@@ -369,6 +369,12 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
           {detail.landRequest.holdReasonCode && <Text size="sm">Reason: {detail.landRequest.holdReasonCode}; holder {detail.landRequest.holdingTaskId ?? 'unknown'} ({detail.landRequest.holdingTaskStatus ?? 'unknown'})</Text>}
           {detail.landRequest.holdDetail && <Text size="sm">{detail.landRequest.holdDetail}</Text>}
           {detail.landRequest.holdingTaskId && <Anchor component={Link} to={`/orchestrator?tab=delegations&task=${detail.landRequest.holdingTaskId}`}>Open holding task</Anchor>}
+          {detail.landRequest.expectedSourceSha
+            ? <Text size="xs">Approved original: <Code>{detail.landRequest.expectedSourceSha}</Code></Text>
+            : <Text size="xs">Approved original: (legacy; not bound)</Text>}
+          {detail.landRequest.localBeforeSha && <Text size="xs">Local before resolution: <Code>{detail.landRequest.localBeforeSha}</Code></Text>}
+          {detail.landRequest.remoteSourceSha && <Text size="xs">Observed remote source: <Code>{detail.landRequest.remoteSourceSha}</Code></Text>}
+          {detail.landRequest.resolvedSourceSha && <Text size="xs">Resolved source: <Code>{detail.landRequest.resolvedSourceSha}</Code></Text>}
           {detail.landRequest.reconciliationError && <Text c="red">{detail.landRequest.reconciliationError}</Text>}
           {detail.landRequest.notifications.map(n => <Stack gap={4} key={n.id}><Text size="sm">
             Notification: {n.kind} {n.state}; destination {n.destinationSessionId ?? 'unavailable'};
@@ -384,13 +390,22 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
         {landView && (landView.queue ? <LandQueueEvidence session={landView.session} message={landView.queue} /> : <SessionTranscriptPanel sessionId={landView.session} />)}
       </Modal>
 
+      {detail.reviewEvidence && (
+        <Section title="Review evidence">
+          <Text size="xs">Evidence: <Code>{detail.reviewEvidence.id}</Code></Text>
+          <Text size="xs">Subject: <Code>{detail.reviewEvidence.subjectTaskId}</Code></Text>
+          <Text size="xs">Reviewed SHA: <Code>{detail.reviewEvidence.reviewedSourceSha}</Code></Text>
+        </Section>
+      )}
       {detail.landing && (
         <Section title="Landing">
           <Text size="sm">Publication: {detail.landing.publication}</Text>
           <Text size="sm">Cleanup: {detail.landing.cleanup}</Text>
           <Text size="xs">Mode: {detail.landing.mode}</Text>
+          <Text size="xs">Approved original: <Code>{detail.landing.reviewedSha ?? detail.landing.sourceSha}</Code></Text>
           <Text size="xs">Source: <Code>{detail.landing.sourceSha}</Code></Text>
           {detail.landing.verifiedSha && <Text size="xs">Verified: <Code>{detail.landing.verifiedSha}</Code></Text>}
+          {detail.landing.sourceRemoteSha && <Text size="xs">Remote source: <Code>{detail.landing.sourceRemoteSha}</Code></Text>}
           {detail.landing.remoteConfirmedAt && (
             <Text size="xs">Remote confirmed: <Code>{detail.landing.remoteSha}</Code> at {detail.landing.remoteConfirmedAt}</Text>
           )}

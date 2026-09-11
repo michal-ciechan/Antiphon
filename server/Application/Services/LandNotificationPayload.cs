@@ -9,7 +9,8 @@ internal static class LandNotificationPayload
     {
         var id = Guid.NewGuid();
         var header = $"[land {id:N} request={request.Id:N} task={request.TaskId:N} outcome={source.Type}]";
-        var body = $"{header}\npublication={source.LandingPublication?.ToString() ?? "Unconfirmed"}; cleanup={source.LandingCleanup?.ToString() ?? "NotStarted"}\n{source.Detail}";
+        var approval = $"expected={request.ExpectedSourceSha ?? "null"}; local={request.LocalBeforeSha ?? "null"}; remote={request.RemoteSourceSha ?? "null"}; candidate={request.CandidateSourceSha ?? "null"}";
+        var body = $"{header}\npublication={source.LandingPublication?.ToString() ?? "Unconfirmed"}; cleanup={source.LandingCleanup?.ToString() ?? "NotStarted"}\n{approval}\n{source.Detail}";
         return new AgentTaskLandNotification
         {
             Id = id, RequestId = request.Id, TaskId = request.TaskId, SourceEventId = source.Id,

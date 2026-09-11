@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Domain;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 
@@ -19,7 +20,7 @@ public sealed class AgentTaskLandingState
 
     public void Transition(AgentTaskLanding operation, LandPhase next, DateTime now)
     {
-        if (operation.SchemaVersion != 1) throw new InvalidOperationException("landing_schema_unsupported");
+        if (operation.SchemaVersion is not 1 and not 2) throw new InvalidOperationException("landing_schema_unsupported");
         var permitted = (operation.Phase, next) switch
         {
             (LandPhase.Inspected, LandPhase.RecoveryPinned) => operation.SourcePinned && operation.TargetPinned,
@@ -49,25 +50,53 @@ public sealed class AgentTaskLandingState
 
     /// <summary>An explicit retry after terminal refusal requires fresh accepted inspection, even for unchanged source.</summary>
     public bool CanReplaceRefused(AgentTaskLanding previous, LandSourceInspection freshInspection,
-        bool explicitRequest, bool leaseHeld) => explicitRequest && leaseHeld && previous.SchemaVersion == 1
-        && previous.Phase == LandPhase.Refused && !HasPublication(previous)
-        && freshInspection.Accepted
-        && freshInspection.Snapshot!.Coordinates.TaskId == previous.TaskId;
+        bool explicitRequest, bool leaseHeld) => CanReplaceRefused(previous, freshInspection, explicitRequest, leaseHeld, null);
 
-    private static bool HasVerification(AgentTaskLanding operation) => IsOid(operation.VerifiedSourceSha)
-        && operation.VerifiedAt is not null && operation.SourcePinned && operation.TargetPinned
-        && (operation.RebasedSourceSha is null || operation.PreparedPinned)
-        && operation.VerifiedSourceSha == (operation.RebasedSourceSha ?? operation.OriginalSourceSha)
-        && (operation.VerificationPassed
-            || operation.VerificationSkipReason == "base_unchanged"
-                && operation.RebasedSourceSha == operation.OriginalSourceSha
-                && string.IsNullOrWhiteSpace(operation.VerificationFilter)
-            || operation.VerificationSkipReason == "exact_remote_containment" && operation.RebasedSourceSha is null);
+    public bool CanReplaceRefused(AgentTaskLanding previous, LandSourceInspection freshInspection,
+        bool explicitRequest, bool leaseHeld, string? expectedSourceSha)
+    {
+        if (!explicitRequest || !leaseHeld || previous.Phase != LandPhase.Refused || HasPublication(previous)
+            || !freshInspection.Accepted
+            || freshInspection.Snapshot!.Coordinates.TaskId != previous.TaskId)
+            return false;
+        if (previous.SchemaVersion is not 1 and not 2) return false;
+        if (previous.SchemaVersion == 1) return true;
+        return previous.ApprovalLandRequestId is not null
+            && previous.ReviewedSourceSha == previous.OriginalSourceSha
+            && (expectedSourceSha is null || expectedSourceSha == previous.OriginalSourceSha);
+    }
 
-    private static bool IsOid(string? value) => value is { Length: 40 or 64 }
-        && value.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
+    public bool HasV2Approval(AgentTaskLanding operation) =>
+        operation.SchemaVersion == 2 && HasV2ApprovalStatic(operation);
 
-    private static bool HasIdentity(AgentTaskLanding operation) => operation.SchemaVersion == 1
+    public bool HasLineage(AgentTaskLanding operation) =>
+        operation.SchemaVersion == 1 || (operation.SchemaVersion == 2 && LineageHolds(operation));
+
+    private static bool HasVerification(AgentTaskLanding operation)
+    {
+        var expected = operation.RebasedSourceSha
+            ?? operation.PreparationInputSha
+            ?? operation.OriginalSourceSha;
+        var derivation = operation.SchemaVersion == 2
+            && operation.PreparationInputSha is { } input && input != operation.OriginalSourceSha;
+        var baseUnchanged = operation.VerificationSkipReason == "base_unchanged"
+            && operation.RebasedSourceSha == operation.OriginalSourceSha
+            && string.IsNullOrWhiteSpace(operation.VerificationFilter)
+            && !derivation;
+        var containment = operation.VerificationSkipReason == "exact_remote_containment"
+            && operation.RebasedSourceSha is null
+            && (!derivation || operation.VerifiedSourceSha == operation.PreparationInputSha);
+        return IsOid(operation.VerifiedSourceSha)
+            && operation.VerifiedAt is not null && operation.SourcePinned && operation.TargetPinned
+            && (operation.RebasedSourceSha is null || operation.PreparedPinned)
+            && operation.VerifiedSourceSha == expected
+            && (operation.VerificationPassed || baseUnchanged || containment);
+    }
+
+    private static bool IsOid(string? value) => GitObjectId.IsFull(value);
+
+    private static bool HasIdentity(AgentTaskLanding operation) =>
+        operation.SchemaVersion is 1 or 2
         && operation.Id != Guid.Empty && operation.TaskId != Guid.Empty
         && IsOid(operation.OriginalSourceSha) && IsOid(operation.TargetBeforeSha)
         && operation.SourceFullRef.StartsWith("refs/heads/", StringComparison.Ordinal)
@@ -79,5 +108,21 @@ public sealed class AgentTaskLandingState
         && !string.IsNullOrWhiteSpace(operation.WorktreePath)
         && !string.IsNullOrWhiteSpace(operation.GitDirectory)
         && operation.RemoteFingerprint.Length == 64
-        && operation.RecoveryRefPrefix == $"refs/antiphon/land/{operation.TaskId:N}/{operation.Id:N}";
+        && operation.RecoveryRefPrefix == $"refs/antiphon/land/{operation.TaskId:N}/{operation.Id:N}"
+        && (operation.SchemaVersion == 1 || HasV2ApprovalStatic(operation));
+
+    private static bool HasV2ApprovalStatic(AgentTaskLanding operation) =>
+        operation.ApprovalLandRequestId is { } requestId && requestId != Guid.Empty
+        && IsOid(operation.ReviewedSourceSha)
+        && operation.ReviewedSourceSha == operation.OriginalSourceSha
+        && LineageHolds(operation);
+
+    private static bool LineageHolds(AgentTaskLanding operation)
+    {
+        var input = operation.PreparationInputSha;
+        if (input is null || input == operation.OriginalSourceSha)
+            return operation.PreviousPreparationOperationId is null;
+        return operation.PreviousPreparationOperationId is { } predecessor && predecessor != Guid.Empty
+            && predecessor != operation.Id && IsOid(input);
+    }
 }

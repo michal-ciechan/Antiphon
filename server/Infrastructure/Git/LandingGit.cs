@@ -243,6 +243,57 @@ public class LandingGit : ILandingGit
         return new(null, false, "remote_changed_during_confirmation");
     }
 
+    public async Task<LandingSourceObservation> ObserveSourceAsync(string repository, string sourceFullRef,
+        string observationPrefix, CancellationToken ct)
+    {
+        if (!sourceFullRef.StartsWith("refs/heads/", StringComparison.Ordinal)
+            || !observationPrefix.StartsWith("refs/antiphon/land/", StringComparison.Ordinal))
+            return new(null, null, null, "invalid_observation_identity");
+        var check = await RunAsync(repository, ["check-ref-format", observationPrefix + "/probe"], ct);
+        if (!check.Succeeded) return new(null, null, null, "invalid_observation_ref");
+        string? fingerprint;
+        try { fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(await EndpointAsync(repository, ct)))); }
+        catch (IOException) { return new(null, null, null, "source_remote_endpoint_ambiguous"); }
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            string endpoint;
+            try { endpoint = await EndpointAsync(repository, ct); }
+            catch (IOException) { return new(null, null, null, "source_remote_endpoint_ambiguous"); }
+            var currentFingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(endpoint)));
+            if (currentFingerprint != fingerprint)
+                return new(null, null, null, "source_remote_endpoint_changed");
+
+            var read = await RunAsync(repository, ["ls-remote", "--refs", "--exit-code", endpoint, sourceFullRef], ct);
+            if (read.ExitCode == 2) return new(null, null, fingerprint, "source_remote_missing");
+            if (!read.Succeeded) return new(null, null, fingerprint, "source_remote_unreadable");
+            var lines = read.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            var fields = lines.Length == 1 ? lines[0].TrimEnd('\r').Split('\t') : [];
+            if (fields.Length != 2 || fields[1] != sourceFullRef || !IsOid(fields[0]))
+                return new(null, null, fingerprint, "source_remote_response_invalid");
+
+            var pin = $"{observationPrefix}/{Guid.NewGuid():N}";
+            var pinCheck = await RunAsync(repository, ["check-ref-format", pin], ct);
+            if (!pinCheck.Succeeded) return new(null, null, fingerprint, "invalid_observation_ref");
+            var fetch = await RunAsync(repository,
+                ["fetch", "--no-tags", "--no-write-fetch-head", endpoint, $"{sourceFullRef}:{pin}"], ct);
+            if (!fetch.Succeeded) return new(null, null, fingerprint, "source_remote_fetch_failed");
+            string observed;
+            try { observed = await CommitAsync(repository, pin, ct); }
+            catch (IOException) { return new(null, null, fingerprint, "source_remote_commit_invalid"); }
+            if (observed != fields[0]) continue;
+            try
+            {
+                var after = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(await EndpointAsync(repository, ct))));
+                if (after != fingerprint) return new(null, null, fingerprint, "source_remote_endpoint_changed");
+            }
+            catch (IOException) { return new(null, null, fingerprint, "source_remote_endpoint_ambiguous"); }
+            return new(observed, pin, fingerprint, null);
+        }
+
+        return new(null, null, fingerprint, "source_remote_changed_during_confirmation");
+    }
+
     public async Task<LandingGitResult> PinAsync(string repository, string recoveryRef, string sha, CancellationToken ct)
     {
         if (!IsOid(sha) || !recoveryRef.StartsWith("refs/antiphon/land/", StringComparison.Ordinal))

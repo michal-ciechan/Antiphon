@@ -1662,7 +1662,8 @@ public sealed class AgentTaskReplyService
             ReportEvidenceHeader(task.ReportEvidence), git,
             DescribeDeliverable(task),
             PipelineHandoff.HeaderBit(task.Role, PipelineHandoff.TryParse(report)),
-            await LandCompletionFacts.LoadAsync(factsScope.ServiceProvider.GetRequiredService<AppDbContext>(), task, ct));
+            await LandCompletionFacts.LoadAsync(factsScope.ServiceProvider.GetRequiredService<AppDbContext>(), task, ct),
+            await LandCompletionFacts.LoadReviewAsync(factsScope.ServiceProvider.GetRequiredService<AppDbContext>(), task, ct));
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
@@ -3012,50 +3013,104 @@ public sealed class AgentTaskReplyService
         if (task.Stage is not { } stage)
             return;
 
+        var already = await db.StageOutcomes.AnyAsync(o => o.StageTaskId == task.Id && o.Stage == stage, ct);
+        if (already)
+            return;
+
+        var outcome = StageOutcomeKind.Unreported;
+        var detail = string.Empty;
+        if (DelegationReportFormatter.TryReadFindingLine(task.Id, report, out var parsed, out var parsedDetail))
+        {
+            outcome = parsed;
+            detail = parsedDetail;
+        }
+
         try
         {
-            var outcome = StageOutcomeKind.Unreported;
-            var detail = string.Empty;
-            if (DelegationReportFormatter.TryReadFindingLine(task.Id, report, out var parsed, out var parsedDetail))
-            {
-                outcome = parsed;
-                detail = parsedDetail;
-            }
-
-            int? commits = null;
             if (task.Workspace == WorkspaceMode.Worktree)
-                commits = await TryCountWorktreeCommitsAsync(services, task, ct);
-            if (commits is int n)
-                detail = string.IsNullOrEmpty(detail) ? $"commits={n}" : $"{detail} commits={n}";
-
-            var duration = 0;
-            if (task.CompletedAt is DateTime completed && task.DispatchedAt is DateTime dispatched)
-                duration = (int)Math.Clamp(Math.Round((completed - dispatched).TotalSeconds), 0, int.MaxValue);
-
-            db.StageOutcomes.Add(new StageOutcome
             {
-                Id = Guid.NewGuid(),
-                Stage = stage,
-                Outcome = outcome,
-                Source = StageOutcomeSource.Delegate,
-                SubjectTaskId = task.FollowUpOfTaskId,
-                StageTaskId = task.Id,
-                CardId = task.CardId,
-                CostUsd = task.CostUsd,
-                TokensIn = task.TokensIn,
-                TokensOut = task.TokensOut,
-                DurationSeconds = duration,
-                Detail = AgentTaskLandService.Clip(detail),
-                RecordedAt = now,
-            });
+                var commits = await TryCountWorktreeCommitsAsync(services, task, ct);
+                if (commits is int n)
+                    detail = string.IsNullOrEmpty(detail) ? $"commits={n}" : $"{detail} commits={n}";
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogWarning(
-                ex, "Could not record stage outcome for task {ShortId}.",
+            _logger.LogWarning(ex, "Could not count worktree commits for task {ShortId}.",
                 DelegationReportFormatter.Short(task.Id));
         }
+
+        var duration = 0;
+        if (task.CompletedAt is DateTime completed && task.DispatchedAt is DateTime dispatched)
+            duration = (int)Math.Clamp(Math.Round((completed - dispatched).TotalSeconds), 0, int.MaxValue);
+
+        Guid? subjectId = task.FollowUpOfTaskId;
+        string? reviewedSha = null;
+        string? reviewedRef = null;
+        string? reviewedRepo = null;
+        if (task.Role == AgentTaskRole.Review && task.Status == AgentTaskStatus.Succeeded
+            && stage == OrchestrationStage.Review && outcome == StageOutcomeKind.Clean)
+        {
+            var evidence = ReviewEvidence.TryParse(report);
+            if (evidence.Usable && evidence.SubjectTaskId is { } named)
+            {
+                if (task.FollowUpOfTaskId is { } follow && follow != named)
+                {
+                    db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning,
+                        "Review evidence subject does not match the follow-up subject.", now));
+                }
+                else
+                {
+                    var subject = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == named, ct);
+                    if (subject is null || subject.Workspace != WorkspaceMode.Worktree
+                        || !ReviewSubjectAuthorized(task, subject))
+                    {
+                        db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning,
+                            "Review evidence named a subject that is not an authorized Worktree landing owner.", now));
+                    }
+                    else
+                    {
+                        subjectId = subject.Id;
+                        reviewedSha = evidence.ReviewedSourceSha;
+                        reviewedRef = subject.WorktreeBranch is null ? null
+                            : subject.WorktreeBranch.StartsWith("refs/", StringComparison.Ordinal)
+                                ? subject.WorktreeBranch : "refs/heads/" + subject.WorktreeBranch;
+                        reviewedRepo = subject.RepoPath;
+                    }
+                }
+            }
+            else
+            {
+                db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning,
+                    evidence.Warning ?? "Review settled without usable review evidence.", now));
+            }
+        }
+
+        db.StageOutcomes.Add(new StageOutcome
+        {
+            Id = Guid.NewGuid(),
+            Stage = stage,
+            Outcome = outcome,
+            Source = StageOutcomeSource.Delegate,
+            SubjectTaskId = subjectId,
+            StageTaskId = task.Id,
+            CardId = task.CardId,
+            CostUsd = task.CostUsd,
+            TokensIn = task.TokensIn,
+            TokensOut = task.TokensOut,
+            DurationSeconds = duration,
+            Detail = AgentTaskLandService.Clip(detail),
+            RecordedAt = now,
+            ReviewedSourceSha = reviewedSha,
+            ReviewedSourceRef = reviewedRef,
+            ReviewedRepositoryPath = reviewedRepo,
+        });
     }
+
+    private static bool ReviewSubjectAuthorized(AgentTask review, AgentTask subject) =>
+        review.Id == subject.Id
+        || review.FollowUpOfTaskId == subject.Id
+        || (review.CardId is { } card && subject.CardId == card);
 
     private static async Task<int?> TryCountWorktreeCommitsAsync(
         IServiceProvider services, AgentTask task, CancellationToken ct)

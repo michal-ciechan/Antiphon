@@ -75,3 +75,65 @@ it.each([null, 'feat/card-task-ce744e22'])('C470 renders canonical mutation hand
   expect(target.searchParams.get('ref')).toBe(deliverableRef)
   expect(target.searchParams.get('task')).toBe(FLY_ID)
 })
+
+it('shows exact approval, source resolution, verification and legacy evidence', async () => {
+  const shaA = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  const shaB = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  const shaP = 'cccccccccccccccccccccccccccccccccccccccc'
+  const shaR = 'dddddddddddddddddddddddddddddddddddddddd'
+  const task = {
+    ...detail(),
+    reviewEvidence: {
+      id: 'bbbbbbbb-0000-0000-0000-000000000002',
+      subjectTaskId: FLY_ID,
+      reviewedSourceSha: shaB,
+      reviewedSourceRef: 'refs/heads/feat/card-task-aaaaaaaa000000000000000000000001',
+      outcome: 'Clean',
+    },
+    landRequest: {
+      id: 'cccccccc-0000-0000-0000-000000000003',
+      state: 'Queued',
+      requestedAt: '2026-09-11T12:00:00Z',
+      startedAt: null,
+      lastEvaluatedAt: '2026-09-11T12:00:00Z',
+      lastProgressAt: '2026-09-11T12:00:00Z',
+      ageSeconds: 12,
+      noProgressSeconds: 12,
+      attempt: 0,
+      holdReasonCode: null,
+      holdDetail: null,
+      holdingTaskId: null,
+      holdingTaskStatus: null,
+      heldSince: null,
+      holdEpisode: 0,
+      reconciliationError: null,
+      expectedSourceSha: shaB,
+      localBeforeSha: shaA,
+      remoteSourceSha: shaR,
+      resolvedSourceSha: shaB,
+      notifications: [],
+    },
+    landing: {
+      operationId: 'dddddddd-0000-0000-0000-000000000004',
+      phase: 'Verified',
+      mode: 'Fresh' as const,
+      publication: 'Unconfirmed' as const,
+      cleanup: 'NotStarted' as const,
+      sourceSha: shaB,
+      reviewedSha: shaB,
+      verifiedSha: shaP,
+      sourceRemoteSha: shaR,
+      remoteSha: null,
+      remoteConfirmedAt: null,
+      destinationRef: 'refs/heads/master',
+      reason: null,
+    },
+  }
+  server.use(http.get('/api/agent-tasks/:id', () => HttpResponse.json(task)))
+  renderWithProviders(<TaskDetailBody taskId={FLY_ID} onClose={() => {}} />)
+  expect(await screen.findByText(/Approved original/)).toBeInTheDocument()
+  expect(screen.getByText(shaB, { exact: false })).toBeInTheDocument()
+  expect(screen.getByText(shaP)).toBeInTheDocument()
+  expect(screen.getByText(/Remote source/)).toBeInTheDocument()
+  expect(screen.getByText(/Reviewed SHA/)).toBeInTheDocument()
+})

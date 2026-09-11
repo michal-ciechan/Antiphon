@@ -14,3 +14,18 @@ public enum LandOperationMode { Fresh = 0, ResumePublication = 1, CleanupRetry =
 public enum LandRequestState { Queued, Held, Running, NeedsResolution, Completed, Superseded, Canceled }
 public enum LandNotificationKind { Held, Aged, Conflict, Outcome }
 public enum LandNotificationState { Queued, RetryPending, AwaitingReceipt, Confirmed, NotRequired, DestinationUnavailable, Canceled, LegacyUnverified }
+
+public enum LandSourceResolutionState { None = 0, Observed = 1, AdvanceStarted = 2, Resolved = 3 }
+
+public enum LandSourceRelationship
+{
+    Unknown = 0,
+    Equal = 1,
+    Behind = 2,
+    LocalAhead = 3,
+    Diverged = 4,
+    Missing = 5,
+    Unavailable = 6,
+}
+
+public enum LandApprovalKind { ExplicitCaller = 0, ReviewEvidence = 1, InheritedResume = 2, LateBinding = 3 }

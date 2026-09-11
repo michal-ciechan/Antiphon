@@ -60,4 +60,16 @@ public sealed class AgentTaskLanding
     public int? ChildProcessId { get; set; }
     public long? ChildProcessStartTicks { get; set; }
     public string? ChildOperation { get; set; }
+
+    public Guid? ApprovalLandRequestId { get; set; }
+    public string? ReviewedSourceSha { get; set; }
+    public Guid? ReviewEvidenceId { get; set; }
+    public string? PreparationInputSha { get; set; }
+    public Guid? PreviousPreparationOperationId { get; set; }
+    public string? SourceRemoteSha { get; set; }
+    public string? SourceRemoteRef { get; set; }
+    public string? SourceRemoteFingerprint { get; set; }
+    public DateTime? SourceRemoteObservedAt { get; set; }
+    public DateTime? ApprovedAt { get; set; }
+    public LandApprovalKind ApprovalKind { get; set; }
 }

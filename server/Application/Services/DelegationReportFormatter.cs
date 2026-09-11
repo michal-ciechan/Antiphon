@@ -511,7 +511,8 @@ public static class DelegationReportFormatter
         AgentTask task, DelegationSettings settings, string report, string? workspaceNote = null,
         int? replyInlineMaxChars = null, string? warning = null, string? overlappingRunning = null,
         string? drift = null, string? reportEvidence = null, string? git = null,
-        DeliverableNote? deliverable = null, string? next = null, LandCompletionFacts? land = null)
+        DeliverableNote? deliverable = null, string? next = null, LandCompletionFacts? land = null,
+        ReviewEvidenceFacts? reviewEvidence = null)
     {
         var header = new StringBuilder();
         header.Append('[').Append("task ").Append(Short(task.Id)).Append(' ')
@@ -550,6 +551,8 @@ public static class DelegationReportFormatter
             bits.Add($"deliverable={deliverable.HeaderBit}");
         if (!string.IsNullOrWhiteSpace(next))
             bits.Add($"next={next.Trim()}");
+        if (reviewEvidence is not null)
+            bits.Add($"review-evidence={reviewEvidence.Id:N}; subject={reviewEvidence.SubjectTaskId:N}; reviewed-sha={reviewEvidence.ReviewedSourceSha}");
         if (bits.Count > 0) header.Append(' ').Append(string.Join(" · ", bits));
 
         var (body, excerpted) = FitReport(report ?? string.Empty, task, settings, replyInlineMaxChars);

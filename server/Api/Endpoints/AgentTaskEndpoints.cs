@@ -198,7 +198,7 @@ public static class AgentTaskEndpoints
         {
             var taskId = await service.ResolveTaskIdAsync(id, ct);
             return Results.Accepted($"/api/agent-tasks/{taskId}",
-                await lands.RequestAsync(taskId, request?.Verify, ct));
+                await lands.RequestAsync(taskId, request ?? new LandAgentTaskRequest(), ct));
         });
     }
 

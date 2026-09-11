@@ -62,7 +62,7 @@ public sealed class AgentTaskLandService
     }
 
     /// <summary>Persist and queue an explicit land request. The endpoint returns before git runs.</summary>
-    public async Task<LandRequestResult> RequestAsync(Guid taskId, string? verifyFilter, CancellationToken ct)
+    public async Task<LandRequestResult> RequestAsync(Guid taskId, LandAgentTaskRequest body, CancellationToken ct)
     {
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
         await _db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM \"AgentTasks\" WHERE \"Id\" = {taskId} FOR UPDATE", ct);
@@ -82,37 +82,66 @@ public sealed class AgentTaskLandService
                 ? ", queued"
                 : $", started {task.LandStartedAt:u}, attempt {task.LandAttempt}";
             throw new ConflictException(
-                $"Task {shortId} land is running in this server: requested {requested}{state}. Wait for its outcome event.");
+                $"Task {shortId} land is running in this server: requested {requested}{state}. Wait for its outcome event.",
+                "land_running");
         }
 
         var now = _clock.GetUtcNow().UtcDateTime;
-        var filter = ClipFilter(verifyFilter);
+        var filter = ClipFilter(body.Verify);
         await _db.Entry(task).ReloadAsync(ct);
         var request = task.LandRequestedAt is not null ? await EnsureRequestAsync(task, ct) : await GetRequestAsync(task, ct);
-        var requeued = request is { IsPending: true } && task.LandRequestedAt is not null;
-        if (!requeued)
+        var pending = request is { IsPending: true } && task.LandRequestedAt is not null;
+        if (pending)
         {
-            request = NewRequest(task, now, filter);
+            var suppliedSha = LandApproval.NormalizeExpectedSha(body.ExpectedSourceSha, required: false);
+            var suppliedEvidence = body.ReviewEvidenceId;
+            if (suppliedSha is not null && request!.ExpectedSourceSha is not null && suppliedSha != request.ExpectedSourceSha
+                || suppliedEvidence is not null && request!.ReviewEvidenceId is not null && suppliedEvidence != request.ReviewEvidenceId
+                || body.Verify is not null && filter != request!.VerifyFilter
+                || suppliedSha is not null && request!.ExpectedSourceSha is null
+                || suppliedEvidence is not null && request!.ReviewEvidenceId is null)
+                throw new ConflictException("A pending land request cannot change expected SHA, evidence or filter.",
+                    "land_request_identity_conflict");
+            if (request!.State == LandRequestState.NeedsResolution) request.State = LandRequestState.Queued;
+        }
+        else
+        {
+            var published = task.ActiveLandingId is Guid opId
+                ? await _db.AgentTaskLandings.AsNoTracking().SingleOrDefaultAsync(o => o.Id == opId, ct)
+                : null;
+            var inherit = published is not null && new AgentTaskLandingState().HasPublication(published);
+            var expected = LandApproval.NormalizeExpectedSha(body.ExpectedSourceSha, required: !inherit);
+            if (expected is null && inherit)
+                expected = published!.OriginalSourceSha;
+            if (expected is not null && inherit && expected != published!.OriginalSourceSha)
+                throw new ConflictException("Cleanup retry expectedSourceSha does not match the published original.",
+                    "land_request_identity_conflict");
+            Guid? evidenceId = body.ReviewEvidenceId;
+            var kind = LandApprovalKind.ExplicitCaller;
+            if (evidenceId is { } eid)
+            {
+                var evidence = await LandApproval.LoadUsableEvidenceAsync(_db, eid, expected!, task, ct);
+                evidenceId = evidence.Id;
+                kind = LandApprovalKind.ReviewEvidence;
+            }
+            request = NewRequest(task, now, filter, expected, evidenceId, kind);
             _db.AgentTaskLandRequests.Add(request);
             task.CurrentLandRequestId = request.Id;
             task.LandRequestedAt = now;
             task.LandStartedAt = null;
             task.LandAttempt = 0;
             var requestedEvent = Event(task.Id, AgentTaskEventType.LandRequested,
-                filter is null ? "Land requested." : $"Land requested with test filter: {filter}", now);
+                ApprovalRequestedDetail(filter, expected, evidenceId), now);
             requestedEvent.LandRequestId = request.Id;
             _db.AgentTaskEvents.Add(requestedEvent);
         }
-        request!.VerifyFilter = filter;
-        // Only an explicit POST after the task has succeeded can resume a resolved conflict.
-        if (requeued && request.State == LandRequestState.NeedsResolution) request.State = LandRequestState.Queued;
-        task.LandVerifyFilter = filter;
+        task.LandVerifyFilter = request!.VerifyFilter;
         task.ConcurrencyToken = Guid.NewGuid();
         await _db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
-        if (!_boundary.DropWakeup("land-request", request.Id)) _queue.TryEnqueue(taskId, filter, request.Id);
+        if (!_boundary.DropWakeup("land-request", request.Id)) _queue.TryEnqueue(taskId, request.VerifyFilter, request.Id);
         await PublishAsync(task, ct);
-        return new LandRequestResult(task.Id, requeued ? "requeued" : "queued", request.Id,
+        return new LandRequestResult(task.Id, pending ? "requeued" : "queued", request.Id,
             request.ReplyTo == AgentTaskReplyTo.None ? "not-required" : "tracked");
     }
 
@@ -215,7 +244,25 @@ public sealed class AgentTaskLandService
         await _db.SaveChangesAsync(ct);
         await admission.CommitAsync(ct);
         }
-        var result = await _protocol.RunAsync(task, lease, ct);
+        await _db.Entry(task).ReloadAsync(ct);
+        await _db.Entry(request).ReloadAsync(ct);
+        var active = task.ActiveLandingId is Guid operationId
+            ? await _db.AgentTaskLandings.SingleOrDefaultAsync(o => o.Id == operationId, ct)
+            : null;
+        var published = active is not null && new AgentTaskLandingState().HasPublication(active);
+        if (!published)
+        {
+            var resolved = await new AgentTaskLandSourceResolver(_db, _landingGit, _leases, _clock)
+                .ResolveAsync(task, request, lease, ct);
+            if (resolved.Reason is not null)
+            {
+                await RefuseAsync(task, FormatSourceRefusal(request, resolved.Reason), ct);
+                return LandRunResult.Complete;
+            }
+            await _db.Entry(task).ReloadAsync(ct);
+            await _db.Entry(request).ReloadAsync(ct);
+        }
+        var result = await _protocol.RunAsync(task, lease, request, ct);
         if (result.Conflicts.Count > 0)
         {
             await using var transaction = await _db.Database.BeginTransactionAsync(ct);
@@ -273,10 +320,14 @@ public sealed class AgentTaskLandService
 
     internal static string FormatOutcome(AgentTaskLanding op) =>
         $"{(op.Publication == LandPublicationOutcome.AlreadyPresent ? "already present" : "landed")} operation={op.Id:N} mode={op.Mode} "
-        + $"source={op.OriginalSourceSha} verified={op.VerifiedSourceSha} -> {op.RemoteName}:{op.DestinationFullRef}; "
+        + $"source={op.OriginalSourceSha} reviewed={op.ReviewedSourceSha ?? op.OriginalSourceSha} verified={op.VerifiedSourceSha} -> {op.RemoteName}:{op.DestinationFullRef}; "
         + $"remote={op.ObservedRemoteTargetSha} confirmed at {op.RemoteConfirmedAt:O}; "
         + (op.PushStartedAt is null ? "no push attempted; " : $"push exit={op.PushExitCode?.ToString() ?? "unknown"}; ")
         + $"cleanup={op.Cleanup}" + (op.LastReason is null ? "" : $": {op.LastReason}");
+
+    internal static string FormatSourceRefusal(AgentTaskLandRequest request, string reason) =>
+        $"{reason} expected={request.ExpectedSourceSha ?? "null"} local={request.LocalBeforeSha ?? "null"} "
+        + $"remote={request.RemoteSourceSha ?? "null"} candidate={request.CandidateSourceSha ?? "null"}";
 
     private async Task<AgentTask?> FindWriterAsync(AgentTask task, string common, CancellationToken ct)
     {
@@ -469,7 +520,7 @@ public sealed class AgentTaskLandService
                 await _db.SaveChangesAsync(ct);
             }
 
-            _queue.TryEnqueue(row.Id, row.LandVerifyFilter, request.Id);
+            _queue.TryEnqueue(row.Id, request.VerifyFilter, request.Id);
         }
     }
 
@@ -519,7 +570,9 @@ public sealed class AgentTaskLandService
         if (request.TerminalEventId is not null) return;
         var now = _clock.GetUtcNow().UtcDateTime;
         var terminal = Event(task.Id, AgentTaskEventType.LandRefused, line, now);
-        var op = task.ActiveLandingId is Guid id ? await _db.AgentTaskLandings.SingleAsync(o => o.Id == id, ct) : null;
+        var op = request.LandingOperationId is Guid opId
+            ? await _db.AgentTaskLandings.SingleOrDefaultAsync(o => o.Id == opId, ct)
+            : null;
         SetLandingEvidence(terminal, op);
         _db.AgentTaskEvents.Add(terminal);
         _db.AgentTaskEvents.Add(Event(task.Id, AgentTaskEventType.Warning,
@@ -577,12 +630,33 @@ public sealed class AgentTaskLandService
     private async Task<AgentTaskLandRequest?> GetRequestAsync(AgentTask task, CancellationToken ct) =>
         task.CurrentLandRequestId is Guid id ? await _db.AgentTaskLandRequests.SingleAsync(r => r.Id == id, ct) : null;
 
-    private static AgentTaskLandRequest NewRequest(AgentTask task, DateTime at, string? filter) => new()
+    private static AgentTaskLandRequest NewRequest(AgentTask task, DateTime at, string? filter,
+        string? expectedSha = null, Guid? evidenceId = null, LandApprovalKind kind = LandApprovalKind.ExplicitCaller) => new()
     {
         Id = Guid.NewGuid(), TaskId = task.Id, RequestedAt = at, VerifyFilter = filter,
         ReplyTo = task.ReplyTo, ParentSessionId = task.ParentSessionId, State = LandRequestState.Queued,
         LastEvaluatedAt = at, LastProgressAt = at,
+        SchemaVersion = expectedSha is null ? 1 : 2,
+        ExpectedSourceSha = expectedSha,
+        ReviewEvidenceId = evidenceId,
+        ApprovalKind = kind,
+        ApprovedAt = expectedSha is null ? null : at,
+        SourceFullRefSnapshot = task.WorktreeBranch is null ? null
+            : task.WorktreeBranch.StartsWith("refs/", StringComparison.Ordinal) ? task.WorktreeBranch : "refs/heads/" + task.WorktreeBranch,
+        RepositoryPathSnapshot = task.RepoPath,
+        WorktreePathSnapshot = task.WorktreePath,
+        TargetFullRefSnapshot = task.MergeTargetRef is null ? "refs/heads/master"
+            : task.MergeTargetRef.StartsWith("refs/", StringComparison.Ordinal) ? task.MergeTargetRef : "refs/heads/" + task.MergeTargetRef,
     };
+
+    private static string ApprovalRequestedDetail(string? filter, string? expected, Guid? evidence)
+    {
+        var bits = new List<string>();
+        if (expected is not null) bits.Add($"expected={expected}");
+        if (evidence is { } id) bits.Add($"evidence={id:N}");
+        if (filter is not null) bits.Add($"filter={filter}");
+        return bits.Count == 0 ? "Land requested." : "Land requested: " + string.Join("; ", bits);
+    }
 
     private async Task<AgentTaskLandRequest> EnsureRequestAsync(AgentTask task, CancellationToken ct)
     {

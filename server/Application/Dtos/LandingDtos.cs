@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Dtos;
 
@@ -27,5 +28,13 @@ public sealed record LandingRegistration(string Path, string? Branch, string? He
 public sealed record LandingDestination(string RemoteName, string FullRef, string Fingerprint);
 
 public sealed record LandingRemoteObservation(string? Sha, bool ContainsSource, string? Reason);
+
+public sealed record LandingSourceObservation(string? Sha, string? ObservationRef, string? Fingerprint, string? Reason)
+{
+    public bool Missing => Reason == "source_remote_missing";
+    public bool Accepted => Sha is not null && Reason is null && ObservationRef is not null && Fingerprint is { Length: 64 };
+}
+
+public sealed record LandingSourceGraph(LandSourceRelationship Relationship, string? Reason);
 
 public sealed record LandingVerification(bool Passed, string Description);

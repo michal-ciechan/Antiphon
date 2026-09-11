@@ -216,6 +216,15 @@ param(
     [Parameter(ParameterSetName = 'Land')]
     [string]$Verify,
 
+    [Parameter(ParameterSetName = 'Land')]
+    [string]$ExpectedSourceSha,
+
+    [Parameter(ParameterSetName = 'Land')]
+    [string]$ReviewEvidenceId,
+
+    [Parameter(ParameterSetName = 'Finding')]
+    [string]$ReviewedSourceSha,
+
     # CARD-0272. Which landing-step question this task answers: Rebase, Verify, Cleanup, Review,
     # FollowUp, Deploy. Omitted, the role maps (Review, Test->Verify, Merge->Rebase, Deploy;
     # -OnAgent -> FollowUp). Code and Plan never default. Distinct from -Role (pipeline seat).
@@ -403,6 +412,10 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($task.landRequest) {
             $r = $task.landRequest
             Write-Output ("Land: {0}; request {1}; requested {2}; attempt {3}; no progress for {4}s" -f $r.state, $r.id, $r.requestedAt, $r.attempt, [int]$r.noProgressSeconds)
+            if ($r.expectedSourceSha) { Write-Output "Approved original: $($r.expectedSourceSha)" } else { Write-Output 'Approved original: (legacy; not bound)' }
+            if ($r.localBeforeSha) { Write-Output "Local before resolution: $($r.localBeforeSha)" }
+            if ($r.remoteSourceSha) { Write-Output "Observed remote source: $($r.remoteSourceSha)" }
+            if ($r.resolvedSourceSha) { Write-Output "Resolved source: $($r.resolvedSourceSha)" }
             if ($r.holdReasonCode) { Write-Output "Reason: $($r.holdReasonCode); holder $($r.holdingTaskId) ($($r.holdingTaskStatus)); $($r.holdDetail)" }
             if ($r.reconciliationError) { Write-Output "Reconciliation: $($r.reconciliationError)" }
             foreach ($n in $r.notifications) {
@@ -411,7 +424,7 @@ switch ($PSCmdlet.ParameterSetName) {
         } else { Write-Output 'Land: Not requested (legacy receipt evidence, if any, is unverified).' }
         if ($task.landing) {
             $l = $task.landing
-            Write-Output "Publication: $($l.publication); operation $($l.operationId); verified $($l.verifiedSha); remote $($l.remoteSha); confirmed $($l.remoteConfirmedAt); cleanup: $($l.cleanup)"
+            Write-Output "Publication: $($l.publication); operation $($l.operationId); approved $($l.reviewedSha); verified $($l.verifiedSha); remote $($l.remoteSha); confirmed $($l.remoteConfirmedAt); cleanup: $($l.cleanup)"
         } else { Write-Output 'Publication: Unconfirmed; cleanup: NotStarted' }
         if ($task.result) { Write-Output ''; Write-Output $task.result }
         elseif ($task.failureReason) { Write-Output ''; Write-Output "failed: $($task.failureReason)" }
@@ -421,6 +434,8 @@ switch ($PSCmdlet.ParameterSetName) {
     'Land' {
         $body = @{}
         if ($Verify) { $body['verify'] = $Verify }
+        if ($ExpectedSourceSha) { $body['expectedSourceSha'] = $ExpectedSourceSha }
+        if ($ReviewEvidenceId) { $body['reviewEvidenceId'] = $ReviewEvidenceId }
         $result = Invoke-Antiphon -Method POST -Path "/api/agent-tasks/$Land/land" -Body $body
         $suffix = if ($Verify) { " with test filter '$Verify'" } else { '' }
         $word = if ($result.status -eq 'requeued') { 'Requeued land' } else { 'Queued land' }
@@ -495,6 +510,7 @@ switch ($PSCmdlet.ParameterSetName) {
             found = -not [bool]$Clean
         }
         if (-not $Clean) { $body['detail'] = $Found }
+        if ($ReviewedSourceSha) { $body['reviewedSourceSha'] = $ReviewedSourceSha }
         Invoke-Antiphon -Method POST -Path "/api/agent-tasks/$Finding/finding" -Body $body | Out-Null
         $word = if ($Clean) { 'clean' } else { 'found' }
         Write-Output ("recorded {0} {1} on task {2}" -f $Stage, $word, $Finding)

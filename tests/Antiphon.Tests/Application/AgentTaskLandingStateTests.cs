@@ -58,6 +58,108 @@ public sealed class AgentTaskLandingStateTests
     }
 
     [Test]
+    public void C488_UnknownVersionRefuses()
+    {
+        var op = ValidV2();
+        op.SchemaVersion = 3;
+        var policy = new AgentTaskLandingState();
+        policy.HasPublication(op).ShouldBeFalse();
+        Should.Throw<InvalidOperationException>(() => policy.Transition(op, LandPhase.Verified, DateTime.UtcNow))
+            .Message.ShouldBe("landing_schema_unsupported");
+    }
+
+    [Test]
+    public void C488_V2ReceiptNeedsRequestBinding()
+    {
+        var op = ValidV2();
+        op.ApprovalLandRequestId = Guid.Empty;
+        new AgentTaskLandingState().HasPublication(op).ShouldBeFalse();
+        Should.Throw<InvalidOperationException>(() => new AgentTaskLandingState().Transition(op, LandPhase.Verified, DateTime.UtcNow));
+    }
+
+    [Test]
+    public void C488_V2ReceiptNeedsApprovedOriginal()
+    {
+        var op = ValidV2();
+        op.ReviewedSourceSha = new string('e', 40);
+        new AgentTaskLandingState().HasPublication(op).ShouldBeFalse();
+    }
+
+    [Test]
+    public void C488_V2ReceiptNeedsLineage()
+    {
+        var op = ValidV2();
+        op.PreparationInputSha = new string('f', 40);
+        op.PreviousPreparationOperationId = null;
+        new AgentTaskLandingState().HasPublication(op).ShouldBeFalse();
+        new AgentTaskLandingState().HasLineage(op).ShouldBeFalse();
+    }
+
+    [Test]
+    public void C488_VerifiedCommitExact()
+    {
+        var op = ValidV2();
+        op.VerifiedSourceSha = new string('e', 40);
+        new AgentTaskLandingState().HasPublication(op).ShouldBeFalse();
+    }
+
+    [Test]
+    public void C488_ContainedInputReceiptHasLineage()
+    {
+        var predecessor = Guid.NewGuid();
+        var op = ValidV2();
+        op.PreparationInputSha = new string('f', 40);
+        op.PreviousPreparationOperationId = predecessor;
+        op.RebasedSourceSha = null;
+        op.VerifiedSourceSha = new string('f', 40);
+        op.ObservedRemoteTargetSha = new string('f', 40);
+        op.VerificationSkipReason = "exact_remote_containment";
+        op.VerificationPassed = false;
+        op.PreparedPinned = false;
+        op.Phase = LandPhase.RecoveryPinned;
+        var policy = new AgentTaskLandingState();
+        policy.HasLineage(op).ShouldBeTrue();
+        policy.HasPublication(op).ShouldBeTrue();
+        policy.Transition(op, LandPhase.Verified, DateTime.UtcNow);
+    }
+
+    [Test]
+    public void C488_VersionedReceiptMatrix()
+    {
+        var v1 = ValidV2();
+        v1.SchemaVersion = 1;
+        v1.ApprovalLandRequestId = null;
+        v1.ReviewedSourceSha = null;
+        v1.PreparationInputSha = null;
+        new AgentTaskLandingState().HasPublication(v1).ShouldBeTrue();
+        new AgentTaskLandingState().HasPublication(ValidV2()).ShouldBeTrue();
+        var unknown = ValidV2();
+        unknown.SchemaVersion = 9;
+        new AgentTaskLandingState().HasPublication(unknown).ShouldBeFalse();
+    }
+
+    private static AgentTaskLanding ValidV2()
+    {
+        var op = new AgentTaskLanding
+        {
+            Id = Guid.NewGuid(), TaskId = Guid.NewGuid(), SchemaVersion = 2,
+            ApprovalLandRequestId = Guid.NewGuid(),
+            SourceFullRef = "refs/heads/source", TargetFullRef = "refs/heads/master", DestinationFullRef = "refs/heads/master",
+            RepositoryPath = "repo", CommonDirectory = "common", GitDirectory = "git", WorktreePath = "tree",
+            OriginalSourceSha = new string('a', 40), ReviewedSourceSha = new string('a', 40),
+            PreparationInputSha = new string('a', 40),
+            RebasedSourceSha = new string('a', 40), VerifiedSourceSha = new string('a', 40),
+            TargetBeforeSha = new string('b', 40), ObservedRemoteTargetSha = new string('a', 40),
+            RemoteFingerprint = new string('c', 64), RemoteConfirmedAt = DateTime.UtcNow, VerifiedAt = DateTime.UtcNow,
+            Publication = LandPublicationOutcome.Landed, VerificationSkipReason = "base_unchanged",
+            SourcePinned = true, TargetPinned = true, PreparedPinned = true,
+            ConfirmationMethod = "push-endpoint-read-fetch-ancestry", Phase = LandPhase.Prepared,
+        };
+        op.RecoveryRefPrefix = $"refs/antiphon/land/{op.TaskId:N}/{op.Id:N}";
+        return op;
+    }
+
+    [Test]
     public void C448_V22_StageDurationsUseTheirOwnAcknowledgedIntervals()
     {
         var start = new DateTime(2026, 9, 8, 12, 0, 0, DateTimeKind.Utc);

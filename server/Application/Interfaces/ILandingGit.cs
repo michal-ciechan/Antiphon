@@ -17,6 +17,8 @@ public interface ILandingGit
     Task<LandingDestination> DestinationAsync(string repository, string targetFullRef, CancellationToken ct);
     Task<LandingRemoteObservation> ObserveAsync(string repository, LandingDestination destination,
         string sourceSha, string observationRef, CancellationToken ct);
+    Task<LandingSourceObservation> ObserveSourceAsync(string repository, string sourceFullRef,
+        string observationPrefix, CancellationToken ct);
     Task<LandingGitResult> PinAsync(string repository, string recoveryRef, string sha, CancellationToken ct);
     Task<LandingGitResult> PushAsync(string repository, LandingDestination destination, string sha, CancellationToken ct);
     Task<LandingGitResult> PushOwnedAsync(string repository, LandingDestination destination, string sha,

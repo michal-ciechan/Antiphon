@@ -1474,12 +1474,38 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<AgentTaskLandRequest>(entity =>
         {
-            entity.ToTable("AgentTaskLandRequests");
+            entity.ToTable("AgentTaskLandRequests", table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_AgentTaskLandRequests_V2Approval",
+                    "\"SchemaVersion\" <> 2 OR (\"ExpectedSourceSha\" IS NOT NULL AND (length(\"ExpectedSourceSha\") = 40 OR length(\"ExpectedSourceSha\") = 64) AND \"ExpectedSourceSha\" ~ '^[0-9a-f]+$')");
+                table.HasCheckConstraint(
+                    "CK_AgentTaskLandRequests_OidShape",
+                    "(\"ExpectedSourceSha\" IS NULL OR ((length(\"ExpectedSourceSha\") = 40 OR length(\"ExpectedSourceSha\") = 64) AND \"ExpectedSourceSha\" ~ '^[0-9a-f]+$')) AND (\"ResolvedSourceSha\" IS NULL OR ((length(\"ResolvedSourceSha\") = 40 OR length(\"ResolvedSourceSha\") = 64) AND \"ResolvedSourceSha\" ~ '^[0-9a-f]+$')) AND (\"LocalBeforeSha\" IS NULL OR ((length(\"LocalBeforeSha\") = 40 OR length(\"LocalBeforeSha\") = 64) AND \"LocalBeforeSha\" ~ '^[0-9a-f]+$')) AND (\"RemoteSourceSha\" IS NULL OR ((length(\"RemoteSourceSha\") = 40 OR length(\"RemoteSourceSha\") = 64) AND \"RemoteSourceSha\" ~ '^[0-9a-f]+$')) AND (\"CandidateSourceSha\" IS NULL OR ((length(\"CandidateSourceSha\") = 40 OR length(\"CandidateSourceSha\") = 64) AND \"CandidateSourceSha\" ~ '^[0-9a-f]+$'))");
+            });
             entity.HasKey(r => r.Id);
             entity.Property(r => r.ConcurrencyToken).IsConcurrencyToken();
             entity.Property(r => r.VerifyFilter).HasMaxLength(400);
             entity.Property(r => r.HoldReasonCode).HasMaxLength(100);
             entity.Property(r => r.HoldDetail).HasMaxLength(2000);
+            entity.Property(r => r.SchemaVersion).IsRequired().HasDefaultValue(1);
+            entity.Property(r => r.ExpectedSourceSha).HasMaxLength(64);
+            entity.Property(r => r.ResolvedSourceSha).HasMaxLength(64);
+            entity.Property(r => r.LocalBeforeSha).HasMaxLength(64);
+            entity.Property(r => r.RemoteSourceSha).HasMaxLength(64);
+            entity.Property(r => r.CandidateSourceSha).HasMaxLength(64);
+            entity.Property(r => r.RemoteSourceFingerprint).HasMaxLength(64);
+            entity.Property(r => r.SourceFullRefSnapshot).HasMaxLength(400);
+            entity.Property(r => r.RepositoryPathSnapshot).HasMaxLength(1000);
+            entity.Property(r => r.WorktreePathSnapshot).HasMaxLength(1000);
+            entity.Property(r => r.TargetFullRefSnapshot).HasMaxLength(400);
+            entity.Property(r => r.RemoteSourceRef).HasMaxLength(400);
+            entity.Property(r => r.SourceObservationRef).HasMaxLength(400);
+            entity.Property(r => r.SourceCommonDirectory).HasMaxLength(1000);
+            entity.Property(r => r.SourceWorktreePath).HasMaxLength(1000);
+            entity.Property(r => r.SourceGitDirectory).HasMaxLength(1000);
+            entity.Property(r => r.SourceRefusalReason).HasMaxLength(200);
+            entity.Property(r => r.SourceAdvanceChildOperation).HasMaxLength(200);
             entity.HasIndex(r => r.TaskId).IsUnique().HasFilter("\"IsPending\" = TRUE");
             entity.HasIndex(r => new { r.IsPending, r.LastProgressAt });
             entity.HasOne<AgentTask>().WithMany().HasForeignKey(r => r.TaskId).OnDelete(DeleteBehavior.Restrict);
@@ -1503,6 +1529,18 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<AgentTaskLanding>(entity =>
         {
+            entity.ToTable("AgentTaskLandings", table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_AgentTaskLandings_V2Approval",
+                    "\"SchemaVersion\" <> 2 OR (\"ApprovalLandRequestId\" IS NOT NULL AND \"ReviewedSourceSha\" IS NOT NULL AND \"ReviewedSourceSha\" = \"OriginalSourceSha\")");
+                table.HasCheckConstraint(
+                    "CK_AgentTaskLandings_OidShape",
+                    "(\"OriginalSourceSha\" = '' OR ((length(\"OriginalSourceSha\") = 40 OR length(\"OriginalSourceSha\") = 64) AND \"OriginalSourceSha\" ~ '^[0-9a-f]+$')) AND (\"ReviewedSourceSha\" IS NULL OR ((length(\"ReviewedSourceSha\") = 40 OR length(\"ReviewedSourceSha\") = 64) AND \"ReviewedSourceSha\" ~ '^[0-9a-f]+$')) AND (\"PreparationInputSha\" IS NULL OR ((length(\"PreparationInputSha\") = 40 OR length(\"PreparationInputSha\") = 64) AND \"PreparationInputSha\" ~ '^[0-9a-f]+$')) AND (\"SourceRemoteSha\" IS NULL OR ((length(\"SourceRemoteSha\") = 40 OR length(\"SourceRemoteSha\") = 64) AND \"SourceRemoteSha\" ~ '^[0-9a-f]+$'))");
+                table.HasCheckConstraint(
+                    "CK_AgentTaskLandings_V2ApprovalEquality",
+                    "\"SchemaVersion\" <> 2 OR \"ReviewedSourceSha\" = \"OriginalSourceSha\"");
+            });
             entity.HasKey(l => l.Id);
             entity.Property(l => l.ConcurrencyToken).IsConcurrencyToken();
             entity.HasIndex(l => l.TaskId).IsUnique().HasFilter("\"Active\" = TRUE");
@@ -1510,6 +1548,11 @@ public class AppDbContext : DbContext
                 .OnDelete(DeleteBehavior.Restrict);
             entity.Property(l => l.LastReason).HasMaxLength(400);
             entity.Property(l => l.VerificationFilter).HasMaxLength(400);
+            entity.Property(l => l.ReviewedSourceSha).HasMaxLength(64);
+            entity.Property(l => l.PreparationInputSha).HasMaxLength(64);
+            entity.Property(l => l.SourceRemoteSha).HasMaxLength(64);
+            entity.Property(l => l.SourceRemoteFingerprint).HasMaxLength(64);
+            entity.Property(l => l.SourceRemoteRef).HasMaxLength(400);
         });
 
         modelBuilder.Entity<AgentTask>(entity =>
@@ -1682,7 +1725,11 @@ public class AppDbContext : DbContext
             entity.Property(o => o.DurationSeconds).IsRequired();
             entity.Property(o => o.Detail).IsRequired().HasMaxLength(StageOutcome.DetailMaxLength);
             entity.Property(o => o.Ref).HasMaxLength(1000);
+            entity.Property(o => o.ReviewedSourceSha).HasMaxLength(64);
+            entity.Property(o => o.ReviewedSourceRef).HasMaxLength(400);
+            entity.Property(o => o.ReviewedRepositoryPath).HasMaxLength(1000);
             entity.Property(o => o.RecordedAt).IsRequired();
+            entity.HasIndex(o => o.SubjectTaskId).HasDatabaseName("IX_StageOutcomes_SubjectTaskId");
 
             // Provenance only — no FK. The hit rate needs months of clean runs, including after
             // DataRetentionService deletes the task the row was about.

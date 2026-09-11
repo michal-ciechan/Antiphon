@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -43,6 +44,7 @@ public class AgentTaskLandStageOutcomeTests
         await repo.CommitFileAsync("README.md", "base advanced\n");
         await repo.GitAsync("push", "origin", "master");
 
+        await RequestHeadAsync(land, task);
         var result = await land.RunAsync(task.Id, null, CancellationToken.None);
 
         result.ShouldBe(LandRunResult.Complete);
@@ -77,6 +79,7 @@ public class AgentTaskLandStageOutcomeTests
         await repo.CommitFileAsync("shared.md", "target version\n");
         await repo.GitAsync("push", "origin", "master");
 
+        await RequestHeadAsync(land, task);
         await land.RunAsync(task.Id, null, CancellationToken.None);
 
         var rows = await RowsAsync(db, task.Id);
@@ -117,6 +120,7 @@ public class AgentTaskLandStageOutcomeTests
         // origin-ahead is a rebase refusal).
         await repo.GitAsync("remote", "set-url", "--push", "origin", Path.Combine(remote.Path, "no-such-remote.git"));
 
+        await RequestHeadAsync(land, task);
         await land.RunAsync(task.Id, null, CancellationToken.None);
 
         var rows = await RowsAsync(db, task.Id);
@@ -148,6 +152,7 @@ public class AgentTaskLandStageOutcomeTests
         await repo.CommitFileAsync("README.md", "base advanced\n");
         await repo.GitAsync("push", "origin", "master");
 
+        await RequestHeadAsync(land, task);
         await land.RunAsync(task.Id, null, CancellationToken.None);
 
         var rows = await RowsAsync(db, task.Id);
@@ -181,6 +186,7 @@ public class AgentTaskLandStageOutcomeTests
         await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "feature.md");
         await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "feature");
 
+        await RequestHeadAsync(land, task);
         await land.RunAsync(task.Id, null, CancellationToken.None);
 
         var rows = await RowsAsync(db, task.Id);
@@ -213,6 +219,7 @@ public class AgentTaskLandStageOutcomeTests
         await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "feature");
         (await ScratchGitRepo.GitInAsync(repo.Path, "worktree", "lock", task.WorktreePath!)).Ok.ShouldBeTrue();
 
+        await RequestHeadAsync(land, task);
         await land.RunAsync(task.Id, null, CancellationToken.None);
 
         var rows = await RowsAsync(db, task.Id);
@@ -224,7 +231,7 @@ public class AgentTaskLandStageOutcomeTests
         (await ScratchGitRepo.GitInAsync(remote.Path, "show", "master:feature.md")).Ok.ShouldBeFalse();
         await AssertPendingClearedAsync(db, task.Id, attempt: 1);
 
-        var queued = await land.RequestAsync(task.Id, null, CancellationToken.None);
+        var queued = await RequestHeadAsync(land, task);
         queued.Status.ShouldBe("queued");
     }
 
@@ -247,6 +254,7 @@ public class AgentTaskLandStageOutcomeTests
         await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "feature.md");
         await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "feature");
 
+        await RequestHeadAsync(land, task);
         await land.RunAsync(task.Id, null, CancellationToken.None);
         Directory.Exists(task.WorktreePath).ShouldBeFalse();
         var afterFirst = await RowsAsync(db, task.Id);
@@ -304,6 +312,7 @@ public class AgentTaskLandStageOutcomeTests
         await ScratchGitRepo.GitInAsync(build.WorktreePath!, "add", "feature.md");
         await ScratchGitRepo.GitInAsync(build.WorktreePath!, "commit", "-m", "feature");
 
+        await RequestHeadAsync(land, build);
         await land.RunAsync(build.Id, null, CancellationToken.None);
 
         var landed = await db.AgentTaskEvents.AsNoTracking()
@@ -335,6 +344,7 @@ public class AgentTaskLandStageOutcomeTests
         await ScratchGitRepo.GitInAsync(sibling.WorktreePath!, "add", "plan.md");
         await ScratchGitRepo.GitInAsync(sibling.WorktreePath!, "commit", "-m", "docs(plan): CARD-0215");
 
+        await RequestHeadAsync(land, sibling);
         await land.RunAsync(sibling.Id, null, CancellationToken.None);
         (await db.AgentTaskEvents.CountAsync(e =>
             e.AgentTaskId == sibling.Id && e.Type == AgentTaskEventType.Landed)).ShouldBe(1);
@@ -344,6 +354,7 @@ public class AgentTaskLandStageOutcomeTests
         await ScratchGitRepo.GitInAsync(build.WorktreePath!, "add", "feature.md");
         await ScratchGitRepo.GitInAsync(build.WorktreePath!, "commit", "-m", "feature");
 
+        await RequestHeadAsync(land, build);
         await land.RunAsync(build.Id, null, CancellationToken.None);
 
         var landed = await db.AgentTaskEvents.AsNoTracking()
@@ -387,6 +398,7 @@ public class AgentTaskLandStageOutcomeTests
         });
         await db.SaveChangesAsync();
 
+        await RequestHeadAsync(land, task);
         var result = await land.RunAsync(task.Id, null, CancellationToken.None);
 
         result.ShouldBe(LandRunResult.Held);
@@ -417,7 +429,6 @@ public class AgentTaskLandStageOutcomeTests
             ReplyTo = AgentTaskReplyTo.None,
             CreatedAt = DateTime.UtcNow,
             CompletedAt = DateTime.UtcNow,
-            LandRequestedAt = DateTime.UtcNow,
         };
         await worktrees.CreateForTaskAsync(task, CancellationToken.None);
         db.AgentTasks.Add(task);
@@ -451,6 +462,15 @@ public class AgentTaskLandStageOutcomeTests
             new AgentTaskLandingProtocol(db, graph.Git, graph.Leases, graph.Manager, new LandingVerifier(), TimeProvider.System),
             graph.Leases, graph.Git);
         return (land, worktrees);
+    }
+
+    private static async Task<LandRequestResult> RequestHeadAsync(AgentTaskLandService land, AgentTask task)
+    {
+        var sha = (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim();
+        var branch = task.WorktreeBranch!.StartsWith("refs/", StringComparison.Ordinal)
+            ? task.WorktreeBranch : "refs/heads/" + task.WorktreeBranch;
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "push", "origin", $"HEAD:{branch}")).Ok.ShouldBeTrue();
+        return await land.RequestAsync(task.Id, new LandAgentTaskRequest(ExpectedSourceSha: sha), CancellationToken.None);
     }
 
     private static async Task<Card> SeedCardAsync(AppDbContext db)

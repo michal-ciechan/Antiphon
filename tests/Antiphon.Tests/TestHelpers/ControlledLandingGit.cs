@@ -114,6 +114,10 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
     public string TargetHead => _targetHead;
     public string RemoteTarget => _remoteTarget;
     public string RemoteSource => _remoteSource;
+    public bool RemoteSourceMissing { get; set; }
+    public string? SourceReadError { get; set; }
+    public int SourceObservationAttempts { get; private set; }
+    public Func<int, Task>? OnSourceObservation { get; set; }
 
     public void SetShowRefExistsError(int exit) => _existsErrorExit = exit;
 
@@ -229,6 +233,22 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
         };
     }
 
+    public async Task<LandingSourceObservation> ObserveSourceAsync(string repository, string sourceFullRef,
+        string observationPrefix, CancellationToken ct)
+    {
+        SourceObservationAttempts++;
+        if (OnSourceObservation is not null) await OnSourceObservation(SourceObservationAttempts);
+        if (SourceReadError is not null) return new(null, null, Fingerprint, SourceReadError);
+        if (RemoteSourceMissing) return new(null, null, Fingerprint, "source_remote_missing");
+        var pin = $"{observationPrefix}/{Guid.NewGuid():N}";
+        var fetch = await RunAsync(repository,
+            ["fetch", "--no-tags", "--no-write-fetch-head", _endpoint, $"{sourceFullRef}:{pin}"], ct);
+        if (!fetch.Succeeded) return new(null, null, Fingerprint, "source_remote_fetch_failed");
+        return new(_remoteSource, pin, Fingerprint, null);
+    }
+
+    public void SetRemoteSource(string sha) => _remoteSource = sha;
+
     public async Task<LandingGitResult> PinAsync(string repository, string recoveryRef, string sha, CancellationToken ct)
     {
         if (sha.Length is not (40 or 64)) return new(1, "", "invalid_recovery_identity");
@@ -313,8 +333,9 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
             ["worktree", "remove", "--", var path] => PathsEqual(path, Source),
             ["worktree", "lock", var path] => PathsEqual(path, Source),
             ["fetch", "--no-tags", "--no-write-fetch-head", var endpoint, var spec] =>
-                endpoint == _endpoint && spec.StartsWith(TargetRef + ":", StringComparison.Ordinal)
-                    && IsFullRef(spec[(TargetRef.Length + 1)..]),
+                endpoint == _endpoint && IsSourceOrTargetFetch(spec),
+            ["ls-remote", "--refs", "--exit-code", var endpoint, var fullRef] =>
+                endpoint == _endpoint && (fullRef == TargetRef || fullRef == SourceRef),
             ["merge-base", "--is-ancestor", var source, var target] => LooksOid(source) && LooksOid(target),
             ["update-ref", var name, var sha, var expected] => IsFullRef(name) && LooksOid(sha) && LooksOid(expected),
             ["update-ref", "--no-deref", "-d", var name, var expected] => IsFullRef(name) && LooksOid(expected),
@@ -331,6 +352,15 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
             _ => false,
         };
         if (!supported) throw Unsupported(args);
+    }
+
+    private bool IsSourceOrTargetFetch(string spec)
+    {
+        var colon = spec.LastIndexOf(':');
+        if (colon <= 0) return false;
+        var from = spec[..colon];
+        var pin = spec[(colon + 1)..];
+        return (from == TargetRef || from == SourceRef) && IsFullRef(pin);
     }
 
     private bool IsPushSpec(string spec)
@@ -370,11 +400,29 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
             _sourceLocked = true;
             return new(0, "", "");
         }
+        if (args[0] == "ls-remote")
+        {
+            var fullRef = args[^1];
+            if (fullRef == SourceRef)
+            {
+                if (RemoteSourceMissing) return new(2, "", "git_exit_2");
+                if (SourceReadError is not null) return new(1, "", SourceReadError);
+                return new(0, $"{_remoteSource}\t{SourceRef}\n", "");
+            }
+            if (fullRef == TargetRef)
+                return new(0, $"{_remoteTarget}\t{TargetRef}\n", "");
+            return new(2, "", "git_exit_2");
+        }
         if (args[0] == "fetch")
         {
             var dest = args[^1];
             var colon = dest.LastIndexOf(':');
-            if (colon > 0) _refs[dest[(colon + 1)..]] = _remoteTarget;
+            if (colon > 0)
+            {
+                var from = dest[..colon];
+                var pin = dest[(colon + 1)..];
+                _refs[pin] = from == SourceRef || from.StartsWith(SourceRef, StringComparison.Ordinal) ? _remoteSource : _remoteTarget;
+            }
             return new(0, "", "");
         }
         if (args[0] == "merge-base" && args.Contains("--is-ancestor"))
@@ -399,13 +447,22 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
         if (args.Contains("merge") && args.Contains("--ff-only"))
         {
             var sha = args[^1];
-            _targetHead = sha;
-            _refs[TargetRef] = sha;
-            _worktrees[Repository] = _worktrees[Repository] with { Head = sha };
-            if (_files.TryGetValue("feature.txt", out var feature))
+            if (IsSource(repository))
             {
-                _targetFiles["feature.txt"] = feature;
-                File.WriteAllText(Path.Combine(Repository, "feature.txt"), feature);
+                _sourceHead = sha;
+                _refs[_sourceBranch] = sha;
+                _worktrees[Source] = _worktrees[Source] with { Head = sha };
+            }
+            else
+            {
+                _targetHead = sha;
+                _refs[TargetRef] = sha;
+                _worktrees[Repository] = _worktrees[Repository] with { Head = sha };
+                if (_files.TryGetValue("feature.txt", out var feature))
+                {
+                    _targetFiles["feature.txt"] = feature;
+                    File.WriteAllText(Path.Combine(Repository, "feature.txt"), feature);
+                }
             }
             return new(0, "", "");
         }

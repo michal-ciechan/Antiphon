@@ -81,7 +81,6 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
             WorkingDirectory = Fixture.Repository, RepoPath = Fixture.Repository, WorktreePath = Fixture.Source,
             WorktreeBranch = Fixture.SourceRef[11..], MergeTargetRef = "master", Status = AgentTaskStatus.Succeeded,
             ReplyTo = AgentTaskReplyTo.None, CreatedAt = DateTime.UtcNow, CompletedAt = DateTime.UtcNow,
-            LandRequestedAt = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
     }
@@ -133,7 +132,14 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         await using var scope = Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await Fixture.CaptureAsync("before_service");
-        try { return await CreateLand(db, scope.ServiceProvider).RunAsync(Fixture.TaskId, null, ct); }
+        try
+        {
+            await using var observer = CreateContext();
+            var task = await observer.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == Fixture.TaskId);
+            if (task.LandRequestedAt is null)
+                await RequestAsync();
+            return await CreateLand(db, scope.ServiceProvider).RunAsync(Fixture.TaskId, null, ct);
+        }
         finally
         {
             await Fixture.CaptureAsync("after_service");
@@ -170,11 +176,14 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
             Services.GetRequiredService<IRepositoryMutationLease>(), Fixture.Git);
     }
 
-    public async Task<LandRequestResult> RequestAsync(string? filter = null)
+    public async Task<LandRequestResult> RequestAsync(string? filter = null, string? expectedSourceSha = null,
+        Guid? reviewEvidenceId = null)
     {
+        expectedSourceSha ??= (await Fixture.RequiredAsync(Fixture.Source, "rev-parse", "HEAD")).Trim();
         await using var scope = Services.CreateAsyncScope();
         return await CreateLand(scope.ServiceProvider.GetRequiredService<AppDbContext>(), scope.ServiceProvider)
-            .RequestAsync(Fixture.TaskId, filter, CancellationToken.None);
+            .RequestAsync(Fixture.TaskId, new LandAgentTaskRequest(filter, expectedSourceSha, reviewEvidenceId),
+                CancellationToken.None);
     }
 
     public async Task SweepAsync()
@@ -201,7 +210,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     {
         await using var scope = Services.CreateAsyncScope();
         await using var db = CreateContext();
-        await CreateLand(db, scope.ServiceProvider).RequestAsync(Fixture.TaskId, null, CancellationToken.None);
+        await RequestAsync();
     }
 
     public async Task<AgentTaskLanding?> OperationAsync()

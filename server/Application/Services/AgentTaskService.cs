@@ -1465,7 +1465,17 @@ public sealed class AgentTaskService
                 landNotes.Select(LandNotificationStatusDto.From).ToList()),
             legacyLand is null ? null : new LegacyLandReceiptDto(legacyLand.Id, legacyLand.At,
                 legacyNote?.ConfirmedAt is not null ? "Confirmed" : task.ReplyTo == AgentTaskReplyTo.None ? "NotRequired" : "LegacyUnverified",
-                legacyNote?.QueueMessageId, legacyNote?.ConfirmedAt, legacyNote?.ConfirmingPromptSequence));
+                legacyNote?.QueueMessageId, legacyNote?.ConfirmedAt, legacyNote?.ConfirmingPromptSequence),
+            await LoadReviewEvidenceAsync(task, ct));
+    }
+
+    private async Task<ReviewEvidenceDto?> LoadReviewEvidenceAsync(AgentTask task, CancellationToken ct)
+    {
+        var facts = await LandCompletionFacts.LoadReviewAsync(_db, task, ct);
+        if (facts is null) return null;
+        var row = await _db.StageOutcomes.AsNoTracking().SingleAsync(o => o.Id == facts.Id, ct);
+        return new ReviewEvidenceDto(row.Id, facts.SubjectTaskId, facts.ReviewedSourceSha,
+            row.ReviewedSourceRef, row.ReviewedRepositoryPath, row.Outcome);
     }
 
     /// <summary>Record the first operator read; repeat opens deliberately preserve that timestamp.</summary>

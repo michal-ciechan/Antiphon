@@ -256,6 +256,14 @@ export interface AgentTaskDetailDto {
     heldSince: string | null
     holdEpisode: number
     reconciliationError: string | null
+    expectedSourceSha?: string | null
+    reviewEvidenceId?: string | null
+    localBeforeSha?: string | null
+    remoteSourceSha?: string | null
+    candidateSourceSha?: string | null
+    resolvedSourceSha?: string | null
+    sourceRefusalReason?: string | null
+    schemaVersion?: number
     notifications: Array<{
       id: string; kind: string; state: string; destinationSessionId: string | null
       queueMessageId: string | null; lastErrorCode: string | null; confirmedAt: string | null
@@ -269,6 +277,9 @@ export interface AgentTaskDetailDto {
     publication: 'Unconfirmed' | 'Landed' | 'AlreadyPresent' | 'Refused'
     cleanup: 'NotStarted' | 'Pending' | 'Complete' | 'Refused'
     sourceSha: string
+    reviewedSha?: string | null
+    preparationInputSha?: string | null
+    sourceRemoteSha?: string | null
     verifiedSha: string | null
     remoteSha: string | null
     remoteConfirmedAt: string | null
@@ -299,6 +310,14 @@ export interface AgentTaskDetailDto {
   nextHandoff?: string | null
   /** CARD-0330: the distiller's text, when one ran. */
   distilledResult?: string | null
+  reviewEvidence?: {
+    id: string
+    subjectTaskId: string
+    reviewedSourceSha: string
+    reviewedSourceRef?: string | null
+    reviewedRepositoryPath?: string | null
+    outcome: string
+  } | null
 }
 
 /** CARD-0146. The `next:` token a stage-role report declared. */

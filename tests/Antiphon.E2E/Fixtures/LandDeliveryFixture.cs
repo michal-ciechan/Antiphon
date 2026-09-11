@@ -66,6 +66,7 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
         await GitAsync(Source, "add", ".");
         await GitAsync(Source, "commit", "-m", "owned feature");
         SourceSha = (await GitAsync(Source, "rev-parse", "HEAD")).Trim();
+        await GitAsync(Source, "push", "origin", "HEAD:refs/heads/c467-source");
         if (!_shared)
         {
             _app = new AntiphonAppFixture { LandDelivery = new(Root, cut), UsePrebuiltFrontend = true, DiagnosticsDirectory = Path.Combine(Root, "server-logs") };
@@ -144,7 +145,8 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
     public async Task<Guid> RequestAsync(bool initial = true)
     {
         var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var arg in new[] { "-NoProfile", "-File", Path.Combine(AntiphonAppFixture.FindRepositoryRoot(), "scripts", "delegate.ps1"), "-Land", TaskId.ToString() }) start.ArgumentList.Add(arg);
+        foreach (var arg in new[] { "-NoProfile", "-File", Path.Combine(AntiphonAppFixture.FindRepositoryRoot(), "scripts", "delegate.ps1"),
+                     "-Land", TaskId.ToString(), "-ExpectedSourceSha", SourceSha }) start.ArgumentList.Add(arg);
         start.Environment["ANTIPHON_API"] = _address; start.Environment["ANTIPHON_TASK_TOKEN"] = _token;
         using var process = Process.Start(start)!;
         var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
@@ -296,6 +298,7 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
             await File.WriteAllTextAsync(Path.Combine(Source, "Seed.cs"), "public class Seed { public int Source; }\n");
             await GitAsync(Source, "add", "."); await GitAsync(Source, "commit", "-m", "source conflict");
             SourceSha = (await GitAsync(Source, "rev-parse", "HEAD")).Trim();
+            await GitAsync(Source, "push", "origin", "HEAD:refs/heads/c467-source");
             await File.WriteAllTextAsync(Path.Combine(Repository, "Seed.cs"), "public class Seed { public int Target; }\n");
             await GitAsync(Repository, "add", "."); await GitAsync(Repository, "commit", "-m", "target conflict");
             await GitAsync(Repository, "push", "origin", "master");

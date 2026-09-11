@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -30,13 +31,13 @@ public class AgentTaskLandRequestTests
         var task = await SeedSucceededWorktreeAsync(db);
         var originalCaller = Guid.NewGuid(); task.ReplyTo = AgentTaskReplyTo.Session; task.ParentSessionId = originalCaller;
         await db.SaveChangesAsync();
-        var first = await land.RequestAsync(task.Id, "first", CancellationToken.None); queue.Release(task.Id);
+        var first = await land.RequestAsync(task.Id, Approve("first"), CancellationToken.None); queue.Release(task.Id);
         await land.FailAsync(task.Id, new IOException("owned pre-operation failure"), CancellationToken.None);
         var owed = await db.AgentTaskLandNotifications.SingleAsync(n => n.RequestId == first.RequestId);
         owed.ParentSessionId.ShouldBe(originalCaller); owed.ConfirmedAt.ShouldBeNull();
         task = await db.AgentTasks.SingleAsync(t => t.Id == task.Id); task.ParentSessionId = Guid.NewGuid(); await db.SaveChangesAsync();
         clock.Advance(TimeSpan.FromHours(1));
-        var second = await land.RequestAsync(task.Id, "second", CancellationToken.None); second.RequestId.ShouldNotBe(first.RequestId);
+        var second = await land.RequestAsync(task.Id, Approve("second"), CancellationToken.None); second.RequestId.ShouldNotBe(first.RequestId);
         var retry = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == second.RequestId);
         retry.Attempt.ShouldBe(0); retry.RequestedAt.ShouldBe(clock.GetUtcNow().UtcDateTime);
         retry.ParentSessionId.ShouldBe(task.ParentSessionId); owed.ParentSessionId.ShouldBe(originalCaller);
@@ -58,7 +59,7 @@ public class AgentTaskLandRequestTests
         await using var first = CreateContext(schema); await using var second = CreateContext(schema);
         var a = CreateLand(first, new AgentTaskLandQueue(), Frozen(DateTime.UtcNow));
         var b = CreateLand(second, new AgentTaskLandQueue(), Frozen(DateTime.UtcNow.AddHours(1)));
-        var accepted = await Task.WhenAll(a.RequestAsync(task.Id, "first", CancellationToken.None), b.RequestAsync(task.Id, "second", CancellationToken.None));
+        var accepted = await Task.WhenAll(a.RequestAsync(task.Id, Approve("same"), CancellationToken.None), b.RequestAsync(task.Id, Approve("same"), CancellationToken.None));
         accepted[0].RequestId.ShouldBe(accepted[1].RequestId);
         (await seed.AgentTaskLandRequests.CountAsync(r => r.TaskId == task.Id && r.IsPending)).ShouldBe(1);
     }
@@ -68,13 +69,13 @@ public class AgentTaskLandRequestTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync(); await using var db = CreateContext(schema);
         var clock = Frozen(DateTime.UtcNow); var queue = new AgentTaskLandQueue(); var land = CreateLand(db, queue, clock);
-        var task = await SeedSucceededWorktreeAsync(db); var accepted = await land.RequestAsync(task.Id, null, CancellationToken.None);
+        var task = await SeedSucceededWorktreeAsync(db); var accepted = await land.RequestAsync(task.Id, Approve(), CancellationToken.None);
         queue.Release(task.Id);
         var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == accepted.RequestId);
         request.State = LandRequestState.NeedsResolution; await db.SaveChangesAsync(); var age = request.RequestedAt;
         await land.SweepAsync(CancellationToken.None); queue.PendingCount.ShouldBe(0);
         clock.Advance(TimeSpan.FromHours(1));
-        (await land.RequestAsync(task.Id, null, CancellationToken.None)).RequestId.ShouldBe(accepted.RequestId);
+        (await land.RequestAsync(task.Id, Approve(), CancellationToken.None)).RequestId.ShouldBe(accepted.RequestId);
         request.State.ShouldBe(LandRequestState.Queued); request.RequestedAt.ShouldBe(age); queue.PendingCount.ShouldBe(1);
     }
 
@@ -88,7 +89,7 @@ public class AgentTaskLandRequestTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync(); await using var db = CreateContext(schema);
         var queue = new AgentTaskLandQueue(); var clock = Frozen(DateTime.UtcNow); var land = CreateLand(db, queue, clock);
-        var task = await SeedSucceededWorktreeAsync(db); var accepted = await land.RequestAsync(task.Id, null, CancellationToken.None);
+        var task = await SeedSucceededWorktreeAsync(db); var accepted = await land.RequestAsync(task.Id, Approve(), CancellationToken.None);
         queue.Release(task.Id);
         var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == accepted.RequestId);
         var token = task.ConcurrencyToken;
@@ -118,7 +119,7 @@ public class AgentTaskLandRequestTests
         var land = CreateLand(db, queue, clock);
         var task = await SeedSucceededWorktreeAsync(db);
 
-        var result = await land.RequestAsync(task.Id, " /*/Antiphon.Tests.Application/*/* ", CancellationToken.None);
+        var result = await land.RequestAsync(task.Id, Approve(" /*/Antiphon.Tests.Application/*/* "), CancellationToken.None);
 
         result.Status.ShouldBe("queued");
         var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
@@ -146,10 +147,10 @@ public class AgentTaskLandRequestTests
         var land = CreateLand(db, queue, clock);
         var task = await SeedSucceededWorktreeAsync(db);
 
-        await land.RequestAsync(task.Id, null, CancellationToken.None);
+        await land.RequestAsync(task.Id, Approve(), CancellationToken.None);
 
         var error = await Should.ThrowAsync<ConflictException>(
-            () => land.RequestAsync(task.Id, null, CancellationToken.None));
+            () => land.RequestAsync(task.Id, Approve(), CancellationToken.None));
         error.Message.ShouldContain("running");
         error.Message.ShouldContain(clock.GetUtcNow().UtcDateTime.ToString("u"));
         error.Message.ShouldContain("queued");
@@ -168,7 +169,7 @@ public class AgentTaskLandRequestTests
         var previous = new DateTime(2026, 9, 3, 1, 3, 21, DateTimeKind.Utc);
         var task = await SeedSucceededWorktreeAsync(db, requestedAt: previous, attempt: 2);
 
-        var result = await land.RequestAsync(task.Id, null, CancellationToken.None);
+        var result = await land.RequestAsync(task.Id, new LandAgentTaskRequest(), CancellationToken.None);
 
         result.Status.ShouldBe("requeued");
         var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
@@ -180,10 +181,13 @@ public class AgentTaskLandRequestTests
         request.Attempt.ShouldBe(2);
         queue.Release(task.Id);
         clock.Advance(TimeSpan.FromHours(1));
-        var again = await land.RequestAsync(task.Id, "updated-filter", CancellationToken.None);
+        var again = await land.RequestAsync(task.Id, new LandAgentTaskRequest(), CancellationToken.None);
         again.RequestId.ShouldBe(result.RequestId);
         (await db.AgentTaskLandRequests.CountAsync(r => r.TaskId == task.Id)).ShouldBe(1);
-        (await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == result.RequestId)).VerifyFilter.ShouldBe("updated-filter");
+        var conflict = await Should.ThrowAsync<ConflictException>(
+            () => land.RequestAsync(task.Id, new LandAgentTaskRequest("updated-filter"), CancellationToken.None));
+        conflict.Code.ShouldBe("land_request_identity_conflict");
+        (await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == result.RequestId)).VerifyFilter.ShouldBeNull();
         queue.IsActive(task.Id).ShouldBeTrue();
     }
 
@@ -205,7 +209,7 @@ public class AgentTaskLandRequestTests
         });
         await db.SaveChangesAsync();
 
-        var result = await land.RequestAsync(task.Id, null, CancellationToken.None);
+        var result = await land.RequestAsync(task.Id, Approve(), CancellationToken.None);
 
         result.Status.ShouldBe("queued");
         var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
@@ -336,6 +340,9 @@ public class AgentTaskLandRequestTests
 
     private static FakeTimeProvider Frozen(DateTime utc) =>
         new(new DateTimeOffset(DateTime.SpecifyKind(utc, DateTimeKind.Utc)));
+
+    private static LandAgentTaskRequest Approve(string? filter = null) =>
+        new(filter, new string('a', 40));
 
     private static AppDbContext CreateContext(IsolatedTestSchema schema) =>
         new(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));

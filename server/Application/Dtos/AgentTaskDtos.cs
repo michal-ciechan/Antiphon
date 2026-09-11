@@ -285,7 +285,8 @@ public sealed record AgentTaskDetailDto(
     string? DistilledResult = null,
     LandingEvidenceDto? Landing = null,
     LandRequestStatusDto? LandRequest = null,
-    LegacyLandReceiptDto? LegacyLandReceipt = null);
+    LegacyLandReceiptDto? LegacyLandReceipt = null,
+    ReviewEvidenceDto? ReviewEvidence = null);
 
 /// <summary>Why a task is Blocked — CARD-0033. RoutingExhausted is CARD-0090, added after the original three.</summary>
 public enum BlockedKind
@@ -427,7 +428,18 @@ public sealed record ReplyToAgentTaskRequest(
     AnswerOrigin? Origin = null);
 
 /// <summary>Optional narrow test filter for an explicit <c>POST /land</c> verification.</summary>
-public sealed record LandAgentTaskRequest(string? Verify = null);
+public sealed record LandAgentTaskRequest(
+    string? Verify = null,
+    string? ExpectedSourceSha = null,
+    Guid? ReviewEvidenceId = null);
+
+public sealed record ReviewEvidenceDto(
+    Guid Id,
+    Guid SubjectTaskId,
+    string ReviewedSourceSha,
+    string? ReviewedSourceRef,
+    string? ReviewedRepositoryPath,
+    StageOutcomeKind Outcome);
 
 /// <summary>Manual tier bump. Null takes the next rung up (or the role policy's target).</summary>
 public sealed record EscalateAgentTaskRequest(AgentModelLevel? ModelLevel = null);

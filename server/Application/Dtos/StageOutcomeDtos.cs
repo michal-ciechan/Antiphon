@@ -24,7 +24,10 @@ public sealed record StageOutcomeDto(
     string Detail,
     string? Ref,
     Guid? SupersedesId,
-    DateTime RecordedAt);
+    DateTime RecordedAt,
+    string? ReviewedSourceSha = null,
+    string? ReviewedSourceRef = null,
+    string? ReviewedRepositoryPath = null);
 
 /// <summary>
 /// One stage's counts over the filtered (and optionally latest-per-task) rows.
@@ -51,4 +54,5 @@ public sealed record StageOutcomeSummaryRowDto(
 public sealed record RecordStageFindingRequest(
     string Stage,
     bool Found,
-    string? Detail = null);
+    string? Detail = null,
+    string? ReviewedSourceSha = null);

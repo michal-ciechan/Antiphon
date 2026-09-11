@@ -31,4 +31,33 @@ public sealed class AgentTaskLandRequest
     public DateTime? ErrorAt { get; set; }
     public string? ReconciliationError { get; set; }
     public Guid ConcurrencyToken { get; set; } = Guid.NewGuid();
+
+    public int SchemaVersion { get; set; } = 1;
+    public string? ExpectedSourceSha { get; set; }
+    public Guid? ReviewEvidenceId { get; set; }
+    public LandApprovalKind ApprovalKind { get; set; }
+    public DateTime? ApprovedAt { get; set; }
+    public string? SourceFullRefSnapshot { get; set; }
+    public string? RepositoryPathSnapshot { get; set; }
+    public string? WorktreePathSnapshot { get; set; }
+    public string? TargetFullRefSnapshot { get; set; }
+
+    public LandSourceResolutionState SourceResolutionState { get; set; }
+    public string? LocalBeforeSha { get; set; }
+    public string? RemoteSourceSha { get; set; }
+    public string? RemoteSourceRef { get; set; }
+    public string? RemoteSourceFingerprint { get; set; }
+    public string? SourceObservationRef { get; set; }
+    public DateTime? SourceObservedAt { get; set; }
+    public string? ResolvedSourceSha { get; set; }
+    public string? SourceCommonDirectory { get; set; }
+    public string? SourceWorktreePath { get; set; }
+    public string? SourceGitDirectory { get; set; }
+    public LandSourceRelationship SourceRelationship { get; set; }
+    public string? SourceRefusalReason { get; set; }
+    public string? CandidateSourceSha { get; set; }
+
+    public int? SourceAdvanceChildProcessId { get; set; }
+    public long? SourceAdvanceChildStartTicks { get; set; }
+    public string? SourceAdvanceChildOperation { get; set; }
 }

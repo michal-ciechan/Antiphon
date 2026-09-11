@@ -13,13 +13,27 @@ public sealed record LandRequestStatusDto(
     int Attempt, string? HoldReasonCode, string? HoldDetail, Guid? HoldingTaskId,
     AgentTaskStatus? HoldingTaskStatus, DateTime? HeldSince, int HoldEpisode,
     Guid? LandingOperationId, Guid? TerminalEventId, string? ReconciliationError,
-    IReadOnlyList<LandNotificationStatusDto> Notifications)
+    IReadOnlyList<LandNotificationStatusDto> Notifications,
+    int SchemaVersion = 1,
+    string? ExpectedSourceSha = null,
+    Guid? ReviewEvidenceId = null,
+    LandApprovalKind ApprovalKind = LandApprovalKind.ExplicitCaller,
+    LandSourceResolutionState SourceResolutionState = LandSourceResolutionState.None,
+    string? LocalBeforeSha = null,
+    string? RemoteSourceSha = null,
+    string? CandidateSourceSha = null,
+    string? ResolvedSourceSha = null,
+    LandSourceRelationship SourceRelationship = LandSourceRelationship.Unknown,
+    string? SourceRefusalReason = null)
 {
     public static LandRequestStatusDto From(AgentTaskLandRequest r, DateTime now, IReadOnlyList<LandNotificationStatusDto> notifications)
         => new(r.Id, r.State, r.RequestedAt, r.StartedAt, r.LastEvaluatedAt, r.LastProgressAt,
             (now-r.RequestedAt).TotalSeconds, (now-r.LastProgressAt).TotalSeconds, r.Attempt,
             r.HoldReasonCode, r.HoldDetail, r.HoldingTaskId, r.HoldingTaskStatus, r.HeldSince, r.HoldEpisode,
-            r.LandingOperationId, r.TerminalEventId, r.ReconciliationError, notifications);
+            r.LandingOperationId, r.TerminalEventId, r.ReconciliationError, notifications,
+            r.SchemaVersion, r.ExpectedSourceSha, r.ReviewEvidenceId, r.ApprovalKind, r.SourceResolutionState,
+            r.LocalBeforeSha, r.RemoteSourceSha, r.CandidateSourceSha, r.ResolvedSourceSha,
+            r.SourceRelationship, r.SourceRefusalReason);
 }
 
 public sealed record LandNotificationStatusDto(Guid Id, LandNotificationKind Kind, LandNotificationState State,

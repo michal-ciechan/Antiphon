@@ -241,6 +241,8 @@ public sealed class LandingRemovalPolicyControlTests
         public Task<string> CommonDirectoryAsync(string repository, CancellationToken ct) => Task.FromResult(Root);
         public Task<LandingRemoteObservation> ObserveAsync(string repository, LandingDestination destination, string sourceSha, string observationRef, CancellationToken ct)
             => Task.FromResult(new LandingRemoteObservation(Sha, true, null));
+        public Task<LandingSourceObservation> ObserveSourceAsync(string repository, string sourceFullRef, string observationPrefix, CancellationToken ct)
+            => Task.FromResult(new LandingSourceObservation(Sha, observationPrefix + "/pin", new string('c', 64), null));
         public Task<LandSourceInspection> InspectAsync(LandSourceCoordinates coordinates, CancellationToken ct)
         {
             InspectionCount++;

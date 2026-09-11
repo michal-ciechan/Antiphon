@@ -44,6 +44,15 @@ public class StageOutcome
     /// <summary>A SHA, a task id, a verdict line — whatever lets a reader chase it.</summary>
     public string? Ref { get; set; }
 
+    /// <summary>Exact reviewed commit. Null unless this row is usable Review approval evidence.</summary>
+    public string? ReviewedSourceSha { get; set; }
+
+    /// <summary>Source full ref snapshotted from the named subject at settlement.</summary>
+    public string? ReviewedSourceRef { get; set; }
+
+    /// <summary>Canonical repository path snapshotted from the named subject at settlement.</summary>
+    public string? ReviewedRepositoryPath { get; set; }
+
     /// <summary>An orchestrator override points at the row it replaces; the report takes the latest per (task, stage).</summary>
     public Guid? SupersedesId { get; set; }
 

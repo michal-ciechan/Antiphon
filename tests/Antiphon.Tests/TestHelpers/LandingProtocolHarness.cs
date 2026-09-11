@@ -85,7 +85,6 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
             WorkingDirectory = Git.Repository, RepoPath = Git.Repository, WorktreePath = Git.Source,
             WorktreeBranch = Git.SourceRef[11..], MergeTargetRef = "master", Status = AgentTaskStatus.Succeeded,
             ReplyTo = AgentTaskReplyTo.None, CreatedAt = DateTime.UtcNow, CompletedAt = DateTime.UtcNow,
-            LandRequestedAt = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
     }
@@ -99,6 +98,10 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
     {
         await using var scope = Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await using var observer = CreateContext();
+        var seeded = await observer.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == Git.TaskId);
+        if (seeded.LandRequestedAt is null)
+            await RequestAsync();
         return await CreateLand(db, scope.ServiceProvider).RunAsync(Git.TaskId, null, ct);
     }
 
@@ -124,11 +127,14 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
 
     public ILandingGit RegisteredGit => Services.GetRequiredService<ILandingGit>();
 
-    public async Task<LandRequestResult> RequestAsync(string? filter = null)
+    public async Task<LandRequestResult> RequestAsync(string? filter = null, string? expectedSourceSha = null,
+        Guid? reviewEvidenceId = null)
     {
+        expectedSourceSha ??= Git.SourceHead;
         await using var scope = Services.CreateAsyncScope();
         return await CreateLand(scope.ServiceProvider.GetRequiredService<AppDbContext>(), scope.ServiceProvider)
-            .RequestAsync(Git.TaskId, filter, CancellationToken.None);
+            .RequestAsync(Git.TaskId, new LandAgentTaskRequest(filter, expectedSourceSha, reviewEvidenceId),
+                CancellationToken.None);
     }
 
     public async Task SweepAsync()
@@ -155,7 +161,7 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
     {
         await using var scope = Services.CreateAsyncScope();
         await using var db = CreateContext();
-        await CreateLand(db, scope.ServiceProvider).RequestAsync(Git.TaskId, null, CancellationToken.None);
+        await RequestAsync();
     }
 
     public async Task<AgentTaskLanding?> OperationAsync()

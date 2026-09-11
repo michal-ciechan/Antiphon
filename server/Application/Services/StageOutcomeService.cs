@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Domain;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -117,7 +118,8 @@ public sealed class StageOutcomeService
     public static StageOutcomeDto ToDto(StageOutcome o) => new(
         o.Id, o.Stage, o.Outcome, o.Source, o.SubjectTaskId, o.StageTaskId, o.CardId,
         o.CostUsd, o.TokensIn, o.TokensOut, o.DurationSeconds, o.ResolutionTaskId,
-        o.ResolutionCostUsd, o.Detail, o.Ref, o.SupersedesId, o.RecordedAt);
+        o.ResolutionCostUsd, o.Detail, o.Ref, o.SupersedesId, o.RecordedAt,
+        o.ReviewedSourceSha, o.ReviewedSourceRef, o.ReviewedRepositoryPath);
 
     /// <summary>
     /// CARD-0272 S3. An orchestrator override of a stage run. Appends a row with
@@ -134,6 +136,17 @@ public sealed class StageOutcomeService
         var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == taskId, ct)
             ?? throw new NotFoundException(nameof(AgentTask), taskId);
 
+        string? reviewedSha = null;
+        if (!string.IsNullOrWhiteSpace(request.ReviewedSourceSha))
+        {
+            if (stage != OrchestrationStage.Review || request.Found)
+                throw new ValidationException("reviewedSourceSha",
+                    "reviewedSourceSha is only valid on a Review Clean finding.", "review_evidence_fields_restricted");
+            if (!GitObjectId.TryNormalize(request.ReviewedSourceSha, out reviewedSha))
+                throw new ValidationException("reviewedSourceSha", "reviewedSourceSha must be a full 40- or 64-character object ID.",
+                    "expected_source_sha_invalid");
+        }
+
         var now = DateTime.UtcNow;
         var existing = await _db.StageOutcomes
             .Where(o => o.Stage == stage && (o.StageTaskId == taskId || o.SubjectTaskId == taskId))
@@ -149,13 +162,30 @@ public sealed class StageOutcomeService
         if (task.CompletedAt is DateTime completed && task.DispatchedAt is DateTime dispatched)
             duration = (int)Math.Clamp(Math.Round((completed - dispatched).TotalSeconds), 0, int.MaxValue);
 
+        var subjectId = existing?.SubjectTaskId ?? task.FollowUpOfTaskId ?? (reviewedSha is null ? null : task.Id);
+        string? reviewedRef = null;
+        string? reviewedRepo = null;
+        if (reviewedSha is not null)
+        {
+            var subject = subjectId is Guid sid
+                ? await _db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == sid, ct)
+                : task;
+            if (subject is null || subject.Workspace != WorkspaceMode.Worktree
+                || !CallerMayBindSubject(task, subject))
+                throw new ConflictException("Review evidence subject is not an authorized Worktree landing owner.",
+                    "review_evidence_subject_unauthorized");
+            subjectId = subject.Id;
+            reviewedRef = FullRef(subject.WorktreeBranch);
+            reviewedRepo = subject.RepoPath;
+        }
+
         var row = new StageOutcome
         {
             Id = Guid.NewGuid(),
             Stage = stage,
             Outcome = request.Found ? StageOutcomeKind.Found : StageOutcomeKind.Clean,
             Source = StageOutcomeSource.Orchestrator,
-            SubjectTaskId = existing?.SubjectTaskId ?? task.FollowUpOfTaskId,
+            SubjectTaskId = subjectId,
             StageTaskId = task.Id,
             CardId = existing?.CardId ?? task.CardId,
             CostUsd = existing?.CostUsd ?? (task.CostUsd == 0m ? null : task.CostUsd),
@@ -165,6 +195,9 @@ public sealed class StageOutcomeService
             Detail = detail,
             SupersedesId = existing?.Id,
             RecordedAt = now,
+            ReviewedSourceSha = reviewedSha,
+            ReviewedSourceRef = reviewedRef,
+            ReviewedRepositoryPath = reviewedRepo,
         };
         _db.StageOutcomes.Add(row);
 
@@ -211,4 +244,13 @@ public sealed class StageOutcomeService
 
         return stage;
     }
+
+    private static bool CallerMayBindSubject(AgentTask findingTask, AgentTask subject) =>
+        findingTask.Id == subject.Id
+        || findingTask.FollowUpOfTaskId == subject.Id
+        || (findingTask.CardId is { } card && subject.CardId == card);
+
+    private static string? FullRef(string? branch) =>
+        string.IsNullOrWhiteSpace(branch) ? null
+            : branch.StartsWith("refs/", StringComparison.Ordinal) ? branch : "refs/heads/" + branch;
 }
