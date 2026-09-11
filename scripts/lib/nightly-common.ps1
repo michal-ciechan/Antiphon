@@ -304,6 +304,24 @@ function Get-NightlySha256Text {
     }
 }
 
+function Get-NightlyFileSha256 {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
+        throw ('missing file for hash {0}' -f $Path)
+    }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $hash = $sha.ComputeHash($stream)
+        $sb = New-Object System.Text.StringBuilder
+        foreach ($b in $hash) { [void]$sb.Append($b.ToString('x2')) }
+        return $sb.ToString()
+    } finally {
+        $stream.Dispose()
+        $sha.Dispose()
+    }
+}
+
 function ConvertFrom-NightlyJsonMap {
     param($Object)
     if ($null -eq $Object) { return $null }

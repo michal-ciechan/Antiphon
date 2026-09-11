@@ -397,6 +397,17 @@ function Invoke-AntiphonNightlyTests {
                     }
                     if ($isNative) {
                         $discPath = Join-Path $LogRoot ('{0}-{1}.discovery.json' -f $suiteId, $chunk.id)
+                        if ((Test-Path -LiteralPath $trxPath) -and -not (Test-Path -LiteralPath $discPath)) {
+                            try {
+                                $diagDir = Join-Path $LogRoot ('{0}-{1}-discovery' -f $suiteId, $chunk.id)
+                                $discLog = Join-Path $LogRoot ('{0}-{1}-discovery.log' -f $suiteId, $chunk.id)
+                                [void](Invoke-NightlyProduceDiscovery -ExePath $exe -OutputPath $discPath `
+                                    -DiagnosticDirectory $diagDir -LogPath $discLog -WorkingDirectory $RepoRoot `
+                                    -Environment $envMap)
+                            } catch {
+                                $reasons += ('discovery-produce-failed {0}' -f $_.Exception.Message)
+                            }
+                        }
                         $required = @()
                         if ($chunk.classes) { foreach ($c in @($chunk.classes)) { $required += [string]$c } }
                         $nativeVerdict = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trxPath -DiscoveryPath $discPath `

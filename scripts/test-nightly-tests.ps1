@@ -221,6 +221,54 @@ function Test-C487_G040 {
         $partialReason = (([string]($sum2.reasons | Out-String)) -match 'partial-selection')
     }
     Assert-C487 -Cond ((-not [bool]$r2.coverageComplete) -and [bool]$r2.testsPassed -and $partialReason) -Name 'G040 partial selection not complete' -Detail ('cov=' + $r2.coverageComplete + ' pass=' + $r2.testsPassed)
+
+    $fxNe = New-Efx
+    $runNe = $fxNe.Logs
+    New-Item -ItemType Directory -Path $runNe -Force | Out-Null
+    $trxNe = Join-Path $runNe 'g040-notexecuted.trx'
+    $discNe = Join-Path $runNe 'g040-notexecuted.discovery.json'
+    Write-C487Trx -Path $trxNe -Rows @(
+        @{ Id = 'uid-pass'; ClassName = 'SampleClass'; MethodName = 'Ran'; Outcome = 'Passed' },
+        @{ Id = 'uid-ne'; ClassName = 'SampleClass'; MethodName = 'DidNotRun'; Outcome = 'NotExecuted' }
+    )
+    Write-C487Discovery -Path $discNe -Nodes @(
+        @{ uid = 'uid-pass'; type = 'SampleClass'; method = 'Ran'; namespace = 'Ns'; state = 'Discovered' },
+        @{ uid = 'uid-ne'; type = 'SampleClass'; method = 'DidNotRun'; namespace = 'Ns'; state = 'Discovered' }
+    )
+    $vNe = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trxNe -DiscoveryPath $discNe -RunDirectory $runNe `
+        -NotBeforeUtc ([datetime]::UtcNow.AddMinutes(-5)) -ProcessExit 0 `
+        -Sha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' -ExpectedSha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' `
+        -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p'
+    $neReason = (([string]($vNe.reasons | Out-String)) -match 'unexecuted-outcome')
+    Assert-C487 -Cond ((-not [bool]$vNe.coverageComplete) -and $neReason) -Name 'G040 NotExecuted not complete' -Detail (($vNe.reasons) -join ',')
+
+    $vUnk = ConvertTo-NightlyCoverageVerdict -TerminalRows @(
+        [pscustomobject]@{ Outcome = 'Passed'; Identity = 'A.Ran' },
+        [pscustomobject]@{ Outcome = 'WeirdState'; Identity = 'A.Unknown' }
+    ) -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p'
+    $unkReason = (([string]($vUnk.reasons | Out-String)) -match 'unknown-outcome')
+    Assert-C487 -Cond ((-not [bool]$vUnk.coverageComplete) -and (-not [bool]$vUnk.testsPassed) -and $unkReason) -Name 'G040 unknown outcome not complete' -Detail (($vUnk.reasons) -join ',')
+
+    $fxProd = New-Efx
+    Write-C487NativePassSeams -Path $fxProd.Seams -TracePath $fxProd.Trace -OmitDiscovery `
+        -Rows @(@{ Id = 'uid-1'; ClassName = 'SampleClass'; MethodName = 'SampleMethod'; Outcome = 'Passed' }) `
+        -DiscoveryNodes @(@{ uid = 'uid-1'; type = 'SampleClass'; method = 'SampleMethod'; namespace = 'Ns' })
+    $rProd = Invoke-E -Fx $fxProd -Extra @{ Suites = @('antiphon') }
+    $discWritten = Test-Path -LiteralPath (Join-Path $fxProd.Logs 'antiphon-all.discovery.json')
+    $traceText = ''
+    if (Test-Path -LiteralPath $fxProd.Trace) { $traceText = [System.IO.File]::ReadAllText($fxProd.Trace) }
+    $listCalled = $traceText -match '--list-tests'
+    $missingDiscReason = $false
+    $produceFailed = $false
+    if ($rProd.SummaryPath -and (Test-Path -LiteralPath $rProd.SummaryPath)) {
+        $sumProd = Get-Content -LiteralPath $rProd.SummaryPath -Raw | ConvertFrom-Json
+        $reasonText = [string]($sumProd.reasons | Out-String)
+        $missingDiscReason = ($reasonText -match 'missing-discovery')
+        $produceFailed = ($reasonText -match 'discovery-produce-failed')
+    }
+    Assert-C487 -Cond ($discWritten -and $listCalled -and (-not $missingDiscReason) -and (-not $produceFailed) -and [bool]$rProd.testsPassed) `
+        -Name 'G040 production discovery generated' `
+        -Detail ('disc=' + $discWritten + ' list=' + $listCalled + ' missing=' + $missingDiscReason + ' produce=' + $produceFailed + ' pass=' + $rProd.testsPassed)
 }
 
 function Test-C487_G041 {
@@ -346,4 +394,4 @@ if ($Case) {
     }
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'tests-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }
-Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 59 })
+Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 62 })
