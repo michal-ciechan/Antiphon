@@ -149,6 +149,7 @@ function Invoke-AntiphonNightlyTests {
         }
     }
     $policyHash = $policy.Hash
+    $requiredSuites = @(Get-NightlyRequiredSuiteUniverse -PolicyObject $policy.Object)
     $universe = Test-NightlyPolicyProjectUniverse -RepoRoot $RepoRoot -PolicyObject $policy.Object
     if (-not $universe.Ok) {
         Write-Error $universe.Message
@@ -178,6 +179,12 @@ function Invoke-AntiphonNightlyTests {
             Error = $_.Exception.Message
             LaunchCount = 0
         }
+    }
+
+    $suiteUniverse = Test-NightlyRequiredSuitesPresent -Selected $selectedSuites -Required $requiredSuites
+    if (-not $suiteUniverse.Ok) {
+        $coverageComplete = $false
+        $reasons += ('partial-selection missing {0}' -f ($suiteUniverse.Missing -join ','))
     }
 
     if ($WhatIf) {

@@ -67,6 +67,7 @@ function Read-NightlyTrxIdentities {
         }
         $rows += [pscustomobject]@{
             TestId = $testId
+            Uid = $testId
             ClassName = $className
             MethodName = $methodName
             Display = $display
@@ -348,11 +349,16 @@ function Test-NightlyExpandedRowsPresent {
     $terminalUids = @{}
     foreach ($r in @($TerminalRows)) {
         if ($r.Uid) { $terminalUids[[string]$r.Uid] = $true }
-        elseif ($r.Identity) { $terminalUids[[string]$r.Identity] = $true }
+        if ($r.TestId) { $terminalUids[[string]$r.TestId] = $true }
+        if (-not $r.Uid -and -not $r.TestId -and $r.Identity) {
+            $terminalUids[[string]$r.Identity] = $true
+        }
     }
     $missing = @()
     foreach ($uid in @($RequiredUids)) {
-        if (-not $terminalUids.ContainsKey($uid)) { $missing += $uid }
+        $key = [string]$uid
+        if ([string]::IsNullOrWhiteSpace($key)) { continue }
+        if (-not $terminalUids.ContainsKey($key)) { $missing += $key }
     }
     return [pscustomobject]@{ Ok = ($missing.Count -eq 0); Missing = $missing }
 }
@@ -423,10 +429,18 @@ function ConvertTo-NightlyNativeSuiteVerdict {
         }
     }
     $discoveryNodes = @()
-    if (-not [string]::IsNullOrWhiteSpace($DiscoveryPath) -and (Test-Path -LiteralPath $DiscoveryPath)) {
+    $discoveryPresent = $false
+    if ([string]::IsNullOrWhiteSpace($DiscoveryPath) -or -not (Test-Path -LiteralPath $DiscoveryPath)) {
+        $reasons += 'missing-discovery'
+    } else {
         try {
             $disc = Read-NightlyDiscoveryDocument -Path $DiscoveryPath
             $discoveryNodes = @($disc.Nodes)
+            if ($discoveryNodes.Count -eq 0) {
+                $reasons += 'empty-discovery'
+            } else {
+                $discoveryPresent = $true
+            }
         } catch {
             return [pscustomobject]@{
                 coverageComplete = $false
@@ -443,12 +457,39 @@ function ConvertTo-NightlyNativeSuiteVerdict {
     $coverageComplete = [bool]$verdict.coverageComplete
     $testsPassed = [bool]$verdict.testsPassed
     foreach ($r in @($verdict.reasons)) { $reasons += $r }
-    if ($RequiredClasses -and @($RequiredClasses).Count -gt 0) {
-        $member = Test-NightlyRequiredClassesPresent -TerminalRows $rows -RequiredClasses $RequiredClasses
-        if (-not $member.Ok) {
+    if (-not $discoveryPresent) {
+        $coverageComplete = $false
+    } else {
+        $requiredUids = @()
+        foreach ($n in $discoveryNodes) {
+            $uid = [string]$n.Uid
+            if (-not [string]::IsNullOrWhiteSpace($uid)) { $requiredUids += $uid }
+        }
+        $expanded = Test-NightlyExpandedRowsPresent -DiscoveryNodes $discoveryNodes -TerminalRows $rows -RequiredUids $requiredUids
+        if (-not $expanded.Ok) {
             $coverageComplete = $false
-            $testsPassed = $false
-            $reasons += ('missing-required-class {0}' -f ($member.Missing -join ','))
+            $reasons += ('missing-expanded-row {0}' -f ($expanded.Missing -join ','))
+        }
+        $classReq = @()
+        if ($RequiredClasses -and @($RequiredClasses).Count -gt 0) {
+            foreach ($c in @($RequiredClasses)) { $classReq += [string]$c }
+        } else {
+            $seenClass = @{}
+            foreach ($n in $discoveryNodes) {
+                $t = [string]$n.Type
+                if ([string]::IsNullOrWhiteSpace($t)) { $t = Get-NightlyClassNameFromIdentity -ClassName ([string]$n.ClassName) }
+                if ([string]::IsNullOrWhiteSpace($t) -or $seenClass.ContainsKey($t)) { continue }
+                $seenClass[$t] = $true
+                $classReq += $t
+            }
+        }
+        if ($classReq.Count -gt 0) {
+            $member = Test-NightlyRequiredClassesPresent -TerminalRows $rows -RequiredClasses $classReq
+            if (-not $member.Ok) {
+                $coverageComplete = $false
+                $testsPassed = $false
+                $reasons += ('missing-required-class {0}' -f ($member.Missing -join ','))
+            }
         }
     }
     return [pscustomobject]@{
