@@ -7,6 +7,8 @@ public static class HerdrPaneDisposalRoutes
     public static void MapHerdrPaneDisposalRoutes(this WebApplication app)
     {
         var group = app.MapGroup("/herdr/pane-disposals");
+        group.MapGet("/previews/{previewId:guid}", (Guid previewId, HerdrPaneDisposalService service) =>
+            RespondAsync(() => Task.FromResult<IResult>(Results.Ok(service.GetPreview(previewId)))));
         group.MapPost("/preview", (HerdrPaneDisposalPreviewRequest request,
             HerdrPaneDisposalService service, CancellationToken ct) =>
             RespondAsync(async () => Results.Ok(await service.PreviewAsync(request, ct))));
@@ -14,9 +16,10 @@ public static class HerdrPaneDisposalRoutes
             HerdrPaneDisposalService service, CancellationToken ct) => RespondAsync(async () =>
         {
             var receipt = await service.ExecuteAsync(request, ct);
-            return Results.Problem(statusCode: 409, type: receipt.Code,
-                title: "Guarded Herdr disposal is unavailable",
-                detail: "No teardown was dispatched. The guarded backend prerequisite is not implemented.",
+            if (receipt.Outcome is "Closed" or "AlreadyAbsent") return Results.Ok(receipt);
+            return Results.Problem(statusCode: receipt.Outcome == "Unknown" || receipt.Code == HerdrProblemTypes.Unreachable ? 503 : 409, type: receipt.Code,
+                title: "Herdr pane disposal did not confirm closure",
+                detail: receipt.Outcome == "Unknown" ? "Outcome is unknown; read status, do not replay disposal." : "Inspection refused disposal; no close was dispatched.",
                 extensions: new Dictionary<string, object?>
                 {
                     ["operationId"] = receipt.OperationId, ["receipt"] = receipt,

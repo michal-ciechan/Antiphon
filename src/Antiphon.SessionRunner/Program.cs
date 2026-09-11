@@ -182,7 +182,7 @@ app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings, SessionRunne
         ? [SessionBackends.PtyHost, SessionBackends.Herdr]
         : [SessionBackends.PtyHost];
     IReadOnlyList<string>? features = herdrSettings.Value.Enabled
-        ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement, HerdrPaneDisposalCodes.Capability, GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1]
+        ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement, HerdrPaneDisposalCodes.Capability, HerdrPaneDisposalCodes.BestEffortCapability, GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1]
         : [GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1];
     if (runtime.VerificationCustodyBackend is not null)
         features = [.. features, RunnerCapabilityFeatures.VerificationCustodyV1];

@@ -17,6 +17,7 @@ public sealed class HerdrPaneScriptTests
     {
         await using var h = new HerdrDisposalHttpFixture();
         await h.StartAsync();
+        h.Runner.Processes.Complete = false;
         var inspect = await RunAsync(h, "inspect", "-PaneId", h.Runner.PaneId,
             "-ExpectedSessionId", h.Runner.SessionId.ToString("D"), "-Json");
         inspect.ExitCode.ShouldBe(0, inspect.Output);
@@ -34,7 +35,7 @@ public sealed class HerdrPaneScriptTests
         var execute = await RunAsync(h, args.Concat(["-Execute"]).ToArray());
         execute.ExitCode.ShouldBe(1, execute.Output);
         using var error = JsonDocument.Parse(execute.Output);
-        error.RootElement.GetProperty("code").GetString().ShouldBe(HerdrPaneDisposalCodes.GuardUnavailable);
+        error.RootElement.GetProperty("code").GetString().ShouldBe(HerdrPaneDisposalCodes.IdentityUnproven);
         error.RootElement.GetProperty("operationId").GetString().ShouldBe(operationId);
         var status = await RunAsync(h, "status", "-OperationId", operationId, "-Json");
         status.ExitCode.ShouldBe(0, status.Output);
@@ -107,4 +108,10 @@ public sealed class HerdrPaneScriptTests
             }
         }
     }
+
+    [Test] public Task C461_G011_Execute_opt_in() => Inspect_dry_run_refusal_and_status_use_real_script_and_http_routes();
+    [Test] public Task C461_G108_Script_redaction() => Inspect_dry_run_refusal_and_status_use_real_script_and_http_routes();
+    [Test] public Task C461_G110_Server_route_only() => Inspect_dry_run_refusal_and_status_use_real_script_and_http_routes();
+    [Test] public Task Inspect_dispose_and_status_use_real_script() => Inspect_dry_run_refusal_and_status_use_real_script_and_http_routes();
+    [Test] public Task ReasonFile_json_and_ascii_contract() => ReasonFile_preserves_multiline_text_and_script_is_ascii();
 }

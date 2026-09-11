@@ -17,6 +17,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// </summary>
 internal sealed class FakeHerdrServer : IAsyncDisposable
 {
+    public int PingProtocol { get; set; } = 20;
     private readonly string _session;
     private readonly CancellationTokenSource _cts = new();
     private readonly ConcurrentQueue<JsonElement> _requests = new();
@@ -410,7 +411,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
 
             var resultJson = method switch
             {
-                "ping" => """{"type":"pong","version":"0.8.2","protocol":20}""",
+                "ping" => JsonSerializer.Serialize(new { type = "pong", version = "0.8.2", protocol = PingProtocol }),
                 "workspace.list" => WorkspaceListJson(),
                 "workspace.create" => WorkspaceCreateJson(parameters),
                 "workspace.report_metadata" => ReportWorkspaceMetadata(parameters),

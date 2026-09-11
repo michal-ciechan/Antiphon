@@ -3,6 +3,9 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.SessionRunner;
@@ -16,15 +19,17 @@ public sealed class HerdrClient
 {
     private readonly HerdrSettings _settings;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly string? _socketOverride;
 
     public HerdrClient(IOptions<HerdrSettings> settings)
         : this(settings.Value)
     {
     }
 
-    internal HerdrClient(HerdrSettings settings)
+    internal HerdrClient(HerdrSettings settings, string? socketOverride = null)
     {
         _settings = settings;
+        _socketOverride = socketOverride;
     }
 
     internal HerdrSettings Settings => _settings;
@@ -32,6 +37,7 @@ public sealed class HerdrClient
     /// <summary>Resolves Herdr's documented session/socket precedence to the Windows pipe name.</summary>
     public string ResolveSocketPath()
     {
+        if (_socketOverride is not null) return _socketOverride;
         var session = _settings.Session;
         if (!string.IsNullOrWhiteSpace(session))
             return SocketPathForSession(session);
@@ -57,7 +63,8 @@ public sealed class HerdrClient
     public async Task<HerdrServerInfo> ConnectAndValidateAsync(CancellationToken cancellationToken)
     {
         EnsureEnabled();
-        var result = await SendRequestAsync("ping", new { }, cancellationToken);
+        var observed = await SendCoreAsync("ping", new { }, true, cancellationToken);
+        var result = observed.Result;
         try
         {
             var type = result.GetProperty("type").GetString();
@@ -68,7 +75,7 @@ public sealed class HerdrClient
             if (protocol != _settings.ExpectedProtocol)
                 throw new HerdrProtocolMismatchException(_settings.ExpectedProtocol, protocol, version);
 
-            return new HerdrServerInfo(version, protocol);
+            return new HerdrServerInfo(version, protocol, observed.InstanceId);
         }
         catch (KeyNotFoundException ex)
         {
@@ -84,7 +91,11 @@ public sealed class HerdrClient
     public async Task<JsonElement> SendRequestAsync(
         string method,
         object? parameters,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken) =>
+        (await SendCoreAsync(method, parameters, false, cancellationToken)).Result;
+
+    private async Task<(JsonElement Result, string? InstanceId)> SendCoreAsync(
+        string method, object? parameters, bool identifyServer, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(method);
         EnsureEnabled();
@@ -95,9 +106,19 @@ public sealed class HerdrClient
         var reader = CreateReader(pipe);
         try
         {
+            string? instanceId = null;
+            if (identifyServer && GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var pid))
+            {
+                try
+                {
+                    using var server = Process.GetProcessById(checked((int)pid));
+                    instanceId = $"{pid}:{server.StartTime.ToUniversalTime().Ticks}";
+                }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { }
+            }
             await WriteRequestAsync(writer, new HerdrRequest(requestId, method, parameters), cancellationToken);
             var response = await ReadResponseAsync(reader, cancellationToken);
-            return RequireResult(response, requestId);
+            return (RequireResult(response, requestId), instanceId);
         }
         finally
         {
@@ -108,6 +129,10 @@ public sealed class HerdrClient
             DisposeQuietly(reader);
         }
     }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint serverProcessId);
 
     // --- typed wrappers (CARD-0160 B2 / plan §8). agent.prompt is deliberately not wrapped. ---
 
@@ -575,7 +600,7 @@ public sealed class HerdrClient
         [property: JsonPropertyName("params")] object? Parameters);
 }
 
-public sealed record HerdrServerInfo(string Version, int Protocol);
+public sealed record HerdrServerInfo(string Version, int Protocol, string? InstanceId = null);
 
 /// <summary>
 /// One <c>events.subscribe</c> entry. Subscribe types are dotted (<c>pane.closed</c>); the wire

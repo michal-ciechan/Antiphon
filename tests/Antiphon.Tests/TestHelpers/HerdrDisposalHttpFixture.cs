@@ -25,6 +25,7 @@ internal sealed class HerdrDisposalHttpFixture : IAsyncDisposable
     public HttpClient Http { get; private set; } = null!;
     public bool AdvertiseCapability { get; set; } = true;
     public int RunnerDisposalRequests { get; private set; }
+    public IHerdrPaneDisposalOwnership Ownership { get; set; } = new AllowedOwnership();
 
     public async Task StartAsync()
     {
@@ -38,12 +39,13 @@ internal sealed class HerdrDisposalHttpFixture : IAsyncDisposable
             await next(context);
         });
         RunnerApp.MapGet("/capabilities", () => new RunnerCapabilitiesDto("ModernConPty", "test", "test", false,
-            SessionBackends: [SessionBackends.Herdr], Features: AdvertiseCapability ? [HerdrPaneDisposalCodes.Capability] : []));
+            SessionBackends: [SessionBackends.Herdr], Features: AdvertiseCapability ? [HerdrPaneDisposalCodes.Capability, HerdrPaneDisposalCodes.BestEffortCapability] : []));
         RunnerApp.MapHerdrPaneDisposalRoutes();
         await RunnerApp.StartAsync();
 
         builder = NewBuilder();
         builder.Services.AddScoped<ServerDisposal>();
+        builder.Services.AddSingleton(Ownership);
         builder.Services.AddHttpClient<ISessionRunnerClient, SessionRunnerHttpClient>();
         builder.Services.AddSingleton(Options.Create(new Antiphon.Server.Application.Settings.SessionRunnerSettings
             { BaseUrl = RunnerApp.Urls.Single() }));
@@ -60,6 +62,12 @@ internal sealed class HerdrDisposalHttpFixture : IAsyncDisposable
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(o => o.Listen(IPAddress.Loopback, 0));
         return builder;
+    }
+
+    private sealed class AllowedOwnership : IHerdrPaneDisposalOwnership, IAsyncDisposable
+    {
+        public Task<IAsyncDisposable> AcquireAsync(HerdrPaneDisposalPreview preview, CancellationToken ct) => Task.FromResult<IAsyncDisposable>(this);
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     public async ValueTask DisposeAsync()
