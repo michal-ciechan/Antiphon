@@ -8,6 +8,7 @@ public sealed record PtyHostOptions
     public required string PipeName { get; init; }
     public required string ManifestDir { get; init; }
     public string? LogFile { get; init; }
+    public string? CustodyStoreRoot { get; init; }
 
     /// <summary>Self-destruct if no Launch arrives within this window (runner died mid-start).</summary>
     public TimeSpan LaunchTimeout { get; init; } = TimeSpan.FromSeconds(30);
@@ -39,6 +40,7 @@ public sealed record PtyHostOptions
         string? pipeName = null;
         string? manifestDir = null;
         string? logFile = null;
+        string? custodyStoreRoot = null;
         var launchTimeout = TimeSpan.FromSeconds(30);
         var lingerTtl = TimeSpan.FromHours(24);
         var ringCap = 1_000_000;
@@ -52,6 +54,7 @@ public sealed record PtyHostOptions
                 case "--pipe": pipeName = args[++i]; break;
                 case "--manifest-dir": manifestDir = args[++i]; break;
                 case "--log": logFile = args[++i]; break;
+                case "--custody-store": custodyStoreRoot = args[++i]; break;
                 case "--launch-timeout-sec": launchTimeout = TimeSpan.FromSeconds(int.Parse(args[++i])); break;
                 case "--linger-hours":
                     lingerTtl = TimeSpan.FromHours(
@@ -73,6 +76,7 @@ public sealed record PtyHostOptions
             PipeName = pipeName ?? PtyHostProtocol.PipeNameFor(sessionId.Value),
             ManifestDir = manifestDir,
             LogFile = logFile,
+            CustodyStoreRoot = custodyStoreRoot,
             LaunchTimeout = launchTimeout,
             LingerTtl = lingerTtl,
             RingCapChars = ringCap,

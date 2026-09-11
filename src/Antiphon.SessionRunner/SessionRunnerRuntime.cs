@@ -40,6 +40,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     private readonly RunnerStartupDiagnostics _startup;
     private readonly HerdrPlacementCoordinator _placement = new();
     private readonly HerdrNamedTabResolver _namedTabs = new(HerdrNamedTabResolver.HostLabelComparer);
+    private readonly Lazy<RunnerCustodyLedger> _custody;
+    public string? VerificationCustodyBackend => OperatingSystem.IsWindows()
+        && PtyBackendPolicy.Resolve(_settings.PtyBackend).Backend == PtyBackend.ModernConPty ? "windows-job-v1" : null;
+    public Guid RunnerStoreId => _custody.Value.Store.StoreId;
 
     /// <summary>
     /// CARD-0162: fired when the set of live herdr panes changes (launch / adopt / exit) so the
@@ -55,6 +59,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         RunnerStartupDiagnostics? startupDiagnostics = null)
     {
         _settings = settings.Value;
+        _custody = new(() => new RunnerCustodyLedger(Path.Combine(_settings.SessionLogPath, "verification-custody")));
         _logger = logger;
         _startup = startupDiagnostics ?? new RunnerStartupDiagnostics(logger);
         _herdrClient = herdrClient;
@@ -147,9 +152,44 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     {
         var gate = _launchLocks.GetOrAdd(request.SessionId, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(ct);
-        try { return await StartCoreAsync(request, ct); }
+        try
+        {
+            using var custodyLease = _custody.Value.AcquireSession(request.SessionId);
+            if (!_custody.Value.PrepareStart(request, _settings.PtyBackend))
+            {
+                if (_sessions.TryGetValue(request.SessionId, out var existing)
+                    && existing.VerificationBinding == request.VerificationBinding)
+                    return existing.ToDto();
+                throw new VerificationCustodyException("verification_custody_attempt_already_recorded");
+            }
+            return await StartCoreAsync(request, ct);
+        }
         finally { gate.Release(); }
     }
+
+    public async Task<VerificationCustodyStatus> ReadCustodyAsync(VerificationExecutionBinding binding,
+        bool seal, CancellationToken ct)
+    {
+        var gate = _launchLocks.GetOrAdd(binding.Generation.SessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            using var custodyLease = _custody.Value.AcquireSession(binding.Generation.SessionId);
+            if (seal) _custody.Value.Seal(binding);
+            else _custody.Value.Store.RequireBinding(binding);
+            if (_custody.Value.ReadFinal(binding) is { } final) return final;
+            if (_sessions.TryGetValue(binding.Generation.SessionId, out var session)
+                && session.VerificationBinding == binding)
+                return await session.CollectCustodyAsync(ct);
+            if (_custody.Value.ReadProducer(binding) is { } producer)
+                return _custody.Value.Accept(producer);
+            return _custody.Value.ReadUnavailable(binding);
+        }
+        finally { gate.Release(); }
+    }
+
+    public VerificationExecutionBinding ResolveCustodyBinding(Guid sessionId, Guid executionId, DateTime acceptedStartedAt) =>
+        _custody.Value.Resolve(sessionId, executionId, acceptedStartedAt);
 
     private async Task<RunnerSessionDto> StartCoreAsync(RunnerLaunchRequest request, CancellationToken ct)
     {
@@ -228,14 +268,15 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
 
         var session = new RunnerSession(request.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness);
+        if (request.VerificationBinding is { } binding)
+            session.SetCustody(_custody.Value, binding);
         session.GrokRulesReceipt = request.InstalledGrokRulesReceipt;
         if (!_sessions.TryAdd(request.SessionId, session))
         {
             // A session id can be relaunched once its process has exited (claude --resume reuses
             // the original id); only a live session blocks the id.
             if (_sessions.TryGetValue(request.SessionId, out var existing)
-                && existing.HasExited
-                && _sessions.TryUpdate(request.SessionId, session, existing))
+                && existing.HasExited)
             {
                 // CARD-0050: the pipe name derives from the session id, so a relaunch races the
                 // PREVIOUS host's teardown — its Shutdown ack is fire-and-forget (HandleExited),
@@ -244,7 +285,13 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 // dying host, which correctly answered "alreadyLaunched: Session is Exited" and
                 // failed the relaunch. The child is already exited here, so forcing the old host
                 // out forfeits nothing a pty-host exists to protect.
-                await existing.EnsureExitedHostGoneAsync(TimeSpan.FromSeconds(5), ct);
+                try { await existing.EnsureExitedHostGoneAsync(TimeSpan.FromSeconds(5), ct); }
+                catch { await session.DisposeAsync(); throw; }
+                if (!_sessions.TryUpdate(request.SessionId, session, existing))
+                {
+                    await session.DisposeAsync();
+                    throw new InvalidOperationException($"Session '{request.SessionId}' changed during relaunch.");
+                }
                 await existing.DisposeAsync();
             }
             else
@@ -289,9 +336,18 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
             return session.ToDto();
         }
-        catch
+        catch (Exception ex)
         {
             _sessions.TryRemove(request.SessionId, out _);
+            if (request.VerificationBinding is { } failedBinding
+                && ex is VerificationCustodyException { Code: "verification_custody_unsupported_backend" })
+            {
+                try { _custody.Value.RecordUnsupported(failedBinding); }
+                catch (Exception storageError)
+                {
+                    _logger.LogWarning(storageError, "Unsupported custody outcome could not be persisted for {ExecutionId}", failedBinding.ExecutionId);
+                }
+            }
             // Kill then dispose — DisposeAsync is detach-not-kill (pty-host split). Same shape
             // as AgentSessionService.KillAndDisposeAsync (CARD-0056 D1, CARD-0086).
             session.TearDownFailedLaunch();
@@ -316,6 +372,19 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
     /// <summary>CARD-0213: bind a standing session to an operator pane Antiphon did not launch.</summary>
     public async Task<RunnerSessionDto> AttachHerdrAsync(HerdrAttachRequest request, CancellationToken ct)
+    {
+        var gate = _launchLocks.GetOrAdd(request.SessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            using var custodyLease = _custody.Value.AcquireSession(request.SessionId);
+            _custody.Value.RequireUntrackedSession(request.SessionId);
+            return await AttachHerdrCoreAsync(request, ct);
+        }
+        finally { gate.Release(); }
+    }
+
+    private async Task<RunnerSessionDto> AttachHerdrCoreAsync(HerdrAttachRequest request, CancellationToken ct)
     {
         if (request.SessionId == Guid.Empty)
             throw new ArgumentException("SessionId must not be empty.", nameof(request));
@@ -342,10 +411,15 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         if (!_sessions.TryAdd(request.SessionId, session))
         {
             if (_sessions.TryGetValue(request.SessionId, out var existing)
-                && existing.HasExited
-                && _sessions.TryUpdate(request.SessionId, session, existing))
+                && existing.HasExited)
             {
-                await existing.EnsureExitedHostGoneAsync(TimeSpan.FromSeconds(5), ct);
+                try { await existing.EnsureExitedHostGoneAsync(TimeSpan.FromSeconds(5), ct); }
+                catch { await session.DisposeAsync(); throw; }
+                if (!_sessions.TryUpdate(request.SessionId, session, existing))
+                {
+                    await session.DisposeAsync();
+                    throw new InvalidOperationException($"Session '{request.SessionId}' changed during attach.");
+                }
                 await existing.DisposeAsync();
             }
             else
@@ -734,6 +808,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// </summary>
     public async Task<int> AdoptOrphanedHostsAsync(IProcessLivenessProbe probe, CancellationToken ct)
     {
+        _custody.Value.ValidateRecovery();
+        _custody.Value.RecoverManifests(_settings.PtyHostManifestDir, probe);
         using var sweep = _startup.Begin("adoption-sweep");
         // Rebuild transcript claims BEFORE any session is adopted. This sweep already has to
         // complete before the HTTP API starts listening, so restoring here means a freshly launched
@@ -782,11 +858,30 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (_sessions.ContainsKey(manifest.SessionId))
                 continue;
 
+            var tracked = _custody.Value.Store.ReadReservations()
+                .Where(b => b.Generation.SessionId == manifest.SessionId).ToArray();
+            if (tracked.Length != 0)
+            {
+                if (manifest.VerificationBinding is not { } binding || !tracked.Contains(binding)
+                    || manifest.VerificationHost is not { } identity)
+                {
+                    _logger.LogWarning("Custody identity missing for manifest {SessionId}; retained without adoption", manifest.SessionId);
+                    continue;
+                }
+                _custody.Value.RequireHost(binding, identity);
+                if (manifest.HostPid != identity.HostPid || manifest.HostStartTimeUtc != identity.HostStartTimeUtc
+                    || manifest.Cwd != binding.Creation.WorktreePath)
+                    throw new VerificationCustodyException("verification_custody_identity_mismatch");
+                if (manifest.AnsiLogPath is { } ansi) _custody.Value.Store.RequireOutsideSnapshot(ansi, binding);
+            }
+
             using var hostAttempt = _startup.Begin("pty-host-adoption", manifest.SessionId);
 
             if (manifest.HostPid > 0 && probe.IsAlive(manifest.HostPid, manifest.HostStartTimeUtc))
             {
                 var session = new RunnerSession(manifest.SessionId, _settings, _events, _logger, _transcriptClaims);
+                if (manifest.VerificationBinding is { } binding)
+                    session.SetCustody(_custody.Value, binding);
                 try
                 {
                     var running = await session.AdoptAsync(manifest, ct);
@@ -804,7 +899,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         "Live pty-host for session {SessionId} (pid {HostPid}) could not be adopted; treating as dead",
                         manifest.SessionId, manifest.HostPid);
                     await session.DisposeAsync();
-                    KillPidBestEffort(manifest.HostPid);
+                    if (manifest.VerificationBinding is null) KillPidBestEffort(manifest.HostPid);
                 }
             }
 
@@ -812,6 +907,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             // Register the session as Exited with the fate the manifest recorded so the server
             // sees a real exit instead of an unknown session.
             var exitedSession = RunnerSession.CreateAdoptedExited(manifest, _settings, _events, _logger);
+            if (manifest.VerificationBinding is { } exitedBinding)
+                exitedSession.SetCustody(_custody.Value, exitedBinding);
             _sessions.TryAdd(manifest.SessionId, exitedSession);
             hostAttempt.Complete(0, "terminal");
             TryDeleteFile(file);
@@ -1142,6 +1239,19 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     internal sealed class RunnerSession : IAsyncDisposable
     {
         internal GrokRulesReceipt? GrokRulesReceipt { get; set; }
+        internal VerificationExecutionBinding? VerificationBinding { get; private set; }
+        private RunnerCustodyLedger? _custodyLedger;
+        private readonly SemaphoreSlim _custodyReadGate = new(1, 1);
+        private readonly CancellationTokenSource _custodyLifetime = new();
+        private readonly TaskCompletionSource _launchFinished = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private Task? _custodyShutdown;
+
+        internal void SetCustody(RunnerCustodyLedger ledger, VerificationExecutionBinding binding)
+        {
+            ledger.Store.RequireBinding(binding);
+            VerificationBinding = binding;
+            _custodyLedger = ledger;
+        }
         private readonly Guid _sessionId;
         private readonly SessionRunnerSettings _settings;
         private readonly SessionRunnerEventHub _events;
@@ -1710,6 +1820,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     // PtyAgentRunner's per-instance override at all, three processes down, and so ran on
                     // whatever the test process had inherited.
                     ptyBackend: _settings.PtyBackend,
+                    custodyStoreRoot: _custodyLedger?.Store.Root,
                     ct: ct);
 
                 _client = await PtyHostClient.ConnectAsync(
@@ -1719,6 +1830,16 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _client.OnOutput += HandleOutput;
                 _client.OnExited += HandleExited;
                 _client.OnDisconnected += HandleDisconnected;
+
+                if (VerificationBinding is { } binding)
+                {
+                    using var hostProcess = System.Diagnostics.Process.GetProcessById(_hostPid);
+                    if (_client.Hello.SessionId != _sessionId || _client.Hello.HostInstanceId is not { } hostInstance
+                        || _client.Hello.Features?.Contains("verificationCustodyV1") != true)
+                        throw new VerificationCustodyException("verification_custody_unsupported_backend");
+                    _custodyLedger!.RecordConnectedHost(binding,
+                        new(hostInstance, _hostPid, hostProcess.StartTime.ToUniversalTime()));
+                }
 
                 var launched = await _client.LaunchAsync(
                     new LaunchMessage(
@@ -1731,7 +1852,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         request.MemoryLimitMb,
                         request.TranscriptEnabled,
                         _ansiLogPath,
-                        GrokRulesReceipt),
+                        GrokRulesReceipt, VerificationBinding, _custodyLedger?.Store.StoreId),
                     ct);
 
                 _childPid = launched.ChildPid;
@@ -1765,6 +1886,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 TearDownFailedLaunch();
                 throw;
             }
+            finally { _launchFinished.TrySetResult(); }
         }
 
         /// <summary>
@@ -1796,6 +1918,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         /// </summary>
         public async Task<bool> AdoptAsync(PtyHostManifest manifest, CancellationToken ct)
         {
+            try { return await AdoptCoreAsync(manifest, ct); }
+            finally { _launchFinished.TrySetResult(); }
+        }
+
+        private async Task<bool> AdoptCoreAsync(PtyHostManifest manifest, CancellationToken ct)
+        {
             if (manifest.GrokRulesReceipt is { } receipt
                 && await new GrokRulesFileStore(_settings.SessionLogPath, _settings.GrokRules)
                     .VerifyAsync(_sessionId, receipt, ct))
@@ -1811,6 +1939,16 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 manifest.Rows > 0 ? manifest.Rows : 30);
 
             _client = await PtyHostClient.ConnectAsync(manifest.PipeName, TimeSpan.FromSeconds(5), ct);
+            if (VerificationBinding is { } binding)
+            {
+                var identity = manifest.VerificationHost
+                    ?? throw new VerificationCustodyException("verification_custody_identity_mismatch");
+                _custodyLedger!.RequireHost(binding, identity);
+                if (_client.Hello.SessionId != binding.Generation.SessionId
+                    || _client.Hello.HostInstanceId != identity.HostInstanceId
+                    || _client.Hello.Features?.Contains("verificationCustodyV1") != true)
+                    throw new VerificationCustodyException("verification_custody_identity_mismatch");
+            }
             var runnerVersion = RunnerBuildIdentity.Resolve().InformationalVersion;
             if (!string.Equals(_client.Hello.HostVersion, runnerVersion, StringComparison.Ordinal))
             {
@@ -1857,7 +1995,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 SessionRunnerEventNames.SessionAdopted,
                 new RunnerSessionAdoptedEvent(_sessionId, _childPid, _startedAt, status.LastSeq));
 
-            if (manifest.TranscriptEnabled)
+            if (manifest.TranscriptEnabled
+                && (VerificationBinding is null || _custodyLedger!.ReadFinal(VerificationBinding) is null))
             {
                 // Re-tail the file we already knew about instead of re-running discovery: after a
                 // restart the input log is empty, so nothing could prove ownership of a candidate,
@@ -1959,6 +2098,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             };
             session._clientReady.TrySetResult(false);
             session._exited.TrySetResult();
+            session._launchFinished.TrySetResult();
 
             events.Publish(
                 SessionRunnerEventNames.SessionExited,
@@ -2270,7 +2410,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     Pending: _pendingReason,
                     HerdrVerifiedAtUtc: _herdrVerifiedAtUtc,
                     HerdrOrigin: _herdrOrigin,
-                    GrokRulesReceipt: GrokRulesReceipt);
+                        GrokRulesReceipt: GrokRulesReceipt,
+                        VerificationBinding: VerificationBinding);
             }
         }
 
@@ -2337,6 +2478,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         public async Task WriteAsync(string input, CancellationToken ct)
         {
+            if (VerificationBinding is { } binding
+                && _custodyLedger!.Store.ReadRecord<CustodyStamp>(binding, "runner-seal.json") is not null)
+                throw new VerificationCustodyException("verification_custody_sealed");
             // Recorded BEFORE the write: Claude cannot persist a prompt we have not sent yet, so
             // the input log is always ahead of the transcript record that rule C4 matches it to.
             _inputLog.Append(input);
@@ -2386,7 +2530,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         public async Task KillAsync(TimeSpan timeout, CancellationToken ct, string? exitReasonOverride = null)
         {
-            if (HasExited)
+            if (HasExited && VerificationBinding is null)
                 return;
 
             if (exitReasonOverride is not null)
@@ -2496,6 +2640,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         public async ValueTask DisposeAsync()
         {
+            _custodyLifetime.Cancel();
+            _launchFinished.TrySetResult();
+            if (_custodyShutdown is not null) await _custodyShutdown;
             _clientReady.TrySetResult(false);
             // Dispose detaches from the host — it must NOT kill it: surviving the runner's own
             // teardown is the entire point of the pty-host split.
@@ -2592,10 +2739,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         /// </summary>
         public async Task EnsureExitedHostGoneAsync(TimeSpan bound, CancellationToken ct)
         {
+            if (VerificationBinding is { } binding && _custodyLedger!.ReadFinal(binding) is null)
+                throw new VerificationCustodyException("verification_custody_session_fenced");
             if (!HasExited || _hostPid <= 0)
                 return;
 
             await ShutdownHostAsync();
+            if (VerificationBinding is not null && _custodyShutdown is not null)
+                await _custodyShutdown.WaitAsync(ct);
 
             var deadline = DateTime.UtcNow + bound;
             var killed = false;
@@ -2605,6 +2756,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     return;
                 if (!killed && DateTime.UtcNow + TimeSpan.FromSeconds(2) >= deadline)
                 {
+                    if (VerificationBinding is not null)
+                        throw new VerificationCustodyException("verification_custody_host_still_present");
                     // The ack did not take (host wedged, or the ack raced its own pipe teardown) —
                     // escalate once, then keep waiting for the exit inside the same bound.
                     KillHostIfStillOurs();
@@ -2657,6 +2810,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         private async Task ShutdownHostAsync()
         {
+            if (VerificationBinding is not null)
+            {
+                lock (_gate)
+                    _custodyShutdown ??= Task.Run(ObserveCustodyThenShutdownAsync);
+                return;
+            }
             var client = _client;
             if (client is null)
                 return;
@@ -2670,6 +2829,62 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _logger.LogDebug(ex,
                     "Shutdown ack to pty-host for session {SessionId} failed (host likely already gone)",
                     _sessionId);
+            }
+        }
+
+        internal async Task<VerificationCustodyStatus> CollectCustodyAsync(CancellationToken ct)
+        {
+            var binding = VerificationBinding
+                ?? throw new VerificationCustodyException("verification_custody_binding_required");
+            await _launchFinished.Task.WaitAsync(ct);
+            await _custodyReadGate.WaitAsync(ct);
+            try
+            {
+                if (_custodyLedger!.ReadFinal(binding) is { } final) return final;
+                var observed = _custodyLedger.ReadProducer(binding);
+                if (observed is null)
+                {
+                    if (_client is not { } client) return _custodyLedger.ReadUnavailable(binding);
+                    var seal = HasExited || _custodyLedger.Store.ReadRecord<CustodyStamp>(binding, "runner-seal.json") is not null;
+                    observed = await client.GetCustodyAsync(binding, seal, ct);
+                }
+                if (observed.Receipt is not null && _tailer is { } tailer)
+                {
+                    await tailer.DisposeAsync();
+                    _tailer = null;
+                }
+                return _custodyLedger.Accept(observed);
+            }
+            catch (Exception ex) when (ex is IOException or OperationCanceledException)
+            {
+                return new(binding, VerificationCustodyState.Unknown,
+                    ct.IsCancellationRequested ? "observation_canceled" : "custody_observer_unavailable");
+            }
+            finally { _custodyReadGate.Release(); }
+        }
+
+        private async Task ObserveCustodyThenShutdownAsync()
+        {
+            var ct = _custodyLifetime.Token;
+            while (!ct.IsCancellationRequested)
+            {
+                try
+                {
+                    var custody = await CollectCustodyAsync(ct);
+                    if (custody.Receipt is not null && _client is { } client)
+                    {
+                        await client.ShutdownAsync(ct);
+                        return;
+                    }
+                    if (custody.Reason == "custody_observer_unavailable") return;
+                    await Task.Delay(TimeSpan.FromSeconds(1), ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Custody remains unresolved for {ExecutionId}", VerificationBinding!.ExecutionId);
+                    return;
+                }
             }
         }
 

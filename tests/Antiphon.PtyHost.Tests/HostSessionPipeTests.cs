@@ -7,6 +7,7 @@ using TUnit.Core.Exceptions;
 namespace Antiphon.PtyHost.Tests;
 
 [Category("PtyHost")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class HostSessionPipeTests
 {
     private static void SkipIfNotWindows()

@@ -12,6 +12,8 @@ public sealed record PtyHostManifest
 {
     public int SchemaVersion { get; init; } = 1;
     public bool LaunchPending { get; init; }
+    public global::Antiphon.SessionRunner.Contracts.VerificationExecutionBinding? VerificationBinding { get; init; }
+    public global::Antiphon.SessionRunner.Contracts.VerificationHostIdentity? VerificationHost { get; init; }
     public global::Antiphon.SessionRunner.Contracts.GrokRulesReceipt? GrokRulesReceipt { get; init; }
     public required Guid SessionId { get; init; }
     public required string PipeName { get; init; }
@@ -41,7 +43,7 @@ public sealed record PtyHostManifest
 
     public void SaveAtomic(string path)
     {
-        if (GrokRulesReceipt is null)
+        if (GrokRulesReceipt is null && VerificationBinding is null)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             var legacyTemp = path + ".tmp";

@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Antiphon.SessionRunner\Antiphon.SessionRunner.csproj" />
+    <ProjectReference Include="..\Antiphon.CustodyTestChild\Antiphon.CustodyTestChild.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.FakeLlmApi\Antiphon.FakeLlmApi.csproj" />
   </ItemGroup>
   <ItemGroup>
@@ -27,6 +28,20 @@
     <Compile Include="..\Shared\TestClassificationGuardTests.cs" Link="TestSupport\TestClassificationGuardTests.cs" />
     <None Include="slow-tests-allowlist.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <Target Name="CopyCustodyChild" AfterTargets="Build">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Antiphon.CustodyTestChild\Antiphon.CustodyTestChild.csproj"
+             Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
+      <Output TaskParameter="TargetOutputs" ItemName="_CustodyChildTargetPath" />
+    </MSBuild>
+    <PropertyGroup>
+      <_CustodyChildOutputDir>@(_CustodyChildTargetPath->'%(RootDir)%(Directory)')</_CustodyChildOutputDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <CustodyChildOutput Include="$(_CustodyChildOutputDir)*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(CustodyChildOutput)" DestinationFolder="$(OutDir)custody-child/" />
+  </Target>
 
   <ItemGroup>
     <!-- The pinned compact-boundary shape lives beside its primary consumer (Antiphon.Tests);

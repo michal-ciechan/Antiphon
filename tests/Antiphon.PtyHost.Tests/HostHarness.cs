@@ -30,7 +30,8 @@ public sealed class HostHarness : IAsyncDisposable
     public string AnsiLogPath => Path.Combine(TempDir, "session.ansi.log");
     public string ManifestPath => Options.ManifestPath;
 
-    public static HostHarness Start(Func<PtyHostOptions, PtyHostOptions>? configure = null)
+    public static HostHarness Start(Func<PtyHostOptions, PtyHostOptions>? configure = null,
+        IVerificationCustodyFiles? custodyFiles = null)
     {
         var sessionId = Guid.NewGuid();
         var tempDir = Path.Combine(Path.GetTempPath(), "antiphon-ptyhost-tests", sessionId.ToString("N"));
@@ -47,7 +48,7 @@ public sealed class HostHarness : IAsyncDisposable
             options = configure(options);
 
         var log = new HostLog(options.LogFile);
-        var session = new HostSession(options, log);
+        var session = new HostSession(options, log, custodyFiles);
         var server = new PtyHostServer(options, session, log);
         var cts = new CancellationTokenSource();
         var run = Task.Run(() => server.RunAsync(cts.Token));
