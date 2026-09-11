@@ -26,7 +26,8 @@ public class HerdrClientTests
         var client = ClientFor(pipeName);
         var info = await client.ConnectAndValidateAsync(CancellationToken.None);
 
-        info.ShouldBe(new HerdrServerInfo("0.8.2", 20));
+        using var owner = System.Diagnostics.Process.GetCurrentProcess();
+        info.ShouldBe(new HerdrServerInfo("0.8.2", 20, $"{owner.Id}:{owner.StartTime.ToUniversalTime().Ticks}"));
         await server;
     }
 
