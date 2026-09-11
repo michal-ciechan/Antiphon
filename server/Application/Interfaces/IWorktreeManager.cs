@@ -4,6 +4,12 @@ namespace Antiphon.Server.Application.Interfaces;
 
 public interface IWorktreeManager
 {
+    Task<VerificationWorktreeCreation?> ReadVerificationCreationAsync(string path, CancellationToken ct)
+        => Task.FromResult<VerificationWorktreeCreation?>(null);
+
+    Task<WorktreeInfo> CreateVerificationAsync(string repoPath, string identifier, string sha, RepositoryLease lease, CancellationToken ct)
+        => throw new NotSupportedException("Verification creation is unavailable.");
+
     Task<WorktreeInfo> CreateAsync(string repoPath, string cardId, string baseRef, CancellationToken ct);
 
     Task<WorktreeInfo> CreateAsync(string repoPath, string cardId, string baseRef, RepositoryLease lease, CancellationToken ct)

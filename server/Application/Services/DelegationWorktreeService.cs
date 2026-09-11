@@ -24,15 +24,18 @@ public sealed class DelegationWorktreeService
     private readonly IGitService _git;
     private readonly GitWorkspaceService _gitWorkspace;
     private readonly ILogger<DelegationWorktreeService> _logger;
+    private readonly SourceLandingAdmission? _sourceLanding;
 
     public DelegationWorktreeService(
         IWorktreeManager worktrees,
         IGitService git,
         ILogger<DelegationWorktreeService> logger,
         GitWorkspaceService gitWorkspace,
-        IRepositoryMutationLease? leases = null, ILandingGit? landingGit = null)
+        IRepositoryMutationLease? leases = null, ILandingGit? landingGit = null,
+        SourceLandingAdmission? sourceLanding = null)
     {
         _leases = leases;
+        _sourceLanding = sourceLanding;
         _landingGit = landingGit;
         _worktrees = worktrees;
         _git = git;
@@ -165,6 +168,19 @@ public sealed class DelegationWorktreeService
         var identifier = $"task-{DelegationReportFormatter.Short(task.Id)}";
         var baseRef = task.MergeTargetRef ?? "HEAD";
 
+        if (task.SourceLandingOperationId is not null)
+        {
+            if (_sourceLanding is null) throw new ConflictException("verification_source_admission_unavailable");
+            var source = await _sourceLanding.RequireSourceAsync(task, ct);
+            await _sourceLanding.RequireSupportAsync(ct);
+            var snapshot = await _worktrees.CreateVerificationAsync(repoPath, identifier, source.VerifiedSourceSha!, lease, ct);
+            task.WorktreePath = snapshot.Path;
+            task.WorktreeBranch = snapshot.Branch;
+            task.WorktreeBaseSha = source.VerifiedSourceSha;
+            await ValidateVerificationAsync(task, lease, ct);
+            return;
+        }
+
         Dtos.WorktreeInfo info;
         try
         {
@@ -223,6 +239,52 @@ public sealed class DelegationWorktreeService
         """;
 
     private const string DenyHookRelativePath = ".claude/settings.local.json";
+
+    public async Task ValidateVerificationAsync(AgentTask task, RepositoryLease lease, CancellationToken ct)
+    {
+        if (_landingGit is null || _leases is null || task.RepoPath is null || task.WorktreePath is null
+            || task.WorktreeBranch != $"feat/card-task-{DelegationReportFormatter.Short(task.Id)}"
+            || task.SourceLandingSha is null || task.WorktreeBaseSha != task.SourceLandingSha
+            || task.VerificationCleanupSealJson is not null)
+            throw new ConflictException("verification_creation_identity_mismatch");
+        var common = await _landingGit.CommonDirectoryAsync(task.RepoPath, ct);
+        if (!_leases.Owns(lease, common)) throw new ConflictException("repository_lease_required");
+        var creation = await _worktrees.ReadVerificationCreationAsync(task.WorktreePath, ct);
+        if (creation is null || creation.CreationId == Guid.Empty || creation.InitialSha != task.SourceLandingSha
+            || creation.Branch != task.WorktreeBranch)
+            throw new ConflictException("verification_creation_identity_mismatch");
+        var repository = await _landingGit.CanonicalDirectoryAsync(task.RepoPath, ct);
+        var path = await _landingGit.CanonicalDirectoryAsync(task.WorktreePath, ct);
+        var admin = await _landingGit.RunAsync(path, ["rev-parse", "--absolute-git-dir"], ct);
+        if (!admin.Succeeded) throw new ConflictException("verification_creation_identity_mismatch");
+        var gitDirectory = await _landingGit.CanonicalDirectoryAsync(admin.Output.Trim(), ct);
+        var coordinates = new global::Antiphon.SessionRunner.Contracts.VerificationCreationCoordinates(
+            repository, common, path, gitDirectory, task.WorktreeBranch, creation.CreationId);
+        var metadataCoordinates = coordinates with
+        {
+            RepositoryPath = await _landingGit.CanonicalDirectoryAsync(creation.RepositoryPath, ct),
+            WorktreePath = await _landingGit.CanonicalDirectoryAsync(creation.WorktreePath, ct),
+            WorktreeGitDirectory = await _landingGit.CanonicalDirectoryAsync(creation.GitDirectory, ct),
+        };
+        if (coordinates != metadataCoordinates)
+            throw new ConflictException("verification_creation_identity_mismatch");
+        var registrations = await _landingGit.RegistrationsAsync(repository, ct);
+        var matches = registrations.Where(r => r.Branch == "refs/heads/" + task.WorktreeBranch).ToList();
+        if (matches.Count != 1 || matches[0].Locked || matches[0].Prunable
+            || await _landingGit.CanonicalDirectoryAsync(matches[0].Path, ct) != path
+            || await _landingGit.HasActiveSequencerAsync(path, ct))
+            throw new ConflictException("verification_creation_identity_mismatch");
+        var head = await _landingGit.RunAsync(path, ["rev-parse", "--verify", "HEAD^{commit}"], ct);
+        var symbolic = await _landingGit.RunAsync(path, ["symbolic-ref", "-q", "HEAD"], ct);
+        var status = await _landingGit.RunAsync(path, ["status", "--porcelain=v1", "-z", "--untracked-files=no", "--ignore-submodules=none"], ct);
+        if (!head.Succeeded || head.Output.Trim() != task.SourceLandingSha || !symbolic.Succeeded
+            || symbolic.Output.Trim() != "refs/heads/" + task.WorktreeBranch || !status.Succeeded || status.Output.Length != 0)
+            throw new ConflictException("verification_snapshot_not_restored");
+        var serialized = System.Text.Json.JsonSerializer.Serialize(coordinates);
+        if (task.VerificationCreationJson is not null && task.VerificationCreationJson != serialized)
+            throw new ConflictException("verification_creation_identity_mismatch");
+        task.VerificationCreationJson = serialized;
+    }
 
     /// <summary>
     /// Arm the deny hook in a task's OWN worktree — the only place it is ever written, because a
@@ -294,6 +356,8 @@ public sealed class DelegationWorktreeService
     /// </summary>
     public async Task<MergeOutcome> TryMergeBackAsync(AgentTask task, CancellationToken ct)
     {
+        if (task.Role == Domain.Enums.AgentTaskRole.Mutation || task.SourceLandingOperationId is not null)
+            return new MergeOutcome(MergeResult.LeftForHuman, [], "Verification snapshot retained; no autosave or publication.");
         if (task.WorktreePath is not { } worktree || task.WorktreeBranch is not { } branch
             || task.RepoPath is not { } repo)
         {

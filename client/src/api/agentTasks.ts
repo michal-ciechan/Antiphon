@@ -238,6 +238,9 @@ export interface BlockedContextDto {
 }
 
 export interface AgentTaskDetailDto {
+  sourceLandingOperationId?: string | null
+  sourceLandingSha?: string | null
+  verificationCleanupResidue?: string | null
   legacyLandReceipt?: { eventId: string; at: string; state: 'LegacyUnverified' | 'NotRequired' | 'Confirmed' } | null
   landRequest?: {
     id: string
@@ -456,6 +459,7 @@ export interface AgentTaskPipelineDto {
 }
 
 export interface CreateAgentTaskRequest {
+  sourceLandingOperationId?: string | null
   goal: string
   title?: string | null
   kind?: AgentTaskKind

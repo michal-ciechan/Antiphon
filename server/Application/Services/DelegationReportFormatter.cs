@@ -169,6 +169,19 @@ public static class DelegationReportFormatter
             sb.AppendLine(UnrelatedWorkRefocusLine).AppendLine();
 
         sb.AppendLine(task.Goal.Trim()).AppendLine();
+        if (task.SourceLandingOperationId is Guid operationId)
+        {
+            sb.AppendLine($"SourceLanding: {operationId:D}; immutable landed commit: {task.SourceLandingSha}.");
+            sb.AppendLine("This is a verification-only snapshot: never commit, push, land, deploy, or repair its source. Use local inherited execution only; no external executor with snapshot access.");
+            sb.AppendLine("Keep MSBUILDDISABLENODEREUSE=1 and UseSharedCompilation=false. Await every command; restore source and index before settlement. Process custody comes only from the runner.");
+            if (task.VerificationCreationJson is not null)
+            {
+                var creation = System.Text.Json.JsonSerializer.Deserialize<global::Antiphon.SessionRunner.Contracts.VerificationCreationCoordinates>(task.VerificationCreationJson)!;
+                sb.AppendLine($"Persistent evidence root: {Path.Combine(creation.CommonGitDirectory, "antiphon", "verification", operationId.ToString("N"), task.Id.ToString("N"))}");
+                sb.AppendLine($"Creation identity: {creation.CreationId:D}. Write restoration.json there using the verification restoration contract in docs/testing-and-build.md.");
+            }
+            sb.AppendLine();
+        }
 
         if (BuildHandoff(task) is { } handoff)
             sb.AppendLine(handoff).AppendLine();

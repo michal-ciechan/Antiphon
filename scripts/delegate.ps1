@@ -63,6 +63,13 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [string]$Card,
 
+    # Confirmed landing operation, never an arbitrary commit selector.
+    [Parameter(ParameterSetName = 'Create')]
+    [guid]$SourceLanding,
+
+    [Parameter(ParameterSetName = 'CleanupVerification', Mandatory = $true)]
+    [string]$CleanupVerification,
+
     # Run somewhere else - another repo, another checkout. Defaults to the caller's directory.
     [Parameter(ParameterSetName = 'Create')]
     [string]$Dir,
@@ -475,11 +482,21 @@ switch ($PSCmdlet.ParameterSetName) {
         return
     }
 
+    'CleanupVerification' {
+        $result = Invoke-Antiphon -Method POST -Path "/api/agent-tasks/$CleanupVerification/cleanup-verification" -Body @{}
+        $result | ConvertTo-Json -Depth 10
+        return
+    }
+
     'Status' {
         $task = Invoke-Antiphon -Method GET -Path "/api/agent-tasks/$Status"
         $s = $task.summary
         Write-Output ("{0}  {1}  {2}/{3}  {4}" -f $s.status, $s.title, $s.kind, $s.role, $s.modelLevel)
         Write-Output "Delegate: $($s.status)"
+        if ($task.sourceLandingOperationId) {
+            Write-Output "Verification source: $($task.sourceLandingOperationId); commit $($task.sourceLandingSha)"
+            if ($task.verificationCleanupResidue) { Write-Output "Verification residue: $($task.verificationCleanupResidue)" }
+        }
         if ($task.legacyLandReceipt) { Write-Output "Legacy receipt: $($task.legacyLandReceipt.state); event $($task.legacyLandReceipt.eventId)" }
         if ($task.landRequest) {
             $r = $task.landRequest
@@ -702,6 +719,7 @@ switch ($PSCmdlet.ParameterSetName) {
         elseif ($Shared) { $body['workspace'] = 'Shared' }
         if ($AllowDirectEdits) { $body['denyDirectEdits'] = $false }
         if ($OnAgent) { $body['followUpOnTask'] = $OnAgent }
+        if ($PSBoundParameters.ContainsKey('SourceLanding')) { $body['sourceLandingOperationId'] = $SourceLanding.ToString('D') }
         if ($Agent) { $body['agent'] = $Agent }
         if ($Stage) { $body['stage'] = $Stage }
         if ($titleText) { $body['title'] = $titleText }

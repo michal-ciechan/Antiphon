@@ -83,6 +83,7 @@ public sealed class AgentTaskDispatcher
     private readonly CapacityRecoveryService? _capacityRecovery;
 
     private readonly IRepositoryMutationLease? _repositoryLeases;
+    private readonly VerificationExecutionService? _verification;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -134,9 +135,11 @@ public sealed class AgentTaskDispatcher
         IOptions<SessionReconciliationSettings>? reconciliation = null,
         OrchestratorWorkspaceWarningService? workspaceWarning = null,
         CapacityRecoveryService? capacityRecovery = null,
-        IRepositoryMutationLease? repositoryLeases = null)
+        IRepositoryMutationLease? repositoryLeases = null,
+        VerificationExecutionService? verification = null)
     {
         _repositoryLeases = repositoryLeases;
+        _verification = verification;
         _capacityRecovery = capacityRecovery;
         _complexityRouting = complexityRouting;
         _routingPins = routingPins;
@@ -3015,6 +3018,9 @@ public sealed class AgentTaskDispatcher
         var now = UtcNow();
 
         // CARD-0136 / CARD-0336: a low reading warns on every dispatch path (reuse and spawn).
+        if (claimed.SourceLandingOperationId is not null && (claimed.VerificationCleanupSealJson is not null
+            || claimed.Workspace != WorkspaceMode.Worktree || claimed.AgentId is not null || _verification is null))
+            throw new ConflictException("verification_dispatch_requires_fresh_unsealed_reservation");
         // Create-time is the refuse; Tick must not skip the task for the same verdict.
         if (_quotaGate is not null)
         {
@@ -3106,6 +3112,9 @@ public sealed class AgentTaskDispatcher
             });
         }
 
+        if (claimed.SourceLandingOperationId is not null)
+            await _worktrees.ValidateVerificationAsync(claimed, repositoryLease!, ct);
+
         var agent = await ResolveAgentAsync(claimed, now, ct);
         // A pool delegate's environment is fixed for the life of its process. Record the task
         // scope at every cold launch (including a deliberate relaunch of an existing pool row),
@@ -3143,6 +3152,10 @@ public sealed class AgentTaskDispatcher
             LastSeenAt = now,
         };
         _db.AgentSessions.Add(session);
+
+        global::Antiphon.SessionRunner.Contracts.VerificationExecutionBinding? verificationBinding = null;
+        if (claimed.SourceLandingOperationId is not null)
+            verificationBinding = await _verification!.ReserveAsync(claimed, session, ct);
 
         claimed.AgentId = agent.Id;
         // Snapshotted, not joined: the ephemeral agent row is deleted when the task settles, and
@@ -3193,6 +3206,7 @@ public sealed class AgentTaskDispatcher
         // pinned one (CARD-0058 slice 6).
         var attachedBundleKeys = await AgentBundleAttachments.LoadAsync(_db, agent.Id, _logger, ct);
         var spec = await BuildLaunchSpecAsync(claimed, agent, session, program, attachedBundleKeys, ct);
+        spec = spec with { VerificationBinding = verificationBinding };
         // CARD-0115 S2 — this is the bottom-level path a pool delegate takes. The task's recorded
         // project scope wins; a task without one falls back to its pinned standing agent's board.
         // A pool delegate has neither a board nor a path-derived fallback: no trustworthy scope

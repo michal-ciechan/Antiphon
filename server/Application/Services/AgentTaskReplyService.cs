@@ -1371,6 +1371,8 @@ public sealed class AgentTaskReplyService
     private async Task<string?> MergeBackAsync(
         IServiceProvider services, AppDbContext db, AgentTask task, DateTime now, CancellationToken ct)
     {
+        if (task.Role == AgentTaskRole.Mutation || task.SourceLandingOperationId is not null)
+            return "verification snapshot retained";
         DelegationWorktreeService.MergeOutcome outcome;
         try
         {
@@ -1581,7 +1583,17 @@ public sealed class AgentTaskReplyService
                 s => s.Id == sid
                     && (s.Status == SessionStatus.Starting || s.Status == SessionStatus.Running), ct);
 
-        if (_settings.PoolEnabled && task.Workspace == WorkspaceMode.Shared && sessionAlive)
+        if (task.SourceLandingOperationId is not null && !killSession)
+        {
+            // A recovery uncertainty is not authority to kill. Keep its explicit task/agent
+            // ownership and custody residue; this process must never become a warm candidate.
+            agent.PoolIdleSince = null;
+            agent.PoolReservedForRootTaskId = null;
+            task.VerificationCleanupResidue = "verification_release_unresolved";
+            return;
+        }
+
+        if (_settings.PoolEnabled && task.SourceLandingOperationId is null && task.Workspace == WorkspaceMode.Shared && sessionAlive)
         {
             agent.Status = AgentStatus.Idle;
             agent.PoolIdleSince = now;

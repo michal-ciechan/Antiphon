@@ -133,6 +133,33 @@ public sealed class WorktreeManager : IWorktreeManager
         return info;
     }
 
+    public async Task<WorktreeInfo> CreateVerificationAsync(string repoPath, string identifier, string sha,
+        RepositoryLease lease, CancellationToken ct)
+    {
+        if (!_creationLeases.Owns(lease, await _creationGit.CommonDirectoryAsync(repoPath, ct)))
+            throw new ConflictException("repository_lease_required");
+        var root = ResolveWorktreeRoot(create: true);
+        var path = Path.Combine(root, BuildDirectoryName(ValidateCardId(identifier)));
+        var saved = await FindMetadataByPathAsync(root, path, ct);
+        // Verification recovery never invokes legacy stale-registration healing or rollback.
+        if (saved is not null)
+        {
+            if (saved is not { SchemaVersion: 2, CreationComplete: true, CreationId: not null }
+                || saved.InitialSha != sha || saved.CardId != identifier || saved.Branch != BuildBranchName(identifier))
+                throw new ConflictException("verification_creation_identity_mismatch");
+            return ToInfo(saved);
+        }
+        return await CreateAsync(repoPath, identifier, sha, lease, ct);
+    }
+
+    public async Task<VerificationWorktreeCreation?> ReadVerificationCreationAsync(string path, CancellationToken ct)
+    {
+        var metadata = await FindMetadataByPathAsync(ResolveWorktreeRoot(create: false), path, ct);
+        if (metadata is not { SchemaVersion: 2, CreationComplete: true, CreationId: Guid id,
+            InitialSha: not null, GitDirectory: not null }) return null;
+        return new(id, metadata.RepoPath, metadata.Path, metadata.GitDirectory, metadata.Branch, metadata.InitialSha);
+    }
+
     public async Task<IReadOnlyList<WorktreeInfo>> ListAsync(string repoPath, CancellationToken ct)
     {
         var repoFullPath = ResolveExistingDirectory(repoPath, nameof(repoPath));

@@ -70,6 +70,8 @@ public sealed class AgentTaskLandService
         var task = await _db.AgentTasks.SingleOrDefaultAsync(t => t.Id == taskId, ct)
             ?? throw new NotFoundException(nameof(AgentTask), taskId.ToString());
         await _db.Entry(task).ReloadAsync(ct);
+        if (task.Role == AgentTaskRole.Mutation || task.SourceLandingOperationId is not null)
+            throw new ConflictException("Mutation snapshots cannot be landed.", "verification_publication_forbidden");
         if (task.Workspace != WorkspaceMode.Worktree)
             throw new ConflictException("Only a Worktree task can be landed.");
         if (task.Status != AgentTaskStatus.Succeeded)
@@ -155,6 +157,8 @@ public sealed class AgentTaskLandService
     public async Task<LandRunResult> RunRequestAsync(Guid taskId, Guid? requestId, string? verifyFilter, CancellationToken ct)
     {
         var task = await _db.AgentTasks.SingleOrDefaultAsync(t => t.Id == taskId, ct);
+        if (task is not null && (task.Role == AgentTaskRole.Mutation || task.SourceLandingOperationId is not null))
+            throw new ConflictException("Mutation snapshots cannot be landed.", "verification_publication_forbidden");
         if (task is null)
             return LandRunResult.Complete;
         if (task.LandRequestedAt is null)

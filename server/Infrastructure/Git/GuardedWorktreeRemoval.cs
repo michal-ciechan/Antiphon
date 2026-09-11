@@ -11,6 +11,8 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
 {
     public async Task<WorktreeRemoval> RemoveAsync(WorktreeRemovalRequest request, CancellationToken ct)
     {
+        if (request.Purpose == WorktreeRemovalPurpose.Verification)
+            return await new GuardedVerificationRemoval(git, leases, evidence).RemoveAsync(request, ct);
         var source = request.Source;
         var directoryGone = false;
         var unregistered = false;

@@ -3,6 +3,7 @@ using System;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260911073607_VerificationExecutionCustody")]
+    partial class VerificationExecutionCustody
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1091,18 +1094,8 @@ namespace Antiphon.Server.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<int>("ApprovalKind")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("ApprovedAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<int>("Attempt")
                         .HasColumnType("integer");
-
-                    b.Property<string>("CandidateSourceSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
 
                     b.Property<Guid>("ConcurrencyToken")
                         .IsConcurrencyToken()
@@ -1110,10 +1103,6 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<DateTime?>("ErrorAt")
                         .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("ExpectedSourceSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
 
                     b.Property<DateTime?>("HeldSince")
                         .HasColumnType("timestamp with time zone");
@@ -1153,102 +1142,23 @@ namespace Antiphon.Server.Migrations
                     b.Property<DateTime>("LastProgressAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("LocalBeforeSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
                     b.Property<Guid?>("ParentSessionId")
                         .HasColumnType("uuid");
 
                     b.Property<string>("ReconciliationError")
                         .HasColumnType("text");
 
-                    b.Property<string>("RemoteSourceFingerprint")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("RemoteSourceRef")
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<string>("RemoteSourceSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
                     b.Property<int>("ReplyTo")
                         .HasColumnType("integer");
 
-                    b.Property<string>("RepositoryPathSnapshot")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
                     b.Property<DateTime>("RequestedAt")
                         .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("ResolvedSourceSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<Guid?>("ReviewEvidenceId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("SchemaVersion")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(1);
-
-                    b.Property<string>("SourceAdvanceChildOperation")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<int?>("SourceAdvanceChildProcessId")
-                        .HasColumnType("integer");
-
-                    b.Property<long?>("SourceAdvanceChildStartTicks")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("SourceCommonDirectory")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("SourceFullRefSnapshot")
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<string>("SourceGitDirectory")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("SourceObservationRef")
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<DateTime?>("SourceObservedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("SourceRefusalReason")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<int>("SourceRelationship")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("SourceResolutionState")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("SourceWorktreePath")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
 
                     b.Property<DateTime?>("StartedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("State")
                         .HasColumnType("integer");
-
-                    b.Property<string>("TargetFullRefSnapshot")
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
 
                     b.Property<Guid>("TaskId")
                         .HasColumnType("uuid");
@@ -1263,10 +1173,6 @@ namespace Antiphon.Server.Migrations
                     b.Property<DateTime?>("WarningAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("WorktreePathSnapshot")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
                     b.HasKey("Id");
 
                     b.HasIndex("TaskId")
@@ -1275,12 +1181,7 @@ namespace Antiphon.Server.Migrations
 
                     b.HasIndex("IsPending", "LastProgressAt");
 
-                    b.ToTable("AgentTaskLandRequests", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_AgentTaskLandRequests_OidShape", "(\"ExpectedSourceSha\" IS NULL OR ((length(\"ExpectedSourceSha\") = 40 OR length(\"ExpectedSourceSha\") = 64) AND \"ExpectedSourceSha\" ~ '^[0-9a-f]+$')) AND (\"ResolvedSourceSha\" IS NULL OR ((length(\"ResolvedSourceSha\") = 40 OR length(\"ResolvedSourceSha\") = 64) AND \"ResolvedSourceSha\" ~ '^[0-9a-f]+$')) AND (\"LocalBeforeSha\" IS NULL OR ((length(\"LocalBeforeSha\") = 40 OR length(\"LocalBeforeSha\") = 64) AND \"LocalBeforeSha\" ~ '^[0-9a-f]+$')) AND (\"RemoteSourceSha\" IS NULL OR ((length(\"RemoteSourceSha\") = 40 OR length(\"RemoteSourceSha\") = 64) AND \"RemoteSourceSha\" ~ '^[0-9a-f]+$')) AND (\"CandidateSourceSha\" IS NULL OR ((length(\"CandidateSourceSha\") = 40 OR length(\"CandidateSourceSha\") = 64) AND \"CandidateSourceSha\" ~ '^[0-9a-f]+$'))");
-
-                            t.HasCheckConstraint("CK_AgentTaskLandRequests_V2Approval", "\"SchemaVersion\" <> 2 OR (\"ExpectedSourceSha\" IS NOT NULL AND (length(\"ExpectedSourceSha\") = 40 OR length(\"ExpectedSourceSha\") = 64) AND \"ExpectedSourceSha\" ~ '^[0-9a-f]+$')");
-                        });
+                    b.ToTable("AgentTaskLandRequests", (string)null);
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentTaskLanding", b =>
@@ -1291,15 +1192,6 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<bool>("Active")
                         .HasColumnType("boolean");
-
-                    b.Property<int>("ApprovalKind")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid?>("ApprovalLandRequestId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("ApprovedAt")
-                        .HasColumnType("timestamp with time zone");
 
                     b.Property<bool>("BranchRemoved")
                         .HasColumnType("boolean");
@@ -1370,18 +1262,11 @@ namespace Antiphon.Server.Migrations
                     b.Property<int>("Phase")
                         .HasColumnType("integer");
 
-                    b.Property<string>("PreparationInputSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
                     b.Property<DateTime?>("PreparedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<bool>("PreparedPinned")
                         .HasColumnType("boolean");
-
-                    b.Property<Guid?>("PreviousPreparationOperationId")
-                        .HasColumnType("uuid");
 
                     b.Property<int>("Publication")
                         .HasColumnType("integer");
@@ -1423,13 +1308,6 @@ namespace Antiphon.Server.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<Guid?>("ReviewEvidenceId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("ReviewedSourceSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
                     b.Property<int>("SchemaVersion")
                         .HasColumnType("integer");
 
@@ -1439,21 +1317,6 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<bool>("SourcePinned")
                         .HasColumnType("boolean");
-
-                    b.Property<string>("SourceRemoteFingerprint")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<DateTime?>("SourceRemoteObservedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("SourceRemoteRef")
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<string>("SourceRemoteSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
 
                     b.Property<string>("TargetBeforeSha")
                         .IsRequired()
@@ -1510,14 +1373,7 @@ namespace Antiphon.Server.Migrations
                         .IsUnique()
                         .HasFilter("\"Active\" = TRUE");
 
-                    b.ToTable("AgentTaskLandings", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_AgentTaskLandings_OidShape", "(\"OriginalSourceSha\" = '' OR ((length(\"OriginalSourceSha\") = 40 OR length(\"OriginalSourceSha\") = 64) AND \"OriginalSourceSha\" ~ '^[0-9a-f]+$')) AND (\"ReviewedSourceSha\" IS NULL OR ((length(\"ReviewedSourceSha\") = 40 OR length(\"ReviewedSourceSha\") = 64) AND \"ReviewedSourceSha\" ~ '^[0-9a-f]+$')) AND (\"PreparationInputSha\" IS NULL OR ((length(\"PreparationInputSha\") = 40 OR length(\"PreparationInputSha\") = 64) AND \"PreparationInputSha\" ~ '^[0-9a-f]+$')) AND (\"SourceRemoteSha\" IS NULL OR ((length(\"SourceRemoteSha\") = 40 OR length(\"SourceRemoteSha\") = 64) AND \"SourceRemoteSha\" ~ '^[0-9a-f]+$'))");
-
-                            t.HasCheckConstraint("CK_AgentTaskLandings_V2Approval", "\"SchemaVersion\" <> 2 OR (\"ApprovalLandRequestId\" IS NOT NULL AND \"ReviewedSourceSha\" IS NOT NULL)");
-
-                            t.HasCheckConstraint("CK_AgentTaskLandings_V2ApprovalEquality", "\"SchemaVersion\" <> 2 OR \"ReviewedSourceSha\" = \"OriginalSourceSha\"");
-                        });
+                    b.ToTable("AgentTaskLandings");
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentTuiModel", b =>
@@ -4680,18 +4536,6 @@ namespace Antiphon.Server.Migrations
                     b.Property<Guid?>("ResolutionTaskId")
                         .HasColumnType("uuid");
 
-                    b.Property<string>("ReviewedRepositoryPath")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("ReviewedSourceRef")
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<string>("ReviewedSourceSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
                     b.Property<int>("Source")
                         .HasColumnType("integer");
 
@@ -4723,9 +4567,6 @@ namespace Antiphon.Server.Migrations
 
                     b.HasIndex("StageTaskId")
                         .HasDatabaseName("IX_StageOutcomes_StageTaskId");
-
-                    b.HasIndex("SubjectTaskId")
-                        .HasDatabaseName("IX_StageOutcomes_SubjectTaskId");
 
                     b.HasIndex("Stage", "RecordedAt")
                         .HasDatabaseName("IX_StageOutcomes_Stage_RecordedAt");
