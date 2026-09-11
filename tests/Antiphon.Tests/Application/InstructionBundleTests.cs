@@ -31,11 +31,11 @@ public class InstructionBundleTests
         code.ShouldNotContain("Run each PC-n as red-then-green");
         code.ShouldContain("MUTATION RUNNER ONLY");
         var mutation = Compose(AgentTaskRole.Mutation);
-        foreach (var text in new[] { "implementation SHA equals HEAD", "clean tracked source/index", "exact methods", "intended assertion red", "restore fixed bytes", "restored green", "missing PC", "next: code", "final SHA", "original Code task ID", "only after restoration" })
+        foreach (var text in new[] { "HEAD=L", "clean tracked source/index", "exact methods", "intended assertion red", "restore fixed bytes", "restored green", "missing PC", "next: decide", "final SHA", "original Code task ID", "Never commit or push" })
             mutation.ShouldContain(text);
         var review = Compose(AgentTaskRole.Review);
         review.ShouldContain("Read-only");
-        review.ShouldContain("PC evidence read-only");
+        review.ShouldContain("Executed PCs are not a prerequisite");
         review.ShouldNotContain("run the listed PCs");
         var design = Compose(AgentTaskRole.TestDesign);
         design.ShouldContain("ordinary V/R floor (Code)");
@@ -551,7 +551,7 @@ public class InstructionBundleTests
 
         var code = InstructionBundles.TextOf(InstructionBundles.StageCode);
         code.ShouldContain("Run each V-n and R-n");
-        code.ShouldContain("next: mutation when implementation and ordinary V/R are complete, even with zero PCs");
+        code.ShouldContain("next: review when implementation and ordinary V/R are complete, even with zero PCs");
         code.ShouldNotContain("fast-forward");
         code.ShouldNotContain("deploy-local");
 
@@ -568,7 +568,7 @@ public class InstructionBundleTests
             "durable identity", "busy", "already eligible", "crash/enqueue-failure", "matching complete UserPrompt",
             "Declare substitutes", "named positive control" }) design.ShouldContain(field);
         var review = InstructionBundles.TextOf(InstructionBundles.StageReview);
-        review.ShouldContain("V/R/PC evidence");
+        review.ShouldContain("ordinary V/R evidence");
         review.ShouldContain("Reject a missing producer-to-recipient test");
         review.ShouldContain("matching complete UserPrompt");
     }

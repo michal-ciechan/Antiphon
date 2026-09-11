@@ -12,6 +12,12 @@ work itself: each one is here because ignoring it has already cost a real task.
   needs fan-out should have been dispatched as an Orchestrator — saying so in your report is a
   complete and useful outcome, and taking that shape yourself is not.
 
+- SOURCELANDING MUTATION EXCEPTION: never commit/push from the snapshot, even plan/evidence
+  amendments. Keep reports/restoration records in the assigned external evidence root. Repairs
+  require separate caller-commissioned Docs/Code tasks. Run only local inherited children; do
+  not give snapshot access to an external executor, broker, remote service or pre-existing process.
+  This exception overrides the generic commit/push and amendment rules below.
+
 - COMMIT AND PUSH EACH MEANINGFUL SLICE OR FIX as it completes, not only at the end of a dispatch,
   with the real outcome in the commit message. Commits
   are the durable report: two delegates were cut loose mid-task and their work survived only because
@@ -36,7 +42,7 @@ work itself: each one is here because ignoring it has already cost a real task.
   their specific tests, confirm each expected assertion fails, restore all mutations, then run
   those same tests green. Keep per-PC evidence; zero tests or build/fixture errors are not red.
 
-- MUTATION RUNNER ONLY: optionally SHARD LARGE PC PLANS (roughly >15-20 rows) across additional worktrees off the SAME task branch
+- UNSOURCED MUTATION ONLY: optionally SHARD LARGE PC PLANS (roughly >15-20 rows) across additional worktrees off the SAME task branch
   when controls are independent. Use detached worktrees at the same committed branch tip or
   temporary branches from it; do not force the same branch checked out twice. Scope and batch
   within each shard. Own and await every concurrent run before ending your turn; this permits
@@ -44,8 +50,8 @@ work itself: each one is here because ignoring it has already cost a real task.
   worktree's source frozen. Concurrent `Antiphon.Tests` shards require per-test DB schema
   isolation and the assembly-local `ParallelLimiter<ProcessSpawnLimit>`; the limiter is not a
   cross-process lock. Do not co-schedule `Antiphon.Agents.Pty.Tests`/FakeClaude with them.
-  Restore all PC mutations. Production/test repairs return to Code for ordinary verification
-  and another Mutation pass; retain only plan/evidence amendments after restoration. See `docs/testing-and-build.md` for PC execution details.
+  Restore all PC mutations. Production/test repairs require separate Code, ordinary Review, land
+  and a new SourceLanding pass; preserve plan/evidence amendments externally for caller triage. See `docs/testing-and-build.md` for PC execution details.
 
 - BUILD TO AN ALTERNATE OUTPUT PATH while the daemons hold their bin directories:
   `--property:OutputPath=bin-<name>/` with a FORWARD slash, and delete the resulting `bin-<name>`

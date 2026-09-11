@@ -101,3 +101,12 @@ Program.cs for routes. The server is :17202 /api/...; the session-runner is :172
 with no /api. There is no GET /api/sessions and no GET /api/board, and GET /api/cards is a 400
 unless you pass one of boardId, status or updatedSince. Typed input goes to POST
 /api/sessions/{id}/messages, not the runner's /input.
+
+Default workflow: Code -> ordinary Review -> caller records same-board companion -> land
+the original Code task -> confirmed publication -> required deployment -> SourceLanding
+Mutation on the companion. Keep every PC/variant pending through Review; use a fresh
+Worktree at O.VerifiedSourceSha. Follow the full CARD-0478 recipe in docs/orchestration-loop.md.
+The landing outcome explicitly starts this continuation; do not synthesize a stage report.
+Read parsed next= elsewhere. Mutation next=decide is caller triage of the full finding report,
+not automatically a human question. Preserve the original Done verdict and keep the companion
+open until its explicit disposition; no automatic card creation, tick spend or alert message.

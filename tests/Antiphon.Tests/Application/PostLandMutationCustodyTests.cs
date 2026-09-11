@@ -25,6 +25,33 @@ namespace Antiphon.Tests.Application;
 public sealed class PostLandMutationCustodyTests
 {
     [Test]
+    public async Task C478_FinalBranchBoundaryReloadsCommittedAuthority()
+    {
+        await using var world = await World.CreateAsync();
+        await world.TerminalAsync();
+        await world.WriteRestorationAsync([]);
+        var branch = "refs/heads/feat/card-task-" + DelegationReportFormatter.Short(world.TaskId);
+        var changed = false;
+        world.Host.Fixture.Git.BeforeObservedCommand = async arguments =>
+        {
+            if (!arguments.SequenceEqual(new[] { "symbolic-ref", "-q", branch })) return;
+            await using var observer = world.Host.CreateContext();
+            await observer.AgentTasks.Where(t => t.Id == world.TaskId).ExecuteUpdateAsync(s =>
+                s.SetProperty(t => t.VerificationExecutionRevision, t => t.VerificationExecutionRevision + 1));
+            changed = true;
+        };
+        world.Host.Fixture.Git.Trace.Clear();
+        await using var scope = world.Host.Services.CreateAsyncScope();
+        var result = await scope.ServiceProvider.GetRequiredService<VerificationCleanupService>().CleanupAsync(world.TaskId, default);
+        changed.ShouldBeTrue();
+        result.DirectoryGone.ShouldBeTrue();
+        result.BranchDeleted.ShouldBeFalse();
+        result.Residue.ShouldBe("verification_authority_changed");
+        world.Host.Fixture.Git.Trace.Any(arguments => arguments.Contains("update-ref")).ShouldBeFalse();
+        (await world.Host.Fixture.RequiredAsync(world.Host.Fixture.Repository, "rev-parse", branch)).Trim().ShouldBe(world.Host.Fixture.SeedSha);
+    }
+
+    [Test]
     public async Task C478_SnapshotSubdirectoryCannotLaunchAnUnboundSession()
     {
         await using var world = await World.CreateAsync();

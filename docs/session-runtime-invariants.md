@@ -9,9 +9,12 @@
   but neither its acknowledgment nor session terminal state is a receipt.
   Ordinary custody reads do not seal a running generation. Store loss, crossed
   identities and unresolved session reuse refuse rather than inventing a new job.
-  The application reservation/importer, task seal and guarded cleanup are still
-  absent: **do not land or deploy this runtime checkpoint alone**. See the
-  [continuation and ordinary evidence](investigations/2026-09-11-card-0478-host-runner-custody-checkpoint.md).
+  The application now persists the immutable generation binding before launch,
+  imports exact receipts and seals the full attempt set before guarded cleanup.
+  All ordinary acceptance and delivery/crash scenarios are not yet complete:
+  **do not land or deploy this checkpoint**. See the
+  [application continuation](investigations/2026-09-11-card-0478-application-custody-checkpoint.md)
+  and [inherited runtime evidence](investigations/2026-09-11-card-0478-host-runner-custody-checkpoint.md).
 
 - **Queued standing launches retain their accepted generation (CARD-0466).** Start holds
   the source and chosen target's delivery locks through reservation commit and launch

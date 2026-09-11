@@ -51,7 +51,12 @@ public sealed class GuardedVerificationRemoval(ILandingGit git, IRepositoryMutat
                 var current = await AuthorityAsync(request, ct);
                 if (current is null || !SameOutputs(authority, current) || await InspectAsync(request, current, ct) is null)
                     return Refuse("verification_authority_or_content_changed");
-                if (!Directory.EnumerateFileSystemEntries(directory).Any()) Directory.Delete(directory, recursive: false);
+                if (!Directory.EnumerateFileSystemEntries(directory).Any())
+                {
+                    current = await AuthorityAsync(request, ct);
+                    if (current is null || !SameOutputs(authority, current)) return Refuse("verification_authority_changed");
+                    Directory.Delete(directory, recursive: false);
+                }
             }
             var final = await AuthorityAsync(request, ct);
             if (final is null || !SameOutputs(authority, final) || await InspectAsync(request, final, ct) is null
@@ -73,6 +78,7 @@ public sealed class GuardedVerificationRemoval(ILandingGit git, IRepositoryMutat
                 return Refuse("source_ref_symbolic_or_unresolved");
             if ((await git.RunAsync(source.RepositoryPath, ["show-ref", "--exists", source.SourceFullRef], ct)).ExitCode == 2)
                 return new(unregistered, directoryGone, true, null);
+            if (await AuthorityAsync(request, ct) is null) return Refuse("verification_authority_changed");
             var deleted = await git.RunAsync(source.RepositoryPath,
                 ["update-ref", "--no-deref", "-d", source.SourceFullRef, request.ExpectedSourceSha], ct);
             if (!deleted.Succeeded) return Refuse("branch_delete_failed");

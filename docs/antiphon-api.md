@@ -688,11 +688,13 @@ sealing a running root. The binding includes the expected capability store ID
 and accepted application generation at microsecond precision. A terminal result
 carries the exact UTF-8 receipt bytes (JSON encodes byte arrays as base64), after
 runner acceptance. Unknown/Unsupported results confer no exit authority.
-The application still cannot commission SourceLanding tasks or clean their trees;
-these runtime routes must not be substituted for the unfinished server admission,
-task seal or cleanup guards. See the
-[checkpoint](investigations/2026-09-11-card-0478-host-runner-custody-checkpoint.md)
-before continuing Code; do not deploy this subset.
+Application task creation now accepts optional `sourceLandingOperationId`; task detail
+exposes it, `sourceLandingSha` and `verificationCleanupResidue`. The explicit
+`POST /api/agent-tasks/{id}/cleanup-verification` seals a terminal sourced task and
+imports all-attempt custody before guarded removal. It never kills or publishes.
+See [ops-http.md](ops-http.md#post-land-verification-card-0478) for the CLI and restrictions.
+The full ordinary acceptance matrix remains incomplete; do not deploy this
+[checkpoint](investigations/2026-09-11-card-0478-application-custody-checkpoint.md).
 
 ## 5. Front doors you probably want instead
 
