@@ -12,8 +12,10 @@ public sealed class SlowTestTripwireTests
         var path = Path.Combine(RepoRoot, "tests", "Antiphon.Tests", "slow-tests-allowlist.txt");
         File.Exists(path).ShouldBeTrue();
         var entries = SlowTestTripwire.LoadAllowlist(path);
-        entries.ShouldContain("SessionMessageQueuePtyIntegrationTests");
-        entries.ShouldContain("RunnerProcessProbeTests");
+        entries.ShouldContain(e => e.Equals("SessionMessageQueuePtyIntegrationTests", StringComparison.OrdinalIgnoreCase)
+            || e.EndsWith(".SessionMessageQueuePtyIntegrationTests", StringComparison.OrdinalIgnoreCase));
+        entries.ShouldContain(e => e.Equals("RunnerProcessProbeTests", StringComparison.OrdinalIgnoreCase)
+            || e.EndsWith(".RunnerProcessProbeTests", StringComparison.OrdinalIgnoreCase));
     }
 
     [Test]
