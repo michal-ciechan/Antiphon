@@ -24,6 +24,16 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     private CancellationTokenSource? _jobMonitorCts;
     private Task? _jobMonitorTask;
     private int _exitReason = (int)PtyExitReason.Unknown;
+    private IPtyCustodyJournal? _custody;
+    private readonly object _launchGate = new();
+    private bool _launchInProgress;
+    private bool _trackedLaunchAttempted;
+    private bool _custodySealed;
+    private volatile bool _custodyInputClosed;
+    private Task? _custodyDrainTask;
+    private IOException? _custodyReadFailure;
+    internal IPtyCustodyNative? CustodyNative { get; init; }
+    public PtyTerminationObservation? CustodyTermination => (_conn as ModernConPtyConnection)?.LastTermination;
 
     public RingBuffer<string> Output { get; } = new(4096);
 
@@ -55,7 +65,7 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     /// </summary>
     public SendLineGateOutcome? LastSendLineOutcome { get; private set; }
 
-    public async Task StartAsync(
+    public Task StartAsync(
         string app,
         string[] commandLine,
         string? cwd = null,
@@ -64,6 +74,38 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         int rows = 30,
         int memoryLimitMb = 0,
         CancellationToken ct = default)
+        => StartCoreAsync(app, commandLine, cwd, env, cols, rows, memoryLimitMb, null, ct);
+
+    public Task StartTrackedAsync(string app, string[] commandLine, string cwd,
+        IDictionary<string, string> env, int cols, int rows, int memoryLimitMb,
+        IPtyCustodyJournal custody, CancellationToken ct = default)
+        => StartCoreAsync(app, commandLine, cwd, env, cols, rows, memoryLimitMb,
+            custody ?? throw new ArgumentNullException(nameof(custody)), ct);
+
+    private async Task StartCoreAsync(string app, string[] commandLine, string? cwd,
+        IDictionary<string, string>? env, int cols, int rows, int memoryLimitMb,
+        IPtyCustodyJournal? custody, CancellationToken ct)
+    {
+        lock (_launchGate)
+        {
+            if (_conn is not null || _launchInProgress || _trackedLaunchAttempted)
+                throw new InvalidOperationException("Already started or tracked launch attempted");
+            _launchInProgress = true;
+            _trackedLaunchAttempted = custody is not null;
+        }
+        try
+        {
+            await LaunchCoreAsync(app, commandLine, cwd, env, cols, rows, memoryLimitMb, custody, ct);
+        }
+        finally
+        {
+            lock (_launchGate) _launchInProgress = false;
+        }
+    }
+
+    private async Task LaunchCoreAsync(string app, string[] commandLine, string? cwd,
+        IDictionary<string, string>? env, int cols, int rows, int memoryLimitMb,
+        IPtyCustodyJournal? custody, CancellationToken ct)
     {
         if (_conn is not null) throw new InvalidOperationException("Already started");
         if (memoryLimitMb < 0) throw new ArgumentOutOfRangeException(nameof(memoryLimitMb));
@@ -87,6 +129,9 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         // before CARD-0037, ceilings and all.
         var backend = PtyBackendPolicy.Resolve(backendOverride);
         Backend = backend;
+        if (custody is not null && backend.Backend != PtyBackend.ModernConPty)
+            throw new PlatformNotSupportedException("verification_custody_unsupported_backend");
+        _custody = custody;
 
         // CARD-0101: aa1c8f1 corrected the escaping in ModernConPtyConnection only. Porta's own
         // formatter (WindowsArguments.Format) is STILL the doubling rule that shredded production —
@@ -116,16 +161,23 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         }
 
         _conn = backend.Backend == PtyBackend.ModernConPty
-            ? ModernConPtyConnection.Spawn(backend.ConPtyDllPath!, options)
+            ? ModernConPtyConnection.Spawn(backend.ConPtyDllPath!, options, custody, CustodyNative, ct)
             : new PortaPtySession(await PtyProvider.SpawnAsync(options, ct));
-        _conn.Exited += exitCode =>
+        void HandleExit(int exitCode)
         {
+            if (_custody is not null) _custodyInputClosed = true;
             if (_jobObject?.HasReachedMemoryLimit() == true)
                 SetExitReason(PtyExitReason.MemoryKilled);
             else
                 SetExitReason(PtyExitReason.ProcessExited);
             _exitTcs.TrySetResult(exitCode);
-        };
+        }
+        _conn.Exited += HandleExit;
+        // The suspended tracked launch retains its process handle before resume. Replay an
+        // already observed root exit after subscribing, without using it as custody proof.
+        if (custody is not null && _conn is ModernConPtyConnection tracked
+            && tracked.ReadExitedCode() is { } exitedCode)
+            HandleExit(exitedCode);
 
         if (memoryLimitMb > 0)
         {
@@ -168,8 +220,15 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
                 OnData?.Invoke(chunk);
             }
         }
-        catch (OperationCanceledException) { }
-        catch (IOException) { }
+        catch (OperationCanceledException ex)
+        {
+            if (_custody is not null)
+                _custodyReadFailure = new IOException("verification_custody_output_drain_canceled", ex);
+        }
+        catch (IOException ex)
+        {
+            if (_custody is not null) _custodyReadFailure = ex;
+        }
     }
 
     public async Task WriteAsync(string data, CancellationToken ct = default)
@@ -372,8 +431,55 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         return done == _exitTcs.Task;
     }
 
+    /// <summary>
+    /// Irreversibly close this producer's input gate before observing OS accounting. A timeout
+    /// or failed read throws and cannot be interpreted as an empty container. No kill occurs here.
+    /// </summary>
+    public async Task<PtyCustodyObservation> SealAndObserveCustodyAsync(CancellationToken ct = default)
+    {
+        await _writeGate.WaitAsync(ct);
+        try
+        {
+            if (_custody is null || _conn is not ModernConPtyConnection modern)
+                throw new PlatformNotSupportedException("verification_custody_unsupported_backend");
+            if (!_custodySealed)
+            {
+                // Fence even if persistence fails; later reads must retry persistence, never input.
+                _custodyInputClosed = true;
+                _custody.RecordSeal();
+                _custodySealed = true;
+            }
+            var active = modern.QueryActiveProcesses();
+            if (active != 0) return new(active, false);
+            // ClosePseudoConsole can wait for its output consumer. Own that native wait as
+            // part of the drain, so a canceled observation cannot strand the HTTP/pipe caller.
+            _custodyDrainTask ??= DrainCustodyOutputAsync(modern);
+            await _custodyDrainTask.WaitAsync(ct);
+            return new(modern.QueryActiveProcesses(), true);
+        }
+        finally { _writeGate.Release(); }
+    }
+
+    private async Task DrainCustodyOutputAsync(ModernConPtyConnection modern)
+    {
+        await Task.Run(modern.CloseConsoleForDrain);
+        if (_readTask is not null) await _readTask;
+        // OnData callbacks and audit recording execute on the awaited read task.
+        if (_audit is not null)
+        {
+            await _audit.DisposeAsync();
+            _audit = null;
+        }
+        if (_custodyReadFailure is not null)
+            throw new IOException("verification_custody_output_drain_failed", _custodyReadFailure);
+    }
+
     public async ValueTask DisposeAsync()
     {
+        if (_custodyDrainTask is not null)
+        {
+            try { await _custodyDrainTask; } catch { }
+        }
         try { _readCts?.Cancel(); } catch { }
         try { _jobMonitorCts?.Cancel(); } catch { }
         if (_readTask is not null)
@@ -394,6 +500,7 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
 
     private async Task WriteCoreAsync(string data, CancellationToken ct)
     {
+        if (_custodyInputClosed) throw new InvalidOperationException("verification_custody_sealed");
         if (_conn is null) throw new InvalidOperationException("Not started");
         var bytes = Encoding.UTF8.GetBytes(data);
         await _conn.WriterStream.WriteAsync(bytes.AsMemory(), ct);

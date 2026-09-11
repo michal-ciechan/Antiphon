@@ -66,6 +66,18 @@ Porta's Kill only signals the TUI; `PortaPtySession` tree-kills the pid we can s
 own that job handle. Inbox tests and fallback still need that. CARD-0221's three-state release rule
 (killed, pooled warm, or owned) is unchanged.
 
+**Opt-in custody foundation (CARD-0478, incomplete Code checkpoint).**
+`StartTrackedAsync` additionally uses a native job-list attribute and suspension
+to establish containment before resuming the root. Its accounting comes from
+the retained original job; termination success is separate. This is a native
+primitive, not advertised host/runner support or cleanup authority. The journal
+interface still needs the amendment's bound durable host/runner implementation.
+The complete feature must ship together; see the
+[checkpoint evidence and remaining work](../investigations/2026-09-11-card-0478-native-custody-checkpoint.md).
+Native tests on Windows 10.0.19045 showed that new-console descendants can add a
+console host to the job count. A descendant fixture must prove nonzero while its
+leaf lives, rather than assume exactly three active processes.
+
 ### 2. One switch, process-wide, inherited — the runner and the pty-hosts move together
 
 `ANTIPHON_PTY_BACKEND` (`inbox`, the default, or `modern`), also settable as
