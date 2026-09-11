@@ -286,6 +286,7 @@ function ConvertTo-NightlyCoverageVerdict {
     }
     if ($null -eq $TerminalRows -or $TerminalRows.Count -eq 0) {
         $coverageComplete = $false
+        $testsPassed = $false
         $reasons += 'zero-terminal-rows'
     }
     $failed = @($TerminalRows | Where-Object { [string]$_.Outcome -eq 'Failed' -or [string]$_.Outcome -eq 'FAIL' })
@@ -354,4 +355,106 @@ function Test-NightlyExpandedRowsPresent {
         if (-not $terminalUids.ContainsKey($uid)) { $missing += $uid }
     }
     return [pscustomobject]@{ Ok = ($missing.Count -eq 0); Missing = $missing }
+}
+
+function Test-NightlyRequiredClassesPresent {
+    param([object[]]$TerminalRows, [string[]]$RequiredClasses)
+    if ($null -eq $RequiredClasses -or @($RequiredClasses).Count -eq 0) {
+        return [pscustomobject]@{ Ok = $true; Missing = @() }
+    }
+    $present = @{}
+    foreach ($r in @($TerminalRows)) {
+        $cn = [string]$r.ClassName
+        if ([string]::IsNullOrWhiteSpace($cn)) { continue }
+        $present[$cn] = $true
+        $present[(Get-NightlyClassNameFromIdentity -ClassName $cn)] = $true
+    }
+    $missing = @()
+    foreach ($c in @($RequiredClasses)) {
+        $name = [string]$c
+        if ([string]::IsNullOrWhiteSpace($name)) { continue }
+        if (-not $present.ContainsKey($name)) { $missing += $name }
+    }
+    return [pscustomobject]@{ Ok = ($missing.Count -eq 0); Missing = $missing }
+}
+
+function ConvertTo-NightlyNativeSuiteVerdict {
+    param(
+        [string]$TrxPath,
+        [string]$DiscoveryPath = '',
+        [string]$RunDirectory,
+        [datetime]$NotBeforeUtc,
+        [int]$ProcessExit,
+        [string]$Sha,
+        [string]$ExpectedSha,
+        [string]$GitRef,
+        [string]$ExpectedRef,
+        [string]$PolicyHash,
+        [string]$ExpectedPolicyHash,
+        [string[]]$RequiredClasses = @()
+    )
+    $reasons = @()
+    if ([string]::IsNullOrWhiteSpace($TrxPath) -or -not (Test-Path -LiteralPath $TrxPath)) {
+        return [pscustomobject]@{
+            coverageComplete = $false
+            testsPassed = $false
+            reasons = @('missing-trx')
+            rows = @()
+        }
+    }
+    $fresh = Test-NightlyFreshEvidence -Path $TrxPath -RunDirectory $RunDirectory -NotBeforeUtc $NotBeforeUtc -InvocationId ''
+    if (-not $fresh.Ok) {
+        return [pscustomobject]@{
+            coverageComplete = $false
+            testsPassed = $false
+            reasons = @($fresh.Reason)
+            rows = @()
+        }
+    }
+    $rows = @()
+    try {
+        $rows = @(Read-NightlyTrxIdentities -TrxPath $TrxPath)
+    } catch {
+        return [pscustomobject]@{
+            coverageComplete = $false
+            testsPassed = $false
+            reasons = @($_.Exception.Message)
+            rows = @()
+        }
+    }
+    $discoveryNodes = @()
+    if (-not [string]::IsNullOrWhiteSpace($DiscoveryPath) -and (Test-Path -LiteralPath $DiscoveryPath)) {
+        try {
+            $disc = Read-NightlyDiscoveryDocument -Path $DiscoveryPath
+            $discoveryNodes = @($disc.Nodes)
+        } catch {
+            return [pscustomobject]@{
+                coverageComplete = $false
+                testsPassed = $false
+                reasons = @($_.Exception.Message)
+                rows = $rows
+            }
+        }
+    }
+    $verdict = ConvertTo-NightlyCoverageVerdict -TerminalRows $rows -ProcessExit $ProcessExit `
+        -Sha $Sha -ExpectedSha $ExpectedSha -GitRef $GitRef -ExpectedRef $ExpectedRef `
+        -PolicyHash $PolicyHash -ExpectedPolicyHash $ExpectedPolicyHash `
+        -DiscoveryNodes $discoveryNodes -UsedDiscoveryAsExecution $false
+    $coverageComplete = [bool]$verdict.coverageComplete
+    $testsPassed = [bool]$verdict.testsPassed
+    foreach ($r in @($verdict.reasons)) { $reasons += $r }
+    if ($RequiredClasses -and @($RequiredClasses).Count -gt 0) {
+        $member = Test-NightlyRequiredClassesPresent -TerminalRows $rows -RequiredClasses $RequiredClasses
+        if (-not $member.Ok) {
+            $coverageComplete = $false
+            $testsPassed = $false
+            $reasons += ('missing-required-class {0}' -f ($member.Missing -join ','))
+        }
+    }
+    return [pscustomobject]@{
+        coverageComplete = $coverageComplete
+        testsPassed = $testsPassed
+        reasons = $reasons
+        rows = $rows
+    }
 }

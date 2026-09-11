@@ -135,7 +135,13 @@ function Test-C487_G007 {
         $rec = @{ pid = $PID; startedAt = (Get-Date).ToUniversalTime().AddMinutes(-$age).ToString('o'); runId = 'live1' } | ConvertTo-Json -Compress
         [System.IO.File]::WriteAllText($lockPath, $rec)
         $r = Invoke-FxRun -Fx $fx
-        Assert-C487 -Cond ($r.Refusal -eq 'live-owner' -or $r.Refusal -eq 'lock-held') -Name ('G007 age {0}' -f $age) -Detail $r.Refusal
+        $lockAfter = ''
+        if (Test-Path -LiteralPath $lockPath) { $lockAfter = [System.IO.File]::ReadAllText($lockPath) }
+        $trace = ''
+        if (Test-Path -LiteralPath $fx.Trace) { $trace = Get-Content -LiteralPath $fx.Trace -Raw }
+        $kept = $lockAfter -match 'live1'
+        $noReplace = ($trace -notmatch '(?i)delete|replace') -and $kept
+        Assert-C487 -Cond ($r.Refusal -eq 'live-owner' -and $noReplace) -Name ('G007 age {0}' -f $age) -Detail ($r.Refusal + ' lock=' + $lockAfter)
     }
 }
 

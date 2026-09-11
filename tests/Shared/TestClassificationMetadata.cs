@@ -49,14 +49,18 @@ public static class TestClassificationMetadata
         var set = new HashSet<string>(StringComparer.Ordinal);
         foreach (var attr in member.GetCustomAttributes(inherit: true))
         {
+            string? value = null;
             if (attr is CategoryAttribute category)
+                value = category.Category;
+            else if (attr.GetType().Name is "CategoryAttribute" or "Category")
             {
-                var value = category.Category;
-                if (string.IsNullOrWhiteSpace(value))
-                    value = attr.GetType().GetProperty("Value")?.GetValue(attr) as string;
-                if (!string.IsNullOrWhiteSpace(value))
-                    set.Add(value);
+                value = attr.GetType().GetProperty("Category")?.GetValue(attr) as string
+                    ?? attr.GetType().GetProperty("Value")?.GetValue(attr) as string;
             }
+            if (string.IsNullOrWhiteSpace(value))
+                value = attr.GetType().GetProperty("Value")?.GetValue(attr) as string;
+            if (!string.IsNullOrWhiteSpace(value))
+                set.Add(value);
         }
         return set.OrderBy(c => c, StringComparer.Ordinal).ToArray();
     }
@@ -154,6 +158,12 @@ public static class TestClassificationMetadata
                 errors.Add("unmarked-registered " + match.FullName);
         }
 
+        foreach (var cls in classes)
+        {
+            if (cls.HasMethodLevelSlow)
+                errors.Add("method-level-slow " + cls.FullName);
+        }
+
         foreach (var cls in slow)
         {
             var registered = entries.Any(e =>
@@ -161,8 +171,6 @@ public static class TestClassificationMetadata
                 (!repositoryMode && string.Equals(e.Name, cls.SimpleName, StringComparison.OrdinalIgnoreCase)));
             if (!registered)
                 errors.Add("unregistered-marked " + cls.FullName);
-            if (cls.HasMethodLevelSlow)
-                errors.Add("method-level-slow " + cls.FullName);
         }
 
         if (string.Equals(assembly.GetName().Name, "Antiphon.Tests", StringComparison.OrdinalIgnoreCase))

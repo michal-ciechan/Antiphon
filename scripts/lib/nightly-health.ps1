@@ -276,6 +276,185 @@ function Test-NightlyMonitorRouting {
     return $true
 }
 
+function Get-NightlyMonitorResultPath {
+    param([string]$StateRoot)
+    return (Join-Path $StateRoot 'last-monitor.json')
+}
+
+function Get-NightlyRecipientReceiptPath {
+    param([string]$StateRoot)
+    return (Join-Path $StateRoot 'notification-receipts.json')
+}
+
+function Get-NightlyWindmillConfig {
+    $base = [string]$env:WINDMILL_BASE_URL
+    $token = [string]$env:WINDMILL_TOKEN
+    $tokenFile = [string]$env:WINDMILL_TOKEN_FILE
+    if ([string]::IsNullOrWhiteSpace($token) -and -not [string]::IsNullOrWhiteSpace($tokenFile)) {
+        if (Test-Path -LiteralPath $tokenFile) {
+            $token = [System.IO.File]::ReadAllText($tokenFile).Trim()
+        }
+    }
+    $workspace = [string]$env:WINDMILL_WORKSPACE
+    if ([string]::IsNullOrWhiteSpace($workspace)) { $workspace = 'mc' }
+    $scriptPath = [string]$env:ANTIPHON_NIGHTLY_WINDMILL_SCRIPT
+    if ([string]::IsNullOrWhiteSpace($scriptPath)) { $scriptPath = 'u/lndcobra/antiphon_nightly_tests' }
+    $notifyPath = [string]$env:ANTIPHON_NIGHTLY_NOTIFY_SCRIPT
+    if ([string]::IsNullOrWhiteSpace($notifyPath)) { $notifyPath = 'u/lndcobra/telegram_notify' }
+    $hasCreds = (-not [string]::IsNullOrWhiteSpace($base) -and -not [string]::IsNullOrWhiteSpace($token))
+    return [pscustomobject]@{
+        BaseUrl = $base
+        Token = $token
+        Workspace = $workspace
+        ScriptPath = $scriptPath
+        NotifyPath = $notifyPath
+        HasCredentials = $hasCreds
+    }
+}
+
+function Invoke-NightlyWindmillHttp {
+    param(
+        [string]$Method,
+        [string]$Url,
+        [string]$Token,
+        $Body = $null
+    )
+    $headers = @{ Authorization = ('Bearer {0}' -f $Token) }
+    $params = @{
+        Method = $Method
+        Uri = $Url
+        Headers = $headers
+        UseBasicParsing = $true
+        TimeoutSec = 30
+    }
+    if ($null -ne $Body) {
+        $params.ContentType = 'application/json; charset=utf-8'
+        $params.Body = ($Body | ConvertTo-Json -Compress -Depth 8)
+    }
+    $resp = Invoke-WebRequest @params
+    $text = [string]$resp.Content
+    if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+    return ($text | ConvertFrom-Json)
+}
+
+function New-NightlyProductionWindmillApi {
+    param($Config)
+    if ($null -eq $Config -or -not [bool]$Config.HasCredentials) { return $null }
+    $base = ([string]$Config.BaseUrl).TrimEnd('/')
+    $ws = [string]$Config.Workspace
+    $token = [string]$Config.Token
+    $scriptPath = [string]$Config.ScriptPath
+    $escaped = ($scriptPath -replace '\\', '/')
+    return @{
+        GetRegistration = {
+            $obj = Invoke-NightlyWindmillHttp -Method GET -Url ('{0}/api/w/{1}/scripts/get/p/{2}' -f $base, $ws, $escaped) -Token $token
+            if ($null -eq $obj) { return $null }
+            return @{
+                script = $true
+                hash = [string]$obj.hash
+                tag = [string]$obj.tag
+                path = [string]$obj.path
+            }
+        }.GetNewClosure()
+        GetSchedule = {
+            $obj = Invoke-NightlyWindmillHttp -Method GET -Url ('{0}/api/w/{1}/schedules/get/{2}' -f $base, $ws, $escaped) -Token $token
+            if ($null -eq $obj) { return $null }
+            $paused = $false
+            if ($obj.PSObject.Properties['paused']) { $paused = [bool]$obj.paused }
+            $enabled = $true
+            if ($obj.PSObject.Properties['enabled']) { $enabled = [bool]$obj.enabled }
+            return @{
+                enabled = $enabled
+                paused = $paused
+                tag = [string]$obj.tag
+                args = $obj.args
+                workerVersion = [string]$obj.worker_version
+                serverVersion = [string]$obj.server_version
+            }
+        }.GetNewClosure()
+        GetJobs = {
+            $url = '{0}/api/w/{1}/jobs/list?script_path_exact={2}&per_page=20' -f $base, $ws, [uri]::EscapeDataString($escaped)
+            $obj = Invoke-NightlyWindmillHttp -Method GET -Url $url -Token $token
+            $rows = @()
+            foreach ($j in @($obj)) {
+                $result = $j.result
+                $nativeRunId = ''
+                $sha = ''
+                $localDue = ''
+                if ($result) {
+                    if ($result.nativeRunId) { $nativeRunId = [string]$result.nativeRunId }
+                    elseif ($result.runId) { $nativeRunId = [string]$result.runId }
+                    if ($result.sha) { $sha = [string]$result.sha }
+                    if ($result.localDueDate) { $localDue = [string]$result.localDueDate }
+                }
+                $rows += @{
+                    id = [string]$j.id
+                    status = [string]$j.running
+                    nativeRunId = $nativeRunId
+                    sha = $sha
+                    localDueDate = $localDue
+                    scheduledFor = $j.scheduled_for
+                }
+            }
+            return $rows
+        }.GetNewClosure()
+        EnqueueNotification = {
+            param($Event, [string]$Destination)
+            $text = ('Antiphon nightly monitor failureKind={0} run={1} sha={2}' -f [string]$Event.failureKind, [string]$Event.nativeRunId, [string]$Event.sha)
+            $body = @{ text = $text; chat_id = $Destination }
+            $job = Invoke-NightlyWindmillHttp -Method POST `
+                -Url ('{0}/api/w/{1}/jobs/run/p/{2}' -f $base, $ws, [string]$Config.NotifyPath) `
+                -Token $token -Body $body
+            return [pscustomobject]@{
+                Enqueued = $true
+                TransportStatus = 201
+                JobId = [string]$job
+                Received = $false
+            }
+        }.GetNewClosure()
+    }
+}
+
+function Get-NightlyWindmillApi {
+    if ($script:NightlySeams -and $script:NightlySeams.WindmillApi) {
+        return $script:NightlySeams.WindmillApi
+    }
+    return (New-NightlyProductionWindmillApi -Config (Get-NightlyWindmillConfig))
+}
+
+function Get-NightlyRecipientView {
+    param([string]$StateRoot)
+    if ($script:NightlySeams -and $script:NightlySeams.RecipientView) {
+        return @($script:NightlySeams.RecipientView.Invoke())
+    }
+    $path = Get-NightlyRecipientReceiptPath -StateRoot $StateRoot
+    if (-not (Test-Path -LiteralPath $path)) { return @() }
+    $obj = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($obj.receipts) { return @($obj.receipts) }
+    if ($obj -is [System.Array]) { return @($obj) }
+    return @($obj)
+}
+
+function Get-NightlyNotificationSink {
+    param($Api, [string]$AuthorizedDestination)
+    if ($script:NightlySeams -and $script:NightlySeams.NotificationSink) {
+        return $script:NightlySeams.NotificationSink
+    }
+    if ($null -eq $Api -or -not $Api.EnqueueNotification) { return $null }
+    if ([string]::IsNullOrWhiteSpace($AuthorizedDestination)) { return $null }
+    $dest = $AuthorizedDestination
+    return {
+        param($Event)
+        return $Api.EnqueueNotification.Invoke($Event, $dest)
+    }.GetNewClosure()
+}
+
+function Save-NightlyMonitorResult {
+    param([string]$StateRoot, $Result)
+    $path = Get-NightlyMonitorResultPath -StateRoot $StateRoot
+    Write-NightlyAtomicJson -Path $path -Object $Result
+}
+
 function Invoke-AntiphonNightlyHealth {
     param(
         [string]$StateRoot,
@@ -287,10 +466,7 @@ function Invoke-AntiphonNightlyHealth {
     )
     Import-NightlySeams -SeamsPath $SeamsPath
     $now = Get-NightlyUtcNow
-    $api = $null
-    if ($script:NightlySeams -and $script:NightlySeams.WindmillApi) {
-        $api = $script:NightlySeams.WindmillApi
-    }
+    $api = Get-NightlyWindmillApi
     $registration = $null
     $schedule = $null
     $jobs = @()
@@ -307,6 +483,7 @@ function Invoke-AntiphonNightlyHealth {
     $health = Test-NightlyMonitorHealth -Registration $registration -Schedule $schedule -Jobs $jobs `
         -NativeState $native -NowUtc $now -ExpectedScriptHash $ExpectedScriptHash -ExpectedPolicyHash $ExpectedPolicyHash
     $notify = $null
+    $receiptOk = $false
     if (-not $health.Healthy) {
         if ([string]::IsNullOrWhiteSpace($AuthorizedDestination) -and -not ($script:NightlySeams -and $script:NightlySeams.AllowOfflineNotify)) {
             $health.Reasons += 'unauthorized-destination'
@@ -324,16 +501,26 @@ function Invoke-AntiphonNightlyHealth {
             }
             $storePath = Get-NightlyNotificationStorePath -StateRoot $StateRoot
             $saved = Add-NightlyNotificationEvent -StorePath $storePath -Event $event
-            $sink = $null
-            if ($script:NightlySeams -and $script:NightlySeams.NotificationSink) {
-                $sink = $script:NightlySeams.NotificationSink
-            }
+            $sink = Get-NightlyNotificationSink -Api $api -AuthorizedDestination $AuthorizedDestination
             try {
                 if ($sink) { $notify = Invoke-NightlyNotificationEnqueue -Event $saved.Event -Sink $sink }
             } catch {
-                $notify = [pscustomobject]@{ Enqueued = $false; Error = $_.Exception.Message }
+                $notify = [pscustomobject]@{ Enqueued = $false; Error = $_.Exception.Message; Received = $false }
                 $health.Healthy = $false
                 $health.Reasons += 'enqueue-failed'
+            }
+            $view = Get-NightlyRecipientView -StateRoot $StateRoot
+            $receiptOk = Test-NightlyNotificationReceipt -Event $saved.Event -RecipientView $view
+            if (-not $receiptOk) {
+                $health.Healthy = $false
+                if ($health.Reasons -notcontains 'notification-unreceived') {
+                    $health.Reasons += 'notification-unreceived'
+                }
+            }
+            if ($notify -and $notify.PSObject.Properties['Received']) {
+                $notify.Received = [bool]$receiptOk
+            } elseif ($null -ne $notify) {
+                $notify = [pscustomobject]@{ Enqueued = [bool]$notify.Enqueued; Received = [bool]$receiptOk; Transport = $notify }
             }
         }
     }
@@ -341,7 +528,10 @@ function Invoke-AntiphonNightlyHealth {
         ExitCode = $(if ($health.Healthy) { 0 } else { 1 })
         Health = $health
         Notification = $notify
+        Receipt = $receiptOk
+        RecordedAt = $now.ToString('o')
     }
+    Save-NightlyMonitorResult -StateRoot $StateRoot -Result $out
     if ($PassThru) { return $out }
     return $out
 }

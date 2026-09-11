@@ -8,7 +8,6 @@ $script:AntiphonNightlyCommonLoaded = $true
 $script:NightlySeams = $null
 $script:NightlyOwnedLock = $null
 $script:NightlyLockStream = $null
-$script:NightlyLockSelfRetry = $false
 
 function Get-NightlyUtcNow {
     if ($script:NightlySeams -and $script:NightlySeams.UtcNow) {
@@ -379,6 +378,55 @@ function Write-NightlyTrace {
     }
 }
 
+function Start-NightlyProcess {
+    param(
+        [hashtable]$StartParams,
+        [hashtable]$Environment = $null
+    )
+    if ($null -eq $Environment) {
+        return Start-Process @StartParams
+    }
+    $backup = @{}
+    $current = [System.Environment]::GetEnvironmentVariables('Process')
+    foreach ($entry in $current.GetEnumerator()) {
+        $backup[[string]$entry.Key] = [string]$entry.Value
+    }
+    try {
+        foreach ($name in @($backup.Keys)) {
+            $present = $false
+            foreach ($k in $Environment.Keys) {
+                if ([string]::Equals([string]$k, [string]$name, [StringComparison]::OrdinalIgnoreCase)) {
+                    $present = $true
+                    break
+                }
+            }
+            if (-not $present) {
+                [System.Environment]::SetEnvironmentVariable([string]$name, $null, 'Process')
+            }
+        }
+        foreach ($k in $Environment.Keys) {
+            $val = [string]$Environment[$k]
+            if ([string]::IsNullOrEmpty($val)) {
+                [System.Environment]::SetEnvironmentVariable([string]$k, $null, 'Process')
+            } else {
+                [System.Environment]::SetEnvironmentVariable([string]$k, $val, 'Process')
+            }
+        }
+        return Start-Process @StartParams
+    } finally {
+        $after = [System.Environment]::GetEnvironmentVariables('Process')
+        foreach ($entry in $after.GetEnumerator()) {
+            $name = [string]$entry.Key
+            if (-not $backup.ContainsKey($name)) {
+                [System.Environment]::SetEnvironmentVariable($name, $null, 'Process')
+            }
+        }
+        foreach ($name in $backup.Keys) {
+            [System.Environment]::SetEnvironmentVariable([string]$name, [string]$backup[$name], 'Process')
+        }
+    }
+}
+
 function Test-NightlyProcessAlive {
     param([int]$ProcessId)
     if ($ProcessId -le 0) { return $false }
@@ -532,21 +580,13 @@ function Enter-NightlyExclusiveLock {
         if ($existing -and [int]$existing.pid -gt 0) {
             $alive = Test-NightlyProcessAlive -ProcessId ([int]$existing.pid)
         }
-        if ($alive -and [int]$existing.pid -eq $PID -and [string]::IsNullOrWhiteSpace($ContinueRunId) -and -not $script:NightlyLockSelfRetry) {
-            $script:NightlyLockSelfRetry = $true
-            if ($script:NightlyLockStream) {
-                try { $script:NightlyLockStream.Dispose() } catch { }
-                $script:NightlyLockStream = $null
-            }
-            Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
-            $script:NightlyOwnedLock = $false
-            try {
-                return (Enter-NightlyExclusiveLock -StateRoot $StateRoot -RunId $RunId -ContinueRunId '' -ContinueParentPid 0 -ContinueParentStartedAt '')
-            } finally {
-                $script:NightlyLockSelfRetry = $false
-            }
-        }
         if ($alive) {
+            $samePid = [int]$existing.pid -eq $PID
+            $sameRun = [string]::Equals([string]$existing.runId, $RunId, [StringComparison]::OrdinalIgnoreCase)
+            if ($samePid -and $sameRun -and [string]::IsNullOrWhiteSpace($ContinueRunId)) {
+                $script:NightlyOwnedLock = $true
+                return [pscustomobject]@{ Ok = $true; Reason = 'acquired'; OwnsLock = $true; Record = $existing }
+            }
             return [pscustomobject]@{ Ok = $false; Reason = 'live-owner'; OwnsLock = $false; Record = $existing }
         }
         return [pscustomobject]@{ Ok = $false; Reason = 'lock-held'; OwnsLock = $false; Record = $existing }
