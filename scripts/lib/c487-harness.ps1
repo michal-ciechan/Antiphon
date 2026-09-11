@@ -158,7 +158,8 @@ function Write-C487NativePassSeams {
         [string]$Path,
         [string]$TracePath,
         [object[]]$Rows,
-        [object[]]$DiscoveryNodes
+        [object[]]$DiscoveryNodes,
+        [switch]$OmitDiscovery
     )
     $trxLiteral = @()
     foreach ($r in @($Rows)) {
@@ -179,15 +180,22 @@ function Write-C487NativePassSeams {
     }
     $rowText = $trxLiteral -join ', '
     $nodeText = $nodeLiteral -join ', '
+    $omitLiteral = $(if ($OmitDiscovery) { '$true' } else { '$false' })
     $extra = [scriptblock]::Create(@"
 `$NightlySeams.StartProcess = {
     param(`$FilePath, `$ArgumentList, `$WorkingDirectory, `$TimeoutMilliseconds, `$Environment)
     Add-Content -LiteralPath '$TracePath' -Value (('EXEC {0} {1}' -f `$FilePath, ((`$ArgumentList) -join ' '))) -Encoding ASCII
     `$trx = ''
     `$args = @(`$ArgumentList)
+    `$listTests = `$false
+    `$diagDir = ''
     for (`$i = 0; `$i -lt `$args.Count; `$i++) {
         if ([string]`$args[`$i] -eq '--report-trx-filename' -and (`$i + 1) -lt `$args.Count) {
             `$trx = [string]`$args[`$i + 1]
+        }
+        if ([string]`$args[`$i] -eq '--list-tests') { `$listTests = `$true }
+        if ([string]`$args[`$i] -eq '--diagnostic-output-directory' -and (`$i + 1) -lt `$args.Count) {
+            `$diagDir = [string]`$args[`$i + 1]
         }
     }
     if (-not [string]::IsNullOrWhiteSpace(`$trx)) {
@@ -206,7 +214,22 @@ function Write-C487NativePassSeams {
         `$td = Split-Path -Parent `$trx
         if (`$td -and -not (Test-Path -LiteralPath `$td)) { New-Item -ItemType Directory -Path `$td -Force | Out-Null }
         [System.IO.File]::WriteAllText(`$trx, `$xml)
-        `$discPath = [System.IO.Path]::ChangeExtension(`$trx, '.discovery.json')
+        `$omitDiscovery = $omitLiteral
+        if (-not `$omitDiscovery) {
+            `$discPath = [System.IO.Path]::ChangeExtension(`$trx, '.discovery.json')
+            `$nodes = @($nodeText)
+            `$disc = @{
+                format = 'antiphon-tunit-discovery-v1'
+                tunitVersion = '1.44.0'
+                mtpVersion = '2.2.2'
+                assemblyHash = 'c487-test-hash'
+                nodes = `$nodes
+            }
+            `$disc | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath `$discPath -Encoding UTF8
+        }
+    }
+    if (`$listTests -and -not [string]::IsNullOrWhiteSpace(`$diagDir)) {
+        if (-not (Test-Path -LiteralPath `$diagDir)) { New-Item -ItemType Directory -Path `$diagDir -Force | Out-Null }
         `$nodes = @($nodeText)
         `$disc = @{
             format = 'antiphon-tunit-discovery-v1'
@@ -215,7 +238,8 @@ function Write-C487NativePassSeams {
             assemblyHash = 'c487-test-hash'
             nodes = `$nodes
         }
-        `$disc | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath `$discPath -Encoding UTF8
+        `$diagPath = Join-Path `$diagDir 'log.diag'
+        `$disc | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath `$diagPath -Encoding UTF8
     }
     `$jsonIdx = [array]::IndexOf(`$args, '-JsonResultPath')
     if (`$jsonIdx -ge 0 -and (`$jsonIdx + 1) -lt `$args.Count) {

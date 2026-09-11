@@ -202,6 +202,126 @@ function ConvertFrom-NightlyDiagnosticLog {
     return [pscustomobject]@{ Nodes = $nodes }
 }
 
+function ConvertTo-NightlyNormalizedOutcome {
+    param([string]$Outcome)
+    $raw = ([string]$Outcome).Trim().ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($raw)) { return 'Unknown' }
+    switch ($raw) {
+        'passed' { return 'Passed' }
+        'pass' { return 'Passed' }
+        'failed' { return 'Failed' }
+        'fail' { return 'Failed' }
+        'error' { return 'Failed' }
+        'skipped' { return 'Skipped' }
+        'notexecuted' { return 'NotExecuted' }
+        'notrunnable' { return 'NotExecuted' }
+        'pending' { return 'NotExecuted' }
+        default { return 'Unknown' }
+    }
+}
+
+function ConvertTo-NightlyDiscoveryDocument {
+    param(
+        [object[]]$Nodes,
+        [string]$AssemblyHash
+    )
+    if ([string]::IsNullOrWhiteSpace($AssemblyHash)) { throw 'missing assemblyHash' }
+    $mapped = @()
+    foreach ($n in @($Nodes)) {
+        $uid = [string]$n.uid
+        $typeName = [string]$n.type
+        $method = [string]$n.method
+        $ns = [string]$n.namespace
+        $assembly = [string]$n.assembly
+        $signature = [string]$n.signature
+        $state = [string]$n.state
+        if ([string]::IsNullOrWhiteSpace($state)) { $state = 'Discovered' }
+        $mapped += [ordered]@{
+            uid = $uid
+            assembly = $assembly
+            namespace = $ns
+            type = $typeName
+            method = $method
+            signature = $signature
+            state = $state
+        }
+    }
+    return [ordered]@{
+        format = $script:NightlyDiscoveryFormat
+        tunitVersion = $script:NightlySupportedTunit
+        mtpVersion = $script:NightlySupportedMtp
+        assemblyHash = $AssemblyHash
+        nodes = $mapped
+    }
+}
+
+function Write-NightlyDiscoveryDocument {
+    param(
+        [string]$Path,
+        $Document
+    )
+    Write-NightlyAtomicJson -Path $Path -Object $Document
+}
+
+function Get-NightlyLatestDiagnosticLog {
+    param([string]$Directory)
+    if ([string]::IsNullOrWhiteSpace($Directory) -or -not (Test-Path -LiteralPath $Directory)) {
+        return $null
+    }
+    $files = @(Get-ChildItem -LiteralPath $Directory -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending)
+    if ($files.Count -eq 0) { return $null }
+    $diag = @($files | Where-Object { [string]$_.Extension -eq '.diag' })
+    if ($diag.Count -gt 0) { return $diag[0].FullName }
+    return $files[0].FullName
+}
+
+function Get-NightlyAssemblyHash {
+    param([string]$ExePath)
+    $dll = [System.IO.Path]::ChangeExtension($ExePath, '.dll')
+    if (Test-Path -LiteralPath $dll) { return (Get-NightlyFileSha256 -Path $dll) }
+    if (Test-Path -LiteralPath $ExePath) { return (Get-NightlyFileSha256 -Path $ExePath) }
+    return (Get-NightlySha256Text -Text ([string]$ExePath))
+}
+
+function Invoke-NightlyProduceDiscovery {
+    param(
+        [string]$ExePath,
+        [string]$OutputPath,
+        [string]$DiagnosticDirectory,
+        [string]$LogPath,
+        [string]$WorkingDirectory,
+        [hashtable]$Environment = $null,
+        [int]$TimeoutMilliseconds = 600000
+    )
+    if ([string]::IsNullOrWhiteSpace($ExePath)) { throw 'missing assembly exe' }
+    if ([string]::IsNullOrWhiteSpace($OutputPath)) { throw 'missing discovery output' }
+    if ([string]::IsNullOrWhiteSpace($DiagnosticDirectory)) { throw 'missing diagnostic directory' }
+    New-Item -ItemType Directory -Path $DiagnosticDirectory -Force | Out-Null
+    $args = @(
+        '--list-tests',
+        '--no-progress',
+        '--no-ansi',
+        '--diagnostic',
+        '--diagnostic-output-directory',
+        $DiagnosticDirectory
+    )
+    $run = Invoke-NightlyOwnedProcess -FilePath $ExePath -ArgumentList $args `
+        -WorkingDirectory $WorkingDirectory -TimeoutMilliseconds $TimeoutMilliseconds `
+        -Environment $Environment -LogPath $LogPath
+    if ([bool]$run.TimedOut) { throw 'discovery list-tests timed out' }
+    $diagPath = Get-NightlyLatestDiagnosticLog -Directory $DiagnosticDirectory
+    if ([string]::IsNullOrWhiteSpace($diagPath)) {
+        throw ('missing diagnostic discovery log in {0}' -f $DiagnosticDirectory)
+    }
+    $parsed = ConvertFrom-NightlyDiagnosticLog -Path $diagPath -Kind discovery
+    $nodes = @($parsed.Nodes)
+    if ($nodes.Count -eq 0) { throw 'empty discovery' }
+    $hash = Get-NightlyAssemblyHash -ExePath $ExePath
+    $doc = ConvertTo-NightlyDiscoveryDocument -Nodes $nodes -AssemblyHash $hash
+    Write-NightlyDiscoveryDocument -Path $OutputPath -Document $doc
+    return $doc
+}
+
 function Test-NightlyFreshEvidence {
     param(
         [string]$Path,
@@ -290,11 +410,22 @@ function ConvertTo-NightlyCoverageVerdict {
         $testsPassed = $false
         $reasons += 'zero-terminal-rows'
     }
-    $failed = @($TerminalRows | Where-Object { [string]$_.Outcome -eq 'Failed' -or [string]$_.Outcome -eq 'FAIL' })
-    $skipped = @($TerminalRows | Where-Object { [string]$_.Outcome -eq 'Skipped' })
+    $failed = @($TerminalRows | Where-Object { (ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$_.Outcome)) -eq 'Failed' })
+    $skipped = @($TerminalRows | Where-Object { (ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$_.Outcome)) -eq 'Skipped' })
+    $unexecuted = @($TerminalRows | Where-Object { (ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$_.Outcome)) -eq 'NotExecuted' })
+    $unknown = @($TerminalRows | Where-Object { (ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$_.Outcome)) -eq 'Unknown' })
     if ($failed.Count -gt 0) {
         $testsPassed = $false
         $reasons += 'failed-row'
+    }
+    if ($unexecuted.Count -gt 0) {
+        $coverageComplete = $false
+        $reasons += ('unexecuted-outcome:{0}' -f (($unexecuted | ForEach-Object { $_.Identity }) -join ','))
+    }
+    if ($unknown.Count -gt 0) {
+        $coverageComplete = $false
+        $testsPassed = $false
+        $reasons += ('unknown-outcome:{0}' -f (($unknown | ForEach-Object { $_.Identity }) -join ','))
     }
     if ($ProcessExit -ne 0) {
         $testsPassed = $false
@@ -323,7 +454,7 @@ function ConvertTo-NightlyCoverageVerdict {
         $coverageComplete = $false
         $reasons += ('policy-mismatch {0} vs {1}' -f $PolicyHash, $ExpectedPolicyHash)
     }
-    $passedCount = @($TerminalRows | Where-Object { [string]$_.Outcome -eq 'Passed' -or [string]$_.Outcome -eq 'pass' }).Count
+    $passedCount = @($TerminalRows | Where-Object { (ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$_.Outcome)) -eq 'Passed' }).Count
     return [pscustomobject]@{
         coverageComplete = [bool]$coverageComplete
         testsPassed = [bool]$testsPassed
@@ -347,7 +478,10 @@ function Test-NightlyCounterAgreement {
 function Test-NightlyExpandedRowsPresent {
     param([object[]]$DiscoveryNodes, [object[]]$TerminalRows, [string[]]$RequiredUids)
     $terminalUids = @{}
+    $executed = @('Passed', 'Failed', 'Skipped')
     foreach ($r in @($TerminalRows)) {
+        $outcome = ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$r.Outcome)
+        if ($executed -notcontains $outcome) { continue }
         if ($r.Uid) { $terminalUids[[string]$r.Uid] = $true }
         if ($r.TestId) { $terminalUids[[string]$r.TestId] = $true }
         if (-not $r.Uid -and -not $r.TestId -and $r.Identity) {

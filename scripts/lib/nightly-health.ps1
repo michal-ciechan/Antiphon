@@ -172,6 +172,64 @@ function Invoke-NightlyNotificationEnqueue {
     return & $Sink $Event
 }
 
+function Test-NightlyNotificationTransportAccepted {
+    param($Event)
+    if ($null -eq $Event) { return $false }
+    try {
+        if ([bool]$Event.transportAccepted) { return $true }
+    } catch { }
+    $status = [string]$Event.status
+    if ($status -eq 'accepted' -or $status -eq 'received') { return $true }
+    return $false
+}
+
+function Test-NightlyNotificationEnqueueAccepted {
+    param($Notify)
+    if ($null -eq $Notify) { return $false }
+    $map = ConvertFrom-NightlyJsonMap -Object $Notify
+    if ($null -eq $map) { return $false }
+    if ($map.Contains('Enqueued') -and [bool]$map['Enqueued']) { return $true }
+    if ($map.Contains('TransportStatus')) {
+        try {
+            $code = [int]$map['TransportStatus']
+            if ($code -ge 200 -and $code -lt 300) { return $true }
+        } catch {
+            return $false
+        }
+    }
+    return $false
+}
+
+function Set-NightlyNotificationTransportAccepted {
+    param(
+        [string]$StorePath,
+        $Event,
+        $Notify = $null
+    )
+    $store = Read-NightlyNotificationStore -Path $StorePath
+    $events = @()
+    if ($store.events) { $events = @($store.events) }
+    $logical = Get-NightlyNotificationLogicalIdentity -Event $Event
+    $updated = @()
+    foreach ($e in $events) {
+        if ((Get-NightlyNotificationLogicalIdentity -Event $e) -eq $logical) {
+            $e | Add-Member -NotePropertyName transportAccepted -NotePropertyValue $true -Force
+            $cur = [string]$e.status
+            if ($cur -ne 'received') {
+                $e | Add-Member -NotePropertyName status -NotePropertyValue 'accepted' -Force
+            }
+            if ($null -ne $Notify) {
+                $map = ConvertFrom-NightlyJsonMap -Object $Notify
+                if ($map -and $map.Contains('TransportStatus')) {
+                    $e | Add-Member -NotePropertyName transportStatus -NotePropertyValue $map['TransportStatus'] -Force
+                }
+            }
+        }
+        $updated += $e
+    }
+    Save-NightlyNotificationStore -Path $StorePath -Store ([ordered]@{ events = $updated })
+}
+
 function Test-NightlyNotificationReceipt {
     param($Event, $RecipientView)
     if ($null -eq $RecipientView) { return $false }
@@ -586,12 +644,18 @@ function Invoke-AntiphonNightlyHealth {
             $view = Get-NightlyRecipientView -StateRoot $StateRoot
             $receiptOk = Test-NightlyNotificationReceipt -Event $deliveredEvent -RecipientView $view
             if (-not $receiptOk) {
-                try {
-                    if ($sink) { $notify = Invoke-NightlyNotificationEnqueue -Event $deliveredEvent -Sink $sink }
-                } catch {
-                    $notify = [pscustomobject]@{ Enqueued = $false; Error = $_.Exception.Message; Received = $false }
-                    $health.Healthy = $false
-                    $health.Reasons += 'enqueue-failed'
+                $alreadyAccepted = Test-NightlyNotificationTransportAccepted -Event $deliveredEvent
+                if (-not $alreadyAccepted) {
+                    try {
+                        if ($sink) { $notify = Invoke-NightlyNotificationEnqueue -Event $deliveredEvent -Sink $sink }
+                        if (Test-NightlyNotificationEnqueueAccepted -Notify $notify) {
+                            Set-NightlyNotificationTransportAccepted -StorePath $storePath -Event $deliveredEvent -Notify $notify
+                        }
+                    } catch {
+                        $notify = [pscustomobject]@{ Enqueued = $false; Error = $_.Exception.Message; Received = $false }
+                        $health.Healthy = $false
+                        $health.Reasons += 'enqueue-failed'
+                    }
                 }
                 $view = Get-NightlyRecipientView -StateRoot $StateRoot
                 $receiptOk = Test-NightlyNotificationReceipt -Event $deliveredEvent -RecipientView $view

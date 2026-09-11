@@ -281,7 +281,12 @@ function Test-C487_G123 {
     $store = Read-NightlyNotificationStore -Path (Get-NightlyNotificationStorePath -StateRoot $fx.Root)
     $events = @()
     if ($store.events) { $events = @($store.events) }
+    $enqLines = @()
+    if (Test-Path -LiteralPath $fx.EnqueueLog) { $enqLines = @(Get-Content -LiteralPath $fx.EnqueueLog) }
+    $accepted = $false
+    if ($events.Count -gt 0) { $accepted = Test-NightlyNotificationTransportAccepted -Event $events[0] }
     Assert-C487 -Cond ($events.Count -eq 1) -Name 'G123 entry same poll not spam' -Detail ('n=' + $events.Count)
+    Assert-C487 -Cond (($enqLines.Count -eq 1) -and $accepted) -Name 'G123 entry same poll single enqueue' -Detail ('enq=' + $enqLines.Count + ' accepted=' + $accepted)
 }
 
 function Test-C487_G124 {
@@ -314,4 +319,4 @@ if ($Case) {
     foreach ($fn in (Get-C487CaseFunctions -Prefix 'C487_G')) { & $fn }
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'health-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }
-Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 51 })
+Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 52 })
