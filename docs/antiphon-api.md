@@ -673,6 +673,27 @@ GET  /events              SSE
 `GET /capabilities` is worth knowing about even from outside: it is how you check which pty backend
 is actually serving (`InboxConhost` vs `ModernConPty`) and whether the runner advertises `herdr`.
 
+**CARD-0478 runtime checkpoint, not a complete deployed feature:** this branch adds
+`verificationCustodyV1`, `verificationCustodyBackend` and stable `runnerStoreId` to
+capabilities, plus these internal routes:
+
+```text
+GET  /sessions/{id}/executions/{executionId}/custody?acceptedStartedAt=<UTC round-trip timestamp>
+POST /sessions/{id}/executions/{executionId}/seal
+```
+
+POST takes the exact `VerificationExecutionBinding` as its body and durably
+closes admission for that execution; it does not kill. GET observes without
+sealing a running root. The binding includes the expected capability store ID
+and accepted application generation at microsecond precision. A terminal result
+carries the exact UTF-8 receipt bytes (JSON encodes byte arrays as base64), after
+runner acceptance. Unknown/Unsupported results confer no exit authority.
+The application still cannot commission SourceLanding tasks or clean their trees;
+these runtime routes must not be substituted for the unfinished server admission,
+task seal or cleanup guards. See the
+[checkpoint](investigations/2026-09-11-card-0478-host-runner-custody-checkpoint.md)
+before continuing Code; do not deploy this subset.
+
 ## 5. Front doors you probably want instead
 
 For the common operations, use the scripts — they handle base-URL resolution, card-id forms,
