@@ -25,6 +25,7 @@ namespace Antiphon.E2E;
 /// a shape the backend no longer produces.
 /// </summary>
 [NotInParallel]
+[Category("OptIn")]
 public class ContractSnapshotTests
 {
     [Test]

@@ -19,7 +19,18 @@ public sealed class NightlyScriptsTests
     [Test]
     public void The_three_scripts_are_ascii_only()
     {
-        foreach (var name in new[] { "nightly-tests.ps1", "nightly-run.ps1", "nightly-report.ps1" })
+        foreach (var name in new[]
+                 {
+                     "nightly-tests.ps1", "nightly-run.ps1", "nightly-report.ps1", "nightly-health.ps1",
+                     "test-nightly-run.ps1", "test-nightly-tests.ps1", "test-nightly-health.ps1",
+                     Path.Combine("lib", "nightly-common.ps1"),
+                     Path.Combine("lib", "nightly-policy.ps1"),
+                     Path.Combine("lib", "nightly-coverage.ps1"),
+                     Path.Combine("lib", "nightly-run-impl.ps1"),
+                     Path.Combine("lib", "nightly-tests-impl.ps1"),
+                     Path.Combine("lib", "nightly-health.ps1"),
+                     Path.Combine("lib", "c487-harness.ps1"),
+                 })
         {
             var path = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", name);
             File.Exists(path).ShouldBeTrue(path);

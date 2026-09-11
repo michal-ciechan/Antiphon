@@ -14,6 +14,7 @@ namespace Antiphon.E2E;
 /// Every schedule it creates is a prompt, so the fixture never spawns.
 /// </summary>
 [NotInParallel]
+[Category("OptIn")]
 public class ScheduleCliE2ETests
 {
     private static readonly JsonSerializerOptions JsonOptions = new()

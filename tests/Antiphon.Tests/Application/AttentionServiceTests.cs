@@ -40,6 +40,7 @@ namespace Antiphon.Tests.Application;
 /// "flaky test" incidents in this repo were an unscoped assertion over this same database.</para>
 /// </summary>
 [Category("Integration")]
+[Category("Slow")]
 public class AttentionServiceTests
 {
     [Test]

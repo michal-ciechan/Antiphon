@@ -16,6 +16,7 @@ namespace Antiphon.Agents.Pty.Tests;
 /// </summary>
 [NotInParallel("Headed")]
 [Category("Headed")]
+[Category("OptIn")]
 [Category("HeadedCanary")]
 [Category("Card0159")]
 [Category("Card0355")]

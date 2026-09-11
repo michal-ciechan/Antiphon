@@ -1,39 +1,67 @@
-# CARD-0110 S6 / CARD-0475 S6: classes allowed to run ≥5 s in a TRX of Antiphon.Tests.
-# One exact class name per line, matched case-insensitively against the TRX TestMethod@className
-# simple name or fully-qualified name. No substring or argument matching.
-# # comments and blanks ignored. Every expanded row contributes duration; class totals are
-# summed TRX body time, not elapsed wall time.
-# A new ≥5 s test whose class is not listed is a tripwire hit — shorten it or add it here with a reason.
-SessionMessageQueuePtyIntegrationTests
-SessionMessageQueueGrokPtyIntegrationTests
-RunnerProcessProbeTests
-ProgramStartupConcurrencyTests
-GitDiffSpikeTests
-GitServiceTests
-WorktreeManagerGitIntegrationTests
-DelegationWorktreeTests
-AgentSessionServiceIntegrationTests
-AgentSessionRuntimeTests
-RawPtyAdapterTests
-ClaudeAdapterLocalShellTests
-CodexAdapterLocalShellTests
-SlashCommandMenuReconciliationTests
-ProjectReadinessBatchTests
-SmokeTests
-ApiKeyLaunchPathTests
-AgentTuiLaunchResolverTests
-AttentionServiceTests
-AgentTaskDeliveryWatchdogTests
-ReviewLoopTests
-SessionMessageQueueDeliveryVerificationTests
-ApiErrorRecoveryServiceTests
-WorkspaceHookRunnerTests
-GitIgnorePreviewTests
+# CARD-0110 S6 / CARD-0475 S6 / CARD-0487: Slow classes in Antiphon.Tests.
+# Repository entries are fully-qualified class names. Adjacent reason comments are required.
+# Tripwire still accepts caller-supplied simple names. No substring or argument matching.
+# CARD-0487: historical allowance, pty integration cost.
+Antiphon.Tests.Application.SessionMessageQueuePtyIntegrationTests
+# CARD-0487: historical allowance, grok pty integration cost.
+Antiphon.Tests.Application.SessionMessageQueueGrokPtyIntegrationTests
+# CARD-0487: historical allowance, process probe cost.
+Antiphon.Tests.AgentTui.RunnerProcessProbeTests
+# CARD-0487: historical allowance, startup concurrency cost.
+Antiphon.Tests.ProgramStartupConcurrencyTests
+# CARD-0487: historical allowance, real Git diff spike.
+Antiphon.Tests.Infrastructure.GitDiffSpikeTests
+# CARD-0487: historical allowance, real Git service cost.
+Antiphon.Tests.Infrastructure.GitServiceTests
+# CARD-0487: historical allowance, real Git worktree integration.
+Antiphon.Tests.Infrastructure.WorktreeManagerGitIntegrationTests
+# CARD-0487: historical allowance, worktree protocol cost.
+Antiphon.Tests.Application.DelegationWorktreeTests
+# CARD-0487: historical allowance, session Git/PTY integration.
+Antiphon.Tests.Application.AgentSessionServiceIntegrationTests
+# CARD-0487: historical allowance, live runtime cost.
+Antiphon.Tests.Application.AgentSessionRuntimeTests
+# CARD-0487: historical allowance, raw PTY adapter cost.
+Antiphon.Tests.Agents.RawPtyAdapterTests
+# CARD-0487: historical allowance, Claude local-shell PTY cost.
+Antiphon.Tests.Agents.ClaudeAdapterLocalShellTests
+# CARD-0487: historical allowance, Codex local-shell PTY cost.
+Antiphon.Tests.Agents.CodexAdapterLocalShellTests
+# CARD-0487: historical allowance, headed slash-command reconciliation.
+Antiphon.Tests.Application.SlashCommandMenuReconciliationTests
+# CARD-0487: historical allowance, project readiness Git batch.
+Antiphon.Tests.Application.ProjectReadinessBatchTests
+# CARD-0487: historical allowance, smoke factory/container cost.
+Antiphon.Tests.SmokeTests
+# CARD-0487: historical allowance, API key launch path.
+Antiphon.Tests.ApiKeys.ApiKeyLaunchPathTests
+# CARD-0487: historical allowance, TUI launch resolver.
+Antiphon.Tests.AgentTui.AgentTuiLaunchResolverTests
+# CARD-0487: historical allowance, AttentionService aggregate cost.
+Antiphon.Tests.Application.AttentionServiceTests
+# CARD-0487: historical allowance, delivery watchdog waits.
+Antiphon.Tests.Application.AgentTaskDeliveryWatchdogTests
+# CARD-0487: historical allowance, review loop queue cost.
+Antiphon.Tests.Application.ReviewLoopTests
+# CARD-0487: historical allowance, delivery verification cost.
+Antiphon.Tests.Application.SessionMessageQueueDeliveryVerificationTests
+# CARD-0487: historical allowance, API error recovery.
+Antiphon.Tests.Application.ApiErrorRecoveryServiceTests
+# CARD-0487: historical allowance, workspace hook runner.
+Antiphon.Tests.Infrastructure.WorkspaceHookRunnerTests
+# CARD-0487: historical allowance, gitignore preview real Git.
+Antiphon.Tests.Application.GitIgnorePreviewTests
 # CARD-0475: retained real Git ref/index/sequencer/recovery-pin capstones.
-AgentTaskLandBoundaryTests
+Antiphon.Tests.Application.AgentTaskLandBoundaryTests
 # CARD-0475: real dispatch and repository-lease admission orderings.
-AgentTaskLandAdmissionTests
+Antiphon.Tests.Application.AgentTaskLandAdmissionTests
 # CARD-0475: real settlement, child-merge and writer/lease races.
-AgentTaskLandConcurrencyTests
+Antiphon.Tests.Application.AgentTaskLandConcurrencyTests
 # CARD-0475: generated-project build/test/cancellation and private-output proofs.
-AgentTaskLandVerifierTests
+Antiphon.Tests.Application.AgentTaskLandVerifierTests
+# CARD-0475: retained real checkpoint recovery matrix.
+Antiphon.Tests.Application.AgentTaskLandCheckpointMatrixTests
+# CARD-0475: retained real cleanup safety matrix.
+Antiphon.Tests.Application.AgentTaskLandCleanupSafetyTests
+# CARD-0484: ChannelBridge observed cost; rebaseline after the pending fix. No timeout tuning here.
+Antiphon.Tests.Application.ChannelBridgeTests

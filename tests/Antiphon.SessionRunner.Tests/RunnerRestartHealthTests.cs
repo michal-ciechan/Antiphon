@@ -4,6 +4,7 @@ using TUnit.Core;
 namespace Antiphon.SessionRunner.Tests;
 
 [Category("Integration"), ParallelLimiter<ProcessSpawnLimit>]
+[Category("Slow")]
 public partial class RunnerRestartHealthTests
 {
     [Test]

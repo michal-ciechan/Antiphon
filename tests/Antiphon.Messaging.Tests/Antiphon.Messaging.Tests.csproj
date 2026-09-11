@@ -39,6 +39,9 @@
 
   <ItemGroup>
     <Content Include="Fixtures\*" CopyToOutputDirectory="PreserveNewest" />
+    <Compile Include="..\Shared\TestClassificationMetadata.cs" Link="TestSupport\TestClassificationMetadata.cs" />
+    <Compile Include="..\Shared\TestClassificationGuardTests.cs" Link="TestSupport\TestClassificationGuardTests.cs" />
+    <None Include="slow-tests-allowlist.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

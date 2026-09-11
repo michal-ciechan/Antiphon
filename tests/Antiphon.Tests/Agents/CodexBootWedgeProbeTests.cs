@@ -19,6 +19,7 @@ namespace Antiphon.Tests.Agents;
 /// </summary>
 [Explicit]
 [Category("Headed")]
+[Category("OptIn")]
 [Category("RealCliStubProxy")]
 [NotInParallel("RealCliStubProxy")]
 [ParallelLimiter<ProcessSpawnLimit>]

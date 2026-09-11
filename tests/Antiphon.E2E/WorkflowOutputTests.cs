@@ -26,6 +26,7 @@ namespace Antiphon.E2E;
 /// - Screenshot capture of the outputs tab for visual inspection
 /// </summary>
 [NotInParallel]
+[Category("OptIn")]
 public class WorkflowOutputTests
 {
     private static readonly Guid DocProjectTemplateId = new("b0000000-0000-0000-0000-000000000003");

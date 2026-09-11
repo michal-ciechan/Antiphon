@@ -22,6 +22,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [Category("Integration")]
 [NotInParallel]
+[Category("Slow")]
 public class ApiErrorRecoveryServiceTests
 {
     private static AppDbContext CreateContext() => BridgeQueueHarness.CreateContext();

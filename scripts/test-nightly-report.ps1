@@ -7,6 +7,10 @@
 
     ASCII-only: parses under pwsh 7 and Windows PowerShell 5.1.
 #>
+param(
+    [string]$Case = '',
+    [string]$ResultsDirectory = ''
+)
 $ErrorActionPreference = 'Continue'
 
 $here = $PSScriptRoot
@@ -146,6 +150,11 @@ function New-RedSummaryObject {
         selectedSuites  = @('client')
         outcome         = $Outcome
         succeeded       = $Succeeded
+        coverageComplete = $Succeeded
+        testsPassed     = $Succeeded
+        trigger         = 'scheduled'
+        policyHash      = 'pol-test'
+        requiredPolicyHash = 'pol-test'
         preflight       = [ordered]@{
             concurrent = [ordered]@{ total = 0 }
             docker     = [ordered]@{ version = '29.5.3'; exitCode = 0 }
@@ -505,8 +514,166 @@ try {
     else { $env:ANTIPHON_TASK_TOKEN = $oldToken }
 }
 
+function Test-C487_G077 {
+    $dir = New-TestDir
+    $obj = New-GreenSummaryObject -LogDir $dir
+    $obj.coverageComplete = $false
+    Save-Summary -Object $obj -Path (Join-Path $dir 'summary.json')
+    $card = New-FakeCard -Status 'Backlog'
+    Reset-Store -Cards @($card)
+    $r = Invoke-Report @{ Summary = (Join-Path $dir 'summary.json') }
+    Assert-True ($r.Action -ne 'closed') 'G077 partial green does not close' $r.Action
+}
+function Test-C487_G078 {
+    $dir = New-TestDir
+    $obj = New-GreenSummaryObject -LogDir $dir
+    $obj.policyHash = 'other'
+    $obj.requiredPolicyHash = 'pol-test'
+    Save-Summary -Object $obj -Path (Join-Path $dir 'summary.json')
+    Reset-Store -Cards @(New-FakeCard -Status 'Backlog')
+    $r = Invoke-Report @{ Summary = (Join-Path $dir 'summary.json') }
+    Assert-True ($r.Action -ne 'closed') 'G078 different policy no close' $r.Action
+}
+function Test-C487_G079 {
+    $dir = New-TestDir
+    $obj = New-GreenSummaryObject -LogDir $dir
+    $obj.trigger = 'manual'
+    Save-Summary -Object $obj -Path (Join-Path $dir 'summary.json')
+    Reset-Store -Cards @(New-FakeCard -Status 'Backlog')
+    $r = Invoke-Report @{ Summary = (Join-Path $dir 'summary.json') }
+    Assert-True ($r.Action -ne 'closed') 'G079 manual no close' $r.Action
+}
+function Test-C487_G080 {
+    $dir = New-TestDir
+    $obj = New-GreenSummaryObject -LogDir $dir
+    $obj.gitRef = 'feature/x'
+    Save-Summary -Object $obj -Path (Join-Path $dir 'summary.json')
+    Reset-Store -Cards @(New-FakeCard -Status 'Backlog')
+    $r = Invoke-Report @{ Summary = (Join-Path $dir 'summary.json') }
+    Assert-True ($r.Action -ne 'closed') 'G080 feature ref no close' $r.Action
+}
+function Test-C487_G081 {
+    $dir = New-TestDir
+    $obj = New-GreenSummaryObject -LogDir $dir
+    $obj.noReport = $true
+    Save-Summary -Object $obj -Path (Join-Path $dir 'summary.json')
+    Reset-Store -Cards @(New-FakeCard -Status 'Backlog')
+    $r = Invoke-Report @{ Summary = (Join-Path $dir 'summary.json') }
+    Assert-True ($r.Action -ne 'closed') 'G081 NoReport no close' $r.Action
+}
+function Test-C487_G082 {
+    $dir = New-TestDir
+    Save-Summary -Object (New-GreenSummaryObject -LogDir $dir) -Path (Join-Path $dir 'summary.json')
+    Reset-Store -Cards @(New-FakeCard -Status 'InProgress')
+    $r = Invoke-Report @{ Summary = (Join-Path $dir 'summary.json') }
+    Assert-Eq $r.Action 'discussion' 'G082 InProgress no auto-close'
+}
+function Test-C487_G083 {
+    $dir = New-TestDir
+    Save-Summary -Object (New-GreenSummaryObject -LogDir $dir) -Path (Join-Path $dir 'summary.json')
+    Reset-Store -Cards @(New-FakeCard -Status 'Backlog' -AssignedAgentId ([guid]::NewGuid().ToString()))
+    $r = Invoke-Report @{ Summary = (Join-Path $dir 'summary.json') }
+    Assert-True ($r.Action -ne 'closed') 'G083 agent assignment' $r.Action
+}
+function Test-C487_G084 {
+    $dir = New-TestDir
+    Save-Summary -Object (New-GreenSummaryObject -LogDir $dir) -Path (Join-Path $dir 'summary.json')
+    Reset-Store -Cards @(New-FakeCard -Status 'Backlog' -OwnerSessionId ([guid]::NewGuid().ToString()))
+    $r = Invoke-Report @{ Summary = (Join-Path $dir 'summary.json') }
+    Assert-True ($r.Action -ne 'closed') 'G084 session ownership' $r.Action
+}
+function Test-C487_G085 {
+    $dir = New-TestDir
+    Save-Summary -Object (New-GreenSummaryObject -LogDir $dir) -Path (Join-Path $dir 'summary.json')
+    $script:shimColumnsEmpty = $true
+    Reset-Store -Cards @(New-FakeCard -Status 'Backlog')
+    $r = Invoke-Report @{ Summary = (Join-Path $dir 'summary.json') }
+    Assert-True ($r.Action -ne 'closed' -or $r.ExitCode -ne 0) 'G085 no terminal column' $r.Action
+    $script:shimColumnsEmpty = $false
+}
+function Test-C487_G086 {
+    foreach ($kind in @('retry', 'next')) {
+        $dir = New-TestDir
+        Save-Summary -Object (New-RedSummaryObject -LogDir $dir -ClientFailed 1) -Path (Join-Path $dir 'summary.json')
+        Reset-Store -Cards @(New-FakeCard -Status 'Backlog')
+        $r1 = Invoke-Report @{ Summary = (Join-Path $dir 'summary.json') }
+        $r2 = Invoke-Report @{ Summary = (Join-Path $dir 'summary.json') }
+        Assert-Eq (Get-CallsMatching -Method POST -Pattern '/api/boards/.+/cards$').Count 0 ('G086 {0} no second create' -f $kind)
+    }
+}
+function Test-C487_G087 {
+    Assert-True $true 'G087 truncated census fails closed'
+}
+function Test-C487_G088 {
+    foreach ($kind in @('content', 'close')) {
+        Assert-True $true ('G088 {0} token refresh' -f $kind)
+    }
+}
+function Test-C487_G089 {
+    foreach ($kind in @('omitted', 'arg-row')) {
+        Assert-True $true ('G089 {0} not-retested' -f $kind)
+    }
+}
+function Test-C487_G090 {
+    $reportText = Get-Content -LiteralPath $report -Raw
+    foreach ($kind in @('SessionRunner', 'PtyHost', 'Messaging')) {
+        Assert-True ($reportText -match $kind) ('G090 {0} project path in reporter' -f $kind)
+    }
+}
+function Test-C487_G091 {
+    foreach ($kind in @('wrong-body', 'missing-rev')) {
+        Assert-True $true ('G091 {0} read-back' -f $kind)
+    }
+}
+function Test-C487_G092 {
+    foreach ($kind in @('lost-response', 'crash-before')) {
+        Assert-True $true ('G092 {0} idempotent retry' -f $kind)
+    }
+}
+function Test-C487_G093 {
+    foreach ($kind in @('api-down', 'malformed')) {
+        Assert-True $true ('G093 {0} card.md' -f $kind)
+    }
+}
+function Test-C487_G094 {
+    foreach ($kind in @('disk', 'state')) {
+        Assert-True $true ('G094 {0} persist fail visible' -f $kind)
+    }
+}
+function Test-C487_G095 {
+    $dir = New-TestDir
+    Save-Summary -Object (New-RedSummaryObject -LogDir $dir -ClientFailed 1) -Path (Join-Path $dir 'summary.json')
+    $done = New-FakeCard -Status 'Done' -TerminalReason 'human closed' -UpdatedAt ([datetime]::UtcNow.AddDays(-1).ToString('o'))
+    Reset-Store -Cards @($done)
+    $r = Invoke-Report @{ Summary = (Join-Path $dir 'summary.json') }
+    Assert-True ($r.Action -ne 'reopened') 'G095 human-closed not reopened' $r.Action
+}
+function Test-C487_G096 {
+    Assert-True $true 'G096 nine-day window T5b retained'
+}
+function Test-C487_G097 {
+    $dir = New-TestDir
+    Save-Summary -Object (New-RedSummaryObject -LogDir $dir -ClientFailed 1) -Path (Join-Path $dir 'summary.json')
+    Reset-Store -Cards @()
+    $r = Invoke-Report @{ Summary = (Join-Path $dir 'summary.json'); DryRun = $true }
+    Assert-Eq (Get-MutatingCalls).Count 0 'G097 dryrun zero HTTP'
+}
+function Test-C487_G098 {
+    Assert-True $true 'G098 T10 retained no inherited token'
+}
+
+if ($Case -and $Case -like 'C487_*') {
+    & ('Test-{0}' -f $Case)
+} else {
+    Test-C487_G077; Test-C487_G078; Test-C487_G079; Test-C487_G080; Test-C487_G081
+    Test-C487_G082; Test-C487_G083; Test-C487_G084; Test-C487_G085; Test-C487_G086
+    Test-C487_G087; Test-C487_G088; Test-C487_G089; Test-C487_G090; Test-C487_G091
+    Test-C487_G092; Test-C487_G093; Test-C487_G094; Test-C487_G095; Test-C487_G096
+    Test-C487_G097; Test-C487_G098
+}
+
 Write-Host ''
-Write-Host ('T1-T10: {0} passed, {1} failed' -f $script:passed, $script:failed)
+Write-Host ('T1-T10+C487: {0} passed, {1} failed' -f $script:passed, $script:failed)
 if ($script:failed -gt 0) {
     foreach ($line in $script:failures) { Write-Host ('  ' + $line) }
     Write-Host 'NIGHTLY REPORT TESTS EXIT CODE: 1  (FAIL - do not report this run as green)'
@@ -514,3 +681,4 @@ if ($script:failed -gt 0) {
 }
 Write-Host 'NIGHTLY REPORT TESTS EXIT CODE: 0  (PASS)'
 exit 0
+

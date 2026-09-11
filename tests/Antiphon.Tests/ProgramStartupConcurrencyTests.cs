@@ -22,6 +22,7 @@ namespace Antiphon.Tests;
 /// failure that DOES happen surfaces instead of leaving a silently dead factory behind).
 /// </summary>
 [Category("Integration")]
+[Category("Slow")]
 public class ProgramStartupConcurrencyTests
 {
     [Test]

@@ -5,6 +5,7 @@ using TUnit.Core;
 
 namespace Antiphon.E2E;
 
+[Category("OptIn")]
 public class OutputDistillationCanaryGuardTests
 {
     [Test]

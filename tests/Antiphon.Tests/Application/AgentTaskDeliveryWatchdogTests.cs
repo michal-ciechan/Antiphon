@@ -31,6 +31,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [Category("Integration")]
 [NotInParallel]
+[Category("Slow")]
 public class AgentTaskDeliveryWatchdogTests
 {
     [Test]

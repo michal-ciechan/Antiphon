@@ -12,6 +12,7 @@ namespace Antiphon.Agents.Pty.Tests;
 /// </summary>
 [NotInParallel("Headed")]
 [Category("Headed")]
+[Category("OptIn")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeDangerousTests
 {

@@ -1,0 +1,3 @@
+# CARD-0487: no Slow classes in Antiphon.Messaging.Tests at initial classification.
+# Disposable broker coverage is unattended once ANTIPHON_BROKER_TESTS=1; it is not Slow by default.
+# Mixed Telegram fake/live classes are not wholly OptIn; fake legs remain required.

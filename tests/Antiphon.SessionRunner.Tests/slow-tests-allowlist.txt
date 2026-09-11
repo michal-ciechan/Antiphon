@@ -1,0 +1,5 @@
+# CARD-0487: Slow classes in Antiphon.SessionRunner.Tests. FQN entries with reasons.
+# CARD-0487: aggregate/process/wait cost despite many individual rows under 5 seconds.
+Antiphon.SessionRunner.Tests.RunnerRestartHealthTests
+# CARD-0487: real tailer/tree adoption safety; retain serialization and all current rows.
+Antiphon.SessionRunner.Tests.TranscriptAdoptionSafetyTests

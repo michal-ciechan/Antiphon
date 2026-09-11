@@ -24,6 +24,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// </summary>
 [NotInParallel("ClaudeConfigDirEnv")] // mutates the process-wide CLAUDE_CONFIG_DIR variable
 [ParallelLimiter<ProcessSpawnLimit>]
+[Category("Slow")]
 public class TranscriptAdoptionSafetyTests
 {
     private static readonly TimeSpan ShortGrace = TimeSpan.FromMilliseconds(300);

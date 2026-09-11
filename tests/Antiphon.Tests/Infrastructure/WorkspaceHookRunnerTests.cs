@@ -10,6 +10,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Infrastructure;
 
 [Category("Integration")]
+[Category("Slow")]
 public class WorkspaceHookRunnerTests
 {
     [Test]

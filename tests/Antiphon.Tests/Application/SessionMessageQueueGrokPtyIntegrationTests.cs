@@ -24,6 +24,7 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 [NotInParallel("Headed")]
 [ParallelLimiter<ProcessSpawnLimit>]
+[Category("Slow")]
 public class SessionMessageQueueGrokPtyIntegrationTests
 {
     private static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);

@@ -10,6 +10,7 @@ namespace Antiphon.E2E;
 /// Uses AntiphonAppFixture for the backend and PlaywrightFixture for the browser.
 /// </summary>
 [NotInParallel]
+[Category("OptIn")]
 public class SmokeE2ETests
 {
     private readonly AntiphonAppFixture _appFixture = new();

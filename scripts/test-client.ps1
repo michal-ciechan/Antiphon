@@ -28,6 +28,16 @@
 # ASCII-only on purpose - must parse under Windows PowerShell 5.1 too.
 
 $ErrorActionPreference = 'Continue'
+$jsonResultPath = ''
+$forward = @()
+for ($i = 0; $i -lt $args.Count; $i++) {
+    if ([string]$args[$i] -eq '-JsonResultPath' -and ($i + 1) -lt $args.Count) {
+        $jsonResultPath = [string]$args[$i + 1]
+        $i++
+        continue
+    }
+    $forward += $args[$i]
+}
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $clientDir = Join-Path $repoRoot 'client'
 $logDir = Join-Path $repoRoot 'logs'
@@ -44,7 +54,12 @@ if (-not (Test-Path $vitest)) {
 
 Push-Location $clientDir
 try {
-    node $vitest run @args 2>&1 | Tee-Object -FilePath $logFile
+    $vitestArgs = @('run')
+    if (-not [string]::IsNullOrWhiteSpace($jsonResultPath)) {
+        $vitestArgs += @('--reporter=default', '--reporter=json', '--outputFile', $jsonResultPath)
+    }
+    if ($forward.Count -gt 0) { $vitestArgs += $forward }
+    node $vitest @vitestArgs 2>&1 | Tee-Object -FilePath $logFile
     $code = $LASTEXITCODE
 }
 finally {

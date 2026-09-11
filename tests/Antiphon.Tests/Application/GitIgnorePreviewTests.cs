@@ -15,6 +15,7 @@ namespace Antiphon.Tests.Application;
 /// in the file view in two different projects.
 /// </summary>
 [Category("Integration")]
+[Category("Slow")]
 public class GitIgnorePreviewTests
 {
     [Test]

@@ -1,0 +1,124 @@
+{
+  "schemaVersion": 1,
+  "policyHash": "49432b151c949a66aa012c15f75e1a15b46831d27408d4b8d9d30fbf10323e24",
+  "defaultSuites": [
+    "antiphon",
+    "session-runner",
+    "pty-host",
+    "agents-pty",
+    "messaging",
+    "client",
+    "scripts"
+  ],
+  "projects": [
+    "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+    "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+    "tests/Antiphon.Messaging.Tests/Antiphon.Messaging.Tests.csproj",
+    "tests/Antiphon.PtyHost.Tests/Antiphon.PtyHost.Tests.csproj",
+    "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
+    "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+  ],
+  "suites": {
+    "antiphon": {
+      "name": "Antiphon.Tests",
+      "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+      "assembly": "Antiphon.Tests",
+      "mode": "unattended",
+      "processGroup": "native-dotnet",
+      "slowRegistry": "tests/Antiphon.Tests/slow-tests-allowlist.txt"
+    },
+    "session-runner": {
+      "name": "Antiphon.SessionRunner.Tests",
+      "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
+      "assembly": "Antiphon.SessionRunner.Tests",
+      "mode": "unattended",
+      "processGroup": "native-dotnet",
+      "slowRegistry": "tests/Antiphon.SessionRunner.Tests/slow-tests-allowlist.txt"
+    },
+    "pty-host": {
+      "name": "Antiphon.PtyHost.Tests",
+      "project": "tests/Antiphon.PtyHost.Tests/Antiphon.PtyHost.Tests.csproj",
+      "assembly": "Antiphon.PtyHost.Tests",
+      "mode": "unattended",
+      "processGroup": "native-dotnet",
+      "slowRegistry": "tests/Antiphon.PtyHost.Tests/slow-tests-allowlist.txt"
+    },
+    "agents-pty": {
+      "name": "Antiphon.Agents.Pty.Tests",
+      "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+      "assembly": "Antiphon.Agents.Pty.Tests",
+      "mode": "unattended",
+      "processGroup": "native-dotnet",
+      "slowRegistry": "tests/Antiphon.Agents.Pty.Tests/slow-tests-allowlist.txt"
+    },
+    "messaging": {
+      "name": "Antiphon.Messaging.Tests",
+      "project": "tests/Antiphon.Messaging.Tests/Antiphon.Messaging.Tests.csproj",
+      "assembly": "Antiphon.Messaging.Tests",
+      "mode": "unattended",
+      "processGroup": "native-dotnet",
+      "slowRegistry": "tests/Antiphon.Messaging.Tests/slow-tests-allowlist.txt",
+      "broker": "disposable-container"
+    },
+    "client": {
+      "name": "client",
+      "command": "scripts/test-client.ps1",
+      "mode": "unattended",
+      "processGroup": "client",
+      "requires": ["client-build", "client-lint"]
+    },
+    "scripts": {
+      "name": "scripts",
+      "mode": "unattended",
+      "processGroup": "scripts"
+    },
+    "e2e": {
+      "name": "Antiphon.E2E",
+      "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+      "assembly": "Antiphon.E2E",
+      "mode": "manual",
+      "processGroup": "e2e",
+      "slowRegistry": "tests/Antiphon.E2E/slow-tests-allowlist.txt",
+      "reason": "requires fresh client/dist and isolated random runner"
+    }
+  },
+  "safeEnvironment": {
+    "clear": [
+      "ANTIPHON_HEADED_TESTS",
+      "ANTIPHON_HEADED_LONG_TESTS",
+      "ANTIPHON_DISTILLER_APPLY_CANARY",
+      "ANTIPHON_TG_TEST_TOKEN",
+      "ANTIPHON_CARD0133_RUN_P3",
+      "ANTIPHON_CARD0133_CODEX_EXE"
+    ],
+    "set": {}
+  },
+  "scriptCensus": [
+    { "id": "test-apphost-lock-age", "path": "scripts/test-apphost-lock-age.ps1", "disposition": "unattended", "wildcard": false },
+    { "id": "test-apphost-main-worktree-guard", "path": "scripts/test-apphost-main-worktree-guard.ps1", "disposition": "unattended", "wildcard": false },
+    { "id": "test-apphost-probe-class", "path": "scripts/test-apphost-probe-class.ps1", "disposition": "unattended", "wildcard": false },
+    { "id": "test-cleanup-claude-sessions", "path": "scripts/test-cleanup-claude-sessions.ps1", "disposition": "unattended", "wildcard": false },
+    { "id": "test-cleanup-codex-test-residue", "path": "scripts/test-cleanup-codex-test-residue.ps1", "disposition": "unattended", "wildcard": false },
+    { "id": "test-client", "path": "scripts/test-client.ps1", "disposition": "wrapper", "wildcard": false },
+    { "id": "test-client-mode", "path": "scripts/test-client-mode.ps1", "disposition": "unattended", "wildcard": false },
+    { "id": "test-deploy-am-service", "path": "scripts/test-deploy-am-service.ps1", "disposition": "unattended", "wildcard": false },
+    { "id": "test-duration-tripwire", "path": "scripts/test-duration-tripwire.ps1", "disposition": "argument-consumer", "wildcard": false },
+    { "id": "test-hooks", "path": "scripts/test-hooks.ps1", "disposition": "unattended", "wildcard": false },
+    { "id": "test-nightly-report", "path": "scripts/test-nightly-report.ps1", "disposition": "unattended", "wildcard": false },
+    { "id": "test-reap-zombie-agents", "path": "scripts/test-reap-zombie-agents.ps1", "disposition": "unattended", "wildcard": false },
+    { "id": "test-stage-value-report", "path": "scripts/test-stage-value-report.ps1", "disposition": "unattended", "wildcard": false }
+  ],
+  "watchdogs": {
+    "npm-ci": 600000,
+    "npm-build": 600000,
+    "dotnet-build": 1200000,
+    "antiphon": 3600000,
+    "session-runner": 1200000,
+    "pty-host": 1200000,
+    "agents-pty": 1200000,
+    "messaging": 1200000,
+    "client": 1200000,
+    "scripts": 1200000
+  },
+  "reducedDispatchPolicy": "inactive"
+}

@@ -11,6 +11,7 @@ namespace Antiphon.E2E;
 
 [ParallelLimiter<ProcessSpawnLimit>]
 [NotInParallel("C467LandDelivery")]
+[Category("OptIn")]
 public class AgentTaskLandDeliveryE2ETests
 {
     [Test]
