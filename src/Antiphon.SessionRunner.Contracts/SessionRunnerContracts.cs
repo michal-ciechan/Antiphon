@@ -22,7 +22,8 @@ public sealed record RunnerLaunchRequest(
     // Required when Backend == SessionBackends.Herdr; ignored otherwise.
     HerdrLaunchOptions? Herdr = null,
     GrokRulesPayload? GrokRulesPayload = null,
-    int? CommandLineBudgetChars = null)
+    int? CommandLineBudgetChars = null,
+    VerificationExecutionBinding? VerificationBinding = null)
 {
     // Set only by the runner after materialization, never trusted from a caller.
     [System.Text.Json.Serialization.JsonIgnore]
@@ -134,6 +135,7 @@ public static class HerdrNativeSessionSources
 /// <summary>CARD-0213: extra capability tokens on <see cref="RunnerCapabilitiesDto.Features"/>.</summary>
 public static class RunnerCapabilityFeatures
 {
+    public const string VerificationCustodyV1 = "verificationCustodyV1";
     public const string HerdrAttach = "herdr-attach";
 
     /// <summary>CARD-0384: runner implements named-tab placement (TabLabel + check route).</summary>
@@ -205,7 +207,8 @@ public sealed record RunnerSessionDto(
     DateTime? HerdrVerifiedAtUtc = null,
     // CARD-0213: HerdrPaneOrigins on a herdr session. Null for pty / older runners / unknown.
     string? HerdrOrigin = null,
-    GrokRulesReceipt? GrokRulesReceipt = null);
+    GrokRulesReceipt? GrokRulesReceipt = null,
+    VerificationExecutionBinding? VerificationBinding = null);
 
 public sealed record RunnerBufferDto(
     Guid SessionId,
@@ -922,7 +925,9 @@ public sealed record RunnerCapabilitiesDto(
     // Null on an older runner that predates the field.
     string? Version = null,
     // CARD-0213: extra capability tokens (e.g. herdr-attach). Null = older runner = no evidence.
-    IReadOnlyList<string>? Features = null);
+    IReadOnlyList<string>? Features = null,
+    string? VerificationCustodyBackend = null,
+    Guid? RunnerStoreId = null);
 
 /// <summary>Build identity of the running session-runner process (CARD-0112).</summary>
 public sealed record RunnerBuildDto(

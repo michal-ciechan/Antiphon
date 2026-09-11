@@ -109,6 +109,11 @@ app.Use(async (context, next) =>
         context.Response.StatusCode = StatusCodes.Status404NotFound;
         await context.Response.WriteAsJsonAsync(new { error = ex.Message });
     }
+    catch (VerificationCustodyException ex)
+    {
+        await Results.Problem(title: ex.Code, type: ex.Code, statusCode: StatusCodes.Status409Conflict)
+            .ExecuteAsync(context);
+    }
 });
 
 // CARD-0186 S3: /input, /kill, /resize, /snapshot map HerdrBackendUnavailableException to 503
@@ -165,7 +170,7 @@ app.MapHealthChecks("/health");
 // environment: runner and server are separate processes with separate config, so a server that
 // assumed they matched would size bodies for a pty that cannot carry them. Resolved live rather
 // than captured at startup so a runner restarted with a different flag reports the truth.
-app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings) =>
+app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings, SessionRunnerRuntime runtime) =>
 {
     var decision = PtyBackendPolicy.Resolve();
     // CARD-0160: advertise from the actual dispatch surface. pty-host is always available;
@@ -178,17 +183,32 @@ app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings) =>
     IReadOnlyList<string>? features = herdrSettings.Value.Enabled
         ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement, GrokRulesTransport.Capability]
         : [GrokRulesTransport.Capability];
+    if (runtime.VerificationCustodyBackend is not null)
+        features = [.. features, RunnerCapabilityFeatures.VerificationCustodyV1];
     return Results.Ok(new RunnerCapabilitiesDto(
         decision.Backend.ToString(), decision.Requested, decision.Reason, decision.FellBack,
         SessionRunnerRuntime.SupportedTranscriptFormats, runnerBuild, sessionBackends,
         Version: runnerBuild.CommitSha ?? "unknown",
-        Features: features));
+        Features: features, VerificationCustodyBackend: runtime.VerificationCustodyBackend,
+        RunnerStoreId: runtime.RunnerStoreId));
 });
 
 app.MapGet("/sessions", (SessionRunnerRuntime runtime) => Results.Ok(runtime.List()));
 
 app.MapGet("/sessions/{id:guid}", async (Guid id, SessionRunnerRuntime runtime, CancellationToken ct) =>
     Results.Ok(await runtime.GetAsync(id, ct)));
+
+app.MapGet("/sessions/{id:guid}/executions/{executionId:guid}/custody", async (
+    Guid id, Guid executionId, DateTime acceptedStartedAt, SessionRunnerRuntime runtime, CancellationToken ct) =>
+    Results.Ok(await runtime.ReadCustodyAsync(runtime.ResolveCustodyBinding(id, executionId, acceptedStartedAt), false, ct)));
+
+app.MapPost("/sessions/{id:guid}/executions/{executionId:guid}/seal", async (
+    Guid id, Guid executionId, VerificationExecutionBinding binding, SessionRunnerRuntime runtime, CancellationToken ct) =>
+{
+    if (binding.ExecutionId != executionId || binding.Generation.SessionId != id)
+        throw new VerificationCustodyException("verification_custody_identity_mismatch");
+    return Results.Ok(await runtime.ReadCustodyAsync(binding, true, ct));
+});
 
 app.MapPost("/sessions", async (
     RunnerLaunchRequest request,

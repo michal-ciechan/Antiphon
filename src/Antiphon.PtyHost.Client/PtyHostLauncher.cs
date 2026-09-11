@@ -44,6 +44,7 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
         TimeSpan? lingerTtl = null,
         int? ringCapChars = null,
         string? ptyBackend = null,
+        string? custodyStoreRoot = null,
         CancellationToken ct = default)
     {
         var exe = Path.Combine(CurrentShadowDir, HostExeName);
@@ -57,11 +58,19 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            // The intermediary's detached child inherits this CWD. In custody mode neither
+            // host may keep the verification snapshot open through its current directory.
+            WorkingDirectory = custodyStoreRoot is null ? "" : CurrentShadowDir,
         };
         foreach (var arg in BuildHostArgs(
                      sessionId, manifestDir, hostLogFile, pipeName, launchTimeout, lingerTtl,
                      ringCapChars, ptyBackend))
             psi.ArgumentList.Add(arg);
+        if (custodyStoreRoot is not null)
+        {
+            psi.ArgumentList.Add("--custody-store");
+            psi.ArgumentList.Add(Path.GetFullPath(custodyStoreRoot));
+        }
 
         using var intermediary = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start pty-host spawn intermediary.");

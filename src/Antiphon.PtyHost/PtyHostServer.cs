@@ -181,6 +181,10 @@ public sealed class PtyHostServer(PtyHostOptions options, HostSession session, H
                 outbound.TryWrite(session.GetStatus());
                 return false;
 
+            case CustodyRequestMessage custody:
+                outbound.TryWrite(new CustodyReplyMessage(await session.GetCustodyAsync(custody.Binding, custody.Seal, ct)));
+                return false;
+
             case ShutdownMessage:
                 session.Shutdown();
                 return true;

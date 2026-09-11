@@ -1,5 +1,6 @@
 using System.IO.Pipes;
 using Antiphon.PtyHost.Protocol;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.PtyHost.Client;
 
@@ -80,13 +81,38 @@ public sealed class PtyHostClient : IAsyncDisposable
 
     public async Task<LaunchedMessage> LaunchAsync(LaunchMessage launch, CancellationToken ct)
     {
+        if (launch.VerificationBinding is not null) RequireCustodySupport();
         var reply = await RequestAsync(launch, ct);
         return reply switch
         {
             LaunchedMessage launched => launched,
+            ErrorMessage error when error.Code.StartsWith("verification_custody_", StringComparison.Ordinal) =>
+                throw new VerificationCustodyException(error.Code),
             ErrorMessage error => throw new InvalidOperationException($"Host launch failed ({error.Code}): {error.Message}"),
             _ => throw new InvalidOperationException($"Unexpected launch reply {reply.GetType().Name}."),
         };
+    }
+
+    public Task<VerificationCustodyStatus> GetCustodyAsync(VerificationExecutionBinding binding,
+        CancellationToken ct) => GetCustodyAsync(binding, false, ct);
+
+    public async Task<VerificationCustodyStatus> GetCustodyAsync(VerificationExecutionBinding binding,
+        bool seal, CancellationToken ct)
+    {
+        RequireCustodySupport();
+        var reply = await RequestAsync(new CustodyRequestMessage(binding, seal), ct);
+        return reply switch
+        {
+            CustodyReplyMessage custody when custody.Custody.Binding == binding => custody.Custody,
+            ErrorMessage error => throw new VerificationCustodyException(error.Code),
+            _ => throw new VerificationCustodyException("verification_custody_identity_mismatch"),
+        };
+    }
+
+    private void RequireCustodySupport()
+    {
+        if (Hello.Features?.Contains("verificationCustodyV1") != true || Hello.HostInstanceId is null)
+            throw new VerificationCustodyException("verification_custody_unsupported_backend");
     }
 
     /// <summary>
@@ -184,7 +210,7 @@ public sealed class PtyHostClient : IAsyncDisposable
                         OnExited?.Invoke(exited);
                         break;
 
-                    case LaunchedMessage or AttachedMessage or ResyncMessage or StatusReplyMessage:
+                    case LaunchedMessage or AttachedMessage or ResyncMessage or StatusReplyMessage or CustodyReplyMessage:
                         Volatile.Read(ref _pendingReply)?.TrySetResult(message);
                         break;
 

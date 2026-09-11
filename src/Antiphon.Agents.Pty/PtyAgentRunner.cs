@@ -193,7 +193,9 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
                 _jobMonitorCts.Token);
         }
 
-        _audit = PtySessionAudit.Create(app, commandLine, cwd, env, SnapshotText);
+        // Tracked hosts own their external ANSI log and await its output callbacks. The optional
+        // legacy debug audit has an independent timer/TTL and cannot participate in that seal.
+        _audit = custody is null ? PtySessionAudit.Create(app, commandLine, cwd, env, SnapshotText) : null;
 
         _readCts = new CancellationTokenSource();
         _readTask = Task.Run(() => ReadLoopAsync(_readCts.Token));

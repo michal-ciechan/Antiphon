@@ -20,6 +20,7 @@ namespace Antiphon.PtyHost.Protocol;
 [JsonDerivedType(typeof(ClearLiveBufferMessage), "clearLiveBuffer")]
 [JsonDerivedType(typeof(StatusRequestMessage), "status")]
 [JsonDerivedType(typeof(ShutdownMessage), "shutdown")]
+[JsonDerivedType(typeof(CustodyRequestMessage), "custody")]
 // host -> client
 [JsonDerivedType(typeof(HelloAckMessage), "helloAck")]
 [JsonDerivedType(typeof(AttachedMessage), "attached")]
@@ -29,6 +30,7 @@ namespace Antiphon.PtyHost.Protocol;
 [JsonDerivedType(typeof(StatusReplyMessage), "statusReply")]
 [JsonDerivedType(typeof(ResyncMessage), "resync")]
 [JsonDerivedType(typeof(ErrorMessage), "error")]
+[JsonDerivedType(typeof(CustodyReplyMessage), "custodyReply")]
 public abstract record PtyHostMessage;
 
 // ── client -> host ───────────────────────────────────────────────────────────
@@ -50,7 +52,16 @@ public sealed record LaunchMessage(
     int MemoryLimitMb,
     bool TranscriptEnabled,
     string AnsiLogPath,
-    global::Antiphon.SessionRunner.Contracts.GrokRulesReceipt? GrokRulesReceipt = null) : PtyHostMessage;
+    global::Antiphon.SessionRunner.Contracts.GrokRulesReceipt? GrokRulesReceipt = null,
+    global::Antiphon.SessionRunner.Contracts.VerificationExecutionBinding? VerificationBinding = null,
+    Guid? RunnerStoreId = null) : PtyHostMessage;
+
+/// <summary>Negotiated v1 custody request. Seal is irreversible and never kills a process.</summary>
+public sealed record CustodyRequestMessage(
+    global::Antiphon.SessionRunner.Contracts.VerificationExecutionBinding Binding, bool Seal = false) : PtyHostMessage;
+
+public sealed record CustodyReplyMessage(
+    global::Antiphon.SessionRunner.Contracts.VerificationCustodyStatus Custody) : PtyHostMessage;
 
 /// <summary>
 /// Subscribe to live output, replaying chunks with sequence &gt; <paramref name="LastSeq"/> first.
@@ -83,7 +94,9 @@ public sealed record HelloAckMessage(
     int ProtocolVersion,
     string HostVersion,
     Guid SessionId,
-    string Status) : PtyHostMessage;
+    string Status,
+    IReadOnlyList<string>? Features = null,
+    Guid? HostInstanceId = null) : PtyHostMessage;
 
 public sealed record LaunchedMessage(int ChildPid, DateTime ChildStartTimeUtc) : PtyHostMessage;
 
