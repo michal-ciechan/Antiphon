@@ -595,6 +595,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddScoped<DecisionCardNotifier>();
     builder.Services.AddScoped<IncidentPageNotifier>();
     builder.Services.AddScoped<HerdrPaneDisposalService>();
+    builder.Services.AddScoped<IHerdrPaneDisposalOwnership, HerdrPaneDisposalOwnership>();
     builder.Services.AddScoped<CostTrackingService>();
     builder.Services.AddScoped<FeatureStatusService>();
 

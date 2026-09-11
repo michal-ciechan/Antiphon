@@ -170,7 +170,7 @@ argv first, then `agent_session` when `source != antiphon`, then refuses Grok.
 
 A pane picker (`GET /herdr/panes` list) is a follow-up card.
 
-### Explicit leftover-pane inspection (CARD-0461, incomplete disposal increment)
+### Explicit leftover-pane disposal (CARD-0461)
 
 `scripts/herdr-pane.ps1 inspect -PaneId <workspace:pane> -ExpectedSessionId <full-uuid>`
 or `-ExpectedNativeSessionId <full-uuid>` uses the independent
@@ -178,35 +178,53 @@ or `-ExpectedNativeSessionId <full-uuid>` uses the independent
 It never requires a database session row, attaches a pane, or invokes Stop.
 The runner equivalent is `POST /herdr/pane-disposals/preview`.
 
-**This increment cannot close a pane.** Every preview is `eligible: false`,
-`guardAvailable: false`, `processInventoryComplete: false`, with
-`herdr_disposal_guard_unavailable` and `herdr_pane_identity_unproven` blockers.
-The displayed foreground PIDs/executable names, placement and readable locator
-claims are observations, not verified ownership or a complete affected-process
-census. Native UUIDs are retained as operator expectations; this increment does
-not independently prove them. Raw argv, cwd/native-home paths and token values
-other than a parsed Antiphon session UUID are not returned.
+An eligible preview identifies a verified idle shell or one supported agent
+with matching native argv or an exact recorded child PID/OS creation time.
+Inspection combines runtime, pending, placement, sidecar, last-pane and token
+claims with Herdr foreground information and an independent OS descendant census.
+Conflicting/live claims, foreign/background occupants, missing identity and
+incomplete inventories refuse. A current standing target requires persisted Stop
+and no active/queued launch. Server ownership refusals return an empty preview ID;
+Stop must be followed by a fresh inspection. Raw argv, environment, cwd/provider
+home and transcript contents are never returned or persisted in disposal evidence.
+
+The guard is **best effort**, `guardMode: antiphon-best-effort`, `atomicClose: false`.
+While holding Antiphon's pane lease, execution persists intent and freshly checks
+the pane incarnation, placement, claims and exact process identities immediately
+before stock Herdr 0.8.2 protocol-20 `pane.close` (only `pane_id`). Foreign work
+present at that check refuses. External input, moves or process starts **after
+the final check can race close and be terminated**. This operator-accepted window
+is a known limitation; Antiphon's locks do not fence Herdr or external processes.
 
 Previews last two minutes, are capped at 256 per service instance, and are lost
 on runner restart. `dispose -PreviewId <uuid> -OperationId <uuid> -Reason <text>`
 prints a dry run. Only `-Execute` submits `POST /api/herdr/pane-disposals`; a
-valid preview records a durable **409 refusal**, never a teardown. `-ReasonFile`
+valid eligible preview can close that pane. `-ReasonFile`
 accepts multiline reasons up to 4096 characters; `-Json` emits machine-readable
 results, including error receipts (exit 1). Read `status -OperationId <uuid>` or
 `GET /api/herdr/pane-disposals/{operationId}` after a lost HTTP reply. The runner
-uses the same paths without `/api`. Refusal receipts live under
-`<SessionLogPath>/herdr/disposals`; identical operation retries return the stored
-receipt even after restart, while changed payloads conflict. `paneLeftOpen: null`
-means execution did not re-observe the pane; it does not mean closed or absent.
+uses the same paths without `/api`. Receipts live under
+`<SessionLogPath>/herdr/disposals`; identical operation retries return or reconcile
+the stored receipt even after restart, while changed payloads conflict. A preview
+can be consumed only once. Closed/AlreadyAbsent return 200, refusal 409, and
+unavailable/Unknown 503 with typed operation/receipt evidence. Status returns the
+current receipt, including Unknown. `paneLeftOpen: null` is uncertainty, not proof
+of closure or absence. A dropped close reply is Unknown and is never replayed.
+Read-only recovery requires the original daemon identity, absence of the original
+terminal and positive absence of every reviewed OS process incarnation before
+AlreadyAbsent. Backend restart or unreadable process evidence remains Unknown.
+Display-ID replacement is reported separately. Only captured, unchanged locator
+files are deleted after confirmed closure/absence; cleanup failures remain
+`cleanupPending` and status retries deletion only. Unknown and cleanup-pending
+receipts are retained; settled receipts are pruned after seven days on execution.
 
-The `herdr-pane-disposal` runner feature advertises this inspect/refuse surface,
-not guarded teardown support. Protocol-20 Herdr supplies no process-tree fence
-at the close boundary. Executable classification, process creation identities,
-standing launch synchronization, pane acquisition leases, conditional locator
-cleanup, receipt retention/reconciliation and real guarded-backend race acceptance
-remain outstanding under the [CARD-0461 plan](superpowers/plans/2026-09-10-card-0461-herdr-leftover-pane-disposal-plan.md).
-Do not enable execution by changing the preview booleans or adding a `pane.close`
-call. Future guarded execution must ship the server ownership gates as well.
+The `herdr-pane-disposal` feature advertises inspection; execution additionally
+requires `herdr-pane-disposal-best-effort-v1` and the server's guard-mode opt-in.
+The runner-only `GET /herdr/pane-disposals/previews/{previewId}` lets the server
+acquire the existing standing Start locks for the immutable reviewed IDs. These
+locks remain held across runner I/O, with no database transaction spanning it.
+Pane acquisition/retirement uses key, workspace, then pane lock order; disposal
+takes only the pane lock. No automatic supervision path initiates disposal.
 Ordinary Stop/kill retains its existing attached-origin detach contract.
 
 ## 4. Where a pane lands

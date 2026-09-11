@@ -5,7 +5,7 @@ using TUnit.Core;
 
 namespace Antiphon.SessionRunner.Tests;
 
-public sealed class HerdrPaneDisposalServiceTests
+public sealed partial class HerdrPaneDisposalServiceTests
 {
     [Test]
     [Arguments("")]
@@ -38,7 +38,7 @@ public sealed class HerdrPaneDisposalServiceTests
     }
 
     [Test]
-    public async Task Protocol20_preview_is_read_only_ineligible_and_redacts_process_arguments()
+    public async Task Protocol20_preview_is_read_only_and_redacts_process_arguments()
     {
         await using var h = new HerdrPaneDisposalFixture();
         await h.StartAsync();
@@ -47,16 +47,15 @@ public sealed class HerdrPaneDisposalServiceTests
         h.Fake.SetPaneAgentSession(h.PaneId, "antiphon", "uuid", h.SessionId.ToString("D"));
         var preview = await h.PreviewAsync();
         preview.Eligible.ShouldBeFalse();
-        preview.GuardAvailable.ShouldBeFalse();
-        preview.ProcessInventoryComplete.ShouldBeFalse();
-        preview.Blockers.ShouldContain(HerdrPaneDisposalCodes.GuardUnavailable);
-        preview.Blockers.ShouldContain(HerdrPaneDisposalCodes.IdentityUnproven);
+        preview.GuardAvailable.ShouldBeTrue();
+        preview.ProcessInventoryComplete.ShouldBeTrue();
+        preview.Blockers.ShouldNotBeEmpty();
         preview.WouldLeaveTabEmpty.ShouldBe(false);
         preview.Foreground.ShouldNotBeNull().Single().ExecutableName.ShouldBe("grok.exe");
         var json = JsonSerializer.Serialize(preview);
         json.ShouldNotContain("secret-canary");
         json.ShouldNotContain("private-home");
-        h.Methods.ShouldAllBe(m => new[] { "ping", "pane.get", "pane.process_info", "workspace.list", "tab.list" }.Contains(m));
+        h.Methods.ShouldAllBe(m => new[] { "ping", "pane.get", "pane.process_info", "workspace.list", "tab.list", "agent.list" }.Contains(m));
         Directory.Exists(h.Settings.SessionLogPath).ShouldBeFalse();
     }
 

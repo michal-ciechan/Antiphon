@@ -117,6 +117,10 @@ internal sealed class HerdrPaneChild : ISessionChild
         if (request.SessionId == Guid.Empty)
             throw new ArgumentException("SessionId must not be empty.", nameof(request));
 
+        await using var paneLease = _coordinator is null ? null : await _coordinator.LockPaneAsync(request.PaneId, ct);
+        if (_findBound?.Invoke(request.PaneId, request.SessionId) is not null)
+            throw new HerdrLaunchException("Pane was bound before attach acquired it.", HerdrProblemTypes.PaneBound);
+
         var expectedKind = string.IsNullOrEmpty(request.ExpectedKind)
             ? HerdrAgentKinds.Claude
             : request.ExpectedKind;
@@ -238,6 +242,7 @@ internal sealed class HerdrPaneChild : ISessionChild
             TabId = pane.TabId,
             PaneId = request.PaneId,
             ChildPid = occupant.Pid,
+            ChildStartedAtUtc = _processLiveness.TryGetStartTimeUtc(occupant.Pid),
             ShellPid = inspected.Process.ShellPid,
             LaunchedAtUtc = startUtc,
             Cwd = occupant.Cwd,
@@ -308,6 +313,7 @@ internal sealed class HerdrPaneChild : ISessionChild
             }
 
             var target = await ResolveTargetPaneAsync(ensured.WorkspaceId, opts, request, expectedKind, ct);
+            await using var targetLease = target.Lease;
 
         if (target.Kind == TargetPaneKind.Adopt)
             return await AdoptInPlaceAsync(request, opts, expectedKind, target, ct);
@@ -339,6 +345,8 @@ internal sealed class HerdrPaneChild : ISessionChild
             sidecarWorkspaceId = ensured.WorkspaceId;
         }
 
+            await using var allocatedLease = target.Lease is not null || _coordinator is null
+                ? null : await _coordinator.LockPaneAsync(paneId, ct);
             return await CompleteTypedLaunchAsync(
                 request, opts, expectedKind, sidecarWorkspaceId, tabId, paneId, ct,
                 createdRootTabId, useRootWorkingDirectory, previousEnvNames);
@@ -362,6 +370,7 @@ internal sealed class HerdrPaneChild : ISessionChild
         var resolver = _namedTabs;
         IAsyncDisposable? wsLock = null;
         PlacementClaim? claim = null;
+        IAsyncDisposable? paneLease = null;
         try
         {
             if (_coordinator is not null)
@@ -420,7 +429,11 @@ internal sealed class HerdrPaneChild : ISessionChild
             }
 
             if (_coordinator is not null)
+            {
+                paneLease = await _coordinator.LockPaneAsync(paneId, ct);
+                RefuseIfForeignBinding(paneId, request.SessionId, opts);
                 claim = _coordinator.Claim(request.SessionId, ensured.WorkspaceId, tabId, paneId, named: true);
+            }
 
             HerdrPaneInfo livePane;
             try
@@ -555,6 +568,8 @@ internal sealed class HerdrPaneChild : ISessionChild
                 await wsLock.DisposeAsync();
             if (claim is not null)
                 await claim.DisposeAsync();
+            if (paneLease is not null)
+                await paneLease.DisposeAsync();
         }
     }
 
@@ -589,7 +604,8 @@ internal sealed class HerdrPaneChild : ISessionChild
         HerdrPaneProcess? Occupant = null,
         int? ShellPid = null,
         // CARD-0341: env names the previous launch script set on this pane's shell (relaunch arm).
-        IReadOnlyList<string>? PreviousEnvNames = null);
+        IReadOnlyList<string>? PreviousEnvNames = null,
+        IAsyncDisposable? Lease = null);
 
     /// <summary>
     /// CARD-0224: decide whether this launch reuses a standing last-pane, adopts a live occupant,
@@ -609,6 +625,14 @@ internal sealed class HerdrPaneChild : ISessionChild
 
         if (candidate is null)
             return new TargetPane(TargetPaneKind.Allocate, workspaceId, TabId: "", PaneId: "");
+
+        IAsyncDisposable? lease = _coordinator is null ? null : await _coordinator.LockPaneAsync(candidate.PaneId, ct);
+        try
+        {
+        if (HerdrLastPane.TryLoad(_settings.SessionLogPath, candidate.SessionId)?.PaneId != candidate.PaneId)
+            return new TargetPane(TargetPaneKind.Allocate, workspaceId, TabId: "", PaneId: "");
+        if (_findBound?.Invoke(candidate.PaneId, request.SessionId) is { Live: true })
+            throw new HerdrLaunchException("Last pane was acquired by another launch.", HerdrProblemTypes.PaneBound);
 
         if (!string.Equals(candidate.WorkspaceKey, opts.WorkspaceKey, StringComparison.Ordinal))
         {
@@ -648,14 +672,16 @@ internal sealed class HerdrPaneChild : ISessionChild
             }
 
             await RequirePowerShellShellAsync(candidate.PaneId, ct);
-            return new TargetPane(
+            var resolved = new TargetPane(
                 TargetPaneKind.Relaunch,
                 candidate.WorkspaceId,
                 candidate.TabId,
                 candidate.PaneId,
                 candidate.SessionId,
                 ShellPid: proc.ShellPid,
-                PreviousEnvNames: candidate.LaunchEnvNames);
+                PreviousEnvNames: candidate.LaunchEnvNames, Lease: lease);
+            lease = null;
+            return resolved;
         }
 
         if (string.Equals(pane.Agent, expectedKind, StringComparison.Ordinal)
@@ -663,14 +689,16 @@ internal sealed class HerdrPaneChild : ISessionChild
             && TryReadNativeSessionId(nonShell[0].Argv, out var native)
             && native == request.SessionId)
         {
-            return new TargetPane(
+            var resolved = new TargetPane(
                 TargetPaneKind.Adopt,
                 candidate.WorkspaceId,
                 candidate.TabId,
                 candidate.PaneId,
                 candidate.SessionId,
                 Occupant: nonShell[0],
-                ShellPid: proc.ShellPid);
+                ShellPid: proc.ShellPid, Lease: lease);
+            lease = null;
+            return resolved;
         }
 
         // 4c: foreign / unidentifiable / wrong kind / more than one process — refuse, keep the record.
@@ -681,6 +709,8 @@ internal sealed class HerdrPaneChild : ISessionChild
         throw new HerdrLaunchException(
             $"pane {candidate.PaneId} is occupied by {occupant.Name} pid {occupant.Pid} ({nativeText}); not stolen — run attach (CARD-0213) or free the pane",
             HerdrLaunchException.CodePaneOccupied);
+        }
+        finally { if (lease is not null) await lease.DisposeAsync(); }
     }
 
     private static bool IsPaneNotFound(HerdrApiException ex) =>
@@ -970,6 +1000,7 @@ internal sealed class HerdrPaneChild : ISessionChild
             TabId = tabId,
             PaneId = paneId,
             ChildPid = childPid,
+            ChildStartedAtUtc = childPid is int exactPid ? _processLiveness.TryGetStartTimeUtc(exactPid) : null,
             ShellPid = shellPid,
             LaunchedAtUtc = launchedAt,
             Cwd = request.Cwd,
@@ -1067,6 +1098,8 @@ internal sealed class HerdrPaneChild : ISessionChild
     {
         if (_paneId is null)
             return false;
+
+        await using var paneLease = _coordinator is null ? null : await _coordinator.LockPaneAsync(_paneId, ct);
 
         if (string.Equals(_sidecar?.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase))
             return await DetachAsync(ct);
@@ -1455,6 +1488,12 @@ internal sealed class HerdrPaneChild : ISessionChild
             }
             case HerdrPaneAllocator.Split split:
             {
+                await using var splitLease = _coordinator is null ? null : await _coordinator.LockPaneAsync(split.TargetPaneId, ct);
+                var current = await _client.PaneGetAsync(split.TargetPaneId, ct);
+                var selected = paneList.Single(p => p.PaneId == split.TargetPaneId);
+                if (current.TerminalId != selected.TerminalId || current.TabId != selected.TabId
+                    || !_liveAntiphonPanes().Any(p => p.PaneId == split.TargetPaneId))
+                    throw new HerdrLaunchException("Split target changed before acquisition.", HerdrProblemTypes.PaneChanged);
                 var pane = await _client.PaneSplitAsync(
                     split.TargetPaneId, split.Direction, split.Ratio, request.Cwd, request.Env, ct);
                 return (pane.TabId, pane.PaneId);

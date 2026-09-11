@@ -9,13 +9,14 @@ using TUnit.Core;
 namespace Antiphon.Tests.Agents;
 
 [Category("Integration")]
-public sealed class HerdrPaneDisposalHttpWireTests
+public sealed partial class HerdrPaneDisposalHttpWireTests
 {
     [Test]
     public async Task Refusal_and_durable_status_round_trip_through_both_route_families()
     {
         await using var h = new HerdrDisposalHttpFixture();
         await h.StartAsync();
+        h.Runner.Processes.Complete = false;
         using var response = await h.Http.PostAsJsonAsync("/api/herdr/pane-disposals/preview",
             new HerdrPaneDisposalPreviewRequest(h.Runner.PaneId, h.Runner.SessionId));
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -26,7 +27,7 @@ public sealed class HerdrPaneDisposalHttpWireTests
         using var refused = await h.Http.PostAsJsonAsync("/api/herdr/pane-disposals", request);
         refused.StatusCode.ShouldBe(HttpStatusCode.Conflict);
         var problem = await refused.Content.ReadFromJsonAsync<JsonElement>();
-        problem.GetProperty("code").GetString().ShouldBe(HerdrPaneDisposalCodes.GuardUnavailable);
+        problem.GetProperty("code").GetString().ShouldBe(HerdrPaneDisposalCodes.IdentityUnproven);
         problem.GetProperty("operationId").GetGuid().ShouldBe(request.OperationId);
         var receipt = problem.GetProperty("receipt").Deserialize<HerdrPaneDisposalReceipt>(new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
         receipt.PaneLeftOpen.ShouldBeNull();
@@ -47,7 +48,7 @@ public sealed class HerdrPaneDisposalHttpWireTests
             new HerdrPaneDisposalRequest(Guid.NewGuid(), Guid.NewGuid(), "test"));
         response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-        body.GetProperty("code").GetString().ShouldBe(HerdrProblemTypes.Refused);
+        body.GetProperty("code").GetString().ShouldBe(HerdrPaneDisposalCodes.GuardUnavailable);
         h.RunnerDisposalRequests.ShouldBe(0);
         h.Runner.Methods.ShouldBeEmpty();
     }

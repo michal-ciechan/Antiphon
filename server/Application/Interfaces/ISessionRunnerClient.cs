@@ -49,6 +49,9 @@ public interface ISessionRunnerClient
         HerdrPaneDisposalRequest request, CancellationToken ct) =>
         throw new NotSupportedException("This runner cannot dispose panes.");
 
+    Task<HerdrPaneDisposalPreview> GetHerdrPaneDisposalPreviewAsync(Guid previewId, CancellationToken ct) =>
+        throw new NotSupportedException("This runner cannot retrieve disposal previews.");
+
     Task<HerdrPaneDisposalReceipt> GetHerdrPaneDisposalAsync(Guid operationId, CancellationToken ct) =>
         throw new NotSupportedException("This runner cannot read disposal receipts.");
 

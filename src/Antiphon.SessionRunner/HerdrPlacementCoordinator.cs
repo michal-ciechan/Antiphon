@@ -16,11 +16,33 @@ internal sealed class HerdrPlacementCoordinator
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _workspaceIdLocks =
         new(StringComparer.Ordinal);
     private readonly object _claimsGate = new();
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _paneLocks = new(StringComparer.Ordinal);
     private readonly List<PlacementClaim> _claims = [];
+    internal event Action<string>? LockRequested;
+
+    // Lock order: workspace key -> workspace ID -> pane. Pane-only actors never acquire
+    // either outer lock. Leases serialize Antiphon only, never external Herdr RPC/process starts.
+    public async Task<IAsyncDisposable> LockPaneAsync(string paneId, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(paneId);
+        LockRequested?.Invoke("pane");
+        var semaphore = _paneLocks.GetOrAdd(paneId, _ => new(1, 1));
+        await semaphore.WaitAsync(ct);
+        return new SemaphoreReleaser(semaphore);
+    }
+
+    public IDisposable LockPane(string paneId)
+    {
+        LockRequested?.Invoke("pane");
+        var semaphore = _paneLocks.GetOrAdd(paneId, _ => new(1, 1));
+        semaphore.Wait();
+        return new SemaphoreReleaser(semaphore);
+    }
 
     public async Task<IAsyncDisposable> LockWorkspaceKeyAsync(string workspaceKey, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workspaceKey);
+        LockRequested?.Invoke("workspace-key");
         var sem = _workspaceKeyLocks.GetOrAdd(workspaceKey, _ => new SemaphoreSlim(1, 1));
         await sem.WaitAsync(ct).ConfigureAwait(false);
         return new SemaphoreReleaser(sem);
@@ -29,6 +51,7 @@ internal sealed class HerdrPlacementCoordinator
     public async Task<IAsyncDisposable> LockWorkspaceIdAsync(string workspaceId, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workspaceId);
+        LockRequested?.Invoke("workspace-id");
         var sem = _workspaceIdLocks.GetOrAdd(workspaceId, _ => new SemaphoreSlim(1, 1));
         await sem.WaitAsync(ct).ConfigureAwait(false);
         return new SemaphoreReleaser(sem);
@@ -78,16 +101,16 @@ internal sealed class HerdrPlacementCoordinator
             _claims.Remove(claim);
     }
 
-    private sealed class SemaphoreReleaser(SemaphoreSlim semaphore) : IAsyncDisposable
+    private sealed class SemaphoreReleaser(SemaphoreSlim semaphore) : IAsyncDisposable, IDisposable
     {
         private int _released;
 
         public ValueTask DisposeAsync()
         {
-            if (Interlocked.Exchange(ref _released, 1) == 0)
-                semaphore.Release();
+            Dispose();
             return ValueTask.CompletedTask;
         }
+        public void Dispose() { if (Interlocked.Exchange(ref _released, 1) == 0) semaphore.Release(); }
     }
 }
 

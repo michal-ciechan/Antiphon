@@ -44,7 +44,8 @@ public sealed record HerdrPaneInfo(
     [property: JsonPropertyName("agent")] string? Agent = null,
     [property: JsonPropertyName("tokens")] IReadOnlyDictionary<string, string>? Tokens = null,
     [property: JsonPropertyName("state_labels")] IReadOnlyDictionary<string, string>? StateLabels = null,
-    [property: JsonPropertyName("agent_session")] HerdrAgentSessionInfo? AgentSession = null);
+    [property: JsonPropertyName("agent_session")] HerdrAgentSessionInfo? AgentSession = null,
+    [property: JsonPropertyName("pending_input")] bool? PendingInput = null);
 
 public sealed record HerdrAgentSessionInfo(
     [property: JsonPropertyName("source")] string Source,

@@ -177,7 +177,7 @@ app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings) =>
         ? [SessionBackends.PtyHost, SessionBackends.Herdr]
         : [SessionBackends.PtyHost];
     IReadOnlyList<string>? features = herdrSettings.Value.Enabled
-        ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement, HerdrPaneDisposalCodes.Capability, GrokRulesTransport.Capability]
+        ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement, HerdrPaneDisposalCodes.Capability, HerdrPaneDisposalCodes.BestEffortCapability, GrokRulesTransport.Capability]
         : [GrokRulesTransport.Capability];
     return Results.Ok(new RunnerCapabilitiesDto(
         decision.Backend.ToString(), decision.Requested, decision.Reason, decision.FellBack,

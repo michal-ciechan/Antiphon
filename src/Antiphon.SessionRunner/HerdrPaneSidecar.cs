@@ -25,6 +25,8 @@ public sealed record HerdrPaneSidecar
     public required string PaneId { get; init; }
     /// <summary>The agent child's pid from pane.process_info after launch (leaf under a wrapper, <c>cmd.exe</c> for a <c>.cmd</c> launcher).</summary>
     public int? ChildPid { get; init; }
+    /// <summary>Exact observed OS creation identity; unlike LaunchedAtUtc, never a fallback timestamp.</summary>
+    public DateTime? ChildStartedAtUtc { get; init; }
     /// <summary>The pane's shell pid, if herdr wraps one.</summary>
     public int? ShellPid { get; init; }
     /// <summary>C3 epoch and staleness judge — runner UTC at launch success.</summary>

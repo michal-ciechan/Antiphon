@@ -97,7 +97,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
     internal readonly record struct LiveHerdrPane(Guid SessionId, string PaneId, RunnerSession Session);
 
-    // Read-only locator census for refused disposal previews, not an acquisition/kill guard.
+    internal HerdrPlacementCoordinator Placement => _placement;
+
+    // Runtime claims; the disposal locator store reads/captures files separately under the lease.
     // Include all matching claims, even the requested session and exited runtime history.
     internal IReadOnlyList<HerdrPaneDisposalClaim> InspectHerdrDisposalClaims(string paneId)
     {
@@ -107,14 +109,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         foreach (var (id, session) in _sessions)
         {
             if (session.HerdrPaneId == paneId)
-                claims.Add(new(id, "runner", session.HerdrOrigin, !session.HasExited));
+            {
+                var retained = session.HerdrLocator;
+                claims.Add(new(id, "runner", session.HerdrOrigin, !session.HasExited,
+                    retained?.AgentKind, retained?.ChildPid, retained?.ChildStartedAtUtc));
+            }
             if (session.PendingSidecar is { } pending && pending.PaneId == paneId)
                 claims.Add(new(id, "pending-adoption", pending.Origin, true));
         }
-        foreach (var sidecar in HerdrPaneSidecar.LoadAll(_settings.SessionLogPath).Where(s => s.PaneId == paneId))
-            claims.Add(new(sidecar.SessionId, "sidecar", sidecar.Origin, true));
-        foreach (var last in HerdrLastPane.LoadAll(_settings.SessionLogPath).Where(s => s.PaneId == paneId))
-            claims.Add(new(last.SessionId, "last-pane", last.Origin, false));
         return claims;
     }
 
@@ -854,13 +856,17 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// </summary>
     private async Task AdoptHerdrSessionsAsync(IProcessLivenessProbe probe, CancellationToken ct)
     {
-        foreach (var sidecar in HerdrPaneSidecar.LoadAll(_settings.SessionLogPath))
+        foreach (var candidate in HerdrPaneSidecar.LoadAll(_settings.SessionLogPath))
         {
             ct.ThrowIfCancellationRequested();
-            if (_sessions.ContainsKey(sidecar.SessionId))
+            if (_sessions.ContainsKey(candidate.SessionId))
                 continue;
 
-            using var attempt = _startup.Begin("herdr-adoption", sidecar.SessionId);
+            using var attempt = _startup.Begin("herdr-adoption", candidate.SessionId);
+            await using var paneLease = await _placement.LockPaneAsync(candidate.PaneId, ct);
+            var sidecar = HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, candidate.SessionId));
+            if (sidecar is null || sidecar.PaneId != candidate.PaneId) continue;
+            if (_sessions.ContainsKey(sidecar.SessionId)) continue;
             var verdict = await EvaluateHerdrBarAsync(sidecar, probe, ct);
             switch (verdict)
             {
@@ -882,7 +888,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     break;
                 case HerdrBarVerdict.Unreachable:
                     var pending = RunnerSession.CreatePendingHerdr(
-                        sidecar, _settings, _events, _logger, _processLiveness);
+                        sidecar, _settings, _events, _logger, _processLiveness, _placement);
                     _sessions.TryAdd(sidecar.SessionId, pending);
                     _logger.LogWarning(
                         "Herdr unreachable while adopting session {SessionId}; registered Pending ({Reason}); sidecar retained",
@@ -951,6 +957,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         var sidecar = session.PendingSidecar;
         if (sidecar is null || _herdrClient is null)
             return;
+
+        await using var paneLease = await _placement.LockPaneAsync(sidecar.PaneId, ct);
+        if (!session.IsPendingHerdr || session.PendingSidecar != sidecar) return;
 
         var verdict = await EvaluateHerdrBarAsync(sidecar, probe, ct);
         switch (verdict)
@@ -1231,7 +1240,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             _tailer?.NotifyClaimRevoked(path, newOwner);
 
         /// <summary>CARD-0162: pane id when this session is on the herdr lane.</summary>
-        internal string? HerdrPaneId => (_herdrChild as HerdrPaneChild)?.PaneId;
+        private HerdrPaneSidecar? _retiredHerdrSidecar;
+        private HerdrPlacementCoordinator? _herdrPlacement;
+        internal HerdrPaneSidecar? HerdrLocator => (_herdrChild as HerdrPaneChild)?.Sidecar ?? _retiredHerdrSidecar;
+        internal string? HerdrPaneId => (_herdrChild as HerdrPaneChild)?.PaneId ?? _retiredHerdrSidecar?.PaneId;
 
         /// <summary>CARD-0213: <see cref="HerdrPaneOrigins"/> once known.</summary>
         internal string? HerdrOrigin => _herdrOrigin;
@@ -1309,6 +1321,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 return true;
 
             var sidecar = herdr.Sidecar;
+            await using var paneLease = _herdrPlacement is null ? null : await _herdrPlacement.LockPaneAsync(sidecar.PaneId, ct);
             try
             {
                 try
@@ -1380,6 +1393,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             _ansiLogPath = Path.Combine(_settings.SessionLogPath, $"{_sessionId:N}.ansi.log");
             _screen = new TerminalScreen(request.Cols > 0 ? request.Cols : 120, request.Rows > 0 ? request.Rows : 30);
             _onHerdrPaneSetChanged = onPaneSetChanged;
+            _herdrPlacement = placement;
 
             try
             {
@@ -1455,6 +1469,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             _ansiLogPath = Path.Combine(_settings.SessionLogPath, $"{_sessionId:N}.ansi.log");
             _screen = new TerminalScreen(120, 30);
             _onHerdrPaneSetChanged = onPaneSetChanged;
+            _herdrPlacement = placement;
 
             try
             {
@@ -2004,6 +2019,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _exitCode = null,
                 _exitReason = reason,
                 _backend = SessionBackends.Herdr,
+                _retiredHerdrSidecar = sidecar,
                 _herdrOrigin = sidecar.Origin ?? HerdrPaneOrigins.Launched,
             };
             session._clientReady.TrySetResult(false);
@@ -2023,7 +2039,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             SessionRunnerSettings settings,
             SessionRunnerEventHub events,
             ILogger logger,
-            IProcessLivenessProbe processLiveness)
+            IProcessLivenessProbe processLiveness,
+            HerdrPlacementCoordinator? placement = null)
         {
             return new RunnerSession(sidecar.SessionId, settings, events, logger, processLiveness: processLiveness)
             {
@@ -2034,6 +2051,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _backend = SessionBackends.Herdr,
                 _pendingReason = HerdrPendingReasons.Unreachable,
                 _pendingSidecar = sidecar,
+                _herdrPlacement = placement,
                 _herdrOrigin = sidecar.Origin ?? HerdrPaneOrigins.Launched,
             };
         }
@@ -2072,6 +2090,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 return false;
             if (_herdrChild is not HerdrPaneChild herdr || herdr.PaneId is null || herdr.Sidecar is null)
                 return false;
+
+            await using var paneLease = _herdrPlacement is null ? null : await _herdrPlacement.LockPaneAsync(herdr.PaneId, ct);
 
             var sidecar = herdr.Sidecar;
             try
@@ -2128,6 +2148,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             _startedAt = sidecar.LaunchedAtUtc;
             _herdrOrigin = sidecar.Origin ?? HerdrPaneOrigins.Launched;
             _onHerdrPaneSetChanged = onPaneSetChanged;
+            _herdrPlacement = placement;
             _herdrChild = new HerdrPaneChild(
                 client,
                 _settings,
@@ -2418,6 +2439,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
             if (_pendingReason is not null)
             {
+                await using var pendingLease = _herdrPlacement is null || _pendingSidecar is null ? null
+                    : await _herdrPlacement.LockPaneAsync(_pendingSidecar.PaneId, ct);
+                if (_pendingReason is null) return;
                 KillPendingHerdr();
                 return;
             }
@@ -2467,6 +2491,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         /// </summary>
         public bool MarkVanishedIfDead(IProcessLivenessProbe probe)
         {
+            using var paneLease = _herdrPlacement is null || HerdrPaneId is null ? null : _herdrPlacement.LockPane(HerdrPaneId);
             int? pid;
             DateTime startedAt;
             lock (_gate)

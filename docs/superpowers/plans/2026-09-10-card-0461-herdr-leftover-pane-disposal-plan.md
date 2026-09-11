@@ -1,5 +1,89 @@
 # CARD-0461: explicit disposal of a leftover Herdr pane
 
+## Accepted execution revision — 2026-09-11
+
+The operator explicitly authorized **best-effort Antiphon check-then-close** on
+2026-09-11. This revision supersedes every atomic/backend-guard prerequisite and
+backend-fence/operation-receipt assumption below. Other identity, lifecycle,
+coordination, retention and redaction requirements remain in force. The original
+2026-09-10 design below is retained as design history where it discusses an
+unavailable backend primitive; it must not block this revised implementation.
+
+Execution uses the existing protocol-20 `pane.close` with **only `pane_id`**.
+Antiphon takes a pane lease, captures intent durably, then reinspects the selected
+pane, exact process creation identities, supported/native occupant evidence,
+OS shell descendants and runtime/pending/placement/sidecar/last-pane claims
+immediately before close. Foreign/unexpected occupants **visible at that check**
+refuse without close or PID killing. Antiphon leases serialize Antiphon acquisition,
+publication, detach and retirement. They do not fence external Herdr input, move,
+close or process creation. External changes **after** the final check may be
+terminated by unconditional close: a documented accepted limitation, not a hard
+invariant and not a release blocker. An absent optional backend pending-input
+observation is unknown, not proof that no external input can arrive.
+
+The daemon's named-pipe server PID and exact creation time identify the observed
+backend process. The terminal ID plus placement and exact process identities
+detect observed changes; none is represented as an atomic backend comparison.
+`guardAvailable` means Antiphon's best-effort check is available; responses expose
+`guardMode: antiphon-best-effort` and `atomicClose: false` explicitly. A versioned
+best-effort feature/wire opt-in prevents the earlier preview-only server, which
+has no standing ownership gates, from accidentally activating a newer runner.
+
+Herdr supplies no operation-ID receipt. The runner persists a sanitized reviewed
+snapshot before send. Same-operation retries query that receipt, never replay
+destruction. Post-send loss/cancellation is Unknown. Status can establish
+AlreadyAbsent only with the same observed backend, absence of the reviewed
+terminal in a complete pane census, and positive absence of the original OS
+process incarnations. Display-ID reuse is reported separately. Unavailable or
+ambiguous evidence stays Unknown. The new runner-only preview lookup permits the
+server to inspect the immutable expected IDs before taking its existing standing
+delivery/reservation locks; it does not create or refresh a preview.
+
+### Revised verification obligations (all 117 IDs retained)
+
+- V-1..V-8 keep their acceptance goals, using check-then-`pane.close`, durable
+  runner receipts and direct read-only reconciliation instead of a guarded RPC
+  or backend operation query. Unknown is not Closed. All other refusal and
+  preservation cases stay mandatory.
+- V-9 uses an owned uniquely named **stock Herdr 0.8.2** server, isolated config/
+  log roots, disposable processes and sentinel panes. No custom backend source,
+  fork or process-start fence instrumentation is needed. Prove positive closure,
+  foreign foreground/background refusal **at the final check**, changed placement
+  before that check, and lost-result reconciliation. Schedule changes after the
+  first runner observation but before its final inspection using acknowledged
+  barriers. No assertion promises survival of arrivals after the final check.
+- G/PC-14 (`Backend_feature_gate`): refuse unverifiable/incompatible **selected
+  daemon** protocol/OS identity; protocol 20 is supported. Mutant bypasses that
+  verification; assertion is zero close on unverifiable backend.
+- G/PC-15 (`Distinct_guard_wire`): the reviewed target reaches **existing**
+  `pane.close` with exactly `pane_id`; no made-up guard fields or unsupported
+  method. Mutant sends the wrong method/shape; captured wire assertion fails.
+- G/PC-33 (`No_pending_input`): refuse a **reported** pending-input observation;
+  absence does not establish an external input fence.
+- G/PC-83 (`Foreign_after_runner_inspection`): a foreign foreground process is
+  present before the final Antiphon check. Mutant omits final inspection and uses
+  the earlier snapshot; real foreign-process/pane survival assertion fails.
+- G/PC-84 (`External_tree_race_at_teardown`): a foreign **background descendant**
+  is present before the final check. Mutant omits current OS descendant inspection;
+  real survival assertion fails. No backend source mutation is required.
+- G/PC-85 (`Backend_rpc_fence`): an external pane move/replacement completes before
+  final inspection. Mutant omits final placement/incarnation comparison; target
+  survival assertion fails. The historical name does not claim an RPC fence.
+- G/PC-93: original absence is based on the conservative direct census/process
+  rules above, not a nonexistent backend receipt.
+- G/PC-113 (`Queryable_backend_identity`): recovery uses the **persisted reviewed
+  backend/terminal/process identity**. Mutant substitutes a new current identity;
+  restart/reuse remains Unknown and zero-close assertions detect it.
+
+The same exact class/method IDs below continue to identify all 117 tests and
+Mutation controls; these replacements override the obsolete atomic controls in
+their rows. Code runs ordinary V/R only. Mutation runs red/restored-green in the
+retained Code worktree, then mandatory Review. The historical 479-minute estimate
+included custom-backend setup/fence mutations and is superseded for those costs;
+record measured time for the stock-backend cases, without padding or skipping.
+
+## Original design and retained non-atomicity requirements
+
 Plan date: 2026-09-10. Inspected Antiphon HEAD: `dc6af182`.
 Card: CARD-0461, `18e4ed92-d598-4e3d-8b8f-f20ebff955b0`, Antiphon board.
 Stage: Plan. Runtime implementation and live cleanup are not part of this change.

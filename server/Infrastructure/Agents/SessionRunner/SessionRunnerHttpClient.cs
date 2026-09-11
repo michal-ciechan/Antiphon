@@ -576,6 +576,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         HerdrPaneDisposalRequest request, CancellationToken ct)
     {
         await RequirePaneDisposalCapabilityAsync(ct);
+        if ((await GetCapabilitiesAsync(ct))?.Features?.Contains(HerdrPaneDisposalCodes.BestEffortCapability, StringComparer.Ordinal) != true)
+            throw new ConflictException("The runner cannot execute best-effort pane disposal.", HerdrPaneDisposalCodes.GuardUnavailable);
         using var response = await _httpClient.PostAsJsonAsync("herdr/pane-disposals", request, JsonOptions, ct);
         return await ReadPaneDisposalAsync<HerdrPaneDisposalReceipt>(response, ct);
     }
@@ -585,6 +587,13 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         await RequirePaneDisposalCapabilityAsync(ct);
         using var response = await _httpClient.GetAsync($"herdr/pane-disposals/{operationId:D}", ct);
         return await ReadPaneDisposalAsync<HerdrPaneDisposalReceipt>(response, ct);
+    }
+
+    public async Task<HerdrPaneDisposalPreview> GetHerdrPaneDisposalPreviewAsync(Guid previewId, CancellationToken ct)
+    {
+        await RequirePaneDisposalCapabilityAsync(ct);
+        using var response = await _httpClient.GetAsync($"herdr/pane-disposals/previews/{previewId:D}", ct);
+        return await ReadPaneDisposalAsync<HerdrPaneDisposalPreview>(response, ct);
     }
 
     private async Task RequirePaneDisposalCapabilityAsync(CancellationToken ct)

@@ -1,5 +1,5 @@
-# Explicit pane inspection/refusal. Ordinary Stop still detaches attached panes.
-# Protocol-20 backends cannot safely execute disposal; inspect reports that blocker.
+# Explicit best-effort pane disposal. Ordinary Stop still detaches attached panes.
+# External changes after the final Antiphon check can race unconditional pane.close.
 [CmdletBinding()]
 param(
     [Parameter(Position = 0, Mandatory = $true)]
@@ -92,7 +92,8 @@ if ($Json) { $result | ConvertTo-Json -Depth 16 }
 elseif ($Verb -eq 'inspect' -and -not $failed) {
     Write-Output ("Pane {0}, tab {1}, workspace {2}; eligible={3}; guardAvailable={4}" -f $result.paneId, $result.tabId, $result.workspaceId, $result.eligible, $result.guardAvailable)
     Write-Output ("Preview {0}, expires {1}; blockers: {2}" -f $result.previewId, $result.expiresAtUtc, ($result.blockers -join ', '))
-    Write-Output 'Foreground observations are incomplete. No process termination is authorized.'
+    Write-Output ("Guard mode: {0}; atomic close: {1}; process inventory complete: {2}" -f $result.guardMode, $result.atomicClose, $result.processInventoryComplete)
+    Write-Output 'External changes after the final check can race close. Execute only the reviewed preview.'
 }
 else { $result | ConvertTo-Json -Depth 16 }
 if ($failed) { exit 1 }
