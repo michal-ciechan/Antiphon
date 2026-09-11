@@ -446,7 +446,10 @@ public sealed class ApiErrorRecoveryService
         row.EvidenceDigest = CapacityEvidence.Digest(errorText);
         row.EvidenceStatus = string.IsNullOrWhiteSpace(errorText) ? "empty" : "text";
 
-        if (_capacityRecovery is not null)
+        // Production always registers CapacityRecoveryService; honor IsEnabled so a disabled
+        // recovery does not stamp CapacityWaitId. A wait created while disabled would never
+        // reconcile (ReconcileAsync returns immediately) and the reply path would retain Working.
+        if (_capacityRecovery is { IsEnabled: true })
         {
             var wait = await _capacityRecovery.EnsureWaitOnAsync(db, new CapacityWaitRegistration
             {
