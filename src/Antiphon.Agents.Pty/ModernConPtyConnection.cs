@@ -30,6 +30,9 @@ namespace Antiphon.Agents.Pty;
 /// <c>CreatePseudoConsole</c>. Anything else that differs at spawn is a bug in this file.
 /// <see cref="Kill"/> is the measured exception (CARD-0308): settlement must terminate the
 /// spawn job immediately rather than waiting for <see cref="Dispose"/> to close it.</para>
+/// <para>Opt-in tracked launches (CARD-0478) additionally use a job list at native creation,
+/// suspension, validated membership and a durable journal callback before resuming. The host
+/// must bind and persist the eventual custody receipt; this connection does not authorize cleanup.</para>
 ///
 /// <para><b>One thing it must do that the inbox path must not (CARD-0048).</b> The
 /// <c>OpenConsole.exe</c> behind this DLL opens with a DA1 query and <b>freezes the console client
@@ -42,6 +45,7 @@ internal sealed class ModernConPtyConnection : IPtySession
 {
     private const int EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     private const int CREATE_UNICODE_ENVIRONMENT = 0x00000400;
+    private const int CREATE_SUSPENDED = 0x00000004;
     private const int STARTF_USESTDHANDLES = 0x00000100;
     private static readonly IntPtr PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x00020016;
 
@@ -53,7 +57,10 @@ internal sealed class ModernConPtyConnection : IPtySession
     private readonly SafeFileHandle _inWrite;
     private readonly SafeFileHandle _outRead;
     private readonly SafeFileHandle _job;
+    private readonly IPtyCustodyNative _custodyNative;
+    internal PtyTerminationObservation? LastTermination { get; private set; }
     private readonly IntPtr _attrList;
+    private readonly IntPtr _jobList;
     private readonly IntPtr _hProcess;
     private readonly IntPtr _hThread;
     private readonly Process _process;
@@ -61,6 +68,7 @@ internal sealed class ModernConPtyConnection : IPtySession
     private readonly Da1StartupResponder _da1;
     private readonly FileStream _da1Reply;
     private bool _disposed;
+    private bool _consoleClosed;
 
     public event Action<int>? Exited;
 
@@ -88,7 +96,9 @@ internal sealed class ModernConPtyConnection : IPtySession
         SafeFileHandle inWrite,
         SafeFileHandle outRead,
         SafeFileHandle job,
+        IPtyCustodyNative custodyNative,
         IntPtr attrList,
+        IntPtr jobList,
         IntPtr hProcess,
         IntPtr hThread,
         int pid)
@@ -98,7 +108,9 @@ internal sealed class ModernConPtyConnection : IPtySession
         _inWrite = inWrite;
         _outRead = outRead;
         _job = job;
+        _custodyNative = custodyNative;
         _attrList = attrList;
+        _jobList = jobList;
         _hProcess = hProcess;
         _hThread = hThread;
         Pid = pid;
@@ -136,7 +148,9 @@ internal sealed class ModernConPtyConnection : IPtySession
         _process.EnableRaisingEvents = true;
     }
 
-    public static ModernConPtyConnection Spawn(string conptyDllPath, PtyOptions options)
+    public static ModernConPtyConnection Spawn(string conptyDllPath, PtyOptions options,
+        IPtyCustodyJournal? custody = null, IPtyCustodyNative? custodyNative = null,
+        CancellationToken ct = default)
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("The modern ConPTY backend is Windows-only.");
@@ -158,10 +172,14 @@ internal sealed class ModernConPtyConnection : IPtySession
         // with it any process that did get created). Porta does the same; without it a crashed host
         // leaves the child and its OpenConsole behind.
         var job = CreateKillOnCloseJob();
+        custodyNative ??= new WindowsPtyCustodyNative();
         SafeFileHandle? inRead = null, inWrite = null, outRead = null, outWrite = null;
         var attrList = IntPtr.Zero;
+        var jobList = IntPtr.Zero;
         var hPC = IntPtr.Zero;
         var envBlock = IntPtr.Zero;
+        PROCESS_INFORMATION processInfo = default;
+        ModernConPtyConnection? connection = null;
 
         try
         {
@@ -186,7 +204,12 @@ internal sealed class ModernConPtyConnection : IPtySession
             outWrite.Dispose();
             outWrite = null;
 
-            attrList = CreatePseudoConsoleAttributeList(hPC);
+            if (custody is not null)
+            {
+                jobList = Marshal.AllocHGlobal(IntPtr.Size);
+                Marshal.WriteIntPtr(jobList, job.DangerousGetHandle());
+            }
+            attrList = CreatePseudoConsoleAttributeList(hPC, jobList);
 
             var startupInfo = new STARTUPINFOEX();
             startupInfo.StartupInfo.cb = Marshal.SizeOf<STARTUPINFOEX>();
@@ -203,29 +226,66 @@ internal sealed class ModernConPtyConnection : IPtySession
 
             // bInheritHandles false, as Porta has it: the pseudoconsole duplicates the pipe ends it
             // was given into the console host itself, so nothing here needs to be inheritable.
+            if (custody is not null) ct.ThrowIfCancellationRequested();
+            custody?.RecordStartIntent();
+            if (custody is not null) ct.ThrowIfCancellationRequested();
             var created = CreateProcessW(
                 null,
                 new StringBuilder(commandLine),
                 IntPtr.Zero,
                 IntPtr.Zero,
                 false,
-                EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+                EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT
+                    | (custody is null ? 0 : CREATE_SUSPENDED),
                 envBlock,
                 options.Cwd,
                 ref startupInfo,
-                out var processInfo);
+                out processInfo);
             if (!created)
                 throw LastError($"Could not start terminal process {commandLine}");
 
-            if (!AssignProcessToJobObject(job, processInfo.hProcess))
-                throw LastError("AssignProcessToJobObject failed");
+            if (custody is null)
+            {
+                if (!AssignProcessToJobObject(job, processInfo.hProcess))
+                    throw LastError("AssignProcessToJobObject failed");
+            }
+            else
+            {
+                if (!custodyNative.IsInJob(processInfo.hProcess, job))
+                    throw new InvalidOperationException("Atomic job membership validation failed");
+                if (custodyNative.QueryLimitFlags(job) != 0x00002000)
+                    throw new InvalidOperationException("Custody job must kill on close and disallow breakaway.");
+                custody.RecordTracking(processInfo.dwProcessId);
+                ct.ThrowIfCancellationRequested();
+                // Retain the managed process handle while the root is still suspended.
+                // An immediately exiting provider must not race Process.GetProcessById.
+                connection = new ModernConPtyConnection(
+                    module, hPC, inWrite!, outRead!, job, custodyNative, attrList, jobList,
+                    processInfo.hProcess, processInfo.hThread, processInfo.dwProcessId);
+                if (custodyNative.Resume(processInfo.hThread) != 1)
+                    throw LastError("ResumeThread failed");
+            }
 
-            return new ModernConPtyConnection(
-                module, hPC, inWrite!, outRead!, job, attrList,
+            return connection ?? new ModernConPtyConnection(
+                module, hPC, inWrite!, outRead!, job, custodyNative, attrList, jobList,
                 processInfo.hProcess, processInfo.hThread, processInfo.dwProcessId);
         }
         catch
         {
+            if (connection is not null)
+            {
+                connection.Kill();
+                connection.Dispose();
+                throw;
+            }
+            // Close containment first: an unresumed child must not block console teardown.
+            if (processInfo.hProcess != IntPtr.Zero)
+            {
+                TerminateProcess(processInfo.hProcess, 1);
+                CloseHandle(processInfo.hProcess);
+            }
+            if (processInfo.hThread != IntPtr.Zero) CloseHandle(processInfo.hThread);
+            job.Dispose();
             if (hPC != IntPtr.Zero) module.Close(hPC);
             inRead?.Dispose();
             inWrite?.Dispose();
@@ -237,12 +297,41 @@ internal sealed class ModernConPtyConnection : IPtySession
                 Marshal.FreeHGlobal(attrList);
             }
 
-            job.Dispose();
+            if (jobList != IntPtr.Zero) Marshal.FreeHGlobal(jobList);
             throw;
         }
         finally
         {
             if (envBlock != IntPtr.Zero) Marshal.FreeHGlobal(envBlock);
+        }
+    }
+
+    /// <summary>OS accounting on the original retained spawn job, never a PID census.</summary>
+    internal uint QueryActiveProcesses()
+    {
+        lock (_disposeGate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return _custodyNative.QueryActiveProcesses(_job);
+        }
+    }
+
+    internal int? ReadExitedCode()
+    {
+        lock (_disposeGate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return _process.HasExited ? _process.ExitCode : null;
+        }
+    }
+
+    internal void CloseConsoleForDrain()
+    {
+        lock (_disposeGate)
+        {
+            if (_consoleClosed) return;
+            _module.Close(_hPC);
+            _consoleClosed = true;
         }
     }
 
@@ -274,14 +363,14 @@ internal sealed class ModernConPtyConnection : IPtySession
         if (_job.IsInvalid || _job.IsClosed)
             return;
 
-        _ = TerminateJobObject(_job, 1);
+        LastTermination = _custodyNative.Terminate(_job);
     }
 
     public void Resize(int cols, int rows)
     {
         lock (_disposeGate)
         {
-            if (_disposed) throw new ObjectDisposedException(nameof(ModernConPtyConnection));
+            if (_disposed || _consoleClosed) throw new ObjectDisposedException(nameof(ModernConPtyConnection));
             var hr = _module.Resize(_hPC, new COORD { X = (short)cols, Y = (short)rows });
             if (hr != 0)
                 throw new InvalidOperationException($"Could not resize pseudo console: 0x{hr:X8}");
@@ -301,7 +390,7 @@ internal sealed class ModernConPtyConnection : IPtySession
         // Documented ConPTY teardown order, matching Porta's: pseudoconsole (tells the console host
         // to shut down), then the pipes (lets pending I/O complete), then process/thread handles,
         // then the job last so anything still alive is terminated.
-        try { _module.Close(_hPC); } catch { /* teardown */ }
+        try { CloseConsoleForDrain(); } catch { /* teardown */ }
         try { _inWrite.Dispose(); } catch { /* teardown */ }
         try { _outRead.Dispose(); } catch { /* teardown */ }
         try { CloseHandle(_hThread); } catch { /* teardown */ }
@@ -312,6 +401,7 @@ internal sealed class ModernConPtyConnection : IPtySession
             {
                 DeleteProcThreadAttributeList(_attrList);
                 Marshal.FreeHGlobal(_attrList);
+                if (_jobList != IntPtr.Zero) Marshal.FreeHGlobal(_jobList);
             }
             catch { /* teardown */ }
         }
@@ -600,22 +690,30 @@ internal sealed class ModernConPtyConnection : IPtySession
         return Path.Combine(cwd, app);
     }
 
-    private static IntPtr CreatePseudoConsoleAttributeList(IntPtr hPC)
+    private static IntPtr CreatePseudoConsoleAttributeList(IntPtr hPC, IntPtr jobList)
     {
         var size = IntPtr.Zero;
-        InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size);
+        var count = jobList == IntPtr.Zero ? 1 : 2;
+        InitializeProcThreadAttributeList(IntPtr.Zero, count, 0, ref size);
+        if (size == IntPtr.Zero) throw LastError("Attribute-list sizing failed");
         var list = Marshal.AllocHGlobal(size);
+        var initialized = false;
         try
         {
-            if (!InitializeProcThreadAttributeList(list, 1, 0, ref size))
+            if (!InitializeProcThreadAttributeList(list, count, 0, ref size))
                 throw LastError("InitializeProcThreadAttributeList failed");
+            initialized = true;
             if (!UpdateProcThreadAttribute(
                     list, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, hPC, (IntPtr)IntPtr.Size, IntPtr.Zero, IntPtr.Zero))
                 throw LastError("UpdateProcThreadAttribute failed");
+            if (jobList != IntPtr.Zero && !UpdateProcThreadAttribute(
+                    list, 0, (IntPtr)0x0002000D, jobList, (IntPtr)IntPtr.Size, IntPtr.Zero, IntPtr.Zero))
+                throw LastError("UpdateProcThreadAttribute JOB_LIST failed");
             return list;
         }
         catch
         {
+            if (initialized) DeleteProcThreadAttributeList(list);
             Marshal.FreeHGlobal(list);
             throw;
         }
@@ -741,7 +839,7 @@ internal sealed class ModernConPtyConnection : IPtySession
     private static extern bool AssignProcessToJobObject(SafeFileHandle hJob, IntPtr hProcess);
 
     [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool TerminateJobObject(SafeFileHandle hJob, uint uExitCode);
+    private static extern bool TerminateProcess(IntPtr process, uint exitCode);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct COORD
@@ -780,7 +878,6 @@ internal sealed class ModernConPtyConnection : IPtySession
         public ulong ReadOperationCount, WriteOperationCount, OtherOperationCount;
         public ulong ReadTransferCount, WriteTransferCount, OtherTransferCount;
     }
-
     [StructLayout(LayoutKind.Sequential)]
     private struct JOBOBJECT_BASIC_LIMIT_INFORMATION
     {
