@@ -584,6 +584,36 @@ public class CardWorkTransitionServiceTests
 
         public async Task<CardRevision> LatestMoveAsync(Guid cardId) => (await MovesAsync(cardId))[^1];
 
+        public async Task<MoveCardResult> MoveToAsync(Guid cardId, CardStatus to, string reason)
+        {
+            await using var scope = _provider.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var card = await db.Cards.SingleAsync(c => c.Id == cardId);
+            var column = await db.BoardColumns.FirstAsync(c => c.BoardId == BoardId && c.CardStatus == to);
+            return await scope.ServiceProvider.GetRequiredService<CardService>()
+                .MoveAsync(cardId, new MoveCardRequest(column.Id, card.ConcurrencyToken, reason), CancellationToken.None);
+        }
+
+        public async Task<ReopenCardResult> ReopenToAsync(Guid cardId, CardStatus to, string reason)
+        {
+            await using var scope = _provider.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var card = await db.Cards.SingleAsync(c => c.Id == cardId);
+            var column = await db.BoardColumns.FirstAsync(c => c.BoardId == BoardId && c.CardStatus == to);
+            return await scope.ServiceProvider.GetRequiredService<CardService>()
+                .ReopenAsync(cardId, new ReopenCardRequest(card.ConcurrencyToken, reason, column.Id), CancellationToken.None);
+        }
+
+        public async Task<List<CardRevision>> DecisionRevisionsAsync(Guid cardId)
+        {
+            await using var scope = _provider.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            return await db.CardRevisions.AsNoTracking()
+                .Where(r => r.CardId == cardId && r.ToStatus == CardStatus.NeedsDecision)
+                .OrderBy(r => r.RevisionNumber)
+                .ToListAsync();
+        }
+
         public async Task<int> SessionCountForAsync(Guid cardId)
         {
             await using var scope = _provider.CreateAsyncScope();

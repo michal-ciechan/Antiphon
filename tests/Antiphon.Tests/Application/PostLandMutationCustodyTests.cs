@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -569,8 +570,28 @@ public sealed class PostLandMutationCustodyTests
         await using var world = await PostLandMutationWorld.CreateAsync();
         var binding = await world.ReserveAsync();
         await world.TerminalAsync(binding.Generation.SessionId);
+        await using (var db = world.Host.CreateContext())
+        {
+            var row = await db.VerificationExecutions.SingleAsync(e => e.Id == binding.ExecutionId);
+            row.ReceiptBytes.ShouldBeNull();
+            row.ReceiptImportedAt.ShouldBeNull();
+        }
         await world.WriteRestorationAsync([]);
+        var path = await world.EvidencePathAsync();
+        var node = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(path))!.AsObject();
+        node["commandsAwaited"] = true;
+        node["rootPid"] = 4242;
+        node["activeProcesses"] = 0;
+        node["custodyState"] = "Exited";
+        node["observationMethod"] = "worker-restoration";
+        node["pidInventory"] = new System.Text.Json.Nodes.JsonArray(4242, 4243);
+        await File.WriteAllTextAsync(path, node.ToJsonString(PostLandMutationWorld.WebJson));
         await AssertCleanupRetainsAsync(world);
+        await using var observer = world.Host.CreateContext();
+        var execution = await observer.VerificationExecutions.SingleAsync(e => e.Id == binding.ExecutionId);
+        execution.ReceiptBytes.ShouldBeNull();
+        execution.ReceiptImportedAt.ShouldBeNull();
+        execution.ReceiptDigest.ShouldBeNull();
     }
 
     [Test]

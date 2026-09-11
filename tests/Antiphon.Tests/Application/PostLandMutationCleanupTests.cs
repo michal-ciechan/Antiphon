@@ -265,19 +265,29 @@ public sealed class PostLandMutationCleanupTests
         await world.TerminalAsync();
         await world.WriteRestorationAsync([]);
         var path = await world.PathAsync();
-        var sentinel = Path.Combine(path, "replacement.txt");
-        await File.WriteAllTextAsync(sentinel, "replacement-identity");
+        (await world.Host.Fixture.RequiredAsync(path, "status", "--porcelain", "--untracked-files=all"))
+            .Trim().ShouldBe("");
         var creation = await CreationAsync(world);
+        var replacementId = Guid.NewGuid();
         var metadataDir = Path.Combine(world.Host.Fixture.Root, "trees", ".antiphon", "worktrees");
+        var rewritten = 0;
         foreach (var file in Directory.GetFiles(metadataDir, "*.json"))
         {
             var text = await File.ReadAllTextAsync(file);
             if (!text.Contains(creation.CreationId.ToString(), StringComparison.OrdinalIgnoreCase)) continue;
-            await File.WriteAllTextAsync(file, text.Replace(creation.CreationId.ToString(), Guid.NewGuid().ToString(),
+            await File.WriteAllTextAsync(file, text.Replace(creation.CreationId.ToString(), replacementId.ToString(),
                 StringComparison.OrdinalIgnoreCase));
+            rewritten++;
         }
+        rewritten.ShouldBeGreaterThan(0);
         await RefuseCleanupAsync(world, path);
-        File.Exists(sentinel).ShouldBeTrue();
+        Directory.Exists(path).ShouldBeTrue();
+        await using var scope = world.Host.Services.CreateAsyncScope();
+        var metadata = await scope.ServiceProvider.GetRequiredService<IWorktreeManager>()
+            .ReadVerificationCreationAsync(path, default);
+        metadata.ShouldNotBeNull();
+        metadata!.CreationId.ShouldBe(replacementId);
+        metadata.CreationId.ShouldNotBe(creation.CreationId);
     }
 
     [Test]
