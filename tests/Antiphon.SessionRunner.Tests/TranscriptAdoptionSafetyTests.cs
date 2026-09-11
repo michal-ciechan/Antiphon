@@ -1015,8 +1015,8 @@ public class TranscriptAdoptionSafetyTests
     /// <summary>
     /// THE test for CARD-0064. A brief typed into a mid-turn composer is recorded as
     /// <c>queue-operation</c> <c>enqueue</c> and never as a <c>user</c> prompt. C4 must still bind
-    /// on that body. The ingested snapshot stays empty — the harvest is C4-only and must not
-    /// leak a queued-but-unsubmitted body into the transcript stream CARD-0055 confirms against.
+    /// on that body. CARD-0292 persists that enqueue as an inert <see cref="TranscriptKinds.QueueEnqueue"/>
+    /// housekeeping row; it must not leak as a UserPrompt or QueuedUserPrompt.
     /// </summary>
     [Test]
     public async Task Queue_operation_enqueue_of_delivered_text_binds_via_C4()
@@ -1038,9 +1038,13 @@ public class TranscriptAdoptionSafetyTests
             await tree.AppendAsync(file, QueueOperationLine("enqueue", prompt, now));
 
             await AssertBoundByDiscoveryAsync(hub, tailer, file);
-            await Task.Delay(400);
-            tailer.Snapshot().Entries.ShouldBeEmpty(
-                "a queued body is C4 evidence only — it must not be ingested as a UserPrompt");
+            var entries = await PollForEntriesAsync(tailer, want: 1, TimeSpan.FromSeconds(10));
+            var enqueue = entries.ShouldHaveSingleItem();
+            enqueue.Kind.ShouldBe(TranscriptKinds.QueueEnqueue);
+            enqueue.Text.ShouldBe(prompt);
+            entries.ShouldNotContain(e => e.Kind == TranscriptKinds.UserPrompt);
+            entries.ShouldNotContain(e => e.Kind == TranscriptKinds.QueuedUserPrompt,
+                "a queued body is C4 evidence and inert QueueEnqueue, never a submitted prompt");
         }
         finally
         {

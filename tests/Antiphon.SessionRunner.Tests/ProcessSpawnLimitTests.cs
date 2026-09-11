@@ -19,6 +19,7 @@ public class ProcessSpawnLimitTests
         Type[] expected =
         [
             typeof(DaemonLogRotationTests),
+            typeof(DaemonStartupDiagnosticsTests),
             typeof(FirstWriteRaceTests),
             typeof(GrokRulesAdoptionTests),
             typeof(GrokRulesFileLaunchTests),
@@ -31,6 +32,9 @@ public class ProcessSpawnLimitTests
             typeof(HerdrPaneChildKillTests),
             typeof(PtyBackendSeamTests),
             typeof(PtyHostAdoptionTests),
+            typeof(RunnerRestartHealthTests),
+            typeof(RunnerRestartScriptCompatibilityTests),
+            typeof(RunnerStartupReadinessTests),
             typeof(SessionBufferBoundsTests),
             typeof(SessionCpuWatchdogTests),
             typeof(SessionLivenessTests),
