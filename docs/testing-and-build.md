@@ -168,9 +168,19 @@ Commit before each big run and record the commit and temporary PC mutations it e
 
 ## Nightly
 
-The overnight job is `scripts/nightly-run.ps1`, invoked by Windmill
-(`u/lndcobra/antiphon_nightly_tests`, 00:30 Europe/London). Do not add a local
-Windows Scheduled Task.
+**Deployment audit, 2026-09-11 (CARD-0487): the named Windmill script and schedule
+are absent.** A read-only census of the live Windmill database found no matching
+script, schedule or retained job. The latest local `last-run.json` is a failed
+September 4 client-only feature-branch run. The current script also omits
+SessionRunner, PtyHost and Messaging test projects. Do not credit this as an
+operational full-suite backstop. See the
+[audit and prerequisite plan](superpowers/plans/2026-09-11-card-0487-scoped-dispatch-testing-plan.md).
+This finding does not activate that plan's reduced-dispatch policy.
+
+The implemented bootstrap is `scripts/nightly-run.ps1`; its intended Windmill
+registration is `u/lndcobra/antiphon_nightly_tests`, 00:30 Europe/London. The
+following describes the current script contract. Do not add a local Windows
+Scheduled Task.
 
 It syncs an **isolated** clone at `C:\Antiphon\nightly\checkout` to
 `origin/master` (never `C:\src\Antiphon`, never a worktree), builds (`npm ci`,
