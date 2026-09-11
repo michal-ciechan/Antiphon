@@ -2888,6 +2888,7 @@ public class AgentTaskReplyIntegrationTests
         // "Done" work that cannot land is not done. The task blocks, and the conflict goes to a
         // Merge-role delegate working in the conflicted worktree — never an automatic resolution.
         using var repo = new ScratchGitRepo("antiphon-reply-conflict");
+        await repo.CommitFileAsync(".gitignore", ".antiphon/\n");
         await repo.CommitFileAsync("shared.md", "original\n");
         await repo.GitAsync("branch", "feat/parent");
         var factory = new TestScopeFactory(repo.WorktreeRoot);
@@ -3204,7 +3205,11 @@ public class AgentTaskReplyIntegrationTests
         await SeedApiErrorStubTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id));
         await using var wall = await WallRecoveryFixture.CreateAsync(task, sessionId);
         var logger = new SettlementLogger();
-        await wall.OnTurnEndAsync(CreateService(logger: logger));
+        var factory = new TestScopeFactory(supervision: new SupervisionSettings
+        {
+            CapacityRecovery = new CapacityRecoverySettings { Enabled = false },
+        });
+        await wall.OnTurnEndAsync(CreateService(factory, logger: logger));
         var recovery = await wall.AssertRecoveryAsync();
         recovery.ResolvedReason.ShouldBe(ApiErrorRecoveryReasons.WallParked);
         recovery.ResolvedAt.ShouldNotBeNull();
@@ -4274,13 +4279,13 @@ public class AgentTaskReplyIntegrationTests
         /// <summary>Records what the settle path asked to stop — the ephemeral-cleanup assertion.</summary>
         public RecordingSessionStopper Stopper { get; } = new();
 
-        public TestScopeFactory(string? worktreeRoot = null)
+        public TestScopeFactory(string? worktreeRoot = null, SupervisionSettings? supervision = null)
         {
             var services = new ServiceCollection();
             services.AddLogging();
             services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
             services.AddSingleton<Antiphon.Server.Application.Interfaces.IEventBus, MockEventBus>();
-            services.AddSingleton(Options.Create(new SupervisionSettings()));
+            services.AddSingleton(Options.Create(supervision ?? new SupervisionSettings()));
             services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
             services.AddSingleton(Options.Create(new DelegationSettings()));
             services.AddSingleton(TimeProvider.System);
