@@ -606,6 +606,7 @@ public sealed class PostLandMutationCustodyTests
         await using (var db = world.Host.CreateContext())
         {
             var execution = await db.VerificationExecutions.SingleAsync(e => e.Id == first.ExecutionId);
+            execution.ReceiptBytes = [1, 2, 3];
             execution.CustodyReason = VerificationCustodyState.Unknown.ToString();
             await db.SaveChangesAsync();
         }
