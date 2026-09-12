@@ -90,6 +90,36 @@ function Get-NightlyNativeActiveCount {
     return 0
 }
 
+function Get-NightlyNativeExecutionArguments {
+    param(
+        [string]$TrxPath,
+        [string]$DiagnosticDirectory,
+        [string[]]$Classes
+    )
+    if ([string]::IsNullOrWhiteSpace($TrxPath)) { throw 'missing trx path' }
+    if ([string]::IsNullOrWhiteSpace($DiagnosticDirectory)) { throw 'missing diagnostic directory' }
+    $trxName = [System.IO.Path]::GetFileName($TrxPath)
+    $resultsDir = [System.IO.Path]::GetDirectoryName($TrxPath)
+    if ([string]::IsNullOrWhiteSpace($trxName)) { throw 'missing trx filename' }
+    if ($trxName -match '[\\/]') { throw 'trx filename must be a basename' }
+    if ([string]::IsNullOrWhiteSpace($resultsDir)) { throw 'missing trx results directory' }
+    $nativeArgs = @(
+        '--no-progress',
+        '--no-ansi',
+        '--report-trx',
+        '--report-trx-filename', $trxName,
+        '--results-directory', $resultsDir,
+        '--diagnostic',
+        '--diagnostic-output-directory', $DiagnosticDirectory
+    )
+    if ($Classes -and @($Classes).Count -gt 0) {
+        $or = (@($Classes) | ForEach-Object { '({0}*)' -f $_ }) -join '|'
+        $nativeArgs += '--treenode-filter'
+        $nativeArgs += ('/*/*/({0})/*' -f $or)
+    }
+    return ,$nativeArgs
+}
+
 function Invoke-AntiphonNightlyTests {
     param(
         [string]$RepoRoot = '',
@@ -356,12 +386,9 @@ function Invoke-AntiphonNightlyTests {
                         $exe = Join-Path $RepoRoot ('tests\{0}\bin\Debug\net9.0\{0}.exe' -f $exeName)
                         $execDiagDir = Join-Path $LogRoot ('{0}-{1}-execution' -f $suiteId, $chunk.id)
                         New-Item -ItemType Directory -Path $execDiagDir -Force | Out-Null
-                        $args = @('--no-progress', '--no-ansi', '--report-trx', '--report-trx-filename', $trxPath, '--diagnostic', '--diagnostic-output-directory', $execDiagDir)
-                        if ($chunk.classes -and @($chunk.classes).Count -gt 0) {
-                            $or = (@($chunk.classes) | ForEach-Object { '({0}*)' -f $_ }) -join '|'
-                            $args += '--treenode-filter'
-                            $args += ('/*/*/({0})/*' -f $or)
-                        }
+                        $chunkClasses = @()
+                        if ($chunk.classes -and @($chunk.classes).Count -gt 0) { $chunkClasses = @($chunk.classes) }
+                        $args = @(Get-NightlyNativeExecutionArguments -TrxPath $trxPath -DiagnosticDirectory $execDiagDir -Classes $chunkClasses)
                         $run = Invoke-NightlyOwnedProcess -FilePath $exe -ArgumentList $args -WorkingDirectory $RepoRoot `
                             -TimeoutMilliseconds (Get-NightlyWatchdogMs -PolicyObject $policy.Object -Key $suiteId -Fallback 3600000) `
                             -Environment $envMap -LogPath $logPath
