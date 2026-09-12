@@ -208,6 +208,10 @@ app.MapPost("/sessions", async (
     {
         return GrokRulesProblemMapper.Map(ex);
     }
+    catch (CodexLaunchException ex)
+    {
+        return CodexLaunchProblemMapper.Map(ex);
+    }
     catch (GrokRulesTransportException ex)
     {
         return Results.Problem(title: ex.Code, detail: ex.Message, statusCode: ex.StatusCode, type: ex.Code);

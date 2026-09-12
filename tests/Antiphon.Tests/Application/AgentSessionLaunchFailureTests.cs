@@ -149,6 +149,32 @@ public class AgentSessionLaunchFailureTests
             .ShouldBe(HerdrSupervisionFailureKind.NonQualifying);
     }
 
+    [Test]
+    public async Task Codex_command_line_refusal_409_persists_the_measured_length_and_limit_without_the_instructions()
+    {
+        const string sentinel = "C0497-LAUNCH-SENTINEL";
+        var detail =
+            "Session 00000000-0000-0000-0000-000000000001: codex_command_line_too_long: launcher node.exe codex.js measured 30,001 UTF-16 units against an effective budget of 30,000. Shrink the developer instructions or standing prompt; the runner refuses before creating a child.";
+        var adapter = new FakeAgentProtocolAdapter
+        {
+            ThrowOnStart = new ConflictException(detail, CodexLaunchProblemTypes.CommandLineTooLong),
+        };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        var ex = await Should.ThrowAsync<ConflictException>(fixture.LaunchInteractiveAsync());
+        ex.Code.ShouldBe(CodexLaunchProblemTypes.CommandLineTooLong);
+        adapter.Started.ShouldBeFalse();
+        adapter.Prompts.ShouldBeEmpty();
+        await using var db = LaunchFixture.CreateContext();
+        var row = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        row.Status.ShouldBe(SessionStatus.Failed);
+        row.FailureReason.ShouldContain("codex_command_line_too_long");
+        row.FailureReason.ShouldContain("30,001");
+        row.FailureReason.ShouldContain("30,000");
+        row.FailureReason.ShouldNotContain(sentinel);
+        row.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
+        row.HerdrSupervisionFailureKind.ShouldBe(HerdrSupervisionFailureKind.NonQualifying);
+    }
+
     // ---- Slice 1: kill before dispose -----------------------------------------------------------
 
     /// <summary>

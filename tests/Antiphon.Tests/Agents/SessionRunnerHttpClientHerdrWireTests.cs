@@ -328,6 +328,48 @@ public class SessionRunnerHttpClientHerdrWireTests
     }
 
     [Test]
+    public async Task Launch_409_codex_command_line_too_long_maps_to_conflict_with_the_code()
+    {
+        const string detail =
+            "Session 00000000-0000-0000-0000-000000000001: codex_command_line_too_long: launcher node.exe codex.js measured 30,001 UTF-16 units against an effective budget of 30,000.";
+        var handler = new CapturingHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/capabilities")
+            {
+                return Task.FromResult(Json(new RunnerCapabilitiesDto(
+                    "InboxConhost",
+                    "inbox",
+                    "test",
+                    false,
+                    TranscriptFormats: [TranscriptFormats.Claude, TranscriptFormats.Grok, TranscriptFormats.Codex],
+                    SessionBackends: [SessionBackends.PtyHost, SessionBackends.Herdr])));
+            }
+
+            return Task.FromResult(Problem(409, CodexLaunchProblemTypes.CommandLineTooLong, detail));
+        });
+        var client = new SessionRunnerHttpClient(
+            new HttpClient(handler) { BaseAddress = new Uri("http://runner.test/") },
+            new StubFactory(),
+            Options.Create(new SessionRunnerSettings { BaseUrl = "http://runner.test" }));
+
+        var ex = await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(() =>
+            client.StartAsync(
+                Guid.NewGuid(),
+                new AgentLaunchSpec(
+                    "codex",
+                    AgentKind.Codex,
+                    "codex.cmd",
+                    ["--no-alt-screen"],
+                    new Dictionary<string, string>(),
+                    Path.GetTempPath(),
+                    120,
+                    30),
+                CancellationToken.None));
+        ex.Code.ShouldBe(CodexLaunchProblemTypes.CommandLineTooLong);
+        ex.Message.ShouldBe(detail);
+    }
+
+    [Test]
     public async Task Problem_details_404_maps_to_runner_problem()
     {
         var handler = new CapturingHandler(_ => Task.FromResult(Problem(

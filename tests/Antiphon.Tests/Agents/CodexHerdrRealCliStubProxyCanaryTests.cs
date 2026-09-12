@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using Antiphon.Agents.Pty;
+using System.Management;
 using Antiphon.FakeLlmApi;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner;
@@ -187,6 +188,135 @@ public class CodexHerdrRealCliStubProxyCanaryTests
             catch { /* teardown */ }
             HerdrRealCliCanarySupport.WriteProbeResults(
                 HerdrRealCliCanarySupport.Log.RenderMarkdown(HerdrRealCliCanarySupport.K9Line));
+            RealCliStubBServerHarness.TryDelete(tempRoot);
+        }
+    }
+
+    [Test]
+    [Timeout(420_000)]
+    public async Task B_runner_herdr_launch_from_the_npm_shim_carries_the_incident_fixture(
+        CancellationToken cancellationToken)
+    {
+        RealCliStubGate.SkipIfNotEligible(AgentKind.Codex);
+        await RealCliStubGate.SkipIfHerdrUnreachableAsync(cancellationToken);
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var shim = Path.Combine(appData, "npm", "codex.cmd");
+        if (!File.Exists(shim))
+            throw new SkipTestException($"npm Codex shim not found at {shim}");
+
+        var nonce = $"STUBCANARY-{Guid.NewGuid():N}";
+        var reply = $"STUBREPLY-{Guid.NewGuid():N}";
+        var syntheticKey = $"stub-codex-{Guid.NewGuid():N}";
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"codex-herdr-c0497-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        var cwd = Path.Combine(tempRoot, "cwd");
+        Directory.CreateDirectory(cwd);
+        var logs = Path.Combine(tempRoot, "logs");
+        Directory.CreateDirectory(logs);
+        var codexHome = Path.Combine(tempRoot, "codex-home");
+        Directory.CreateDirectory(codexHome);
+
+        await using var stub = await FakeLlmApiServer.StartAsync(new FakeLlmApiOptions { Codex = true });
+        stub.Script.SetDefault(StubEndpointKeys.CodexResponses, new ScriptedTextTurn(reply));
+        var overlay = RealCliStubEnv.ForCodex(stub.BaseUrl, syntheticKey, codexHome);
+        var env = new Dictionary<string, string>(overlay.Env, StringComparer.OrdinalIgnoreCase)
+        {
+            ["TERM"] = "xterm-256color",
+        };
+        var args = new List<string>
+        {
+            "--no-alt-screen",
+            "--dangerously-bypass-approvals-and-sandbox",
+        };
+        args.AddRange(overlay.Args);
+        args.AddRange(["-c", "disable_paste_burst=true"]);
+        args.AddRange(["-c", "developer_instructions=" + CodexInstructionFixtures.Incident]);
+
+        var herdrClient = new HerdrClient(Options.Create(new HerdrSettings { Enabled = true }));
+        await using var runtime = new SessionRunnerRuntime(
+            Options.Create(new SessionRunnerSettings
+            {
+                SessionLogPath = logs,
+                PtyHostLingerHours = 0.02,
+                PtyBackend = "modern",
+            }),
+            NullLogger<SessionRunnerRuntime>.Instance,
+            herdrClient);
+
+        var sessionId = Guid.NewGuid();
+        try
+        {
+            var startTask = runtime.StartAsync(
+                new RunnerLaunchRequest(
+                    sessionId,
+                    shim,
+                    args,
+                    env,
+                    cwd,
+                    120,
+                    30,
+                    TranscriptEnabled: true,
+                    TranscriptFormat: TranscriptFormats.Codex,
+                    Backend: SessionBackends.Herdr,
+                    Herdr: new HerdrLaunchOptions(
+                        WorkspaceKey: $"card0497-{sessionId:N}"[..32],
+                        WorkspaceLabel: $"card0497-codex-{sessionId:N}"[..40],
+                        WorkspaceCwd: cwd,
+                        PaneTitle: "card0497-codex",
+                        AgentKind: HerdrAgentKinds.Codex)),
+                CancellationToken.None);
+            var started = await HerdrRealCliCanarySupport.AwaitOrSkipAndReapAsync(
+                startTask,
+                TimeSpan.FromSeconds(HerdrRealCliCanarySupport.CodexLaunchStallSkipSeconds),
+                HerdrRealCliCanarySupport.LaunchStallSkip(
+                    "codex", HerdrRealCliCanarySupport.CodexLaunchStallSkipSeconds).Message,
+                result => runtime.KillAsync(sessionId, TimeSpan.FromSeconds(10), CancellationToken.None));
+            started.Status.ShouldBe("Running");
+            await HerdrRealCliCanarySupport.AssertSidecarAndPaneAgentAsync(
+                logs, sessionId, herdrClient, HerdrAgentKinds.Codex, cancellationToken);
+            var sidecar = HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(logs, sessionId));
+            sidecar.ShouldNotBeNull();
+            sidecar!.ChildPid.ShouldNotBeNull();
+            using (var searcher = new ManagementObjectSearcher(
+                       $"SELECT Name, CommandLine FROM Win32_Process WHERE ProcessId={sidecar.ChildPid.Value}"))
+            {
+                ManagementObject? row = null;
+                foreach (ManagementObject obj in searcher.Get())
+                    row = obj;
+                row.ShouldNotBeNull();
+                using (row)
+                {
+                    row!["Name"]?.ToString().ShouldBe("node.exe");
+                    (row["CommandLine"]?.ToString() ?? "").ShouldContain("codex.js");
+                    (row["CommandLine"]?.ToString() ?? "").ShouldNotContain("codex.cmd");
+                }
+            }
+
+            var trustAnswered = await HerdrRealCliCanarySupport.AcceptCodexTrustIfVisibleAsync(runtime, sessionId, cancellationToken);
+            await WaitUntilCodexComposerLooksIdleAsync(runtime, sessionId, trustAnswered, TimeSpan.FromSeconds(30), cancellationToken);
+            var prompt = $"Reply with exactly this token and nothing else is needed: {nonce}";
+            await HerdrRealCliCanarySupport.SendWrappedBodyAsync(runtime, sessionId, prompt, cancellationToken);
+            var chatHit = await stub.Requests.WaitForAsync(
+                r => r.Method == "POST"
+                     && r.Path == "/v1/responses"
+                     && r.Body.Contains(nonce, StringComparison.Ordinal),
+                TimeSpan.FromSeconds(60));
+            if (chatHit is null)
+                throw HerdrRealCliCanarySupport.BootStallSkip("codex", "stub never saw the nonce");
+            chatHit.Headers["Authorization"].ShouldBe([$"Bearer {syntheticKey}"]);
+            chatHit.Body.Contains(CodexInstructionFixtures.Incident, StringComparison.Ordinal).ShouldBeTrue();
+            await WaitForUserPromptAsync(runtime, sessionId, nonce, TimeSpan.FromSeconds(45), cancellationToken);
+            var killed = await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(10), CancellationToken.None);
+            killed.Status.ShouldBe("Exited");
+        }
+        catch (HerdrLaunchException ex)
+        {
+            throw HerdrRealCliCanarySupport.BootStallSkip("codex", ex.Message);
+        }
+        finally
+        {
+            try { await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), CancellationToken.None); }
+            catch { /* teardown */ }
             RealCliStubBServerHarness.TryDelete(tempRoot);
         }
     }

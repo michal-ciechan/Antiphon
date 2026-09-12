@@ -99,6 +99,88 @@ public class HerdrPaneChildKillTests
     }
 
     [Test]
+    public async Task Node_child_kill_by_pid_leaves_the_pane_open()
+    {
+        var node = ResolveNodeExe();
+        if (node is null)
+            throw new TUnit.Core.Exceptions.SkipTestException("node.exe not found for CARD-0497 kill canary");
+
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+
+        var settings = new SessionRunnerSettings
+        {
+            SessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-herdr-kill-node-{Guid.NewGuid():N}"),
+            PtyHostLingerHours = 0.02,
+        };
+        var client = new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session });
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await fake.WaitUntilListeningAsync(cts.Token);
+        await client.WorkspaceCreateAsync(settings.SessionLogPath, "card0497-kill-node", cts.Token);
+
+        var pane = fake.Workspaces[0].Tabs[0].Panes[0];
+        using var dummy = StartNodeDummy(node);
+        try
+        {
+            fake.SetPaneProcessInfo(
+                pane.PaneId,
+                shellPid: 1,
+                (dummy.Id, "node.exe"),
+                (99999, "pwsh.exe"));
+
+            var sessionId = Guid.NewGuid();
+            var launched = DateTime.UtcNow;
+            var sidecar = new HerdrPaneSidecar
+            {
+                SessionId = sessionId,
+                WorkspaceKey = "none",
+                WorkspaceId = pane.WorkspaceId,
+                TabId = pane.TabId,
+                PaneId = pane.PaneId,
+                ChildPid = dummy.Id,
+                ShellPid = 1,
+                LaunchedAtUtc = launched,
+                Cwd = settings.SessionLogPath,
+                UpdatedAtUtc = launched,
+            };
+            sidecar.SaveAtomic(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId));
+
+            var child = new HerdrPaneChild(
+                client,
+                settings,
+                NullLogger.Instance,
+                () => [],
+                new StubProbe(alive: true));
+            string? reason = null;
+            child.Exited += exit => reason = exit.Reason;
+            await child.AttachExistingAsync(sidecar, cts.Token);
+
+            var killed = await child.KillAsync(cts.Token);
+            killed.ShouldBeTrue("our node child is gone; the pane is not ours to close");
+            reason.ShouldBe(HerdrExitReasons.PaneLeftOpen);
+            dummy.WaitForExit(5_000).ShouldBeTrue();
+            File.Exists(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId)).ShouldBeFalse();
+            fake.Workspaces[0].Tabs[0].Panes.ShouldContain(p => p.PaneId == pane.PaneId);
+            fake.Requests.Any(r => r.GetProperty("method").GetString() == "pane.close")
+                .ShouldBeFalse();
+        }
+        finally
+        {
+            KillBestEffort(dummy);
+            try
+            {
+                if (Directory.Exists(settings.SessionLogPath))
+                    Directory.Delete(settings.SessionLogPath, recursive: true);
+            }
+            catch
+            {
+                // Best-effort.
+            }
+        }
+    }
+
+    [Test]
     public async Task Attached_kill_detaches_without_pane_close_or_pid_kill()
     {
         await using var fake = new FakeHerdrServer();
@@ -384,6 +466,36 @@ public class HerdrPaneChildKillTests
             RedirectStandardError = true,
         };
         return Process.Start(psi) ?? throw new InvalidOperationException("failed to start dummy");
+    }
+
+    private static Process StartNodeDummy(string node)
+    {
+        var psi = new ProcessStartInfo(node, "-e \"setInterval(()=>{},1000)\"")
+        {
+            CreateNoWindow = true,
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        return Process.Start(psi) ?? throw new InvalidOperationException("failed to start node dummy");
+    }
+
+    private static string? ResolveNodeExe()
+    {
+        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var sibling = Path.Combine(programFiles, "nodejs", "node.exe");
+        if (File.Exists(sibling))
+            return sibling;
+        var path = Environment.GetEnvironmentVariable("PATH") ?? "";
+        foreach (var dir in path.Split(Path.PathSeparator))
+        {
+            if (string.IsNullOrWhiteSpace(dir)) continue;
+            var candidate = Path.Combine(dir, "node.exe");
+            if (File.Exists(candidate))
+                return candidate;
+        }
+        return null;
     }
 
     private static void KillBestEffort(Process process)

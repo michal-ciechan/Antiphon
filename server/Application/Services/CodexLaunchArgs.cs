@@ -32,6 +32,10 @@ public static class CodexLaunchArgs
     /// TOML and falls back to the raw literal when that fails, which is what a multi-line markdown
     /// bundle always does — verified to survive embedded newlines, tabs, double quotes, backticks and
     /// Windows path backslashes unchanged.</para>
+    ///
+    /// <para>CARD-0497: do not treat the composer <c>sum(length + 3)</c> estimate as the launch
+    /// ceiling. The session runner serializes the fully resolved Node/native hops with CRT quoting
+    /// and refuses with 409 <c>codex_command_line_too_long</c> before creating a child.</para>
     /// </summary>
     public static string DeveloperInstructions(string text) => $"developer_instructions={text}";
 
