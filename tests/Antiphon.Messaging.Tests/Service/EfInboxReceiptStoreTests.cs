@@ -24,6 +24,17 @@ public sealed class EfInboxReceiptStoreTests
     }
 
     [Test]
+    public void Unique_violation_is_not_inferred_from_constraint_name_alone()
+    {
+        InboxUniqueConstraint.IsViolation(InboxConstraintFailureWithoutUniqueSqlState()).ShouldBeFalse();
+        InboxUniqueConstraint.IsViolation(new PostgresException(
+            "duplicate key value violates unique constraint",
+            "ERROR",
+            "ERROR",
+            PostgresErrorCodes.UniqueViolation)).ShouldBeTrue();
+    }
+
+    [Test]
     public async Task RecordAsync_same_channel_and_message_id_twice_does_not_throw()
     {
         await using var harness = await StoreHarness.CreateAsync();
@@ -115,6 +126,17 @@ public sealed class EfInboxReceiptStoreTests
             "ERROR",
             "ERROR",
             PostgresErrorCodes.UniqueViolation);
+        return new DbUpdateException("An error occurred while saving the entity changes.", postgres);
+    }
+
+    internal static DbUpdateException InboxConstraintFailureWithoutUniqueSqlState()
+    {
+        var postgres = new PostgresException(
+            messageText: "could not serialize access due to concurrent update",
+            severity: "ERROR",
+            invariantSeverity: "ERROR",
+            sqlState: PostgresErrorCodes.SerializationFailure,
+            constraintName: InboxUniqueConstraint.ChannelMessageIndex);
         return new DbUpdateException("An error occurred while saving the entity changes.", postgres);
     }
 

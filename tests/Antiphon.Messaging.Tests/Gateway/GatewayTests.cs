@@ -48,14 +48,15 @@ public sealed class GatewayTests
         var second = SampleMessage(conversationId: "chat-1", channelMessageId: "663");
         var adapter = new QueueAdapter([first, second]);
         var producer = new CapturingProducer();
-        var sink = new FirstThrowSink(EfInboxReceiptStoreTests.DuplicateInboxException());
+        var throwing = new FirstThrowSink(EfInboxReceiptStoreTests.DuplicateInboxException());
+        var recording = new RecordingSink();
         var logs = new List<string>();
         var sut = new GatewayIngressService(
             [adapter],
             producer,
             Options.Create(new AntiphonGatewayOptions()),
             new ListLogger<GatewayIngressService>(logs),
-            [sink]);
+            [throwing, recording]);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await sut.StartAsync(cts.Token);
@@ -68,8 +69,10 @@ public sealed class GatewayTests
         await sut.StopAsync(CancellationToken.None);
 
         producer.Records.Count.ShouldBe(2);
-        sink.Calls.ShouldBe(2);
-        sink.Recorded.ShouldBe(["663"]);
+        throwing.Calls.ShouldBe(2);
+        throwing.Recorded.ShouldBe(["663"]);
+        recording.Calls.ShouldBe(2);
+        recording.Recorded.ShouldBe(["662", "663"]);
         logs.ShouldContain(l => l.Contains("[ingress] receipt sink failed") && l.Contains("662"));
         logs.ShouldNotContain(l => l.Contains("receive stream faulted"));
     }
@@ -238,6 +241,20 @@ public sealed class GatewayTests
             var n = Interlocked.Increment(ref Calls);
             if (n == 1)
                 throw first;
+            Recorded.Add(message.ChannelMessageId);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class RecordingSink : IInboundReceiptSink
+    {
+        public int Calls;
+        public List<string> Recorded { get; } = [];
+
+        public Task RecordAsync(
+            ChannelMessage message, string envelopeJson, string topic, int partition, long offset, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref Calls);
             Recorded.Add(message.ChannelMessageId);
             return Task.CompletedTask;
         }
