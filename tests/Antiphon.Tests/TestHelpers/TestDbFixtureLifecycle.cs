@@ -340,8 +340,8 @@ internal sealed class TestDbFixtureLifecycle
             {
                 if (container is not null)
                 {
-                    await _ops.DisposeOwnedAsync(container).ConfigureAwait(false);
                     Interlocked.Increment(ref DisposeOwned);
+                    await _ops.DisposeOwnedAsync(container).ConfigureAwait(false);
                 }
             }
             catch (Exception c)
