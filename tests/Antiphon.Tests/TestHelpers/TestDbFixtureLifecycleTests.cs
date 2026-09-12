@@ -368,9 +368,23 @@ public sealed class TestDbFixtureLifecycleTests
         var lifecycle = new TestDbFixtureLifecycle(ops);
         await Should.ThrowAsync<InvalidOperationException>(() => lifecycle.EnsureReadyAsync());
         var ex = await Should.ThrowAsync<Exception>(() => lifecycle.CreateIsolatedSchemaAsync());
+        ex.ShouldBeOfType<InvalidOperationException>();
         Flatten(ex).ShouldContain(m => m.Contains("C476-FAULT", StringComparison.Ordinal));
         lifecycle.Drop.ShouldBe(0);
         lifecycle.Create.ShouldBe(1);
+        await lifecycle.DisposeAsync();
+    }
+
+    [Test]
+    public async Task Drop_on_a_faulted_lifecycle_does_not_drop()
+    {
+        var ops = new ControlledTestDbOperations { FaultAt = "migrate" };
+        var lifecycle = new TestDbFixtureLifecycle(ops);
+        await Should.ThrowAsync<InvalidOperationException>(() => lifecycle.EnsureReadyAsync());
+        var ex = await Should.ThrowAsync<ObjectDisposedException>(
+            () => lifecycle.DropClonedDatabaseAsync("test_x"));
+        ex.ObjectName.ShouldBe(nameof(TestDbFixture));
+        lifecycle.Drop.ShouldBe(0);
         await lifecycle.DisposeAsync();
     }
 
