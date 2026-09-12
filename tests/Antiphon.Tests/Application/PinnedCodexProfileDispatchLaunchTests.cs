@@ -87,7 +87,7 @@ public class PinnedCodexProfileDispatchLaunchTests
             await db.Agents.Where(a => a.Id == agentId)
                 .ExecuteUpdateAsync(u => u.SetProperty(a => a.SystemPromptAppend, CodexInstructionFixtures.Incident));
         }
-        var taskId = await SeedQueuedPinAsync(h, agentId);
+        var taskId = await SeedQueuedPinAsync(h, agentId, AgentTaskRole.TestDesign);
 
         using (var scope = h.Provider.CreateScope())
         {
@@ -104,7 +104,9 @@ public class PinnedCodexProfileDispatchLaunchTests
         var args = adapter.StartedArgs.ToList();
         var block = args.Single(a => a.StartsWith("developer_instructions=", StringComparison.Ordinal));
         var text = block["developer_instructions=".Length..];
-        text.ShouldContain(CodexInstructionFixtures.Incident);
+        var composed = InstructionBundleComposer.Compose(
+            InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.TestDesign));
+        text.ShouldBe(composed.Text);
         text.Length.ShouldBeGreaterThan(8_191);
         args[args.IndexOf("--model") + 1].ShouldBe("gpt-5.6-terra");
         _ = taskId;
@@ -254,7 +256,8 @@ public class PinnedCodexProfileDispatchLaunchTests
         return agent.Id;
     }
 
-    private static async Task<Guid> SeedQueuedPinAsync(BridgeQueueHarness h, Guid agentId)
+    private static async Task<Guid> SeedQueuedPinAsync(
+        BridgeQueueHarness h, Guid agentId, AgentTaskRole role = AgentTaskRole.Docs)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -264,7 +267,7 @@ public class PinnedCodexProfileDispatchLaunchTests
             Title = "CARD-0140 T10 pin",
             Goal = "CARD-0140 T10 pin",
             Kind = AgentTaskKind.Worker,
-            Role = AgentTaskRole.Docs,
+            Role = role,
             AgentKind = AgentKind.Codex,
             ModelLevel = AgentModelLevel.High,
             Workspace = WorkspaceMode.Shared,
