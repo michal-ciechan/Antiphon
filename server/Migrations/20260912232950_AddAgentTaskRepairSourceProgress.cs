@@ -1,19 +1,11 @@
-using System;
-using Antiphon.Server.Infrastructure.Data;
-using Microsoft.EntityFrameworkCore.Infrastructure;
+﻿using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
 namespace Antiphon.Server.Migrations
 {
-    /// <summary>
-    /// CARD-0499: AgentTasks.RepairSourceTaskId, ProgressBaselineJson, CompletionProgressEvidenceJson.
-    /// No backfill — pre-existing rows have no repair source or progress snapshot.
-    /// Hand-written (running daemons lock bin/); snapshot is updated to match.
-    /// </summary>
-    [DbContext(typeof(AppDbContext))]
-    [Migration("20260912200000_AddAgentTaskRepairSourceProgress")]
+    /// <summary>CARD-0499. Repair source identity and progress snapshots. No backfill.</summary>
     public partial class AddAgentTaskRepairSourceProgress : Migration
     {
         /// <inheritdoc />
