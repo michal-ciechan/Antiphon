@@ -359,22 +359,38 @@ public sealed partial class SessionMessageQueueService
             // CARD-0320: the per-session queue lock serialises two EnqueueAsync calls but used
             // to let both insert. A Delegation note with the same SourceTaskId+ContentDigest
             // is the same completion, not a second turn. The task stamp survives queue retention.
+            // An existing unstamped row is the partial-enqueue hole: repair the stamp here
+            // rather than treating the queue row as proof the stamp already exists.
             if (origin == QueuedMessageOrigin.Delegation
                 && sourceLandNotificationId is null
                 && sourceTaskId is Guid sourced
-                && !string.IsNullOrEmpty(contentDigest)
-                && (await db.SessionQueuedMessages.AsNoTracking().AnyAsync(
-                        m => m.SourceTaskId == sourced
-                            && m.SourceLandNotificationId == null
-                            && m.ContentDigest == contentDigest
-                            && m.Origin == QueuedMessageOrigin.Delegation, ct)
-                    || await db.AgentTasks.AsNoTracking().AnyAsync(
-                        t => t.Id == sourced && t.CompletionNoteDigest == contentDigest, ct)))
+                && !string.IsNullOrEmpty(contentDigest))
             {
-                _logger.LogWarning(
-                    "Skipping duplicate Delegation note for task {SourceTaskId} on session {SessionId} (CARD-0320)",
-                    sourced, sessionId);
-                return await GetQueueAsync(sessionId, ct);
+                var existingQueuedAt = await db.SessionQueuedMessages.AsNoTracking()
+                    .Where(m => m.SourceTaskId == sourced
+                        && m.SourceLandNotificationId == null
+                        && m.ContentDigest == contentDigest
+                        && m.Origin == QueuedMessageOrigin.Delegation)
+                    .OrderBy(m => m.CreatedAt)
+                    .Select(m => (DateTime?)m.CreatedAt)
+                    .FirstOrDefaultAsync(ct);
+                if (existingQueuedAt is not null
+                    || await db.AgentTasks.AsNoTracking().AnyAsync(
+                        t => t.Id == sourced && t.CompletionNoteDigest == contentDigest, ct))
+                {
+                    if (existingQueuedAt is not null
+                        && CompletionNoteStamp.IsCallerCompletionNote(
+                            origin, sourceLandNotificationId, sourced, conversationKey))
+                    {
+                        await CompletionNoteStamp.ApplyAsync(
+                            db, sourced, contentDigest, existingQueuedAt.Value, ct);
+                    }
+
+                    _logger.LogWarning(
+                        "Skipping duplicate Delegation note for task {SourceTaskId} on session {SessionId} (CARD-0320)",
+                        sourced, sessionId);
+                    return await GetQueueAsync(sessionId, ct);
+                }
             }
 
             if (!string.IsNullOrEmpty(capacityRecoveryActionKey))
@@ -412,6 +428,11 @@ public sealed partial class SessionMessageQueueService
                 CapacityWaitId = capacityWaitId,
             };
             db.SessionQueuedMessages.Add(row);
+            var stampCompletion = CompletionNoteStamp.IsCallerCompletionNote(
+                origin, sourceLandNotificationId, sourceTaskId, conversationKey);
+            await using var completionTx = stampCompletion
+                ? await db.Database.BeginTransactionAsync(ct)
+                : null;
             try { await db.SaveChangesAsync(ct); }
             catch (DbUpdateException ex) when (sourceLandNotificationId is not null
                 && ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
@@ -424,18 +445,14 @@ public sealed partial class SessionMessageQueueService
                 onCreated?.Invoke(existing.Id);
                 return await GetQueueAsync(sessionId, ct);
             }
+
+            if (stampCompletion && sourceTaskId is Guid completionTaskId)
+                await CompletionNoteStamp.ApplyAsync(db, completionTaskId, contentDigest, now, ct);
+
+            if (completionTx is not null)
+                await completionTx.CommitAsync(ct);
+
             onCreated?.Invoke(row.Id);
-            if (origin == QueuedMessageOrigin.Delegation
-                && sourceLandNotificationId is null
-                && sourceTaskId is Guid completionTaskId
-                && conversationKey is not null
-                && conversationKey.StartsWith("task:", StringComparison.Ordinal))
-            {
-                await db.AgentTasks.Where(t => t.Id == completionTaskId)
-                    .ExecuteUpdateAsync(s => s
-                        .SetProperty(t => t.CompletionNoteQueuedAt, now)
-                        .SetProperty(t => t.CompletionNoteDigest, contentDigest), ct);
-            }
             if (sourceLandNotificationId is not null && afterLandQueueInsert is not null)
                 await afterLandQueueInsert(row.Id, ct);
 

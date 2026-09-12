@@ -57,7 +57,8 @@ public sealed class CompletionNoteWorkHostedService(
     /// Pending-row wakeup cannot see a missing insert; rebuild from the durable task.
     /// Absence of a queue row is not enough: retention deletes Sent rows while sourced tasks
     /// remain, so <see cref="AgentTaskCheckService.HasCompletionNoteAsync"/> also reads the
-    /// task stamp written at enqueue.
+    /// task stamp written at enqueue. An unstamped leftover queue row is repaired first —
+    /// treating it as "already delivered" without stamping is how retention-then-scan replayed.
     /// </summary>
     private async Task RecoverMissingSourcedCompletionNotesAsync(
         IServiceProvider services, AppDbContext db, CancellationToken ct)
@@ -74,6 +75,12 @@ public sealed class CompletionNoteWorkHostedService(
             .ToListAsync(ct);
         if (owed.Count == 0)
             return;
+
+        var owedIds = owed.Select(r => r.Id).ToList();
+        await CompletionNoteStamp.RepairFromAsync(
+            db,
+            db.SessionQueuedMessages.Where(m => m.SourceTaskId != null && owedIds.Contains(m.SourceTaskId.Value)),
+            ct);
 
         var queue = services.GetRequiredService<SessionMessageQueueService>();
         var settings = services.GetRequiredService<IOptions<DelegationSettings>>().Value;

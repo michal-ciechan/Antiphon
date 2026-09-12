@@ -266,6 +266,80 @@ public sealed class PostLandMutationDeliveryTests
     }
 
     [Test]
+    public async Task C478_CompletionReplayAfterPartialEnqueueRetention()
+    {
+        await using var settled = await SettleMutationAsync();
+        await using (var db = settled.World.Host.CreateContext())
+        {
+            var queued = await db.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == settled.World.TaskId);
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == settled.World.TaskId);
+            task.CompletionNoteQueuedAt.ShouldNotBeNull();
+            task.CompletionNoteDigest.ShouldNotBeNull();
+            task.CompletionNoteQueuedAt = null;
+            task.CompletionNoteDigest = null;
+            queued.Status.ShouldBe(QueuedMessageStatus.Pending);
+            await db.SaveChangesAsync();
+        }
+
+        SessionQueuedMessage queued;
+        await using (var db = settled.World.Host.CreateContext())
+            queued = await db.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == settled.World.TaskId);
+
+        await ConfirmQueuedReceiptAsync(
+            settled.World.Host.Schema.ConnectionString, settled.Bridge, queued,
+            settled.Bridge.SessionId, busy: false, cut: "after-receipt");
+
+        await using (var db = settled.World.Host.CreateContext())
+        {
+            var sent = await db.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == settled.World.TaskId);
+            sent.Status.ShouldBe(QueuedMessageStatus.Sent);
+            sent.DeliveryVerdict.ShouldBeOneOf(DeliveryVerdict.Delivered, DeliveryVerdict.LateConfirmed);
+            sent.SentAt = DateTime.UtcNow.AddDays(-40);
+            sent.CreatedAt = DateTime.UtcNow.AddDays(-40);
+            sent.DeliveryAttempts = Math.Max(1, sent.DeliveryAttempts);
+            await db.SaveChangesAsync();
+            var audit = Options.Create(new AuditSettings());
+            await new DataRetentionService(db, Options.Create(new RetentionSettings()), audit, TimeProvider.System,
+                NullLogger<DataRetentionService>.Instance, new AuditService(db, audit))
+                .PruneQueuedMessagesAsync(CancellationToken.None);
+        }
+
+        await using (var observer = settled.World.Host.CreateContext())
+        {
+            (await observer.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == settled.World.TaskId)).ShouldBe(0);
+            var task = await observer.AgentTasks.SingleAsync(t => t.Id == settled.World.TaskId);
+            task.CompletionNoteQueuedAt.ShouldNotBeNull();
+            task.CompletionNoteDigest.ShouldBe(DelegationNoteDigest.Compute(task.Result!));
+            (await AgentTaskCheckService.HasCompletionNoteAsync(observer, settled.Bridge.SessionId,
+                settled.World.TaskId, CancellationToken.None)).ShouldBeTrue();
+        }
+
+        var typed = settled.Bridge.Adapter.Inputs.Count;
+        using var hosted = await StartCompletionRecoveryAsync(settled.Bridge);
+        try
+        {
+            await UntilAsync(async () =>
+            {
+                await using var db = settled.World.Host.CreateContext();
+                return (await db.AgentTasks.SingleAsync(t => t.Id == settled.World.TaskId))
+                    .CompletionNoteQueuedAt is not null
+                    && await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == settled.World.TaskId) == 0;
+            }, "partial-enqueue stamp repair must survive retention without a replayed queue row");
+            await Task.Delay(1500);
+            await using var recovered = settled.World.Host.CreateContext();
+            (await recovered.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == settled.World.TaskId)).ShouldBe(0);
+            (await AgentTaskCheckService.HasCompletionNoteAsync(recovered, settled.Bridge.SessionId,
+                settled.World.TaskId, CancellationToken.None)).ShouldBeTrue();
+            settled.Bridge.Adapter.Inputs.Count.ShouldBe(typed);
+        }
+        finally
+        {
+            await hosted.StopAsync(CancellationToken.None);
+            hosted.Dispose();
+        }
+    }
+
+    [Test]
     public async Task C478_G150_CompletionEnqueue()
     {
         var fault = new QueueInsertFault();
