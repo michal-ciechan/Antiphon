@@ -91,7 +91,7 @@ public sealed class AgentTaskLandSourceResolver(
                 && request.RemoteSourceSha is { } savedR && request.RemoteSourceFingerprint is { Length: 64 })
             {
                 var retryPrefix = $"refs/antiphon/land/{task.Id:N}/{request.Id:N}/source-observed";
-                var moved = await RecheckRemoteAsync(coordinates.RepositoryPath, coordinates.SourceFullRef, retryPrefix,
+                var moved = await RecheckRemoteAsync(local.RegisteredPath, coordinates.SourceFullRef, retryPrefix,
                     new(savedR, request.SourceObservationRef ?? retryPrefix, request.RemoteSourceFingerprint, null), ct);
                 if (moved is not null)
                     return await RefuseAsync(request, moved, local.HeadSha, savedR, expected, ct);
@@ -131,7 +131,7 @@ public sealed class AgentTaskLandSourceResolver(
                 request.RemoteSourceSha, expected, ct);
 
         var prefix = $"refs/antiphon/land/{task.Id:N}/{request.Id:N}/source-observed";
-        var observed = await git.ObserveSourceAsync(coordinates.RepositoryPath, coordinates.SourceFullRef, prefix, ct);
+        var observed = await git.ObserveSourceAsync(local.RegisteredPath, coordinates.SourceFullRef, prefix, ct);
         if (!observed.Accepted)
             return await RefuseAsync(request, observed.Reason ?? "source_remote_unreadable", local.HeadSha, observed.Sha, null, ct);
 
@@ -176,7 +176,7 @@ public sealed class AgentTaskLandSourceResolver(
         request.SourceResolutionState = LandSourceResolutionState.Observed;
         await SaveRequestAsync(request, ct);
 
-        var afterObserved = await RecheckRemoteAsync(coordinates.RepositoryPath, coordinates.SourceFullRef, prefix,
+        var afterObserved = await RecheckRemoteAsync(local.RegisteredPath, coordinates.SourceFullRef, prefix,
             observed, ct);
         if (afterObserved is not null)
             return await RefuseAsync(request, afterObserved, local.HeadSha, request.RemoteSourceSha, expected, ct);
@@ -192,7 +192,7 @@ public sealed class AgentTaskLandSourceResolver(
             request.SourceResolutionState = LandSourceResolutionState.AdvanceStarted;
             request.SourceAdvanceChildOperation = "source-ff";
             await SaveRequestAsync(request, ct);
-            var beforeMerge = await RecheckRemoteAsync(coordinates.RepositoryPath, coordinates.SourceFullRef, prefix,
+            var beforeMerge = await RecheckRemoteAsync(local.RegisteredPath, coordinates.SourceFullRef, prefix,
                 observed, ct);
             if (beforeMerge is not null)
                 return await RefuseAsync(request, beforeMerge, local.HeadSha, request.RemoteSourceSha, expected, ct);
@@ -216,7 +216,7 @@ public sealed class AgentTaskLandSourceResolver(
                 || after.Snapshot.CommonDirectory != local.CommonDirectory
                 || after.Snapshot.RegisteredPath != local.RegisteredPath)
                 return await RefuseAsync(request, after.Reason ?? "source_changed", after.Snapshot?.HeadSha, observed.Sha, expected, ct);
-            var afterFf = await RecheckRemoteAsync(coordinates.RepositoryPath, coordinates.SourceFullRef, prefix,
+            var afterFf = await RecheckRemoteAsync(local.RegisteredPath, coordinates.SourceFullRef, prefix,
                 observed, ct);
             if (afterFf is not null)
                 return await RefuseAsync(request, afterFf, expected, request.RemoteSourceSha, expected, ct);
@@ -241,7 +241,7 @@ public sealed class AgentTaskLandSourceResolver(
 
         LandingDestination destination;
         try { destination = await git.DestinationAsync(coordinates.RepositoryPath, coordinates.TargetFullRef, ct); }
-        catch (IOException) { return new(null, "remote_configuration_invalid", false); }
+        catch (IOException) { return new(null, "landing_io_error", false); }
         string target;
         try { target = await CommitAsync(coordinates.RepositoryPath, coordinates.TargetFullRef, ct); }
         catch (InvalidOperationException) { return new(null, "commit_lookup_failed", false); }

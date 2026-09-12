@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Domain;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Application.Settings;
@@ -252,21 +253,36 @@ public sealed class AgentTaskLandService
         var published = active is not null && new AgentTaskLandingState().HasPublication(active);
         if (!published)
         {
-            var resolved = await new AgentTaskLandSourceResolver(_db, _landingGit, _leases, _clock)
-                .ResolveAsync(task, request, lease, ct);
-            if (resolved.Reason is not null)
+            var canResolve = request.SchemaVersion == 2 && GitObjectId.IsFull(request.ExpectedSourceSha);
+            if (!canResolve && active is not { Phase: LandPhase.Refused })
             {
                 if (request.SourceRefusalReason is null)
                 {
-                    request.SourceRefusalReason = resolved.Reason;
+                    request.SourceRefusalReason = "legacy_review_binding_required";
                     request.ConcurrencyToken = Guid.NewGuid();
                     await _db.SaveChangesAsync(ct);
                 }
-                await RefuseAsync(task, FormatSourceRefusal(request, resolved.Reason), ct);
+                await RefuseAsync(task, FormatSourceRefusal(request, "legacy_review_binding_required"), ct);
                 return LandRunResult.Complete;
             }
-            await _db.Entry(task).ReloadAsync(ct);
-            await _db.Entry(request).ReloadAsync(ct);
+            if (canResolve)
+            {
+                var resolved = await new AgentTaskLandSourceResolver(_db, _landingGit, _leases, _clock)
+                    .ResolveAsync(task, request, lease, ct);
+                if (resolved.Reason is not null)
+                {
+                    if (request.SourceRefusalReason is null)
+                    {
+                        request.SourceRefusalReason = resolved.Reason;
+                        request.ConcurrencyToken = Guid.NewGuid();
+                        await _db.SaveChangesAsync(ct);
+                    }
+                    await RefuseAsync(task, FormatSourceRefusal(request, resolved.Reason), ct);
+                    return LandRunResult.Complete;
+                }
+                await _db.Entry(task).ReloadAsync(ct);
+                await _db.Entry(request).ReloadAsync(ct);
+            }
         }
         var result = await _protocol.RunAsync(task, lease, request, ct);
         if (result.Conflicts.Count > 0)
@@ -576,8 +592,9 @@ public sealed class AgentTaskLandService
         if (request.TerminalEventId is not null) return;
         var now = _clock.GetUtcNow().UtcDateTime;
         var terminal = Event(task.Id, AgentTaskEventType.LandRefused, line, now);
-        var op = request.LandingOperationId is Guid opId
-            ? await _db.AgentTaskLandings.SingleOrDefaultAsync(o => o.Id == opId, ct)
+        var opId = request.LandingOperationId ?? task.ActiveLandingId;
+        var op = opId is Guid bound
+            ? await _db.AgentTaskLandings.SingleOrDefaultAsync(o => o.Id == bound, ct)
             : null;
         SetLandingEvidence(terminal, op);
         _db.AgentTaskEvents.Add(terminal);

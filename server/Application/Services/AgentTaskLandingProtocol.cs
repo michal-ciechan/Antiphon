@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Domain;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -67,7 +68,9 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 else if (op.Phase == LandPhase.Refused)
                 {
                     var fresh = await git.InspectAsync(coordinates, ct);
-                    var explicitRequest = request is not null && (op.ApprovalLandRequestId is null || request.Id != op.ApprovalLandRequestId);
+                    var explicitRequest = request is not null
+                        && GitObjectId.IsFull(request.ExpectedSourceSha)
+                        && (op.ApprovalLandRequestId is null || request.Id != op.ApprovalLandRequestId);
                     Require(_state.CanReplaceRefused(op, fresh, explicitRequest, true, request?.ExpectedSourceSha),
                         op.LastReason ?? "refused_operation_requires_new_evidence");
                     previousToReplace = op;
