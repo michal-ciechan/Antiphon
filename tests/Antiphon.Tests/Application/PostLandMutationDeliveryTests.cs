@@ -280,30 +280,32 @@ public sealed class PostLandMutationDeliveryTests
             (await observer.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == settled.World.TaskId)).ShouldBe(0);
         }
 
-        using var hosted = await StartCompletionRecoveryAsync(settled.Bridge);
-        try
+        SessionQueuedMessage? queued = null;
+        using (var hosted = await StartCompletionRecoveryAsync(settled.Bridge))
         {
-            SessionQueuedMessage? queued = null;
-            await UntilAsync(async () =>
+            try
             {
-                await using var db = settled.World.Host.CreateContext();
-                queued = await db.SessionQueuedMessages.AsNoTracking()
-                    .SingleOrDefaultAsync(m => m.SourceTaskId == settled.World.TaskId);
-                return queued is not null;
-            }, "missing completion note was not recovered from the durable task");
-            await ConfirmQueuedReceiptAsync(settled.World.Host.Schema.ConnectionString, settled.Bridge, queued!,
-                settled.Bridge.SessionId, busy: false, cut: "after-receipt");
-            await using var recovered = settled.World.Host.CreateContext();
-            (await recovered.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == settled.World.TaskId
-                && m.Status != QueuedMessageStatus.Canceled)).ShouldBe(1);
-            (await recovered.AgentTasks.SingleAsync(t => t.Id == settled.World.TaskId)).Result
-                .ShouldContain("Mutation complete");
+                await UntilAsync(async () =>
+                {
+                    await using var db = settled.World.Host.CreateContext();
+                    queued = await db.SessionQueuedMessages.AsNoTracking()
+                        .SingleOrDefaultAsync(m => m.SourceTaskId == settled.World.TaskId);
+                    return queued is not null;
+                }, "missing completion note was not recovered from the durable task");
+            }
+            finally
+            {
+                await hosted.StopAsync(CancellationToken.None);
+            }
         }
-        finally
-        {
-            await hosted.StopAsync(CancellationToken.None);
-            hosted.Dispose();
-        }
+
+        await ConfirmQueuedReceiptAsync(settled.World.Host.Schema.ConnectionString, settled.Bridge, queued!,
+            settled.Bridge.SessionId, busy: false, cut: "after-receipt");
+        await using var recovered = settled.World.Host.CreateContext();
+        (await recovered.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == settled.World.TaskId
+            && m.Status != QueuedMessageStatus.Canceled)).ShouldBe(1);
+        (await recovered.AgentTasks.SingleAsync(t => t.Id == settled.World.TaskId)).Result
+            .ShouldContain("Mutation complete");
     }
 
     [Test]
