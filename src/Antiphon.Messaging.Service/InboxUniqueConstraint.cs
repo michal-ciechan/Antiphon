@@ -38,9 +38,7 @@ internal static class InboxUniqueConstraint
     {
         for (var ex = exception; ex is not null; ex = ex.InnerException)
         {
-            if (ex is PostgresException pg &&
-                (pg.SqlState == PostgresErrorCodes.UniqueViolation
-                 || string.Equals(pg.ConstraintName, ChannelMessageIndex, StringComparison.Ordinal)))
+            if (ex is PostgresException pg && pg.SqlState == PostgresErrorCodes.UniqueViolation)
                 return true;
 
             if (IsSqliteUniqueConstraint(ex))

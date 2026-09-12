@@ -104,6 +104,64 @@ public sealed class InboxConsumerServiceTests
         logs.ShouldContain(l => l.Contains("[inbox] persist failed") && l.Contains("662"));
     }
 
+    [Test]
+    public async Task Non_duplicate_persist_failure_stops_the_host()
+    {
+        if (_broker is null) Skip.Test("set ANTIPHON_BROKER_TESTS=1 with Docker running");
+
+        var bootstrap = _broker!.GetBootstrapAddress();
+        var topic = $"c0503-inbound-{Guid.NewGuid():N}";
+        using (var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = bootstrap }).Build())
+        {
+            await admin.CreateTopicsAsync(
+                [new TopicSpecification { Name = topic, NumPartitions = 1, ReplicationFactor = 1 }]);
+        }
+
+        using (var producer = new ProducerBuilder<string, string>(
+                   new ProducerConfig { BootstrapServers = bootstrap }).Build())
+        {
+            await producer.ProduceAsync(topic, new Message<string, string>
+            {
+                Key = "chat-1",
+                Value = JsonSerializer.Serialize(
+                    EfInboxReceiptStoreTests.Sample("662"), MessagingJson.Options),
+            });
+        }
+
+        var sink = new FirstThrowSink(EfInboxReceiptStoreTests.InboxConstraintFailureWithoutUniqueSqlState());
+        var logs = new List<string>();
+
+        var builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings());
+        builder.Services.AddLogging();
+        builder.Services.AddSingleton<ILogger<InboxConsumerService>>(new ListLogger<InboxConsumerService>(logs));
+        builder.Services.AddSingleton(MessagingJson.Options);
+        builder.Services.AddSingleton<IInboundReceiptSink>(sink);
+        builder.Services.AddSingleton(Options.Create(new AntiphonGatewayOptions
+        {
+            BootstrapServers = bootstrap,
+            InboundTopic = topic,
+            ConsumerGroup = $"c0503-{Guid.NewGuid():N}",
+        }));
+        builder.Services.AddHostedService<InboxConsumerService>();
+
+        using var host = builder.Build();
+        var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
+        await host.StartAsync();
+
+        var deadline = DateTime.UtcNow.AddSeconds(45);
+        while (DateTime.UtcNow < deadline && !lifetime.ApplicationStopping.IsCancellationRequested)
+            await Task.Delay(100);
+
+        var hostStopped = lifetime.ApplicationStopping.IsCancellationRequested;
+        await host.StopAsync(TimeSpan.FromSeconds(15));
+
+        hostStopped.ShouldBeTrue(
+            "a non-duplicate persist failure must still crash-stop the host so Kafka does not auto-commit a dropped message");
+        sink.Calls.ShouldBe(1);
+        sink.Recorded.ShouldBeEmpty();
+        logs.ShouldNotContain(l => l.Contains("[inbox] persist failed"));
+    }
+
     private sealed class FirstThrowSink(Exception first) : IInboundReceiptSink
     {
         public int Calls;
