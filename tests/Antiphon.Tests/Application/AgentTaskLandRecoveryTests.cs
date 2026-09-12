@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
@@ -179,7 +180,25 @@ public sealed class AgentTaskLandRecoveryTests
                 var gitDir = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "--absolute-git-dir")).Trim();
                 (Path.Exists(Path.Combine(gitDir, "rebase-merge")) || Path.Exists(Path.Combine(gitDir, "rebase-apply")))
                     .ShouldBeTrue("interrupted rebase evidence must still be present for operator continue");
-                await h.Fixture.RequiredAsync(h.Fixture.Source, "rebase", "--continue");
+                var continueGit = new ProcessStartInfo("git")
+                {
+                    WorkingDirectory = h.Fixture.Source, UseShellExecute = false, CreateNoWindow = true,
+                    RedirectStandardOutput = true, RedirectStandardError = true,
+                };
+                continueGit.ArgumentList.Add("rebase");
+                continueGit.ArgumentList.Add("--continue");
+                continueGit.Environment["GIT_TERMINAL_PROMPT"] = "0";
+                continueGit.Environment["GIT_EDITOR"] = "cmd.exe /c exit 0";
+                continueGit.Environment["GIT_SEQUENCE_EDITOR"] = "cmd.exe /c exit 0";
+                continueGit.Environment["GIT_AUTHOR_NAME"] = "C448 Fixture";
+                continueGit.Environment["GIT_AUTHOR_EMAIL"] = "fixture@example.invalid";
+                continueGit.Environment["GIT_COMMITTER_NAME"] = "C448 Fixture";
+                continueGit.Environment["GIT_COMMITTER_EMAIL"] = "fixture@example.invalid";
+                using var continueProcess = Process.Start(continueGit)!;
+                var continueErr = continueProcess.StandardError.ReadToEndAsync();
+                var continueOut = continueProcess.StandardOutput.ReadToEndAsync();
+                await continueProcess.WaitForExitAsync();
+                continueProcess.ExitCode.ShouldBe(0, $"rebase --continue stderr={await continueErr} stdout={await continueOut}");
                 var resolved = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim();
                 await h.RepostAsync();
                 await using (var request = h.CreateContext())
