@@ -211,6 +211,7 @@ function Write-C487NativePassSeams {
     param(`$FilePath, `$ArgumentList, `$WorkingDirectory, `$TimeoutMilliseconds, `$Environment)
     Add-Content -LiteralPath '$TracePath' -Value (('EXEC {0} {1}' -f `$FilePath, ((`$ArgumentList) -join ' '))) -Encoding ASCII
     `$trx = ''
+    `$resultsDir = ''
     `$args = @(`$ArgumentList)
     `$listTests = `$false
     `$diagDir = ''
@@ -218,10 +219,19 @@ function Write-C487NativePassSeams {
         if ([string]`$args[`$i] -eq '--report-trx-filename' -and (`$i + 1) -lt `$args.Count) {
             `$trx = [string]`$args[`$i + 1]
         }
+        if ([string]`$args[`$i] -eq '--results-directory' -and (`$i + 1) -lt `$args.Count) {
+            `$resultsDir = [string]`$args[`$i + 1]
+        }
         if ([string]`$args[`$i] -eq '--list-tests') { `$listTests = `$true }
         if ([string]`$args[`$i] -eq '--diagnostic-output-directory' -and (`$i + 1) -lt `$args.Count) {
             `$diagDir = [string]`$args[`$i + 1]
         }
+    }
+    if (-not [string]::IsNullOrWhiteSpace(`$trx) -and `$trx -match '[\\/]') {
+        return @{ ExitCode = 5; TimedOut = `$false; Pid = 2; ChildrenExited = `$true; LogText = 'C487_INVOCATION fake trx-filename-not-basename' }
+    }
+    if (-not [string]::IsNullOrWhiteSpace(`$trx) -and -not [string]::IsNullOrWhiteSpace(`$resultsDir)) {
+        `$trx = Join-Path `$resultsDir `$trx
     }
     if (-not [string]::IsNullOrWhiteSpace(`$trx)) {
         `$rows = @($rowText)

@@ -537,6 +537,41 @@ function Test-C487_G058 {
     Assert-C487 -Cond $true -Name 'G058 lint required'
 }
 
+function Test-C487_G144 {
+    $logRoot = Join-Path $ResultsDirectory ('g144-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
+    $trxPath = Join-Path $logRoot 'antiphon-all.trx'
+    $diagDir = Join-Path $logRoot 'antiphon-all-execution'
+    $nativeArgs = @(Get-NightlyNativeExecutionArguments -TrxPath $trxPath -DiagnosticDirectory $diagDir)
+    $fileIdx = [array]::IndexOf($nativeArgs, '--report-trx-filename')
+    $dirIdx = [array]::IndexOf($nativeArgs, '--results-directory')
+    $fileVal = ''
+    $dirVal = ''
+    if ($fileIdx -ge 0 -and ($fileIdx + 1) -lt $nativeArgs.Count) { $fileVal = [string]$nativeArgs[$fileIdx + 1] }
+    if ($dirIdx -ge 0 -and ($dirIdx + 1) -lt $nativeArgs.Count) { $dirVal = [string]$nativeArgs[$dirIdx + 1] }
+    $basename = [System.IO.Path]::GetFileName($trxPath)
+    $expectedDir = [System.IO.Path]::GetDirectoryName($trxPath)
+    $noSep = ($fileVal -notmatch '[\\/]')
+    Assert-C487 -Cond ($noSep -and ($fileVal -eq $basename) -and ($dirVal -eq $expectedDir)) `
+        -Name 'G144 native trx filename is basename with results-directory' `
+        -Detail ('file=' + $fileVal + ' dir=' + $dirVal)
+
+    $fx = New-Efx
+    Write-C487NativePassSeams -Path $fx.Seams -TracePath $fx.Trace `
+        -Rows @(@{ Id = 'uid-1'; ClassName = 'SampleClass'; MethodName = 'SampleMethod'; Outcome = 'Passed' }) `
+        -DiscoveryNodes @(@{ uid = 'uid-1'; type = 'SampleClass'; method = 'SampleMethod'; namespace = 'Ns' })
+    $null = Invoke-E -Fx $fx -Extra @{ Suites = @('antiphon') }
+    $expectedTrx = Join-Path $fx.Logs 'antiphon-all.trx'
+    $trxWritten = Test-Path -LiteralPath $expectedTrx
+    $traceText = ''
+    if (Test-Path -LiteralPath $fx.Trace) { $traceText = [System.IO.File]::ReadAllText($fx.Trace) }
+    $hasResults = $traceText -match [regex]::Escape('--results-directory')
+    $hasFullPathFilename = $traceText -match '--report-trx-filename\s+\S*[\\/]'
+    Assert-C487 -Cond ($trxWritten -and $hasResults -and (-not $hasFullPathFilename)) `
+        -Name 'G144 production native argv writes TRX via results-directory' `
+        -Detail ('trx=' + $trxWritten + ' results=' + $hasResults + ' fullPath=' + $hasFullPathFilename)
+}
+
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
     if (-not $fn) { Write-Error ('unknown case {0}' -f $Case); exit 2 }
@@ -545,6 +580,7 @@ if ($Case) {
     foreach ($fn in (Get-C487CaseFunctions -Prefix 'C487_G0')) {
         if ($fn.Name -match 'C487_G0(2[6-9]|3[0-9]|4[0-9]|5[0-8])$') { & $fn }
     }
+    Test-C487_G144
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'tests-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }
-Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 78 })
+Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 80 })
