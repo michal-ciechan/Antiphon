@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Orchestration;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -212,16 +213,42 @@ public sealed class PostLandMutationDeliveryTests
     [Test]
     public async Task C478_G150_CompletionEnqueue()
     {
-        await using var settled = await SettleMutationAsync();
-        await using var observer = settled.World.Host.CreateContext();
-        var task = await observer.AgentTasks.SingleAsync(t => t.Id == settled.World.TaskId);
-        task.Result.ShouldContain("Mutation complete");
-        var queued = await observer.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == settled.World.TaskId);
-        queued.Status.ShouldBe(QueuedMessageStatus.Pending);
-        await ConfirmQueuedReceiptAsync(settled.World.Host.Schema.ConnectionString, settled.Bridge, queued,
-            settled.Bridge.SessionId, busy: false, cut: "before-submit");
-        (await observer.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == settled.World.TaskId
-            && m.Status != QueuedMessageStatus.Canceled)).ShouldBe(1);
+        var fault = new QueueInsertFault();
+        await using var settled = await SettleMutationAsync(
+            new() { ConfigureDbContext = o => o.AddInterceptors(fault) }, fault: fault);
+        fault.Triggered.ShouldBeTrue();
+        await using (var observer = settled.World.Host.CreateContext())
+        {
+            var task = await observer.AgentTasks.SingleAsync(t => t.Id == settled.World.TaskId);
+            task.Status.ShouldBe(AgentTaskStatus.Succeeded, task.FailureReason);
+            task.Result.ShouldContain("Mutation complete");
+            (await observer.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == settled.World.TaskId)).ShouldBe(0);
+        }
+
+        using var hosted = await StartCompletionRecoveryAsync(settled.Bridge);
+        try
+        {
+            SessionQueuedMessage? queued = null;
+            await UntilAsync(async () =>
+            {
+                await using var db = settled.World.Host.CreateContext();
+                queued = await db.SessionQueuedMessages.AsNoTracking()
+                    .SingleOrDefaultAsync(m => m.SourceTaskId == settled.World.TaskId);
+                return queued is not null;
+            }, "missing completion note was not recovered from the durable task");
+            await ConfirmQueuedReceiptAsync(settled.World.Host.Schema.ConnectionString, settled.Bridge, queued!,
+                settled.Bridge.SessionId, busy: false, cut: "after-receipt");
+            await using var recovered = settled.World.Host.CreateContext();
+            (await recovered.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == settled.World.TaskId
+                && m.Status != QueuedMessageStatus.Canceled)).ShouldBe(1);
+            (await recovered.AgentTasks.SingleAsync(t => t.Id == settled.World.TaskId)).Result
+                .ShouldContain("Mutation complete");
+        }
+        finally
+        {
+            await hosted.StopAsync(CancellationToken.None);
+            hosted.Dispose();
+        }
     }
 
     [Test]
@@ -246,8 +273,20 @@ public sealed class PostLandMutationDeliveryTests
         var queued = await observer.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == settled.World.TaskId);
         queued.Status.ShouldBe(QueuedMessageStatus.Pending);
         settled.Bridge.Adapter.Inputs.ShouldBeEmpty();
-        await ConfirmQueuedReceiptAsync(settled.World.Host.Schema.ConnectionString, settled.Bridge, queued,
-            settled.Bridge.SessionId, busy: false, cut: "before-submit");
+
+        using var hosted = await StartCompletionRecoveryAsync(settled.Bridge);
+        try
+        {
+            await UntilAsync(() => Task.FromResult(settled.Bridge.Adapter.SubmittedBodies.Count > 0),
+                "hosted completion scan did not flush the persisted idle note");
+            await ConfirmQueuedReceiptAsync(settled.World.Host.Schema.ConnectionString, settled.Bridge, queued,
+                settled.Bridge.SessionId, busy: false, cut: "after-receipt");
+        }
+        finally
+        {
+            await hosted.StopAsync(CancellationToken.None);
+            hosted.Dispose();
+        }
     }
 
     [Test]
@@ -266,23 +305,21 @@ public sealed class PostLandMutationDeliveryTests
         await using var settled = await SettleMutationAsync();
         await using var db = settled.World.Host.CreateContext();
         var queued = await db.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == settled.World.TaskId);
-        queued.Status = QueuedMessageStatus.Sent;
-        queued.DeliveryAttempts = 1;
-        queued.DeliveryVerdict = DeliveryVerdict.Delivered;
-        queued.LastDeliveryStartedAt = DateTime.UtcNow.AddSeconds(-1);
-        queued.LastDeliveryBaselineSequence = 4;
+        StampParkedSentAttempt(queued);
         await db.SaveChangesAsync();
         (await db.AgentTasks.SingleAsync(t => t.Id == settled.World.TaskId)).Status.ShouldBe(AgentTaskStatus.Succeeded);
         (await db.TranscriptEntries.CountAsync(e => e.AgentSessionId == settled.Bridge.SessionId
             && e.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
         var typed = settled.Bridge.Adapter.Inputs.Count;
-        await settled.Bridge.Queue.FlushIfIdleAsync(settled.Bridge.SessionId, CancellationToken.None);
+        await settled.Bridge.Queue.OnTurnEndAsync(settled.Bridge.SessionId, CancellationToken.None);
         settled.Bridge.Adapter.Inputs.Count.ShouldBe(typed);
         await using var recovered = settled.World.Host.CreateContext();
         (await recovered.TranscriptEntries.CountAsync(e => e.AgentSessionId == settled.Bridge.SessionId
             && e.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
-        (await recovered.SessionQueuedMessages.SingleAsync(m => m.Id == queued.Id)).DeliveryVerdict
-            .ShouldBe(DeliveryVerdict.Delivered);
+        var saved = await recovered.SessionQueuedMessages.SingleAsync(m => m.Id == queued.Id);
+        saved.DeliveryVerdict.ShouldBeNull();
+        saved.DeliveryVerdict.ShouldNotBe(DeliveryVerdict.LateConfirmed);
+        saved.DeliveryVerdict.ShouldNotBe(DeliveryVerdict.Delivered);
     }
 
     [Test]
@@ -306,20 +343,22 @@ public sealed class PostLandMutationDeliveryTests
         await using var settled = await SettleMutationAsync();
         await using var db = settled.World.Host.CreateContext();
         var queued = await db.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == settled.World.TaskId);
-        queued.Status = QueuedMessageStatus.Pending;
-        queued.DeliveryAttempts = 1;
-        queued.DeliveryVerdict = null;
-        queued.LastDeliveryBaselineSequence = 4;
-        queued.LastDeliveryStartedAt = DateTime.UtcNow.AddSeconds(-1);
+        StampParkedSentAttempt(queued);
         db.TranscriptEntries.Add(new TranscriptEntry
         {
             Id = Guid.NewGuid(), AgentSessionId = settled.Bridge.SessionId, Sequence = 5,
             Kind = TranscriptKinds.UserPrompt, Text = queued.Body[..Math.Min(200, queued.Body.Length)] + queued.Body[^Math.Min(100, queued.Body.Length)..],
             CreatedAt = DateTime.UtcNow, Timestamp = DateTime.UtcNow,
         });
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(), AgentSessionId = settled.Bridge.SessionId, Sequence = 6,
+            Kind = TranscriptKinds.TurnEnd, StopReason = TranscriptKinds.StopReasons.EndTurn,
+            CreatedAt = DateTime.UtcNow, Timestamp = DateTime.UtcNow,
+        });
         await db.SaveChangesAsync();
         var typed = settled.Bridge.Adapter.Inputs.Count;
-        await settled.Bridge.Queue.FlushIfIdleAsync(settled.Bridge.SessionId, CancellationToken.None);
+        await settled.Bridge.Queue.OnTurnEndAsync(settled.Bridge.SessionId, CancellationToken.None);
         await using var recovered = settled.World.Host.CreateContext();
         var saved = await recovered.SessionQueuedMessages.SingleAsync(m => m.Id == queued.Id);
         saved.DeliveryVerdict.ShouldNotBe(DeliveryVerdict.LateConfirmed);
@@ -336,20 +375,22 @@ public sealed class PostLandMutationDeliveryTests
         await using var settled = await SettleMutationAsync();
         await using var db = settled.World.Host.CreateContext();
         var queued = await db.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == settled.World.TaskId);
-        queued.Status = QueuedMessageStatus.Pending;
-        queued.DeliveryAttempts = 1;
-        queued.DeliveryVerdict = null;
-        queued.LastDeliveryBaselineSequence = 10;
-        queued.LastDeliveryStartedAt = DateTime.UtcNow.AddSeconds(-1);
+        StampParkedSentAttempt(queued, baseline: 10);
         db.TranscriptEntries.Add(new TranscriptEntry
         {
             Id = Guid.NewGuid(), AgentSessionId = settled.Bridge.SessionId, Sequence = 10,
             Kind = TranscriptKinds.UserPrompt, Text = queued.Body,
             CreatedAt = DateTime.UtcNow, Timestamp = DateTime.UtcNow.AddMinutes(-1),
         });
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(), AgentSessionId = settled.Bridge.SessionId, Sequence = 11,
+            Kind = TranscriptKinds.TurnEnd, StopReason = TranscriptKinds.StopReasons.EndTurn,
+            CreatedAt = DateTime.UtcNow, Timestamp = DateTime.UtcNow,
+        });
         await db.SaveChangesAsync();
         var typed = settled.Bridge.Adapter.Inputs.Count;
-        await settled.Bridge.Queue.FlushIfIdleAsync(settled.Bridge.SessionId, CancellationToken.None);
+        await settled.Bridge.Queue.OnTurnEndAsync(settled.Bridge.SessionId, CancellationToken.None);
         await using var recovered = settled.World.Host.CreateContext();
         (await recovered.SessionQueuedMessages.SingleAsync(m => m.Id == queued.Id)).DeliveryVerdict.ShouldBeNull();
         settled.Bridge.Adapter.Inputs.Count.ShouldBe(typed);
@@ -430,8 +471,9 @@ public sealed class PostLandMutationDeliveryTests
         }
 
         var cutClock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var cutBoundary = new DeliveryCut(cut);
         var cutService = new AgentTaskLandNotificationService(seeded, h.Queue, new CompletionNoteFlushQueue(), h.Runtime,
-            cutClock, new DeliveryCut(cut));
+            cutClock, cutBoundary);
         if (cut is "before-enqueue" or "queue-inserted")
         {
             await cutService.ReconcileAsync(note.Id, CancellationToken.None);
@@ -446,8 +488,51 @@ public sealed class PostLandMutationDeliveryTests
         }
 
         await cutService.ReconcileAsync(note.Id, CancellationToken.None);
+        if (cut == "lost-wakeup")
+        {
+            var dropped = await seeded.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id);
+            dropped.QueueMessageId.ShouldNotBeNull();
+            dropped.ConfirmedAt.ShouldBeNull();
+            h.Adapter.Inputs.ShouldBeEmpty();
+            await ConfirmLandReceiptAsync(land.Schema.ConnectionString, h, note, busy, alreadySubmitted: false);
+            return;
+        }
+
+        if (cut == "receipt-before-save")
+        {
+            var queuedId = (await seeded.AgentTaskLandNotifications.SingleAsync(n => n.Id == note.Id)).QueueMessageId;
+            queuedId.ShouldNotBeNull();
+            var queued = await seeded.SessionQueuedMessages.SingleAsync(m => m.Id == queuedId);
+            queued.Status = QueuedMessageStatus.Sent;
+            queued.DeliveryAttempts = 1;
+            queued.LastDeliveryStartedAt = DateTime.UtcNow.AddSeconds(-1);
+            queued.LastDeliveryBaselineSequence = 10;
+            if (!await seeded.TranscriptEntries.AnyAsync(e => e.AgentSessionId == h.SessionId && e.Sequence == 10))
+            {
+                seeded.TranscriptEntries.Add(new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(), AgentSessionId = h.SessionId, Sequence = 10,
+                    Kind = TranscriptKinds.AssistantText, Text = "baseline", CreatedAt = DateTime.UtcNow,
+                    Timestamp = DateTime.UtcNow.AddMinutes(-1),
+                });
+            }
+            seeded.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(), AgentSessionId = h.SessionId, Sequence = 11,
+                Kind = TranscriptKinds.UserPrompt, Text = queued.Body, CreatedAt = DateTime.UtcNow,
+                Timestamp = DateTime.UtcNow,
+            });
+            await seeded.SaveChangesAsync();
+            await cutService.ReconcileAsync(note.Id, CancellationToken.None);
+            cutBoundary.ReceiptSaveReached.ShouldBeTrue();
+            (await seeded.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id))
+                .ConfirmedAt.ShouldBeNull();
+            await ConfirmLandReceiptAsync(land.Schema.ConnectionString, h, note, busy, alreadySubmitted: true);
+            return;
+        }
+
         await ConfirmLandReceiptAsync(land.Schema.ConnectionString, h, note, busy,
-            alreadySubmitted: cut is "receipt-before-save" or "after-receipt" or "lost-wakeup");
+            alreadySubmitted: cut == "after-receipt");
     }
 
     private static async Task PublicationCommitCrashAsync()
@@ -656,7 +741,7 @@ public sealed class PostLandMutationDeliveryTests
         queued = await db.SessionQueuedMessages.SingleAsync(m => m.Id == queued.Id);
         if (busy) await SetWorkingAsync(connection, sessionId, true);
 
-        if (cut == "before-submit" || queued.Status == QueuedMessageStatus.Pending && queued.DeliveryAttempts == 0)
+        if (queued.Status == QueuedMessageStatus.Pending && queued.DeliveryAttempts == 0)
         {
             await h.Queue.FlushIfIdleAsync(sessionId, CancellationToken.None);
             if (busy)
@@ -668,32 +753,12 @@ public sealed class PostLandMutationDeliveryTests
                 await h.Queue.FlushIfIdleAsync(sessionId, CancellationToken.None);
             }
             queued = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == queued.Id);
-            var typedBody = await AssertSubmittedAsync(h, queued);
-            if (cut == "before-submit")
-            {
-                await ConfirmPersistedQueuedReceiptAsync(connection, h, queued, sessionId, typedBody);
-                return;
-            }
+            await AssertSubmittedAsync(h, queued);
         }
 
-        queued = await db.SessionQueuedMessages.SingleAsync(m => m.Id == queued.Id);
-        queued.Status = QueuedMessageStatus.Pending;
-        queued.DeliveryAttempts = Math.Max(1, queued.DeliveryAttempts);
-        queued.DeliveryVerdict = null;
-        queued.LastDeliveryStartedAt = DateTime.UtcNow.AddSeconds(-1);
-        queued.LastDeliveryBaselineSequence ??= 4;
-        if (!await db.TranscriptEntries.AnyAsync(e => e.AgentSessionId == sessionId && e.Sequence == queued.LastDeliveryBaselineSequence))
-        {
-            db.TranscriptEntries.Add(new TranscriptEntry
-            {
-                Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = queued.LastDeliveryBaselineSequence.Value,
-                Kind = TranscriptKinds.AssistantText, Text = "baseline", CreatedAt = DateTime.UtcNow,
-                Timestamp = DateTime.UtcNow.AddMinutes(-1),
-            });
-        }
-        await db.SaveChangesAsync();
-        await ConfirmPersistedQueuedReceiptAsync(connection, h, queued, sessionId,
-            h.Adapter.SubmittedBodies.LastOrDefault() ?? queued.Body);
+        var typedBody = h.Adapter.SubmittedBodies.LastOrDefault() ?? queued.Body;
+        await ConfirmPersistedQueuedReceiptAsync(connection, h, queued, sessionId, typedBody,
+            alreadyConfirmed: cut == "after-receipt");
     }
 
     private static async Task<string> AssertSubmittedAsync(BridgeQueueHarness h, SessionQueuedMessage queued)
@@ -712,14 +777,14 @@ public sealed class PostLandMutationDeliveryTests
     }
 
     private static async Task ConfirmPersistedQueuedReceiptAsync(string connection, BridgeQueueHarness h,
-        SessionQueuedMessage queued, Guid sessionId, string typedBody)
+        SessionQueuedMessage queued, Guid sessionId, string typedBody, bool alreadyConfirmed)
     {
         var typed = h.Adapter.Inputs.Count;
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
         queued = await db.SessionQueuedMessages.SingleAsync(m => m.Id == queued.Id);
         var floor = queued.LastDeliveryBaselineSequence ?? 4;
         var promptSequence = floor + 1;
-        h.Runner.SetTranscript(new(sessionId,
+        var events = new SessionRunnerTranscriptDto(sessionId,
         [
             new SessionRunnerTranscriptEvent(sessionId, promptSequence, TranscriptKinds.UserPrompt,
                 "c478-queued-" + queued.Id.ToString("N"), null, DateTimeOffset.UtcNow, "user",
@@ -727,15 +792,33 @@ public sealed class PostLandMutationDeliveryTests
             new SessionRunnerTranscriptEvent(sessionId, promptSequence + 1, TranscriptKinds.TurnEnd,
                 "c478-queued-end-" + queued.Id.ToString("N"), null, DateTimeOffset.UtcNow, "assistant",
                 null, null, null, null, null, TranscriptKinds.StopReasons.EndTurn),
-        ], promptSequence + 1));
-        queued.Status = QueuedMessageStatus.Pending;
+        ], promptSequence + 1);
+        h.Runner.SetTranscript(events);
+        queued.Status = QueuedMessageStatus.Sent;
         queued.DeliveryAttempts = Math.Max(1, queued.DeliveryAttempts);
-        queued.DeliveryVerdict = null;
         queued.LastDeliveryBaselineSequence = floor;
-        queued.LastDeliveryStartedAt ??= DateTime.UtcNow.AddSeconds(-1);
+        if (alreadyConfirmed)
+        {
+            queued.DeliveryVerdict ??= DeliveryVerdict.Delivered;
+            queued.DeliveryVerdictAt ??= DateTime.UtcNow;
+            queued.LastDeliveryStartedAt ??= DateTime.UtcNow.AddSeconds(-1);
+        }
+        else
+        {
+            queued.DeliveryVerdict = null;
+            queued.DeliveryVerdictAt = null;
+            queued.LastDeliveryStartedAt = EligibleInterruptedAt();
+        }
+        if (!await db.TranscriptEntries.AnyAsync(e => e.AgentSessionId == sessionId && e.Sequence == floor))
+        {
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = floor,
+                Kind = TranscriptKinds.AssistantText, Text = "baseline", CreatedAt = DateTime.UtcNow,
+                Timestamp = DateTime.UtcNow.AddMinutes(-1),
+            });
+        }
         await db.SaveChangesAsync();
-        try { await h.Runtime.CatchUpTranscriptAsync(sessionId, CancellationToken.None); }
-        catch (NotSupportedException) { /* FakeSessionRunnerClient has no transcript snapshot. */ }
         if (!await db.TranscriptEntries.AnyAsync(e => e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.UserPrompt))
         {
             db.TranscriptEntries.Add(new TranscriptEntry
@@ -752,8 +835,17 @@ public sealed class PostLandMutationDeliveryTests
             });
             await db.SaveChangesAsync();
         }
-        await h.Queue.FlushIfIdleAsync(sessionId, CancellationToken.None);
-        await h.Queue.FlushIfIdleAsync(sessionId, CancellationToken.None);
+
+        await using var recovery = await BridgeQueueHarness.CreateAsync(new()
+        {
+            AlwaysOn = false, ConnectionString = connection,
+        });
+        recovery.Runtime.Register(sessionId, h.Adapter);
+        recovery.Runner.SetTranscript(events);
+        try { await recovery.Runtime.CatchUpTranscriptAsync(sessionId, CancellationToken.None); }
+        catch (NotSupportedException) { /* EmptyRunnerClient always has a snapshot. */ }
+        await recovery.Queue.OnTurnEndAsync(sessionId, CancellationToken.None);
+        await recovery.Queue.OnTurnEndAsync(sessionId, CancellationToken.None);
         await using var recovered = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
         var confirmed = await recovered.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == queued.Id);
         confirmed.Status.ShouldBe(QueuedMessageStatus.Sent);
@@ -902,20 +994,27 @@ public sealed class PostLandMutationDeliveryTests
         await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None,
             QueuedMessageOrigin.Delegation, sourceTaskId: taskId, deliverIfIdle: false);
         var queued = await db.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == taskId);
-        queued.Status = QueuedMessageStatus.Sent;
-        queued.DeliveryAttempts = 1;
-        queued.LastDeliveryBaselineSequence = 4;
-        queued.LastDeliveryStartedAt = DateTime.UtcNow.AddSeconds(-1);
+        StampParkedSentAttempt(queued);
         db.TranscriptEntries.Add(new TranscriptEntry
         {
             Id = Guid.NewGuid(), AgentSessionId = h.SessionId, Sequence = 5, Kind = TranscriptKinds.UserPrompt,
             Text = body.Replace(taskId.ToString("N"), Guid.NewGuid().ToString("N")),
             CreatedAt = DateTime.UtcNow, Timestamp = DateTime.UtcNow,
         });
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(), AgentSessionId = h.SessionId, Sequence = 6,
+            Kind = TranscriptKinds.TurnEnd, StopReason = TranscriptKinds.StopReasons.EndTurn,
+            CreatedAt = DateTime.UtcNow, Timestamp = DateTime.UtcNow,
+        });
         await db.SaveChangesAsync();
         var typed = h.Adapter.Inputs.Count;
         await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
         h.Adapter.Inputs.Count.ShouldBe(typed);
+        await db.Entry(queued).ReloadAsync();
+        queued.DeliveryVerdict.ShouldBeNull();
+        queued.DeliveryVerdict.ShouldNotBe(DeliveryVerdict.LateConfirmed);
+        queued.DeliveryVerdict.ShouldNotBe(DeliveryVerdict.Delivered);
     }
 
     private static async Task CompletionWrongSessionAsync()
@@ -928,10 +1027,7 @@ public sealed class PostLandMutationDeliveryTests
         await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None,
             QueuedMessageOrigin.Delegation, sourceTaskId: taskId, deliverIfIdle: false);
         var queued = await db.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == taskId);
-        queued.Status = QueuedMessageStatus.Sent;
-        queued.DeliveryAttempts = 1;
-        queued.LastDeliveryBaselineSequence = 4;
-        queued.LastDeliveryStartedAt = DateTime.UtcNow.AddSeconds(-1);
+        StampParkedSentAttempt(queued);
         var other = Guid.NewGuid();
         db.AgentSessions.Add(new AgentSession { Id = other, CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow });
         db.TranscriptEntries.Add(new TranscriptEntry
@@ -943,6 +1039,10 @@ public sealed class PostLandMutationDeliveryTests
         var typed = h.Adapter.Inputs.Count;
         await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
         h.Adapter.Inputs.Count.ShouldBe(typed);
+        await db.Entry(queued).ReloadAsync();
+        queued.DeliveryVerdict.ShouldBeNull();
+        queued.DeliveryVerdict.ShouldNotBe(DeliveryVerdict.LateConfirmed);
+        queued.DeliveryVerdict.ShouldNotBe(DeliveryVerdict.Delivered);
     }
 
     private static async Task LandWrongSessionAsync()
@@ -1108,15 +1208,64 @@ public sealed class PostLandMutationDeliveryTests
         },
     };
 
+    private static DateTime EligibleInterruptedAt() => DateTime.UtcNow.AddSeconds(-40);
+
+    private static void StampParkedSentAttempt(SessionQueuedMessage queued, long baseline = 4)
+    {
+        queued.Status = QueuedMessageStatus.Sent;
+        queued.DeliveryAttempts = 3;
+        queued.DeliveryVerdict = null;
+        queued.DeliveryVerdictAt = null;
+        queued.LastDeliveryStartedAt = EligibleInterruptedAt();
+        queued.LastDeliveryBaselineSequence = baseline;
+    }
+
+    private static async Task<CompletionNoteWorkHostedService> StartCompletionRecoveryAsync(BridgeQueueHarness h)
+    {
+        var hosted = new CompletionNoteWorkHostedService(
+            h.Provider.GetRequiredService<IServiceScopeFactory>(),
+            new CompletionNoteFlushQueue(),
+            new SpecialistFailureQueue(),
+            TimeProvider.System,
+            NullLogger<CompletionNoteWorkHostedService>.Instance);
+        await hosted.StartAsync(CancellationToken.None);
+        return hosted;
+    }
+
+    private static async Task UntilAsync(Func<Task<bool>> condition, string because, int seconds = 20)
+    {
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(seconds));
+        while (!budget.Token.IsCancellationRequested)
+        {
+            if (await condition()) return;
+            try { await Task.Delay(50, budget.Token); }
+            catch (OperationCanceledException) { break; }
+        }
+
+        throw new TimeoutException(because);
+    }
+
     private sealed class DeliveryCut(string cut) : LandDeliveryBoundary
     {
-        public override Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct) =>
-            (cut, boundary) switch
+        public bool ReceiptSaveReached { get; private set; }
+
+        public override bool DropWakeup(string boundary, Guid identity) =>
+            cut == "lost-wakeup" && boundary == "completion";
+
+        public override Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
+        {
+            if (cut == "receipt-before-save" && boundary == "receipt-before-save")
+            {
+                ReceiptSaveReached = true;
+                return Task.FromException(new IOException("owned receipt save failure"));
+            }
+
+            return (cut, boundary) switch
             {
                 ("before-enqueue", "before-enqueue") => Task.FromException(new IOException("owned enqueue failure")),
                 ("queue-inserted", "queue-inserted") => Task.FromException(new IOException("owned queue-ack failure")),
-                ("receipt-before-save", "receipt-before-save") => Task.FromException(new IOException("owned receipt save failure")),
                 _ => Task.CompletedTask,
             };
+        }
     }
 }
