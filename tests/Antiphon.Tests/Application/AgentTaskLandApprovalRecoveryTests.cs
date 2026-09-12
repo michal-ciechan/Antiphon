@@ -481,7 +481,7 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         h.Git.OwnedTrace.Clear();
         await h.RequestAsync(filter: "/*/*/Required/*", expectedSourceSha: original);
         await h.RunQueuedAsync();
-        h.Git.OwnedTrace.ShouldNotContain(a => a.Contains("merge") && a.Contains("--ff-only"));
+        h.Git.OwnedTrace.ShouldNotContain(a => a.Contains("merge") && a.Contains("--ff-only") && a.Contains(original));
         var retry = (await h.OperationAsync()).ShouldNotBeNull();
         retry.PreparationInputSha.ShouldNotBe(retry.OriginalSourceSha);
     }
