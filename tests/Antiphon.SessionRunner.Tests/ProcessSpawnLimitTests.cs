@@ -34,6 +34,7 @@ public class ProcessSpawnLimitTests
             typeof(PtyHostAdoptionTests),
             typeof(RunnerRestartHealthTests),
             typeof(RunnerRestartScriptCompatibilityTests),
+            typeof(RunnerRestartPreflightSafetyTests),
             typeof(RunnerStartupReadinessTests),
             typeof(SessionBufferBoundsTests),
             typeof(SessionCpuWatchdogTests),

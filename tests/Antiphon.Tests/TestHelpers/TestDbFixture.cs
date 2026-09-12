@@ -1,201 +1,94 @@
-using System.Text.RegularExpressions;
+using System.Globalization;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
 using TUnit.Core;
 using Antiphon.Server.Infrastructure.Data;
-using Testcontainers.PostgreSql;
 
 namespace Antiphon.Tests.TestHelpers;
 
 /// <summary>
-/// Shared PostgreSQL testcontainer fixture. One container per test session.
-/// Shared-store tests use <see cref="TransactionalTestBase"/> against <c>antiphon_test</c>.
-/// Isolated consumers get a cloned database via <see cref="CreateIsolatedSchemaAsync"/> —
-/// CARD-0110 S2 migrates a template once per assembly, then
-/// <c>CREATE DATABASE … TEMPLATE</c> (~100–300 ms) instead of replaying every EF migration.
+/// Shared PostgreSQL testcontainer fixture. One container per test session, started lazily
+/// on the first default-store consumer (CARD-0476 S1). Shared-store tests use
+/// <see cref="TransactionalTestBase"/> against <c>antiphon_test</c>. Isolated consumers get a
+/// cloned database via <see cref="CreateIsolatedSchemaAsync"/>.
 /// </summary>
 public class TestDbFixture
 {
 	internal const string TemplateDatabaseName = "antiphon_tmpl";
 	internal const string SharedDatabaseName = "antiphon_test";
+	internal const string ProbeMarker = "ANTIPHON_C476_PROBE";
 
-	private static readonly Regex SafeDatabaseName = new("^[a-z][a-z0-9_]{0,62}$", RegexOptions.CultureInvariant);
-	private static readonly SemaphoreSlim CloneLock = new(1, 1);
+	internal static TestDbFixtureLifecycle Lifecycle { get; } = new();
 
-	private static readonly PostgreSqlContainer _container = new PostgreSqlBuilder("postgres:16-alpine")
-		.WithDatabase(SharedDatabaseName)
-		.WithUsername("test")
-		.WithPassword("test")
-		.Build();
+	public static string ConnectionString => Lifecycle.ConnectionString;
 
-	public static string ConnectionString => _container.GetConnectionString();
-
-	internal static string MaintenanceConnectionString =>
-		new NpgsqlConnectionStringBuilder(ConnectionString)
-		{
-			Database = "postgres",
-			Pooling = false
-		}.ConnectionString;
-
-	[Before(Assembly)]
-	public static async Task InitializeAsync()
-	{
-		if (Environment.GetEnvironmentVariable(LandQueueRaceWorker.Marker) is { } worker)
-		{
-			try { await LandQueueRaceWorker.RunAsync(worker); Environment.Exit(0); }
-			catch (Exception ex) { Console.Error.WriteLine(ex.GetType().Name + ": " + ex.StackTrace); Environment.Exit(1); }
-			return;
-		}
-		await _container.StartAsync();
-
-		// Migrate the shared database once; isolated clones copy this state via TEMPLATE.
-		var options = CreateDbContextOptions();
-		await using (var context = new AppDbContext(options))
-		{
-			await context.Database.MigrateAsync();
-		}
-
-		// CREATE DATABASE … TEMPLATE requires the source to have no other sessions.
-		NpgsqlConnection.ClearAllPools();
-		await using var maintenance = new NpgsqlConnection(MaintenanceConnectionString);
-		await maintenance.OpenAsync();
-		await TerminateBackendsAsync(maintenance, SharedDatabaseName);
-
-		await ExecuteNonQueryAsync(
-			maintenance,
-			$"CREATE DATABASE {TemplateDatabaseName} TEMPLATE {SharedDatabaseName}");
-		// Nobody may connect to the template, including a stray pooled connection, or clones fail
-		// with "source database is being accessed by other users".
-		await ExecuteNonQueryAsync(
-			maintenance,
-			$"ALTER DATABASE {TemplateDatabaseName} IS_TEMPLATE true");
-		await ExecuteNonQueryAsync(
-			maintenance,
-			$"ALTER DATABASE {TemplateDatabaseName} ALLOW_CONNECTIONS false");
-	}
+	internal static string MaintenanceConnectionString => Lifecycle.MaintenanceConnectionString;
 
 	[After(Assembly)]
 	public static async Task DisposeAsync()
 	{
-		await _container.DisposeAsync();
+		await Lifecycle.DisposeAsync();
+		WriteProbeEvidence();
 	}
 
 	public static DbContextOptions<AppDbContext> CreateDbContextOptions(string? connectionString = null)
 	{
-		return new DbContextOptionsBuilder<AppDbContext>()
-			.UseNpgsql(connectionString ?? ConnectionString, npgsql =>
-			{
-				npgsql.MigrationsAssembly("Antiphon.Server");
-				npgsql.SetPostgresVersion(16, 0);
-			})
-			.Options;
+		if (connectionString is not null)
+			return TestDbFixtureLifecycle.BuildOptions(connectionString);
+		return Lifecycle.CreateDbContextOptions();
 	}
 
 	/// <summary>
 	/// Returns a connection string to an empty, fully-migrated store. Isolation is a cloned
 	/// database (<c>Database=test_…</c>), not a <c>SearchPath=</c> schema on the shared database.
 	/// </summary>
-	public static async Task<IsolatedTestSchema> CreateIsolatedSchemaAsync()
+	public static Task<IsolatedTestSchema> CreateIsolatedSchemaAsync() =>
+		Lifecycle.CreateIsolatedSchemaAsync();
+
+	internal static Task DropClonedDatabaseAsync(string databaseName) =>
+		Lifecycle.DropClonedDatabaseAsync(databaseName);
+
+	public AppDbContext CreateDbContext() => Lifecycle.CreateDbContext();
+
+	private static void WriteProbeEvidence()
 	{
-		var databaseName = $"test_{Guid.NewGuid():N}";
+		var raw = Environment.GetEnvironmentVariable(ProbeMarker);
+		if (string.IsNullOrEmpty(raw))
+			return;
+
+		string? root = null;
 		try
 		{
-			await CloneDatabaseAsync(databaseName);
-			var connectionString = new NpgsqlConnectionStringBuilder(ConnectionString)
-			{
-				Database = databaseName
-			}.ConnectionString;
-			return new IsolatedTestSchema(databaseName, connectionString);
+			using var doc = JsonDocument.Parse(raw);
+			if (doc.RootElement.TryGetProperty("root", out var rootEl))
+				root = rootEl.GetString();
 		}
-		catch
+		catch (JsonException)
 		{
-			await DropClonedDatabaseAsync(databaseName);
-			throw;
+			return;
 		}
-	}
 
-	internal static async Task DropClonedDatabaseAsync(string databaseName)
-	{
-		ValidateDatabaseName(databaseName);
-		var clonedConnectionString = new NpgsqlConnectionStringBuilder(ConnectionString)
+		if (string.IsNullOrWhiteSpace(root))
+			return;
+
+		Directory.CreateDirectory(root);
+		var payload = new Dictionary<string, object?>
 		{
-			Database = databaseName
-		}.ConnectionString;
-		NpgsqlConnection.ClearPool(new NpgsqlConnection(clonedConnectionString));
-
-		await using var maintenance = new NpgsqlConnection(MaintenanceConnectionString);
-		await maintenance.OpenAsync();
-		await ExecuteNonQueryAsync(
-			maintenance,
-			$"DROP DATABASE IF EXISTS {databaseName} WITH (FORCE)");
-	}
-
-	private static async Task CloneDatabaseAsync(string databaseName)
-	{
-		ValidateDatabaseName(databaseName);
-		await CloneLock.WaitAsync();
-		try
-		{
-			const int maxAttempts = 5;
-			for (var attempt = 1; attempt <= maxAttempts; attempt++)
-			{
-				try
-				{
-					await using var maintenance = new NpgsqlConnection(MaintenanceConnectionString);
-					await maintenance.OpenAsync();
-					await TerminateBackendsAsync(maintenance, TemplateDatabaseName);
-					await ExecuteNonQueryAsync(
-						maintenance,
-						$"CREATE DATABASE {databaseName} TEMPLATE {TemplateDatabaseName}");
-					return;
-				}
-				catch (PostgresException ex) when (
-					ex.SqlState == PostgresErrorCodes.ObjectInUse && attempt < maxAttempts)
-				{
-					await Task.Delay(50 * attempt);
-				}
-			}
-
-			throw new InvalidOperationException(
-				$"Failed to clone '{databaseName}' from template '{TemplateDatabaseName}'.");
-		}
-		finally
-		{
-			CloneLock.Release();
-		}
-	}
-
-	private static void ValidateDatabaseName(string databaseName)
-	{
-		if (!SafeDatabaseName.IsMatch(databaseName))
-			throw new ArgumentException($"Unsafe database name '{databaseName}'.", nameof(databaseName));
-	}
-
-	private static async Task TerminateBackendsAsync(NpgsqlConnection connection, string databaseName)
-	{
-		await using var command = new NpgsqlCommand(
-			"""
-			SELECT pg_terminate_backend(pid)
-			FROM pg_stat_activity
-			WHERE datname = @db AND pid <> pg_backend_pid()
-			""",
-			connection);
-		command.Parameters.AddWithValue("db", databaseName);
-		await command.ExecuteNonQueryAsync();
-	}
-
-	private static async Task ExecuteNonQueryAsync(NpgsqlConnection connection, string sql)
-	{
-		await using var command = new NpgsqlCommand(sql, connection)
-		{
-			CommandTimeout = 60
+			["state"] = Lifecycle.State,
+			["create"] = Lifecycle.Create,
+			["start"] = Lifecycle.Start,
+			["migrate"] = Lifecycle.Migrate,
+			["protect"] = Lifecycle.Protect,
+			["disposeOwned"] = Lifecycle.DisposeOwned,
+			["teardownDispose"] = Lifecycle.TeardownDispose,
+			["containerId"] = Lifecycle.ContainerId,
+			["runnerBaseUrl"] = Environment.GetEnvironmentVariable(ProductionRunnerGuard.BaseUrlEnvVar),
+			["ptyBackend"] = Environment.GetEnvironmentVariable(Antiphon.Agents.Pty.PtyBackendPolicy.EnvVar),
+			["mvid"] = typeof(TestDbFixture).Assembly.ManifestModule.ModuleVersionId.ToString("D", CultureInfo.InvariantCulture)
 		};
-		await command.ExecuteNonQueryAsync();
-	}
-
-	public AppDbContext CreateDbContext()
-	{
-		return new AppDbContext(CreateDbContextOptions());
+		File.WriteAllText(
+			Path.Combine(root, "lifecycle.json"),
+			JsonSerializer.Serialize(payload));
 	}
 }
 
@@ -206,18 +99,25 @@ public class TestDbFixture
 public sealed class IsolatedTestSchema : IAsyncDisposable
 {
 	private readonly string _databaseName;
+	private readonly TestDbFixtureLifecycle _lifecycle;
 
 	internal IsolatedTestSchema(string databaseName, string connectionString)
+		: this(databaseName, connectionString, TestDbFixture.Lifecycle)
+	{
+	}
+
+	internal IsolatedTestSchema(string databaseName, string connectionString, TestDbFixtureLifecycle lifecycle)
 	{
 		_databaseName = databaseName;
 		ConnectionString = connectionString;
+		_lifecycle = lifecycle;
 	}
 
 	public string ConnectionString { get; }
 
 	public async ValueTask DisposeAsync()
 	{
-		await TestDbFixture.DropClonedDatabaseAsync(_databaseName);
+		await _lifecycle.DropClonedDatabaseAsync(_databaseName);
 	}
 }
 
@@ -239,7 +139,6 @@ public abstract class TransactionalTestBase
 	public async Task SetupAsync()
 	{
 		DbContext = _fixture.CreateDbContext();
-		// Begin a transaction that will be rolled back after each test
 		await DbContext.Database.BeginTransactionAsync();
 	}
 

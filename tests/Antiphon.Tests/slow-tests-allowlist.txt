@@ -65,3 +65,5 @@ Antiphon.Tests.Application.AgentTaskLandCheckpointMatrixTests
 Antiphon.Tests.Application.AgentTaskLandCleanupSafetyTests
 # CARD-0484: ChannelBridge observed cost; rebaseline after the pending fix. No timeout tuning here.
 Antiphon.Tests.Application.ChannelBridgeTests
+# CARD-0476 fresh-process lazy DB probes, Docker cold start
+Antiphon.Tests.TestHelpers.TestDbFixtureLazyInitializationTests
