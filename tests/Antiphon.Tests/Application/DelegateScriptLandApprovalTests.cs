@@ -1,5 +1,3 @@
-using System.Net;
-using System.Text;
 using System.Text.Json;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -17,12 +15,16 @@ public sealed class DelegateScriptLandApprovalTests
         var owner = Guid.NewGuid();
         var evidence = Guid.NewGuid();
         var sha = new string('b', 40);
-        await using var server = new CapturingStub(JsonSerializer.Serialize(new { requestId = owner, status = "queued", notification = "tracked" }));
+        await using var server = LandApiStub.Compatible(
+            new string('a', 40),
+            v2Body: JsonSerializer.Serialize(new { requestId = owner, status = "queued", notification = "tracked" }));
         var result = await DelegateScriptRunner.RunAsync(server.Url, "-Land", owner.ToString(),
             "-ExpectedSourceSha", sha, "-ReviewEvidenceId", evidence.ToString(), "-Verify", "/*/*/FreshnessProbeTests/ApprovedFixIsPresent");
         result.ExitCode.ShouldBe(0, result.Output);
-        server.Posted.ShouldNotBeNull();
-        using var json = JsonDocument.Parse(server.Posted!);
+        server.LegacyLandPosts.ShouldBe(0);
+        server.Requests.Count.ShouldBe(2);
+        server.Requests[1].Path.ShouldEndWith("/land/v2");
+        using var json = JsonDocument.Parse(server.Requests[1].Body);
         json.RootElement.GetProperty("expectedSourceSha").GetString().ShouldBe(sha);
         json.RootElement.GetProperty("reviewEvidenceId").GetGuid().ShouldBe(evidence);
         json.RootElement.GetProperty("verify").GetString().ShouldBe("/*/*/FreshnessProbeTests/ApprovedFixIsPresent");
@@ -54,7 +56,10 @@ public sealed class DelegateScriptLandApprovalTests
                 remoteSha = remote, remoteConfirmedAt = "2026-09-11T00:10:00Z", cleanup = "Complete",
             },
         });
-        await using var server = new CapturingStub(JsonSerializer.Serialize(new { requestId = id, status = "queued" }), body);
+        await using var server = LandApiStub.Compatible(
+            new string('e', 40),
+            v2Body: JsonSerializer.Serialize(new { requestId = id, status = "queued" }),
+            taskStatusBody: body);
         var status = await DelegateScriptRunner.RunAsync(server.Url, "-Status", id.ToString());
         status.ExitCode.ShouldBe(0, status.Output);
         status.Output.ShouldContain("Approved original: " + approved);
@@ -65,41 +70,4 @@ public sealed class DelegateScriptLandApprovalTests
 
     [Test]
     public async Task C488_StatusApprovalIsNotVerifiedSha() => await C488_StatusShowsDistinctSourceFacts();
-
-    private sealed class CapturingStub : IAsyncDisposable
-    {
-        private readonly HttpListener _listener = new();
-        private readonly Task _pump;
-        private readonly string _post;
-        private readonly string _get;
-        public string Url { get; }
-        public string? Posted { get; private set; }
-        public CapturingStub(string post, string? get = null)
-        {
-            _post = post;
-            _get = get ?? "{}";
-            Url = EphemeralHttpListener.BindLoopback(_listener);
-            _pump = Task.Run(async () =>
-            {
-                while (_listener.IsListening)
-                {
-                    HttpListenerContext context;
-                    try { context = await _listener.GetContextAsync(); }
-                    catch (HttpListenerException) { break; }
-                    catch (ObjectDisposedException) { break; }
-                    var post = context.Request.HttpMethod == "POST";
-                    if (post)
-                    {
-                        using var reader = new StreamReader(context.Request.InputStream, context.Request.ContentEncoding);
-                        Posted = await reader.ReadToEndAsync();
-                    }
-                    context.Response.StatusCode = post ? 202 : 200;
-                    context.Response.ContentType = "application/json";
-                    await context.Response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes(post ? _post : _get));
-                    context.Response.Close();
-                }
-            });
-        }
-        public async ValueTask DisposeAsync() { _listener.Close(); await _pump; }
-    }
 }

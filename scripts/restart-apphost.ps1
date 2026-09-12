@@ -32,13 +32,17 @@
 
 .OUTPUTS
     Exit codes:
-      0  restarted, dashboard up and /health 200
+      0  restarted, dashboard up, /health 200, and /api/version SHA matches the intended HEAD
       1  failed (build failed, or did not come up within TimeoutSec)
-      3  REFUSED - a linked/unverifiable worktree root, or another restart or launch is in flight; nothing was killed
+      3  REFUSED - a linked/unverifiable worktree root, SHA admission failure, or another restart or launch is in flight; nothing was killed
       4  Aspire's DCP dependency check timed out (see the printed verdict)
+      5  server build unverified - health succeeded but /api/version SHA did not match; lock retained, child left running
+.PARAMETER ExpectedServerSha
+    Full 40- or 64-character SHA that must equal source-root HEAD. Default is that HEAD.
 .EXAMPLE
     pwsh -File scripts/restart-apphost.ps1
     pwsh -File scripts/restart-apphost.ps1 -AllowWorktree
+    pwsh -File scripts/restart-apphost.ps1 -ExpectedServerSha <full-sha>
 .NOTES
     Keep this file ASCII-only: it may run under Windows PowerShell 5.1, which reads
     no-BOM .ps1 as CP1252 and mangles non-ASCII characters into parse errors.
@@ -47,12 +51,18 @@ param(
     [switch]$NoBuild,
     [int]$TimeoutSec = 150,
     [int]$LockMaxAgeMinutes,
-    [switch]$AllowWorktree
+    [switch]$AllowWorktree,
+    [string]$ExpectedServerSha
 )
 
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'apphost-common.ps1')
+$appHostTestSeams = $env:ANTIPHON_APPHOST_TEST_SEAMS
+if (-not [string]::IsNullOrWhiteSpace($appHostTestSeams) -and (Test-Path -LiteralPath $appHostTestSeams)) {
+    . $appHostTestSeams
+    Write-Host 'TEST SEAMS ACTIVE'
+}
 if (-not $PSBoundParameters.ContainsKey('LockMaxAgeMinutes')) {
     $LockMaxAgeMinutes = $AppHostLockMaxAgeMinutes
 }
@@ -89,11 +99,6 @@ function Read-PidFile([string]$file) {
     return $null
 }
 
-function Get-PortPids([int]$p) {
-    @((Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue).OwningProcess) |
-        Where-Object { $_ } | Select-Object -Unique
-}
-
 Write-Host "Restarting Antiphon AppHost..." -ForegroundColor Cyan
 
 # 0) Refuse if anything else is already launching or restarting. This runs BEFORE
@@ -126,31 +131,64 @@ $devProcess = $null
 
 try {
 
+    $sourceHead = Get-AppHostSourceHead -SourceRoot $root
+    if (-not $sourceHead) {
+        Write-Host "REFUSED: could not read a full HEAD SHA from source root $root" -ForegroundColor Yellow
+        if ($PSBoundParameters.ContainsKey('ExpectedServerSha') -and -not [string]::IsNullOrWhiteSpace($ExpectedServerSha)) {
+            Write-Host "  supplied -ExpectedServerSha: $ExpectedServerSha" -ForegroundColor DarkGray
+        }
+        Write-Host "  Update the canonical checkout, then re-run." -ForegroundColor DarkGray
+        Write-Host "  Nothing was killed." -ForegroundColor DarkGray
+        exit 3
+    }
+    $expectedSha = $sourceHead
+    if ($PSBoundParameters.ContainsKey('ExpectedServerSha') -and -not [string]::IsNullOrWhiteSpace($ExpectedServerSha)) {
+        if (-not (Test-AppHostBuildShaFormat $ExpectedServerSha)) {
+            Write-Host "REFUSED: -ExpectedServerSha is not a full 40- or 64-character SHA: $ExpectedServerSha" -ForegroundColor Yellow
+            Write-Host "  source root: $root" -ForegroundColor DarkGray
+            Write-Host "  HEAD: $sourceHead" -ForegroundColor DarkGray
+            Write-Host "  Update the canonical checkout, then re-run." -ForegroundColor DarkGray
+            Write-Host "  Nothing was killed." -ForegroundColor DarkGray
+            exit 3
+        }
+        if ($ExpectedServerSha.ToLowerInvariant() -ne $sourceHead) {
+            Write-Host "REFUSED: -ExpectedServerSha $ExpectedServerSha does not match source-root HEAD $sourceHead" -ForegroundColor Yellow
+            Write-Host "  source root: $root" -ForegroundColor DarkGray
+            Write-Host "  Update the canonical checkout, then re-run." -ForegroundColor DarkGray
+            Write-Host "  Nothing was killed." -ForegroundColor DarkGray
+            exit 3
+        }
+        $expectedSha = $ExpectedServerSha.ToLowerInvariant()
+    }
+    if (Test-AppHostTrackedEdits -SourceRoot $root) {
+        Write-Host "NOTE: source checkout has tracked edits; SHA equality does not prove uncommitted behavior is loaded. Probe the changed feature directly." -ForegroundColor Yellow
+    }
+
     # Guard: which PID owns the session-runner port, so we never kill it.
-    $srPid = Get-PortPids $sessionRunnerPort | Select-Object -First 1
+    $srPid = Get-AppHostPortOwners $sessionRunnerPort | Select-Object -First 1
     if ($srPid) { Write-Host "  preserving session-runner (PID $srPid on $sessionRunnerPort)" -ForegroundColor DarkGray }
     & (Join-Path $PSScriptRoot 'check-daemon-build.ps1')
 
     # 1) Kill the AppHost wrapper + dotnet AppHost tree.
     $appHostPid = Read-PidFile $pidFile
-    if ($appHostPid) { taskkill /T /F /PID $appHostPid 2>&1 | Out-Null; Write-Host "  killed AppHost wrapper tree (PID $appHostPid)" }
+    if ($appHostPid) { Stop-AppHostProcessTree -ProcessId $appHostPid; Write-Host "  killed AppHost wrapper tree (PID $appHostPid)" }
 
     # 2) Free every AppHost-owned port (DCP children often escape the wrapper tree).
     #    Never touch the session-runner PID.
-    Start-Sleep 1
+    Wait-AppHostPollInterval -Seconds 1
     foreach ($port in $appHostPorts) {
-        foreach ($owner in Get-PortPids $port) {
+        foreach ($owner in Get-AppHostPortOwners $port) {
             if ($owner -ne $srPid) {
-                Stop-Process -Id $owner -Force -ErrorAction SilentlyContinue
+                Stop-AppHostProcessId -ProcessId $owner
                 Write-Host "  freed port $port (PID $owner)"
             }
         }
     }
 
     # 3) Clean stale DCP / dashboard processes left orphaned by an unclean exit.
-    Get-Process dcpctrl, 'Aspire.Dashboard' -ErrorAction SilentlyContinue |
+    Get-AppHostStrayProcesses |
         Where-Object { $_.Id -ne $srPid } |
-        ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue; Write-Host "  killed stale $($_.ProcessName) (PID $($_.Id))" }
+        ForEach-Object { Stop-AppHostProcessId -ProcessId $_.Id; Write-Host "  killed stale $($_.ProcessName) (PID $($_.Id))" }
 
     # 4) Reset launch signals so the wait below is not fooled by stale state.
     Remove-Item $urlFile -ErrorAction SilentlyContinue
@@ -161,15 +199,19 @@ try {
     $devArgs = @('-NoLogo', '-File', $devScript)
     if ($NoBuild) { $devArgs += '-NoBuild' }
     if ($AllowWorktree) { $devArgs += '-AllowWorktree' }
-    $devProcess = Start-Process pwsh -ArgumentList $devArgs -WindowStyle Normal -PassThru
+    $devProcess = Start-AppHostDevLaunch -ArgumentList $devArgs
     $keepRestartLock = $true
 
-    # 6) Wait for the dashboard URL + backend health.
+    # 6) Wait for the dashboard URL + backend health + intended loaded SHA.
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     $dashUrl = $null
     $backendOk = $false
+    $identityVerified = $false
+    $identityObserved = $null
+    $identityReason = 'unavailable'
+    $freshHeadNow = $null
     while ((Get-Date) -lt $deadline) {
-        Start-Sleep 3
+        Wait-AppHostPollInterval -Seconds 3
         if (-not $dashUrl -and (Test-Path $urlFile)) {
             $u = (Get-Content -LiteralPath $urlFile -Raw -ErrorAction SilentlyContinue).Trim()
             if ($u -match '^https?://') { $dashUrl = $u }
@@ -177,12 +219,7 @@ try {
         $verdict = Get-AppHostLogVerdict -LogPath $logFile
         if ($verdict.Kind -eq 'BuildFailed') {
             $keepRestartLock = $false
-            if ($devProcess) {
-                try { $devProcess.Refresh() } catch { }
-                if (-not $devProcess.HasExited) {
-                    Stop-Process -Id $devProcess.Id -Force -ErrorAction SilentlyContinue
-                }
-            }
+            Stop-AppHostLaunchChild -Process $devProcess
             Write-Host "AppHost build FAILED - check: Get-Content '$logFile' -Tail 40" -ForegroundColor Red
             exit 1
         }
@@ -194,18 +231,51 @@ try {
                 -LaunchLock $launchLock -RestartLock $restartLock -WatchdogLog $watchdogLog
             exit 4
         }
-        if ($dashUrl) {
-            try {
-                $r = Invoke-WebRequest 'http://localhost:17202/health' -UseBasicParsing -TimeoutSec 5
-                if ($r.StatusCode -eq 200) { $backendOk = $true; break }
-            } catch { }
+        if (-not $dashUrl) { continue }
+        $health = Invoke-AppHostHealthProbe
+        if ([string]$health.StatusCode -ne '200') { continue }
+        $backendOk = $true
+        $versionProbe = Invoke-AppHostVersionProbe
+        $ident = Resolve-AppHostLoadedIdentity -Probe $versionProbe
+        $freshHeadNow = Get-AppHostSourceHead -SourceRoot $root
+        $moved = (-not $freshHeadNow) -or ($freshHeadNow -ne $expectedSha)
+        $shaOk = $ident.Ok -and ($ident.Sha.ToLowerInvariant() -eq $expectedSha)
+        if ($shaOk -and -not $moved) {
+            $identityVerified = $true
+            $identityObserved = $ident.Sha
+            break
+        }
+        if ($moved) {
+            $identityReason = 'checkout moved'
+            $identityObserved = $freshHeadNow
+        } elseif ($ident.Ok) {
+            $identityReason = $ident.Sha
+            $identityObserved = $ident.Sha
+        } else {
+            $identityReason = $ident.Reason
+            $identityObserved = $ident.Sha
         }
     }
 
-    if ($dashUrl -and $backendOk) {
+    if ($dashUrl -and $backendOk -and $identityVerified) {
         $keepRestartLock = $false
-        Write-Host "AppHost restarted - dashboard $dashUrl, backend healthy." -ForegroundColor Green
+        Write-Host "AppHost restarted - dashboard $dashUrl, backend healthy, server $identityObserved." -ForegroundColor Green
         exit 0
+    } elseif ($dashUrl -and $backendOk) {
+        $observedText = $identityObserved
+        if ([string]::IsNullOrWhiteSpace($observedText)) { $observedText = $identityReason }
+        Write-Host "REFUSED: server build unverified (exit 5)." -ForegroundColor Yellow
+        Write-Host "  expected SHA: $expectedSha" -ForegroundColor DarkGray
+        Write-Host "  observed SHA: $observedText" -ForegroundColor DarkGray
+        Write-Host "  reason: $identityReason" -ForegroundColor DarkGray
+        if ($identityReason -eq 'checkout moved') {
+            Write-Host "  checkout moved: expected $expectedSha, HEAD now $freshHeadNow" -ForegroundColor DarkGray
+        }
+        Write-Host "  source root: $root" -ForegroundColor DarkGray
+        Write-Host "  lock: $restartLock" -ForegroundColor DarkGray
+        Write-Host "  inspect: Get-Content '$logFile' -Tail 40; Get-Content '$restartLock'" -ForegroundColor DarkGray
+        Write-Host "  The launched child was left running; the restart lock is retained." -ForegroundColor DarkGray
+        exit 5
     } elseif ($dashUrl) {
         Write-Host "Dashboard up ($dashUrl) but backend health not confirmed in ${TimeoutSec}s." -ForegroundColor Yellow
         Write-Host "  Leaving $restartLock so a watchdog fire treats this as still in flight." -ForegroundColor DarkGray

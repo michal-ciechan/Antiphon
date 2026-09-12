@@ -322,6 +322,71 @@ elseif ($hasTaskToken) {
     $headers['X-Antiphon-Task-Token'] = $env:ANTIPHON_TASK_TOKEN
 }
 
+function Get-AntiphonSafeApiBase {
+    param([string]$Api)
+    try {
+        $u = [uri]$Api
+        $port = ''
+        if (-not $u.IsDefaultPort -and $u.Port -gt 0) { $port = ':' + $u.Port }
+        return ('{0}://{1}{2}' -f $u.Scheme, $u.Host, $port)
+    } catch {
+        return $Api
+    }
+}
+
+function Get-AntiphonHttpStatusCode {
+    param($ErrorRecord)
+    $ex = $ErrorRecord.Exception
+    if ($ex.Response -and $ex.Response.StatusCode) {
+        return [int]$ex.Response.StatusCode
+    }
+    if ($ex.InnerException -and $ex.InnerException.Response -and $ex.InnerException.Response.StatusCode) {
+        return [int]$ex.InnerException.Response.StatusCode
+    }
+    if ($ex.Message -match 'status code[^\d]*(\d{3})') {
+        return [int]$Matches[1]
+    }
+    return $null
+}
+
+function Test-AntiphonLandV2Sha {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $false }
+    if ($Value -eq 'unknown') { return $false }
+    return [bool]($Value -match '^[0-9a-fA-F]{40}$' -or $Value -match '^[0-9a-fA-F]{64}$')
+}
+
+function Get-AntiphonVersionProbeTimeoutSec {
+    $raw = $env:ANTIPHON_VERSION_PROBE_TIMEOUT_SEC
+    if ([string]::IsNullOrWhiteSpace($raw)) { return 5 }
+    $parsed = 0
+    if ([int]::TryParse($raw, [ref]$parsed) -and $parsed -gt 0) { return $parsed }
+    return 5
+}
+
+function Invoke-AntiphonLandVersionProbe {
+    param([string]$SafeApi)
+    $timeoutSec = Get-AntiphonVersionProbeTimeoutSec
+    $uri = "$api/api/version"
+    try {
+        $resp = Invoke-WebRequest -Method GET -Uri $uri -Headers $headers -TimeoutSec $timeoutSec -UseBasicParsing
+        return [pscustomobject]@{
+            Ok         = $true
+            StatusCode = [int]$resp.StatusCode
+            Body       = [string]$resp.Content
+            Error      = $null
+        }
+    } catch {
+        $code = Get-AntiphonHttpStatusCode $_
+        return [pscustomobject]@{
+            Ok         = $false
+            StatusCode = $code
+            Body       = $null
+            Error      = $_.Exception.Message
+        }
+    }
+}
+
 function Invoke-Antiphon {
     param([string]$Method, [string]$Path, $Body)
     $uri = "$api$Path"
@@ -432,12 +497,53 @@ switch ($PSCmdlet.ParameterSetName) {
     }
 
     'Land' {
+        $safeApi = Get-AntiphonSafeApiBase -Api $api
+        $probe = Invoke-AntiphonLandVersionProbe -SafeApi $safeApi
+        $observed = 'unavailable'
+        $hasMarker = $false
+        if ($probe.Ok -and -not [string]::IsNullOrWhiteSpace($probe.Body)) {
+            try {
+                $version = $probe.Body | ConvertFrom-Json
+                if ($null -ne $version.version -and [string]$version.version -ne '') {
+                    $observed = [string]$version.version
+                }
+                $caps = @()
+                if ($null -ne $version.capabilities) { $caps = @($version.capabilities) }
+                $hasMarker = [bool]($caps -ccontains 'land-v2')
+            } catch {
+                $observed = 'unavailable'
+                $hasMarker = $false
+            }
+        }
+        if (-not $hasMarker -or -not (Test-AntiphonLandV2Sha -Value $observed)) {
+            Write-Error ("Antiphon land refused: {0} does not advertise land-v2 (observed SHA {1}). GET {0}/api/version and run pwsh -NoProfile -File scripts/restart-apphost.ps1 after updating the canonical checkout if needed." -f $safeApi, $observed)
+            exit 1
+        }
+
         $body = @{}
         if ($Verify) { $body['verify'] = $Verify }
         if ($ExpectedSourceSha) { $body['expectedSourceSha'] = $ExpectedSourceSha }
         if ($ReviewEvidenceId) { $body['reviewEvidenceId'] = $ReviewEvidenceId }
-        $result = Invoke-Antiphon -Method POST -Path "/api/agent-tasks/$Land/land" -Body $body
-        $suffix = if ($Verify) { " with test filter '$Verify'" } else { '' }
+        $landPath = "/api/agent-tasks/$Land/land/v2"
+        $uri = "$api$landPath"
+        $json = $body | ConvertTo-Json -Depth 6 -Compress
+        try {
+            $result = Invoke-RestMethod -Method POST -Uri $uri -Headers $headers -Body $json -ContentType 'application/json'
+        } catch {
+            $code = Get-AntiphonHttpStatusCode $_
+            if ($code -eq 404 -or $code -eq 405) {
+                Write-Error ("Antiphon land refused: POST {0}{1} returned {2} (land-v2). Confirm GET {0}/api/version, then pwsh -NoProfile -File scripts/restart-apphost.ps1." -f $safeApi, $landPath, $code)
+                exit 1
+            }
+            if ($null -eq $code) {
+                Write-Error ("Antiphon land POST to {0}{1} did not complete. The request may have been accepted; check with delegate.ps1 -Status {2}. Do not assume publication failed." -f $safeApi, $landPath, $Land)
+                exit 1
+            }
+            $detail = $_.ErrorDetails.Message
+            if ([string]::IsNullOrWhiteSpace($detail)) { $detail = $_.Exception.Message }
+            Write-Error "Antiphon POST $landPath failed: $detail"
+            exit 1
+        }
         $word = if ($result.status -eq 'requeued') { 'Requeued land' } else { 'Queued land' }
         if ($result.notification -eq 'not-required') {
             Write-Output "$word request $($result.requestId). Publication pending; notification=not-required."

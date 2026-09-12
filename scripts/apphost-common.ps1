@@ -445,8 +445,125 @@ function Format-AppHostRestartExitName {
         1 { return '1=timeout/build' }
         3 { return '3=refused (already unstamped)' }
         4 { return '4=DCP dependency timeout' }
+        5 { return '5=server build unverified' }
         default { return "$ExitCode" }
     }
+}
+
+function Test-AppHostBuildShaFormat {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $false }
+    return [bool]($Value -match '^[0-9a-fA-F]{40}$' -or $Value -match '^[0-9a-fA-F]{64}$')
+}
+
+function Get-AppHostSourceHead {
+    param([Parameter(Mandatory = $true)][string]$SourceRoot)
+    try {
+        $raw = @(& git -C $SourceRoot rev-parse HEAD 2>&1)
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $text = (@($raw | ForEach-Object { $_.ToString().Trim() } | Where-Object { $_ }) | Select-Object -First 1)
+        if (-not (Test-AppHostBuildShaFormat $text)) { return $null }
+        return $text.ToLowerInvariant()
+    } catch {
+        return $null
+    }
+}
+
+function Test-AppHostTrackedEdits {
+    param([Parameter(Mandatory = $true)][string]$SourceRoot)
+    try {
+        $rows = @(& git -C $SourceRoot status --porcelain --untracked-files=no 2>$null)
+        return [bool]($rows | Where-Object { $_ })
+    } catch {
+        return $false
+    }
+}
+
+function Get-AppHostPortOwners {
+    param([Parameter(Mandatory = $true)][int]$Port)
+    @((Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue).OwningProcess) |
+        Where-Object { $_ } | Select-Object -Unique
+}
+
+function Stop-AppHostProcessId {
+    param([Parameter(Mandatory = $true)][int]$ProcessId)
+    Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+}
+
+function Stop-AppHostProcessTree {
+    param([Parameter(Mandatory = $true)][int]$ProcessId)
+    taskkill /T /F /PID $ProcessId 2>&1 | Out-Null
+}
+
+function Get-AppHostStrayProcesses {
+    Get-Process dcpctrl, 'Aspire.Dashboard' -ErrorAction SilentlyContinue
+}
+
+function Start-AppHostDevLaunch {
+    param([Parameter(Mandatory = $true)][string[]]$ArgumentList)
+    return Start-Process pwsh -ArgumentList $ArgumentList -WindowStyle Normal -PassThru
+}
+
+function Stop-AppHostLaunchChild {
+    param($Process)
+    if (-not $Process) { return }
+    try { $Process.Refresh() } catch { }
+    $exited = $false
+    try { $exited = [bool]$Process.HasExited } catch { $exited = $true }
+    if (-not $exited) {
+        try { Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue } catch { }
+    }
+}
+
+function Invoke-AppHostHealthProbe {
+    param([int]$TimeoutSec = 5)
+    try {
+        $r = Invoke-WebRequest 'http://localhost:17202/health' -UseBasicParsing -TimeoutSec $TimeoutSec
+        return [pscustomobject]@{ StatusCode = [int]$r.StatusCode; Body = [string]$r.Content; Error = $null }
+    } catch {
+        $code = $null
+        if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
+            $code = [int]$_.Exception.Response.StatusCode
+        }
+        return [pscustomobject]@{ StatusCode = $code; Body = $null; Error = $_.Exception.Message }
+    }
+}
+
+function Invoke-AppHostVersionProbe {
+    param([int]$TimeoutSec = 5)
+    try {
+        $r = Invoke-WebRequest 'http://localhost:17202/api/version' -UseBasicParsing -TimeoutSec $TimeoutSec
+        return [pscustomobject]@{ StatusCode = [int]$r.StatusCode; Body = [string]$r.Content; Error = $null }
+    } catch {
+        $code = $null
+        if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
+            $code = [int]$_.Exception.Response.StatusCode
+        }
+        return [pscustomobject]@{ StatusCode = $code; Body = $null; Error = $_.Exception.Message }
+    }
+}
+
+function Wait-AppHostPollInterval {
+    param([int]$Seconds = 3)
+    if ($Seconds -gt 0) { Start-Sleep -Seconds $Seconds }
+}
+
+function Resolve-AppHostLoadedIdentity {
+    param($Probe)
+    if ($null -eq $Probe -or [string]$Probe.StatusCode -ne '200' -or [string]::IsNullOrWhiteSpace($Probe.Body)) {
+        return [pscustomobject]@{ Ok = $false; Sha = $null; Reason = 'unavailable' }
+    }
+    try {
+        $obj = $Probe.Body | ConvertFrom-Json
+    } catch {
+        return [pscustomobject]@{ Ok = $false; Sha = $null; Reason = 'malformed' }
+    }
+    $sha = $null
+    if ($null -ne $obj.version) { $sha = [string]$obj.version }
+    if (-not (Test-AppHostBuildShaFormat $sha)) {
+        return [pscustomobject]@{ Ok = $false; Sha = $sha; Reason = 'malformed' }
+    }
+    return [pscustomobject]@{ Ok = $true; Sha = $sha; Reason = $null }
 }
 
 function Invoke-AppHostRestartCaptured {

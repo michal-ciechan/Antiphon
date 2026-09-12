@@ -30,10 +30,14 @@ For the usual case, where AppHost may already be running:
 
 ```powershell
 pwsh -NoProfile -File scripts/restart-apphost.ps1
+pwsh -NoProfile -File scripts/restart-apphost.ps1 -ExpectedServerSha <full-intended-head>
 ```
 
 This is the canonical teardown: it stops the AppHost tree and its API, client,
-dashboard and other owned resources, then relaunches and waits for health.
+dashboard and other owned resources, then relaunches and waits for health
+**and** a matching `GET /api/version` SHA (CARD-0495). Default expected SHA is
+source-root HEAD, never the caller's cwd. `-NoBuild` does not skip the identity
+check. SHA equality is committed-build provenance, not dirty-file attestation.
 Postgres, the runner on 17204, and live detached pty-host / herdr sessions survive.
 Never run a second bare `dev-aspire.ps1`: the old process can keep the ports and
 the new code never goes live. Linked worktrees refuse by default (exit 3);
@@ -114,14 +118,15 @@ show a rebuild after the client change before checking the browser. Use
 
 | Exit | Meaning | Operator action |
 |---|---|---|
-| 0 | Dashboard URL discovered and API `/health` returned 200 | Verify build identity / changed behavior. |
+| 0 | Dashboard URL discovered, API `/health` returned 200, and `/api/version` SHA equals the intended source-root HEAD | Record the printed SHA; probe the required capability/feature (`land-v2` for landing). |
 | 1 | Build failed or health wait timed out (default 150 seconds) | Read logs; after timeout the child may still be launching. Do not immediately rerun. |
-| 3 | Refused: worktree guard or active launch/restart lock; nothing killed | Inspect ownership and both locks; wait for the existing launch. |
+| 3 | Refused: worktree guard, SHA admission (`-ExpectedServerSha` malformed or not equal to HEAD, or HEAD unreadable), or active launch/restart lock; nothing killed | Inspect ownership and both locks; update the canonical checkout if the expected SHA is wrong; wait for the existing launch. |
 | 4 | Aspire DCP dependency-check timeout | Inspect Docker and lock/log evidence before retrying; podman text does not establish a missing runtime. |
+| 5 | Server build unverified: health succeeded but `/api/version` SHA mismatched, was unavailable/malformed, or the checkout moved during observation. Restart lock retained; launched child left running. | Inspect the printed expected/observed SHAs, source root, `logs/apphost.restart.lock` and `logs/apphost.log`. Do not treat the stack as the intended build. Fix the checkout if needed, then restart with `-ExpectedServerSha <full-intended-head>`. |
 
 | Lock | Lifetime |
 |---|---|
-| `logs/apphost.restart.lock` | Held through restart. Exit 0 and detected build failure remove it; health timeout and exit 4 retain its stamp. |
+| `logs/apphost.restart.lock` | Held through restart. Exit 0 and detected build failure remove it; health timeout, exit 4, and exit 5 (unverified server build) retain its stamp. |
 | `logs/apphost.launch.lock` | Written by `dev-aspire.ps1` during launch and removed on script exit, including a successful dashboard start. |
 
 A present lock with a stamp younger than 15 minutes is active **even if its
@@ -139,6 +144,31 @@ docker ps
 The podman wording can be captured probe stderr when DCP times out during racing
 restarts. Establish the actual Docker/process state; do not install another
 runtime or raise the dependency timeout based on that text alone.
+
+## Post-land server activation (CARD-0495)
+
+A land confirms publication, not that this machine is running the new server.
+Before relying on newly landed server behavior:
+
+1. Record the landing receipt's verified commit (post-rebase identity).
+2. Confirm the canonical checkout contains it (`git pull --rebase` in
+   `C:\src\Antiphon` after out-of-band publication).
+3. From an independent operator shell in the canonical checkout, run
+   `pwsh -NoProfile -File scripts/restart-apphost.ps1 -ExpectedServerSha <full-intended-head>`.
+4. Require exit 0 and a fresh `GET /api/version` showing that exact SHA and
+   `capabilities` containing `land-v2`. Probe the required feature directly when
+   the checkout has tracked edits.
+5. Record desired and observed full SHAs in the deployment report.
+
+`delegate.ps1 -Land` GETs `/api/version` first (5s bound, `ANTIPHON_VERSION_PROBE_TIMEOUT_SEC`
+seam) and POSTs only `/api/agent-tasks/{id}/land/v2`. Missing `land-v2`, a
+malformed/unknown SHA, or a probe failure is exit 1 with zero land POSTs. A
+404/405 on `/land/v2` is not retried against `/land`.
+
+First install of this card: land Code with the still-installed pre-CARD-0495 CLI
+against a verified CARD-0488-capable server, then perform the activation restart
+above before using the new CLI. Do not restore silent fallback if the server is
+rolled back.
 
 ## Scheduled Tasks and deliberate downtime
 
