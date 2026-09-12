@@ -92,3 +92,73 @@ through — the `wrapper-absolute-import` case then **hung the execution child f
 fixture deadline** and surfaced as `TimeoutException: The operation has timed out.` at `:207`.
 `ValidatorChildStarts.ShouldBe(0)` at `:210` was never reached (a validator child had in fact
 started). The companion row `wrapper-extra-line` went red at `:205`.
+
+## Results — `Antiphon.Tests` (PC-1…PC-21, PC-55, PC-56)
+
+Pristine green MVID for `Antiphon.Tests` = `240b9167-8242-4ea9-a887-a604e4b0c6ae`
+(whole `TestDbFixtureLifecycleTests` class: 29/29 pass).
+
+### Controlled-ops block (Unit, `TestDbFixtureLifecycleTests`)
+
+| PC | Guard | Mutation | Named row | Red at | Verdict |
+|----|-------|----------|-----------|--------|---------|
+| PC-2 | G-2 gate creates the task once | `_task ??=` to `_task =` | `Eight_concurrent_first_callers_share_one_bootstrap` | `LifecycleTests.cs:144` `Create.ShouldBe(1)` | RED as specified, red mvid `4cf359a2` |
+| PC-3 | G-3 no init after disposal | delete the disposed check in the gate | `Teardown_matrix(access-after)` | `:310` `Should.Throw<ObjectDisposedException>` | RED as specified (1/7), `93f8798f` |
+| PC-4 | G-4 bootstrap off the captured context | `Task.Factory.StartNew(..., FromCurrentSynchronizationContext())` | `Synchronous_access_completes_under_a_single_threaded_synchronization_context` | `:229` 30 s `WaitAsync` | RED as specified (30.0 s), `2970ce5d` |
+| PC-5 | G-5 readiness only after template protection | publish `ready`, run `ProtectTemplateAsync` fire-and-forget | `Readiness_waits_for_template_protection(before-ALLOW_CONNECTIONS)` | `:202` `sync.IsCompleted.ShouldBeFalse()` | RED as specified (2/4 — `after-IS_TEMPLATE` too), `af9be072` |
+| PC-6 | G-6 bootstrap never calls the lazy accessors | `_ = CreateDbContextOptions();` inside the bootstrap | `Eight_concurrent_first_callers_share_one_bootstrap` | `:142` 30 s bound (self-wait) | RED as specified (30.4 s), `9149a06b` |
+| **PC-7** | G-7 explicit connection strings bypass init | `_ = Lifecycle.ConnectionString;` at the top of `TestDbFixture.CreateDbContextOptions(string?)` | `Explicit_options_never_initialize` | — | **DOES NOT REPRODUCE** — see finding 1 |
+| **PC-8** | G-8 a bootstrap fault never enters the drop path | move the readiness await inside the `try` after the clone name | `Clone_request_on_a_faulted_lifecycle_does_not_drop` | — | **DOES NOT REPRODUCE** — see finding 2 |
+| PC-9 | G-9 pool clearing scoped to the shared store | add `_ops.ClearAllPools();` to the bootstrap | `Bootstrap_clears_only_the_shared_pool` | `:403` `ops.ClearAll.ShouldBe(0)` | RED as specified, `881fb151` |
+| PC-10 | G-10 never-requested teardown is a no-op | teardown creates the bootstrap task before disposing | `Teardown_matrix(never-requested)` | `:265` `Create.ShouldBe(0)` | RED as specified (1/7), `122d51e5` |
+| PC-11 | G-11 in-flight teardown awaits then disposes | `if (!init.IsCompleted) return;` in `DisposeCoreAsync` | `Teardown_matrix(starting)` | `:277` `teardown.IsCompleted.ShouldBeFalse()` | RED, **one assertion earlier** than planned (`:282` `DisposeOwned.ShouldBe(1)`), `11074c2b` |
+| PC-12 | G-12 repeated teardown shares one disposal | delete the `_disposeTask` short-circuit | `Teardown_matrix(repeated)` | `:304` `DisposeOwned.ShouldBe(1)` | RED as specified (1/7), `d1603be2` |
+| PC-13 | G-13 fault is terminal, no retry | `lock (_gate) _task = null;` in the fault path | `Bootstrap_fault_is_terminal_for_all_waiters(migrate)` | `:350` `Create.ShouldBe(created)` | RED as specified (all 5 rows), `569ee465` |
+| PC-14 | G-14 partial container disposed once | delete the owned-container disposal from the catch | `(start)` | `:354` `DisposeOwned.ShouldBe(1)` | RED as specified (4/5 rows; `construct` correctly stays green), `76bd22b6` |
+| PC-15 | G-15 cleanup attached, never substituted | `throw cleanup;` instead of `AggregateException(ex, cleanup)` | `(protect-and-cleanup-fails)` | `:343` C476-FAULT sentinel | RED as specified (1/5), `8668fda1` |
+| PC-16 | G-16 clone error preserved | `throw dropEx;` instead of `AggregateException(ex, dropEx)` | `Clone_creation_failure_drops_once_and_preserves_the_clone_error(drop-fails)` | `:390` C476-CLONE sentinel | RED as specified (1/2), `815596d2` |
+| **PC-21** | G-21 clone disposal reads ready state | `DropClonedDatabaseAsync` calls `EnsureReadyAsync()` | `Teardown_matrix(clone-dispose-after)` | — | **DOES NOT REPRODUCE** — see finding 3 |
+
+### Findings
+
+**Finding 1 — PC-7 is mapped to the wrong test; the guard itself holds.**
+`Explicit_options_never_initialize` never calls `TestDbFixture.CreateDbContextOptions(string?)`.
+It calls the *static* `TestDbFixtureLifecycle.BuildOptions` and asserts on its own private
+`TestDbFixtureLifecycle` instance, which a mutation to the `TestDbFixture.Lifecycle` singleton
+cannot touch. With the mutation applied the named test passed 1/1 (mvid `3ace8f78`).
+The defect **is** caught elsewhere: with the same mutation still applied,
+`TestDbFixtureLazyInitializationTests.A_db_free_exact_method_selection_constructs_and_starts_no_database`
+went red — child assertion `TestDbFixture.Lifecycle.IsRequested.ShouldBeFalse()`
+(`LazyInitializationTests.cs:171`), surfacing in the parent at `:26` `run.Exit.ShouldBe(0)`,
+after the child had started a real container (44.7 s). So G-7 is guarded; the PC row names
+the wrong method. Plan amendment only, no code change needed.
+
+**Finding 2 — PC-8 is a real coverage hole.**
+Moving the readiness await inside the `try` does put a faulted bootstrap on the drop path, but
+`DropClonedDatabaseAsync` throws `ObjectDisposedException` on the null `_ready` *before*
+`Interlocked.Increment(ref Drop)`, so the `Drop` counter — the only thing the test observes —
+never moves, and the clone error still flattens to `C476-FAULT`. Evidence, all with the
+mutation applied (mvid `865648d7`):
+
+* named test `Clone_request_on_a_faulted_lifecycle_does_not_drop`: 1/1 **passed**
+* whole `TestDbFixtureLifecycleTests` class: **29/29 passed**
+* `TestDbFixtureLazyInitializationTests.A_post_start_fault_cleans_up_the_owned_container`
+  (whose child asserts `Lifecycle.Drop.ShouldBe(0)` against a real faulted bootstrap): **passed**
+
+G-8 is therefore asserted only through a counter that a second safety net (the `_ready` null
+check) keeps at zero. A test that asserts the *structure* — that `_ops.DropAsync` is never
+reached, or that the thrown exception is the bare fault rather than an `AggregateException`
+carrying an `ObjectDisposedException` — would close it.
+
+**Finding 3 — PC-21 cannot reproduce while G-3 holds.**
+Making `DropClonedDatabaseAsync` call `EnsureReadyAsync()` cannot produce "a second create"
+in `Teardown_matrix(clone-dispose-after)`: the lifecycle is already disposed, so
+`EnsureReadyAsync` hits the G-3 disposed check and throws the very `ObjectDisposedException`
+the row expects, leaving `Create` unchanged. Evidence with the mutation applied
+(mvid `a032848e`): named method 7/7 **passed**, whole class **29/29 passed**.
+The genuinely dangerous case for G-21 — dropping a clone against a *never-requested*
+lifecycle, which would start a container — is unreachable from the test surface (you cannot
+hold a clone without having initialised). The guard is real but PC-21 as written proves
+nothing about it. Recommend rewording PC-21/G-21 to assert that `DropClonedDatabaseAsync`
+observes the ready state directly (e.g. a faulted lifecycle must surface
+`ObjectDisposedException`, not the bootstrap fault) rather than counting creates.
