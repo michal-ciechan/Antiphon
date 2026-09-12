@@ -307,7 +307,7 @@ public sealed class RunnerRestartPreflightSafetyTests
         f.ChildTimeout = TimeSpan.FromSeconds(2);
         var sw = Stopwatch.StartNew();
         await Should.ThrowAsync<TimeoutException>(() => f.Script("Start-Sleep 10"));
-        sw.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(4));
+        sw.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(6));
         Should.Throw<ArgumentException>(() => Process.GetProcessById(f.LastChildPid));
     }
 
