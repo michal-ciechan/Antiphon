@@ -340,6 +340,98 @@ public sealed class PostLandMutationDeliveryTests
     }
 
     [Test]
+    public async Task C478_CompletionNoteInsertStampAtomicity()
+    {
+        var fault = new QueueWriteAfterInsertFault();
+        await using var settled = await SettleMutationAsync(
+            new() { ConfigureDbContext = o => o.AddInterceptors(fault) });
+        fault.Triggered.ShouldBeTrue();
+        await using var observer = settled.World.Host.CreateContext();
+        var task = await observer.AgentTasks.SingleAsync(t => t.Id == settled.World.TaskId);
+        task.Status.ShouldBe(AgentTaskStatus.Succeeded, task.FailureReason);
+        (await observer.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == settled.World.TaskId)).ShouldBe(0);
+        task.CompletionNoteQueuedAt.ShouldBeNull();
+        task.CompletionNoteDigest.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task C478_CompletionNoteScannerRepairsCanceledRow()
+    {
+        var probe = new CompletionScanProbe();
+        await using var settled = await SettleMutationAsync(new()
+        {
+            ConfigureServices = services => services.AddSingleton<LandDeliveryBoundary>(probe),
+        });
+        await using (var db = settled.World.Host.CreateContext())
+        {
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == settled.World.TaskId);
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == settled.World.TaskId);
+            task.CompletionNoteQueuedAt.ShouldNotBeNull();
+            task.CompletionNoteDigest.ShouldNotBeNull();
+            task.CompletionNoteQueuedAt = null;
+            task.CompletionNoteDigest = null;
+            row.Status = QueuedMessageStatus.Canceled;
+            await db.SaveChangesAsync();
+        }
+
+        using var hosted = await StartCompletionRecoveryAsync(settled.Bridge);
+        try
+        {
+            await UntilAsync(async () =>
+            {
+                await using var db = settled.World.Host.CreateContext();
+                var task = await db.AgentTasks.SingleAsync(t => t.Id == settled.World.TaskId);
+                return task.CompletionNoteQueuedAt is not null
+                    && await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == settled.World.TaskId) == 1;
+            }, "scanner repair must stamp a canceled leftover without enqueueing a duplicate");
+            await using var observer = settled.World.Host.CreateContext();
+            (await observer.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == settled.World.TaskId)).ShouldBe(1);
+            var repaired = await observer.AgentTasks.SingleAsync(t => t.Id == settled.World.TaskId);
+            repaired.CompletionNoteQueuedAt.ShouldNotBeNull();
+            repaired.CompletionNoteDigest.ShouldNotBeNull();
+            // Non-Canceled leftovers already satisfy HasCompletionNoteAsync, so EnqueueAsync never
+            // runs. A completion-scan hit on this task means the scanner skipped RepairFromAsync
+            // and took the duplicate-skip path instead.
+            probe.HitsFor(settled.World.TaskId).ShouldBe(0);
+        }
+        finally
+        {
+            await hosted.StopAsync(CancellationToken.None);
+            hosted.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task C478_CompletionNoteDuplicateSkipRepairsStamp()
+    {
+        await using var settled = await SettleMutationAsync();
+        await using (var db = settled.World.Host.CreateContext())
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == settled.World.TaskId);
+            task.CompletionNoteQueuedAt.ShouldNotBeNull();
+            task.CompletionNoteDigest.ShouldNotBeNull();
+            task.CompletionNoteQueuedAt = null;
+            task.CompletionNoteDigest = null;
+            await db.SaveChangesAsync();
+        }
+
+        SessionQueuedMessage queued;
+        await using (var db = settled.World.Host.CreateContext())
+            queued = await db.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == settled.World.TaskId);
+
+        await settled.Bridge.Queue.EnqueueAsync(
+            settled.Bridge.SessionId, queued.Body, MessageSendMode.WhenIdle,
+            CancellationToken.None, QueuedMessageOrigin.Delegation, queued.ConversationKey,
+            settled.World.TaskId, queued.ContentDigest, queued.NoteHeader, deliverIfIdle: false);
+
+        await using var observer = settled.World.Host.CreateContext();
+        (await observer.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == settled.World.TaskId)).ShouldBe(1);
+        var repaired = await observer.AgentTasks.SingleAsync(t => t.Id == settled.World.TaskId);
+        repaired.CompletionNoteQueuedAt.ShouldNotBeNull();
+        repaired.CompletionNoteDigest.ShouldBe(queued.ContentDigest);
+    }
+
+    [Test]
     public async Task C478_G150_CompletionEnqueue()
     {
         var fault = new QueueInsertFault();
@@ -1110,6 +1202,51 @@ public sealed class PostLandMutationDeliveryTests
                 throw new InvalidOperationException("owned completion enqueue failure");
             }
             return ValueTask.FromResult(result);
+        }
+    }
+
+    /// <summary>
+    /// Faults after the completion-note INSERT is written but before the ambient transaction
+    /// commits. Added entries become Unchanged after SaveChanges, so the match is captured in
+    /// SavingChanges and the throw is in SavedChanges (GrokRulesTransactionTests.QueueWriteFault).
+    /// </summary>
+    private sealed class QueueWriteAfterInsertFault : SaveChangesInterceptor
+    {
+        public bool Triggered { get; private set; }
+        private bool _hit;
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            _hit = eventData.Context!.ChangeTracker.Entries<SessionQueuedMessage>().Any(e =>
+                e.State == EntityState.Added
+                && e.Entity.Origin == QueuedMessageOrigin.Delegation
+                && e.Entity.SourceTaskId != null);
+            return ValueTask.FromResult(result);
+        }
+
+        public override ValueTask<int> SavedChangesAsync(
+            SaveChangesCompletedEventData eventData, int result, CancellationToken cancellationToken = default)
+        {
+            if (_hit)
+            {
+                Triggered = true;
+                throw new InvalidOperationException("injected after completion-note insert before transaction commit");
+            }
+
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    private sealed class CompletionScanProbe : LandDeliveryBoundary
+    {
+        private readonly List<Guid> _hits = new();
+        public int HitsFor(Guid taskId) => _hits.Count(id => id == taskId);
+        public override Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
+        {
+            if (boundary == "completion-scan" && taskId != Guid.Empty)
+                _hits.Add(taskId);
+            return Task.CompletedTask;
         }
     }
 
