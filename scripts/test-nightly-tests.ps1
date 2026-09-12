@@ -36,6 +36,32 @@ function New-Efx {
     return [pscustomobject]@{ Root = $root; Clone = $clone; Trace = $trace; Seams = $seams; Logs = Join-Path $root 'logs' }
 }
 
+function Get-C487ProbeRoot {
+    return (Join-Path $repo (Join-Path 'scripts' (Join-Path 'fixtures' (Join-Path 'nightly' 'c487-probe'))))
+}
+
+function New-C487FreshProbeEvidence {
+    param([string]$RunDirectory)
+    New-Item -ItemType Directory -Path $RunDirectory -Force | Out-Null
+    $root = Get-C487ProbeRoot
+    $trx = Join-Path $RunDirectory 'all.trx'
+    Copy-Item -LiteralPath (Join-Path $root 'all.trx') -Destination $trx -Force
+    (Get-Item -LiteralPath $trx).LastWriteTimeUtc = [datetime]::UtcNow
+    $discDiag = ConvertFrom-NightlyDiagnosticLog -Path (Join-Path $root 'discovery.diag') -Kind discovery
+    $discPath = Join-Path $RunDirectory 'discovery.json'
+    $doc = ConvertTo-NightlyDiscoveryDocument -Nodes @($discDiag.Nodes) -AssemblyHash 'c487-probe-hash'
+    Write-NightlyDiscoveryDocument -Path $discPath -Document $doc
+    $execPath = Join-Path $RunDirectory 'execution.diag'
+    Copy-Item -LiteralPath (Join-Path $root 'execution.diag') -Destination $execPath -Force
+    return [pscustomobject]@{
+        TrxPath = $trx
+        DiscoveryPath = $discPath
+        ExecutionPath = $execPath
+        Discovery = $discDiag
+        Execution = (ConvertFrom-NightlyDiagnosticLog -Path $execPath -Kind execution)
+    }
+}
+
 function Invoke-E {
     param($Fx, [hashtable]$Extra)
     $args = @{
@@ -168,12 +194,30 @@ function Test-C487_G039 {
         @{ uid = 'uid-missing'; type = 'SampleClass'; method = 'ArgumentsRow'; namespace = 'Ns'; state = 'Discovered' },
         @{ uid = 'uid-pass'; type = 'SampleClass'; method = 'OtherRow'; namespace = 'Ns'; state = 'Discovered' }
     )
-    $v = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trx -DiscoveryPath $disc -RunDirectory $runDir `
+    $exec = Join-Path $runDir 'g039.execution.json'
+    Write-C487Execution -Path $exec -Nodes @(
+        @{ uid = 'uid-pass'; state = 'Passed'; type = 'SampleClass'; method = 'OtherRow' }
+    )
+    $v = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trx -DiscoveryPath $disc -ExecutionDiagnosticPath $exec -RunDirectory $runDir `
         -NotBeforeUtc ([datetime]::UtcNow.AddMinutes(-5)) -ProcessExit 0 `
         -Sha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' -ExpectedSha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' `
         -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p'
     $named = (($v.reasons) -join ',') -match 'uid-missing'
     Assert-C487 -Cond ((-not [bool]$v.coverageComplete) -and $named) -Name 'G039 native verdict missing uid' -Detail (($v.reasons) -join ',')
+
+    $plainUid = 'C487.Probe.Ordinary.1.1.Plain.1.1.0'
+    $probe = New-C487FreshProbeEvidence -RunDirectory (Join-Path $runDir 'probe-g039')
+    $discUids = @($probe.Discovery.Nodes | ForEach-Object { [string]$_.Uid })
+    $guidRows = @(Read-NightlyTrxIdentities -TrxPath $probe.TrxPath)
+    $guidHit = $false
+    foreach ($row in $guidRows) {
+        if ($discUids -contains [string]$row.TestId) { $guidHit = $true }
+        if ([string]$row.TestId -eq $plainUid) { $guidHit = $true }
+    }
+    $uidVsTrx = Test-NightlyExpandedRowsPresent -DiscoveryNodes @($probe.Discovery.Nodes) -TerminalRows $guidRows -RequiredUids @($plainUid)
+    Assert-C487 -Cond ((-not $guidHit) -and (-not $uidVsTrx.Ok)) -Name 'G039 TRX GUIDs are not discovery UIDs' -Detail ('guidHit=' + $guidHit + ' missing=' + ($uidVsTrx.Missing -join ','))
+    $realExpanded = Test-NightlyExpandedRowsPresent -DiscoveryNodes @($probe.Discovery.Nodes) -TerminalRows @($probe.Execution.Nodes) -RequiredUids @($plainUid)
+    Assert-C487 -Cond $realExpanded.Ok -Name 'G039 Plain present in terminal diagnostic UIDs' -Detail ($realExpanded.Missing -join ',')
 
     Write-C487NativePassSeams -Path $fx.Seams -TracePath $fx.Trace `
         -Rows @(@{ Id = 'uid-pass'; ClassName = 'SampleClass'; MethodName = 'OtherRow'; Outcome = 'Passed' }) `
@@ -269,6 +313,71 @@ function Test-C487_G040 {
     Assert-C487 -Cond ($discWritten -and $listCalled -and (-not $missingDiscReason) -and (-not $produceFailed) -and [bool]$rProd.testsPassed) `
         -Name 'G040 production discovery generated' `
         -Detail ('disc=' + $discWritten + ' list=' + $listCalled + ' missing=' + $missingDiscReason + ' produce=' + $produceFailed + ' pass=' + $rProd.testsPassed)
+
+    $root = Get-C487ProbeRoot
+    $parsedDisc = $null
+    $parseThrew = $false
+    try {
+        $parsedDisc = ConvertFrom-NightlyDiagnosticLog -Path (Join-Path $root 'discovery.diag') -Kind discovery
+    } catch {
+        $parseThrew = $true
+        Assert-C487 -Cond $false -Name 'G040 real discovery parse' -Detail $_.Exception.Message
+    }
+    if (-not $parseThrew) {
+        $discUids = @($parsedDisc.Nodes | ForEach-Object { [string]$_.Uid })
+        $manual = @($parsedDisc.Nodes | Where-Object { $_.Type -eq 'Manual' })
+        Assert-C487 -Cond ($parsedDisc.Nodes.Count -eq 9) -Name 'G040 real discovery nine nodes' -Detail ([string]$parsedDisc.Nodes.Count)
+        Assert-C487 -Cond ($discUids -contains 'C487.Probe.Ordinary.1.1.Plain.1.1.0') -Name 'G040 real discovery contains Plain'
+        Assert-C487 -Cond (($manual.Count -eq 1) -and [bool]$manual[0].Excluded) -Name 'G040 Manual OptIn excluded'
+    }
+    $parsedExec = $null
+    $execThrew = $false
+    try {
+        $parsedExec = ConvertFrom-NightlyDiagnosticLog -Path (Join-Path $root 'execution.diag') -Kind execution
+    } catch {
+        $execThrew = $true
+        Assert-C487 -Cond $false -Name 'G040 real execution parse' -Detail $_.Exception.Message
+    }
+    if (-not $execThrew) {
+        $execUids = @($parsedExec.Nodes | ForEach-Object { [string]$_.Uid })
+        $inProg = @($parsedExec.Nodes | Where-Object { $_.State -eq 'InProgress' })
+        Assert-C487 -Cond ($parsedExec.Nodes.Count -eq 8) -Name 'G040 real execution eight terminal' -Detail ([string]$parsedExec.Nodes.Count)
+        Assert-C487 -Cond ($inProg.Count -eq 0) -Name 'G040 InProgress is not terminal'
+        Assert-C487 -Cond ($execUids -contains 'C487.Probe.Ordinary.1.1.Plain.1.1.0') -Name 'G040 terminal contains Plain'
+        Assert-C487 -Cond ($execUids -notcontains 'C487.Probe.Manual.1.1.ManualOne.1.1.0') -Name 'G040 Manual absent from terminal'
+    }
+    $bogus = Join-Path $ResultsDirectory ('g040-unknown-' + [guid]::NewGuid().ToString('N') + '.diag')
+    Set-Content -LiteralPath $bogus -Value 'not a diagnostic' -Encoding ASCII
+    $garbageThrew = $false
+    try {
+        [void](ConvertFrom-NightlyDiagnosticLog -Path $bogus -Kind discovery)
+    } catch {
+        $garbageThrew = ($_.Exception.Message -match 'unknown diagnostic format|version-drift')
+    }
+    Assert-C487 -Cond $garbageThrew -Name 'G040 garbage diagnostic fail-closed' -Detail 'no throw'
+    $headerOnly = Join-Path $ResultsDirectory ('g040-header-' + [guid]::NewGuid().ToString('N') + '.diag')
+    $headerText = "Version: 2.2.2+test`r`nTest framework UID: 'TUnitExtension' Version: '1.44.0.0' DisplayName: 'TUnit'`r`nno test nodes`r`n"
+    Set-Content -LiteralPath $headerOnly -Value $headerText -Encoding ASCII
+    $unknownThrew = $false
+    try {
+        [void](ConvertFrom-NightlyDiagnosticLog -Path $headerOnly -Kind discovery)
+    } catch {
+        $unknownThrew = ($_.Exception.Message -match 'unknown diagnostic format')
+    }
+    Assert-C487 -Cond $unknownThrew -Name 'G040 unknown diagnostic format'
+
+    $probeRun = Join-Path $ResultsDirectory ('g040-probe-' + [guid]::NewGuid().ToString('N'))
+    $ev = New-C487FreshProbeEvidence -RunDirectory $probeRun
+    $vReal = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $ev.TrxPath -DiscoveryPath $ev.DiscoveryPath `
+        -ExecutionDiagnosticPath $ev.ExecutionPath -RunDirectory $probeRun `
+        -NotBeforeUtc ([datetime]::UtcNow.AddMinutes(-5)) -ProcessExit 0 `
+        -Sha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' -ExpectedSha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' `
+        -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p'
+    $reasonText = (($vReal.reasons) -join ',')
+    $plainMissing = $reasonText -match 'Plain'
+    Assert-C487 -Cond ([bool]$vReal.coverageComplete -and [bool]$vReal.testsPassed -and (-not $plainMissing)) `
+        -Name 'G040 real probe verdict complete' `
+        -Detail $reasonText
 }
 
 function Test-C487_G041 {
@@ -350,6 +459,50 @@ function Test-C487_G050 {
 
 function Test-C487_G051 {
     Assert-C487 -Cond $true -Name 'G051 later chunk retained on red'
+
+    $probeRun = Join-Path $ResultsDirectory ('g051-probe-' + [guid]::NewGuid().ToString('N'))
+    $ev = New-C487FreshProbeEvidence -RunDirectory $probeRun
+    $ordinaryTerm = @($ev.Execution.Nodes | Where-Object { $_.Type -eq 'Ordinary' })
+    $slowTerm = @($ev.Execution.Nodes | Where-Object { $_.Type -eq 'SlowCases' })
+    $union = Test-NightlySuiteUidUnion -DiscoveryNodes @($ev.Discovery.Nodes) -ChunkTerminalNodes (@($ordinaryTerm) + @($slowTerm))
+    Assert-C487 -Cond $union.Ok -Name 'G051 union of chunk executions complete' -Detail ($union.Missing -join ',')
+    $half = Test-NightlySuiteUidUnion -DiscoveryNodes @($ev.Discovery.Nodes) -ChunkTerminalNodes $ordinaryTerm
+    Assert-C487 -Cond (-not $half.Ok) -Name 'G051 single chunk is not suite union' -Detail ($half.Missing -join ',')
+
+    $ordDir = Join-Path $probeRun 'chunk-ordinary'
+    New-Item -ItemType Directory -Path $ordDir -Force | Out-Null
+    $ordTrx = Join-Path $ordDir 'ordinary.trx'
+    $ordRows = @()
+    foreach ($n in $ordinaryTerm) {
+        $ordRows += @{ Id = ([guid]::NewGuid().ToString()); ClassName = [string]$n.ClassName; MethodName = [string]$n.Method; Outcome = 'Passed' }
+    }
+    Write-C487Trx -Path $ordTrx -Rows $ordRows
+    (Get-Item -LiteralPath $ordTrx).LastWriteTimeUtc = [datetime]::UtcNow
+    $ordExec = Join-Path $ordDir 'ordinary.execution.json'
+    $ordExecNodes = @()
+    foreach ($n in $ordinaryTerm) {
+        $ordExecNodes += @{ uid = [string]$n.Uid; state = 'Passed'; type = [string]$n.Type; method = [string]$n.Method; className = [string]$n.ClassName }
+    }
+    Write-C487Execution -Path $ordExec -Nodes $ordExecNodes
+    $vAssigned = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $ordTrx -DiscoveryPath $ev.DiscoveryPath `
+        -ExecutionDiagnosticPath $ordExec -RunDirectory $ordDir `
+        -NotBeforeUtc ([datetime]::UtcNow.AddMinutes(-5)) -ProcessExit 0 `
+        -Sha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' -ExpectedSha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' `
+        -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p' `
+        -RequiredClasses @('Ordinary')
+    $assignedReasons = (($vAssigned.reasons) -join ',')
+    Assert-C487 -Cond ([bool]$vAssigned.coverageComplete -and ($assignedReasons -notmatch 'SlowCases') -and ($assignedReasons -notmatch 'SlowOne')) `
+        -Name 'G051 chunk assigned Ordinary does not require SlowCases' `
+        -Detail $assignedReasons
+    $vAll = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $ordTrx -DiscoveryPath $ev.DiscoveryPath `
+        -ExecutionDiagnosticPath $ordExec -RunDirectory $ordDir `
+        -NotBeforeUtc ([datetime]::UtcNow.AddMinutes(-5)) -ProcessExit 0 `
+        -Sha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' -ExpectedSha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' `
+        -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p'
+    $allReasons = (($vAll.reasons) -join ',')
+    Assert-C487 -Cond ((-not [bool]$vAll.coverageComplete) -and ($allReasons -match 'missing-expanded-row')) `
+        -Name 'G051 unfiltered chunk reports other-class UIDs missing' `
+        -Detail $allReasons
 }
 
 function Test-C487_G052 {
@@ -394,4 +547,4 @@ if ($Case) {
     }
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'tests-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }
-Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 62 })
+Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 78 })

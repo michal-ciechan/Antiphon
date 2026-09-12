@@ -67,7 +67,7 @@ function Read-NightlyTrxIdentities {
         }
         $rows += [pscustomobject]@{
             TestId = $testId
-            Uid = $testId
+            Uid = ''
             ClassName = $className
             MethodName = $methodName
             Display = $display
@@ -105,6 +105,13 @@ function ConvertFrom-NightlyDiscoveryDocument {
         if ([string]::IsNullOrWhiteSpace($typeName) -or [string]::IsNullOrWhiteSpace($method)) {
             throw ('truncated discovery record uid={0}' -f $uid)
         }
+        $categories = @()
+        if ($n.categories) { foreach ($c in @($n.categories)) { $categories += [string]$c } }
+        $excluded = $false
+        if ($n.PSObject.Properties.Name -contains 'excluded') { $excluded = [bool]$n.excluded }
+        foreach ($c in $categories) {
+            if ($c -eq 'OptIn' -or $c -eq 'Explicit') { $excluded = $true }
+        }
         $nodes += [pscustomobject]@{
             Uid = $uid
             Assembly = [string]$n.assembly
@@ -114,6 +121,8 @@ function ConvertFrom-NightlyDiscoveryDocument {
             Signature = [string]$n.signature
             State = [string]$n.state
             ClassName = $(if ([string]::IsNullOrWhiteSpace([string]$n.namespace)) { $typeName } else { '{0}.{1}' -f $n.namespace, $typeName })
+            Excluded = $excluded
+            Categories = $categories
         }
     }
     return [pscustomobject]@{
@@ -166,38 +175,151 @@ function Read-NightlyExecutionDocument {
     }
 }
 
+function Test-NightlyPinnedDiagnosticVersions {
+    param([string]$Text)
+    $tunitOk = ($Text -match "Version:\s+'1\.44\.0") -or ($Text -match 'TUnit v1\.44\.0')
+    $mtpOk = ($Text -match 'Version:\s+2\.2\.2')
+    if (-not $tunitOk -or -not $mtpOk) {
+        throw ('version-drift tunit/mtp header missing or unsupported')
+    }
+}
+
+function Get-NightlyDiagnosticStateName {
+    param([string]$Record)
+    if ($Record -match 'PassedTestNodeStateProperty') { return 'Passed' }
+    if ($Record -match 'FailedTestNodeStateProperty') { return 'Failed' }
+    if ($Record -match 'SkippedTestNodeStateProperty') { return 'Skipped' }
+    if ($Record -match 'DiscoveredTestNodeStateProperty') { return 'Discovered' }
+    if ($Record -match 'InProgressTestNodeStateProperty') { return 'InProgress' }
+    return ''
+}
+
+function ConvertFrom-NightlyDiagnosticRecord {
+    param([string]$Record, [string]$State)
+    if ($Record -notmatch 'TestNodeUid \{ Value = (?<uid>[^}]+?) \}') {
+        throw 'truncated diagnostic record: missing uid'
+    }
+    $uid = $Matches['uid'].Trim()
+    $typeName = ''
+    $method = ''
+    $ns = ''
+    $assembly = ''
+    if ($Record -match '(?<![A-Za-z])TypeName = (?<type>[A-Za-z0-9_\.]+)') { $typeName = $Matches['type'] }
+    if ($Record -match '(?<![A-Za-z])MethodName = (?<method>[A-Za-z0-9_]+)') { $method = $Matches['method'] }
+    if ($Record -match '(?<![A-Za-z])Namespace = (?<ns>[A-Za-z0-9_\.]+)') { $ns = $Matches['ns'] }
+    if ($Record -match 'AssemblyFullName = (?<asm>[^,]+)') { $assembly = $Matches['asm'].Trim() }
+    if ([string]::IsNullOrWhiteSpace($uid)) { throw 'truncated diagnostic record: missing uid' }
+    if ([string]::IsNullOrWhiteSpace($typeName) -or [string]::IsNullOrWhiteSpace($method)) {
+        throw ('truncated diagnostic record uid={0}' -f $uid)
+    }
+    $categories = @()
+    foreach ($m in [regex]::Matches($Record, 'TestMetadataProperty \{ Key = (?<key>[A-Za-z0-9_]+)')) {
+        $categories += $m.Groups['key'].Value
+    }
+    $excluded = $false
+    foreach ($c in $categories) {
+        if ($c -eq 'OptIn' -or $c -eq 'Explicit') { $excluded = $true }
+    }
+    $className = $(if ([string]::IsNullOrWhiteSpace($ns)) { $typeName } else { '{0}.{1}' -f $ns, $typeName })
+    return [pscustomobject]@{
+        Uid = $uid
+        Assembly = $assembly
+        Namespace = $ns
+        Type = $typeName
+        Method = $method
+        Signature = ''
+        State = $State
+        Outcome = $State
+        ClassName = $className
+        Excluded = $excluded
+        Categories = $categories
+    }
+}
+
+function ConvertFrom-NightlyExecutionJson {
+    param($Object)
+    $format = [string]$Object.format
+    if ($format -ne $script:NightlyExecutionFormat) {
+        throw ('unknown execution format {0}' -f $format)
+    }
+    $tunit = [string]$Object.tunitVersion
+    $mtp = [string]$Object.mtpVersion
+    if ($tunit -ne $script:NightlySupportedTunit -or $mtp -ne $script:NightlySupportedMtp) {
+        throw ('version-drift tunit={0} mtp={1}' -f $tunit, $mtp)
+    }
+    $nodes = @()
+    $uids = @{}
+    foreach ($n in @($Object.nodes)) {
+        $uid = [string]$n.uid
+        $state = [string]$n.state
+        if ([string]::IsNullOrWhiteSpace($uid)) { throw 'truncated execution record' }
+        $norm = ConvertTo-NightlyNormalizedOutcome -Outcome $state
+        if ($state -eq 'InProgress' -or $state -eq 'Discovered' -or $norm -eq 'NotExecuted') { continue }
+        if ($uids.ContainsKey($uid)) { throw ('duplicate execution uid {0}' -f $uid) }
+        $uids[$uid] = $true
+        $typeName = [string]$n.type
+        $method = [string]$n.method
+        $ns = [string]$n.namespace
+        $className = [string]$n.className
+        if ([string]::IsNullOrWhiteSpace($className)) {
+            $className = $(if ([string]::IsNullOrWhiteSpace($ns)) { $typeName } else { '{0}.{1}' -f $ns, $typeName })
+        }
+        $nodes += [pscustomobject]@{
+            Uid = $uid
+            State = $state
+            Outcome = $state
+            Type = $typeName
+            Method = $method
+            Namespace = $ns
+            ClassName = $className
+            Excluded = $false
+            Categories = @()
+        }
+    }
+    return [pscustomobject]@{ Nodes = $nodes }
+}
+
 function ConvertFrom-NightlyDiagnosticLog {
     param([string]$Path, [string]$Kind)
-    # Strict text adapter for TUnit diagnostic logs. Accepts golden JSON first; otherwise
-    # requires DiscoveredTestNodeStateProperty / terminal state records with UID + method id.
+    # Strict adapter for pinned TUnit 1.44 / MTP 2.2 diagnostic ToString() records.
+    # Accepts golden JSON first; otherwise TestNodeUid { Value = ... } plus state properties.
     if (-not (Test-Path -LiteralPath $Path)) { throw ('missing diagnostic {0}' -f $Path) }
     $text = [System.IO.File]::ReadAllText($Path)
-    if ($text.Trim().StartsWith('{')) {
+    if ([string]::IsNullOrWhiteSpace($text)) { throw ('empty diagnostic {0}' -f $Path) }
+    $trimmed = $text.Trim()
+    if ($trimmed.StartsWith('{')) {
         $obj = $text | ConvertFrom-Json
         if ($Kind -eq 'discovery') {
             return (ConvertFrom-NightlyDiscoveryDocument -Object $obj -ExpectedFormat $script:NightlyDiscoveryFormat)
         }
+        if ($Kind -eq 'execution') {
+            return (ConvertFrom-NightlyExecutionJson -Object $obj)
+        }
         return $obj
     }
-    $uids = @()
-    $pattern = 'DiscoveredTestNodeStateProperty.*?TestNodeUid["\s:=]+(?<uid>[^\s",}]+).*?Type["\s:=]+(?<type>[^\s",}]+).*?Method["\s:=]+(?<method>[^\s",}]+)'
-    $matches = [regex]::Matches($text, $pattern, 'Singleline')
-    if ($matches.Count -eq 0) {
-        throw ('unknown diagnostic format {0}' -f $Path)
-    }
+    Test-NightlyPinnedDiagnosticVersions -Text $text
+    $recognized = $false
     $nodes = @()
     $seen = @{}
-    foreach ($m in $matches) {
-        $uid = $m.Groups['uid'].Value
-        if ($seen.ContainsKey($uid)) { throw ('duplicate discovery uid {0}' -f $uid) }
-        $seen[$uid] = $true
-        $nodes += [pscustomobject]@{
-            Uid = $uid
-            Type = $m.Groups['type'].Value
-            Method = $m.Groups['method'].Value
-            State = 'Discovered'
-            ClassName = $m.Groups['type'].Value
+    foreach ($line in ($text -split "`r?`n")) {
+        if ($line -notmatch 'TestNode \{ Uid = TestNodeUid') { continue }
+        $state = Get-NightlyDiagnosticStateName -Record $line
+        if ([string]::IsNullOrWhiteSpace($state)) { continue }
+        $recognized = $true
+        if ($Kind -eq 'discovery') {
+            if ($state -ne 'Discovered') { continue }
+        } elseif ($Kind -eq 'execution') {
+            if ($state -eq 'InProgress' -or $state -eq 'Discovered') { continue }
         }
+        $node = ConvertFrom-NightlyDiagnosticRecord -Record $line -State $state
+        if ($seen.ContainsKey($node.Uid)) {
+            throw ('duplicate {0} uid {1}' -f $Kind, $node.Uid)
+        }
+        $seen[$node.Uid] = $true
+        $nodes += $node
+    }
+    if (-not $recognized) {
+        throw ('unknown diagnostic format {0}' -f $Path)
     }
     return [pscustomobject]@{ Nodes = $nodes }
 }
@@ -236,6 +358,10 @@ function ConvertTo-NightlyDiscoveryDocument {
         $signature = [string]$n.signature
         $state = [string]$n.state
         if ([string]::IsNullOrWhiteSpace($state)) { $state = 'Discovered' }
+        $categories = @()
+        if ($n.categories) { foreach ($c in @($n.categories)) { $categories += [string]$c } }
+        $excluded = $false
+        if ($n.PSObject.Properties.Name -contains 'excluded') { $excluded = [bool]$n.excluded }
         $mapped += [ordered]@{
             uid = $uid
             assembly = $assembly
@@ -244,6 +370,8 @@ function ConvertTo-NightlyDiscoveryDocument {
             method = $method
             signature = $signature
             state = $state
+            excluded = $excluded
+            categories = $categories
         }
     }
     return [ordered]@{
@@ -355,6 +483,59 @@ function Get-NightlyClassNameFromIdentity {
     if ([string]::IsNullOrWhiteSpace($ClassName)) { return $ClassName }
     $parts = $ClassName.Split('.')
     return $parts[$parts.Length - 1]
+}
+
+function Test-NightlyClassAssigned {
+    param([string]$ClassName, [string]$TypeName, [string[]]$RequiredClasses)
+    if ($null -eq $RequiredClasses -or @($RequiredClasses).Count -eq 0) { return $true }
+    $candidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($ClassName)) {
+        $candidates += $ClassName
+        $candidates += (Get-NightlyClassNameFromIdentity -ClassName $ClassName)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($TypeName)) { $candidates += $TypeName }
+    foreach ($c in @($RequiredClasses)) {
+        $want = [string]$c
+        if ([string]::IsNullOrWhiteSpace($want)) { continue }
+        foreach ($have in $candidates) {
+            if ([string]::Equals($want, $have, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+        }
+    }
+    return $false
+}
+
+function Test-NightlyDiscoveryExcluded {
+    param($Node)
+    if ($null -eq $Node) { return $false }
+    if ([bool]$Node.Excluded) { return $true }
+    foreach ($c in @($Node.Categories)) {
+        if ([string]$c -eq 'OptIn' -or [string]$c -eq 'Explicit') { return $true }
+    }
+    return $false
+}
+
+function Get-NightlyRequiredDiscoveryUids {
+    param([object[]]$DiscoveryNodes, [string[]]$RequiredClasses = @())
+    $uids = @()
+    $seen = @{}
+    foreach ($n in @($DiscoveryNodes)) {
+        if (Test-NightlyDiscoveryExcluded -Node $n) { continue }
+        if (-not (Test-NightlyClassAssigned -ClassName ([string]$n.ClassName) -TypeName ([string]$n.Type) -RequiredClasses $RequiredClasses)) {
+            continue
+        }
+        $uid = [string]$n.Uid
+        if ([string]::IsNullOrWhiteSpace($uid)) { continue }
+        if ($seen.ContainsKey($uid)) { continue }
+        $seen[$uid] = $true
+        $uids += $uid
+    }
+    return $uids
+}
+
+function Get-NightlyIdentityBagKey {
+    param([string]$ClassName, [string]$TypeName, [string]$MethodName)
+    $simple = Get-NightlyClassNameFromIdentity -ClassName $(if ([string]::IsNullOrWhiteSpace($ClassName)) { $TypeName } else { $ClassName })
+    return (('{0}.{1}' -f $simple, $MethodName).ToLowerInvariant())
 }
 
 function Test-NightlyChunkMembership {
@@ -481,12 +662,12 @@ function Test-NightlyExpandedRowsPresent {
     $executed = @('Passed', 'Failed', 'Skipped')
     foreach ($r in @($TerminalRows)) {
         $outcome = ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$r.Outcome)
-        if ($executed -notcontains $outcome) { continue }
-        if ($r.Uid) { $terminalUids[[string]$r.Uid] = $true }
-        if ($r.TestId) { $terminalUids[[string]$r.TestId] = $true }
-        if (-not $r.Uid -and -not $r.TestId -and $r.Identity) {
-            $terminalUids[[string]$r.Identity] = $true
+        if ([string]::IsNullOrWhiteSpace($outcome) -and $r.State) {
+            $outcome = ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$r.State)
         }
+        if ($executed -notcontains $outcome) { continue }
+        $uid = [string]$r.Uid
+        if (-not [string]::IsNullOrWhiteSpace($uid)) { $terminalUids[$uid] = $true }
     }
     $missing = @()
     foreach ($uid in @($RequiredUids)) {
@@ -495,6 +676,56 @@ function Test-NightlyExpandedRowsPresent {
         if (-not $terminalUids.ContainsKey($key)) { $missing += $key }
     }
     return [pscustomobject]@{ Ok = ($missing.Count -eq 0); Missing = $missing }
+}
+
+function Test-NightlyTrxDiagnosticCrossCheck {
+    param([object[]]$TrxRows, [object[]]$TerminalNodes, [string[]]$RequiredClasses = @())
+    $trxBag = @{}
+    $diagBag = @{}
+    $extra = @()
+    foreach ($r in @($TrxRows)) {
+        $assigned = Test-NightlyClassAssigned -ClassName ([string]$r.ClassName) -TypeName '' -RequiredClasses $RequiredClasses
+        if (-not $assigned) {
+            if ($RequiredClasses -and @($RequiredClasses).Count -gt 0) {
+                $extra += ('{0}.{1}' -f $r.ClassName, $r.MethodName)
+            }
+            continue
+        }
+        $key = Get-NightlyIdentityBagKey -ClassName ([string]$r.ClassName) -TypeName '' -MethodName ([string]$r.MethodName)
+        if (-not $trxBag.ContainsKey($key)) { $trxBag[$key] = 0 }
+        $trxBag[$key]++
+    }
+    foreach ($n in @($TerminalNodes)) {
+        if (-not (Test-NightlyClassAssigned -ClassName ([string]$n.ClassName) -TypeName ([string]$n.Type) -RequiredClasses $RequiredClasses)) {
+            continue
+        }
+        $method = [string]$n.Method
+        if ([string]::IsNullOrWhiteSpace($method)) { $method = [string]$n.MethodName }
+        $key = Get-NightlyIdentityBagKey -ClassName ([string]$n.ClassName) -TypeName ([string]$n.Type) -MethodName $method
+        if (-not $diagBag.ContainsKey($key)) { $diagBag[$key] = 0 }
+        $diagBag[$key]++
+    }
+    $mismatch = @()
+    $allKeys = @{}
+    foreach ($k in @($trxBag.Keys)) { $allKeys[$k] = $true }
+    foreach ($k in @($diagBag.Keys)) { $allKeys[$k] = $true }
+    foreach ($k in @($allKeys.Keys)) {
+        $t = 0; $d = 0
+        if ($trxBag.ContainsKey($k)) { $t = [int]$trxBag[$k] }
+        if ($diagBag.ContainsKey($k)) { $d = [int]$diagBag[$k] }
+        if ($t -ne $d) { $mismatch += ('{0} trx={1} diag={2}' -f $k, $t, $d) }
+    }
+    return [pscustomobject]@{
+        Ok = ($mismatch.Count -eq 0 -and $extra.Count -eq 0)
+        Mismatch = $mismatch
+        ExtraClasses = $extra
+    }
+}
+
+function Test-NightlySuiteUidUnion {
+    param([object[]]$DiscoveryNodes, [object[]]$ChunkTerminalNodes)
+    $required = @(Get-NightlyRequiredDiscoveryUids -DiscoveryNodes $DiscoveryNodes -RequiredClasses @())
+    return (Test-NightlyExpandedRowsPresent -DiscoveryNodes $DiscoveryNodes -TerminalRows $ChunkTerminalNodes -RequiredUids $required)
 }
 
 function Test-NightlyRequiredClassesPresent {
@@ -522,6 +753,7 @@ function ConvertTo-NightlyNativeSuiteVerdict {
     param(
         [string]$TrxPath,
         [string]$DiscoveryPath = '',
+        [string]$ExecutionDiagnosticPath = '',
         [string]$RunDirectory,
         [datetime]$NotBeforeUtc,
         [int]$ProcessExit,
@@ -581,7 +813,26 @@ function ConvertTo-NightlyNativeSuiteVerdict {
                 testsPassed = $false
                 reasons = @($_.Exception.Message)
                 rows = $rows
+                terminalNodes = @()
+                discoveryNodes = @()
             }
+        }
+    }
+    $terminalNodes = @()
+    $execPresent = $false
+    $execPath = $ExecutionDiagnosticPath
+    if (-not [string]::IsNullOrWhiteSpace($execPath) -and (Test-Path -LiteralPath $execPath) -and (Test-Path -LiteralPath $execPath -PathType Container)) {
+        $execPath = Get-NightlyLatestDiagnosticLog -Directory $execPath
+    }
+    if ([string]::IsNullOrWhiteSpace($execPath) -or -not (Test-Path -LiteralPath $execPath)) {
+        if ($discoveryPresent) { $reasons += 'missing-execution-diagnostic' }
+    } else {
+        try {
+            $exec = ConvertFrom-NightlyDiagnosticLog -Path $execPath -Kind execution
+            $terminalNodes = @($exec.Nodes)
+            $execPresent = $true
+        } catch {
+            $reasons += $_.Exception.Message
         }
     }
     $verdict = ConvertTo-NightlyCoverageVerdict -TerminalRows $rows -ProcessExit $ProcessExit `
@@ -594,15 +845,25 @@ function ConvertTo-NightlyNativeSuiteVerdict {
     if (-not $discoveryPresent) {
         $coverageComplete = $false
     } else {
-        $requiredUids = @()
-        foreach ($n in $discoveryNodes) {
-            $uid = [string]$n.Uid
-            if (-not [string]::IsNullOrWhiteSpace($uid)) { $requiredUids += $uid }
-        }
-        $expanded = Test-NightlyExpandedRowsPresent -DiscoveryNodes $discoveryNodes -TerminalRows $rows -RequiredUids $requiredUids
-        if (-not $expanded.Ok) {
+        $requiredUids = @(Get-NightlyRequiredDiscoveryUids -DiscoveryNodes $discoveryNodes -RequiredClasses $RequiredClasses)
+        if (-not $execPresent) {
             $coverageComplete = $false
-            $reasons += ('missing-expanded-row {0}' -f ($expanded.Missing -join ','))
+        } else {
+            $expanded = Test-NightlyExpandedRowsPresent -DiscoveryNodes $discoveryNodes -TerminalRows $terminalNodes -RequiredUids $requiredUids
+            if (-not $expanded.Ok) {
+                $coverageComplete = $false
+                $reasons += ('missing-expanded-row {0}' -f ($expanded.Missing -join ','))
+            }
+            $cross = Test-NightlyTrxDiagnosticCrossCheck -TrxRows $rows -TerminalNodes $terminalNodes -RequiredClasses $RequiredClasses
+            if (-not $cross.Ok) {
+                $coverageComplete = $false
+                if ($cross.Mismatch.Count -gt 0) {
+                    $reasons += ('trx-diagnostic-mismatch {0}' -f ($cross.Mismatch -join ','))
+                }
+                if ($cross.ExtraClasses.Count -gt 0) {
+                    $reasons += ('extra-class-in-chunk {0}' -f ($cross.ExtraClasses -join ','))
+                }
+            }
         }
         $classReq = @()
         if ($RequiredClasses -and @($RequiredClasses).Count -gt 0) {
@@ -610,6 +871,7 @@ function ConvertTo-NightlyNativeSuiteVerdict {
         } else {
             $seenClass = @{}
             foreach ($n in $discoveryNodes) {
+                if (Test-NightlyDiscoveryExcluded -Node $n) { continue }
                 $t = [string]$n.Type
                 if ([string]::IsNullOrWhiteSpace($t)) { $t = Get-NightlyClassNameFromIdentity -ClassName ([string]$n.ClassName) }
                 if ([string]::IsNullOrWhiteSpace($t) -or $seenClass.ContainsKey($t)) { continue }
@@ -631,5 +893,7 @@ function ConvertTo-NightlyNativeSuiteVerdict {
         testsPassed = $testsPassed
         reasons = $reasons
         rows = $rows
+        terminalNodes = $terminalNodes
+        discoveryNodes = $discoveryNodes
     }
 }

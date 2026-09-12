@@ -307,6 +307,8 @@ function Invoke-AntiphonNightlyTests {
                 }
 
                 $chunkIndex = 0
+                $suiteDiscoveryNodes = @()
+                $suiteTerminalNodes = @()
                 foreach ($chunk in $chunks) {
                     $chunkIndex++
                     $logPath = Join-Path $LogRoot ('{0}-{1}-tests.log' -f $suiteId, $chunk.id)
@@ -327,6 +329,7 @@ function Invoke-AntiphonNightlyTests {
                     }
 
                     $run = $null
+                    $execDiagDir = ''
                     if ($suiteId -eq 'client') {
                         $wrapper = Join-Path $RepoRoot (Join-Path 'scripts' 'test-client.ps1')
                         $args = @('-NoProfile', '-NoLogo', '-File', $wrapper, '-JsonResultPath', $jsonPath)
@@ -351,7 +354,9 @@ function Invoke-AntiphonNightlyTests {
                         $exeName = [string]$suite.assembly
                         if ([string]::IsNullOrWhiteSpace($exeName)) { $exeName = $label }
                         $exe = Join-Path $RepoRoot ('tests\{0}\bin\Debug\net9.0\{0}.exe' -f $exeName)
-                        $args = @('--no-progress', '--no-ansi', '--report-trx', '--report-trx-filename', $trxPath)
+                        $execDiagDir = Join-Path $LogRoot ('{0}-{1}-execution' -f $suiteId, $chunk.id)
+                        New-Item -ItemType Directory -Path $execDiagDir -Force | Out-Null
+                        $args = @('--no-progress', '--no-ansi', '--report-trx', '--report-trx-filename', $trxPath, '--diagnostic', '--diagnostic-output-directory', $execDiagDir)
                         if ($chunk.classes -and @($chunk.classes).Count -gt 0) {
                             $or = (@($chunk.classes) | ForEach-Object { '({0}*)' -f $_ }) -join '|'
                             $args += '--treenode-filter'
@@ -410,10 +415,18 @@ function Invoke-AntiphonNightlyTests {
                         }
                         $required = @()
                         if ($chunk.classes) { foreach ($c in @($chunk.classes)) { $required += [string]$c } }
+                        $execDiagPath = Get-NightlyLatestDiagnosticLog -Directory $execDiagDir
                         $nativeVerdict = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trxPath -DiscoveryPath $discPath `
+                            -ExecutionDiagnosticPath $execDiagPath `
                             -RunDirectory $LogRoot -NotBeforeUtc $startedAt -ProcessExit ([int]$run.ExitCode) `
                             -Sha $Sha -ExpectedSha $Sha -GitRef $GitRef -ExpectedRef $GitRef `
                             -PolicyHash $policyHash -ExpectedPolicyHash $policyHash -RequiredClasses $required
+                        if ($nativeVerdict.discoveryNodes -and @($nativeVerdict.discoveryNodes).Count -gt 0 -and $suiteDiscoveryNodes.Count -eq 0) {
+                            $suiteDiscoveryNodes = @($nativeVerdict.discoveryNodes)
+                        }
+                        if ($nativeVerdict.terminalNodes) {
+                            foreach ($tn in @($nativeVerdict.terminalNodes)) { $suiteTerminalNodes += $tn }
+                        }
                         $row.trx = $trxPath
                         $row.evidenceReasons = @($nativeVerdict.reasons)
                         if (-not [bool]$nativeVerdict.coverageComplete) {
@@ -452,6 +465,14 @@ function Invoke-AntiphonNightlyTests {
                     }
                     $suiteResults += $row
                     if ($run.TimedOut) { $coverageComplete = $false }
+                }
+                if ($isNative -and @($suiteDiscoveryNodes).Count -gt 0) {
+                    $union = Test-NightlySuiteUidUnion -DiscoveryNodes $suiteDiscoveryNodes -ChunkTerminalNodes $suiteTerminalNodes
+                    if (-not $union.Ok) {
+                        $coverageComplete = $false
+                        $overallFailed = $true
+                        $reasons += ('missing-expanded-row union {0}' -f ($union.Missing -join ','))
+                    }
                 }
             }
         } else {
