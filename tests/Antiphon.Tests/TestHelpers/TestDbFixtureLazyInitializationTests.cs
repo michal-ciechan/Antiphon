@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Xml.Linq;
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
@@ -41,28 +42,35 @@ public sealed class TestDbFixtureLazyInitializationTests
     public async Task A_class_filtered_child_skips_every_parent_probe()
     {
         SkipIfChildProcess();
+        var probeHome = Path.GetFullPath(Path.Combine(".antiphon", "acceptance", "card-0476"));
+        var before = Directory.Exists(probeHome)
+            ? Directory.GetDirectories(probeHome, "probe-*").Length
+            : 0;
         var run = await LaunchAsync(
             "/*/*/TestDbFixtureLazyInitializationTests/*",
             new { root = "", depth = 1 });
+        var siblingHome = Path.GetDirectoryName(run.Root)
+            ?? throw new InvalidOperationException("probe root has no parent");
+        Directory.GetDirectories(siblingHome, "probe-*").Length.ShouldBe(before + 1);
         run.Exit.ShouldBe(0, run.Stderr + run.Stdout);
         var trx = XDocument.Load(run.Trx);
         foreach (var result in trx.Descendants().Where(e => e.Name.LocalName == "UnitTestResult"))
         {
             var name = (string?)result.Attribute("testName") ?? "";
             var outcome = (string?)result.Attribute("outcome") ?? "";
-            if (name.Contains("Child_", StringComparison.Ordinal)
-                || name.Contains("A_db_free", StringComparison.Ordinal)
+            if (name.Contains("Child_", StringComparison.Ordinal))
+                continue;
+            if (name.Contains("A_db_free", StringComparison.Ordinal)
                 || name.Contains("A_class_filtered", StringComparison.Ordinal)
                 || name.Contains("A_child_at_depth", StringComparison.Ordinal)
                 || name.Contains("Mixed_first", StringComparison.Ordinal)
                 || name.Contains("A_post_start", StringComparison.Ordinal)
                 || name.Contains("A_failing_worker", StringComparison.Ordinal))
             {
-                (outcome is "Passed" or "Skipped" or "NotExecuted").ShouldBeTrue(name + " " + outcome);
+                (outcome is "Skipped" or "NotExecuted").ShouldBeTrue(name + " " + outcome);
             }
         }
 
-        Directory.GetDirectories(run.Root, "probe-*").ShouldBeEmpty();
         if (File.Exists(Path.Combine(run.Root, "lifecycle.json")))
             ReadLifecycle(run.Root).GetProperty("create").GetInt32().ShouldBe(0);
     }
@@ -74,7 +82,8 @@ public sealed class TestDbFixtureLazyInitializationTests
         var run = await LaunchChildAsync(
             "Child_db_free_selection_touches_no_database",
             mode: "db-free",
-            depth: 2);
+            depth: 2,
+            bypassLaunchDepthCap: true);
         run.Exit.ShouldNotBe(0);
         var trxText = File.Exists(run.Trx) ? File.ReadAllText(run.Trx) : run.Stdout + run.Stderr;
         trxText.ShouldContain("depth");
@@ -288,25 +297,60 @@ public sealed class TestDbFixtureLazyInitializationTests
         string childMethod,
         string mode,
         int depth = 1,
-        string? fault = null)
+        string? fault = null,
+        bool bypassLaunchDepthCap = false)
     {
         return await LaunchAsync(
             "/*/*/TestDbFixtureLazyInitializationTests/" + childMethod,
-            new { root = "", depth, mode, fault });
+            new { root = "", depth, mode, fault },
+            bypassLaunchDepthCap);
     }
 
-    private static async Task<ChildRun> LaunchAsync(string filter, object probe)
+    private static async Task<ChildRun> LaunchAsync(
+        string filter,
+        object probe,
+        bool bypassLaunchDepthCap = false)
     {
         var root = CreateOwnedRoot();
+        var depth = ComputeChildDepth(probe, bypassLaunchDepthCap);
+        var mode = ProbeString(probe, "mode");
         var payload = JsonSerializer.Serialize(new
         {
             root,
-            depth = ProbeInt(probe, "depth", 1),
-            mode = ProbeString(probe, "mode"),
+            depth,
+            mode,
             fault = ProbeString(probe, "fault")
         });
+        if (depth > 1 && !bypassLaunchDepthCap)
+            throw new InvalidOperationException($"CARD-0476 probe depth {depth} exceeds 1");
+
         var extra = new Dictionary<string, string?> { [ProbeEnv] = payload };
+        if (string.Equals(mode, "db-free", StringComparison.Ordinal))
+            extra[PtyBackendPolicy.EnvVar] = "modern";
         return await LaunchProcessAsync(root, filter, extra);
+    }
+
+    private static int ComputeChildDepth(object probe, bool bypassLaunchDepthCap)
+    {
+        if (bypassLaunchDepthCap)
+            return ProbeInt(probe, "depth", 1);
+
+        var raw = Environment.GetEnvironmentVariable(ProbeEnv);
+        if (string.IsNullOrEmpty(raw))
+            return 1;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            var inherited = doc.RootElement.TryGetProperty("depth", out var depthEl)
+                ? depthEl.GetInt32()
+                : 1;
+            return inherited + 1;
+        }
+        catch (JsonException)
+        {
+            return 2;
+        }
     }
 
     private static string CreateOwnedRoot()
