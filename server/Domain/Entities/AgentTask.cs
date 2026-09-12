@@ -311,6 +311,16 @@ public class AgentTask
     /// <summary>When the parent session last read <see cref="LastPolledResultHash"/> through status polling.</summary>
     public DateTime? LastPolledResultAt { get; set; }
 
+    /// <summary>
+    /// When a caller completion note for this task was persisted on the session queue.
+    /// Survives <c>PruneQueuedMessagesAsync</c>: sourced tasks are exempt from task pruning, but
+    /// Sent queue rows are not, and recovery must not treat a pruned Sent row as never delivered.
+    /// </summary>
+    public DateTime? CompletionNoteQueuedAt { get; set; }
+
+    /// <summary>Digest of the report last stamped into a caller completion note for this task.</summary>
+    public string? CompletionNoteDigest { get; set; }
+
     /// <summary>Guards against two dispatcher ticks claiming the same task.</summary>
     public Guid ConcurrencyToken { get; set; } = Guid.NewGuid();
 

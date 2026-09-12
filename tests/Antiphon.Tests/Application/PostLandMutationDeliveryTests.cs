@@ -7,6 +7,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Orchestration;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -57,7 +58,8 @@ public sealed class PostLandMutationDeliveryTests
     public async Task C478_V09b_AcceptedTaskToWorker()
     {
         await using var world = await PostLandMutationWorld.CreateAsync();
-        await using var bridge = await BridgeQueueHarness.CreateAsync(DispatchOptions(world));
+        var capture = new MutationDispatchTestsCapture();
+        await using var bridge = await BridgeQueueHarness.CreateAsync(DispatchOptions(world, capture));
         await using (var db = world.Host.CreateContext())
         {
             var task = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
@@ -67,8 +69,9 @@ public sealed class PostLandMutationDeliveryTests
             task.AgentKind = AgentKind.Raw;
             await db.SaveChangesAsync();
         }
-        var (sessionId, queued) = await DispatchWorkerBriefAsync(world, bridge);
-        await ConfirmQueuedReceiptAsync(world.Host.Schema.ConnectionString, bridge, queued, sessionId, busy: false);
+        var (sessionId, queued, adapter) = await DispatchWorkerBriefAsync(world, bridge, capture);
+        await ConfirmQueuedReceiptAsync(world.Host.Schema.ConnectionString, bridge, queued, sessionId, busy: false,
+            adapter: adapter);
     }
 
     [Test]
@@ -208,6 +211,58 @@ public sealed class PostLandMutationDeliveryTests
         task.NextStage.ShouldBe(PipelineHandoffKind.None);
         (await observer.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == settled.World.TaskId)).ShouldBe(0);
         fault.Triggered.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task C478_CompletionReplayAfterRetention()
+    {
+        await using var settled = await SettleMutationAsync();
+        await using (var db = settled.World.Host.CreateContext())
+        {
+            var queued = await db.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == settled.World.TaskId);
+            queued.Status = QueuedMessageStatus.Sent;
+            queued.SentAt = DateTime.UtcNow.AddDays(-40);
+            queued.CreatedAt = DateTime.UtcNow.AddDays(-40);
+            queued.DeliveryAttempts = Math.Max(1, queued.DeliveryAttempts);
+            await db.SaveChangesAsync();
+            var audit = Options.Create(new AuditSettings());
+            await new DataRetentionService(db, Options.Create(new RetentionSettings()), audit, TimeProvider.System,
+                NullLogger<DataRetentionService>.Instance, new AuditService(db, audit))
+                .PruneQueuedMessagesAsync(CancellationToken.None);
+        }
+
+        await using (var observer = settled.World.Host.CreateContext())
+        {
+            (await observer.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == settled.World.TaskId)).ShouldBe(0);
+            (await AgentTaskCheckService.HasCompletionNoteAsync(observer, settled.Bridge.SessionId,
+                settled.World.TaskId, CancellationToken.None)).ShouldBeTrue();
+            var task = await observer.AgentTasks.SingleAsync(t => t.Id == settled.World.TaskId);
+            task.CompletionNoteQueuedAt.ShouldNotBeNull();
+            task.CompletionNoteDigest.ShouldBe(DelegationNoteDigest.Compute(task.Result!));
+        }
+
+        var typed = settled.Bridge.Adapter.Inputs.Count;
+        using var hosted = await StartCompletionRecoveryAsync(settled.Bridge);
+        try
+        {
+            await UntilAsync(async () =>
+            {
+                await using var db = settled.World.Host.CreateContext();
+                return (await db.AgentTasks.SingleAsync(t => t.Id == settled.World.TaskId))
+                    .CompletionNoteQueuedAt is not null;
+            }, "completion stamp should already exist before the scanner runs");
+            await Task.Delay(1500);
+            await using var recovered = settled.World.Host.CreateContext();
+            (await recovered.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == settled.World.TaskId)).ShouldBe(0);
+            (await AgentTaskCheckService.HasCompletionNoteAsync(recovered, settled.Bridge.SessionId,
+                settled.World.TaskId, CancellationToken.None)).ShouldBeTrue();
+            settled.Bridge.Adapter.Inputs.Count.ShouldBe(typed);
+        }
+        finally
+        {
+            await hosted.StopAsync(CancellationToken.None);
+            hosted.Dispose();
+        }
     }
 
     [Test]
@@ -602,7 +657,8 @@ public sealed class PostLandMutationDeliveryTests
     private static async Task WorkerCrashAsync(string cut, bool busy)
     {
         await using var world = await PostLandMutationWorld.CreateAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(DispatchOptions(world));
+        var capture = new MutationDispatchTestsCapture();
+        await using var h = await BridgeQueueHarness.CreateAsync(DispatchOptions(world, capture));
         await using (var db = world.Host.CreateContext())
         {
             var task = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
@@ -612,8 +668,21 @@ public sealed class PostLandMutationDeliveryTests
             task.AgentKind = AgentKind.Raw;
             await db.SaveChangesAsync();
         }
-        var (session, queued) = await DispatchWorkerBriefAsync(world, h);
-        await ConfirmQueuedReceiptAsync(world.Host.Schema.ConnectionString, h, queued, session, busy, cut);
+        var (session, queued, adapter) = await DispatchWorkerBriefAsync(world, h, capture, busy);
+        await using var recovered = await BridgeQueueHarness.CreateAsync(DispatchOptions(world, capture));
+        using (var scope = recovered.Provider.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+        await recovered.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
+        await using (var observer = world.Host.CreateContext())
+        {
+            var task = await observer.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
+            task.Status.ShouldBe(AgentTaskStatus.Dispatched, task.FailureReason);
+            task.AgentSessionId.ShouldBe(session);
+            (await observer.SessionQueuedMessages.CountAsync(m => m.ExecutionTaskId == world.TaskId)).ShouldBe(1);
+        }
+        recovered.Runtime.Register(session, adapter);
+        await ConfirmQueuedReceiptAsync(world.Host.Schema.ConnectionString, recovered, queued, session, busy, cut,
+            adapter: adapter);
     }
 
     private static async Task SettlementCrashAsync(string cut, bool busy)
@@ -737,8 +806,10 @@ public sealed class PostLandMutationDeliveryTests
     }
 
     private static async Task ConfirmQueuedReceiptAsync(string connection, BridgeQueueHarness h,
-        SessionQueuedMessage queued, Guid sessionId, bool busy, string cut = "after-receipt")
+        SessionQueuedMessage queued, Guid sessionId, bool busy, string cut = "after-receipt",
+        FakeAgentProtocolAdapter? adapter = null)
     {
+        adapter ??= h.Adapter;
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
         queued = await db.SessionQueuedMessages.SingleAsync(m => m.Id == queued.Id);
         if (busy) await SetWorkingAsync(connection, sessionId, true);
@@ -748,25 +819,26 @@ public sealed class PostLandMutationDeliveryTests
             await h.Queue.FlushIfIdleAsync(sessionId, CancellationToken.None);
             if (busy)
             {
-                h.Adapter.Inputs.ShouldBeEmpty();
+                adapter.Inputs.ShouldBeEmpty();
                 (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == queued.Id))
                     .Status.ShouldBe(QueuedMessageStatus.Pending);
                 await SetWorkingAsync(connection, sessionId, false);
                 await h.Queue.FlushIfIdleAsync(sessionId, CancellationToken.None);
             }
             queued = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == queued.Id);
-            await AssertSubmittedAsync(h, queued);
+            await AssertSubmittedAsync(h, queued, adapter);
         }
 
-        var typedBody = h.Adapter.SubmittedBodies.LastOrDefault() ?? queued.Body;
+        var typedBody = adapter.SubmittedBodies.LastOrDefault() ?? queued.Body;
         await ConfirmPersistedQueuedReceiptAsync(connection, h, queued, sessionId, typedBody,
-            alreadyConfirmed: cut == "after-receipt");
+            alreadyConfirmed: cut == "after-receipt", adapter: adapter);
     }
 
-    private static async Task<string> AssertSubmittedAsync(BridgeQueueHarness h, SessionQueuedMessage queued)
+    private static async Task<string> AssertSubmittedAsync(
+        BridgeQueueHarness h, SessionQueuedMessage queued, FakeAgentProtocolAdapter adapter)
     {
-        h.Adapter.SubmittedBodies.Count.ShouldBeGreaterThan(0);
-        var typed = h.Adapter.SubmittedBodies[^1];
+        adapter.SubmittedBodies.Count.ShouldBeGreaterThan(0);
+        var typed = adapter.SubmittedBodies[^1];
         if (typed == queued.Body) return typed;
         typed.ShouldContain(TypedBodySpill.PointerHeadline);
         var relative = typed.Split('\n').Select(l => l.Trim().Trim('\'', '`'))
@@ -779,9 +851,11 @@ public sealed class PostLandMutationDeliveryTests
     }
 
     private static async Task ConfirmPersistedQueuedReceiptAsync(string connection, BridgeQueueHarness h,
-        SessionQueuedMessage queued, Guid sessionId, string typedBody, bool alreadyConfirmed)
+        SessionQueuedMessage queued, Guid sessionId, string typedBody, bool alreadyConfirmed,
+        FakeAgentProtocolAdapter? adapter = null)
     {
-        var typed = h.Adapter.Inputs.Count;
+        adapter ??= h.Adapter;
+        var typed = adapter.Inputs.Count;
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
         queued = await db.SessionQueuedMessages.SingleAsync(m => m.Id == queued.Id);
         var floor = queued.LastDeliveryBaselineSequence ?? 4;
@@ -826,7 +900,7 @@ public sealed class PostLandMutationDeliveryTests
         {
             AlwaysOn = false, ConnectionString = connection,
         });
-        recovery.Runtime.Register(sessionId, h.Adapter);
+        recovery.Runtime.Register(sessionId, adapter);
         recovery.Runner.SetTranscript(events);
         try { await recovery.Runtime.CatchUpTranscriptAsync(sessionId, CancellationToken.None); }
         catch (NotSupportedException) { /* EmptyRunnerClient always has a snapshot. */ }
@@ -856,7 +930,7 @@ public sealed class PostLandMutationDeliveryTests
             && p.Kind == TranscriptKinds.UserPrompt).ToListAsync();
         prompts.Count.ShouldBeGreaterThanOrEqualTo(1);
         prompts.Any(p => p.Text != null && PromptSubmissionMatch.IsCompleteIn(typedBody, p.Text)).ShouldBeTrue();
-        h.Adapter.Inputs.Count.ShouldBe(typed);
+        adapter.Inputs.Count.ShouldBe(typed);
     }
 
     private static async Task SetWorkingAsync(string connection, Guid sessionId, bool working)
@@ -1149,49 +1223,96 @@ public sealed class PostLandMutationDeliveryTests
         note.ConfirmedAt.ShouldBeNull();
     }
 
-    private static async Task<(Guid SessionId, SessionQueuedMessage Queued)> DispatchWorkerBriefAsync(
-        PostLandMutationWorld world, BridgeQueueHarness h)
+    private static async Task<(Guid SessionId, SessionQueuedMessage Queued, FakeAgentProtocolAdapter Adapter)>
+        DispatchWorkerBriefAsync(
+            PostLandMutationWorld world, BridgeQueueHarness h, MutationDispatchTestsCapture capture,
+            bool busy = false)
     {
-        var sessionId = Guid.NewGuid();
-        await using (var db = world.Host.CreateContext())
+        var ready = busy
+            ? new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously)
+            : null;
+        capture.Configure = adapter =>
         {
+            adapter.RegisterOnStart = h.Runtime;
+            if (ready is not null) adapter.ReadyHold = ready;
+            adapter.OnSubmitted = async submitted =>
+            {
+                if (adapter.StartedSessionId is not Guid sid) return;
+                await InsertWorkerTranscriptAsync(world.Host.Schema.ConnectionString, sid, submitted);
+            };
+        };
+
+        using (var scope = h.Provider.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+
+        Guid sessionId = Guid.Empty;
+        await UntilAsync(async () =>
+        {
+            await using var db = world.Host.CreateContext();
             var task = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
-            db.AgentSessions.Add(new AgentSession
-            {
-                Id = sessionId, Status = SessionStatus.Running, Cwd = task.WorktreePath!,
-                AgentKind = AgentKind.Raw, SessionBackend = SessionBackend.PtyHost,
-                StartedAt = DateTime.UtcNow, CreatedAt = DateTime.UtcNow,
-            });
-            task.AgentSessionId = sessionId;
-            task.Status = AgentTaskStatus.Dispatched;
-            task.AgentKind = AgentKind.Raw;
-            await db.SaveChangesAsync();
-            var settings = h.Provider.GetRequiredService<IOptions<DelegationSettings>>().Value;
-            var brief = AgentTaskDispatcher.FitBriefForTyping(task, settings, agentKind: AgentKind.Raw);
-            var durable = brief;
-            if (!durable.Contains("SourceLanding", StringComparison.Ordinal))
-            {
-                brief.ShouldContain("YOUR BRIEF IS NOT IN THIS MESSAGE");
-                var spill = Path.Combine(task.WorkingDirectory!, ".antiphon",
-                    $"task-{DelegationReportFormatter.Short(task.Id)}-brief.md");
-                File.Exists(spill).ShouldBeTrue();
-                durable = await File.ReadAllTextAsync(spill);
-            }
-            durable.ShouldContain("SourceLanding");
-            durable.ShouldContain(world.Operation.ToString("D"));
-            durable.ShouldContain(world.Host.Fixture.SeedSha);
-            h.Runtime.Register(sessionId, h.Adapter);
-            await h.Queue.EnqueueAsync(sessionId, brief, MessageSendMode.WhenIdle, CancellationToken.None,
-                QueuedMessageOrigin.Delegation, executionDeadlineAt: task.ExecutionDeadlineAt,
-                executionTaskId: task.Id, deliverIfIdle: false);
+            if (task.Status == AgentTaskStatus.Failed)
+                throw new InvalidOperationException(task.FailureReason ?? "dispatch failed");
+            if (task.AgentSessionId is not Guid id) return false;
+            sessionId = id;
+            return true;
+        }, "dispatcher did not persist a worker session");
+
+        if (busy)
+        {
+            await SetWorkingAsync(world.Host.Schema.ConnectionString, sessionId, true);
+            ready!.TrySetResult(true);
         }
+
+        await h.Provider.GetRequiredService<AgentSessionLaunchQueue>()
+            .WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
+
         await using var observer = world.Host.CreateContext();
+        var launched = await observer.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
+        launched.Status.ShouldBe(AgentTaskStatus.Dispatched, launched.FailureReason);
+        launched.AgentSessionId.ShouldBe(sessionId);
+        launched.SourceLandingOperationId.ShouldBe(world.Operation);
+        launched.SourceLandingSha.ShouldBe(world.Host.Fixture.SeedSha);
         var queued = await observer.SessionQueuedMessages.SingleAsync(m => m.ExecutionTaskId == world.TaskId);
         queued.Origin.ShouldBe(QueuedMessageOrigin.Delegation);
-        return (sessionId, queued);
+        queued.AgentSessionId.ShouldBe(sessionId);
+        var durable = queued.Body;
+        if (!durable.Contains("SourceLanding", StringComparison.Ordinal))
+        {
+            queued.Body.ShouldContain("YOUR BRIEF IS NOT IN THIS MESSAGE");
+            var spill = Path.Combine(launched.WorkingDirectory!, ".antiphon",
+                $"task-{DelegationReportFormatter.Short(launched.Id)}-brief.md");
+            File.Exists(spill).ShouldBeTrue();
+            durable = await File.ReadAllTextAsync(spill);
+        }
+        durable.ShouldContain("SourceLanding");
+        durable.ShouldContain(world.Operation.ToString("D"));
+        durable.ShouldContain(world.Host.Fixture.SeedSha);
+        capture.Adapters.ShouldHaveSingleItem().Started.ShouldBeTrue();
+        return (sessionId, queued, capture.Adapters[0]);
     }
 
-    private static BridgeQueueHarness.HarnessOptions DispatchOptions(PostLandMutationWorld world) => new()
+    private static async Task InsertWorkerTranscriptAsync(string connection, Guid sessionId, string submitted)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
+        var seq = ((await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId)
+            .MaxAsync(t => (long?)t.Sequence)) ?? 0) + 1;
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = seq,
+            Kind = TranscriptKinds.UserPrompt, Text = submitted,
+            CreatedAt = DateTime.UtcNow, Timestamp = DateTime.UtcNow,
+        });
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = seq + 1,
+            Kind = TranscriptKinds.TurnEnd, StopReason = TranscriptKinds.StopReasons.EndTurn,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private static BridgeQueueHarness.HarnessOptions DispatchOptions(
+        PostLandMutationWorld world, MutationDispatchTestsCapture capture) => new()
     {
         AlwaysOn = false,
         ConnectionString = world.Host.Schema.ConnectionString,
@@ -1199,15 +1320,17 @@ public sealed class PostLandMutationDeliveryTests
         {
             services.RemoveAll<IWorktreeManager>();
             services.RemoveAll<IAgentProtocolAdapterFactory>();
-            services.AddDelegationWorktreeGraph(new GitSettings { WorktreeBasePath = Path.Combine(world.Host.Fixture.Root, "trees") });
+            services.RemoveAll<ISessionRunnerClient>();
+            services.AddSingleton<ISessionRunnerClient>(world.Runner);
             services.AddSingleton<ILandingGit>(world.Host.Fixture.Git);
+            services.AddDelegationWorktreeGraph(new GitSettings { WorktreeBasePath = Path.Combine(world.Host.Fixture.Root, "trees") });
             services.AddSingleton(world.Runner);
             services.AddScoped<SourceLandingAdmission>();
             services.AddScoped<VerificationExecutionService>();
             services.AddScoped<AgentTaskService>();
             services.AddScoped<AgentTaskDispatcher>();
             services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
-            services.AddSingleton<IAgentProtocolAdapterFactory>(new MutationDispatchTestsCapture());
+            services.AddSingleton<IAgentProtocolAdapterFactory>(capture);
             services.AddSingleton<DelegationWorkspaceResolver>();
         },
     };

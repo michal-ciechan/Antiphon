@@ -1569,6 +1569,8 @@ public class AppDbContext : DbContext
             // repeat-dispatch guard keys on this rather than parsing FailureReason.
             entity.Property(t => t.FailureCode).IsRequired(false);
             entity.Property(t => t.LastPolledResultHash).HasColumnType("text");
+            entity.Property(t => t.CompletionNoteDigest).HasColumnType("text");
+            entity.Property(t => t.CompletionNoteQueuedAt).IsRequired(false);
             entity.Property(t => t.DistilledResult).HasColumnType("text");
             entity.Property(t => t.ResultFilePath).HasMaxLength(1000);
             entity.Property(t => t.DeliverablePath).HasMaxLength(1000);

@@ -253,14 +253,24 @@ public sealed class AgentTaskCheckService
         return new Supersession(true, task.Status, task.CompletedAt ?? DateTime.UtcNow);
     }
 
-    internal static Task<bool> HasCompletionNoteAsync(
-        AppDbContext db, Guid parentSessionId, Guid rootTaskId, CancellationToken ct) =>
-        db.SessionQueuedMessages.AsNoTracking().AnyAsync(
-            m => m.AgentSessionId == parentSessionId
-                && m.SourceLandNotificationId == null
-                && m.Origin == QueuedMessageOrigin.Delegation
-                && m.ConversationKey == $"task:{rootTaskId:N}"
-                && m.Status != QueuedMessageStatus.Canceled, ct);
+    internal static async Task<bool> HasCompletionNoteAsync(
+        AppDbContext db, Guid parentSessionId, Guid rootTaskId, CancellationToken ct)
+    {
+        if (await db.SessionQueuedMessages.AsNoTracking().AnyAsync(
+                m => m.AgentSessionId == parentSessionId
+                    && m.SourceLandNotificationId == null
+                    && m.Origin == QueuedMessageOrigin.Delegation
+                    && m.ConversationKey == $"task:{rootTaskId:N}"
+                    && m.Status != QueuedMessageStatus.Canceled, ct))
+            return true;
+
+        // Sent queue rows age out; sourced tasks do not. The stamp on the task is the
+        // durable idempotency evidence once the queue row is gone.
+        return await db.AgentTasks.AsNoTracking().AnyAsync(
+            t => t.RootTaskId == rootTaskId
+                && t.ParentSessionId == parentSessionId
+                && t.CompletionNoteQueuedAt != null, ct);
+    }
 
     private async Task<bool> WaitForCompletionNoteAsync(Guid parentSessionId, Guid rootTaskId, CancellationToken ct)
     {
