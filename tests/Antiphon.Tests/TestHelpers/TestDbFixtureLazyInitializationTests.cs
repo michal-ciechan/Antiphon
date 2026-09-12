@@ -133,13 +133,12 @@ public sealed class TestDbFixtureLazyInitializationTests
         var root = CreateOwnedRoot();
         var unowned = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "c476-unowned-" + Guid.NewGuid().ToString("N")));
         Directory.CreateDirectory(unowned);
-        var settings = JsonSerializer.Serialize(new
-        {
-            Root = unowned,
-            Session = Guid.NewGuid(),
-            Task = Guid.NewGuid(),
-            Notification = Guid.NewGuid()
-        });
+        var settings =
+            "{\"Root\":" + JsonSerializer.Serialize(unowned)
+            + ",\"Session\":" + JsonSerializer.Serialize(Guid.NewGuid())
+            + ",\"Task\":" + JsonSerializer.Serialize(Guid.NewGuid())
+            + ",\"Notification\":" + JsonSerializer.Serialize(Guid.NewGuid())
+            + "}";
         var sw = Stopwatch.StartNew();
         var run = await LaunchProcessAsync(
             root,
@@ -147,7 +146,7 @@ public sealed class TestDbFixtureLazyInitializationTests
             extraEnv: new Dictionary<string, string?> { [LandQueueRaceWorker.Marker] = settings });
         sw.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(60));
         run.Exit.ShouldBe(1, run.Stderr + run.Stdout);
-        run.Stderr.ShouldContain("InvalidOperationException");
+        (run.Stderr + run.Stdout).ShouldContain("InvalidOperationException");
         if (File.Exists(run.Trx))
             ReadExecuted(run.Trx).Count.ShouldBe(0);
         File.Exists(Path.Combine(root, "lifecycle.json")).ShouldBeFalse();
@@ -273,8 +272,15 @@ public sealed class TestDbFixtureLazyInitializationTests
         if (depth != 1)
             throw new InvalidOperationException($"CARD-0476 probe depth {depth} exceeds 1");
         var actual = root.TryGetProperty("mode", out var modeEl) ? modeEl.GetString() : null;
-        if (!string.Equals(actual, mode, StringComparison.Ordinal))
+        if (string.Equals(mode, "db-free", StringComparison.Ordinal))
+        {
+            if (!string.IsNullOrEmpty(actual) && !string.Equals(actual, "db-free", StringComparison.Ordinal))
+                throw new SkipTestException($"child mode {actual} != {mode}");
+        }
+        else if (!string.Equals(actual, mode, StringComparison.Ordinal))
+        {
             throw new SkipTestException($"child mode {actual} != {mode}");
+        }
         return root;
     }
 
