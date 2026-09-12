@@ -5,6 +5,7 @@ using TUnit.Core;
 namespace Antiphon.SessionRunner.Tests;
 
 [Category("Unit")]
+[NotInParallel]
 public sealed class RunnerRestartPreflightCacheTests
 {
     [Test]
@@ -249,8 +250,11 @@ public sealed class RunnerRestartPreflightCacheTests
             Directory.CreateDirectory(first);
             Directory.CreateDirectory(second);
             var readable = Path.Combine(second, "pwsh.exe");
-            WriteDummyExe(readable);
-            File.WriteAllBytes(Path.Combine(second, "System.Management.Automation.dll"), "sma"u8.ToArray());
+            if (shape is not ("none-readable" or "other-shell-only"))
+            {
+                WriteDummyExe(readable);
+                File.WriteAllBytes(Path.Combine(second, "System.Management.Automation.dll"), "sma"u8.ToArray());
+            }
             switch (shape)
             {
                 case "readable-first":
@@ -277,8 +281,6 @@ public sealed class RunnerRestartPreflightCacheTests
                 case "other-shell-only":
                     WriteDummyExe(Path.Combine(first, "powershell.exe"));
                     File.WriteAllBytes(Path.Combine(first, "System.Management.Automation.dll"), "sma"u8.ToArray());
-                    File.Delete(readable);
-                    File.Delete(Path.Combine(second, "System.Management.Automation.dll"));
                     break;
             }
 

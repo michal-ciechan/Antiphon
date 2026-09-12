@@ -109,6 +109,7 @@ internal sealed class ControlledTestDbOperations : TestDbOperations
 }
 
 [Category("Unit")]
+[NotInParallel]
 public sealed class TestDbFixtureLifecycleTests
 {
     private static readonly TimeSpan Bound = TimeSpan.FromSeconds(30);
@@ -124,12 +125,12 @@ public sealed class TestDbFixtureLifecycleTests
         var connection = new Task<string>[2];
         var options = new Task<string>[2];
         var clones = new Task<IsolatedTestSchema>[2];
-        connection[0] = Task.Run(() => lifecycle.ConnectionString);
-        connection[1] = Task.Run(() => lifecycle.ConnectionString);
-        var maintenance = Task.Run(() => lifecycle.MaintenanceConnectionString);
-        options[0] = Task.Run(() => ConnectionOf(lifecycle.CreateDbContextOptions()));
-        options[1] = Task.Run(() => ConnectionOf(lifecycle.CreateDbContextOptions()));
-        var context = Task.Run(() => lifecycle.CreateDbContext().Database.GetConnectionString()!);
+        connection[0] = LongRunning(() => lifecycle.ConnectionString);
+        connection[1] = LongRunning(() => lifecycle.ConnectionString);
+        var maintenance = LongRunning(() => lifecycle.MaintenanceConnectionString);
+        options[0] = LongRunning(() => ConnectionOf(lifecycle.CreateDbContextOptions()));
+        options[1] = LongRunning(() => ConnectionOf(lifecycle.CreateDbContextOptions()));
+        var context = LongRunning(() => lifecycle.CreateDbContext().Database.GetConnectionString()!);
         clones[0] = Task.Run(() => lifecycle.CreateIsolatedSchemaAsync());
         clones[1] = Task.Run(() => lifecycle.CreateIsolatedSchemaAsync());
 
@@ -195,7 +196,7 @@ public sealed class TestDbFixtureLifecycleTests
         }
 
         var lifecycle = new TestDbFixtureLifecycle(ops);
-        var sync = Task.Run(() => lifecycle.ConnectionString);
+        var sync = LongRunning(() => lifecycle.ConnectionString);
         var asyncWaiter = lifecycle.CreateIsolatedSchemaAsync();
         await Task.Delay(200);
         sync.IsCompleted.ShouldBeFalse();
@@ -268,7 +269,7 @@ public sealed class TestDbFixtureLifecycleTests
             {
                 var start = NewGate();
                 ops.StartGate = start.Task;
-                var waiter = Task.Run(() => lifecycle.ConnectionString);
+                var waiter = LongRunning(() => lifecycle.ConnectionString);
                 while (Volatile.Read(ref lifecycle.Create) == 0)
                     await Task.Delay(10);
                 var teardown = lifecycle.DisposeAsync();
@@ -334,7 +335,7 @@ public sealed class TestDbFixtureLifecycleTests
         var ops = new ControlledTestDbOperations { FaultAt = stage };
         var lifecycle = new TestDbFixtureLifecycle(ops);
         var waiters = Enumerable.Range(0, 4)
-            .Select(_ => Task.Run(() => lifecycle.ConnectionString))
+            .Select(_ => LongRunning(() => lifecycle.ConnectionString))
             .ToArray();
         foreach (var waiter in waiters)
         {
@@ -344,7 +345,7 @@ public sealed class TestDbFixtureLifecycleTests
 
         var created = lifecycle.Create;
         var fifth = await Should.ThrowAsync<Exception>(async () =>
-            await Task.Run(() => lifecycle.ConnectionString).WaitAsync(Bound));
+            await LongRunning(() => lifecycle.ConnectionString).WaitAsync(Bound));
         Flatten(fifth).ShouldContain(m => m.Contains("C476-FAULT", StringComparison.Ordinal));
         lifecycle.Create.ShouldBe(created);
         if (stage == "construct")
@@ -410,7 +411,7 @@ public sealed class TestDbFixtureLifecycleTests
         var start = NewGate();
         ops.StartGate = start.Task;
         var lifecycle = new TestDbFixtureLifecycle(ops);
-        var waiter = Task.Run(() => lifecycle.ConnectionString);
+        var waiter = LongRunning(() => lifecycle.ConnectionString);
         while (Volatile.Read(ref lifecycle.Create) == 0)
             await Task.Delay(10);
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -451,6 +452,13 @@ public sealed class TestDbFixtureLifecycleTests
 
     private static string ConnectionOf(Microsoft.EntityFrameworkCore.DbContextOptions<Antiphon.Server.Infrastructure.Data.AppDbContext> options) =>
         new Antiphon.Server.Infrastructure.Data.AppDbContext(options).Database.GetConnectionString()!;
+
+    private static Task<string> LongRunning(Func<string> work) =>
+        Task.Factory.StartNew(
+            work,
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
 
     private static TaskCompletionSource NewGate() =>
         new(TaskCreationOptions.RunContinuationsAsynchronously);
