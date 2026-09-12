@@ -62,7 +62,9 @@ internal sealed class FakeTaskProgressGit : ITaskProgressGit
         Trace.Add(["rev-parse", "--verify", revision]);
         ThrowIfInjected("rev-parse", ["rev-parse", "--verify", revision]);
         var key = revision.Replace("^{commit}", "", StringComparison.Ordinal);
-        if (LocalRefs.TryGetValue(key, out var sha) || LocalRefs.TryGetValue("HEAD", out sha))
+        if (LocalRefs.TryGetValue(key, out var sha))
+            return Task.FromResult(new ProgressRevParse(true, sha, null));
+        if (key is "HEAD" && LocalRefs.TryGetValue("HEAD", out sha))
             return Task.FromResult(new ProgressRevParse(true, sha, null));
         if (GitObjectId.IsFull(key) && Parents.ContainsKey(key))
             return Task.FromResult(new ProgressRevParse(true, key, null));
@@ -115,7 +117,7 @@ internal sealed class FakeTaskProgressGit : ITaskProgressGit
             return Task.FromResult(new ProgressRemoteObservation(ProgressRemoteState.Missing, EndpointFingerprint: EndpointFingerprint));
         if (ObserveAttemptsUntilStable > 0 && ObserveCalls < ObserveAttemptsUntilStable)
             return Task.FromResult(new ProgressRemoteObservation(ProgressRemoteState.Unavailable, Reason: "changed_during_confirmation"));
-        if (!LocalRefs.ContainsValue(sha) && !Parents.ContainsKey(sha))
+        if (!LocalRefs.ContainsValue(sha))
         {
             var pin = $"{TaskProgressGit.ProgressRefPrefix}{taskId:N}/observe";
             Fetches.Add(pin);

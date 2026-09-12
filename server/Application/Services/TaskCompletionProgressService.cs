@@ -72,8 +72,13 @@ public sealed class TaskCompletionProgressService
                 inFence = !inFence;
                 continue;
             }
-            if (inFence) continue;
             var line = trimmed.TrimStart();
+            if (inFence)
+            {
+                if (line.StartsWith("[antiphon-progress:", StringComparison.Ordinal))
+                    malformed = true;
+                continue;
+            }
             if (line.StartsWith('>')) continue;
             if (!line.StartsWith("[antiphon-progress:", StringComparison.Ordinal))
                 continue;
@@ -241,7 +246,15 @@ public sealed class TaskCompletionProgressService
             return failed;
         }
 
-        var remote = await _git.ObserveExactRefAsync(repo, source.FullRef, source.Remote.EndpointFingerprint, task.Id, ct);
+        ProgressRemoteObservation remote;
+        try
+        {
+            remote = await _git.ObserveExactRefAsync(repo, source.FullRef, source.Remote.EndpointFingerprint, task.Id, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            remote = new ProgressRemoteObservation(ProgressRemoteState.Unavailable, Reason: "source_remote_unreadable");
+        }
         if (remote.State == ProgressRemoteState.Unavailable
             && remote.Reason is "source_remote_endpoint_changed")
         {

@@ -268,6 +268,7 @@ public class TaskCompletionProgressPolicyTests
         var (task, git, svc) = World(primaryLocal: C, withRepair: false);
         git.AddCommit(C, Bl);
         git.SymbolicHeads["HEAD"] = "refs/heads/other";
+        git.SymbolicHeads[@"C:\repo\repair"] = "refs/heads/other";
         git.LocalRefs["refs/heads/other"] = C;
         var ev = await svc.EvaluateAsync(task, "switched.", default);
         ev.Assessment.ShouldBe(CompletionProgressAssessment.NoAttributedProgress);
@@ -321,10 +322,8 @@ public class TaskCompletionProgressPolicyTests
     {
         var (task, git, svc) = World(primaryLocal: C);
         git.AddCommit(C, Bl);
-        git.Inject = (cmd, _) => cmd == "ls-remote" ? new InvalidOperationException("boom") : null;
-        git.BeforeCommand = (_, args) => args.Count > 0 && args[0] == "ls-remote"
+        git.BeforeCommand = (_, args) => args.Contains("refs/heads/feat/owner")
             ? new LandingGitResult(128, "", "git_exit_128") : null;
-        // Force repair observe to fail after primary graph succeeds: intercept only when repair ref is queried second time.
         var ev = await svc.EvaluateAsync(task, "primary commit.", default);
         ev.Assessment.ShouldBe(CompletionProgressAssessment.ProgressObserved);
         ev.Evidence.Sources!.Any(s => s.Origin == ProgressOrigin.Primary).ShouldBeTrue();

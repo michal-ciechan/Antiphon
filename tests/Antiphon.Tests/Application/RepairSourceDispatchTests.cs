@@ -19,6 +19,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
+[Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public class RepairSourceDispatchTests
 {
