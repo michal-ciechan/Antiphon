@@ -441,7 +441,7 @@ public sealed class AgentTaskLandRefusedRetryTests
             var oldEvents = await EventsAsync();
             _clock.After(old.UpdatedAt);
             Trace.Clear();
-            var result = await H.RequestAsync(filter);
+            var result = await H.RequestAsync(filter, expectedSourceSha: old.OriginalSourceSha);
             result.Status.ShouldBe("queued");
             Trace.ShouldBeEmpty("request must queue before Git runs");
             var after = await TaskAsync();

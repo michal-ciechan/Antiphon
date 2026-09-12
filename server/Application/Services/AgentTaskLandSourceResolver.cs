@@ -98,23 +98,29 @@ public sealed class AgentTaskLandSourceResolver(
         if (!observed.Accepted)
             return await RefuseAsync(request, observed.Reason ?? "source_remote_unreadable", local.HeadSha, observed.Sha, null, ct);
 
-        var graph = await ClassifyAsync(local.RegisteredPath, local.HeadSha, observed.Sha!, ct);
-        if (graph.Relationship is LandSourceRelationship.Unavailable or LandSourceRelationship.Unknown)
-            return await RefuseAsync(request, graph.Reason ?? "source_remote_ancestry_error", local.HeadSha, observed.Sha, null, ct);
+        var remoteGraph = await ClassifyAsync(local.RegisteredPath, expected, observed.Sha!, ct);
+        if (remoteGraph.Relationship is LandSourceRelationship.Unavailable or LandSourceRelationship.Unknown)
+            return await RefuseAsync(request, remoteGraph.Reason ?? "source_remote_ancestry_error", local.HeadSha, observed.Sha, null, ct);
+        if (remoteGraph.Relationship == LandSourceRelationship.Diverged)
+            return await RefuseObservedAsync(request, local, observed, remoteGraph, "source_remote_diverged", ct);
+        if (remoteGraph.Relationship == LandSourceRelationship.Behind)
+            return await RefuseObservedAsync(request, local, observed, remoteGraph, "reviewed_source_mismatch", ct, observed.Sha);
 
-        var candidate = graph.Relationship switch
-        {
-            LandSourceRelationship.Equal => local.HeadSha,
-            LandSourceRelationship.Behind => observed.Sha!,
-            LandSourceRelationship.LocalAhead => local.HeadSha,
-            _ => (string?)null,
-        };
-        if (graph.Relationship == LandSourceRelationship.Diverged)
-            return await RefuseObservedAsync(request, local, observed, graph, "source_remote_diverged", ct);
+        var localGraph = await ClassifyAsync(local.RegisteredPath, local.HeadSha, expected, ct);
+        if (localGraph.Relationship is LandSourceRelationship.Unavailable or LandSourceRelationship.Unknown)
+            return await RefuseAsync(request, localGraph.Reason ?? "source_remote_ancestry_error", local.HeadSha, observed.Sha, null, ct);
+
+        var predecessorOp = task.ActiveLandingId is Guid activeId
+            ? await db.AgentTaskLandings.SingleOrDefaultAsync(o => o.Id == activeId && o.TaskId == task.Id, ct)
+            : null;
+        var derivation = predecessorOp is { RebasedSourceSha: { } prepared } && prepared == local.HeadSha
+            && predecessorOp.OriginalSourceSha == expected;
+
+        var needFf = localGraph.Relationship == LandSourceRelationship.Behind;
+        string? candidate = localGraph.Relationship == LandSourceRelationship.Equal || needFf || derivation
+            ? expected : null;
         if (candidate is null)
-            return await RefuseObservedAsync(request, local, observed, graph, graph.Reason ?? "source_remote_unreadable", ct);
-        if (candidate != expected)
-            return await RefuseObservedAsync(request, local, observed, graph, "reviewed_source_mismatch", ct, candidate);
+            return await RefuseObservedAsync(request, local, observed, localGraph, "reviewed_source_mismatch", ct, local.HeadSha);
 
         request.LocalBeforeSha = local.HeadSha;
         request.RemoteSourceSha = observed.Sha;
@@ -123,7 +129,10 @@ public sealed class AgentTaskLandSourceResolver(
         request.SourceObservationRef = observed.ObservationRef;
         request.SourceObservedAt = clock.GetUtcNow().UtcDateTime;
         request.CandidateSourceSha = candidate;
-        request.SourceRelationship = graph.Relationship;
+        request.SourceRelationship = needFf ? LandSourceRelationship.Behind
+            : remoteGraph.Relationship == LandSourceRelationship.LocalAhead ? LandSourceRelationship.LocalAhead
+            : localGraph.Relationship == LandSourceRelationship.Equal ? LandSourceRelationship.Equal
+            : LandSourceRelationship.LocalAhead;
         request.SourceCommonDirectory = local.CommonDirectory;
         request.SourceWorktreePath = local.RegisteredPath;
         request.SourceGitDirectory = local.GitDirectory;
@@ -135,7 +144,7 @@ public sealed class AgentTaskLandSourceResolver(
         if (afterObserved is not null)
             return await RefuseAsync(request, afterObserved, local.HeadSha, request.RemoteSourceSha, expected, ct);
 
-        if (graph.Relationship == LandSourceRelationship.Behind)
+        if (needFf)
         {
             var still = await git.InspectAsync(coordinates, ct);
             if (!still.Accepted || still.Snapshot!.HeadSha != local.HeadSha
@@ -308,7 +317,10 @@ public sealed class AgentTaskLandSourceResolver(
     {
         request.ConcurrencyToken = Guid.NewGuid();
         request.LastProgressAt = clock.GetUtcNow().UtcDateTime;
+        await using var transaction = db.Database.CurrentTransaction is null
+            ? await db.Database.BeginTransactionAsync(ct) : null;
         await db.SaveChangesAsync(ct);
+        if (transaction is not null) await transaction.CommitAsync(ct);
     }
 
     private async Task<string> CommitAsync(string repository, string revision, CancellationToken ct)

@@ -306,10 +306,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
             if (_armed && (AfterSave || TerminalCut == "after-save")) { Triggered = true; throw new InjectedSaveFailure(); }
             if (_armed && TerminalCut is "commit" or "after-commit") AwaitingCommit = true;
             if (_armed && AfterCommit)
-            {
-                if (data.Context!.Database.CurrentTransaction is not null) AwaitingCommit = true;
-                else { Triggered = true; throw new InjectedSaveFailure(); }
-            }
+                AwaitingCommit = true;
             if (data.Context!.Database.CurrentTransaction is null) await AcknowledgedAsync(data.Context);
             return result;
         }
