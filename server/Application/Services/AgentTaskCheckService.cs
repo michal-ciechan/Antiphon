@@ -265,7 +265,9 @@ public sealed class AgentTaskCheckService
             return true;
 
         // Sent queue rows age out; sourced tasks do not. The stamp on the task is the
-        // durable idempotency evidence once the queue row is gone.
+        // durable idempotency evidence once the queue row is gone. A queue row without a
+        // stamp is not enough on its own — CompletionNoteStamp repairs that leftover
+        // before retention, and this read still treats the live row as present.
         return await db.AgentTasks.AsNoTracking().AnyAsync(
             t => t.RootTaskId == rootTaskId
                 && t.ParentSessionId == parentSessionId

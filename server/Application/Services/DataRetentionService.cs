@@ -166,6 +166,8 @@ public sealed class DataRetentionService
     /// Deletes settled queue rows past the window. Never a <c>Pending</c> row (parked messages
     /// stay Pending by design) and never an unsettled Channel-origin correlation (CARD-0067).
     /// Independent of session liveness — this is what bounds a long-lived always-on session's queue.
+    /// Stamps an unstamped caller completion note before deleting its row so retention cannot
+    /// reopen the CARD-0478 replay hole.
     /// </summary>
     public async Task<int> PruneQueuedMessagesAsync(CancellationToken ct)
     {
@@ -173,6 +175,12 @@ public sealed class DataRetentionService
             return 0;
 
         var cutoff = UtcNow().AddDays(-_settings.QueuedMessageRetentionDays);
+        await CompletionNoteStamp.RepairFromAsync(
+            _db,
+            _db.SessionQueuedMessages.Where(m =>
+                (m.Status == QueuedMessageStatus.Sent || m.Status == QueuedMessageStatus.Canceled)
+                && m.CreatedAt < cutoff),
+            ct);
         var removed = await _db.SessionQueuedMessages
             .Where(m => (m.Status == QueuedMessageStatus.Sent || m.Status == QueuedMessageStatus.Canceled)
                 && m.CreatedAt < cutoff
