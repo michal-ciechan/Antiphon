@@ -368,9 +368,14 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         if (request is not null)
         {
             Require(request.TaskId == op.TaskId, "stale_land_request");
-            Require(op.ApprovalLandRequestId is null || request.Id == op.ApprovalLandRequestId
-                || (request.ExpectedSourceSha == op.OriginalSourceSha && op.PreviousPreparationOperationId is not null),
-                "land_request_identity_conflict");
+            if (op.ApprovalLandRequestId is Guid bound && bound != request.Id)
+            {
+                Require(request.ExpectedSourceSha == op.OriginalSourceSha, "land_request_identity_conflict");
+                var boundRequest = await db.AgentTaskLandRequests.AsNoTracking()
+                    .SingleOrDefaultAsync(r => r.Id == bound && r.TaskId == op.TaskId, ct);
+                Require(boundRequest is not null && boundRequest.RequestedAt <= request.RequestedAt,
+                    "land_request_identity_conflict");
+            }
             if (request.ExpectedSourceSha is not null)
                 Require(request.ExpectedSourceSha == op.OriginalSourceSha, "resume_approval_changed");
             if (request.ReviewEvidenceId is not null && op.ReviewEvidenceId is not null)
