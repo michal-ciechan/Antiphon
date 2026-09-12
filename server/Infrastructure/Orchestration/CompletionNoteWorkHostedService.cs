@@ -55,6 +55,9 @@ public sealed class CompletionNoteWorkHostedService(
     /// <summary>
     /// G-150: a sourced Mutation Result that survived an enqueue fault is still owed a caller note.
     /// Pending-row wakeup cannot see a missing insert; rebuild from the durable task.
+    /// Absence of a queue row is not enough: retention deletes Sent rows while sourced tasks
+    /// remain, so <see cref="AgentTaskCheckService.HasCompletionNoteAsync"/> also reads the
+    /// task stamp written at enqueue.
     /// </summary>
     private async Task RecoverMissingSourcedCompletionNotesAsync(
         IServiceProvider services, AppDbContext db, CancellationToken ct)

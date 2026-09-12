@@ -607,11 +607,15 @@ public sealed class PostLandMutationWorktreeTests
 
 internal sealed class MutationDispatchTestsCapture : IAgentProtocolAdapterFactory
 {
-    public int Count { get; private set; }
+    public int Count => Adapters.Count;
+    public List<Antiphon.Tests.Agents.FakeAgentProtocolAdapter> Adapters { get; } = [];
+    public Action<Antiphon.Tests.Agents.FakeAgentProtocolAdapter>? Configure { get; set; }
     public IAgentProtocolAdapter Create(AgentKind kind)
     {
-        Count++;
-        return new Antiphon.Tests.Agents.FakeAgentProtocolAdapter();
+        var adapter = new Antiphon.Tests.Agents.FakeAgentProtocolAdapter();
+        Configure?.Invoke(adapter);
+        Adapters.Add(adapter);
+        return adapter;
     }
 }
 
