@@ -135,17 +135,9 @@ public sealed class AgentTaskLandSourceResolver(
         if (!observed.Accepted)
             return await RefuseAsync(request, observed.Reason ?? "source_remote_unreadable", local.HeadSha, observed.Sha, null, ct);
 
-        var remoteGraph = await ClassifyAsync(local.RegisteredPath, expected, observed.Sha!, ct);
-        if (remoteGraph.Relationship is LandSourceRelationship.Unavailable or LandSourceRelationship.Unknown)
-            return await RefuseAsync(request, remoteGraph.Reason ?? "source_remote_ancestry_error", local.HeadSha, observed.Sha, null, ct);
-        if (remoteGraph.Relationship == LandSourceRelationship.Diverged)
-            return await RefuseObservedAsync(request, local, observed, remoteGraph, "source_remote_diverged", ct);
-        if (remoteGraph.Relationship == LandSourceRelationship.Behind)
-            return await RefuseObservedAsync(request, local, observed, remoteGraph, "reviewed_source_mismatch", ct, observed.Sha);
-
-        var localGraph = await ClassifyAsync(local.RegisteredPath, local.HeadSha, expected, ct);
-        if (localGraph.Relationship is LandSourceRelationship.Unavailable or LandSourceRelationship.Unknown)
-            return await RefuseAsync(request, localGraph.Reason ?? "source_remote_ancestry_error", local.HeadSha, observed.Sha, null, ct);
+        var lr = await ClassifyAsync(local.RegisteredPath, local.HeadSha, observed.Sha!, ct);
+        if (lr.Relationship is LandSourceRelationship.Unavailable or LandSourceRelationship.Unknown)
+            return await RefuseAsync(request, lr.Reason ?? "source_remote_ancestry_error", local.HeadSha, observed.Sha, null, ct);
 
         var predecessorOp = task.ActiveLandingId is Guid activeId
             ? await db.AgentTaskLandings.SingleOrDefaultAsync(o => o.Id == activeId && o.TaskId == task.Id, ct)
@@ -153,11 +145,40 @@ public sealed class AgentTaskLandSourceResolver(
         var derivation = predecessorOp is { RebasedSourceSha: { } prepared } && prepared == local.HeadSha
             && predecessorOp.OriginalSourceSha == expected;
 
-        var needFf = localGraph.Relationship == LandSourceRelationship.Behind;
-        string? candidate = localGraph.Relationship == LandSourceRelationship.Equal || needFf || derivation
-            ? expected : null;
-        if (candidate is null)
-            return await RefuseObservedAsync(request, local, observed, localGraph, "reviewed_source_mismatch", ct, local.HeadSha);
+        bool needFf;
+        LandSourceRelationship relationship;
+        if (derivation)
+        {
+            var originToRemote = await ClassifyAsync(local.RegisteredPath, expected, observed.Sha!, ct);
+            if (originToRemote.Relationship is LandSourceRelationship.Unavailable or LandSourceRelationship.Unknown)
+                return await RefuseAsync(request, originToRemote.Reason ?? "source_remote_ancestry_error",
+                    local.HeadSha, observed.Sha, null, ct);
+            if (originToRemote.Relationship is LandSourceRelationship.Diverged or LandSourceRelationship.Behind)
+                return await RefuseObservedAsync(request, local, observed, originToRemote,
+                    originToRemote.Relationship == LandSourceRelationship.Diverged
+                        ? "source_remote_diverged" : "reviewed_source_mismatch", ct, observed.Sha);
+            needFf = false;
+            relationship = LandSourceRelationship.LocalAhead;
+        }
+        else if (lr.Relationship == LandSourceRelationship.Diverged)
+            return await RefuseObservedAsync(request, local, observed, lr, "source_remote_diverged", ct);
+        else if (lr.Relationship == LandSourceRelationship.Behind)
+        {
+            if (expected != observed.Sha)
+                return await RefuseObservedAsync(request, local, observed, lr, "reviewed_source_mismatch", ct, observed.Sha);
+            needFf = true;
+            relationship = LandSourceRelationship.Behind;
+        }
+        else
+        {
+            if (expected != local.HeadSha)
+                return await RefuseObservedAsync(request, local, observed, lr, "reviewed_source_mismatch", ct, local.HeadSha);
+            needFf = false;
+            relationship = lr.Relationship == LandSourceRelationship.Equal
+                ? LandSourceRelationship.Equal : LandSourceRelationship.LocalAhead;
+        }
+
+        var candidate = expected;
 
         request.LocalBeforeSha = local.HeadSha;
         request.RemoteSourceSha = observed.Sha;
@@ -166,10 +187,7 @@ public sealed class AgentTaskLandSourceResolver(
         request.SourceObservationRef = observed.ObservationRef;
         request.SourceObservedAt = clock.GetUtcNow().UtcDateTime;
         request.CandidateSourceSha = candidate;
-        request.SourceRelationship = needFf ? LandSourceRelationship.Behind
-            : remoteGraph.Relationship == LandSourceRelationship.LocalAhead ? LandSourceRelationship.LocalAhead
-            : localGraph.Relationship == LandSourceRelationship.Equal ? LandSourceRelationship.Equal
-            : LandSourceRelationship.LocalAhead;
+        request.SourceRelationship = relationship;
         request.SourceCommonDirectory = local.CommonDirectory;
         request.SourceWorktreePath = local.RegisteredPath;
         request.SourceGitDirectory = local.GitDirectory;
