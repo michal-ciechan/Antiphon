@@ -26,6 +26,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         Enum.GetValues<TranscriptTailerKind>().Select(FormatFor).ToArray();
 
     private readonly ConcurrentDictionary<Guid, RunnerSession> _sessions = new();
+    private int _startCoreSessionRegistrations;
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _launchLocks = new();
     private readonly SessionRunnerEventHub _events = new();
     // One transcript, one session (CARD-0006 rule C1). Process-wide because the runner process is
@@ -46,6 +47,13 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// event pump can recycle its subscription.
     /// </summary>
     public event Action? PaneSetChanged;
+
+    /// <summary>
+    /// CARD-0497 G-10: how many sessions <see cref="StartCoreAsync"/> inserted into
+    /// <c>_sessions</c>, including ones the launch catch later removed. Distinguishes
+    /// "policy refused before TryAdd" from "registered then torn down".
+    /// </summary>
+    internal int StartCoreSessionRegistrations => _startCoreSessionRegistrations;
 
     public SessionRunnerRuntime(
         IOptions<SessionRunnerSettings> settings,
@@ -257,6 +265,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 throw new InvalidOperationException($"Session '{request.SessionId}' is already running.");
             }
         }
+
+        Interlocked.Increment(ref _startCoreSessionRegistrations);
 
         try
         {

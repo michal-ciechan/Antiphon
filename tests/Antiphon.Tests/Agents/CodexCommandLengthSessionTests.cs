@@ -43,8 +43,7 @@ public sealed class CodexCommandLengthSessionTests
     public async Task Near_cap_fixture_launches_and_arrives_intact(CancellationToken cancellationToken)
     {
         _ = cancellationToken;
-        var nearCap = FitHop2Payload(29_990);
-        await RunInteractiveAsync(developer: nearCap, ptyBackend: "modern");
+        await RunInteractiveAsync(ptyBackend: "modern", hop2Target: 29_990);
     }
 
     [Test]
@@ -83,23 +82,29 @@ public sealed class CodexCommandLengthSessionTests
         string? controlDeveloper = null,
         string? developer = null,
         string ptyBackend = "modern",
-        bool compareBaseInstructions = false)
+        bool compareBaseInstructions = false,
+        int? hop2Target = null)
     {
         RealCliStubGate.SkipIfNotEligible(AgentKind.Codex);
         var shim = NpmShimPath();
-        developer ??= CodexInstructionFixtures.Incident;
+        developer ??= hop2Target is null ? CodexInstructionFixtures.Incident : null;
 
         string? controlInstructions = null;
         if (controlDeveloper is not null)
             controlInstructions = await LaunchOnceAsync(shim, controlDeveloper, ptyBackend, compareFixture: controlDeveloper);
 
-        var incidentInstructions = await LaunchOnceAsync(shim, developer, ptyBackend, compareFixture: developer);
+        var incidentInstructions = await LaunchOnceAsync(
+            shim, developer, ptyBackend, compareFixture: developer, hop2Target: hop2Target);
         if (compareBaseInstructions && controlInstructions is not null)
             controlInstructions.ShouldBe(incidentInstructions);
     }
 
     private static async Task<string?> LaunchOnceAsync(
-        string shim, string developer, string ptyBackend, string compareFixture)
+        string shim,
+        string? developer,
+        string ptyBackend,
+        string? compareFixture,
+        int? hop2Target = null)
     {
         var nonce = $"STUBCANARY-{Guid.NewGuid():N}";
         var reply = $"STUBREPLY-{Guid.NewGuid():N}";
@@ -128,6 +133,14 @@ public sealed class CodexCommandLengthSessionTests
         };
         args.AddRange(overlay.Args);
         args.AddRange(["-c", "disable_paste_burst=true"]);
+        if (hop2Target is int target)
+        {
+            developer = FitHop2Payload(shim, cwd, env, args, target);
+            compareFixture = developer;
+        }
+
+        developer ??= CodexInstructionFixtures.Incident;
+        var fixture = compareFixture ?? developer;
         args.AddRange(["-c", "developer_instructions=" + developer]);
 
         var options = Options.Create(new AgentRegistrySettings
@@ -165,6 +178,10 @@ public sealed class CodexCommandLengthSessionTests
             commandLine.ShouldNotContain("codex.cmd");
 
             (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue();
+            // Near-cap (~30k) argv can leave the TUI quiet after splash while it is still
+            // parsing; WaitForReady's 1s quiet clock then latches before the composer exists.
+            // Wait for the idle placeholder rather than widening CodexReadyQuietPeriodMs.
+            await WaitForIdleComposerAsync(client, sessionId, TimeSpan.FromSeconds(30));
             await adapter.SendPromptAsync($"Reply with exactly this token and nothing else is needed: {nonce}", CancellationToken.None);
             var chatHit = await stub.Requests.WaitForAsync(
                 r => r.Method == "POST"
@@ -190,9 +207,9 @@ public sealed class CodexCommandLengthSessionTests
             stub.Requests.All.ShouldContain(r => r.Method == "GET" && r.Path == "/v1/models");
 
             var strings = WalkStrings(JsonDocument.Parse(chatHit.Body).RootElement).ToList();
-            strings.Count(s => s.Contains(compareFixture, StringComparison.Ordinal)).ShouldBe(1);
+            strings.Count(s => s.Contains(fixture, StringComparison.Ordinal)).ShouldBe(1);
             strings.ShouldContain(s => s.Contains(nonce, StringComparison.Ordinal));
-            if (compareFixture.Contains(CodexInstructionFixtures.StartSentinel, StringComparison.Ordinal))
+            if (fixture == CodexInstructionFixtures.Incident)
             {
                 strings.ShouldContain(s => s.Contains(CodexInstructionFixtures.StartSentinel, StringComparison.Ordinal));
                 strings.ShouldContain(s => s.Contains(CodexInstructionFixtures.MidSentinel, StringComparison.Ordinal));
@@ -222,36 +239,71 @@ public sealed class CodexCommandLengthSessionTests
         return shim;
     }
 
-    private static string FitHop2Payload(int target)
+    private static async Task WaitForIdleComposerAsync(
+        DirectSessionRunnerClient client, Guid sessionId, TimeSpan budget)
     {
-        var shimDir = Path.GetDirectoryName(NpmShimPath())!;
+        var deadline = DateTime.UtcNow + budget;
+        while (DateTime.UtcNow < deadline)
+        {
+            var snap = await client.GetSnapshotAsync(sessionId, CancellationToken.None);
+            var screen = snap.RenderedScreen ?? "";
+            if (screen.Contains("Ask Codex to do anything", StringComparison.Ordinal))
+                return;
+            await Task.Delay(100);
+        }
+    }
+
+    private static string FitHop2Payload(
+        string shim,
+        string cwd,
+        IReadOnlyDictionary<string, string> env,
+        IReadOnlyList<string> prefix,
+        int hop2Target)
+    {
+        var shimDir = Path.GetDirectoryName(shim)!;
+        var js = Path.GetFullPath(Path.Combine(shimDir, "node_modules", "@openai", "codex", "bin", "codex.js"));
+        if (!File.Exists(js))
+            throw new SkipTestException($"codex.js not found at {js}");
         var native = ResolveNative(shimDir) ?? throw new SkipTestException("vendored codex.exe not found");
-        var home = Directory.CreateTempSubdirectory("c0497-fit").FullName;
-        try
+        var sibling = Path.Combine(shimDir, "node.exe");
+        var node = File.Exists(sibling)
+            ? Path.GetFullPath(sibling)
+            : WindowsCommandLine.ResolveExecutable("node.exe", cwd, new Dictionary<string, string>(env, StringComparer.OrdinalIgnoreCase));
+
+        var filler = new string('A', Math.Max(100, hop2Target));
+        var payload = CodexInstructionFixtures.StartSentinel + filler;
+        IReadOnlyList<string> UserArgs() => [.. prefix, "developer_instructions=" + payload];
+        IReadOnlyList<string> Hop1Args() => Prepend(js, UserArgs());
+
+        var hop2 = WindowsCommandLine.Measure(native, UserArgs());
+        if (hop2 > hop2Target)
+            payload = payload[..^Math.Min(payload.Length - 20, hop2 - hop2Target)];
+        else
+            payload += new string('A', hop2Target - hop2);
+        WindowsCommandLine.Measure(native, UserArgs()).ShouldBe(hop2Target);
+
+        var hop1 = WindowsCommandLine.Measure(node, Hop1Args());
+        if (hop1 > CodexLaunchProblemTypes.TransportCeilingChars)
         {
-            var overlay = RealCliStubEnv.ForCodex("http://127.0.0.1:54321", "stub-key", home);
-            var prefix = new List<string>
-            {
-                "--no-alt-screen",
-                "--dangerously-bypass-approvals-and-sandbox",
-            };
-            prefix.AddRange(overlay.Args);
-            prefix.AddRange(["-c", "disable_paste_burst=true", "-c"]);
-            var filler = new string('A', Math.Max(100, target));
-            var payload = CodexInstructionFixtures.StartSentinel + filler;
-            string[] Args() => [.. prefix, "developer_instructions=" + payload];
-            var measured = WindowsCommandLine.Measure(native, Args());
-            if (measured > target)
-                payload = payload[..^Math.Min(payload.Length - 20, measured - target)];
-            else
-                payload += new string('A', target - measured);
-            WindowsCommandLine.Measure(native, Args()).ShouldBe(target);
-            return payload;
+            var extra = hop1 - CodexLaunchProblemTypes.TransportCeilingChars;
+            extra.ShouldBeLessThan(payload.Length - 20);
+            payload = payload[..^extra];
+            WindowsCommandLine.Measure(node, Hop1Args())
+                .ShouldBeLessThanOrEqualTo(CodexLaunchProblemTypes.TransportCeilingChars);
         }
-        finally
-        {
-            try { Directory.Delete(home, recursive: true); } catch { /* best-effort */ }
-        }
+
+        Console.WriteLine(
+            $"CARD-0497 V-3 fit hop1={WindowsCommandLine.Measure(node, Hop1Args())} hop2={WindowsCommandLine.Measure(native, UserArgs())} payload={payload.Length}");
+        return payload;
+    }
+
+    private static string[] Prepend(string first, IReadOnlyList<string> rest)
+    {
+        var result = new string[rest.Count + 1];
+        result[0] = first;
+        for (var i = 0; i < rest.Count; i++)
+            result[i + 1] = rest[i];
+        return result;
     }
 
     private static string? ResolveNative(string npmRoot)
