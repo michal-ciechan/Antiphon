@@ -691,7 +691,7 @@ public sealed class PostLandMutationDeliveryTests
         }
         var queued = await db.SessionQueuedMessages.SingleAsync(m => m.Id == saved.QueueMessageId);
         queued.Body.ShouldContain("publication=");
-        if (busy)
+        if (busy && !alreadySubmitted)
         {
             await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
             h.Adapter.Inputs.ShouldBeEmpty();
@@ -699,6 +699,8 @@ public sealed class PostLandMutationDeliveryTests
             queued.Status.ShouldBe(QueuedMessageStatus.Pending);
             await SetWorkingAsync(connection, h.SessionId, false);
         }
+        else if (busy && alreadySubmitted)
+            await SetWorkingAsync(connection, h.SessionId, false);
         if (!alreadySubmitted && queued.Status != QueuedMessageStatus.Sent)
         {
             await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
@@ -819,6 +821,15 @@ public sealed class PostLandMutationDeliveryTests
             });
         }
         await db.SaveChangesAsync();
+
+        await using var recovery = await BridgeQueueHarness.CreateAsync(new()
+        {
+            AlwaysOn = false, ConnectionString = connection,
+        });
+        recovery.Runtime.Register(sessionId, h.Adapter);
+        recovery.Runner.SetTranscript(events);
+        try { await recovery.Runtime.CatchUpTranscriptAsync(sessionId, CancellationToken.None); }
+        catch (NotSupportedException) { /* EmptyRunnerClient always has a snapshot. */ }
         if (!await db.TranscriptEntries.AnyAsync(e => e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.UserPrompt))
         {
             db.TranscriptEntries.Add(new TranscriptEntry
@@ -835,15 +846,6 @@ public sealed class PostLandMutationDeliveryTests
             });
             await db.SaveChangesAsync();
         }
-
-        await using var recovery = await BridgeQueueHarness.CreateAsync(new()
-        {
-            AlwaysOn = false, ConnectionString = connection,
-        });
-        recovery.Runtime.Register(sessionId, h.Adapter);
-        recovery.Runner.SetTranscript(events);
-        try { await recovery.Runtime.CatchUpTranscriptAsync(sessionId, CancellationToken.None); }
-        catch (NotSupportedException) { /* EmptyRunnerClient always has a snapshot. */ }
         await recovery.Queue.OnTurnEndAsync(sessionId, CancellationToken.None);
         await recovery.Queue.OnTurnEndAsync(sessionId, CancellationToken.None);
         await using var recovered = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
@@ -998,7 +1000,9 @@ public sealed class PostLandMutationDeliveryTests
         db.TranscriptEntries.Add(new TranscriptEntry
         {
             Id = Guid.NewGuid(), AgentSessionId = h.SessionId, Sequence = 5, Kind = TranscriptKinds.UserPrompt,
-            Text = body.Replace(taskId.ToString("N"), Guid.NewGuid().ToString("N")),
+            Text = body.Replace(
+                DelegationReportFormatter.ReportToken(taskId, "done"),
+                DelegationReportFormatter.ReportToken(Guid.NewGuid(), "done")),
             CreatedAt = DateTime.UtcNow, Timestamp = DateTime.UtcNow,
         });
         db.TranscriptEntries.Add(new TranscriptEntry
