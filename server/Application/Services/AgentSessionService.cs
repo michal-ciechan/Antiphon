@@ -430,6 +430,15 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 resumeMode = ApplyEffectiveResumeMode(session, launchSpec, resumeMode);
             adapter = _adapterFactory.Create(session.AgentKind);
             var spec = await BuildRuntimeLaunchSpecAsync(launchSpec, session, session.Cwd, resumeMode, ct);
+            spec = spec with { AcceptedStartedAt = acceptedGeneration };
+            if (spec.VerificationBinding is { } binding
+                && !SessionGeneration.Equal(binding.Generation.AcceptedStartedAt, acceptedGeneration))
+            {
+                throw new ConflictException(
+                    "Verification binding generation disagrees with the launch generation.",
+                    SessionGeneration.BindingMismatch);
+            }
+
             EnsureHerdrLaunchAllowed(session, spec);
             await RequireCurrentCheckLaunchAsync(session, agentId, acceptedGeneration, ct);
             await adapter.StartAsync(spec, ct);
@@ -519,7 +528,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 && (IsClaudeSessionNotFound(adapter, ex)
                     || ex is ConflictException { Code: HerdrProblemTypes.GrokNativeSessionMissing });
             if (adapter is not null)
-                await KillAndDisposeAsync(adapter);
+                await KillAndDisposeAsync(adapter, acceptedGeneration);
 
             if (resumeTargetMissing)
             {
@@ -562,13 +571,20 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     /// Killing an already-killed session is harmless — the runner answers false for a session it no
     /// longer knows.
     /// </summary>
-    private async Task KillAndDisposeAsync(IAgentProtocolAdapter adapter)
+    private async Task KillAndDisposeAsync(
+        IAgentProtocolAdapter adapter, DateTime? acceptedGeneration = null)
     {
         try
         {
-            await adapter.KillAsync(
-                TimeSpan.FromMilliseconds(Math.Max(100, _settings.KillGraceMs)),
-                CancellationToken.None);
+            var grace = TimeSpan.FromMilliseconds(Math.Max(100, _settings.KillGraceMs));
+            if (acceptedGeneration is { } generation)
+            {
+                await adapter.KillGenerationAsync(generation, grace, CancellationToken.None);
+            }
+            else
+            {
+                await adapter.KillAsync(grace, CancellationToken.None);
+            }
         }
         catch (Exception ex)
         {
@@ -1141,6 +1157,60 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     public Task KillAsync(Guid sessionId, CancellationToken ct) =>
         KillAsync(sessionId, SessionTerminationSource.SystemRequest, ct);
 
+    /// <summary>
+    /// CARD-0502: close and kill only if the row still holds <paramref name="expectedGeneration"/>.
+    /// A mismatch or missing generation is a non-kill — never retried as <see cref="KillAsync"/>.
+    /// </summary>
+    public async Task<bool> KillGenerationAsync(
+        Guid sessionId, DateTime expectedGeneration, SessionTerminationSource source, CancellationToken ct)
+    {
+        await using var isolated = CreateIsolatedDbContext();
+        var session = await isolated.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+        if (session is null || !SessionGeneration.Equal(session.StartedAt, expectedGeneration))
+            return false;
+
+        if (session.Status is SessionStatus.Created or SessionStatus.Starting
+            or SessionStatus.Running or SessionStatus.Stopping)
+        {
+            SessionTermination.Record(session, source);
+        }
+
+        session.Status = SessionStatus.Stopping;
+        session.LastSeenAt = UtcNow();
+        await isolated.SaveChangesAsync(ct);
+
+        var killed = false;
+        try
+        {
+            killed = await _runtime.KillGenerationAsync(
+                sessionId,
+                expectedGeneration,
+                TimeSpan.FromMilliseconds(Math.Max(100, _settings.KillGraceMs)),
+                ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Generation-conditional kill of session {SessionId} threw", sessionId);
+        }
+
+        await isolated.Entry(session).ReloadAsync(ct);
+        if (!SessionGeneration.Equal(session.StartedAt, expectedGeneration))
+            return killed;
+
+        var runnerSession = await _runtime.GetSessionAsync(sessionId, ct);
+        session.ExitCode = runnerSession.ExitCode;
+        await _runtime.DisposeSessionAsync(sessionId);
+        session.Status = killed ? SessionStatus.Stopped : SessionStatus.Failed;
+        session.EndedAt = UtcNow();
+        session.LastSeenAt = session.EndedAt.Value;
+        session.FailureReason = killed ? null : "Agent process did not exit within the configured grace period.";
+        if (!killed && session.TerminationSource == SessionTerminationSource.Unknown)
+            SessionTermination.Record(session, source);
+        await isolated.SaveChangesAsync(ct);
+        await SyncTrackedSessionAfterIsolatedKillAsync(sessionId, ct);
+        return killed;
+    }
+
     public async Task KillAsync(Guid sessionId, SessionTerminationSource source, CancellationToken ct)
     {
         // CARD-0319: never flush a caller's still-dirty change tracker. Settlement used to mark
@@ -1623,6 +1693,20 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             await rulesScope.ServiceProvider.GetRequiredService<GrokRulesRefreshService>()
                 .PrepareLaunchAsync(_db, session, spec, ct);
         }
+
+        spec = spec with
+        {
+            AcceptedStartedAt = spec.AcceptedStartedAt ?? SessionGeneration.Normalize(session.StartedAt),
+        };
+        if (spec.VerificationBinding is { } binding
+            && spec.AcceptedStartedAt is { } generation
+            && !SessionGeneration.Equal(binding.Generation.AcceptedStartedAt, generation))
+        {
+            throw new ConflictException(
+                "Verification binding generation disagrees with the launch generation.",
+                SessionGeneration.BindingMismatch);
+        }
+
         return spec;
     }
 

@@ -1,4 +1,5 @@
 using Antiphon.PtyHost.Protocol;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.PtyHost.Tests;
 
@@ -74,7 +75,8 @@ public sealed class HostHarness : IAsyncDisposable
             30,
             MemoryLimitMb: 0,
             TranscriptEnabled: false,
-            AnsiLogPath);
+            AnsiLogPath,
+            AcceptedStartedAt: SessionGeneration.Normalize(DateTime.UtcNow));
     }
 
     public LaunchMessage InteractiveCmdLaunch() =>

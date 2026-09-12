@@ -69,6 +69,9 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
     public async Task<bool> KillAsync(TimeSpan timeout, CancellationToken ct) =>
         await _terminal.KillAsync(ct);
 
+    public Task<bool> KillGenerationAsync(DateTime expectedAcceptedStartedAt, TimeSpan timeout, CancellationToken ct) =>
+        _terminal.KillGenerationAsync(expectedAcceptedStartedAt, ct);
+
     /// <summary>
     /// Types the prompt and then PROVES it submitted, because for Codex a typed body and a
     /// submitted body are routinely different things (CARD-0108 S1: the production body + delayed

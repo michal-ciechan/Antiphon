@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.SessionRunner.Contracts;
+using SessionGeneration = Antiphon.SessionRunner.Contracts.SessionGeneration;
 
 namespace Antiphon.Tests.Agents;
 
@@ -148,6 +149,8 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     public int Rows { get; private set; }
     public int MemoryLimitMb { get; private set; }
     public bool Started { get; private set; }
+    public DateTime? StartedAcceptedGeneration { get; private set; }
+    public List<DateTime> KillGenerationCalls { get; } = [];
     public bool Killed { get; private set; }
     public bool Disposed { get; private set; }
     public bool KillResult { get; set; } = true;
@@ -185,6 +188,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
             throw ThrowOnStart;
 
         Started = true;
+        StartedAcceptedGeneration = spec.AcceptedStartedAt;
         StartedArgs = spec.Args.ToArray();
         StartedHerdr = spec.Herdr;
         StartedEnv = new Dictionary<string, string>(spec.Env, StringComparer.Ordinal);
@@ -219,6 +223,22 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
         if (KillResult)
             _exit.TrySetResult(ExitCode);
 
+        return Task.FromResult(KillResult);
+    }
+
+    public Task<bool> KillGenerationAsync(DateTime expectedAcceptedStartedAt, TimeSpan timeout, CancellationToken ct)
+    {
+        KillGenerationCalls.Add(expectedAcceptedStartedAt);
+        if (StartedAcceptedGeneration is { } started
+            && !SessionGeneration.Equal(started, expectedAcceptedStartedAt))
+        {
+            return Task.FromResult(false);
+        }
+
+        Killed = true;
+        _lifecycle.Add("KillGeneration");
+        if (KillResult)
+            _exit.TrySetResult(ExitCode);
         return Task.FromResult(KillResult);
     }
 

@@ -73,6 +73,12 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             throw new RunnerCapabilityMismatchException(namedMismatch);
         }
 
+        if (spec.AcceptedStartedAt is not null
+            && await GetSessionGenerationCapabilityMismatchAsync(ct) is { } generationMismatch)
+        {
+            throw new RunnerCapabilityMismatchException(generationMismatch);
+        }
+
         var request = new RunnerLaunchRequest(
             sessionId,
             spec.Exe,
@@ -93,15 +99,25 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             Herdr: spec.Herdr,
             GrokRulesPayload: spec.GrokRulesPayload,
             CommandLineBudgetChars: spec.CommandLineBudgetChars,
-            VerificationBinding: spec.VerificationBinding);
+            VerificationBinding: spec.VerificationBinding,
+            AcceptedStartedAt: spec.AcceptedStartedAt);
         var response = await _httpClient.PostAsJsonAsync("sessions", request, JsonOptions, ct);
         // CARD-0341: a runner refusal (herdr_gkp_env_missing, pane_occupied, …) carries its reason
         // in problem-details; surface that as the typed exception so the launch path stores the
         // runner's detail in FailureReason rather than "status code does not indicate success".
         await ThrowForRunnerProblemAsync(response, ct);
         response.EnsureSuccessStatusCode();
-        return Map(await response.Content.ReadFromJsonAsync<RunnerSessionDto>(JsonOptions, ct)
+        var started = Map(await response.Content.ReadFromJsonAsync<RunnerSessionDto>(JsonOptions, ct)
             ?? throw new InvalidOperationException("Session runner returned an empty start response."));
+        if (spec.AcceptedStartedAt is { } expected
+            && !SessionGeneration.Equal(expected, started.AcceptedStartedAt))
+        {
+            throw new ConflictException(
+                "The session runner did not echo the accepted launch generation.",
+                SessionGeneration.NotEchoed);
+        }
+
+        return started;
     }
 
     /// <summary>
@@ -161,6 +177,21 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
 
         var build = DescribeBuild(cached?.Build);
         return $"The session runner does not advertise {RunnerCapabilityFeatures.HerdrNamedTabPlacement}{build}. "
+            + "Rebuild and restart it: pwsh -File scripts/restart-session-runner.ps1.";
+    }
+
+    private async Task<string?> GetSessionGenerationCapabilityMismatchAsync(CancellationToken ct)
+    {
+        await EnsureCapabilitiesProbedAsync(ct);
+        RunnerCapabilitiesDto? cached;
+        lock (_capabilityGate)
+            cached = _cachedCapabilities;
+        if (cached?.Features is { } features
+            && features.Contains(RunnerCapabilityFeatures.SessionGenerationV1, StringComparer.OrdinalIgnoreCase))
+            return null;
+
+        var build = DescribeBuild(cached?.Build);
+        return $"The session runner does not advertise {RunnerCapabilityFeatures.SessionGenerationV1}{build}. "
             + "Rebuild and restart it: pwsh -File scripts/restart-session-runner.ps1.";
     }
 
@@ -389,6 +420,20 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             ?? throw new InvalidOperationException("Session runner returned an empty kill response."));
     }
 
+    public async Task<RunnerKillGenerationResult> KillGenerationAsync(
+        Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct)
+    {
+        var response = await _httpClient.PostAsJsonAsync(
+            $"sessions/{sessionId:D}/kill-generation",
+            new RunnerKillGenerationRequest(expectedAcceptedStartedAt),
+            JsonOptions,
+            ct);
+        await ThrowForRunnerProblemAsync(response, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<RunnerKillGenerationResult>(JsonOptions, ct)
+            ?? throw new InvalidOperationException("Session runner returned an empty kill-generation response.");
+    }
+
     public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(
         [EnumeratorCancellation] CancellationToken ct)
     {
@@ -474,7 +519,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
                         exited.SessionId,
                         exited.ExitCode,
                         MapExitReason(exited.ExitReason),
-                        exited.LastSequence));
+                        exited.LastSequence,
+                        exited.AcceptedStartedAt));
         }
 
         if (eventName == SessionRunnerEventNames.SessionAdopted)
@@ -485,7 +531,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
                 : new SessionRunnerEvent(
                     eventName,
                     adopted.SessionId,
-                    Adopted: new SessionRunnerAdoptedEvent(adopted.SessionId, adopted.Pid, adopted.LastSequence));
+                    Adopted: new SessionRunnerAdoptedEvent(
+                        adopted.SessionId, adopted.Pid, adopted.LastSequence, adopted.AcceptedStartedAt));
         }
 
         if (eventName == SessionRunnerEventNames.SessionStarted)
@@ -592,6 +639,12 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     public async Task<SessionRunnerSessionDto> AttachHerdrAsync(HerdrAttachRequest request, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
+        if (request.AcceptedStartedAt is not null
+            && await GetSessionGenerationCapabilityMismatchAsync(ct) is { } generationMismatch)
+        {
+            throw new RunnerCapabilityMismatchException(generationMismatch);
+        }
+
         var response = await _httpClient.PostAsJsonAsync("sessions/attach", request, JsonOptions, ct);
         await ThrowForRunnerProblemAsync(response, ct);
         return Map(await response.Content.ReadFromJsonAsync<RunnerSessionDto>(JsonOptions, ct)
@@ -703,7 +756,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             dto.Pending,
             dto.HerdrVerifiedAtUtc,
             dto.HerdrOrigin,
-            dto.GrokRulesReceipt);
+            dto.GrokRulesReceipt,
+            dto.AcceptedStartedAt);
 
     private static AgentExitReason MapExitReason(string reason) =>
         Enum.TryParse<AgentExitReason>(reason, ignoreCase: true, out var parsed)

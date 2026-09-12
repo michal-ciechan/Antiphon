@@ -29,6 +29,7 @@ public class PtyHostAdoptionTests
 
         var runtimeA = new SessionRunnerRuntime(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance);
         var dtoA = await StartInteractiveSessionAsync(runtimeA, sessionId);
+        var acceptedA = dtoA.AcceptedStartedAt;
         int? childPid = dtoA.Pid;
         try
         {
@@ -50,6 +51,8 @@ public class PtyHostAdoptionTests
             var dtoB = runtimeB.Get(sessionId);
             dtoB.Status.ShouldBe("Running");
             dtoB.Pid.ShouldBe(childPid);
+            dtoB.AcceptedStartedAt.ShouldBe(acceptedA);
+            dtoB.StartedAt.ShouldNotBe(acceptedA);
 
             // Interpretation rebuilt: pre-restart output is still in the snapshot.
             runtimeB.GetSnapshot(sessionId).RawOutput.ShouldContain("before-restart-marker");
@@ -278,7 +281,8 @@ public class PtyHostAdoptionTests
             new Dictionary<string, string>(),
             Path.GetTempPath(),
             Cols: 100,
-            Rows: 25);
+            Rows: 25,
+            AcceptedStartedAt: SessionGeneration.Normalize(DateTime.UtcNow));
         var dto = await runtime.StartAsync(request, CancellationToken.None);
 
         for (var attempt = 0; attempt < 20 && dto.Status != "Running"; attempt++)

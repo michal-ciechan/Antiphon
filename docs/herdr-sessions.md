@@ -11,6 +11,12 @@ That is the whole benefit, and it is a real one. Everything else on this page is
 > what every agent that existed before the column still has. Herdr is something an operator opts
 > *into*, per agent, never something a migration does to a working agent.
 
+> **Generation metadata (CARD-0502).** Launch-pending, launched, attached and pending sidecars
+> carry the reservation's `AcceptedStartedAt` separately from `LaunchedAtUtc` (the child's real
+> start). Adoption restores that token into a fresh runner object before any synthesized exit.
+> An old sidecar without the field loads null; null is never replaced by the database's current
+> generation. Attach is idempotent on the same pane.
+
 ## Source of truth
 
 | Fact | Owner |

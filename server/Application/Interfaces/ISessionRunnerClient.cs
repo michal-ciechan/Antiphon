@@ -73,5 +73,16 @@ public interface ISessionRunnerClient
     Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct);
     Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct);
     Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct);
+
+    /// <summary>
+    /// CARD-0502: kill only the runner object whose accepted generation matches.
+    /// Default returns an explicit non-kill so untouched fakes never fall through to
+    /// <see cref="KillAsync"/>. Production posts <c>POST /sessions/{id}/kill-generation</c>.
+    /// </summary>
+    Task<RunnerKillGenerationResult> KillGenerationAsync(
+        Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct) =>
+        Task.FromResult(new RunnerKillGenerationResult(
+            sessionId, false, KillGenerationOutcomes.Missing, null));
+
     IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(CancellationToken ct);
 }

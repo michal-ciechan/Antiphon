@@ -49,6 +49,9 @@ public sealed class RunnerOpenCodeAdapter : IAgentProtocolAdapter, IAttachablePr
     public async Task<bool> KillAsync(TimeSpan timeout, CancellationToken ct) =>
         await _terminal.KillAsync(ct);
 
+    public Task<bool> KillGenerationAsync(DateTime expectedAcceptedStartedAt, TimeSpan timeout, CancellationToken ct) =>
+        _terminal.KillGenerationAsync(expectedAcceptedStartedAt, ct);
+
     public async Task SendPromptAsync(string prompt, CancellationToken ct)
     {
         EnsureStarted();

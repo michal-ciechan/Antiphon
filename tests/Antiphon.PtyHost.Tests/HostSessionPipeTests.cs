@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using Antiphon.PtyHost.Protocol;
+using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
@@ -31,6 +32,7 @@ public class HostSessionPipeTests
         await client.SendAsync(host.CmdLaunch("echo pty-marker-1", "exit /b 42"));
         var launched = await client.ExpectAsync<LaunchedMessage>();
         launched.ChildPid.ShouldBeGreaterThan(0);
+        launched.AcceptedStartedAt.ShouldNotBeNull();
 
         await client.SendAsync(new AttachMessage(0));
         var chunks = await client.CollectOutputUntilAsync(text => text.Contains("pty-marker-1"));
@@ -48,8 +50,42 @@ public class HostSessionPipeTests
         manifest.ExitReason.ShouldBe("ProcessExited");
         manifest.AnsiLogPath.ShouldBe(host.AnsiLogPath);
         manifest.HostPid.ShouldBe(Environment.ProcessId);
+        manifest.AcceptedStartedAt.ShouldBe(launched.AcceptedStartedAt);
 
         File.ReadAllText(host.AnsiLogPath).ShouldContain("pty-marker-1");
+    }
+
+    [Test]
+    public void A_launch_pending_manifest_carries_the_generation_and_an_old_manifest_loads_null()
+    {
+        var generation = SessionGeneration.Normalize(DateTime.UtcNow);
+        var dir = Path.Combine(Path.GetTempPath(), $"pty-c502-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var sessionId = Guid.NewGuid();
+            var pending = new PtyHostManifest
+            {
+                SessionId = sessionId,
+                PipeName = "pipe",
+                HostPid = 1,
+                HostStartTimeUtc = DateTime.UtcNow,
+                CreatedAtUtc = DateTime.UtcNow,
+                LaunchPending = true,
+                AcceptedStartedAt = generation,
+            };
+            var path = Path.Combine(dir, "pending.json");
+            pending.SaveAtomic(path);
+            PtyHostManifest.TryLoad(path)!.AcceptedStartedAt.ShouldBe(generation);
+
+            var oldPath = Path.Combine(dir, "old.json");
+            File.WriteAllText(oldPath, """{"sessionId":"00000000-0000-0000-0000-000000000001","pipeName":"p","hostPid":1,"hostStartTimeUtc":"2026-01-01T00:00:00Z","createdAtUtc":"2026-01-01T00:00:00Z"}""");
+            PtyHostManifest.TryLoad(oldPath)!.AcceptedStartedAt.ShouldBeNull();
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
     }
 
     [Test]

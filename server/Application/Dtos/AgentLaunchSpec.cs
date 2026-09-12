@@ -86,4 +86,5 @@ public sealed record AgentLaunchSpec(
     global::Antiphon.SessionRunner.Contracts.HerdrLaunchOptions? Herdr = null,
     global::Antiphon.SessionRunner.Contracts.GrokRulesPayload? GrokRulesPayload = null,
     int? CommandLineBudgetChars = null,
-    global::Antiphon.SessionRunner.Contracts.VerificationExecutionBinding? VerificationBinding = null);
+    global::Antiphon.SessionRunner.Contracts.VerificationExecutionBinding? VerificationBinding = null,
+    DateTime? AcceptedStartedAt = null);

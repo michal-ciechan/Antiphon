@@ -23,7 +23,8 @@ public sealed record RunnerLaunchRequest(
     HerdrLaunchOptions? Herdr = null,
     GrokRulesPayload? GrokRulesPayload = null,
     int? CommandLineBudgetChars = null,
-    VerificationExecutionBinding? VerificationBinding = null)
+    VerificationExecutionBinding? VerificationBinding = null,
+    DateTime? AcceptedStartedAt = null)
 {
     // Set only by the runner after materialization, never trusted from a caller.
     [System.Text.Json.Serialization.JsonIgnore]
@@ -98,7 +99,8 @@ public sealed record HerdrAttachRequest(
     string WorkspaceKey,
     Guid? ExpectedNativeSessionId = null,
     string? PaneTitle = null,
-    string? AgentSlug = null);
+    string? AgentSlug = null,
+    DateTime? AcceptedStartedAt = null);
 
 /// <summary>CARD-0213: read-only snapshot of a herdr pane. Nothing is written, typed, or renamed.</summary>
 public sealed record HerdrPaneInspectDto(
@@ -140,6 +142,12 @@ public static class RunnerCapabilityFeatures
 
     /// <summary>CARD-0384: runner implements named-tab placement (TabLabel + check route).</summary>
     public const string HerdrNamedTabPlacement = "herdr-named-tab-placement";
+
+    /// <summary>
+    /// CARD-0502: launch binding, persisted adoption identity, exit emission and
+    /// generation-conditional kill all work on this runner.
+    /// </summary>
+    public const string SessionGenerationV1 = "sessionGenerationV1";
 }
 
 /// <summary>Values for <see cref="RunnerLaunchRequest.TranscriptFormat"/>.</summary>
@@ -208,7 +216,8 @@ public sealed record RunnerSessionDto(
     // CARD-0213: HerdrPaneOrigins on a herdr session. Null for pty / older runners / unknown.
     string? HerdrOrigin = null,
     GrokRulesReceipt? GrokRulesReceipt = null,
-    VerificationExecutionBinding? VerificationBinding = null);
+    VerificationExecutionBinding? VerificationBinding = null,
+    DateTime? AcceptedStartedAt = null);
 
 public sealed record RunnerBufferDto(
     Guid SessionId,
@@ -230,13 +239,15 @@ public sealed record RunnerOutputEvent(
 public sealed record RunnerSessionStartedEvent(
     Guid SessionId,
     int? Pid,
-    DateTime StartedAt);
+    DateTime StartedAt,
+    DateTime? AcceptedStartedAt = null);
 
 public sealed record RunnerSessionExitedEvent(
     Guid SessionId,
     int? ExitCode,
     string ExitReason,
-    long LastSequence);
+    long LastSequence,
+    DateTime? AcceptedStartedAt = null);
 
 /// <summary>
 /// A restarted runner re-attached to a still-live pty-host (the session kept running the whole
@@ -247,7 +258,8 @@ public sealed record RunnerSessionAdoptedEvent(
     Guid SessionId,
     int? Pid,
     DateTime StartedAt,
-    long LastSequence);
+    long LastSequence,
+    DateTime? AcceptedStartedAt = null);
 
 /// <summary>
 /// CARD-0162: herdr agent_status changed for a tracked pane. Additive SSE event — old servers

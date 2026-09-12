@@ -9,6 +9,7 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -36,7 +37,7 @@ public class SessionReconciliationServiceTests
         var marker = NewMarker();
         try
         {
-            var (agent, session) = await SeedWorkingAgentWithSessionAsync(
+            var (agent, session, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Running, staleAgent: true);
 
             await using var db = CreateContext();
@@ -72,7 +73,7 @@ public class SessionReconciliationServiceTests
         var marker = NewMarker();
         try
         {
-            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Running, staleAgent: true);
 
             await using var db = CreateContext();
@@ -82,7 +83,8 @@ public class SessionReconciliationServiceTests
                 [
                     new SessionRunnerSessionDto(
                         sessionId, Pid: 4242, StartedAt: DateTime.UtcNow.AddHours(-1),
-                        Status: "Exited", ExitCode: 0, ExitReason: AgentExitReason.Unknown, LastSequence: 10)
+                        Status: "Exited", ExitCode: 0, ExitReason: AgentExitReason.Unknown, LastSequence: 10,
+                        AcceptedStartedAt: startedAt)
                 ]
             };
             var service = BuildService(db, runner, new MockEventBus());
@@ -108,7 +110,7 @@ public class SessionReconciliationServiceTests
         var marker = NewMarker();
         try
         {
-            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Running, staleAgent: true);
 
             await using var db = CreateContext();
@@ -118,7 +120,8 @@ public class SessionReconciliationServiceTests
                 [
                     new SessionRunnerSessionDto(
                         sessionId, Pid: 4242, StartedAt: DateTime.UtcNow.AddHours(-1),
-                        Status: "Exited", ExitCode: 1, ExitReason: AgentExitReason.ProcessExited, LastSequence: 10)
+                        Status: "Exited", ExitCode: 1, ExitReason: AgentExitReason.ProcessExited, LastSequence: 10,
+                        AcceptedStartedAt: startedAt)
                 ]
             };
             var service = BuildService(db, runner, new MockEventBus());
@@ -146,7 +149,7 @@ public class SessionReconciliationServiceTests
             "codex_command_line_too_long: launcher node.exe codex.js measured 30,001 UTF-16 units against an effective budget of 30,000.";
         try
         {
-            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Starting, staleAgent: true, failureReason: seeded);
             await using (var stamp = CreateContext())
             {
@@ -162,7 +165,8 @@ public class SessionReconciliationServiceTests
                 [
                     new SessionRunnerSessionDto(
                         sessionId, Pid: 4242, StartedAt: DateTime.UtcNow.AddHours(-1),
-                        Status: "Exited", ExitCode: 1, ExitReason: AgentExitReason.ProcessExited, LastSequence: 0)
+                        Status: "Exited", ExitCode: 1, ExitReason: AgentExitReason.ProcessExited, LastSequence: 0,
+                        AcceptedStartedAt: startedAt)
                 ]
             };
             var service = BuildService(db, runner, new MockEventBus());
@@ -185,7 +189,7 @@ public class SessionReconciliationServiceTests
         var marker = NewMarker();
         try
         {
-            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Running, staleAgent: true);
 
             await using var db = CreateContext();
@@ -195,7 +199,8 @@ public class SessionReconciliationServiceTests
                 [
                     new SessionRunnerSessionDto(
                         sessionId, Pid: 4242, StartedAt: DateTime.UtcNow.AddHours(-1),
-                        Status: "Exited", ExitCode: -1, ExitReason: AgentExitReason.CpuSpinKilled, LastSequence: 10)
+                        Status: "Exited", ExitCode: -1, ExitReason: AgentExitReason.CpuSpinKilled, LastSequence: 10,
+                        AcceptedStartedAt: startedAt)
                 ]
             };
             var service = BuildService(db, runner, new MockEventBus());
@@ -219,7 +224,7 @@ public class SessionReconciliationServiceTests
         var marker = NewMarker();
         try
         {
-            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Running, staleAgent: true);
             await using (var stamp = CreateContext())
             {
@@ -235,7 +240,8 @@ public class SessionReconciliationServiceTests
                 [
                     new SessionRunnerSessionDto(
                         sessionId, Pid: 4242, StartedAt: DateTime.UtcNow.AddHours(-1),
-                        Status: "Exited", ExitCode: 0, ExitReason: AgentExitReason.Unknown, LastSequence: 10)
+                        Status: "Exited", ExitCode: 0, ExitReason: AgentExitReason.Unknown, LastSequence: 10,
+                        AcceptedStartedAt: startedAt)
                 ]
             };
             var service = BuildService(db, runner, new MockEventBus());
@@ -259,7 +265,7 @@ public class SessionReconciliationServiceTests
         var marker = NewMarker();
         try
         {
-            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Running, staleAgent: true);
 
             await using var db = CreateContext();
@@ -270,7 +276,7 @@ public class SessionReconciliationServiceTests
                     new SessionRunnerSessionDto(
                         sessionId, Pid: 4242, StartedAt: DateTime.UtcNow.AddHours(-1),
                         Status: "Exited", ExitCode: null, ExitReason: AgentExitReason.HerdrPaneClosed,
-                        LastSequence: 10)
+                        LastSequence: 10, AcceptedStartedAt: startedAt)
                 ]
             };
             var service = BuildService(db, runner, new MockEventBus());
@@ -298,7 +304,7 @@ public class SessionReconciliationServiceTests
         var marker = NewMarker();
         try
         {
-            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(marker, SessionStatus.Running, staleAgent: true);
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(marker, SessionStatus.Running, staleAgent: true);
             await using var db = CreateContext();
             var runner = new FakeRunnerClient { Sessions = [new SessionRunnerSessionDto(sessionId, 4242, DateTime.UtcNow.AddHours(-1), "Exited", null, reason, 10)] };
             await BuildService(db, runner, new MockEventBus()).ScanAsync(CancellationToken.None);
@@ -314,7 +320,7 @@ public class SessionReconciliationServiceTests
         var marker = NewMarker();
         try
         {
-            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(marker, SessionStatus.Running, staleAgent: true);
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(marker, SessionStatus.Running, staleAgent: true);
             await using var db = CreateContext();
             // The launch catch and runner exit can publish in either order. Keep the row in the
             // reconciliation scan's live set so this test exercises its actual evidence writer.
@@ -338,11 +344,11 @@ public class SessionReconciliationServiceTests
         var ownership = new RecordingLaunchOwnership();
         try
         {
-            var (agentId, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (agentId, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Starting, staleAgent: false);
 
             await using var db = CreateContext();
-            var service = BuildService(db, RunnerRunning(sessionId), new MockEventBus(), ownership: ownership);
+            var service = BuildService(db, RunnerRunning(sessionId, startedAt), new MockEventBus(), ownership: ownership);
 
             await service.ScanAsync(CancellationToken.None);
 
@@ -364,12 +370,12 @@ public class SessionReconciliationServiceTests
         var ownership = new RecordingLaunchOwnership();
         try
         {
-            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Starting, staleAgent: false);
             ownership.Owned.Add(sessionId);
 
             await using var db = CreateContext();
-            var service = BuildService(db, RunnerRunning(sessionId), new MockEventBus(), ownership: ownership);
+            var service = BuildService(db, RunnerRunning(sessionId, startedAt), new MockEventBus(), ownership: ownership);
 
             await service.ScanAsync(CancellationToken.None);
 
@@ -388,7 +394,7 @@ public class SessionReconciliationServiceTests
         var ownership = new RecordingLaunchOwnership();
         try
         {
-            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Starting, staleAgent: false);
 
             await using var db = CreateContext();
@@ -415,18 +421,163 @@ public class SessionReconciliationServiceTests
     }
 
     [Test]
+    public async Task Runner_Exited_snapshot_for_a_superseded_generation_does_not_close_the_row()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var generationA = SessionGeneration.Normalize(DateTime.UtcNow.AddMinutes(-10));
+            var generationB = SessionGeneration.Next(generationA, DateTime.UtcNow);
+            var (_, sessionId, _) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Running, staleAgent: true);
+            await using (var db = CreateContext())
+            {
+                await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u
+                    .SetProperty(s => s.StartedAt, generationB));
+            }
+
+            await using var scan = CreateContext();
+            var alerts = new RecordingAlertService();
+            var eventBus = new MockEventBus();
+            var service = BuildService(scan, new FakeRunnerClient
+            {
+                Sessions =
+                [
+                    new SessionRunnerSessionDto(
+                        sessionId, Pid: 1, StartedAt: generationA, Status: "Exited",
+                        ExitCode: 1, ExitReason: AgentExitReason.KilledByRequest, LastSequence: 1,
+                        AcceptedStartedAt: generationA)
+                ]
+            }, eventBus, alerts);
+            await service.ScanAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Running);
+            alerts.For(sessionId).ShouldBeEmpty();
+            eventBus.PublishedEvents.ShouldNotContain(e => e.EventName == "SessionExited");
+        }
+        finally { await CleanupAsync(marker); }
+    }
+
+    [Test]
+    public async Task Runner_Running_snapshot_for_a_superseded_generation_does_not_resume_an_interrupted_launch()
+    {
+        var marker = NewMarker();
+        var ownership = new RecordingLaunchOwnership();
+        try
+        {
+            var generationA = SessionGeneration.Normalize(DateTime.UtcNow.AddMinutes(-10));
+            var generationB = SessionGeneration.Next(generationA, DateTime.UtcNow.AddHours(-2));
+            var (_, sessionId, _) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Starting, staleAgent: false);
+            await using (var db = CreateContext())
+            {
+                await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u
+                    .SetProperty(s => s.StartedAt, generationB));
+            }
+
+            await using var scan = CreateContext();
+            var service = BuildService(scan, RunnerRunning(sessionId, generationA), new MockEventBus(), ownership: ownership);
+            await service.ScanAsync(CancellationToken.None);
+            ownership.Resumes.ShouldBeEmpty();
+        }
+        finally { await CleanupAsync(marker); }
+    }
+
+    [Test]
+    public async Task A_Failed_row_at_a_newer_generation_is_not_re_adopted_from_older_Running_evidence()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var generationA = SessionGeneration.Normalize(DateTime.UtcNow.AddMinutes(-10));
+            var generationB = SessionGeneration.Next(generationA, DateTime.UtcNow);
+            var (_, sessionId, _) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Failed, staleAgent: true, agentStatus: AgentStatus.Failed);
+            await using (var db = CreateContext())
+            {
+                await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u
+                    .SetProperty(s => s.StartedAt, generationB));
+            }
+
+            var flapState = new SessionReAdoptionState();
+            var runner = RunnerRunning(sessionId, generationA);
+            await using var scan = CreateContext();
+            var service = BuildService(scan, runner, new MockEventBus(), reAdoptions: flapState);
+            await service.ScanAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Failed);
+            runner.Probed.ShouldBeEmpty();
+            flapState.CountFor(sessionId).ShouldBe(0);
+        }
+        finally { await CleanupAsync(marker); }
+    }
+
+    [Test]
+    public async Task A_stale_list_absence_does_not_close_a_row_accepted_after_the_list()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var generationA = SessionGeneration.Normalize(DateTime.UtcNow.AddHours(-3));
+            var generationB = SessionGeneration.Next(generationA, DateTime.UtcNow.AddHours(-2));
+            var (_, sessionId, _) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Starting, staleAgent: false);
+            await using (var db = CreateContext())
+            {
+                await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u
+                    .SetProperty(s => s.StartedAt, generationA)
+                    .SetProperty(s => s.Status, SessionStatus.Starting));
+            }
+
+            var refreshed = false;
+            var runner = new FakeRunnerClient
+            {
+                OnList = async ct =>
+                {
+                    await using var db = CreateContext();
+                    await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u
+                        .SetProperty(s => s.StartedAt, generationB)
+                        .SetProperty(s => s.Status, SessionStatus.Starting), ct);
+                },
+                Sessions = [],
+                GetOverride = _ =>
+                {
+                    refreshed = true;
+                    return new SessionRunnerSessionDto(
+                        sessionId, Pid: 1, StartedAt: generationB, Status: "Running",
+                        ExitCode: null, ExitReason: AgentExitReason.Unknown, LastSequence: 0,
+                        AcceptedStartedAt: generationB);
+                }
+            };
+
+            await using var scan = CreateContext();
+            var service = BuildService(scan, runner, new MockEventBus());
+            await service.ScanAsync(CancellationToken.None);
+
+            refreshed.ShouldBeTrue();
+            await using var verify = CreateContext();
+            var row = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            row.Status.ShouldBe(SessionStatus.Starting);
+            row.StartedAt.ShouldBe(generationB);
+        }
+        finally { await CleanupAsync(marker); }
+    }
+
+    [Test]
     public async Task LaunchResumeEnabled_false_does_not_resume()
     {
         var marker = NewMarker();
         var ownership = new RecordingLaunchOwnership();
         try
         {
-            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Starting, staleAgent: false);
 
             await using var db = CreateContext();
             var service = BuildService(
-                db, RunnerRunning(sessionId), new MockEventBus(),
+                db, RunnerRunning(sessionId, startedAt), new MockEventBus(),
                 ownership: ownership, launchResumeEnabled: false);
 
             await service.ScanAsync(CancellationToken.None);
@@ -445,7 +596,7 @@ public class SessionReconciliationServiceTests
         var marker = NewMarker();
         try
         {
-            var (agentId, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (agentId, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Starting, staleAgent: false);
 
             await using var db = CreateContext();
@@ -493,7 +644,7 @@ public class SessionReconciliationServiceTests
         var marker = NewMarker();
         try
         {
-            var (agentId, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (agentId, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Running, staleAgent: true);
 
             await using var db = CreateContext();
@@ -528,7 +679,7 @@ public class SessionReconciliationServiceTests
         var marker = NewMarker();
         try
         {
-            var (agentId, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (agentId, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Failed, staleAgent: true,
                 agentStatus: AgentStatus.Failed,
                 failureReason: "No composer evidence appeared for the typed body.");
@@ -536,7 +687,8 @@ public class SessionReconciliationServiceTests
             await using var db = CreateContext();
             var alerts = new RecordingAlertService();
             var eventBus = new MockEventBus();
-            var service = BuildService(db, RunnerRunning(sessionId), eventBus, alerts);
+            var flapState = new SessionReAdoptionState();
+            var service = BuildService(db, RunnerRunning(sessionId, startedAt), eventBus, alerts, flapState);
 
             await service.ScanAsync(CancellationToken.None);
 
@@ -557,6 +709,7 @@ public class SessionReconciliationServiceTests
                 customMessage: "the reason it was wrongly failed belongs on the record");
             alerts.For(sessionId).ShouldNotBeEmpty();
             eventBus.PublishedEvents.ShouldContain(e => e.EventName == "AgentChanged");
+            flapState.CountFor(sessionId).ShouldBe(1);
         }
         finally
         {
@@ -576,7 +729,7 @@ public class SessionReconciliationServiceTests
         var marker = NewMarker();
         try
         {
-            var (agentId, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (agentId, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Failed, staleAgent: true, agentStatus: AgentStatus.Running);
             // The agent has been relaunched onto a different session since — the pointer no longer
             // names this one, so this session is unclaimed.
@@ -589,13 +742,15 @@ public class SessionReconciliationServiceTests
 
             await using var db = CreateContext();
             var alerts = new RecordingAlertService();
-            var service = BuildService(db, RunnerRunning(sessionId), new MockEventBus(), alerts);
+            var flapState = new SessionReAdoptionState();
+            var service = BuildService(db, RunnerRunning(sessionId, startedAt), new MockEventBus(), alerts, flapState);
 
             await service.ScanAsync(CancellationToken.None);
 
             await using var verify = CreateContext();
             (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status
                 .ShouldBe(SessionStatus.Running, "unclaimed must never imply kill");
+            flapState.CountFor(sessionId).ShouldBe(1);
             var agent = await verify.Agents.SingleAsync(a => a.Id == agentId);
             agent.PersistentSessionId.ShouldBe(otherSessionId.ToString("D"), "the pointer is not stolen back");
 
@@ -623,11 +778,11 @@ public class SessionReconciliationServiceTests
         var marker = NewMarker();
         try
         {
-            var (agentId, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (agentId, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Failed, staleAgent: true, agentStatus: AgentStatus.Failed);
 
             await using var db = CreateContext();
-            var runner = RunnerRunning(sessionId);
+            var runner = RunnerRunning(sessionId, startedAt);
             runner.BufferError = new HttpRequestException("the pty-host pipe is gone");
             var alerts = new RecordingAlertService();
             var service = BuildService(db, runner, new MockEventBus(), alerts);
@@ -656,7 +811,7 @@ public class SessionReconciliationServiceTests
         var marker = NewMarker();
         try
         {
-            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Failed, staleAgent: true, agentStatus: AgentStatus.Failed);
 
             await using var db = CreateContext();
@@ -689,11 +844,11 @@ public class SessionReconciliationServiceTests
         var marker = NewMarker();
         try
         {
-            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Stopped, staleAgent: true, agentStatus: AgentStatus.Stopped);
 
             await using var db = CreateContext();
-            var runner = RunnerRunning(sessionId);
+            var runner = RunnerRunning(sessionId, startedAt);
             var service = BuildService(db, runner, new MockEventBus(), new RecordingAlertService());
 
             await service.ScanAsync(CancellationToken.None);
@@ -740,52 +895,74 @@ public class SessionReconciliationServiceTests
     /// escalates instead of running the loop forever.
     /// </summary>
     [Test]
-    public async Task Re_adoption_stops_and_escalates_once_the_flap_cap_is_reached()
+    public async Task Re_adoption_counts_committed_transitions_and_latches_after_the_cap()
     {
         var marker = NewMarker();
         try
         {
-            var (agentId, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (agentId, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Failed, staleAgent: true, agentStatus: AgentStatus.Failed);
 
-            // One state object across every sweep — it is a singleton in production for exactly this
-            // reason: the service is scoped, so a per-sweep counter would bound nothing.
             var flapState = new SessionReAdoptionState();
             var alerts = new RecordingAlertService();
-            for (var round = 1; round <= 4; round++)
+            var logs = new List<string>();
+            var logger = new ListLogger<SessionReconciliationService>(logs);
+            var runner = RunnerRunning(sessionId, startedAt);
+            for (var round = 1; round <= 104; round++)
             {
                 await using var db = CreateContext();
                 var service = BuildService(
-                    db, RunnerRunning(sessionId), new MockEventBus(), alerts, flapState);
+                    db, runner, new MockEventBus(), alerts, flapState, logger: logger);
                 await service.ScanAsync(CancellationToken.None);
 
                 await using var verify = CreateContext();
-                var status = (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status;
+                var row = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
                 if (round <= 3)
                 {
-                    status.ShouldBe(SessionStatus.Running, $"round {round} is within the cap");
-                    // Whatever wrongly failed it does so again — the flap this cap exists for.
+                    row.Status.ShouldBe(SessionStatus.Running, $"round {round} is within the cap");
+                    flapState.CountFor(sessionId).ShouldBe(round);
+                    alerts.For(sessionId).Count(a => a.Severity == AlertSeverity.Critical).ShouldBe(0);
                     await verify.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u
-                        .SetProperty(s => s.Status, SessionStatus.Failed));
+                        .SetProperty(s => s.Status, SessionStatus.Failed)
+                        .SetProperty(s => s.StartedAt, startedAt)
+                        .SetProperty(s => s.EndedAt, DateTime.UtcNow));
+                    await verify.Agents.Where(a => a.Id == agentId).ExecuteUpdateAsync(u => u
+                        .SetProperty(a => a.Status, AgentStatus.Failed));
                 }
                 else
                 {
-                    status.ShouldBe(SessionStatus.Failed, "the fourth round stops re-adopting");
+                    row.Status.ShouldBe(SessionStatus.Failed, $"round {round} stays Failed");
+                    flapState.CountFor(sessionId).ShouldBe(3);
                 }
             }
 
-            flapState.CountFor(sessionId).ShouldBe(4);
-            alerts.For(sessionId).ShouldContain(a => a.Severity == AlertSeverity.Critical);
+            runner.Probed.Count.ShouldBe(4);
+            runner.Killed.ShouldBeEmpty();
             await using var final = CreateContext();
-            (await final.AgentIncidents
-                    .Where(i => i.AgentId == agentId && i.Severity == AlertSeverity.Critical)
-                    .ToListAsync())
-                .ShouldHaveSingleItem();
+            var critical = await final.AgentIncidents
+                .Where(i => i.AgentId == agentId && i.Severity == AlertSeverity.Critical)
+                .ToListAsync();
+            critical.ShouldHaveSingleItem();
+            critical[0].FailureReason.ShouldBe("ReAdoptCapReached");
+            critical[0].Message.ShouldContain("Re-adopted this session 3 times during this server uptime (cap 3).");
+            critical[0].Message.ShouldContain("A further Failed/runner-Running mismatch was observed; automatic re-adoption is stopped.");
+            alerts.For(sessionId).Count(a => a.Severity == AlertSeverity.Critical).ShouldBe(1);
+            logs.Count(l => l.Contains("automatic re-adoption is stopped", StringComparison.OrdinalIgnoreCase)
+                || l.Contains("A further Failed/runner-Running mismatch")).ShouldBe(1);
         }
         finally
         {
             await CleanupAsync(marker);
         }
+    }
+
+    private sealed class ListLogger<T>(List<string> sink) : ILogger<T>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel level, EventId id, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            sink.Add(formatter(state, exception));
     }
 
     /// <summary>
@@ -797,13 +974,13 @@ public class SessionReconciliationServiceTests
         var marker = NewMarker();
         try
         {
-            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Failed, staleAgent: true, agentStatus: AgentStatus.Failed);
 
             await using var db = CreateContext();
             var alerts = new RecordingAlertService();
             var service = BuildService(
-                db, RunnerRunning(sessionId), new MockEventBus(), alerts, reAdoptEnabled: false);
+                db, RunnerRunning(sessionId, startedAt), new MockEventBus(), alerts, reAdoptEnabled: false);
 
             await service.ScanAsync(CancellationToken.None);
 
@@ -828,7 +1005,7 @@ public class SessionReconciliationServiceTests
         var marker = NewMarker();
         try
         {
-            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Failed, staleAgent: true, agentStatus: AgentStatus.Failed);
 
             await using var db = CreateContext();
@@ -853,7 +1030,7 @@ public class SessionReconciliationServiceTests
         var marker = NewMarker();
         try
         {
-            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Running, staleAgent: true);
 
             await using var db = CreateContext();
@@ -889,7 +1066,7 @@ public class SessionReconciliationServiceTests
         var marker = NewMarker();
         try
         {
-            var (agentId, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (agentId, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Running, staleAgent: true);
             var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 25, 12, 0, 0, TimeSpan.Zero));
             var pendingState = new HerdrPendingAlertState();
@@ -957,7 +1134,7 @@ public class SessionReconciliationServiceTests
         var marker = NewMarker();
         try
         {
-            var (agentId, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (agentId, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Running, staleAgent: true);
             await BindChannelAsync(agentId, marker);
 
@@ -1012,7 +1189,7 @@ public class SessionReconciliationServiceTests
         var marker = NewMarker();
         try
         {
-            var (agentId, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (agentId, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Failed, staleAgent: true,
                 agentStatus: AgentStatus.Failed,
                 failureReason: "Process exited (HerdrRestartPresumedDead, code unknown).");
@@ -1051,7 +1228,7 @@ public class SessionReconciliationServiceTests
         var marker = NewMarker();
         try
         {
-            var (agentId, sessionId) = await SeedWorkingAgentWithSessionAsync(
+            var (agentId, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Failed, staleAgent: true, agentStatus: AgentStatus.Failed);
 
             await using var db = CreateContext();
@@ -1128,7 +1305,9 @@ public class SessionReconciliationServiceTests
         TimeProvider? time = null,
         int herdrPendingAlertMinutes = 5,
         ILaunchOwnership? ownership = null,
-        bool launchResumeEnabled = true) =>
+        bool launchResumeEnabled = true,
+        int maxReAdoptions = 3,
+        ILogger<SessionReconciliationService>? logger = null) =>
         new(
             db,
             runnerClient,
@@ -1136,6 +1315,7 @@ public class SessionReconciliationServiceTests
             alerts ?? new NoOpAlertService(),
             new RunnerReachabilityState(),
             reAdoptions ?? new SessionReAdoptionState(),
+            new SessionGenerationCompatState(),
             pendingAlerts ?? new HerdrPendingAlertState(),
             // Default OFF for every pre-existing case: the census is global by nature and these
             // tests share a database, so a suite that had not thought about it must not start
@@ -1151,22 +1331,24 @@ public class SessionReconciliationServiceTests
                 CensusAlertEnabled = censusAlertEnabled && census is not null,
                 HerdrPendingAlertMinutes = herdrPendingAlertMinutes,
                 LaunchResumeEnabled = launchResumeEnabled,
+                MaxReAdoptionsPerSession = maxReAdoptions,
             }),
             time ?? TimeProvider.System,
-            NullLogger<SessionReconciliationService>.Instance,
+            logger ?? NullLogger<SessionReconciliationService>.Instance,
             ownership);
 
     /// <summary>A runner that reports one session Running, with a real process behind it.</summary>
     private static FakeRunnerClient RunnerRunning(
-        Guid sessionId, int? pid = 4242, int? hostPid = 4243) =>
+        Guid sessionId, DateTime? acceptedStartedAt = null, int? pid = 4242, int? hostPid = 4243) =>
         new()
         {
             Sessions =
             [
                 new SessionRunnerSessionDto(
-                    sessionId, Pid: pid, StartedAt: DateTime.UtcNow.AddHours(-1),
+                    sessionId, Pid: pid, StartedAt: acceptedStartedAt ?? DateTime.UtcNow.AddHours(-1),
                     Status: "Running", ExitCode: null, ExitReason: AgentExitReason.Unknown,
-                    LastSequence: 10, HostPid: hostPid)
+                    LastSequence: 10, HostPid: hostPid,
+                    AcceptedStartedAt: acceptedStartedAt)
             ]
         };
 
@@ -1210,8 +1392,13 @@ public class SessionReconciliationServiceTests
         public IReadOnlyList<AlertRaise> For(Guid sessionId) =>
             Raised.Where(a => a.SessionId == sessionId).ToList();
 
+        public bool ThrowOnce { get; set; }
+        private int _threw;
+
         public Task RaiseAsync(AlertRaise alert, CancellationToken ct)
         {
+            if (ThrowOnce && Interlocked.Exchange(ref _threw, 1) == 0)
+                throw new InvalidOperationException("RecordingAlertService throw-once");
             lock (_raised)
                 _raised.Add(alert);
             return Task.CompletedTask;
@@ -1220,7 +1407,7 @@ public class SessionReconciliationServiceTests
 
     private static string NewMarker() => $"antiphon-reconciliation-tests-{Guid.NewGuid():N}";
 
-    private static async Task<(Guid AgentId, Guid SessionId)> SeedWorkingAgentWithSessionAsync(
+    private static async Task<(Guid AgentId, Guid SessionId, DateTime StartedAt)> SeedWorkingAgentWithSessionAsync(
         string marker,
         SessionStatus sessionStatus,
         bool staleAgent,
@@ -1264,7 +1451,7 @@ public class SessionReconciliationServiceTests
             UpdatedAt = staleAgent ? now.AddHours(-1) : now
         });
         await db.SaveChangesAsync();
-        return (agentId, sessionId);
+        return (agentId, sessionId, startedAt);
     }
 
     private static async Task<Guid> SeedAgentAsync(
@@ -1348,9 +1535,18 @@ public class SessionReconciliationServiceTests
         public Exception? BufferError { get; set; }
         public List<Guid> Probed { get; } = [];
         public List<Guid> Killed { get; } = [];
+        public List<(Guid SessionId, DateTime Expected)> KillGenerationCalls { get; } = [];
+        public Func<CancellationToken, Task>? OnList { get; set; }
+        public Func<Guid, CancellationToken, Task>? OnProbe { get; set; }
 
-        public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
-            ListError is not null ? Task.FromException<IReadOnlyList<SessionRunnerSessionDto>>(ListError) : Task.FromResult(Sessions);
+        public async Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct)
+        {
+            if (OnList is not null)
+                await OnList(ct);
+            if (ListError is not null)
+                throw ListError;
+            return Sessions;
+        }
 
         public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct) =>
             throw new NotSupportedException();
@@ -1366,12 +1562,22 @@ public class SessionReconciliationServiceTests
             return Task.FromResult(match);
         }
 
-        public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct)
+        public async Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct)
         {
+            if (OnProbe is not null)
+                await OnProbe(sessionId, ct);
             Probed.Add(sessionId);
-            return BufferError is not null
-                ? Task.FromException<SessionRunnerBufferDto>(BufferError)
-                : Task.FromResult(new SessionRunnerBufferDto(sessionId, "> ", 10));
+            if (BufferError is not null)
+                throw BufferError;
+            return new SessionRunnerBufferDto(sessionId, "> ", 10);
+        }
+
+        public Task<RunnerKillGenerationResult> KillGenerationAsync(
+            Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct)
+        {
+            KillGenerationCalls.Add((sessionId, expectedAcceptedStartedAt));
+            return Task.FromResult(new RunnerKillGenerationResult(
+                sessionId, false, KillGenerationOutcomes.Mismatch, expectedAcceptedStartedAt));
         }
 
         public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>

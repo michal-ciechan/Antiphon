@@ -54,7 +54,8 @@ public sealed record LaunchMessage(
     string AnsiLogPath,
     global::Antiphon.SessionRunner.Contracts.GrokRulesReceipt? GrokRulesReceipt = null,
     global::Antiphon.SessionRunner.Contracts.VerificationExecutionBinding? VerificationBinding = null,
-    Guid? RunnerStoreId = null) : PtyHostMessage;
+    Guid? RunnerStoreId = null,
+    DateTime? AcceptedStartedAt = null) : PtyHostMessage;
 
 /// <summary>Negotiated v1 custody request. Seal is irreversible and never kills a process.</summary>
 public sealed record CustodyRequestMessage(
@@ -98,7 +99,10 @@ public sealed record HelloAckMessage(
     IReadOnlyList<string>? Features = null,
     Guid? HostInstanceId = null) : PtyHostMessage;
 
-public sealed record LaunchedMessage(int ChildPid, DateTime ChildStartTimeUtc) : PtyHostMessage;
+public sealed record LaunchedMessage(
+    int ChildPid,
+    DateTime ChildStartTimeUtc,
+    DateTime? AcceptedStartedAt = null) : PtyHostMessage;
 
 /// <summary>
 /// Successful attach ack, sent BEFORE any replayed output so the client can distinguish

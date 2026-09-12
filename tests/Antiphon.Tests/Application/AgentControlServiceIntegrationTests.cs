@@ -16,6 +16,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -1610,6 +1611,80 @@ public class AgentControlServiceIntegrationTests
         await db.SaveChangesAsync();
     }
 
+    [Test]
+    public async Task Resume_generation_is_strictly_greater_even_when_the_clock_is_frozen_or_moves_backward()
+    {
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "agent-workspace");
+            Directory.CreateDirectory(workspace);
+            var t = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+            var clock = new FakeTimeProvider(t);
+            var first = new FakeAgentProtocolAdapter();
+            var second = new FakeAgentProtocolAdapter();
+            var third = new FakeAgentProtocolAdapter();
+            var fourth = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(
+                tempRoot, [first, second, third, fourth], defaultKind: "ClaudeCode", timeProvider: clock);
+
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest("Clock Claude", workspace), CancellationToken.None);
+            var firstStart = await harness.Control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            DateTime ReadStartedAt()
+            {
+                using var db = CreateContext();
+                var id = Guid.Parse(db.Agents.Single(a => a.Id == agent.Id).PersistentSessionId!);
+                return db.AgentSessions.Single(s => s.Id == id).StartedAt;
+            }
+
+            var original = ReadStartedAt();
+            await MarkSessionEndedAsync(firstStart.PersistentSessionId!, SessionStatus.Failed);
+
+            clock.SetUtcNow(t);
+            using (var scope = harness.Provider.CreateScope())
+            {
+                await scope.ServiceProvider.GetRequiredService<AgentControlService>()
+                    .StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+            }
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            var afterFrozen = ReadStartedAt();
+            afterFrozen.ShouldBe(SessionGeneration.Next(original, t.UtcDateTime));
+            second.StartedAcceptedGeneration.ShouldBe(afterFrozen);
+
+            await MarkSessionEndedAsync(firstStart.PersistentSessionId!, SessionStatus.Failed);
+            clock.SetUtcNow(t.AddMinutes(-1));
+            using (var scope = harness.Provider.CreateScope())
+            {
+                await scope.ServiceProvider.GetRequiredService<AgentControlService>()
+                    .StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+            }
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            var afterBackward = ReadStartedAt();
+            afterBackward.ShouldBe(SessionGeneration.Next(afterFrozen, t.AddMinutes(-1).UtcDateTime));
+            third.StartedAcceptedGeneration.ShouldBe(afterBackward);
+
+            await MarkSessionEndedAsync(firstStart.PersistentSessionId!, SessionStatus.Failed);
+            clock.SetUtcNow(t.AddHours(1));
+            using (var scope = harness.Provider.CreateScope())
+            {
+                await scope.ServiceProvider.GetRequiredService<AgentControlService>()
+                    .StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+            }
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            var afterAdvance = ReadStartedAt();
+            afterAdvance.ShouldBe(SessionGeneration.Normalize(t.AddHours(1).UtcDateTime));
+            fourth.StartedAcceptedGeneration.ShouldBe(afterAdvance);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
     private static AppDbContext CreateContext(string? connectionString = null) =>
         new(TestDbFixture.CreateDbContextOptions(connectionString));
 
@@ -1622,7 +1697,8 @@ public class AgentControlServiceIntegrationTests
         bool includeQuotaGate = false,
         bool includeModelAvailability = false,
         AgentWorkspaceProvisioner? workspace = null,
-        Action<IServiceCollection>? configureServices = null)
+        Action<IServiceCollection>? configureServices = null,
+        TimeProvider? timeProvider = null)
     {
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options =>
@@ -1634,7 +1710,7 @@ public class AgentControlServiceIntegrationTests
         var eventBus = new MockEventBus();
         services.AddSingleton(eventBus);
         services.AddSingleton<IEventBus>(eventBus);
-        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton(timeProvider ?? TimeProvider.System);
         services.AddSingleton<IOptions<AgentSessionSettings>>(Options.Create(new AgentSessionSettings
         {
             FirstDeltaTimeoutMs = 1_000,

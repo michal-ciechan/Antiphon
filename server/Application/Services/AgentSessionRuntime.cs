@@ -45,6 +45,7 @@ public sealed class AgentSessionRuntime
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentSessionRuntime> _logger;
     private readonly AgentMentionRouter? _mentionRouter;
+    private readonly SessionGenerationCompatState _generationCompat;
 
     public AgentSessionRuntime(
         ISessionRunnerClient runnerClient,
@@ -53,7 +54,8 @@ public sealed class AgentSessionRuntime
         IServiceScopeFactory scopeFactory,
         TimeProvider timeProvider,
         ILogger<AgentSessionRuntime> logger,
-        AgentMentionRouter? mentionRouter = null)
+        AgentMentionRouter? mentionRouter = null,
+        SessionGenerationCompatState? generationCompat = null)
     {
         _runnerClient = runnerClient;
         _eventBus = eventBus;
@@ -62,6 +64,7 @@ public sealed class AgentSessionRuntime
         _timeProvider = timeProvider;
         _logger = logger;
         _mentionRouter = mentionRouter;
+        _generationCompat = generationCompat ?? new SessionGenerationCompatState();
     }
 
     public AgentSessionRuntime(
@@ -130,14 +133,45 @@ public sealed class AgentSessionRuntime
         await RecordActivityAsync(sessionId);
     }
 
-    public async Task ObserveExitAsync(Guid sessionId, int? exitCode, AgentExitReason exitReason, CancellationToken ct)
+    public async Task<SessionExitDisposition> ObserveExitAsync(
+        Guid sessionId, int? exitCode, AgentExitReason exitReason, CancellationToken ct,
+        DateTime? acceptedStartedAt = null)
     {
-        await CloseSessionOnExitAsync(sessionId, exitCode, exitReason, ct);
-        await _eventBus.PublishToGroupAsync(
-            AgentSessionGroups.Session(sessionId),
-            "SessionExited",
-            new { sessionId, status = "Exited", exitCode, exitReason = exitReason.ToString() },
-            ct);
+        if (acceptedStartedAt is null)
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            acceptedStartedAt = await db.AgentSessions.AsNoTracking()
+                .Where(s => s.Id == sessionId)
+                .Select(s => (DateTime?)s.StartedAt)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        return await ObserveExitAsync(
+            new SessionRunnerExitedEvent(sessionId, exitCode, exitReason, 0, acceptedStartedAt), ct);
+    }
+
+    public async Task<SessionExitDisposition> ObserveExitAsync(
+        SessionRunnerExitedEvent evt, CancellationToken ct)
+    {
+        var disposition = await CloseSessionOnExitAsync(evt, ct);
+        if (disposition == SessionExitDisposition.Applied)
+        {
+            await _eventBus.PublishToGroupAsync(
+                AgentSessionGroups.Session(evt.SessionId),
+                "SessionExited",
+                new
+                {
+                    sessionId = evt.SessionId,
+                    status = "Exited",
+                    exitCode = evt.ExitCode,
+                    exitReason = evt.ExitReason.ToString(),
+                    acceptedStartedAt = evt.AcceptedStartedAt,
+                },
+                ct);
+        }
+
+        return disposition;
     }
 
     // A runner exit must also land in the DATABASE, not just the SignalR group: the session row is
@@ -145,8 +179,12 @@ public sealed class AgentSessionRuntime
     // event pump left the session Running and its agent Working forever — a phantom with no process.
     // Idempotent: sessions already closed by another path (kill, launch-failure, reconciler) are
     // left untouched. Card-owned agents are skipped; their lifecycle belongs to the orchestrator.
-    private async Task CloseSessionOnExitAsync(Guid sessionId, int? exitCode, AgentExitReason exitReason, CancellationToken ct)
+    private async Task<SessionExitDisposition> CloseSessionOnExitAsync(
+        SessionRunnerExitedEvent evt, CancellationToken ct)
     {
+        var sessionId = evt.SessionId;
+        var exitCode = evt.ExitCode;
+        var exitReason = evt.ExitReason;
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
@@ -155,7 +193,19 @@ public sealed class AgentSessionRuntime
             var session = await db.AgentSessions.FromSqlInterpolated(
                 $"""SELECT * FROM "AgentSessions" WHERE "Id" = {sessionId} FOR UPDATE""").FirstOrDefaultAsync(ct);
             if (session is null)
-                return;
+                return SessionExitDisposition.Unknown;
+
+            if (evt.AcceptedStartedAt is null)
+            {
+                await ReportLegacyExitOnceAsync(sessionId, ct);
+                return SessionExitDisposition.Missing;
+            }
+
+            var cmp = SessionGeneration.Compare(evt.AcceptedStartedAt.Value, session.StartedAt);
+            if (cmp < 0)
+                return SessionExitDisposition.Stale;
+            if (cmp > 0)
+                return SessionExitDisposition.Unknown;
 
             var now = _timeProvider.GetUtcNow().UtcDateTime;
             var changed = false;
@@ -195,6 +245,13 @@ public sealed class AgentSessionRuntime
             Guid? changedAgentId = null;
             var sessionIdText = sessionId.ToString("D");
             var agent = await db.Agents.FirstOrDefaultAsync(a => a.PersistentSessionId == sessionIdText, ct);
+            if (agent is not null)
+            {
+                await db.Entry(agent).ReloadAsync(ct);
+                if (!string.Equals(agent.PersistentSessionId, sessionIdText, StringComparison.OrdinalIgnoreCase))
+                    agent = null;
+            }
+
             if (agent is not null && agent.Status == AgentStatus.Running && agent.CurrentCardId is null)
             {
                 agent.Status = cleanStop ? AgentStatus.Stopped : AgentStatus.Failed;
@@ -256,10 +313,42 @@ public sealed class AgentSessionRuntime
             await transaction.CommitAsync(ct);
             if (changedAgentId is Guid agentId)
                 await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), ct);
+            return SessionExitDisposition.Applied;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "Failed to persist exit of session {SessionId}", sessionId);
+            return SessionExitDisposition.PersistenceFailed;
+        }
+    }
+
+    private async Task ReportLegacyExitOnceAsync(Guid sessionId, CancellationToken ct)
+    {
+        if (!_generationCompat.TryReport(sessionId))
+            return;
+
+        _logger.LogWarning(
+            "Session {SessionId} produced a legacy exit without an accepted generation; automatic close is declined.",
+            sessionId);
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var alerts = scope.ServiceProvider.GetService<IAlertService>();
+            if (alerts is null)
+                return;
+            await alerts.RaiseAsync(
+                new AlertRaise(
+                    AlertSeverity.Warning,
+                    Source: "runtime",
+                    Title: "Legacy session exit without generation identity",
+                    Detail: $"Session {sessionId} produced an exit event without an accepted generation. Automatic close is declined.",
+                    DedupKey: $"compat:generation:{sessionId}",
+                    SessionId: sessionId),
+                ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Legacy generation compatibility alert failed for session {SessionId}", sessionId);
         }
     }
 
@@ -1020,6 +1109,16 @@ public sealed class AgentSessionRuntime
 
         var session = await _runnerClient.KillAsync(sessionId, ct);
         return session.Status == "Exited" || session.ExitCode is not null;
+    }
+
+    public async Task<bool> KillGenerationAsync(
+        Guid sessionId, DateTime expectedAcceptedStartedAt, TimeSpan timeout, CancellationToken ct)
+    {
+        if (_testAdapters.TryGetValue(sessionId, out var adapter))
+            return await adapter.KillGenerationAsync(expectedAcceptedStartedAt, timeout, ct);
+
+        var result = await _runnerClient.KillGenerationAsync(sessionId, expectedAcceptedStartedAt, ct);
+        return result.Killed;
     }
 
     public Task<SessionRunnerSessionDto> GetSessionAsync(Guid sessionId, CancellationToken ct)

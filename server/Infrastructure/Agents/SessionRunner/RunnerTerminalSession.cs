@@ -2,6 +2,7 @@ using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
@@ -10,6 +11,7 @@ internal sealed class RunnerTerminalSession
     private readonly ISessionRunnerClient _client;
     private Guid _sessionId;
     private bool _started;
+    private DateTime? _acceptedGeneration;
 
     public RunnerTerminalSession(ISessionRunnerClient client)
     {
@@ -18,6 +20,7 @@ internal sealed class RunnerTerminalSession
 
     public Guid SessionId => _sessionId;
     public DateTime StartedAt { get; private set; }
+    public DateTime? AcceptedStartedAt => _acceptedGeneration;
     public int? Pid { get; private set; }
     public AgentExitReason ExitReason { get; private set; } = AgentExitReason.Unknown;
     public Task<int> Exited { get; private set; } = Task.FromResult(0);
@@ -30,6 +33,7 @@ internal sealed class RunnerTerminalSession
             throw new InvalidOperationException("AgentLaunchSpec.SessionId is required for session runner launches.");
 
         _sessionId = sessionId;
+        _acceptedGeneration = spec.AcceptedStartedAt;
         var session = await _client.StartAsync(sessionId, spec, ct);
         StartedAt = session.StartedAt;
         Pid = session.Pid;
@@ -76,6 +80,7 @@ internal sealed class RunnerTerminalSession
 
         _sessionId = sessionId;
         StartedAt = session.StartedAt;
+        _acceptedGeneration = session.AcceptedStartedAt;
         Pid = session.Pid;
         ExitReason = session.ExitReason;
         Exited = WaitForExitAsync(sessionId, CancellationToken.None);
@@ -241,6 +246,17 @@ internal sealed class RunnerTerminalSession
         return session.Status == "Exited" || session.ExitCode is not null;
     }
 
+    public async Task<bool> KillGenerationAsync(DateTime expectedAcceptedStartedAt, CancellationToken ct)
+    {
+        if (_sessionId == Guid.Empty)
+            return false;
+        if (!SessionGeneration.Equal(_acceptedGeneration, expectedAcceptedStartedAt))
+            return false;
+
+        var result = await _client.KillGenerationAsync(_sessionId, expectedAcceptedStartedAt, ct);
+        return result.Killed;
+    }
+
     private async Task<int> WaitForExitAsync(Guid sessionId, CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
@@ -248,8 +264,22 @@ internal sealed class RunnerTerminalSession
             try
             {
                 var session = await _client.GetAsync(sessionId, ct);
+                if (_acceptedGeneration is { } mine
+                    && session.AcceptedStartedAt is { } current
+                    && !SessionGeneration.Equal(current, mine))
+                {
+                    return -1;
+                }
+
                 if (session.Status == "Exited")
                 {
+                    if (_acceptedGeneration is { } expected
+                        && session.AcceptedStartedAt is { } exitedGen
+                        && !SessionGeneration.Equal(exitedGen, expected))
+                    {
+                        return -1;
+                    }
+
                     ExitReason = session.ExitReason;
                     return session.ExitCode ?? 0;
                 }

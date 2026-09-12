@@ -32,6 +32,7 @@ public sealed record PtyHostManifest
     public int? ExitCode { get; init; }
     public string? ExitReason { get; init; }
     public DateTime? ExitedAtUtc { get; init; }
+    public DateTime? AcceptedStartedAt { get; init; }
 
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
     {

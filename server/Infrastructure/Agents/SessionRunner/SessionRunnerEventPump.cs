@@ -51,7 +51,7 @@ public sealed class SessionRunnerEventPump : BackgroundService
                     if (evt.Output is not null)
                         await runtime.ObserveOutputAsync(evt.Output.SessionId, evt.Output.Sequence, evt.Output.Text, stoppingToken);
                     else if (evt.Exited is not null)
-                        await runtime.ObserveExitAsync(evt.Exited.SessionId, evt.Exited.ExitCode, evt.Exited.ExitReason, stoppingToken);
+                        await runtime.ObserveExitAsync(evt.Exited, stoppingToken);
                     else if (evt.Transcript is not null)
                         await runtime.ObserveTranscriptAsync(evt.Transcript, stoppingToken);
                     else if (evt.TranscriptFault is not null)

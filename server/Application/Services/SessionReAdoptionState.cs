@@ -3,32 +3,124 @@ using System.Collections.Concurrent;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// Singleton flap counter for reconciliation's third pass (CARD-0056): how many times each session
-/// has been written back from Failed to Running during this server's uptime.
-///
-/// <para>It lives outside <see cref="SessionReconciliationService"/> because that service is scoped
-/// — a fresh instance per sweep — so a counter held there would reset every 15 seconds and bound
-/// nothing. In-memory on purpose: the cap exists to stop a loop between two live components (the
-/// reconciler re-adopting, something else re-failing), and a restart genuinely is a fresh start.
-/// </para>
+/// Singleton per-session re-adoption accounting for this server uptime (CARD-0502 D-6/D-7).
+/// Counts committed Failed-to-Running restorations, not probes or refused observations.
 /// </summary>
 public sealed class SessionReAdoptionState
 {
-    private readonly ConcurrentDictionary<Guid, int> _counts = new();
+    private readonly ConcurrentDictionary<Guid, SessionState> _sessions = new();
 
-    /// <summary>
-    /// Registers one re-adoption of <paramref name="sessionId"/> and reports whether it is allowed.
-    /// <c>Allowed</c> is false once the session has already been re-adopted <paramref name="cap"/>
-    /// times — the caller must then change nothing and escalate, because a session that keeps
-    /// flapping is a state for a human rather than a loop to run forever. <c>Count</c> is the total
-    /// including this attempt, so an escalation can say which one it is.
-    /// </summary>
-    public (bool Allowed, int Count) TryRegisterReAdoption(Guid sessionId, int cap)
+    public int CountFor(Guid sessionId) =>
+        _sessions.TryGetValue(sessionId, out var state) ? Volatile.Read(ref state.SuccessfulReAdoptions) : 0;
+
+    public bool IsLatched(Guid sessionId) =>
+        _sessions.TryGetValue(sessionId, out var state) && state.Escalation is { Reported: true };
+
+    public async Task<ReAdoptionLease> TryReserveAsync(Guid sessionId, int cap, CancellationToken ct)
     {
-        var count = _counts.AddOrUpdate(sessionId, 1, (_, existing) => existing + 1);
-        return (count <= Math.Max(0, cap), count);
+        cap = Math.Max(0, cap);
+        var state = _sessions.GetOrAdd(sessionId, _ => new SessionState());
+        await state.Gate.WaitAsync(ct).ConfigureAwait(false);
+        var held = true;
+        try
+        {
+            if (state.Escalation is { Reported: true })
+            {
+                held = false;
+                state.Gate.Release();
+                return new ReAdoptionLease(state, allowed: false, alreadyLatched: true, escalationEligible: false, cap);
+            }
+
+            if (state.SuccessfulReAdoptions >= cap)
+            {
+                return new ReAdoptionLease(state, allowed: false, alreadyLatched: false, escalationEligible: true, cap);
+            }
+
+            return new ReAdoptionLease(state, allowed: true, alreadyLatched: false, escalationEligible: false, cap);
+        }
+        catch
+        {
+            if (held)
+                state.Gate.Release();
+            throw;
+        }
     }
 
-    /// <summary>How many times this session has been re-adopted so far (diagnostics/tests).</summary>
-    public int CountFor(Guid sessionId) => _counts.TryGetValue(sessionId, out var count) ? count : 0;
+    internal sealed class SessionState
+    {
+        public readonly SemaphoreSlim Gate = new(1, 1);
+        public int SuccessfulReAdoptions;
+        public PendingCapEscalation? Escalation;
+    }
+
+    public sealed class PendingCapEscalation
+    {
+        public required Guid IncidentId { get; init; }
+        public required DateTime OriginalAt { get; init; }
+        public required int Count { get; init; }
+        public required int Cap { get; init; }
+        public bool IncidentPersisted { get; set; }
+        public bool AlertSubmitted { get; set; }
+        public bool Reported => IncidentPersisted && AlertSubmitted;
+    }
+
+    public sealed class ReAdoptionLease : IAsyncDisposable
+    {
+        private readonly SessionState _state;
+        private bool _held;
+        private bool _committed;
+
+        internal ReAdoptionLease(
+            SessionState state, bool allowed, bool alreadyLatched, bool escalationEligible, int cap)
+        {
+            _state = state;
+            _held = !alreadyLatched;
+            Allowed = allowed;
+            AlreadyLatched = alreadyLatched;
+            EscalationEligible = escalationEligible;
+            Cap = cap;
+        }
+
+        public bool Allowed { get; }
+        public bool AlreadyLatched { get; }
+        public bool EscalationEligible { get; }
+        public int Cap { get; }
+        public int SuccessfulReAdoptions => Volatile.Read(ref _state.SuccessfulReAdoptions);
+        public PendingCapEscalation? Escalation => _state.Escalation;
+
+        public void Commit()
+        {
+            if (!_held)
+                throw new InvalidOperationException("Re-adoption lease is not held.");
+            if (!Allowed)
+                throw new InvalidOperationException("A refused re-adoption reservation cannot commit.");
+            if (_committed)
+                return;
+            Interlocked.Increment(ref _state.SuccessfulReAdoptions);
+            _committed = true;
+        }
+
+        public PendingCapEscalation GetOrCreateEscalation(DateTime at, Guid incidentId)
+        {
+            if (!_held)
+                throw new InvalidOperationException("Re-adoption lease is not held.");
+            _state.Escalation ??= new PendingCapEscalation
+            {
+                IncidentId = incidentId,
+                OriginalAt = at,
+                Count = SuccessfulReAdoptions,
+                Cap = Cap,
+            };
+            return _state.Escalation;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            if (!_held)
+                return;
+            _held = false;
+            _state.Gate.Release();
+            await ValueTask.CompletedTask;
+        }
+    }
 }

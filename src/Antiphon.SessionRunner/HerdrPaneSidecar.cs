@@ -47,6 +47,7 @@ public sealed record HerdrPaneSidecar
     public string? WorkspaceLabel { get; init; }
     /// <summary>CARD-0384: dedicated tab pin snapshot. Null on pre-field files / unpinned launches.</summary>
     public string? TabLabel { get; init; }
+    public DateTime? AcceptedStartedAt { get; init; }
 
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
     {
