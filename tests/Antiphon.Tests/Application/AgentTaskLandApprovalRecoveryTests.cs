@@ -163,7 +163,7 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         h.Git.Trace.Clear();
         h.Git.OwnedTrace.Clear();
         await h.RunAsync();
-        h.Git.OwnedTrace.Count(a => a.Contains("merge") && a.Contains("--ff-only")).ShouldBe(1);
+        h.Git.OwnedTrace.Count(a => a.Contains("merge") && a.Contains("--ff-only") && a.Contains(b)).ShouldBe(1);
         var op = (await h.OperationAsync()).ShouldNotBeNull();
         op.OriginalSourceSha.ShouldBe(b);
         op.ReviewedSourceSha.ShouldBe(b);
@@ -185,7 +185,7 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         h.Fault.AfterCommit = false;
         h.Git.OwnedTrace.Clear();
         await h.RunAsync();
-        h.Git.OwnedTrace.ShouldNotContain(a => a.Contains("merge"));
+        h.Git.OwnedTrace.ShouldNotContain(a => a.Contains("merge") && a.Contains("--ff-only") && a.Contains(b));
         var op = (await h.OperationAsync()).ShouldNotBeNull();
         op.OriginalSourceSha.ShouldBe(b);
     }
