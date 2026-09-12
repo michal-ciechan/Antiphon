@@ -134,7 +134,8 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             }
             else
             {
-                op.Mode = LandOperationMode.ResumePublication;
+                if (op.SourcePinned || op.Phase != LandPhase.Inspected)
+                    op.Mode = LandOperationMode.ResumePublication;
                 await RecheckRemoteSourceAsync(op, request, ct);
                 Require(Matches(snapshot, op, op.RebasedSourceSha ?? InputSha(op)), "source_changed");
                 await SaveAsync(op, ct);

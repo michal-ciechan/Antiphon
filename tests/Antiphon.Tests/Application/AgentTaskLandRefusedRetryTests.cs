@@ -490,7 +490,6 @@ public sealed class AgentTaskLandRefusedRetryTests
             await AssertPinsAsync();
             (await ReadAsync(F.Source, "rev-parse", "HEAD")).Trim().ShouldBe(SourceSha);
             (await ReadAsync(F.Repository, "rev-parse", F.TargetRef)).Trim().ShouldBe(A.TargetBeforeSha);
-            (await ReadAsync(F.Repository, "for-each-ref", "--format=%(refname) %(objectname)", $"refs/antiphon/land/{F.TaskId:N}/")).ShouldBe(_pins);
         }
         public async Task AssertReplacementAsync(AgentTaskLanding b)
         {
