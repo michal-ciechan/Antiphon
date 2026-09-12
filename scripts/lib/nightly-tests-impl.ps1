@@ -117,7 +117,7 @@ function Get-NightlyNativeExecutionArguments {
         $nativeArgs += '--treenode-filter'
         $nativeArgs += ('/*/*/({0})/*' -f $or)
     }
-    return ,$nativeArgs
+    return $nativeArgs
 }
 
 function Invoke-AntiphonNightlyTests {
