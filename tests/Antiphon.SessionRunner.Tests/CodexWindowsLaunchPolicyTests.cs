@@ -23,7 +23,7 @@ public sealed class CodexWindowsLaunchPolicyTests
         effective.Exe.ShouldBe(layout.SiblingNodePath);
         effective.Args[0].ShouldBe(layout.JsPath);
         effective.Args.Skip(1).ToArray().ShouldBe(args);
-        effective.Args[2].ShouldBe("developer_instructions=" + CodexInstructionFixtures.Incident);
+        effective.Args[^1].ShouldBe("developer_instructions=" + CodexInstructionFixtures.Incident);
     }
 
     [Test]
