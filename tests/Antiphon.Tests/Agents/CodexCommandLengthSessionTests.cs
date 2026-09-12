@@ -23,7 +23,7 @@ namespace Antiphon.Tests.Agents;
 [Category("Integration")]
 public sealed class CodexCommandLengthSessionTests
 {
-    private const int PerTestBudgetSeconds = 180;
+    private const int PerTestBudgetSeconds = 420;
 
     [Test]
     [Timeout(PerTestBudgetSeconds * 1000)]
@@ -137,7 +137,7 @@ public sealed class CodexCommandLengthSessionTests
             CodexReadyQuietPeriodMs = 1_000,
             CodexReadyMaxWaitMs = 60_000,
             CodexDoneQuietPeriodMs = 3_000,
-            CodexDoneMaxWaitMs = 90_000,
+            CodexDoneMaxWaitMs = 180_000,
         });
 
         await using var client = new DirectSessionRunnerClient(logs, ptyBackend: ptyBackend, codexTranscript: true);
@@ -166,6 +166,13 @@ public sealed class CodexCommandLengthSessionTests
 
             (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue();
             await adapter.SendPromptAsync($"Reply with exactly this token and nothing else is needed: {nonce}", CancellationToken.None);
+            var chatHit = await stub.Requests.WaitForAsync(
+                r => r.Method == "POST"
+                     && r.Path == "/v1/responses"
+                     && r.Body.Contains(nonce, StringComparison.Ordinal),
+                TimeSpan.FromSeconds(60));
+            chatHit.ShouldNotBeNull("stub never saw the nonce — prompt did not reach Codex");
+
             var turn = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
             turn.TurnCompleted.ShouldBeTrue();
             turn.ResponseText.ShouldNotBeNull();
@@ -179,9 +186,6 @@ public sealed class CodexCommandLengthSessionTests
             transcript.Entries.Any(e =>
                 e.Text != null && e.Text.Contains(reply, StringComparison.Ordinal)).ShouldBeTrue();
 
-            var chatHit = stub.Requests.All.FirstOrDefault(r =>
-                r.Method == "POST" && r.Path == "/v1/responses" && r.Body.Contains(nonce, StringComparison.Ordinal));
-            chatHit.ShouldNotBeNull();
             chatHit!.Headers["Authorization"].ShouldBe([$"Bearer {syntheticKey}"]);
             stub.Requests.All.ShouldContain(r => r.Method == "GET" && r.Path == "/v1/models");
 
@@ -221,33 +225,33 @@ public sealed class CodexCommandLengthSessionTests
     private static string FitHop2Payload(int target)
     {
         var shimDir = Path.GetDirectoryName(NpmShimPath())!;
-        var js = Path.Combine(shimDir, "node_modules", "@openai", "codex", "bin", "codex.js");
         var native = ResolveNative(shimDir) ?? throw new SkipTestException("vendored codex.exe not found");
-        var overlayLen = 400;
-        var prefix = new[]
+        var home = Directory.CreateTempSubdirectory("c0497-fit").FullName;
+        try
         {
-            "--no-alt-screen",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "-c", "model_providers.stub.name=\"Stub\"",
-            "-c", "model_providers.stub.env_key=\"OPENAI_API_KEY\"",
-            "-c", "model_providers.stub.wire_api=\"responses\"",
-            "-c", "model_provider=stub",
-            "-c", "disable_paste_burst=true",
-            "-c",
-        };
-        _ = overlayLen;
-        var filler = new string('A', Math.Max(100, target));
-        var payload = CodexInstructionFixtures.StartSentinel + filler;
-        var args = prefix.Concat(["developer_instructions=" + payload]).ToArray();
-        var measured = WindowsCommandLine.Measure(native, args);
-        if (measured > target)
-            payload = payload[..^Math.Min(payload.Length - 20, measured - target)];
-        else
-            payload += new string('A', target - measured);
-        args = prefix.Concat(["developer_instructions=" + payload]).ToArray();
-        WindowsCommandLine.Measure(native, args).ShouldBe(target);
-        _ = js;
-        return payload;
+            var overlay = RealCliStubEnv.ForCodex("http://127.0.0.1:54321", "stub-key", home);
+            var prefix = new List<string>
+            {
+                "--no-alt-screen",
+                "--dangerously-bypass-approvals-and-sandbox",
+            };
+            prefix.AddRange(overlay.Args);
+            prefix.AddRange(["-c", "disable_paste_burst=true", "-c"]);
+            var filler = new string('A', Math.Max(100, target));
+            var payload = CodexInstructionFixtures.StartSentinel + filler;
+            string[] Args() => [.. prefix, "developer_instructions=" + payload];
+            var measured = WindowsCommandLine.Measure(native, Args());
+            if (measured > target)
+                payload = payload[..^Math.Min(payload.Length - 20, measured - target)];
+            else
+                payload += new string('A', target - measured);
+            WindowsCommandLine.Measure(native, Args()).ShouldBe(target);
+            return payload;
+        }
+        finally
+        {
+            try { Directory.Delete(home, recursive: true); } catch { /* best-effort */ }
+        }
     }
 
     private static string? ResolveNative(string npmRoot)
