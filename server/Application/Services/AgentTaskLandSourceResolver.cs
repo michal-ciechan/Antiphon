@@ -42,14 +42,23 @@ public sealed class AgentTaskLandSourceResolver(
         if (request.SourceAdvanceChildOperation is not null)
         {
             if (request.SourceAdvanceChildProcessId is null || request.SourceAdvanceChildStartTicks is null)
-                return await RefuseAsync(request, "interrupted_process_requires_inspection", null, null, null, ct);
-            var alive = await git.IsProcessAliveAsync(request.SourceAdvanceChildProcessId.Value,
-                request.SourceAdvanceChildStartTicks.Value, ct);
-            if (alive != false)
-                return await RefuseAsync(request, "interrupted_process_requires_inspection", null, null, null, ct);
-            request.SourceAdvanceChildOperation = null;
-            request.SourceAdvanceChildProcessId = null;
-            request.SourceAdvanceChildStartTicks = null;
+            {
+                if (request.SourceResolutionState != LandSourceResolutionState.AdvanceStarted)
+                    return await RefuseAsync(request, "interrupted_process_requires_inspection",
+                        request.LocalBeforeSha, request.RemoteSourceSha, request.ExpectedSourceSha, ct);
+                request.SourceAdvanceChildOperation = null;
+            }
+            else
+            {
+                var alive = await git.IsProcessAliveAsync(request.SourceAdvanceChildProcessId.Value,
+                    request.SourceAdvanceChildStartTicks.Value, ct);
+                if (alive != false)
+                    return await RefuseAsync(request, "interrupted_process_requires_inspection",
+                        request.LocalBeforeSha, request.RemoteSourceSha, request.ExpectedSourceSha, ct);
+                request.SourceAdvanceChildOperation = null;
+                request.SourceAdvanceChildProcessId = null;
+                request.SourceAdvanceChildStartTicks = null;
+            }
             await SaveRequestAsync(request, ct);
         }
 
@@ -78,13 +87,41 @@ public sealed class AgentTaskLandSourceResolver(
                 return await CreateOperationAsync(task, request, coordinates, lease, ct);
             }
 
-            if (request.LocalBeforeSha is { } savedL && local.HeadSha == savedL && request.ResolvedSourceSha is null)
+            if (request.LocalBeforeSha is { } savedL && local.HeadSha == savedL && request.ResolvedSourceSha is null
+                && request.RemoteSourceSha is { } savedR && request.RemoteSourceFingerprint is { Length: 64 })
             {
-                // Clean L retries the saved L→E pair only.
+                var retryPrefix = $"refs/antiphon/land/{task.Id:N}/{request.Id:N}/source-observed";
+                var moved = await RecheckRemoteAsync(coordinates.RepositoryPath, coordinates.SourceFullRef, retryPrefix,
+                    new(savedR, request.SourceObservationRef ?? retryPrefix, request.RemoteSourceFingerprint, null), ct);
+                if (moved is not null)
+                    return await RefuseAsync(request, moved, local.HeadSha, savedR, expected, ct);
+                request.SourceAdvanceChildOperation = "source-ff";
+                await SaveRequestAsync(request, ct);
+                var merge = await git.RunOwnedAsync(local.RegisteredPath,
+                    ["-c", "merge.autoStash=false", "merge", "--ff-only", expected],
+                    async (pid, ticks, token) =>
+                    {
+                        request.SourceAdvanceChildProcessId = pid;
+                        request.SourceAdvanceChildStartTicks = ticks;
+                        await SaveRequestAsync(request, token);
+                    }, ct);
+                request.SourceAdvanceChildOperation = null;
+                request.SourceAdvanceChildProcessId = null;
+                request.SourceAdvanceChildStartTicks = null;
+                await SaveRequestAsync(request, ct);
+                if (!merge.Succeeded)
+                    return await RefuseAsync(request, "source_fast_forward_failed", local.HeadSha, savedR, expected, ct);
+                var after = await git.InspectAsync(coordinates, ct);
+                if (!after.Accepted || after.Snapshot!.HeadSha != expected)
+                    return await RefuseAsync(request, after.Reason ?? "source_changed", after.Snapshot?.HeadSha, savedR, expected, ct);
+                request.ResolvedSourceSha = expected;
+                request.SourceResolutionState = LandSourceResolutionState.Resolved;
+                await SaveRequestAsync(request, ct);
+                return await CreateOperationAsync(task, request, coordinates, lease, ct);
             }
-            else
-                return await RefuseAsync(request, "source_advance_head_unexpected", local.HeadSha,
-                    request.RemoteSourceSha, expected, ct);
+
+            return await RefuseAsync(request, "source_advance_head_unexpected", local.HeadSha,
+                request.RemoteSourceSha, expected, ct);
         }
 
         if (request.SourceResolutionState == LandSourceResolutionState.Observed
