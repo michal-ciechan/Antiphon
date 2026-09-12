@@ -136,8 +136,13 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         {
             await using var observer = CreateContext();
             var task = await observer.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == Fixture.TaskId);
-            if (task.LandRequestedAt is null)
-                await RequestAsync();
+            if (task.LandRequestedAt is null && task.ActiveLandingId is null)
+            {
+                var prior = Events;
+                Events = new MockEventBus();
+                try { await RequestAsync(filter: task.LandVerifyFilter); }
+                finally { Events = prior; }
+            }
             try
             {
                 return await CreateLand(db, scope.ServiceProvider).RunAsync(Fixture.TaskId, null, ct);
@@ -186,11 +191,15 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         if (expectedSourceSha is null)
         {
             await using var published = CreateContext();
-            var op = await published.AgentTaskLandings.AsNoTracking()
-                .SingleOrDefaultAsync(o => o.TaskId == Fixture.TaskId && o.Active);
-            expectedSourceSha = op is not null && new AgentTaskLandingState().HasPublication(op)
-                ? op.OriginalSourceSha
-                : (await Fixture.RequiredAsync(Fixture.Source, "rev-parse", "HEAD")).Trim();
+            var task = await published.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == Fixture.TaskId);
+            if (task.LandRequestedAt is null)
+            {
+                var op = await published.AgentTaskLandings.AsNoTracking()
+                    .SingleOrDefaultAsync(o => o.TaskId == Fixture.TaskId && o.Active);
+                expectedSourceSha = op is not null && new AgentTaskLandingState().HasPublication(op)
+                    ? op.OriginalSourceSha
+                    : (await Fixture.RequiredAsync(Fixture.Source, "rev-parse", "HEAD")).Trim();
+            }
         }
         await using var scope = Services.CreateAsyncScope();
         return await CreateLand(scope.ServiceProvider.GetRequiredService<AppDbContext>(), scope.ServiceProvider)
@@ -207,7 +216,8 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
 
     public async Task<LandRunResult> RunQueuedAsync(string? filter = null)
     {
-        if (!Queue.TryDequeue(out var request) || request.TaskId != Fixture.TaskId || request.VerifyFilter != filter)
+        if (!Queue.TryDequeue(out var request) || request.TaskId != Fixture.TaskId
+            || filter is not null && request.VerifyFilter != filter)
             throw new InvalidOperationException("Expected exact fixture task/filter queue claim");
         try
         {

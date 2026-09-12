@@ -21,12 +21,12 @@ public sealed class AgentTaskLandSourceResolver(
         if (!request.IsPending || task.CurrentLandRequestId != request.Id)
             return new(null, "stale_land_request", false);
         if (request.SchemaVersion is not 1 and not 2)
-            return new(null, "landing_schema_unsupported", false);
+            return await RefuseAsync(request, "landing_schema_unsupported", null, null, null, ct);
         if (request.SchemaVersion != 2 || !GitObjectId.IsFull(request.ExpectedSourceSha))
-            return new(null, "legacy_review_binding_required", false);
+            return await RefuseAsync(request, "legacy_review_binding_required", null, null, null, ct);
 
         if (task.RepoPath is null || task.WorktreePath is null || task.WorktreeBranch is null)
-            return new(null, "source_coordinates_missing", false);
+            return await RefuseAsync(request, "source_coordinates_missing", null, null, null, ct);
         var coordinates = new LandSourceCoordinates(task.Id, task.RepoPath, task.WorktreePath,
             FullRef(task.WorktreeBranch), FullRef(task.MergeTargetRef ?? "master"));
         if (request.SourceFullRefSnapshot is not null && request.SourceFullRefSnapshot != coordinates.SourceFullRef
@@ -37,16 +37,16 @@ public sealed class AgentTaskLandSourceResolver(
 
         var common = await git.CommonDirectoryAsync(coordinates.RepositoryPath, ct);
         if (!leases.Owns(lease, common))
-            return new(null, "repository_lease_required", false);
+            return await RefuseAsync(request, "repository_lease_required", null, null, null, ct);
 
         if (request.SourceAdvanceChildOperation is not null)
         {
             if (request.SourceAdvanceChildProcessId is null || request.SourceAdvanceChildStartTicks is null)
-                return new(null, "interrupted_process_requires_inspection", false);
+                return await RefuseAsync(request, "interrupted_process_requires_inspection", null, null, null, ct);
             var alive = await git.IsProcessAliveAsync(request.SourceAdvanceChildProcessId.Value,
                 request.SourceAdvanceChildStartTicks.Value, ct);
             if (alive != false)
-                return new(null, "interrupted_process_requires_inspection", false);
+                return await RefuseAsync(request, "interrupted_process_requires_inspection", null, null, null, ct);
             request.SourceAdvanceChildOperation = null;
             request.SourceAdvanceChildProcessId = null;
             request.SourceAdvanceChildStartTicks = null;
@@ -86,6 +86,12 @@ public sealed class AgentTaskLandSourceResolver(
                 return await RefuseAsync(request, "source_advance_head_unexpected", local.HeadSha,
                     request.RemoteSourceSha, expected, ct);
         }
+
+        if (request.SourceResolutionState == LandSourceResolutionState.Observed
+            && local.HeadSha == expected
+            && request.LocalBeforeSha is { } recorded && recorded != expected)
+            return await RefuseAsync(request, "source_advance_head_unexpected", local.HeadSha,
+                request.RemoteSourceSha, expected, ct);
 
         var prefix = $"refs/antiphon/land/{task.Id:N}/{request.Id:N}/source-observed";
         var observed = await git.ObserveSourceAsync(coordinates.RepositoryPath, coordinates.SourceFullRef, prefix, ct);
@@ -207,7 +213,8 @@ public sealed class AgentTaskLandSourceResolver(
             GitDirectory = snapshot.GitDirectory, SourceFullRef = coordinates.SourceFullRef,
             OriginalSourceSha = request.ExpectedSourceSha!, ReviewedSourceSha = request.ExpectedSourceSha,
             PreparationInputSha = previous?.RebasedSourceSha ?? request.ExpectedSourceSha,
-            PreviousPreparationOperationId = previous is { RebasedSourceSha: not null } ? previous.Id : null,
+            PreviousPreparationOperationId = previous is { RebasedSourceSha: { } prepared }
+                && prepared != request.ExpectedSourceSha ? previous.Id : null,
             ApprovalLandRequestId = previous is { OriginalSourceSha: { } prev } && prev == request.ExpectedSourceSha
                 ? previous.ApprovalLandRequestId ?? request.Id : request.Id,
             ReviewEvidenceId = previous?.ReviewEvidenceId ?? request.ReviewEvidenceId,
@@ -218,7 +225,7 @@ public sealed class AgentTaskLandSourceResolver(
             SourceRemoteObservedAt = request.SourceObservedAt,
             TargetFullRef = coordinates.TargetFullRef, TargetBeforeSha = target,
             RemoteName = destination.RemoteName, DestinationFullRef = destination.FullRef,
-            RemoteFingerprint = destination.Fingerprint, VerificationFilter = request.VerifyFilter,
+            RemoteFingerprint = destination.Fingerprint, VerificationFilter = request.VerifyFilter ?? task.LandVerifyFilter,
         };
         op.RecoveryRefPrefix = $"refs/antiphon/land/{task.Id:N}/{op.Id:N}";
         try

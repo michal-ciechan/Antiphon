@@ -61,9 +61,9 @@ public sealed class AgentTaskLandingState
             return false;
         if (previous.SchemaVersion is not 1 and not 2) return false;
         if (previous.SchemaVersion == 1) return true;
+        _ = expectedSourceSha;
         return previous.ApprovalLandRequestId is not null
-            && previous.ReviewedSourceSha == previous.OriginalSourceSha
-            && (expectedSourceSha is null || expectedSourceSha == previous.OriginalSourceSha);
+            && previous.ReviewedSourceSha == previous.OriginalSourceSha;
     }
 
     public bool HasV2Approval(AgentTaskLanding operation) =>

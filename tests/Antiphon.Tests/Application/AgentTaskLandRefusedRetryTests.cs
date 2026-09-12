@@ -321,6 +321,7 @@ public sealed class AgentTaskLandRefusedRetryTests
                 s.H.Clock = s._clock;
                 await s.H.InitializeAsync();
                 s.SourceSha = await s.H.AddSourceAsync();
+                await s.H.RequestAsync(expectedSourceSha: s.SourceSha);
                 s.InitialRequest = (await s.TaskAsync()).LandRequestedAt!.Value;
                 s._clock.After(s.InitialRequest);
                 if (sentinel) await File.WriteAllTextAsync(s.Sentinel, SentinelBytes);

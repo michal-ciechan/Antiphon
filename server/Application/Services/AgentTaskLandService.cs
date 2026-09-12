@@ -256,6 +256,12 @@ public sealed class AgentTaskLandService
                 .ResolveAsync(task, request, lease, ct);
             if (resolved.Reason is not null)
             {
+                if (request.SourceRefusalReason is null)
+                {
+                    request.SourceRefusalReason = resolved.Reason;
+                    request.ConcurrencyToken = Guid.NewGuid();
+                    await _db.SaveChangesAsync(ct);
+                }
                 await RefuseAsync(task, FormatSourceRefusal(request, resolved.Reason), ct);
                 return LandRunResult.Complete;
             }

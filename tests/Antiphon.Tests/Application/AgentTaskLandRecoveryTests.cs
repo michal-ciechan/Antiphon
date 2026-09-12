@@ -49,12 +49,11 @@ public sealed class AgentTaskLandRecoveryTests
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
         await h.AddSourceAsync();
-        h.Fixture.Git.BeforeCommand = (_, a) => Task.FromResult<Antiphon.Server.Application.Dtos.LandingGitResult?>(
-            a[0] == "ls-remote" ? new(128, "", "fixture unavailable") : null);
+        h.Verifier.Passed = false;
         await h.RunAsync();
         var previous = (await h.OperationAsync()).ShouldNotBeNull();
         previous.Phase.ShouldBe(LandPhase.Refused);
-        h.Fixture.Git.BeforeCommand = null;
+        h.Verifier.Passed = true;
         await h.Fixture.RequiredAsync(h.Fixture.Source, "commit", "--allow-empty", "-m", "new retry evidence");
         await h.RepostAsync();
         h.Fixture.Git.BeforeCommand = (_, a) => Task.FromResult<Antiphon.Server.Application.Dtos.LandingGitResult?>(

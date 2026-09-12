@@ -78,6 +78,7 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         var started = false;
         h.Git.BeforeCommand = async (_, args) =>
         {
+            if (started) return null;
             if (args.Contains("merge") && args.Contains("--ff-only"))
             {
                 await using var observer = h.CreateContext();
@@ -376,6 +377,7 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         h.Fault.AfterCommit = true;
         await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunAsync());
         var op = (await h.OperationAsync()).ShouldNotBeNull();
+        await h.Git.RequiredAsync(h.Git.Source, "commit", "--allow-empty", "-m", "new source after advancement intent");
         await h.RestartServicesAsync();
         h.Fault.Phase = null;
         h.Fault.AfterCommit = false;

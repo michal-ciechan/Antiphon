@@ -50,11 +50,15 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     throw new LandingRefusal("interrupted_rebase_requires_inspection");
                 if (op.Phase >= LandPhase.TargetAdvanceStarted && op.Phase != LandPhase.Refused)
                 {
-                    // Publication-intent operations resume only; they cannot be replaced.
+                    Require(op.TaskId == task.Id && op.SourceFullRef == coordinates.SourceFullRef
+                        && op.TargetFullRef == coordinates.TargetFullRef && SamePath(op.RepositoryPath, coordinates.RepositoryPath)
+                        && SamePath(op.WorktreePath, coordinates.WorktreePath) && SamePath(common, op.CommonDirectory),
+                        "pending_operation_coordinates_changed");
+                    Require(await git.DestinationAsync(coordinates.RepositoryPath, coordinates.TargetFullRef, ct)
+                        == Destination(op), "remote_configuration_changed");
                 }
                 else if (op.Phase == LandPhase.Verified && !_state.HasPublication(op)
                     && request is not null && request.Id != op.ApprovalLandRequestId
-                    && (op.SchemaVersion != 2 || request.ExpectedSourceSha == op.OriginalSourceSha)
                     && await PreparationChangedAsync(op, coordinates, request.VerifyFilter ?? task.LandVerifyFilter, ct))
                 {
                     previousToReplace = op;
@@ -108,7 +112,8 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     GitDirectory = snapshot.GitDirectory, SourceFullRef = coordinates.SourceFullRef,
                     OriginalSourceSha = approved, ReviewedSourceSha = request?.ExpectedSourceSha,
                     PreparationInputSha = previousToReplace?.RebasedSourceSha ?? approved,
-                    PreviousPreparationOperationId = previousToReplace is { RebasedSourceSha: not null } ? previousToReplace.Id : null,
+                    PreviousPreparationOperationId = previousToReplace is { RebasedSourceSha: { } prepared }
+                        && prepared != approved ? previousToReplace.Id : null,
                     ApprovalLandRequestId = previousToReplace is { OriginalSourceSha: { } prev } && prev == approved
                         ? previousToReplace.ApprovalLandRequestId ?? request?.Id : request?.Id,
                     ReviewEvidenceId = previousToReplace?.ReviewEvidenceId ?? request?.ReviewEvidenceId,
@@ -364,7 +369,8 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         {
             Require(request.TaskId == op.TaskId, "stale_land_request");
             Require(op.ApprovalLandRequestId is null || request.Id == op.ApprovalLandRequestId
-                || request.ExpectedSourceSha == op.OriginalSourceSha, "land_request_identity_conflict");
+                || (request.ExpectedSourceSha == op.OriginalSourceSha && op.PreviousPreparationOperationId is not null),
+                "land_request_identity_conflict");
             if (request.ExpectedSourceSha is not null)
                 Require(request.ExpectedSourceSha == op.OriginalSourceSha, "resume_approval_changed");
             if (request.ReviewEvidenceId is not null && op.ReviewEvidenceId is not null)

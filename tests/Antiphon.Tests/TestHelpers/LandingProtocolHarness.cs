@@ -100,7 +100,7 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await using var observer = CreateContext();
         var seeded = await observer.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == Git.TaskId);
-        if (seeded.LandRequestedAt is null)
+        if (seeded.LandRequestedAt is null && seeded.ActiveLandingId is null)
             await RequestAsync();
         try
         {
@@ -137,10 +137,14 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
         if (expectedSourceSha is null)
         {
             await using var published = CreateContext();
-            var op = await published.AgentTaskLandings.AsNoTracking()
-                .SingleOrDefaultAsync(o => o.TaskId == Git.TaskId && o.Active);
-            expectedSourceSha = op is not null && new AgentTaskLandingState().HasPublication(op)
-                ? op.OriginalSourceSha : Git.SourceHead;
+            var task = await published.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == Git.TaskId);
+            if (task.LandRequestedAt is null)
+            {
+                var op = await published.AgentTaskLandings.AsNoTracking()
+                    .SingleOrDefaultAsync(o => o.TaskId == Git.TaskId && o.Active);
+                expectedSourceSha = op is not null && new AgentTaskLandingState().HasPublication(op)
+                    ? op.OriginalSourceSha : Git.SourceHead;
+            }
         }
         await using var scope = Services.CreateAsyncScope();
         return await CreateLand(scope.ServiceProvider.GetRequiredService<AppDbContext>(), scope.ServiceProvider)
@@ -157,7 +161,8 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
 
     public async Task<LandRunResult> RunQueuedAsync(string? filter = null)
     {
-        if (!Queue.TryDequeue(out var request) || request.TaskId != Git.TaskId || request.VerifyFilter != filter)
+        if (!Queue.TryDequeue(out var request) || request.TaskId != Git.TaskId
+            || filter is not null && request.VerifyFilter != filter)
             throw new InvalidOperationException("Expected exact fixture task/filter queue claim");
         try
         {
