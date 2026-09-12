@@ -105,6 +105,8 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 var target = await CommitAsync(coordinates.RepositoryPath, coordinates.TargetFullRef, ct);
                 var approved = request is { ExpectedSourceSha: not null } ? request.ExpectedSourceSha : snapshot.HeadSha;
                 Require(snapshot.HeadSha == approved, "reviewed_source_mismatch");
+                var derivation = previousToReplace is { RebasedSourceSha: { } prepared }
+                    && prepared == snapshot.HeadSha && prepared != approved;
                 op = new AgentTaskLanding
                 {
                     Id = Guid.NewGuid(), TaskId = task.Id,
@@ -114,9 +116,8 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     WorktreePath = snapshot.RegisteredPath, CommonDirectory = snapshot.CommonDirectory,
                     GitDirectory = snapshot.GitDirectory, SourceFullRef = coordinates.SourceFullRef,
                     OriginalSourceSha = approved, ReviewedSourceSha = request?.ExpectedSourceSha,
-                    PreparationInputSha = previousToReplace?.RebasedSourceSha ?? approved,
-                    PreviousPreparationOperationId = previousToReplace is { RebasedSourceSha: { } prepared }
-                        && prepared != approved ? previousToReplace.Id : null,
+                    PreparationInputSha = derivation ? previousToReplace!.RebasedSourceSha : approved,
+                    PreviousPreparationOperationId = derivation ? previousToReplace!.Id : null,
                     ApprovalLandRequestId = previousToReplace is { OriginalSourceSha: { } prev } && prev == approved
                         ? previousToReplace.ApprovalLandRequestId ?? request?.Id : request?.Id,
                     ReviewEvidenceId = previousToReplace?.ReviewEvidenceId ?? request?.ReviewEvidenceId,
@@ -531,11 +532,14 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         if (transaction is not null) await transaction.CommitAsync(ct);
     }
 
-    private Task SaveAsync(AgentTaskLanding op, CancellationToken ct)
+    private async Task SaveAsync(AgentTaskLanding op, CancellationToken ct)
     {
         op.UpdatedAt = Now();
         op.ConcurrencyToken = Guid.NewGuid();
-        return db.SaveChangesAsync(ct);
+        await using var transaction = db.Database.CurrentTransaction is null
+            ? await db.Database.BeginTransactionAsync(ct) : null;
+        await db.SaveChangesAsync(ct);
+        if (transaction is not null) await transaction.CommitAsync(ct);
     }
 
     private DateTime Now() => clock.GetUtcNow().UtcDateTime;

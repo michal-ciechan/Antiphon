@@ -251,6 +251,8 @@ public sealed class AgentTaskLandSourceResolver(
         AgentTaskLanding? previous = null;
         if (task.ActiveLandingId is Guid previousId)
             previous = await db.AgentTaskLandings.SingleAsync(o => o.Id == previousId, ct);
+        var derivation = previous is { RebasedSourceSha: { } prepared }
+            && prepared == snapshot.HeadSha && prepared != request.ExpectedSourceSha;
         var op = new AgentTaskLanding
         {
             Id = Guid.NewGuid(), TaskId = task.Id, SchemaVersion = 2, Phase = LandPhase.Inspected,
@@ -258,9 +260,8 @@ public sealed class AgentTaskLandSourceResolver(
             WorktreePath = snapshot.RegisteredPath, CommonDirectory = snapshot.CommonDirectory,
             GitDirectory = snapshot.GitDirectory, SourceFullRef = coordinates.SourceFullRef,
             OriginalSourceSha = request.ExpectedSourceSha!, ReviewedSourceSha = request.ExpectedSourceSha,
-            PreparationInputSha = previous?.RebasedSourceSha ?? request.ExpectedSourceSha,
-            PreviousPreparationOperationId = previous is { RebasedSourceSha: { } prepared }
-                && prepared != request.ExpectedSourceSha ? previous.Id : null,
+            PreparationInputSha = derivation ? previous!.RebasedSourceSha : request.ExpectedSourceSha,
+            PreviousPreparationOperationId = derivation ? previous!.Id : null,
             ApprovalLandRequestId = previous is { OriginalSourceSha: { } prev } && prev == request.ExpectedSourceSha
                 ? previous.ApprovalLandRequestId ?? request.Id : request.Id,
             ReviewEvidenceId = previous?.ReviewEvidenceId ?? request.ReviewEvidenceId,

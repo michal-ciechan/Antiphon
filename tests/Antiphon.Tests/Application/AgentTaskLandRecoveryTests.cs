@@ -50,6 +50,12 @@ public sealed class AgentTaskLandRecoveryTests
         await h.InitializeAsync();
         await h.AddSourceAsync();
         h.Verifier.Passed = false;
+        await using (var db = h.CreateContext())
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            task.LandVerifyFilter = "/*/*/V31Refuse/*";
+            await db.SaveChangesAsync();
+        }
         await h.RunAsync();
         var previous = (await h.OperationAsync()).ShouldNotBeNull();
         previous.Phase.ShouldBe(LandPhase.Refused);

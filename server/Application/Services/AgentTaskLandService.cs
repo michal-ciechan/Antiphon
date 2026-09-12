@@ -251,7 +251,10 @@ public sealed class AgentTaskLandService
             ? await _db.AgentTaskLandings.SingleOrDefaultAsync(o => o.Id == operationId, ct)
             : null;
         var published = active is not null && new AgentTaskLandingState().HasPublication(active);
-        if (!published)
+        // Resume unpublished work in the protocol. Source resolution already ran when the
+        // operation was created; re-resolving can inspect/FF a live rebase or skip publication
+        // coordinate checks.
+        if (!published && (active is null || active.Phase == LandPhase.Refused))
         {
             var canResolve = request.SchemaVersion == 2 && GitObjectId.IsFull(request.ExpectedSourceSha);
             if (!canResolve && active is not { Phase: LandPhase.Refused })
