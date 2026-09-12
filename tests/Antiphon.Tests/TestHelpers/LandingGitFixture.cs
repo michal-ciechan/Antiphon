@@ -134,8 +134,10 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         protected override void ConfigureProcess(ProcessStartInfo start)
         {
             start.Environment["HOME"] = home;
-            start.Environment["GIT_EDITOR"] = "cmd.exe /c exit 0";
-            start.Environment["GIT_SEQUENCE_EDITOR"] = "cmd.exe /c exit 0";
+            var editor = Path.Combine(home, "noop-editor.cmd");
+            if (!File.Exists(editor)) File.WriteAllText(editor, "@exit /b 0" + Environment.NewLine);
+            start.Environment["GIT_EDITOR"] = editor;
+            start.Environment["GIT_SEQUENCE_EDITOR"] = editor;
             start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
             start.Environment["GIT_CONFIG_GLOBAL"] = Path.Combine(home, "empty-config");
             start.Environment["GIT_AUTHOR_NAME"] = "C448 Fixture";
