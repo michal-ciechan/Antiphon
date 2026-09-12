@@ -541,7 +541,7 @@ switch ($PSCmdlet.ParameterSetName) {
                 Write-AntiphonLandFailure ("Antiphon land refused: POST {0}{1} returned {2} (land-v2). Confirm GET {0}/api/version, then pwsh -NoProfile -File scripts/restart-apphost.ps1." -f $safeApi, $landPath, $code)
             }
             if ($null -eq $code) {
-                Write-AntiphonLandFailure ("Antiphon land POST to {0}{1} did not complete. The request may have been accepted; check with delegate.ps1 -Status {2}. Do not assume publication failed." -f $safeApi, $landPath, $Land)
+                Write-AntiphonLandFailure ("Antiphon land POST to {0}{1} did not complete. The request may have been accepted; check with delegate.ps1 -Status {2}." -f $safeApi, $landPath, $Land)
             }
             $detail = $_.ErrorDetails.Message
             if ([string]::IsNullOrWhiteSpace($detail)) { $detail = $_.Exception.Message }
