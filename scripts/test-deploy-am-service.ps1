@@ -10,6 +10,7 @@
 $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'deploy-am-service.ps1')
 $script:passed = 0; $script:failed = 0; $script:failures = @()
+$script:realisticCluster = 'redpanda.66fe474a-d399-4ea1-8cde-c606e98614a8'
 function Pass { param([string]$Name) $script:passed++; Write-Host "PASS $Name" }
 function Fail { param([string]$Name, [string]$Detail) $script:failed++; $script:failures += "$Name : $Detail"; Write-Host "FAIL $Name - $Detail" }
 function Assert-True { param([bool]$Condition, [string]$Name, [string]$Detail = '') if ($Condition) { Pass $Name } else { Fail $Name $Detail } }
@@ -48,8 +49,12 @@ function Add-MonitorFake {
         }
         if ($command -match 'rpk cluster info') {
             $script:commands.Add($command); $script:brokerReads++
-            $cluster = if ($script:monitorCase -eq 'broker-mismatch' -and $script:brokerReads -eq 2) { 'different-cluster' } else { 'c0410-cluster' }
-            return [pscustomobject]@{ExitCode=0;Output=(@{cluster_name=$cluster} | ConvertTo-Json -Compress)}
+            $cluster = if ($script:monitorCase -eq 'broker-mismatch' -and $script:brokerReads -eq 2) { 'different-cluster' } elseif ($script:monitorCase -eq 'legacy-cluster') { 'c0410-cluster' } elseif ($script:monitorCase -eq 'invalid-cluster') { '...' } else { $script:realisticCluster }
+            $json = (@{cluster_name=$cluster} | ConvertTo-Json -Compress)
+            if ($script:monitorCase -eq 'rpk-noise') {
+                return [pscustomobject]@{ExitCode=0;Output=@('WARNING: This is a Redpanda Enterprise feature. Requires a license.','CLUSTER','=======',$json)}
+            }
+            return [pscustomobject]@{ExitCode=0;Output=$json}
         }
         if ($command -match 'C0410_MANAGED') { $script:commands.Add($command); $script:persisted = $true; return [pscustomobject]@{ExitCode=0;Output=@()} }
         if ($command -match '/health/inbound-unconsumed') {
@@ -80,6 +85,21 @@ try {
     $serverProfile = Get-Content -Raw (Join-Path $root 'server/appsettings.json') | ConvertFrom-Json
     $serviceProfile = Get-Content -Raw (Join-Path $context 'Antiphon.Messaging.Service/appsettings.json') | ConvertFrom-Json
     Assert-True ($serverProfile.AntiphonMessaging.ConsumerGroup -ceq 'antiphon-server-bridge' -and $serviceProfile.Kafka.AntiphonConsumerGroup -ceq $serverProfile.AntiphonMessaging.ConsumerGroup -and $serviceProfile.Kafka.ExpectedAntiphonConsumerGroup -ceq $serverProfile.AntiphonMessaging.ConsumerGroup -and $serviceProfile.Kafka.ConsumerGroup -cne $serverProfile.AntiphonMessaging.ConsumerGroup) 'repository profiles agree on the server inbound group'
+    $noisy = @('WARNING: This is a Redpanda Enterprise feature. Requires a license.','CLUSTER','=======',(@{cluster_name=$script:realisticCluster} | ConvertTo-Json -Compress)) -join "`n"
+    $parsed = ConvertFrom-AmServiceJsonOutput $noisy
+    Assert-True ($parsed.cluster_name -ceq $script:realisticCluster) 'json helper extracts cluster identity from rpk license banner noise'
+    Assert-Throws { ConvertFrom-AmServiceJsonOutput 'WARNING: This is a Redpanda Enterprise feature. Requires a license.' } 'json helper refuses diagnostic-only output'
+    Assert-Throws { ConvertFrom-AmServiceJsonOutput '' } 'json helper refuses empty output'
+    $script:directCmds = New-Object 'System.Collections.Generic.List[string]'
+    $directSsh = { param($command) $script:directCmds.Add($command); return [pscustomobject]@{ExitCode=0;Output=(@{cluster_name=$script:realisticCluster} | ConvertTo-Json -Compress)} }
+    Assert-AmServiceBrokerIdentity $directSsh 'am-redpanda:9092' 'am-redpanda:9092'
+    Assert-True (($script:directCmds -join "`n") -match 'docker compose exec -T redpanda rpk cluster info' -and ($script:directCmds -join "`n") -notmatch 'docker compose exec -T am-redpanda' -and ($script:directCmds -join "`n") -match '2>/dev/null') 'broker identity probe execs Compose service redpanda and discards rpk stderr' ($script:directCmds -join ' | ')
+    Assert-Throws { Assert-AmServiceBrokerIdentity { param($command) return [pscustomobject]@{ExitCode=0;Output=(@{cluster_name='...'} | ConvertTo-Json -Compress)} } 'am-redpanda:9092' 'am-redpanda:9092' } 'broker identity refuses dotted-ellipsis garbage'
+    Assert-Throws { Assert-AmServiceBrokerIdentity { param($command) return [pscustomobject]@{ExitCode=0;Output=(@{cluster_name='redpanda.'} | ConvertTo-Json -Compress)} } 'am-redpanda:9092' 'am-redpanda:9092' } 'broker identity refuses trailing-dot cluster name'
+    Assert-Throws { Assert-AmServiceBrokerIdentity { param($command) return [pscustomobject]@{ExitCode=0;Output=(@{cluster_name='c0410 cluster'} | ConvertTo-Json -Compress)} } 'am-redpanda:9092' 'am-redpanda:9092' } 'broker identity refuses cluster names with spaces'
+    $legacySsh = { param($command) return [pscustomobject]@{ExitCode=0;Output=(@{cluster_name='c0410-cluster'} | ConvertTo-Json -Compress)} }
+    Assert-AmServiceBrokerIdentity $legacySsh 'am-redpanda:9092' 'am-redpanda:9092'
+    Pass 'broker identity still accepts undotted c0410-cluster fixture'
     New-Item -ItemType Directory -Force $fixture | Out-Null
     foreach ($dir in @('one', 'two', 'three')) { New-Item -ItemType Directory -Force (Join-Path $fixture $dir) | Out-Null; [IO.File]::WriteAllText((Join-Path $fixture "$dir\file.txt"), $dir) }
     $fixtureDockerfile = Join-Path $fixture 'Dockerfile'
@@ -133,12 +153,20 @@ try {
     Assert-True $cleanupWasRequested 'remote seam removes transient upload after handled deployment' ($script:commands -join ' | ')
     $verificationCommand = @($script:commands | Where-Object { $_ -match 'curl -fsS' }) -join "`n"
     Assert-True ($verificationCommand.Contains("cd '/home/mc/antiphon-messaging'")) 'technical verification uses the deployment Compose directory'
+    $brokerCmds = @($script:commands | Where-Object { $_ -match 'rpk cluster info|rpk group describe' }) -join "`n"
+    Assert-True ($brokerCmds -match 'docker compose exec -T redpanda rpk cluster info' -and $brokerCmds -match 'docker compose exec -T redpanda rpk group describe' -and $brokerCmds -notmatch 'docker compose exec -T am-redpanda') 'deploy broker probes use Compose service name redpanda' $brokerCmds
 
     Reset-MonitorFake; $script:commands.Clear(); $script:scpCalls.Clear()
     $log = @(Invoke-AmServiceDeployment $root $false $false 10 $successSsh $scp $http 6>&1 | ForEach-Object { $_.ToString() }) -join "`n"
     $readOnly = $script:scpCalls.Count -eq 0 -and ($script:commands -join "`n") -notmatch 'tar xzf|docker compose build|docker compose up|tee |cat >|printf .*> '
     $identities = $log.Contains('repository default: antiphon-server-bridge') -and $log.Contains('server: antiphon-server-bridge') -and $log.Contains('gateway watched: antiphon-consumer') -and $log.Contains('proposed: Kafka__AntiphonConsumerGroup=antiphon-server-bridge Kafka__ExpectedAntiphonConsumerGroup=antiphon-server-bridge') -and $log.Contains('outbound group unchanged: antiphon-messaging-service')
     Assert-True ($readOnly -and $identities) 'preflight reads server identity and gateway settings without writing' 'preflight must show four identities and issue zero writes'
+    Reset-MonitorFake; $script:monitorCase='rpk-noise'; $script:commands.Clear(); $script:scpCalls.Clear()
+    $noiseLog = @(Invoke-AmServiceDeployment $root $false $false 10 $successSsh $scp $http 6>&1 | ForEach-Object { $_.ToString() }) -join "`n"
+    Assert-True ($script:scpCalls.Count -eq 0 -and $noiseLog.Contains('Broker listener metadata identifies the same cluster.')) 'preflight accepts redpanda.<uuid> cluster identity through rpk license banner noise' $noiseLog
+    Reset-MonitorFake; $script:monitorCase='legacy-cluster'; $script:commands.Clear()
+    $legacyLog = @(Invoke-AmServiceDeployment $root $false $false 10 $successSsh $scp $http 6>&1 | ForEach-Object { $_.ToString() }) -join "`n"
+    Assert-True ($legacyLog.Contains('Broker listener metadata identifies the same cluster.')) 'preflight still accepts undotted cluster identity' $legacyLog
     foreach ($case in @(@('404','identity endpoint 404 refuses'), @('disabled','disabled bridge refuses'), @('topic','inbound topic mismatch refuses'), @('rename','identity change between preview and write refuses'), @('unmarked','unmarked existing override refuses before any write'))) {
         Reset-MonitorFake; $script:monitorCase=$case[0]; $script:commands.Clear(); $script:scpCalls.Clear()
         Assert-Throws { Invoke-AmServiceDeployment $root $true $true 10 $successSsh $scp $http | Out-Null } $case[1]
@@ -169,7 +197,7 @@ try {
     $log = @(Invoke-AmServiceDeployment $root $true $true 10 $successSsh $scp $http 6>&1 | ForEach-Object { $_.ToString() }) -join "`n"
     $written = @($script:commands | Where-Object { $_ -match 'C0410_MANAGED' }) -join "`n"
     Assert-True (-not $log.Contains('never-log-this') -and -not $written.Contains('never-log-this')) 'identity, compose, and container output never leak'
-    foreach ($case in @('ambiguous-compose','broker-mismatch')) {
+    foreach ($case in @('ambiguous-compose','broker-mismatch','invalid-cluster')) {
         Reset-MonitorFake; $script:monitorCase=$case; $script:commands.Clear(); $script:scpCalls.Clear()
         $failureLog = ''
         try { $failureLog = @(Invoke-AmServiceDeployment $root $true $true 10 $successSsh $scp $http 6>&1 | ForEach-Object { $_.ToString() }) -join "`n"; Fail "$case refuses" 'did not throw' } catch { Pass "$case refuses" }

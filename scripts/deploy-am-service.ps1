@@ -168,7 +168,7 @@ print(json.dumps({k:env.get("Kafka__"+k,None if merged and k in keys[:2] else pr
 '@
     $code = $code.Replace('MODE', $mode)
     $command = "cd /home/mc/antiphon-messaging && python3 - <<'C0410_GATEWAY_SETTINGS'`n$code`nC0410_GATEWAY_SETTINGS"
-    try { $body = ((Invoke-AmServiceRunner $SshRunner @($command) 'gateway settings projection') -join "`n") | ConvertFrom-Json -ErrorAction Stop } catch { throw 'Gateway settings projection failed.' }
+    try { $body = ConvertFrom-AmServiceJsonOutput ((Invoke-AmServiceRunner $SshRunner @($command) 'gateway settings projection') -join "`n") } catch { throw 'Gateway settings projection failed.' }
     # Validate before output or shell use, and do not carry arbitrary returned fields forward.
     foreach ($key in @('AntiphonConsumerGroup','InboundTopic','ConsumerGroup')) {
         if ([string]$body.$key -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,248}$') { throw "Gateway settings missing or invalid $key." }
@@ -193,20 +193,39 @@ managed=not exists or p.read_text().splitlines()[0]==marker
 print(json.dumps({"name":override,"exists":exists,"managed":managed}))
 '@
     $command = "cd /home/mc/antiphon-messaging && python3 - <<'C0410_OVERRIDE'`n$code`nC0410_OVERRIDE"
-    try { $body = ((Invoke-AmServiceRunner $SshRunner @($command) 'managed override preflight') -join "`n") | ConvertFrom-Json -ErrorAction Stop } catch { throw 'Compose base/override ambiguity or unreadable override refuses deployment.' }
+    try { $body = ConvertFrom-AmServiceJsonOutput ((Invoke-AmServiceRunner $SshRunner @($command) 'managed override preflight') -join "`n") } catch { throw 'Compose base/override ambiguity or unreadable override refuses deployment.' }
     if ($body.name -notmatch '^(docker-compose|compose)\.override\.(yml|yaml)$') { throw 'Invalid managed override filename.' }
     if ($body.managed -ne $true) { throw "Unmarked existing $($body.name) refuses before any write." }
     return [pscustomobject]@{ Path=('/home/mc/antiphon-messaging/' + $body.name); Exists=($body.exists -eq $true) }
+}
+
+function ConvertFrom-AmServiceJsonOutput {
+    # SSH 2>&1 merges rpk/python diagnostics into stdout; take the JSON object, not the banner.
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+    $trimmed = ([string]$Text).Trim()
+    if ($trimmed.Length -eq 0) { throw 'JSON output was empty.' }
+    try { return ($trimmed | ConvertFrom-Json -ErrorAction Stop) } catch { }
+    $start = $trimmed.IndexOf('{')
+    $end = $trimmed.LastIndexOf('}')
+    if ($start -ge 0 -and $end -gt $start) {
+        $slice = $trimmed.Substring($start, ($end - $start + 1))
+        try { return ($slice | ConvertFrom-Json -ErrorAction Stop) } catch { }
+    }
+    throw 'JSON output was not parseable.'
 }
 
 function Assert-AmServiceBrokerIdentity {
     param([scriptblock]$SshRunner, [string]$ServerBrokers, [string]$GatewayBrokers)
     $ids = @()
     foreach ($listener in @($ServerBrokers,$GatewayBrokers)) {
-        $command = "cd /home/mc/antiphon-messaging && docker compose exec -T am-redpanda rpk cluster info -X brokers=$listener --format json"
-        try { $body = ((Invoke-AmServiceRunner $SshRunner @($command) 'broker metadata probe') -join "`n") | ConvertFrom-Json -ErrorAction Stop } catch { throw 'Broker metadata probe failed.' }
-        if ([string]$body.cluster_name -notmatch '^[A-Za-z0-9_-]+$') { throw 'Broker metadata has no cluster identity.' }
-        $ids += [string]$body.cluster_name
+        # Compose SERVICE name is redpanda; am-redpanda is only the container_name.
+        $command = "cd /home/mc/antiphon-messaging && docker compose exec -T redpanda rpk cluster info -X brokers=$listener --format json 2>/dev/null"
+        $raw = (Invoke-AmServiceRunner $SshRunner @($command) 'broker metadata probe') -join "`n"
+        try { $body = ConvertFrom-AmServiceJsonOutput $raw } catch { throw 'Broker metadata probe failed.' }
+        # Redpanda's live cluster_name is redpanda.<uuid>; keep exact identity comparison.
+        $name = [string]$body.cluster_name
+        if ($name.Length -lt 1 -or $name.Length -gt 249 -or $name -notmatch '^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$') { throw 'Broker metadata has no cluster identity.' }
+        $ids += $name
     }
     if ($ids[0] -cne $ids[1]) { throw 'Server/gateway broker cluster identity mismatch.' }
     Write-Host 'Broker listener metadata identifies the same cluster.'
@@ -225,7 +244,7 @@ function Assert-AmServiceMonitor {
     $partitions = @($body.partitions)
     if (-not $partitions.Count -or @($partitions | Where-Object { $_.status -cne 'CommittedOffset' -or $null -eq $_.committedNextOffset -or $_.committedNextOffset -is [string] -or [long]$_.committedNextOffset -lt 0 }).Count) { throw 'Monitor readiness contains unknown offsets.' }
     $group = $Identity.consumerGroup
-    $raw = (Invoke-AmServiceRunner $SshRunner @("cd /home/mc/antiphon-messaging && docker compose exec -T am-redpanda rpk group describe $group") 'read-only group offsets') -join "`n"
+    $raw = (Invoke-AmServiceRunner $SshRunner @("cd /home/mc/antiphon-messaging && docker compose exec -T redpanda rpk group describe $group 2>/dev/null") 'read-only group offsets') -join "`n"
     # rpk's table: TOPIC PARTITION CURRENT-OFFSET LOG-START-OFFSET LOG-END-OFFSET LAG ...
     foreach ($partition in $partitions) {
         $pattern = '(?m)^\s*' + [regex]::Escape($Identity.inboundTopic) + '\s+' + [regex]::Escape([string]$partition.partition) + '\s+([0-9]+)\s+'
