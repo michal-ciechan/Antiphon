@@ -202,7 +202,9 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
                     .SingleOrDefaultAsync(o => o.TaskId == Fixture.TaskId && o.Active);
                 expectedSourceSha = op is not null && new AgentTaskLandingState().HasPublication(op)
                     ? op.OriginalSourceSha
-                    : (await Fixture.RequiredAsync(Fixture.Source, "rev-parse", "HEAD")).Trim();
+                    : Directory.Exists(Fixture.Source)
+                        ? (await Fixture.RequiredAsync(Fixture.Source, "rev-parse", "HEAD")).Trim()
+                        : Fixture.SeedSha;
             }
         }
         await using var scope = Services.CreateAsyncScope();

@@ -261,10 +261,7 @@ public class AgentTaskLandStageOutcomeTests
         afterFirst.Count.ShouldBe(3);
         await AssertPendingClearedAsync(db, task.Id, attempt: 1);
 
-        var row = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
-        row.LandRequestedAt = DateTime.UtcNow;
-        await db.SaveChangesAsync();
-
+        await land.RequestAsync(task.Id, new LandAgentTaskRequest(), CancellationToken.None);
         await land.RunAsync(task.Id, null, CancellationToken.None);
 
         var rows = await RowsAsync(db, task.Id);
@@ -469,7 +466,8 @@ public class AgentTaskLandStageOutcomeTests
         var sha = (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim();
         var branch = task.WorktreeBranch!.StartsWith("refs/", StringComparison.Ordinal)
             ? task.WorktreeBranch : "refs/heads/" + task.WorktreeBranch;
-        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "push", "origin", $"HEAD:{branch}")).Ok.ShouldBeTrue();
+        var fetch = (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "remote", "get-url", "origin")).StdOut.Trim();
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "push", fetch, $"HEAD:{branch}")).Ok.ShouldBeTrue();
         return await land.RequestAsync(task.Id, new LandAgentTaskRequest(ExpectedSourceSha: sha), CancellationToken.None);
     }
 

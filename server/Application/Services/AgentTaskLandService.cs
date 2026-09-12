@@ -76,6 +76,8 @@ public sealed class AgentTaskLandService
             throw new ConflictException($"Task {DelegationReportFormatter.Short(task.Id)} must have succeeded before it can land.");
 
         var shortId = DelegationReportFormatter.Short(task.Id);
+        if (_queue.IsActive(taskId) && task.LandRequestedAt is null)
+            _queue.Release(taskId);
         if (_queue.IsActive(taskId))
         {
             var requested = task.LandRequestedAt?.ToString("u") ?? "unknown";
