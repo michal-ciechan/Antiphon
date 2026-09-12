@@ -176,7 +176,12 @@ public sealed class AgentTaskLandRecoveryTests
                 (await File.ReadAllTextAsync(Path.Combine(h.Fixture.Source, "keep.txt"))).ShouldBe("operator resolution\n");
                 h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase") || a[0] == "push" || a.Contains("remove"));
                 // Explicit operator resolution is a separate action after the conservative restart refusal.
-                await h.Fixture.RequiredAsync(h.Fixture.Source, "-c", "core.editor=:", "rebase", "--no-edit", "--continue");
+                var gitDir = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "--absolute-git-dir")).Trim();
+                (Path.Exists(Path.Combine(gitDir, "rebase-merge")) || Path.Exists(Path.Combine(gitDir, "rebase-apply")))
+                    .ShouldBeTrue("interrupted rebase evidence must still be present for operator continue");
+                var continued = await h.Fixture.Git.RunAsync(h.Fixture.Source,
+                    ["-c", "core.editor=cmd.exe /c exit 0", "rebase", "--continue"], CancellationToken.None);
+                continued.Succeeded.ShouldBeTrue($"rebase --continue: exit={continued.ExitCode} {continued.Diagnostic} {continued.Output}");
                 var resolved = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim();
                 await h.RepostAsync();
                 await using (var request = h.CreateContext())
