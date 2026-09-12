@@ -65,3 +65,5 @@ Antiphon.Tests.Application.AgentTaskLandCheckpointMatrixTests
 Antiphon.Tests.Application.AgentTaskLandCleanupSafetyTests
 # CARD-0484: ChannelBridge observed cost; rebaseline after the pending fix. No timeout tuning here.
 Antiphon.Tests.Application.ChannelBridgeTests
+# CARD-0495: default version-probe timeout is 5s by contract (C495_VersionProbeDefaultTimeoutIsFiveSeconds).
+Antiphon.Tests.Application.DelegateScriptLandCompatibilityTests
