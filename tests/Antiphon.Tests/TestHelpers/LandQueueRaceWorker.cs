@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
+using TUnit.Core;
 
 namespace Antiphon.Tests.TestHelpers;
 
@@ -13,6 +14,23 @@ internal static class LandQueueRaceWorker
 {
     internal const string Marker = "ANTIPHON_C467_QUEUE_WORKER";
     private sealed record Settings(string Root, Guid Session, Guid Task, Guid Notification);
+
+    [Before(Assembly)]
+    public static async Task DispatchWorkerIfRequested()
+    {
+        if (Environment.GetEnvironmentVariable(Marker) is not { } worker)
+            return;
+        try
+        {
+            await RunAsync(worker);
+            Environment.Exit(0);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(ex.GetType().Name + ": " + ex.StackTrace);
+            Environment.Exit(1);
+        }
+    }
 
     internal static async Task RunAsync(string encoded)
     {
@@ -30,7 +48,14 @@ internal static class LandQueueRaceWorker
             sourceLandNotificationId: settings.Notification, onCreated: id => row = id);
         h.Adapter.Inputs.ShouldBeEmpty(); row.ShouldNotBe(Guid.Empty);
         await File.WriteAllTextAsync(Path.Combine(settings.Root, $"{Environment.ProcessId}.result.json"),
-            JsonSerializer.Serialize(new { row, pid = Environment.ProcessId, mvid = typeof(LandQueueRaceWorker).Assembly.ManifestModule.ModuleVersionId, inputs = h.Adapter.Inputs.Count }));
+            JsonSerializer.Serialize(new
+            {
+                row,
+                pid = Environment.ProcessId,
+                mvid = typeof(LandQueueRaceWorker).Assembly.ManifestModule.ModuleVersionId,
+                inputs = h.Adapter.Inputs.Count,
+                dbLifecycle = TestDbFixture.Lifecycle.State
+            }));
         // No shared TestDbFixture was started in this child. Dispose only its provider; parent owns the database.
         h.Scope.Dispose(); await h.Provider.DisposeAsync();
     }
@@ -62,6 +87,9 @@ internal static class LandQueueRaceWorker
             foreach (var worker in workers)
             {
                 using var result = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, $"{worker.Process.Id}.result.json")));
+                result.RootElement.GetProperty("mvid").GetGuid()
+                    .ShouldBe(typeof(LandQueueRaceWorker).Assembly.ManifestModule.ModuleVersionId);
+                result.RootElement.GetProperty("dbLifecycle").GetString().ShouldBe("never-requested");
                 rows.Add(result.RootElement.GetProperty("row").GetGuid());
             }
             return (rows[0], rows[1]);

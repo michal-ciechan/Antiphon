@@ -68,6 +68,7 @@ public class ProcessSpawnLimitTests
             typeof(TestDurationTripwireTests),
             typeof(SessionQueueReceiptPlumbingTests),
             typeof(TestClassificationPolicyTests),
+            typeof(TestDbFixtureLazyInitializationTests),
         ];
 
         foreach (var type in types)

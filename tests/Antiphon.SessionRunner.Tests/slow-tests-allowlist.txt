@@ -3,3 +3,5 @@
 Antiphon.SessionRunner.Tests.RunnerRestartHealthTests
 # CARD-0487: real tailer/tree adoption safety; retain serialization and all current rows.
 Antiphon.SessionRunner.Tests.TranscriptAdoptionSafetyTests
+# CARD-0476 real-shell preflight cache safety, two shells
+Antiphon.SessionRunner.Tests.RunnerRestartPreflightSafetyTests
