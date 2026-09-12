@@ -96,6 +96,12 @@ pwsh -File scripts/test-duration-tripwire.ps1 -Trx path\to\run.trx
 
 The allowlist is `tests/Antiphon.Tests/slow-tests-allowlist.txt` (exact simple or fully-qualified class names, case-insensitive). Every test class is tagged `Unit` xor `Integration` (`TestLaneCategoryGuardTests`).
 
+### Lazy PostgreSQL and restart preflight cache (CARD-0476)
+
+`TestDbFixture` constructs no container until the first default-store consumer (`ConnectionString`, default `CreateDbContextOptions()`, instance `CreateDbContext()`, or `CreateIsolatedSchemaAsync()`). Explicit connection strings and `new TestDbFixture()` stay inert. Assembly teardown is a no-op when the database was never requested. `SessionDeliveryProfileTests` remains `Category("Unit")` and still starts PostgreSQL when that class runs, so the full Unit lane is not a zero-DB benchmark. `ProductionRunnerGuard` and `PtyBackendEnvGuard` stay eager and independent of the lazy task. `LandQueueRaceWorker` dispatch is a separate `[Before(Assembly)]` hook; worker children use a parent-owned connection and must not start a private database.
+
+`RestartFixture.Run` caches only a successful AST preflight, keyed by resolved shell identity plus the hashed copied entry, helper, platform, wrapper, and validator identity. Every accepted `Run` still launches the real entry child. `Script` and `DecodeCapturedMilestones` stay uncached. Resolver identity walks PATH for the first readable regular file and launches that absolute path (skipping zero-byte/reparse WindowsApps aliases). Measured Code-stage Health+Compatibility+Safety selection: 94 passed in 8m 45s into `bin-c476/`. Paired before/after savings for the S3 procedure are left for Mutation/Review if needed; do not treat the historical 24–37 s bootstrap or 143 s Health total as recovered wall.
+
 ## Combined class filters (CARD-0403)
 
 For one invocation covering several named classes on the pinned TUnit 1.44 runner, use
