@@ -70,6 +70,10 @@ public sealed class AgentTaskLandService
         var task = await _db.AgentTasks.SingleOrDefaultAsync(t => t.Id == taskId, ct)
             ?? throw new NotFoundException(nameof(AgentTask), taskId.ToString());
         await _db.Entry(task).ReloadAsync(ct);
+        if (task.RepairSourceTaskId is Guid repairOwner)
+            throw new ConflictException(
+                $"Repair tasks cannot be landed; commission Land on the original owner {DelegationReportFormatter.Short(repairOwner)}.",
+                "repair_source_landing_owner_required");
         if (task.Role == AgentTaskRole.Mutation || task.SourceLandingOperationId is not null)
             throw new ConflictException("Mutation snapshots cannot be landed.", "verification_publication_forbidden");
         if (task.Workspace != WorkspaceMode.Worktree)
@@ -157,6 +161,10 @@ public sealed class AgentTaskLandService
     public async Task<LandRunResult> RunRequestAsync(Guid taskId, Guid? requestId, string? verifyFilter, CancellationToken ct)
     {
         var task = await _db.AgentTasks.SingleOrDefaultAsync(t => t.Id == taskId, ct);
+        if (task is not null && task.RepairSourceTaskId is Guid repairOwner)
+            throw new ConflictException(
+                $"Repair tasks cannot be landed; commission Land on the original owner {DelegationReportFormatter.Short(repairOwner)}.",
+                "repair_source_landing_owner_required");
         if (task is not null && (task.Role == AgentTaskRole.Mutation || task.SourceLandingOperationId is not null))
             throw new ConflictException("Mutation snapshots cannot be landed.", "verification_publication_forbidden");
         if (task is null)

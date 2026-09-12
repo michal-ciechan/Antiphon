@@ -1,5 +1,7 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data.Seeding;
 using Shouldly;
@@ -20,6 +22,53 @@ namespace Antiphon.Tests.Application;
 [Category("Unit")]
 public class InstructionBundleTests
 {
+    [Test]
+    public void C499_V08_CodeBriefCarriesTheTaskScopedProgressClaimContract()
+    {
+        var id = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        var task = new AgentTask
+        {
+            Id = id, RootTaskId = id, Title = "code", Goal = "build it",
+            Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Worktree,
+            WorkingDirectory = @"C:\repo", CreatedAt = DateTime.UtcNow,
+        };
+        var brief = DelegationReportFormatter.BuildBrief(task, new DelegationSettings());
+        brief.ShouldContain($"[antiphon-progress:{id:D} commit=");
+        brief.ShouldContain("before the `--- next stage ---` block");
+        brief.ShouldNotContain("Repair owner");
+    }
+
+    [Test]
+    public void C499_V08b_RepairBriefNamesOwnerSourceBaselineAndAssignedCheckout()
+    {
+        var id = Guid.NewGuid();
+        var owner = Guid.NewGuid();
+        var baseline = new ProgressBaselineSnapshot(1, DateTime.UtcNow, DateTime.UtcNow,
+            new ProgressSourceBaseline(@"C:\repo", @"C:\repo", id, @"C:\wt\repair", "refs/heads/feat/card-task-repair", new string('a', 40),
+                new ProgressRemoteBaseline(ProgressRemoteState.Present, new string('a', 40), new string('b', 64))),
+            new ProgressSourceBaseline(@"C:\repo", @"C:\repo", owner, @"C:\wt\owner", "refs/heads/feat/card-task-owner", new string('c', 40),
+                new ProgressRemoteBaseline(ProgressRemoteState.Present, new string('c', 40), new string('b', 64))));
+        var task = new AgentTask
+        {
+            Id = id, RootTaskId = id, Title = "repair", Goal = "fix attribution",
+            Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Worktree,
+            WorkingDirectory = @"C:\wt\repair", WorktreePath = @"C:\wt\repair",
+            WorktreeBranch = "feat/card-task-repair", RepairSourceTaskId = owner,
+            ProgressBaselineJson = TaskProgressJson.SerializeBaseline(baseline),
+            CreatedAt = DateTime.UtcNow,
+        };
+        var brief = DelegationReportFormatter.BuildBrief(task, new DelegationSettings());
+        brief.ShouldContain(owner.ToString("D"));
+        brief.ShouldContain("refs/heads/feat/card-task-owner");
+        brief.ShouldContain(new string('c', 40));
+        brief.ShouldContain(@"C:\wt\repair");
+        brief.ShouldContain("feat/card-task-repair");
+        brief.ShouldContain("integration: not requested");
+        task.MergeTargetRef = "feat/card-task-owner";
+        DelegationReportFormatter.BuildBrief(task, new DelegationSettings())
+            .ShouldContain("integration: requested into feat/card-task-owner");
+    }
+
     [Test]
     public void C470_composed_roles_separate_vr_from_pc()
     {

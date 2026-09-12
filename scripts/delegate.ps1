@@ -67,6 +67,10 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [guid]$SourceLanding,
 
+    # CARD-0499. Original Code/Worktree landing owner this repair is attributed against.
+    [Parameter(ParameterSetName = 'Create')]
+    [guid]$RepairSource,
+
     [Parameter(ParameterSetName = 'CleanupVerification', Mandatory = $true)]
     [string]$CleanupVerification,
 
@@ -525,6 +529,18 @@ switch ($PSCmdlet.ParameterSetName) {
             $l = $task.landing
             Write-Output "Publication: $($l.publication); operation $($l.operationId); approved $($l.reviewedSha); verified $($l.verifiedSha); remote $($l.remoteSha); confirmed $($l.remoteConfirmedAt); cleanup: $($l.cleanup)"
         } else { Write-Output 'Publication: Unconfirmed; cleanup: NotStarted' }
+        if ($task.progressEvidence) {
+            $p = $task.progressEvidence
+            $origin = $null
+            if ($p.sources) { $origin = @($p.sources)[0] }
+            if ($p.assessment -eq 'Indeterminate' -or $p.reason) {
+                Write-Output ("Progress: unavailable; reason {0}" -f $p.reason)
+            } elseif ($origin -and ($origin.origin -eq 'RepairSource' -or $origin.origin -eq 'RepairSourceRemote')) {
+                Write-Output ("Progress: repair-source; owner {0}; commit {1}" -f $origin.ownerTaskId, $origin.commit)
+            } elseif ($origin) {
+                Write-Output ("Progress: {0}; commit {1}" -f $origin.origin, $origin.commit)
+            }
+        }
         if ($task.result) { Write-Output ''; Write-Output $task.result }
         elseif ($task.failureReason) { Write-Output ''; Write-Output "failed: $($task.failureReason)" }
         return
@@ -730,6 +746,7 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($AllowDirectEdits) { $body['denyDirectEdits'] = $false }
         if ($OnAgent) { $body['followUpOnTask'] = $OnAgent }
         if ($PSBoundParameters.ContainsKey('SourceLanding')) { $body['sourceLandingOperationId'] = $SourceLanding.ToString('D') }
+        if ($PSBoundParameters.ContainsKey('RepairSource')) { $body['repairSourceTaskId'] = $RepairSource.ToString('D') }
         if ($Agent) { $body['agent'] = $Agent }
         if ($Stage) { $body['stage'] = $Stage }
         if ($titleText) { $body['title'] = $titleText }

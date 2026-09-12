@@ -67,3 +67,7 @@ Antiphon.Tests.Application.AgentTaskLandCleanupSafetyTests
 Antiphon.Tests.Application.ChannelBridgeTests
 # CARD-0495: default version-probe timeout is 5s by contract (C495_VersionProbeDefaultTimeoutIsFiveSeconds).
 Antiphon.Tests.Application.DelegateScriptLandCompatibilityTests
+# CARD-0499: real dispatcher tick + dual worktree + scratch remote.
+Antiphon.Tests.Application.RepairSourceDispatchTests
+# CARD-0499: real dispatch then settlement through AgentTaskReplyService.
+Antiphon.Tests.Application.RepairSourceSettlementTests

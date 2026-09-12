@@ -13,7 +13,7 @@ namespace Antiphon.Server.Application.Services;
 /// every call is best-effort: a non-repo workspace or a git failure degrades to "no git info",
 /// never an error surfaced to the files UI.
 /// </summary>
-public sealed class GitWorkspaceService
+public class GitWorkspaceService
 {
     // The direct-construction test seam needs a process-wide default, while DI supplies the
     // configured singleton gate in production.
@@ -56,15 +56,24 @@ public sealed class GitWorkspaceService
         return code == 0 && origin.Length > 0 ? origin : null;
     }
 
+    public sealed record GitStrictList<T>(bool Succeeded, IReadOnlyList<T> Items, int ExitCode);
+
     /// <summary>Working tree + index changes vs HEAD (porcelain v1 -z), untracked included.</summary>
     public async Task<IReadOnlyList<GitChange>> GetChangesAsync(string workingDirectory, CancellationToken ct)
+    {
+        var strict = await TryGetChangesAsync(workingDirectory, ct);
+        return strict.Items;
+    }
+
+    /// <summary>CARD-0499. Failures stay failures; the Files UI wrappers still swallow via <see cref="GetChangesAsync"/>.</summary>
+    public virtual async Task<GitStrictList<GitChange>> TryGetChangesAsync(string workingDirectory, CancellationToken ct)
     {
         var (code, stdout, stderr) = await RunAsync(
             workingDirectory, ct, "status", "--porcelain", "-z", "--untracked-files=all");
         if (code != 0)
         {
             _logger.LogDebug("git status failed in {Dir}: {Err}", workingDirectory, stderr);
-            return [];
+            return new(false, [], code);
         }
 
         // Git reports paths relative to the REPO ROOT; when the workspace is a SUBDIRECTORY of
@@ -96,7 +105,7 @@ public sealed class GitWorkspaceService
 
             changes.Add(new GitChange(Rebase(path), Classify(index, work), oldPath is null ? null : Rebase(oldPath)));
         }
-        return changes;
+        return new(true, changes, 0);
 
         string Rebase(string repoRelative) =>
             prefix.Length == 0 ? repoRelative
@@ -244,9 +253,17 @@ public sealed class GitWorkspaceService
     public async Task<IReadOnlyList<GitCommit>> GetRecentCommitsAsync(
         string workingDirectory, int limit, CancellationToken ct)
     {
+        var strict = await TryGetRecentCommitsAsync(workingDirectory, limit, ct);
+        return strict.Items;
+    }
+
+    /// <summary>CARD-0499. Failures stay failures; the Files UI wrappers still swallow via <see cref="GetRecentCommitsAsync"/>.</summary>
+    public virtual async Task<GitStrictList<GitCommit>> TryGetRecentCommitsAsync(
+        string workingDirectory, int limit, CancellationToken ct)
+    {
         var (code, stdout, _) = await RunAsync(
             workingDirectory, ct, "log", $"-{limit}", "--format=%H%x00%h%x00%an%x00%aI%x00%s%x01");
-        return code != 0 ? [] : ParseCommits(stdout);
+        return code != 0 ? new(false, [], code) : new(true, ParseCommits(stdout), 0);
     }
 
     /// <summary>Records written by the shared <c>%H %h %an %aI %s</c> format above.</summary>

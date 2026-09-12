@@ -257,6 +257,13 @@ Use the explicit commissioning/resumption/triage recipe in [orchestration-loop.m
 Canceled/superseded verification records reason and successor, never Done/Clean. Decisions belong
 on existing move/reopen revisions and attention, never an alert sink.
 
+`POST /api/agent-tasks` accepts optional `repairSourceTaskId` (full GUID), exposed by
+`delegate.ps1 -RepairSource`. Only a fresh Worker/Code/Worktree task may carry it. The owner must
+be an authorized Code/Worktree task in the same project and git common directory.
+`GET /api/agent-tasks/{id}` exposes `repairSourceTaskId` and `progressEvidence`
+(`assessment`, `reason`, `sources[].origin` / `ownerTaskId` / `commit`). Land on a repair task
+returns 409 `repair_source_landing_owner_required`.
+
 `POST /api/agent-tasks` accepts optional `sourceLandingOperationId` (full GUID), exposed by
 `delegate.ps1 -SourceLanding`. Only fresh Worker/Mutation/Worktree with a distinct same-board
 companion, same authorized repository/project and structured confirmed publication is accepted.

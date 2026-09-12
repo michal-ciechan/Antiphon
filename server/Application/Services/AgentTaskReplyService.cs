@@ -697,6 +697,14 @@ public sealed class AgentTaskReplyService
         // the task, an incident on the agent's timeline, and a line the CALLER reads above the
         // report itself.
         string? callerWarning = null;
+        if (task.CompletionProgressEvidenceJson is not null
+            && TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson) is { } progressEvidence
+            && TaskCompletionProgressService.ProgressWarning(progressEvidence) is { } progressWarning)
+        {
+            callerWarning = progressWarning;
+            db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, progressWarning, now));
+        }
+
         if (turn.FinalMessageMissing)
         {
             callerWarning = FinalMessageMissingWarning(settledBody.Length, _settings.FinalMessageGraceSeconds);
@@ -720,7 +728,19 @@ public sealed class AgentTaskReplyService
         // a question-Blocked one keeps its worktree and session alive to continue.
         string? workspaceNote = null;
         if (task.Status == AgentTaskStatus.Succeeded && task.Workspace == WorkspaceMode.Worktree)
-            workspaceNote = await MergeBackAsync(services, db, task, now, ct);
+        {
+            var progressEvidenceForMerge = TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson);
+            if (progressEvidenceForMerge is not null
+                && !TaskCompletionProgressService.AllowsAutomaticWorkspaceMutation(progressEvidenceForMerge))
+            {
+                workspaceNote = $"branch {task.WorktreeBranch} left for review";
+                db.AgentTaskEvents.Add(NewEvent(
+                    task.Id, AgentTaskEventType.Completed,
+                    $"Alternate or unavailable progress does not authorize merge-back; {workspaceNote}.", now));
+            }
+            else
+                workspaceNote = await MergeBackAsync(services, db, task, now, ct);
+        }
 
         var (gitHeader, gitWarning) = await TryDescribeGitAsync(services, db, task, settledBody, now, ct);
         if (gitWarning is not null)
@@ -2349,10 +2369,9 @@ public sealed class AgentTaskReplyService
     }
 
     /// <summary>
-    /// CARD-0286: an explicit <c>done</c> from a Code Worktree task is Succeeded only when the
-    /// isolated worktree has a post-dispatch commit or changed/untracked content. Fail open when
-    /// the probe is missing or git evidence is unavailable — this is a proof of zero work, not a
-    /// reason to punish a failed probe. Shared workspaces and non-Code roles are out of scope.
+    /// CARD-0286 / CARD-0499: an explicit <c>done</c> from a Code Worktree task is Succeeded only
+    /// when attributed post-dispatch progress exists. Fail open when evidence is indeterminate.
+    /// Shared workspaces and non-Code roles are out of scope.
     /// </summary>
     private async Task<(AgentTaskStatus Status, AgentTaskReportEvidence Evidence, string Body, string? FailureReason)?>
         TryClassifyCompletedWithoutProgressAsync(
@@ -2360,14 +2379,14 @@ public sealed class AgentTaskReplyService
     {
         if (task.Role != AgentTaskRole.Code
             || task.Workspace != WorkspaceMode.Worktree
-            || task.DispatchedAt is not DateTime dispatchedAt
+            || task.DispatchedAt is not DateTime
             || string.IsNullOrWhiteSpace(task.WorktreePath))
             return null;
 
-        IWorkspaceProgressProbe? probe;
+        TaskCompletionProgressService? completion;
         try
         {
-            probe = services.GetService<IWorkspaceProgressProbe>();
+            completion = services.GetService<TaskCompletionProgressService>();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -2377,32 +2396,41 @@ public sealed class AgentTaskReplyService
             return null;
         }
 
-        if (probe is null)
+        if (completion is null)
             return null;
 
-        WorkspaceProgressArm arm;
+        TaskCompletionProgressService.Evaluation evaluated;
         try
         {
-            arm = await probe.ProbeProgressAsync(
-                task.WorktreePath, dispatchedAt, sharedCheckout: false, ct);
+            evaluated = await completion.EvaluateAsync(task, body, ct);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
         {
             _logger.LogWarning(
                 ex, "Worktree progress probe failed for task {ShortId} at {Path}; failing open",
                 DelegationReportFormatter.Short(task.Id), task.WorktreePath);
+            var unavailable = new CompletionProgressEvidence(
+                1, CompletionProgressAssessment.Indeterminate, "primary_status_unavailable");
+            task.CompletionProgressEvidenceJson = TaskProgressJson.SerializeEvidence(unavailable);
             return null;
         }
 
-        if (!arm.Available)
-            return null;
-        if (arm.LastCommitAt is not null || arm.LastFileChangeAt is not null)
+        task.CompletionProgressEvidenceJson = TaskProgressJson.SerializeEvidence(evaluated.Evidence);
+        if (evaluated.IsProgress || evaluated.IsIndeterminate)
             return null;
 
-        var reason =
-            "The delegate reported completion but Antiphon observed no post-dispatch worktree "
-            + $"progress at {task.WorktreePath}: 0 commits after dispatch and 0 changed or "
-            + "untracked files.";
+        var named = string.Join(" and ", new[]
+        {
+            task.WorktreePath,
+            evaluated.Evidence.Sources?.FirstOrDefault(s => s.Origin is ProgressOrigin.RepairSource or ProgressOrigin.RepairSourceRemote)
+                ?.RegisteredPath,
+            TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson)?.RepairSource?.FullRef,
+        }.Where(s => !string.IsNullOrWhiteSpace(s)).Distinct());
+        var reason = TaskCompletionProgressService.FailureSentence(task, named);
         task.FailureCode = AgentTaskFailureCode.CompletedWithoutProgress;
         return (AgentTaskStatus.Failed, AgentTaskReportEvidence.Marked, body, reason);
     }

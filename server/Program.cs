@@ -315,6 +315,8 @@ try
     builder.Services.AddScoped<AgentTaskPipelineStatusService>();
     builder.Services.AddSingleton<AgentTaskLandQueue>();
     builder.Services.AddSingleton<ILandingGit, LandingGit>();
+    builder.Services.AddSingleton<ITaskProgressGit, TaskProgressGit>();
+    builder.Services.AddScoped<TaskCompletionProgressService>();
     builder.Services.AddSingleton<IWorktreeRemovalEvidence, WorktreeRemovalEvidence>();
     builder.Services.AddSingleton<GuardedWorktreeRemoval>();
     builder.Services.AddSingleton<IRepositoryMutationLease, RepositoryMutationLease>();

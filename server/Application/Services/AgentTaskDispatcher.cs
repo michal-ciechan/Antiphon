@@ -85,6 +85,7 @@ public sealed class AgentTaskDispatcher
 
     private readonly IRepositoryMutationLease? _repositoryLeases;
     private readonly VerificationExecutionService? _verification;
+    private readonly ITaskProgressGit? _progressGit;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -137,10 +138,12 @@ public sealed class AgentTaskDispatcher
         OrchestratorWorkspaceWarningService? workspaceWarning = null,
         CapacityRecoveryService? capacityRecovery = null,
         IRepositoryMutationLease? repositoryLeases = null,
-        VerificationExecutionService? verification = null)
+        VerificationExecutionService? verification = null,
+        ITaskProgressGit? progressGit = null)
     {
         _repositoryLeases = repositoryLeases;
         _verification = verification;
+        _progressGit = progressGit;
         _capacityRecovery = capacityRecovery;
         _complexityRouting = complexityRouting;
         _routingPins = routingPins;
@@ -578,6 +581,29 @@ public sealed class AgentTaskDispatcher
             // landing Plan, Code behind Plan, …); helpers use the same git-ancestry hold
             // because a Docs worktree from master would still miss the sibling's commits.
             // Otherwise dispatch with a warning so a superseded plan cannot block Execute.
+            if (task.RepairSourceTaskId is Guid repairOwnerId && task.WorktreePath is null)
+            {
+                var owner = await _db.AgentTasks.AsNoTracking()
+                    .FirstOrDefaultAsync(t => t.Id == repairOwnerId, ct);
+                if (owner?.LandRequestedAt is not null)
+                {
+                    if (everHeld.Add(task.Id))
+                    {
+                        _db.AgentTaskEvents.Add(new AgentTaskEvent
+                        {
+                            Id = Guid.NewGuid(),
+                            AgentTaskId = task.Id,
+                            Type = AgentTaskEventType.Held,
+                            Detail = $"{DelegationReportFormatter.Short(owner.Id)} is landing",
+                            At = UtcNow(),
+                        });
+                        await _db.SaveChangesAsync(ct);
+                    }
+
+                    continue;
+                }
+            }
+
             IReadOnlyList<UnlandedSibling>? siblingWarnings = null;
             if (task.Workspace == WorkspaceMode.Worktree
                 && task.CardId is not null
@@ -3091,9 +3117,25 @@ public sealed class AgentTaskDispatcher
         // Isolation is real, not declarative: a Worktree task gets its own `git worktree add`
         // BEFORE the session exists, and the delegate runs inside it. Branching from the merge
         // target keeps the eventual rebase-back linear.
+        string? repairStartSha = null;
+        List<string>? repairWarnings = null;
+        if (claimed.RepairSourceTaskId is Guid)
+        {
+            var prep = await PrepareRepairSourceAsync(claimed, ct);
+            if (prep.FailureReason is not null)
+            {
+                await FailAsync(claimed, prep.FailureReason, ct);
+                await transaction.CommitAsync(ct);
+                return false;
+            }
+
+            repairStartSha = prep.OwnerSha;
+            repairWarnings = prep.Warnings;
+        }
+
         if (claimed.Workspace == WorkspaceMode.Worktree && claimed.WorktreePath is null)
         {
-            await _worktrees.CreateForTaskAsync(claimed, repositoryLease!, ct);
+            await _worktrees.CreateForTaskAsync(claimed, repositoryLease!, ct, repairStartSha);
 
             // The hard version of the orchestrator contract: a PreToolUse hook that refuses
             // Edit/Write with "delegate this instead". Only ever written into the task's OWN
@@ -3115,6 +3157,39 @@ public sealed class AgentTaskDispatcher
 
         if (claimed.SourceLandingOperationId is not null)
             await _worktrees.ValidateVerificationAsync(claimed, repositoryLease!, ct);
+
+        if (claimed.Workspace == WorkspaceMode.Worktree
+            && claimed.Role == AgentTaskRole.Code
+            && string.IsNullOrEmpty(claimed.ProgressBaselineJson)
+            && _progressGit is not null)
+        {
+            var capture = await CaptureProgressBaselineAsync(claimed, now, ct);
+            if (capture.FailureReason is not null)
+            {
+                await FailAsync(claimed, capture.FailureReason, ct);
+                await transaction.CommitAsync(ct);
+                return false;
+            }
+
+            claimed.ProgressBaselineJson = capture.Json;
+            if (capture.Warning is not null)
+                (repairWarnings ??= []).Add(capture.Warning);
+        }
+
+        if (repairWarnings is { Count: > 0 })
+        {
+            foreach (var detail in repairWarnings)
+            {
+                _db.AgentTaskEvents.Add(new AgentTaskEvent
+                {
+                    Id = Guid.NewGuid(),
+                    AgentTaskId = claimed.Id,
+                    Type = AgentTaskEventType.Warning,
+                    Detail = detail,
+                    At = now,
+                });
+            }
+        }
 
         var agent = await ResolveAgentAsync(claimed, now, ct);
         // A pool delegate's environment is fixed for the life of its process. Record the task
@@ -4023,6 +4098,133 @@ public sealed class AgentTaskDispatcher
             + "Session {SessionId} was not killed.",
             DelegationReportFormatter.Short(task.Id), evidence.Describe(), sessionId);
         return true;
+    }
+
+    private sealed record RepairSourcePrep(string? OwnerSha, List<string> Warnings, string? FailureReason);
+
+    private async Task<RepairSourcePrep> PrepareRepairSourceAsync(AgentTask task, CancellationToken ct)
+    {
+        var warnings = new List<string>();
+        if (_progressGit is null || task.RepairSourceTaskId is not Guid ownerId || task.RepoPath is null)
+            return new(null, warnings, "repair_source_identity_unavailable: progress git is not configured.");
+
+        var owner = await _db.AgentTasks.AsNoTracking().FirstOrDefaultAsync(t => t.Id == ownerId, ct);
+        if (owner is null || string.IsNullOrWhiteSpace(owner.WorktreeBranch))
+            return new(null, warnings, "repair_source_identity_unavailable: owner is missing.");
+
+        var ownerRef = TaskCompletionProgressService.FullRef(owner.WorktreeBranch);
+        var local = await _progressGit.RevParseCommitAsync(task.RepoPath, ownerRef, ct);
+        if (!local.Succeeded || local.Sha is null)
+        {
+            return new(null, warnings,
+                $"repair_source_identity_unavailable: {DelegationReportFormatter.Short(owner.Id)} {owner.WorktreePath}");
+        }
+
+        IReadOnlyList<LandingRegistration> registrations;
+        try { registrations = await _progressGit.RegistrationsAsync(task.RepoPath, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new(null, warnings,
+                $"repair_source_identity_unavailable: {DelegationReportFormatter.Short(owner.Id)} {owner.WorktreePath}");
+        }
+
+        var matches = new List<LandingRegistration>();
+        foreach (var entry in registrations)
+        {
+            if (string.Equals(entry.Branch, ownerRef, StringComparison.Ordinal))
+                matches.Add(entry);
+        }
+
+        if (matches.Count != 1)
+        {
+            var paths = string.Join(", ", matches.Select(m => m.Path).DefaultIfEmpty(owner.WorktreePath));
+            return new(null, warnings,
+                $"repair_source_identity_unavailable: {DelegationReportFormatter.Short(owner.Id)} {paths}");
+        }
+
+        var registered = matches[0];
+        if (!string.IsNullOrWhiteSpace(owner.WorktreePath))
+        {
+            var registeredCanon = await _progressGit.CanonicalDirectoryAsync(registered.Path, ct);
+            var ownerCanon = await _progressGit.CanonicalDirectoryAsync(owner.WorktreePath, ct);
+            if (!string.Equals(
+                    Path.TrimEndingDirectorySeparator(registeredCanon),
+                    Path.TrimEndingDirectorySeparator(ownerCanon),
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            {
+                return new(null, warnings,
+                    $"repair_source_identity_unavailable: {DelegationReportFormatter.Short(owner.Id)} {owner.WorktreePath}");
+            }
+        }
+
+        var symbolic = await _progressGit.SymbolicHeadAsync(registered.Path, ct);
+        if (!symbolic.Succeeded || !string.Equals(symbolic.FullRef, ownerRef, StringComparison.Ordinal))
+        {
+            return new(null, warnings,
+                $"repair_source_identity_unavailable: {DelegationReportFormatter.Short(owner.Id)} {registered.Path}");
+        }
+
+        warnings.Add($"occupied source {ownerRef} at {registered.Path}; routing to an isolated branch at {local.Sha}.");
+        var dirty = await _progressGit.RunAsync(registered.Path,
+            ["status", "--porcelain", "--untracked-files=all"], ct);
+        if (dirty.Succeeded && dirty.Output.Trim().Length > 0)
+            warnings.Add("snapshot excludes uncommitted source files.");
+
+        return new(local.Sha, warnings, null);
+    }
+
+    private sealed record BaselineCapture(string? Json, string? Warning, string? FailureReason);
+
+    private async Task<BaselineCapture> CaptureProgressBaselineAsync(AgentTask task, DateTime capturedAt, CancellationToken ct)
+    {
+        if (_progressGit is null || task.RepoPath is null || task.WorktreePath is null || task.WorktreeBranch is null)
+            return new(null, null, "repair_source_identity_unavailable");
+
+        var repo = await _progressGit.CanonicalDirectoryAsync(task.RepoPath, ct);
+        var common = await _progressGit.CommonDirectoryAsync(repo, ct);
+        var primaryRef = TaskCompletionProgressService.FullRef(task.WorktreeBranch);
+        var primarySha = await _progressGit.RevParseCommitAsync(task.WorktreePath, "HEAD", ct);
+        if (!primarySha.Succeeded || primarySha.Sha is null)
+            return new(null, null, "repair_source_identity_unavailable");
+
+        var primaryRemote = await ObserveRemoteForBaselineAsync(repo, primaryRef, task.Id, ct);
+        var primary = new ProgressSourceBaseline(
+            repo, common, task.Id, task.WorktreePath, primaryRef, primarySha.Sha, primaryRemote);
+
+        ProgressSourceBaseline? repair = null;
+        string? warning = null;
+        if (task.RepairSourceTaskId is Guid ownerId)
+        {
+            var owner = await _db.AgentTasks.AsNoTracking().FirstOrDefaultAsync(t => t.Id == ownerId, ct);
+            if (owner?.WorktreeBranch is null)
+                return new(null, null, $"repair_source_identity_unavailable: {DelegationReportFormatter.Short(ownerId)}");
+            var ownerRef = TaskCompletionProgressService.FullRef(owner.WorktreeBranch);
+            var ownerSha = await _progressGit.RevParseCommitAsync(repo, ownerRef, ct);
+            if (!ownerSha.Succeeded || ownerSha.Sha is null)
+                return new(null, null, $"repair_source_identity_unavailable: {DelegationReportFormatter.Short(ownerId)} {owner.WorktreePath}");
+            var ownerRemote = await ObserveRemoteForBaselineAsync(repo, ownerRef, task.Id, ct);
+            if (ownerRemote.State == ProgressRemoteState.Unavailable)
+                warning = $"progress=unavailable; reason={ownerRemote.Reason ?? "source_remote_unreadable"}";
+            repair = new ProgressSourceBaseline(
+                repo, common, owner.Id, owner.WorktreePath, ownerRef, ownerSha.Sha, ownerRemote);
+            await _progressGit.PinBaselineAsync(repo, task.Id, "repair-local", ownerSha.Sha, ct);
+            if (ownerRemote.Sha is not null)
+                await _progressGit.PinBaselineAsync(repo, task.Id, "repair-remote", ownerRemote.Sha, ct);
+        }
+
+        await _progressGit.PinBaselineAsync(repo, task.Id, "primary-local", primarySha.Sha, ct);
+        if (primaryRemote.Sha is not null)
+            await _progressGit.PinBaselineAsync(repo, task.Id, "primary-remote", primaryRemote.Sha, ct);
+
+        var snapshot = new ProgressBaselineSnapshot(1, capturedAt, capturedAt, primary, repair);
+        return new(TaskProgressJson.SerializeBaseline(snapshot), warning, null);
+    }
+
+    private async Task<ProgressRemoteBaseline> ObserveRemoteForBaselineAsync(
+        string repo, string fullRef, Guid taskId, CancellationToken ct)
+    {
+        var observed = await _progressGit!.ObserveExactRefAsync(repo, fullRef, null, taskId, ct);
+        return new ProgressRemoteBaseline(observed.State, observed.Sha, observed.EndpointFingerprint, observed.Reason);
     }
 
     private async Task FailAsync(

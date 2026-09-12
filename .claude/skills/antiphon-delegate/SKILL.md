@@ -135,6 +135,7 @@ A sub-orchestrator defaults to `Plan` and never runs below opus.
 | `-Dir <path>` | run somewhere else — another repo, another checkout. Defaults to yours |
 | `-Worktree` | isolate a worker in a fresh git worktree; sourced Mutation never merges back |
 | `-SourceLanding <operation-guid>` | create only Worker/Mutation/Worktree at the confirmed operation's immutable L; distinct same-board companion and same project/repository required |
+| `-RepairSource <owner-guid>` | CARD-0499. Attribute this Code Worktree repair to the original Code/Worktree landing owner. Isolated branch at the owner's SHA; Land is refused (`repair_source_landing_owner_required`). No merge target unless you pass the owner's branch explicitly |
 | `-CleanupVerification <task-id>` | explicitly seal and clean a terminal sourced snapshot after all-attempt native custody and restoration checks; never publishes or kills |
 | `-Shared` | force the shared directory — opts a sub-orchestrator OUT of its worktree (warned) |
 | `-ReadOnly` | shared directory, but the brief says don't write |

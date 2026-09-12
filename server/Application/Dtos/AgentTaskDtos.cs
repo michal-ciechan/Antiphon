@@ -155,7 +155,12 @@ public sealed record CreateAgentTaskRequest(
     /// pipeline seats. An unknown name is 422.
     /// </summary>
     OrchestrationStage? Stage = null,
-    Guid? SourceLandingOperationId = null);
+    Guid? SourceLandingOperationId = null,
+    /// <summary>
+    /// CARD-0499. Full GUID of the original Code/Worktree landing owner this repair is attributed
+    /// against. Callers cannot supply an evidence directory, remote URL or baseline SHA.
+    /// </summary>
+    Guid? RepairSourceTaskId = null);
 
 public sealed record AgentTaskSummaryDto(
     Guid Id,
@@ -296,7 +301,9 @@ public sealed record AgentTaskDetailDto(
     bool VerificationDirectoryRemoved = false,
     bool VerificationRegistrationRemoved = false,
     bool VerificationBranchRemoved = false,
-    IReadOnlyList<VerificationExecutionDetailDto>? VerificationExecutions = null);
+    IReadOnlyList<VerificationExecutionDetailDto>? VerificationExecutions = null,
+    Guid? RepairSourceTaskId = null,
+    ProgressEvidenceDto? ProgressEvidence = null);
 
 /// <summary>One accepted launch attempt for a sourced Mutation snapshot. Receipt bytes stay on the server.</summary>
 public sealed record VerificationExecutionDetailDto(

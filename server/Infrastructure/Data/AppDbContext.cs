@@ -1648,6 +1648,10 @@ public class AppDbContext : DbContext
             // non-Legacy class. WorktreeBaseSha is the no-target git-facts base.
             entity.Property(t => t.ReportEvidence).IsRequired().HasDefaultValue(AgentTaskReportEvidence.Legacy);
             entity.Property(t => t.WorktreeBaseSha).HasMaxLength(64);
+            // CARD-0499. Null on every pre-existing row: no backfill of baselines or source identity.
+            entity.Property(t => t.RepairSourceTaskId).IsRequired(false);
+            entity.Property(t => t.ProgressBaselineJson).HasColumnType("text");
+            entity.Property(t => t.CompletionProgressEvidenceJson).HasColumnType("text");
             // CARD-0248. Null on every existing row (legacy nudge, no boundary recorded).
             entity.Property(t => t.ReportNudgedSequence).IsRequired(false);
             entity.Property(t => t.ReportNudgeMessageId).IsRequired(false);

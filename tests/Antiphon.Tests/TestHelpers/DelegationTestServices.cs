@@ -68,6 +68,8 @@ internal static class DelegationTestServices
         services.TryAddSingleton<IWorktreeManager, WorktreeManager>();
         services.TryAddSingleton<IGitService, GitService>();
         services.TryAddSingleton<ILandingGit, LandingGit>();
+        services.TryAddSingleton<ITaskProgressGit, TaskProgressGit>();
+        services.TryAddScoped<TaskCompletionProgressService>();
         services.TryAddSingleton<IWorktreeRemovalEvidence, Antiphon.Server.Infrastructure.Data.WorktreeRemovalEvidence>();
         services.TryAddSingleton<GuardedWorktreeRemoval>();
         services.TryAddSingleton<IRepositoryMutationLease, RepositoryMutationLease>();

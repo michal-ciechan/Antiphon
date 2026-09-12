@@ -155,6 +155,50 @@ public class AgentTaskDispatchBaseGuardTests
 
     [Test]
     [Timeout(30_000)]
+    public async Task C499_V06_ARepairIsHeldWhileItsOwnerIsLanding(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c499-v06");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-0499");
+        var owner = await SeedKeptSiblingAsync(db, repo, card.Id, "owner work");
+        owner.Role = AgentTaskRole.Code;
+        owner.LandRequestedAt = DateTime.UtcNow.AddMinutes(-1);
+        var parentSessionId = Guid.NewGuid();
+        await SeedParentSessionAsync(db, parentSessionId);
+        var repair = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, parentSessionId);
+        repair.RepairSourceTaskId = owner.Id;
+        await db.SaveChangesAsync(ct);
+
+        await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot);
+        await using var scope = provider.CreateAsyncScope();
+        var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+        await dispatcher.TickAsync(ct);
+
+        var held = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == repair.Id, ct);
+        held.Status.ShouldBe(AgentTaskStatus.Queued);
+        held.WorktreePath.ShouldBeNull();
+        var heldEvents = await db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == repair.Id && e.Type == AgentTaskEventType.Held)
+            .ToListAsync(ct);
+        heldEvents.ShouldHaveSingleItem();
+        heldEvents[0].Detail.ShouldContain(DelegationReportFormatter.Short(owner.Id));
+        heldEvents[0].Detail.ShouldContain("is landing");
+
+        var liveOwner = await db.AgentTasks.SingleAsync(t => t.Id == owner.Id, ct);
+        liveOwner.LandRequestedAt = null;
+        await db.SaveChangesAsync(ct);
+        await dispatcher.TickAsync(ct);
+        db.ChangeTracker.Clear();
+        var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == repair.Id, ct);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        (await db.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == repair.Id && e.Type == AgentTaskEventType.Held, ct)).ShouldBe(1);
+    }
+
+    [Test]
+    [Timeout(30_000)]
     public async Task a_sibling_whose_branch_was_deleted_is_silent(CancellationToken ct)
     {
         using var repo = new ScratchGitRepo("card0215-gone");

@@ -57,6 +57,7 @@ public sealed class AgentTaskService
     private readonly DelegationOpenGate? _openGate;
     private readonly CapacityRecoveryService? _capacityRecovery;
     private readonly SourceLandingAdmission? _sourceLanding;
+    private readonly ILandingGit? _landingGit;
 
     public AgentTaskService(
         AppDbContext db,
@@ -77,7 +78,8 @@ public sealed class AgentTaskService
         DiagnoseQueue? diagnoseQueue = null,
         DelegationOpenGate? openGate = null,
         CapacityRecoveryService? capacityRecovery = null,
-        SourceLandingAdmission? sourceLanding = null)
+        SourceLandingAdmission? sourceLanding = null,
+        ILandingGit? landingGit = null)
     {
         _areas = areas;
         _db = db;
@@ -98,6 +100,7 @@ public sealed class AgentTaskService
         _openGate = openGate;
         _capacityRecovery = capacityRecovery;
         _sourceLanding = sourceLanding;
+        _landingGit = landingGit;
     }
 
     /// <summary>
@@ -198,6 +201,15 @@ public sealed class AgentTaskService
             throw new ValidationException(nameof(request.SourceLandingOperationId),
                 "SourceLanding requires a fresh Worker/Mutation Worktree without an agent pin, follow-up or merge target.",
                 "verification_source_mode");
+
+        if (request.RepairSourceTaskId is not null
+            && (request.Kind != AgentTaskKind.Worker || request.Role != AgentTaskRole.Code
+                || request.Workspace is { } repairWorkspace && repairWorkspace != WorkspaceMode.Worktree
+                || request.AgentId is not null || request.Agent is not null
+                || request.FollowUpOnTask is not null || request.SourceLandingOperationId is not null))
+            throw new ValidationException(nameof(request.RepairSourceTaskId),
+                "RepairSource requires a fresh Worker/Code Worktree without an agent pin, follow-up or SourceLanding.",
+                "repair_source_mode");
 
         // Validate explicit access before a live follow-up can overwrite Workspace.
         if (request.Role == AgentTaskRole.Mutation && request.Workspace == WorkspaceMode.ReadOnly)
@@ -423,6 +435,12 @@ public sealed class AgentTaskService
         }
 
         var (workspace, warning) = ResolveWorkspace(request, caller, resolved);
+        if (request.RepairSourceTaskId is not null && workspace != WorkspaceMode.Worktree)
+        {
+            throw new ValidationException(nameof(request.RepairSourceTaskId),
+                "RepairSource requires a fresh Worker/Code Worktree without an agent pin, follow-up or SourceLanding.",
+                "repair_source_mode");
+        }
 
         // CARD-0040. Resolved BEFORE the row so an explicit -Card that names nothing is a 422 on
         // creation rather than a task that runs with a binding its caller thinks it has. It is
@@ -824,6 +842,13 @@ public sealed class AgentTaskService
         var projectId = parent is null
             ? await DeriveCallerProjectAsync(caller, ct)
             : parent.ProjectId;
+        AgentTask? repairOwner = null;
+        if (request.RepairSourceTaskId is Guid repairOwnerId)
+        {
+            repairOwner = await ValidateRepairSourceOwnerAsync(
+                repairOwnerId, request, caller, resolved, projectId, ct);
+        }
+
         var now = UtcNow();
         var (token, tokenHash) = NewToken();
 
@@ -878,6 +903,7 @@ public sealed class AgentTaskService
             Kind = request.Kind,
             Role = request.Role,
             SourceLandingOperationId = request.SourceLandingOperationId,
+            RepairSourceTaskId = request.RepairSourceTaskId,
             VerificationCustodyContractVersion = request.SourceLandingOperationId is null ? null : 1,
             ProjectId = projectId,
             CardId = binding.CardId,
@@ -898,7 +924,9 @@ public sealed class AgentTaskService
             // A worktree parent's children target its task branch (integration once per level);
             // a shared-workspace parent passes its own target down. Cross-repo "merge" is a
             // release-coordination problem and deliberately out of scope.
-            MergeTargetRef = request.SourceLandingOperationId is not null ? null : request.MergeTargetRef
+            MergeTargetRef = request.SourceLandingOperationId is not null ? null
+                : request.RepairSourceTaskId is not null ? NormalizedRepairMergeTarget(request.MergeTargetRef, repairOwner)
+                : request.MergeTargetRef
                 ?? (SharesRepoWith(parent, resolved.RepoPath)
                     ? parent?.WorktreeBranch ?? parent?.MergeTargetRef
                     : null),
@@ -1300,6 +1328,112 @@ public sealed class AgentTaskService
     /// orchestrators isolate by default, and an explicit choice that shares anyway is honoured
     /// but WARNED — at creation, to the caller, not just in a timeline nobody reads in time.
     /// </summary>
+    private async Task<AgentTask> ValidateRepairSourceOwnerAsync(
+        Guid ownerId,
+        CreateAgentTaskRequest request,
+        Caller caller,
+        DelegationWorkspaceResolver.Resolution resolved,
+        Guid? projectId,
+        CancellationToken ct)
+    {
+        IReadOnlyList<string> allowedRoots = caller.CapabilityId is not null
+            ? caller.ExtraAllowedRoots ?? []
+            : _settings.AllowedRoots;
+        var owner = await _db.AgentTasks.AsNoTracking().FirstOrDefaultAsync(t => t.Id == ownerId, ct);
+        if (owner is null)
+            throw new ValidationException(nameof(request.RepairSourceTaskId), "Repair source was not found.", "repair_source_not_found");
+
+        var ownerPath = owner.RepoPath ?? owner.WorktreePath ?? owner.WorkingDirectory;
+        if (!IsPathAllowed(ownerPath, caller.WorkingDirectory, allowedRoots))
+            throw new ValidationException(nameof(request.RepairSourceTaskId), "Repair source was not found.", "repair_source_not_found");
+
+        if (owner.Role != AgentTaskRole.Code || owner.Workspace != WorkspaceMode.Worktree
+            || string.IsNullOrWhiteSpace(owner.WorktreeBranch) || string.IsNullOrWhiteSpace(owner.RepoPath)
+            || (projectId is not null && owner.ProjectId is not null && owner.ProjectId != projectId))
+        {
+            throw new ValidationException(nameof(request.RepairSourceTaskId),
+                "Repair source must be a Code Worktree owner in the same project with complete source coordinates.",
+                "repair_source_owner_invalid");
+        }
+
+        if (resolved.RepoPath is not null && owner.RepoPath is not null
+            && !await SameCommonDirectoryAsync(resolved.RepoPath, owner.RepoPath, ct))
+        {
+            throw new ValidationException(nameof(request.RepairSourceTaskId),
+                "Repair source is not in the same git common directory.",
+                "repair_source_owner_invalid");
+        }
+
+        if (await OwnerHasConfirmedPublicationAsync(owner.Id, ct))
+        {
+            throw new ValidationException(nameof(request.RepairSourceTaskId),
+                "Repair source has already been published; land through the original owner.",
+                "repair_source_published");
+        }
+
+        if (request.MergeTargetRef is { } explicitTarget)
+        {
+            var ownerRef = TaskCompletionProgressService.FullRef(owner.WorktreeBranch);
+            var asked = TaskCompletionProgressService.FullRef(explicitTarget);
+            if (!string.Equals(ownerRef, asked, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(owner.WorktreeBranch, explicitTarget, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ValidationException(nameof(request.MergeTargetRef),
+                    "RepairSource merge target must be the owner's branch.",
+                    "repair_source_merge_target_mismatch");
+            }
+        }
+
+        return owner;
+    }
+
+    private static string? NormalizedRepairMergeTarget(string? requested, AgentTask? owner)
+    {
+        if (requested is null || owner is null) return null;
+        return owner.WorktreeBranch;
+    }
+
+    private async Task<bool> SameCommonDirectoryAsync(string left, string right, CancellationToken ct)
+    {
+        if (_landingGit is null)
+            return PathsEqual(left, right);
+        try
+        {
+            var a = await _landingGit.CommonDirectoryAsync(left, ct);
+            var b = await _landingGit.CommonDirectoryAsync(right, ct);
+            return PathsEqual(a, b);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return PathsEqual(left, right);
+        }
+    }
+
+    private async Task<bool> OwnerHasConfirmedPublicationAsync(Guid ownerId, CancellationToken ct)
+    {
+        var landings = await _db.AgentTaskLandings.AsNoTracking().Where(o => o.TaskId == ownerId).ToListAsync(ct);
+        var state = new AgentTaskLandingState();
+        return landings.Any(state.HasPublication);
+    }
+
+    private static bool IsPathAllowed(string? path, string callerDirectory, IReadOnlyList<string> allowedRoots)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return false;
+        string full;
+        try { full = Path.GetFullPath(path); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        { return false; }
+
+        if (DelegationWorkspaceResolver.IsWithinRoot(full, callerDirectory))
+            return true;
+        foreach (var root in allowedRoots)
+        {
+            if (DelegationWorkspaceResolver.IsWithinRoot(full, root))
+                return true;
+        }
+        return false;
+    }
+
     internal (WorkspaceMode Workspace, string? Warning) ResolveWorkspace(
         CreateAgentTaskRequest request,
         Caller caller,
@@ -1510,7 +1644,8 @@ public sealed class AgentTaskService
             await LoadReviewEvidenceAsync(task, ct),
             task.SourceLandingOperationId, task.SourceLandingSha, task.VerificationCleanupResidue,
             sealId, task.VerificationExecutionRevision, task.VerificationDirectoryRemoved,
-            task.VerificationRegistrationRemoved, task.VerificationBranchRemoved, executions);
+            task.VerificationRegistrationRemoved, task.VerificationBranchRemoved, executions,
+            task.RepairSourceTaskId, TaskProgressJson.ToDto(TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson)));
     }
 
     private static VerificationExecutionDetailDto ToExecutionDetail(VerificationExecution execution)

@@ -20,6 +20,10 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     public async Task<LandingProtocolResult> RunAsync(AgentTask task, RepositoryLease lease,
         AgentTaskLandRequest? request, CancellationToken ct)
     {
+        if (task.RepairSourceTaskId is Guid repairOwner)
+            throw new Application.Exceptions.ConflictException(
+                $"Repair tasks cannot be landed; commission Land on the original owner {DelegationReportFormatter.Short(repairOwner)}.",
+                "repair_source_landing_owner_required");
         if (task.Role == AgentTaskRole.Mutation || task.SourceLandingOperationId is not null)
             throw new Application.Exceptions.ConflictException("Mutation snapshots cannot be landed.", "verification_publication_forbidden");
         AgentTaskLanding? op = task.ActiveLandingId is Guid id

@@ -67,6 +67,15 @@ this server now — wait for its outcome event. A `Warning` "did not finish (ser
 re-running" is informational. The orchestrator decides the order and what a refusal means, but
 does none of those git operations itself.
 
+**Repair source (CARD-0499).** When a Code Worktree task must work on a branch that is already
+checked out elsewhere, pass `delegate.ps1 -RepairSource <owner-guid>` (full GUID of the original
+Code/Worktree landing owner). Antiphon records that owner, routes the repair onto its own unique
+branch at the owner's recorded SHA, and attributes a claimed post-dispatch commit on the owner's
+ref. `-RepairSource` alone sets no merge target and grants no Land: a repair task's
+`-Land` is refused `repair_source_landing_owner_required`. Integrate through the original owner
+(or an explicit merge target equal to the owner's branch). Historical Failed tasks are not
+backfilled; prose-only "work in that other worktree" is still unsupported.
+
 **Post-land server activation check (CARD-0495).** A land confirms publication, not
 server activation. Before relying on newly landed server behavior, record the landing
 receipt's verified commit, confirm the canonical checkout contains it, and check the

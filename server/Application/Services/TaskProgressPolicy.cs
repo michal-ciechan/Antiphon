@@ -127,7 +127,8 @@ internal static class TaskProgressPolicy
         var fileNote = "no workspace arm";
         var filesTag = "files=none";
         var commitsTag = "commits=none";
-        if (workspace is { Available: true } arm)
+        if (workspace is { } arm
+            && (arm.Available || arm.LastFileChangeAt is not null || arm.LastCommitAt is not null))
         {
             if (arm.LastFileChangeAt is DateTime fileAt && fileAt > lastProgressAt)
                 lastProgressAt = fileAt;
