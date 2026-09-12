@@ -387,6 +387,13 @@ function Invoke-AntiphonLandVersionProbe {
     }
 }
 
+function Write-AntiphonLandFailure {
+    param([string]$Message)
+    Write-Output $Message
+    Write-Error $Message
+    exit 1
+}
+
 function Invoke-Antiphon {
     param([string]$Method, [string]$Path, $Body)
     $uri = "$api$Path"
@@ -516,8 +523,7 @@ switch ($PSCmdlet.ParameterSetName) {
             }
         }
         if (-not $hasMarker -or -not (Test-AntiphonLandV2Sha -Value $observed)) {
-            Write-Error ("Antiphon land refused: {0} does not advertise land-v2 (observed SHA {1}). GET {0}/api/version and run pwsh -NoProfile -File scripts/restart-apphost.ps1 after updating the canonical checkout if needed." -f $safeApi, $observed)
-            exit 1
+            Write-AntiphonLandFailure ("Antiphon land refused: {0} does not advertise land-v2 (observed SHA {1}). GET {0}/api/version and run pwsh -NoProfile -File scripts/restart-apphost.ps1 after updating the canonical checkout if needed." -f $safeApi, $observed)
         }
 
         $body = @{}
@@ -532,17 +538,14 @@ switch ($PSCmdlet.ParameterSetName) {
         } catch {
             $code = Get-AntiphonHttpStatusCode $_
             if ($code -eq 404 -or $code -eq 405) {
-                Write-Error ("Antiphon land refused: POST {0}{1} returned {2} (land-v2). Confirm GET {0}/api/version, then pwsh -NoProfile -File scripts/restart-apphost.ps1." -f $safeApi, $landPath, $code)
-                exit 1
+                Write-AntiphonLandFailure ("Antiphon land refused: POST {0}{1} returned {2} (land-v2). Confirm GET {0}/api/version, then pwsh -NoProfile -File scripts/restart-apphost.ps1." -f $safeApi, $landPath, $code)
             }
             if ($null -eq $code) {
-                Write-Error ("Antiphon land POST to {0}{1} did not complete. The request may have been accepted; check with delegate.ps1 -Status {2}. Do not assume publication failed." -f $safeApi, $landPath, $Land)
-                exit 1
+                Write-AntiphonLandFailure ("Antiphon land POST to {0}{1} did not complete. The request may have been accepted; check with delegate.ps1 -Status {2}. Do not assume publication failed." -f $safeApi, $landPath, $Land)
             }
             $detail = $_.ErrorDetails.Message
             if ([string]::IsNullOrWhiteSpace($detail)) { $detail = $_.Exception.Message }
-            Write-Error "Antiphon POST $landPath failed: $detail"
-            exit 1
+            Write-AntiphonLandFailure "Antiphon POST $landPath failed: $detail"
         }
         $word = if ($result.status -eq 'requeued') { 'Requeued land' } else { 'Queued land' }
         if ($result.notification -eq 'not-required') {

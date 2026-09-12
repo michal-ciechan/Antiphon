@@ -53,15 +53,16 @@ public sealed class DelegateScriptLandCompatibilityTests
     {
         await using var stub = LandApiStub.WithVersion(200,
             LandApiStub.CompatibleVersion("unknown", ["land-v2"], extraJsonFields: null));
-        await AssertRefusedAsync(stub, LandArgs());
+        await AssertRefusedAsync(stub, LandArgs(), observed: "unknown");
     }
 
     [Test]
     public async Task C495_ShortShaRefuses()
     {
+        var shortSha = new string('a', 39);
         await using var stub = LandApiStub.WithVersion(200,
-            LandApiStub.CompatibleVersion(new string('a', 39), ["land-v2"], extraJsonFields: null));
-        await AssertRefusedAsync(stub, LandArgs());
+            LandApiStub.CompatibleVersion(shortSha, ["land-v2"], extraJsonFields: null));
+        await AssertRefusedAsync(stub, LandArgs(), observed: shortSha);
     }
 
     [Test]
