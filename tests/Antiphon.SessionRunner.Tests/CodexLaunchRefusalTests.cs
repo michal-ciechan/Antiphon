@@ -55,6 +55,7 @@ public sealed class CodexLaunchRefusalTests
         ex.Code.ShouldBe(CodexLaunchProblemTypes.CommandLineTooLong);
         ex.Message.ShouldNotContain(sentinel);
         runtime.List().ShouldBeEmpty();
+        runtime.StartCoreSessionRegistrations.ShouldBe(0);
         await Should.ThrowAsync<KeyNotFoundException>(() => runtime.GetAsync(sessionId, CancellationToken.None));
         File.Exists(PtyHostManifest.PathFor(settings.PtyHostManifestDir, sessionId)).ShouldBeFalse();
         File.Exists(Path.Combine(settings.SessionLogPath, $"{sessionId:N}.ansi.log")).ShouldBeFalse();
@@ -102,6 +103,7 @@ public sealed class CodexLaunchRefusalTests
         fake.Requests.ShouldBeEmpty();
         fake.LastLaunchScriptContent.ShouldBeNull();
         runtime.List().ShouldBeEmpty();
+        runtime.StartCoreSessionRegistrations.ShouldBe(0);
         File.Exists(HerdrLaunchScript.PathFor(settings.SessionLogPath, sessionId)).ShouldBeFalse();
         File.Exists(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId)).ShouldBeFalse();
         File.Exists(HerdrLastPane.PathFor(settings.SessionLogPath, sessionId)).ShouldBeFalse();
