@@ -79,6 +79,27 @@ public class AgentTaskDeadSessionReconciliationTests
             .ShouldBeFalse("the ephemeral delegate is cleaned up, exactly as the watchdog's tail does");
     }
 
+    [Test]
+    public async Task A_codex_launch_refusal_reason_reaches_the_task_and_the_caller()
+    {
+        await using var scenario = new Scenario();
+        const string reason =
+            "codex_command_line_too_long: launcher node.exe codex.js measured 30,001 UTF-16 units against an effective budget of 30,000.";
+        var task = await scenario.AddTaskAsync(
+            AgentTaskStatus.Dispatched, SessionStatus.Failed, failureReason: reason);
+        var harness = scenario.Harness(task.SessionId);
+
+        await scenario.PastGraceAsync(harness);
+
+        var failed = await scenario.ReadTaskAsync(task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason.ShouldContain("codex_command_line_too_long");
+        failed.FailureReason.ShouldContain("30,001");
+        failed.FailureReason.ShouldContain("30,000");
+        (await scenario.ParentNoteBodiesAsync())
+            .ShouldContain(b => b.Contains("codex_command_line_too_long") && b.Contains("30,001"));
+    }
+
     /// <summary>
     /// The case <c>FailNeverStartedAsync</c> structurally cannot reach: its query is
     /// <c>Status == Dispatched</c>, so a task that got as far as Working and then lost its session

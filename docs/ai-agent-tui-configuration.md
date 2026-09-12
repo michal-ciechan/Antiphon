@@ -23,6 +23,8 @@ Configure terminal AI runners (Claude Code, Codex, OpenCode, Grok Build TUI) thr
 | **Managed secrets** | Write-only env values encrypted with ASP.NET Data Protection. Keys live outside the database |
 | **Exact model** | Opaque runner model id passed as separate `--model` + value args, or omitted, in which case the agent's tier picks the model for Claude/Grok/Codex ([agent-kinds.md](agent-kinds.md)), and a profile whose model argument is blank passes none at all |
 
+Windows Codex profiles that still name `codex.cmd` (the default in `Agents:Definitions:codex`) do not need a profile migration: the session runner rewrites a recognized npm shim to `node.exe` plus the installed `codex.js` and refuses with 409 `codex_command_line_too_long` / `codex_launcher_unavailable` / `codex_launcher_unsupported` when the fully quoted line, including the longer Node-to-native hop, would overflow. Custom wrappers are not rewritten. See [agent-kinds.md](agent-kinds.md).
+
 ## UI
 
 1. Open **Settings → AI Agent TUI**.

@@ -129,9 +129,9 @@ public static class InstructionBundleComposer
         && !string.Equals(launchedStamp, current.StampLine, StringComparison.Ordinal);
 
     /// <summary>
-    /// The command-line guard. THROWS RATHER THAN TRUNCATES: a truncated system prompt is an agent
-    /// running under half a contract with nothing to show that it is, which is strictly worse than a
-    /// launch that fails loudly and names what to shrink.
+    /// Early command-line ESTIMATE. THROWS RATHER THAN TRUNCATES: a truncated system prompt is an
+    /// agent running under half a contract with nothing to show that it is, which is strictly worse
+    /// than a launch that fails loudly and names what to shrink.
     ///
     /// <para>Counted in UTF-16 CHARS, deliberately — unlike every pty ceiling in this codebase, which
     /// counts UTF-8 bytes because the receiving TUI's read quantum is measured in bytes. This is not
@@ -139,12 +139,12 @@ public static class InstructionBundleComposer
     /// UTF-16 characters, so an em-dash costs one here and three there.</para>
     ///
     /// <para><paramref name="otherArgs"/> is everything else this launch will put on the command line
-    /// that the caller knows about. The budget sits below the OS limit to leave room for what the
-    /// caller does NOT know about — the resolved executable path, the definition's own base args, the
-    /// <c>--session-id</c>/<c>--resume</c> the runner adds — and each argument is charged three extra
-    /// characters for the space and the pair of quotes that wrap it. Pessimistic on purpose; the
-    /// measured worst-case composition uses a small fraction of the budget, so the guard only ever
-    /// fires on something genuinely runaway.</para>
+    /// that the caller knows about. Each argument is charged three extra characters for the space and
+    /// the pair of quotes that wrap it — an estimate, not CRT/<c>CommandLineToArgvW</c> proof.
+    /// CARD-0497: the session runner is the final check of the fully quoted invocation (including the
+    /// resolved executable and, for Codex, both Node hops). A larger
+    /// <c>Delegation:CommandLineBudgetChars</c> must never raise the runner's 30,000-unit transport
+    /// ceiling. This composer guard still refuses gross overflow before a launch is queued.</para>
     /// </summary>
     /// <param name="subject">Named in the exception so a failed launch says WHOSE it was.</param>
     /// <exception cref="InvalidOperationException">The composition does not fit.</exception>
@@ -168,9 +168,10 @@ public static class InstructionBundleComposer
             ? "no bundles"
             : string.Join(", ", composed.Bundles.Select(b => $"{b.Stamp} {b.Text.Length:N0} chars"));
         throw new InvalidOperationException(
-            $"{subject}: composed instructions do not fit the command line — {total:N0} chars against a "
+            $"{subject}: composed instructions do not fit the command-line estimate — {total:N0} chars against a "
             + $"budget of {budgetChars:N0} ({appendChars:N0} for --append-system-prompt, {otherChars:N0} for "
             + $"the other {otherArgs.Count} args). Bundles: {breakdown}. Nothing was truncated: shrink a "
-            + "bundle under server/Bundles/, or shorten the agent's own system prompt append.");
+            + "bundle under server/Bundles/, or shorten the agent's own system prompt append. This is an "
+            + "early estimate; the session runner is the final check of the fully quoted command line.");
     }
 }

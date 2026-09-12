@@ -71,6 +71,16 @@ public class HerdrAdoptionSweepTests
         before.ShouldNotBeNull();
         before!.Format.ShouldBe(format);
 
+        if (string.Equals(format, TranscriptFormats.Codex, StringComparison.Ordinal))
+        {
+            var sidecar = HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId));
+            sidecar.ShouldNotBeNull();
+            var paneId = fake.RequireAgentPaneId();
+            fake.SetPaneProcessInfo(
+                paneId, shellPid: 1,
+                [(sidecar!.ChildPid ?? 900, "node.exe", new[] { "node.exe", @"C:\npm\node_modules\@openai\codex\bin\codex.js" }, (string?)null)]);
+        }
+
         await using var runtimeB = BuildRuntime(settings, fake);
         await runtimeB.AdoptOrphanedHostsAsync(new StubProbe(alive: true), CancellationToken.None);
 

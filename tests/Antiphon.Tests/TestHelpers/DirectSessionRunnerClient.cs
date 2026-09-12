@@ -186,6 +186,10 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             // Match the real HTTP client's typed 409; prose alone is not failure evidence.
             throw MapLaunch(ex);
         }
+        catch (CodexLaunchException ex)
+        {
+            throw new ConflictException(ex.Message, ex, ex.Code);
+        }
     }
 
     public Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct)

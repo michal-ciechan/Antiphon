@@ -199,10 +199,10 @@ public sealed class SessionReconciliationService
                     ? SessionStatus.Stopped
                     : SessionStatus.Failed;
                 session.ExitCode = runnerSession.ExitCode;
-                if (session.Status == SessionStatus.Failed)
+                if (session.Status == SessionStatus.Failed && string.IsNullOrEmpty(session.FailureReason))
                 {
                     session.FailureReason =
-                        $"Runner reported an exit that was never observed ({runnerSession.ExitReason}, "
+                        $"Reconciliation found the runner exited while the database session was still live ({runnerSession.ExitReason}, "
                         + $"code {runnerSession.ExitCode?.ToString() ?? "unknown"}).";
                 }
                 SessionTermination.Record(session, SessionTermination.FromExitReason(runnerSession.ExitReason));

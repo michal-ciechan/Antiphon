@@ -107,6 +107,32 @@ public class CodexDelegateDispatchTests
     }
 
     [Test]
+    [Arguments(AgentModelLevel.Frontier)]
+    [Arguments(AgentModelLevel.High)]
+    [Arguments(AgentModelLevel.Medium)]
+    [Arguments(AgentModelLevel.Low)]
+    public void every_tier_carries_a_whole_developer_block_past_the_batch_ceiling(AgentModelLevel level)
+    {
+        var (dispatcher, _) = CreateHarness();
+        var task = TaskFor(AgentKind.Codex, level, AgentTaskRole.TestDesign);
+        var composed = InstructionBundleComposer.Compose(
+            InstructionBundles.ForDelegate(task.Kind, task.Role));
+        composed.Text.Length.ShouldBeGreaterThan(8_191);
+
+        var spec = SpecOf(dispatcher, task);
+        var args = spec.Args.ToList();
+        var value = ConfigValue(args, "developer_instructions").ShouldNotBeNull();
+        value.ShouldBe(composed.Text);
+        args.Count(a => a.StartsWith("developer_instructions=", StringComparison.Ordinal)).ShouldBe(1);
+        args.Count(a => a == "-c").ShouldBeGreaterThanOrEqualTo(3);
+        Should.NotThrow(() => InstructionBundleComposer.EnsureWithinCommandLineBudget(
+            composed, args.Where(a => !a.StartsWith("developer_instructions=", StringComparison.Ordinal)).ToList(),
+            30_000, "codex-tier"));
+        args.ShouldContain("--model");
+        ConfigValue(args, "model_reasoning_effort").ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Test]
     public void a_claude_delegate_is_launched_exactly_as_it_was_before_codex_existed()
     {
         // The compatibility half, asserted on the argument list itself: --name, --model and

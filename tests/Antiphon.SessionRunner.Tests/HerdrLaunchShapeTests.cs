@@ -855,6 +855,82 @@ public class HerdrLaunchShapeTests
     }
 
     [Test]
+    public async Task Codex_occupied_pane_with_a_foreign_node_script_is_refused()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.LaunchScriptAgentKind = HerdrAgentKinds.Codex;
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+
+        await using var runtime = BuildRuntime(settings, fake);
+        await StartAsync(runtime, sessionId, settings.SessionLogPath, agentKind: HerdrAgentKinds.Codex);
+        var paneId = fake.RequireAgentPaneId();
+        runtime.SweepVanishedSessions(new DeadProcessProbe());
+        fake.ClearDetectedAgent(paneId);
+        fake.SetPaneProcessInfo(
+            paneId, shellPid: 1,
+            [(900, "node.exe", new[] { "node.exe", @"C:\other\app.js" }, (string?)null)]);
+        fake.SeedDetectedAgent(paneId, HerdrAgentKinds.Codex);
+
+        var ex = await Should.ThrowAsync<HerdrLaunchException>(() =>
+            StartAsync(runtime, sessionId, settings.SessionLogPath, agentKind: HerdrAgentKinds.Codex));
+        ex.Code.ShouldBe(HerdrLaunchException.CodePaneOccupied);
+        HerdrAgentKinds.IsFamilyMember(HerdrAgentKinds.Codex, "node.exe").ShouldBeTrue();
+
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
+    [Test]
+    public async Task Codex_node_launcher_child_is_recognized_as_own_occupant()
+    {
+        using var layout = new CodexNpmLayout();
+        await using var fake = new FakeHerdrServer();
+        fake.LaunchScriptAgentKind = HerdrAgentKinds.Codex;
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+        await using var runtime = BuildRuntime(settings, fake);
+        var dto = await runtime.StartAsync(
+            new RunnerLaunchRequest(
+                sessionId,
+                layout.ShimPath,
+                ["--no-alt-screen"],
+                new Dictionary<string, string>(),
+                settings.SessionLogPath,
+                Cols: 120,
+                Rows: 30,
+                Backend: SessionBackends.Herdr,
+                TranscriptFormat: TranscriptFormats.Codex,
+                Herdr: new HerdrLaunchOptions(
+                    WorkspaceKey: $"test-{sessionId:N}"[..32],
+                    WorkspaceLabel: "card0497-codex",
+                    WorkspaceCwd: settings.SessionLogPath,
+                    PaneTitle: "card0497-codex",
+                    AgentKind: HerdrAgentKinds.Codex)),
+            CancellationToken.None);
+        dto.Status.ShouldBe("Running");
+        fake.LastLaunchScriptContent.ShouldNotBeNull();
+        fake.LastLaunchScriptContent.ShouldContain("node.exe");
+        fake.LastLaunchScriptContent.ShouldContain("codex.js");
+        fake.LastLaunchScriptContent.ShouldNotContain("codex.cmd");
+        HerdrAgentKinds.IsFamilyMember(HerdrAgentKinds.Codex, "node.exe").ShouldBeTrue();
+        HerdrAgentKinds.IsFamilyMember(HerdrAgentKinds.Codex, "cmd.exe").ShouldBeTrue();
+
+        var paneId = fake.RequireAgentPaneId();
+        fake.SetPaneProcessInfo(
+            paneId, shellPid: 1,
+            [(900, "node.exe", new[] { "node.exe", layout.JsPath, "--no-alt-screen" }, (string?)null)]);
+        var inspected = await runtime.InspectHerdrPaneAsync(paneId, CancellationToken.None);
+        inspected.Foreground.ShouldContain(p => p.Name == "node.exe");
+
+        await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
+    [Test]
     public async Task Relaunch_in_place_never_calls_tab_rename_or_pane_split()
     {
         await using var fake = new FakeHerdrServer();

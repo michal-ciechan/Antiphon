@@ -103,6 +103,83 @@ public class SessionReconciliationServiceTests
     }
 
     [Test]
+    public async Task Unobserved_failed_exit_gets_the_factual_reconciliation_wording()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Running, staleAgent: true);
+
+            await using var db = CreateContext();
+            var runner = new FakeRunnerClient
+            {
+                Sessions =
+                [
+                    new SessionRunnerSessionDto(
+                        sessionId, Pid: 4242, StartedAt: DateTime.UtcNow.AddHours(-1),
+                        Status: "Exited", ExitCode: 1, ExitReason: AgentExitReason.ProcessExited, LastSequence: 10)
+                ]
+            };
+            var service = BuildService(db, runner, new MockEventBus());
+            await service.ScanAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var dbSession = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            dbSession.Status.ShouldBe(SessionStatus.Failed);
+            dbSession.ExitCode.ShouldBe(1);
+            dbSession.FailureReason.ShouldBe(
+                "Reconciliation found the runner exited while the database session was still live (ProcessExited, code 1).");
+            dbSession.TerminationSource.ShouldBe(SessionTerminationSource.ProcessExit);
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task A_specific_failure_reason_already_on_the_live_row_survives_reconciliation()
+    {
+        var marker = NewMarker();
+        const string seeded =
+            "codex_command_line_too_long: launcher node.exe codex.js measured 30,001 UTF-16 units against an effective budget of 30,000.";
+        try
+        {
+            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Starting, staleAgent: true, failureReason: seeded);
+            await using (var stamp = CreateContext())
+            {
+                var session = await stamp.AgentSessions.SingleAsync(s => s.Id == sessionId);
+                session.StartedAt = DateTime.UtcNow.AddHours(-1);
+                await stamp.SaveChangesAsync();
+            }
+
+            await using var db = CreateContext();
+            var runner = new FakeRunnerClient
+            {
+                Sessions =
+                [
+                    new SessionRunnerSessionDto(
+                        sessionId, Pid: 4242, StartedAt: DateTime.UtcNow.AddHours(-1),
+                        Status: "Exited", ExitCode: 1, ExitReason: AgentExitReason.ProcessExited, LastSequence: 0)
+                ]
+            };
+            var service = BuildService(db, runner, new MockEventBus());
+            await service.ScanAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var dbSession = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            dbSession.FailureReason.ShouldBe(seeded);
+            dbSession.Status.ShouldBe(SessionStatus.Failed);
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
     public async Task Runner_reported_CpuSpinKilled_exit_records_SystemRequest()
     {
         var marker = NewMarker();

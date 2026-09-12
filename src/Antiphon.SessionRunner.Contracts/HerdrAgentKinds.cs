@@ -12,7 +12,11 @@ public static class HerdrAgentKinds
     /// <summary>Grok Build (CARD-0187 K1).</summary>
     public const string Grok = "grok";
 
-    /// <summary>Codex (CARD-0187 K5 — launched via <c>codex.cmd</c>, never <c>agent.start</c>).</summary>
+    /// <summary>
+    /// Codex (CARD-0187 K5, CARD-0497 — launched via <c>node.exe</c> + installed <c>codex.js</c>
+    /// when the npm shim is recognized; legacy <c>codex.cmd</c> remains in the family).
+    /// Never <c>agent.start</c>.
+    /// </summary>
     public const string Codex = "codex";
 
     public static IReadOnlyList<string> Supported { get; } = [Claude, Grok, Codex];
@@ -27,7 +31,9 @@ public static class HerdrAgentKinds
     /// <summary>
     /// CARD-0213: executable names that may occupy a pane of this kind (process_info <c>name</c>).
     /// A <c>pwsh</c> wrapper is deliberately absent (CARD-0187 K6). Codex includes <c>cmd</c>
-    /// because the interactive launcher is <c>codex.cmd</c>.
+    /// because a remaining explicit launcher may still be <c>codex.cmd</c>, and <c>node</c>
+    /// because CARD-0497 launches the recognized npm shim as <c>node.exe</c> + <c>codex.js</c>.
+    /// A family name alone never proves ownership (CARD-0213 4c stays occupied).
     /// </summary>
     public static IReadOnlyList<string> ExecutableFamily(string? kind)
     {
@@ -35,7 +41,7 @@ public static class HerdrAgentKinds
         return resolved switch
         {
             Grok => ["grok", "grok.exe"],
-            Codex => ["codex", "codex.exe", "cmd", "cmd.exe"],
+            Codex => ["codex", "codex.exe", "cmd", "cmd.exe", "node", "node.exe"],
             _ => ["claude", "claude.exe", "node", "node.exe"],
         };
     }

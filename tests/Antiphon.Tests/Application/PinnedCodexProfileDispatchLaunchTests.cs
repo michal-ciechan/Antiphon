@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Antiphon.FakeLlmApi;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -71,6 +72,42 @@ public class PinnedCodexProfileDispatchLaunchTests
         session.DefinitionName.ShouldBe("codex");
         session.TuiProfileRevisionId.ShouldBe(revisionId);
         session.EffectiveModelId.ShouldBe("gpt-5.6-terra");
+    }
+
+    [Test]
+    public async Task T11_pinned_codex_profile_keeps_a_long_developer_block_whole()
+    {
+        await using var h = await CreateHarnessAsync();
+        var factory = Factory(h);
+        var exe = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+        var (profileId, _) = await SeedCodexProfileAsync(exe);
+        var agentId = await SeedStoppedCodexAgentAsync(h, profileId, modelId: "gpt-5.6-terra");
+        await using (var db = BridgeQueueHarness.CreateContext())
+        {
+            await db.Agents.Where(a => a.Id == agentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.SystemPromptAppend, CodexInstructionFixtures.Incident));
+        }
+        var taskId = await SeedQueuedPinAsync(h, agentId);
+
+        using (var scope = h.Provider.CreateScope())
+        {
+            var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+            await dispatcher.TickAsync(CancellationToken.None);
+        }
+
+        await h.Provider.GetRequiredService<AgentSessionLaunchQueue>()
+            .WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+
+        factory.Created.ShouldNotBeEmpty();
+        var adapter = factory.Created.Single(a =>
+            a.StartedArgs.Contains("--dangerously-bypass-approvals-and-sandbox"));
+        var args = adapter.StartedArgs.ToList();
+        var block = args.Single(a => a.StartsWith("developer_instructions=", StringComparison.Ordinal));
+        var text = block["developer_instructions=".Length..];
+        text.ShouldContain(CodexInstructionFixtures.Incident);
+        text.Length.ShouldBeGreaterThan(8_191);
+        args[args.IndexOf("--model") + 1].ShouldBe("gpt-5.6-terra");
+        _ = taskId;
     }
 
     private static RegisteringAdapterFactory Factory(BridgeQueueHarness h) =>

@@ -420,6 +420,17 @@ public class InstructionBundleTests
         ex.Message.ShouldContain("30,000");
         ex.Message.ShouldContain("delegate-basics v", customMessage: "the message names each bundle and its size");
         ex.Message.ShouldContain("Nothing was truncated");
+        ex.Message.ShouldContain("estimate");
+        ex.Message.ShouldContain("session runner is the final check");
+    }
+
+    [Test]
+    public void the_test_design_composition_is_past_the_batch_command_ceiling()
+    {
+        var composed = InstructionBundleComposer.Compose(
+            InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.TestDesign, []));
+        composed.Text.Length.ShouldBeGreaterThanOrEqualTo(
+            8192, $"TestDesign composition is {composed.Text.Length} UTF-16 units");
     }
 
     [Test]

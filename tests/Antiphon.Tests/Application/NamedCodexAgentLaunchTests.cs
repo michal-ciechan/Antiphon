@@ -1,3 +1,4 @@
+using Antiphon.FakeLlmApi;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -64,6 +65,24 @@ public class NamedCodexAgentLaunchTests
         // Rendered, not the raw template: {agentName} expands the same way it does for Claude.
         instructions.ShouldContain("You are BridgeQueue.");
         instructions.ShouldNotContain("{agentName}");
+        args[args.IndexOf("--model") + 1].ShouldBe("gpt-5.6-terra");
+        ConfigValue(args, "model_reasoning_effort").ShouldBe("medium");
+    }
+
+    [Test]
+    public async Task A_codex_agents_long_standing_instructions_arrive_whole()
+    {
+        await using var h = await CreateHarnessAsync();
+        await SetAgentAsync(h, AgentModelLevel.Medium, systemPrompt: CodexInstructionFixtures.Incident);
+        await EndSessionAsync(h, SessionStatus.Failed);
+
+        await StartAsync(h);
+
+        var args = Factory(h).Created.ShouldHaveSingleItem().StartedArgs.ToList();
+        var instructions = ConfigValue(args, "developer_instructions").ShouldNotBeNull();
+        instructions.ShouldContain(CodexInstructionFixtures.Incident);
+        instructions.ShouldContain(CodexInstructionFixtures.StartSentinel);
+        instructions.Length.ShouldBeGreaterThan(8_191);
         args[args.IndexOf("--model") + 1].ShouldBe("gpt-5.6-terra");
         ConfigValue(args, "model_reasoning_effort").ShouldBe("medium");
     }

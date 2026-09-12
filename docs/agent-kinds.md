@@ -35,7 +35,7 @@ guessing "no".
 |---|---|---|---|---|---|
 | `ClaudeCode` | `claude.exe` | yes | **yes — the only one** | transcript (JSONL) | yes |
 | `Grok` | `grok.exe` (xAI Grok Build TUI) | yes, worker only | no | transcript (ACP `updates.jsonl`) | yes (CARD-0187) |
-| `Codex` | `codex.cmd` (OpenAI codex-cli) | yes, worker only | no | transcript (rollout JSONL) | yes (CARD-0187) |
+| `Codex` | `codex.cmd` rewritten to `node.exe` + installed `codex.js` on Windows (CARD-0497); native `codex.exe` unchanged | yes, worker only | no | transcript (rollout JSONL) | yes (CARD-0187) |
 | `OpenCode` | `opencode` / a wrapper | no | no | quiet-time only | **no** — refused |
 | `Raw` | any command (`pwsh.exe`, …) | no | no | quiet-time only | **no** — refused |
 
@@ -87,11 +87,19 @@ A session's command line is built in layers, and no single file holds the whole 
    Claude and Codex use argv for the full composed text. Grok uses a runner-owned rules file
    and an internal queued read/acknowledgement turn (CARD-0395). This alone does not establish live model compliance:
    CARD-0395 measured that Grok 1.0.13 retains the old `--rules` on native resume and ignores a
-   replacement value. Claude/Codex's argument bound remains the command line, guarded by
-   `InstructionBundleComposer.EnsureWithinCommandLineBudget` (`Delegation:CommandLineBudgetChars`),
-   which throws rather than truncating. Composition order is attachments → `ReplyStyle` block →
-   `SystemPromptAppend`; `Normal` composes nothing. A change takes effect at the next launch — the
-   drift badge is informational, not an action.
+   replacement value. Claude/Codex's argument bound remains the command line. The composer
+   `InstructionBundleComposer.EnsureWithinCommandLineBudget` (`Delegation:CommandLineBudgetChars`)
+   is an early estimate that throws rather than truncating. CARD-0497: on Windows the session
+   runner is the final check. A recognized npm `codex.cmd` is rewritten to `node.exe` plus the
+   installed `codex.js` (sibling `node.exe` first, then PATH) before any child is created, and
+   both Node hops are measured with the CRT quoting used by `CreateProcessW`. The effective
+   ceiling is `min(configured, 30_000)` UTF-16 units; a configured value above 30,000 cannot raise
+   it. A remaining explicit batch/cmd Codex launcher is capped at `min(configured, 7_000)` and is
+   not rewritten. Oversized or unmeasurable launches return 409 `codex_command_line_too_long`,
+   `codex_launcher_unavailable`, or `codex_launcher_unsupported` with the session id, launcher,
+   measured length and effective budget — never the instruction text. Composition order is
+   attachments → `ReplyStyle` block → `SystemPromptAppend`; `Normal` composes nothing. A change
+   takes effect at the next launch — the drift badge is informational, not an action.
 
    On Windows, Grok `--rules` is also fail-closed (CARD-0382): a payload containing CR, LF, or
    NUL, or more than 4,096 UTF-16 code units, is refused as 409 `grok_rules_argv_unsafe` before

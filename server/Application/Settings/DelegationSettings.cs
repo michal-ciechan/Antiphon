@@ -267,7 +267,11 @@ public sealed class DelegationSettings
     ///
     /// <para>30 000 leaves ~2 700 characters for the parts a composing caller cannot see: the
     /// resolved executable path, the definition's own base args, the <c>--session-id</c> or
-    /// <c>--resume</c> the launch adds, and the quoting each argument costs on the way to the OS.</para>
+    /// <c>--resume</c> the launch adds, and the quoting each argument costs on the way to the OS.
+    /// CARD-0497: this number is a configurable ceiling, not a transport raise. The session runner
+    /// is the final check of the fully quoted invocation and will not honour a value above 30 000
+    /// UTF-16 units. For a remaining explicit Windows batch/cmd Codex launch the runner also applies
+    /// a 7 000-unit conservative cap.</para>
     ///
     /// <para>It is a runaway stop, not a working constraint, and the measurement says so:
     /// <c>InstructionBundleTests</c> composes the worst case anyone can currently construct — every

@@ -111,6 +111,35 @@ public class DelegateLaunchArgvIntegrityTests
             + "quietly widen the matrix without being checked");
     }
 
+    [Test]
+    public void Every_codex_launch_fits_both_launcher_hops_at_production_budget()
+    {
+        SkipIfNotWindows();
+        var (dispatcher, provider) = CreateHarness();
+        using var _ = provider;
+        var node = @"C:\Program Files\nodejs\node.exe";
+        var js = @"C:\npm\node_modules\@openai\codex\bin\codex.js";
+        var native = @"C:\" + new string('n', 200) + @"\codex.exe";
+        var max = 0;
+        foreach (var kind in Enum.GetValues<AgentTaskKind>())
+        foreach (var role in Enum.GetValues<AgentTaskRole>())
+        {
+            var sessionId = Guid.NewGuid();
+            var task = TaskFor(kind, role, AgentKind.Codex);
+            var args = ComposeLaunchArgs(dispatcher, task, AgentKind.Codex, sessionId, Attachments);
+            var hop1Args = new string[args.Length + 1];
+            hop1Args[0] = js;
+            Array.Copy(args, 0, hop1Args, 1, args.Length);
+            var hop1 = WindowsCommandLine.Measure(node, hop1Args);
+            var hop2 = WindowsCommandLine.Measure(native, args);
+            hop1.ShouldBeLessThanOrEqualTo(30_000, $"{kind}/{role} hop1={hop1}");
+            hop2.ShouldBeLessThanOrEqualTo(30_000, $"{kind}/{role} hop2={hop2}");
+            max = Math.Max(max, Math.Max(hop1, hop2));
+        }
+
+        Console.WriteLine($"CARD-0497 Codex hop max={max}");
+    }
+
     /// <summary>
     /// The same matrix with NO attachments: the role defaults alone are what a fresh pool delegate
     /// launches with (its agent row is ephemeral, so nobody can have attached anything), and that is

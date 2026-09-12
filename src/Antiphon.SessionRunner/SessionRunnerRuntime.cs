@@ -275,6 +275,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             };
         }
 
+        // CARD-0497: rewrite a recognized npm Codex shim to node.exe + codex.js and apply the
+        // launcher-aware budget before a session is registered, a host starts, or Herdr is contacted.
+        request = CodexWindowsLaunchPolicy.Apply(request, useHerdr);
+
         var session = new RunnerSession(request.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness);
         if (request.VerificationBinding is { } binding)
             session.SetCustody(_custody.Value, binding);

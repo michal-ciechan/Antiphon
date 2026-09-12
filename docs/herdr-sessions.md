@@ -35,7 +35,7 @@ You **can** choose it for:
 |---|---|
 | **`ClaudeCode`** | spiked (CARD-0160); launch script (CARD-0187) |
 | **`Grok`** | spiked (CARD-0187 K1) — same launch script, Grok transcript tailer |
-| **`Codex`** | spiked (CARD-0187 K5) — through `codex.cmd`, never `agent.start` |
+| **`Codex`** | spiked (CARD-0187 K5) — through the runner's normalized `node.exe` + `codex.js` launch (CARD-0497; `codex.cmd` is still recognized in the executable family), never `agent.start` |
 
 You **cannot** choose it for:
 
@@ -518,7 +518,7 @@ workspace/tab ids stay out of the database.
 
 ### Preserved Gotcha #61
 
-- **A herdr relaunch after pid loss targets the pane we already had** (CARD-0224): exits that leave the pane standing retire the sidecar to `<SessionLogPath>/herdr/last-pane/<sessionId:N>.json` instead of deleting it. The next launch of that id (supervisor resume, or a `Fresh` fallback via `ReusePaneOfSessionId`) relaunches into an empty PowerShell pane or adopts a live process whose argv names our session id. A foreign occupant **refuses** the launch (`pane_occupied`) — never falls back to the allocator, never steals. `pane.close` success and `PaneLeftOpen` still plain-delete. Codex never carries a session id in argv, so an occupied Codex pane is always refused. Do not put pane ids in the database.
+- **A herdr relaunch after pid loss targets the pane we already had** (CARD-0224): exits that leave the pane standing retire the sidecar to `<SessionLogPath>/herdr/last-pane/<sessionId:N>.json` instead of deleting it. The next launch of that id (supervisor resume, or a `Fresh` fallback via `ReusePaneOfSessionId`) relaunches into an empty PowerShell pane or adopts a live process whose argv names our session id. A foreign occupant **refuses** the launch (`pane_occupied`) — never falls back to the allocator, never steals. `pane.close` success and `PaneLeftOpen` still plain-delete. Codex never carries a session id in argv, so an occupied Codex pane is always refused. CARD-0497 adds `node`/`node.exe` to the Codex executable family so Herdr occupancy recognizes the real child; a family name alone still never adopts a foreign Node process. Do not put pane ids in the database.
 
 ### Preserved Gotcha #62
 
