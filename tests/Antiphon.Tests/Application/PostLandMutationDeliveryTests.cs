@@ -271,22 +271,22 @@ public sealed class PostLandMutationDeliveryTests
         await using var settled = await SettleMutationAsync();
         await using (var db = settled.World.Host.CreateContext())
         {
-            var queued = await db.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == settled.World.TaskId);
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == settled.World.TaskId);
             var task = await db.AgentTasks.SingleAsync(t => t.Id == settled.World.TaskId);
             task.CompletionNoteQueuedAt.ShouldNotBeNull();
             task.CompletionNoteDigest.ShouldNotBeNull();
             task.CompletionNoteQueuedAt = null;
             task.CompletionNoteDigest = null;
-            queued.Status.ShouldBe(QueuedMessageStatus.Pending);
+            row.Status.ShouldBe(QueuedMessageStatus.Pending);
             await db.SaveChangesAsync();
         }
 
-        SessionQueuedMessage queued;
+        SessionQueuedMessage pending;
         await using (var db = settled.World.Host.CreateContext())
-            queued = await db.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == settled.World.TaskId);
+            pending = await db.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == settled.World.TaskId);
 
         await ConfirmQueuedReceiptAsync(
-            settled.World.Host.Schema.ConnectionString, settled.Bridge, queued,
+            settled.World.Host.Schema.ConnectionString, settled.Bridge, pending,
             settled.Bridge.SessionId, busy: false, cut: "after-receipt");
 
         await using (var db = settled.World.Host.CreateContext())
