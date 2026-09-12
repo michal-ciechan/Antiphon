@@ -253,13 +253,20 @@ public sealed class AgentTaskLandService
             ? await _db.AgentTaskLandings.SingleOrDefaultAsync(o => o.Id == operationId, ct)
             : null;
         var published = active is not null && new AgentTaskLandingState().HasPublication(active);
-        // Resume unpublished work in the protocol. Source resolution already ran when the
-        // operation was created; re-resolving can inspect/FF a live rebase or skip publication
-        // coordinate checks.
-        if (!published && (active is null || active.Phase == LandPhase.Refused))
+        // Resume unpublished work in the protocol only when this same request already has a
+        // durable remote-source snapshot. Missing snapshot (legacy/unpublished) and a replacement
+        // request must resolve again; otherwise remote movement is never observed and a retry can
+        // inherit null remote fields, which disables every later remote check.
+        var resumeExisting = !published && active is not null && active.Phase != LandPhase.Refused
+            && active.SchemaVersion == 2
+            && GitObjectId.IsFull(active.SourceRemoteSha)
+            && active.SourceRemoteFingerprint is { Length: 64 }
+            && GitObjectId.IsFull(active.ReviewedSourceSha)
+            && active.ApprovalLandRequestId == request.Id;
+        if (!published && !resumeExisting)
         {
             var canResolve = request.SchemaVersion == 2 && GitObjectId.IsFull(request.ExpectedSourceSha);
-            if (!canResolve && active is not { Phase: LandPhase.Refused })
+            if (!canResolve)
             {
                 if (request.SourceRefusalReason is null)
                 {
@@ -270,24 +277,21 @@ public sealed class AgentTaskLandService
                 await RefuseAsync(task, FormatSourceRefusal(request, "legacy_review_binding_required"), ct);
                 return LandRunResult.Complete;
             }
-            if (canResolve)
+            var resolved = await new AgentTaskLandSourceResolver(_db, _landingGit, _leases, _clock)
+                .ResolveAsync(task, request, lease, ct);
+            if (resolved.Reason is not null)
             {
-                var resolved = await new AgentTaskLandSourceResolver(_db, _landingGit, _leases, _clock)
-                    .ResolveAsync(task, request, lease, ct);
-                if (resolved.Reason is not null)
+                if (request.SourceRefusalReason is null)
                 {
-                    if (request.SourceRefusalReason is null)
-                    {
-                        request.SourceRefusalReason = resolved.Reason;
-                        request.ConcurrencyToken = Guid.NewGuid();
-                        await _db.SaveChangesAsync(ct);
-                    }
-                    await RefuseAsync(task, FormatSourceRefusal(request, resolved.Reason), ct);
-                    return LandRunResult.Complete;
+                    request.SourceRefusalReason = resolved.Reason;
+                    request.ConcurrencyToken = Guid.NewGuid();
+                    await _db.SaveChangesAsync(ct);
                 }
-                await _db.Entry(task).ReloadAsync(ct);
-                await _db.Entry(request).ReloadAsync(ct);
+                await RefuseAsync(task, FormatSourceRefusal(request, resolved.Reason), ct);
+                return LandRunResult.Complete;
             }
+            await _db.Entry(task).ReloadAsync(ct);
+            await _db.Entry(request).ReloadAsync(ct);
         }
         var result = await _protocol.RunAsync(task, lease, request, ct);
         if (result.Conflicts.Count > 0)

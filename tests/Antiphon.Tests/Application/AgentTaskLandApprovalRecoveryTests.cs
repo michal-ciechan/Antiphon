@@ -524,6 +524,84 @@ public sealed class AgentTaskLandApprovalRecoveryTests
     public async Task C488_LegacyQueuedApprovalRequired() => await C488_LegacyAutomaticMutationRefuses();
 
     [Test]
+    public async Task C488_LegacyUnpublishedRecoveryRefusesMovedRemote()
+    {
+        await using var h = new LandingProtocolHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        h.Fault.Phase = LandPhase.Prepared;
+        h.Fault.AfterCommit = true;
+        await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunAsync());
+        await using (var db = h.CreateContext())
+        {
+            var op = await db.AgentTaskLandings.SingleAsync();
+            op.SchemaVersion = 1;
+            op.ApprovalLandRequestId = null;
+            op.ReviewedSourceSha = null;
+            op.PreparationInputSha = null;
+            op.SourceRemoteSha = null;
+            op.SourceRemoteFingerprint = null;
+            var req = await db.AgentTaskLandRequests.SingleAsync();
+            req.SchemaVersion = 1;
+            req.ExpectedSourceSha = null;
+            req.ReviewEvidenceId = null;
+            await db.SaveChangesAsync();
+        }
+        h.Git.AdvanceRemoteSource();
+        h.Fault.Phase = null;
+        h.Fault.AfterCommit = false;
+        await h.RestartServicesAsync();
+        await h.RunAsync();
+        await using var observer = h.CreateContext();
+        var recovered = await observer.AgentTaskLandings.SingleAsync();
+        var request = await observer.AgentTaskLandRequests.SingleAsync();
+        recovered.Publication.ShouldNotBe(LandPublicationOutcome.Landed);
+        recovered.Publication.ShouldNotBe(LandPublicationOutcome.AlreadyPresent);
+        recovered.Phase.ShouldNotBe(LandPhase.Complete);
+        request.ExpectedSourceSha.ShouldBeNull();
+        recovered.ReviewedSourceSha.ShouldBeNull();
+        (request.SourceRefusalReason ?? recovered.LastReason).ShouldBe("legacy_review_binding_required");
+    }
+
+    [Test]
+    public async Task C488_VerifiedRetryRequiresSourceResolution()
+    {
+        await using var h = new LandingProtocolHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        h.Fault.Phase = LandPhase.Verified;
+        h.Fault.AfterCommit = true;
+        await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunAsync());
+        var stale = h.Git.SourceHead;
+        h.Git.SetRemoteSource(stale);
+        var newer = h.Git.AdvanceRemoteSource();
+        h.Fault.Phase = null;
+        h.Fault.AfterCommit = false;
+        await h.RestartServicesAsync();
+        await h.RunAsync();
+        await using (var first = h.CreateContext())
+        {
+            var refused = await first.AgentTaskLandings.SingleAsync();
+            refused.LastReason.ShouldBe("source_remote_changed");
+            refused.Publication.ShouldNotBe(LandPublicationOutcome.Landed);
+        }
+        await h.RequestAsync("/*/*/Required/*", stale);
+        await h.RunQueuedAsync();
+        await using var observer = h.CreateContext();
+        var task = await observer.AgentTasks.SingleAsync(t => t.Id == h.Git.TaskId);
+        var active = await observer.AgentTaskLandings.SingleAsync(o => o.Active);
+        var req = await observer.AgentTaskLandRequests.SingleAsync(r => r.Id == task.CurrentLandRequestId);
+        active.Publication.ShouldNotBe(LandPublicationOutcome.Landed);
+        active.Publication.ShouldNotBe(LandPublicationOutcome.AlreadyPresent);
+        active.Phase.ShouldNotBe(LandPhase.Complete);
+        req.ExpectedSourceSha.ShouldBe(stale);
+        newer.ShouldNotBe(stale);
+        (req.SourceRefusalReason ?? active.LastReason).ShouldBe("reviewed_source_mismatch");
+        if (active.SchemaVersion == 2)
+            (active.SourceRemoteSha ?? req.RemoteSourceSha).ShouldNotBeNull();
+    }
+
+    [Test]
     public async Task C488_LegacyPublishedCleanupWorks()
     {
         await using var h = new LandingProtocolHarness();
@@ -781,6 +859,7 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         await C488_ConflictSupersessionAtomic();
         await C488_AutomaticReplacementRefuses();
         await C488_TargetIntentPreventsReplacement();
+        await C488_VerifiedRetryRequiresSourceResolution();
     }
 
     [Test]
@@ -804,6 +883,7 @@ public sealed class AgentTaskLandApprovalRecoveryTests
     {
         await C488_LegacyAutomaticMutationRefuses();
         await C488_LegacyLateBindingOriginalExact();
+        await C488_LegacyUnpublishedRecoveryRefusesMovedRemote();
     }
 
     [Test]

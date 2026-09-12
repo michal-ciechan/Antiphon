@@ -101,35 +101,41 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             var snapshot = source.Snapshot!;
             if (op is null)
             {
+                Require(request is not null && GitObjectId.IsFull(request.ExpectedSourceSha),
+                    "legacy_review_binding_required");
+                var approval = request!;
+                Require(GitObjectId.IsFull(approval.RemoteSourceSha)
+                    && approval.RemoteSourceFingerprint is { Length: 64 },
+                    "source_resolution_required");
                 var destination = await git.DestinationAsync(coordinates.RepositoryPath, coordinates.TargetFullRef, ct);
                 var target = await CommitAsync(coordinates.RepositoryPath, coordinates.TargetFullRef, ct);
-                var approved = request is { ExpectedSourceSha: not null } ? request.ExpectedSourceSha : snapshot.HeadSha;
+                var approved = approval.ExpectedSourceSha!;
                 Require(snapshot.HeadSha == approved, "reviewed_source_mismatch");
                 var derivation = previousToReplace is { RebasedSourceSha: { } prepared }
                     && prepared == snapshot.HeadSha && prepared != approved;
                 op = new AgentTaskLanding
                 {
                     Id = Guid.NewGuid(), TaskId = task.Id,
-                    SchemaVersion = request is { ExpectedSourceSha: not null } ? 2 : 1,
+                    SchemaVersion = 2,
                     Phase = LandPhase.Inspected,
                     CreatedAt = Now(), UpdatedAt = Now(), RepositoryPath = coordinates.RepositoryPath,
                     WorktreePath = snapshot.RegisteredPath, CommonDirectory = snapshot.CommonDirectory,
                     GitDirectory = snapshot.GitDirectory, SourceFullRef = coordinates.SourceFullRef,
-                    OriginalSourceSha = approved, ReviewedSourceSha = request?.ExpectedSourceSha,
+                    OriginalSourceSha = approved, ReviewedSourceSha = approval.ExpectedSourceSha,
                     PreparationInputSha = derivation ? previousToReplace!.RebasedSourceSha : approved,
                     PreviousPreparationOperationId = derivation ? previousToReplace!.Id : null,
                     ApprovalLandRequestId = previousToReplace is { OriginalSourceSha: { } prev } && prev == approved
-                        ? previousToReplace.ApprovalLandRequestId ?? request?.Id : request?.Id,
-                    ReviewEvidenceId = previousToReplace?.ReviewEvidenceId ?? request?.ReviewEvidenceId,
-                    ApprovalKind = request?.ApprovalKind ?? LandApprovalKind.ExplicitCaller,
-                    ApprovedAt = request?.ApprovedAt ?? Now(),
-                    SourceRemoteSha = request?.RemoteSourceSha, SourceRemoteRef = request?.RemoteSourceRef,
-                    SourceRemoteFingerprint = request?.RemoteSourceFingerprint,
-                    SourceRemoteObservedAt = request?.SourceObservedAt,
+                        ? previousToReplace.ApprovalLandRequestId ?? approval.Id : approval.Id,
+                    ReviewEvidenceId = previousToReplace?.ReviewEvidenceId ?? approval.ReviewEvidenceId,
+                    ApprovalKind = approval.ApprovalKind,
+                    ApprovedAt = approval.ApprovedAt ?? Now(),
+                    SourceRemoteSha = approval.RemoteSourceSha, SourceRemoteRef = approval.RemoteSourceRef,
+                    SourceRemoteFingerprint = approval.RemoteSourceFingerprint,
+                    SourceRemoteObservedAt = approval.SourceObservedAt,
                     TargetFullRef = coordinates.TargetFullRef,
                     TargetBeforeSha = target, RemoteName = destination.RemoteName,
                     DestinationFullRef = destination.FullRef, RemoteFingerprint = destination.Fingerprint,
-                    VerificationFilter = request?.VerifyFilter ?? task.LandVerifyFilter,
+                    VerificationFilter = approval.VerifyFilter ?? task.LandVerifyFilter,
                 };
                 op.RecoveryRefPrefix = $"refs/antiphon/land/{task.Id:N}/{op.Id:N}";
                 op.TargetCheckoutPath = await TargetCheckoutAsync(op, ct);
@@ -387,8 +393,16 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 Require(request.ReviewEvidenceId == op.ReviewEvidenceId, "resume_approval_changed");
             Require(request.VerifyFilter == op.VerificationFilter, "verification_filter_changed");
         }
-        if (op.SchemaVersion != 2 || op.SourceRemoteSha is null || op.SourceRemoteFingerprint is null)
+        if (_state.HasPublication(op))
             return;
+        if (op.SchemaVersion != 2 || op.SourceRemoteSha is null || op.SourceRemoteFingerprint is null
+            || !GitObjectId.IsFull(op.ReviewedSourceSha) || op.ApprovalLandRequestId is null)
+        {
+            throw new LandingRefusal(op.SchemaVersion != 2 || !GitObjectId.IsFull(op.ReviewedSourceSha)
+                || op.ApprovalLandRequestId is null
+                ? "legacy_review_binding_required"
+                : "source_resolution_required");
+        }
         var observed = await git.ObserveSourceAsync(op.RepositoryPath, op.SourceFullRef,
             $"refs/antiphon/land/{op.TaskId:N}/{op.Id:N}/source-recheck", ct);
         Require(observed.Accepted, observed.Reason ?? "source_remote_unreadable");
