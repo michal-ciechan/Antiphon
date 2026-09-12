@@ -1,3 +1,5 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 
 namespace Antiphon.Messaging.Service;
@@ -10,6 +12,27 @@ namespace Antiphon.Messaging.Service;
 internal static class InboxUniqueConstraint
 {
     internal const string ChannelMessageIndex = "IX_Inbox_Channel_ChannelMessageId";
+
+    public static async Task SaveChangesIgnoringDuplicateAsync(
+        DbContext db,
+        ILogger logger,
+        string channel,
+        string channelMessageId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (IsViolation(ex))
+        {
+            logger.LogDebug(
+                ex,
+                "[inbox] duplicate receipt for {Channel} {MessageId} ignored",
+                channel,
+                channelMessageId);
+        }
+    }
 
     public static bool IsViolation(Exception exception)
     {

@@ -46,18 +46,8 @@ public sealed class EfInboxReceiptStore(
             Partition = partition,
             Offset = offset,
         });
-        try
-        {
-            await db.SaveChangesAsync(cancellationToken);
-        }
-        catch (DbUpdateException ex) when (InboxUniqueConstraint.IsViolation(ex))
-        {
-            logger.LogDebug(
-                ex,
-                "[inbox] duplicate receipt for {Channel} {MessageId} ignored",
-                message.Channel,
-                message.ChannelMessageId);
-        }
+        await InboxUniqueConstraint.SaveChangesIgnoringDuplicateAsync(
+            db, logger, message.Channel, message.ChannelMessageId, cancellationToken);
     }
 
     public async Task<IReadOnlyList<InboundReceipt>> GetOverdueAsync(DateTimeOffset cutoff, CancellationToken cancellationToken)

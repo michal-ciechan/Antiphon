@@ -54,6 +54,37 @@ public sealed class EfInboxReceiptStoreTests
     }
 
     [Test]
+    public async Task SaveChanges_of_a_duplicate_channel_message_id_is_ignored()
+    {
+        await using var harness = await StoreHarness.CreateAsync();
+        await harness.InsertAsync(new InboxMessage
+        {
+            Id = Guid.NewGuid(),
+            Channel = "telegram",
+            ChannelMessageId = "662",
+            ConversationId = "chat-1",
+            ReplyHandle = "chat-1",
+            Status = InboxStatus.Pending,
+            ReceivedAt = DateTimeOffset.UnixEpoch,
+            EnvelopeJson = "{}",
+        });
+
+        await harness.InsertIgnoringDuplicateAsync(new InboxMessage
+        {
+            Id = Guid.NewGuid(),
+            Channel = "telegram",
+            ChannelMessageId = "662",
+            ConversationId = "chat-1",
+            ReplyHandle = "chat-1",
+            Status = InboxStatus.Pending,
+            ReceivedAt = DateTimeOffset.UnixEpoch,
+            EnvelopeJson = "{}",
+        });
+
+        (await harness.LoadAsync()).ShouldHaveSingleItem().ChannelMessageId.ShouldBe("662");
+    }
+
+    [Test]
     public async Task RecordAsync_fills_offset_when_the_existing_row_has_none()
     {
         await using var harness = await StoreHarness.CreateAsync();
@@ -137,6 +168,15 @@ public sealed class EfInboxReceiptStoreTests
             var db = scope.ServiceProvider.GetRequiredService<MessagingDbContext>();
             db.Inbox.Add(row);
             await db.SaveChangesAsync();
+        }
+
+        public async Task InsertIgnoringDuplicateAsync(InboxMessage row)
+        {
+            using var scope = Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<MessagingDbContext>();
+            db.Inbox.Add(row);
+            await InboxUniqueConstraint.SaveChangesIgnoringDuplicateAsync(
+                db, NullLogger<EfInboxReceiptStore>.Instance, row.Channel, row.ChannelMessageId, CancellationToken.None);
         }
 
         public async Task<List<InboxMessage>> LoadAsync()
