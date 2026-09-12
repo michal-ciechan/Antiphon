@@ -230,7 +230,7 @@ Guards = 25, mapped = 25, missing = 0, duplicate PC mappings = 0. G-4 covers `un
 
 ### Positive controls
 
-Mutation applies each defect to the working tree only, runs the named method red, restores the file (refreshing its timestamp; no rebuild is needed for `.ps1` targets because the C# tests execute the script from disk), and runs the same method green. PC-11 is the only control needing a C# rebuild. Script-lane filters use `pwsh -File scripts/test-apphost-server-version.ps1 -Case <T>`; C# filters use `dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c495-pc/ -- --treenode-filter "/*/*/<Class>/<Method>"` with a fresh `--results-directory` per run. Zero executed tests, build errors or fixture errors are not red.
+Mutation applies each defect to the working tree only (except PC-21, which WG cannot see until the mutant is committed or copied into the fixture worktree), runs the named method red, restores the file (refreshing its timestamp; no rebuild is needed for `.ps1` targets because the C# tests execute the script from disk), and runs the same method green. PC-11 is the only control needing a C# rebuild. Script-lane filters use `pwsh -File scripts/test-apphost-server-version.ps1 -Case <T>`; C# filters use `dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c495-pc/ -- --treenode-filter "/*/*/<Class>/<Method>"` with a fresh `--results-directory` per run. Zero executed tests, build errors or fixture errors are not red.
 
 - PC-1: break G-1 by deleting the probe call in the `'Land'` arm of `delegate.ps1` so the POST is issued directly; expect CC.`C495_OldServerTwoFieldVersionRefuses` red at `stub.Requests.Count.ShouldBe(1)` (a `/land/v2` POST appears) and at `ExitCode.ShouldBe(1)`.
 - PC-2: break G-2 by treating a null or empty capabilities array as compatible (`$hasMarker = (-not $caps) -or ($caps -ccontains 'land-v2')`); expect CC.`C495_EmptyCapabilitiesRefuses` red at the zero-POST assertion and exit 1, and CC.`C495_MissingCapabilitiesRefuses` red likewise.
@@ -252,13 +252,13 @@ Mutation applies each defect to the working tree only, runs the named method red
 - PC-18: break G-18 by adding `if ($NoBuild) { $identityVerified = $true }`; expect SV T12 red at `exit code is 5`.
 - PC-19: break G-19 by calling `Stop-AppHostLaunchChild` on the exit-5 path; expect SV T6 red at `launch child stop count is 0`.
 - PC-20: break G-20 by changing `Invoke-ChildPowerShell` to ignore exit 5 (`-ne 0 -and -ne 5`); expect SV T16 red at `last line is DEPLOY VERDICT: failed restart-apphost.ps1 exited 5`.
-- PC-21: break G-21 by moving the worktree guard below `New-AppHostLock`; expect WG red at `restart entry exits before restart banner` (decisive) and at `restart entry leaves no restart lock` when the lock survives.
+- PC-21: break G-21 by moving the worktree guard below `New-AppHostLock`. WG (`scripts/test-apphost-main-worktree-guard.ps1`) does `git worktree add --detach $linkedRoot $head` and runs the committed `scripts/restart-apphost.ps1` from that linked tree, so an uncommitted working-tree mutation never reaches it: COMMIT the mutant (or copy the mutated script into the fixture worktree after add) before running WG, then restore after the red run. Expect WG red at `restart entry exits before restart banner` (decisive) and at `restart entry leaves no restart lock` when the lock survives.
 - PC-22: break G-22 by proceeding when `New-AppHostLock` reports not acquired; expect SV T22 red at `teardown call count is 0` and `exit code is 3`.
 - PC-23: break G-23 by deleting the `-ne $srPid` filter in the port loop; expect SV T21 (seam reports the same fake PID on 17204 and 17202) red at `session-runner PID never passed to Stop-AppHostProcessId`.
 - PC-24: break G-24 by removing the child stop and `$keepRestartLock = $false` on the BuildFailed branch; expect SV T13 red at `child stop count is 1` and `lock removed`.
 - PC-25: break G-25 by changing the DCP branch to `exit 1` and `$keepRestartLock = $false`; expect SV T14 red at `exit code is 4` and `lock retained`.
 
-Each PC report line records: mutated file and diff, expected assertion, red result with the exact failing assertion text, restore evidence (timestamp refresh; rebuilt DLL for PC-11), green result with the same filter, wall time. Never commit a mutant.
+Each PC report line records: mutated file and diff, expected assertion, red result with the exact failing assertion text, restore evidence (timestamp refresh; rebuilt DLL for PC-11), green result with the same filter, wall time. Never commit a mutant except PC-21, which must be committed (or delivered into the fixture worktree) so WG observes it; restore that commit after the red run.
 
 ### Out of scope
 

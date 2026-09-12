@@ -8,6 +8,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
+[Category("Slow")]
 public sealed class DelegateScriptLandCompatibilityTests
 {
     private static readonly string VersionSha = new('a', 40);
