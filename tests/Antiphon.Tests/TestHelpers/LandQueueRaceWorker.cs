@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
@@ -27,7 +28,20 @@ internal static class LandQueueRaceWorker
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine(ex.GetType().Name + ": " + ex.StackTrace);
+            var text = ex.GetType().Name + ": " + ex.Message + Environment.NewLine + ex.StackTrace + Environment.NewLine;
+            Console.Error.Write(text);
+            Console.Error.Flush();
+            try
+            {
+                var stderr = Console.OpenStandardError();
+                var bytes = Encoding.UTF8.GetBytes(text);
+                stderr.Write(bytes, 0, bytes.Length);
+                stderr.Flush();
+            }
+            catch
+            {
+                // Best-effort: Environment.Exit still reports failure.
+            }
             Environment.Exit(1);
         }
     }
