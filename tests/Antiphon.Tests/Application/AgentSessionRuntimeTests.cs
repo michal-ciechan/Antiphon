@@ -242,10 +242,10 @@ public class AgentSessionRuntimeTests
     [Test]
     public async Task a_clean_process_exit_records_ProcessExit_when_no_prior_source()
     {
-        var (sessionId, agentId, logPath, runtime) = await SeedRunningSessionAsync();
+        var (sessionId, agentId, logPath, runtime, startedAt) = await SeedRunningSessionAsync();
         try
         {
-            await runtime.ObserveExitAsync(sessionId, 0, AgentExitReason.ProcessExited, CancellationToken.None);
+            await runtime.ObserveExitAsync(sessionId, 0, AgentExitReason.ProcessExited, CancellationToken.None, startedAt);
 
             await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
@@ -262,11 +262,11 @@ public class AgentSessionRuntimeTests
     [Test]
     public async Task an_exit_event_does_not_overwrite_an_OperatorRequest_source()
     {
-        var (sessionId, agentId, logPath, runtime) = await SeedRunningSessionAsync(
+        var (sessionId, agentId, logPath, runtime, startedAt) = await SeedRunningSessionAsync(
             SessionTerminationSource.OperatorRequest);
         try
         {
-            await runtime.ObserveExitAsync(sessionId, 0, AgentExitReason.ProcessExited, CancellationToken.None);
+            await runtime.ObserveExitAsync(sessionId, 0, AgentExitReason.ProcessExited, CancellationToken.None, startedAt);
 
             await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
@@ -283,11 +283,11 @@ public class AgentSessionRuntimeTests
     [Test]
     public async Task an_exit_event_backfills_ProcessExit_onto_an_already_closed_row_with_no_source()
     {
-        var (sessionId, agentId, logPath, runtime) = await SeedRunningSessionAsync(
+        var (sessionId, agentId, logPath, runtime, startedAt) = await SeedRunningSessionAsync(
             status: SessionStatus.Stopped);
         try
         {
-            await runtime.ObserveExitAsync(sessionId, 0, AgentExitReason.ProcessExited, CancellationToken.None);
+            await runtime.ObserveExitAsync(sessionId, 0, AgentExitReason.ProcessExited, CancellationToken.None, startedAt);
 
             await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
@@ -305,10 +305,10 @@ public class AgentSessionRuntimeTests
     [Test]
     public async Task a_cpu_spin_watchdog_exit_records_SystemRequest()
     {
-        var (sessionId, agentId, logPath, runtime) = await SeedRunningSessionAsync();
+        var (sessionId, agentId, logPath, runtime, startedAt) = await SeedRunningSessionAsync();
         try
         {
-            await runtime.ObserveExitAsync(sessionId, -1, AgentExitReason.CpuSpinKilled, CancellationToken.None);
+            await runtime.ObserveExitAsync(sessionId, -1, AgentExitReason.CpuSpinKilled, CancellationToken.None, startedAt);
 
             await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
@@ -325,10 +325,10 @@ public class AgentSessionRuntimeTests
     [Test]
     public async Task HerdrPaneClosed_exit_is_Failed_not_a_clean_stop()
     {
-        var (sessionId, agentId, logPath, runtime) = await SeedRunningSessionAsync();
+        var (sessionId, agentId, logPath, runtime, startedAt) = await SeedRunningSessionAsync();
         try
         {
-            await runtime.ObserveExitAsync(sessionId, null, AgentExitReason.HerdrPaneClosed, CancellationToken.None);
+            await runtime.ObserveExitAsync(sessionId, null, AgentExitReason.HerdrPaneClosed, CancellationToken.None, startedAt);
 
             await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
@@ -348,10 +348,10 @@ public class AgentSessionRuntimeTests
     [Test]
     public async Task HerdrPaneLeftOpen_exit_is_Failed_and_records_the_warning_incident()
     {
-        var (sessionId, agentId, logPath, runtime) = await SeedRunningSessionAsync();
+        var (sessionId, agentId, logPath, runtime, startedAt) = await SeedRunningSessionAsync();
         try
         {
-            await runtime.ObserveExitAsync(sessionId, null, AgentExitReason.HerdrPaneLeftOpen, CancellationToken.None);
+            await runtime.ObserveExitAsync(sessionId, null, AgentExitReason.HerdrPaneLeftOpen, CancellationToken.None, startedAt);
 
             await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
@@ -373,11 +373,11 @@ public class AgentSessionRuntimeTests
     [Test]
     public async Task HerdrLaunchDetectTimeout_exit_is_Failed_and_does_not_record_HerdrPaneLeftOpen()
     {
-        var (sessionId, agentId, logPath, runtime) = await SeedRunningSessionAsync();
+        var (sessionId, agentId, logPath, runtime, startedAt) = await SeedRunningSessionAsync();
         try
         {
             await runtime.ObserveExitAsync(
-                sessionId, null, AgentExitReason.HerdrLaunchDetectTimeout, CancellationToken.None);
+                sessionId, null, AgentExitReason.HerdrLaunchDetectTimeout, CancellationToken.None, startedAt);
 
             await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
@@ -403,10 +403,10 @@ public class AgentSessionRuntimeTests
     [Arguments(AgentExitReason.ProcessExited, HerdrSupervisionFailureKind.NonQualifying)]
     public async Task Terminal_exit_stamps_the_typed_evidence(AgentExitReason reason, HerdrSupervisionFailureKind expected)
     {
-        var (sessionId, agentId, logPath, runtime) = await SeedRunningSessionAsync();
+        var (sessionId, agentId, logPath, runtime, startedAt) = await SeedRunningSessionAsync();
         try
         {
-            await runtime.ObserveExitAsync(sessionId, null, reason, CancellationToken.None);
+            await runtime.ObserveExitAsync(sessionId, null, reason, CancellationToken.None, startedAt);
             await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             (await db.AgentSessions.SingleAsync(s => s.Id == sessionId)).HerdrSupervisionFailureKind.ShouldBe(expected);
         }
@@ -416,11 +416,11 @@ public class AgentSessionRuntimeTests
     [Test]
     public async Task A_pane_closed_exit_after_DetectTimeout_evidence_keeps_DetectTimeout()
     {
-        var (sessionId, agentId, logPath, runtime) = await SeedRunningSessionAsync();
+        var (sessionId, agentId, logPath, runtime, startedAt) = await SeedRunningSessionAsync();
         try
         {
-            await runtime.ObserveExitAsync(sessionId, null, AgentExitReason.HerdrLaunchDetectTimeout, CancellationToken.None);
-            await runtime.ObserveExitAsync(sessionId, null, AgentExitReason.HerdrPaneClosed, CancellationToken.None);
+            await runtime.ObserveExitAsync(sessionId, null, AgentExitReason.HerdrLaunchDetectTimeout, CancellationToken.None, startedAt);
+            await runtime.ObserveExitAsync(sessionId, null, AgentExitReason.HerdrPaneClosed, CancellationToken.None, startedAt);
             await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             (await db.AgentSessions.SingleAsync(s => s.Id == sessionId)).HerdrSupervisionFailureKind.ShouldBe(HerdrSupervisionFailureKind.DetectTimeout);
         }
@@ -430,10 +430,10 @@ public class AgentSessionRuntimeTests
     [Test]
     public async Task An_operator_stopped_row_gets_no_evidence()
     {
-        var (sessionId, agentId, logPath, runtime) = await SeedRunningSessionAsync(SessionTerminationSource.OperatorRequest, SessionStatus.Stopped);
+        var (sessionId, agentId, logPath, runtime, startedAt) = await SeedRunningSessionAsync(SessionTerminationSource.OperatorRequest, SessionStatus.Stopped);
         try
         {
-            await runtime.ObserveExitAsync(sessionId, null, AgentExitReason.HerdrPaneClosed, CancellationToken.None);
+            await runtime.ObserveExitAsync(sessionId, null, AgentExitReason.HerdrPaneClosed, CancellationToken.None, startedAt);
             await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             var row = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
             row.HerdrSupervisionFailureKind.ShouldBeNull();
@@ -443,13 +443,121 @@ public class AgentSessionRuntimeTests
         finally { await CleanupSessionAsync(sessionId, agentId); DeleteDirectoryBestEffort(logPath); }
     }
 
-    private static async Task<(Guid SessionId, Guid AgentId, string LogPath, AgentSessionRuntime Runtime)> SeedRunningSessionAsync(
+    [Test]
+    [Arguments(SessionStatus.Starting, AgentExitReason.ProcessExited, 0)]
+    [Arguments(SessionStatus.Running, AgentExitReason.KilledByRequest, 1)]
+    [Arguments(SessionStatus.Stopping, AgentExitReason.CpuSpinKilled, -1)]
+    [Arguments(SessionStatus.Running, AgentExitReason.HerdrPaneClosed, null)]
+    [Arguments(SessionStatus.Running, AgentExitReason.HerdrPaneLeftOpen, null)]
+    [Arguments(SessionStatus.Running, AgentExitReason.HerdrLaunchDetectTimeout, null)]
+    public async Task An_exit_event_with_a_stale_generation_is_a_no_op_disposition(
+        SessionStatus status, AgentExitReason reason, int? code)
+    {
+        var generationA = SessionGeneration.Normalize(DateTime.UtcNow.AddMinutes(-5));
+        var generationB = SessionGeneration.Next(generationA, DateTime.UtcNow);
+        var (sessionId, agentId, logPath, runtime, _) = await SeedRunningSessionAsync(status: status, acceptedGeneration: generationB);
+        try
+        {
+            var disposition = await runtime.ObserveExitAsync(
+                new SessionRunnerExitedEvent(sessionId, code, reason, 0, generationA), CancellationToken.None);
+            disposition.ShouldBe(SessionExitDisposition.Stale);
+            await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            var row = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            row.Status.ShouldBe(status);
+            row.StartedAt.ShouldBe(generationB);
+            row.ExitCode.ShouldBeNull();
+            (await verify.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Running);
+        }
+        finally { await CleanupSessionAsync(sessionId, agentId); DeleteDirectoryBestEffort(logPath); }
+    }
+
+    [Test]
+    public async Task An_exit_event_newer_than_the_row_is_Unknown_and_changes_nothing()
+    {
+        var generationA = SessionGeneration.Normalize(DateTime.UtcNow.AddMinutes(-5));
+        var generationB = SessionGeneration.Next(generationA, DateTime.UtcNow);
+        var (sessionId, agentId, logPath, runtime, _) = await SeedRunningSessionAsync(acceptedGeneration: generationA);
+        try
+        {
+            var disposition = await runtime.ObserveExitAsync(
+                new SessionRunnerExitedEvent(sessionId, 1, AgentExitReason.KilledByRequest, 0, generationB),
+                CancellationToken.None);
+            disposition.ShouldBe(SessionExitDisposition.Unknown);
+            await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Running);
+        }
+        finally { await CleanupSessionAsync(sessionId, agentId); DeleteDirectoryBestEffort(logPath); }
+    }
+
+    [Test]
+    public async Task A_legacy_exit_event_without_a_generation_is_declined_and_reported_once()
+    {
+        var (sessionId, agentId, logPath, runtime, _) = await SeedRunningSessionAsync();
+        try
+        {
+            for (var i = 0; i < 10; i++)
+            {
+                var disposition = await runtime.ObserveExitAsync(
+                    new SessionRunnerExitedEvent(sessionId, 1, AgentExitReason.KilledByRequest, 0),
+                    CancellationToken.None);
+                disposition.ShouldBe(SessionExitDisposition.Missing);
+            }
+
+            await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Running);
+        }
+        finally { await CleanupSessionAsync(sessionId, agentId); DeleteDirectoryBestEffort(logPath); }
+    }
+
+    [Test]
+    public async Task A_stale_exit_never_backfills_an_already_closed_row()
+    {
+        var generationA = SessionGeneration.Normalize(DateTime.UtcNow.AddMinutes(-5));
+        var generationB = SessionGeneration.Next(generationA, DateTime.UtcNow);
+        var (sessionId, agentId, logPath, runtime, _) = await SeedRunningSessionAsync(
+            SessionTerminationSource.Unknown, SessionStatus.Stopped, generationB);
+        try
+        {
+            var disposition = await runtime.ObserveExitAsync(
+                new SessionRunnerExitedEvent(sessionId, 1, AgentExitReason.KilledByRequest, 0, generationA),
+                CancellationToken.None);
+            disposition.ShouldBe(SessionExitDisposition.Stale);
+            await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            var row = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            row.ExitCode.ShouldBeNull();
+            row.TerminationSource.ShouldBe(SessionTerminationSource.Unknown);
+        }
+        finally { await CleanupSessionAsync(sessionId, agentId); DeleteDirectoryBestEffort(logPath); }
+    }
+
+    [Test]
+    public async Task A_matching_exit_still_backfills_an_already_closed_row()
+    {
+        var (sessionId, agentId, logPath, runtime, startedAt) = await SeedRunningSessionAsync(
+            status: SessionStatus.Stopped);
+        try
+        {
+            var disposition = await runtime.ObserveExitAsync(
+                sessionId, 0, AgentExitReason.ProcessExited, CancellationToken.None, startedAt);
+            disposition.ShouldBe(SessionExitDisposition.Applied);
+            await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            session.Status.ShouldBe(SessionStatus.Stopped);
+            session.TerminationSource.ShouldBe(SessionTerminationSource.ProcessExit);
+            session.ExitCode.ShouldBe(0);
+        }
+        finally { await CleanupSessionAsync(sessionId, agentId); DeleteDirectoryBestEffort(logPath); }
+    }
+
+    private static async Task<(Guid SessionId, Guid AgentId, string LogPath, AgentSessionRuntime Runtime, DateTime StartedAt)> SeedRunningSessionAsync(
         SessionTerminationSource terminationSource = SessionTerminationSource.Unknown,
-        SessionStatus status = SessionStatus.Running)
+        SessionStatus status = SessionStatus.Running,
+        DateTime? acceptedGeneration = null)
     {
         var sessionId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
-        var now = DateTime.UtcNow;
+        var now = acceptedGeneration ?? DateTime.UtcNow;
+        now = SessionGeneration.Normalize(now);
         await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
         {
             db.AgentSessions.Add(new AgentSession
@@ -494,7 +602,7 @@ public class AgentSessionRuntimeTests
             provider.GetRequiredService<IServiceScopeFactory>(),
             TimeProvider.System,
             NullLogger<AgentSessionRuntime>.Instance);
-        return (sessionId, agentId, logPath, runtime);
+        return (sessionId, agentId, logPath, runtime, now);
     }
 
     private static async Task CleanupSessionAsync(Guid sessionId, Guid agentId)

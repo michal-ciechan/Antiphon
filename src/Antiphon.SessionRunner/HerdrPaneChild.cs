@@ -244,6 +244,7 @@ internal sealed class HerdrPaneChild : ISessionChild
             AgentKind = expectedKind,
             Origin = HerdrPaneOrigins.Attached,
             UpdatedAtUtc = startUtc,
+            AcceptedStartedAt = request.AcceptedStartedAt,
         };
         _sidecar.SaveAtomic(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, request.SessionId));
 
@@ -864,6 +865,7 @@ internal sealed class HerdrPaneChild : ISessionChild
                     WorkspaceId = workspaceId, TabId = tabId, PaneId = paneId, ShellPid = shellPid,
                     LaunchPending = true, GrokRulesReceipt = request.InstalledGrokRulesReceipt,
                     UpdatedAtUtc = DateTime.UtcNow,
+                    AcceptedStartedAt = request.AcceptedStartedAt,
                 }.SaveAtomic(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, request.SessionId));
             await _client.PaneSendTextAsync(paneId, typed, ct);
             await _client.PaneSendKeysAsync(paneId, ["enter"], ct);
@@ -982,6 +984,7 @@ internal sealed class HerdrPaneChild : ISessionChild
             WorkspaceLabel = opts.WorkspaceLabel,
             TabLabel = opts.TabLabel,
             GrokRulesReceipt = request.InstalledGrokRulesReceipt,
+            AcceptedStartedAt = request.AcceptedStartedAt,
         };
         _sidecar.SaveAtomic(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, request.SessionId));
     }

@@ -31,7 +31,8 @@ public sealed record SessionRunnerSessionDto(
     DateTime? HerdrVerifiedAtUtc = null,
     // CARD-0213: HerdrPaneOrigins. Null for pty / older runners.
     string? HerdrOrigin = null,
-    global::Antiphon.SessionRunner.Contracts.GrokRulesReceipt? GrokRulesReceipt = null);
+    global::Antiphon.SessionRunner.Contracts.GrokRulesReceipt? GrokRulesReceipt = null,
+    DateTime? AcceptedStartedAt = null);
 
 public sealed record SessionRunnerBufferDto(
     Guid SessionId,
@@ -54,7 +55,8 @@ public sealed record SessionRunnerExitedEvent(
     Guid SessionId,
     int? ExitCode,
     AgentExitReason ExitReason,
-    long LastSequence);
+    long LastSequence,
+    DateTime? AcceptedStartedAt = null);
 
 public sealed record SessionRunnerTranscriptEvent(
     Guid SessionId,
@@ -96,7 +98,8 @@ public sealed record SessionRunnerTranscriptDto(
 public sealed record SessionRunnerAdoptedEvent(
     Guid SessionId,
     int? Pid,
-    long LastSequence);
+    long LastSequence,
+    DateTime? AcceptedStartedAt = null);
 
 /// <summary>
 /// The runner refused to bind a transcript to a session (CARD-0006) — it is running without one

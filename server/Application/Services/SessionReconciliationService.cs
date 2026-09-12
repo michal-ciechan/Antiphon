@@ -6,6 +6,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -42,6 +43,7 @@ public sealed class SessionReconciliationService
     private readonly IAlertService _alerts;
     private readonly RunnerReachabilityState _reachability;
     private readonly SessionReAdoptionState _reAdoptions;
+    private readonly SessionGenerationCompatState _generationCompat;
     private readonly HerdrPendingAlertState _pendingAlerts;
     private readonly IPtyHostCensusProbe _census;
     private readonly PtyHostCensusAlertState _censusAlerts;
@@ -57,6 +59,7 @@ public sealed class SessionReconciliationService
         IAlertService alerts,
         RunnerReachabilityState reachability,
         SessionReAdoptionState reAdoptions,
+        SessionGenerationCompatState generationCompat,
         HerdrPendingAlertState pendingAlerts,
         IPtyHostCensusProbe census,
         PtyHostCensusAlertState censusAlerts,
@@ -71,6 +74,7 @@ public sealed class SessionReconciliationService
         _alerts = alerts;
         _reachability = reachability;
         _reAdoptions = reAdoptions;
+        _generationCompat = generationCompat;
         _pendingAlerts = pendingAlerts;
         _census = census;
         _censusAlerts = censusAlerts;
@@ -177,6 +181,30 @@ public sealed class SessionReconciliationService
 
             if (!runnerById.TryGetValue(session.Id, out var runnerSession))
             {
+                SessionRunnerSessionDto? refreshed = null;
+                try
+                {
+                    refreshed = await _runnerClient.GetAsync(session.Id, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogDebug(ex, "Reconciliation refresh GET for session {SessionId} failed", session.Id);
+                }
+
+                if (refreshed is not null
+                    && string.Equals(refreshed.Status, "Running", StringComparison.OrdinalIgnoreCase)
+                    && GenerationMatches(session, refreshed))
+                {
+                    continue;
+                }
+
+                if (refreshed is not null
+                    && string.Equals(refreshed.Status, "Exited", StringComparison.OrdinalIgnoreCase))
+                {
+                    await TryApplyExitedSnapshotAsync(session, refreshed, now, closedSessionIds, ct);
+                    continue;
+                }
+
                 session.Status = SessionStatus.Failed;
                 session.FailureReason =
                     "Session runner does not know this session (the launch failed, the runner restarted, or the server restarted before the launch reached the runner).";
@@ -189,29 +217,7 @@ public sealed class SessionReconciliationService
             }
             else if (string.Equals(runnerSession.Status, "Exited", StringComparison.OrdinalIgnoreCase))
             {
-                HerdrSupervisionFailureEvidence.Record(session,
-                    HerdrSupervisionFailureEvidence.FromExitReason(runnerSession.ExitReason));
-                // Same mapping as AgentSessionRuntime.CloseSessionOnExitAsync: a CPU-spin watchdog
-                // kill is a clean, resumable stop despite the kill's non-zero exit code.
-                // CARD-0186: herdr pane-closed / presumed-dead / child-gone / pane-left-open are
-                // not clean stops (null/non-zero exit code already maps to Failed).
-                session.Status = runnerSession.ExitCode == 0 || runnerSession.ExitReason == AgentExitReason.CpuSpinKilled
-                    ? SessionStatus.Stopped
-                    : SessionStatus.Failed;
-                session.ExitCode = runnerSession.ExitCode;
-                if (session.Status == SessionStatus.Failed && string.IsNullOrEmpty(session.FailureReason))
-                {
-                    session.FailureReason =
-                        $"Reconciliation found the runner exited while the database session was still live ({runnerSession.ExitReason}, "
-                        + $"code {runnerSession.ExitCode?.ToString() ?? "unknown"}).";
-                }
-                SessionTermination.Record(session, SessionTermination.FromExitReason(runnerSession.ExitReason));
-                session.EndedAt ??= now;
-                session.LastSeenAt = now;
-                closedSessionIds.Add(session.Id);
-                _logger.LogWarning(
-                    "Reconciliation closed session {SessionId}: runner reported unobserved exit ({ExitReason})",
-                    session.Id, runnerSession.ExitReason);
+                await TryApplyExitedSnapshotAsync(session, runnerSession, now, closedSessionIds, ct);
             }
         }
 
@@ -264,6 +270,8 @@ public sealed class SessionReconciliationService
             if (!string.Equals(runnerSession.Status, "Running", StringComparison.OrdinalIgnoreCase))
                 continue;
             if (!string.IsNullOrEmpty(runnerSession.Pending))
+                continue;
+            if (!GenerationMatches(session, runnerSession))
                 continue;
             if (_ownership.Owns(session.Id))
                 continue;
@@ -448,7 +456,19 @@ public sealed class SessionReconciliationService
     private async Task<int> TryReAdoptAsync(
         AgentSession row, SessionRunnerSessionDto runnerSession, DateTime now, CancellationToken ct)
     {
+        if (_reAdoptions.IsLatched(row.Id))
+            return 0;
+
         var agent = await FindOwningAgentAsync(row.Id, ct);
+
+        if (runnerSession.AcceptedStartedAt is null)
+        {
+            await ReportLegacyGenerationOnceAsync(row.Id, agent, ct);
+            return 0;
+        }
+
+        if (!SessionGeneration.Equal(runnerSession.AcceptedStartedAt, row.StartedAt))
+            return 0;
 
         if (!_settings.ReAdoptEnabled)
         {
@@ -471,13 +491,11 @@ public sealed class SessionReconciliationService
             return 0;
         }
 
+        var cap = Math.Max(0, _settings.MaxReAdoptionsPerSession);
         try
         {
             if (string.Equals(runnerSession.Backend, SessionBackends.Herdr, StringComparison.OrdinalIgnoreCase))
             {
-                // CARD-0186 S3: GetBuffer on herdr proves only that the runner is up (the ansi log
-                // is empty and always answers). Evidence is a GET whose HerdrVerifiedAtUtc is at
-                // least as fresh as this sweep's start.
                 var fresh = await _runnerClient.GetAsync(row.Id, ct);
                 if (fresh.HerdrVerifiedAtUtc is not { } verified || verified < now)
                 {
@@ -492,12 +510,14 @@ public sealed class SessionReconciliationService
             }
             else
             {
-                // The probe: reading this session's buffer proves the detached pty-host's pipe is alive
-                // and serving, which "the runner listed it" alone does not.
                 await _runnerClient.GetBufferAsync(row.Id, ct);
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException)
+        {
+            return 0;
+        }
+        catch (Exception ex)
         {
             _logger.LogError(ex,
                 "Session {SessionId} reads Failed and the runner reports it Running, but the buffer probe "
@@ -511,18 +531,26 @@ public sealed class SessionReconciliationService
             return 0;
         }
 
-        var (allowed, count) = _reAdoptions.TryRegisterReAdoption(row.Id, _settings.MaxReAdoptionsPerSession);
-        if (!allowed)
+        await using var lease = await _reAdoptions.TryReserveAsync(row.Id, cap, ct);
+        if (lease.AlreadyLatched)
+            return 0;
+
+        if (!lease.Allowed)
         {
-            _logger.LogError(
-                "Session {SessionId} has now flapped between Failed and runner-Running {Count} times this "
-                + "uptime; re-adoption stops here", row.Id, count);
-            await AlertAndIncidentAsync(
-                AlertSeverity.Critical, agent, row.Id,
-                $"Session {row.Id} has flapped between Failed and runner-Running {count} times since this "
-                + $"server started (cap {_settings.MaxReAdoptionsPerSession}). Re-adoption has stopped: "
-                + "something keeps failing a session the runner keeps serving, and a loop cannot fix that.",
-                "ReAdoptCapReached", ct);
+            if (lease.EscalationEligible)
+                await EmitCapEscalationAsync(lease, row, agent, now, ct);
+            return 0;
+        }
+
+        var probedGeneration = row.StartedAt;
+        await using var transaction = _db.Database.CurrentTransaction is null
+            ? await _db.Database.BeginTransactionAsync(ct) : null;
+        await _db.AgentSessions.FromSqlInterpolated(
+            $"""SELECT * FROM "AgentSessions" WHERE "Id" = {row.Id} FOR UPDATE""").AsNoTracking().SingleAsync(ct);
+        await _db.Entry(row).ReloadAsync(ct);
+        if (row.Status != SessionStatus.Failed
+            || !SessionGeneration.Equal(row.StartedAt, probedGeneration))
+        {
             return 0;
         }
 
@@ -536,14 +564,24 @@ public sealed class SessionReconciliationService
         var claimed = agent is not null;
         if (agent is { Status: AgentStatus.Failed })
         {
-            agent.Status = AgentStatus.Running;
-            agent.UpdatedAt = now;
+            await _db.Entry(agent).ReloadAsync(ct);
+            if (string.Equals(agent.PersistentSessionId, row.Id.ToString("D"), StringComparison.OrdinalIgnoreCase)
+                && agent.Status == AgentStatus.Failed)
+            {
+                agent.Status = AgentStatus.Running;
+                agent.UpdatedAt = now;
+            }
+            else
+            {
+                claimed = false;
+            }
         }
 
+        var nextCount = lease.SuccessfulReAdoptions + 1;
         var detail =
             $"Session {row.Id} read Failed while the session runner was still running it "
             + $"(pid {Describe(runnerSession)}); the buffer probe answered, so the row is back to Running "
-            + $"(re-adoption {count} of {_settings.MaxReAdoptionsPerSession}). "
+            + $"(re-adoption {nextCount} of {cap}). "
             + (claimed
                 ? "Its agent still points at it and has been restored."
                 : "No agent claims it, so it stays unclaimed but visible — stopping it is the operator's "
@@ -552,22 +590,203 @@ public sealed class SessionReconciliationService
                 ? string.Empty
                 : $" It had been failed with: {wasFailedBecause}");
 
+        if (agent is not null && claimed)
+        {
+            _db.AgentIncidents.Add(new AgentIncident
+            {
+                Id = Guid.NewGuid(),
+                AgentId = agent.Id,
+                SessionId = row.Id,
+                Kind = AgentIncidentKind.SessionReAdopted,
+                Severity = AlertSeverity.Warning,
+                Message = ColumnText.Clip(detail, AgentIncident.MessageMaxLength),
+                FailureReason = ColumnText.Clip("SessionReAdopted", AgentIncident.FailureReasonMaxLength),
+                CreatedAt = now,
+            });
+        }
+
+        await _db.SaveChangesAsync(ct);
+        if (transaction is not null)
+            await transaction.CommitAsync(ct);
+        lease.Commit();
+
         _logger.LogWarning(
             "Reconciliation re-adopted session {SessionId} ({Claimed}): it was Failed but the runner is "
             + "still serving it. Previous failure reason: {FailureReason}",
             row.Id, claimed ? "agent restored" : "unclaimed", wasFailedBecause ?? "(none)");
-        await AlertAndIncidentAsync(AlertSeverity.Warning, agent, row.Id, detail, "SessionReAdopted", ct);
 
-        await _db.SaveChangesAsync(ct);
-        await _eventBus.PublishToGroupAsync(
-            AgentSessionGroups.Session(row.Id),
-            "SessionStarted",
-            new { sessionId = row.Id, cardId = row.CardId },
-            ct);
-        if (agent is not null)
-            await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
+        try
+        {
+            await _alerts.RaiseAsync(
+                new AlertRaise(
+                    AlertSeverity.Warning,
+                    Source: agent is null ? "reconciler" : "supervisor",
+                    Title: agent is null
+                        ? "Runner session the database had written off"
+                        : $"{AgentIncidentKind.SessionReAdopted}: agent supervision",
+                    Detail: detail,
+                    DedupKey: agent is null
+                        ? $"reconciler:readopt:{row.Id}"
+                        : $"supervisor:{AgentIncidentKind.SessionReAdopted}:{agent.Id}",
+                    AgentId: agent?.Id,
+                    SessionId: row.Id),
+                ct);
+            await _eventBus.PublishToGroupAsync(
+                AgentSessionGroups.Session(row.Id),
+                "SessionStarted",
+                new { sessionId = row.Id, cardId = row.CardId },
+                ct);
+            if (agent is not null)
+                await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "Re-adoption of session {SessionId} committed but publish/alert failed", row.Id);
+        }
 
         return 1;
+    }
+
+    private async Task<bool> TryApplyExitedSnapshotAsync(
+        AgentSession session, SessionRunnerSessionDto runnerSession, DateTime now, List<Guid> closedSessionIds,
+        CancellationToken ct)
+    {
+        if (runnerSession.AcceptedStartedAt is null)
+        {
+            await ReportLegacyGenerationOnceAsync(session.Id, agent: null, ct);
+            return false;
+        }
+
+        if (!SessionGeneration.Equal(runnerSession.AcceptedStartedAt, session.StartedAt))
+            return false;
+
+        HerdrSupervisionFailureEvidence.Record(session,
+            HerdrSupervisionFailureEvidence.FromExitReason(runnerSession.ExitReason));
+        session.Status = runnerSession.ExitCode == 0 || runnerSession.ExitReason == AgentExitReason.CpuSpinKilled
+            ? SessionStatus.Stopped
+            : SessionStatus.Failed;
+        session.ExitCode = runnerSession.ExitCode;
+        if (session.Status == SessionStatus.Failed && string.IsNullOrEmpty(session.FailureReason))
+        {
+            session.FailureReason =
+                $"Reconciliation found the runner exited while the database session was still live ({runnerSession.ExitReason}, "
+                + $"code {runnerSession.ExitCode?.ToString() ?? "unknown"}).";
+        }
+        SessionTermination.Record(session, SessionTermination.FromExitReason(runnerSession.ExitReason));
+        session.EndedAt ??= now;
+        session.LastSeenAt = now;
+        closedSessionIds.Add(session.Id);
+        _logger.LogWarning(
+            "Reconciliation closed session {SessionId}: runner reported unobserved exit ({ExitReason})",
+            session.Id, runnerSession.ExitReason);
+        return true;
+    }
+
+    private static bool GenerationMatches(AgentSession session, SessionRunnerSessionDto runnerSession) =>
+        SessionGeneration.Equal(runnerSession.AcceptedStartedAt, session.StartedAt);
+
+    private async Task ReportLegacyGenerationOnceAsync(Guid sessionId, Agent? agent, CancellationToken ct)
+    {
+        if (!_generationCompat.TryReport(sessionId))
+            return;
+
+        _logger.LogWarning(
+            "Session {SessionId} has no accepted generation on the runner; automatic exit close and re-adoption are declined.",
+            sessionId);
+        await _alerts.RaiseAsync(
+            new AlertRaise(
+                AlertSeverity.Warning,
+                Source: "reconciler",
+                Title: "Legacy session without generation identity",
+                Detail: $"Session {sessionId} produced runner evidence without an accepted generation. "
+                    + "Automatic exit mutation and re-adoption are declined until it is launched with a bound generation.",
+                DedupKey: $"compat:generation:{sessionId}",
+                AgentId: agent?.Id,
+                SessionId: sessionId),
+            ct);
+    }
+
+    private async Task EmitCapEscalationAsync(
+        SessionReAdoptionState.ReAdoptionLease lease,
+        AgentSession row,
+        Agent? agent,
+        DateTime now,
+        CancellationToken ct)
+    {
+        var escalation = lease.GetOrCreateEscalation(now, Guid.NewGuid());
+        var cap = escalation.Cap;
+        var count = escalation.Count;
+        var detail =
+            $"Re-adopted this session {count} times during this server uptime (cap {cap}). "
+            + "A further Failed/runner-Running mismatch was observed; automatic re-adoption is stopped.";
+
+        if (!escalation.IncidentPersisted && agent is not null)
+        {
+            try
+            {
+                var options = (DbContextOptions<AppDbContext>)_db.GetService<IDbContextOptions>();
+                await using var isolated = new AppDbContext(options);
+                if (!await isolated.AgentIncidents.AnyAsync(i => i.Id == escalation.IncidentId, ct))
+                {
+                    isolated.AgentIncidents.Add(new AgentIncident
+                    {
+                        Id = escalation.IncidentId,
+                        AgentId = agent.Id,
+                        SessionId = row.Id,
+                        Kind = AgentIncidentKind.SessionReAdopted,
+                        Severity = AlertSeverity.Critical,
+                        Message = ColumnText.Clip(detail, AgentIncident.MessageMaxLength),
+                        FailureReason = ColumnText.Clip("ReAdoptCapReached", AgentIncident.FailureReasonMaxLength),
+                        CreatedAt = escalation.OriginalAt,
+                    });
+                    await isolated.SaveChangesAsync(ct);
+                }
+
+                escalation.IncidentPersisted = true;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Cap escalation incident persist failed for session {SessionId}", row.Id);
+            }
+        }
+        else if (agent is null)
+        {
+            escalation.IncidentPersisted = true;
+        }
+
+        if (!escalation.AlertSubmitted && (escalation.IncidentPersisted || agent is null))
+        {
+            try
+            {
+                await _alerts.RaiseAsync(
+                    new AlertRaise(
+                        AlertSeverity.Critical,
+                        Source: agent is null ? "reconciler" : "supervisor",
+                        Title: agent is null
+                            ? "Runner session the database had written off"
+                            : $"{AgentIncidentKind.SessionReAdopted}: agent supervision",
+                        Detail: detail,
+                        DedupKey: agent is null
+                            ? $"reconciler:readopt-cap:{row.Id}"
+                            : $"supervisor:{AgentIncidentKind.SessionReAdopted}:{agent.Id}:cap",
+                        AgentId: agent?.Id,
+                        SessionId: row.Id),
+                    ct);
+                escalation.AlertSubmitted = true;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Cap escalation alert failed for session {SessionId}", row.Id);
+            }
+        }
+
+        if (escalation.Reported)
+        {
+            _logger.LogError(
+                "Re-adopted this session {Count} times during this server uptime (cap {Cap}). A further Failed/runner-Running mismatch was observed; automatic re-adoption is stopped. Session {SessionId}",
+                count, cap, row.Id);
+        }
     }
 
     /// <summary>

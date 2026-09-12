@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -72,6 +73,27 @@ public class AgentSessionLaunchQueueOwnershipTests
         await queue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
 
         queue.Owns(fixture.SessionId).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Queued_launch_carries_the_explicit_accepted_generation_and_never_re_reads_a_replaced_row()
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var fixture = await OwnershipFixture.CreateAsync(adapter);
+        var g2 = SessionGeneration.Next(fixture.Generation, DateTime.UtcNow.AddMinutes(1));
+        await using (var db = BridgeQueueHarness.CreateContext())
+        {
+            await db.AgentSessions.Where(s => s.Id == fixture.SessionId).ExecuteUpdateAsync(u => u
+                .SetProperty(s => s.StartedAt, g2)
+                .SetProperty(s => s.Status, SessionStatus.Starting));
+        }
+
+        fixture.Queue.EnqueueInteractiveSession(
+            fixture.SessionId, fixture.AgentId, fixture.Generation, fixture.Spec, remoteControlName: null);
+        await fixture.Queue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+
+        adapter.Started.ShouldBeFalse();
+        adapter.StartedAcceptedGeneration.ShouldBeNull();
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)

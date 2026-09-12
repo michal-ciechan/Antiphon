@@ -14,6 +14,14 @@ public interface IAgentProtocolAdapter : IAsyncDisposable
 {
     Task StartAsync(AgentLaunchSpec spec, CancellationToken ct);
     Task<bool> KillAsync(TimeSpan timeout, CancellationToken ct);
+
+    /// <summary>
+    /// CARD-0502: kill only if this adapter still represents <paramref name="expectedAcceptedStartedAt"/>.
+    /// Default is a non-kill — never an unconditional <see cref="KillAsync"/> fallback.
+    /// </summary>
+    Task<bool> KillGenerationAsync(
+        DateTime expectedAcceptedStartedAt, TimeSpan timeout, CancellationToken ct) =>
+        Task.FromResult(false);
     Task<int> Exited { get; }
     int? Pid { get; }
     AgentExitReason ExitReason { get; }

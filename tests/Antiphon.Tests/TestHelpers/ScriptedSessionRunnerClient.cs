@@ -14,6 +14,9 @@ namespace Antiphon.Tests.TestHelpers;
         public TaskCompletionSource Streaming { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public void Produce(SessionRunnerTranscriptEvent entry) => _events.Writer.TryWrite(new("transcript", entry.SessionId, Transcript: entry));
 
+        public void ProduceExit(SessionRunnerExitedEvent exited) =>
+            _events.Writer.TryWrite(new(SessionRunnerEventNames.SessionExited, exited.SessionId, Exited: exited));
+
         public void SetTranscript(SessionRunnerTranscriptDto transcript) =>
             _transcripts[transcript.SessionId] = transcript;
 

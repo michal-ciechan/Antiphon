@@ -492,9 +492,10 @@ public sealed class AgentControlService
                 GrokRulesLaunchValidation.Validate(spec with { Backend = agent.SessionBackend }, _grokRulesSettings);
                 GrokRulesRefreshService.PreflightResume(previous, spec.GrokRulesPayload);
                 var resumeNow = UtcNow();
+                var priorGeneration = previous.StartedAt;
                 previous.DefinitionName = definitionName;
                 previous.Status = SessionStatus.Starting;
-                previous.StartedAt = resumeNow;
+                previous.StartedAt = SessionGeneration.Next(priorGeneration, resumeNow);
                 previous.LastSeenAt = resumeNow;
                 previous.EndedAt = null;
                 previous.ExitCode = null;

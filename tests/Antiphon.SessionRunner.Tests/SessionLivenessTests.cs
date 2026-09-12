@@ -38,6 +38,7 @@ public class SessionLivenessTests
             var after = runtime.Get(sessionId);
             after.Status.ShouldBe("Exited");
             after.ExitReason.ShouldBe("ProcessVanished");
+            after.AcceptedStartedAt.ShouldBe(dto.AcceptedStartedAt);
 
             var sawExitEvent = false;
             while (await events.WaitToReadAsync(cts.Token))
@@ -161,7 +162,8 @@ public class SessionLivenessTests
             new Dictionary<string, string>(),
             Path.GetTempPath(),
             Cols: 100,
-            Rows: 25);
+            Rows: 25,
+            AcceptedStartedAt: SessionGeneration.Normalize(DateTime.UtcNow));
         var dto = await runtime.StartAsync(request, CancellationToken.None);
 
         // The spawn is real ConPTY; give the very first bootstrap a beat if needed.

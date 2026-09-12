@@ -181,8 +181,8 @@ app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings, SessionRunne
         ? [SessionBackends.PtyHost, SessionBackends.Herdr]
         : [SessionBackends.PtyHost];
     IReadOnlyList<string>? features = herdrSettings.Value.Enabled
-        ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement, GrokRulesTransport.Capability]
-        : [GrokRulesTransport.Capability];
+        ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement, GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1]
+        : [GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1];
     if (runtime.VerificationCustodyBackend is not null)
         features = [.. features, RunnerCapabilityFeatures.VerificationCustodyV1];
     return Results.Ok(new RunnerCapabilitiesDto(
@@ -355,6 +355,17 @@ app.MapPost("/sessions/{id:guid}/kill", async (
     var session = await runtime.KillAsync(id, TimeSpan.FromSeconds(5), cancellationToken);
     return Results.Ok(session);
 }).AddEndpointFilter(HerdrUnreachableFilter);
+
+app.MapPost("/sessions/{id:guid}/kill-generation", async (
+    Guid id,
+    RunnerKillGenerationRequest request,
+    SessionRunnerRuntime runtime,
+    CancellationToken cancellationToken) =>
+{
+    var result = await runtime.KillGenerationAsync(
+        id, request.ExpectedAcceptedStartedAt, TimeSpan.FromSeconds(5), cancellationToken);
+    return Results.Ok(result);
+});
 
 app.MapGet("/events", async (HttpContext context, SessionRunnerRuntime runtime, IConfiguration config) =>
 {

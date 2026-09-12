@@ -268,6 +268,7 @@ public sealed partial class SessionMessageQueueService
             try
             {
                 await EnsureRulesAllowOrdinaryInputAsync(sessionId, ct);
+                var capturedGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
                 outcome = await DeliverAsync(sessionId, nowBody, ct, nowBaseline);
                 if (outcome.Verdict == DeliveryVerdict.ForbiddenBody)
                 {
@@ -318,7 +319,7 @@ public sealed partial class SessionMessageQueueService
                         }
                     }
 
-                    await HandleDeliveryFailureAsync(sessionId, null, outcome.Verdict, ct);
+                    await HandleDeliveryFailureAsync(sessionId, null, outcome.Verdict, ct, capturedGeneration);
                     throw new ConflictException(
                         "Message delivery could not be verified — the terminal did not accept it "
                         + $"({Describe(outcome.Verdict)}). See the agent's incidents.");
@@ -587,6 +588,7 @@ public sealed partial class SessionMessageQueueService
             ClearAttemptVerdict(row);
             await db.SaveChangesAsync(ct);
 
+            var capturedGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
             outcome = await DeliverAsync(sessionId, nowBody, ct, nowBaseline);
             if (outcome.Verdict == DeliveryVerdict.ForbiddenBody)
             {
@@ -625,7 +627,7 @@ public sealed partial class SessionMessageQueueService
             }
             else
             {
-                await HandleDeliveryFailureAsync(sessionId, [row.Id], outcome.Verdict, ct);
+                await HandleDeliveryFailureAsync(sessionId, [row.Id], outcome.Verdict, ct, capturedGeneration);
                 await using var verifyScope = _scopeFactory.CreateAsyncScope();
                 var verifyDb = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
                 var persisted = await verifyDb.SessionQueuedMessages
@@ -943,6 +945,7 @@ public sealed partial class SessionMessageQueueService
             if (await CancelJustClaimedExpiredBriefsAsync(db, [message], ct))
                 return await BuildQueueDtoAsync(db, sessionId, MaxAttempts, ct);
             DeliveryOutcome outcome;
+            var capturedGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
             try
             {
                 outcome = await DeliverAsync(sessionId, sendNowBody, ct, baseline,
@@ -969,7 +972,7 @@ public sealed partial class SessionMessageQueueService
             }
             if (outcome.Verdict != DeliveryVerdict.Delivered)
             {
-                await HandleDeliveryFailureAsync(sessionId, [message.Id], outcome.Verdict, ct);
+                await HandleDeliveryFailureAsync(sessionId, [message.Id], outcome.Verdict, ct, capturedGeneration);
                 throw new ConflictException(
                     "Message delivery could not be verified — the terminal did not accept it "
                     + $"({Describe(outcome.Verdict)}). The message has been returned to the queue.");
@@ -1696,6 +1699,7 @@ public sealed partial class SessionMessageQueueService
         await db.SaveChangesAsync(ct);
 
         DeliveryOutcome outcome;
+        DateTime? capturedGeneration = null;
         try
         {
             foreach (var landRow in run.Where(m => m.SourceLandNotificationId != null))
@@ -1703,6 +1707,7 @@ public sealed partial class SessionMessageQueueService
                     await landBoundary.ReachedAsync("queue-before-typing", landRow.SourceTaskId!.Value, landRow.Id, ct);
             if (await CancelJustClaimedExpiredBriefsAsync(db, run, ct)) return FlushResult.Nothing;
             using var observation = new RuntimePhase(_logger, _timeProvider, sessionId, "queue.delivery-confirm");
+            capturedGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
             outcome = await DeliverAsync(sessionId, body, ct, baseline, ceilings, FirstInputDeadline(run));
         }
         catch (OptionalBriefExpiredException)
@@ -1779,7 +1784,7 @@ public sealed partial class SessionMessageQueueService
             return FlushResult.Failed;
         }
 
-        await HandleDeliveryFailureAsync(sessionId, ids, outcome.Verdict, ct);
+        await HandleDeliveryFailureAsync(sessionId, ids, outcome.Verdict, ct, capturedGeneration);
         return FlushResult.Failed;
     }
 
@@ -2009,6 +2014,7 @@ public sealed partial class SessionMessageQueueService
             return FlushResult.Nothing;
 
         var submitBaseline = await SettlePostEvidenceAsync(sessionId, ct);
+        var capturedGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
         try
         {
             await _runtime.SendInputAsync(sessionId, "\r", ct);
@@ -2069,7 +2075,7 @@ public sealed partial class SessionMessageQueueService
         if (outcome.Verdict == DeliveryVerdict.BackendUnreachable)
             return FlushResult.Nothing;
 
-        await HandleDeliveryFailureAsync(sessionId, ids, outcome.Verdict, ct);
+        await HandleDeliveryFailureAsync(sessionId, ids, outcome.Verdict, ct, capturedGeneration);
         return FlushResult.Failed;
     }
 
@@ -3384,8 +3390,19 @@ public sealed partial class SessionMessageQueueService
     // budget in ~2.5 minutes and park a brief in a session that was healthy the entire time. The
     // refund only ever applies to that triple condition; "started working and then stalled" keeps
     // CARD-0055's behaviour exactly, because that session HAS a baseline.
+    private async Task<DateTime?> CaptureSessionGenerationAsync(Guid sessionId, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => (DateTime?)s.StartedAt)
+            .FirstOrDefaultAsync(ct);
+    }
+
     private async Task HandleDeliveryFailureAsync(
-        Guid sessionId, IReadOnlyList<Guid>? messageIds, DeliveryVerdict verdict, CancellationToken ct)
+        Guid sessionId, IReadOnlyList<Guid>? messageIds, DeliveryVerdict verdict, CancellationToken ct,
+        DateTime? capturedGeneration = null)
     {
         if (messageIds is { Count: > 0 })
         {
@@ -3635,8 +3652,28 @@ public sealed partial class SessionMessageQueueService
                 await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
                 if (kill)
                 {
-                    var sessions = scope.ServiceProvider.GetRequiredService<AgentSessionService>();
-                    await sessions.KillAsync(sessionId, ct);
+                    if (capturedGeneration is not { } generation)
+                    {
+                        _logger.LogWarning(
+                            "Delivery to session {SessionId} failed verification but the attempt retained no generation; declining the recovery kill.",
+                            sessionId);
+                        if (agent is not null)
+                        {
+                            var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
+                            await supervisor.RecordIncidentAsync(
+                                agent.Id, sessionId, AgentIncidentKind.DeliveryVerificationFailed,
+                                AlertSeverity.Warning,
+                                "Destructive recovery was declined: this delivery attempt retained no accepted generation.",
+                                ct: ct);
+                            await db.SaveChangesAsync(ct);
+                        }
+                    }
+                    else
+                    {
+                        var sessions = scope.ServiceProvider.GetRequiredService<AgentSessionService>();
+                        await sessions.KillGenerationAsync(
+                            sessionId, generation, SessionTerminationSource.SystemRequest, ct);
+                    }
                 }
             }
 

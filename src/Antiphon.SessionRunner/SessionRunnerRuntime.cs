@@ -288,6 +288,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         request = CodexWindowsLaunchPolicy.Apply(request, useHerdr);
 
         var session = new RunnerSession(request.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness);
+        session.BindAcceptedGeneration(request.AcceptedStartedAt);
         if (request.VerificationBinding is { } binding)
             session.SetCustody(_custody.Value, binding);
         session.GrokRulesReceipt = request.InstalledGrokRulesReceipt;
@@ -333,6 +334,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         SessionId = request.SessionId, GrokRulesReceipt = receipt, LaunchPending = true,
                         WorkspaceKey = request.Herdr!.WorkspaceKey, WorkspaceId = "", TabId = "", PaneId = "",
                         UpdatedAtUtc = DateTime.UtcNow,
+                        AcceptedStartedAt = request.AcceptedStartedAt,
                     }.SaveAtomic(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, request.SessionId));
                 await session.StartHerdrAsync(
                     request,
@@ -352,6 +354,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         SessionId = request.SessionId, GrokRulesReceipt = receipt, LaunchPending = true,
                         PipeName = PtyHostProtocol.PipeNameFor(request.SessionId), HostPid = 0,
                         HostStartTimeUtc = DateTime.MinValue, CreatedAtUtc = DateTime.UtcNow,
+                        AcceptedStartedAt = request.AcceptedStartedAt,
                     }.SaveAtomic(PtyHostManifest.PathFor(_settings.PtyHostManifestDir, request.SessionId));
                 await session.StartAsync(request, _launcher, ct);
             }
@@ -429,6 +432,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
 
         var session = new RunnerSession(request.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness);
+        session.BindAcceptedGeneration(request.AcceptedStartedAt);
         if (!_sessions.TryAdd(request.SessionId, session))
         {
             if (_sessions.TryGetValue(request.SessionId, out var existing)
@@ -703,6 +707,35 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         return session.ToDto();
     }
 
+    public async Task<RunnerKillGenerationResult> KillGenerationAsync(
+        Guid sessionId, DateTime expectedAcceptedStartedAt, TimeSpan timeout, CancellationToken ct)
+    {
+        var gate = _launchLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            if (!_sessions.TryGetValue(sessionId, out var session))
+                return new RunnerKillGenerationResult(sessionId, false, KillGenerationOutcomes.Missing, null);
+
+            if (!SessionGeneration.Equal(session.AcceptedStartedAt, expectedAcceptedStartedAt))
+            {
+                return new RunnerKillGenerationResult(
+                    sessionId, false, KillGenerationOutcomes.Mismatch, session.AcceptedStartedAt);
+            }
+
+            if (session.HasExited)
+            {
+                return new RunnerKillGenerationResult(
+                    sessionId, false, KillGenerationOutcomes.AlreadyExited, session.AcceptedStartedAt);
+            }
+
+            await session.KillAsync(timeout, ct);
+            return new RunnerKillGenerationResult(
+                sessionId, true, KillGenerationOutcomes.Killed, session.AcceptedStartedAt);
+        }
+        finally { gate.Release(); }
+    }
+
     /// <summary>Explicit expiry by an artifact owner; never called by kill, retirement, or worktree cleanup.</summary>
     public async Task ExpireRulesArtifactAsync(Guid sessionId, CancellationToken ct)
     {
@@ -880,8 +913,17 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 continue;
             }
 
-            if (_sessions.ContainsKey(manifest.SessionId))
+            if (_sessions.TryGetValue(manifest.SessionId, out var existingPty))
+            {
+                if (manifest.AcceptedStartedAt is { } orphanGeneration
+                    && !SessionGeneration.Equal(existingPty.AcceptedStartedAt, orphanGeneration)
+                    && (manifest.ExitReason is not null || manifest.ExitCode is not null || manifest.ExitedAtUtc is not null))
+                {
+                    _ = RunnerSession.CreateAdoptedExited(manifest, _settings, _events, _logger);
+                }
+
                 continue;
+            }
 
             var tracked = hasCustodyLedger ? _custody.Value.Store.ReadReservations()
                 .Where(b => b.Generation.SessionId == manifest.SessionId).ToArray() : [];
@@ -905,6 +947,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (manifest.HostPid > 0 && probe.IsAlive(manifest.HostPid, manifest.HostStartTimeUtc))
             {
                 var session = new RunnerSession(manifest.SessionId, _settings, _events, _logger, _transcriptClaims);
+                session.BindAcceptedGeneration(manifest.AcceptedStartedAt);
                 if (manifest.VerificationBinding is { } binding)
                     session.SetCustody(_custody.Value, binding);
                 try
@@ -958,8 +1001,20 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         foreach (var sidecar in HerdrPaneSidecar.LoadAll(_settings.SessionLogPath))
         {
             ct.ThrowIfCancellationRequested();
-            if (_sessions.ContainsKey(sidecar.SessionId))
+            if (_sessions.TryGetValue(sidecar.SessionId, out var existingHerdr)
+                && SessionGeneration.Equal(existingHerdr.AcceptedStartedAt, sidecar.AcceptedStartedAt))
                 continue;
+            if (_sessions.ContainsKey(sidecar.SessionId))
+            {
+                if (sidecar.AcceptedStartedAt is { } sidecarGeneration
+                    && !SessionGeneration.Equal(_sessions[sidecar.SessionId].AcceptedStartedAt, sidecarGeneration))
+                {
+                    _ = RunnerSession.CreateAdoptedHerdrExited(
+                        sidecar, _settings, _events, _logger, HerdrExitReasons.RestartPresumedDead);
+                }
+
+                continue;
+            }
 
             using var attempt = _startup.Begin("herdr-adoption", sidecar.SessionId);
             var verdict = await EvaluateHerdrBarAsync(sidecar, probe, ct);
@@ -968,6 +1023,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 case HerdrBarVerdict.Adopt:
                     var session = new RunnerSession(
                         sidecar.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness);
+                    session.BindAcceptedGeneration(sidecar.AcceptedStartedAt);
                     await session.AdoptHerdrAsync(sidecar, _herdrClient!, () => NotifyPaneSetChanged(), _placement, LookupBinding, ct);
                     _sessions.TryAdd(sidecar.SessionId, session);
                     NotifyPaneSetChanged();
@@ -1322,6 +1378,15 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private HerdrPaneSidecar? _pendingSidecar;
         private DateTime? _herdrVerifiedAtUtc;
         private string? _herdrOrigin;
+        private DateTime? _acceptedStartedAt;
+
+        internal DateTime? AcceptedStartedAt => _acceptedStartedAt;
+
+        internal void BindAcceptedGeneration(DateTime? value) =>
+            _acceptedStartedAt = value is { } v ? SessionGeneration.Normalize(v) : null;
+
+        private RunnerSessionExitedEvent ExitEnvelope(int? exitCode, string reason, long lastSequence) =>
+            new(_sessionId, exitCode, reason, lastSequence, AcceptedStartedAt: _acceptedStartedAt);
 
         public RunnerSession(
             Guid sessionId,
@@ -1516,7 +1581,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _exited.TrySetResult();
                     _events.Publish(
                         SessionRunnerEventNames.SessionExited,
-                        new RunnerSessionExitedEvent(_sessionId, exit.ExitCode, exit.Reason, LastSequence: 0));
+                        ExitEnvelope(exit.ExitCode, exit.Reason, 0));
                     _onHerdrPaneSetChanged?.Invoke();
                 };
 
@@ -1530,7 +1595,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
                 _events.Publish(
                     SessionRunnerEventNames.SessionStarted,
-                    new RunnerSessionStartedEvent(_sessionId, _childPid, _startedAt));
+                    new RunnerSessionStartedEvent(_sessionId, _childPid, _startedAt, _acceptedStartedAt));
 
                 // Same transcript binding as pty — format selected from request.TranscriptFormat
                 // (CARD-0187: herdr no longer forces Claude).
@@ -1593,7 +1658,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _exited.TrySetResult();
                     _events.Publish(
                         SessionRunnerEventNames.SessionExited,
-                        new RunnerSessionExitedEvent(_sessionId, exit.ExitCode, exit.Reason, LastSequence: 0));
+                        ExitEnvelope(exit.ExitCode, exit.Reason, 0));
                     _onHerdrPaneSetChanged?.Invoke();
                 };
 
@@ -1606,7 +1671,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
                 _events.Publish(
                     SessionRunnerEventNames.SessionStarted,
-                    new RunnerSessionStartedEvent(_sessionId, _childPid, _startedAt));
+                    new RunnerSessionStartedEvent(_sessionId, _childPid, _startedAt, _acceptedStartedAt));
 
                 StartAttachedTailer(request, attached);
             }
@@ -1877,7 +1942,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         request.MemoryLimitMb,
                         request.TranscriptEnabled,
                         _ansiLogPath,
-                        GrokRulesReceipt, VerificationBinding, _custodyLedger?.Store.StoreId),
+                        GrokRulesReceipt, VerificationBinding, _custodyLedger?.Store.StoreId,
+                        request.AcceptedStartedAt),
                     ct);
 
                 _childPid = launched.ChildPid;
@@ -1890,7 +1956,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
                 _events.Publish(
                     SessionRunnerEventNames.SessionStarted,
-                    new RunnerSessionStartedEvent(_sessionId, _childPid, _startedAt));
+                    new RunnerSessionStartedEvent(_sessionId, _childPid, _startedAt, _acceptedStartedAt));
 
                 if (await _client.AttachAsync(0, ct) is { } resync)
                 {
@@ -2018,7 +2084,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             _clientReady.TrySetResult(true);
             _events.Publish(
                 SessionRunnerEventNames.SessionAdopted,
-                new RunnerSessionAdoptedEvent(_sessionId, _childPid, _startedAt, status.LastSeq));
+                new RunnerSessionAdoptedEvent(_sessionId, _childPid, _startedAt, status.LastSeq, _acceptedStartedAt));
 
             if (manifest.TranscriptEnabled
                 && (VerificationBinding is null || _custodyLedger!.ReadFinal(VerificationBinding) is null))
@@ -2120,6 +2186,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _status = "Exited",
                 _exitCode = manifest.ExitCode ?? -1,
                 _exitReason = manifest.ExitReason ?? "ProcessVanished",
+                _acceptedStartedAt = manifest.AcceptedStartedAt is { } accepted
+                    ? SessionGeneration.Normalize(accepted) : null,
             };
             session._clientReady.TrySetResult(false);
             session._exited.TrySetResult();
@@ -2127,8 +2195,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
             events.Publish(
                 SessionRunnerEventNames.SessionExited,
-                new RunnerSessionExitedEvent(
-                    manifest.SessionId, session._exitCode, session._exitReason, LastSequence: 0));
+                session.ExitEnvelope(session._exitCode, session._exitReason, 0));
             return session;
         }
 
@@ -2149,12 +2216,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _exitReason = reason,
                 _backend = SessionBackends.Herdr,
                 _herdrOrigin = sidecar.Origin ?? HerdrPaneOrigins.Launched,
+                _acceptedStartedAt = sidecar.AcceptedStartedAt is { } accepted
+                    ? SessionGeneration.Normalize(accepted) : null,
             };
             session._clientReady.TrySetResult(false);
             session._exited.TrySetResult();
             events.Publish(
                 SessionRunnerEventNames.SessionExited,
-                new RunnerSessionExitedEvent(sidecar.SessionId, null, reason, LastSequence: 0));
+                session.ExitEnvelope(null, reason, 0));
             return session;
         }
 
@@ -2179,6 +2248,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _pendingReason = HerdrPendingReasons.Unreachable,
                 _pendingSidecar = sidecar,
                 _herdrOrigin = sidecar.Origin ?? HerdrPaneOrigins.Launched,
+                _acceptedStartedAt = sidecar.AcceptedStartedAt is { } accepted
+                    ? SessionGeneration.Normalize(accepted) : null,
             };
         }
 
@@ -2202,7 +2273,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             _exited.TrySetResult();
             _events.Publish(
                 SessionRunnerEventNames.SessionExited,
-                new RunnerSessionExitedEvent(_sessionId, exitCode, reason, LastSequence: 0));
+                ExitEnvelope(exitCode, reason, 0));
         }
 
         /// <summary>
@@ -2266,6 +2337,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 GrokRulesReceipt = receipt;
             _adopted = true;
             _backend = SessionBackends.Herdr;
+            if (_acceptedStartedAt is null)
+                BindAcceptedGeneration(sidecar.AcceptedStartedAt);
             _pendingReason = null;
             _pendingSidecar = null;
             _childPid = sidecar.ChildPid;
@@ -2296,7 +2369,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _exited.TrySetResult();
                 _events.Publish(
                     SessionRunnerEventNames.SessionExited,
-                    new RunnerSessionExitedEvent(_sessionId, exit.ExitCode, exit.Reason, LastSequence: 0));
+                    ExitEnvelope(exit.ExitCode, exit.Reason, 0));
                 _onHerdrPaneSetChanged?.Invoke();
             };
             lock (_gate)
@@ -2304,7 +2377,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             _clientReady.TrySetResult(true);
             _events.Publish(
                 SessionRunnerEventNames.SessionAdopted,
-                new RunnerSessionAdoptedEvent(_sessionId, _childPid, _startedAt, LastSequence: 0));
+                new RunnerSessionAdoptedEvent(_sessionId, _childPid, _startedAt, LastSequence: 0, _acceptedStartedAt));
 
             // Re-tail via existing TranscriptSidecar if present — format from the sidecar, not Claude.
             var transcript = TranscriptSidecar.TryLoad(TranscriptSidecar.PathFor(_settings.SessionLogPath, _sessionId));
@@ -2436,7 +2509,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     HerdrVerifiedAtUtc: _herdrVerifiedAtUtc,
                     HerdrOrigin: _herdrOrigin,
                         GrokRulesReceipt: GrokRulesReceipt,
-                        VerificationBinding: VerificationBinding);
+                        VerificationBinding: VerificationBinding,
+                        AcceptedStartedAt: _acceptedStartedAt);
             }
         }
 
@@ -2643,7 +2717,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
             _events.Publish(
                 SessionRunnerEventNames.SessionExited,
-                new RunnerSessionExitedEvent(_sessionId, exitCode, "ProcessVanished", lastSequence));
+                ExitEnvelope(exitCode, "ProcessVanished", lastSequence));
             _clientReady.TrySetResult(false);
             _exited.TrySetResult();
             _tailer?.NotifyChildExited();
@@ -2728,7 +2802,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             {
                 _events.Publish(
                     SessionRunnerEventNames.SessionExited,
-                    new RunnerSessionExitedEvent(_sessionId, exited.ExitCode, exitReason, exited.LastSeq));
+                    ExitEnvelope(exited.ExitCode, exitReason, exited.LastSeq));
             }
 
             _clientReady.TrySetResult(false);

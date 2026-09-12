@@ -351,6 +351,10 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
         return Map(await _runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), ct));
     }
 
+    public async Task<RunnerKillGenerationResult> KillGenerationAsync(
+        Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct) =>
+        await _runtime.KillGenerationAsync(sessionId, expectedAcceptedStartedAt, TimeSpan.FromSeconds(5), ct);
+
     public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(
         [EnumeratorCancellation] CancellationToken ct)
     {
@@ -469,7 +473,8 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             dto.Pending,
             dto.HerdrVerifiedAtUtc,
             dto.HerdrOrigin,
-            dto.GrokRulesReceipt);
+            dto.GrokRulesReceipt,
+            dto.AcceptedStartedAt);
 
     private static AgentExitReason MapExitReason(string reason) =>
         Enum.TryParse<AgentExitReason>(reason, ignoreCase: true, out var parsed)

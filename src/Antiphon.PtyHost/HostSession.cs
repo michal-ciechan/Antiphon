@@ -126,7 +126,7 @@ public sealed class HostSession : IAsyncDisposable
                     store.RequireOutsideSnapshot(path, binding);
                 _custody = new(store, binding, _hostInstanceId);
             }
-            if (launch.GrokRulesReceipt is not null || _custody is not null)
+            if (launch.GrokRulesReceipt is not null || _custody is not null || launch.AcceptedStartedAt is not null)
             {
                 _manifest = new PtyHostManifest
                 {
@@ -138,6 +138,7 @@ public sealed class HostSession : IAsyncDisposable
                     VerificationBinding = _custody?.Binding, VerificationHost = _custody?.Identity,
                     Cwd = launch.Cwd, Cols = launch.Cols, Rows = launch.Rows,
                     AnsiLogPath = launch.AnsiLogPath, TranscriptEnabled = launch.TranscriptEnabled,
+                    AcceptedStartedAt = launch.AcceptedStartedAt,
                 };
                 _custody?.RecordManifest(_manifest, launched: false);
                 _manifest.SaveAtomic(_options.ManifestPath);
@@ -202,6 +203,7 @@ public sealed class HostSession : IAsyncDisposable
             CreatedAtUtc = DateTime.UtcNow,
             VerificationBinding = _custody?.Binding,
             VerificationHost = _custody?.Identity,
+            AcceptedStartedAt = launch.AcceptedStartedAt,
         };
         _custody?.RecordManifest(_manifest, launched: true);
         _manifest.SaveAtomic(_options.ManifestPath);
@@ -210,7 +212,7 @@ public sealed class HostSession : IAsyncDisposable
         _log.Info($"Launched {launch.Exe} (child pid {childPid}); pty backend: {_runner.Backend}");
 
         _exitObserver = ObserveExitAsync();
-        return new LaunchedMessage(childPid, childStart);
+        return new LaunchedMessage(childPid, childStart, launch.AcceptedStartedAt);
     }
 
     /// <summary>

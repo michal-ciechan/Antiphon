@@ -26,6 +26,7 @@ public class HerdrPaneSidecarTests
                 LaunchedAtUtc = DateTime.UtcNow,
                 Cwd = @"C:\src\Antiphon",
                 UpdatedAtUtc = DateTime.UtcNow,
+                AcceptedStartedAt = SessionGeneration.Normalize(DateTime.UtcNow.AddMinutes(-1)),
             };
             var path = HerdrPaneSidecar.PathFor(root, sessionId);
             sidecar.SaveAtomic(path);
@@ -36,11 +37,32 @@ public class HerdrPaneSidecarTests
             loaded.WorkspaceKey.ShouldBe("project:abc");
             loaded.PaneId.ShouldBe("w2:p1");
             loaded.ChildPid.ShouldBe(4242);
+            loaded.AcceptedStartedAt.ShouldBe(sidecar.AcceptedStartedAt);
 
             HerdrPaneSidecar.LoadAll(root).Select(s => s.SessionId).ShouldContain(sessionId);
 
             HerdrPaneSidecar.TryDelete(root, sessionId);
             HerdrPaneSidecar.TryLoad(path).ShouldBeNull();
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    public void A_sidecar_without_the_field_loads_a_null_generation()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "herdr-sidecar-old-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var sessionId = Guid.NewGuid();
+            var path = HerdrPaneSidecar.PathFor(root, sessionId);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path,
+                $$"""{"schemaVersion":1,"sessionId":"{{sessionId:D}}","workspaceKey":"none","workspaceId":"w","tabId":"t","paneId":"p","launchedAtUtc":"2026-01-01T00:00:00Z","updatedAtUtc":"2026-01-01T00:00:00Z"}""");
+            HerdrPaneSidecar.TryLoad(path)!.AcceptedStartedAt.ShouldBeNull();
         }
         finally
         {

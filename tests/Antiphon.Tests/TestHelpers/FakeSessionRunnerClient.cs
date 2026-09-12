@@ -29,6 +29,9 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
 
     public bool AdvertiseHerdrNamedTabPlacement { get; set; } = true;
 
+    public bool AdvertiseSessionGeneration { get; set; } = true;
+    public List<(Guid SessionId, DateTime Expected)> KillGenerationCalls { get; } = [];
+
     public IReadOnlyList<HerdrPlacementCheckRequest> CheckCalls
     {
         get { lock (_gate) return _checkCalls.ToList(); }
@@ -47,6 +50,8 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
             features.Add(RunnerCapabilityFeatures.HerdrAttach);
         if (AdvertiseHerdr && AdvertiseHerdrNamedTabPlacement)
             features.Add(RunnerCapabilityFeatures.HerdrNamedTabPlacement);
+        if (AdvertiseSessionGeneration)
+            features.Add(RunnerCapabilityFeatures.SessionGenerationV1);
         return Task.FromResult<RunnerCapabilitiesDto?>(new(
             "ModernConPty",
             "modern",
@@ -113,6 +118,14 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
     public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct) =>
         Task.FromResult(new SessionRunnerSessionDto(
             sessionId, null, DateTime.UtcNow, "Exited", 0, AgentExitReason.KilledByRequest, 0));
+
+    public Task<RunnerKillGenerationResult> KillGenerationAsync(
+        Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct)
+    {
+        KillGenerationCalls.Add((sessionId, expectedAcceptedStartedAt));
+        return Task.FromResult(new RunnerKillGenerationResult(
+            sessionId, true, KillGenerationOutcomes.Killed, expectedAcceptedStartedAt));
+    }
 
     public Func<VerificationExecutionBinding, bool, CancellationToken, Task<VerificationCustodyStatus>>? VerificationCustody { get; set; }
 

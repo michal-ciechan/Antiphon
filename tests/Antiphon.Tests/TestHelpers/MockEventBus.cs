@@ -9,6 +9,8 @@ public class MockEventBus : IEventBus
 {
     private readonly object _gate = new();
     private readonly List<PublishedEvent> _events = [];
+    public string? ThrowOnceOnEvent { get; set; }
+    private int _threw;
 
     public IReadOnlyList<PublishedEvent> PublishedEvents
     {
@@ -21,6 +23,7 @@ public class MockEventBus : IEventBus
 
     public Task PublishToGroupAsync(string group, string eventName, object payload, CancellationToken ct = default)
     {
+        MaybeThrow(eventName);
         lock (_gate)
             _events.Add(new PublishedEvent(group, eventName, payload));
         return Task.CompletedTask;
@@ -28,9 +31,20 @@ public class MockEventBus : IEventBus
 
     public Task PublishToAllAsync(string eventName, object payload, CancellationToken ct = default)
     {
+        MaybeThrow(eventName);
         lock (_gate)
             _events.Add(new PublishedEvent(null, eventName, payload));
         return Task.CompletedTask;
+    }
+
+    private void MaybeThrow(string eventName)
+    {
+        if (ThrowOnceOnEvent is { } name
+            && string.Equals(name, eventName, StringComparison.Ordinal)
+            && Interlocked.Exchange(ref _threw, 1) == 0)
+        {
+            throw new InvalidOperationException($"MockEventBus throw-once on {eventName}");
+        }
     }
 
     public void Clear()

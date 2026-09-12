@@ -144,6 +144,43 @@ public class SessionRunnerEventPumpTests
         persistedWhileBlocked.ShouldBeFalse($"B Uuid {b.Uuid} missing while {operation} is held; original inline pump reproduction");
     }
 
+    [Test]
+    public async Task C502_V36_pump_forwards_the_typed_exit_and_publishes_nothing_for_a_stale_disposition()
+    {
+        var runner = new ScriptedSessionRunnerClient();
+        var bus = new GatedEventBus();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConfigureServices = services =>
+            {
+                services.AddSingleton<ISessionRunnerClient>(runner);
+                services.AddSingleton<IEventBus>(bus);
+            },
+        });
+        var generationA = SessionGeneration.Normalize(DateTime.UtcNow.AddMinutes(-5));
+        var generationB = SessionGeneration.Next(generationA, DateTime.UtcNow);
+        await using (var db = BridgeQueueHarness.CreateContext())
+        {
+            await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u
+                .SetProperty(s => s.StartedAt, generationB)
+                .SetProperty(s => s.Status, SessionStatus.Running));
+        }
+
+        using var pump = new SessionRunnerEventPump(
+            h.Provider.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(new SessionRunnerSettings { Enabled = true }),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<SessionRunnerEventPump>.Instance);
+        await pump.StartAsync(CancellationToken.None);
+        await runner.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        runner.ProduceExit(new SessionRunnerExitedEvent(
+            h.SessionId, 1, AgentExitReason.KilledByRequest, 0, generationA));
+        await Task.Delay(500);
+        await pump.StopAsync(CancellationToken.None);
+
+        await using var verify = BridgeQueueHarness.CreateContext();
+        (await verify.AgentSessions.SingleAsync(s => s.Id == h.SessionId)).Status.ShouldBe(SessionStatus.Running);
+    }
+
     private static SessionRunnerTranscriptEvent Entry(Guid session, long sequence, string kind, string? text) =>
         new(session, sequence, kind, Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow,
             null, text, null, null, null, null, kind == TranscriptKinds.TurnEnd ? "end_turn" : null);
