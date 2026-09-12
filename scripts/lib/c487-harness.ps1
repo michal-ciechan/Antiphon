@@ -138,6 +138,31 @@ function Write-C487Trx {
     [System.IO.File]::WriteAllText($Path, $xml)
 }
 
+function Write-C487Execution {
+    param(
+        [string]$Path,
+        [object[]]$Nodes
+    )
+    $mapped = @()
+    foreach ($n in @($Nodes)) {
+        $mapped += @{
+            uid = [string]$n.uid
+            state = $(if ([string]$n.state) { [string]$n.state } else { 'Passed' })
+            type = [string]$n.type
+            method = [string]$n.method
+            namespace = [string]$n.namespace
+            className = $(if ([string]$n.className) { [string]$n.className } else { [string]$n.type })
+        }
+    }
+    $obj = [ordered]@{
+        format = 'antiphon-tunit-execution-v1'
+        tunitVersion = '1.44.0'
+        mtpVersion = '2.2.2'
+        nodes = $mapped
+    }
+    Write-NightlyAtomicJson -Path $Path -Object $obj
+}
+
 function Write-C487Discovery {
     param(
         [string]$Path,
@@ -228,18 +253,38 @@ function Write-C487NativePassSeams {
             `$disc | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath `$discPath -Encoding UTF8
         }
     }
-    if (`$listTests -and -not [string]::IsNullOrWhiteSpace(`$diagDir)) {
+    if (-not [string]::IsNullOrWhiteSpace(`$diagDir)) {
         if (-not (Test-Path -LiteralPath `$diagDir)) { New-Item -ItemType Directory -Path `$diagDir -Force | Out-Null }
-        `$nodes = @($nodeText)
-        `$disc = @{
-            format = 'antiphon-tunit-discovery-v1'
-            tunitVersion = '1.44.0'
-            mtpVersion = '2.2.2'
-            assemblyHash = 'c487-test-hash'
-            nodes = `$nodes
-        }
         `$diagPath = Join-Path `$diagDir 'log.diag'
-        `$disc | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath `$diagPath -Encoding UTF8
+        if (`$listTests) {
+            `$nodes = @($nodeText)
+            `$disc = @{
+                format = 'antiphon-tunit-discovery-v1'
+                tunitVersion = '1.44.0'
+                mtpVersion = '2.2.2'
+                assemblyHash = 'c487-test-hash'
+                nodes = `$nodes
+            }
+            `$disc | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath `$diagPath -Encoding UTF8
+        } else {
+            `$execNodes = @()
+            foreach (`$r in @($rowText)) {
+                `$execNodes += @{
+                    uid = `$r.Id
+                    state = `$r.Outcome
+                    type = `$r.ClassName
+                    method = `$r.MethodName
+                    className = `$r.ClassName
+                }
+            }
+            `$exec = @{
+                format = 'antiphon-tunit-execution-v1'
+                tunitVersion = '1.44.0'
+                mtpVersion = '2.2.2'
+                nodes = `$execNodes
+            }
+            `$exec | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath `$diagPath -Encoding UTF8
+        }
     }
     `$jsonIdx = [array]::IndexOf(`$args, '-JsonResultPath')
     if (`$jsonIdx -ge 0 -and (`$jsonIdx + 1) -lt `$args.Count) {
