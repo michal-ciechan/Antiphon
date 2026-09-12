@@ -162,3 +162,106 @@ hold a clone without having initialised). The guard is real but PC-21 as written
 nothing about it. Recommend rewording PC-21/G-21 to assert that `DropClonedDatabaseAsync`
 observes the ready state directly (e.g. a faulted lifecycle must surface
 `ObjectDisposedException`, not the bootstrap fault) rather than counting creates.
+
+### Fresh-process / Docker block
+
+Pristine green MVID for `Antiphon.Tests` in this block = `96efa55f-50b6-4ed4-910d-61d541fc22d4`.
+(It differs from the `240b9167` of the controlled-ops block only because `Directory.Build.props`
+stamps the git HEAD SHA into `AssemblyInformationalVersion` — CARD-0179 R3 — so the checkpoint
+commit between the two blocks changed the assembly. Builds are otherwise deterministic: every
+pristine rebuild inside a block reproduced the same MVID.)
+
+Baseline greens established before the block: `A_db_free_…constructs_and_starts_no_database` 1/1,
+`C467_V09_KeyedQueueRacesAndDistinctEvents` 1/1, `A_failing_worker_exits_1_without_running_tests`
+1/1, `A_child_at_depth_two_refuses_before_any_work` 1/1,
+`A_class_filtered_child_skips_every_parent_probe` 1/1.
+
+| PC | Guard | Mutation | Named test | Red at | Verdict |
+|----|-------|----------|-----------|--------|---------|
+| PC-1 | G-1 no DB without a default consumer | the `[Before(Assembly)]` marker hook awaits `TestDbFixture.Lifecycle.EnsureReadyAsync()` on the no-marker path | `A_db_free_exact_method_selection_constructs_and_starts_no_database` | child `LazyInitializationTests.cs:171` `Lifecycle.IsRequested.ShouldBeFalse()`, parent `:26` `run.Exit.ShouldBe(0)` | RED, **earlier assertion** than planned (`:33` `create.ShouldBe(0)`) — the child refuses before the container finishes, `4c236333` |
+| PC-17 | G-17 worker dispatch stays eager and awaits `RunAsync` | `Environment.Exit(0)` before `await RunAsync(worker)` | `C467_V09_KeyedQueueRacesAndDistinctEvents` | `LandQueueRaceWorker.cs` `Directory.GetFiles(root, "*.absent").Length.ShouldBe(2)` | RED as specified (32.2 s), `fef973b7` |
+| PC-18 | G-18 worker failure exits 1 before any test runs | `return;` instead of `Environment.Exit(1)` in the worker catch | `A_failing_worker_exits_1_without_running_tests` | `:148` `run.Exit.ShouldBe(1)` | RED as specified (3.7 s), `48ac17c6` |
+| PC-19 | G-19 `ProductionRunnerGuard` stays eager | `if (!TestDbFixture.Lifecycle.IsRequested) return;` at the top of `PointEveryProgramBootAwayFromTheProductionRunner` | `A_db_free_…` | child `:165` `GetEnvironmentVariable(BaseUrlEnvVar).ShouldBe(DeadRunnerBaseUrl)`, parent `:26` | RED — the same guard the plan names (`runnerBaseUrl`), asserted in the child rather than via `lifecycle.json`, `8f3af7d0` |
+| PC-20 | G-20 the worker child never starts a private DB | drop `ConnectionString = …` from the worker's `HarnessOptions` | `C467_V09_KeyedQueueRacesAndDistinctEvents` | `LandQueueRaceWorker.cs` `*.absent` rendezvous `ShouldBe(2)` (was 0) | RED, **different assertion** than planned (`dbLifecycle.ShouldBe("never-requested")`) — see finding 4, `694fde1a` |
+| **PC-55** | G-55 a parent probe skips when the marker is inherited | delete `SkipIfChildProcess()` from the parent probe methods | `A_class_filtered_child_skips_every_parent_probe` | — | **DOES NOT REPRODUCE** — see finding 5, `0ae295ab` |
+| PC-56 | G-56 a child refuses above depth 1 | delete the depth assertion in `RequireChild` | `A_child_at_depth_two_refuses_before_any_work` | `:78` `run.Exit.ShouldNotBe(0)` | RED as specified (3.9 s), `77240848` |
+
+**Finding 4 — PC-20 fires earlier than planned, and the failure is worth reading.**
+Without the explicit connection string each worker child booted **its own private database**
+(`BridgeQueueHarness` falls back to `TestDbFixture.ConnectionString`), so the session row the
+parent had created was absent. Both children died with
+`NotFoundException: AgentSession with id 'da2c89d3-…' was not found` at
+`SessionMessageQueueService.RequireSessionKindAsync`, never reached the rendezvous, and the
+`*.absent` assertion failed with 0 instead of 2 before `dbLifecycle` was ever read. Retained child
+stderr: `tests/Antiphon.Tests/bin-c476pc/.antiphon/acceptance/card-0467/queue-race-2131c205…/`.
+The guard is strong; only the named assertion is optimistic.
+
+**Finding 5 — PC-55's assertion cannot detect what G-55 protects, and the PC as written is unsafe to run.**
+
+*Two separate problems.*
+
+(a) **The assertion looks in the wrong place.** `Directory.GetDirectories(run.Root, "probe-*")`
+inspects the child's `--results-directory`. But `CreateOwnedRoot()` builds every probe root as
+`<cwd>/.antiphon/acceptance/card-0476/probe-<guid>` — a **sibling** of `run.Root`, never nested
+inside it. A nested probe therefore cannot ever show up in that assertion. The TRX loop above it
+does not help either: it accepts `Passed` as well as `Skipped`/`NotExecuted`, so a parent probe
+that actually *ran* in the child is explicitly allowed.
+
+*Evidence (bounded variant, mvid `0ae295ab`):* I removed `SkipIfChildProcess()` from
+`A_db_free_exact_method_selection_constructs_and_starts_no_database` only — the one parent probe
+whose nested launch terminates. `A_class_filtered_child_skips_every_parent_probe` then passed
+**1/1**, while the probe-root directory count under
+`tests/Antiphon.Tests/bin-c476pc/.antiphon/acceptance/card-0476/` went from **12 to 14** — i.e. the
+child really did run a parent probe and really did launch a nested probe process, and the guard
+saw nothing.
+
+(b) **The plan's bounding claim is wrong and the full mutation is a fork bomb.** The note "the
+depth cap stops the grandchild" does not hold: `depth` is a *declared constant* (`LaunchChildAsync`
+defaults it to 1, `LaunchAsync` reads it straight off the probe object) and is **never
+incremented** at any level, and `RequireChild` — the only place the depth cap is enforced — is
+called from the *child* methods, never from the parent probes. So with the skip removed from every
+parent probe, the class-filtered child re-runs `A_class_filtered_child_skips_every_parent_probe`,
+which launches another class-filtered grandchild, without bound; each level also runs
+`Mixed_first_consumers_share_one_real_bootstrap` and `A_post_start_fault_cleans_up_the_owned_container`,
+each of which starts a real Postgres testcontainer. I deliberately did **not** run that variant:
+the only thing that would have stopped it is the outer 150 s `ChildBudget`, after an unbounded
+process and container fan-out on the developer machine.
+
+Recommendation: G-55 needs an assertion that can fail — for example the parent counting
+`probe-*` directories under `.antiphon/acceptance/card-0476/` before and after the child run, or
+the TRX check narrowed to `Skipped`/`NotExecuted` for parent-probe names. Separately, the probe
+protocol should increment `depth` per launch so the depth cap is a real recursion cap rather than
+a declared constant.
+
+**Supplementary to PC-19 — the `PtyBackendEnvGuard` half of G-19 is only conditionally guarded.**
+G-19 names both `ProductionRunnerGuard` *and* `PtyBackendEnvGuard`; PC-19 only mutates the first.
+Applying the same early return to `PtyBackendEnvGuard.ClearInheritedPtyBackend` **was** caught here
+— red at `LazyInitializationTests.cs:169`,
+`GetEnvironmentVariable(PtyBackendPolicy.EnvVar) should be null but was "modern"` (mvid
+`abb3607f`) — but only because this session's environment exports `ANTIPHON_PTY_BACKEND=modern`.
+The assertion checks for `null`, which is also the value an un-run guard leaves behind, so on a
+machine that does not export that variable the same mutation would pass unnoticed. Worth a PC row
+of its own that sets the variable explicitly before the child launch.
+
+## Restoration and final state
+
+* All seven mutated source files `cmp`-verified byte-identical to their pristine backups;
+  `git status --porcelain` empty.
+* Final green sweep on the restored tree, all four affected classes:
+  * `TestDbFixtureLifecycleTests` — 29 passed, 0 failed
+  * `TestDbFixtureLazyInitializationTests` — 6 passed, 3 skipped (the child-only methods), 0 failed
+  * `RunnerRestartPreflightCacheTests` — 26 passed, 0 failed
+  * `RunnerRestartPreflightSafetyTests` — 31 passed, 0 failed
+* `bin-c476pc/` build outputs removed.
+* No production or test source change is proposed by this stage; the three plan amendments
+  (PC-7 mapping, PC-8 hole, PC-21/PC-55 assertions) are recorded here for Review.
+
+## Tally
+
+* 41 of 56 reproduced exactly as the plan specifies (named row, named assertion).
+* 11 reproduced red on the named test/row but at a **different assertion** than the plan names —
+  in every case an earlier assertion covering the same behaviour: PC-1, PC-11, PC-19, PC-20,
+  PC-32, PC-33, PC-35, PC-38, PC-39, PC-48, PC-54.
+* 4 did **not** reproduce: PC-7 (wrong test named; guard holds elsewhere), PC-8 (genuine hole),
+  PC-21 (unreachable while G-3 holds), PC-55 (assertion structurally cannot fail; full mutation
+  unsafe to run).
