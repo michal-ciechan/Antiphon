@@ -67,3 +67,5 @@ Antiphon.Tests.Application.AgentTaskLandCleanupSafetyTests
 Antiphon.Tests.Application.ChannelBridgeTests
 # CARD-0495: default version-probe timeout is 5s by contract (C495_VersionProbeDefaultTimeoutIsFiveSeconds).
 Antiphon.Tests.Application.DelegateScriptLandCompatibilityTests
+# CARD-0476 fresh-process lazy DB probes, Docker cold start
+Antiphon.Tests.TestHelpers.TestDbFixtureLazyInitializationTests
