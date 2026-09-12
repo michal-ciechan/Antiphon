@@ -300,9 +300,13 @@ POST   /api/agent-tasks/{id}/finding         CARD-0272: orchestrator override of
                                              approved SHA. `delegate.ps1 -Finding <id>
                                              -Stage … -Found "…"` / `-Clean`
                                              [`-ReviewedSourceSha`].
-POST   /api/agent-tasks/{id}/land            queue an explicit land of a Succeeded Worktree
-                                             task (`{ expectedSourceSha, reviewEvidenceId?,
-                                             verify? }`). Fresh work requires a full
+POST   /api/agent-tasks/{id}/land            queue an explicit land of a Succeeded Worktree task
+POST   /api/agent-tasks/{id}/land/v2         same handler as `/land` (CARD-0495). New CLI
+                                             callers POST only `/land/v2` after `GET /api/version`
+                                             advertises exact `land-v2`. An old process has
+                                             no v2 route (404/405, never redirected to `/land`).
+                                             Body `{ expectedSourceSha, reviewEvidenceId?,
+                                             verify? }`. Fresh work requires a full
                                              40/64-hex SHA (422 without it). Optional
                                              review evidence must match subject/SHA/ref/repo
                                              (409). Pending identity is immutable. 202
@@ -613,7 +617,7 @@ GET    /api/settings/templates/{id}/stages
 POST   /api/settings/providers/{id}/test
 GET/POST /api/settings/providers/{id}/model-routing   PUT|DELETE /api/settings/model-routing/{routingId}
 GET    /health                               liveness + PostgreSQL
-GET    /api/version                          build-time git SHA (CARD-0179); /health stays the literal Healthy body
+GET    /api/version                          build-time git SHA (CARD-0179) plus `capabilities` (CARD-0495 `land-v2`); /health stays the literal Healthy body
 POST   /api/diagnostics/bundle               Report-bug zip (application/zip); best-effort members + errors.txt
 ```
 

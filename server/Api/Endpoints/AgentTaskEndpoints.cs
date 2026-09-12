@@ -189,17 +189,21 @@ public static class AgentTaskEndpoints
 
         // Explicit and ordered: a succeeded Worktree task is left for review until the caller
         // chooses to land it. The request only queues deterministic git work; it never waits for it.
-        tasks.MapPost("/{id}/land", async (
-            string id,
-            LandAgentTaskRequest? request,
-            AgentTaskService service,
-            AgentTaskLandService lands,
-            CancellationToken ct) =>
-        {
-            var taskId = await service.ResolveTaskIdAsync(id, ct);
-            return Results.Accepted($"/api/agent-tasks/{taskId}",
-                await lands.RequestAsync(taskId, request ?? new LandAgentTaskRequest(), ct));
-        });
+        // CARD-0495: /land/v2 is the same handler; an old process has no v2 route at all.
+        tasks.MapPost("/{id}/land", QueueLandAsync);
+        tasks.MapPost("/{id}/land/v2", QueueLandAsync);
+    }
+
+    private static async Task<IResult> QueueLandAsync(
+        string id,
+        LandAgentTaskRequest? request,
+        AgentTaskService service,
+        AgentTaskLandService lands,
+        CancellationToken ct)
+    {
+        var taskId = await service.ResolveTaskIdAsync(id, ct);
+        return Results.Accepted($"/api/agent-tasks/{taskId}",
+            await lands.RequestAsync(taskId, request ?? new LandAgentTaskRequest(), ct));
     }
 
     private static DistillationFeedback ParseDistillationFeedback(string? verdict)

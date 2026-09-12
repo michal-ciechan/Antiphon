@@ -67,6 +67,24 @@ this server now — wait for its outcome event. A `Warning` "did not finish (ser
 re-running" is informational. The orchestrator decides the order and what a refusal means, but
 does none of those git operations itself.
 
+**Post-land server activation check (CARD-0495).** A land confirms publication, not
+server activation. Before relying on newly landed server behavior, record the landing
+receipt's verified commit, confirm the canonical checkout contains it, and check the
+running API's `GET /api/version`. A client that expects `land-v2` POSTs only
+`/api/agent-tasks/{id}/land/v2` and refuses (exit 1, zero land POSTs) when the
+marker is absent; it never falls back to `/land`. If the build does not demonstrably
+include the required change, restart from the canonical checkout with the intended
+full HEAD as `-ExpectedServerSha`, then confirm the reported SHA and a direct
+capability/feature probe. Do not treat `/health`, a runner SHA, a pushed branch, or
+a succeeded delegate as activation evidence. Use the landing receipt's post-rebase
+identity, not an assumption that the Code worktree SHA survived landing unchanged.
+An already-running descendant build is sufficient when local ancestry can be
+established and the required feature/capability is present; unknown/unrelated build
+history cannot establish activation. Record desired and observed full SHAs in the
+deployment report. After out-of-band publication, update the canonical checkout
+using the existing runbook before choosing the intended deployment HEAD. Executable
+procedure: [apphost-runbook.md](apphost-runbook.md).
+
 **Also automatic: what a stage run found.** A land op writes its own `StageOutcome` rows with no
 orchestrator action (§5). A Review/Test/Merge/Deploy delegate — or any dispatch given `-Stage`
 (§3) — is asked to end its report with a one-line `[antiphon-finding:<id> found|clean]` self-report

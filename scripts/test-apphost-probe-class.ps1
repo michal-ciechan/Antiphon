@@ -72,6 +72,7 @@ Assert-True ((Format-AppHostRestartExitName 0) -eq '0=healthy') 'C5 exit 0 is na
 Assert-True ((Format-AppHostRestartExitName 1) -eq '1=timeout/build') 'C5 exit 1 is named timeout/build'
 Assert-True ((Format-AppHostRestartExitName 3) -eq '3=refused (already unstamped)') 'C5 exit 3 is named refused'
 Assert-True ((Format-AppHostRestartExitName 4) -eq '4=DCP dependency timeout') 'C5 exit 4 is named DCP timeout'
+Assert-True ((Format-AppHostRestartExitName 5) -eq '5=server build unverified') 'C5 exit 5 is named server build unverified'
 
 # --- C6: captured child stdout includes Write-Host and the named exit ---
 $stubDir = Join-Path $env:TEMP ('apphost-probe-class-' + [guid]::NewGuid().ToString('N'))
@@ -94,6 +95,25 @@ try {
     Assert-True ($joined -match 'podman') 'C6 captured tail includes Show-DcpTimeoutVerdict podman line' $joined
 } finally {
     Remove-Item -LiteralPath $stubDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# --- C6b: captured stub exit 5 is named ---
+$stubDir5 = Join-Path $env:TEMP ('apphost-probe-class5-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $stubDir5 -Force | Out-Null
+$stub5 = Join-Path $stubDir5 'stub-restart.ps1'
+@(
+    'Write-Host "REFUSED: server build unverified (exit 5)."'
+    'exit 5'
+) | Set-Content -LiteralPath $stub5 -Encoding ASCII
+try {
+    $psExe = $null
+    try { $psExe = (Get-Process -Id $PID).Path } catch { }
+    if (-not $psExe) { $psExe = 'pwsh' }
+    $captured5 = Invoke-AppHostRestartCaptured -PowerShellExe $psExe -RestartScript $stub5
+    Assert-True ($captured5.ExitCode -eq 5) 'C6b stub exit code is 5' ("ExitCode=$($captured5.ExitCode)")
+    Assert-True ($captured5.ExitName -eq '5=server build unverified') 'C6b stub exit is named server build unverified' $captured5.ExitName
+} finally {
+    Remove-Item -LiteralPath $stubDir5 -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host ''

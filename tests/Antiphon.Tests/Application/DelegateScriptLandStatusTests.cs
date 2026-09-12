@@ -1,5 +1,3 @@
-using System.Net;
-using System.Text;
 using System.Text.Json;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -42,7 +40,10 @@ public sealed class DelegateScriptLandStatusTests
             landing = new { publication, operationId = id, verifiedSha = "verified-source", remoteSha = "observed-remote",
                 remoteConfirmedAt = publication == "Unconfirmed" ? null : "2026-09-09T00:10:00Z", cleanup = scenario == "residue-held" ? "Refused" : "Complete" },
             legacyLandReceipt = scenario == "legacy" ? new { state = "LegacyUnverified", eventId = id } : null });
-        await using var server = new Stub(body, JsonSerializer.Serialize(new { requestId = id, status = "queued", notification = scenario == "none" ? "not-required" : "tracked" }));
+        await using var server = LandApiStub.Compatible(
+            new string('e', 40),
+            v2Body: JsonSerializer.Serialize(new { requestId = id, status = "queued", notification = scenario == "none" ? "not-required" : "tracked" }),
+            taskStatusBody: body);
         var status = await DelegateScriptRunner.RunAsync(server.Url, "-Status", id.ToString());
         status.ExitCode.ShouldBe(0, status.Output); status.Output.ShouldContain("Delegate: Succeeded");
         status.Output.ShouldContain("Publication: " + publication);
@@ -55,29 +56,5 @@ public sealed class DelegateScriptLandStatusTests
         acceptance.ExitCode.ShouldBe(0, acceptance.Output); acceptance.Output.ShouldContain(id.ToString());
         acceptance.Output.ShouldContain("Publication pending"); acceptance.Output.ShouldNotContain("receipt confirmed");
         if (scenario == "none") acceptance.Output.ShouldContain("notification=not-required");
-    }
-
-    private sealed class Stub : IAsyncDisposable
-    {
-        private readonly HttpListener _listener = new();
-        private readonly Task _pump;
-        public string Url { get; }
-        public Stub(string status, string acceptance)
-        {
-            Url = EphemeralHttpListener.BindLoopback(_listener);
-            _pump = Task.Run(async () => {
-                while (_listener.IsListening)
-                {
-                    HttpListenerContext context;
-                    try { context = await _listener.GetContextAsync(); } catch (HttpListenerException) { break; } catch (ObjectDisposedException) { break; }
-                    var post = context.Request.HttpMethod == "POST";
-                    context.Response.StatusCode = post ? 202 : 200;
-                    context.Response.ContentType = "application/json";
-                    await context.Response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes(post ? acceptance : status));
-                    context.Response.Close();
-                }
-            });
-        }
-        public async ValueTask DisposeAsync() { _listener.Close(); await _pump; }
     }
 }

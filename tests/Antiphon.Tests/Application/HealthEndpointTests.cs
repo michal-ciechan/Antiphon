@@ -40,4 +40,26 @@ public class HealthEndpointTests
         // The in-process stamp agrees with the HTTP surface — the endpoint is not a second source.
         AntiphonVersion.Sha.ShouldBe(body.Version);
     }
+
+    [Test]
+    public async Task C495_VersionAdvertisesLandV2()
+    {
+        using var client = _factory.CreateClient();
+        var response = await client.GetAsync("/api/version");
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<AntiphonVersionDto>(
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        body.ShouldNotBeNull();
+        body.Version.ShouldNotBeNullOrWhiteSpace();
+        body.Version.ShouldNotBe("unknown");
+        body.Version.ShouldMatch("^[0-9a-f]{40}$");
+        body.InformationalVersion.ShouldContain(body.Version);
+        AntiphonVersion.Sha.ShouldBe(body.Version);
+        body.Capabilities.ShouldNotBeNull();
+        body.Capabilities.ShouldBe([AntiphonCapabilities.LandV2]);
+
+        var health = await client.GetAsync("/health");
+        health.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await health.Content.ReadAsStringAsync()).ShouldBe("Healthy");
+    }
 }
