@@ -157,7 +157,7 @@ public sealed class DelegationWorktreeService
         await CreateForTaskAsync(task, lease, ct);
     }
 
-    public async Task CreateForTaskAsync(AgentTask task, RepositoryLease lease, CancellationToken ct)
+    public async Task CreateForTaskAsync(AgentTask task, RepositoryLease lease, CancellationToken ct, string? startAtSha = null)
     {
         if (task.RepoPath is not { } repoPath)
             throw new ValidationException(nameof(task.RepoPath), "A worktree task needs a git repository.");
@@ -166,7 +166,7 @@ public sealed class DelegationWorktreeService
             throw new ConflictException("repository_lease_required");
 
         var identifier = $"task-{DelegationReportFormatter.Short(task.Id)}";
-        var baseRef = task.MergeTargetRef ?? "HEAD";
+        var baseRef = startAtSha ?? task.MergeTargetRef ?? "HEAD";
 
         if (task.SourceLandingOperationId is not null)
         {

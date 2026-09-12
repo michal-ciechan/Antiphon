@@ -945,6 +945,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<DateTime?>("CompletionNoteQueuedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("CompletionProgressEvidenceJson")
+                        .HasColumnType("text");
+
                     b.Property<int?>("Complexity")
                         .HasColumnType("integer");
 
@@ -1119,6 +1122,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<Guid?>("ProjectId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("ProgressBaselineJson")
+                        .HasColumnType("text");
+
                     b.Property<DateTime?>("ReadAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -1137,6 +1143,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<string>("RepoPath")
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
+
+                    b.Property<Guid?>("RepairSourceTaskId")
+                        .HasColumnType("uuid");
 
                     b.Property<int>("ReportEvidence")
                         .ValueGeneratedOnAdd()

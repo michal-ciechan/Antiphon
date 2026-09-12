@@ -115,6 +115,82 @@ public class TaskProgressPolicyFileArmTests
         arm.LastCommitAt.ShouldNotBeNull("the baseline commit is newer than a 40-minute-ago dispatch");
     }
 
+    [Test]
+    public async Task C499_R21_AFailedSubProbeMarksTheArmUnavailableAndKeepsPositives()
+    {
+        using var repo = new ScratchGitRepo("card0499-r21");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "fresh.cs"), "new\n");
+        var gitdir = Path.Combine(repo.Path, ".git");
+        var broken = Directory.CreateTempSubdirectory("card0499-r21-broken").FullName;
+        await File.WriteAllTextAsync(Path.Combine(broken, ".git"), "gitdir: " + Path.Combine(broken, "missing.git") + "\n");
+
+        var files = CreateFiles();
+        var statusFail = await files.ProbeProgressAsync(broken, DateTime.UtcNow.AddMinutes(-40), false, CancellationToken.None);
+        statusFail.Available.ShouldBeFalse();
+
+        var ok = await files.ProbeProgressAsync(repo.Path, DateTime.UtcNow.AddMinutes(-40), false, CancellationToken.None);
+        ok.Available.ShouldBeTrue();
+        ok.LastFileChangeAt.ShouldNotBeNull();
+
+        var stubStatusFail = new AgentFilesService(
+            new AppDbContext(TestDbFixture.CreateDbContextOptions()),
+            new FailingGitWorkspace(statusFails: true, logFails: false),
+            new AgentReviewCheckpointService(
+                new AppDbContext(TestDbFixture.CreateDbContextOptions()),
+                new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance),
+                NullLogger<AgentReviewCheckpointService>.Instance),
+            NullLogger<AgentFilesService>.Instance);
+        var armStatus = await stubStatusFail.ProbeProgressAsync(repo.Path, DateTime.UtcNow.AddMinutes(-40), false, CancellationToken.None);
+        armStatus.Available.ShouldBeFalse();
+
+        var stubLogFail = new AgentFilesService(
+            new AppDbContext(TestDbFixture.CreateDbContextOptions()),
+            new FailingGitWorkspace(statusFails: false, logFails: true),
+            new AgentReviewCheckpointService(
+                new AppDbContext(TestDbFixture.CreateDbContextOptions()),
+                new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance),
+                NullLogger<AgentReviewCheckpointService>.Instance),
+            NullLogger<AgentFilesService>.Instance);
+        var armLog = await stubLogFail.ProbeProgressAsync(repo.Path, DateTime.UtcNow.AddMinutes(-40), false, CancellationToken.None);
+        armLog.Available.ShouldBeFalse();
+        armLog.LastFileChangeAt.ShouldNotBeNull();
+        Directory.Delete(broken, true);
+    }
+
+    [Test]
+    public async Task C499_R22_APartialPositiveArmStillWithholdsTheStall()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedLoopAsync();
+        var arm = new WorkspaceProgressArm(
+            false, LastFileChangeAt: DateTime.UtcNow.AddMinutes(-3), LastCommitAt: null, SharedCheckout: false);
+        (await scenario.EvaluateAsync(task, arm)).ShouldBeNull();
+    }
+
+    private static AgentFilesService CreateFiles() =>
+        new(
+            new AppDbContext(TestDbFixture.CreateDbContextOptions()),
+            new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance),
+            new AgentReviewCheckpointService(
+                new AppDbContext(TestDbFixture.CreateDbContextOptions()),
+                new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance),
+                NullLogger<AgentReviewCheckpointService>.Instance),
+            NullLogger<AgentFilesService>.Instance);
+
+    private sealed class FailingGitWorkspace(bool statusFails, bool logFails) : GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance)
+    {
+        public override async Task<GitWorkspaceService.GitStrictList<GitChange>> TryGetChangesAsync(string workingDirectory, CancellationToken ct)
+            => statusFails
+                ? new(false, [], 128)
+                : await base.TryGetChangesAsync(workingDirectory, ct);
+
+        public override async Task<GitWorkspaceService.GitStrictList<GitCommit>> TryGetRecentCommitsAsync(string workingDirectory, int limit, CancellationToken ct)
+            => logFails
+                ? new(false, [], 128)
+                : await base.TryGetRecentCommitsAsync(workingDirectory, limit, ct);
+    }
+
     private sealed class Scenario : IAsyncDisposable
     {
         private readonly Guid _sessionId = Guid.NewGuid();

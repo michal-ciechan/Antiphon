@@ -1,4 +1,5 @@
 ﻿using System.Text;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -183,6 +184,25 @@ public static class DelegationReportFormatter
             sb.AppendLine();
         }
 
+        if (task.RepairSourceTaskId is Guid repairOwnerId)
+        {
+            var baseline = TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson);
+            sb.AppendLine($"Repair owner: {repairOwnerId:D} ({Short(repairOwnerId)}).");
+            if (baseline?.RepairSource is { } repair)
+            {
+                sb.AppendLine($"Source full ref: {repair.FullRef}.");
+                sb.AppendLine($"Source baseline SHA: {repair.LocalSha}.");
+            }
+            if (!string.IsNullOrWhiteSpace(task.WorktreePath))
+                sb.AppendLine($"Assigned checkout: {task.WorktreePath}.");
+            if (!string.IsNullOrWhiteSpace(task.WorktreeBranch))
+                sb.AppendLine($"Assigned branch: {task.WorktreeBranch}.");
+            sb.AppendLine(task.MergeTargetRef is { } target
+                ? $"integration: requested into {target}"
+                : "integration: not requested");
+            sb.AppendLine();
+        }
+
         if (BuildHandoff(task) is { } handoff)
             sb.AppendLine(handoff).AppendLine();
 
@@ -250,6 +270,13 @@ public static class DelegationReportFormatter
     /// <see cref="ReportingContract"/> only when <see cref="AgentTaskRoles.IsStage"/>;
     /// pinned at ≤ 700 characters.
     /// </summary>
+    public static string ProgressClaimContract(Guid taskId) =>
+        $"""
+        To claim alternate-source or remote-only progress, include this exact line before the `--- next stage ---` block:
+        `[antiphon-progress:{taskId:D} commit=<full-40-or-64-hex-sha>]`
+        Direct commits on this task's own worktree still count without it. Conflicting or malformed claims confer no credit.
+        """;
+
     public const string StageHandoffContract = """
         Close with this block immediately above the report token (required for this stage role; a missing block still settles as next=unmarked):
 
@@ -361,6 +388,9 @@ public static class DelegationReportFormatter
         var findingBlock = stage is { } s
             ? "\n" + FindingContract(taskId, s) + "\n"
             : string.Empty;
+        var progressBlock = role == AgentTaskRole.Code
+            ? "\n" + ProgressClaimContract(taskId) + "\n"
+            : string.Empty;
 
         return $"""
             --- how to report back ---
@@ -380,7 +410,7 @@ public static class DelegationReportFormatter
             If your report would run past {inlineMaxChars:N0} characters, write the full detail to
             .antiphon/task-{Short(taskId)}.md and make your final message a summary that points
             at that path.
-            {stageBlock}
+            {progressBlock}{stageBlock}
             End your final message with one line, on its own: `{ReportToken(taskId, "done")}` if the work
             is complete, `{ReportToken(taskId, "blocked")}` if you need a decision or an answer to continue,
             `{ReportToken(taskId, "failed")}` if you could not do it. Nothing after it. Without that line the

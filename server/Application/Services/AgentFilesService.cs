@@ -60,40 +60,56 @@ public sealed class AgentFilesService : IWorkspaceProgressProbe
             return new WorkspaceProgressArm(false, null, null, sharedCheckout);
 
         DateTime? lastFile = null;
+        var fileFailed = false;
         try
         {
-            foreach (var change in await _git.GetChangesAsync(workingDirectory, ct))
+            var status = await _git.TryGetChangesAsync(workingDirectory, ct);
+            if (!status.Succeeded)
+                fileFailed = true;
+            else
             {
-                var abs = Path.IsPathRooted(change.Path)
-                    ? change.Path
-                    : Path.Combine(workingDirectory, change.Path);
-                if (!File.Exists(abs))
-                    continue;
-                var mtime = File.GetLastWriteTimeUtc(abs);
-                if (mtime >= since && (lastFile is null || mtime > lastFile))
-                    lastFile = mtime;
+                foreach (var change in status.Items)
+                {
+                    var abs = Path.IsPathRooted(change.Path)
+                        ? change.Path
+                        : Path.Combine(workingDirectory, change.Path);
+                    if (!File.Exists(abs))
+                        continue;
+                    var mtime = File.GetLastWriteTimeUtc(abs);
+                    if (mtime >= since && (lastFile is null || mtime > lastFile))
+                        lastFile = mtime;
+                }
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            fileFailed = true;
             _logger.LogDebug(ex, "Workspace file probe failed in {Dir}", workingDirectory);
         }
 
         DateTime? lastCommit = null;
+        var commitFailed = false;
         try
         {
-            foreach (var commit in await _git.GetRecentCommitsAsync(workingDirectory, 50, ct))
+            var log = await _git.TryGetRecentCommitsAsync(workingDirectory, 50, ct);
+            if (!log.Succeeded)
+                commitFailed = true;
+            else
             {
-                if (commit.Date > since && (lastCommit is null || commit.Date > lastCommit))
-                    lastCommit = commit.Date;
+                foreach (var commit in log.Items)
+                {
+                    if (commit.Date > since && (lastCommit is null || commit.Date > lastCommit))
+                        lastCommit = commit.Date;
+                }
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            commitFailed = true;
             _logger.LogDebug(ex, "Workspace commit probe failed in {Dir}", workingDirectory);
         }
 
-        return new WorkspaceProgressArm(true, lastFile, lastCommit, sharedCheckout);
+        return new WorkspaceProgressArm(!fileFailed && !commitFailed, lastFile, lastCommit, sharedCheckout);
     }
 
     /// <param name="At">Checkpoint timestamp, surfaced to the UI caption. Checkpoints only.</param>

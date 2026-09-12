@@ -2865,15 +2865,15 @@ public class AgentTaskReplyIntegrationTests
         settled.Status.ShouldBe(AgentTaskStatus.Failed);
         settled.FailureCode.ShouldBe(AgentTaskFailureCode.CompletedWithoutProgress);
         settled.Result.ShouldBe(report, "the delegate's report is preserved for diagnosis");
-        settled.FailureReason.ShouldContain("no post-dispatch worktree progress");
+        settled.FailureReason.ShouldContain("no attributable post-dispatch progress");
         settled.FailureReason.ShouldContain(worktreePath);
-        settled.FailureReason.ShouldContain("0 commits");
+        settled.FailureReason.ShouldNotContain("0 commits");
         settled.WorktreePath.ShouldBe(worktreePath);
         Directory.Exists(worktreePath).ShouldBeTrue("the unmerged worktree is kept for inspection");
 
         (await verify.AgentTaskEvents.AnyAsync(
             e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Failed
-                && e.Detail.Contains("no post-dispatch worktree progress")))
+                && e.Detail.Contains("no attributable post-dispatch progress")))
             .ShouldBeTrue();
         (await verify.AgentTaskEvents.AnyAsync(
             e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Merged))
@@ -2884,10 +2884,10 @@ public class AgentTaskReplyIntegrationTests
         var incident = await verify.AgentIncidents.SingleAsync(
             i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.DelegateCompletedWithoutProgress);
         incident.Severity.ShouldBe(AlertSeverity.Error);
-        incident.Message.ShouldContain("no post-dispatch worktree progress");
+        incident.Message.ShouldContain("no attributable post-dispatch progress");
 
         var note = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parentSessionId);
-        note.Body.ShouldContain("no post-dispatch worktree progress");
+        note.Body.ShouldContain("no attributable post-dispatch progress");
         note.Body.ShouldContain("[task " + DelegationReportFormatter.Short(task.Id) + " failed]");
 
         var agent = await verify.Agents.SingleAsync(a => a.Id == agentId);
@@ -2970,6 +2970,14 @@ public class AgentTaskReplyIntegrationTests
         var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
         settled.Status.ShouldBe(AgentTaskStatus.Succeeded, "a failed git probe must not become a task failure");
         settled.FailureCode.ShouldBeNull();
+        settled.CompletionProgressEvidenceJson.ShouldNotBeNull();
+        var evidence = Antiphon.Server.Application.Dtos.TaskProgressJson.TryReadEvidence(settled.CompletionProgressEvidenceJson);
+        evidence.ShouldNotBeNull();
+        evidence!.Assessment.ShouldBe(Antiphon.Server.Application.Dtos.CompletionProgressAssessment.Indeterminate);
+        (await verify.AgentTaskEvents.AnyAsync(e =>
+            e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning
+                && e.Detail.Contains("progress=unavailable; reason=primary_checkout_missing")))
+            .ShouldBeTrue();
     }
 
     [Test]
@@ -4246,7 +4254,7 @@ public class AgentTaskReplyIntegrationTests
         DateTime? timestamp = null, string? turnEndApiCallId = null, string? stopReason = null,
         bool closingVerdict = true)
     {
-        assistantText = ApplyClosingVerdict(prompt, assistantText, closingVerdict);
+        assistantText = TurnSeeding.ApplyClosingVerdict(prompt, assistantText, closingVerdict);
         await using var db = CreateContext();
         var seq = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId)

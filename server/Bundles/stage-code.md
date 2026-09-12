@@ -6,6 +6,8 @@ INVARIANTS: Run each V-n and R-n; report every ID and actual outcome, mapping sh
 
 Report every PC-n/variant pending for Mutation and any noticed coverage gaps. Do not execute deliberate mutants by default. Mutation owns red/restore/green and missing-control discovery, including zero-PC plans. Never widen a timeout or loosen an assertion (see delegate-basics).
 
+To claim alternate-source or remote-only progress, include `[antiphon-progress:<task D guid> commit=<full-40-or-64-hex-sha>]` before the `--- next stage ---` block.
+
 next: review when implementation and ordinary V/R are complete, even with zero PCs. Ordinary read-only Review precedes land; all deliberate PCs remain pending for post-land Mutation. Include restart: server / runner / none and original landing owner in the handoff.
 
 next: code when implementation or ordinary verification remains (name it); next: decide when a human choice blocks. Do not settle next: land. Do not land the branch or deploy; the caller records the companion verification obligation and lands the original Code task after ordinary Review, then explicitly commissions SourceLanding Mutation.

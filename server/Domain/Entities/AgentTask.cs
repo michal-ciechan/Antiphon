@@ -470,6 +470,18 @@ public class AgentTask
     public string? WorktreeBaseSha { get; set; }
 
     /// <summary>
+    /// CARD-0499. The original Code/Worktree landing owner this repair is attributed against.
+    /// Historical identity; no FK — retained even if the owner row is later removed.
+    /// </summary>
+    public Guid? RepairSourceTaskId { get; set; }
+
+    /// <summary>CARD-0499. Versioned <c>ProgressBaselineSnapshot</c> JSON captured with the first dispatch claim.</summary>
+    public string? ProgressBaselineJson { get; set; }
+
+    /// <summary>CARD-0499. Versioned <c>CompletionProgressEvidence</c> JSON persisted at settlement.</summary>
+    public string? CompletionProgressEvidenceJson { get; set; }
+
+    /// <summary>
     /// CARD-0299 S2. How many times a cold Codex first-delivery <c>NoSubmitOutput</c> has
     /// already killed-and-relaunched this task. Default 0. Compared to
     /// <c>DelegationSettings.BootWedgeRelaunchLimit</c> (1).

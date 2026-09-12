@@ -160,7 +160,12 @@ public sealed record CreateAgentTaskRequest(
     /// CARD-0407. Optional caller-declared internal-decision grants. Empty/null is absent.
     /// Server provenance fields supplied here are rejected.
     /// </summary>
-    InternalDecisionPolicyRequest? InternalDecisionPolicy = null);
+    InternalDecisionPolicyRequest? InternalDecisionPolicy = null,
+    /// <summary>
+    /// CARD-0499. Full GUID of the original Code/Worktree landing owner this repair is attributed
+    /// against. Callers cannot supply an evidence directory, remote URL or baseline SHA.
+    /// </summary>
+    Guid? RepairSourceTaskId = null);
 
 public sealed record AgentTaskSummaryDto(
     Guid Id,
@@ -303,7 +308,9 @@ public sealed record AgentTaskDetailDto(
     bool VerificationBranchRemoved = false,
     IReadOnlyList<VerificationExecutionDetailDto>? VerificationExecutions = null,
     string? InternalDecisionPolicyJson = null,
-    string? InternalDecisionPolicyHash = null);
+    string? InternalDecisionPolicyHash = null,
+    Guid? RepairSourceTaskId = null,
+    ProgressEvidenceDto? ProgressEvidence = null);
 
 /// <summary>One accepted launch attempt for a sourced Mutation snapshot. Receipt bytes stay on the server.</summary>
 public sealed record VerificationExecutionDetailDto(
