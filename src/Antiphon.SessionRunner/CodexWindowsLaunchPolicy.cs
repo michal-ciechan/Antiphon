@@ -174,7 +174,7 @@ internal static class CodexWindowsLaunchPolicy
         string cwd,
         int budget)
     {
-        var jsPath = Path.GetFullPath(originalArgs[0]);
+        var jsPath = Path.GetFullPath(originalArgs[0], cwd);
         if (!File.Exists(jsPath))
         {
             throw Unavailable(
@@ -395,7 +395,9 @@ internal static class CodexWindowsLaunchPolicy
             yield return resolved;
 
         var fileName = Path.GetFileName(exe);
-        var cmdName = HasCmdExtension(fileName) ? fileName : "codex.cmd";
+        var cmdName = HasCmdExtension(fileName)
+            ? fileName
+            : Path.GetFileNameWithoutExtension(fileName) + ".cmd";
         foreach (var dir in PathEntries(cwd, env))
             yield return Path.Combine(dir, cmdName);
     }

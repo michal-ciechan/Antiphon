@@ -360,6 +360,59 @@ public sealed class CodexWindowsLaunchPolicyTests
         effective.Exe.ShouldBe(request.Exe);
     }
 
+    [Test]
+    public void A_path_based_custom_exe_is_not_replaced_by_a_stock_npm_shim_on_PATH()
+    {
+        using var layout = new CodexNpmLayout();
+        var customDir = Path.Combine(layout.Root, "custom-bin");
+        Directory.CreateDirectory(customDir);
+        File.WriteAllBytes(Path.Combine(customDir, "codex-custom.exe"), []);
+
+        var cwd = Path.Combine(layout.Root, "session-cwd");
+        Directory.CreateDirectory(cwd);
+        File.Exists(Path.Combine(cwd, "codex-custom.exe")).ShouldBeFalse();
+        File.Exists(Path.Combine(layout.Root, "codex.cmd")).ShouldBeTrue();
+
+        var args = new[] { "--no-alt-screen", "-c", "developer_instructions=keep-custom" };
+        var request = CodexRequest(
+            "codex-custom.exe",
+            args,
+            cwd,
+            env: new Dictionary<string, string>
+            {
+                ["PATH"] = customDir + Path.PathSeparator + layout.Root,
+            });
+
+        var effective = CodexWindowsLaunchPolicy.Apply(request, useHerdr: false);
+
+        effective.Exe.ShouldBe("codex-custom.exe");
+        effective.Args.ShouldBe(args);
+        effective.Exe.ShouldNotBe(layout.SiblingNodePath);
+        effective.Args[0].ShouldNotBe(layout.JsPath);
+    }
+
+    [Test]
+    public void Relative_direct_node_codex_js_resolves_against_request_cwd()
+    {
+        using var layout = new CodexNpmLayout();
+        var relativeJs = Path.GetRelativePath(layout.Root, layout.JsPath);
+        Path.IsPathRooted(relativeJs).ShouldBeFalse();
+        layout.Root.ShouldNotBe(Environment.CurrentDirectory);
+
+        var ambient = Path.GetFullPath(relativeJs);
+        var againstCwd = Path.GetFullPath(relativeJs, layout.Root);
+        ambient.ShouldNotBe(againstCwd);
+        File.Exists(ambient).ShouldBeFalse();
+        File.Exists(againstCwd).ShouldBeTrue();
+
+        var args = new[] { relativeJs, "--no-alt-screen" };
+        var request = CodexRequest(layout.SiblingNodePath!, args, layout.Root);
+
+        var effective = CodexWindowsLaunchPolicy.Apply(request, useHerdr: false);
+        effective.Exe.ShouldBe(request.Exe);
+        effective.Args.ShouldBe(args);
+    }
+
     private static string CodexLaunchArgsDisablePasteBurst() => "disable_paste_burst=true";
 
     private static RunnerLaunchRequest CodexRequest(
