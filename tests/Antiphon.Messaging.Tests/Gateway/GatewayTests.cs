@@ -1,7 +1,9 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Antiphon.Messaging;
 using Antiphon.Messaging.Gateway;
 using Antiphon.Messaging.Gateway.Testing;
+using Antiphon.Messaging.Tests.Service;
 using Confluent.Kafka;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -37,6 +39,39 @@ public sealed class GatewayTests
 
         adapter.Starts.ShouldBeGreaterThanOrEqualTo(2);
         logs.ShouldContain(l => l.Contains("[ingress]") && l.Contains("receive stream faulted"));
+    }
+
+    [Test]
+    public async Task Ingress_keeps_pumping_after_a_duplicate_key_receipt_sink_failure()
+    {
+        var first = SampleMessage(conversationId: "chat-1", channelMessageId: "662");
+        var second = SampleMessage(conversationId: "chat-1", channelMessageId: "663");
+        var adapter = new QueueAdapter([first, second]);
+        var producer = new CapturingProducer();
+        var sink = new FirstThrowSink(EfInboxReceiptStoreTests.DuplicateInboxException());
+        var logs = new List<string>();
+        var sut = new GatewayIngressService(
+            [adapter],
+            producer,
+            Options.Create(new AntiphonGatewayOptions()),
+            new ListLogger<GatewayIngressService>(logs),
+            [sink]);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await sut.StartAsync(cts.Token);
+
+        var deadline = DateTime.UtcNow.AddSeconds(3);
+        while (DateTime.UtcNow < deadline && producer.Records.Count < 2)
+            await Task.Delay(20);
+
+        await cts.CancelAsync();
+        await sut.StopAsync(CancellationToken.None);
+
+        producer.Records.Count.ShouldBe(2);
+        sink.Calls.ShouldBe(2);
+        sink.Recorded.ShouldBe(["663"]);
+        logs.ShouldContain(l => l.Contains("[ingress] receipt sink failed") && l.Contains("662"));
+        logs.ShouldNotContain(l => l.Contains("receive stream faulted"));
     }
 
     [Test]
@@ -140,11 +175,11 @@ public sealed class GatewayTests
         replies.ShouldHaveSingleItem().Text.ShouldBe("pong");
     }
 
-    private static ChannelMessage SampleMessage(string conversationId) => new()
+    private static ChannelMessage SampleMessage(string conversationId, string channelMessageId = "1") => new()
     {
         Id = "id-1",
         Channel = "telegram",
-        ChannelMessageId = "1",
+        ChannelMessageId = channelMessageId,
         Conversation = new Conversation { Id = conversationId, Kind = ConversationKind.Direct },
         Author = new Participant { Id = "user-1" },
         Timestamp = DateTimeOffset.UnixEpoch,
@@ -173,6 +208,39 @@ public sealed class GatewayTests
 
         public Task<SendResult> SendAsync(ChannelReply reply, CancellationToken cancellationToken) =>
             Task.FromResult(SendResult.Sent());
+    }
+
+    private sealed class QueueAdapter(IReadOnlyList<ChannelMessage> messages) : IChannelAdapter
+    {
+        public string Channel => messages[0].Channel;
+        public ChannelCapabilities Capabilities => new() { Channel = Channel };
+
+        public async IAsyncEnumerable<ChannelMessage> ReceiveAsync(
+            [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            foreach (var message in messages)
+                yield return message;
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+        }
+
+        public Task<SendResult> SendAsync(ChannelReply reply, CancellationToken cancellationToken) =>
+            Task.FromResult(SendResult.Sent());
+    }
+
+    private sealed class FirstThrowSink(Exception first) : IInboundReceiptSink
+    {
+        public int Calls;
+        public List<string> Recorded { get; } = [];
+
+        public Task RecordAsync(
+            ChannelMessage message, string envelopeJson, string topic, int partition, long offset, CancellationToken cancellationToken)
+        {
+            var n = Interlocked.Increment(ref Calls);
+            if (n == 1)
+                throw first;
+            Recorded.Add(message.ChannelMessageId);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class OneShotAdapter(ChannelMessage message) : IChannelAdapter

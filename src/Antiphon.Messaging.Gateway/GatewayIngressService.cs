@@ -77,6 +77,7 @@ public sealed class GatewayIngressService : BackgroundService
                             }
                             catch (Exception sinkEx) when (sinkEx is not OperationCanceledException)
                             {
+                                // One receipt failure must not kill the ingress pump (CARD-0503).
                                 _logger.LogWarning(sinkEx,
                                     "[ingress] receipt sink failed for {Channel} {MessageId}",
                                     adapter.Channel, message.ChannelMessageId);

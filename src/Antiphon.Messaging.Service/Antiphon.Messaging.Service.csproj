@@ -24,4 +24,8 @@
     </PackageReference>
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Antiphon.Messaging.Tests" />
+  </ItemGroup>
+
 </Project>
