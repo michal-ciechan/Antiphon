@@ -4,7 +4,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Antiphon.Messaging.Service;
 
-public sealed class EfInboxReceiptStore(IServiceScopeFactory scopeFactory) : IInboxReceiptStore, IInboundReceiptSink
+public sealed class EfInboxReceiptStore(
+    IServiceScopeFactory scopeFactory,
+    ILogger<EfInboxReceiptStore> logger) : IInboxReceiptStore, IInboundReceiptSink
 {
     public async Task RecordAsync(
         ChannelMessage message, string envelopeJson, string topic, int partition, long offset, CancellationToken cancellationToken)
@@ -44,7 +46,18 @@ public sealed class EfInboxReceiptStore(IServiceScopeFactory scopeFactory) : IIn
             Partition = partition,
             Offset = offset,
         });
-        await db.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (InboxUniqueConstraint.IsViolation(ex))
+        {
+            logger.LogDebug(
+                ex,
+                "[inbox] duplicate receipt for {Channel} {MessageId} ignored",
+                message.Channel,
+                message.ChannelMessageId);
+        }
     }
 
     public async Task<IReadOnlyList<InboundReceipt>> GetOverdueAsync(DateTimeOffset cutoff, CancellationToken cancellationToken)

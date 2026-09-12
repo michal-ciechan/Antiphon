@@ -2,14 +2,13 @@ using System.Text.Json;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Gateway;
 using Confluent.Kafka;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Messaging.Service;
 
 /// <summary>Consumes the inbound topic and persists each message to the Postgres inbox (idempotent).</summary>
 public sealed class InboxConsumerService(
-    IServiceScopeFactory scopeFactory,
+    IInboundReceiptSink sink,
     IOptions<AntiphonGatewayOptions> options,
     JsonSerializerOptions json,
     ILogger<InboxConsumerService> logger) : BackgroundService
@@ -66,7 +65,17 @@ public sealed class InboxConsumerService(
                 }
 
                 if (message is not null)
-                    await PersistAsync(message, result, ct);
+                {
+                    try
+                    {
+                        await PersistAsync(message, result, ct);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        logger.LogWarning(ex, "[inbox] persist failed for {Channel} {MessageId}",
+                            message.Channel, message.ChannelMessageId);
+                    }
+                }
             }
         }
         finally
@@ -77,45 +86,8 @@ public sealed class InboxConsumerService(
 
     private async Task PersistAsync(ChannelMessage message, ConsumeResult<string, string> result, CancellationToken ct)
     {
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<MessagingDbContext>();
-        var envelopeJson = result.Message.Value;
-
-        var existing = await db.Inbox.FirstOrDefaultAsync(
-            x => x.Channel == message.Channel && x.ChannelMessageId == message.ChannelMessageId, ct);
-        if (existing is not null)
-        {
-            if (existing.Offset is null)
-            {
-                existing.Topic = result.Topic;
-                existing.Partition = result.Partition.Value;
-                existing.Offset = result.Offset.Value;
-                await db.SaveChangesAsync(ct);
-            }
-            return;
-        }
-
-        db.Inbox.Add(new InboxMessage
-        {
-            Id = Guid.NewGuid(),
-            Channel = message.Channel,
-            ChannelMessageId = message.ChannelMessageId,
-            ConversationId = message.Conversation.Id,
-            ConversationTitle = message.Conversation.Title,
-            AuthorDisplay = message.Author.DisplayName,
-            Text = message.Text,
-            MentionsMe = message.Mentions.Any(m => m.IsMe),
-            HasAttachments = message.Attachments.Count > 0,
-            ReplyHandle = message.ReplyHandle,
-            Status = InboxStatus.Pending,
-            ReceivedAt = message.Timestamp.ToUniversalTime(),
-            EnvelopeJson = envelopeJson,
-            Topic = result.Topic,
-            Partition = result.Partition.Value,
-            Offset = result.Offset.Value,
-        });
-
-        await db.SaveChangesAsync(ct);
+        await sink.RecordAsync(
+            message, result.Message.Value, result.Topic, result.Partition.Value, result.Offset.Value, ct);
         logger.LogInformation("[inbox] stored {Channel} {MessageId} {Topic}/{Partition}:{Offset}",
             message.Channel, message.ChannelMessageId, result.Topic, result.Partition.Value, result.Offset.Value);
     }
