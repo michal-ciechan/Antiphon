@@ -509,9 +509,11 @@ function Test-T16 {
         $output = @(& pwsh -NoProfile -File $deploy -TimeoutSec 2 2>&1 | ForEach-Object { $_.ToString() })
         $code = $LASTEXITCODE
         $text = $output -join "`n"
-        $last = @($output | Where-Object { $_ -match 'DEPLOY VERDICT:' } | Select-Object -Last 1)
+        $verdictLines = @($output | Where-Object { $_ -match 'DEPLOY VERDICT:' })
+        $lastLine = ''
+        if ($verdictLines.Count -gt 0) { $lastLine = [string]$verdictLines[-1] }
         Assert-True ($code -eq 1) 'T16 deploy exit 1' ("exit=$code; $text")
-        Assert-True ($last -eq 'DEPLOY VERDICT: failed restart-apphost.ps1 exited 5') 'T16 last line failed exit 5' ($last -join ';')
+        Assert-True ($lastLine -eq 'DEPLOY VERDICT: failed restart-apphost.ps1 exited 5') 'T16 last line failed exit 5' $lastLine
         Assert-True (-not (Test-Path -LiteralPath (Join-Path $fx.Root 'verify-invoked.txt'))) 'T16 verify-dev-stack not invoked'
     } finally {
         Remove-Item Env:ANTIPHON_APPHOST_TEST_SEAMS -ErrorAction SilentlyContinue
