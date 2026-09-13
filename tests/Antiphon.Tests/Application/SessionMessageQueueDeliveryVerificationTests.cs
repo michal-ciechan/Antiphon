@@ -149,8 +149,10 @@ public class SessionMessageQueueDeliveryVerificationTests
         await using var h = await CreateHarnessAsync(alwaysOn: true);
         const string body = "deferred body without retained generation";
         h.Adapter.RenderedScreenOverride = body;
+        h.Adapter.EchoTypedInputToScreen = false;
         h.Adapter.OnSubmitted = _ => Task.CompletedTask;
-        await h.SeedPendingMessageAsync(body, deliveryAttempts: 1);
+        var floor = await h.CurrentTranscriptMaxSequenceAsync();
+        await h.SeedPendingMessageAsync(body, deliveryAttempts: 1, baselineSequence: floor);
 
         await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
 
