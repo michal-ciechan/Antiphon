@@ -89,6 +89,13 @@ public class Agent
     public PolicyRefreshMode? PolicyRefreshMode { get; set; }
 
     /// <summary>
+    /// Optional Claude native-import mode for pinned instructions (CARD-0262 D4). Default
+    /// <see cref="PinClaudeImportMode.Unverified"/>. Never disables mandatory per-agent files.
+    /// Operator-only via agent PATCH; pin capture routes cannot change it.
+    /// </summary>
+    public PinClaudeImportMode PinClaudeImportMode { get; set; } = PinClaudeImportMode.Unverified;
+
+    /// <summary>
     /// Per-agent override of <c>ContextCompactionSettings.Enabled</c> (CARD-0082).
     /// Null = use the installation default. The first override an operator wants is "off for this one".
     /// </summary>

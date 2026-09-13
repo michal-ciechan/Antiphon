@@ -134,7 +134,8 @@ public sealed record AgentDetailDto(
     // CARD-0384: optional herdr placement labels. Null = unpinned / project default.
     string? HerdrWorkspaceLabel = null,
     string? HerdrTabLabel = null,
-    Guid? StandingSpecialistOwnerId = null);
+    Guid? StandingSpecialistOwnerId = null,
+    PinClaudeImportMode PinClaudeImportMode = PinClaudeImportMode.Unverified);
 
 /// <summary>
 /// What of a live session's standing instructions the repo has moved past (CARD-0334).
@@ -393,7 +394,9 @@ public sealed record UpdateAgentRequest(
     PolicyRefreshMode? PolicyRefreshMode = null,
     // CARD-0384. Null = leave unchanged; empty/whitespace = clear. Same contract as SystemPromptAppend.
     string? HerdrWorkspaceLabel = null,
-    string? HerdrTabLabel = null);
+    string? HerdrTabLabel = null,
+    // CARD-0262. Null = leave unchanged. Operator-only; a present task-token header on PATCH is 403.
+    PinClaudeImportMode? PinClaudeImportMode = null);
 
 /// <summary>CARD-0334 S3. Body of <c>POST /api/agents/{id}/refresh-policy</c>.</summary>
 public sealed record RefreshPolicyRequest(bool Force = false);

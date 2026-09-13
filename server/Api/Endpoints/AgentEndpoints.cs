@@ -99,9 +99,18 @@ public static class AgentEndpoints
         agents.MapPatch("/{id:guid}", async (
             Guid id,
             UpdateAgentRequest request,
+            HttpContext http,
             AgentService service,
             CancellationToken cancellationToken) =>
         {
+            if (request.PinClaudeImportMode is not null
+                && http.Request.Headers.ContainsKey(AgentTaskEndpoints.TokenHeader))
+            {
+                throw new Antiphon.Server.Application.Exceptions.ForbiddenException(
+                    "Only the operator can change pinClaudeImportMode.",
+                    "pin_caller_mismatch");
+            }
+
             return Results.Ok(await service.UpdateAsync(id, request, cancellationToken));
         });
 

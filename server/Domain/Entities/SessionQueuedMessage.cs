@@ -15,6 +15,10 @@ public class SessionQueuedMessage
     /// <summary>Deadline/identity of an optional specialist brief, never a completion note.</summary>
     public DateTime? ExecutionDeadlineAt { get; set; }
     public Guid? ExecutionTaskId { get; set; }
+    public string? PinRefreshKey { get; set; }
+    public int? PinRequestedRevision { get; set; }
+    public string? PinRequestedHash { get; set; }
+    public int? PinRequestedLocationGeneration { get; set; }
     public string? RulesRefreshKey { get; set; }
     public string? RulesReceiptJson { get; set; }
     public DateTime? RulesDeadlineAt { get; set; }

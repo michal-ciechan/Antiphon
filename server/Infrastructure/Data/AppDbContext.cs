@@ -85,6 +85,12 @@ public class AppDbContext : DbContext
     public DbSet<CapacityRecoveryWait> CapacityRecoveryWaits => Set<CapacityRecoveryWait>();
     public DbSet<CapacityRecoveryWaitHold> CapacityRecoveryWaitHolds => Set<CapacityRecoveryWaitHold>();
     public DbSet<CapacityRecoveryProviderState> CapacityRecoveryProviderStates => Set<CapacityRecoveryProviderState>();
+    public DbSet<AgentPinnedInstruction> AgentPinnedInstructions => Set<AgentPinnedInstruction>();
+    public DbSet<AgentPinnedInstructionState> AgentPinnedInstructionStates => Set<AgentPinnedInstructionState>();
+    public DbSet<AgentPinReconciliation> AgentPinReconciliations => Set<AgentPinReconciliation>();
+    public DbSet<AgentPinProjection> AgentPinProjections => Set<AgentPinProjection>();
+    public DbSet<AgentPinOperation> AgentPinOperations => Set<AgentPinOperation>();
+    public DbSet<AgentPinCleanupRecord> AgentPinCleanupRecords => Set<AgentPinCleanupRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -842,6 +848,9 @@ public class AppDbContext : DbContext
             // database default would make EF omit an explicit Auto from INSERT (same trap as
             // ReplyStyle / ModelLevel). Existing rows stay null, which IS Auto.
             entity.Property(a => a.PolicyRefreshMode);
+            // CARD-0262. Unverified IS 0, so no HasDefaultValue — EF would omit an explicit Unverified
+            // from INSERT (same trap as ReplyStyle / ModelLevel). The entity initializer is Unverified.
+            entity.Property(a => a.PinClaudeImportMode).IsRequired();
             // Unlike the two above, a default IS wanted here — ClaudeCode is 1, not 0, so the EF
             // sentinel (default(AgentKind) == Raw) can never collide with a legitimately chosen
             // value, and the column default is what states the FACT that every pre-CARD-0084 agent
@@ -1112,6 +1121,9 @@ public class AppDbContext : DbContext
             entity.Property(s => s.SessionBackend).IsRequired();
             entity.Property(s => s.Status).IsRequired();
             entity.Property(s => s.Cwd).IsRequired().HasMaxLength(1000);
+            entity.Property(s => s.PinLaunchHash).HasMaxLength(64);
+            entity.Property(s => s.PinLaunchAbsolutePath).HasMaxLength(2000);
+            entity.Property(s => s.PinLastNotifiedHash).HasMaxLength(64);
             entity.Property(s => s.Cols).IsRequired();
             entity.Property(s => s.Rows).IsRequired();
             entity.Property(s => s.CreatedAt).IsRequired();
@@ -1228,6 +1240,12 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<SessionQueuedMessage>(entity =>
         {
+            entity.Property(m => m.PinRefreshKey).HasMaxLength(80);
+            entity.Property(m => m.PinRequestedHash).HasMaxLength(64);
+            entity.HasIndex(m => new { m.AgentSessionId, m.PinRefreshKey })
+                .IsUnique()
+                .HasFilter("\"PinRefreshKey\" IS NOT NULL")
+                .HasDatabaseName("IX_SessionQueuedMessages_AgentSessionId_PinRefreshKey");
             entity.Property(m => m.RulesRefreshKey).HasMaxLength(80);
             entity.Property(m => m.RulesReceiptJson).HasColumnType("jsonb");
             entity.HasIndex(m => new { m.AgentSessionId, m.RulesRefreshKey }).IsUnique();
@@ -2148,6 +2166,126 @@ public class AppDbContext : DbContext
             entity.HasKey(s => s.Kind);
             entity.Property(s => s.LastActionKey).HasMaxLength(80);
             entity.Property(s => s.GrantedActionKey).HasMaxLength(80);
+        });
+
+        modelBuilder.Entity<AgentPinnedInstruction>(entity =>
+        {
+            entity.ToTable("AgentPinnedInstructions");
+            entity.HasKey(p => p.Id);
+            entity.Property(p => p.Text).IsRequired().HasMaxLength(AgentPinnedInstruction.MaxTextLength);
+            entity.Property(p => p.Source).IsRequired();
+            entity.Property(p => p.SourceNamespace).HasMaxLength(AgentPinnedInstruction.MaxSourceNamespaceLength);
+            entity.Property(p => p.SourceKey).HasMaxLength(AgentPinnedInstruction.MaxSourceKeyLength);
+            entity.Property(p => p.SourceRef).HasMaxLength(AgentPinnedInstruction.MaxSourceRefLength);
+            entity.Property(p => p.CreatedAt).IsRequired();
+            entity.HasIndex(p => p.AgentId).HasDatabaseName("IX_AgentPinnedInstructions_AgentId");
+            entity.HasIndex(p => new { p.AgentId, p.SourceNamespace, p.SourceKey })
+                .IsUnique()
+                .HasFilter("\"RevokedAt\" IS NULL AND \"SourceNamespace\" IS NOT NULL AND \"SourceKey\" IS NOT NULL")
+                .HasDatabaseName("IX_AgentPinnedInstructions_ActiveSource");
+            entity.HasOne(p => p.Agent)
+                .WithMany()
+                .HasForeignKey(p => p.AgentId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AgentPinnedInstructionState>(entity =>
+        {
+            entity.ToTable("AgentPinnedInstructionStates");
+            entity.HasKey(s => s.AgentId);
+            entity.Property(s => s.Revision).IsRequired();
+            entity.Property(s => s.ConcurrencyToken).IsConcurrencyToken();
+            entity.Property(s => s.ContentHash).IsRequired().HasMaxLength(64);
+            entity.Property(s => s.FirstUsedAt).IsRequired();
+            entity.Property(s => s.UpdatedAt).IsRequired();
+            entity.HasOne(s => s.Agent)
+                .WithOne()
+                .HasForeignKey<AgentPinnedInstructionState>(s => s.AgentId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AgentPinReconciliation>(entity =>
+        {
+            entity.ToTable("AgentPinReconciliations");
+            entity.HasKey(r => r.AgentId);
+            entity.Property(r => r.DesiredRevision).IsRequired();
+            entity.Property(r => r.DesiredHash).IsRequired().HasMaxLength(64);
+            entity.Property(r => r.Status).IsRequired();
+            entity.Property(r => r.Error).HasMaxLength(1000);
+            entity.Property(r => r.UpdatedAt).IsRequired();
+            entity.HasOne(r => r.Agent)
+                .WithOne()
+                .HasForeignKey<AgentPinReconciliation>(r => r.AgentId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AgentPinProjection>(entity =>
+        {
+            entity.ToTable("AgentPinProjections");
+            entity.HasKey(p => p.Id);
+            entity.Property(p => p.CanonicalHost).IsRequired().HasMaxLength(200);
+            entity.Property(p => p.CanonicalCwd).IsRequired().HasMaxLength(1000);
+            entity.Property(p => p.PathSchemaVersion).IsRequired();
+            entity.Property(p => p.TargetRelativePath).IsRequired().HasMaxLength(400);
+            entity.Property(p => p.TargetAbsolutePath).IsRequired().HasMaxLength(1400);
+            entity.Property(p => p.LocationGeneration).IsRequired();
+            entity.Property(p => p.DesiredRevision).IsRequired();
+            entity.Property(p => p.LastWrittenByteHash).HasMaxLength(64);
+            entity.Property(p => p.MarkerVersion).IsRequired();
+            entity.Property(p => p.Status).IsRequired();
+            entity.Property(p => p.Error).HasMaxLength(1000);
+            entity.Property(p => p.ImportStatus).IsRequired();
+            entity.Property(p => p.ImportMode).IsRequired();
+            entity.Property(p => p.ImportTarget).HasMaxLength(1400);
+            entity.Property(p => p.IntendedBeforeHash).HasMaxLength(64);
+            entity.Property(p => p.IntendedAfterHash).HasMaxLength(64);
+            entity.Property(p => p.CreatedAt).IsRequired();
+            entity.Property(p => p.UpdatedAt).IsRequired();
+            entity.HasIndex(p => new { p.AgentId, p.CanonicalHost, p.CanonicalCwd })
+                .IsUnique()
+                .HasDatabaseName("IX_AgentPinProjections_AgentHostCwd");
+            entity.HasIndex(p => new { p.CanonicalHost, p.TargetAbsolutePath })
+                .IsUnique()
+                .HasDatabaseName("IX_AgentPinProjections_HostTarget");
+            entity.HasOne(p => p.Agent)
+                .WithMany()
+                .HasForeignKey(p => p.AgentId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AgentPinOperation>(entity =>
+        {
+            entity.ToTable("AgentPinOperations");
+            entity.HasKey(o => o.Id);
+            entity.Property(o => o.RequestId).IsRequired();
+            entity.Property(o => o.Kind).IsRequired();
+            entity.Property(o => o.Fingerprint).IsRequired().HasMaxLength(64);
+            entity.Property(o => o.ResultHash).IsRequired().HasMaxLength(64);
+            entity.Property(o => o.CreatedAt).IsRequired();
+            entity.HasIndex(o => new { o.AgentId, o.RequestId })
+                .IsUnique()
+                .HasDatabaseName("IX_AgentPinOperations_AgentId_RequestId");
+            entity.HasOne(o => o.Agent)
+                .WithMany()
+                .HasForeignKey(o => o.AgentId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AgentPinCleanupRecord>(entity =>
+        {
+            entity.ToTable("AgentPinCleanupRecords");
+            entity.HasKey(c => c.Id);
+            entity.Property(c => c.OriginalAgentId).IsRequired();
+            entity.Property(c => c.CanonicalHost).IsRequired().HasMaxLength(200);
+            entity.Property(c => c.CanonicalCwd).IsRequired().HasMaxLength(1000);
+            entity.Property(c => c.TargetRelativePath).IsRequired().HasMaxLength(400);
+            entity.Property(c => c.TargetAbsolutePath).IsRequired().HasMaxLength(1400);
+            entity.Property(c => c.PathSchemaVersion).IsRequired();
+            entity.Property(c => c.Status).IsRequired();
+            entity.Property(c => c.Error).HasMaxLength(1000);
+            entity.Property(c => c.CreatedAt).IsRequired();
+            entity.HasIndex(c => c.OriginalAgentId)
+                .HasDatabaseName("IX_AgentPinCleanupRecords_OriginalAgentId");
         });
 
     }

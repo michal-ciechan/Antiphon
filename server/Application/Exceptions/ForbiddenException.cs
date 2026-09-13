@@ -9,4 +9,9 @@ public class ForbiddenException : HttpException
         : base(403, message)
     {
     }
+
+    public ForbiddenException(string message, string code)
+        : base(403, message, code)
+    {
+    }
 }

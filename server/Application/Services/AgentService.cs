@@ -38,6 +38,7 @@ public sealed class AgentService
     private readonly ISessionRunnerClient? _runnerClient;
     private readonly SessionRunnerSettings _runnerSettings;
     private readonly PolicyRefreshSettings _policyRefresh;
+    private readonly AgentPinnedInstructionService? _pins;
 
     public AgentService(
         AppDbContext db,
@@ -52,7 +53,8 @@ public sealed class AgentService
         IOptions<ContextWindowSettings>? contextWindow = null,
         ISessionRunnerClient? runnerClient = null,
         IOptions<SessionRunnerSettings>? runnerSettings = null,
-        IOptions<SupervisionSettings>? supervision = null)
+        IOptions<SupervisionSettings>? supervision = null,
+        AgentPinnedInstructionService? pins = null)
     {
         _db = db;
         _workflowRunFactory = workflowRunFactory;
@@ -65,6 +67,7 @@ public sealed class AgentService
         _runnerClient = runnerClient;
         _runnerSettings = runnerSettings?.Value ?? new SessionRunnerSettings();
         _policyRefresh = supervision?.Value.PolicyRefresh ?? new PolicyRefreshSettings();
+        _pins = pins;
     }
 
     public async Task<IReadOnlyList<AgentSummaryDto>> GetAllAsync(CancellationToken ct)
@@ -608,6 +611,7 @@ public sealed class AgentService
             request.RemoteControlEnabled ?? agent.RemoteControlEnabled,
             $"agent '{agent.Name}'");
 
+        var previousCwd = agent.WorkingDirectory;
         agent.Name = request.Name.Trim();
         agent.Slug = await UniqueSlugAsync(Slugify(request.Name), agent.Id, ct);
         agent.WorkingDirectory = request.WorkingDirectory.Trim();
@@ -672,6 +676,8 @@ public sealed class AgentService
             agent.HerdrWorkspaceLabel = NormalizeHerdrLabel(request.HerdrWorkspaceLabel, nameof(request.HerdrWorkspaceLabel));
         if (request.HerdrTabLabel is not null)
             agent.HerdrTabLabel = NormalizeHerdrLabel(request.HerdrTabLabel, nameof(request.HerdrTabLabel));
+        if (request.PinClaudeImportMode is { } pinClaudeImportMode)
+            agent.PinClaudeImportMode = pinClaudeImportMode;
         agent.UpdatedAt = UtcNow();
 
         if (specialistIdentityChanged)
@@ -681,6 +687,9 @@ public sealed class AgentService
                         ? StandingSpecialistCandidateStatus.Quarantined : StandingSpecialistCandidateStatus.Unqualified), ct);
         await SaveChangesOrConflictAsync($"Agent '{agent.Name}' was modified by another operation.", ct);
         if (specialistTransaction is not null) await specialistTransaction.CommitAsync(ct);
+        if (_pins is not null
+            && !string.Equals(previousCwd, agent.WorkingDirectory, StringComparison.OrdinalIgnoreCase))
+            await _pins.OnWorkingDirectoryChangedAsync(agent, previousCwd, ct);
         await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
 
         return await GetByIdAsync(agent.Id, ct);
@@ -807,6 +816,8 @@ public sealed class AgentService
             await SaveChangesOrConflictAsync($"Agent '{agent.Name}' was modified by another operation.", ct);
 
         _db.CardWorkflowRuns.RemoveRange(runs);
+        if (_pins is not null)
+            await _pins.PreserveCleanupOnDeleteAsync(id, ct);
         _db.Agents.Remove(agent);
         await SaveChangesOrConflictAsync($"Agent '{agent.Name}' was modified by another operation.", ct);
         if (specialistTransaction is not null) await specialistTransaction.CommitAsync(ct);
@@ -1273,7 +1284,8 @@ public sealed class AgentService
             drift,
             agent.HerdrWorkspaceLabel,
             agent.HerdrTabLabel,
-            agent.StandingSpecialistOwnerId);
+            agent.StandingSpecialistOwnerId,
+            agent.PinClaudeImportMode);
     }
 
     private static (AgentTuiConfiguredSelectionDto? Configured, AgentTuiLiveSessionSelectionDto? Live)
