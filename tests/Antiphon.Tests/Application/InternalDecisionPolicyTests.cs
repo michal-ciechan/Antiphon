@@ -295,29 +295,34 @@ public sealed class InternalDecisionPolicyTests
 
     private static InternalDecisionPolicyRequest BuildCanonicalSizedPolicy(int targetLength)
     {
-        var probe = SizedPreserve(1);
-        var baseline = DocumentLength(probe);
-        var preserve = 1 + (targetLength - baseline);
-        preserve.ShouldBeGreaterThan(0);
-        var request = SizedPreserve(preserve);
+        var probe = OneGrant("pad/a.ps1", "keep");
+        var extra = targetLength - DocumentLength(probe);
+        extra.ShouldBeGreaterThan(0);
+        var request = OneGrant("pad/" + new string('x', extra + 1) + ".ps1", "keep");
         DocumentLength(request).ShouldBe(targetLength);
         return request;
     }
 
-    private static InternalDecisionPolicyRequest SizedPreserve(int preserveChars) =>
-        InternalDecisionFixtures.Sample(
-            id: "pad",
-            categories: [InternalDecisionCategory.LineEndings],
-            paths: ["a.ps1"],
-            attributeTargets: null,
-            preserve: new string('x', preserveChars));
+    private static InternalDecisionPolicyRequest OneGrant(string path, string preserve) =>
+        new(1,
+        [
+            new InternalDecisionGrantRequest(
+                "pad",
+                [InternalDecisionCategory.LineEndings],
+                [path],
+                null,
+                preserve),
+        ]);
 
     private static int DocumentLength(InternalDecisionPolicyRequest request)
     {
-        var grant = request.Grants![0];
-        var stored = new StoredInternalDecisionGrant(
-            grant.Id!, grant.Categories!, grant.Paths!, grant.AttributeTargets, grant.Preserve!);
-        var document = new { version = request.Version, grants = new[] { stored } };
+        var storedGrants = request.Grants!.Select(grant => new StoredInternalDecisionGrant(
+            grant.Id!,
+            grant.Categories!.OrderBy(c => (int)c).ToArray(),
+            grant.Paths!,
+            grant.AttributeTargets,
+            grant.Preserve!)).ToArray();
+        var document = new { version = request.Version, grants = storedGrants };
         return JsonSerializer.Serialize(document, InternalDecisionPolicy.JsonOptions).Length;
     }
 

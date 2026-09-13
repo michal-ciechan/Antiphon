@@ -692,14 +692,14 @@ namespace Antiphon.Server.Migrations
                         .HasDefaultValue("{}");
 
                     b.Property<string>("InternalDecisionAuditBaselineJson")
-                        .HasColumnType("jsonb");
+                        .HasColumnType("text");
 
                     b.Property<string>("InternalDecisionPolicyHash")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
                     b.Property<string>("InternalDecisionPolicyJson")
-                        .HasColumnType("jsonb");
+                        .HasColumnType("text");
 
                     b.Property<int>("Kind")
                         .HasColumnType("integer");
