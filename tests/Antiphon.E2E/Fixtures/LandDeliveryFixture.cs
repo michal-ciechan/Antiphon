@@ -293,7 +293,7 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
         }
         if (outcome == "execution-exception")
         {
-            var notARepo = Path.Combine(Root, "not-a-repo");
+            var notARepo = Path.Combine(Path.GetTempPath(), "antiphon-c498-not-a-repo-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(notARepo);
             await using var db = CreateContext();
             await db.AgentTasks.Where(t => t.Id == TaskId)

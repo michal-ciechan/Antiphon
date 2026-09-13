@@ -331,13 +331,13 @@ public class AgentTaskLandDeliveryE2ETests
             terminal.Type.ShouldBe(AgentTaskEventType.LandRefused);
             var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == note.RequestId);
             request.TerminalFailureCode.ShouldBe("landing_io_error");
-            request.FailureExceptionType.ShouldBe("IOException");
+            request.FailureExceptionType.ShouldBe("LandingGitCommandException");
             request.FailureDiagnosticId.ShouldNotBeNull();
             (await db.AgentTaskLandings.CountAsync(o => o.TaskId == f.TaskId)).ShouldBe(0);
-            note.Body.ShouldContain("landing_io_error; diagnostic=" + request.FailureDiagnosticId!.Value.ToString("N") + "; exception=IOException");
+            note.Body.ShouldContain("landing_io_error; diagnostic=" + request.FailureDiagnosticId!.Value.ToString("N") + "; exception=LandingGitCommandException");
         }
         await f.AssertOnePromptAsync(note);
         (await f.StatusAsync()).ShouldContain("Land execution failure: landing_io_error; diagnostic ");
-        (await f.StatusAsync()).ShouldContain("exception IOException");
+        (await f.StatusAsync()).ShouldContain("exception LandingGitCommandException");
     }
 }
