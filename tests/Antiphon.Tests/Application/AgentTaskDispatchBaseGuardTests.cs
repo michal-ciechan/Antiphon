@@ -161,13 +161,15 @@ public class AgentTaskDispatchBaseGuardTests
         await repo.CommitFileAsync("README.md", "base\n");
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        var card = await SeedCardAsync(db, "CARD-0499");
-        var owner = await SeedKeptSiblingAsync(db, repo, card.Id, "owner work");
+        // Different card so CARD-0215 sibling-base hold cannot match.
+        var ownerCard = await SeedCardAsync(db, "CARD-0499");
+        var repairCard = await SeedCardAsync(db, "CARD-0499b");
+        var owner = await SeedKeptSiblingAsync(db, repo, ownerCard.Id, "owner work");
         owner.Role = AgentTaskRole.Code;
         owner.LandRequestedAt = DateTime.UtcNow.AddMinutes(-1);
         var parentSessionId = Guid.NewGuid();
         await SeedParentSessionAsync(db, parentSessionId);
-        var repair = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, parentSessionId);
+        var repair = await SeedQueuedWorktreeTaskAsync(db, repo.Path, repairCard.Id, parentSessionId);
         repair.RepairSourceTaskId = owner.Id;
         await db.SaveChangesAsync(ct);
 
@@ -183,8 +185,8 @@ public class AgentTaskDispatchBaseGuardTests
             .Where(e => e.AgentTaskId == repair.Id && e.Type == AgentTaskEventType.Held)
             .ToListAsync(ct);
         heldEvents.ShouldHaveSingleItem();
-        heldEvents[0].Detail.ShouldContain(DelegationReportFormatter.Short(owner.Id));
-        heldEvents[0].Detail.ShouldContain("is landing");
+        heldEvents[0].Detail.ShouldBe($"{DelegationReportFormatter.Short(owner.Id)} is landing");
+        heldEvents[0].Detail.ShouldNotContain("kept branch");
 
         var liveOwner = await db.AgentTasks.SingleAsync(t => t.Id == owner.Id, ct);
         liveOwner.LandRequestedAt = null;
