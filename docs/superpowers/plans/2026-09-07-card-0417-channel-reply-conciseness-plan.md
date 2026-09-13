@@ -833,12 +833,23 @@ outside replyStyle/UpdatedAt; resolve concurrent configuration edits rather than
 overwriting them. Preserve prior style for rollback. This procedure does not
 require changing PATCH semantics in production code.
 
-7. At an eligible idle boundary, use `POST /api/agents/{id}/refresh-policy` with
-   `{ "force": false }`, or observe the existing automatic idle refresh. Record
-   response, policy incident/boundary timestamp, session ID, runner launch/readiness
-   state and subsequent transcript evidence. Respect working/provider/Herdr
-   refusals. Force can skip idle-duration/cooldown only, never working protection;
-   no fallback to an unrelated kill or another provider/model.
+7. At an eligible idle boundary, branch on the canary's `PolicyRefreshMode`
+   (`null` is Auto). Record response, policy incident/boundary timestamp, session
+   ID, runner launch/readiness state and subsequent transcript evidence. Respect
+   working/provider/Herdr refusals. Force can skip idle-duration/cooldown only,
+   never working protection; no fallback to an unrelated kill or another
+   provider/model.
+
+   - **Auto or Relaunch:** `POST /api/agents/{id}/refresh-policy` with
+     `{ "force": false }`, or observe the existing automatic idle refresh.
+   - **Notify:** the same POST returns `refreshed: false, notified: true`. That is
+     not loaded policy. Do not collect after samples from it. To load Phone, PATCH
+     `policyRefreshMode` to Auto or Relaunch with a preserving body, use the
+     Auto/Relaunch path at idle, then restore Notify if that remains the intended
+     standing mode. Record both mode changes.
+   - **Off:** the same POST is 409 `not_resumable` even with force. The same
+     temporary Auto/Relaunch switch is required; restoring Off is allowed only
+     after the Phone stamp is loaded.
 8. Repeat the SELECT and compare its exact `style-phone v<hash>` entry to the
    intended deployed bundle stamp. Correlate to the current API/runner session
    and successful resume/start boundary. Stamps are assigned during launch setup,
@@ -903,6 +914,8 @@ redaction labels, evidence references, metrics/exceptions, reviewer identity/dat
 wording verdict and pass/fail/pending for L-1 through L-5 and V-9/V-10. Full private
 evidence stays in the main checkout's ignored directory. A reviewer must have
 access to originals; redacted examples are not described as verbatim.
+**V-10 reviewer of record is the operator (Mike).** Code, Review, and Mutation
+delegates do not substitute a live wording verdict.
 
 **Required stop:** missing pairs, unavailable original replies, absent delivery
 rendering, unverified loaded policy, or no reviewed wording verdict leaves

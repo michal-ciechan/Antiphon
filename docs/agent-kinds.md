@@ -101,6 +101,12 @@ A session's command line is built in layers, and no single file holds the whole 
    attachments → `ReplyStyle` block → `SystemPromptAppend`; `Normal` composes nothing. A change
    takes effect at the next launch — the drift badge is informational, not an action.
 
+   Select `ReplyStyle.Phone` explicitly for human Telegram/Slack replies. The
+   [Phone bundle](../server/Bundles/style-phone.md) exempts internal reports and terminal
+   work. Binding an agent or applying a channel preamble never selects it automatically.
+   A saved style or Notify response is not loaded policy: verify the actual session stamp
+   and successful supported launch/resume before collecting after replies.
+
    On Windows, Grok `--rules` is also fail-closed (CARD-0382): a payload containing CR, LF, or
    NUL, or more than 4,096 UTF-16 code units, is refused as 409 `grok_rules_argv_unsafe` before
    any session starts. Spaces are allowed and passed unchanged. The full Grok composition stays

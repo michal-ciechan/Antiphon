@@ -7,6 +7,20 @@ workspace convention: [agent-workspaces.md](agent-workspaces.md).
 Slack uses the same gateway shape but its own app manifest and Socket Mode procedure; see
 [slack-bot-ops.md](slack-bot-ops.md).
 
+For human Telegram/Slack replies, choose `Phone` explicitly through Reply style; the
+preamble preset changes append text only. Preserve existing append bytes and other
+settings when changing a live style. Follow the preserving PATCH, idle refresh and
+actual loaded-stamp procedure in [CARD-0417](superpowers/plans/2026-09-07-card-0417-channel-reply-conciseness-plan.md).
+Notify-only refresh is not activation. If the canary's `PolicyRefreshMode` is `Notify` or
+`Off`, POST `/refresh-policy` will not load Phone (Notify posts a message; Off is 409
+`not_resumable` even with force). Temporarily switch that row to Auto or Relaunch with a
+preserving body, refresh at an idle boundary, then restore the intended mode after the
+`style-phone v…` stamp is loaded. Review one real canary before expanding to other
+intended enabled bindings. V-10 reviewer of record is the operator (Mike); a Code or
+Review delegate does not substitute that live wording verdict. Roll back by restoring
+its recorded old style and verifying that style is loaded; reset all Phone rows before
+downgrading to a binary without Phone.
+
 ## Per-bot deployment model
 
 One `Antiphon.Messaging.Service` instance per bot token (bot name = persona). The `family`

@@ -21,6 +21,18 @@ namespace Antiphon.Tests.Application;
 public class InstructionBundleTests
 {
     [Test]
+    public void Phone_with_attachments_and_append_keeps_the_command_line_budget_guard()
+    {
+        var composed = InstructionBundleComposer.Compose(
+            [InstructionBundles.BoardApi], "style-phone", "Keep the exact path C:\\src\\phone evidence. ");
+        Should.NotThrow(() => InstructionBundleComposer.EnsureWithinCommandLineBudget(
+            composed, ["--name", "Phone"], new DelegationSettings().CommandLineBudgetChars, "Phone"));
+        var ex = Should.Throw<InvalidOperationException>(() => InstructionBundleComposer.EnsureWithinCommandLineBudget(
+            composed, ["--name", "Phone"], 200, "Phone"));
+        ex.Message.ShouldContain("Nothing was truncated");
+    }
+
+    [Test]
     public void C470_composed_roles_separate_vr_from_pc()
     {
         string Compose(AgentTaskRole role) => InstructionBundleComposer.Compose(
@@ -81,7 +93,7 @@ public class InstructionBundleTests
             "stage-code", "stage-investigate", "stage-mutation", "stage-plan", "stage-review", "stage-test-design",
             // One per AgentReplyStyle value (CARD-0060), style-normal included — see AgentReplyStyles
             // for why the one that is never composed still ships as a file.
-            "style-brief", "style-caveman", "style-explanatory", "style-normal", "style-terse",
+            "style-brief", "style-caveman", "style-explanatory", "style-normal", "style-phone", "style-terse",
         ]);
     }
 
