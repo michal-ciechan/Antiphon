@@ -294,8 +294,11 @@ public sealed class AgentPinnedInstructionServiceTests
         (await verify.AgentPinnedInstructions.CountAsync(p => p.AgentId == agent.Id && p.RevokedAt == null)).ShouldBe(20);
 
         var state = await verify.AgentPinnedInstructionStates.SingleAsync(s => s.AgentId == agent.Id);
+        await using var retryDb = world.FreshDb();
+        var retryService = new AgentPinnedInstructionService(
+            retryDb, new MockEventBus(), TimeProvider.System, new NoOpAgentPinnedInstructionReconciler());
         var retry = await Should.ThrowAsync<ValidationException>(() =>
-            world.Service.CaptureAsync(
+            retryService.CaptureAsync(
                 agent.Id,
                 new CapturePinnedInstructionRequest(Guid.NewGuid(), state.Revision, "twenty-first"),
                 world.Operator,
