@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -47,6 +48,7 @@ internal static class QueuedReceiptAssertions
                 {
                     AlwaysOn = false,
                     ConnectionString = connection,
+                    Delegation = h.Delegation,
                 });
                 BindRuntimeTranscript(adapter, sessionId, connection);
                 recovered.Runtime.Register(sessionId, adapter);
@@ -73,14 +75,12 @@ internal static class QueuedReceiptAssertions
 
             adapter.SubmittedBodies.ShouldNotBeEmpty(
                 "queue insertion or adapter-less flush is not recipient acceptance");
-            var submitted = adapter.SubmittedBodies[^1];
-            PromptSubmissionMatch.IsCompleteIn(queued.Body, submitted).ShouldBeTrue(
-                "the adapter must submit the queued body, not a substitute");
+            var submitted = await AssertSubmittedAsync(h, connection, sessionId, queued, adapter);
 
-            var prompt = await WaitForUserPromptAsync(connection, sessionId, queued.Body);
+            var prompt = await WaitForUserPromptAsync(connection, sessionId, submitted);
             (await CountUserPromptsAsync(connection, sessionId)).ShouldBe(1);
-            PromptSubmissionMatch.Normalize(prompt.Text!).ShouldBe(PromptSubmissionMatch.Normalize(queued.Body));
-            PromptSubmissionMatch.IsCompleteIn(queued.Body, prompt.Text!).ShouldBeTrue();
+            PromptSubmissionMatch.IsCompleteIn(submitted, prompt.Text!).ShouldBeTrue();
+            PromptSubmissionMatch.Normalize(prompt.Text!).ShouldBe(PromptSubmissionMatch.Normalize(submitted));
             if (cut is "queue-inserted" or "lost-wakeup")
             {
                 var recoveredRow = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == queued.Id);
@@ -92,6 +92,31 @@ internal static class QueuedReceiptAssertions
             if (recovered is not null)
                 await recovered.DisposeAsync();
         }
+    }
+
+    private static async Task<string> AssertSubmittedAsync(
+        BridgeQueueHarness h, string connection, Guid sessionId, SessionQueuedMessage queued,
+        FakeAgentProtocolAdapter adapter)
+    {
+        var typed = adapter.SubmittedBodies[^1];
+        if (typed == queued.Body)
+            return typed;
+        typed.ShouldContain(TypedBodySpill.PointerHeadline);
+        var relative = typed.Split('\n').Select(l => l.Trim().Trim('\'', '`'))
+            .First(l => l.Contains(".antiphon") && l.EndsWith(".md", StringComparison.OrdinalIgnoreCase));
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
+        var cwd = (await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sessionId)).Cwd;
+        var absolute = Path.IsPathRooted(relative)
+            ? relative
+            : Path.GetFullPath(Path.Combine(cwd, relative.Replace('/', Path.DirectorySeparatorChar)));
+        if (!File.Exists(absolute))
+        {
+            absolute = Path.IsPathRooted(relative)
+                ? relative
+                : Path.GetFullPath(Path.Combine(h.TempRoot, "workspace", relative.Replace('/', Path.DirectorySeparatorChar)));
+        }
+        (await File.ReadAllTextAsync(absolute)).ShouldBe(queued.Body);
+        return typed;
     }
 
     /// <summary>

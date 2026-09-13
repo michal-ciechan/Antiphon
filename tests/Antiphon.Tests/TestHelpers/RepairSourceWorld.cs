@@ -149,14 +149,7 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(Options.Create(new SupervisionSettings()));
         services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
-        services.AddSingleton(Options.Create(new DelegationSettings
-        {
-            MaxConcurrentTasks = 512,
-            AllowedRoots = [Repo.Path],
-            BriefInlineMaxBytes = 1_000_000,
-            ModernPtyBriefInlineMaxBytes = 1_000_000,
-            HerdrPaneBriefInlineMaxBytes = 1_000_000,
-        }));
+        services.AddSingleton(Options.Create(DeliverySettings()));
         services.AddSingleton(Options.Create(new AgentSessionSettings()));
         services.AddSingleton<ApiErrorRecoveryService>();
         services.AddOptions<AgentRegistrySettings>().Configure(s =>
@@ -202,6 +195,15 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
         services.AddScoped<AgentTaskLandService>();
         Services = services.BuildServiceProvider();
     }
+
+    public DelegationSettings DeliverySettings() => new()
+    {
+        MaxConcurrentTasks = 512,
+        AllowedRoots = [Repo.Path],
+        BriefInlineMaxBytes = 1_000_000,
+        ModernPtyBriefInlineMaxBytes = 1_000_000,
+        HerdrPaneBriefInlineMaxBytes = 1_000_000,
+    };
 
     public AppDbContext CreateContext() =>
         new(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
