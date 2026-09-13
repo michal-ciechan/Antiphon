@@ -285,10 +285,11 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
 
     public async Task<string> CommitFromSecondCloneAsync(string fullRef, string message)
     {
-        var clone = Path.Combine(Repo.WorktreeRoot, "clone-" + Guid.NewGuid().ToString("N")[..8]);
-        (await ScratchGitRepo.GitInAsync(Repo.WorktreeRoot, "clone", Remote, clone)).Ok.ShouldBeTrue();
         var branch = fullRef.StartsWith("refs/heads/", StringComparison.Ordinal) ? fullRef[11..] : fullRef;
-        (await ScratchGitRepo.GitInAsync(clone, "checkout", "-B", branch, "origin/" + branch)).Ok.ShouldBeTrue();
+        if (!(await ScratchGitRepo.GitInAsync(Remote, "rev-parse", fullRef)).Ok)
+            (await ScratchGitRepo.GitInAsync(Repo.Path, "push", "origin", branch)).Ok.ShouldBeTrue();
+        var clone = Path.Combine(Repo.WorktreeRoot, "clone-" + Guid.NewGuid().ToString("N")[..8]);
+        (await ScratchGitRepo.GitInAsync(Repo.WorktreeRoot, "clone", "--branch", branch, Remote, clone)).Ok.ShouldBeTrue();
         await File.WriteAllTextAsync(Path.Combine(clone, "elsewhere.md"), message + "\n");
         (await ScratchGitRepo.GitInAsync(clone, "add", "elsewhere.md")).Ok.ShouldBeTrue();
         (await ScratchGitRepo.GitInAsync(clone, "commit", "-m", message)).Ok.ShouldBeTrue();
