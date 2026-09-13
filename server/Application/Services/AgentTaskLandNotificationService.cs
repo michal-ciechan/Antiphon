@@ -56,9 +56,16 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                     var repository = await db.AgentTasks.Where(t => t.Id == note.TaskId).Select(t => t.RepoPath).SingleAsync(ct);
                     if (repository is not null)
                     {
-                        var released = await leases.TryAcquireAsync(repository, ct);
-                        if (released is null) return;
-                        await released.DisposeAsync();
+                        try
+                        {
+                            var released = await leases.TryAcquireAsync(repository, ct);
+                            if (released is null) return;
+                            await released.DisposeAsync();
+                        }
+                        catch (IOException)
+                        {
+                            // A failed land can leave RepoPath unreadable; the producer is no longer holding a lease.
+                        }
                     }
                 }
                 if (boundary is not null) await boundary.ReachedAsync("before-enqueue", note.TaskId, note.Id, ct);
