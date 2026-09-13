@@ -154,18 +154,41 @@ public sealed class OutboundConversionManifestValidator(IOptions<ChannelOutbound
                 continue;
             if (name.Contains("..", StringComparison.Ordinal) || Path.IsPathRooted(name))
                 throw new InvalidDataException("zip-traversal");
-            expanded += entry.Length;
-            if (expanded > expandedLimit)
-                throw new InvalidDataException("zip-expanded-budget");
             var dest = Path.GetFullPath(Path.Combine(destDir, name.Replace('/', Path.DirectorySeparatorChar)));
             var prefix = Path.GetFullPath(destDir).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             if (!dest.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("zip-containment");
             Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-            using var src = entry.Open();
-            using var copy = File.Create(dest);
-            src.CopyTo(copy);
-            var bytes = File.ReadAllBytes(dest);
+            // The budget counts bytes as they LEAVE the archive. ZipArchiveEntry.Length is a
+            // declaration the archive makes about itself, and an archive that under-declares is
+            // exactly the archive this limit exists to stop.
+            byte[] bytes;
+            try
+            {
+                using (var src = entry.Open())
+                using (var copy = File.Create(dest))
+                {
+                    var buffer = new byte[81920];
+                    int read;
+                    while ((read = src.Read(buffer, 0, buffer.Length)) > 0)
+                    {
+                        expanded += read;
+                        if (expanded > expandedLimit)
+                            throw new InvalidDataException("zip-expanded-budget");
+                        copy.Write(buffer, 0, read);
+                    }
+                }
+
+                // Read back only AFTER the write handle is closed; Windows refuses the overlapping
+                // read outright, so the previous shape threw IOException on every extraction.
+                bytes = File.ReadAllBytes(dest);
+            }
+            catch
+            {
+                try { File.Delete(dest); } catch (IOException) { }
+                throw;
+            }
+
             files.Add(new OutboundConversionFileDescriptor
             {
                 Path = name,
