@@ -175,11 +175,12 @@ public class TaskProgressGit : LandingGit, ITaskProgressGit
         var valid = await RunAsync(repository, ["check-ref-format", pin], ct);
         if (!valid.Succeeded) return new(false, Reason: "invalid_observation_ref");
 
-        if (_leases is null)
-            return new(false, Reason: "repository_lease_busy");
-        await using var lease = await _leases.TryAcquireAsync(repository, ct);
-        if (lease is null)
-            return new(false, Reason: "repository_lease_busy");
+        // Nested acquire is not reentrant. Dispatch already holds the common-directory lease
+        // when capturing the baseline; pinning must still proceed.
+        RepositoryLease? lease = null;
+        if (_leases is not null)
+            lease = await _leases.TryAcquireAsync(repository, ct);
+        await using var owned = lease;
 
         var existing = await RunAsync(repository, ["show-ref", "--verify", "--hash", pin], ct);
         if (existing.Succeeded)

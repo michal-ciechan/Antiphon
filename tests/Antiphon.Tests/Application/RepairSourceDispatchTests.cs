@@ -134,11 +134,12 @@ public class RepairSourceDispatchTests
         }
         else if (kind == "mismatched")
         {
-            (await ScratchGitRepo.GitInAsync(world.Owner.WorktreePath!, "checkout", "master")).Ok.ShouldBeTrue();
+            (await ScratchGitRepo.GitInAsync(world.Owner.WorktreePath!, "checkout", "-f", "master")).Ok.ShouldBeTrue();
         }
         else
         {
-            (await ScratchGitRepo.GitInAsync(world.Owner.WorktreePath!, "checkout", "master")).Ok.ShouldBeTrue();
+            (await ScratchGitRepo.GitInAsync(world.Owner.WorktreePath!, "checkout", "-f", "master")).Ok.ShouldBeTrue();
+            (await ScratchGitRepo.GitInAsync(world.Repo.Path, "worktree", "remove", "--force", world.Owner.WorktreePath!)).Ok.ShouldBeTrue();
             (await ScratchGitRepo.GitInAsync(world.Repo.Path, "branch", "-D", world.Owner.WorktreeBranch!)).Ok.ShouldBeTrue();
         }
 

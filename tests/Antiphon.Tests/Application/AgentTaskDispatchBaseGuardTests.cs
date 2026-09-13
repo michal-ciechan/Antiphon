@@ -189,6 +189,7 @@ public class AgentTaskDispatchBaseGuardTests
         var liveOwner = await db.AgentTasks.SingleAsync(t => t.Id == owner.Id, ct);
         liveOwner.LandRequestedAt = null;
         await db.SaveChangesAsync(ct);
+        await repo.GitAsync("checkout", owner.WorktreeBranch!);
         await dispatcher.TickAsync(ct);
         db.ChangeTracker.Clear();
         var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == repair.Id, ct);

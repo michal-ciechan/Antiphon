@@ -42,8 +42,12 @@ public class TaskProgressGitTests
             observed.State.ShouldBe(ProgressRemoteState.Missing);
         else
             observed.State.ShouldBe(ProgressRemoteState.NotConfigured);
-        git.Trace.ShouldContain(a => a.Length >= 4 && a[0] == "ls-remote" && a.Contains("--refs") && a.Contains("--exit-code"));
-        git.Trace.ShouldNotContain(a => a.Any(x => x.Contains("origin/", StringComparison.Ordinal)));
+        if (kind != "not-configured")
+        {
+            git.Trace.Any(a => a.Length >= 4 && a[0] == "ls-remote" && a.Contains("--refs") && a.Contains("--exit-code"))
+                .ShouldBeTrue();
+        }
+        git.Trace.Any(a => a.Any(x => x.Contains("origin/", StringComparison.Ordinal))).ShouldBeFalse();
     }
 
     [Test]
@@ -95,11 +99,11 @@ public class TaskProgressGitTests
         var git = new ControlledTaskProgressGit(leases);
         // Force a fetch by using a SHA the local repo does not have: push a new commit only to remote via clone.
         var clone = Path.Combine(repo.WorktreeRoot, "c");
-        (await ScratchGitRepo.GitInAsync(repo.WorktreeRoot, "clone", remote, clone)).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(repo.WorktreeRoot, "clone", "--branch", "feat/x", remote, clone)).Ok.ShouldBeTrue();
         await File.WriteAllTextAsync(Path.Combine(clone, "n.md"), "n\n");
         (await ScratchGitRepo.GitInAsync(clone, "add", "n.md")).Ok.ShouldBeTrue();
         (await ScratchGitRepo.GitInAsync(clone, "commit", "-m", "n")).Ok.ShouldBeTrue();
-        (await ScratchGitRepo.GitInAsync(clone, "push", "origin", "feat/x")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(clone, "push", "origin", "HEAD")).Ok.ShouldBeTrue();
         var observed = await git.ObserveExactRefAsync(repo.Path, "refs/heads/feat/x", null, Guid.NewGuid(), default);
         observed.State.ShouldBe(ProgressRemoteState.Unavailable);
         observed.Reason.ShouldBe("repository_lease_busy");

@@ -2431,6 +2431,9 @@ public sealed class AgentTaskReplyService
             TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson)?.RepairSource?.FullRef,
         }.Where(s => !string.IsNullOrWhiteSpace(s)).Distinct());
         var reason = TaskCompletionProgressService.FailureSentence(task, named);
+        if (evaluated.Reason is "unclaimed_or_unmatched_commit" or "claimed_commit_not_novel"
+            or "claimed_commit_unreachable" or "no_movement")
+            reason += " " + evaluated.Reason + ".";
         task.FailureCode = AgentTaskFailureCode.CompletedWithoutProgress;
         return (AgentTaskStatus.Failed, AgentTaskReportEvidence.Marked, body, reason);
     }
