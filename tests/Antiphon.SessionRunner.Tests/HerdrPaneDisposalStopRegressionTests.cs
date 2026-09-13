@@ -9,6 +9,9 @@ namespace Antiphon.SessionRunner.Tests;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class HerdrPaneDisposalStopRegressionTests
 {
+    // These regressions require one failed dial to establish Pending, not the default five-second outage wait.
+    private const int PendingConnectTimeoutMs = 1000;
+
     [Test] public Task C461_G053_Ordinary_attached_kill() => new HerdrPaneChildKillTests().Attached_kill_detaches_without_pane_close_or_pid_kill();
     [Test] public Task C461_G054_Attached_orphan_guard() => new HerdrAdoptionSweepTests().R20_attached_orphan_is_dropped_not_killed();
     [Test] public Task C461_G057_Detach_metadata_clear() => new HerdrAttachTests().Attached_kill_detaches();
@@ -57,7 +60,7 @@ public sealed class HerdrPaneDisposalStopRegressionTests
     [Test] public async Task C461_G075_Stop_completes_when_adoption_wins_the_pane_lease()
     {
         var probe = new HerdrPaneDisposalConcurrencyTests.Probe();
-        await using var h = new HerdrPaneDisposalFixture(probe);
+        await using var h = new HerdrPaneDisposalFixture(probe, connectTimeoutMs: PendingConnectTimeoutMs);
         HerdrPaneDisposalServiceTests.SaveLocator(h, "sidecar"); h.Occupied();
         // Herdr is unreachable (fake not listening yet) but the child is OS-alive: R6 pending.
         await h.Runtime.AdoptOrphanedHostsAsync(probe, default);
@@ -89,7 +92,7 @@ public sealed class HerdrPaneDisposalStopRegressionTests
     [Test] public async Task C461_G076_Stop_waits_through_pending_adoption_publication()
     {
         var probe = new HerdrPaneDisposalConcurrencyTests.Probe();
-        await using var h = new HerdrPaneDisposalFixture(probe);
+        await using var h = new HerdrPaneDisposalFixture(probe, connectTimeoutMs: PendingConnectTimeoutMs);
         HerdrPaneDisposalServiceTests.SaveLocator(h, "sidecar"); h.Occupied();
         await h.Runtime.AdoptOrphanedHostsAsync(probe, default);
         h.Runtime.Get(h.SessionId).Pending.ShouldBe(HerdrPendingReasons.Unreachable);
