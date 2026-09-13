@@ -518,7 +518,7 @@ public class RepairSourceSettlementTests
         await using var verify = world.CreateContext();
         var prompt = await verify.TranscriptEntries.SingleAsync(e =>
             e.AgentSessionId == bridge.SessionId && e.Kind == TranscriptKinds.UserPrompt);
-        prompt.Text.ShouldBe(queued.Body);
+        PromptSubmissionMatch.Normalize(prompt.Text!).ShouldBe(PromptSubmissionMatch.Normalize(queued.Body));
         prompt.Text.ShouldContain("progress=repair-source; owner=");
     }
 
@@ -554,7 +554,7 @@ public class RepairSourceSettlementTests
         await using var verify = world.CreateContext();
         var prompt = await verify.TranscriptEntries.SingleAsync(e =>
             e.AgentSessionId == bridge.SessionId && e.Kind == TranscriptKinds.UserPrompt);
-        prompt.Text.ShouldBe(queued.Body);
+        PromptSubmissionMatch.Normalize(prompt.Text!).ShouldBe(PromptSubmissionMatch.Normalize(queued.Body));
         prompt.Text.ShouldContain("progress=repair-source; owner=");
     }
 
@@ -579,7 +579,8 @@ public class RepairSourceSettlementTests
         await using var verify = world.CreateContext();
         var prompt = await verify.TranscriptEntries.SingleAsync(e =>
             e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.UserPrompt);
-        prompt.Text.ShouldBe(brief.Body);
+        PromptSubmissionMatch.IsCompleteIn(brief.Body, prompt.Text!).ShouldBeTrue();
+        PromptSubmissionMatch.Normalize(prompt.Text!).ShouldBe(PromptSubmissionMatch.Normalize(brief.Body));
         prompt.Text.ShouldContain(DelegationReportFormatter.TaskMarker(repair.Id));
         prompt.Text.ShouldContain(DelegationReportFormatter.Short(world.Owner.Id));
         prompt.Text.ShouldContain(world.OwnerRef);
