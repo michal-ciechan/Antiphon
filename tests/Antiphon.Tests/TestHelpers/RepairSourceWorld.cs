@@ -203,6 +203,9 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
         BriefInlineMaxBytes = 1_000_000,
         ModernPtyBriefInlineMaxBytes = 1_000_000,
         HerdrPaneBriefInlineMaxBytes = 1_000_000,
+        PtySingleChunkBytes = 1_000_000,
+        ModernPtySingleWriteMaxBytes = 1_000_000,
+        HerdrPaneSingleWriteMaxBytes = 1_000_000,
     };
 
     public AppDbContext CreateContext() =>
