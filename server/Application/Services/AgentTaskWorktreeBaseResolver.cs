@@ -173,7 +173,9 @@ public sealed class AgentTaskWorktreeBaseResolver
                 && (t.Status == AgentTaskStatus.Queued
                     || t.Status == AgentTaskStatus.Dispatched
                     || t.Status == AgentTaskStatus.Working)
-                && !AgentTaskRoles.IsSpecialist(t.Role))
+                && t.Role != AgentTaskRole.Check
+                && t.Role != AgentTaskRole.Distill
+                && t.Role != AgentTaskRole.Diagnose)
             .Select(t => new OpenWriter(t.Id, t.Workspace, t.WorktreePath, t.WorkingDirectory, t.FollowUpOfTaskId))
             .ToListAsync(ct);
 
