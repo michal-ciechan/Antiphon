@@ -40,6 +40,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
     public required SessionMessageQueueService Queue { get; init; }
     public required EmptyRunnerClient Runner { get; init; }
     public required string ConnectionString { get; init; }
+    public required DelegationSettings Delegation { get; init; }
     public ChannelReplyDispatcher Dispatcher => Provider.GetRequiredService<ChannelReplyDispatcher>();
 
     public sealed record HarnessOptions
@@ -271,6 +272,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             Queue = provider.GetRequiredService<SessionMessageQueueService>(),
             Runner = runner,
             ConnectionString = store ?? TestDbFixture.ConnectionString,
+            Delegation = options.Delegation ?? new DelegationSettings(),
         };
     }
 

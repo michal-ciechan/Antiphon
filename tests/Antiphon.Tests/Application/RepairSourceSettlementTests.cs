@@ -501,6 +501,7 @@ public class RepairSourceSettlementTests
         {
             AlwaysOn = false,
             ConnectionString = world.Schema.ConnectionString,
+            Delegation = world.DeliverySettings(),
         });
         await using (var db = world.CreateContext())
         {
@@ -536,6 +537,7 @@ public class RepairSourceSettlementTests
         {
             AlwaysOn = false,
             ConnectionString = world.Schema.ConnectionString,
+            Delegation = world.DeliverySettings(),
         });
         await using (var db = world.CreateContext())
         {
@@ -566,6 +568,7 @@ public class RepairSourceSettlementTests
         {
             AlwaysOn = false,
             ConnectionString = world.Schema.ConnectionString,
+            Delegation = world.DeliverySettings(),
         });
         bridge.Runtime.Register(sessionId, bridge.Adapter);
         await using var db = world.CreateContext();
