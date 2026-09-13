@@ -127,6 +127,8 @@ internal sealed class AgentTaskLandRequestWriter(AppDbContext db, TimeProvider c
         task.ConcurrencyToken = Guid.NewGuid();
         await db.SaveChangesAsync(ct);
         if (transaction is not null) await transaction.CommitAsync(ct);
+        await db.Entry(request).ReloadAsync(ct);
+        await db.Entry(task).ReloadAsync(ct);
         return new(LandSourceCheckpointDisposition.Applied, LandSourceCheckpointBaseline.From(request, task));
     }
 
@@ -164,6 +166,8 @@ internal sealed class AgentTaskLandRequestWriter(AppDbContext db, TimeProvider c
         if (now > request.LastProgressAt) request.LastProgressAt = now;
         await db.SaveChangesAsync(ct);
         if (transaction is not null) await transaction.CommitAsync(ct);
+        await db.Entry(request).ReloadAsync(ct);
+        await db.Entry(task).ReloadAsync(ct);
         return LandSourceCheckpointDisposition.Applied;
     }
 

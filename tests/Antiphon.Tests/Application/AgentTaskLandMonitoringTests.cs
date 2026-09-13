@@ -141,7 +141,7 @@ public sealed class AgentTaskLandMonitoringTests
             var detail = heldCleanup
                 ? $"{severity}: Land Held; requested {now:O}; no progress since {now:O}; attempt=0; reason=repository_or_source_writer; holder= ()."
                 : $"{severity}: outcome receipt unconfirmed; notification={outcome.Id:N}; outcome committed={now:O}; destination=; queue=; state=DestinationUnavailable; error=.";
-            note.Body.ShouldBe($"[land {note.Id:N} request={request.Id:N} task={taskId:N} outcome=LandAged]\npublication={publication}; cleanup={cleanup}\n{detail}");
+            note.Body.ShouldBe($"[land {note.Id:N} request={request.Id:N} task={taskId:N} outcome=LandAged]\npublication={publication}; cleanup={cleanup}\nexpected=null; local=null; remote=null; candidate=null\n{detail}");
             note.LandingOperationId.ShouldBe(operation.Id);
             var source = await db.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.Id == note.SourceEventId);
             source.LandingOperationId.ShouldBe(operation.Id); source.LandingPublication.ShouldBe(publication);

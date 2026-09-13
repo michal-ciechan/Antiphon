@@ -302,12 +302,14 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         }
         catch (Exception ex) when (ex is LandingRefusal or IOException or UnauthorizedAccessException or ArgumentException)
         {
+            // Durable publication is FailRequestAsync's job: swallowing here would settle as
+            // a normal land with LastReason=landing_io_error and skip the interrupted-after-publication path.
+            if (op is not null && _state.HasPublication(op)) throw;
             var reason = ex is LandingRefusal ? ex.Message : "landing_io_error";
             if (op is not null)
             {
                 op.LastReason = reason;
-                if (_state.HasPublication(op)) op.Cleanup = LandCleanupStatus.Refused;
-                else if (op.Phase is LandPhase.Inspected or LandPhase.RecoveryPinned or LandPhase.RebaseStarted or LandPhase.Prepared)
+                if (op.Phase is LandPhase.Inspected or LandPhase.RecoveryPinned or LandPhase.RebaseStarted or LandPhase.Prepared)
                 {
                     op.Publication = LandPublicationOutcome.Refused;
                     _state.Transition(op, LandPhase.Refused, Now());

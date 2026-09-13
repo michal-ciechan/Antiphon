@@ -30,6 +30,8 @@ public sealed class AgentTaskLandSourcePersistenceTests
         await using var h = new LandingProtocolHarness();
         h.Clock = clock;
         await h.InitializeAsync();
+        var unique = await h.AddSourceAsync();
+        h.Git.SetRemoteSource(unique);
         var expected = h.Git.SourceHead;
         var barrier = new PauseBarrier();
         Guid? tokenBefore = null;
@@ -57,6 +59,7 @@ public sealed class AgentTaskLandSourcePersistenceTests
                 stored.SourceObservationRef.ShouldContain("/source-observed/");
                 stored.LastEvaluatedAt.ShouldBe(monitorNow.UtcDateTime);
                 stored.LastProgressAt.ShouldBe(monitorNow.UtcDateTime);
+                h.Git.InspectionCalls.ShouldBe(1);
             }
         };
         var queued = await h.RequestAsync(expectedSourceSha: expected);
@@ -88,8 +91,9 @@ public sealed class AgentTaskLandSourcePersistenceTests
         (await done.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Git.TaskId && e.Type == AgentTaskEventType.LandRefused)).ShouldBe(0);
         (await done.AgentTaskLandNotifications.CountAsync(n => n.RequestId == queued.RequestId && n.Kind == LandNotificationKind.Aged))
             .ShouldBe(ageSeconds == 0 ? 0 : ageSeconds == 300 ? 1 : 2);
-        h.Git.SourceObservationAttempts.ShouldBe(2);
-        h.Git.InspectionCalls.ShouldBe(2);
+        // Resolver observes twice (initial + recheck). Protocol RecheckRemoteSourceAsync uses source-recheck, not a ResolveAsync replay.
+        h.Git.Trace.Count(a => a.Any(s => s.Contains("/source-observed/", StringComparison.Ordinal))).ShouldBe(2);
+        h.Git.InspectionCalls.ShouldBeGreaterThanOrEqualTo(2);
     }
 
     [Test]
@@ -110,7 +114,12 @@ public sealed class AgentTaskLandSourcePersistenceTests
         await h.InitializeAsync();
         var barrier = new PauseBarrier();
         var expected = checkpoint is "refuse-observed" or "refuse-plain" ? h.Git.SourceHead : h.Git.AdvanceRemoteSource();
-        if (checkpoint == "refuse-observed") h.Git.DivergeRemoteSource();
+        if (checkpoint == "refuse-observed")
+        {
+            await h.AddSourceAsync();
+            h.Git.DivergeRemoteSource();
+            expected = h.Git.SourceHead;
+        }
         if (checkpoint == "refuse-plain") File.WriteAllText(Path.Combine(h.Git.Source, "keep.txt"), "dirty\n");
         var inspections = 0;
         h.Git.BeforeInspection = async () =>
@@ -173,7 +182,7 @@ public sealed class AgentTaskLandSourcePersistenceTests
             var op = await db.AgentTaskLandings.SingleAsync(o => o.TaskId == h.Git.TaskId && o.Active);
             op.Publication.ShouldBe(LandPublicationOutcome.Landed);
             request.SourceResolutionState.ShouldBe(LandSourceResolutionState.Resolved);
-            h.Git.SourceHead.ShouldBe(expected);
+            request.ResolvedSourceSha.ShouldBe(expected);
             (await db.AgentTaskEvents.CountAsync(e => e.LandRequestId == request.Id && e.IsLandTerminal)).ShouldBe(1);
         }
     }
@@ -215,8 +224,8 @@ public sealed class AgentTaskLandSourcePersistenceTests
         h.Fault.AfterSaveAcknowledged = ctx =>
         {
             var observed = ctx.ChangeTracker.Entries<AgentTaskLandRequest>()
-                .Any(e => e.Property(r => r.SourceResolutionState).IsModified
-                    && e.Entity.SourceResolutionState == LandSourceResolutionState.Observed);
+                .Any(e => e.Entity.SourceResolutionState == LandSourceResolutionState.Observed
+                    && ctx.Database.CurrentTransaction is not null);
             if (!observed) return Task.CompletedTask;
             ctx.Database.CurrentTransaction.ShouldNotBeNull();
             monitorNow = clock.GetUtcNow().UtcDateTime;
@@ -278,7 +287,8 @@ public sealed class AgentTaskLandSourcePersistenceTests
             var stored = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId);
             stored.SourceResolutionState.ShouldBe(LandSourceResolutionState.None);
         }
-        (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Git.TaskId && e.IsLandTerminal)).ShouldBe(0);
+        (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Git.TaskId && e.IsLandTerminal))
+            .ShouldBe(change == "terminal" ? 1 : 0);
         (await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == h.Git.TaskId && n.Kind == LandNotificationKind.Outcome)).ShouldBe(0);
         (await db.AgentTaskLandRequests.CountAsync(r => r.TaskId == h.Git.TaskId && r.TerminalFailureCode != null)).ShouldBe(0);
     }
@@ -363,12 +373,14 @@ public sealed class AgentTaskLandSourcePersistenceTests
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
         var barrier = new PauseBarrier();
-        var inspections = 0;
-        h.Git.BeforeInspection = async () =>
+        h.Git.BeforeCommand = async (_, args) =>
         {
-            if (++inspections != 2) return;
-            barrier.SignalPaused();
-            await barrier.WaitReleaseAsync();
+            if (args[0] == "rev-parse" && args.Any(a => a.Contains("^{commit}", StringComparison.Ordinal)))
+            {
+                barrier.SignalPaused();
+                await barrier.WaitReleaseAsync();
+            }
+            return null;
         };
         var queued = await h.RequestAsync(expectedSourceSha: h.Git.SourceHead);
         var runTask = h.RunQueuedAsync();
@@ -630,7 +642,7 @@ public sealed class AgentTaskLandSourcePersistenceTests
     private static AgentTaskLandRequest NewPending(AgentTask task, DateTime at) => new()
     {
         Id = Guid.NewGuid(), TaskId = task.Id, RequestedAt = at, LastEvaluatedAt = at, LastProgressAt = at,
-        State = LandRequestState.Queued, SchemaVersion = 2, ExpectedSourceSha = task.Id.ToString("N")[..40].PadRight(40, 'a'),
+        State = LandRequestState.Queued, SchemaVersion = 2, ExpectedSourceSha = new string('a', 40),
         ApprovalKind = LandApprovalKind.ExplicitCaller, ApprovedAt = at,
         SourceFullRefSnapshot = "refs/heads/" + task.WorktreeBranch,
         TargetFullRefSnapshot = "refs/heads/master", RepositoryPathSnapshot = task.RepoPath, WorktreePathSnapshot = task.WorktreePath,

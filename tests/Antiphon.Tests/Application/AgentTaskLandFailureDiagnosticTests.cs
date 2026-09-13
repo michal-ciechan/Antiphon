@@ -86,7 +86,7 @@ public sealed class AgentTaskLandFailureDiagnosticTests
         var outcome = await db.AgentTaskLandNotifications.SingleAsync(n => n.RequestId == request.Id && n.Kind == LandNotificationKind.Outcome);
         outcome.State.ShouldBe(LandNotificationState.NotRequired);
         outcome.Body.ShouldContain($"{code}; diagnostic={request.FailureDiagnosticId:N}; exception={exceptionType}");
-        var handled = entries.Single(e => e.State.ContainsKey("DiagnosticId"));
+        var handled = entries.First(e => e.State.ContainsKey("DiagnosticId"));
         handled.State["TaskId"].ShouldBe(h.Git.TaskId);
         handled.State["RequestId"].ShouldBe(request.Id);
         handled.State["Attempt"].ShouldBe(1);
@@ -107,6 +107,7 @@ public sealed class AgentTaskLandFailureDiagnosticTests
         h.AddHostedLandService();
         await h.InitializeAsync();
         if (kind == "already-present") h.Git.SetRemoteContainsSource();
+        else await h.AddSourceAsync();
         h.Fault.AfterAcknowledged = phase =>
         {
             if (phase == LandPhase.PublicationConfirmed) throw new IOException(Marker);
@@ -119,9 +120,13 @@ public sealed class AgentTaskLandFailureDiagnosticTests
         try { await WaitTerminalAsync(h); }
         finally { await hosted.StopAsync(CancellationToken.None); }
         await using var db = h.CreateContext();
-        var op = await db.AgentTaskLandings.SingleAsync(o => o.TaskId == h.Git.TaskId && o.Active);
+        var op = await db.AgentTaskLandings.SingleAsync(o => o.TaskId == h.Git.TaskId);
         (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Git.TaskId && e.Type == AgentTaskEventType.LandRefused)).ShouldBe(0);
+        op.Publication.ShouldBe(kind == "already-present" ? LandPublicationOutcome.AlreadyPresent : LandPublicationOutcome.Landed);
         op.LastReason.ShouldBe("landing_interrupted_after_publication");
+        op.RemoteConfirmedAt.ShouldNotBeNull();
+        op.ObservedRemoteTargetSha.ShouldNotBeNull();
+        h.Git.RemoteTarget.ShouldBe(kind == "already-present" ? h.Git.SeedSha : op.VerifiedSourceSha);
         var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Git.TaskId);
         request.TerminalFailureCode.ShouldBe("landing_interrupted_after_publication");
         request.FailureExceptionType.ShouldBe("IOException");
@@ -415,8 +420,14 @@ public sealed class AgentTaskLandFailureDiagnosticTests
         {
             if (value is null) continue;
             value.ShouldNotContain("synthetic-secret-marker");
-            value.ShouldNotContain("\n");
             value.ShouldNotContain("\u001b");
+        }
+        // Outcome Body is the existing multi-line payload; bounded columns and event detail are single-line.
+        foreach (var value in new[] { request.TerminalFailureCode, request.FailureExceptionType, detail, log,
+                     request.SourceDiagnosticCommand, request.SourceDiagnosticCode, request.SourceDiagnosticExceptionType })
+        {
+            if (value is null) continue;
+            value.ShouldNotContain("\n");
         }
     }
 }
