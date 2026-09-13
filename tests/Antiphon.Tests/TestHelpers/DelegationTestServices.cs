@@ -62,8 +62,11 @@ internal static class DelegationTestServices
     /// </param>
     public static IServiceCollection AddDelegationWorktreeGraph(
         this IServiceCollection services,
-        GitSettings? gitSettings = null)
+        GitSettings? gitSettings = null,
+        GitWorkspaceService? workspaceGit = null)
     {
+        if (workspaceGit is not null)
+            services.TryAddSingleton<GitWorkspaceService>(workspaceGit);
         services.TryAddSingleton(Options.Create(gitSettings ?? new GitSettings()));
         services.TryAddSingleton<IWorktreeManager, WorktreeManager>();
         services.TryAddSingleton<IGitService, GitService>();

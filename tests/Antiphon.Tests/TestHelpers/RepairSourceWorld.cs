@@ -170,12 +170,11 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
         services.AddSingleton<IRepositoryMutationLease>(Leases);
         services.AddSingleton<ILandingGit>(Git);
         services.AddSingleton<ITaskProgressGit>(Git);
-        services.AddSingleton<GitWorkspaceService>(FilesGit);
         services.AddDelegationWorktreeGraph(new GitSettings
         {
             WorktreeBasePath = Repo.WorktreeRoot,
             WorktreeAddTimeoutSeconds = 180,
-        });
+        }, FilesGit);
         services.AddDbContext<AppDbContext>(o =>
         {
             o.UseNpgsql(Schema.ConnectionString);
