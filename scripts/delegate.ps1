@@ -88,6 +88,12 @@ param(
     # Isolate in a fresh git worktree, merged back when it finishes. Workers default to running
     # right in the directory; a sub-orchestrator gets a worktree by default already.
     [Parameter(ParameterSetName = 'Create')]
+    [string]$BaseTask,
+
+    [Parameter(ParameterSetName = 'Create')]
+    [switch]$FreshWorktree,
+
+    [Parameter(ParameterSetName = 'Create')]
     [switch]$Worktree,
 
     # Force the shared directory - opts a sub-orchestrator OUT of its default worktree. The server
@@ -722,6 +728,18 @@ switch ($PSCmdlet.ParameterSetName) {
                 + 'a follow-up already pins to the agent that ran the prior task. Use -Agent or -OnAgent, not both.')
             exit 1
         }
+        if ($BaseTask -and $FreshWorktree) {
+            Write-Error '-BaseTask and -FreshWorktree are mutually exclusive.'
+            exit 1
+        }
+        if (($BaseTask -or $FreshWorktree) -and ($OnAgent -or $Agent)) {
+            Write-Error '-BaseTask/-FreshWorktree cannot combine with -OnAgent or -Agent.'
+            exit 1
+        }
+        if (($BaseTask -or $FreshWorktree) -and -not $Worktree) {
+            Write-Error '-BaseTask and -FreshWorktree require -Worktree.'
+            exit 1
+        }
         if ($Complexity -and ($Kind -or $Level)) {
             Write-Error ('complexity cannot be combined with agentKind or modelLevel. An explicit pair ' `
                 + 'is a single candidate the caller chose and is never silently rerouted. Pass ' `
@@ -737,6 +755,8 @@ switch ($PSCmdlet.ParameterSetName) {
         # Workspace is sent only when chosen - omitted, the server decides: workers run shared,
         # a sub-orchestrator gets its own worktree unless it already has its own -Dir.
         if ($Worktree) { $body['workspace'] = 'Worktree' }
+        if ($BaseTask) { $body['worktreeBaseTask'] = $BaseTask }
+        if ($FreshWorktree) { $body['freshWorktree'] = $true }
         elseif ($ReadOnly) { $body['workspace'] = 'ReadOnly' }
         elseif ($Shared) { $body['workspace'] = 'Shared' }
         if ($AllowDirectEdits) { $body['denyDirectEdits'] = $false }
@@ -857,6 +877,21 @@ switch ($PSCmdlet.ParameterSetName) {
             }
             # A warning at creation is the caller's one chance to reconsider before the collision.
             if ($created.warning) { Write-Output ("WARNING: {0}" -f $created.warning) }
+            $preview = $created.worktreeBase
+            if ($preview) {
+                $decision = "$($preview.decision)"
+                if ($decision -eq 'Continue' -and $preview.sourceTaskId -and $preview.sourceSha) {
+                    Write-Output ("base preview: continues task {0} on {1} @ {2}; new isolated branch; landing target {3}" -f `
+                        ([string]$preview.sourceTaskId).Substring(0, 8), $preview.sourceBranch, $preview.sourceSha, $preview.fallbackRef)
+                }
+                elseif ($decision -eq 'WaitForLand') {
+                    Write-Output ("base preview: waiting for task {0} land; source will be rechecked before launch" -f $preview.reason)
+                }
+                else {
+                    $why = if ($preview.reason) { $preview.reason } else { $decision }
+                    Write-Output ("WARNING: base preview is {0}; {1}" -f $preview.fallbackRef, $why)
+                }
+            }
         }
         # -Pin records what this dispatch RESOLVED to, not what was typed: a caller who passed no
         # -Kind and got Grok from the role policy still means "next time, the same" - and the pin is

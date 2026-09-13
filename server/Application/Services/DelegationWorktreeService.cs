@@ -148,16 +148,16 @@ public sealed class DelegationWorktreeService
     public sealed record KeptBranchInfo(string Tip, int CommitsAbove, string Subject);
 
     /// <summary>Create or reuse the task's managed checkout; never infer publication here.</summary>
-    public async Task CreateForTaskAsync(AgentTask task, CancellationToken ct)
+    public async Task CreateForTaskAsync(AgentTask task, CancellationToken ct, string? continuationSha = null)
     {
         if (_leases is null || task.RepoPath is null)
             throw new ConflictException("repository_lease_required");
         await using var lease = await _leases.TryAcquireAsync(task.RepoPath, ct);
         if (lease is null) throw new ConflictException("repository_busy");
-        await CreateForTaskAsync(task, lease, ct);
+        await CreateForTaskAsync(task, lease, ct, continuationSha);
     }
 
-    public async Task CreateForTaskAsync(AgentTask task, RepositoryLease lease, CancellationToken ct)
+    public async Task CreateForTaskAsync(AgentTask task, RepositoryLease lease, CancellationToken ct, string? continuationSha = null)
     {
         if (task.RepoPath is not { } repoPath)
             throw new ValidationException(nameof(task.RepoPath), "A worktree task needs a git repository.");
@@ -166,7 +166,7 @@ public sealed class DelegationWorktreeService
             throw new ConflictException("repository_lease_required");
 
         var identifier = $"task-{DelegationReportFormatter.Short(task.Id)}";
-        var baseRef = task.MergeTargetRef ?? "HEAD";
+        var baseRef = continuationSha ?? task.MergeTargetRef ?? "HEAD";
 
         if (task.SourceLandingOperationId is not null)
         {
@@ -207,7 +207,9 @@ public sealed class DelegationWorktreeService
 
         task.WorktreePath = info.Path;
         task.WorktreeBranch = info.Branch;
-        task.WorktreeBaseSha = await _gitWorkspace.GetHeadShaAsync(info.Path, ct);
+        var head = await _gitWorkspace.GetHeadShaAsync(info.Path, ct);
+        if (string.IsNullOrEmpty(task.WorktreeBaseSha))
+            task.WorktreeBaseSha = head;
         _logger.LogInformation(
             "Task {ShortId}: worktree at {Path} on {Branch} (base {BaseRef}, sha {Sha})",
             DelegationReportFormatter.Short(task.Id), info.Path, info.Branch, baseRef,

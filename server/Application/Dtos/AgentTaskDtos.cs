@@ -160,7 +160,33 @@ public sealed record CreateAgentTaskRequest(
     /// CARD-0407. Optional caller-declared internal-decision grants. Empty/null is absent.
     /// Server provenance fields supplied here are rejected.
     /// </summary>
-    InternalDecisionPolicyRequest? InternalDecisionPolicy = null);
+    InternalDecisionPolicyRequest? InternalDecisionPolicy = null,
+    /// <summary>CARD-0442. Explicit same-card source task (full guid or 8-hex short id).</summary>
+    string? WorktreeBaseTask = null,
+    /// <summary>CARD-0442. Force the pre-change MergeTargetRef/HEAD start.</summary>
+    bool FreshWorktree = false);
+
+public sealed record WorktreeBaseCandidateDto(
+    Guid TaskId,
+    string? Branch,
+    string? Sha,
+    string? Reason);
+
+public sealed record WorktreeBasePreviewDto(
+    string Decision,
+    string? FallbackRef = null,
+    Guid? SourceTaskId = null,
+    string? SourceBranch = null,
+    string? SourceSha = null,
+    string? Reason = null,
+    IReadOnlyList<WorktreeBaseCandidateDto>? Candidates = null,
+    IReadOnlyList<string>? Warnings = null,
+    DateTime? ObservedAt = null,
+    int CandidateTotal = 0,
+    int CandidateInspected = 0,
+    int CandidateOmitted = 0,
+    int CommandCount = 0,
+    double ElapsedSeconds = 0);
 
 public sealed record AgentTaskSummaryDto(
     Guid Id,
@@ -303,7 +329,13 @@ public sealed record AgentTaskDetailDto(
     bool VerificationBranchRemoved = false,
     IReadOnlyList<VerificationExecutionDetailDto>? VerificationExecutions = null,
     string? InternalDecisionPolicyJson = null,
-    string? InternalDecisionPolicyHash = null);
+    string? InternalDecisionPolicyHash = null,
+    AgentTaskWorktreeBaseMode WorktreeBaseMode = AgentTaskWorktreeBaseMode.Auto,
+    Guid? RequestedWorktreeBaseTaskId = null,
+    Guid? WorktreeBaseTaskId = null,
+    string? WorktreeBaseBranch = null,
+    string? WorktreeBaseSha = null,
+    WorktreeBasePreviewDto? WorktreeBasePreview = null);
 
 /// <summary>One accepted launch attempt for a sourced Mutation snapshot. Receipt bytes stay on the server.</summary>
 public sealed record VerificationExecutionDetailDto(
@@ -434,7 +466,9 @@ public sealed record AgentTaskCreatedDto(
     /// task to antiphon-diagnose to replace the title. <c>delegate.ps1</c> prints
     /// <c>title: pending</c>. Creation never waits on the seat.
     /// </summary>
-    bool TitleDiagnosisQueued = false);
+    bool TitleDiagnosisQueued = false,
+    /// <summary>CARD-0442. Structured start-commit preview. Null on non-Worktree creates.</summary>
+    WorktreeBasePreviewDto? WorktreeBase = null);
 
 /// <summary>
 /// One running task a newly created task overlaps, and what the dispatcher will do about it.

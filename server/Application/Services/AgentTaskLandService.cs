@@ -34,6 +34,9 @@ public sealed class AgentTaskLandService
     private readonly ILogger<AgentTaskLandService> _logger;
     private readonly LandDeliveryBoundary _boundary;
     private LandExecutionIdentity? _execution;
+    private readonly AgentTaskWorktreeBaseResolver? _worktreeBase;
+    private readonly IGitService? _git;
+    private readonly GitSettings _gitSettings;
 
     public AgentTaskLandService(
         AppDbContext db,
@@ -46,7 +49,10 @@ public sealed class AgentTaskLandService
         IOptions<DelegationSettings> settings,
         ILogger<AgentTaskLandService> logger,
         AgentTaskLandingProtocol? protocol = null, IRepositoryMutationLease? leases = null, ILandingGit? landingGit = null,
-        LandDeliveryBoundary? boundary = null)
+        LandDeliveryBoundary? boundary = null,
+        AgentTaskWorktreeBaseResolver? worktreeBase = null,
+        IGitService? git = null,
+        IOptions<GitSettings>? gitSettings = null)
     {
         _protocol = protocol;
         _boundary = boundary ?? new LandDeliveryBoundary();
@@ -61,6 +67,9 @@ public sealed class AgentTaskLandService
         _clock = clock;
         _settings = settings.Value;
         _logger = logger;
+        _worktreeBase = worktreeBase;
+        _git = git;
+        _gitSettings = gitSettings?.Value ?? new GitSettings();
     }
 
     /// <summary>Persist and queue an explicit land request. The endpoint returns before git runs.</summary>
@@ -453,7 +462,48 @@ public sealed class AgentTaskLandService
                 continue;
             if (!await _worktrees.KeptBranchExistsAsync(task.RepoPath, branch, ct))
                 continue;
-            if (await _worktrees.IsAncestorOfBaseAsync(rebasedHeadRepo, branch, verifiedSha ?? "HEAD", ct))
+            var completed = await _db.AgentTaskEvents.AsNoTracking().AnyAsync(
+                e => e.AgentTaskId == sibling.Id
+                    && (e.Type == AgentTaskEventType.Landed || e.Type == AgentTaskEventType.LandedWithResidue),
+                ct);
+            if (completed)
+                continue;
+            var contained = false;
+            if (_worktreeBase is not null && _git is not null && GitObjectId.IsFull(verifiedSha ?? ""))
+            {
+                var session = new WorktreeBaseGitSession(_gitSettings, _clock, _clock.GetUtcNow());
+                try
+                {
+                    var parsed = await _git.RunWorktreeBaseGitAsync(
+                        task.RepoPath, ["rev-parse", "--verify", branch + "^{commit}"], session, ct);
+                    var sha = parsed.ExitCode == 0 ? parsed.Stdout.Trim() : "";
+                    if (GitObjectId.IsFull(sha))
+                    {
+                        var observation = await _worktreeBase.ObserveContainmentAsync(
+                            rebasedHeadRepo, sha, verifiedSha!, session, ct);
+                        contained = observation == AgentTaskWorktreeBaseResolver.WorktreeContainment.Contained;
+                        if (observation is AgentTaskWorktreeBaseResolver.WorktreeContainment.Unknown
+                            or AgentTaskWorktreeBaseResolver.WorktreeContainment.UnknownMerge)
+                        {
+                            warnings.Add(
+                                $"{cardIdentifier}'s kept branch {branch} (task {DelegationReportFormatter.Short(sibling.Id)}) could not be classified against the rebased HEAD.");
+                            continue;
+                        }
+                    }
+                }
+                catch (WorktreeBaseBudgetExceededException)
+                {
+                    warnings.Add(
+                        $"{cardIdentifier}'s kept branch {branch} (task {DelegationReportFormatter.Short(sibling.Id)}) could not be classified against the rebased HEAD.");
+                    continue;
+                }
+            }
+            else if (await _worktrees.IsAncestorOfBaseAsync(rebasedHeadRepo, branch, verifiedSha ?? "HEAD", ct))
+            {
+                contained = true;
+            }
+
+            if (contained)
                 continue;
 
             var shortId = DelegationReportFormatter.Short(sibling.Id);

@@ -308,6 +308,7 @@ try
     builder.Services.AddScoped<DelegationWorktreeService>();
     builder.Services.AddScoped<DelegationOpenGate>();
     builder.Services.AddScoped<WorktreeHealthService>();
+    builder.Services.AddScoped<AgentTaskWorktreeBaseResolver>();
     builder.Services.AddScoped<AgentTaskService>();
     builder.Services.AddScoped<SourceLandingAdmission>();
     builder.Services.AddScoped<VerificationExecutionService>();

@@ -469,6 +469,21 @@ public class AgentTask
     /// </summary>
     public string? WorktreeBaseSha { get; set; }
 
+    /// <summary>CARD-0442. Requested start-commit mode. Auto=0 on every pre-existing row.</summary>
+    public AgentTaskWorktreeBaseMode WorktreeBaseMode { get; set; }
+
+    /// <summary>CARD-0442. Explicit <c>-BaseTask</c> source, retained across retries.</summary>
+    public Guid? RequestedWorktreeBaseTaskId { get; set; }
+
+    /// <summary>CARD-0442. The task whose committed tip was actually inherited, when one was.</summary>
+    public Guid? WorktreeBaseTaskId { get; set; }
+
+    /// <summary>CARD-0442. The inherited source branch name, when a continuation was used.</summary>
+    public string? WorktreeBaseBranch { get; set; }
+
+    /// <summary>CARD-0442. Create-time preview snapshot. Advisory; launch re-resolves.</summary>
+    public string? WorktreeBasePreviewJson { get; set; }
+
     /// <summary>
     /// CARD-0299 S2. How many times a cold Codex first-delivery <c>NoSubmitOutput</c> has
     /// already killed-and-relaunched this task. Default 0. Compared to

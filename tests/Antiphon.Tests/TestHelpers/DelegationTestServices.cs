@@ -76,6 +76,7 @@ internal static class DelegationTestServices
         services.TryAddScoped<AgentTaskLandingProtocol>();
         services.AddGitWorkspaceService();
         services.TryAddScoped<DelegationWorktreeService>();
+        services.TryAddScoped<AgentTaskWorktreeBaseResolver>();
         return services;
     }
 

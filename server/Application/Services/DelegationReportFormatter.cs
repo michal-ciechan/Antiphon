@@ -169,6 +169,15 @@ public static class DelegationReportFormatter
             sb.AppendLine(UnrelatedWorkRefocusLine).AppendLine();
 
         sb.AppendLine(task.Goal.Trim()).AppendLine();
+        if (task.WorktreeBaseSha is { } inheritedSha && task.Workspace == WorkspaceMode.Worktree)
+        {
+            var source = task.WorktreeBaseTaskId is Guid sourceId
+                ? $"task {Short(sourceId)} ({task.WorktreeBaseBranch}) @ {inheritedSha}"
+                : $"HEAD {inheritedSha}";
+            sb.Append("Worktree source: ").Append(source)
+              .Append(". Verify HEAD is that commit before editing.").AppendLine().AppendLine();
+        }
+
         if (task.SourceLandingOperationId is Guid operationId)
         {
             sb.AppendLine($"SourceLanding: {operationId:D}; immutable landed commit: {task.SourceLandingSha}.");

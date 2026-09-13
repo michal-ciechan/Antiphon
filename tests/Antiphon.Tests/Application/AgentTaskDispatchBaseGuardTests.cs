@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -136,21 +137,89 @@ public class AgentTaskDispatchBaseGuardTests
         dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
         dispatched.WorktreePath.ShouldNotBeNull();
 
-        var warning = await db.AgentTaskEvents.AsNoTracking()
-            .SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning, ct);
-        warning.Detail.ShouldContain(sibling.WorktreeBranch!);
-        var tip = (await ScratchGitRepo.GitInAsync(repo.Path, "rev-parse", "--short", sibling.WorktreeBranch!))
+        var tip = (await ScratchGitRepo.GitInAsync(repo.Path, "rev-parse", sibling.WorktreeBranch!))
             .StdOut.Trim();
-        warning.Detail.ShouldContain(tip);
-        warning.Detail.ShouldContain("Land " + DelegationReportFormatter.Short(sibling.Id));
+        dispatched.WorktreeBaseSha.ShouldBe(tip);
+        (await db.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning
+                && e.Detail!.Contains("Land "), ct)).ShouldBe(0);
+    }
 
-        var notes = await db.SessionQueuedMessages.AsNoTracking()
-            .Where(m => m.AgentSessionId == parentSessionId)
-            .ToListAsync(ct);
-        notes.ShouldHaveSingleItem();
-        notes[0].Origin.ShouldBe(QueuedMessageOrigin.Delegation);
-        notes[0].Body.ShouldContain(sibling.WorktreeBranch!);
-        notes[0].Body.ShouldContain(tip);
+    [Test]
+    [Timeout(60_000)]
+    [Arguments("new_descendant")]
+    [Arguments("unchanged")]
+    public async Task T0442_V19(string name, CancellationToken ct)
+    {
+        await using var world = await WorktreeContinuityHarness.CreateAsync();
+        var a = await world.SeedSucceededAsync("A", "code-a.txt", "A\n");
+        var created = await world.Services.GetRequiredService<AgentTaskService>().CreateAsync(
+            new CreateAgentTaskRequest("next", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree, Card: "CARD-0442"),
+            world.Caller(), ct);
+        if (name == "new_descendant")
+            await world.SeedSucceededAsync("B", "code-b.txt", "B\n");
+        await using var scope = world.Services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        await using var db = world.CreateDb();
+        var row = await db.AgentTasks.SingleAsync(t => t.Id == created.Id, ct);
+        row.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        if (name == "unchanged")
+            row.WorktreeBaseTaskId.ShouldBe(a.Id);
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    [Arguments("auto_two")]
+    public async Task T0442_V20(string name, CancellationToken ct)
+    {
+        await using var world = await WorktreeContinuityHarness.CreateAsync();
+        var a = await world.SeedSucceededAsync("A", "code-a.txt", "A\n");
+        await using (var db = world.CreateDb())
+        {
+            var live = await db.AgentTasks.FindAsync([a.Id], ct);
+            live!.LandRequestedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(ct);
+        }
+
+        var created = await world.Services.GetRequiredService<AgentTaskService>().CreateAsync(
+            new CreateAgentTaskRequest("next", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree, Card: "CARD-0442"),
+            world.Caller(), ct);
+        created.WorktreeBase!.Decision.ShouldBe("WaitForLand");
+        await using var scope = world.Services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        await using var db2 = world.CreateDb();
+        var row = await db2.AgentTasks.SingleAsync(t => t.Id == created.Id, ct);
+        row.Status.ShouldBe(AgentTaskStatus.Queued);
+        row.WorktreePath.ShouldBeNull();
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    [Arguments("auto")]
+    [Arguments("target")]
+    [Arguments("task")]
+    public async Task T0442_V26(string name, CancellationToken ct)
+    {
+        await using var world = await WorktreeContinuityHarness.CreateAsync();
+        var a = await world.SeedSucceededAsync("A", "code-a.txt", "A\n");
+        var mode = name switch
+        {
+            "target" => AgentTaskWorktreeBaseMode.Target,
+            "task" => AgentTaskWorktreeBaseMode.Task,
+            _ => AgentTaskWorktreeBaseMode.Auto,
+        };
+        var created = await world.Services.GetRequiredService<AgentTaskService>().CreateAsync(
+            new CreateAgentTaskRequest("next", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree, Card: "CARD-0442")
+            {
+                FreshWorktree = mode == AgentTaskWorktreeBaseMode.Target,
+                WorktreeBaseTask = mode == AgentTaskWorktreeBaseMode.Task ? a.Id.ToString("D") : null,
+            },
+            world.Caller(), ct);
+        await using var db = world.CreateDb();
+        var row = await db.AgentTasks.SingleAsync(t => t.Id == created.Id, ct);
+        row.WorktreeBaseMode.ShouldBe(mode);
+        if (mode == AgentTaskWorktreeBaseMode.Task)
+            row.RequestedWorktreeBaseTaskId.ShouldBe(a.Id);
     }
 
     [Test]

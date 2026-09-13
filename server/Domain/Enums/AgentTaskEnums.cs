@@ -8,6 +8,14 @@ namespace Antiphon.Server.Domain.Enums;
 /// reports, an <see cref="Orchestrator"/> owns a chunk and runs its own agents. Nothing in the
 /// system decomposes work automatically — a human or an agent picks this.
 /// </summary>
+/// <summary>CARD-0442: how a Worktree task chooses its starting commit.</summary>
+public enum AgentTaskWorktreeBaseMode
+{
+    Auto = 0,
+    Target = 1,
+    Task = 2,
+}
+
 public enum AgentTaskKind
 {
     Worker = 0,

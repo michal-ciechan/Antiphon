@@ -57,6 +57,7 @@ public sealed class AgentTaskService
     private readonly DelegationOpenGate? _openGate;
     private readonly CapacityRecoveryService? _capacityRecovery;
     private readonly SourceLandingAdmission? _sourceLanding;
+    private readonly AgentTaskWorktreeBaseResolver? _worktreeBase;
 
     public AgentTaskService(
         AppDbContext db,
@@ -77,7 +78,8 @@ public sealed class AgentTaskService
         DiagnoseQueue? diagnoseQueue = null,
         DelegationOpenGate? openGate = null,
         CapacityRecoveryService? capacityRecovery = null,
-        SourceLandingAdmission? sourceLanding = null)
+        SourceLandingAdmission? sourceLanding = null,
+        AgentTaskWorktreeBaseResolver? worktreeBase = null)
     {
         _areas = areas;
         _db = db;
@@ -98,6 +100,7 @@ public sealed class AgentTaskService
         _openGate = openGate;
         _capacityRecovery = capacityRecovery;
         _sourceLanding = sourceLanding;
+        _worktreeBase = worktreeBase;
     }
 
     /// <summary>
@@ -188,6 +191,13 @@ public sealed class AgentTaskService
     {
         if (string.IsNullOrWhiteSpace(request.Goal))
             throw new ValidationException(nameof(request.Goal), "A goal is required.");
+        if (request.FreshWorktree && !string.IsNullOrWhiteSpace(request.WorktreeBaseTask))
+            throw new ValidationException(nameof(request.FreshWorktree),
+                "FreshWorktree and WorktreeBaseTask are mutually exclusive.", "worktree_base_flags");
+        if ((request.FreshWorktree || !string.IsNullOrWhiteSpace(request.WorktreeBaseTask))
+            && (request.FollowUpOnTask is not null || request.Agent is not null || request.AgentId is not null))
+            throw new ValidationException(nameof(request.WorktreeBaseTask),
+                "Worktree base overrides cannot combine with -OnAgent or a pinned agent.", "worktree_base_flags");
         if (request.Goal.Length > 20_000)
             throw new ValidationException(nameof(request.Goal), "A goal must not exceed 20,000 characters.");
 
@@ -423,6 +433,12 @@ public sealed class AgentTaskService
         }
 
         var (workspace, warning) = ResolveWorkspace(request, caller, resolved);
+        if ((request.FreshWorktree || !string.IsNullOrWhiteSpace(request.WorktreeBaseTask))
+            && workspace != WorkspaceMode.Worktree)
+        {
+            throw new ValidationException(nameof(request.Workspace),
+                "Worktree base overrides require Workspace=Worktree.", "worktree_base_flags");
+        }
 
         var storedPolicy = InternalDecisionPolicy.Normalize(
             request.InternalDecisionPolicy,
@@ -922,6 +938,11 @@ public sealed class AgentTaskService
             ExpectedDurationMinutes = expectedMinutes,
             StandingAuthority = standingAuthority,
             AutoContinueOnWait = request.AutoContinue && standingAuthority is not null,
+            WorktreeBaseMode = request.FreshWorktree
+                ? AgentTaskWorktreeBaseMode.Target
+                : !string.IsNullOrWhiteSpace(request.WorktreeBaseTask)
+                    ? AgentTaskWorktreeBaseMode.Task
+                    : AgentTaskWorktreeBaseMode.Auto,
         };
 
         if (storedPolicy is not null)
@@ -961,6 +982,7 @@ public sealed class AgentTaskService
             && !liveFollowUp;
         IDbContextTransaction? gateTx = null;
         DelegationOpenGate.Snapshot? openSnapshot = null;
+        WorktreeBasePreviewDto? worktreePreview = null;
         if (gateCreate || task.SourceLandingOperationId is not null)
         {
             gateTx = _db.Database.CurrentTransaction is null
@@ -985,6 +1007,44 @@ public sealed class AgentTaskService
             if (gateCreate)
                 openSnapshot = await _openGate!.EnsureCanCreateAsync(
                     projectId, request.Role, request.IgnoreConcurrencyLimit, ct);
+
+        if (workspace == WorkspaceMode.Worktree && _worktreeBase is not null)
+        {
+            if (!string.IsNullOrWhiteSpace(request.WorktreeBaseTask))
+            {
+                if (task.CardId is null)
+                    throw new ValidationException(nameof(request.WorktreeBaseTask),
+                        "WorktreeBaseTask requires a bound card.", "worktree_base_flags");
+                task.RequestedWorktreeBaseTaskId = await ResolveTaskIdAsync(request.WorktreeBaseTask, ct);
+                var requested = await _db.AgentTasks.AsNoTracking()
+                    .FirstOrDefaultAsync(t => t.Id == task.RequestedWorktreeBaseTaskId, ct);
+                if (requested is not null && requested.CardId != task.CardId)
+                    throw new ValidationException(nameof(request.WorktreeBaseTask),
+                        "WorktreeBaseTask must name a same-card task.", "cross_card");
+            }
+
+            var resolution = await _worktreeBase.ResolveAsync(task, ct);
+            worktreePreview = resolution.Preview;
+            task.WorktreeBasePreviewJson = AgentTaskWorktreeBaseResolver.SerializePreview(resolution.Preview);
+            if (resolution.Decision == WorktreeBaseDecisionKind.Ambiguous)
+            {
+                throw new ConflictException(
+                    resolution.BlockDetail ?? "worktree_base_ambiguous",
+                    AgentTaskWorktreeBaseResolver.AmbiguousCode,
+                    new Dictionary<string, object?>
+                    {
+                        ["candidates"] = resolution.Preview.Candidates,
+                        ["recovery"] = new[] { "-BaseTask", "-FreshWorktree" },
+                    });
+            }
+
+            if (resolution.Decision == WorktreeBaseDecisionKind.Invalid)
+            {
+                throw new ValidationException(nameof(request.WorktreeBaseTask),
+                    resolution.BlockDetail ?? resolution.Reason ?? "invalid worktree base",
+                    resolution.Reason ?? "worktree_base_invalid");
+            }
+        }
 
         _db.AgentTasks.Add(task);
         _db.AgentTaskEvents.Add(new AgentTaskEvent
@@ -1077,6 +1137,7 @@ public sealed class AgentTaskService
             FollowUpMessage: followUpMessage,
             Complexity: request.Complexity,
             Routing: routingWalk?.ToDto(),
+            WorktreeBase: worktreePreview,
             TitleDiagnosisQueued: titleDiagnosisQueued);
     }
 
@@ -1526,7 +1587,10 @@ public sealed class AgentTaskService
             task.SourceLandingOperationId, task.SourceLandingSha, task.VerificationCleanupResidue,
             sealId, task.VerificationExecutionRevision, task.VerificationDirectoryRemoved,
             task.VerificationRegistrationRemoved, task.VerificationBranchRemoved, executions,
-            task.InternalDecisionPolicyJson, task.InternalDecisionPolicyHash);
+            task.InternalDecisionPolicyJson, task.InternalDecisionPolicyHash,
+            task.WorktreeBaseMode, task.RequestedWorktreeBaseTaskId, task.WorktreeBaseTaskId,
+            task.WorktreeBaseBranch, task.WorktreeBaseSha,
+            AgentTaskWorktreeBaseResolver.TryReadPreview(task.WorktreeBasePreviewJson));
     }
 
     private static VerificationExecutionDetailDto ToExecutionDetail(VerificationExecution execution)

@@ -653,45 +653,40 @@ arms dominate. Warm scoped-green runs should be substantially shorter; report ac
 times instead of claiming this estimate was measured. Test implementation time is additional.
 
 Run from the task worktree with Docker available for the test-owned Postgres container. Do not
-restart the shared local stack to test this change. Use the same isolated forward-slash output
-directory for every arm so daemon binaries remain untouched and build ledgers do not multiply.
+restart the shared local stack to test this change. Build **once** into a producer-owned isolated
+output (forward slash). Execute the Unit lane into a **fresh** results directory and inspect its
+TRX `Counters` for a nonzero executed count. Then execute the named integration classes from the
+coverage-to-class list, each invocation writing a **fresh** TRX whose `UnitTestResult` names and
+`Counters` must be inspected. `--list-tests` is not execution evidence. Do not combine UID and
+tree selectors. Unit and named integrations are separate `--no-build` invocations of the same
+built output. Combined class-filter syntax is CARD-0403 (`/*/*/(ClassA*)|(ClassB*)/*`); check
+that each intended class actually appears with a nonzero count. Per-PC Mutation stays
+method-scoped and rebuilds after each mutation and restore (never `--no-build` on a PC arm).
+
+Coverage-to-class (ordinary Code/Review V/R):
+
+| Lane | Classes |
+|---|---|
+| Unit | `/*/*/*/*[Category=Unit]` (includes `DelegationTestServicesTests`, `DelegationHarnessCensusTests`, `DelegationCapabilityTests` if tagged Unit) |
+| Named integration | `AgentTaskWorktreeContinuityTests`, `AgentTaskWorktreeBaseResolverTests`, `AgentTaskWorktreeBaseCreateTests`, `DelegateScriptWorktreeBaseTests`, `AgentTaskWorktreeBaseMigrationTests`, `AgentTaskDispatchBaseGuardTests`, `DelegationWorktreeTests`, `AgentTaskLandStageOutcomeTests`, `AgentTaskPipelineStatusTests`, `DelegateScriptKindTests`, `DelegateScriptCapabilityTests`, plus the existing follow-up methods on `AgentTaskServiceIntegrationTests`, `AgentTaskAgentKindTests`, `AgentTaskPoolTests` |
 
 ```powershell
-# New V cases only. One class-filtered foreground process at a time.
-$c442Classes = @(
-    'AgentTaskWorktreeContinuityTests',
-    'AgentTaskWorktreeBaseResolverTests',
-    'AgentTaskWorktreeBaseCreateTests',
-    'DelegateScriptWorktreeBaseTests',
-    'AgentTaskWorktreeBaseMigrationTests',
-    'AgentTaskDispatchBaseGuardTests',
-    'DelegationWorktreeTests'
-)
-$c442Run = Get-Date -Format 'yyyyMMdd-HHmmss'
-foreach ($c442Class in $c442Classes) {
-    dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c442/ -- --treenode-filter "/*/Antiphon.Tests.Application/$c442Class/T0442_V*" --report-trx --report-trx-filename "c442-$c442Run-$c442Class.trx"
-    if ($LASTEXITCODE -ne 0) { throw "$c442Class failed: $LASTEXITCODE" }
-}
+dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c442/ --nologo
 
-# Positive-control example. Use the table's class and exact Vnn for every other arm.
-# Rebuild after each production mutation AND after restoring it; never --no-build here.
-dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c442/ -- --treenode-filter '/*/Antiphon.Tests.Application/AgentTaskWorktreeContinuityTests/T0442_V01' --report-trx --report-trx-filename "c442-$c442Run-pc01-red.trx"
-# Inspect fresh executed assertion failures; revert ONLY the mutation line, then:
-dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c442/ -- --treenode-filter '/*/Antiphon.Tests.Application/AgentTaskWorktreeContinuityTests/T0442_V01' --report-trx --report-trx-filename "c442-$c442Run-pc01-restored.trx"
+dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c442/ -- --treenode-filter '/*/*/*/*[Category=Unit]' --report-trx --report-trx-filename unit.trx --results-directory .antiphon/c442-unit
+
+# Inspect unit.trx Counters.executed > 0 and failed/skipped before continuing.
+
+dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c442/ -- --treenode-filter '/*/*/(AgentTaskWorktreeContinuityTests*)|(AgentTaskWorktreeBaseResolverTests*)|(AgentTaskWorktreeBaseCreateTests*)|(DelegateScriptWorktreeBaseTests*)|(AgentTaskWorktreeBaseMigrationTests*)/*' --report-trx --report-trx-filename new-v.trx --results-directory .antiphon/c442-new-v
+
+dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c442/ -- --treenode-filter '/*/*/(AgentTaskDispatchBaseGuardTests*)|(DelegationWorktreeTests*)|(AgentTaskLandStageOutcomeTests*)|(AgentTaskPipelineStatusTests*)|(DelegateScriptKindTests*)|(DelegateScriptCapabilityTests*)/*' --report-trx --report-trx-filename retained.trx --results-directory .antiphon/c442-retained
 ```
 
-Retained class runs, same command prefix and unique TRX filenames, with exact filters:
+Inspect each fresh TRX for the intended class names, method names (including `T0442_V*`), outcomes
+and nonzero counters. A failed filter can produce a TRX with zero tests (native exit 8) — that is
+not coverage. Follow-up method filters remain:
 
 ```text
-/*/Antiphon.Tests.Application/DelegationWorktreeTests/*
-/*/Antiphon.Tests.Application/AgentTaskDispatchBaseGuardTests/*
-/*/Antiphon.Tests.Application/AgentTaskLandStageOutcomeTests/*
-/*/Antiphon.Tests.Application/AgentTaskPipelineStatusTests/*
-/*/Antiphon.Tests.Application/DelegateScriptKindTests/*
-/*/Antiphon.Tests.Application/DelegateScriptCapabilityTests/*
-/*/Antiphon.Tests.Application/DelegationCapabilityTests/*
-/*/*/DelegationTestServicesTests/*
-/*/*/DelegationHarnessCensusTests/*
 /*/Antiphon.Tests.Application/AgentTaskServiceIntegrationTests/a_follow_up_*
 /*/Antiphon.Tests.Application/AgentTaskServiceIntegrationTests/OnAgent_defaults_stage_to_FollowUp_and_sets_FollowUpOfTaskId
 /*/Antiphon.Tests.Application/AgentTaskServiceIntegrationTests/retrying_*
@@ -706,6 +701,16 @@ Retained-regression counts come from fresh TRX results at Code HEAD, not a stati
 count. For the client DTO compile check, run `node node_modules/typescript/bin/tsc -b --pretty false`
 from `client/` and retain its real exit code (install dependencies with the established lockfile
 workflow only if absent). No new Vitest tests are required for compatible optional DTO fields.
+
+Positive-control example. Use the table's class and exact method for every other arm.
+Rebuild after each production mutation AND after restoring it; never `--no-build` here.
+
+```powershell
+dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c442/ --nologo
+dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c442/ -- --treenode-filter '/*/*/AgentTaskWorktreeContinuityTests/T0442_V01' --report-trx --report-trx-filename pc01-red.trx --results-directory .antiphon/c442-pc01-red
+# Inspect fresh executed assertion failures; revert ONLY the mutation line; refresh LastWriteTime; rebuild; then:
+dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c442/ -- --treenode-filter '/*/*/AgentTaskWorktreeContinuityTests/T0442_V01' --report-trx --report-trx-filename pc01-green.trx --results-directory .antiphon/c442-pc01-green
+```
 
 For every invocation, inspect the fresh TRX `UnitTestResult` names/outcomes and `Counters`, and
 check the intended class and case names actually executed. Require the planned per-class V counts

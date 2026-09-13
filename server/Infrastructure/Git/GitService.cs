@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
 using Microsoft.Extensions.Logging;
 
 namespace Antiphon.Server.Infrastructure.Git;
@@ -9,9 +10,10 @@ namespace Antiphon.Server.Infrastructure.Git;
 /// Implements IGitService using git CLI commands via Process.Start.
 /// Supports the two-tier branching/tagging strategy for workflow artifacts (FR28-FR34).
 /// </summary>
-public class GitService : IGitService
+public partial class GitService : IGitService
 {
     private readonly ILogger<GitService> _logger;
+    private readonly GitProcessGate? _gate;
 
     /// <summary>
     /// Timeout for standard git operations (fetch, diff, checkout, etc.).
@@ -23,9 +25,10 @@ public class GitService : IGitService
     /// </summary>
     private static readonly TimeSpan CloneTimeout = TimeSpan.FromMinutes(10);
 
-    public GitService(ILogger<GitService> logger)
+    public GitService(ILogger<GitService> logger, GitProcessGate? gate = null)
     {
         _logger = logger;
+        _gate = gate;
     }
 
     /// <summary>

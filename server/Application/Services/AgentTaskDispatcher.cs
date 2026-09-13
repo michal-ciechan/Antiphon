@@ -85,6 +85,7 @@ public sealed class AgentTaskDispatcher
 
     private readonly IRepositoryMutationLease? _repositoryLeases;
     private readonly VerificationExecutionService? _verification;
+    private readonly AgentTaskWorktreeBaseResolver? _worktreeBase;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -137,10 +138,12 @@ public sealed class AgentTaskDispatcher
         OrchestratorWorkspaceWarningService? workspaceWarning = null,
         CapacityRecoveryService? capacityRecovery = null,
         IRepositoryMutationLease? repositoryLeases = null,
-        VerificationExecutionService? verification = null)
+        VerificationExecutionService? verification = null,
+        AgentTaskWorktreeBaseResolver? worktreeBase = null)
     {
         _repositoryLeases = repositoryLeases;
         _verification = verification;
+        _worktreeBase = worktreeBase;
         _capacityRecovery = capacityRecovery;
         _complexityRouting = complexityRouting;
         _routingPins = routingPins;
@@ -572,40 +575,60 @@ public sealed class AgentTaskDispatcher
                 continue;
             }
 
-            // CARD-0215 / CARD-0146 S4: a card-bound Worktree task branches from
-            // merge-target-or-HEAD, never a sibling. Hold while that sibling's land is in
-            // flight. The pipeline-stage case is any IsStage Worktree (TestDesign behind a
-            // landing Plan, Code behind Plan, …); helpers use the same git-ancestry hold
-            // because a Docs worktree from master would still miss the sibling's commits.
-            // Otherwise dispatch with a warning so a superseded plan cannot block Execute.
+            // CARD-0442: wait for an uncontained same-card land; CARD-0215 remains when
+            // the continuity resolver is not registered.
             IReadOnlyList<UnlandedSibling>? siblingWarnings = null;
             if (task.Workspace == WorkspaceMode.Worktree
-                && task.CardId is not null
-                && task.WorktreePath is null)
+                && task.WorktreePath is null
+                && task.SourceLandingOperationId is null)
             {
-                var siblingGuard = await EvaluateCardSiblingBaseAsync(task, ct);
-                if (siblingGuard.Hold is { } heldSibling)
+                if (_worktreeBase is not null)
                 {
-                    if (everHeld.Add(task.Id))
+                    var previewHold = await _worktreeBase.ResolveAsync(task, ct);
+                    if (previewHold.HoldForLand)
                     {
-                        _db.AgentTaskEvents.Add(new AgentTaskEvent
+                        if (everHeld.Add(task.Id))
                         {
-                            Id = Guid.NewGuid(),
-                            AgentTaskId = task.Id,
-                            Type = AgentTaskEventType.Held,
-                            Detail = heldSibling.HoldDetail,
-                            At = UtcNow(),
-                        });
-                        await _db.SaveChangesAsync(ct);
-                        _logger.LogInformation(
-                            "Task {ShortId} held: {Detail}",
-                            DelegationReportFormatter.Short(task.Id), heldSibling.HoldDetail);
+                            _db.AgentTaskEvents.Add(new AgentTaskEvent
+                            {
+                                Id = Guid.NewGuid(),
+                                AgentTaskId = task.Id,
+                                Type = AgentTaskEventType.Held,
+                                Detail = previewHold.Reason ?? "held: source is landing",
+                                At = UtcNow(),
+                            });
+                            await _db.SaveChangesAsync(ct);
+                        }
+
+                        continue;
+                    }
+                }
+                else if (task.CardId is not null)
+                {
+                    var siblingGuard = await EvaluateCardSiblingBaseAsync(task, ct);
+                    if (siblingGuard.Hold is { } heldSibling)
+                    {
+                        if (everHeld.Add(task.Id))
+                        {
+                            _db.AgentTaskEvents.Add(new AgentTaskEvent
+                            {
+                                Id = Guid.NewGuid(),
+                                AgentTaskId = task.Id,
+                                Type = AgentTaskEventType.Held,
+                                Detail = heldSibling.HoldDetail,
+                                At = UtcNow(),
+                            });
+                            await _db.SaveChangesAsync(ct);
+                            _logger.LogInformation(
+                                "Task {ShortId} held: {Detail}",
+                                DelegationReportFormatter.Short(task.Id), heldSibling.HoldDetail);
+                        }
+
+                        continue;
                     }
 
-                    continue;
+                    siblingWarnings = siblingGuard.Warnings.Count == 0 ? null : siblingGuard.Warnings;
                 }
-
-                siblingWarnings = siblingGuard.Warnings.Count == 0 ? null : siblingGuard.Warnings;
             }
 
             try
@@ -3093,7 +3116,53 @@ public sealed class AgentTaskDispatcher
         // target keeps the eventual rebase-back linear.
         if (claimed.Workspace == WorkspaceMode.Worktree && claimed.WorktreePath is null)
         {
-            await _worktrees.CreateForTaskAsync(claimed, repositoryLease!, ct);
+            string? continuationSha = null;
+            if (_worktreeBase is not null && claimed.SourceLandingOperationId is null)
+            {
+                var resolved = await _worktreeBase.ResolveAsync(claimed, ct);
+                if (resolved.HoldForLand)
+                {
+                    await transaction.RollbackAsync(ct);
+                    return false;
+                }
+
+                if (resolved.Block)
+                {
+                    claimed.Status = AgentTaskStatus.Blocked;
+                    claimed.FailureReason = resolved.BlockDetail ?? resolved.Reason;
+                    claimed.ConcurrencyToken = Guid.NewGuid();
+                    _db.AgentTaskEvents.Add(new AgentTaskEvent
+                    {
+                        Id = Guid.NewGuid(),
+                        AgentTaskId = claimed.Id,
+                        Type = AgentTaskEventType.Blocked,
+                        Detail = claimed.FailureReason,
+                        At = now,
+                    });
+                    await _db.SaveChangesAsync(ct);
+                    await transaction.CommitAsync(ct);
+                    return false;
+                }
+
+                continuationSha = resolved.StartSha;
+                claimed.WorktreeBaseTaskId = resolved.SourceTaskId;
+                claimed.WorktreeBaseBranch = resolved.SourceBranch;
+                var preview = AgentTaskWorktreeBaseResolver.TryReadPreview(claimed.WorktreeBasePreviewJson);
+                if (preview is not null
+                    && (preview.SourceSha != resolved.StartSha || preview.Decision != resolved.Decision.ToString()))
+                {
+                    _db.AgentTaskEvents.Add(new AgentTaskEvent
+                    {
+                        Id = Guid.NewGuid(),
+                        AgentTaskId = claimed.Id,
+                        Type = AgentTaskEventType.Warning,
+                        Detail = $"worktree base changed from preview {preview.Decision}/{preview.SourceSha} to {resolved.Decision}/{resolved.StartSha}",
+                        At = now,
+                    });
+                }
+            }
+
+            await _worktrees.CreateForTaskAsync(claimed, repositoryLease!, ct, continuationSha);
 
             // The hard version of the orchestrator contract: a PreToolUse hook that refuses
             // Edit/Write with "delegate this instead". Only ever written into the task's OWN

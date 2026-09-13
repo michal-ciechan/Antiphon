@@ -32,4 +32,13 @@ public class GitSettings
     /// The sweep never prunes, removes, or fails a task.
     /// </summary>
     public int WorktreeHealthIntervalSeconds { get; set; } = 60;
+
+    /// <summary>CARD-0442. Inspection wall for worktree-base selection. Equality is expired.</summary>
+    public int WorktreeBaseInspectionTimeoutSeconds { get; set; } = 2;
+
+    /// <summary>CARD-0442. Max same-card branches admitted for Git inspection (default 16).</summary>
+    public int WorktreeBaseMaxCandidates { get; set; } = 16;
+
+    /// <summary>CARD-0442. Max git process starts for one resolution (default 128).</summary>
+    public int WorktreeBaseMaxGitCommands { get; set; } = 128;
 }

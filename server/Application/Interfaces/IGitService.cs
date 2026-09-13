@@ -1,3 +1,5 @@
+using Antiphon.Server.Application.Services;
+
 namespace Antiphon.Server.Application.Interfaces;
 
 /// <summary>
@@ -86,4 +88,11 @@ public interface IGitService
     /// Does not throw if the branch does not exist.
     /// </summary>
     Task DeleteBranchAsync(string branchName, string repoPath, CancellationToken ct);
+
+    Task<(int ExitCode, string Stdout, string Stderr)> RunWorktreeBaseGitAsync(
+        string workingDirectory,
+        IReadOnlyList<string> args,
+        WorktreeBaseGitSession session,
+        CancellationToken ct)
+        => throw new NotSupportedException();
 }

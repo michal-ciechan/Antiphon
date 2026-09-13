@@ -51,7 +51,7 @@ public class DelegationWorktreeTests
     }
 
     [Test]
-    public async Task two_top_level_worktree_tasks_on_one_card_both_branch_from_repo_head()
+    public async Task two_top_level_worktree_tasks_on_one_card_both_branch_from_repo_head_when_create_is_not_auto()
     {
         using var repo = new ScratchGitRepo();
         await repo.CommitFileAsync("README.md", "base\n");
@@ -79,6 +79,21 @@ public class DelegationWorktreeTests
         (await ScratchGitRepo.GitInAsync(
             second.WorktreePath!, "merge-base", "--is-ancestor", firstCommit, "HEAD"))
             .Ok.ShouldBeFalse("a sibling Worktree task branches from HEAD, never from the first task's commit");
+    }
+
+    [Test]
+    public async Task T0442_V23()
+    {
+        using var repo = new ScratchGitRepo();
+        await repo.CommitFileAsync("README.md", "base\n");
+        var a = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        await repo.GitAsync("branch", "feat/source");
+        var (service, _) = CreateService(repo);
+        var task = NewTask(repo.Path, mergeTarget: null);
+        await service.CreateForTaskAsync(task, CancellationToken.None, a);
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim().ShouldBe(a);
+        await repo.CommitFileAsync("later.txt", "B\n");
+        task.WorktreeBaseSha.ShouldBe(a);
     }
 
     [Test]

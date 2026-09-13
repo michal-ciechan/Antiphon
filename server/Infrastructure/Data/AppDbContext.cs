@@ -1671,6 +1671,11 @@ public class AppDbContext : DbContext
             // non-Legacy class. WorktreeBaseSha is the no-target git-facts base.
             entity.Property(t => t.ReportEvidence).IsRequired().HasDefaultValue(AgentTaskReportEvidence.Legacy);
             entity.Property(t => t.WorktreeBaseSha).HasMaxLength(64);
+            entity.Property(t => t.WorktreeBaseMode).IsRequired().HasDefaultValue(AgentTaskWorktreeBaseMode.Auto);
+            entity.Property(t => t.RequestedWorktreeBaseTaskId).IsRequired(false);
+            entity.Property(t => t.WorktreeBaseTaskId).IsRequired(false);
+            entity.Property(t => t.WorktreeBaseBranch).HasMaxLength(300);
+            entity.Property(t => t.WorktreeBasePreviewJson).HasColumnType("jsonb");
             // CARD-0248. Null on every existing row (legacy nudge, no boundary recorded).
             entity.Property(t => t.ReportNudgedSequence).IsRequired(false);
             entity.Property(t => t.ReportNudgeMessageId).IsRequired(false);

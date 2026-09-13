@@ -538,6 +538,15 @@ export interface AgentTaskCreatedDto {
    * to replace the title. Optional: a server that predates the field simply omits it.
    */
   titleDiagnosisQueued?: boolean
+  worktreeBase?: {
+    decision: string
+    fallbackRef?: string | null
+    sourceTaskId?: string | null
+    sourceBranch?: string | null
+    sourceSha?: string | null
+    reason?: string | null
+    warnings?: string[]
+  } | null
 }
 
 /** Role → tier, mirroring the server's default RolePolicy. Shown next to each role in the picker. */
