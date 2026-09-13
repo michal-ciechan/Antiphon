@@ -579,7 +579,12 @@ public sealed class AgentTaskLandService
             return new(diagnosticId, LandFailureDiagnostic.Unexpected, LandFailureDiagnostic.ExceptionTypeName(exception), requestId ?? Guid.Empty, 0);
         var expectedRequest = _execution?.RequestId ?? requestId ?? task.CurrentLandRequestId;
         var expectedAttempt = _execution?.Attempt;
-        if (expectedRequest is null) return new(diagnosticId, LandFailureDiagnostic.Unexpected, LandFailureDiagnostic.ExceptionTypeName(exception), Guid.Empty, 0);
+        if (expectedRequest is null)
+        {
+            if (task.LandRequestedAt is null)
+                return new(diagnosticId, LandFailureDiagnostic.Unexpected, LandFailureDiagnostic.ExceptionTypeName(exception), Guid.Empty, 0);
+            expectedRequest = (await EnsureRequestAsync(task, ct)).Id;
+        }
         if (requestId is not null && requestId != expectedRequest)
             return new(diagnosticId, LandFailureDiagnostic.Unexpected, LandFailureDiagnostic.ExceptionTypeName(exception), expectedRequest.Value, expectedAttempt ?? 0);
 
