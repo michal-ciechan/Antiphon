@@ -24,6 +24,9 @@ internal static class QueuedReceiptAssertions
     {
         var adapter = h.Adapter;
         BindRuntimeTranscript(adapter, sessionId, connection);
+        if (!h.Runtime.ListLiveSessions().Contains(sessionId))
+            h.Runtime.Register(sessionId, adapter);
+        await MarkRecipientLiveAsync(connection, sessionId);
 
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
         queued = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == queued.Id);
@@ -47,6 +50,7 @@ internal static class QueuedReceiptAssertions
                 });
                 BindRuntimeTranscript(adapter, sessionId, connection);
                 recovered.Runtime.Register(sessionId, adapter);
+                await MarkRecipientLiveAsync(connection, sessionId);
                 queue = recovered.Queue;
             }
 
@@ -88,6 +92,22 @@ internal static class QueuedReceiptAssertions
             if (recovered is not null)
                 await recovered.DisposeAsync();
         }
+    }
+
+    /// <summary>
+    /// Attach the fake TUI: a dispatched session is created Starting and never becomes Running
+    /// without a real launch. Receipt confirmation drives the adapter, so the row must accept input.
+    /// </summary>
+    private static async Task MarkRecipientLiveAsync(string connection, Guid sessionId)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
+        if (session.Status == SessionStatus.Running)
+            return;
+        session.Status = SessionStatus.Running;
+        if (session.StartedAt == default) session.StartedAt = DateTime.UtcNow;
+        session.LastSeenAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
     }
 
     /// <summary>
