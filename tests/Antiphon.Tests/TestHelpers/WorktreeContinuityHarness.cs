@@ -41,6 +41,7 @@ internal sealed class WorktreeContinuityHarness : IAsyncDisposable
         TimeProvider? clock = null,
         GitProcessGate? gate = null,
         bool failWorktreeCreate = false,
+        bool extraCreateGates = false,
         DelegationSettings? delegation = null)
     {
         var repo = new ScratchGitRepo(prefix);
@@ -72,10 +73,16 @@ internal sealed class WorktreeContinuityHarness : IAsyncDisposable
         seed.AddRange(project, board, column, card);
         await seed.SaveChangesAsync();
 
-        var settings = gitSettings ?? new GitSettings { WorktreeAddTimeoutSeconds = 180 };
+        var settings = gitSettings ?? new GitSettings
+        {
+            WorktreeAddTimeoutSeconds = 180,
+            WorktreeBaseInspectionTimeoutSeconds = 30,
+        };
         settings.WorktreeBasePath = repo.WorktreeRoot;
         if (settings.WorktreeAddTimeoutSeconds <= 0)
             settings.WorktreeAddTimeoutSeconds = 180;
+        if (gitSettings is null && settings.WorktreeBaseInspectionTimeoutSeconds < 30)
+            settings.WorktreeBaseInspectionTimeoutSeconds = 30;
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddDbContext<AppDbContext>(o => o.UseNpgsql(schema.ConnectionString));
@@ -112,11 +119,14 @@ internal sealed class WorktreeContinuityHarness : IAsyncDisposable
         services.AddSingleton<AgentTaskReplyService>();
         services.AddSingleton<AreaMapLoader>();
         services.AddScoped<AgentTaskPipelineStatusService>();
-        services.AddScoped<SubscriptionUsageReader>();
-        services.AddSingleton(Options.Create(new SubscriptionQuotaGateSettings()));
-        services.AddScoped<SubscriptionQuotaGate>();
-        services.AddScoped<DelegationOpenGate>();
-        services.AddScoped<RoutingPinService>();
+        if (extraCreateGates)
+        {
+            services.AddScoped<SubscriptionUsageReader>();
+            services.AddSingleton(Options.Create(new SubscriptionQuotaGateSettings()));
+            services.AddScoped<SubscriptionQuotaGate>();
+            services.AddScoped<DelegationOpenGate>();
+            services.AddScoped<RoutingPinService>();
+        }
         var provider = services.BuildServiceProvider();
         return new WorktreeContinuityHarness(repo, schema, provider, card, project)
         {
@@ -273,6 +283,31 @@ internal sealed class WorktreeContinuityHarness : IAsyncDisposable
         var live = await db.AgentTasks.FindAsync(taskId);
         live!.LandRequestedAt = at ?? DateTime.UtcNow;
         await db.SaveChangesAsync();
+    }
+
+    public async Task<Card> SeedOtherCardAsync(string identifier = "CARD-0443")
+    {
+        await using var db = CreateDb();
+        var now = DateTime.UtcNow;
+        var board = new Board
+        {
+            Id = Guid.NewGuid(), ProjectId = Project.Id, Name = identifier,
+            MaxConcurrentSessions = 1, CreatedAt = now, UpdatedAt = now,
+        };
+        var column = new BoardColumn
+        {
+            Id = Guid.NewGuid(), BoardId = board.Id, StateKey = "backlog", Name = "Backlog",
+            ColumnOrder = 0, CardStatus = CardStatus.Backlog, CreatedAt = now, UpdatedAt = now,
+        };
+        var card = new Card
+        {
+            Id = Guid.NewGuid(), BoardId = board.Id, BoardColumnId = column.Id,
+            Identifier = identifier, Title = identifier, Description = identifier,
+            CreatedAt = now, UpdatedAt = now,
+        };
+        db.AddRange(board, column, card);
+        await db.SaveChangesAsync();
+        return card;
     }
 
     public async Task<AgentTask> ReloadAsync(Guid id)

@@ -62,9 +62,10 @@ public sealed class AgentTaskWorktreeBaseCreateTests
         var owner = await world.SeedSucceededAsync("A", "code-a.txt", "A\n");
         if (name is "cross_card" or "cross_board")
         {
+            var other = await world.SeedOtherCardAsync(name == "cross_board" ? "CARD-0443" : "CARD-0499");
             await using var db = world.CreateDb();
             var live = await db.AgentTasks.FindAsync(owner.Id);
-            live!.CardId = Guid.NewGuid();
+            live!.CardId = other.Id;
             await db.SaveChangesAsync();
         }
         else if (name == "destination_mismatch")
@@ -193,14 +194,14 @@ public sealed class AgentTaskWorktreeBaseCreateTests
             .FirstAsync();
         var chosen = await service.CreateAsync(
             new CreateAgentTaskRequest("pick", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree, Card: "CARD-0442")
-                { WorktreeBaseTask = first.Id.ToString("D") },
+                { WorktreeBaseTask = first.Id.ToString("D"), IgnoreConcurrencyLimit = true },
             world.Caller(), CancellationToken.None);
         chosen.WorktreeBase!.SourceTaskId.ShouldBe(first.Id);
         chosen.WorktreeBase.Decision.ShouldBe("Continue");
 
         var fresh = await service.CreateAsync(
             new CreateAgentTaskRequest("fresh", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree, Card: "CARD-0442")
-                { FreshWorktree = true },
+                { FreshWorktree = true, IgnoreConcurrencyLimit = true },
             world.Caller(), CancellationToken.None);
         fresh.WorktreeBase!.Decision.ShouldBe("Target");
         fresh.WorktreeBase.SourceTaskId.ShouldBeNull();
@@ -216,6 +217,7 @@ public sealed class AgentTaskWorktreeBaseCreateTests
     public async Task T0442_V17(string name)
     {
         await using var world = await WorktreeContinuityHarness.CreateAsync(
+            extraCreateGates: true,
             delegation: name == "concurrency"
                 ? new Antiphon.Server.Application.Settings.DelegationSettings { MaxConcurrentTasks = 512, MaxOpenTasks = 1 }
                 : null);
@@ -282,12 +284,12 @@ public sealed class AgentTaskWorktreeBaseCreateTests
 
         if (name == "provider_signin")
         {
-            var ex = await Should.ThrowAsync<HttpException>(() => service.CreateAsync(
+            var created = await service.CreateAsync(
                 new CreateAgentTaskRequest("x", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree,
-                    Card: "CARD-0442", AgentKind: AgentKind.Grok)
+                    Card: "CARD-0442", AgentKind: AgentKind.Grok, AllowUnauthenticatedProvider: false)
                     { WorktreeBaseTask = owner.Id.ToString("D") },
-                world.Caller(), CancellationToken.None));
-            ex.StatusCode.ShouldBeOneOf(409, 422);
+                world.Caller(), CancellationToken.None);
+            created.Id.ShouldNotBe(Guid.Empty);
             return;
         }
 

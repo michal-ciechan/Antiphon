@@ -308,7 +308,7 @@ public class AgentTaskDispatchBaseGuardTests
             return;
         }
 
-        var (a, x) = await world.SeedTwoTipsAsync();
+        var (a, b, x, y) = await world.SeedFourTipsAsync();
         await world.SetLandRequestedAsync(a.Id);
         var queued = await world.CreateNextAsync(ct: ct);
         queued.WorktreeBase!.Decision.ShouldBe("WaitForLand");
@@ -317,8 +317,9 @@ public class AgentTaskDispatchBaseGuardTests
 
         if (name == "all_contained")
         {
-            await world.Repo.GitAsync("merge", "--ff-only", a.WorktreeBranch!);
-            await world.Repo.GitAsync("merge", "--ff-only", x.WorktreeBranch!);
+            await world.Repo.GitAsync("checkout", "master");
+            await world.Repo.GitAsync("merge", "--no-ff", b.WorktreeBranch!, "-m", "integrate B");
+            await world.Repo.GitAsync("merge", "--no-ff", y.WorktreeBranch!, "-m", "integrate Y");
             await world.SeedLandedAsync(a.Id);
             await using (var db = world.CreateDb())
             {
@@ -334,7 +335,8 @@ public class AgentTaskDispatchBaseGuardTests
             return;
         }
 
-        await world.Repo.GitAsync("merge", "--ff-only", a.WorktreeBranch!);
+        await world.Repo.GitAsync("checkout", "master");
+        await world.Repo.GitAsync("merge", "--no-ff", a.WorktreeBranch!, "-m", "integrate A only");
         await world.SeedLandedAsync(a.Id);
         await using (var db = world.CreateDb())
         {
@@ -348,12 +350,14 @@ public class AgentTaskDispatchBaseGuardTests
         blocked.Status.ShouldBe(AgentTaskStatus.Blocked);
         blocked.FailureReason.ShouldContain("worktree_base_ambiguous");
         await world.AssertNoLaunchAsync(queued.Id);
-        await world.Repo.GitAsync("merge", "--ff-only", x.WorktreeBranch!);
+        await world.Repo.GitAsync("merge", "--no-ff", b.WorktreeBranch!, "-m", "integrate B");
+        await world.Repo.GitAsync("merge", "--no-ff", y.WorktreeBranch!, "-m", "integrate Y");
         await using var retryScope = world.Services.CreateAsyncScope();
         await retryScope.ServiceProvider.GetRequiredService<AgentTaskService>().RetryAsync(queued.Id, ct);
         await world.TickAsync(ct);
         var done = await world.ReloadAsync(queued.Id);
         done.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        x.Id.ShouldNotBe(Guid.Empty);
     }
 
     [Test]
