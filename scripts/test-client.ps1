@@ -16,6 +16,9 @@
 #   pwsh -File scripts/test-client.ps1                 # full suite
 #   pwsh -File scripts/test-client.ps1 BoardPage       # vitest filter args pass through
 #
+# If client/node_modules has no vitest (a fresh linked worktree), this installs it before running
+# rather than telling the caller to do it - see the comment at the install block below.
+#
 # Why this runs vitest through `node <path>\vitest.mjs` and NOT `npx vitest` (CARD-0307): on
 # Windows `npx` resolves to the Node installer's npx.ps1 shim, and when that shim is called from a
 # line inside a script it does not use its bound parameters - it re-parses the SOURCE TEXT of the
@@ -45,8 +48,32 @@ if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out
 $logFile = Join-Path $logDir 'client-tests.log'
 $vitest = Join-Path $clientDir 'node_modules\vitest\vitest.mjs'
 
+# A fresh linked worktree gets a client/ with no node_modules, and this used to print "run npm ci"
+# and exit 1. That reads as a failing client suite to anyone capturing the output, and it is a dead
+# end for an agent that cannot type the command itself - it cost CARD-0417's review (task f42b6b25)
+# the client evidence entirely. So install once, here, and then re-check. A suite that still cannot
+# run fails just as loudly as before; it is only the install that is no longer somebody else's job.
 if (-not (Test-Path $vitest)) {
-    Write-Output "vitest not installed at $vitest; run npm ci in client/"
+    Write-Output "vitest is not installed at $vitest - installing client dependencies first."
+    # npm.cmd, not the npm.ps1 shim: the shim re-parses the calling line's SOURCE TEXT for its
+    # arguments (the CARD-0307 trap that silently ate this script's vitest filter).
+    $npmExe = if (Get-Command npm.cmd -ErrorAction SilentlyContinue) { 'npm.cmd' } else { 'npm' }
+    $installVerb = if (Test-Path (Join-Path $clientDir 'package-lock.json')) { 'ci' } else { 'install' }
+    Push-Location $clientDir
+    try {
+        & $npmExe $installVerb
+        $installCode = $LASTEXITCODE
+    }
+    finally {
+        Pop-Location
+    }
+    if ($installCode -ne 0) {
+        Write-Output "npm $installVerb exited with code $installCode."
+    }
+}
+
+if (-not (Test-Path $vitest)) {
+    Write-Output "vitest is still not installed at $vitest; run npm ci in client/ by hand and look at why it failed."
     Write-Output ""
     Write-Output "CLIENT TESTS EXIT CODE: 1  (FAIL - do not report this run as green)"
     exit 1
