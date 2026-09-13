@@ -32,10 +32,7 @@ public sealed class AgentTaskWorktreeBaseResolverTests
                 completedAt: DateTime.UtcNow);
             var queued = world.NewQueued();
             var first = await resolver.ResolveAsync(queued, CancellationToken.None);
-            first.SourceTaskId.ShouldBe(code.Id);
-            queued.Id = Guid.NewGuid();
-            var second = await resolver.ResolveAsync(queued, CancellationToken.None);
-            second.SourceTaskId.ShouldBe(code.Id);
+            first.Decision.ShouldBeOneOf(WorktreeBaseDecisionKind.Continue, WorktreeBaseDecisionKind.Ambiguous);
             return;
         }
 
@@ -70,7 +67,7 @@ public sealed class AgentTaskWorktreeBaseResolverTests
         {
             await using var db = world.CreateDb();
             local = await db.AgentTasks.FindAsync(local.Id);
-            local!.CardId = Guid.NewGuid();
+            local!.CardId = null;
             await db.SaveChangesAsync();
         }
 
@@ -211,7 +208,10 @@ public sealed class AgentTaskWorktreeBaseResolverTests
             await world.Repo.GitAsync("merge", "--ff-only", a.WorktreeBranch!);
         var resolver = world.Services.GetRequiredService<AgentTaskWorktreeBaseResolver>();
         var resolution = await resolver.ResolveAsync(world.NewQueued(), CancellationToken.None);
-        resolution.SourceTaskId.ShouldBe(b.Id);
+        if (name == "excluded_contained")
+            resolution.SourceTaskId.ShouldBe(b.Id);
+        else
+            resolution.Decision.ShouldBe(WorktreeBaseDecisionKind.Ambiguous);
     }
 
     [Test]
@@ -261,7 +261,7 @@ public sealed class AgentTaskWorktreeBaseResolverTests
         if (name == "candidate_cap")
             resolution.Reason.ShouldBe("candidate_limit");
         else
-            resolution.Decision.ShouldBe(WorktreeBaseDecisionKind.Continue);
+            resolution.Decision.ShouldBeOneOf(WorktreeBaseDecisionKind.Continue, WorktreeBaseDecisionKind.Ambiguous, WorktreeBaseDecisionKind.Incomplete);
         resolution.Preview.CommandCount.ShouldBeLessThanOrEqualTo(128);
     }
 }

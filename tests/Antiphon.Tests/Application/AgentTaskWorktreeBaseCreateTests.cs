@@ -61,7 +61,7 @@ public sealed class AgentTaskWorktreeBaseCreateTests
         {
             await using var db = world.CreateDb();
             var live = await db.AgentTasks.FindAsync(owner.Id);
-            live!.CardId = Guid.NewGuid();
+            live!.CardId = null;
             await db.SaveChangesAsync();
         }
 
