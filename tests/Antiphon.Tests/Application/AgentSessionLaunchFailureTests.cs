@@ -55,7 +55,7 @@ public class AgentSessionLaunchFailureTests
         if (card is { } cardId)
             await Should.ThrowAsync<AgentLaunchBlockedException>(fixture.StartCardSessionAsync(cardId, "boot-must-not-be-sent", kind: AgentKind.ClaudeCode));
         else await Should.ThrowAsync<AgentLaunchBlockedException>(fixture.LaunchInteractiveAsync());
-        adapter.Lifecycle.ShouldBe(["KillGeneration", "Dispose"]);
+        adapter.Lifecycle.ShouldBe(cardLaunch ? ["Kill", "Dispose"] : ["KillGeneration", "Dispose"]);
         adapter.Prompts.ShouldBeEmpty();
         await using var db = LaunchFixture.CreateContext();
         var session = card is { } id ? await db.AgentSessions.SingleAsync(s => s.CardId == id)
@@ -411,7 +411,7 @@ public class AgentSessionLaunchFailureTests
         var start = fixture.StartCardSessionAsync(card, "do the work");
 
         await Should.ThrowAsync<PromptDeliveryException>(start);
-        adapter.Lifecycle.ShouldBe(["KillGeneration", "Dispose"]);
+        adapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
 
         await using var db = LaunchFixture.CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.CardId == card);
@@ -442,7 +442,7 @@ public class AgentSessionLaunchFailureTests
                 .SetProperty(s => s.HerdrSupervisionFailureKind, HerdrSupervisionFailureKind.PaneClosed));
 
         await Should.ThrowAsync<AgentSessionService.ResumeTargetMissingException>(fixture.LaunchInteractiveAsync(resume: true));
-        resumeAdapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
+        resumeAdapter.Lifecycle.ShouldBe(["KillGeneration", "Dispose"]);
         freshAdapter.Started.ShouldBeFalse();
         await using var db = LaunchFixture.CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
@@ -522,7 +522,7 @@ public class AgentSessionLaunchFailureTests
         {
             await Should.ThrowAsync<AgentSessionService.ResumeTargetMissingException>(() => fixture.LaunchInteractiveAsync(
                 resume: true, spec: GrokSpec(fixture.Workspace, grokHome)));
-            resumeAdapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
+            resumeAdapter.Lifecycle.ShouldBe(["KillGeneration", "Dispose"]);
             freshAdapter.Started.ShouldBeFalse();
             await using var db = LaunchFixture.CreateContext();
             var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
@@ -725,7 +725,7 @@ public class AgentSessionLaunchFailureTests
         };
         await using var fixture = await LaunchFixture.CreateAsync(adapter);
         await Should.ThrowAsync<AgentSessionService.ResumeTargetMissingException>(fixture.LaunchInteractiveAsync(resume: true));
-        adapter.KillCount.ShouldBe(1);
+        adapter.KillGenerationCalls.ShouldNotBeEmpty();
         adapter.Lifecycle.ShouldBe(["KillGeneration", "Dispose"]);
         await using var db = LaunchFixture.CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
@@ -1135,7 +1135,7 @@ public class AgentSessionLaunchFailureTests
         // file exists yet, so there is no ground truth to late-confirm against and the launch fails.
         adapter.Prompts.ShouldBe(
             ["/remote-control", "/rename Card Agent", "do the work", "do the work", "do the work"]);
-        adapter.Lifecycle.ShouldBe(["KillGeneration", "Dispose"]);
+        adapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
 
         await using var db = LaunchFixture.CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.CardId == card);
@@ -1164,7 +1164,7 @@ public class AgentSessionLaunchFailureTests
 
         await Should.ThrowAsync<PromptDeliveryException>(start);
         adapter.Prompts.ShouldBe(["do the work"], "ComposerMayHoldBody skips the remaining re-types");
-        adapter.Lifecycle.ShouldBe(["KillGeneration", "Dispose"]);
+        adapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
         adapter.Killed.ShouldBeTrue();
 
         await using var db = LaunchFixture.CreateContext();

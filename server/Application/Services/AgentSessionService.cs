@@ -1668,6 +1668,19 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         // "env values only": args are process-listing-visible and quoted into logs and failure
         // reasons, and --append-system-prompt text additionally lands in transcripts.
         ApiKeyPlaceholder.EnsureResolved(spec, session.Id);
+        spec = spec with
+        {
+            AcceptedStartedAt = spec.AcceptedStartedAt ?? SessionGeneration.Normalize(session.StartedAt),
+        };
+        if (spec.VerificationBinding is { } binding
+            && spec.AcceptedStartedAt is { } generation
+            && !SessionGeneration.Equal(binding.Generation.AcceptedStartedAt, generation))
+        {
+            throw new ConflictException(
+                $"Verification binding generation disagrees with the launch generation ({SessionGeneration.BindingMismatch}).",
+                SessionGeneration.BindingMismatch);
+        }
+
         await using (var verificationScope = _scopeFactory.CreateAsyncScope())
         {
             var verification = verificationScope.ServiceProvider.GetService<VerificationExecutionService>();
@@ -1698,15 +1711,6 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         {
             AcceptedStartedAt = spec.AcceptedStartedAt ?? SessionGeneration.Normalize(session.StartedAt),
         };
-        if (spec.VerificationBinding is { } binding
-            && spec.AcceptedStartedAt is { } generation
-            && !SessionGeneration.Equal(binding.Generation.AcceptedStartedAt, generation))
-        {
-            throw new ConflictException(
-                $"Verification binding generation disagrees with the launch generation ({SessionGeneration.BindingMismatch}).",
-                SessionGeneration.BindingMismatch);
-        }
-
         return spec;
     }
 
