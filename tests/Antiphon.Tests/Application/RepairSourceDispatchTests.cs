@@ -161,6 +161,13 @@ public class RepairSourceDispatchTests
         await using var world = await RepairSourceWorld.CreateAsync();
         world.Fault.Armed = true;
         await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => world.DispatchAsync());
+        // DispatchSaveFault throws on every SaveChanges, so ProgressBaselineJson.ShouldBeNull()
+        // cannot fail a pre-claim persist. Leftover at OwnerSha with a still-Queued row is the
+        // claim-atomicity signal: CreateForTaskAsync ran inside the claim, baseline did not commit.
+        var leftover = Directory.GetDirectories(world.Repo.WorktreeRoot)
+            .FirstOrDefault(d => d.Contains(DelegationReportFormatter.Short(world.Repair.Id), StringComparison.OrdinalIgnoreCase));
+        leftover.ShouldNotBeNull();
+        (await ScratchGitRepo.GitInAsync(leftover!, "rev-parse", "HEAD")).StdOut.Trim().ShouldBe(world.OwnerSha);
         await using (var db = world.CreateContext())
         {
             var row = await db.AgentTasks.SingleAsync(t => t.Id == world.Repair.Id);
@@ -169,9 +176,6 @@ public class RepairSourceDispatchTests
             row.DispatchedAt.ShouldBeNull();
         }
         world.Fault.Armed = false;
-        var leftover = Directory.GetDirectories(world.Repo.WorktreeRoot)
-            .FirstOrDefault(d => d.Contains(DelegationReportFormatter.Short(world.Repair.Id), StringComparison.OrdinalIgnoreCase));
-        leftover.ShouldNotBeNull();
         var (repair, _) = await world.DispatchAsync();
         repair.Status.ShouldBe(AgentTaskStatus.Dispatched);
         repair.WorktreePath.ShouldBe(leftover);
