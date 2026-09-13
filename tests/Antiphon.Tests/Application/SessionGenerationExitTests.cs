@@ -152,7 +152,7 @@ public class SessionGenerationExitTests
                 new SessionRunnerExitedEvent(sessionId, 1, AgentExitReason.KilledByRequest, 0, generationA),
                 CancellationToken.None);
 
-            await WaitForLockAsync(sessionId);
+            await WaitForLockAsync(sessionId, consume);
 
             if (shape == "pointer-moved")
             {
@@ -236,23 +236,28 @@ public class SessionGenerationExitTests
         return (sessionId, agentId, logPath, runtime, generation);
     }
 
-    private static async Task WaitForLockAsync(Guid sessionId)
+    private static async Task WaitForLockAsync(Guid sessionId, Task<SessionExitDisposition> consume)
     {
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
         while (DateTime.UtcNow < deadline)
         {
+            if (consume.IsCompleted)
+            {
+                var result = consume.IsFaulted
+                    ? consume.Exception!.GetBaseException().ToString()
+                    : (await consume).ToString();
+                throw new TimeoutException($"consumer finished before taking the row lock: {result}");
+            }
+
             await using var conn = new NpgsqlConnection(TestDbFixture.ConnectionString);
             await conn.OpenAsync();
             await using var cmd = conn.CreateCommand();
             cmd.CommandText =
                 """
                 SELECT 1
-                FROM pg_locks l
-                JOIN pg_class c ON c.oid = l.relation
-                JOIN pg_stat_activity a ON a.pid = l.pid
-                WHERE NOT l.granted
-                  AND c.relname = 'AgentSessions'
-                  AND a.wait_event_type = 'Lock'
+                FROM pg_stat_activity
+                WHERE wait_event_type = 'Lock'
+                  AND state = 'active'
                 """;
             var found = await cmd.ExecuteScalarAsync();
             if (found is not null)
@@ -260,7 +265,7 @@ public class SessionGenerationExitTests
             await Task.Delay(50);
         }
 
-        throw new TimeoutException("consumer did not wait on the AgentSessions row lock");
+        throw new TimeoutException($"consumer did not wait on the AgentSessions row lock ({sessionId})");
     }
 
     [Test]
@@ -453,9 +458,12 @@ public class SessionGenerationExitTests
                     .SetProperty(s => s.EndedAt, failed ? DateTime.UtcNow : (DateTime?)null)
                     .SetProperty(s => s.ExitCode, failed ? 1 : (int?)null)
                     .SetProperty(s => s.TerminationSource, failed ? SessionTerminationSource.ProcessExit : SessionTerminationSource.Unknown)
-                    .SetProperty(s => s.FailureReason, failed ? "prior" : null));
+                    .SetProperty(s => s.FailureReason, failed ? "prior" : null)
+                    .SetProperty(s => s.StandingAgentId, harness.AgentId)
+                    .SetProperty(s => s.AgentKind, AgentKind.ClaudeCode));
                 await db.Agents.Where(a => a.Id == harness.AgentId).ExecuteUpdateAsync(u => u
                     .SetProperty(a => a.Status, AgentStatus.Running)
+                    .SetProperty(a => a.Kind, AgentKind.ClaudeCode)
                     .SetProperty(a => a.PersistentSessionId, harness.SessionId.ToString("D"))
                     .SetProperty(a => a.AlwaysOn, true));
             }
