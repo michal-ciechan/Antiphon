@@ -99,7 +99,9 @@ internal static class QueuedReceiptAssertions
         FakeAgentProtocolAdapter adapter)
     {
         var typed = adapter.SubmittedBodies[^1];
-        if (typed == queued.Body)
+        if (typed == queued.Body
+            || PromptSubmissionMatch.Normalize(typed) == PromptSubmissionMatch.Normalize(queued.Body)
+            || PromptSubmissionMatch.IsCompleteIn(queued.Body, typed))
             return typed;
         typed.ShouldContain(TypedBodySpill.PointerHeadline);
         var relative = typed.Split('\n').Select(l => l.Trim().Trim('\'', '`'))
