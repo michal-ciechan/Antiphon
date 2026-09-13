@@ -136,7 +136,6 @@ public class RunnerSessionGenerationTests
         var generationA = SessionGeneration.Normalize(DateTime.UtcNow.AddMinutes(-5));
         var generationB = SessionGeneration.Next(generationA, DateTime.UtcNow);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(40));
-        var events = runtime.Subscribe(cts.Token);
         await runtime.StartAsync(new RunnerLaunchRequest(
             sessionId, Cmd, ["/d", "/q", "/k", "@echo off & prompt $G"], new Dictionary<string, string>(),
             Path.GetTempPath(), 80, 24, AcceptedStartedAt: generationB), cts.Token);
@@ -153,20 +152,22 @@ public class RunnerSessionGenerationTests
             UpdatedAtUtc = generationA,
             AcceptedStartedAt = generationA,
         };
-        sidecar.SaveAtomic(HerdrPaneSidecar.PathFor(logRoot, sessionId));
-        await runtime.AdoptOrphanedHostsAsync(new StubProbe(true), cts.Token);
-        var payload = await ReadExitAsync(events, cts.Token);
-        payload.AcceptedStartedAt.ShouldBe(generationA);
-        runtime.Get(sessionId).AcceptedStartedAt.ShouldBe(generationB);
-        runtime.Get(sessionId).Status.ShouldBe("Running");
+        var hub = new SessionRunnerEventHub();
+        var producerEvents = hub.Subscribe(cts.Token);
+        var producerSettings = new SessionRunnerSettings { SessionLogPath = logRoot };
+
+        _ = SessionRunnerRuntime.RunnerSession.CreateAdoptedHerdrExited(
+            sidecar, producerSettings, hub, NullLogger<SessionRunnerRuntime>.Instance,
+            HerdrExitReasons.RestartPresumedDead);
+        (await ReadExitAsync(producerEvents, cts.Token)).AcceptedStartedAt.ShouldBe(generationA);
 
         var pending = SessionRunnerRuntime.RunnerSession.CreatePendingHerdr(
-            sidecar with { AcceptedStartedAt = generationA },
-            new SessionRunnerSettings { SessionLogPath = logRoot },
-            new SessionRunnerEventHub(),
-            NullLogger<SessionRunnerRuntime>.Instance,
-            new StubProbe(true));
-        pending.CompletePendingAsExited("RestartPresumedDead", 1);
+            sidecar, producerSettings, hub, NullLogger<SessionRunnerRuntime>.Instance, new StubProbe(true));
+        pending.CompletePendingAsExited(HerdrExitReasons.RestartPresumedDead, 1);
+        (await ReadExitAsync(producerEvents, cts.Token)).AcceptedStartedAt.ShouldBe(generationA);
+
+        runtime.Get(sessionId).AcceptedStartedAt.ShouldBe(generationB);
+        runtime.Get(sessionId).Status.ShouldBe("Running");
         KillBestEffort(runtime.Get(sessionId).Pid);
     }
 
