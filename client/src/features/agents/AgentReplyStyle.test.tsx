@@ -227,4 +227,3 @@ describe('Phone audience selection', () => {
     await waitFor(() => expect(submitted?.replyStyle).toBe(style))
   })
 })
-
