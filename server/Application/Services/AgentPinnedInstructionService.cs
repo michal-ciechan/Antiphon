@@ -500,7 +500,10 @@ public sealed class AgentPinnedInstructionService
             .FromSqlInterpolated($"SELECT * FROM \"AgentPinnedInstructionStates\" WHERE \"AgentId\" = {agent.Id} FOR UPDATE")
             .SingleOrDefaultAsync(ct);
         if (existing is not null)
+        {
+            await _db.Entry(existing).ReloadAsync(ct);
             return existing;
+        }
 
         var created = new AgentPinnedInstructionState
         {
