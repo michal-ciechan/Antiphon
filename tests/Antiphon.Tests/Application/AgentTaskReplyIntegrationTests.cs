@@ -56,6 +56,7 @@ public class AgentTaskReplyIntegrationTests
         var factory = NewDeliveryFactory();
         var parentSessionId = await SeedSessionAsync(workspace.Path);
         var terminal = AttachTerminal(factory, parentSessionId);
+        await SeedParentHistoryAsync(parentSessionId);
         var parentId = await SeedAgentAsync(workspace.Path, $"phone-parent-{Guid.NewGuid():N}", poolDelegate: false);
         var workerId = await SeedAgentAsync(workspace.Path, $"phone-worker-{Guid.NewGuid():N}");
         await using (var db = CreateContext())
@@ -150,6 +151,7 @@ public class AgentTaskReplyIntegrationTests
         var factory = NewDeliveryFactory();
         var parentSessionId = await SeedSessionAsync(workspace.Path);
         var terminal = AttachTerminal(factory, parentSessionId);
+        await SeedParentHistoryAsync(parentSessionId);
         var parentId = await SeedAgentAsync(workspace.Path, $"busy-parent-{Guid.NewGuid():N}", poolDelegate: false);
         await using (var db = CreateContext())
         {
@@ -174,7 +176,8 @@ public class AgentTaskReplyIntegrationTests
             waiting.Status.ShouldBe(QueuedMessageStatus.Pending);
             waiting.DeliveryAttempts.ShouldBe(0, "a held note has not been typed, so it has not been attempted");
             (await held.TranscriptEntries.CountAsync(t =>
-                t.AgentSessionId == parentSessionId && t.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
+                t.AgentSessionId == parentSessionId && t.Kind == TranscriptKinds.UserPrompt
+                && t.Text != null && t.Text.Contains(report))).ShouldBe(0);
         }
 
         await SeedEntryAsync(parentSessionId, TranscriptKinds.TurnEnd, null, DateTime.UtcNow);
@@ -197,6 +200,7 @@ public class AgentTaskReplyIntegrationTests
         var factory = NewDeliveryFactory();
         var parentSessionId = await SeedSessionAsync(workspace.Path);
         var terminal = AttachTerminal(factory, parentSessionId);
+        await SeedParentHistoryAsync(parentSessionId);
         var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, parentSessionId, t => t.Role = AgentTaskRole.Code);
         const string report = "Recovery slice done. 4 passed, 0 failed.\n\n--- next stage ---\nnext: review\nhandoff: confirm the redelivery\nartifact: docs/testing-and-build.md";
 
@@ -224,7 +228,9 @@ public class AgentTaskReplyIntegrationTests
             noteId = reverted.Id;
             baseline = reverted.LastDeliveryBaselineSequence!.Value;
             (await failed.TranscriptEntries.CountAsync(t =>
-                t.AgentSessionId == parentSessionId && t.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
+                t.AgentSessionId == parentSessionId && t.Kind == TranscriptKinds.UserPrompt
+                && t.Text != null && t.Text.Contains(report))).ShouldBe(
+                0, "the write never reached the terminal, so nothing can be in the transcript");
         }
 
         terminal.ThrowOnSend = null;
@@ -4050,6 +4056,19 @@ public class AgentTaskReplyIntegrationTests
         return adapter;
     }
 
+    /// <summary>
+    /// A parent that has already taken a turn — the only shape a delegating session is ever in, and
+    /// the shape that makes it OBSERVABLE to the queue. With no transcript at all the delivery
+    /// baseline falls back to CARD-0164's wall-clock arm; the sequence floor V-5's anti-duplicate
+    /// claim rests on only exists once the session has written something.
+    /// </summary>
+    private static async Task SeedParentHistoryAsync(Guid parentSessionId)
+    {
+        await SeedEntryAsync(parentSessionId, TranscriptKinds.UserPrompt, "dispatch a delegate for the slice", DateTime.UtcNow);
+        await SeedEntryAsync(parentSessionId, TranscriptKinds.AssistantText, "Dispatched.", DateTime.UtcNow);
+        await SeedEntryAsync(parentSessionId, TranscriptKinds.TurnEnd, null, DateTime.UtcNow);
+    }
+
     private static SessionMessageQueueService Queue(TestScopeFactory factory) =>
         factory.ServiceProvider.GetRequiredService<SessionMessageQueueService>();
 
@@ -4077,10 +4096,12 @@ public class AgentTaskReplyIntegrationTests
             .Where(t => t.AgentSessionId == parentSessionId && t.Kind == TranscriptKinds.UserPrompt)
             .OrderBy(t => t.Sequence)
             .ToListAsync();
-        var prompt = prompts.ShouldHaveSingleItem();
+        // Counted over the parent's WHOLE transcript, not just the tail: a redelivery that typed a
+        // second copy of the report would show up here, which is the failure a human would see.
+        var carrying = prompts.FindAll(t => t.Text is not null && t.Text.Contains(report, StringComparison.Ordinal));
+        carrying.Count.ShouldBe(1, "the report must reach the parent exactly once");
+        var prompt = carrying[0];
         prompt.Text.ShouldBe(note.Body, "the parent's prompt is the queued note, byte for byte");
-        prompt.Text.ShouldNotBeNull().ShouldContain(
-            report, customMessage: "a note whose report did not arrive is not a delivery");
         prompt.Sequence.ShouldBeGreaterThan(note.LastDeliveryBaselineSequence!.Value);
         return (note, prompt);
     }
