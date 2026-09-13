@@ -1,7 +1,7 @@
 # CARD-0407 verification evidence ledger
 
 Design baseline: `33d906a7`. Landed amendment: `8377f6c7350fcc1318e025dcb5135994dd53201a`.
-S1 implementation: `2c11351c3a62f15163c6177d03f7dc95d00aaa74` plus the follow-on text-column/test-fix commit on `feat/card-task-1e81672c`.
+S1 implementation: `2c11351c3a62f15163c6177d03f7dc95d00aaa74`. S1 evidence/text-column: `76cee55a0d3eabc340a4850d7cacbbf916935bba`.
 Worktree: `C:\Antiphon\worktrees\card-task-1e81672c`. Original Code task: `1e81672c`.
 Build: `dotnet build tests/Antiphon.Tests --property:OutputPath=bin-card0407/`. Isolated producer output only.
 
