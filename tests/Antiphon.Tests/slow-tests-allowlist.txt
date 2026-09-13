@@ -69,9 +69,13 @@ Antiphon.Tests.Application.ChannelBridgeTests
 Antiphon.Tests.Application.DelegateScriptLandCompatibilityTests
 # CARD-0476 fresh-process lazy DB probes, Docker cold start
 Antiphon.Tests.TestHelpers.TestDbFixtureLazyInitializationTests
-# CARD-0442: real git + isolated schema worktree continuity
+# CARD-0442: continuity create/dispatch against real git
 Antiphon.Tests.Application.AgentTaskWorktreeContinuityTests
+# CARD-0442: resolver git/schema cases
 Antiphon.Tests.Application.AgentTaskWorktreeBaseResolverTests
+# CARD-0442: create API git/schema cases
 Antiphon.Tests.Application.AgentTaskWorktreeBaseCreateTests
+# CARD-0442: real delegate.ps1 against stub API
 Antiphon.Tests.Application.DelegateScriptWorktreeBaseTests
+# CARD-0442: isolated-schema migration round trip
 Antiphon.Tests.Application.AgentTaskWorktreeBaseMigrationTests
