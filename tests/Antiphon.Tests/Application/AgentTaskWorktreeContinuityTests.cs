@@ -49,7 +49,7 @@ public sealed class AgentTaskWorktreeContinuityTests
         var reviewRow = await db.AgentTasks.SingleAsync(t => t.Id == review.Id);
         reviewRow.Status.ShouldBe(AgentTaskStatus.Dispatched);
         (await ScratchGitRepo.GitInAsync(reviewRow.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim().ShouldBe(shaA);
-        File.ReadAllText(Path.Combine(reviewRow.WorktreePath!, "code-a.txt")).ShouldBe("A\n");
+        File.ReadAllText(Path.Combine(reviewRow.WorktreePath!, "code-a.txt")).Replace("\r\n", "\n").ShouldBe("A\n");
         reviewRow.WorktreePath.ShouldNotBe(code1.WorktreePath);
         reviewRow.MergeTargetRef.ShouldBe(code1.MergeTargetRef);
     }

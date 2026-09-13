@@ -164,7 +164,7 @@ public sealed class AgentTaskWorktreeBaseResolver
                 && t.WorktreeBranch != null)
             .Select(t => new SiblingRow(
                 t.Id, t.WorktreeBranch!, t.RepoPath, t.WorktreePath, t.WorkingDirectory,
-                t.Status, t.MergeTargetRef, t.LandRequestedAt, t.CompletedAt))
+                t.Status, t.MergeTargetRef, t.LandRequestedAt, t.CompletedAt, t.CardId))
             .ToListAsync(ct);
 
         var completed = await LoadCompletedLandAsync(siblings.Select(s => s.Id).ToList(), ct);
@@ -430,7 +430,7 @@ public sealed class AgentTaskWorktreeBaseResolver
         if (row is null || row.WorktreeBranch is null || row.Workspace != WorkspaceMode.Worktree)
             return null;
         return new SiblingRow(row.Id, row.WorktreeBranch, row.RepoPath, row.WorktreePath, row.WorkingDirectory,
-            row.Status, row.MergeTargetRef, row.LandRequestedAt, row.CompletedAt) { CardId = row.CardId };
+            row.Status, row.MergeTargetRef, row.LandRequestedAt, row.CompletedAt, row.CardId);
     }
 
     private async Task<bool> SameRepoAsync(string repoCommon, SiblingRow sibling, WorktreeBaseGitSession session, CancellationToken ct)
@@ -604,7 +604,8 @@ public sealed class AgentTaskWorktreeBaseResolver
 
     private sealed class SiblingRow(
         Guid id, string branch, string? repoPath, string? worktreePath, string? workingDirectory,
-        AgentTaskStatus status, string? mergeTargetRef, DateTime? landRequestedAt, DateTime? completedAt)
+        AgentTaskStatus status, string? mergeTargetRef, DateTime? landRequestedAt, DateTime? completedAt,
+        Guid? cardId = null)
     {
         public Guid Id { get; } = id;
         public string Branch { get; } = branch;
@@ -615,6 +616,6 @@ public sealed class AgentTaskWorktreeBaseResolver
         public string? MergeTargetRef { get; } = mergeTargetRef;
         public DateTime? LandRequestedAt { get; } = landRequestedAt;
         public DateTime? CompletedAt { get; } = completedAt;
-        public Guid? CardId { get; set; }
+        public Guid? CardId { get; set; } = cardId;
     }
 }

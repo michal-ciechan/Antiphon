@@ -66,7 +66,7 @@ public sealed class AgentTaskWorktreeBaseResolverTests
         var local = await world.SeedSucceededAsync("local", "code-a.txt", "A\n");
         var resolver = world.Services.GetRequiredService<AgentTaskWorktreeBaseResolver>();
         var queued = world.NewQueued();
-        if (name == "other_card_guid")
+        if (name is "other_card_guid" or "same_identifier_other_board")
         {
             await using var db = world.CreateDb();
             local = await db.AgentTasks.FindAsync(local.Id);
