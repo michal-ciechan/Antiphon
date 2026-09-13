@@ -181,7 +181,8 @@ public sealed class HerdrPaneDisposalConcurrencyTests
     }
     [Test] public async Task C461_G069_Pending_adoption_lease()
     {
-        await using var h = new HerdrPaneDisposalFixture();
+        // One refused dial establishes Pending; the production five-second timeout is not part of the lease assertion.
+        await using var h = new HerdrPaneDisposalFixture(connectTimeoutMs: 1000);
         HerdrPaneDisposalServiceTests.SaveLocator(h, "sidecar"); h.Occupied();
         await h.Runtime.AdoptOrphanedHostsAsync(new Probe(), default);
         h.Runtime.Get(h.SessionId).Pending.ShouldBe(HerdrPendingReasons.Unreachable);
