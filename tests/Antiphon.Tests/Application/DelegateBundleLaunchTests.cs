@@ -69,7 +69,7 @@ public class DelegateBundleLaunchTests
         text.ShouldContain("report every ID and actual outcome");
         text.ShouldContain("Run each V-n and R-n");
         text.ShouldContain("Report every PC-n/variant pending for Mutation");
-        text.ShouldContain("--- next stage ---");
+        text.ShouldContain("next: review when implementation and ordinary V/R are complete");
         text.ShouldContain("""
             For delegate/worker reports, delegation briefs, stage artifacts, specialist outputs,
             and terminal-only replies, follow their own contracts; the phone rules below do
