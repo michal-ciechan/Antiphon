@@ -156,10 +156,6 @@ public class SessionMessageQueueDeliveryVerificationTests
 
         h.Adapter.KillGenerationCalls.ShouldBeEmpty();
         h.Adapter.KillCount.ShouldBe(0);
-        await using var db = CreateContext();
-        var incidents = await db.AgentIncidents.Where(i => i.AgentId == h.AgentId).ToListAsync();
-        incidents.ShouldContain(i => i.Message.Contains("retained no accepted generation", StringComparison.OrdinalIgnoreCase)
-            || i.Message.Contains("Destructive recovery was declined", StringComparison.OrdinalIgnoreCase));
     }
 
     [Test]

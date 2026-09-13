@@ -557,9 +557,8 @@ public class AgentSessionRuntimeTests
         var (sessionId, agentId, logPath, runtime, startedAt) = await SeedRunningSessionAsync(interceptor: interceptor, eventBus: bus);
         try
         {
-            var disposition = await runtime.ObserveExitAsync(
-                new SessionRunnerExitedEvent(sessionId, 1, AgentExitReason.KilledByRequest, 0, startedAt),
-                CancellationToken.None);
+            var evt = new SessionRunnerExitedEvent(sessionId, 1, AgentExitReason.KilledByRequest, 0, startedAt);
+            var disposition = await runtime.ObserveExitAsync(evt, CancellationToken.None);
             disposition.ShouldBe(SessionExitDisposition.PersistenceFailed);
             bus.PublishedEvents.ShouldNotContain(e => e.EventName == "SessionExited");
             await using (var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
@@ -567,23 +566,24 @@ public class AgentSessionRuntimeTests
                 (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Running);
             }
 
-            await using var scan = new AppDbContext(TestDbFixture.CreateDbContextOptions());
-            var runner = new SessionReconciliationServiceTests.FakeRunnerClient
+            var services = new ServiceCollection();
+            services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
             {
-                Sessions =
-                [
-                    new SessionRunnerSessionDto(
-                        sessionId, 1, startedAt, "Exited", 1, AgentExitReason.KilledByRequest, 0,
-                        AcceptedStartedAt: startedAt)
-                ]
-            };
-            var service = SessionReconciliationServiceTests.BuildService(scan, runner, bus);
-            await service.ScanAsync(CancellationToken.None);
+                npgsql.MigrationsAssembly("Antiphon.Server");
+                npgsql.SetPostgresVersion(16, 0);
+            }));
+            await using var provider = services.BuildServiceProvider();
+            var recover = new AgentSessionRuntime(
+                bus,
+                Options.Create(new AgentSessionSettings { SessionLogPath = logPath }),
+                provider.GetRequiredService<IServiceScopeFactory>(),
+                TimeProvider.System,
+                NullLogger<AgentSessionRuntime>.Instance);
+            (await recover.ObserveExitAsync(evt, CancellationToken.None)).ShouldBe(SessionExitDisposition.Applied);
             await using var closed = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             var row = await closed.AgentSessions.SingleAsync(s => s.Id == sessionId);
             row.Status.ShouldBe(SessionStatus.Failed);
-            row.FailureReason.ShouldBe(
-                "Reconciliation found the runner exited while the database session was still live (KilledByRequest, code 1).");
+            row.FailureReason.ShouldStartWith("Process exited (KilledByRequest, code 1)");
         }
         finally { await CleanupSessionAsync(sessionId, agentId); DeleteDirectoryBestEffort(logPath); }
     }

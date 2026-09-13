@@ -152,10 +152,12 @@ public class SessionReconciliationServiceTests
         {
             var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Starting, staleAgent: true, failureReason: seeded);
+            DateTime stamped;
             await using (var stamp = CreateContext())
             {
                 var session = await stamp.AgentSessions.SingleAsync(s => s.Id == sessionId);
                 session.StartedAt = DateTime.UtcNow.AddHours(-1);
+                stamped = session.StartedAt;
                 await stamp.SaveChangesAsync();
             }
 
@@ -165,9 +167,9 @@ public class SessionReconciliationServiceTests
                 Sessions =
                 [
                     new SessionRunnerSessionDto(
-                        sessionId, Pid: 4242, StartedAt: DateTime.UtcNow.AddHours(-1),
+                        sessionId, Pid: 4242, StartedAt: stamped,
                         Status: "Exited", ExitCode: 1, ExitReason: AgentExitReason.ProcessExited, LastSequence: 0,
-                        AcceptedStartedAt: startedAt)
+                        AcceptedStartedAt: stamped)
                 ]
             };
             var service = BuildService(db, runner, new MockEventBus());
@@ -307,7 +309,7 @@ public class SessionReconciliationServiceTests
         {
             var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(marker, SessionStatus.Running, staleAgent: true);
             await using var db = CreateContext();
-            var runner = new FakeRunnerClient { Sessions = [new SessionRunnerSessionDto(sessionId, 4242, DateTime.UtcNow.AddHours(-1), "Exited", null, reason, 10)] };
+            var runner = new FakeRunnerClient { Sessions = [new SessionRunnerSessionDto(sessionId, 4242, startedAt, "Exited", null, reason, 10, AcceptedStartedAt: startedAt)] };
             await BuildService(db, runner, new MockEventBus()).ScanAsync(CancellationToken.None);
             await using var verify = CreateContext();
             (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).HerdrSupervisionFailureKind.ShouldBe(expected);
@@ -327,8 +329,8 @@ public class SessionReconciliationServiceTests
             // reconciliation scan's live set so this test exercises its actual evidence writer.
             await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u
                 .SetProperty(s => s.HerdrSupervisionFailureKind, HerdrSupervisionFailureKind.DetectTimeout));
-            var runner = new FakeRunnerClient { Sessions = [new SessionRunnerSessionDto(sessionId, 4242, DateTime.UtcNow.AddHours(-1),
-                "Exited", null, AgentExitReason.HerdrPaneClosed, 10)] };
+            var runner = new FakeRunnerClient { Sessions = [new SessionRunnerSessionDto(sessionId, 4242, startedAt,
+                "Exited", null, AgentExitReason.HerdrPaneClosed, 10, AcceptedStartedAt: startedAt)] };
             await BuildService(db, runner, new MockEventBus()).ScanAsync(CancellationToken.None);
             await using var verify = CreateContext();
             var row = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
@@ -816,7 +818,7 @@ public class SessionReconciliationServiceTests
                 marker, SessionStatus.Failed, staleAgent: true, agentStatus: AgentStatus.Failed);
 
             await using var db = CreateContext();
-            var runner = RunnerRunning(sessionId, pid: null, hostPid: null);
+            var runner = RunnerRunning(sessionId, startedAt, pid: null, hostPid: null);
             var alerts = new RecordingAlertService();
             var service = BuildService(db, runner, new MockEventBus(), alerts);
 
@@ -1424,6 +1426,7 @@ public class SessionReconciliationServiceTests
             var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Running, staleAgent: true);
             var alerts = new RecordingAlertService();
+            var compat = new SessionGenerationCompatState();
             var runner = new FakeRunnerClient
             {
                 Sessions =
@@ -1435,7 +1438,7 @@ public class SessionReconciliationServiceTests
             for (var i = 0; i < 10; i++)
             {
                 await using var db = CreateContext();
-                var service = BuildService(db, runner, new MockEventBus(), alerts);
+                var service = BuildService(db, runner, new MockEventBus(), alerts, generationCompat: compat);
                 await service.ScanAsync(CancellationToken.None);
             }
 
@@ -1459,7 +1462,7 @@ public class SessionReconciliationServiceTests
             for (var i = 0; i < 10; i++)
             {
                 await using var db = CreateContext();
-                var service = BuildService(db, runner, new MockEventBus(), alerts, flapState);
+                var service = BuildService(db, runner, new MockEventBus(), alerts, flapState, generationCompat: compat);
                 await service.ScanAsync(CancellationToken.None);
             }
 
@@ -1732,7 +1735,7 @@ public class SessionReconciliationServiceTests
             await using var db = CreateContext();
             var alerts = new RecordingAlertService();
             var eventBus = new MockEventBus();
-            var runner = RunnerRunningHerdr(sessionId, DateTime.UtcNow.AddMinutes(1));
+            var runner = RunnerRunningHerdr(sessionId, DateTime.UtcNow.AddMinutes(1), startedAt);
             var service = BuildService(db, runner, eventBus, alerts);
 
             await service.ScanAsync(CancellationToken.None);
@@ -1769,7 +1772,7 @@ public class SessionReconciliationServiceTests
             await using var db = CreateContext();
             var alerts = new RecordingAlertService();
             DateTime? verified = stale ? DateTime.UtcNow.AddHours(-1) : null;
-            var runner = RunnerRunningHerdr(sessionId, verified);
+            var runner = RunnerRunningHerdr(sessionId, verified, startedAt);
             var service = BuildService(db, runner, new MockEventBus(), alerts);
 
             await service.ScanAsync(CancellationToken.None);
@@ -1842,7 +1845,8 @@ public class SessionReconciliationServiceTests
         ILaunchOwnership? ownership = null,
         bool launchResumeEnabled = true,
         int maxReAdoptions = 3,
-        ILogger<SessionReconciliationService>? logger = null) =>
+        ILogger<SessionReconciliationService>? logger = null,
+        SessionGenerationCompatState? generationCompat = null) =>
         new(
             db,
             runnerClient,
@@ -1850,7 +1854,7 @@ public class SessionReconciliationServiceTests
             alerts ?? new NoOpAlertService(),
             new RunnerReachabilityState(),
             reAdoptions ?? new SessionReAdoptionState(),
-            new SessionGenerationCompatState(),
+            generationCompat ?? new SessionGenerationCompatState(),
             pendingAlerts ?? new HerdrPendingAlertState(),
             // Default OFF for every pre-existing case: the census is global by nature and these
             // tests share a database, so a suite that had not thought about it must not start
@@ -1891,22 +1895,22 @@ public class SessionReconciliationServiceTests
     /// CARD-0186 S4: Running on herdr. <paramref name="verifiedAtUtc"/> is what the single-session
     /// GET returns (pass 3's evidence); the list endpoint stays cheap and is not consulted.
     /// </summary>
-    private static FakeRunnerClient RunnerRunningHerdr(Guid sessionId, DateTime? verifiedAtUtc) =>
+    private static FakeRunnerClient RunnerRunningHerdr(Guid sessionId, DateTime? verifiedAtUtc, DateTime? acceptedStartedAt = null) =>
         new()
         {
             Sessions =
             [
                 new SessionRunnerSessionDto(
-                    sessionId, Pid: 4243, StartedAt: DateTime.UtcNow.AddHours(-1),
+                    sessionId, Pid: 4243, StartedAt: acceptedStartedAt ?? DateTime.UtcNow.AddHours(-1),
                     Status: "Running", ExitCode: null, ExitReason: AgentExitReason.Unknown,
                     LastSequence: 10, Adopted: true, Backend: SessionBackends.Herdr,
-                    HerdrVerifiedAtUtc: verifiedAtUtc)
+                    HerdrVerifiedAtUtc: verifiedAtUtc, AcceptedStartedAt: acceptedStartedAt)
             ],
             GetOverride = _ => new SessionRunnerSessionDto(
-                sessionId, Pid: 4243, StartedAt: DateTime.UtcNow.AddHours(-1),
+                sessionId, Pid: 4243, StartedAt: acceptedStartedAt ?? DateTime.UtcNow.AddHours(-1),
                 Status: "Running", ExitCode: null, ExitReason: AgentExitReason.Unknown,
                 LastSequence: 10, Adopted: true, Backend: SessionBackends.Herdr,
-                HerdrVerifiedAtUtc: verifiedAtUtc)
+                HerdrVerifiedAtUtc: verifiedAtUtc, AcceptedStartedAt: acceptedStartedAt)
         };
 
     private sealed class NoOpAlertService : IAlertService

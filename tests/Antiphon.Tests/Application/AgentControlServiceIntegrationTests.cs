@@ -1620,7 +1620,7 @@ public class AgentControlServiceIntegrationTests
             var workspace = Path.Combine(tempRoot, "agent-workspace");
             Directory.CreateDirectory(workspace);
             var t = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
-            var clock = new FakeTimeProvider(t);
+            var clock = new MutableUtcClock(t);
             var first = new FakeAgentProtocolAdapter();
             var second = new FakeAgentProtocolAdapter();
             var third = new FakeAgentProtocolAdapter();
@@ -1643,7 +1643,7 @@ public class AgentControlServiceIntegrationTests
             var original = ReadStartedAt();
             await MarkSessionEndedAsync(firstStart.PersistentSessionId!, SessionStatus.Failed);
 
-            clock.SetUtcNow(t);
+            clock.Set(t);
             using (var scope = harness.Provider.CreateScope())
             {
                 await scope.ServiceProvider.GetRequiredService<AgentControlService>()
@@ -1655,7 +1655,7 @@ public class AgentControlServiceIntegrationTests
             second.StartedAcceptedGeneration.ShouldBe(afterFrozen);
 
             await MarkSessionEndedAsync(firstStart.PersistentSessionId!, SessionStatus.Failed);
-            clock.SetUtcNow(t.AddMinutes(-1));
+            clock.Set(t.AddMinutes(-1));
             using (var scope = harness.Provider.CreateScope())
             {
                 await scope.ServiceProvider.GetRequiredService<AgentControlService>()
@@ -1667,7 +1667,7 @@ public class AgentControlServiceIntegrationTests
             third.StartedAcceptedGeneration.ShouldBe(afterBackward);
 
             await MarkSessionEndedAsync(firstStart.PersistentSessionId!, SessionStatus.Failed);
-            clock.SetUtcNow(t.AddHours(1));
+            clock.Set(t.AddHours(1));
             using (var scope = harness.Provider.CreateScope())
             {
                 await scope.ServiceProvider.GetRequiredService<AgentControlService>()
@@ -1683,6 +1683,13 @@ public class AgentControlServiceIntegrationTests
             await CleanupProjectsByTempRootAsync(tempRoot);
             DeleteDirectoryBestEffort(tempRoot);
         }
+    }
+
+    private sealed class MutableUtcClock(DateTimeOffset start) : TimeProvider
+    {
+        private DateTimeOffset _now = start;
+        public override DateTimeOffset GetUtcNow() => _now;
+        public void Set(DateTimeOffset value) => _now = value;
     }
 
     private static AppDbContext CreateContext(string? connectionString = null) =>

@@ -605,9 +605,18 @@ public sealed class SessionReconciliationService
             });
         }
 
-        await _db.SaveChangesAsync(ct);
-        if (transaction is not null)
-            await transaction.CommitAsync(ct);
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+            if (transaction is not null)
+                await transaction.CommitAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Re-adoption of session {SessionId} failed to commit", row.Id);
+            return 0;
+        }
+
         lease.Commit();
 
         _logger.LogWarning(
