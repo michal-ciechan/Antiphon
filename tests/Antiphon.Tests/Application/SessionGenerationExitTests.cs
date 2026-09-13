@@ -501,15 +501,37 @@ public class SessionGenerationExitTests
 
         public async Task ResumeBAsync()
         {
-            await using var scope = Harness.Provider.CreateAsyncScope();
-            await scope.ServiceProvider.GetRequiredService<AgentControlService>()
-                .StartAsync(AgentId, new StartAgentRequest(), CancellationToken.None);
+            GenerationB = SessionGeneration.Next(GenerationA, DateTime.UtcNow);
+            string cwd;
+            await using (var db = Db())
+            {
+                var agent = await db.Agents.SingleAsync(a => a.Id == AgentId);
+                cwd = agent.WorkingDirectory;
+                await db.AgentSessions.Where(s => s.Id == SessionId).ExecuteUpdateAsync(u => u
+                    .SetProperty(s => s.StartedAt, GenerationB)
+                    .SetProperty(s => s.Status, SessionStatus.Starting)
+                    .SetProperty(s => s.EndedAt, (DateTime?)null)
+                    .SetProperty(s => s.ExitCode, (int?)null)
+                    .SetProperty(s => s.FailureReason, (string?)null)
+                    .SetProperty(s => s.TerminationSource, SessionTerminationSource.Unknown)
+                    .SetProperty(s => s.InteractiveLaunchCompletedAt, (DateTime?)null));
+                await db.Agents.Where(a => a.Id == AgentId).ExecuteUpdateAsync(u => u
+                    .SetProperty(a => a.Status, AgentStatus.Running)
+                    .SetProperty(a => a.PersistentSessionId, SessionId.ToString("D")));
+            }
+
+            var spec = new AgentLaunchSpec(
+                "fake", AgentKind.ClaudeCode, "cmd", [], new Dictionary<string, string>(),
+                cwd, 120, 30, SessionId: SessionId, AcceptedStartedAt: GenerationB);
+            Harness.Provider.GetRequiredService<AgentSessionLaunchQueue>()
+                .EnqueueInteractiveSession(SessionId, AgentId, GenerationB, spec, remoteControlName: null);
             await Harness.Provider.GetRequiredService<AgentSessionLaunchQueue>()
                 .WaitForIdleAsync(TimeSpan.FromSeconds(20), CancellationToken.None);
-            await using var db = Db();
-            GenerationB = (await db.AgentSessions.SingleAsync(s => s.Id == SessionId)).StartedAt;
+            await using var verify = Db();
+            var row = await verify.AgentSessions.SingleAsync(s => s.Id == SessionId);
+            row.StartedAt.ShouldBe(GenerationB);
             GenerationB.ShouldBeGreaterThan(GenerationA);
-            IncidentCountAtB = await db.AgentIncidents.CountAsync(i => i.SessionId == SessionId);
+            IncidentCountAtB = await verify.AgentIncidents.CountAsync(i => i.SessionId == SessionId);
         }
 
         public async Task WriteExitAsync(DateTime generation, int exitCode = 1, string? reason = null)
