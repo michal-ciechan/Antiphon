@@ -24,7 +24,7 @@ public sealed class HerdrPaneDisposalStopRegressionTests
     [Test] public Task C461_G056_Attached_failed_bar_guard() => AttachedGuard(false);
     private static async Task AttachedGuard(bool pending)
     {
-        await using var h = new HerdrPaneDisposalFixture();
+        await using var h = new HerdrPaneDisposalFixture(connectTimeoutMs: pending ? PendingConnectTimeoutMs : null);
         var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "cmd.exe"), "/d /q /k")
         { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
         using var dummy = Process.Start(start)!;
