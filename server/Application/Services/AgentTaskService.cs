@@ -194,14 +194,6 @@ public sealed class AgentTaskService
         if (request.Goal.Length > 20_000)
             throw new ValidationException(nameof(request.Goal), "A goal must not exceed 20,000 characters.");
 
-        if (request.SourceLandingOperationId is not null
-            && (request.Kind != AgentTaskKind.Worker || request.Role != AgentTaskRole.Mutation
-                || request.Workspace != WorkspaceMode.Worktree || request.MergeTargetRef is not null
-                || request.AgentId is not null || request.Agent is not null || request.FollowUpOnTask is not null))
-            throw new ValidationException(nameof(request.SourceLandingOperationId),
-                "SourceLanding requires a fresh Worker/Mutation Worktree without an agent pin, follow-up or merge target.",
-                "verification_source_mode");
-
         if (request.RepairSourceTaskId is not null
             && (request.Kind != AgentTaskKind.Worker || request.Role != AgentTaskRole.Code
                 || request.Workspace is { } repairWorkspace && repairWorkspace != WorkspaceMode.Worktree
@@ -210,6 +202,14 @@ public sealed class AgentTaskService
             throw new ValidationException(nameof(request.RepairSourceTaskId),
                 "RepairSource requires a fresh Worker/Code Worktree without an agent pin, follow-up or SourceLanding.",
                 "repair_source_mode");
+
+        if (request.SourceLandingOperationId is not null
+            && (request.Kind != AgentTaskKind.Worker || request.Role != AgentTaskRole.Mutation
+                || request.Workspace != WorkspaceMode.Worktree || request.MergeTargetRef is not null
+                || request.AgentId is not null || request.Agent is not null || request.FollowUpOnTask is not null))
+            throw new ValidationException(nameof(request.SourceLandingOperationId),
+                "SourceLanding requires a fresh Worker/Mutation Worktree without an agent pin, follow-up or merge target.",
+                "verification_source_mode");
 
         // Validate explicit access before a live follow-up can overwrite Workspace.
         if (request.Role == AgentTaskRole.Mutation && request.Workspace == WorkspaceMode.ReadOnly)

@@ -4164,7 +4164,7 @@ public sealed class AgentTaskDispatcher
                 $"repair_source_identity_unavailable: {DelegationReportFormatter.Short(owner.Id)} {registered.Path}");
         }
 
-        warnings.Add($"occupied source {ownerRef} at {registered.Path}; routing to an isolated branch at {local.Sha}.");
+        warnings.Add($"occupied source {ownerRef} at {owner.WorktreePath ?? registered.Path}; routing to an isolated branch at {local.Sha}.");
         var dirty = await _progressGit.RunAsync(registered.Path,
             ["status", "--porcelain", "--untracked-files=all"], ct);
         if (dirty.Succeeded && dirty.Output.Trim().Length > 0)
