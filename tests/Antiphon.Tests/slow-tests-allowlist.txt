@@ -21,6 +21,10 @@ Antiphon.Tests.Application.DelegationWorktreeTests
 Antiphon.Tests.Application.AgentSessionServiceIntegrationTests
 # CARD-0487: historical allowance, live runtime cost.
 Antiphon.Tests.Application.AgentSessionRuntimeTests
+# CARD-0502: isolated schema plus in-proc cmd.exe exit capture and hosted pump.
+Antiphon.Tests.Application.SessionGenerationExitTests
+# CARD-0502: delivery overlap and resume against a killed generation.
+Antiphon.Tests.Application.SessionGenerationDeliveryOverlapTests
 # CARD-0487: historical allowance, raw PTY adapter cost.
 Antiphon.Tests.Agents.RawPtyAdapterTests
 # CARD-0487: historical allowance, Claude local-shell PTY cost.

@@ -549,10 +549,51 @@ public class AgentSessionRuntimeTests
         finally { await CleanupSessionAsync(sessionId, agentId); DeleteDirectoryBestEffort(logPath); }
     }
 
+    [Test]
+    public async Task A_persistence_failure_during_exit_close_publishes_nothing_and_a_matching_snapshot_recovers()
+    {
+        var interceptor = new ThrowOnceSaveInterceptor();
+        var bus = new MockEventBus();
+        var (sessionId, agentId, logPath, runtime, startedAt) = await SeedRunningSessionAsync(interceptor: interceptor, eventBus: bus);
+        try
+        {
+            var disposition = await runtime.ObserveExitAsync(
+                new SessionRunnerExitedEvent(sessionId, 1, AgentExitReason.KilledByRequest, 0, startedAt),
+                CancellationToken.None);
+            disposition.ShouldBe(SessionExitDisposition.PersistenceFailed);
+            bus.PublishedEvents.ShouldNotContain(e => e.EventName == "SessionExited");
+            await using (var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+            {
+                (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Running);
+            }
+
+            await using var scan = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            var runner = new SessionReconciliationServiceTests.FakeRunnerClient
+            {
+                Sessions =
+                [
+                    new SessionRunnerSessionDto(
+                        sessionId, 1, startedAt, "Exited", 1, AgentExitReason.KilledByRequest, 0,
+                        AcceptedStartedAt: startedAt)
+                ]
+            };
+            var service = SessionReconciliationServiceTests.BuildService(scan, runner, bus);
+            await service.ScanAsync(CancellationToken.None);
+            await using var closed = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            var row = await closed.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            row.Status.ShouldBe(SessionStatus.Failed);
+            row.FailureReason.ShouldBe(
+                "Reconciliation found the runner exited while the database session was still live (KilledByRequest, code 1).");
+        }
+        finally { await CleanupSessionAsync(sessionId, agentId); DeleteDirectoryBestEffort(logPath); }
+    }
+
     private static async Task<(Guid SessionId, Guid AgentId, string LogPath, AgentSessionRuntime Runtime, DateTime StartedAt)> SeedRunningSessionAsync(
         SessionTerminationSource terminationSource = SessionTerminationSource.Unknown,
         SessionStatus status = SessionStatus.Running,
-        DateTime? acceptedGeneration = null)
+        DateTime? acceptedGeneration = null,
+        ThrowOnceSaveInterceptor? interceptor = null,
+        MockEventBus? eventBus = null)
     {
         var sessionId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
@@ -590,14 +631,19 @@ public class AgentSessionRuntimeTests
 
         var logPath = Path.Combine(Path.GetTempPath(), $"antiphon-runtime-herdr-exit-{Guid.NewGuid():N}");
         var services = new ServiceCollection();
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
+        services.AddDbContext<AppDbContext>(o =>
         {
-            npgsql.MigrationsAssembly("Antiphon.Server");
-            npgsql.SetPostgresVersion(16, 0);
-        }));
+            o.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
+            {
+                npgsql.MigrationsAssembly("Antiphon.Server");
+                npgsql.SetPostgresVersion(16, 0);
+            });
+            if (interceptor is not null)
+                o.AddInterceptors(interceptor);
+        });
         var provider = services.BuildServiceProvider();
         var runtime = new AgentSessionRuntime(
-            new MockEventBus(),
+            eventBus ?? new MockEventBus(),
             Options.Create(new AgentSessionSettings { SessionLogPath = logPath }),
             provider.GetRequiredService<IServiceScopeFactory>(),
             TimeProvider.System,

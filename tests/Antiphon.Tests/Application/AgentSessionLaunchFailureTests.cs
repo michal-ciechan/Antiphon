@@ -55,7 +55,7 @@ public class AgentSessionLaunchFailureTests
         if (card is { } cardId)
             await Should.ThrowAsync<AgentLaunchBlockedException>(fixture.StartCardSessionAsync(cardId, "boot-must-not-be-sent", kind: AgentKind.ClaudeCode));
         else await Should.ThrowAsync<AgentLaunchBlockedException>(fixture.LaunchInteractiveAsync());
-        adapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
+        adapter.Lifecycle.ShouldBe(["KillGeneration", "Dispose"]);
         adapter.Prompts.ShouldBeEmpty();
         await using var db = LaunchFixture.CreateContext();
         var session = card is { } id ? await db.AgentSessions.SingleAsync(s => s.CardId == id)
@@ -191,7 +191,8 @@ public class AgentSessionLaunchFailureTests
         var launch = fixture.LaunchInteractiveAsync();
 
         await Should.ThrowAsync<InvalidOperationException>(launch);
-        adapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
+        adapter.Lifecycle.ShouldBe(["KillGeneration", "Dispose"]);
+        adapter.KillGenerationCalls.ShouldHaveSingleItem();
 
         await using var db = LaunchFixture.CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
@@ -199,6 +200,33 @@ public class AgentSessionLaunchFailureTests
         session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
         var agent = await db.Agents.SingleAsync(a => a.Id == fixture.AgentId);
         agent.Status.ShouldBe(AgentStatus.Failed, "the Start API already flipped it to Running");
+    }
+
+    [Test]
+    public async Task A_verification_binding_whose_generation_disagrees_with_the_launch_field_is_rejected_before_the_process_starts()
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        var now = DateTime.UtcNow;
+        var binding = new VerificationExecutionBinding(
+            Guid.NewGuid(),
+            new(Guid.NewGuid(), Guid.NewGuid(), new string('a', 40)),
+            new(fixture.SessionId, now.AddMinutes(1)),
+            new(@"C:\repo", @"C:\repo\.git", @"C:\trees\snapshot", @"C:\repo\.git\worktrees\snapshot",
+                "feat/card-task-12345678", Guid.NewGuid()),
+            RunnerStoreId: Guid.NewGuid());
+        var spec = new AgentLaunchSpec(
+            "fake", AgentKind.ClaudeCode, "fake", [], new Dictionary<string, string>(),
+            fixture.Workspace, 120, 30, VerificationBinding: binding);
+
+        var error = await Should.ThrowAsync<ConflictException>(() => fixture.LaunchInteractiveAsync(spec: spec));
+        error.Code.ShouldBe(SessionGeneration.BindingMismatch);
+        adapter.Started.ShouldBeFalse();
+
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.Status.ShouldBe(SessionStatus.Failed);
+        session.FailureReason.ShouldContain(SessionGeneration.BindingMismatch);
     }
 
     [Test]
@@ -218,7 +246,7 @@ public class AgentSessionLaunchFailureTests
 
         var ex = await Should.ThrowAsync<AgentLaunchBlockedException>(launch);
         ex.Block.Kind.ShouldBe(AgentLaunchBlockKind.ProviderSignInRequired);
-        adapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
+        adapter.Lifecycle.ShouldBe(["KillGeneration", "Dispose"]);
 
         await using var db = LaunchFixture.CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
@@ -248,7 +276,7 @@ public class AgentSessionLaunchFailureTests
 
         var ex = await Should.ThrowAsync<AgentLaunchBlockedException>(launch);
         ex.Block.Kind.ShouldBe(AgentLaunchBlockKind.TrustDialogNotCleared);
-        adapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
+        adapter.Lifecycle.ShouldBe(["KillGeneration", "Dispose"]);
 
         await using var db = LaunchFixture.CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
@@ -383,7 +411,7 @@ public class AgentSessionLaunchFailureTests
         var start = fixture.StartCardSessionAsync(card, "do the work");
 
         await Should.ThrowAsync<PromptDeliveryException>(start);
-        adapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
+        adapter.Lifecycle.ShouldBe(["KillGeneration", "Dispose"]);
 
         await using var db = LaunchFixture.CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.CardId == card);
@@ -698,7 +726,7 @@ public class AgentSessionLaunchFailureTests
         await using var fixture = await LaunchFixture.CreateAsync(adapter);
         await Should.ThrowAsync<AgentSessionService.ResumeTargetMissingException>(fixture.LaunchInteractiveAsync(resume: true));
         adapter.KillCount.ShouldBe(1);
-        adapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
+        adapter.Lifecycle.ShouldBe(["KillGeneration", "Dispose"]);
         await using var db = LaunchFixture.CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
         session.Status.ShouldBe(SessionStatus.Failed);
@@ -1107,7 +1135,7 @@ public class AgentSessionLaunchFailureTests
         // file exists yet, so there is no ground truth to late-confirm against and the launch fails.
         adapter.Prompts.ShouldBe(
             ["/remote-control", "/rename Card Agent", "do the work", "do the work", "do the work"]);
-        adapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
+        adapter.Lifecycle.ShouldBe(["KillGeneration", "Dispose"]);
 
         await using var db = LaunchFixture.CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.CardId == card);
@@ -1136,7 +1164,7 @@ public class AgentSessionLaunchFailureTests
 
         await Should.ThrowAsync<PromptDeliveryException>(start);
         adapter.Prompts.ShouldBe(["do the work"], "ComposerMayHoldBody skips the remaining re-types");
-        adapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
+        adapter.Lifecycle.ShouldBe(["KillGeneration", "Dispose"]);
         adapter.Killed.ShouldBeTrue();
 
         await using var db = LaunchFixture.CreateContext();

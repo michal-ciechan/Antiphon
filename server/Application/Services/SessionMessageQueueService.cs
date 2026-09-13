@@ -2014,7 +2014,6 @@ public sealed partial class SessionMessageQueueService
             return FlushResult.Nothing;
 
         var submitBaseline = await SettlePostEvidenceAsync(sessionId, ct);
-        var capturedGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
         try
         {
             await _runtime.SendInputAsync(sessionId, "\r", ct);
@@ -2075,7 +2074,7 @@ public sealed partial class SessionMessageQueueService
         if (outcome.Verdict == DeliveryVerdict.BackendUnreachable)
             return FlushResult.Nothing;
 
-        await HandleDeliveryFailureAsync(sessionId, ids, outcome.Verdict, ct, capturedGeneration);
+        await HandleDeliveryFailureAsync(sessionId, ids, outcome.Verdict, ct, capturedGeneration: null);
         return FlushResult.Failed;
     }
 

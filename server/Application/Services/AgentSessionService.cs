@@ -435,7 +435,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 && !SessionGeneration.Equal(binding.Generation.AcceptedStartedAt, acceptedGeneration))
             {
                 throw new ConflictException(
-                    "Verification binding generation disagrees with the launch generation.",
+                    $"Verification binding generation disagrees with the launch generation ({SessionGeneration.BindingMismatch}).",
                     SessionGeneration.BindingMismatch);
             }
 
@@ -1703,7 +1703,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             && !SessionGeneration.Equal(binding.Generation.AcceptedStartedAt, generation))
         {
             throw new ConflictException(
-                "Verification binding generation disagrees with the launch generation.",
+                $"Verification binding generation disagrees with the launch generation ({SessionGeneration.BindingMismatch}).",
                 SessionGeneration.BindingMismatch);
         }
 

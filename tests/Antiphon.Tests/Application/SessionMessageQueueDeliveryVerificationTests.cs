@@ -88,6 +88,8 @@ public class SessionMessageQueueDeliveryVerificationTests
         incident.Message.ShouldContain("never appeared in the composer");
 
         h.Adapter.Killed.ShouldBeTrue("always-on agent: the wedged session is killed for the supervisor to restart");
+        h.Adapter.KillGenerationCalls.ShouldNotBeEmpty();
+        h.Adapter.KillCount.ShouldBe(0);
     }
 
     [Test]
@@ -137,6 +139,27 @@ public class SessionMessageQueueDeliveryVerificationTests
             i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryVerificationFailed))
             .ShouldBeTrue();
         h.Adapter.Killed.ShouldBeFalse("not always-on: never kill a human's session out from under them");
+        h.Adapter.KillGenerationCalls.ShouldBeEmpty();
+        h.Adapter.KillCount.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task A_deferred_re_check_of_a_row_sent_without_a_retained_generation_declines_the_recovery_kill()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        const string body = "deferred body without retained generation";
+        h.Adapter.RenderedScreenOverride = body;
+        h.Adapter.OnSubmitted = _ => Task.CompletedTask;
+        await h.SeedPendingMessageAsync(body, deliveryAttempts: 1);
+
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.KillGenerationCalls.ShouldBeEmpty();
+        h.Adapter.KillCount.ShouldBe(0);
+        await using var db = CreateContext();
+        var incidents = await db.AgentIncidents.Where(i => i.AgentId == h.AgentId).ToListAsync();
+        incidents.ShouldContain(i => i.Message.Contains("retained no accepted generation", StringComparison.OrdinalIgnoreCase)
+            || i.Message.Contains("Destructive recovery was declined", StringComparison.OrdinalIgnoreCase));
     }
 
     [Test]

@@ -50,6 +50,8 @@ public class HerdrAttachTests
         sidecar!.Origin.ShouldBe(HerdrPaneOrigins.Attached);
         sidecar.ChildPid.ShouldBe(pane.Pid);
         sidecar.PaneId.ShouldBe(pane.PaneId);
+        sidecar.AcceptedStartedAt.ShouldBe(dto.AcceptedStartedAt);
+        dto.AcceptedStartedAt.ShouldNotBeNull();
 
         var transcript = TranscriptSidecar.TryLoad(TranscriptSidecar.PathFor(settings.SessionLogPath, nativeId));
         transcript.ShouldNotBeNull();
@@ -473,6 +475,7 @@ public class HerdrAttachTests
         dto.Status.ShouldBe("Running");
         dto.Adopted.ShouldBeTrue();
         dto.HerdrOrigin.ShouldBe(HerdrPaneOrigins.Attached);
+        dto.AcceptedStartedAt.ShouldNotBeNull();
 
         await runtimeB.KillAsync(nativeId, TimeSpan.FromSeconds(2), CancellationToken.None);
         DeleteLogRoot(settings.SessionLogPath);
@@ -678,7 +681,8 @@ public class HerdrAttachTests
             TranscriptFormats.Grok,
             pane.Pid,
             WorkspaceKey: "card0213",
-            ExpectedNativeSessionId: sessionId);
+            ExpectedNativeSessionId: sessionId,
+            AcceptedStartedAt: SessionGeneration.Normalize(DateTime.UtcNow));
 
     private static SeededPane SeedGrokPane(
         FakeHerdrServer fake,
