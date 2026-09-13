@@ -115,6 +115,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
     internal HerdrPlacementCoordinator Placement => _placement;
 
+    // Controlled pause for the pending-adoption publication race regression.
+    internal Func<Task>? BeforePendingHerdrPublicationAsync { get; set; }
+
     // Runtime claims; the disposal locator store reads/captures files separately under the lease.
     // Include all matching claims, even the requested session and exited runtime history.
     internal IReadOnlyList<HerdrPaneDisposalClaim> InspectHerdrDisposalClaims(string paneId)
@@ -1138,7 +1141,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         switch (verdict)
         {
             case HerdrBarVerdict.Adopt:
-                await session.AdoptHerdrAsync(sidecar, _herdrClient, () => NotifyPaneSetChanged(), _placement, LookupBinding, ct);
+                await session.AdoptHerdrAsync(sidecar, _herdrClient, () => NotifyPaneSetChanged(), _placement, LookupBinding,
+                    ct, BeforePendingHerdrPublicationAsync);
                 NotifyPaneSetChanged();
                 _logger.LogInformation(
                     "Pending herdr session {SessionId} adopted after herdr returned (pane {PaneId})",
@@ -2365,7 +2369,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             Action onPaneSetChanged,
             HerdrPlacementCoordinator placement,
             Func<string, Guid?, PaneBinding?> findBound,
-            CancellationToken ct)
+            CancellationToken ct,
+            Func<Task>? beforePublication = null)
         {
             if (sidecar.GrokRulesReceipt is { } receipt
                 && await new GrokRulesFileStore(_settings.SessionLogPath, _settings.GrokRules)
@@ -2375,14 +2380,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             _backend = SessionBackends.Herdr;
             if (_acceptedStartedAt is null)
                 BindAcceptedGeneration(sidecar.AcceptedStartedAt);
-            _pendingReason = null;
-            _pendingSidecar = null;
-            _childPid = sidecar.ChildPid;
-            _startedAt = sidecar.LaunchedAtUtc;
-            _herdrOrigin = sidecar.Origin ?? HerdrPaneOrigins.Launched;
-            _onHerdrPaneSetChanged = onPaneSetChanged;
-            _herdrPlacement = placement;
-            _herdrChild = new HerdrPaneChild(
+            var herdrChild = new HerdrPaneChild(
                 client,
                 _settings,
                 _logger,
@@ -2391,8 +2389,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 placement,
                 findBound);
             // Re-bind the existing pane without re-launching: reconstruct the child's identity fields.
-            await ((HerdrPaneChild)_herdrChild).AttachExistingAsync(sidecar, ct);
-            _herdrChild.Exited += exit =>
+            await herdrChild.AttachExistingAsync(sidecar, ct);
+            herdrChild.Exited += exit =>
             {
                 lock (_gate)
                 {
@@ -2409,8 +2407,20 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     ExitEnvelope(exit.ExitCode, exit.Reason, 0));
                 _onHerdrPaneSetChanged?.Invoke();
             };
+            if (beforePublication is not null)
+                await beforePublication();
             lock (_gate)
+            {
+                _childPid = sidecar.ChildPid;
+                _startedAt = sidecar.LaunchedAtUtc;
+                _herdrOrigin = sidecar.Origin ?? HerdrPaneOrigins.Launched;
+                _onHerdrPaneSetChanged = onPaneSetChanged;
+                _herdrPlacement = placement;
+                _herdrChild = herdrChild;
+                _pendingReason = null;
+                _pendingSidecar = null;
                 _status = "Running";
+            }
             _clientReady.TrySetResult(true);
             _events.Publish(
                 SessionRunnerEventNames.SessionAdopted,
@@ -2666,22 +2676,23 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         public async Task KillAsync(TimeSpan timeout, CancellationToken ct, string? exitReasonOverride = null)
         {
-            if (HasExited && VerificationBinding is null)
-                return;
-
-            if (exitReasonOverride is not null)
+            HerdrPaneSidecar? pendingSidecar;
+            lock (_gate)
             {
-                lock (_gate)
+                if (_status == "Exited" && VerificationBinding is null)
+                    return;
+                if (exitReasonOverride is not null)
                     _exitReasonOverride = exitReasonOverride;
+                pendingSidecar = _pendingReason is null ? null : _pendingSidecar;
             }
 
-            if (_pendingReason is not null)
+            if (pendingSidecar is not null)
             {
                 // The pane lease serializes us against RetryPendingHerdrAsync, which holds it for
                 // the whole adoption — so waiting for it can mean adoption already finished and
                 // the session is live. Re-evaluate under the lease, then fall through to the live
                 // path instead of returning: returning would leave a running session unstopped.
-                if (await TryKillPendingUnderPaneLeaseAsync(ct))
+                if (await TryKillPendingUnderPaneLeaseAsync(pendingSidecar, ct))
                     return;
                 if (HasExited)
                     return;
@@ -2689,7 +2700,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 // lease themselves and the lease is not reentrant.
             }
 
-            if (_herdrChild is { } herdr)
+            ISessionChild? herdr;
+            lock (_gate)
+                herdr = _herdrChild;
+            if (herdr is not null)
             {
                 await herdr.KillAsync(ct);
                 await Task.WhenAny(_exited.Task, Task.Delay(timeout + TimeSpan.FromSeconds(2), ct));
@@ -2712,13 +2726,15 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         /// The lease is released before returning either way: it is not reentrant, and every live
         /// stop path acquires it again for itself.
         /// </summary>
-        private async Task<bool> TryKillPendingUnderPaneLeaseAsync(CancellationToken ct)
+        private async Task<bool> TryKillPendingUnderPaneLeaseAsync(HerdrPaneSidecar pendingSidecar, CancellationToken ct)
         {
-            // Snapshot: adoption clears _pendingSidecar, so re-reading it for the pane ID races.
-            var pendingSidecar = _pendingSidecar;
-            await using var pendingLease = _herdrPlacement is null || pendingSidecar is null ? null
+            // The caller snapshots the sidecar under the publication gate before adoption can clear it.
+            await using var pendingLease = _herdrPlacement is null ? null
                 : await _herdrPlacement.LockPaneAsync(pendingSidecar.PaneId, ct);
-            if (_pendingReason is null)
+            bool stillPending;
+            lock (_gate)
+                stillPending = _pendingReason is not null;
+            if (!stillPending)
                 return false;
             KillPendingHerdr();
             return true;
