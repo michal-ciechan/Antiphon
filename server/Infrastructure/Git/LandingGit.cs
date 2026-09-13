@@ -130,11 +130,11 @@ public class LandingGit : ILandingGit
     {
         try
         {
+            await ValidateBranchAsync(coordinates.RepositoryPath, coordinates.SourceFullRef, ct);
+            await ValidateBranchAsync(coordinates.RepositoryPath, coordinates.TargetFullRef, ct);
             if (coordinates.SourceFullRef == coordinates.TargetFullRef) return new(null, "source_equals_target");
             var before = await IdentityAsync(coordinates, ct);
             if (before.Reason is not null) return before;
-            await ValidateBranchAsync(coordinates.RepositoryPath, coordinates.SourceFullRef, ct);
-            await ValidateBranchAsync(coordinates.RepositoryPath, coordinates.TargetFullRef, ct);
             var snapshot = before.Snapshot!;
             if (HasSequencerAt(snapshot.GitDirectory)) return new(null, "active_sequencer");
             var statusArgs = new[] { "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none" };
@@ -355,7 +355,15 @@ public class LandingGit : ILandingGit
         if (!fullRef.StartsWith("refs/heads/", StringComparison.Ordinal) || fullRef[11..].StartsWith('-'))
             throw new ArgumentException("invalid_branch");
         var valid = await RunAsync(repository, ["check-ref-format", fullRef], ct);
-        if (!valid.Succeeded) throw new ArgumentException("invalid_branch");
+        if (!valid.Succeeded)
+        {
+            if (valid.ExitCode == 128)
+            {
+                var template = LandFailureDiagnostic.CommandTemplate(["check-ref-format"]);
+                throw new LandingGitCommandException(template, valid.ExitCode, $"git_exit_{valid.ExitCode}");
+            }
+            throw new ArgumentException("invalid_branch");
+        }
     }
 
     private async Task<string> RequiredAsync(string repository, IReadOnlyList<string> args, CancellationToken ct)

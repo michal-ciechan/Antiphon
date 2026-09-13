@@ -325,7 +325,7 @@ public sealed class LandingGitTests
         var result = await git.InspectAsync(fixture.Coordinates, CancellationToken.None);
         result.Reason.ShouldBe("identity_io_error");
         result.Diagnostic!.Code.ShouldBe("git_exit_128");
-        result.Diagnostic.Command.ShouldBe("git rev-parse <identity>");
+        result.Diagnostic.Command.ShouldBe("git check-ref-format <ref>");
         (result.Diagnostic.Command + result.Diagnostic.Code + (await git.RunAsync(fixture.Repository, ["rev-parse", "--absolute-git-dir"], CancellationToken.None)).Diagnostic
             + (await git.RunAsync(fixture.Repository, ["rev-parse", "--absolute-git-dir"], CancellationToken.None)).Output)
             .ShouldNotContain("synthetic-secret-marker");
