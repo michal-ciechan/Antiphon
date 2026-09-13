@@ -621,6 +621,24 @@ protocol, not treated as truncation. This is a real application regression for
 report preservation, complementary to instruction-text assertions and live
 channel-summary review.
 
+Amended after review task `f42b6b25`: asserting the parent note as a
+`SessionQueuedMessages` row is **not** enough — a row is an intent to deliver,
+and the note still has to survive the queue's claim, the typing, the submit and
+CARD-0055's transcript-confirm gate. V-5 therefore runs the real
+`SessionMessageQueueService` against a terminal registered on the parent session
+(`AttachTerminal`, whose submitted bodies become `UserPrompt` records the way the
+JSONL tailer persists them) and asserts the note where it lands: exactly one
+complete `UserPrompt` in the PARENT's transcript, byte-identical to the queued
+body, correlated by `SourceTaskId`, `ConversationKey` `task:{root}` and the
+report's `ContentDigest`, past that attempt's own baseline sequence. Three
+recipient states are covered — already-eligible (idle and live, and still not
+typed at settle, per CARD-0312 S2), busy (held mid-turn, typed on the turn-end
+boundary), and transport failure (reverted to Pending with identity and the
+anti-duplicate baseline intact, then the SAME row redelivered exactly once).
+The rig raises only the pty single-write ceiling to the modern ConPTY value so
+the note is typed whole rather than spilled to a pointer; the spill shape has its
+own tests.
+
 #### V-7 / V-8: client, CLI and delivery checks
 
 Use the current MSW fixtures and actual modal interactions. In the three client
