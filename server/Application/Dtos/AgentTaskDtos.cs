@@ -155,7 +155,12 @@ public sealed record CreateAgentTaskRequest(
     /// pipeline seats. An unknown name is 422.
     /// </summary>
     OrchestrationStage? Stage = null,
-    Guid? SourceLandingOperationId = null);
+    Guid? SourceLandingOperationId = null,
+    /// <summary>
+    /// CARD-0407. Optional caller-declared internal-decision grants. Empty/null is absent.
+    /// Server provenance fields supplied here are rejected.
+    /// </summary>
+    InternalDecisionPolicyRequest? InternalDecisionPolicy = null);
 
 public sealed record AgentTaskSummaryDto(
     Guid Id,
@@ -296,7 +301,9 @@ public sealed record AgentTaskDetailDto(
     bool VerificationDirectoryRemoved = false,
     bool VerificationRegistrationRemoved = false,
     bool VerificationBranchRemoved = false,
-    IReadOnlyList<VerificationExecutionDetailDto>? VerificationExecutions = null);
+    IReadOnlyList<VerificationExecutionDetailDto>? VerificationExecutions = null,
+    string? InternalDecisionPolicyJson = null,
+    string? InternalDecisionPolicyHash = null);
 
 /// <summary>One accepted launch attempt for a sourced Mutation snapshot. Receipt bytes stay on the server.</summary>
 public sealed record VerificationExecutionDetailDto(

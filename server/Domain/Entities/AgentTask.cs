@@ -495,6 +495,22 @@ public class AgentTask
     /// </summary>
     public DateTime? AutoContinuedAt { get; set; }
 
+    /// <summary>
+    /// CARD-0407. Canonical validated grant snapshot including server-resolved provenance.
+    /// Null when the dispatch has no internal-decision policy. Immutable after create;
+    /// same-task retry/escalation keep it, new tasks never inherit it.
+    /// </summary>
+    public string? InternalDecisionPolicyJson { get; set; }
+
+    /// <summary>SHA-256 hex of <see cref="InternalDecisionPolicyJson"/>. Null iff the JSON is null.</summary>
+    public string? InternalDecisionPolicyHash { get; set; }
+
+    /// <summary>
+    /// CARD-0407. Server-owned Git observation baseline for settlement path audit. Null until
+    /// a later slice captures it at dispatch; workers cannot supply or refresh it.
+    /// </summary>
+    public string? InternalDecisionAuditBaselineJson { get; set; }
+
     public Card? Card { get; set; }
     public AgentTask? ParentTask { get; set; }
     public ICollection<AgentTask> Children { get; set; } = new List<AgentTask>();

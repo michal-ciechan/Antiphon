@@ -424,6 +424,14 @@ public sealed class AgentTaskService
 
         var (workspace, warning) = ResolveWorkspace(request, caller, resolved);
 
+        var storedPolicy = InternalDecisionPolicy.Normalize(
+            request.InternalDecisionPolicy,
+            request.Role,
+            workspace,
+            InternalDecisionPolicy.GrantorFrom(
+                caller.Task?.Id, caller.SessionId, caller.CapabilityId, caller.CapabilityName),
+            UtcNow());
+
         // CARD-0040. Resolved BEFORE the row so an explicit -Card that names nothing is a 422 on
         // creation rather than a task that runs with a binding its caller thinks it has. It is
         // resolved HERE, ahead of tier/kind, because a CARD-0305 routing pin is keyed on the card
@@ -915,6 +923,13 @@ public sealed class AgentTaskService
             StandingAuthority = standingAuthority,
             AutoContinueOnWait = request.AutoContinue && standingAuthority is not null,
         };
+
+        if (storedPolicy is not null)
+        {
+            task.InternalDecisionPolicyJson = InternalDecisionPolicy.Serialize(
+                storedPolicy with { GrantedAt = now });
+            task.InternalDecisionPolicyHash = InternalDecisionPolicy.Hash(task.InternalDecisionPolicyJson);
+        }
 
         var repeatOf = await FindLaunchFailureRepeatAsync(
             task.CardId, task.Goal, task.Kind, task.Role, task.AgentKind, ct);
@@ -1510,7 +1525,8 @@ public sealed class AgentTaskService
             await LoadReviewEvidenceAsync(task, ct),
             task.SourceLandingOperationId, task.SourceLandingSha, task.VerificationCleanupResidue,
             sealId, task.VerificationExecutionRevision, task.VerificationDirectoryRemoved,
-            task.VerificationRegistrationRemoved, task.VerificationBranchRemoved, executions);
+            task.VerificationRegistrationRemoved, task.VerificationBranchRemoved, executions,
+            task.InternalDecisionPolicyJson, task.InternalDecisionPolicyHash);
     }
 
     private static VerificationExecutionDetailDto ToExecutionDetail(VerificationExecution execution)
@@ -2054,6 +2070,9 @@ public sealed class AgentTaskService
         // that no longer exists, and the previous attempt's checks are not this one's budget.
         task.NextCheckAt = null;
         task.CheckCount = 0;
+        // CARD-0407: the grant snapshot is attempt-immutable; the audit baseline is attempt-scoped
+        // and is recaptured at the next dispatch. Same-task retry/escalation keep the policy.
+        task.InternalDecisionAuditBaselineJson = null;
 
         // Result and FailureReason are deliberately KEPT: they are the handoff the next attempt gets
         // (DelegationReportFormatter.BuildBrief), and the drawer still shows what the last try said.
