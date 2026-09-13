@@ -84,6 +84,17 @@ public class SessionGenerationDeliveryOverlapTests
         h.Adapter.KillGenerationCalls.ShouldBe([generationA]);
         h.Adapter.KillCount.ShouldBe(0);
 
+        await using (var db = BridgeQueueHarness.CreateContext())
+        {
+            await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u
+                .SetProperty(s => s.StandingAgentId, h.AgentId)
+                .SetProperty(s => s.AgentKind, AgentKind.ClaudeCode));
+            await db.Agents.Where(a => a.Id == h.AgentId).ExecuteUpdateAsync(u => u
+                .SetProperty(a => a.Kind, AgentKind.ClaudeCode)
+                .SetProperty(a => a.AlwaysOn, true)
+                .SetProperty(a => a.PersistentSessionId, h.SessionId.ToString("D")));
+        }
+
         await using var scope = h.Provider.CreateAsyncScope();
         await scope.ServiceProvider.GetRequiredService<AgentControlService>()
             .StartAsync(h.AgentId, new StartAgentRequest(), CancellationToken.None);
