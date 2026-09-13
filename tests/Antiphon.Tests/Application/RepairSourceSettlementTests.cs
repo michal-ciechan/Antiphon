@@ -517,14 +517,17 @@ public class RepairSourceSettlementTests
         await using var verify = world.CreateContext();
         var prompt = await verify.TranscriptEntries.SingleAsync(e =>
             e.AgentSessionId == bridge.SessionId && e.Kind == TranscriptKinds.UserPrompt);
+        prompt.Text.ShouldBe(queued.Body);
         prompt.Text.ShouldContain("progress=repair-source; owner=");
     }
 
     [Test]
     [Timeout(120_000)]
-    [Arguments("queue-inserted")]
-    [Arguments("lost-wakeup")]
-    public async Task C499_V38b_ProgressWarningSurvivesQueueCuts(string cut)
+    [Arguments("queue-inserted", true)]
+    [Arguments("queue-inserted", false)]
+    [Arguments("lost-wakeup", true)]
+    [Arguments("lost-wakeup", false)]
+    public async Task C499_V38b_ProgressWarningSurvivesQueueCuts(string cut, bool busy)
     {
         await using var world = await RepairSourceWorld.CreateAsync();
         var (repair, _) = await world.DispatchAsync();
@@ -545,10 +548,12 @@ public class RepairSourceSettlementTests
         var queued = await world.CreateContext().SessionQueuedMessages
             .SingleAsync(m => m.SourceTaskId == repair.Id && m.AgentSessionId == bridge.SessionId);
         await QueuedReceiptAssertions.ConfirmQueuedReceiptAsync(
-            world.Schema.ConnectionString, bridge, queued, bridge.SessionId, busy: false, cut);
-        (await world.CreateContext().TranscriptEntries.CountAsync(e =>
-            e.AgentSessionId == bridge.SessionId && e.Kind == TranscriptKinds.UserPrompt))
-            .ShouldBe(1);
+            world.Schema.ConnectionString, bridge, queued, bridge.SessionId, busy, cut);
+        await using var verify = world.CreateContext();
+        var prompt = await verify.TranscriptEntries.SingleAsync(e =>
+            e.AgentSessionId == bridge.SessionId && e.Kind == TranscriptKinds.UserPrompt);
+        prompt.Text.ShouldBe(queued.Body);
+        prompt.Text.ShouldContain("progress=repair-source; owner=");
     }
 
     [Test]
@@ -568,8 +573,10 @@ public class RepairSourceSettlementTests
             m.AgentSessionId == sessionId && m.Origin == QueuedMessageOrigin.Delegation);
         await QueuedReceiptAssertions.ConfirmQueuedReceiptAsync(
             world.Schema.ConnectionString, bridge, brief, sessionId, busy: false);
-        var prompt = await db.TranscriptEntries.SingleAsync(e =>
+        await using var verify = world.CreateContext();
+        var prompt = await verify.TranscriptEntries.SingleAsync(e =>
             e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.UserPrompt);
+        prompt.Text.ShouldBe(brief.Body);
         prompt.Text.ShouldContain(DelegationReportFormatter.TaskMarker(repair.Id));
         prompt.Text.ShouldContain(DelegationReportFormatter.Short(world.Owner.Id));
         prompt.Text.ShouldContain(world.OwnerRef);

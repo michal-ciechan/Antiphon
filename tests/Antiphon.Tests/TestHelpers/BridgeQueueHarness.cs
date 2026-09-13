@@ -39,6 +39,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
     public required AgentSessionRuntime Runtime { get; init; }
     public required SessionMessageQueueService Queue { get; init; }
     public required EmptyRunnerClient Runner { get; init; }
+    public required string ConnectionString { get; init; }
     public ChannelReplyDispatcher Dispatcher => Provider.GetRequiredService<ChannelReplyDispatcher>();
 
     public sealed record HarnessOptions
@@ -226,6 +227,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
 
         var runtime = provider.GetRequiredService<AgentSessionRuntime>();
         var adapter = new FakeAgentProtocolAdapter();
+        var store = options.ConnectionString;
         // CARD-0055: a delivery is Delivered only once its prompt exists as a UserPrompt transcript
         // row, so the fake has to model the whole round trip, not just the composer. A real Claude
         // that takes a prompt records it and then WORKS; the trailing TurnEnd keeps the fake's
@@ -248,8 +250,10 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             // BOTH sides stamped to fire, and the other insert helpers here stamp nothing, so a
             // stamped end could outrank a later unstamped MarkWorkingAsync and read a busy session
             // idle. Sequence alone already puts this end above its prompt.
-            await InsertEntryAsync(sessionId, TranscriptKinds.UserPrompt, submitted, timestamp: DateTime.UtcNow);
-            await InsertEntryAsync(sessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn");
+            await InsertEntryAsync(sessionId, TranscriptKinds.UserPrompt, submitted, timestamp: DateTime.UtcNow,
+                connectionString: store);
+            await InsertEntryAsync(sessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn",
+                connectionString: store);
         };
         runtime.Register(sessionId, adapter);
 
@@ -266,6 +270,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             Runtime = runtime,
             Queue = provider.GetRequiredService<SessionMessageQueueService>(),
             Runner = runner,
+            ConnectionString = store ?? TestDbFixture.ConnectionString,
         };
     }
 
@@ -287,14 +292,16 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         string? toolName = null,
         string? toolUseId = null) =>
         InsertEntryAsync(sessionId ?? SessionId, kind, text, stopReason, timestamp,
-            isApiError, apiErrorClass, apiErrorStatus, toolName, toolUseId);
+            isApiError, apiErrorClass, apiErrorStatus, toolName, toolUseId,
+            connectionString: ConnectionString);
 
     internal static async Task<long> InsertEntryAsync(
         Guid sessionId, string kind, string? text = null, string? stopReason = null,
         DateTime? timestamp = null, bool? isApiError = null, string? apiErrorClass = null,
-        int? apiErrorStatus = null, string? toolName = null, string? toolUseId = null)
+        int? apiErrorStatus = null, string? toolName = null, string? toolUseId = null,
+        string? connectionString = null)
     {
-        await using var db = CreateContext();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
         var seq = ((await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId)
             .MaxAsync(t => (long?)t.Sequence)) ?? 0) + 1;
@@ -330,7 +337,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             return;
 
         var sessionId = SessionId;
-        await using var db = CreateContext();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(ConnectionString));
         var baseSeq = ((await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId)
             .MaxAsync(t => (long?)t.Sequence)) ?? 0);
@@ -404,7 +411,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         string? conversationKey = null)
     {
         var sid = sessionId ?? SessionId;
-        await using var db = CreateContext();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(ConnectionString));
         // FIFO sequence continues from whatever is already queued, so a test can seed several.
         var seq = ((await db.SessionQueuedMessages
             .Where(m => m.AgentSessionId == sid)
@@ -446,7 +453,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         string body, string conversationKey, DateTime? sentAtUtc = null, Guid? sessionId = null)
     {
         var sid = sessionId ?? SessionId;
-        await using var db = CreateContext();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(ConnectionString));
         var seq = ((await db.SessionQueuedMessages
             .Where(m => m.AgentSessionId == sid)
             .MaxAsync(m => (long?)m.Sequence)) ?? 0) + 1;
@@ -473,7 +480,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
     public async Task<long> CurrentTranscriptMaxSequenceAsync(Guid? sessionId = null)
     {
         var sid = sessionId ?? SessionId;
-        await using var db = CreateContext();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(ConnectionString));
         return (await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sid)
             .MaxAsync(t => (long?)t.Sequence)) ?? 0;
@@ -487,7 +494,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
     public async Task<string> BindChannelAsync(string? externalId = null)
     {
         externalId ??= $"bridge-queue-{Guid.NewGuid():N}";
-        await using var db = CreateContext();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(ConnectionString));
         db.ChatChannels.Add(new ChatChannel
         {
             Id = Guid.NewGuid(),
@@ -507,7 +514,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        await using (var db = CreateContext())
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(ConnectionString)))
         {
             var sessionIds = await db.AgentSessions
                 .Where(s => s.CardId == null && s.Cwd.StartsWith(TempRoot))
