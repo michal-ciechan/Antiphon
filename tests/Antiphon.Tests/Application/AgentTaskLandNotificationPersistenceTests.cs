@@ -201,4 +201,30 @@ public sealed class AgentTaskLandNotificationPersistenceTests
             (await observer.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Fixture.TaskId && e.Type == AgentTaskEventType.LandingCleanup)).ShouldBe(1);
         }
     }
+
+    [Test]
+    public async Task C498_FailureOutcomeBodyCarriesDiagnostic()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        Exception? thrown = null;
+        h.Fixture.Git.BeforeCommand = (_, args) =>
+        {
+            if (args[0] == "ls-remote") thrown = new InvalidOperationException("synthetic-secret-marker://user:pw@host/?q=1");
+            return thrown is null ? Task.FromResult<LandingGitResult?>(null) : throw thrown;
+        };
+        await Should.ThrowAsync<InvalidOperationException>(() => h.RunAsync());
+        await h.FailAsync(thrown!);
+        await using var db = h.CreateContext();
+        var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Fixture.TaskId);
+        request.TerminalFailureCode.ShouldBe("landing_unexpected_exception");
+        request.FailureExceptionType.ShouldBe("InvalidOperationException");
+        request.FailureDiagnosticId.ShouldNotBeNull();
+        var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == h.Fixture.TaskId && n.Kind == LandNotificationKind.Outcome);
+        note.Body.ShouldContain("landing_unexpected_exception; diagnostic=" + request.FailureDiagnosticId!.Value.ToString("N") + "; exception=InvalidOperationException");
+        note.Body.ShouldContain("expected=" + (request.ExpectedSourceSha ?? "null"));
+        note.Body.ShouldContain("local=" + (request.LocalBeforeSha ?? "null"));
+        note.Body.ShouldNotContain("synthetic-secret-marker");
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
 }

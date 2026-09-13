@@ -285,6 +285,13 @@ export interface AgentTaskDetailDto {
     resolvedSourceSha?: string | null
     sourceRefusalReason?: string | null
     schemaVersion?: number
+    terminalFailureCode?: string | null
+    failureDiagnosticId?: string | null
+    failureExceptionType?: string | null
+    sourceDiagnosticCommand?: string | null
+    sourceDiagnosticExitCode?: number | null
+    sourceDiagnosticCode?: string | null
+    sourceDiagnosticExceptionType?: string | null
     notifications: Array<{
       id: string; kind: string; state: string; destinationSessionId: string | null
       queueMessageId: string | null; lastErrorCode: string | null; confirmedAt: string | null

@@ -1507,6 +1507,11 @@ public class AppDbContext : DbContext
             entity.Property(r => r.SourceGitDirectory).HasMaxLength(1000);
             entity.Property(r => r.SourceRefusalReason).HasMaxLength(200);
             entity.Property(r => r.SourceAdvanceChildOperation).HasMaxLength(200);
+            entity.Property(r => r.TerminalFailureCode).HasMaxLength(100);
+            entity.Property(r => r.FailureExceptionType).HasMaxLength(200);
+            entity.Property(r => r.SourceDiagnosticCommand).HasMaxLength(160);
+            entity.Property(r => r.SourceDiagnosticCode).HasMaxLength(100);
+            entity.Property(r => r.SourceDiagnosticExceptionType).HasMaxLength(200);
             entity.HasIndex(r => r.TaskId).IsUnique().HasFilter("\"IsPending\" = TRUE");
             entity.HasIndex(r => new { r.IsPending, r.LastProgressAt });
             entity.HasOne<AgentTask>().WithMany().HasForeignKey(r => r.TaskId).OnDelete(DeleteBehavior.Restrict);

@@ -987,7 +987,12 @@ writers still exclude landing. Publication, cleanup and caller receipt are separ
 facts; a Succeeded delegate is not evidence of publication. A terminal land transaction
 owes a durable notification, and an independent worker recovers the same keyed queue
 row. Only a complete correlated UserPrompt after the attempt floor confirms receipt.
-Status polling does not discharge it. The StageTestDesign delivery inventory and
+Status polling does not discharge it. Unexpected execution failures persist a bounded
+`terminalFailureCode`, `failureDiagnosticId` and exception type on the request (and in
+the Outcome body) without claiming a source refusal; Git inspection failures may add a
+fixed command template, exit code and generated diagnostic code, never raw stderr.
+The same diagnostic identity correlates the request row, terminal event, notification
+and server log. The StageTestDesign delivery inventory and
 StageReview audit require producer-to-recipient evidence for changed asynchronous paths.
 
 ### Code, ordinary Review, Land, then Mutation (CARD-0478)

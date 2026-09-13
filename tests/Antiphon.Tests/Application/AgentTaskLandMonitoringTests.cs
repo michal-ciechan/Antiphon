@@ -141,7 +141,7 @@ public sealed class AgentTaskLandMonitoringTests
             var detail = heldCleanup
                 ? $"{severity}: Land Held; requested {now:O}; no progress since {now:O}; attempt=0; reason=repository_or_source_writer; holder= ()."
                 : $"{severity}: outcome receipt unconfirmed; notification={outcome.Id:N}; outcome committed={now:O}; destination=; queue=; state=DestinationUnavailable; error=.";
-            note.Body.ShouldBe($"[land {note.Id:N} request={request.Id:N} task={taskId:N} outcome=LandAged]\npublication={publication}; cleanup={cleanup}\n{detail}");
+            note.Body.ShouldBe($"[land {note.Id:N} request={request.Id:N} task={taskId:N} outcome=LandAged]\npublication={publication}; cleanup={cleanup}\nexpected=null; local=null; remote=null; candidate=null\n{detail}");
             note.LandingOperationId.ShouldBe(operation.Id);
             var source = await db.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.Id == note.SourceEventId);
             source.LandingOperationId.ShouldBe(operation.Id); source.LandingPublication.ShouldBe(publication);
@@ -189,5 +189,35 @@ public sealed class AgentTaskLandMonitoringTests
         saved.LastProgressAt.ShouldBe(now);
         saved.LastEvaluatedAt.ShouldBe(now.AddMinutes(15));
         saved.Attempt.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C498_MonitorRotatesTokenEveryPass()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var now = new DateTime(2026, 9, 13, 12, 0, 0, DateTimeKind.Utc);
+        var clock = new FakeTimeProvider(now);
+        var taskId = Guid.NewGuid();
+        var request = new AgentTaskLandRequest
+        {
+            Id = Guid.NewGuid(), TaskId = taskId, State = LandRequestState.Queued, RequestedAt = now.AddSeconds(-1),
+            LastProgressAt = now.AddSeconds(-1), LastEvaluatedAt = now.AddSeconds(-1), ReplyTo = AgentTaskReplyTo.None,
+        };
+        var before = request.ConcurrencyToken;
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = taskId, RootTaskId = taskId, Title = "C498 monitor", Goal = "monitor fixture",
+            WorkingDirectory = Path.GetTempPath(), Status = AgentTaskStatus.Succeeded, ReplyTo = AgentTaskReplyTo.None,
+            CreatedAt = now, LandRequestedAt = now.AddSeconds(-1), CurrentLandRequestId = request.Id,
+        });
+        db.AgentTaskLandRequests.Add(request);
+        await db.SaveChangesAsync();
+        await new AgentTaskLandMonitorService(db, clock, Options.Create(new DelegationSettings()), new MockEventBus())
+            .SweepAsync(CancellationToken.None);
+        var after = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.Id);
+        after.ConcurrencyToken.ShouldNotBe(before);
+        after.LastEvaluatedAt.ShouldBe(now);
+        (await db.AgentTaskLandNotifications.CountAsync(n => n.RequestId == request.Id)).ShouldBe(0);
     }
 }

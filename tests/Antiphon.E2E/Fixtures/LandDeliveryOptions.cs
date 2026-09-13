@@ -120,7 +120,9 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
         {
             app.Use(async (context, onward) =>
             {
-                if (!context.Request.Path.Value!.EndsWith("/land", StringComparison.Ordinal) || context.Request.Method != "POST")
+                var path = context.Request.Path.Value ?? "";
+                if (context.Request.Method != "POST"
+                    || !(path.EndsWith("/land", StringComparison.Ordinal) || path.EndsWith("/land/v2", StringComparison.Ordinal)))
                 { await onward(); return; }
                 var original = context.Response.Body;
                 await using var capture = new MemoryStream();
