@@ -331,8 +331,9 @@ public sealed class AgentTaskLandContractEndpointTests
         using var doc = JsonDocument.Parse(jsonText);
         var json = doc.RootElement.Clone();
         var land = json.GetProperty("landRequest");
+        var exceptionType = producer == "hosted-catch" ? "LandingGitCommandException" : "IOException";
         land.GetProperty("terminalFailureCode").GetString().ShouldBe("landing_io_error");
-        land.GetProperty("failureExceptionType").GetString().ShouldBe("IOException");
+        land.GetProperty("failureExceptionType").GetString().ShouldBe(exceptionType);
         var diagnostic = land.GetProperty("failureDiagnosticId").GetGuid();
         diagnostic.ShouldNotBe(Guid.Empty);
         land.ValueKind.ShouldBe(JsonValueKind.Object);
@@ -346,14 +347,14 @@ public sealed class AgentTaskLandContractEndpointTests
             var row = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == body.RequestId);
             row.FailureDiagnosticId.ShouldBe(diagnostic);
             var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.RequestId == body.RequestId && n.Kind == LandNotificationKind.Outcome);
-            note.Body.ShouldContain($"landing_io_error; diagnostic={diagnostic:N}; exception=IOException");
+            note.Body.ShouldContain($"landing_io_error; diagnostic={diagnostic:N}; exception={exceptionType}");
             note.Body.ShouldNotContain("synthetic-secret-marker");
         }
         jsonText.ShouldNotContain("synthetic-secret-marker");
         await using var server = LandApiStub.Compatible(new string('e', 40), taskStatusBody: jsonText);
         var status = await DelegateScriptRunner.RunAsync(server.Url, "-Status", task.Id.ToString());
         status.ExitCode.ShouldBe(0, status.Output);
-        status.Output.ShouldContain($"Land execution failure: landing_io_error; diagnostic {diagnostic}; exception IOException");
+        status.Output.ShouldContain($"Land execution failure: landing_io_error; diagnostic {diagnostic}; exception {exceptionType}");
         status.Output.ShouldContain("Publication: Unconfirmed; cleanup: NotStarted");
         status.Output.ShouldNotContain("synthetic-secret-marker");
     }

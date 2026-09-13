@@ -317,10 +317,10 @@ public sealed class LandingGitTests
     {
         await using var fixture = new LandingGitFixture();
         await fixture.InitializeAsync();
-        var home = Path.Combine(fixture.Root, "home");
-        Directory.CreateDirectory(home);
-        var config = Path.Combine(home, "gitconfig");
-        await File.WriteAllTextAsync(config, "[include]\n\tpath = \"synthetic-secret-marker://user:pw@host/?q=1\"\n");
+        var markerDir = Path.Combine(fixture.Root, "home", "synthetic-secret-marker");
+        Directory.CreateDirectory(markerDir);
+        var config = Path.Combine(markerDir, "config");
+        await File.WriteAllTextAsync(config, "[broken \"synthetic-secret-marker://user:pw@host/?q=1\"\n");
         var git = new MarkerHomeGit(Path.Combine(fixture.Root, "home"), fixture.TaskId, config);
         var result = await git.InspectAsync(fixture.Coordinates, CancellationToken.None);
         result.Reason.ShouldBe("identity_io_error");
