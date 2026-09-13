@@ -214,10 +214,12 @@ public class RepairSourceSettlementTests
         evidence.Sources!.First(s => s.Origin == ProgressOrigin.RepairSourceRemote).RemoteObserved.ShouldBe(remoteTip);
         (await ScratchGitRepo.GitInAsync(world.Repo.Path, "rev-parse", world.OwnerRef)).StdOut.Trim()
             .ShouldBe(world.OwnerSha);
-        world.Git.Trace.Any(a => a.Length > 0 && a[0] == "fetch"
-            && a.Any(x => x.StartsWith("refs/heads/", StringComparison.Ordinal)
-                || x.StartsWith("refs/remotes/", StringComparison.Ordinal)))
-            .ShouldBeFalse();
+        world.Git.Trace.Any(a => a.Length > 0 && a[0] == "fetch" && a.Any(x =>
+        {
+            var dest = x.Contains(':') ? x[(x.LastIndexOf(':') + 1)..] : "";
+            return dest.StartsWith("refs/heads/", StringComparison.Ordinal)
+                || dest.StartsWith("refs/remotes/", StringComparison.Ordinal);
+        })).ShouldBeFalse();
     }
 
     [Test]

@@ -121,6 +121,8 @@ public sealed class TaskCompletionProgressService
     {
         if (evidence.Assessment == CompletionProgressAssessment.Indeterminate)
             return $"progress=unavailable; reason={evidence.Reason ?? "unknown"}";
+        if (evidence.ClaimWarning is not null)
+            return $"progress=unavailable; reason={evidence.ClaimWarning}";
         if (evidence.Assessment != CompletionProgressAssessment.ProgressObserved)
             return null;
         var repair = evidence.Sources?.FirstOrDefault(s =>
