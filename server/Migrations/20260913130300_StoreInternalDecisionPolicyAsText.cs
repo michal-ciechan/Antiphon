@@ -35,25 +35,24 @@ namespace Antiphon.Server.Migrations
                 oldNullable: true);
         }
 
+        /// <remarks>
+        /// Hand-written, not AlterColumn: PostgreSQL has no assignment cast from text to jsonb, so
+        /// the generated <c>ALTER COLUMN ... TYPE jsonb</c> fails with 42804 on any database that
+        /// has ever stored a policy. A Down that cannot run is not a rollback.
+        /// </remarks>
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AlterColumn<string>(
-                name: "InternalDecisionPolicyJson",
-                table: "AgentTasks",
-                type: "jsonb",
-                nullable: true,
-                oldClrType: typeof(string),
-                oldType: "text",
-                oldNullable: true);
+            migrationBuilder.Sql("""
+                ALTER TABLE "AgentTasks"
+                    ALTER COLUMN "InternalDecisionPolicyJson" TYPE jsonb
+                        USING "InternalDecisionPolicyJson"::jsonb;
+                """);
 
-            migrationBuilder.AlterColumn<string>(
-                name: "InternalDecisionAuditBaselineJson",
-                table: "AgentTasks",
-                type: "jsonb",
-                nullable: true,
-                oldClrType: typeof(string),
-                oldType: "text",
-                oldNullable: true);
+            migrationBuilder.Sql("""
+                ALTER TABLE "AgentTasks"
+                    ALTER COLUMN "InternalDecisionAuditBaselineJson" TYPE jsonb
+                        USING "InternalDecisionAuditBaselineJson"::jsonb;
+                """);
         }
     }
 }
