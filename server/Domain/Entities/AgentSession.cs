@@ -149,6 +149,16 @@ public class AgentSession
     /// </summary>
     public string? PolicyNotifiedStamp { get; set; }
 
+    /// <summary>CARD-0262: projection location this pin-bearing session was launched against.</summary>
+    public Guid? PinProjectionId { get; set; }
+    public int? PinLaunchRevision { get; set; }
+    public string? PinLaunchHash { get; set; }
+    public string? PinLaunchAbsolutePath { get; set; }
+    public int? PinLaunchLocationGeneration { get; set; }
+    public int? PinLastNotifiedRevision { get; set; }
+    public string? PinLastNotifiedHash { get; set; }
+    public int? PinLastNotifiedLocationGeneration { get; set; }
+
     public Card Card { get; set; } = null!;
     public Worktree? Worktree { get; set; }
     public AgentTuiProfileRevision? TuiProfileRevision { get; set; }

@@ -3,6 +3,7 @@ using System;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260913121031_AddAgentPinnedInstructions")]
+    partial class AddAgentPinnedInstructions
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1476,13 +1479,6 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
-                    b.Property<Guid?>("FailureDiagnosticId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("FailureExceptionType")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
                     b.Property<DateTime?>("HeldSince")
                         .HasColumnType("timestamp with time zone");
 
@@ -1579,21 +1575,6 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
 
-                    b.Property<string>("SourceDiagnosticCode")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("SourceDiagnosticCommand")
-                        .HasMaxLength(160)
-                        .HasColumnType("character varying(160)");
-
-                    b.Property<string>("SourceDiagnosticExceptionType")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<int?>("SourceDiagnosticExitCode")
-                        .HasColumnType("integer");
-
                     b.Property<string>("SourceFullRefSnapshot")
                         .HasMaxLength(400)
                         .HasColumnType("character varying(400)");
@@ -1638,10 +1619,6 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<Guid?>("TerminalEventId")
                         .HasColumnType("uuid");
-
-                    b.Property<string>("TerminalFailureCode")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("VerifyFilter")
                         .HasMaxLength(400)

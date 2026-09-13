@@ -390,6 +390,8 @@ try
     builder.Services.AddScoped<CardThreadService>();
     builder.Services.AddScoped<CardWorkflowRunFactory>();
     builder.Services.AddScoped<AgentService>();
+    builder.Services.AddScoped<IAgentPinnedInstructionReconciler, NoOpAgentPinnedInstructionReconciler>();
+    builder.Services.AddScoped<AgentPinnedInstructionService>();
     builder.Services.AddScoped<AgentControlService>();
     // The CLAUDE.md floor every agent's working directory carries (CARD-0059). Singleton: it holds no
     // state, touches no database and its only dependency is a logger. Idempotent and never-clobbering,
@@ -818,6 +820,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     app.MapDiagnosisEndpoints();
     app.MapDistillationEndpoints();
     app.MapAgentEndpoints();
+    app.MapAgentPinnedInstructionEndpoints();
     app.MapAgentTuiEndpoints();
     app.MapChannelEndpoints();
     app.MapWorkflowEndpoints();
