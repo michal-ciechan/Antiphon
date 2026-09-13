@@ -86,6 +86,46 @@ public sealed class HerdrPaneDisposalStopRegressionTests
         File.Exists(HerdrPaneSidecar.PathFor(h.Settings.SessionLogPath, h.SessionId)).ShouldBeFalse();
     }
 
+    [Test] public async Task C461_G076_Stop_waits_through_pending_adoption_publication()
+    {
+        var probe = new HerdrPaneDisposalConcurrencyTests.Probe();
+        await using var h = new HerdrPaneDisposalFixture(probe);
+        HerdrPaneDisposalServiceTests.SaveLocator(h, "sidecar"); h.Occupied();
+        await h.Runtime.AdoptOrphanedHostsAsync(probe, default);
+        h.Runtime.Get(h.SessionId).Pending.ShouldBe(HerdrPendingReasons.Unreachable);
+        await h.StartAsync();
+
+        var publishing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Runtime.BeforePendingHerdrPublicationAsync = () =>
+        {
+            publishing.TrySetResult();
+            return release.Task;
+        };
+        var adoption = h.Runtime.SweepVanishedSessionsAsync(probe, default);
+        try
+        {
+            await publishing.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            h.Runtime.Get(h.SessionId).Pending.ShouldBe(HerdrPendingReasons.Unreachable);
+
+            var stop = h.Runtime.KillAsync(h.SessionId, TimeSpan.FromSeconds(1), default);
+            stop.IsCompleted.ShouldBeFalse("Stop must wait for the pane lease until the live child is published");
+
+            release.TrySetResult();
+            await adoption.WaitAsync(TimeSpan.FromSeconds(10));
+            var stopped = await stop.WaitAsync(TimeSpan.FromSeconds(10));
+            stopped.Status.ShouldBe("Exited");
+            stopped.ExitReason.ShouldBe(HerdrExitReasons.Detached);
+            h.Methods.ShouldContain("pane.report_metadata");
+            File.Exists(HerdrPaneSidecar.PathFor(h.Settings.SessionLogPath, h.SessionId)).ShouldBeFalse();
+        }
+        finally
+        {
+            release.TrySetResult();
+            await adoption.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+    }
+
     [Test] public async Task Stop_then_fresh_preview_is_the_only_explicit_close()
     {
         await using var h = new HerdrPaneDisposalFixture(); await h.StartAsync(); h.Occupied("claude");
