@@ -594,7 +594,7 @@ public sealed class AgentTaskDispatcher
                                 Id = Guid.NewGuid(),
                                 AgentTaskId = task.Id,
                                 Type = AgentTaskEventType.Held,
-                                Detail = previewHold.Reason ?? "held: source is landing",
+                                Detail = FormatWorktreeBaseLandHold(previewHold),
                                 At = UtcNow(),
                             });
                             await _db.SaveChangesAsync(ct);
@@ -2838,6 +2838,20 @@ public sealed class AgentTaskDispatcher
                     || s.Status == SessionStatus.Starting
                     || s.Status == SessionStatus.Running),
             ct);
+    }
+
+    /// <summary>
+    /// CARD-0442 wait text plus CARD-0215 branch identity so in-flight land holds stay recognizable.
+    /// </summary>
+    internal static string FormatWorktreeBaseLandHold(WorktreeBaseResolution hold)
+    {
+        var reason = string.IsNullOrWhiteSpace(hold.Reason) ? "held: source is landing" : hold.Reason;
+        if (string.IsNullOrEmpty(hold.SourceBranch))
+            return reason;
+        if (reason.Contains(hold.SourceBranch, StringComparison.Ordinal)
+            && reason.Contains("is landing", StringComparison.Ordinal))
+            return reason;
+        return $"{reason}; {hold.SourceBranch} is landing";
     }
 
     private sealed record UnlandedSibling(

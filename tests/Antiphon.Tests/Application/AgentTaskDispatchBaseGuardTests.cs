@@ -148,6 +148,7 @@ public class AgentTaskDispatchBaseGuardTests
     [Test]
     [Timeout(60_000)]
     [Arguments("new_descendant")]
+    [Arguments("landed_in_queue")]
     [Arguments("unchanged")]
     public async Task T0442_V19(string name, CancellationToken ct)
     {
@@ -156,15 +157,40 @@ public class AgentTaskDispatchBaseGuardTests
         var created = await world.Services.GetRequiredService<AgentTaskService>().CreateAsync(
             new CreateAgentTaskRequest("next", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree, Card: "CARD-0442"),
             world.Caller(), ct);
+        Guid? expectedSource = a.Id;
         if (name == "new_descendant")
-            await world.SeedSucceededAsync("B", "code-b.txt", "B\n");
+        {
+            var b = await world.SeedSucceededAsync("B", "code-b.txt", "B\n", fromBranch: a.WorktreeBranch);
+            expectedSource = b.Id;
+        }
+        else if (name == "landed_in_queue")
+        {
+            await world.Repo.GitAsync("merge", "--ff-only", a.WorktreeBranch!);
+            await using var seed = world.CreateDb();
+            seed.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(),
+                AgentTaskId = a.Id,
+                Type = AgentTaskEventType.Landed,
+                Detail = "landed",
+                At = DateTime.UtcNow,
+            });
+            await seed.SaveChangesAsync(ct);
+            expectedSource = null;
+        }
+
         await using var scope = world.Services.CreateAsyncScope();
         await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
         await using var db = world.CreateDb();
         var row = await db.AgentTasks.SingleAsync(t => t.Id == created.Id, ct);
         row.Status.ShouldBe(AgentTaskStatus.Dispatched);
-        if (name == "unchanged")
-            row.WorktreeBaseTaskId.ShouldBe(a.Id);
+        row.WorktreeBaseTaskId.ShouldBe(expectedSource);
+        if (name != "unchanged")
+        {
+            (await db.AgentTaskEvents.CountAsync(
+                e => e.AgentTaskId == created.Id && e.Type == AgentTaskEventType.Warning, ct))
+                .ShouldBeGreaterThan(0);
+        }
     }
 
     [Test]
@@ -252,7 +278,7 @@ public class AgentTaskDispatchBaseGuardTests
 
     [Test]
     [Timeout(30_000)]
-    public async Task a_stranded_request_row_with_a_null_column_only_warns(CancellationToken ct)
+    public async Task a_stranded_request_row_with_a_null_column_continues(CancellationToken ct)
     {
         using var repo = new ScratchGitRepo("card0215-stranded");
         await repo.CommitFileAsync("README.md", "base\n");
@@ -283,9 +309,11 @@ public class AgentTaskDispatchBaseGuardTests
         dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
         (await db.AgentTaskEvents.CountAsync(
             e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held, ct)).ShouldBe(0);
-        var warning = await db.AgentTaskEvents.AsNoTracking()
-            .SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning, ct);
-        warning.Detail.ShouldContain(sibling.WorktreeBranch!);
+        (await db.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning, ct)).ShouldBe(0);
+        var tip = (await ScratchGitRepo.GitInAsync(repo.Path, "rev-parse", sibling.WorktreeBranch!))
+            .StdOut.Trim();
+        dispatched.WorktreeBaseSha.ShouldBe(tip);
     }
 
     private static async Task<AgentTask> SeedKeptSiblingAsync(

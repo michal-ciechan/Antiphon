@@ -96,11 +96,14 @@ internal sealed class WorktreeContinuityHarness : IAsyncDisposable
 
     public async Task<AgentTask> SeedSucceededAsync(
         string commitMessage, string markerFile, string marker, AgentTaskRole role = AgentTaskRole.Code,
-        Guid? cardId = null, DateTime? completedAt = null, AgentTaskStatus status = AgentTaskStatus.Succeeded)
+        Guid? cardId = null, DateTime? completedAt = null, AgentTaskStatus status = AgentTaskStatus.Succeeded,
+        string? fromBranch = null)
     {
         await using var db = CreateDb();
         var id = Guid.NewGuid();
         var branch = $"feat/card-task-{DelegationReportFormatter.Short(id)}";
+        if (!string.IsNullOrEmpty(fromBranch))
+            await Repo.GitAsync("checkout", fromBranch);
         await Repo.GitAsync("checkout", "-b", branch);
         await File.WriteAllTextAsync(Path.Combine(Repo.Path, markerFile), marker);
         await Repo.GitAsync("add", markerFile);
