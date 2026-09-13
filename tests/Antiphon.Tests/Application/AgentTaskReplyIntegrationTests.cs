@@ -7,6 +7,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -31,13 +32,30 @@ namespace Antiphon.Tests.Application;
 [NotInParallel]
 public class AgentTaskReplyIntegrationTests
 {
+    // ---- CARD-0417 V-5: the parent's note is only reported when the PARENT actually receives it ----
+    //
+    // Review f42b6b25 rejected a V-5 that stopped at the SessionQueuedMessages row. A row is an
+    // INTENT to deliver: the note still has to survive the queue's claim, the typing, the submit
+    // and CARD-0055's transcript-confirm gate before the parent has it, and every one of those can
+    // fail on its own. These tests therefore run the real SessionMessageQueueService against a
+    // registered terminal whose submitted bodies become UserPrompt records — the same ground truth
+    // the JSONL tailer persists in production — and judge delivery where it lands: a matching,
+    // complete UserPrompt in the PARENT's transcript, correlated back to the task that produced it.
+
+    /// <summary>
+    /// CARD-0417 V-5. A Phone-style parent must still receive its delegate's report WHOLE — the
+    /// worker table, the caveat and the stage handoff are for the parent, whose audience is not the
+    /// channel Phone trims for — and must receive it in the transcript, not merely in the queue.
+    /// </summary>
     [Test]
     [Arguments(AgentReplyStyle.Normal)]
     [Arguments(AgentReplyStyle.Phone)]
     public async Task Phone_parent_preserves_worker_table_and_stage_handoff(AgentReplyStyle style)
     {
         using var workspace = new TempWorkspace();
+        var factory = NewDeliveryFactory();
         var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var terminal = AttachTerminal(factory, parentSessionId);
         var parentId = await SeedAgentAsync(workspace.Path, $"phone-parent-{Guid.NewGuid():N}", poolDelegate: false);
         var workerId = await SeedAgentAsync(workspace.Path, $"phone-worker-{Guid.NewGuid():N}");
         await using (var db = CreateContext())
@@ -75,22 +93,148 @@ public class AgentTaskReplyIntegrationTests
             artifact: docs/superpowers/plans/2026-09-07-card-0417-channel-reply-conciseness-plan.md
             """.ReplaceLineEndings("\n");
         await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), report);
-        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
-        await using var verify = CreateContext();
-        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
-        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
-        settled.Result.ShouldBe(report);
-        settled.NextStage.ShouldBe(PipelineHandoffKind.Review);
-        settled.NextHandoff.ShouldBe("verify all evidence before accepting channel rollout");
-        PipelineHandoff.TryParse(settled.Result).ArtifactPath.ShouldBe(
-            "docs/superpowers/plans/2026-09-07-card-0417-channel-reply-conciseness-plan.md");
-        var note = await verify.SessionQueuedMessages.SingleAsync(
-            m => m.AgentSessionId == parentSessionId && m.Origin == QueuedMessageOrigin.Delegation);
-        note.Body.ShouldContain("next=review");
-        note.Body.ShouldContain(report);
-        (await verify.Agents.SingleAsync(a => a.Id == parentId)).ReplyStyle.ShouldBe(style);
-        (await verify.Agents.SingleAsync(a => a.Id == workerId)).ReplyStyle.ShouldBe(
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using (var verify = CreateContext())
+        {
+            var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+            settled.Result.ShouldBe(report);
+            settled.NextStage.ShouldBe(PipelineHandoffKind.Review);
+            settled.NextHandoff.ShouldBe("verify all evidence before accepting channel rollout");
+            PipelineHandoff.TryParse(settled.Result).ArtifactPath.ShouldBe(
+                "docs/superpowers/plans/2026-09-07-card-0417-channel-reply-conciseness-plan.md");
+
+            // The recipient is already eligible — idle, live, nothing queued ahead of it — and the
+            // note STILL waits for the flush machinery (CARD-0312 S2: a settle must not spend its
+            // own thread on a delivery's verification budget). Eligible is not the same as sent,
+            // which is exactly why asserting this row is not asserting a delivery.
+            var enqueued = await verify.SessionQueuedMessages.SingleAsync(
+                m => m.AgentSessionId == parentSessionId && m.Origin == QueuedMessageOrigin.Delegation);
+            enqueued.Status.ShouldBe(QueuedMessageStatus.Pending);
+            enqueued.DeliveryAttempts.ShouldBe(0);
+            enqueued.Body.ShouldContain("next=review");
+            enqueued.Body.ShouldContain(report);
+            terminal.Inputs.ShouldBeEmpty("settling a delegate must not type into the parent's terminal");
+        }
+
+        await Queue(factory).FlushSessionAsync(parentSessionId, CancellationToken.None);
+
+        var (note, prompt) = await AssertParentReceivedNoteAsync(parentSessionId, task, report);
+        terminal.SubmittedBodies.ShouldHaveSingleItem().ShouldBe(note.Body);
+        var delivered = prompt.Text.ShouldNotBeNull();
+        delivered.ShouldContain("| V-1 | 6 | 0 |",
+            customMessage: "Phone must not trim the worker table out of a parent note");
+        delivered.ShouldContain("Caveat: real channel replies still need a reviewer");
+        delivered.ShouldContain("next: review");
+        delivered.ShouldContain(
+            "artifact: docs/superpowers/plans/2026-09-07-card-0417-channel-reply-conciseness-plan.md");
+
+        await using var styles = CreateContext();
+        (await styles.Agents.SingleAsync(a => a.Id == parentId)).ReplyStyle.ShouldBe(style);
+        (await styles.Agents.SingleAsync(a => a.Id == workerId)).ReplyStyle.ShouldBe(
             style == AgentReplyStyle.Phone ? AgentReplyStyle.Phone : AgentReplyStyle.Normal);
+    }
+
+    /// <summary>
+    /// CARD-0417 V-5, busy recipient. A parent mid-turn must not be cut into — and must not lose the
+    /// note either. The turn-end flush is the handoff between the two: held while working, typed on
+    /// the boundary, and typed exactly once.
+    /// </summary>
+    [Test]
+    [Arguments(AgentReplyStyle.Normal)]
+    [Arguments(AgentReplyStyle.Phone)]
+    public async Task Phone_note_waits_for_a_busy_parent_and_lands_on_its_turn_end(AgentReplyStyle style)
+    {
+        using var workspace = new TempWorkspace();
+        var factory = NewDeliveryFactory();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var terminal = AttachTerminal(factory, parentSessionId);
+        var parentId = await SeedAgentAsync(workspace.Path, $"busy-parent-{Guid.NewGuid():N}", poolDelegate: false);
+        await using (var db = CreateContext())
+        {
+            await db.Agents.Where(a => a.Id == parentId).ExecuteUpdateAsync(u => u
+                .SetProperty(a => a.PersistentSessionId, parentSessionId.ToString())
+                .SetProperty(a => a.ReplyStyle, style));
+        }
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, parentSessionId, t => t.Role = AgentTaskRole.Code);
+        const string report = "Slice done. 12 passed, 0 failed.\n\n--- next stage ---\nnext: review\nhandoff: check the queue path\nartifact: docs/testing-and-build.md";
+
+        // Assistant text with no turn-end after it is what "working" means to the queue.
+        await SeedEntryAsync(parentSessionId, TranscriptKinds.AssistantText, "mid-turn on something else", DateTime.UtcNow);
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), report);
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+        await Queue(factory).FlushSessionAsync(parentSessionId, CancellationToken.None);
+
+        terminal.Inputs.ShouldBeEmpty("a working parent is not interrupted by a completion note");
+        await using (var held = CreateContext())
+        {
+            var waiting = await held.SessionQueuedMessages.AsNoTracking().SingleAsync(
+                m => m.AgentSessionId == parentSessionId && m.Origin == QueuedMessageOrigin.Delegation);
+            waiting.Status.ShouldBe(QueuedMessageStatus.Pending);
+            waiting.DeliveryAttempts.ShouldBe(0, "a held note has not been typed, so it has not been attempted");
+            (await held.TranscriptEntries.CountAsync(t =>
+                t.AgentSessionId == parentSessionId && t.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
+        }
+
+        await SeedEntryAsync(parentSessionId, TranscriptKinds.TurnEnd, null, DateTime.UtcNow);
+        await Queue(factory).OnTurnEndAsync(parentSessionId, CancellationToken.None);
+
+        var (note, _) = await AssertParentReceivedNoteAsync(parentSessionId, task, report);
+        note.DeliveryAttempts.ShouldBe(1, "the boundary delivers it once, not once per flush that ran");
+        terminal.SubmittedBodies.ShouldHaveSingleItem().ShouldBe(note.Body);
+    }
+
+    /// <summary>
+    /// CARD-0417 V-5, failure and recovery. A transport that dies before the terminal accepts the
+    /// write must leave the note recoverable and still identifiable — and the redelivery must land
+    /// exactly one prompt in the parent, not a second copy of a report a human is reading.
+    /// </summary>
+    [Test]
+    public async Task Phone_note_survives_a_failed_delivery_and_is_redelivered_exactly_once()
+    {
+        using var workspace = new TempWorkspace();
+        var factory = NewDeliveryFactory();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var terminal = AttachTerminal(factory, parentSessionId);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, parentSessionId, t => t.Role = AgentTaskRole.Code);
+        const string report = "Recovery slice done. 4 passed, 0 failed.\n\n--- next stage ---\nnext: review\nhandoff: confirm the redelivery\nartifact: docs/testing-and-build.md";
+
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), report);
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        // The runner 503s before a byte reaches the pty — the shape CARD-0186 S3 measured.
+        terminal.ThrowOnSend = new InvalidOperationException("runner unreachable");
+        await Queue(factory).FlushSessionAsync(parentSessionId, CancellationToken.None);
+
+        Guid noteId;
+        long baseline;
+        await using (var failed = CreateContext())
+        {
+            var reverted = await failed.SessionQueuedMessages.AsNoTracking().SingleAsync(
+                m => m.AgentSessionId == parentSessionId && m.Origin == QueuedMessageOrigin.Delegation);
+            reverted.Status.ShouldBe(QueuedMessageStatus.Pending, "a note the terminal never saw goes back in the queue");
+            reverted.DeliveryAttempts.ShouldBe(1, "the attempt happened and is charged; that is what stops an endless retry");
+            reverted.SentAt.ShouldBeNull();
+            reverted.SourceTaskId.ShouldBe(task.Id, "a failed attempt must not cost the note its identity");
+            reverted.ContentDigest.ShouldBe(DelegationNoteDigest.Compute(report));
+            reverted.ConversationKey.ShouldBe($"task:{task.RootTaskId:N}");
+            reverted.LastDeliveryBaselineSequence.ShouldNotBeNull(
+                "the retry reads this floor before it retypes — it is the anti-duplicate keystone");
+            noteId = reverted.Id;
+            baseline = reverted.LastDeliveryBaselineSequence!.Value;
+            (await failed.TranscriptEntries.CountAsync(t =>
+                t.AgentSessionId == parentSessionId && t.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
+        }
+
+        terminal.ThrowOnSend = null;
+        await Queue(factory).FlushSessionAsync(parentSessionId, CancellationToken.None);
+
+        var (note, prompt) = await AssertParentReceivedNoteAsync(parentSessionId, task, report);
+        note.Id.ShouldBe(noteId, "the SAME row is redelivered — a second row would be a second note");
+        note.DeliveryAttempts.ShouldBe(2);
+        prompt.Sequence.ShouldBeGreaterThan(baseline);
+        terminal.SubmittedBodies.ShouldHaveSingleItem().ShouldBe(note.Body);
     }
 
     [Test]
@@ -3863,6 +4007,84 @@ public class AgentTaskReplyIntegrationTests
 
     // Most cases pin the ceiling explicitly so they stay readable as the shipped default moves;
     // pass `settings` to exercise what actually ships.
+    /// <summary>
+    /// A scope factory whose queue can actually deliver: verification on with the short budgets the
+    /// queue's own harness uses, and the modern ConPTY single-write ceiling (ADR-0002) so a
+    /// completion note of this size is typed WHOLE. Under the inbox-conhost default of 1 024 bytes
+    /// the queue spills the note to a file and types a pointer — a real shape with its own tests
+    /// (SessionMessageQueueSpillTests), but one that would hide the thing V-5 has to show: the
+    /// report text itself arriving in the parent's transcript.
+    /// </summary>
+    private static TestScopeFactory NewDeliveryFactory() => new(
+        supervision: new SupervisionSettings
+        {
+            DeliveryVerification = new DeliveryVerificationSettings
+            {
+                Enabled = true,
+                EvidenceTimeoutSeconds = 1,
+                PollIntervalMs = 50,
+                PostSubmitAdvanceTimeoutSeconds = 1,
+                TranscriptConfirmTimeoutSeconds = 3,
+                ReEnterIntervalSeconds = 1,
+            },
+        },
+        delegation: new DelegationSettings { PtySingleChunkBytes = 43_200 });
+
+    /// <summary>
+    /// Gives <paramref name="sessionId"/> a live terminal whose submitted bodies become UserPrompt
+    /// transcript records, exactly as the JSONL tailer persists a real submit. That record is what
+    /// CARD-0055's confirm gate reads, so a delivery driven through this fake is judged the way
+    /// production judges one.
+    /// </summary>
+    private static FakeAgentProtocolAdapter AttachTerminal(TestScopeFactory factory, Guid sessionId)
+    {
+        var adapter = new FakeAgentProtocolAdapter
+        {
+            OnSubmitted = async submitted =>
+            {
+                await SeedEntryAsync(sessionId, TranscriptKinds.UserPrompt, submitted, DateTime.UtcNow);
+                await SeedEntryAsync(sessionId, TranscriptKinds.TurnEnd, null, DateTime.UtcNow);
+            },
+        };
+        factory.ServiceProvider.GetRequiredService<AgentSessionRuntime>().Register(sessionId, adapter);
+        return adapter;
+    }
+
+    private static SessionMessageQueueService Queue(TestScopeFactory factory) =>
+        factory.ServiceProvider.GetRequiredService<SessionMessageQueueService>();
+
+    /// <summary>
+    /// The V-5 delivery verdict. Durable correlation is asserted on both halves: the row still
+    /// names its task, its root conversation and the digest of the report it carries, and the
+    /// transcript record is the same body, past that attempt's own baseline — so the prompt in the
+    /// parent's transcript is provably THIS task's note and not a same-shaped neighbour.
+    /// </summary>
+    private static async Task<(SessionQueuedMessage Note, TranscriptEntry Prompt)> AssertParentReceivedNoteAsync(
+        Guid parentSessionId, AgentTask task, string report)
+    {
+        await using var verify = CreateContext();
+        var note = await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(
+            m => m.AgentSessionId == parentSessionId && m.Origin == QueuedMessageOrigin.Delegation);
+        note.Status.ShouldBe(QueuedMessageStatus.Sent);
+        note.SentAt.ShouldNotBeNull();
+        note.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        note.SourceTaskId.ShouldBe(task.Id);
+        note.ConversationKey.ShouldBe($"task:{task.RootTaskId:N}");
+        note.ContentDigest.ShouldBe(DelegationNoteDigest.Compute(report));
+        note.LastDeliveryBaselineSequence.ShouldNotBeNull();
+
+        var prompts = await verify.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == parentSessionId && t.Kind == TranscriptKinds.UserPrompt)
+            .OrderBy(t => t.Sequence)
+            .ToListAsync();
+        var prompt = prompts.ShouldHaveSingleItem();
+        prompt.Text.ShouldBe(note.Body, "the parent's prompt is the queued note, byte for byte");
+        prompt.Text.ShouldNotBeNull().ShouldContain(
+            report, customMessage: "a note whose report did not arrive is not a delivery");
+        prompt.Sequence.ShouldBeGreaterThan(note.LastDeliveryBaselineSequence!.Value);
+        return (note, prompt);
+    }
+
     private static AgentTaskReplyService CreateService(
         TestScopeFactory? factory = null,
         DelegationSettings? settings = null,
@@ -4388,8 +4610,10 @@ public class AgentTaskReplyIntegrationTests
 
     /// <summary>
     /// The reply service is a singleton that opens a DI scope per operation. This supplies the two
-    /// services it resolves — a real DbContext and a queue whose runtime is never actually driven
-    /// (delivery is asserted through the persisted queue rows, not a live pty).
+    /// services it resolves — a real DbContext and a real queue. By default the queue's runtime is
+    /// never driven, so those tests assert the persisted rows; the V-5 delivery tests register a
+    /// terminal on it (see <see cref="AttachTerminal"/>) and carry the note all the way to the
+    /// recipient's transcript.
     /// </summary>
     private sealed class TestScopeFactory : IServiceScopeFactory, IServiceScope, IServiceProvider
     {
@@ -4398,7 +4622,10 @@ public class AgentTaskReplyIntegrationTests
         /// <summary>Records what the settle path asked to stop — the ephemeral-cleanup assertion.</summary>
         public RecordingSessionStopper Stopper { get; } = new();
 
-        public TestScopeFactory(string? worktreeRoot = null, SupervisionSettings? supervision = null)
+        public TestScopeFactory(
+            string? worktreeRoot = null,
+            SupervisionSettings? supervision = null,
+            DelegationSettings? delegation = null)
         {
             var services = new ServiceCollection();
             services.AddLogging();
@@ -4406,7 +4633,7 @@ public class AgentTaskReplyIntegrationTests
             services.AddSingleton<Antiphon.Server.Application.Interfaces.IEventBus, MockEventBus>();
             services.AddSingleton(Options.Create(supervision ?? new SupervisionSettings()));
             services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
-            services.AddSingleton(Options.Create(new DelegationSettings()));
+            services.AddSingleton(Options.Create(delegation ?? new DelegationSettings()));
             services.AddSingleton(TimeProvider.System);
             services.AddSingleton(Options.Create(new AgentSessionSettings()));
             services.AddSingleton<AgentSessionRuntime>();
