@@ -3,6 +3,7 @@ using System;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260913125821_AddAgentTaskInternalDecisionPolicy")]
+    partial class AddAgentTaskInternalDecisionPolicy
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -97,9 +100,6 @@ namespace Antiphon.Server.Migrations
                     b.Property<string>("PersistentSessionId")
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
-
-                    b.Property<int>("PinClaudeImportMode")
-                        .HasColumnType("integer");
 
                     b.Property<int?>("PolicyRefreshMode")
                         .HasColumnType("integer");
@@ -236,331 +236,6 @@ namespace Antiphon.Server.Migrations
                         .HasDatabaseName("IX_AgentIncidents_AgentId_CreatedAt");
 
                     b.ToTable("AgentIncidents", (string)null);
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentPinCleanupRecord", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("CanonicalCwd")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("CanonicalHost")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<DateTime?>("CompletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Error")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<Guid>("OriginalAgentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("PathSchemaVersion")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("TargetAbsolutePath")
-                        .IsRequired()
-                        .HasMaxLength(1400)
-                        .HasColumnType("character varying(1400)");
-
-                    b.Property<string>("TargetRelativePath")
-                        .IsRequired()
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("OriginalAgentId")
-                        .HasDatabaseName("IX_AgentPinCleanupRecords_OriginalAgentId");
-
-                    b.ToTable("AgentPinCleanupRecords", (string)null);
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentPinOperation", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("AgentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("CreatedNewRow")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Fingerprint")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<int>("Kind")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid>("RequestId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("ResultHash")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<Guid?>("ResultPinId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("ResultRevision")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid?>("ResultRevokedPinId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("AgentId", "RequestId")
-                        .IsUnique()
-                        .HasDatabaseName("IX_AgentPinOperations_AgentId_RequestId");
-
-                    b.ToTable("AgentPinOperations", (string)null);
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentPinProjection", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("AgentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("CanonicalCwd")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("CanonicalHost")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("DesiredRevision")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Error")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<bool>("HasConfiguredConsumer")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("HasLiveSessionConsumer")
-                        .HasColumnType("boolean");
-
-                    b.Property<int>("ImportMode")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("ImportOwnedLength")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("ImportOwnedStart")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("ImportStatus")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("ImportTarget")
-                        .HasMaxLength(1400)
-                        .HasColumnType("character varying(1400)");
-
-                    b.Property<string>("IntendedAfterHash")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("IntendedBeforeHash")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("LastWrittenByteHash")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<int>("LocationGeneration")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("MarkerVersion")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("PathSchemaVersion")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("ProjectedRevision")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("TargetAbsolutePath")
-                        .IsRequired()
-                        .HasMaxLength(1400)
-                        .HasColumnType("character varying(1400)");
-
-                    b.Property<string>("TargetRelativePath")
-                        .IsRequired()
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CanonicalHost", "TargetAbsolutePath")
-                        .IsUnique()
-                        .HasDatabaseName("IX_AgentPinProjections_HostTarget");
-
-                    b.HasIndex("AgentId", "CanonicalHost", "CanonicalCwd")
-                        .IsUnique()
-                        .HasDatabaseName("IX_AgentPinProjections_AgentHostCwd");
-
-                    b.ToTable("AgentPinProjections", (string)null);
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentPinReconciliation", b =>
-                {
-                    b.Property<Guid>("AgentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("DesiredHash")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<int>("DesiredRevision")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Error")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("AgentId");
-
-                    b.ToTable("AgentPinReconciliations", (string)null);
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentPinnedInstruction", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("AgentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("CreatedBySessionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("CreatedByUserId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("RevokedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("RevokedBySessionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("RevokedByUserId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("Source")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("SourceKey")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<string>("SourceNamespace")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("SourceRef")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<Guid?>("SupersedesPinId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Text")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("AgentId")
-                        .HasDatabaseName("IX_AgentPinnedInstructions_AgentId");
-
-                    b.HasIndex("AgentId", "SourceNamespace", "SourceKey")
-                        .IsUnique()
-                        .HasDatabaseName("IX_AgentPinnedInstructions_ActiveSource")
-                        .HasFilter("\"RevokedAt\" IS NULL AND \"SourceNamespace\" IS NOT NULL AND \"SourceKey\" IS NOT NULL");
-
-                    b.ToTable("AgentPinnedInstructions", (string)null);
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentPinnedInstructionState", b =>
-                {
-                    b.Property<Guid>("AgentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("ConcurrencyToken")
-                        .IsConcurrencyToken()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("ContentHash")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<DateTime>("FirstUsedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("Revision")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("AgentId");
-
-                    b.ToTable("AgentPinnedInstructionStates", (string)null);
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentReviewCheckpoint", b =>
@@ -702,33 +377,6 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<DateTime?>("LaunchResumedAt")
                         .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("PinLastNotifiedHash")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<int?>("PinLastNotifiedLocationGeneration")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("PinLastNotifiedRevision")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("PinLaunchAbsolutePath")
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)");
-
-                    b.Property<string>("PinLaunchHash")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<int?>("PinLaunchLocationGeneration")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("PinLaunchRevision")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid?>("PinProjectionId")
-                        .HasColumnType("uuid");
 
                     b.Property<string>("PolicyNotifiedStamp")
                         .HasMaxLength(4000)
@@ -1486,13 +1134,6 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
-                    b.Property<Guid?>("FailureDiagnosticId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("FailureExceptionType")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
                     b.Property<DateTime?>("HeldSince")
                         .HasColumnType("timestamp with time zone");
 
@@ -1589,21 +1230,6 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
 
-                    b.Property<string>("SourceDiagnosticCode")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("SourceDiagnosticCommand")
-                        .HasMaxLength(160)
-                        .HasColumnType("character varying(160)");
-
-                    b.Property<string>("SourceDiagnosticExceptionType")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<int?>("SourceDiagnosticExitCode")
-                        .HasColumnType("integer");
-
                     b.Property<string>("SourceFullRefSnapshot")
                         .HasMaxLength(400)
                         .HasColumnType("character varying(400)");
@@ -1648,10 +1274,6 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<Guid?>("TerminalEventId")
                         .HasColumnType("uuid");
-
-                    b.Property<string>("TerminalFailureCode")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("VerifyFilter")
                         .HasMaxLength(400)
@@ -4673,20 +4295,6 @@ namespace Antiphon.Server.Migrations
                     b.Property<int>("Origin")
                         .HasColumnType("integer");
 
-                    b.Property<string>("PinRefreshKey")
-                        .HasMaxLength(80)
-                        .HasColumnType("character varying(80)");
-
-                    b.Property<string>("PinRequestedHash")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<int?>("PinRequestedLocationGeneration")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("PinRequestedRevision")
-                        .HasColumnType("integer");
-
                     b.Property<DateTime?>("RulesAcknowledgedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -4755,11 +4363,6 @@ namespace Antiphon.Server.Migrations
 
                     b.HasIndex("SourceScheduleId")
                         .HasDatabaseName("IX_SessionQueuedMessages_SourceScheduleId");
-
-                    b.HasIndex("AgentSessionId", "PinRefreshKey")
-                        .IsUnique()
-                        .HasDatabaseName("IX_SessionQueuedMessages_AgentSessionId_PinRefreshKey")
-                        .HasFilter("\"PinRefreshKey\" IS NOT NULL");
 
                     b.HasIndex("AgentSessionId", "RulesRefreshKey")
                         .IsUnique();
@@ -5936,61 +5539,6 @@ namespace Antiphon.Server.Migrations
                         .WithMany()
                         .HasForeignKey("AgentId")
                         .OnDelete(DeleteBehavior.Cascade);
-
-                    b.Navigation("Agent");
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentPinOperation", b =>
-                {
-                    b.HasOne("Antiphon.Server.Domain.Entities.Agent", "Agent")
-                        .WithMany()
-                        .HasForeignKey("AgentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Agent");
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentPinProjection", b =>
-                {
-                    b.HasOne("Antiphon.Server.Domain.Entities.Agent", "Agent")
-                        .WithMany()
-                        .HasForeignKey("AgentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Agent");
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentPinReconciliation", b =>
-                {
-                    b.HasOne("Antiphon.Server.Domain.Entities.Agent", "Agent")
-                        .WithOne()
-                        .HasForeignKey("Antiphon.Server.Domain.Entities.AgentPinReconciliation", "AgentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Agent");
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentPinnedInstruction", b =>
-                {
-                    b.HasOne("Antiphon.Server.Domain.Entities.Agent", "Agent")
-                        .WithMany()
-                        .HasForeignKey("AgentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Agent");
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentPinnedInstructionState", b =>
-                {
-                    b.HasOne("Antiphon.Server.Domain.Entities.Agent", "Agent")
-                        .WithOne()
-                        .HasForeignKey("Antiphon.Server.Domain.Entities.AgentPinnedInstructionState", "AgentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
 
                     b.Navigation("Agent");
                 });

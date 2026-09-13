@@ -59,6 +59,43 @@ public class AgentTaskCallerResolutionTests
     }
 
     [Test]
+    public async Task a_capability_caller_is_the_stored_grantor()
+    {
+        var root = Directory.CreateTempSubdirectory("antiphon-c407-cap");
+        try
+        {
+            var (service, _) = CreateService(allowedRoots: [root.FullName]);
+            var capabilityId = Guid.NewGuid();
+            var created = await service.CreateAsync(
+                new CreateAgentTaskRequest(
+                    Goal: "capability policy",
+                    Role: AgentTaskRole.Deploy,
+                    WorkingDirectory: root.FullName,
+                    InternalDecisionPolicy: InternalDecisionFixtures.Sample()),
+                new AgentTaskService.Caller(null, null, root.FullName, capabilityId, "gym-stat"),
+                CancellationToken.None);
+
+            try
+            {
+                await using var verify = CreateContext();
+                var stored = InternalDecisionPolicy.ReadStored(
+                    (await verify.AgentTasks.SingleAsync(t => t.Id == created.Id)).InternalDecisionPolicyJson!);
+                stored.GrantedBy.Kind.ShouldBe("capability");
+                stored.GrantedBy.CapabilityId.ShouldBe(capabilityId);
+                stored.GrantedBy.CapabilityName.ShouldBe("gym-stat");
+            }
+            finally
+            {
+                await DeleteTaskAsync(created.Id);
+            }
+        }
+        finally
+        {
+            root.Delete(true);
+        }
+    }
+
+    [Test]
     public async Task a_token_less_request_with_no_directory_is_refused_and_told_why()
     {
         var (service, _) = CreateService();

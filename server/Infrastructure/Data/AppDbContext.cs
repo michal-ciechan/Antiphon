@@ -1696,6 +1696,10 @@ public class AppDbContext : DbContext
             entity.Property(t => t.StandingAuthority).HasMaxLength(2000);
             entity.Property(t => t.AutoContinueOnWait).IsRequired().HasDefaultValue(false);
             entity.Property(t => t.AutoContinuedAt).IsRequired(false);
+            // CARD-0407. Null on every pre-existing row: no grant and no audit baseline.
+            entity.Property(t => t.InternalDecisionPolicyJson).HasColumnType("jsonb");
+            entity.Property(t => t.InternalDecisionPolicyHash).HasMaxLength(64);
+            entity.Property(t => t.InternalDecisionAuditBaselineJson).HasColumnType("jsonb");
             // CARD-0146 S2. Null on every pre-existing row: enrichment at settlement, never a gate.
             entity.Property(t => t.NextStage).IsRequired(false);
             entity.Property(t => t.NextHandoff).HasMaxLength(400);

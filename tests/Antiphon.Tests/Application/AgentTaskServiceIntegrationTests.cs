@@ -89,7 +89,8 @@ public class AgentTaskServiceIntegrationTests
                 or AgentTaskRole.Plan
                 or AgentTaskRole.TestDesign
                 or AgentTaskRole.Code
-                or AgentTaskRole.Review;
+                or AgentTaskRole.Review
+                or AgentTaskRole.Mutation;
             AgentTaskRoles.IsStage(role).ShouldBe(expected, role.ToString());
         }
     }
@@ -681,6 +682,191 @@ public class AgentTaskServiceIntegrationTests
         merge.ShouldNotBeNull();
         merge!.StandingAuthority.ShouldBe("start the remaining epics");
         merge.AutoContinueOnWait.ShouldBeFalse();
+        merge.InternalDecisionPolicyJson.ShouldBeNull();
+        merge.InternalDecisionPolicyHash.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task auto_continue_true_with_authority_is_stored_without_a_runtime_fire()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db);
+        using var workspace = new TempWorkspace();
+
+        var created = await service.CreateAsync(
+            NewRequest("do the remaining epics") with
+            {
+                Authority = "start the remaining epics one after another",
+                AutoContinue = true,
+                InternalDecisionPolicy = InternalDecisionFixtures.Sample(),
+            },
+            ManualCaller(workspace.Path),
+            CancellationToken.None);
+
+        var stored = await db.AgentTasks.SingleAsync(t => t.Id == created.Id);
+        stored.StandingAuthority.ShouldBe("start the remaining epics one after another");
+        stored.AutoContinueOnWait.ShouldBeTrue();
+        stored.AutoContinuedAt.ShouldBeNull();
+        stored.InternalDecisionPolicyJson.ShouldNotBeNull();
+        stored.InternalDecisionPolicyHash.ShouldNotBeNull();
+        stored.InternalDecisionAuditBaselineJson.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task Internal_policy_create_role_matrix()
+    {
+        var eligible = new HashSet<AgentTaskRole>
+        {
+            AgentTaskRole.Code, AgentTaskRole.Debug, AgentTaskRole.Custom, AgentTaskRole.Deploy,
+            AgentTaskRole.Plan, AgentTaskRole.TestDesign, AgentTaskRole.Coverage, AgentTaskRole.Docs,
+            AgentTaskRole.Commit, AgentTaskRole.Merge,
+        };
+        var roles = Enum.GetValues<AgentTaskRole>();
+        roles.Length.ShouldBe(17, "every current AgentTaskRole must be classified");
+        eligible.Count.ShouldBe(10);
+
+        using var workspace = new TempWorkspace();
+        using var repo = new ScratchGitRepo("card0407-s1-roles");
+        await repo.CommitFileAsync("README.md", "base\n");
+        var created = new List<Guid>();
+        try
+        {
+            foreach (var role in roles)
+            {
+                await using var db = CreateContext();
+                var service = CreateService(db);
+                var grantFree = await service.CreateAsync(
+                    NewRequest($"grant-free {role} {Guid.NewGuid():N}", role: role),
+                    ManualCaller(workspace.Path),
+                    CancellationToken.None);
+                created.Add(grantFree.Id);
+                (await db.AgentTasks.SingleAsync(t => t.Id == grantFree.Id))
+                    .InternalDecisionPolicyJson.ShouldBeNull(role.ToString());
+
+                if (eligible.Contains(role))
+                {
+                    var shared = await service.CreateAsync(
+                        NewRequest($"grant-shared {role} {Guid.NewGuid():N}", role: role) with
+                        {
+                            Workspace = WorkspaceMode.Shared,
+                            InternalDecisionPolicy = InternalDecisionFixtures.Sample(),
+                        },
+                        ManualCaller(workspace.Path),
+                        CancellationToken.None);
+                    created.Add(shared.Id);
+                    var sharedRow = await db.AgentTasks.SingleAsync(t => t.Id == shared.Id);
+                    sharedRow.InternalDecisionPolicyJson.ShouldNotBeNull(role.ToString());
+                    sharedRow.InternalDecisionPolicyHash.ShouldNotBeNull();
+                    sharedRow.InternalDecisionAuditBaselineJson.ShouldBeNull();
+
+                    var worktree = await service.CreateAsync(
+                        NewRequest($"grant-wt {role} {Guid.NewGuid():N}", role: role) with
+                        {
+                            Workspace = WorkspaceMode.Worktree,
+                            InternalDecisionPolicy = InternalDecisionFixtures.Sample(),
+                        },
+                        ManualCaller(repo.Path),
+                        CancellationToken.None);
+                    created.Add(worktree.Id);
+                    (await db.AgentTasks.SingleAsync(t => t.Id == worktree.Id))
+                        .Workspace.ShouldBe(WorkspaceMode.Worktree);
+
+                    var readOnly = await Should.ThrowAsync<ValidationException>(() =>
+                        service.CreateAsync(
+                            NewRequest($"grant-ro {role} {Guid.NewGuid():N}", role: role) with
+                            {
+                                Workspace = WorkspaceMode.ReadOnly,
+                                InternalDecisionPolicy = InternalDecisionFixtures.Sample(),
+                            },
+                            ManualCaller(workspace.Path),
+                            CancellationToken.None));
+                    readOnly.Code.ShouldBe("internal_decision_readonly");
+                }
+                else
+                {
+                    var rejected = await Should.ThrowAsync<ValidationException>(() =>
+                        service.CreateAsync(
+                            NewRequest($"grant-ineligible {role} {Guid.NewGuid():N}", role: role) with
+                            {
+                                InternalDecisionPolicy = InternalDecisionFixtures.Sample(),
+                            },
+                            ManualCaller(workspace.Path),
+                            CancellationToken.None));
+                    rejected.Code.ShouldBe("internal_decision_role_ineligible");
+                }
+            }
+
+            var unknown = await Should.ThrowAsync<ValidationException>(() =>
+                CreateService(CreateContext()).CreateAsync(
+                    NewRequest("unknown-role grant", role: (AgentTaskRole)999) with
+                    {
+                        InternalDecisionPolicy = InternalDecisionFixtures.Sample(),
+                    },
+                    ManualCaller(workspace.Path),
+                    CancellationToken.None));
+            unknown.Code.ShouldBe("internal_decision_role_ineligible");
+
+            var coverageRo = await Should.ThrowAsync<ValidationException>(() =>
+                CreateService(CreateContext()).CreateAsync(
+                    NewRequest("coverage readonly", role: AgentTaskRole.Coverage) with
+                    {
+                        Workspace = WorkspaceMode.ReadOnly,
+                        InternalDecisionPolicy = InternalDecisionFixtures.Sample(),
+                    },
+                    ManualCaller(workspace.Path),
+                    CancellationToken.None));
+            coverageRo.Code.ShouldBe("internal_decision_readonly");
+        }
+        finally
+        {
+            await DeleteTaskTreeAsync(created.ToArray());
+        }
+    }
+
+    [Test]
+    public async Task Create_rejects_invalid_policy_before_task_creation()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db);
+        using var workspace = new TempWorkspace();
+        var goal = $"invalid-policy-{Guid.NewGuid():N}";
+        var before = await db.AgentTasks.CountAsync(t => t.Goal == goal);
+
+        var ex = await Should.ThrowAsync<ValidationException>(() =>
+            service.CreateAsync(
+                NewRequest(goal, role: AgentTaskRole.Code) with
+                {
+                    InternalDecisionPolicy = InternalDecisionFixtures.Sample(
+                        categories: [InternalDecisionCategory.LineEndings],
+                        paths: ["C:\\abs\\file.ps1"],
+                        attributeTargets: null),
+                },
+                ManualCaller(workspace.Path),
+                CancellationToken.None));
+        ex.StatusCode.ShouldBe(422);
+        (await db.AgentTasks.CountAsync(t => t.Goal == goal)).ShouldBe(before);
+        (await db.AgentTaskEvents.CountAsync()).ShouldBeGreaterThanOrEqualTo(0);
+    }
+
+    [Test]
+    public async Task Scope_warnings_do_not_create_internal_grants()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db);
+        using var workspace = new TempWorkspace();
+
+        var created = await service.CreateAsync(
+            NewRequest("scoped but no grant", role: AgentTaskRole.Code) with
+            {
+                Scope = "not-an-area-name-xyz",
+            },
+            ManualCaller(workspace.Path),
+            CancellationToken.None);
+
+        var stored = await db.AgentTasks.SingleAsync(t => t.Id == created.Id);
+        stored.Scope.ShouldBe("not-an-area-name-xyz");
+        stored.InternalDecisionPolicyJson.ShouldBeNull();
+        stored.InternalDecisionPolicyHash.ShouldBeNull();
     }
 
     // ---- projection ------------------------------------------------------------------------
