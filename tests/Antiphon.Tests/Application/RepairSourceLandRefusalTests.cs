@@ -54,4 +54,20 @@ public class RepairSourceLandRefusalTests
         (await scope.ServiceProvider.GetRequiredService<AppDbContext>().AgentTaskLandings.CountAsync(o => o.TaskId == repair.Id))
             .ShouldBe(0);
     }
+
+    [Test]
+    [Timeout(90_000)]
+    public async Task C499_V24iv_OwnerLandRequestStillQueues()
+    {
+        await using var world = await RepairSourceWorld.CreateAsync();
+        var (repair, _) = await world.DispatchAsync();
+        var c = await world.CommitInOwnerTreeAsync("repair work", push: true);
+        await world.SettleAsync("Fixed it.\n" + world.ClaimLine(c) + "\n");
+        await using var scope = world.Services.CreateAsyncScope();
+        var land = scope.ServiceProvider.GetRequiredService<AgentTaskLandService>();
+        var queue = scope.ServiceProvider.GetRequiredService<AgentTaskLandQueue>();
+        var result = await land.RequestAsync(world.Owner.Id, new LandAgentTaskRequest(ExpectedSourceSha: c), default);
+        result.Status.ShouldBe("queued");
+        queue.IsActive(repair.Id).ShouldBeFalse();
+    }
 }

@@ -107,7 +107,94 @@ public class TaskProgressGitTests
         var observed = await git.ObserveExactRefAsync(repo.Path, "refs/heads/feat/x", null, Guid.NewGuid(), default);
         observed.State.ShouldBe(ProgressRemoteState.Unavailable);
         observed.Reason.ShouldBe("repository_lease_busy");
-        git.Trace.ShouldNotContain(a => a.Length > 0 && a[0] == "fetch");
-        git.Trace.ShouldNotContain(a => a.Length > 0 && a[0] == "update-ref");
+        git.Trace.Any(a => a.Length > 0 && a[0] == "fetch").ShouldBeFalse();
+        git.Trace.Any(a => a.Length > 0 && a[0] == "update-ref").ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task C499_V33_FetchIntoTaskObservationRefAndAnswerAncestry()
+    {
+        using var repo = new ScratchGitRepo("c499-v33");
+        await repo.CommitFileAsync("README.md", "base\n");
+        var remote = Path.Combine(repo.WorktreeRoot, "remote.git");
+        Directory.CreateDirectory(remote);
+        (await ScratchGitRepo.GitInAsync(remote, "init", "--bare")).Ok.ShouldBeTrue();
+        await repo.GitAsync("remote", "add", "origin", remote);
+        await repo.GitAsync("branch", "feat/x");
+        await repo.GitAsync("push", "origin", "feat/x");
+        var bl = (await ScratchGitRepo.GitInAsync(repo.Path, "rev-parse", "refs/heads/feat/x")).StdOut.Trim();
+        var taskId = Guid.NewGuid();
+        var leases = new RepositoryMutationLease(new LandingGit());
+        var git = new ControlledTaskProgressGit(leases);
+        (await git.PinBaselineAsync(repo.Path, taskId, "local", bl, default)).Succeeded.ShouldBeTrue();
+        (await git.PinBaselineAsync(repo.Path, taskId, "remote", bl, default)).Succeeded.ShouldBeTrue();
+        var fetchHeadBefore = File.Exists(Path.Combine(repo.Path, ".git", "FETCH_HEAD"))
+            ? await File.ReadAllTextAsync(Path.Combine(repo.Path, ".git", "FETCH_HEAD")) : "";
+        var headsBefore = (await ScratchGitRepo.GitInAsync(repo.Path, "for-each-ref", "refs/heads")).StdOut;
+
+        var clone = Path.Combine(repo.WorktreeRoot, "c");
+        (await ScratchGitRepo.GitInAsync(repo.WorktreeRoot, "clone", "--branch", "feat/x", remote, clone)).Ok.ShouldBeTrue();
+        await File.WriteAllTextAsync(Path.Combine(clone, "n.md"), "n\n");
+        (await ScratchGitRepo.GitInAsync(clone, "add", "n.md")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(clone, "commit", "-m", "n")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(clone, "push", "origin", "HEAD")).Ok.ShouldBeTrue();
+        var c = (await ScratchGitRepo.GitInAsync(clone, "rev-parse", "HEAD")).StdOut.Trim();
+
+        var observed = await git.ObserveExactRefAsync(repo.Path, "refs/heads/feat/x", null, taskId, default);
+        observed.State.ShouldBe(ProgressRemoteState.Present);
+        observed.Sha.ShouldBe(c);
+        (await git.IsAncestorAsync(repo.Path, c, c, default)).ShouldBe(true);
+        (await git.IsAncestorAsync(repo.Path, c, bl, default)).ShouldBe(false);
+        git.Trace.Any(a => a.Length >= 3 && a[0] == "fetch" && a.Contains("--no-tags") && a.Contains("--no-write-fetch-head")
+            && a.Any(x => x.Contains($"{TaskProgressGit.ProgressRefPrefix}{taskId:N}/", StringComparison.Ordinal)))
+            .ShouldBeTrue();
+        var fetchHeadAfter = File.Exists(Path.Combine(repo.Path, ".git", "FETCH_HEAD"))
+            ? await File.ReadAllTextAsync(Path.Combine(repo.Path, ".git", "FETCH_HEAD")) : "";
+        fetchHeadAfter.ShouldBe(fetchHeadBefore);
+        (await ScratchGitRepo.GitInAsync(repo.Path, "for-each-ref", "refs/heads")).StdOut.ShouldBe(headsBefore);
+        var pins = await git.ListProgressPinsAsync(repo.Path, taskId, default);
+        pins.Count.ShouldBeGreaterThanOrEqualTo(2);
+    }
+
+    [Test]
+    [Arguments("once")]
+    [Arguments("always")]
+    public async Task C499_V34_ObservationRaceIsRetriedThenIndeterminate(string mode)
+    {
+        using var repo = new ScratchGitRepo("c499-v34");
+        await repo.CommitFileAsync("README.md", "base\n");
+        var remote = Path.Combine(repo.WorktreeRoot, "remote.git");
+        Directory.CreateDirectory(remote);
+        (await ScratchGitRepo.GitInAsync(remote, "init", "--bare")).Ok.ShouldBeTrue();
+        await repo.GitAsync("remote", "add", "origin", remote);
+        await repo.GitAsync("branch", "feat/x");
+        await repo.GitAsync("push", "origin", "feat/x");
+        var clone = Path.Combine(repo.WorktreeRoot, "c");
+        (await ScratchGitRepo.GitInAsync(repo.WorktreeRoot, "clone", "--branch", "feat/x", remote, clone)).Ok.ShouldBeTrue();
+        await File.WriteAllTextAsync(Path.Combine(clone, "n.md"), "n\n");
+        (await ScratchGitRepo.GitInAsync(clone, "add", "n.md")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(clone, "commit", "-m", "n")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(clone, "push", "origin", "HEAD")).Ok.ShouldBeTrue();
+
+        var fetches = 0;
+        var git = new ControlledTaskProgressGit(new RepositoryMutationLease(new LandingGit()));
+        git.BeforeCommand = (_, args) =>
+        {
+            if (args.Count == 0 || args[0] != "fetch")
+                return Task.FromResult<LandingGitResult?>(null);
+            fetches++;
+            if (mode == "always" || fetches == 1)
+                return Task.FromResult<LandingGitResult?>(new(0, "", ""));
+            return Task.FromResult<LandingGitResult?>(null);
+        };
+        var observed = await git.ObserveExactRefAsync(repo.Path, "refs/heads/feat/x", null, Guid.NewGuid(), default);
+        if (mode == "once")
+            observed.State.ShouldBe(ProgressRemoteState.Present);
+        else
+        {
+            observed.State.ShouldBe(ProgressRemoteState.Unavailable);
+            observed.Reason.ShouldBe("changed_during_confirmation");
+            fetches.ShouldBe(3);
+        }
     }
 }

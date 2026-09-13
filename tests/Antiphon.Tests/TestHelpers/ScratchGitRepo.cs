@@ -41,7 +41,10 @@ public sealed class ScratchGitRepo : IDisposable
 
     public sealed record GitResult(bool Ok, string StdOut, string StdErr = "");
 
-    public static async Task<GitResult> GitInAsync(string dir, params string[] args)
+    public static async Task<GitResult> GitInAsync(string dir, params string[] args) =>
+        await GitInAsync(dir, env: null, args);
+
+    public static async Task<GitResult> GitInAsync(string dir, IReadOnlyDictionary<string, string>? env, params string[] args)
     {
         var psi = new ProcessStartInfo
         {
@@ -53,6 +56,11 @@ public sealed class ScratchGitRepo : IDisposable
             RedirectStandardError = true,
         };
         foreach (var a in args) psi.ArgumentList.Add(a);
+        if (env is not null)
+        {
+            foreach (var (key, value) in env)
+                psi.Environment[key] = value;
+        }
         using var p = Process.Start(psi)!;
         var stdout = p.StandardOutput.ReadToEndAsync();
         var stderr = p.StandardError.ReadToEndAsync();
