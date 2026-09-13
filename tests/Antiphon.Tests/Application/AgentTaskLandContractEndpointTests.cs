@@ -6,9 +6,11 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Orchestration;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 using TUnit.Core;
 
@@ -228,6 +230,20 @@ public sealed class AgentTaskLandContractEndpointTests
         (await db.AgentTaskLandRequests.CountAsync(r => r.TaskId == taskId)).ShouldBe(0);
     }
 
+    private async Task WaitTerminalAsync(Guid taskId)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (DateTime.UtcNow < deadline)
+        {
+            using var scope = _factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            if (await db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == taskId && e.IsLandTerminal))
+                return;
+            await Task.Delay(50);
+        }
+        throw new TimeoutException("terminal event");
+    }
+
     private static async Task<LandBody> ReadLandAsync(HttpResponseMessage response)
     {
         var body = await response.Content.ReadFromJsonAsync<LandBody>(Json);
@@ -271,6 +287,75 @@ public sealed class AgentTaskLandContractEndpointTests
         request.ReviewEvidenceId.ShouldBeNull();
         request.TargetFullRefSnapshot.ShouldBe("refs/heads/master");
         Release(task.Id);
+    }
+
+    [Test]
+    [Arguments("hosted-catch")]
+    [Arguments("direct")]
+    public async Task C498_TaskGetExposesFailureDiagnostics(string producer)
+    {
+        const string marker = "synthetic-secret-marker://user:pw@host/?q=1";
+        var empty = Directory.CreateTempSubdirectory("c498-land-empty-").FullName;
+        var task = await SeedSucceededAsync();
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var stored = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            stored.RepoPath = empty;
+            stored.WorktreePath = empty;
+            await db.SaveChangesAsync();
+        }
+        using var client = _factory.CreateClient();
+        var queued = await client.PostAsJsonAsync($"/api/agent-tasks/{task.Id}/land/v2",
+            new { expectedSourceSha = ShaB });
+        queued.StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        var body = await ReadLandAsync(queued);
+        Release(task.Id);
+        if (producer == "hosted-catch")
+        {
+            var hosted = new AgentTaskLandHostedService(
+                _factory.Services.GetRequiredService<AgentTaskLandQueue>(),
+                _factory.Services.GetRequiredService<IServiceScopeFactory>(),
+                NullLogger<AgentTaskLandHostedService>.Instance);
+            await hosted.StartAsync(CancellationToken.None);
+            try { await WaitTerminalAsync(task.Id); }
+            finally { await hosted.StopAsync(CancellationToken.None); }
+        }
+        else
+        {
+            using var scope = _factory.Services.CreateScope();
+            var lands = scope.ServiceProvider.GetRequiredService<AgentTaskLandService>();
+            await lands.FailRequestAsync(task.Id, body.RequestId, new IOException(marker), CancellationToken.None);
+        }
+        var jsonText = await client.GetStringAsync($"/api/agent-tasks/{task.Id}");
+        using var doc = JsonDocument.Parse(jsonText);
+        var json = doc.RootElement.Clone();
+        var land = json.GetProperty("landRequest");
+        land.GetProperty("terminalFailureCode").GetString().ShouldBe("landing_io_error");
+        land.GetProperty("failureExceptionType").GetString().ShouldBe("IOException");
+        var diagnostic = land.GetProperty("failureDiagnosticId").GetGuid();
+        diagnostic.ShouldNotBe(Guid.Empty);
+        land.ValueKind.ShouldBe(JsonValueKind.Object);
+        if (land.TryGetProperty("sourceRefusalReason", out var refusal))
+            (refusal.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined || refusal.GetString() is null).ShouldBeTrue();
+        json.TryGetProperty("landing", out var landing).ShouldBeTrue();
+        landing.ValueKind.ShouldBe(JsonValueKind.Null);
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var row = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == body.RequestId);
+            row.FailureDiagnosticId.ShouldBe(diagnostic);
+            var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.RequestId == body.RequestId && n.Kind == LandNotificationKind.Outcome);
+            note.Body.ShouldContain($"landing_io_error; diagnostic={diagnostic:N}; exception=IOException");
+            note.Body.ShouldNotContain("synthetic-secret-marker");
+        }
+        jsonText.ShouldNotContain("synthetic-secret-marker");
+        await using var server = LandApiStub.Compatible(new string('e', 40), taskStatusBody: jsonText);
+        var status = await DelegateScriptRunner.RunAsync(server.Url, "-Status", task.Id.ToString());
+        status.ExitCode.ShouldBe(0, status.Output);
+        status.Output.ShouldContain($"Land execution failure: landing_io_error; diagnostic {diagnostic}; exception IOException");
+        status.Output.ShouldContain("Publication: Unconfirmed; cleanup: NotStarted");
+        status.Output.ShouldNotContain("synthetic-secret-marker");
     }
 
     [Test]

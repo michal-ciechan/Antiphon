@@ -654,6 +654,8 @@ public sealed class AgentTaskLandSourceFreshnessTests
             task.MergeTargetRef = null;
             await db.SaveChangesAsync();
         }
+        var unique = await h.AddSourceAsync();
+        h.Git.SetRemoteSource(unique);
         var expected = relationship == "behind" ? h.Git.AdvanceRemoteSource() : h.Git.SourceHead;
         var queued = await h.RequestAsync(expectedSourceSha: expected);
         queued.Status.ShouldBe("queued");
