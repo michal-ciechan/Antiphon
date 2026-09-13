@@ -100,7 +100,8 @@ public class AgentSupervisionTests
 
             var sessionId = await WaitForPersistentSessionAsync(harness, agent.Id);
             var runtime = harness.Provider.GetRequiredService<AgentSessionRuntime>();
-            await runtime.ObserveExitAsync(sessionId, 1, AgentExitReason.ProcessExited, CancellationToken.None);
+            await SessionExitObservation.ObserveMatchingAsync(
+                runtime, sessionId, 1, AgentExitReason.ProcessExited, CreateContext);
 
             // Next tick records the crash and schedules the retry.
             await harness.Supervisor().TickAsync(CancellationToken.None);
@@ -442,7 +443,8 @@ public class AgentSupervisionTests
             var firstId = await WaitForPersistentSessionAsync(harness, agent.Id);
 
             var runtime = harness.Provider.GetRequiredService<AgentSessionRuntime>();
-            await runtime.ObserveExitAsync(firstId, 1, AgentExitReason.ProcessExited, CancellationToken.None);
+            await SessionExitObservation.ObserveMatchingAsync(
+                runtime, firstId, 1, AgentExitReason.ProcessExited, CreateContext);
             await harness.Supervisor().TickAsync(CancellationToken.None);
             harness.Clock.Advance(TimeSpan.FromMinutes(1));
             await harness.Supervisor().TickAsync(CancellationToken.None);
@@ -452,7 +454,8 @@ public class AgentSupervisionTests
             resume.StartedSessionId.ShouldBe(firstId);
 
             var resumedId = await WaitForPersistentSessionAsync(harness, agent.Id);
-            await runtime.ObserveExitAsync(resumedId, 1, AgentExitReason.ProcessExited, CancellationToken.None);
+            await SessionExitObservation.ObserveMatchingAsync(
+                runtime, resumedId, 1, AgentExitReason.ProcessExited, CreateContext);
             await harness.Supervisor().TickAsync(CancellationToken.None);
             harness.Clock.Advance(TimeSpan.FromMinutes(1));
             await harness.Supervisor().TickAsync(CancellationToken.None);

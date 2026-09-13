@@ -789,7 +789,8 @@ public class AgentControlServiceIntegrationTests
 
             // The watchdog's exit event arrives via the event pump: non-zero code, CpuSpinKilled.
             var runtime = harness.Provider.GetRequiredService<AgentSessionRuntime>();
-            await runtime.ObserveExitAsync(sessionId, -1, AgentExitReason.CpuSpinKilled, CancellationToken.None);
+            await SessionExitObservation.ObserveMatchingAsync(
+                runtime, sessionId, -1, AgentExitReason.CpuSpinKilled, () => CreateContext());
 
             await using (var verify = CreateContext())
             {

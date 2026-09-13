@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.Agents;
+using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
@@ -93,7 +94,9 @@ public partial class StandingRestartAccountingTests
                     fault.Release.TrySetResult(); await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
                     adapter.Killed.ShouldBeTrue(); adapter.Disposed.ShouldBeTrue(); adapter.Inputs.ShouldBeEmpty();
                     if (generation == 2) { adapter.StartedArgs.ShouldContain("--resume"); adapter.StartedArgs.ShouldNotContain("--session-id"); }
-                    await h.Provider.GetRequiredService<AgentSessionRuntime>().ObserveExitAsync(sessionId, 1, AgentExitReason.ProcessExited, default);
+                    await SessionExitObservation.ObserveMatchingAsync(
+                        h.Provider.GetRequiredService<AgentSessionRuntime>(),
+                        sessionId, 1, AgentExitReason.ProcessExited, AgentSupervisionTests.CreateContext);
                     for (var repeat = 0; repeat < 2; repeat++) await h.Supervisor().TickAsync(default);
                     await using var verify = AgentSupervisionTests.CreateContext();
                     var outcome = (await verify.AgentSessions.FindAsync(sessionId))!;

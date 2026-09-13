@@ -647,8 +647,13 @@ public class HerdrSupervisionBackoffTests
             await using var db = Db();
             return await db.AgentSupervisionStates.SingleAsync(s => s.AgentId == AgentId);
         }
-        public async Task ExitAsync(AgentExitReason reason) => await Harness.Provider.GetRequiredService<AgentSessionRuntime>()
-            .ObserveExitAsync((await SessionAsync()).Id, null, reason, CancellationToken.None);
+        public async Task ExitAsync(AgentExitReason reason)
+        {
+            var session = await SessionAsync();
+            await Harness.Provider.GetRequiredService<AgentSessionRuntime>().ObserveExitAsync(
+                new SessionRunnerExitedEvent(session.Id, null, reason, 0, session.StartedAt),
+                CancellationToken.None);
+        }
         public async Task NoLaunchAsync()
         {
             await using var db = Db();

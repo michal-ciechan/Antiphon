@@ -156,6 +156,16 @@ public class SessionMessageQueueDeliveryVerificationTests
 
         h.Adapter.KillGenerationCalls.ShouldBeEmpty();
         h.Adapter.KillCount.ShouldBe(0);
+        h.Adapter.Killed.ShouldBeFalse();
+        await using var db = CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        message.Status.ShouldBe(QueuedMessageStatus.Pending);
+        message.SentAt.ShouldBeNull();
+        var declined = await db.AgentIncidents.SingleAsync(
+            i => i.AgentId == h.AgentId
+                && i.Kind == AgentIncidentKind.DeliveryVerificationFailed
+                && i.Message.Contains("Destructive recovery was declined"));
+        declined.Message.ShouldContain("retained no accepted generation");
     }
 
     [Test]

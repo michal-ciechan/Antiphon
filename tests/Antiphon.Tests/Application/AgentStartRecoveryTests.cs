@@ -132,7 +132,8 @@ public class AgentStartRecoveryTests
             var runtime = harness.Provider.GetRequiredService<AgentSessionRuntime>();
 
             // Simulate the runner's exit event arriving via the event pump.
-            await runtime.ObserveExitAsync(sessionId, exitCode, AgentExitReason.Unknown, CancellationToken.None);
+            await SessionExitObservation.ObserveMatchingAsync(
+                runtime, sessionId, exitCode, AgentExitReason.Unknown, CreateContext);
 
             await using var verify = CreateContext();
             var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);

@@ -32,7 +32,8 @@
   `CloseSessionOnExitAsync` and reconciliation's Exited / Failed-to-Running / list-absence
   arms compare that token with the locked row before any mutation. A missing token is not a
   match: legacy unbound exits and DTOs are declined (no implicit Failed, no re-adoption)
-  and reported once per session per server uptime. A runner restart cannot retroactively
+  and reported once per session per server uptime. The direct `ObserveExitAsync(Guid, …)`
+  overload must not fill a missing token from the current row's `StartedAt`. A runner restart cannot retroactively
   bind an old host's metadata; such a session keeps stale DB status until explicitly
   recovered and launched with a bound generation. Delivery-failure cleanup and launch-tail
   teardown kill only via `POST /sessions/{id}/kill-generation`; a mismatch or 404 is never

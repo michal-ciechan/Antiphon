@@ -1313,11 +1313,7 @@ public class AgentSessionServiceIntegrationTests
                     }
                     else if (evt.Exited is not null)
                     {
-                        await runtime.ObserveExitAsync(
-                            evt.Exited.SessionId,
-                            evt.Exited.ExitCode,
-                            evt.Exited.ExitReason,
-                            CancellationToken.None);
+                        await runtime.ObserveExitAsync(evt.Exited, CancellationToken.None);
                     }
                 }
             }
