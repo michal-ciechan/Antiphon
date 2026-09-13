@@ -303,4 +303,41 @@ public class AgentTaskLandDeliveryE2ETests
 
     [Test]
     public async Task C488_ApprovalPollingCannotConfirm() => await C467_V32_StatusPollingCannotDischargeUnreceivedOutcome("busy");
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C498_FailureOutcomeReachesCaller(bool busy)
+    {
+        await using var f = new LandDeliveryFixture();
+        await f.InitializeAsync(busy);
+        await f.ArrangeOutcomeAsync("execution-exception");
+        await f.RequestAsync();
+        await f.ReleaseExecutionAsync();
+        if (busy)
+        {
+            await LandDeliveryFixture.UntilAsync(async () =>
+            {
+                await using var db = f.CreateContext();
+                var note = await db.AgentTaskLandNotifications.SingleOrDefaultAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Outcome);
+                return note is { QueueMessageId: not null, ConfirmedAt: null };
+            }, "busy outcome queued");
+            await f.ReleaseBusyAsync();
+        }
+        var note = await f.ReceiptAsync();
+        await using (var db = f.CreateContext())
+        {
+            var terminal = await db.AgentTaskEvents.SingleAsync(e => e.Id == note.SourceEventId);
+            terminal.Type.ShouldBe(AgentTaskEventType.LandRefused);
+            var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == note.RequestId);
+            request.TerminalFailureCode.ShouldBe("landing_io_error");
+            request.FailureExceptionType.ShouldBe("IOException");
+            request.FailureDiagnosticId.ShouldNotBeNull();
+            (await db.AgentTaskLandings.CountAsync(o => o.TaskId == f.TaskId)).ShouldBe(0);
+            note.Body.ShouldContain("landing_io_error; diagnostic=" + request.FailureDiagnosticId!.Value.ToString("N") + "; exception=IOException");
+        }
+        await f.AssertOnePromptAsync(note);
+        (await f.StatusAsync()).ShouldContain("Land execution failure: landing_io_error; diagnostic ");
+        (await f.StatusAsync()).ShouldContain("exception IOException");
+    }
 }

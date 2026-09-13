@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
 
 namespace Antiphon.Server.Infrastructure.Git;
 
@@ -136,20 +137,32 @@ public class LandingGit : ILandingGit
             if (before.Reason is not null) return before;
             var snapshot = before.Snapshot!;
             if (HasSequencerAt(snapshot.GitDirectory)) return new(null, "active_sequencer");
-            var status = await RunAsync(snapshot.RegisteredPath,
-                ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
-            if (!status.Succeeded) return new(null, "status_error");
-            var ignored = await RunAsync(snapshot.RegisteredPath,
-                ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], ct);
-            if (!ignored.Succeeded) return new(null, "ignored_status_error");
+            var statusArgs = new[] { "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none" };
+            var status = await RunAsync(snapshot.RegisteredPath, statusArgs, ct);
+            if (!status.Succeeded)
+                return new(null, "status_error", LandFailureDiagnostic.FromCommand(statusArgs, status.ExitCode));
+            var ignoredArgs = new[] { "ls-files", "--others", "--ignored", "--exclude-standard", "-z" };
+            var ignored = await RunAsync(snapshot.RegisteredPath, ignoredArgs, ct);
+            if (!ignored.Succeeded)
+                return new(null, "ignored_status_error", LandFailureDiagnostic.FromCommand(ignoredArgs, ignored.ExitCode));
             var after = await IdentityAsync(coordinates, ct);
             if (after.Reason is not null || after.Snapshot != snapshot) return new(null, "source_changed");
             if (status.Output.Length != 0) return new(null, "source_dirty");
             return new(snapshot with { Status = status.Output,
                 IgnoredPaths = ignored.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries).ToImmutableArray() }, null);
         }
-        catch (IOException) { return new(null, "identity_io_error"); }
-        catch (UnauthorizedAccessException) { return new(null, "identity_inaccessible"); }
+        catch (LandingGitCommandException ex)
+        {
+            return new(null, "identity_io_error", LandFailureDiagnostic.FromCommandException(ex));
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return new(null, "identity_inaccessible", LandFailureDiagnostic.FromIo(ex));
+        }
+        catch (IOException ex)
+        {
+            return new(null, "identity_io_error", LandFailureDiagnostic.FromIo(ex));
+        }
         catch (ArgumentException) { return new(null, "invalid_identity"); }
     }
 
@@ -348,7 +361,12 @@ public class LandingGit : ILandingGit
     private async Task<string> RequiredAsync(string repository, IReadOnlyList<string> args, CancellationToken ct)
     {
         var result = await RunAsync(repository, args, ct);
-        if (!result.Succeeded) throw new IOException(result.Diagnostic);
+        if (!result.Succeeded)
+        {
+            var template = LandFailureDiagnostic.CommandTemplate(args);
+            if (string.IsNullOrEmpty(template)) throw new IOException(result.Diagnostic);
+            throw new LandingGitCommandException(template, result.ExitCode, $"git_exit_{result.ExitCode}");
+        }
         return result.Output;
     }
 

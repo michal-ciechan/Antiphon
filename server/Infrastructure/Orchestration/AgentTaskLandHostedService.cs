@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 
 namespace Antiphon.Server.Infrastructure.Orchestration;
@@ -35,10 +36,19 @@ public sealed class AgentTaskLandHostedService : BackgroundService
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "Land operation failed for task {TaskId}", request.TaskId);
                         try
                         {
-                            await lands.FailRequestAsync(request.TaskId, request.RequestId, ex, stoppingToken);
+                            var handled = await lands.FailRequestAsync(request.TaskId, request.RequestId, ex, stoppingToken);
+                            _logger.LogWarning(ex,
+                                "Land operation failed for task {TaskId} request {RequestId} attempt {Attempt} exception {ExceptionType} code {Code} diagnostic {DiagnosticId}",
+                                request.TaskId, handled.RequestId, handled.Attempt, handled.ExceptionType, handled.Code,
+                                handled.DiagnosticId);
+                        }
+                        catch (LandFailurePersistenceException persistEx)
+                        {
+                            _logger.LogWarning(persistEx,
+                                "Could not persist land failure for task {TaskId} diagnostic {DiagnosticId} persistence {PersistenceErrorType}",
+                                request.TaskId, persistEx.DiagnosticId, persistEx.PersistenceErrorType);
                         }
                         catch (Exception failEx) when (failEx is not OperationCanceledException)
                         {

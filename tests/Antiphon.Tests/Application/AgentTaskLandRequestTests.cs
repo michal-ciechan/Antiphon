@@ -268,8 +268,7 @@ public class AgentTaskLandRequestTests
         stored.LandAttempt.ShouldBe(1);
         var refused = await db.AgentTaskEvents.AsNoTracking()
             .SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.LandRefused);
-        refused.Detail.ShouldStartWith("land unconfirmed:");
-        refused.Detail.ShouldContain("inspect durable evidence");
+        refused.Detail.ShouldStartWith("land unconfirmed: landing_unexpected_exception; diagnostic=");
         refused.Detail.ShouldNotContain("git launch failed");
         (await db.AgentTaskEvents.CountAsync(e =>
             e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning)).ShouldBe(1);

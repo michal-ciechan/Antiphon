@@ -515,6 +515,17 @@ switch ($PSCmdlet.ParameterSetName) {
             if ($r.localBeforeSha) { Write-Output "Local before resolution: $($r.localBeforeSha)" }
             if ($r.remoteSourceSha) { Write-Output "Observed remote source: $($r.remoteSourceSha)" }
             if ($r.resolvedSourceSha) { Write-Output "Resolved source: $($r.resolvedSourceSha)" }
+            if ($r.candidateSourceSha) { Write-Output "Candidate source: $($r.candidateSourceSha)" }
+            if ($r.sourceRefusalReason) { Write-Output "Source refusal: $($r.sourceRefusalReason)" }
+            if ($r.terminalFailureCode) {
+                Write-Output ("Land execution failure: {0}; diagnostic {1}; exception {2}" -f `
+                    $r.terminalFailureCode, $r.failureDiagnosticId, $r.failureExceptionType)
+            }
+            if ($null -ne $r.sourceDiagnosticCommand -or $null -ne $r.sourceDiagnosticExitCode -or $null -ne $r.sourceDiagnosticCode) {
+                Write-Output ("Source inspection: {0}; exit {1}; diagnostic {2}" -f `
+                    $r.sourceDiagnosticCommand, $r.sourceDiagnosticExitCode, $r.sourceDiagnosticCode)
+            }
+            if ($r.sourceDiagnosticExceptionType) { Write-Output "Source inspection exception: $($r.sourceDiagnosticExceptionType)" }
             if ($r.holdReasonCode) { Write-Output "Reason: $($r.holdReasonCode); holder $($r.holdingTaskId) ($($r.holdingTaskStatus)); $($r.holdDetail)" }
             if ($r.reconciliationError) { Write-Output "Reconciliation: $($r.reconciliationError)" }
             foreach ($n in $r.notifications) {
@@ -524,6 +535,7 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($task.landing) {
             $l = $task.landing
             Write-Output "Publication: $($l.publication); operation $($l.operationId); approved $($l.reviewedSha); verified $($l.verifiedSha); remote $($l.remoteSha); confirmed $($l.remoteConfirmedAt); cleanup: $($l.cleanup)"
+            if ($l.reason) { Write-Output "Landing reason: $($l.reason)" }
         } else { Write-Output 'Publication: Unconfirmed; cleanup: NotStarted' }
         if ($task.result) { Write-Output ''; Write-Output $task.result }
         elseif ($task.failureReason) { Write-Output ''; Write-Output "failed: $($task.failureReason)" }

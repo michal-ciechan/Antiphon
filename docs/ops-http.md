@@ -240,10 +240,15 @@ refuses the switch (including manual Fresh) with `standing_resume_delivery_pendi
 Resolve that input using existing queue controls. Transcript and task history stay separate.
 
 Land detail also includes `landRequest`: request/hold/progress clocks, holder, attempts,
-reconciliation disagreement and notification states with destination, queue ID and
-confirmed prompt sequence. POST land returns additive `requestId` and `notification`.
+reconciliation disagreement, source SHAs, `sourceRefusalReason`, terminal failure
+(`terminalFailureCode`, `failureDiagnosticId`, `failureExceptionType`) and safe source-inspection
+metadata (`sourceDiagnosticCommand`, `sourceDiagnosticExitCode`, `sourceDiagnosticCode`,
+`sourceDiagnosticExceptionType`). Inspection metadata is a generated command/exit/code, never
+captured stderr. POST land returns additive `requestId` and `notification`.
 Repeated inactive pending requests preserve age and identity. `delegate.ps1 -Status`
-prints delegate, land, publication/cleanup and receipt separately. The Attention view
+prints delegate, land, candidate/refusal/execution-failure/inspection, publication/cleanup,
+`Landing reason:` from the operation, and receipt separately. Missing optional fields from an
+older server print no false failure line. The Attention view
 projects held and aged requests and unresolved receipts independently of task openness.
 
 ## Post-land verification (CARD-0478)

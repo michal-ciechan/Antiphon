@@ -30,6 +30,7 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
     public SaveFault Fault { get; } = new();
     public IEventBus Events { get; set; } = new MockEventBus();
     public Action<IServiceCollection>? ConfigureServices { get; set; }
+    private bool _registerHostedLand;
     public SessionMessageQueueService? Messages { get; set; }
     public Microsoft.Extensions.Logging.ILogger<AgentTaskLandService> Logger { get; set; } =
         NullLogger<AgentTaskLandService>.Instance;
@@ -61,6 +62,11 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
         services.AddScoped(_ => CreateContext());
         services.AddDelegationWorktreeGraph(new GitSettings { WorktreeBasePath = Path.Combine(Git.Root, "trees") });
         services.AddScoped<AgentTaskLandingProtocol>();
+        if (_registerHostedLand)
+        {
+            services.AddSingleton(Queue);
+            services.AddScoped(sp => CreateLand(sp.GetRequiredService<AppDbContext>(), sp));
+        }
         ConfigureServices?.Invoke(services);
         Services = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
         Worktrees.Removal = new GuardedWorktreeRemoval(
@@ -134,6 +140,8 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
     }
 
     public ILandingGit RegisteredGit => Services.GetRequiredService<ILandingGit>();
+
+    public void AddHostedLandService() => _registerHostedLand = true;
 
     public async Task<LandRequestResult> RequestAsync(string? filter = null, string? expectedSourceSha = null,
         Guid? reviewEvidenceId = null)
@@ -283,6 +291,7 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
         public Func<DbContext, Task>? AfterSaveAcknowledged { get; set; }
         public bool Triggered { get; private set; }
         public Func<LandPhase, Task>? AfterAcknowledged { get; set; }
+        public Func<DbContext, Task>? OnTransactionStarted { get; set; }
         private bool _armed;
         internal bool AwaitingCommit { get; set; }
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data,
@@ -332,6 +341,13 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
 
     private sealed class TransactionFault(SaveFault fault) : DbTransactionInterceptor
     {
+        public override async ValueTask<InterceptionResult<System.Data.Common.DbTransaction>> TransactionStartingAsync(
+            System.Data.Common.DbConnection connection, TransactionStartingEventData eventData,
+            InterceptionResult<System.Data.Common.DbTransaction> result, CancellationToken cancellationToken = default)
+        {
+            if (fault.OnTransactionStarted is not null) await fault.OnTransactionStarted(eventData.Context!);
+            return result;
+        }
         public override ValueTask<InterceptionResult> TransactionCommittingAsync(System.Data.Common.DbTransaction transaction,
             TransactionEventData eventData, InterceptionResult result, CancellationToken cancellationToken = default)
         { fault.Committing(); return ValueTask.FromResult(result); }

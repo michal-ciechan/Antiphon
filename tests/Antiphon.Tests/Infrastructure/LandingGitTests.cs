@@ -205,4 +205,169 @@ public sealed class LandingGitTests
         observation.Reason.ShouldBe(ancestryExit == 128 ? "remote_ancestry_error" : null);
         await fixture.AssertRemoteSourceAsync();
     }
+
+    [Test]
+    [Arguments("status", 0)]
+    [Arguments("status", 1)]
+    [Arguments("status", 128)]
+    [Arguments("status", -1)]
+    [Arguments("status", int.MinValue)]
+    [Arguments("status", int.MaxValue)]
+    [Arguments("ls-files", 128)]
+    public async Task C498_InspectionCarriesCommandAndExit(string command, int exit)
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        if (exit == 0 && command == "status")
+        {
+            var accepted = await fixture.Git.InspectAsync(fixture.Coordinates, CancellationToken.None);
+            accepted.Accepted.ShouldBeTrue();
+            accepted.Diagnostic.ShouldBeNull();
+            await fixture.AssertRemoteSourceAsync();
+            return;
+        }
+        fixture.Git.BeforeCommand = (_, args) => Task.FromResult<LandingGitResult?>(
+            args[0] == command ? new LandingGitResult(exit, "", "synthetic-secret-marker") : null);
+        var result = await fixture.Git.InspectAsync(fixture.Coordinates, CancellationToken.None);
+        result.Accepted.ShouldBeFalse();
+        result.Reason.ShouldBe(command == "status" ? "status_error" : "ignored_status_error");
+        result.Diagnostic.ShouldNotBeNull();
+        result.Diagnostic!.Command.ShouldBe(command == "status" ? "git status --porcelain=v1" : "git ls-files --others --ignored");
+        result.Diagnostic.ExitCode.ShouldBe(exit);
+        result.Diagnostic.Code.ShouldBe($"git_exit_{exit}");
+        result.Diagnostic.ExceptionType.ShouldBeNull();
+        await fixture.AssertRemoteSourceAsync();
+    }
+
+    [Test]
+    [Arguments("worktree list")]
+    [Arguments("rev-parse --absolute-git-dir")]
+    [Arguments("rev-parse --git-common-dir")]
+    public async Task C498_RequiredCommandFailureKeepsCommandIdentity(string command)
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        fixture.Git.BeforeCommand = (_, args) =>
+        {
+            var match = command == "worktree list" ? args[0] == "worktree"
+                : command.Contains("absolute-git-dir", StringComparison.Ordinal) ? args.Contains("--absolute-git-dir")
+                : args.Contains("--git-common-dir");
+            return Task.FromResult<LandingGitResult?>(match ? new LandingGitResult(128, "", "synthetic-secret-marker") : null);
+        };
+        var result = await fixture.Git.InspectAsync(fixture.Coordinates, CancellationToken.None);
+        result.Reason.ShouldBe("identity_io_error");
+        result.Diagnostic.ShouldNotBeNull();
+        result.Diagnostic!.ExceptionType.ShouldBe("LandingGitCommandException");
+        result.Diagnostic.Command.ShouldBe(command.StartsWith("worktree", StringComparison.Ordinal) ? "git worktree list" : "git rev-parse <identity>");
+        result.Diagnostic.ExitCode.ShouldBe(128);
+        result.Diagnostic.Code.ShouldBe("git_exit_128");
+        await fixture.AssertRemoteSourceAsync();
+    }
+
+    [Test]
+    [Arguments("missing-worktree")]
+    [Arguments("unauthorized")]
+    [Arguments("hostile-io")]
+    [Arguments("start-failed")]
+    public async Task C498_FilesystemFailureHasNoInventedExit(string kind)
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        LandSourceCoordinates coordinates = fixture.Coordinates;
+        if (kind == "missing-worktree")
+            coordinates = fixture.Coordinates with { WorktreePath = Path.Combine(fixture.Root, "missing-tree") };
+        else if (kind == "unauthorized")
+            fixture.Git.BeforeCommand = (_, _) => throw new UnauthorizedAccessException("synthetic-secret-marker");
+        else if (kind == "hostile-io")
+            fixture.Git.BeforeCommand = (_, _) => throw new IOException("synthetic-secret-marker");
+        else
+            fixture.Git.BeforeCommand = (_, _) => throw new IOException("git_start_failed");
+        var result = await fixture.Git.InspectAsync(coordinates, CancellationToken.None);
+        if (kind == "missing-worktree")
+        {
+            result.Diagnostic!.ExceptionType.ShouldBe("IOException");
+            result.Diagnostic.Command.ShouldBe("filesystem canonicalization");
+            result.Diagnostic.ExitCode.ShouldBeNull();
+            result.Diagnostic.Code.ShouldBe("path_missing_or_inaccessible");
+        }
+        else if (kind == "unauthorized")
+        {
+            result.Reason.ShouldBe("identity_inaccessible");
+            result.Diagnostic!.ExceptionType.ShouldBe("UnauthorizedAccessException");
+            result.Diagnostic.ExitCode.ShouldBeNull();
+            result.Diagnostic.Command.ShouldBeNull();
+            result.Diagnostic.Code.ShouldBeNull();
+        }
+        else if (kind == "hostile-io")
+        {
+            result.Reason.ShouldBe("identity_io_error");
+            result.Diagnostic!.ExceptionType.ShouldBe("IOException");
+            result.Diagnostic.ExitCode.ShouldBeNull();
+        }
+        else
+        {
+            result.Diagnostic!.Code.ShouldBe("git_start_failed");
+            result.Diagnostic.ExitCode.ShouldBeNull();
+        }
+        await fixture.AssertRemoteSourceAsync();
+    }
+
+    [Test]
+    public async Task C498_RealStderrStaysSuppressed()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var markerDir = Path.Combine(fixture.Root, "home", "synthetic-secret-marker://user:pw@host");
+        Directory.CreateDirectory(markerDir);
+        var config = Path.Combine(markerDir, "config");
+        await File.WriteAllTextAsync(config, "[broken\n");
+        var git = new MarkerHomeGit(Path.Combine(fixture.Root, "home"), fixture.TaskId, config);
+        var result = await git.InspectAsync(fixture.Coordinates, CancellationToken.None);
+        result.Reason.ShouldBe("identity_io_error");
+        result.Diagnostic!.Code.ShouldBe("git_exit_128");
+        result.Diagnostic.Command.ShouldBe("git rev-parse <identity>");
+        (result.Diagnostic.Command + result.Diagnostic.Code + (await git.RunAsync(fixture.Repository, ["rev-parse", "--absolute-git-dir"], CancellationToken.None)).Diagnostic
+            + (await git.RunAsync(fixture.Repository, ["rev-parse", "--absolute-git-dir"], CancellationToken.None)).Output)
+            .ShouldNotContain("synthetic-secret-marker");
+        await fixture.AssertRemoteSourceAsync();
+    }
+
+    [Test]
+    [Arguments("source_dirty")]
+    [Arguments("active_sequencer")]
+    [Arguments("source_equals_target")]
+    [Arguments("wrong_repository")]
+    public async Task C498_SemanticRefusalsCarryNoDiagnostic(string reason)
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        LandSourceInspection result;
+        if (reason == "source_dirty")
+        {
+            await File.WriteAllTextAsync(Path.Combine(fixture.Source, "keep.txt"), "dirty\n");
+            result = await fixture.Git.InspectAsync(fixture.Coordinates, CancellationToken.None);
+        }
+        else if (reason == "active_sequencer")
+        {
+            var gitDir = (await fixture.RequiredAsync(fixture.Source, "rev-parse", "--absolute-git-dir")).Trim();
+            Directory.CreateDirectory(Path.Combine(gitDir, "rebase-merge"));
+            result = await fixture.Git.InspectAsync(fixture.Coordinates, CancellationToken.None);
+        }
+        else if (reason == "source_equals_target")
+            result = await fixture.Git.InspectAsync(fixture.Coordinates with { SourceFullRef = fixture.TargetRef }, CancellationToken.None);
+        else
+            result = await fixture.Git.InspectAsync(fixture.Coordinates with { RepositoryPath = fixture.Remote }, CancellationToken.None);
+        result.Reason.ShouldBe(reason);
+        result.Diagnostic.ShouldBeNull();
+        await fixture.AssertRemoteSourceAsync();
+    }
+
+    private sealed class MarkerHomeGit(string home, Guid taskId, string configPath) : LandingGitFixture.FixtureGit(home, taskId)
+    {
+        protected override void ConfigureProcess(System.Diagnostics.ProcessStartInfo start)
+        {
+            base.ConfigureProcess(start);
+            start.Environment["GIT_CONFIG_GLOBAL"] = configPath;
+        }
+    }
 }

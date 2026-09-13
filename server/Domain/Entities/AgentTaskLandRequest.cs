@@ -60,4 +60,12 @@ public sealed class AgentTaskLandRequest
     public int? SourceAdvanceChildProcessId { get; set; }
     public long? SourceAdvanceChildStartTicks { get; set; }
     public string? SourceAdvanceChildOperation { get; set; }
+
+    public string? TerminalFailureCode { get; set; }
+    public Guid? FailureDiagnosticId { get; set; }
+    public string? FailureExceptionType { get; set; }
+    public string? SourceDiagnosticCommand { get; set; }
+    public int? SourceDiagnosticExitCode { get; set; }
+    public string? SourceDiagnosticCode { get; set; }
+    public string? SourceDiagnosticExceptionType { get; set; }
 }

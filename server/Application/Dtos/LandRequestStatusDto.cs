@@ -24,7 +24,14 @@ public sealed record LandRequestStatusDto(
     string? CandidateSourceSha = null,
     string? ResolvedSourceSha = null,
     LandSourceRelationship SourceRelationship = LandSourceRelationship.Unknown,
-    string? SourceRefusalReason = null)
+    string? SourceRefusalReason = null,
+    string? TerminalFailureCode = null,
+    Guid? FailureDiagnosticId = null,
+    string? FailureExceptionType = null,
+    string? SourceDiagnosticCommand = null,
+    int? SourceDiagnosticExitCode = null,
+    string? SourceDiagnosticCode = null,
+    string? SourceDiagnosticExceptionType = null)
 {
     public static LandRequestStatusDto From(AgentTaskLandRequest r, DateTime now, IReadOnlyList<LandNotificationStatusDto> notifications)
         => new(r.Id, r.State, r.RequestedAt, r.StartedAt, r.LastEvaluatedAt, r.LastProgressAt,
@@ -33,7 +40,10 @@ public sealed record LandRequestStatusDto(
             r.LandingOperationId, r.TerminalEventId, r.ReconciliationError, notifications,
             r.SchemaVersion, r.ExpectedSourceSha, r.ReviewEvidenceId, r.ApprovalKind, r.SourceResolutionState,
             r.LocalBeforeSha, r.RemoteSourceSha, r.CandidateSourceSha, r.ResolvedSourceSha,
-            r.SourceRelationship, r.SourceRefusalReason);
+            r.SourceRelationship, r.SourceRefusalReason,
+            r.TerminalFailureCode, r.FailureDiagnosticId, r.FailureExceptionType,
+            r.SourceDiagnosticCommand, r.SourceDiagnosticExitCode, r.SourceDiagnosticCode,
+            r.SourceDiagnosticExceptionType);
 }
 
 public sealed record LandNotificationStatusDto(Guid Id, LandNotificationKind Kind, LandNotificationState State,

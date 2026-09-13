@@ -637,4 +637,59 @@ public sealed class AgentTaskLandSourceFreshnessTests
         op.LastReason.ShouldBe("source_remote_changed");
         h.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("remove"));
     }
+
+    [Test]
+    [Arguments(AgentTaskRole.Plan, "equal")]
+    [Arguments(AgentTaskRole.Plan, "behind")]
+    [Arguments(AgentTaskRole.TestDesign, "equal")]
+    [Arguments(AgentTaskRole.TestDesign, "behind")]
+    public async Task C498_NonReviewedRoleLandsWithDefaultTarget(AgentTaskRole role, string relationship)
+    {
+        await using var h = new LandingProtocolHarness();
+        await h.InitializeAsync();
+        await using (var db = h.CreateContext())
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Git.TaskId);
+            task.Role = role;
+            task.MergeTargetRef = null;
+            await db.SaveChangesAsync();
+        }
+        var expected = relationship == "behind" ? h.Git.AdvanceRemoteSource() : h.Git.SourceHead;
+        var queued = await h.RequestAsync(expectedSourceSha: expected);
+        queued.Status.ShouldBe("queued");
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+        var op = await h.OperationAsync();
+        op.ShouldNotBeNull();
+        op!.TargetFullRef.ShouldBe("refs/heads/master");
+        op.DestinationFullRef.ShouldBe("refs/heads/master");
+        op.ApprovalKind.ShouldBe(LandApprovalKind.ExplicitCaller);
+        op.ReviewEvidenceId.ShouldBeNull();
+        op.Publication.ShouldBe(LandPublicationOutcome.Landed);
+        op.Cleanup.ShouldBe(LandCleanupStatus.Complete);
+        h.Git.RemoteTarget.ShouldBe(op.VerifiedSourceSha);
+        await using var observer = h.CreateContext();
+        var request = await observer.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId);
+        request.SourceRefusalReason.ShouldBeNull();
+        request.TerminalFailureCode.ShouldBeNull();
+        (await observer.AgentTaskEvents.CountAsync(e => e.Detail!.Contains("legacy_review_binding_required"))).ShouldBe(0);
+    }
+
+    [Test]
+    [Arguments(AgentTaskRole.Plan)]
+    [Arguments(AgentTaskRole.TestDesign)]
+    public async Task C498_NonReviewedRoleLandsDocsOnlyAgainstRealRemote(AgentTaskRole role)
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var sha = await h.AddDocsOnlySourceAsync();
+        await h.SetRoleAsync(role, null);
+        var queued = await h.RequestAsync(expectedSourceSha: sha);
+        queued.Status.ShouldBe("queued");
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+        var op = await h.OperationAsync();
+        op.ShouldNotBeNull();
+        op!.Publication.ShouldBe(LandPublicationOutcome.Landed);
+        (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", "refs/heads/master")).Trim().ShouldBe(op.VerifiedSourceSha);
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
 }

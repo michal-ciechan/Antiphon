@@ -291,6 +291,14 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
             await using var db = CreateContext();
             await db.AgentTasks.Where(t => t.Id == TaskId).ExecuteUpdateAsync(s => s.SetProperty(t => t.WorktreeBranch, (string?)null));
         }
+        if (outcome == "execution-exception")
+        {
+            var notARepo = Path.Combine(Root, "not-a-repo");
+            Directory.CreateDirectory(notARepo);
+            await using var db = CreateContext();
+            await db.AgentTasks.Where(t => t.Id == TaskId)
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.RepoPath, notARepo));
+        }
         if (outcome == "operation-refusal")
             await File.WriteAllTextAsync(Path.Combine(Remote, "hooks", "pre-receive"), "#!/bin/sh\nexit 1\n");
         if (outcome == "conflict")

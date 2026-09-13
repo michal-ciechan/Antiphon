@@ -336,6 +336,36 @@ public class AgentTaskLandApprovalRequestTests
             Options.Create(new DelegationSettings()), NullLogger<AgentTaskLandService>.Instance);
     }
 
+    [Test]
+    [Arguments(AgentTaskRole.Plan)]
+    [Arguments(AgentTaskRole.TestDesign)]
+    [Arguments(AgentTaskRole.Mutation)]
+    public async Task C498_NonReviewedRolesAdmitExplicitSha(AgentTaskRole role)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var land = CreateLand(db, new AgentTaskLandQueue(), Frozen(DateTime.UtcNow));
+        var task = await SeedSucceededWorktreeAsync(db);
+        task.Role = role;
+        task.MergeTargetRef = null;
+        await db.SaveChangesAsync();
+        if (role == AgentTaskRole.Mutation)
+        {
+            var error = await Should.ThrowAsync<ConflictException>(
+                () => land.RequestAsync(task.Id, new LandAgentTaskRequest(ExpectedSourceSha: ShaB), CancellationToken.None));
+            error.Code.ShouldBe("verification_publication_forbidden");
+            return;
+        }
+        var result = await land.RequestAsync(task.Id, new LandAgentTaskRequest(ExpectedSourceSha: ShaB), CancellationToken.None);
+        result.Status.ShouldBe("queued");
+        var stored = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == result.RequestId);
+        stored.ApprovalKind.ShouldBe(LandApprovalKind.ExplicitCaller);
+        stored.SchemaVersion.ShouldBe(2);
+        stored.ExpectedSourceSha.ShouldBe(ShaB);
+        stored.ReviewEvidenceId.ShouldBeNull();
+        stored.TargetFullRefSnapshot.ShouldBe("refs/heads/master");
+    }
+
     private static FakeTimeProvider Frozen(DateTime utc) =>
         new(new DateTimeOffset(DateTime.SpecifyKind(utc, DateTimeKind.Utc)));
 

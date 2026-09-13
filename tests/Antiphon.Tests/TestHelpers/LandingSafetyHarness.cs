@@ -251,6 +251,24 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         return await db.AgentTaskLandings.AsNoTracking().Where(o => o.TaskId == Fixture.TaskId && o.Active).SingleOrDefaultAsync();
     }
 
+    public async Task SetRoleAsync(AgentTaskRole role, string? mergeTarget)
+    {
+        await using var db = CreateContext();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == Fixture.TaskId);
+        task.Role = role;
+        task.MergeTargetRef = mergeTarget;
+        await db.SaveChangesAsync();
+    }
+
+    public async Task<string> AddDocsOnlySourceAsync()
+    {
+        Directory.CreateDirectory(Path.Combine(Fixture.Source, "docs"));
+        await File.WriteAllTextAsync(Path.Combine(Fixture.Source, "docs", "note.md"), "owned docs\n");
+        await Fixture.RequiredAsync(Fixture.Source, "add", ".");
+        await Fixture.RequiredAsync(Fixture.Source, "commit", "-m", "docs only");
+        return (await Fixture.RequiredAsync(Fixture.Source, "rev-parse", "HEAD")).Trim();
+    }
+
     public async Task<string> AddSourceAsync()
     {
         await File.WriteAllTextAsync(Path.Combine(Fixture.Source, "feature.txt"), "valuable feature\n");

@@ -55,6 +55,8 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
     public List<string[]> Trace { get; } = [];
     public List<string[]> OwnedTrace { get; } = [];
     public Func<Task>? BeforeInspection { get; set; }
+    public int InspectionCalls { get; private set; }
+    public Func<int, LandSourceInspection?>? InjectInspection { get; set; }
     public Func<Task>? BeforeCommonDirectory { get; set; }
     public Func<string, IReadOnlyList<string>, Task<LandingGitResult?>>? BeforeCommand { get; set; }
     public Func<string, IReadOnlyList<string>, LandingGitResult, Task>? AfterCommand { get; set; }
@@ -188,7 +190,9 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
 
     public async Task<LandSourceInspection> InspectAsync(LandSourceCoordinates coordinates, CancellationToken ct)
     {
+        InspectionCalls++;
         if (BeforeInspection is not null) await BeforeInspection();
+        if (InjectInspection?.Invoke(InspectionCalls) is { } injected) return injected;
         if (coordinates.SourceFullRef == coordinates.TargetFullRef)
             return new(null, "source_equals_target");
         if (!PathsEqual(coordinates.RepositoryPath, Repository))

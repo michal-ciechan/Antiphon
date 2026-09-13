@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
@@ -241,4 +242,66 @@ public sealed class AgentTaskLandContractEndpointTests
     }
 
     private sealed record LandBody(Guid TaskId, string Status, Guid RequestId, string Notification);
+
+    [Test]
+    [Arguments(AgentTaskRole.Plan)]
+    [Arguments(AgentTaskRole.TestDesign)]
+    public async Task C498_PlanAndTestDesignExplicitShaAdmitted(AgentTaskRole role)
+    {
+        var task = await SeedSucceededAsync();
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var stored = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            stored.Role = role;
+            stored.MergeTargetRef = null;
+            await db.SaveChangesAsync();
+        }
+        using var client = _factory.CreateClient();
+        var response = await client.PostAsJsonAsync($"/api/agent-tasks/{task.Id}/land/v2",
+            new { expectedSourceSha = ShaB });
+        response.StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        var body = await ReadLandAsync(response);
+        using var read = _factory.Services.CreateScope();
+        var observer = read.ServiceProvider.GetRequiredService<AppDbContext>();
+        var request = await observer.AgentTaskLandRequests.SingleAsync(r => r.Id == body.RequestId);
+        request.ApprovalKind.ShouldBe(LandApprovalKind.ExplicitCaller);
+        request.SchemaVersion.ShouldBe(2);
+        request.ExpectedSourceSha.ShouldBe(ShaB);
+        request.ReviewEvidenceId.ShouldBeNull();
+        request.TargetFullRefSnapshot.ShouldBe("refs/heads/master");
+        Release(task.Id);
+    }
+
+    [Test]
+    public async Task C498_TaskGetExposesInspectionDiagnostics()
+    {
+        var task = await SeedSucceededAsync();
+        Guid requestId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var stored = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            var request = new AgentTaskLandRequest
+            {
+                Id = Guid.NewGuid(), TaskId = stored.Id, RequestedAt = DateTime.UtcNow, LastEvaluatedAt = DateTime.UtcNow,
+                LastProgressAt = DateTime.UtcNow, State = LandRequestState.Completed, IsPending = false, SchemaVersion = 2,
+                ExpectedSourceSha = ShaB, SourceDiagnosticCommand = "git status --porcelain=v1",
+                SourceDiagnosticExitCode = 128, SourceDiagnosticCode = "git_exit_128",
+                SourceDiagnosticExceptionType = "LandingGitCommandException",
+            };
+            db.AgentTaskLandRequests.Add(request);
+            stored.CurrentLandRequestId = request.Id;
+            await db.SaveChangesAsync();
+            requestId = request.Id;
+        }
+        using var client = _factory.CreateClient();
+        var json = await client.GetFromJsonAsync<JsonElement>($"/api/agent-tasks/{task.Id}");
+        var land = json.GetProperty("landRequest");
+        land.GetProperty("sourceDiagnosticCommand").GetString().ShouldBe("git status --porcelain=v1");
+        land.GetProperty("sourceDiagnosticExitCode").GetInt32().ShouldBe(128);
+        land.GetProperty("sourceDiagnosticCode").GetString().ShouldBe("git_exit_128");
+        land.GetProperty("sourceDiagnosticExceptionType").GetString().ShouldBe("LandingGitCommandException");
+        requestId.ShouldNotBe(Guid.Empty);
+    }
 }
