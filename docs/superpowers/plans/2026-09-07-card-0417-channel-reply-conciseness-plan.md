@@ -709,19 +709,40 @@ NO_REPLY and NO_REPLY alongside an attachment; do not rewrite that contract.
 | R-5 | New option lost in create/edit/setup or channel preset silently opts into Phone | V-7 submitted-body/reopen checks, Normal fallback, preset selection invariant, exact catalog description and CLI binder | PC-1 through defaults; V-7 runs on every picker change |
 | R-6 | Shortening loses essential facts, detail, exact material, silence or file delivery | V-1 correctness/exception pins, V-8 transport checks, V-10 real replies and narrow rendering review | PC-3, PC-9, PC-10 |
 
-Run from the implementation branch; these sources must remain identical to the
-landed plan baseline. This is an intentional scope/byte check, not a new snapshot
-of generated model outputs:
+Run from the implementation branch. The question this asks is **"did CARD-0417
+change a protected source?"**, so the baseline is the branch's merge-base with
+`master` -- not a SHA typed into this document. Review task `bda44b07` rejected
+the card on a red exit here that turned out to be entirely master moving on: the
+baseline was pinned at `1d37c6da` (2026-09-07), seventeen unrelated upstream
+commits then touched six stage/delegate bundles and `DelegationReportFormatter.cs`,
+and the command dutifully reported them as this card's drift. A pinned SHA does
+not measure scope; it measures how long ago the plan was written. Compute the
+baseline instead, and it stays true for as long as the branch lives:
 
 ```powershell
-git diff --exit-code 1d37c6da -- server/Bundles/style-normal.md server/Bundles/style-terse.md server/Bundles/style-caveman.md server/Bundles/style-brief.md server/Bundles/style-explanatory.md server/Bundles/orchestrator.md server/Bundles/board-api.md server/Bundles/delegate-basics.md 'server/Bundles/stage-*.md' server/Bundles/output-distiller.md server/Bundles/check-interpreter.md server/Bundles/diagnose.md server/Bundles/Presets/orchestrator-prompt.md server/Application/Services/ChannelPreamble.cs server/Application/Services/DelegationReportFormatter.cs server/Application/Services/AgentPresets.cs tests/Antiphon.Tests/Application/ChannelContractsTests.cs
+$baseline = git merge-base HEAD origin/master   # 2fb81db3 as of 2026-09-13
+git diff --exit-code $baseline -- server/Bundles/style-normal.md server/Bundles/style-terse.md server/Bundles/style-caveman.md server/Bundles/style-brief.md server/Bundles/style-explanatory.md server/Bundles/orchestrator.md server/Bundles/board-api.md server/Bundles/delegate-basics.md 'server/Bundles/stage-*.md' server/Bundles/output-distiller.md server/Bundles/check-interpreter.md server/Bundles/diagnose.md server/Bundles/Presets/orchestrator-prompt.md server/Application/Services/ChannelPreamble.cs server/Application/Services/DelegationReportFormatter.cs server/Application/Services/AgentPresets.cs tests/Antiphon.Tests/Application/ChannelContractsTests.cs
 if ($LASTEXITCODE -ne 0) { throw 'Preserved instruction or transport source changed' }
 ```
 
-If upstream independently changed a protected source after `1d37c6da`, attribute
-that exact difference before adjusting the baseline for it. Do not bless changes
-from this card by refreshing snapshots. The old unused style bundles must also
-keep their normalized content versions; adding Phone alone changes no old stamp.
+If the command exits non-zero, attribute every differing hunk before touching
+anything. A difference is only this card's if one of the branch's own commits
+carries it, so the attribution is a second command, not a judgement call:
+
+```powershell
+git diff --name-only origin/master..HEAD -- <the same path list>
+```
+
+Empty output means the branch touches no protected source and any delta against
+an older baseline is upstream's. Non-empty output names the file to revert. Do
+not bless changes from this card by refreshing the baseline past them, and do not
+refresh the baseline at all while that second command prints a path. The old
+unused style bundles must also keep their normalized content versions; adding
+Phone alone changes no old stamp.
+
+Recorded 2026-09-13 (task `344d7b1c`), branch tip `a52120b3`: the first command
+exits 0 against the merge-base, and the second prints nothing -- CARD-0417's
+seven commits touch none of the protected paths.
 
 ### Positive controls
 
