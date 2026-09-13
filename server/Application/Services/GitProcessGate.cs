@@ -10,6 +10,7 @@ public sealed class GitProcessGate
     private int _inFlight;
     private int _started;
     private int _peakInFlight;
+    private int _waiting;
 
     public GitProcessGate(int maxConcurrentProcesses = 8)
     {
@@ -19,10 +20,20 @@ public sealed class GitProcessGate
     public int InFlight => Volatile.Read(ref _inFlight);
     public int Started => Volatile.Read(ref _started);
     public int PeakInFlight => Volatile.Read(ref _peakInFlight);
+    public int Waiting => Volatile.Read(ref _waiting);
 
     public async ValueTask<IDisposable> EnterAsync(CancellationToken ct)
     {
-        await _semaphore.WaitAsync(ct);
+        Interlocked.Increment(ref _waiting);
+        try
+        {
+            await _semaphore.WaitAsync(ct);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _waiting);
+        }
+
         var inFlight = Interlocked.Increment(ref _inFlight);
         Interlocked.Increment(ref _started);
         UpdatePeak(inFlight);

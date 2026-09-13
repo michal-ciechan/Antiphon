@@ -355,7 +355,30 @@ API and is fully commented in place. The fields that change behaviour most: `rol
 [agent-kinds.md](agent-kinds.md)), `workspace`, `workingDirectory`, `scope`, `followUpOnTask`,
 `expectedMinutes`, `envOverride`, `ignoreSubscriptionQuota`, `ignoreModelDisabled`,
 `ignoreRoutingPin`, `ignoreConcurrencyLimit` (CARD-0147; omits the create-time project/role cap for this request only), `authority` (CARD-0294 standing authority, ≤ 2000 chars; `autoContinue`
-without it is 422 `auto_continue_needs_authority`).
+without it is 422 `auto_continue_needs_authority`), `worktreeBaseTask` / `freshWorktree`
+(CARD-0442; Worktree only, mutually exclusive, not with `followUpOnTask` / a pinned agent).
+
+CARD-0442 worktree continuation (create + detail):
+
+- Omitted overrides are **Auto**: continue the card's one eligible unlanded tip, or the legacy
+  `mergeTargetRef ?? HEAD` fallback with named omissions. **Task** (`worktreeBaseTask` short id
+  or guid) chooses one same-card/same-common-repo source with the same effective destination
+  (null compares equal to `master`). **Target** (`freshWorktree: true`) keeps the pre-change
+  start and lists omitted same-card work. Persisted mode is `worktreeBaseMode` (`Auto`/`Task`/
+  `Target`) plus `requestedWorktreeBaseTaskId`; resolved `worktreeBaseTaskId` /
+  `worktreeBaseBranch` / `worktreeBaseSha` are written when the worktree is actually created.
+- Create 201 includes structured `worktreeBase` (`decision`, source task/branch/full SHA,
+  fallback, warnings, candidate summaries, inspection counts). Decisions: `Continue`,
+  `Target`, `WaitForLand`, `Incomplete`. This snapshot is advisory; launch re-resolves.
+- **409 `worktree_base_ambiguous`** (distinct from short-id and provider 409s): competing
+  maximal tips named in `candidates`, recovery `["-BaseTask","-FreshWorktree"]`, no runnable
+  row. After queueing, the same code is the durable Blocked reason — a `/reply` is not a Git
+  selector. Pending land is `WaitForLand` / `Queued` / pipeline `siblingLandInFlight` in every
+  mode; `Landed` / `LandedWithResidue` release it. Inspection budget expiry is `Incomplete`
+  (`inspection_timeout` / `candidate_limit` / `git_command_limit`) unless a pending land still
+  holds. Invalid Task input is 422, never a silent target fallback.
+- Detail/status expose the same provenance. `unlanded-sibling=` on a land outcome is proven
+  omitted committed work; uncertainty is a separate Warning.
 
 `role` is `AgentTaskRole`. Dispatchable: `Investigate`, `Plan`, `TestDesign`, `Code`, `Review`,
 `Debug`, `Coverage`, `Docs`, `Commit`, `Test`, `Deploy`, `Merge`, `Custom`. Specialists `Check`,

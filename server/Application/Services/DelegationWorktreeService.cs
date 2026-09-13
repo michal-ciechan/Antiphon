@@ -182,6 +182,7 @@ public sealed class DelegationWorktreeService
         }
 
         Dtos.WorktreeInfo info;
+        var adopted = false;
         try
         {
             info = await _worktrees.CreateAsync(repoPath, identifier, baseRef, lease, ct);
@@ -203,17 +204,38 @@ public sealed class DelegationWorktreeService
             }
 
             info = existing;
+            adopted = true;
         }
 
         task.WorktreePath = info.Path;
         task.WorktreeBranch = info.Branch;
-        var head = await _gitWorkspace.GetHeadShaAsync(info.Path, ct);
-        if (string.IsNullOrEmpty(task.WorktreeBaseSha))
-            task.WorktreeBaseSha = head;
+        if (!adopted && string.IsNullOrEmpty(task.WorktreeBaseSha))
+            task.WorktreeBaseSha = await _gitWorkspace.GetHeadShaAsync(info.Path, ct);
         _logger.LogInformation(
             "Task {ShortId}: worktree at {Path} on {Branch} (base {BaseRef}, sha {Sha})",
             DelegationReportFormatter.Short(task.Id), info.Path, info.Branch, baseRef,
             task.WorktreeBaseSha ?? "(unknown)");
+    }
+
+    /// <summary>
+    /// CARD-0442: if this task already has a registered worktree, take it instead of selecting a
+    /// new source. Crash windows can leave the branch/directory before coordinates were saved.
+    /// </summary>
+    public async Task<bool> TryAdoptExistingAsync(AgentTask task, RepositoryLease lease, CancellationToken ct)
+    {
+        if (task.RepoPath is null) return false;
+        var identifier = $"task-{DelegationReportFormatter.Short(task.Id)}";
+        var listed = await _worktrees.ListAsync(task.RepoPath, ct);
+        if (listed.All(w => w.CardId != identifier))
+            return false;
+
+        var preserved = task.WorktreeBaseSha;
+        await CreateForTaskAsync(task, lease, ct);
+        if (!string.IsNullOrEmpty(preserved))
+            task.WorktreeBaseSha = preserved;
+        else if (string.IsNullOrEmpty(task.WorktreeBaseSha))
+            task.WorktreeBaseSha = null;
+        return !string.IsNullOrEmpty(task.WorktreePath);
     }
 
     /// <summary>

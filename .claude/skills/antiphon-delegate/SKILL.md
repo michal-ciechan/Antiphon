@@ -133,7 +133,9 @@ A sub-orchestrator defaults to `Plan` and never runs below opus.
 | `-Level <tier>` | override the role's tier — `Frontier`/`High`/`Medium`/`Low`. Say why in `-Goal` |
 | `-Complexity Hard\|Medium\|Easy` | walk the (role, complexity) cell, falling back to the any-role chain (CARD-0090 / CARD-0332). Combined with `-Kind` or `-Level` is refused. Exhausted → Blocked for a human; **do not pick a kind yourself**. `-RefuseIfExhausted` 409s instead. `-Reroute <id> -Kind … -Level …` is the explicit human pick |
 | `-Dir <path>` | run somewhere else — another repo, another checkout. Defaults to yours |
-| `-Worktree` | isolate a worker in a fresh git worktree; sourced Mutation never merges back |
+| `-Worktree` | isolate a worker in its own git worktree (new branch + directory). Same-card Auto continues the unlanded predecessor (CARD-0442); landing destination is unchanged |
+| `-BaseTask <short-id\|guid>` | Worktree only. Explicitly start at that same-card task's committed tip when Auto would be ambiguous. Mutually exclusive with `-FreshWorktree`; cannot combine with `-OnAgent`/`-Agent` |
+| `-FreshWorktree` | Worktree only. Legacy `MergeTargetRef ?? HEAD` start, naming omitted same-card work. Does not bypass a pending land |
 | `-SourceLanding <operation-guid>` | create only Worker/Mutation/Worktree at the confirmed operation's immutable L; distinct same-board companion and same project/repository required |
 | `-CleanupVerification <task-id>` | explicitly seal and clean a terminal sourced snapshot after all-attempt native custody and restoration checks; never publishes or kills |
 | `-Shared` | force the shared directory — opts a sub-orchestrator OUT of its worktree (warned) |
@@ -162,6 +164,15 @@ explicit form and is refused 422 if it names no card. Creation echoes `- bound t
 check that line rather than discovering a mis-binding on the board a week later. A `Failed` task moves
 the card nowhere, and a move you make by hand is never overridden — the sweep only acts on evidence
 newer than your last move. **Review → Done is still yours.**
+
+**Same-card Worktree continuation (CARD-0442).** A new `-Worktree` task on a card starts at the
+committed tip of the card's unambiguous settled unlanded predecessor. It still gets a new branch
+and directory; do not pass `-Refine` to name the previous branch, and do not land merely so the
+next stage can see the work. The create line includes `base preview:`. **409
+`worktree_base_ambiguous`** means two or more eligible tips remain — choose `-BaseTask <id>` or
+`-FreshWorktree`; do not retry the same POST or pick a different provider. A later Blocked
+`worktree_base_ambiguous` after queueing is the same choice after integrating, or cancel and
+recreate; `-Reply` is not a Git ref. Pending land holds even Fresh/BaseTask (`siblingLandInFlight`).
 
 **Workers default to shared** — the delegate runs right in the directory, like you would yourself.
 That default is only safe when it is the only write-capable worker in there. Decide explicitly, every

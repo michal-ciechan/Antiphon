@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -196,27 +197,42 @@ public class AgentTaskDispatchBaseGuardTests
     [Test]
     [Timeout(60_000)]
     [Arguments("auto_two")]
+    [Arguments("task_two")]
+    [Arguments("fresh_two")]
+    [Arguments("auto_four")]
+    [Arguments("task_four")]
+    [Arguments("fresh_four")]
     public async Task T0442_V20(string name, CancellationToken ct)
     {
         await using var world = await WorktreeContinuityHarness.CreateAsync();
-        var a = await world.SeedSucceededAsync("A", "code-a.txt", "A\n");
-        await using (var db = world.CreateDb())
+        AgentTask source;
+        if (name.Contains("four", StringComparison.Ordinal))
         {
-            var live = await db.AgentTasks.FindAsync([a.Id], ct);
-            live!.LandRequestedAt = DateTime.UtcNow;
-            await db.SaveChangesAsync(ct);
+            var graph = await world.SeedFourTipsAsync();
+            source = graph.B;
+        }
+        else
+        {
+            var graph = await world.SeedTwoTipsAsync();
+            source = graph.A;
         }
 
-        var created = await world.Services.GetRequiredService<AgentTaskService>().CreateAsync(
-            new CreateAgentTaskRequest("next", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree, Card: "CARD-0442"),
-            world.Caller(), ct);
+        await world.SetLandRequestedAsync(source.Id);
+        var mode = name.StartsWith("task", StringComparison.Ordinal) ? AgentTaskWorktreeBaseMode.Task
+            : name.StartsWith("fresh", StringComparison.Ordinal) ? AgentTaskWorktreeBaseMode.Target
+            : AgentTaskWorktreeBaseMode.Auto;
+        var created = await world.CreateNextAsync(mode, source.Id, ct: ct);
         created.WorktreeBase!.Decision.ShouldBe("WaitForLand");
-        await using var scope = world.Services.CreateAsyncScope();
-        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
-        await using var db2 = world.CreateDb();
-        var row = await db2.AgentTasks.SingleAsync(t => t.Id == created.Id, ct);
+        await world.TickAsync(ct);
+        await world.TickAsync(ct);
+        var row = await world.ReloadAsync(created.Id);
         row.Status.ShouldBe(AgentTaskStatus.Queued);
         row.WorktreePath.ShouldBeNull();
+        await world.AssertNoLaunchAsync(created.Id);
+        await using var scope = world.Services.CreateAsyncScope();
+        var pipeline = await scope.ServiceProvider.GetRequiredService<AgentTaskPipelineStatusService>().GetAsync(ct);
+        pipeline.Stages.SelectMany(s => s.Queued).ShouldContain(q =>
+            q.TaskId == created.Id && q.QueueReason == AgentTaskPipelineStatusService.QueueReasonSiblingLandInFlight);
     }
 
     [Test]
@@ -246,6 +262,227 @@ public class AgentTaskDispatchBaseGuardTests
         row.WorktreeBaseMode.ShouldBe(mode);
         if (mode == AgentTaskWorktreeBaseMode.Task)
             row.RequestedWorktreeBaseTaskId.ShouldBe(a.Id);
+
+        row.Status = AgentTaskStatus.Blocked;
+        row.FailureReason = "prelaunch";
+        await db.SaveChangesAsync(ct);
+        await using var scope = world.Services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<AgentTaskService>().RetryAsync(created.Id, ct);
+        var retried = await world.ReloadAsync(created.Id);
+        retried.Status.ShouldBe(AgentTaskStatus.Queued);
+        retried.WorktreeBaseMode.ShouldBe(mode);
+        retried.Attempt.ShouldBeGreaterThan(row.Attempt);
+        if (mode == AgentTaskWorktreeBaseMode.Task)
+            retried.RequestedWorktreeBaseTaskId.ShouldBe(a.Id);
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    [Arguments("all_contained")]
+    [Arguments("still_divergent")]
+    [Arguments("landed_merge")]
+    [Arguments("landed_residue_merge")]
+    public async Task T0442_V21(string name, CancellationToken ct)
+    {
+        await using var world = await WorktreeContinuityHarness.CreateAsync();
+        if (name.StartsWith("landed", StringComparison.Ordinal))
+        {
+            var merge = await world.SeedMergeRangeAsync();
+            var created = await world.CreateNextAsync(ct: ct);
+            created.WorktreeBase!.Decision.ShouldBeOneOf("Target", "Continue", "WaitForLand", "Incomplete");
+            await world.SetLandRequestedAsync(merge.Id);
+            await world.TickAsync(ct);
+            await world.SeedLandedAsync(merge.Id, name.Contains("residue", StringComparison.Ordinal)
+                ? AgentTaskEventType.LandedWithResidue
+                : AgentTaskEventType.Landed);
+            await using (var db = world.CreateDb())
+            {
+                var live = await db.AgentTasks.FindAsync([merge.Id], ct);
+                live!.LandRequestedAt = null;
+                await db.SaveChangesAsync(ct);
+            }
+
+            await world.TickAsync(ct);
+            var after = await world.ReloadAsync(created.Id);
+            after.Status.ShouldBe(AgentTaskStatus.Dispatched);
+            return;
+        }
+
+        var (a, x) = await world.SeedTwoTipsAsync();
+        await world.SetLandRequestedAsync(a.Id);
+        var queued = await world.CreateNextAsync(ct: ct);
+        queued.WorktreeBase!.Decision.ShouldBe("WaitForLand");
+        await world.TickAsync(ct);
+        await world.AssertNoLaunchAsync(queued.Id);
+
+        if (name == "all_contained")
+        {
+            await world.Repo.GitAsync("merge", "--ff-only", a.WorktreeBranch!);
+            await world.Repo.GitAsync("merge", "--ff-only", x.WorktreeBranch!);
+            await world.SeedLandedAsync(a.Id);
+            await using (var db = world.CreateDb())
+            {
+                var live = await db.AgentTasks.FindAsync([a.Id], ct);
+                live!.LandRequestedAt = null;
+                await db.SaveChangesAsync(ct);
+            }
+
+            await world.TickAsync(ct);
+            var released = await world.ReloadAsync(queued.Id);
+            released.Status.ShouldBe(AgentTaskStatus.Dispatched);
+            released.WorktreeBaseTaskId.ShouldBeNull();
+            return;
+        }
+
+        await world.Repo.GitAsync("merge", "--ff-only", a.WorktreeBranch!);
+        await world.SeedLandedAsync(a.Id);
+        await using (var db = world.CreateDb())
+        {
+            var live = await db.AgentTasks.FindAsync([a.Id], ct);
+            live!.LandRequestedAt = null;
+            await db.SaveChangesAsync(ct);
+        }
+
+        await world.TickAsync(ct);
+        var blocked = await world.ReloadAsync(queued.Id);
+        blocked.Status.ShouldBe(AgentTaskStatus.Blocked);
+        blocked.FailureReason.ShouldContain("worktree_base_ambiguous");
+        await world.AssertNoLaunchAsync(queued.Id);
+        await world.Repo.GitAsync("merge", "--ff-only", x.WorktreeBranch!);
+        await using var retryScope = world.Services.CreateAsyncScope();
+        await retryScope.ServiceProvider.GetRequiredService<AgentTaskService>().RetryAsync(queued.Id, ct);
+        await world.TickAsync(ct);
+        var done = await world.ReloadAsync(queued.Id);
+        done.Status.ShouldBe(AgentTaskStatus.Dispatched);
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    [Arguments("auto_diverges")]
+    [Arguments("task_deleted")]
+    [Arguments("task_dirty")]
+    [Arguments("task_active")]
+    public async Task T0442_V22(string name, CancellationToken ct)
+    {
+        await using var world = await WorktreeContinuityHarness.CreateAsync();
+        var a = await world.SeedSucceededAsync("A", "code-a.txt", "A\n");
+        var mode = name.StartsWith("task", StringComparison.Ordinal)
+            ? AgentTaskWorktreeBaseMode.Task
+            : AgentTaskWorktreeBaseMode.Auto;
+        var created = await world.CreateNextAsync(mode, a.Id, ct: ct);
+        created.Status.ShouldBe(AgentTaskStatus.Queued);
+
+        if (name == "auto_diverges")
+            await world.SeedSucceededAsync("X", "x.txt", "X\n");
+        else if (name == "task_deleted")
+            await world.Repo.GitAsync("branch", "-D", a.WorktreeBranch!);
+        else if (name == "task_dirty")
+        {
+            await using var db = world.CreateDb();
+            var live = await db.AgentTasks.FindAsync([a.Id], ct);
+            live!.WorktreePath = world.Repo.Path;
+            await db.SaveChangesAsync(ct);
+            await File.WriteAllTextAsync(Path.Combine(world.Repo.Path, "README.md"), "dirty\n");
+        }
+        else
+        {
+            await using var db = world.CreateDb();
+            var follow = Guid.NewGuid();
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = follow, RootTaskId = follow, Title = "writer", Goal = "writer",
+                Role = AgentTaskRole.Code, AgentKind = AgentKind.ClaudeCode, ModelLevel = AgentModelLevel.Medium,
+                Workspace = WorkspaceMode.Shared, WorkingDirectory = world.Repo.Path, RepoPath = world.Repo.Path,
+                CardId = world.Card.Id, FollowUpOfTaskId = a.Id, Status = AgentTaskStatus.Working,
+                ReplyTo = AgentTaskReplyTo.None, CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync(ct);
+        }
+
+        await world.TickAsync(ct);
+        var row = await world.ReloadAsync(created.Id);
+        row.Status.ShouldBe(AgentTaskStatus.Blocked);
+        if (name == "auto_diverges")
+            row.FailureReason.ShouldContain("worktree_base_ambiguous");
+        row.WorktreeBaseMode.ShouldBe(mode);
+        await world.AssertNoLaunchAsync(created.Id);
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task T0442_V28(CancellationToken ct)
+    {
+        await using var world = await WorktreeContinuityHarness.CreateAsync();
+        var a = await world.SeedSucceededAsync("A", "code-a.txt", "A\n");
+        var created = await world.CreateNextAsync(ct: ct);
+        await world.SeedSucceededAsync("X", "x.txt", "X\n");
+        await world.TickAsync(ct);
+        var blocked = await world.ReloadAsync(created.Id);
+        blocked.Status.ShouldBe(AgentTaskStatus.Blocked);
+        var replies = world.Services.GetRequiredService<AgentTaskReplyService>();
+        await Should.ThrowAsync<ConflictException>(() =>
+            replies.AnswerAsync(created.Id, $"use {a.WorktreeBranch}", ct));
+        var after = await world.ReloadAsync(created.Id);
+        after.WorktreeBaseMode.ShouldBe(AgentTaskWorktreeBaseMode.Auto);
+        after.RequestedWorktreeBaseTaskId.ShouldBeNull();
+        after.Status.ShouldBe(AgentTaskStatus.Blocked);
+        await world.AssertNoLaunchAsync(created.Id);
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    [Arguments("deadline")]
+    [Arguments("candidate_cap")]
+    [Arguments("pending_land_budget")]
+    public async Task T0442_V30(string name, CancellationToken ct)
+    {
+        var settings = new GitSettings
+        {
+            WorktreeBasePath = Path.GetTempPath(),
+            WorktreeBaseMaxCandidates = name == "candidate_cap" ? 2 : 16,
+            WorktreeBaseMaxGitCommands = name is "pending_land_budget" or "deadline" ? 1 : 128,
+            WorktreeBaseInspectionTimeoutSeconds = 2,
+        };
+        await using var world = await WorktreeContinuityHarness.CreateAsync(settings);
+        var a = await world.SeedSucceededAsync("A", "code-a.txt", "A\n");
+        if (name == "candidate_cap")
+        {
+            await world.SeedSucceededAsync("B", "b.txt", "B\n");
+            await world.SeedSucceededAsync("C", "c.txt", "C\n");
+        }
+
+        if (name == "pending_land_budget")
+            await world.SetLandRequestedAsync(a.Id);
+
+        var created = await world.CreateNextAsync(ct: ct);
+        if (name == "pending_land_budget")
+            created.WorktreeBase!.Decision.ShouldBe("WaitForLand");
+        else if (name == "candidate_cap")
+            created.WorktreeBase!.Reason.ShouldBe("candidate_limit");
+
+        await world.TickAsync(ct);
+        var row = await world.ReloadAsync(created.Id);
+        if (name == "pending_land_budget")
+        {
+            row.Status.ShouldBe(AgentTaskStatus.Queued);
+            await world.AssertNoLaunchAsync(created.Id);
+            await world.SeedLandedAsync(a.Id);
+            await using var db = world.CreateDb();
+            var live = await db.AgentTasks.FindAsync([a.Id], ct);
+            live!.LandRequestedAt = null;
+            await db.SaveChangesAsync(ct);
+            await world.TickAsync(ct);
+            var released = await world.ReloadAsync(created.Id);
+            released.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        }
+        else
+        {
+            row.WorktreeBaseTaskId.ShouldBeNull();
+            if (row.Status == AgentTaskStatus.Dispatched)
+                row.WorktreePath.ShouldNotBeNull();
+            else
+                await world.AssertNoLaunchAsync(created.Id);
+        }
     }
 
     [Test]

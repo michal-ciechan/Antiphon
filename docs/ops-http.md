@@ -262,6 +262,17 @@ Use the explicit commissioning/resumption/triage recipe in [orchestration-loop.m
 Canceled/superseded verification records reason and successor, never Done/Clean. Decisions belong
 on existing move/reopen revisions and attention, never an alert sink.
 
+`POST /api/agent-tasks` Worktree continuation (CARD-0442): omitted `worktreeBaseTask` /
+`freshWorktree` is Auto. `-BaseTask <short-id|guid>` sends `worktreeBaseTask`; `-FreshWorktree`
+sends `freshWorktree: true`. They are mutually exclusive, require `-Worktree` (`-Workspace
+Worktree` is the same), and cannot combine with `-OnAgent`/`-Agent`. The 201 `worktreeBase`
+preview is printed immediately (`base preview: continues task … @ <sha>`, `waiting for task …
+land`, or `WARNING: base preview is HEAD; …`). **409 `worktree_base_ambiguous`** prints the
+code, competing tips and both recovery switches, exits nonzero after one POST, and never
+retries or reroutes. A queued Auto that later diverges is Blocked with the same code — reply
+is not a source selector; land/integrate then `delegate.ps1 -Retry`, or cancel and recreate
+with `-BaseTask` / `-FreshWorktree`. Pending land holds every mode (`siblingLandInFlight`).
+
 `POST /api/agent-tasks` accepts optional `sourceLandingOperationId` (full GUID), exposed by
 `delegate.ps1 -SourceLanding`. Only fresh Worker/Mutation/Worktree with a distinct same-board
 companion, same authorized repository/project and structured confirmed publication is accepted.

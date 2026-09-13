@@ -156,14 +156,31 @@ Landing (fetch, rebase, verify, fast-forward, push, worktree removal, branch del
 in-flight / queued / ready per stage, generalised across all six stage roles (CARD-0146 S4) — is
 `/orchestrator?tab=pipeline`.
 
-A Worktree task branches from its merge target, or from master HEAD when none is set — never from
-a sibling task's branch (CARD-0215). Land a Plan with `delegate.ps1 -Land <id>` before dispatching
-Execute, so the plan commit is on master and the build worktree contains it. The dispatcher holds
-Execute while that plan's land is in flight, and warns (a `Warning` event plus a WhenIdle note
-naming the branch and tip) when the plan branch is simply not landed. A `Landed` line carrying
-`unlanded-sibling=` means a same-card branch is still stranded; land or drop it. Two 2026-08-10
-cases (the CARD-0002 design doc and the CARD-0001 fix) sat unmerged for 9 hours before anyone
-noticed.
+A card-bound Worktree task continues the card's unambiguous, settled, unlanded predecessor
+(CARD-0442). The new task still gets its own branch and directory; the landing destination is
+unchanged (`MergeTargetRef`, else the inherited parent destination, else master for explicit
+land). Create returns a structured `worktreeBase` preview; `delegate.ps1` prints it immediately.
+The dispatcher re-resolves immediately before worktree creation, so a preview is not a promise
+about Git state minutes later.
+
+Default **Auto** picks one eligible Succeeded tip in the same card and Git common directory.
+Divergent maximal tips refuse create with **409 `worktree_base_ambiguous`** (candidates and
+recovery switches in the problem details). Recover with `-BaseTask <short-id|guid>` (choose one
+same-card source) or `-FreshWorktree` (legacy `MergeTargetRef ?? HEAD`, with omitted work named).
+Those flags are mutually exclusive, require `-Worktree`, and cannot combine with `-OnAgent`.
+A pending same-card land still holds the new task `Queued` (`siblingLandInFlight`) in every
+mode, including Fresh/BaseTask; completed `Landed` / `LandedWithResidue` evidence releases it.
+If Auto becomes ambiguous or an explicit source becomes invalid after queueing, the task is
+durably Blocked with the same `worktree_base_ambiguous` reason — a reply is not a Git selector;
+retry after integrating, or cancel and recreate with `-BaseTask` / `-FreshWorktree`.
+
+Land a Plan with `delegate.ps1 -Land <id>` when you want that plan on the destination before
+unrelated work, not because the next same-card Worktree task cannot see it. The dispatcher still
+holds while that land is in flight. A `Landed` line carrying `unlanded-sibling=` means a
+same-card kept branch is **proven omitted** committed work, not merely a non-ancestor after
+rebase; an unknown/uncertain inspection is a separate Warning (inspect or `-BaseTask`, do not
+treat it as stranded). Two 2026-08-10 cases (the CARD-0002 design doc and the CARD-0001 fix) sat
+unmerged for 9 hours before anyone noticed.
 
 ### Picking
 
@@ -604,8 +621,11 @@ its `LandingCleanup` event updates the same publication rather than counting ano
 the last acknowledged checkpoint. Missing source components alone never prove success.
 A `Landed` line that also carries
 `unlanded-sibling=<id>:<branch>` (comma-separated if several) means a same-card kept branch is
-not an ancestor of the rebased HEAD — land or drop that sibling; the server warns rather than
-refusing.
+**proven omitted** committed work against the rebased HEAD (ancestry or linear patch-equivalence,
+after durable Landed/LandedWithResidue exclusion). An inherited predecessor that rebase rewrote
+is not stranded. Uncertain merge/error/timeout emits its own inspection-unknown Warning without
+that token. The server warns rather than refusing. Recover omitted work with `-BaseTask` or land
+it; recover uncertainty by inspecting and choosing `-BaseTask` / `-FreshWorktree`.
 
 After `-Land`, the orchestrator's own git involvement is **zero**. Do not re-run `git show`,
 `git diff`, `gh run view`, or tests to double-check a `Landed` outcome. This is the same

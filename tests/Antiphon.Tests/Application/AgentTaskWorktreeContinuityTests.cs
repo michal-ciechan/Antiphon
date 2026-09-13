@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -17,13 +18,27 @@ public sealed class AgentTaskWorktreeContinuityTests
     [Test]
     [Arguments("implicit_master")]
     [Arguments("explicit_master")]
+    [Arguments("inherited_parent")]
     public async Task T0442_V01(string name)
     {
         await using var world = await WorktreeContinuityHarness.CreateAsync();
+        AgentTask? parent = null;
+        if (name == "inherited_parent")
+        {
+            await world.Repo.GitAsync("branch", "feat/parent");
+            parent = await world.SeedSucceededAsync("parent", "parent.txt", "p\n", mergeTarget: "feat/parent");
+            await using var dbp = world.CreateDb();
+            var live = await dbp.AgentTasks.FindAsync(parent.Id);
+            live!.WorktreeBranch = "feat/parent";
+            live.Kind = AgentTaskKind.Orchestrator;
+            await dbp.SaveChangesAsync();
+            parent = live;
+        }
+
         var first = await world.Services.GetRequiredService<AgentTaskService>().CreateAsync(
             new CreateAgentTaskRequest("first", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree,
                 Card: "CARD-0442", MergeTargetRef: name == "explicit_master" ? "master" : null),
-            world.Caller(), CancellationToken.None);
+            world.Caller(parent), CancellationToken.None);
         await using (var scope = world.Services.CreateAsyncScope())
             await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
         await using var db = world.CreateDb();
@@ -40,7 +55,7 @@ public sealed class AgentTaskWorktreeContinuityTests
 
         var review = await world.Services.GetRequiredService<AgentTaskService>().CreateAsync(
             new CreateAgentTaskRequest("review", Role: AgentTaskRole.Review, Workspace: WorkspaceMode.Worktree, Card: "CARD-0442"),
-            world.Caller(), CancellationToken.None);
+            world.Caller(parent), CancellationToken.None);
         review.WorktreeBase.ShouldNotBeNull();
         review.WorktreeBase!.SourceSha.ShouldBe(shaA);
         await using (var scope = world.Services.CreateAsyncScope())
@@ -51,6 +66,8 @@ public sealed class AgentTaskWorktreeContinuityTests
         (await ScratchGitRepo.GitInAsync(reviewRow.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim().ShouldBe(shaA);
         File.ReadAllText(Path.Combine(reviewRow.WorktreePath!, "code-a.txt")).Replace("\r\n", "\n").ShouldBe("A\n");
         reviewRow.WorktreePath.ShouldNotBe(code1.WorktreePath);
+        if (name == "inherited_parent")
+            reviewRow.MergeTargetRef.ShouldBe("feat/parent");
     }
 
     [Test]
@@ -71,18 +88,23 @@ public sealed class AgentTaskWorktreeContinuityTests
     [Test]
     [Arguments("uncontained_sibling")]
     [Arguments("uncertain_sibling")]
+    [Arguments("inspection_failure")]
     public async Task T0442_V31(string name)
     {
         await using var world = await WorktreeContinuityHarness.CreateAsync();
         await world.SeedSucceededAsync("A", "code-a.txt", "A\n");
-        var x = await world.SeedSucceededAsync("X", "x.txt", "X\n");
+        if (name == "uncertain_sibling")
+            await world.SeedMergeRangeAsync();
+        else
+            await world.SeedSucceededAsync("X", "x.txt", "X\n");
         var resolver = world.Services.GetRequiredService<AgentTaskWorktreeBaseResolver>();
         var queued = world.NewQueued();
+        if (name == "inspection_failure")
+            queued.RepoPath = Path.Combine(world.Repo.Path, "missing");
         var resolution = await resolver.ResolveAsync(queued, CancellationToken.None);
         if (name == "uncontained_sibling")
             resolution.Decision.ShouldBe(WorktreeBaseDecisionKind.Ambiguous);
         else
             resolution.Preview.Candidates.ShouldNotBeNull();
-        x.Id.ShouldNotBe(Guid.Empty);
     }
 }

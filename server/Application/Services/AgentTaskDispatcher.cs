@@ -3131,52 +3131,57 @@ public sealed class AgentTaskDispatcher
         if (claimed.Workspace == WorkspaceMode.Worktree && claimed.WorktreePath is null)
         {
             string? continuationSha = null;
-            if (_worktreeBase is not null && claimed.SourceLandingOperationId is null)
+            var adopted = claimed.SourceLandingOperationId is null
+                && await _worktrees.TryAdoptExistingAsync(claimed, repositoryLease!, ct);
+            if (!adopted)
             {
-                var resolved = await _worktreeBase.ResolveAsync(claimed, ct);
-                if (resolved.HoldForLand)
+                if (_worktreeBase is not null && claimed.SourceLandingOperationId is null)
                 {
-                    await transaction.RollbackAsync(ct);
-                    return false;
+                    var resolved = await _worktreeBase.ResolveAsync(claimed, ct);
+                    if (resolved.HoldForLand)
+                    {
+                        await transaction.RollbackAsync(ct);
+                        return false;
+                    }
+
+                    if (resolved.Block)
+                    {
+                        claimed.Status = AgentTaskStatus.Blocked;
+                        claimed.FailureReason = resolved.BlockDetail ?? resolved.Reason;
+                        claimed.ConcurrencyToken = Guid.NewGuid();
+                        _db.AgentTaskEvents.Add(new AgentTaskEvent
+                        {
+                            Id = Guid.NewGuid(),
+                            AgentTaskId = claimed.Id,
+                            Type = AgentTaskEventType.Blocked,
+                            Detail = claimed.FailureReason,
+                            At = now,
+                        });
+                        await _db.SaveChangesAsync(ct);
+                        await transaction.CommitAsync(ct);
+                        return false;
+                    }
+
+                    continuationSha = resolved.StartSha;
+                    claimed.WorktreeBaseTaskId = resolved.SourceTaskId;
+                    claimed.WorktreeBaseBranch = resolved.SourceBranch;
+                    var preview = AgentTaskWorktreeBaseResolver.TryReadPreview(claimed.WorktreeBasePreviewJson);
+                    if (preview is not null
+                        && (preview.SourceSha != resolved.StartSha || preview.Decision != resolved.Decision.ToString()))
+                    {
+                        _db.AgentTaskEvents.Add(new AgentTaskEvent
+                        {
+                            Id = Guid.NewGuid(),
+                            AgentTaskId = claimed.Id,
+                            Type = AgentTaskEventType.Warning,
+                            Detail = $"worktree base changed from preview {preview.Decision}/{preview.SourceSha} to {resolved.Decision}/{resolved.StartSha}",
+                            At = now,
+                        });
+                    }
                 }
 
-                if (resolved.Block)
-                {
-                    claimed.Status = AgentTaskStatus.Blocked;
-                    claimed.FailureReason = resolved.BlockDetail ?? resolved.Reason;
-                    claimed.ConcurrencyToken = Guid.NewGuid();
-                    _db.AgentTaskEvents.Add(new AgentTaskEvent
-                    {
-                        Id = Guid.NewGuid(),
-                        AgentTaskId = claimed.Id,
-                        Type = AgentTaskEventType.Blocked,
-                        Detail = claimed.FailureReason,
-                        At = now,
-                    });
-                    await _db.SaveChangesAsync(ct);
-                    await transaction.CommitAsync(ct);
-                    return false;
-                }
-
-                continuationSha = resolved.StartSha;
-                claimed.WorktreeBaseTaskId = resolved.SourceTaskId;
-                claimed.WorktreeBaseBranch = resolved.SourceBranch;
-                var preview = AgentTaskWorktreeBaseResolver.TryReadPreview(claimed.WorktreeBasePreviewJson);
-                if (preview is not null
-                    && (preview.SourceSha != resolved.StartSha || preview.Decision != resolved.Decision.ToString()))
-                {
-                    _db.AgentTaskEvents.Add(new AgentTaskEvent
-                    {
-                        Id = Guid.NewGuid(),
-                        AgentTaskId = claimed.Id,
-                        Type = AgentTaskEventType.Warning,
-                        Detail = $"worktree base changed from preview {preview.Decision}/{preview.SourceSha} to {resolved.Decision}/{resolved.StartSha}",
-                        At = now,
-                    });
-                }
+                await _worktrees.CreateForTaskAsync(claimed, repositoryLease!, ct, continuationSha);
             }
-
-            await _worktrees.CreateForTaskAsync(claimed, repositoryLease!, ct, continuationSha);
 
             // The hard version of the orchestrator contract: a PreToolUse hook that refuses
             // Edit/Write with "delegate this instead". Only ever written into the task's OWN

@@ -1,11 +1,13 @@
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -92,8 +94,92 @@ public class DelegationWorktreeTests
         var task = NewTask(repo.Path, mergeTarget: null);
         await service.CreateForTaskAsync(task, CancellationToken.None, a);
         (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim().ShouldBe(a);
+        await repo.GitAsync("checkout", "feat/source");
         await repo.CommitFileAsync("later.txt", "B\n");
+        var b = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        b.ShouldNotBe(a);
         task.WorktreeBaseSha.ShouldBe(a);
+        File.Exists(Path.Combine(task.WorktreePath!, "later.txt")).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task T0442_V24()
+    {
+        await using var world = await WorktreeContinuityHarness.CreateAsync(failWorktreeCreate: true);
+        var a = await world.SeedSucceededAsync("A", "code-a.txt", "A\n");
+        var created = await world.CreateNextAsync(AgentTaskWorktreeBaseMode.Task, a.Id);
+        created.WorktreeBase!.SourceSha.ShouldBe(a.WorktreeBaseSha);
+        await world.TickAsync();
+        var row = await world.ReloadAsync(created.Id);
+        row.Status.ShouldBe(AgentTaskStatus.Failed);
+        await world.AssertNoLaunchAsync(created.Id);
+        world.FailingWorktrees.ShouldNotBeNull();
+        world.FailingWorktrees!.CreateCalls.ShouldBe(1);
+        world.FailingWorktrees.BaseRefs.ShouldHaveSingleItem();
+        GitObjectId.IsFull(world.FailingWorktrees.BaseRefs[0]).ShouldBeTrue();
+        world.FailingWorktrees.BaseRefs[0].ShouldBe(a.WorktreeBaseSha);
+        (await ScratchGitRepo.GitInAsync(world.Repo.Path, "rev-parse", a.WorktreeBranch!)).Ok.ShouldBeTrue();
+    }
+
+    [Test]
+    [Arguments("persisted_coordinates")]
+    [Arguments("crash_before_coordinates")]
+    [Arguments("registered_missing_directory")]
+    public async Task T0442_V25(string name)
+    {
+        await using var world = await WorktreeContinuityHarness.CreateAsync();
+        var a = await world.SeedSucceededAsync("A", "code-a.txt", "A\n");
+        var created = await world.CreateNextAsync();
+        await world.TickAsync();
+        var row = await world.ReloadAsync(created.Id);
+        row.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        row.WorktreePath.ShouldNotBeNull();
+        await File.WriteAllTextAsync(Path.Combine(row.WorktreePath!, "code-c.txt"), "C\n");
+        (await ScratchGitRepo.GitInAsync(row.WorktreePath!, "add", "code-c.txt")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(row.WorktreePath!, "commit", "-m", "C")).Ok.ShouldBeTrue();
+        var shaC = (await ScratchGitRepo.GitInAsync(row.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim();
+        var originalBase = row.WorktreeBaseSha;
+        originalBase.ShouldBe(a.WorktreeBaseSha);
+
+        await world.SeedSucceededAsync("X", "x.txt", "X\n");
+        await using (var db = world.CreateDb())
+        {
+            var live = await db.AgentTasks.FindAsync(row.Id);
+            live!.Status = AgentTaskStatus.Failed;
+            live.CompletedAt = DateTime.UtcNow;
+            if (name != "persisted_coordinates")
+            {
+                live.WorktreePath = null;
+                if (name == "crash_before_coordinates")
+                    live.WorktreeBaseSha = null;
+            }
+
+            await db.SaveChangesAsync();
+        }
+
+        if (name == "registered_missing_directory")
+        {
+            var path = row.WorktreePath!;
+            foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+                File.SetAttributes(file, FileAttributes.Normal);
+            Directory.Delete(path, recursive: true);
+        }
+
+        await using var scope = world.Services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<AgentTaskService>().RetryAsync(row.Id, CancellationToken.None);
+        await world.TickAsync();
+        var adopted = await world.ReloadAsync(row.Id);
+        adopted.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        adopted.WorktreePath.ShouldNotBeNull();
+        adopted.WorktreeBranch.ShouldBe(row.WorktreeBranch);
+        if (name == "persisted_coordinates")
+            adopted.WorktreeBaseSha.ShouldBe(originalBase);
+        if (name != "registered_missing_directory" || Directory.Exists(adopted.WorktreePath!))
+        {
+            var head = (await ScratchGitRepo.GitInAsync(adopted.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim();
+            if (name != "registered_missing_directory")
+                head.ShouldBe(shaC);
+        }
     }
 
     [Test]

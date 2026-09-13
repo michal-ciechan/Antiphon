@@ -18,16 +18,34 @@ public sealed class DelegateScriptWorktreeBaseTests
     [Arguments("fresh")]
     [Arguments("both_flags")]
     [Arguments("shared")]
+    [Arguments("readonly")]
     [Arguments("onagent_task")]
+    [Arguments("onagent_fresh")]
+    [Arguments("ambiguous_response")]
     public async Task T0442_V16(string name)
     {
+        if (name == "ambiguous_response")
+        {
+            const string json = """{"type":"https://httpstatuses.com/409","title":"Conflict","status":409,"detail":"worktree_base_ambiguous: competing tips","code":"worktree_base_ambiguous","candidates":[{"taskId":"22222222-2222-2222-2222-222222222222","branch":"feat/a"}],"recovery":["-BaseTask","-FreshWorktree"]}""";
+            using var conflict = new StubApi(json, 409);
+            var run = await DelegateScriptRunner.RunAsync(conflict.BaseUrl, "-Role", "Code", "-Goal", "x", "-Worktree");
+            run.ExitCode.ShouldNotBe(0);
+            run.Output.ShouldContain("worktree_base_ambiguous");
+            run.Output.ShouldContain("-BaseTask");
+            run.Output.ShouldContain("-FreshWorktree");
+            conflict.RequestCount.ShouldBe(1);
+            return;
+        }
+
         using var server = new StubApi();
-        if (name is "both_flags" or "shared" or "onagent_task")
+        if (name is "both_flags" or "shared" or "readonly" or "onagent_task" or "onagent_fresh")
         {
             var refused = name switch
             {
                 "both_flags" => await DelegateScriptRunner.RunAsync(server.BaseUrl, "-Role", "Code", "-Goal", "x", "-Worktree", "-BaseTask", "abcd1234", "-FreshWorktree"),
                 "shared" => await DelegateScriptRunner.RunAsync(server.BaseUrl, "-Role", "Code", "-Goal", "x", "-Shared", "-FreshWorktree"),
+                "readonly" => await DelegateScriptRunner.RunAsync(server.BaseUrl, "-Role", "Code", "-Goal", "x", "-ReadOnly", "-BaseTask", "abcd1234"),
+                "onagent_fresh" => await DelegateScriptRunner.RunAsync(server.BaseUrl, "-Role", "Code", "-Goal", "x", "-Worktree", "-FreshWorktree", "-OnAgent", "abcd1234"),
                 _ => await DelegateScriptRunner.RunAsync(server.BaseUrl, "-Role", "Code", "-Goal", "x", "-Worktree", "-BaseTask", "abcd1234", "-OnAgent", "abcd1234"),
             };
             refused.ExitCode.ShouldNotBe(0);
@@ -66,7 +84,7 @@ public sealed class DelegateScriptWorktreeBaseTests
         {
             "continue" => """{"id":"11111111-1111-1111-1111-111111111111","shortId":"11111111","status":"Queued","modelLevel":"Frontier","agentKind":"ClaudeCode","noReplyRouting":true,"worktreeBase":{"decision":"Continue","fallbackRef":"master","sourceTaskId":"22222222-2222-2222-2222-222222222222","sourceBranch":"feat/card-task-22222222","sourceSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}""",
             "wait" => """{"id":"11111111-1111-1111-1111-111111111111","shortId":"11111111","status":"Queued","modelLevel":"Frontier","agentKind":"ClaudeCode","noReplyRouting":true,"worktreeBase":{"decision":"WaitForLand","reason":"waiting for land"}}""",
-            "unknown_fallback" => """{"id":"11111111-1111-1111-1111-111111111111","shortId":"11111111","status":"Queued","modelLevel":"Frontier","agentKind":"ClaudeCode","noReplyRouting":true,"worktreeBase":{"decision":"Incomplete","fallbackRef":"HEAD","reason":"inspection_timeout"}}""",
+            "unknown_fallback" => """{"id":"11111111-1111-1111-1111-111111111111","shortId":"11111111","status":"Queued","modelLevel":"Frontier","agentKind":"ClaudeCode","noReplyRouting":true,"worktreeBase":{"decision":"Incomplete","fallbackRef":"HEAD","reason":"inspection_timeout","commandCount":4,"candidateTotal":6}}""",
             _ => """{"id":"11111111-1111-1111-1111-111111111111","shortId":"11111111","status":"Queued","modelLevel":"Frontier","agentKind":"ClaudeCode","noReplyRouting":true,"worktreeBase":{"decision":"Target","fallbackRef":"HEAD","reason":"fresh_target"}}""",
         };
         using var server = new StubApi(json);
@@ -82,10 +100,12 @@ public sealed class DelegateScriptWorktreeBaseTests
         private readonly CancellationTokenSource _cts = new();
         private readonly Task _pump;
         private readonly string _createJson;
+        private readonly int _statusCode;
 
-        public StubApi(string? createJson = null)
+        public StubApi(string? createJson = null, int statusCode = 201)
         {
             _createJson = createJson ?? """{"id":"11111111-1111-1111-1111-111111111111","shortId":"11111111","status":"Queued","modelLevel":"High","warning":null,"agentKind":"ClaudeCode"}""";
+            _statusCode = statusCode;
             BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
             _pump = Task.Run(PumpAsync);
         }
@@ -109,7 +129,7 @@ public sealed class DelegateScriptWorktreeBaseTests
                 }
 
                 var payload = Encoding.UTF8.GetBytes(_createJson);
-                context.Response.StatusCode = 201;
+                context.Response.StatusCode = _statusCode;
                 context.Response.ContentType = "application/json";
                 await context.Response.OutputStream.WriteAsync(payload);
                 context.Response.Close();

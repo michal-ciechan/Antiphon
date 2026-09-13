@@ -105,11 +105,11 @@ public sealed class AgentTaskWorktreeBaseResolver
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            return Incomplete(task, session, warnings, candidates, "inspection_timeout");
+            return await HoldOrIncompleteAsync(task, session, warnings, candidates, "inspection_timeout", ct);
         }
         catch (WorktreeBaseBudgetExceededException ex)
         {
-            return Incomplete(task, session, warnings, candidates, ex.Reason);
+            return await HoldOrIncompleteAsync(task, session, warnings, candidates, ex.Reason, ct);
         }
     }
 
@@ -546,6 +546,45 @@ public sealed class AgentTaskWorktreeBaseResolver
         string reason) =>
         Finish(WorktreeBaseDecisionKind.Invalid, null, null, null, reason, session, warnings, candidates,
             task.MergeTargetRef ?? "HEAD", false, true, reason);
+
+    private async Task<WorktreeBaseResolution> HoldOrIncompleteAsync(
+        AgentTask task,
+        WorktreeBaseGitSession session,
+        List<string> warnings,
+        List<WorktreeBaseCandidateDto> candidates,
+        string reason,
+        CancellationToken ct)
+    {
+        var hold = await TryPendingLandHoldAsync(task, ct);
+        if (hold is not null)
+        {
+            warnings.Add($"incomplete inspection: {reason}; pending land still holds");
+            return Wait(task, session, warnings, candidates, hold,
+                $"waiting for task {DelegationReportFormatter.Short(hold.Id)} land");
+        }
+
+        return Incomplete(task, session, warnings, candidates, reason);
+    }
+
+    private async Task<SiblingRow?> TryPendingLandHoldAsync(AgentTask task, CancellationToken ct)
+    {
+        if (task.CardId is null) return null;
+        var dest = EffectiveDestination(task.MergeTargetRef);
+        var pending = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.Id != task.Id
+                && t.CardId == task.CardId
+                && t.Workspace == WorkspaceMode.Worktree
+                && t.WorktreeBranch != null
+                && t.LandRequestedAt != null)
+            .Select(t => new SiblingRow(
+                t.Id, t.WorktreeBranch!, t.RepoPath, t.WorktreePath, t.WorkingDirectory,
+                t.Status, t.MergeTargetRef, t.LandRequestedAt, t.CompletedAt, t.CardId))
+            .ToListAsync(ct);
+        if (pending.Count == 0) return null;
+        var completed = await LoadCompletedLandAsync(pending.Select(p => p.Id).ToList(), ct);
+        return pending.FirstOrDefault(p =>
+            !completed.Contains(p.Id) && EffectiveDestination(p.MergeTargetRef) == dest);
+    }
 
     private WorktreeBaseResolution Incomplete(
         AgentTask task, WorktreeBaseGitSession session, List<string> warnings, List<WorktreeBaseCandidateDto> candidates,
