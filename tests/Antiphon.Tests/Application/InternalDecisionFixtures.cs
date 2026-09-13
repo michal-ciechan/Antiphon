@@ -13,8 +13,14 @@ internal static class InternalDecisionFixtures
         IReadOnlyList<InternalDecisionCategory>? categories = null,
         IReadOnlyList<string>? paths = null,
         IReadOnlyList<string>? attributeTargets = null,
-        string? preserve = null) =>
-        new(
+        string? preserve = null)
+    {
+        var resolvedPaths = paths ?? ["scripts/deploy-gym-stat.ps1", ".gitattributes"];
+        var resolvedTargets = attributeTargets;
+        if (paths is null && attributeTargets is null)
+            resolvedTargets = ["scripts/deploy-gym-stat.ps1"];
+
+        return new(
             Version: 1,
             Grants:
             [
@@ -25,10 +31,11 @@ internal static class InternalDecisionFixtures
                         InternalDecisionCategory.LineEndings,
                         InternalDecisionCategory.ShellTransport,
                     ],
-                    Paths: paths ?? ["scripts/deploy-gym-stat.ps1", ".gitattributes"],
-                    AttributeTargets: attributeTargets ?? ["scripts/deploy-gym-stat.ps1"],
+                    Paths: resolvedPaths,
+                    AttributeTargets: resolvedTargets,
                     Preserve: preserve ?? Preserve),
             ]);
+    }
 
     public static StoredInternalDecisionGrantedBy ManualGrantor() =>
         new("manual", null, null, null, null);
