@@ -153,6 +153,9 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
         {
             MaxConcurrentTasks = 512,
             AllowedRoots = [Repo.Path],
+            BriefInlineMaxBytes = 1_000_000,
+            ModernPtyBriefInlineMaxBytes = 1_000_000,
+            HerdrPaneBriefInlineMaxBytes = 1_000_000,
         }));
         services.AddSingleton(Options.Create(new AgentSessionSettings()));
         services.AddSingleton<ApiErrorRecoveryService>();
@@ -204,6 +207,13 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
         new(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
 
     public string ClaimLine(string sha) => $"[antiphon-progress:{Repair.Id:D} commit={sha}]";
+
+    public async Task<string> BriefTextAsync(AgentTask repair, SessionQueuedMessage queued)
+    {
+        var spill = Path.Combine(repair.WorkingDirectory ?? Repo.Path, ".antiphon",
+            $"task-{DelegationReportFormatter.Short(repair.Id)}-brief.md");
+        return File.Exists(spill) ? await File.ReadAllTextAsync(spill) : queued.Body;
+    }
 
     public string DoneReport(string body, string? claimSha = null)
     {

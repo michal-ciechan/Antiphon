@@ -93,15 +93,16 @@ public class RepairSourceDispatchTests
         warnings.ShouldContain(w => w.Detail.Contains("occupied", StringComparison.OrdinalIgnoreCase)
             && w.Detail.Contains(world.Owner.WorktreePath!));
         await using var db = world.CreateContext();
-        var brief = await db.SessionQueuedMessages.SingleAsync(m =>
+        var queued = await db.SessionQueuedMessages.SingleAsync(m =>
             m.AgentSessionId == repair.AgentSessionId && m.Origin == QueuedMessageOrigin.Delegation);
-        brief.Body.ShouldContain(DelegationReportFormatter.Short(world.Owner.Id));
-        brief.Body.ShouldContain(world.OwnerRef);
-        brief.Body.ShouldContain(world.OwnerSha);
-        brief.Body.ShouldContain(repair.WorktreePath!);
-        brief.Body.ShouldContain(repair.WorktreeBranch!);
-        brief.Body.ShouldContain("integration: not requested");
-        brief.Body.ShouldContain($"[antiphon-progress:{repair.Id:D} commit=");
+        var brief = await world.BriefTextAsync(repair, queued);
+        brief.ShouldContain(DelegationReportFormatter.Short(world.Owner.Id));
+        brief.ShouldContain(world.OwnerRef);
+        brief.ShouldContain(world.OwnerSha);
+        brief.ShouldContain(repair.WorktreePath!);
+        brief.ShouldContain(repair.WorktreeBranch!);
+        brief.ShouldContain("integration: not requested");
+        brief.ShouldContain($"[antiphon-progress:{repair.Id:D} commit=");
     }
 
     [Test]
@@ -134,11 +135,10 @@ public class RepairSourceDispatchTests
         }
         else if (kind == "mismatched")
         {
-            (await ScratchGitRepo.GitInAsync(world.Owner.WorktreePath!, "checkout", "-f", "master")).Ok.ShouldBeTrue();
+            (await ScratchGitRepo.GitInAsync(world.Owner.WorktreePath!, "checkout", "--detach")).Ok.ShouldBeTrue();
         }
         else
         {
-            (await ScratchGitRepo.GitInAsync(world.Owner.WorktreePath!, "checkout", "-f", "master")).Ok.ShouldBeTrue();
             (await ScratchGitRepo.GitInAsync(world.Repo.Path, "worktree", "remove", "--force", world.Owner.WorktreePath!)).Ok.ShouldBeTrue();
             (await ScratchGitRepo.GitInAsync(world.Repo.Path, "branch", "-D", world.Owner.WorktreeBranch!)).Ok.ShouldBeTrue();
         }
