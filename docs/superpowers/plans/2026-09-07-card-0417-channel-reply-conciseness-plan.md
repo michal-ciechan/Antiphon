@@ -635,6 +635,10 @@ Assert client/server descriptions separately against the exact proposed text
 strings. View create, edit and setup at 360 and 390 CSS px in an isolated browser
 fixture with mocked HTTP; JSDOM is not evidence of label fit. Retain screenshots
 and observed clipping/wrapping verdict. Do not save changes through a live UI.
+That fixture is `client/src/stories/card0417/ReplyStyleNarrow.stories.tsx`, driven by
+`node client/scripts/v7-reply-style-widths.mjs` (Storybook preview iframe with `fetch`
+stubbed and every non-GET refused, real browser over CDP); it writes the screenshots and
+verdict to `.antiphon/c0417-v7/`.
 
 CLI validation can run without executing the script body or making an HTTP call.
 Run this from the implementation checkout with PowerShell; it uses the parsed
