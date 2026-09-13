@@ -471,6 +471,12 @@ automation is needed to implement this verification.
 | V-9 | One real canary becomes eligible as an after sample / live probe | Execute the manifest, preserving PATCH, idle refresh and session-stamp procedure below | Real before evidence predates activation; actual loaded Phone stamp and successful launch boundary precede every after sample; saved DTO alone never qualifies |
 | V-10 | Reviewed real replies and scoped rollout / mandatory live review | Execute the live sample and review procedure below | At least three genuine before/after pairs, detail follow-up, phone rendering and required follow-up coverage pass; only then expand one bound agent at a time |
 
+Evidence directories under `.antiphon/` are gitignored, so a TRX proves nothing to
+the next reader. Runs whose result a reviewer has to trust -- in particular any
+failure claimed to be pre-existing -- are written into **Recorded runs and known
+pre-existing red** below, in this file, not left in a task's scratch output.
+
+
 #### V-1 / V-2: configuration is opt-in, with meaningful HTTP coverage
 
 - Add `AgentReplyStyle.Phone` to the existing correctness-sentence and
@@ -743,6 +749,55 @@ Phone alone changes no old stamp.
 Recorded 2026-09-13 (task `344d7b1c`), branch tip `a52120b3`: the first command
 exits 0 against the merge-base, and the second prints nothing -- CARD-0417's
 seven commits touch none of the protected paths.
+
+### Recorded runs and known pre-existing red
+
+#### `AgentSystemPromptLaunchTests` -- four failures, pre-existing, not this card
+
+Review task `81633e06` re-flagged these because the only record that they predate
+the card was an earlier task's ignored TRX. Reproduced fresh on 2026-09-13 (task
+`a1011c9f`) at both ends of the branch with
+`--treenode-filter "/*/*/AgentSystemPromptLaunchTests/*"`, the base in a detached
+worktree at the merge-base:
+
+| Where | SHA | total | failed | succeeded |
+|---|---|---|---|---|
+| merge-base, equal to the `origin/master` tip | `2fb81db3` | 24 | 4 | 20 |
+| branch tip | `483e28f0` | 29 | 4 | 25 |
+
+The failing set is identical at both ends by name *and* by failure message, which
+is the part that rules out a coincidence of names:
+
+| Test | Failure, byte-identical at both SHAs |
+|---|---|
+| `Start_with_system_prompt_append_passes_flag_on_fresh_launch` | `ShouldAssertException: await db.AgentIncidents.AnyAsync(i => i.AgentId == h.AgentId) should be False but was True` |
+| `Second_start_on_a_live_session_is_a_no_op_and_does_not_rebootstrap` | `ConflictException: Stop the current conversation before selecting another.` |
+| `Resume_not_found_fallback_delivers_fresh_bootstrap` | `ShouldAssertException: factory.Created.Count should be 2 but was 1` |
+| `Fallback_with_stale_mid_turn_transcript_still_delivers_bootstrap` | `ArgumentOutOfRangeException: Index was out of range.` |
+
+The five-test difference in the totals is this card's own work, and all of it is
+green: `Phone_fresh_launch_preserves_order_append_and_stamp` and
+`Phone_resume_replaces_loaded_stamp_without_changing_append` (telegram and slack
+each), plus `A_style_alone_produces_the_flag_but_still_no_launch_notes` splitting
+into parameterized `Terse` and `Phone` cases where the base has one. Six passing
+cases added; nothing about the four failures changed. They sit on the
+launch/bootstrap path, not on reply style, and are not this card's to fix.
+
+#### V-7 and V-8 at branch tip `483e28f0`, 2026-09-13
+
+| Check | Command | Result |
+|---|---|---|
+| V-7 client | `pwsh -File scripts/test-client.ps1 AgentReplyStyle.test.tsx AgentCreateModal.test.tsx ProjectSetupModal.test.tsx` | 3 files, **22/22**, exit 0 |
+| V-7 CLI | the `project.ps1` ValidateSet probe above | six styles bind, `NotAStyle` rejected, help line lists Phone |
+| V-7 narrow width | `cd client && node scripts/v7-reply-style-widths.mjs` | **PASS**, exit 0; vertical at 360 and 390 px; longest label `Explanatory` has `scrollWidth == clientWidth` (269 px / 296 px) and `documentScrollWidth` equals the viewport on create, edit and setup; 12 screenshots |
+| V-8 contracts | `--treenode-filter "/*/*/ChannelContractsTests/*"` | **14/14** |
+| V-8 delivery | the six methods listed above, one filter per run | **6/6**, one test per run |
+
+Run the six delivery methods one filter at a time. Method-level alternation --
+`/*/*/ChannelBridgeTests/(A)|(B)|(C)` -- discovers **zero** tests on this runner,
+and a zero-test run is a silent false green, not evidence. Only the class segment
+accepts `(X*)|(Y*)`. The class-wide `/*/*/ChannelBridgeTests/*` exceeds a
+ten-minute foreground window; the three named methods take about 80 s each.
 
 ### Positive controls
 
