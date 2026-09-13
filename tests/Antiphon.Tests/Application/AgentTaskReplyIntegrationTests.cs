@@ -1694,9 +1694,11 @@ public class AgentTaskReplyIntegrationTests
             Path.Combine(workspace.Path, ".antiphon", "deliverables", DelegationReportFormatter.Short(task.Id)));
         settled.DeliverableFileCount.ShouldBe(4);
         Directory.GetFiles(settled.DeliverableBundleDir!, "*.md").Length.ShouldBe(4);
-        settled.DeliverablePdfPath.ShouldBeNull("TestScopeFactory points BrowserPath at a missing exe");
-        settled.DeliverableRenderError.ShouldNotBeNull();
-        File.Exists(Path.Combine(settled.DeliverableBundleDir!, "render.log")).ShouldBeTrue();
+        settled.DeliverablePdfPath.ShouldBeNull();
+        settled.DeliverableRenderError.ShouldBeNull();
+        File.Exists(Path.Combine(settled.DeliverableBundleDir!, SourceBundleManifest.FileName)).ShouldBeTrue();
+        File.Exists(Path.Combine(settled.DeliverableBundleDir!, "render.log")).ShouldBeFalse();
+        DeliverableBundleService.FormatNoteBit(settled).ShouldBe("4 md");
     }
 
     [Test]
@@ -1722,7 +1724,8 @@ public class AgentTaskReplyIntegrationTests
         await using var verify = CreateContext();
         var note = await verify.SessionQueuedMessages.SingleAsync(
             m => m.AgentSessionId == parentSessionId && m.Origin == QueuedMessageOrigin.Delegation);
-        note.Body.ShouldContain("deliverable=1 md, pdf failed");
+        note.Body.ShouldContain("deliverable=1 md");
+        note.Body.ShouldNotContain("pdf failed");
         note.Body.ShouldContain("--- deliverable ---");
         note.Body.ShouldContain("[[attach: ");
         note.Body.ShouldContain("01-requirements.md]]");
