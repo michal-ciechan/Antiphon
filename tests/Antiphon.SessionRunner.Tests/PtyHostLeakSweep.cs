@@ -17,6 +17,7 @@ public static class TestSessionLogRoot
         "cpu-watchdog-tests", "liveness-tests", "adoption-tests", "bufbounds-tests",
         "backend-seam", "first-write-race", "0180-dto",
         "card0395-adoption", "card0395-write-fault", "card0395-http", "c420-barrier",
+        "c502-v25", "c502-v26", "c502-v26-manifest", "c502-v26-herdr", "c502-v27",
     ];
 
     public static string Create(string prefix)
