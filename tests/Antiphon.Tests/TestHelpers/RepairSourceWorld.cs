@@ -22,13 +22,16 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
     public IsolatedTestSchema Schema { get; private set; } = null!;
     public ServiceProvider Services { get; private set; } = null!;
     public ControlledTaskProgressGit Git { get; private set; } = null!;
+    public ControlledGitWorkspaceService FilesGit { get; private set; } = null!;
+    public RepositoryMutationLease Leases { get; private set; } = null!;
     public DispatchSaveFault Fault { get; } = new();
     public AgentTask Owner { get; private set; } = null!;
-    public AgentTask Repair { get; private set; } = null!;
+    public AgentTask Repair { get; internal set; } = null!;
     public Guid CallerSessionId { get; private set; }
     public string OwnerRef { get; private set; } = "";
     public string OwnerSha { get; private set; } = "";
     public bool ExplicitIntegration { get; init; }
+    public bool OrdinaryCodeTask { get; init; }
 
     public RepairSourceWorld()
     {
@@ -37,9 +40,14 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
         Remote = Path.GetFullPath(Remote);
     }
 
-    public static async Task<RepairSourceWorld> CreateAsync(bool explicitIntegration = false)
+    public static async Task<RepairSourceWorld> CreateAsync(
+        bool explicitIntegration = false, bool ordinaryCodeTask = false)
     {
-        var world = new RepairSourceWorld { ExplicitIntegration = explicitIntegration };
+        var world = new RepairSourceWorld
+        {
+            ExplicitIntegration = explicitIntegration,
+            OrdinaryCodeTask = ordinaryCodeTask,
+        };
         await world.InitializeAsync();
         return world;
     }
@@ -53,7 +61,9 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
         await Repo.GitAsync("push", "-u", "origin", "master");
 
         Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        Git = new ControlledTaskProgressGit();
+        Leases = new RepositoryMutationLease(new LandingGit());
+        Git = new ControlledTaskProgressGit(Leases);
+        FilesGit = new ControlledGitWorkspaceService();
         BuildServices();
 
         await using var db = CreateContext();
@@ -120,7 +130,7 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
             Workspace = WorkspaceMode.Worktree,
             WorkingDirectory = Repo.Path,
             RepoPath = Repo.Path,
-            RepairSourceTaskId = Owner.Id,
+            RepairSourceTaskId = OrdinaryCodeTask ? null : Owner.Id,
             MergeTargetRef = ExplicitIntegration ? Owner.WorktreeBranch : null,
             ParentSessionId = CallerSessionId,
             ReplyTo = AgentTaskReplyTo.Session,
@@ -139,7 +149,13 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(Options.Create(new SupervisionSettings()));
         services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
-        services.AddSingleton(Options.Create(new DelegationSettings { MaxConcurrentTasks = 512 }));
+        services.AddSingleton(Options.Create(new DelegationSettings
+        {
+            MaxConcurrentTasks = 512,
+            AllowedRoots = [Repo.Path],
+        }));
+        services.AddSingleton(Options.Create(new AgentSessionSettings()));
+        services.AddSingleton<ApiErrorRecoveryService>();
         services.AddOptions<AgentRegistrySettings>().Configure(s =>
         {
             s.DefaultDefinition = "claude";
@@ -151,8 +167,10 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
         services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
         services.AddSingleton<DelegationWorkspaceResolver>();
+        services.AddSingleton<IRepositoryMutationLease>(Leases);
         services.AddSingleton<ILandingGit>(Git);
         services.AddSingleton<ITaskProgressGit>(Git);
+        services.AddSingleton<GitWorkspaceService>(FilesGit);
         services.AddDelegationWorktreeGraph(new GitSettings
         {
             WorktreeBasePath = Repo.WorktreeRoot,
@@ -187,6 +205,41 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
         new(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
 
     public string ClaimLine(string sha) => $"[antiphon-progress:{Repair.Id:D} commit={sha}]";
+
+    public string DoneReport(string body, string? claimSha = null)
+    {
+        var claim = claimSha is null ? "" : ClaimLine(claimSha) + "\n";
+        return body + "\n" + claim + "--- next stage ---\nnext: review\nhandoff: x\n";
+    }
+
+    public async Task AmendOwnerCommitDateAsync(DateTimeOffset when)
+    {
+        var stamp = when.ToString("o");
+        var env = new Dictionary<string, string>
+        {
+            ["GIT_AUTHOR_DATE"] = stamp,
+            ["GIT_COMMITTER_DATE"] = stamp,
+        };
+        (await ScratchGitRepo.GitInAsync(Owner.WorktreePath!, env, "commit", "--amend", "--no-edit", "--date", stamp))
+            .Ok.ShouldBeTrue();
+        OwnerSha = (await ScratchGitRepo.GitInAsync(Owner.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim();
+        (await ScratchGitRepo.GitInAsync(Owner.WorktreePath!, "push", "--force", "origin", Owner.WorktreeBranch!))
+            .Ok.ShouldBeTrue();
+        await using var db = CreateContext();
+        var owner = await db.AgentTasks.SingleAsync(t => t.Id == Owner.Id);
+        owner.WorktreeBaseSha = OwnerSha;
+        await db.SaveChangesAsync();
+        Owner = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == Owner.Id);
+    }
+
+    public async Task<string> CommitInPrimaryTreeAsync(string message)
+    {
+        var path = Repair.WorktreePath!;
+        await File.WriteAllTextAsync(Path.Combine(path, "direct.md"), message + "\n");
+        (await ScratchGitRepo.GitInAsync(path, "add", "direct.md")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(path, "commit", "-m", message)).Ok.ShouldBeTrue();
+        return (await ScratchGitRepo.GitInAsync(path, "rev-parse", "HEAD")).StdOut.Trim();
+    }
 
     public async Task<(AgentTask Repair, Guid SessionId)> DispatchAsync()
     {

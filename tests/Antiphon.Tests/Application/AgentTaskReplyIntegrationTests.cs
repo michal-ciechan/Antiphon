@@ -2769,6 +2769,50 @@ public class AgentTaskReplyIntegrationTests
     }
 
     [Test]
+    public async Task a_legacy_task_without_a_baseline_gets_no_remote_credit()
+    {
+        using var repo = new ScratchGitRepo("antiphon-reply-legacy-remote");
+        await repo.CommitFileAsync("README.md", "base\n");
+        var remote = Path.Combine(repo.WorktreeRoot, "remote.git");
+        Directory.CreateDirectory(remote);
+        (await ScratchGitRepo.GitInAsync(remote, "init", "--bare")).Ok.ShouldBeTrue();
+        await repo.GitAsync("remote", "add", "origin", remote);
+        await repo.GitAsync("push", "-u", "origin", "master");
+        var factory = new TestScopeFactory(repo.WorktreeRoot);
+        var parentSessionId = await SeedSessionAsync(repo.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(repo.Path, parentSessionId, t =>
+        {
+            t.Workspace = WorkspaceMode.Worktree;
+            t.RepoPath = repo.Path;
+            t.Role = AgentTaskRole.Code;
+            t.MergeTargetRef = null;
+        });
+        await CreateWorktreeForAsync(factory, task);
+        task.ProgressBaselineJson.ShouldBeNull();
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "push", "-u", "origin", task.WorktreeBranch!)).Ok.ShouldBeTrue();
+        var clone = Path.Combine(repo.WorktreeRoot, "clone");
+        (await ScratchGitRepo.GitInAsync(repo.WorktreeRoot, "clone", remote, clone)).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(clone, "checkout", "-B", task.WorktreeBranch!, "origin/" + task.WorktreeBranch))
+            .Ok.ShouldBeTrue();
+        await File.WriteAllTextAsync(Path.Combine(clone, "elsewhere.md"), "elsewhere\n");
+        (await ScratchGitRepo.GitInAsync(clone, "add", "elsewhere.md")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(clone, "commit", "-m", "elsewhere")).Ok.ShouldBeTrue();
+        var c = (await ScratchGitRepo.GitInAsync(clone, "rev-parse", "HEAD")).StdOut.Trim();
+        (await ScratchGitRepo.GitInAsync(clone, "push", "origin", task.WorktreeBranch!)).Ok.ShouldBeTrue();
+
+        var report = $"Fixed it.\n[antiphon-progress:{task.Id:D} commit={c}]\n";
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), report);
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Failed);
+        settled.FailureCode.ShouldBe(AgentTaskFailureCode.CompletedWithoutProgress);
+        settled.FailureReason.ShouldContain("no attributable post-dispatch progress");
+        settled.FailureReason.ShouldNotContain("0 commits");
+    }
+
+    [Test]
     public async Task a_shared_code_task_is_not_failed_for_zero_worktree_progress()
     {
         using var workspace = new TempWorkspace();

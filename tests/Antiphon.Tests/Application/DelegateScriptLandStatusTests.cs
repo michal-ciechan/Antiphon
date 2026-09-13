@@ -57,4 +57,31 @@ public sealed class DelegateScriptLandStatusTests
         acceptance.Output.ShouldContain("Publication pending"); acceptance.Output.ShouldNotContain("receipt confirmed");
         if (scenario == "none") acceptance.Output.ShouldContain("notification=not-required");
     }
+
+    [Test]
+    [Arguments("observed")]
+    [Arguments("unavailable")]
+    public async Task C499_V29b_StatusPrintsProgressEvidence(string kind)
+    {
+        var id = Guid.NewGuid();
+        var owner = Guid.NewGuid();
+        var commit = new string('a', 40);
+        object progress = kind == "observed"
+            ? new { assessment = "ProgressObserved", sources = new[] { new { origin = "RepairSource", ownerTaskId = owner, commit } } }
+            : new { assessment = "Indeterminate", reason = "source_remote_unreadable" };
+        var body = JsonSerializer.Serialize(new {
+            summary = new { status = "Succeeded", title = "repair", kind = "Worker", role = "Code", modelLevel = "High" },
+            result = "EXACT REPORT AFTER FACTS",
+            progressEvidence = progress,
+        });
+        await using var server = LandApiStub.Compatible(commit, taskStatusBody: body);
+        var status = await DelegateScriptRunner.RunAsync(server.Url, "-Status", id.ToString());
+        status.ExitCode.ShouldBe(0, status.Output);
+        if (kind == "observed")
+            status.Output.ShouldContain($"Progress: repair-source; owner {owner}; commit {commit}");
+        else
+            status.Output.ShouldContain("Progress: unavailable; reason source_remote_unreadable");
+        status.Output.IndexOf("Progress:", StringComparison.Ordinal)
+            .ShouldBeLessThan(status.Output.IndexOf("EXACT REPORT AFTER FACTS", StringComparison.Ordinal));
+    }
 }

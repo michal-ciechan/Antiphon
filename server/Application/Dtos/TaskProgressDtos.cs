@@ -131,13 +131,15 @@ public static class TaskProgressJson
         return new ProgressEvidenceDto(
             evidence.Assessment,
             evidence.Reason,
-            evidence.Sources?.Select(s => new ProgressEvidenceSourceDto(
-                s.Origin,
-                s.OwnerTaskId,
-                s.VerifiedSha ?? s.ClaimedSha,
-                s.LocalObserved,
-                s.RemoteObserved,
-                s.RegisteredPath,
-                s.Reason)).ToArray());
+            evidence.Sources?
+                .OrderBy(s => s.Assessment == CompletionProgressAssessment.ProgressObserved ? 0 : 1)
+                .Select(s => new ProgressEvidenceSourceDto(
+                    s.Origin,
+                    s.OwnerTaskId,
+                    s.VerifiedSha ?? s.ClaimedSha,
+                    s.LocalObserved,
+                    s.RemoteObserved,
+                    s.RegisteredPath,
+                    s.Reason)).ToArray());
     }
 }

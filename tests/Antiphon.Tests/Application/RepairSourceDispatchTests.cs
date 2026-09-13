@@ -236,16 +236,28 @@ public class RepairSourceDispatchTests
     [Arguments("unknown-guid")]
     [Arguments("no-branch")]
     [Arguments("plan-owner")]
+    [Arguments("other-repo")]
+    [Arguments("published")]
     public async Task C499_R26_AForeignOwnerIsRefused(string kind)
     {
         using var repo = new ScratchGitRepo("c499-r26");
         await repo.CommitFileAsync("README.md", "base\n");
+        using var other = new ScratchGitRepo("c499-r26-other");
+        await other.CommitFileAsync("README.md", "other\n");
         await using var db = CreateContext();
-        var owner = await SeedOwnerAsync(db, repo);
+        var ownerRepo = kind == "other-repo" ? other : repo;
+        var owner = await SeedOwnerAsync(db, ownerRepo);
         if (kind == "no-branch") owner.WorktreeBranch = null;
         if (kind == "plan-owner") owner.Role = AgentTaskRole.Plan;
+        if (kind == "published")
+        {
+            var op = PublishedLanding(owner.Id);
+            db.AgentTaskLandings.Add(op);
+            owner.ActiveLandingId = op.Id;
+        }
         await db.SaveChangesAsync();
-        var service = CreateService(db, repo);
+        var extra = kind == "other-repo" ? new[] { other.Path } : null;
+        var service = CreateService(db, repo, extra);
         var id = kind == "unknown-guid" ? Guid.NewGuid() : owner.Id;
         var ex = await Should.ThrowAsync<ValidationException>(() =>
             service.CreateAsync(
@@ -253,7 +265,12 @@ public class RepairSourceDispatchTests
                     { RepairSourceTaskId = id },
                 new AgentTaskService.Caller(null, null, repo.Path),
                 CancellationToken.None));
-        ex.Code.ShouldBe(kind == "unknown-guid" ? "repair_source_not_found" : "repair_source_owner_invalid");
+        ex.Code.ShouldBe(kind switch
+        {
+            "unknown-guid" => "repair_source_not_found",
+            "published" => "repair_source_published",
+            _ => "repair_source_owner_invalid",
+        });
     }
 
     [Test]
@@ -271,6 +288,57 @@ public class RepairSourceDispatchTests
                 new AgentTaskService.Caller(null, null, repo.Path),
                 CancellationToken.None));
         ex.Code.ShouldBe("repair_source_merge_target_mismatch");
+    }
+
+    [Test]
+    [Timeout(90_000)]
+    public async Task C499_R08_RelaunchAndRetryKeepTheOriginalBaseline()
+    {
+        await using var world = await RepairSourceWorld.CreateAsync();
+        var (repair, sessionId) = await world.DispatchAsync();
+        var original = repair.ProgressBaselineJson;
+        original.ShouldNotBeNull();
+        await world.CommitInOwnerTreeAsync("owner continued", push: true);
+        await using (var scope = world.Services.CreateAsyncScope())
+        {
+            var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+            await dispatcher.RelaunchWedgedAsync(repair.Id, sessionId, CancellationToken.None);
+        }
+        await using (var db = world.CreateContext())
+        {
+            (await db.AgentTasks.SingleAsync(t => t.Id == repair.Id)).ProgressBaselineJson.ShouldBe(original);
+        }
+
+        await using (var scope = world.Services.CreateAsyncScope())
+        {
+            var tasks = scope.ServiceProvider.GetRequiredService<AgentTaskService>();
+            await tasks.RetryAsync(repair.Id, CancellationToken.None);
+        }
+        await world.DispatchAsync();
+        await using (var db = world.CreateContext())
+        {
+            var retried = await db.AgentTasks.SingleAsync(t => t.Id == repair.Id);
+            retried.ProgressBaselineJson.ShouldBe(original);
+            retried.Status = AgentTaskStatus.Succeeded;
+            await db.SaveChangesAsync();
+        }
+
+        await using var followScope = world.Services.CreateAsyncScope();
+        var followUp = await followScope.ServiceProvider.GetRequiredService<AgentTaskService>()
+            .CreateAsync(
+                new CreateAgentTaskRequest("follow-up repair", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree)
+                    { RepairSourceTaskId = world.Owner.Id },
+                new AgentTaskService.Caller(null, null, world.Repo.Path),
+                CancellationToken.None);
+        await using (var db = world.CreateContext())
+        {
+            world.Repair = await db.AgentTasks.SingleAsync(t => t.Id == followUp.Id);
+        }
+        var (fresh, _) = await world.DispatchAsync();
+        var freshBaseline = TaskProgressJson.TryReadBaseline(fresh.ProgressBaselineJson)!;
+        var originalBaseline = TaskProgressJson.TryReadBaseline(original)!;
+        freshBaseline.CapturedAt.ShouldNotBe(originalBaseline.CapturedAt);
+        freshBaseline.RepairSource!.LocalSha.ShouldNotBe(originalBaseline.RepairSource!.LocalSha);
     }
 
     [Test]
@@ -330,9 +398,29 @@ public class RepairSourceDispatchTests
         return parent;
     }
 
-    private static AgentTaskService CreateService(AppDbContext db, ScratchGitRepo repo)
+    private static AgentTaskLanding PublishedLanding(Guid ownerId)
     {
-        var settings = new DelegationSettings { MaxDepth = 5, MaxTasksPerRoot = 40, AllowedRoots = [repo.Path] };
+        var op = new AgentTaskLanding
+        {
+            Id = Guid.NewGuid(), TaskId = ownerId, SchemaVersion = 1,
+            SourceFullRef = "refs/heads/source", TargetFullRef = "refs/heads/master", DestinationFullRef = "refs/heads/master",
+            RepositoryPath = "repo", CommonDirectory = "common", GitDirectory = "git", WorktreePath = "tree",
+            OriginalSourceSha = new string('a', 40), RebasedSourceSha = new string('a', 40), VerifiedSourceSha = new string('a', 40),
+            TargetBeforeSha = new string('b', 40), ObservedRemoteTargetSha = new string('a', 40),
+            RemoteFingerprint = new string('c', 64), RemoteConfirmedAt = DateTime.UtcNow, VerifiedAt = DateTime.UtcNow,
+            Publication = LandPublicationOutcome.Landed, VerificationSkipReason = "base_unchanged",
+            SourcePinned = true, TargetPinned = true, PreparedPinned = true,
+            ConfirmationMethod = "push-endpoint-read-fetch-ancestry", Phase = LandPhase.Prepared,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        op.RecoveryRefPrefix = $"refs/antiphon/land/{op.TaskId:N}/{op.Id:N}";
+        return op;
+    }
+
+    private static AgentTaskService CreateService(AppDbContext db, ScratchGitRepo repo, IReadOnlyList<string>? extraRoots = null)
+    {
+        var roots = extraRoots is null ? new List<string> { repo.Path } : extraRoots.Prepend(repo.Path).ToList();
+        var settings = new DelegationSettings { MaxDepth = 5, MaxTasksPerRoot = 40, AllowedRoots = roots };
         return new AgentTaskService(
             db,
             new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
