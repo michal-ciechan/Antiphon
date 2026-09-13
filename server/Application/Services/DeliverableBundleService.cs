@@ -11,38 +11,32 @@ using Microsoft.Extensions.Options;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// CARD-0337 S1: at settlement, a document-producing task gets a PDF + source copies (or a zip)
-/// under <c>&lt;repo&gt;\.antiphon\deliverables\&lt;taskShort&gt;\</c>. Never throws into settlement.
+/// CARD-0418: at settlement, a document-producing task gets source copies (or a zip) under
+/// <c>&lt;repo&gt;\.antiphon\deliverables\&lt;taskShort&gt;\</c>. Never throws into settlement.
+/// Does not render PDF.
 /// </summary>
 public sealed class DeliverableBundleService
 {
-    public const string RenderLogName = "render.log";
     public const long MaxInlineSourceBytes = 1024 * 1024;
 
     private static readonly Regex NamedDocPattern = new(
         "`?(?<path>docs/[\\w./-]+\\.md)`?", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    private readonly MarkdownPdfRenderer _renderer;
     private readonly GitWorkspaceService _git;
     private readonly DeliverablesSettings _settings;
-    private readonly TimeProvider _clock;
     private readonly ILogger<DeliverableBundleService> _logger;
 
     public DeliverableBundleService(
-        MarkdownPdfRenderer renderer,
         GitWorkspaceService git,
         IOptions<DeliverablesSettings> settings,
-        TimeProvider clock,
         ILogger<DeliverableBundleService> logger)
     {
-        _renderer = renderer;
         _git = git;
         _settings = settings.Value;
-        _clock = clock;
         _logger = logger;
     }
 
-    public readonly record struct BundledDocument(string RepoRelativePath, string Markdown);
+    public readonly record struct BundledDocument(string RepoRelativePath, byte[] Bytes);
 
     public async Task TryBuildAsync(
         AgentTask task,
@@ -53,6 +47,8 @@ public sealed class DeliverableBundleService
         if (!_settings.Enabled)
             return;
         if (task.Status != AgentTaskStatus.Succeeded)
+            return;
+        if (task.OutboundDeliveryId is not null)
             return;
 
         try
@@ -69,7 +65,8 @@ public sealed class DeliverableBundleService
     }
 
     /// <summary>
-    /// Files S3 may attach: PDF first, then sources/zip. Skips <c>render.log</c> and leftover HTML.
+    /// Files a channel turn may imply-attach: manifest-listed markdown and source zip only.
+    /// Historical PDF paths stay on the task row but are not implicitly attached.
     /// </summary>
     public static IReadOnlyList<string> ListAttachableFiles(AgentTask task)
     {
@@ -77,29 +74,23 @@ public sealed class DeliverableBundleService
             || !Directory.Exists(task.DeliverableBundleDir))
             return [];
 
-        var files = new List<string>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (!string.IsNullOrWhiteSpace(task.DeliverablePdfPath)
-            && File.Exists(task.DeliverablePdfPath)
-            && seen.Add(task.DeliverablePdfPath))
+        var manifestPath = Path.Combine(task.DeliverableBundleDir, SourceBundleManifest.FileName);
+        if (File.Exists(manifestPath))
         {
-            files.Add(task.DeliverablePdfPath);
+            try
+            {
+                return SourceBundleManifest.Read(manifestPath).ListExistingFiles(task.DeliverableBundleDir);
+            }
+            catch (Exception)
+            {
+                return [];
+            }
         }
 
-        foreach (var path in Directory.EnumerateFiles(task.DeliverableBundleDir)
-                     .OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
-        {
-            var name = Path.GetFileName(path);
-            if (name.Equals(RenderLogName, StringComparison.OrdinalIgnoreCase))
-                continue;
-            if (name.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
-                continue;
-            if (!seen.Add(path))
-                continue;
-            files.Add(path);
-        }
-
-        return files;
+        return Directory.EnumerateFiles(task.DeliverableBundleDir)
+            .Where(IsLegacyImpliedSource)
+            .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     public static string? FormatNoteBit(AgentTask task)
@@ -107,13 +98,10 @@ public sealed class DeliverableBundleService
         if (string.IsNullOrWhiteSpace(task.DeliverableBundleDir))
             return null;
         var md = task.DeliverableFileCount;
-        if (!string.IsNullOrWhiteSpace(task.DeliverablePdfPath)
-            && File.Exists(task.DeliverablePdfPath))
-        {
-            return $"{md} md, pdf {FormatSize(new FileInfo(task.DeliverablePdfPath).Length)}";
-        }
-
-        return $"{md} md, pdf failed";
+        var zip = HasSourcesZip(task);
+        var incomplete = IsIncomplete(task);
+        var bit = zip ? $"{md} md, sources zip" : $"{md} md";
+        return incomplete ? bit + ", incomplete" : bit;
     }
 
     private async Task BuildCoreAsync(
@@ -122,76 +110,79 @@ public sealed class DeliverableBundleService
         AppDbContext? db,
         CancellationToken ct)
     {
-        var log = new StringBuilder();
-        var documents = await CollectDocumentsAsync(task, report, log, ct);
+        var documents = await CollectDocumentsAsync(task, report, ct);
         if (documents.Count == 0)
             return;
 
         var root = FirstNonEmpty(task.RepoPath, task.WorkingDirectory);
         if (string.IsNullOrWhiteSpace(root))
-        {
-            log.AppendLine("no RepoPath or WorkingDirectory; skipped");
             return;
-        }
 
         var shortId = DelegationReportFormatter.Short(task.Id);
         var bundleDir = Path.Combine(root, ".antiphon", "deliverables", shortId);
         Directory.CreateDirectory(bundleDir);
 
-        var collected = documents.Count;
-        var truncated = collected > _settings.MaxDocuments;
-        if (truncated)
+        var budget = _settings.MaxUncompressedSourceBytes <= 0
+            ? 64L * 1024 * 1024
+            : _settings.MaxUncompressedSourceBytes;
+        var retained = new List<BundledDocument>();
+        var omissions = new List<SourceBundleOmission>();
+        long used = 0;
+        foreach (var doc in documents)
         {
-            log.AppendLine(
-                $"capped documents at {_settings.MaxDocuments} of {collected}; PDF skipped, sources zipped");
-            documents = documents.Take(_settings.MaxDocuments).ToList();
+            var length = doc.Bytes.LongLength;
+            if (used > 0 && used + length > budget)
+            {
+                omissions.Add(new SourceBundleOmission
+                {
+                    RelativePath = doc.RepoRelativePath,
+                    Length = length,
+                    Reason = "uncompressed-source-budget",
+                });
+                continue;
+            }
+
+            if (used == 0 && length > budget)
+            {
+                omissions.Add(new SourceBundleOmission
+                {
+                    RelativePath = doc.RepoRelativePath,
+                    Length = length,
+                    Reason = "uncompressed-source-budget",
+                });
+                continue;
+            }
+
+            retained.Add(doc);
+            used += length;
         }
+
+        if (retained.Count == 0)
+            return;
 
         var identifier = db is null ? null : await CardIdentifierAsync(db, task, ct);
-        var stem = $"{CoverStem(identifier, shortId)}-{Slug(documents[0])}";
-        await WriteSourcesAsync(documents, bundleDir, stem, zipOnly: truncated, log, ct);
+        var stem = $"{CoverStem(identifier, shortId)}-{Slug(retained[0])}";
+        var members = await WriteSourcesAsync(retained, bundleDir, stem, ct);
 
-        string? pdfPath = null;
-        string? renderError = null;
-        if (!truncated)
+        var manifest = new SourceBundleManifest
         {
-            var cover = await BuildCoverLineAsync(task, identifier, shortId, log, ct);
-            var pdfName = stem + ".pdf";
-            pdfPath = Path.Combine(bundleDir, pdfName);
-            var html = _renderer.ToHtml(
-                cover,
-                documents.Select(d => new MarkdownPdfRenderer.DocumentSection(d.RepoRelativePath, d.Markdown)).ToList());
-            var rendered = await _renderer.RenderToPdfAsync(html, pdfPath, ct);
-            log.AppendLine($"pdf {rendered.DurationMs}ms: {(rendered.Succeeded ? "ok" : rendered.Error)}");
-            if (!string.IsNullOrWhiteSpace(rendered.Log))
-                log.AppendLine(rendered.Log);
-            if (!rendered.Succeeded)
-            {
-                renderError = rendered.Error;
-                pdfPath = null;
-                try { if (File.Exists(Path.Combine(bundleDir, pdfName))) File.Delete(Path.Combine(bundleDir, pdfName)); }
-                catch (IOException) { }
-            }
-        }
-        else
-        {
-            renderError = $"too many documents ({collected}); PDF skipped";
-        }
-
-        await File.WriteAllTextAsync(Path.Combine(bundleDir, RenderLogName), log.ToString(), ct);
+            Version = SourceBundleManifest.CurrentVersion,
+            Members = members,
+            Omissions = omissions,
+            Incomplete = omissions.Count > 0,
+        };
+        await SourceBundleManifest.WriteAsync(
+            Path.Combine(bundleDir, SourceBundleManifest.FileName), manifest, ct);
 
         task.DeliverableBundleDir = bundleDir;
-        task.DeliverablePdfPath = pdfPath;
-        task.DeliverableFileCount = documents.Count;
-        task.DeliverableRenderError = renderError is null
-            ? null
-            : renderError.Length <= 300 ? renderError : renderError[..300];
+        task.DeliverablePdfPath = null;
+        task.DeliverableFileCount = retained.Count;
+        task.DeliverableRenderError = null;
     }
 
     private async Task<List<BundledDocument>> CollectDocumentsAsync(
         AgentTask task,
         string report,
-        StringBuilder log,
         CancellationToken ct)
     {
         var named = new List<string>();
@@ -231,18 +222,15 @@ public sealed class DeliverableBundleService
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                log.AppendLine($"git diff failed: {ex.Message}");
+                _logger.LogDebug(ex, "git diff failed while collecting deliverable sources");
             }
         }
 
         var producingByRole = task.Role is AgentTaskRole.Plan or AgentTaskRole.Docs;
-        // Named paths that resolve (disk or git) make any role document-producing — the live
-        // Custom-role cleanup task is this shape. Mixed code+docs Code tasks with no named
-        // doc do not get a bundle.
         var resolvedNamed = new List<BundledDocument>();
         foreach (var relative in named)
         {
-            var content = await ReadContentAsync(task, relative, ct);
+            var content = await ReadBytesAsync(task, relative, ct);
             if (content is not null)
                 resolvedNamed.Add(new BundledDocument(relative, content));
         }
@@ -262,7 +250,7 @@ public sealed class DeliverableBundleService
         {
             if (!seen.Add(relative))
                 continue;
-            var content = await ReadContentAsync(task, relative, ct);
+            var content = await ReadBytesAsync(task, relative, ct);
             if (content is not null)
                 documents.Add(new BundledDocument(relative, content));
         }
@@ -270,7 +258,7 @@ public sealed class DeliverableBundleService
         return documents;
     }
 
-    private async Task<string?> ReadContentAsync(AgentTask task, string relative, CancellationToken ct)
+    private async Task<byte[]?> ReadBytesAsync(AgentTask task, string relative, CancellationToken ct)
     {
         var diskRelative = relative.Replace('/', Path.DirectorySeparatorChar);
         foreach (var root in new[] { task.WorktreePath, task.WorkingDirectory, task.RepoPath }
@@ -278,33 +266,31 @@ public sealed class DeliverableBundleService
                      .Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var full = Path.Combine(root!, diskRelative);
-            if (File.Exists(full))
-            {
-                try { return await File.ReadAllTextAsync(full, ct); }
-                catch (IOException) { }
-            }
+            if (!File.Exists(full))
+                continue;
+            try { return await File.ReadAllBytesAsync(full, ct); }
+            catch (IOException) { }
         }
 
         if (task.Workspace == WorkspaceMode.Worktree && !string.IsNullOrWhiteSpace(task.WorktreeBranch))
         {
             var repository = FirstNonEmpty(task.RepoPath, task.WorkingDirectory);
             if (!string.IsNullOrWhiteSpace(repository))
-                return await _git.GetContentAtAsync(repository, relative, task.WorktreeBranch, ct);
+                return await _git.GetBytesAtAsync(repository, relative, task.WorktreeBranch, ct);
         }
 
         return null;
     }
 
-    private async Task WriteSourcesAsync(
+    private async Task<List<SourceBundleMember>> WriteSourcesAsync(
         List<BundledDocument> documents,
         string bundleDir,
         string stem,
-        bool zipOnly,
-        StringBuilder log,
         CancellationToken ct)
     {
-        var anyOversize = documents.Any(d => Encoding.UTF8.GetByteCount(d.Markdown) > MaxInlineSourceBytes);
-        var zip = zipOnly || documents.Count > _settings.MaxSourceFilesInline || anyOversize;
+        var anyOversize = documents.Any(d => d.Bytes.LongLength > MaxInlineSourceBytes);
+        var zip = documents.Count > _settings.MaxSourceFilesInline || anyOversize;
+        var members = new List<SourceBundleMember>();
         if (!zip)
         {
             var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -312,65 +298,43 @@ public sealed class DeliverableBundleService
             {
                 var fileName = UniqueFileName(doc.RepoRelativePath, names);
                 var dest = Path.Combine(bundleDir, fileName);
-                await File.WriteAllTextAsync(dest, doc.Markdown, ct);
-                log.AppendLine($"copied {doc.RepoRelativePath} -> {fileName}");
+                await File.WriteAllBytesAsync(dest, doc.Bytes, ct);
+                members.Add(new SourceBundleMember
+                {
+                    RelativePath = doc.RepoRelativePath,
+                    StoredName = fileName,
+                    Kind = SourceBundleMemberKinds.Markdown,
+                    Length = doc.Bytes.LongLength,
+                    Sha256 = SourceBundleManifest.Sha256Hex(doc.Bytes),
+                });
             }
 
-            return;
+            return members;
         }
 
-        var zipPath = Path.Combine(bundleDir, stem + "-sources.zip");
-        await using (var stream = File.Create(zipPath))
+        var zipName = stem + "-sources.zip";
+        var zipPath = Path.Combine(bundleDir, zipName);
+        await using (var stream = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None))
         using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
         {
             foreach (var doc in documents)
             {
                 var entryName = doc.RepoRelativePath.Replace('\\', '/').TrimStart('/');
                 var entry = archive.CreateEntry(entryName, CompressionLevel.Fastest);
-                await using var writer = new StreamWriter(entry.Open());
-                await writer.WriteAsync(doc.Markdown.AsMemory(), ct);
+                await using var dest = entry.Open();
+                await dest.WriteAsync(doc.Bytes, ct);
+                members.Add(new SourceBundleMember
+                {
+                    RelativePath = doc.RepoRelativePath,
+                    StoredName = zipName,
+                    Kind = SourceBundleMemberKinds.Zip,
+                    Length = doc.Bytes.LongLength,
+                    Sha256 = SourceBundleManifest.Sha256Hex(doc.Bytes),
+                });
             }
         }
 
-        log.AppendLine($"zipped {documents.Count} sources -> {Path.GetFileName(zipPath)}");
-    }
-
-    private async Task<string> BuildCoverLineAsync(
-        AgentTask task,
-        string? identifier,
-        string shortId,
-        StringBuilder log,
-        CancellationToken ct)
-    {
-        var title = string.IsNullOrWhiteSpace(task.Title) ? null : task.Title.Trim();
-        var sha = await TryHeadShaAsync(task, ct);
-        var date = _clock.GetUtcNow().UtcDateTime.ToString("yyyy-MM-dd");
-        var bits = new List<string>();
-        if (!string.IsNullOrWhiteSpace(identifier) && !string.IsNullOrWhiteSpace(title))
-            bits.Add($"{identifier} {title}");
-        else if (!string.IsNullOrWhiteSpace(identifier))
-            bits.Add(identifier);
-        else if (!string.IsNullOrWhiteSpace(title))
-            bits.Add(title);
-        bits.Add(shortId);
-        if (!string.IsNullOrWhiteSpace(sha))
-            bits.Add(sha.Length > 12 ? sha[..12] : sha);
-        bits.Add(date);
-        log.AppendLine("cover: " + string.Join(" · ", bits));
-        return string.Join(" · ", bits);
-    }
-
-    private async Task<string?> TryHeadShaAsync(AgentTask task, CancellationToken ct)
-    {
-        foreach (var dir in new[] { task.WorktreePath, task.WorkingDirectory, task.RepoPath }
-                     .Where(d => !string.IsNullOrWhiteSpace(d)))
-        {
-            var sha = await _git.GetHeadShaAsync(dir!, ct);
-            if (!string.IsNullOrWhiteSpace(sha))
-                return sha;
-        }
-
-        return string.IsNullOrWhiteSpace(task.WorktreeBaseSha) ? null : task.WorktreeBaseSha;
+        return members;
     }
 
     private static async Task<string?> CardIdentifierAsync(AppDbContext db, AgentTask task, CancellationToken ct)
@@ -464,6 +428,42 @@ public sealed class DeliverableBundleService
         }
 
         return null;
+    }
+
+    private static bool IsLegacyImpliedSource(string path)
+    {
+        var name = Path.GetFileName(path);
+        if (name.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return name.EndsWith("-sources.zip", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasSourcesZip(AgentTask task)
+    {
+        foreach (var file in ListAttachableFiles(task))
+        {
+            if (file.EndsWith("-sources.zip", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsIncomplete(AgentTask task)
+    {
+        if (string.IsNullOrWhiteSpace(task.DeliverableBundleDir))
+            return false;
+        var manifestPath = Path.Combine(task.DeliverableBundleDir, SourceBundleManifest.FileName);
+        if (!File.Exists(manifestPath))
+            return false;
+        try
+        {
+            return SourceBundleManifest.Read(manifestPath).Incomplete;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
     }
 
     internal static string FormatSize(long bytes)

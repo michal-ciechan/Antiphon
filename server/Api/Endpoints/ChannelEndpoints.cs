@@ -34,6 +34,13 @@ public static class ChannelEndpoints
             return Results.Ok(await service.UpdateAsync(id, request, cancellationToken));
         });
 
+        channels.MapGet("/outbound-profiles", async (
+            ChatChannelService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.ListOutboundProfilesAsync(cancellationToken));
+        });
+
         // CARD-0171: there is deliberately NO generic POST /{id}/send. ChatChannelService.SendAsync
         // is the primitive, and the server composes and addresses its own messages
         // (TrackerSyncNotifier). A text-to-any-channel megaphone with no audit row is a feature

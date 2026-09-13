@@ -13,13 +13,14 @@ using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Application;
 
-/// <summary>CARD-0337 S1: document detection, source copy/zip, PDF failure still keeps sources.</summary>
+/// <summary>CARD-0418 S1: document detection, source copy/zip, never a settlement PDF.</summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public class DeliverableBundleServiceTests
 {
     [Test]
-    public async Task A_custom_role_report_naming_four_docs_copies_them_and_records_a_render_error_without_a_browser()
+    [Test]
+    public async Task Default_settlement_preserves_sources_without_conversion()
     {
         using var workspace = new TempDir();
         WriteDocs(workspace.Path, "01-requirements.md", "02-design.md", "03-api.md", "04-test.md");
@@ -38,11 +39,34 @@ public class DeliverableBundleServiceTests
             Path.Combine(workspace.Path, ".antiphon", "deliverables", DelegationReportFormatter.Short(task.Id)));
         task.DeliverableFileCount.ShouldBe(4);
         task.DeliverablePdfPath.ShouldBeNull();
-        task.DeliverableRenderError.ShouldNotBeNull();
+        task.DeliverableRenderError.ShouldBeNull();
         Directory.GetFiles(task.DeliverableBundleDir, "*.md").Length.ShouldBe(4);
-        File.Exists(Path.Combine(task.DeliverableBundleDir, "render.log")).ShouldBeTrue();
+        File.Exists(Path.Combine(task.DeliverableBundleDir, "render.log")).ShouldBeFalse();
+        File.Exists(Path.Combine(task.DeliverableBundleDir, SourceBundleManifest.FileName)).ShouldBeTrue();
         DeliverableBundleService.ListAttachableFiles(task).Count.ShouldBe(4);
-        DeliverableBundleService.FormatNoteBit(task).ShouldBe("4 md, pdf failed");
+        DeliverableBundleService.FormatNoteBit(task).ShouldBe("4 md");
+    }
+
+    [Test]
+    public async Task A_custom_role_report_naming_four_docs_copies_them_and_records_a_render_error_without_a_browser()
+    {
+        using var workspace = new TempDir();
+        WriteDocs(workspace.Path, "01-requirements.md", "02-design.md", "03-api.md", "04-test.md");
+        var task = NewTask(workspace.Path, AgentTaskRole.Custom, WorkspaceMode.Worktree);
+        var report = """
+            Wrote `docs/features/001-kalshi-ref-data-downloader/01-requirements.md`,
+            `docs/features/001-kalshi-ref-data-downloader/02-design.md`,
+            `docs/features/001-kalshi-ref-data-downloader/03-api.md`,
+            `docs/features/001-kalshi-ref-data-downloader/04-test.md`.
+            """;
+
+        await CreateService().TryBuildAsync(task, report, db: null, CancellationToken.None);
+
+        task.DeliverableBundleDir.ShouldNotBeNull();
+        task.DeliverableFileCount.ShouldBe(4);
+        task.DeliverablePdfPath.ShouldBeNull();
+        task.DeliverableRenderError.ShouldBeNull();
+        DeliverableBundleService.FormatNoteBit(task).ShouldBe("4 md");
     }
 
     [Test]
@@ -152,7 +176,6 @@ public class DeliverableBundleServiceTests
         var settings = new DeliverablesSettings
         {
             Enabled = false,
-            BrowserPath = Path.Combine(Path.GetTempPath(), "antiphon-no-browser", "msedge.exe"),
         };
 
         await CreateService(settings).TryBuildAsync(
@@ -164,17 +187,10 @@ public class DeliverableBundleServiceTests
 
     private static DeliverableBundleService CreateService(DeliverablesSettings? settings = null)
     {
-        settings ??= new DeliverablesSettings
-        {
-            BrowserPath = Path.Combine(Path.GetTempPath(), "antiphon-no-browser", "msedge.exe"),
-            RenderTimeoutSeconds = 2,
-        };
-        var renderer = new MarkdownPdfRenderer(
-            Options.Create(settings), NullLogger<MarkdownPdfRenderer>.Instance);
+        settings ??= new DeliverablesSettings();
         var git = new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance);
         return new DeliverableBundleService(
-            renderer, git, Options.Create(settings), TimeProvider.System,
-            NullLogger<DeliverableBundleService>.Instance);
+            git, Options.Create(settings), NullLogger<DeliverableBundleService>.Instance);
     }
 
     private static AgentTask NewTask(string dir, AgentTaskRole role, WorkspaceMode workspace) => new()

@@ -21,7 +21,27 @@ public sealed record ChatChannelDto(
     // Non-null = this channel is an alert sink for severities >= the value.
     AlertSeverity? AlertMinSeverity = null,
     bool DigestEnabled = false,
-    DateTime? DigestLastSentAt = null);
+    DateTime? DigestLastSentAt = null,
+    string? OutboundAgentProfile = null,
+    ChannelOutboundProfilePreviewDto? OutboundPreview = null);
+
+public sealed record ChannelOutboundProfilePreviewDto(
+    Guid ProjectId,
+    Guid AgentId,
+    string? AgentName,
+    string PromptRevision,
+    string Trigger,
+    int TimeoutSeconds,
+    string AuthorizationNote);
+
+public sealed record ChannelOutboundProfileListItemDto(
+    string Name,
+    Guid ProjectId,
+    Guid AgentId,
+    string? AgentName,
+    string Trigger,
+    int TimeoutSeconds,
+    int MaxPending);
 
 /// <summary>
 /// Partial update. <paramref name="AgentId"/> binds the channel to an agent; <paramref name="UnbindAgent"/>
@@ -36,4 +56,6 @@ public sealed record UpdateChatChannelRequest(
     // (same JSON absent-vs-null dance as the agent binding).
     AlertSeverity? AlertMinSeverity = null,
     bool ClearAlertMinSeverity = false,
-    bool? DigestEnabled = null);
+    bool? DigestEnabled = null,
+    string? OutboundAgentProfile = null,
+    bool ClearOutboundAgentProfile = false);

@@ -22,22 +22,34 @@ public sealed class ChatChannelService
     private readonly AppDbContext _db;
     private readonly TimeProvider _timeProvider;
     private readonly IAntiphonMessagingProducer _producer;
+    private readonly ChannelOutboundPolicy? _outboundPolicy;
+    private readonly ChannelOutboundService? _outbound;
 
-    public ChatChannelService(AppDbContext db, TimeProvider timeProvider, IAntiphonMessagingProducer producer)
+    public ChatChannelService(
+        AppDbContext db,
+        TimeProvider timeProvider,
+        IAntiphonMessagingProducer producer,
+        ChannelOutboundPolicy? outboundPolicy = null,
+        ChannelOutboundService? outbound = null)
     {
         _db = db;
         _timeProvider = timeProvider;
         _producer = producer;
+        _outboundPolicy = outboundPolicy;
+        _outbound = outbound;
     }
 
     public async Task<IReadOnlyList<ChatChannelDto>> GetAllAsync(CancellationToken ct)
     {
-        return await _db.ChatChannels
+        var channels = await _db.ChatChannels
             .AsNoTracking()
             .Include(c => c.Agent)
             .OrderByDescending(c => c.LastMessageAt ?? c.CreatedAt)
-            .Select(c => ToDto(c))
             .ToListAsync(ct);
+        var list = new List<ChatChannelDto>(channels.Count);
+        foreach (var channel in channels)
+            list.Add(await ToDtoAsync(channel, ct));
+        return list;
     }
 
     public async Task<ChatChannelDto> UpdateAsync(Guid id, UpdateChatChannelRequest request, CancellationToken ct)
@@ -51,6 +63,7 @@ public sealed class ChatChannelService
         {
             channel.AgentId = null;
             channel.Agent = null;
+            channel.OutboundAgentProfile = null;
         }
         else if (request.AgentId is Guid agentId)
         {
@@ -62,6 +75,7 @@ public sealed class ChatChannelService
 
             channel.AgentId = agent.Id;
             channel.Agent = agent;
+            channel.OutboundAgentProfile = null;
         }
 
         if (request.Enabled is bool enabled)
@@ -75,9 +89,19 @@ public sealed class ChatChannelService
         if (request.DigestEnabled is bool digestEnabled)
             channel.DigestEnabled = digestEnabled;
 
+        if (request.ClearOutboundAgentProfile)
+            channel.OutboundAgentProfile = null;
+        else if (request.OutboundAgentProfile is string profileName)
+        {
+            if (_outboundPolicy is null)
+                throw new ValidationException("outboundAgentProfile", "Outbound conversion is not configured.");
+            await _outboundPolicy.ValidateBindingAsync(channel, profileName, ct);
+            channel.OutboundAgentProfile = profileName;
+        }
+
         channel.UpdatedAt = UtcNow();
         await _db.SaveChangesAsync(ct);
-        return ToDto(channel);
+        return await ToDtoAsync(channel, ct);
     }
 
     /// <summary>
@@ -109,17 +133,43 @@ public sealed class ChatChannelService
         JsonElement? rawOverrides = options?.Silent == true
             ? JsonDocument.Parse("{\"disable_notification\":true}").RootElement.Clone()
             : null;
-        await _producer.SendAsync(
-            new ChannelReply
+        var reply = new ChannelReply
+        {
+            Channel = channel.Provider,
+            ConversationId = channel.ExternalId,
+            ReplyHandle = options?.ReplyHandle,
+            Text = text,
+            ReplyToMessageId = options?.ReplyToMessageId,
+            RawOverrides = rawOverrides,
+        };
+        if (_outbound is not null)
+        {
+            var result = await _outbound.SendAsync(
+                new ChannelOutboundRequest(
+                    reply,
+                    ChannelOutboundOrigin.Control,
+                    ChannelOutboundSendKind.Control,
+                    SessionId: null,
+                    PromptSequence: null,
+                    TextWindowStart: null,
+                    TextWindowEnd: null,
+                    ChannelId: channel.Id,
+                    ProjectId: null,
+                    CorrelationIds: [],
+                    SourceTaskIds: []),
+                ct);
+            if (result.Status == ChannelOutboundPublishStatus.Failed)
             {
-                Channel = channel.Provider,
-                ConversationId = channel.ExternalId,
-                ReplyHandle = options?.ReplyHandle,
-                Text = text,
-                ReplyToMessageId = options?.ReplyToMessageId,
-                RawOverrides = rawOverrides,
-            },
-            ct);
+                throw new ConflictException(
+                    result.Failure ?? "Outbound send failed.",
+                    "channel_send_failed");
+            }
+        }
+        else
+        {
+            await _producer.SendAsync(reply, ct);
+        }
+
         await StampLastReplyAsync(channel.Provider, channel.ExternalId, text, ct);
     }
 
@@ -194,12 +244,39 @@ public sealed class ChatChannelService
     private static string? Truncate(string? text) =>
         text is { Length: > PreviewMaxChars } ? text[..PreviewMaxChars] : text;
 
-    private static ChatChannelDto ToDto(ChatChannel c) => new(
-        c.Id, c.Provider, c.ExternalId, c.Kind, c.Title,
-        c.AgentId, c.Agent?.Name, c.Enabled,
-        c.LastMessageAt, c.LastMessagePreview, c.LastAuthor,
-        c.LastReplyAt, c.LastReplyPreview, c.MessageCount, c.CreatedAt,
-        c.AlertMinSeverity, c.DigestEnabled, c.DigestLastSentAt);
+    public async Task<IReadOnlyList<ChannelOutboundProfileListItemDto>> ListOutboundProfilesAsync(CancellationToken ct)
+    {
+        var listed = new List<ChannelOutboundProfileListItemDto>();
+        var profiles = _outboundPolicy?.AllProfiles;
+        if (profiles is null)
+            return listed;
+        foreach (var (name, profile) in profiles)
+        {
+            var agent = await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == profile.AgentId, ct);
+            listed.Add(new ChannelOutboundProfileListItemDto(
+                name,
+                profile.ProjectId,
+                profile.AgentId,
+                agent?.Name,
+                profile.Trigger.ToString(),
+                profile.TimeoutSeconds,
+                profile.MaxPending));
+        }
+
+        return listed;
+    }
+
+    private async Task<ChatChannelDto> ToDtoAsync(ChatChannel c, CancellationToken ct)
+    {
+        var preview = _outboundPolicy is null ? null : await _outboundPolicy.PreviewAsync(c, ct);
+        return new ChatChannelDto(
+            c.Id, c.Provider, c.ExternalId, c.Kind, c.Title,
+            c.AgentId, c.Agent?.Name, c.Enabled,
+            c.LastMessageAt, c.LastMessagePreview, c.LastAuthor,
+            c.LastReplyAt, c.LastReplyPreview, c.MessageCount, c.CreatedAt,
+            c.AlertMinSeverity, c.DigestEnabled, c.DigestLastSentAt,
+            c.OutboundAgentProfile, preview);
+    }
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
 }

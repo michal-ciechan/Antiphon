@@ -25,6 +25,8 @@ function channel(over: Partial<ChatChannelDto> = {}): ChatChannelDto {
     alertMinSeverity: null,
     digestEnabled: false,
     digestLastSentAt: null,
+    outboundAgentProfile: null,
+    outboundPreview: null,
     ...over,
   }
 }
@@ -33,6 +35,7 @@ describe('ChannelsPage', () => {
   it('shows the outbound reply stamp after the inbound last-message line', async () => {
     server.use(
       http.get('/api/channels', () => HttpResponse.json([channel()])),
+      http.get('/api/channels/outbound-profiles', () => HttpResponse.json([])),
       http.get('/api/agents', () => HttpResponse.json([])),
     )
     renderWithProviders(<ChannelsPage />)
@@ -45,6 +48,7 @@ describe('ChannelsPage', () => {
       http.get('/api/channels', () =>
         HttpResponse.json([channel({ lastReplyAt: null, lastReplyPreview: null })]),
       ),
+      http.get('/api/channels/outbound-profiles', () => HttpResponse.json([])),
       http.get('/api/agents', () => HttpResponse.json([])),
     )
     renderWithProviders(<ChannelsPage />)

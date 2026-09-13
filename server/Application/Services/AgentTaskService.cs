@@ -181,11 +181,28 @@ public sealed class AgentTaskService
     /// Create a task. <paramref name="caller"/> is the authenticated creator: an orchestrator
     /// delegating downward, or the UI acting on a human's behalf.
     /// </summary>
-    public async Task<AgentTaskCreatedDto> CreateAsync(
+    public Task<AgentTaskCreatedDto> CreateAsync(
         CreateAgentTaskRequest request,
         Caller caller,
         CancellationToken ct)
+        => CreateAsync(request, caller, outbound: null, ct);
+
+    internal Task<AgentTaskCreatedDto> CreateOutboundConversionAsync(
+        CreateAgentTaskRequest request,
+        Caller caller,
+        OutboundConversionCreateContext outbound,
+        CancellationToken ct)
+        => CreateAsync(request, caller, outbound, ct);
+
+    private OutboundConversionCreateContext? _outboundCreate;
+
+    private async Task<AgentTaskCreatedDto> CreateAsync(
+        CreateAgentTaskRequest request,
+        Caller caller,
+        OutboundConversionCreateContext? outbound,
+        CancellationToken ct)
     {
+        _outboundCreate = outbound;
         if (string.IsNullOrWhiteSpace(request.Goal))
             throw new ValidationException(nameof(request.Goal), "A goal is required.");
         if (request.Goal.Length > 20_000)
@@ -438,7 +455,9 @@ public sealed class AgentTaskService
         // and must decide the routing before the role policy fills anything in. Its warning is
         // still appended below, in the order it always was.
         var title = BuildTitle(request);
-        var binding = await AgentTaskCardBinder.BindAsync(
+        var binding = outbound is not null
+            ? AgentTaskCardBinding.None
+            : await AgentTaskCardBinder.BindAsync(
             _db,
             request.Card,
             new AgentTaskCardBinder.Context(
@@ -923,6 +942,16 @@ public sealed class AgentTaskService
             StandingAuthority = standingAuthority,
             AutoContinueOnWait = request.AutoContinue && standingAuthority is not null,
         };
+        if (_outboundCreate is { } outboundCreate)
+        {
+            task.OutboundDeliveryId = outboundCreate.OutboundDeliveryId;
+            task.ExecutionDeadlineAt = outboundCreate.ExecutionDeadlineAt;
+            task.MaxAttempts = 1;
+            task.ReplyTo = AgentTaskReplyTo.None;
+            task.ParentSessionId = null;
+            task.ParentTaskId = null;
+            task.CardId = null;
+        }
 
         if (storedPolicy is not null)
         {

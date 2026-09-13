@@ -199,6 +199,7 @@ public sealed class AttentionService
         items.AddRange(await BuildParkedMessageItemsAsync(ct));
         items.AddRange(await BuildCallerNoteUndeliveredItemsAsync(now, ct));
         items.AddRange(await BuildLandItemsAsync(now, ct));
+        items.AddRange(await BuildOutboundDeliveryItemsAsync(ct));
         items.AddRange(await BuildCardlessDetailsNoPromptItemsAsync(now, ct));
         items.AddRange(await BuildInboundUnconsumedItemsAsync(since, ct));
         items.AddRange(await BuildRecentIncidentItemsAsync(since, attachedIncidents, ct));
@@ -2820,5 +2821,30 @@ public sealed class AttentionService
         return span.TotalHours >= 1
             ? $"{(int)span.TotalHours}h{span.Minutes:00}m"
             : $"{(int)span.TotalMinutes}m";
+    }
+
+    private async Task<List<AttentionItemDto>> BuildOutboundDeliveryItemsAsync(CancellationToken ct)
+    {
+        var rows = await _db.ChannelOutboundDeliveries.AsNoTracking()
+            .Where(d => d.State == ChannelOutboundDeliveryState.Held
+                || d.State == ChannelOutboundDeliveryState.Failed
+                || d.State == ChannelOutboundDeliveryState.PublishUncertain)
+            .OrderByDescending(d => d.UpdatedAt)
+            .Take(50)
+            .ToListAsync(ct);
+        return rows.Select(d => new AttentionItemDto(
+            AttentionKind.OutboundDelivery,
+            d.State == ChannelOutboundDeliveryState.Held ? AlertSeverity.Warning : AlertSeverity.Error,
+            d.ConversionTaskId,
+            d.SessionId,
+            AgentId: null,
+            MessageId: null,
+            Title: $"Outbound {d.State}",
+            Headline: $"{d.ChannelProvider} {d.ConversationId} {d.State}",
+            Evidence: $"delivery {d.Id:D}; channel {d.ChannelId}; task {d.ConversionTaskId}; {d.FailureReason}",
+            d.UpdatedAt,
+            SubtreeCostUsd: null,
+            Actions: [AttentionAction.OpenDrawer],
+            ConditionKey: d.Id.ToString("N"))).ToList();
     }
 }

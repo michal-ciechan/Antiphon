@@ -12,7 +12,13 @@ import {
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { TbBrandTelegram, TbBrandWhatsapp, TbBrandDiscord, TbMessageCircle } from 'react-icons/tb'
-import { useChannels, useUpdateChannel, type AlertSeverity, type ChatChannelDto } from '../../api/channels'
+import {
+  useChannels,
+  useOutboundProfiles,
+  useUpdateChannel,
+  type AlertSeverity,
+  type ChatChannelDto,
+} from '../../api/channels'
 import { useAgentList } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
 
@@ -44,6 +50,7 @@ function relativeTime(iso: string | null): string {
 
 function ChannelRow({ channel }: { channel: ChatChannelDto }) {
   const { data: agents } = useAgentList()
+  const { data: profiles } = useOutboundProfiles()
   const update = useUpdateChannel()
 
   const agentOptions = (agents ?? []).map((a) => ({ value: a.id, label: a.name }))
@@ -87,6 +94,24 @@ function ChannelRow({ channel }: { channel: ChatChannelDto }) {
       { onError: (e) => notifications.show({ color: 'red', message: getApiErrorMessage(e, 'Failed to update channel') }) },
     )
   }
+
+  const onOutboundChange = (profile: string | null) => {
+    update.mutate(
+      {
+        id: channel.id,
+        request: profile ? { outboundAgentProfile: profile } : { clearOutboundAgentProfile: true },
+      },
+      {
+        onError: (e) =>
+          notifications.show({ color: 'red', message: getApiErrorMessage(e, 'Failed to update outbound profile') }),
+      },
+    )
+  }
+
+  const outboundOptions = (profiles ?? []).map((p) => ({ value: p.name, label: p.name }))
+  const outboundHint = channel.outboundPreview
+    ? `${channel.outboundPreview.trigger} · ${channel.outboundPreview.timeoutSeconds}s · ${channel.outboundPreview.authorizationNote}`
+    : 'Passthrough — sources only'
 
   return (
     <Table.Tr>
@@ -171,6 +196,21 @@ function ChannelRow({ channel }: { channel: ChatChannelDto }) {
           />
         </Tooltip>
       </Table.Td>
+      <Table.Td>
+        <Tooltip label={outboundHint} withArrow>
+          <Select
+            placeholder="Sources only"
+            data={outboundOptions}
+            value={channel.outboundAgentProfile}
+            onChange={onOutboundChange}
+            clearable
+            searchable
+            size="xs"
+            w={180}
+            disabled={update.isPending}
+          />
+        </Tooltip>
+      </Table.Td>
     </Table.Tr>
   )
 }
@@ -199,6 +239,7 @@ export function ChannelsPage() {
               <Table.Th w={90}>Enabled</Table.Th>
               <Table.Th w={140}>Alerts</Table.Th>
               <Table.Th w={100}>Digest</Table.Th>
+              <Table.Th w={200}>Outbound</Table.Th>
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
@@ -207,7 +248,7 @@ export function ChannelsPage() {
             ))}
             {!isLoading && (channels ?? []).length === 0 && (
               <Table.Tr>
-                <Table.Td colSpan={7}>
+                <Table.Td colSpan={8}>
                   <Text c="dimmed" ta="center" py="lg" size="sm">
                     No channels yet — they appear automatically when a connected provider (e.g. the
                     Telegram bot) receives its first message.

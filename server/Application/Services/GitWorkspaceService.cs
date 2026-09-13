@@ -180,6 +180,16 @@ public sealed class GitWorkspaceService
         return code == 0 ? stdout : null;
     }
 
+    /// <summary>
+    /// Exact blob bytes at a ref. CARD-0418 source bundling must not UTF-8-decode the file.
+    /// </summary>
+    public async Task<byte[]?> GetBytesAtAsync(
+        string workingDirectory, string relativePath, string gitRef, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunBytesAsync(workingDirectory, ct, "show", $"{gitRef}:./{relativePath}");
+        return code == 0 ? stdout : null;
+    }
+
     /// <summary>Unified diff of the file vs a base commit (default HEAD); null on failure/no repo.</summary>
     public async Task<string?> GetDiffAsync(
         string workingDirectory, string relativePath, CancellationToken ct, string baseRef = "HEAD")
@@ -694,6 +704,13 @@ public sealed class GitWorkspaceService
     private async Task<(int Code, string Stdout, string Stderr)> RunAsync(
         string workingDirectory, CancellationToken ct, params string[] args)
     {
+        var (code, stdout, stderr) = await RunBytesAsync(workingDirectory, ct, args);
+        return (code, Encoding.UTF8.GetString(stdout), stderr);
+    }
+
+    private async Task<(int Code, byte[] Stdout, string Stderr)> RunBytesAsync(
+        string workingDirectory, CancellationToken ct, params string[] args)
+    {
         Process? process = null;
         try
         {
@@ -705,7 +722,6 @@ public sealed class GitWorkspaceService
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8,
             };
             foreach (var a in args)
@@ -714,12 +730,12 @@ public sealed class GitWorkspaceService
             using var lease = await _gate.EnterAsync(ct);
             process = Process.Start(psi);
             if (process is null)
-                return (-1, "", $"{_settings.ExecutableName} failed to start");
+                return (-1, [], $"{_settings.ExecutableName} failed to start");
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             var timeout = TimeSpan.FromSeconds(Math.Max(1, _settings.TimeoutSeconds));
             timeoutCts.CancelAfter(timeout);
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+            var stdoutTask = ReadAllBytesAsync(process.StandardOutput.BaseStream, timeoutCts.Token);
             var stderrTask = process.StandardError.ReadToEndAsync(timeoutCts.Token);
             await process.WaitForExitAsync(timeoutCts.Token);
             return (process.ExitCode, await stdoutTask, await stderrTask);
@@ -733,17 +749,24 @@ public sealed class GitWorkspaceService
             _logger.LogWarning(
                 "git {Args} timed out after {Timeout} in {Dir}; child killed",
                 string.Join(' ', args), TimeSpan.FromSeconds(Math.Max(1, _settings.TimeoutSeconds)), workingDirectory);
-            return (-1, "", "timeout");
+            return (-1, [], "timeout");
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "git {Args} failed in {Dir}", string.Join(' ', args), workingDirectory);
-            return (-1, "", ex.Message);
+            return (-1, [], ex.Message);
         }
         finally
         {
             process?.Dispose();
         }
+    }
+
+    private static async Task<byte[]> ReadAllBytesAsync(Stream stream, CancellationToken ct)
+    {
+        await using var buffer = new MemoryStream();
+        await stream.CopyToAsync(buffer, ct);
+        return buffer.ToArray();
     }
 
     private static void TryKill(Process? process)

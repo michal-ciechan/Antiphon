@@ -32,6 +32,13 @@ The two share nothing — separate brokers, separate databases, separate images.
 bot" is about the *bot token*, not about the channel: a single instance happily serves several
 providers at once, as `am-service` now does.
 
+## Outbound conversion is server-side (CARD-0418)
+
+The gateway still consumes `channels.outbound` and sends `ChannelReply` as before. Optional
+per-conversation conversion happens in the Antiphon server before Kafka publication. Do not add
+a conversion topic or give agents Kafka credentials. CARD-0410 consumer-group identity and
+unknown-evidence suppression stay intact.
+
 ## Fake gateway (local dev / integration tests)
 
 `src/Antiphon.Messaging.FakeGateway` (NuGet: `Antiphon.Messaging.FakeGateway`, dotnet tool

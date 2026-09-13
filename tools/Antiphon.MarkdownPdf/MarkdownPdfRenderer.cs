@@ -1,15 +1,13 @@
 using System.Diagnostics;
 using System.Net;
 using System.Text;
-using Antiphon.Server.Application.Settings;
 using Markdig;
-using Microsoft.Extensions.Options;
 
-namespace Antiphon.Server.Application.Services;
+namespace Antiphon.MarkdownPdf;
 
 /// <summary>
-/// CARD-0337: Markdig → self-contained HTML → headless Edge/Chrome <c>--print-to-pdf</c>.
-/// Never throws for a missing browser, timeout, or non-zero exit; the caller records the error.
+/// CARD-0418: Markdig → self-contained HTML → headless Edge/Chrome <c>--print-to-pdf</c>.
+/// Optional tool; the server does not depend on this assembly.
 /// </summary>
 public sealed class MarkdownPdfRenderer
 {
@@ -38,33 +36,21 @@ public sealed class MarkdownPdfRenderer
             "Google", "Chrome", "Application", "chrome.exe"),
     ];
 
-    private readonly DeliverablesSettings _settings;
-    private readonly ILogger<MarkdownPdfRenderer> _logger;
+    private readonly MarkdownPdfSettings _settings;
 
-    /// <summary>Test seam: a hang that is cancelled by the render timeout. Production is null.</summary>
     internal Func<CancellationToken, Task>? TestHang { get; set; }
 
-    public MarkdownPdfRenderer(
-        IOptions<DeliverablesSettings> settings,
-        ILogger<MarkdownPdfRenderer> logger)
-    {
-        _settings = settings.Value;
-        _logger = logger;
-    }
+    /// <summary>Test seam: replace process start so ordinary tests do not spawn a real browser.</summary>
+    internal Func<string, IReadOnlyList<string>, TimeSpan, CancellationToken, Task<BrowserRun>>? TestRun { get; set; }
+
+    public MarkdownPdfRenderer(MarkdownPdfSettings settings) => _settings = settings;
 
     public readonly record struct DocumentSection(string RepoRelativePath, string Markdown);
 
-    public sealed record PdfRenderResult(
-        bool Succeeded,
-        string? Error,
-        string Log,
-        int DurationMs);
+    public sealed record PdfRenderResult(bool Succeeded, string? Error, string Log, int DurationMs);
 
-    /// <summary>
-    /// A configured <see cref="DeliverablesSettings.BrowserPath"/> is exclusive: if it is set
-    /// and missing, we do not fall through to Edge/Chrome (the operator named a specific binary).
-    /// Null/empty auto-detects Edge, then Chrome.
-    /// </summary>
+    public sealed record BrowserRun(int ExitCode, string Stdout, string Stderr, bool TimedOut);
+
     public string? ResolveBrowserPath()
     {
         if (!string.IsNullOrWhiteSpace(_settings.BrowserPath))
@@ -130,21 +116,17 @@ public sealed class MarkdownPdfRenderer
         return sb.ToString();
     }
 
-    /// <summary>Markdig HTML for a single document — used by renderer tests without a browser.</summary>
     public static string ToMarkdownHtml(string markdown) =>
         Markdown.ToHtml(markdown ?? string.Empty, Pipeline);
 
-    public async Task<PdfRenderResult> RenderToPdfAsync(
-        string html,
-        string pdfPath,
-        CancellationToken ct)
+    public async Task<PdfRenderResult> RenderToPdfAsync(string html, string pdfPath, CancellationToken ct)
     {
         var browser = ResolveBrowserPath();
         if (browser is null)
         {
             var missing = string.IsNullOrWhiteSpace(_settings.BrowserPath)
                 ? "no Edge/Chrome found in default locations"
-                : $"browser not found at Deliverables:BrowserPath ({_settings.BrowserPath})";
+                : $"browser not found at --browser-path ({_settings.BrowserPath})";
             return new PdfRenderResult(false, missing, missing, 0);
         }
 
@@ -201,12 +183,7 @@ public sealed class MarkdownPdfRenderer
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             started.Stop();
-            _logger.LogWarning(ex, "Markdown PDF render failed for {PdfPath}", pdfPath);
-            return new PdfRenderResult(
-                false,
-                TrimError(ex.Message),
-                ex.ToString(),
-                (int)started.ElapsedMilliseconds);
+            return new PdfRenderResult(false, TrimError(ex.Message), ex.ToString(), (int)started.ElapsedMilliseconds);
         }
         finally
         {
@@ -245,6 +222,9 @@ public sealed class MarkdownPdfRenderer
             }
         }
 
+        if (TestRun is not null)
+            return await TestRun(fileName, arguments, timeout, ct);
+
         var start = new ProcessStartInfo
         {
             FileName = fileName,
@@ -272,7 +252,7 @@ public sealed class MarkdownPdfRenderer
         }
     }
 
-    private static void TryKill(Process process)
+    internal static void TryKill(Process process)
     {
         try
         {
@@ -281,7 +261,6 @@ public sealed class MarkdownPdfRenderer
         }
         catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
         {
-            // Already exited, or the platform cannot kill the tree.
         }
     }
 
@@ -296,6 +275,4 @@ public sealed class MarkdownPdfRenderer
         var trimmed = text.Trim();
         return trimmed.Length <= 8000 ? trimmed : trimmed[..8000];
     }
-
-    private sealed record BrowserRun(int ExitCode, string Stdout, string Stderr, bool TimedOut);
 }

@@ -5,6 +5,14 @@ HTML), inbound normalization, and every knob. Companion docs:
 [telegram-bot-ops.md](telegram-bot-ops.md) (standing up a bot + agent),
 [messaging-standalone.md](messaging-standalone.md) (deploying gateway instances).
 
+## Source attachments and optional conversion (CARD-0418)
+
+Successful document-producing tasks attach Markdown sources (or a zip) by default. The server
+does not render PDF at settlement. A conversation may bind `ChatChannel.OutboundAgentProfile` to a
+named `ChannelOutbound:Profiles` entry; that profile invokes a dedicated conversion worker before
+the existing `ChannelReply` is published to `channels.outbound`. Null profile is passthrough.
+Gateway transport, topics, and consumer groups are unchanged.
+
 ## Architecture in one paragraph
 
 One `Antiphon.Messaging.Service` instance runs per bot token (bot = persona). It long-polls the

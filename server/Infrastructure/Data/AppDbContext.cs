@@ -44,6 +44,7 @@ public class AppDbContext : DbContext
     public DbSet<TokenUsage> TokenUsages => Set<TokenUsage>();
     public DbSet<ArtifactSectionReview> ArtifactSectionReviews => Set<ArtifactSectionReview>();
     public DbSet<ChatChannel> ChatChannels => Set<ChatChannel>();
+    public DbSet<ChannelOutboundDelivery> ChannelOutboundDeliveries => Set<ChannelOutboundDelivery>();
     public DbSet<ChannelIngressIncident> ChannelIngressIncidents => Set<ChannelIngressIncident>();
     public DbSet<AgentSupervisionState> AgentSupervisionStates => Set<AgentSupervisionState>();
     public DbSet<AgentIncident> AgentIncidents => Set<AgentIncident>();
@@ -239,6 +240,32 @@ public class AppDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(c => c.AgentId)
                 .OnDelete(DeleteBehavior.SetNull);
+            entity.Property(c => c.OutboundAgentProfile).HasMaxLength(100);
+        });
+
+        modelBuilder.Entity<ChannelOutboundDelivery>(entity =>
+        {
+            entity.ToTable("ChannelOutboundDeliveries");
+            entity.HasKey(d => d.Id);
+            entity.Property(d => d.SourceKey).IsRequired().HasMaxLength(400);
+            entity.HasIndex(d => d.SourceKey).IsUnique();
+            entity.Property(d => d.ChannelProvider).IsRequired().HasMaxLength(50);
+            entity.Property(d => d.ConversationId).IsRequired().HasMaxLength(200);
+            entity.Property(d => d.ReplyHandle).HasMaxLength(500);
+            entity.Property(d => d.ProfileName).HasMaxLength(100);
+            entity.Property(d => d.InputHash).IsRequired().HasMaxLength(64);
+            entity.Property(d => d.LeaseOwner).HasMaxLength(200);
+            entity.Property(d => d.FrozenReplyJson).HasColumnType("text");
+            entity.Property(d => d.ProfileSnapshotJson).HasColumnType("text");
+            entity.Property(d => d.OutputManifestJson).HasColumnType("text");
+            entity.Property(d => d.SealedPayloadJson).HasColumnType("text");
+            entity.Property(d => d.SealedPayloadHash).HasMaxLength(64);
+            entity.Property(d => d.FailureReason).HasMaxLength(300);
+            entity.Property(d => d.CreatedAt).IsRequired();
+            entity.Property(d => d.UpdatedAt).IsRequired();
+            entity.Property(d => d.DeadlineAt).IsRequired();
+            entity.HasIndex(d => new { d.State, d.CreatedAt });
+            entity.HasIndex(d => d.ConversionTaskId);
         });
 
         modelBuilder.Entity<ChannelIngressIncident>(entity =>
@@ -1278,6 +1305,7 @@ public class AppDbContext : DbContext
             entity.HasIndex(m => new { m.Origin, m.Status })
                 .HasDatabaseName("IX_SessionQueuedMessages_OpenChannelCorrelations")
                 .HasFilter("\"ChannelReplySettledAt\" IS NULL");
+            entity.HasIndex(m => m.OutboundDeliveryId);
 
             entity.HasOne(m => m.AgentSession)
                 .WithMany()
@@ -1647,6 +1675,9 @@ public class AppDbContext : DbContext
             entity.Property(t => t.DeliverableFileCount).IsRequired().HasDefaultValue(0);
             entity.Property(t => t.DeliverableRenderError).HasMaxLength(300);
             entity.Property(t => t.DeliverableDeliveredAt).IsRequired(false);
+            entity.HasIndex(t => t.OutboundDeliveryId)
+                .IsUnique()
+                .HasFilter("\"OutboundDeliveryId\" IS NOT NULL");
             entity.Property(t => t.TokenHash).HasMaxLength(128);
             entity.Property(t => t.CacheReadTokens).IsRequired();
             entity.Property(t => t.CacheCreationTokens).IsRequired();

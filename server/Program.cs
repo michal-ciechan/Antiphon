@@ -547,8 +547,17 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
         new GitProcessGate(Math.Max(1, sp.GetRequiredService<IOptions<GitSettings>>().Value.MaxConcurrentProcesses)));
     builder.Services.AddSingleton<GitWorkspaceService>();
     builder.Services.AddSingleton<IAgentReportStore, Antiphon.Server.Infrastructure.Files.AgentReportStore>();
-    builder.Services.AddSingleton<MarkdownPdfRenderer>();
     builder.Services.AddSingleton<DeliverableBundleService>();
+    builder.Services.AddSingleton<IValidateOptions<ChannelOutboundSettings>, ChannelOutboundSettingsValidator>();
+    builder.Services.AddOptions<ChannelOutboundSettings>()
+        .Bind(builder.Configuration.GetSection(ChannelOutboundSettings.SectionName))
+        .ValidateOnStart();
+    builder.Services.AddSingleton<IChannelOutboundFileStore, Antiphon.Server.Infrastructure.Files.ChannelOutboundFileStore>();
+    builder.Services.AddSingleton<OutboundConversionManifestValidator>();
+    builder.Services.AddScoped<ChannelOutboundPolicy>();
+    builder.Services.AddScoped<ChannelOutboundService>();
+    builder.Services.AddScoped<OutboundConversionTaskRunner>();
+    builder.Services.AddHostedService<ChannelOutboundHostedService>();
     builder.Services.AddMemoryCache();
     builder.Services.AddSingleton<ProjectReadinessCache>();
     builder.Services.AddSingleton<IResettableCache>(sp => sp.GetRequiredService<ProjectReadinessCache>());
@@ -690,6 +699,15 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
             .AddConsoleExporter());
 
     var app = builder.Build();
+
+    {
+        var deliverables = app.Configuration.GetSection(DeliverablesSettings.SectionName);
+        if (deliverables["BrowserPath"] is not null || deliverables["RenderTimeoutSeconds"] is not null)
+        {
+            app.Logger.LogWarning(
+                "Deliverables:BrowserPath and Deliverables:RenderTimeoutSeconds are ignored; PDF rendering is no longer a server function (CARD-0418).");
+        }
+    }
 
     // Arm the alert log tap (no-op unless Alerts:LogTap:Enabled).
     {

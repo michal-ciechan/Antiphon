@@ -24,6 +24,28 @@ export interface ChatChannelDto {
   alertMinSeverity: AlertSeverity | null
   digestEnabled: boolean
   digestLastSentAt: string | null
+  outboundAgentProfile: string | null
+  outboundPreview: ChannelOutboundProfilePreview | null
+}
+
+export interface ChannelOutboundProfilePreview {
+  projectId: string
+  agentId: string
+  agentName: string | null
+  promptRevision: string
+  trigger: string
+  timeoutSeconds: number
+  authorizationNote: string
+}
+
+export interface ChannelOutboundProfileListItem {
+  name: string
+  projectId: string
+  agentId: string
+  agentName: string | null
+  trigger: string
+  timeoutSeconds: number
+  maxPending: number
 }
 
 export interface UpdateChatChannelRequest {
@@ -33,6 +55,8 @@ export interface UpdateChatChannelRequest {
   alertMinSeverity?: AlertSeverity | null
   clearAlertMinSeverity?: boolean
   digestEnabled?: boolean
+  outboundAgentProfile?: string | null
+  clearOutboundAgentProfile?: boolean
 }
 
 export const channelKeys = {
@@ -43,6 +67,14 @@ export function useChannels() {
   return useQuery({
     queryKey: channelKeys.all,
     queryFn: () => apiGet<ChatChannelDto[]>('/channels'),
+    staleTime: 10_000,
+  })
+}
+
+export function useOutboundProfiles() {
+  return useQuery({
+    queryKey: [...channelKeys.all, 'outbound-profiles'] as const,
+    queryFn: () => apiGet<ChannelOutboundProfileListItem[]>('/channels/outbound-profiles'),
     staleTime: 10_000,
   })
 }

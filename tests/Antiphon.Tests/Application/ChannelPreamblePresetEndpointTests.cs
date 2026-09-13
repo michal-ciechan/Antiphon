@@ -32,7 +32,7 @@ public sealed class ChannelPreamblePresetEndpointTests(AntiphonWebAppFactory fac
         var slackTemplate = await TemplateAsync(slack);
         slackTemplate.ShouldBe(ChannelPreamble.SlackPresetTemplate);
         slackTemplate.ShouldContain("Your reply to each chat message");
-        slackTemplate.ShouldContain("Prefer PDF for documents — Slack shows HTML files as a text snippet, not a document.");
+        slackTemplate.ShouldContain("Document-producing tasks attach their Markdown sources automatically");
 
         var unknown = await client.GetAsync("/api/agents/preamble-preset?provider=unknown");
         unknown.StatusCode.ShouldBe(HttpStatusCode.NotFound);

@@ -265,6 +265,13 @@ public enum AttentionKind
     LandNoProgress = 36,
     LandOutcomeUnconfirmed = 37,
     LandLegacyUnverified = 38,
+
+    /// <summary>
+    /// CARD-0418: an outbound conversion delivery is Held, Failed, or PublishUncertain.
+    /// Detection only — attention does not automatically replay the send.
+    /// Appended after shipped 38; do not renumber.
+    /// </summary>
+    OutboundDelivery = 39,
 }
 
 /// <summary>

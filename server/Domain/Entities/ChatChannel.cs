@@ -30,6 +30,11 @@ public class ChatChannel
     public bool Enabled { get; set; } = true;
 
     /// <summary>
+    /// CARD-0418: named profile in <c>ChannelOutbound:Profiles</c>. Null is passthrough.
+    /// </summary>
+    public string? OutboundAgentProfile { get; set; }
+
+    /// <summary>
     /// When set, this channel is an ALERT SINK: operational alerts with severity ≥ this value are
     /// delivered here (throttled/grouped). Null = not an alert sink.
     /// </summary>

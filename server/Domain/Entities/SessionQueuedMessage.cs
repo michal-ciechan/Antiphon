@@ -139,5 +139,11 @@ public class SessionQueuedMessage
     /// </summary>
     public DateTime? ChannelReplySettledAt { get; set; }
 
+    /// <summary>
+    /// CARD-0418: durable outbound conversion intent that owns this correlation until it
+    /// publishes or fails. Nonterminal deliveries keep the row out of TTL-lost handling.
+    /// </summary>
+    public Guid? OutboundDeliveryId { get; set; }
+
     public AgentSession AgentSession { get; set; } = null!;
 }

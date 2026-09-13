@@ -1110,6 +1110,9 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
 
+                    b.Property<Guid?>("OutboundDeliveryId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid?>("ParentSessionId")
                         .HasColumnType("uuid");
 
@@ -1289,6 +1292,10 @@ namespace Antiphon.Server.Migrations
                     b.HasIndex("LandRequestedAt")
                         .HasDatabaseName("IX_AgentTasks_LandRequestedAt")
                         .HasFilter("\"LandRequestedAt\" IS NOT NULL");
+
+                    b.HasIndex("OutboundDeliveryId")
+                        .IsUnique()
+                        .HasFilter("\"OutboundDeliveryId\" IS NOT NULL");
 
                     b.HasIndex("ParentTaskId")
                         .HasDatabaseName("IX_AgentTasks_ParentTaskId");
@@ -3337,6 +3344,136 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("ChannelIngressIncidents", (string)null);
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.ChannelOutboundDelivery", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ChannelId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ChannelProvider")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("ConversationId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<bool>("ConversionSucceeded")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid?>("ConversionTaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("DeadlineAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<string>("FrozenReplyJson")
+                        .HasColumnType("text");
+
+                    b.Property<string>("InputHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime?>("LeaseExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LeaseOwner")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<int>("Origin")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("OutputManifestJson")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProfileName")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("ProfileSnapshotJson")
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long?>("PromptSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("PublishAttempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("PublishedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ReplyHandle")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("ReplyToMessageId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SealedPayloadHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("SealedPayloadJson")
+                        .HasColumnType("text");
+
+                    b.Property<int>("SendKind")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("SessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("SourceComplete")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("SourceKey")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("character varying(400)");
+
+                    b.Property<int>("State")
+                        .HasColumnType("integer");
+
+                    b.Property<long?>("TextWindowEnd")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("TextWindowStart")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConversionTaskId");
+
+                    b.HasIndex("SourceKey")
+                        .IsUnique();
+
+                    b.HasIndex("State", "CreatedAt");
+
+                    b.ToTable("ChannelOutboundDeliveries", (string)null);
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.ChatChannel", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3394,6 +3531,10 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<long>("MessageCount")
                         .HasColumnType("bigint");
+
+                    b.Property<string>("OutboundAgentProfile")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("Provider")
                         .IsRequired()
@@ -4673,6 +4814,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<int>("Origin")
                         .HasColumnType("integer");
 
+                    b.Property<Guid?>("OutboundDeliveryId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("PinRefreshKey")
                         .HasMaxLength(80)
                         .HasColumnType("character varying(80)");
@@ -4748,6 +4892,8 @@ namespace Antiphon.Server.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_SessionQueuedMessages_CapacityRecoveryActionKey")
                         .HasFilter("\"CapacityRecoveryActionKey\" IS NOT NULL");
+
+                    b.HasIndex("OutboundDeliveryId");
 
                     b.HasIndex("SourceLandNotificationId")
                         .IsUnique()

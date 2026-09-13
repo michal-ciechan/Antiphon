@@ -79,6 +79,7 @@ public sealed class AlertDigestFlusher
     private readonly AppDbContext _db;
     private readonly AlertThrottle _throttle;
     private readonly IAntiphonMessagingProducer _producer;
+    private readonly ChannelOutboundService? _outbound;
     private readonly AlertsSettings _settings;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AlertDigestFlusher> _logger;
@@ -89,11 +90,13 @@ public sealed class AlertDigestFlusher
         IAntiphonMessagingProducer producer,
         IOptions<AlertsSettings> settings,
         TimeProvider timeProvider,
-        ILogger<AlertDigestFlusher> logger)
+        ILogger<AlertDigestFlusher> logger,
+        ChannelOutboundService? outbound = null)
     {
         _db = db;
         _throttle = throttle;
         _producer = producer;
+        _outbound = outbound;
         _settings = settings.Value;
         _timeProvider = timeProvider;
         _logger = logger;
@@ -118,14 +121,33 @@ public sealed class AlertDigestFlusher
             var text = Format(groups);
             try
             {
-                await _producer.SendAsync(
-                    new ChannelReply
-                    {
-                        Channel = sink.Provider,
-                        ConversationId = sink.ExternalId,
-                        Text = text,
-                    },
-                    ct);
+                var reply = new ChannelReply
+                {
+                    Channel = sink.Provider,
+                    ConversationId = sink.ExternalId,
+                    Text = text,
+                };
+                if (_outbound is not null)
+                {
+                    await _outbound.SendAsync(
+                        new ChannelOutboundRequest(
+                            reply,
+                            ChannelOutboundOrigin.Control,
+                            ChannelOutboundSendKind.Control,
+                            SessionId: null,
+                            PromptSequence: null,
+                            TextWindowStart: null,
+                            TextWindowEnd: null,
+                            sink.Id,
+                            ProjectId: null,
+                            CorrelationIds: [],
+                            SourceTaskIds: []),
+                        ct);
+                }
+                else
+                {
+                    await _producer.SendAsync(reply, ct);
+                }
                 sent++;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

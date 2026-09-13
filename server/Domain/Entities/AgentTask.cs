@@ -276,13 +276,22 @@ public class AgentTask
     public string? NextHandoff { get; set; }
 
     /// <summary>
-    /// CARD-0337: directory of the settlement document bundle (PDF + sources) under
+    /// CARD-0418: directory of the settlement source bundle under
     /// <c>.antiphon/deliverables/</c>. Null when the task produced no documents.
     /// </summary>
     public string? DeliverableBundleDir { get; set; }
 
-    /// <summary>Absolute path of the rendered PDF inside <see cref="DeliverableBundleDir"/>, if render succeeded.</summary>
+    /// <summary>
+    /// Historical PDF path from pre-CARD-0418 settlement. New bundles leave this null; the
+    /// column remains so old rows stay readable.
+    /// </summary>
     public string? DeliverablePdfPath { get; set; }
+
+    /// <summary>
+    /// CARD-0418: when set, this Worker/Custom task is the internal outbound conversion job for
+    /// that delivery. Null on every public-create task. Not accepted from the public API.
+    /// </summary>
+    public Guid? OutboundDeliveryId { get; set; }
 
     /// <summary>How many source documents the bundle holds.</summary>
     public int DeliverableFileCount { get; set; }

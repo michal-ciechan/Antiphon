@@ -4676,11 +4676,7 @@ public class AgentTaskReplyIntegrationTests
                 WorktreeStaleAfterDays = 7,
                 WorktreeJanitorIntervalHours = 24,
             });
-            services.AddSingleton(Options.Create(new DeliverablesSettings
-            {
-                BrowserPath = Path.Combine(Path.GetTempPath(), "antiphon-missing-browser", "msedge.exe"),
-            }));
-            services.AddSingleton<MarkdownPdfRenderer>();
+            services.AddSingleton(Options.Create(new DeliverablesSettings()));
             services.AddSingleton<DeliverableBundleService>();
             _provider = services.BuildServiceProvider();
         }

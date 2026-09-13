@@ -392,12 +392,14 @@ public static class AgentTaskRoles
     /// </summary>
     public static readonly Expression<Func<AgentTask, bool>> OptionalWork =
         t => t.Role == AgentTaskRole.Distill
-            || (t.Role == AgentTaskRole.Check && t.SpecialistInputPolicyJson != null);
+            || (t.Role == AgentTaskRole.Check && t.SpecialistInputPolicyJson != null)
+            || t.OutboundDeliveryId != null;
 
     /// <summary>In-memory twin of <see cref="OptionalWork"/>. Keep the two in step.</summary>
     public static bool IsOptionalWork(AgentTask task) =>
         task.Role == AgentTaskRole.Distill
-            || (task.Role == AgentTaskRole.Check && task.SpecialistInputPolicyJson is not null);
+            || (task.Role == AgentTaskRole.Check && task.SpecialistInputPolicyJson is not null)
+            || task.OutboundDeliveryId is not null;
 
     /// <summary>
     /// The roles whose task may carry a <c>SpecialistInputPolicy</c> — complete facts typed

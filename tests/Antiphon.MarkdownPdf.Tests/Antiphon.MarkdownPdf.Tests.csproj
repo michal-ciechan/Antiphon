@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>Antiphon.MarkdownPdf.Tests</RootNamespace>
+    <EnableMicrosoftTestingPlatformRunner>true</EnableMicrosoftTestingPlatformRunner>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TUnit" Version="1.44.0" />
+    <PackageReference Include="Shouldly" Version="4.*" />
+    <PackageReference Include="UglyToad.PdfPig" Version="0.1.10" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\tools\Antiphon.MarkdownPdf\Antiphon.MarkdownPdf.csproj" />
+    <Compile Include="..\Shared\TestClassificationMetadata.cs" Link="TestSupport\TestClassificationMetadata.cs" />
+    <Compile Include="..\Shared\TestClassificationGuardTests.cs" Link="TestSupport\TestClassificationGuardTests.cs" />
+    <None Include="slow-tests-allowlist.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

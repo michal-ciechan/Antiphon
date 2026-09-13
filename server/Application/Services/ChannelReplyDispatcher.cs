@@ -20,6 +20,7 @@ public enum ChannelReplyDispatchOutcome
     Published,
     IntentionallyWithheld,
     PublicationFailed,
+    Deferred,
 }
 
 /// <summary>
@@ -29,10 +30,11 @@ public enum ChannelReplyDispatchOutcome
 public sealed record ChannelReplyDispatchResult(
     IReadOnlySet<Guid> PublishedCorrelationIds,
     IReadOnlySet<Guid> IntentionallyWithheldCorrelationIds,
-    IReadOnlySet<Guid> FailedCorrelationIds)
+    IReadOnlySet<Guid> FailedCorrelationIds,
+    IReadOnlySet<Guid>? DeferredCorrelationIds = null)
 {
     public static ChannelReplyDispatchResult Empty { get; } = new(
-        new HashSet<Guid>(), new HashSet<Guid>(), new HashSet<Guid>());
+        new HashSet<Guid>(), new HashSet<Guid>(), new HashSet<Guid>(), new HashSet<Guid>());
 
     public ChannelReplyDispatchOutcome OutcomeFor(Guid correlationId) =>
         PublishedCorrelationIds.Contains(correlationId)
@@ -41,7 +43,9 @@ public sealed record ChannelReplyDispatchResult(
                 ? ChannelReplyDispatchOutcome.IntentionallyWithheld
                 : FailedCorrelationIds.Contains(correlationId)
                     ? ChannelReplyDispatchOutcome.PublicationFailed
-                    : ChannelReplyDispatchOutcome.NotPublished;
+                    : DeferredCorrelationIds is not null && DeferredCorrelationIds.Contains(correlationId)
+                        ? ChannelReplyDispatchOutcome.Deferred
+                        : ChannelReplyDispatchOutcome.NotPublished;
 }
 
 /// <summary>
@@ -76,7 +80,7 @@ public sealed record ChannelReplyDispatchResult(
 /// </summary>
 public sealed class ChannelReplyDispatcher
 {
-    private sealed record ReplyTarget(string Provider, string? ReplyHandle, string ConversationId);
+    private sealed record ReplyTarget(string Provider, string? ReplyHandle, string ConversationId, Guid? ChannelId = null);
 
     /// <summary>Why a correlation was abandoned without an answer. All are Critical incidents.</summary>
     private enum LossReason
@@ -174,7 +178,8 @@ public sealed class ChannelReplyDispatcher
             .Where(m => m.Origin == QueuedMessageOrigin.Channel
                 && m.Status == QueuedMessageStatus.Sent
                 && m.ConversationKey != null
-                && m.ChannelReplySettledAt == null);
+                && m.ChannelReplySettledAt == null
+                && m.OutboundDeliveryId == null);
 
     /// <summary>
     /// Called on every completed turn. Cheap for sessions with no channel correlations (one indexed
@@ -350,7 +355,7 @@ public sealed class ChannelReplyDispatcher
 
             var channel = await db.ChatChannels.AsNoTracking()
                 .Where(c => c.Provider == provider && c.ExternalId == conversationId)
-                .Select(c => new { c.ReplyHandle })
+                .Select(c => new { c.Id, c.ReplyHandle })
                 .FirstOrDefaultAsync(ct);
             if (channel is null)
             {
@@ -359,7 +364,7 @@ public sealed class ChannelReplyDispatcher
                     + "by conversation id alone", group.Key, sessionId);
             }
 
-            targets.Add(new ReplyTarget(provider, channel?.ReplyHandle, conversationId));
+            targets.Add(new ReplyTarget(provider, channel?.ReplyHandle, conversationId, channel?.Id));
         }
 
         var failed = unroutable.Select(m => m.Id).ToHashSet();
@@ -405,6 +410,10 @@ public sealed class ChannelReplyDispatcher
         // One reply per distinct conversation. With same-conversation batching this loop is
         // degenerate (exactly one send) — the fan-out is a deliberate latent safety net in case
         // batching scope ever widens to cross-conversation.
+        var outbound = scope.ServiceProvider.GetService<ChannelOutboundService>();
+        var sourceTaskIds = matches.Where(m => m.SourceTaskId is not null)
+            .Select(m => m.SourceTaskId!.Value).Distinct().ToList();
+        var deferred = new HashSet<Guid>();
         var produced = false;
         try
         {
@@ -419,12 +428,39 @@ public sealed class ChannelReplyDispatcher
                     Kind = kind,
                     Attachments = attachments,
                 };
-                await _producer.SendAsync(reply, ct);
+                var request = new ChannelOutboundRequest(
+                    reply,
+                    ChannelOutboundOrigin.AgentReply,
+                    ChannelOutboundSendKind.Main,
+                    sessionId,
+                    userPrompt.Sequence,
+                    userPrompt.Sequence,
+                    maxTextSeq,
+                    target.ChannelId,
+                    ProjectId: null,
+                    matches.Select(m => m.Id).ToList(),
+                    sourceTaskIds);
+                if (outbound is not null && await outbound.WouldConvertAsync(request, ct))
+                {
+                    foreach (var m in matches)
+                        m.ChannelReplySettledAt = null;
+                    await db.SaveChangesAsync(ct);
+                    var deferredResult = await outbound.SendAsync(request, ct);
+                    if (deferredResult.Status == ChannelOutboundPublishStatus.Deferred)
+                    {
+                        deferred.UnionWith(matches.Select(m => m.Id));
+                        continue;
+                    }
+                    if (deferredResult.Status == ChannelOutboundPublishStatus.Published)
+                        continue;
+                }
+
+                await PublishReplyAsync(outbound, reply, request, ct);
                 _logger.LogInformation(
                     "Sent {Kind} reply ({Chars} chars, {AttachmentCount} attachment(s)) to {Provider} conversation {ConversationId} from session {SessionId}",
                     reply.Kind, text.Length, attachments.Count, target.Provider, target.ConversationId, sessionId);
             }
-            produced = true;
+            produced = deferred.Count == 0;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -448,9 +484,10 @@ public sealed class ChannelReplyDispatcher
         }
 
         return new ChannelReplyDispatchResult(
-            failed.Count == 0 ? matches.Select(m => m.Id).ToHashSet() : new HashSet<Guid>(),
+            failed.Count == 0 && deferred.Count == 0 ? matches.Select(m => m.Id).ToHashSet() : new HashSet<Guid>(),
             new HashSet<Guid>(),
-            failed);
+            failed,
+            deferred);
     }
 
     /// <summary>
@@ -1094,8 +1131,22 @@ public sealed class ChannelReplyDispatcher
                 Kind = kind,
                 Attachments = attachments,
             };
-            await _producer.SendAsync(reply, ct);
-            await channels.StampLastReplyAsync(target.Provider, target.ConversationId, text, ct);
+            var outbound = scope.ServiceProvider.GetService<ChannelOutboundService>();
+            var trailingRequest = new ChannelOutboundRequest(
+                    reply,
+                    ChannelOutboundOrigin.AgentReply,
+                    ChannelOutboundSendKind.Trailing,
+                    sessionId,
+                    turn.PromptSeq,
+                    turn.MaxTextSeq,
+                    claimed.MaxTextSeq,
+                    ChannelId: null,
+                    ProjectId: null,
+                    CorrelationIds: [],
+                    SourceTaskIds: []);
+            await PublishReplyAsync(outbound, reply, trailingRequest, ct);
+            if (reply.Text is not null)
+                await channels.StampLastReplyAsync(target.Provider, target.ConversationId, text, ct);
             _logger.LogInformation(
                 "Sent follow-up {Kind} reply ({Chars} chars, {AttachmentCount} attachment(s)) to {Provider} conversation {ConversationId} from session {SessionId} — text arrived after the turn's dispatch",
                 reply.Kind, text.Length, attachments.Count, target.Provider, target.ConversationId, sessionId);
@@ -1237,7 +1288,7 @@ public sealed class ChannelReplyDispatcher
 
         var channel = await db.ChatChannels.AsNoTracking()
             .Where(c => c.Provider == provider && c.ExternalId == conversationId)
-            .Select(c => new { c.ReplyHandle })
+            .Select(c => new { c.Id, c.ReplyHandle })
             .FirstOrDefaultAsync(ct);
         if (channel is null)
         {
@@ -1269,7 +1320,34 @@ public sealed class ChannelReplyDispatcher
                 Kind = kind,
                 Attachments = attachments,
             };
-            await _producer.SendAsync(reply, ct);
+            var outbound = scope.ServiceProvider.GetService<ChannelOutboundService>();
+            var machineRequest = new ChannelOutboundRequest(
+                    reply,
+                    ChannelOutboundOrigin.AgentReply,
+                    ChannelOutboundSendKind.Machine,
+                    sessionId,
+                    userPrompt.Sequence,
+                    userPrompt.Sequence,
+                    maxTextSeq,
+                    channel?.Id,
+                    ProjectId: null,
+                    matches.Select(m => m.Id).ToList(),
+                    impliedTasks.Select(t => t.Id).ToList());
+            if (outbound is not null)
+            {
+                var machineResult = await outbound.SendAsync(machineRequest, ct);
+                if (machineResult.Status == ChannelOutboundPublishStatus.Deferred)
+                {
+                    foreach (var m in matches)
+                        m.ChannelReplySettledAt = null;
+                    await db.SaveChangesAsync(ct);
+                    return;
+                }
+            }
+            else
+            {
+                await _producer.SendAsync(reply, ct);
+            }
             StampDeliveredBundles(impliedTasks, attachments, _timeProvider.GetUtcNow().UtcDateTime);
             await db.SaveChangesAsync(ct);
             _dispatched[sessionId] = new DispatchedTurn(userPrompt.Sequence, maxTextSeq, [target]);
@@ -1364,6 +1442,21 @@ public sealed class ChannelReplyDispatcher
         }
 
         return (paths, tasks);
+    }
+
+    private async Task PublishReplyAsync(
+        ChannelOutboundService? outbound,
+        ChannelReply reply,
+        ChannelOutboundRequest request,
+        CancellationToken ct)
+    {
+        if (outbound is null)
+        {
+            await _producer.SendAsync(reply, ct);
+            return;
+        }
+
+        await outbound.SendAsync(request, ct);
     }
 
     private static void StampDeliveredBundles(
