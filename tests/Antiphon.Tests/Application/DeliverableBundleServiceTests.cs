@@ -19,7 +19,6 @@ namespace Antiphon.Tests.Application;
 public class DeliverableBundleServiceTests
 {
     [Test]
-    [Test]
     public async Task Default_settlement_preserves_sources_without_conversion()
     {
         using var workspace = new TempDir();
