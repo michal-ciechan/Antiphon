@@ -793,6 +793,11 @@ launch/bootstrap path, not on reply style, and are not this card's to fix.
 | V-8 contracts | `--treenode-filter "/*/*/ChannelContractsTests/*"` | **14/14** |
 | V-8 delivery | the six methods listed above, one filter per run | **6/6**, one test per run |
 
+Every commit on this branch after `483e28f0` is documentation-only: confirm with
+`git diff --stat 483e28f0..HEAD`, which lists this plan file and nothing else. The
+results above therefore still describe the tip, and do not need rerunning for a
+docs commit.
+
 Run the six delivery methods one filter at a time. Method-level alternation --
 `/*/*/ChannelBridgeTests/(A)|(B)|(C)` -- discovers **zero** tests on this runner,
 and a zero-test run is a silent false green, not evidence. Only the class segment
