@@ -83,8 +83,9 @@ public class SessionRunnerGenerationWireTests
         handler.Requests.Select(r => r.RequestUri!.AbsolutePath).ShouldBe(["/capabilities"]);
 
         handler.Requests.Clear();
+        var attachClient = Client(handler);
         await Should.ThrowAsync<RunnerCapabilityMismatchException>(() =>
-            client.AttachHerdrAsync(new HerdrAttachRequest(
+            attachClient.AttachHerdrAsync(new HerdrAttachRequest(
                 sessionId, "pane", "claude", "claude", 1, "none", AcceptedStartedAt: generation),
                 CancellationToken.None));
         handler.Requests.Select(r => r.RequestUri!.AbsolutePath).ShouldBe(["/capabilities"]);
