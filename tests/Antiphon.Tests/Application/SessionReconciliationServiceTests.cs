@@ -8,6 +8,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -854,6 +855,7 @@ public class SessionReconciliationServiceTests
             await service.ScanAsync(CancellationToken.None);
 
             runner.Killed.ShouldBe([sessionId]);
+            runner.KillGenerationCalls.ShouldBeEmpty();
             await using var verify = CreateContext();
             (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status
                 .ShouldBe(SessionStatus.Stopped);
@@ -956,6 +958,519 @@ public class SessionReconciliationServiceTests
         }
     }
 
+    [Test]
+    [Arguments(0)]
+    [Arguments(-1)]
+    public async Task Cap_zero_or_negative_allows_no_transition_and_escalates_on_the_first_mismatch(int cap)
+    {
+        var marker = NewMarker();
+        try
+        {
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Failed, staleAgent: true, agentStatus: AgentStatus.Failed);
+            var flapState = new SessionReAdoptionState();
+            var alerts = new RecordingAlertService();
+            var runner = RunnerRunning(sessionId, startedAt);
+            for (var sweep = 1; sweep <= 21; sweep++)
+            {
+                await using var db = CreateContext();
+                var service = BuildService(db, runner, new MockEventBus(), alerts, flapState, maxReAdoptions: cap);
+                await service.ScanAsync(CancellationToken.None);
+                await using var verify = CreateContext();
+                (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Failed);
+                flapState.CountFor(sessionId).ShouldBe(0);
+            }
+
+            runner.Probed.Count.ShouldBe(1);
+            await using var final = CreateContext();
+            var critical = await final.AgentIncidents
+                .Where(i => i.SessionId == sessionId && i.Severity == AlertSeverity.Critical)
+                .ToListAsync();
+            critical.ShouldHaveSingleItem();
+            critical[0].Message.ShouldContain("0 times");
+            critical[0].Message.ShouldContain("(cap 0)");
+            alerts.For(sessionId).Count(a => a.Severity == AlertSeverity.Critical).ShouldBe(1);
+        }
+        finally { await CleanupAsync(marker); }
+    }
+
+    [Test]
+    public async Task Cap_state_is_per_session_and_a_new_singleton_starts_over()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var (agent1, s1, started1) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Failed, staleAgent: true, agentStatus: AgentStatus.Failed);
+            var s2 = Guid.NewGuid();
+            await using (var db = CreateContext())
+            {
+                var now = DateTime.UtcNow.AddHours(-1);
+                db.AgentSessions.Add(new AgentSession
+                {
+                    Id = s2,
+                    DefinitionName = "claude",
+                    AgentKind = AgentKind.ClaudeCode,
+                    Status = SessionStatus.Failed,
+                    Cwd = Path.Combine(Path.GetTempPath(), marker),
+                    Cols = 120,
+                    Rows = 30,
+                    CreatedAt = now,
+                    StartedAt = started1,
+                    LastSeenAt = now,
+                    EndedAt = DateTime.UtcNow,
+                    ExitCode = 1,
+                });
+                await db.SaveChangesAsync();
+            }
+
+            var flapState = new SessionReAdoptionState();
+            var alerts = new RecordingAlertService();
+            var runner = new FakeRunnerClient
+            {
+                Sessions =
+                [
+                    new SessionRunnerSessionDto(s1, 1, started1, "Running", null, AgentExitReason.Unknown, 10, HostPid: 2, AcceptedStartedAt: started1),
+                    new SessionRunnerSessionDto(s2, 1, started1, "Running", null, AgentExitReason.Unknown, 10, HostPid: 3, AcceptedStartedAt: started1),
+                ]
+            };
+            for (var round = 1; round <= 4; round++)
+            {
+                await using var db = CreateContext();
+                var service = BuildService(db, runner, new MockEventBus(), alerts, flapState);
+                await service.ScanAsync(CancellationToken.None);
+                if (round <= 3)
+                {
+                    await using var verify = CreateContext();
+                    await verify.AgentSessions.Where(s => s.Id == s1).ExecuteUpdateAsync(u => u
+                        .SetProperty(s => s.Status, SessionStatus.Failed)
+                        .SetProperty(s => s.EndedAt, DateTime.UtcNow));
+                    await verify.Agents.Where(a => a.Id == agent1).ExecuteUpdateAsync(u => u
+                        .SetProperty(a => a.Status, AgentStatus.Failed));
+                }
+            }
+
+            flapState.CountFor(s1).ShouldBe(3);
+            flapState.CountFor(s2).ShouldBe(1);
+            alerts.Raised.Count(a => a.Severity == AlertSeverity.Critical).ShouldBe(1);
+
+            var fresh = new SessionReAdoptionState();
+            await using (var db = CreateContext())
+            {
+                await db.AgentSessions.Where(s => s.Id == s1).ExecuteUpdateAsync(u => u
+                    .SetProperty(s => s.Status, SessionStatus.Failed)
+                    .SetProperty(s => s.EndedAt, DateTime.UtcNow));
+            }
+
+            await using (var db = CreateContext())
+            {
+                var service = BuildService(db, runner, new MockEventBus(), new RecordingAlertService(), fresh);
+                await service.ScanAsync(CancellationToken.None);
+            }
+
+            fresh.CountFor(s1).ShouldBe(1);
+            alerts.Raised.Count(a => a.Severity == AlertSeverity.Critical).ShouldBe(1);
+        }
+        finally { await CleanupAsync(marker); }
+    }
+
+    [Test]
+    public async Task A_healthy_sweep_or_same_id_resume_does_not_reset_the_count()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var (agentId, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Failed, staleAgent: true, agentStatus: AgentStatus.Failed);
+            var flapState = new SessionReAdoptionState();
+            var runner = RunnerRunning(sessionId, startedAt);
+            for (var round = 1; round <= 2; round++)
+            {
+                await using var db = CreateContext();
+                var service = BuildService(db, runner, new MockEventBus(), reAdoptions: flapState);
+                await service.ScanAsync(CancellationToken.None);
+                await using var verify = CreateContext();
+                await verify.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u
+                    .SetProperty(s => s.Status, SessionStatus.Failed)
+                    .SetProperty(s => s.EndedAt, DateTime.UtcNow));
+                await verify.Agents.Where(a => a.Id == agentId).ExecuteUpdateAsync(u => u
+                    .SetProperty(a => a.Status, AgentStatus.Failed));
+            }
+
+            flapState.CountFor(sessionId).ShouldBe(2);
+            await using (var db = CreateContext())
+            {
+                await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u
+                    .SetProperty(s => s.Status, SessionStatus.Running)
+                    .SetProperty(s => s.EndedAt, (DateTime?)null));
+            }
+
+            for (var i = 0; i < 3; i++)
+            {
+                await using var db = CreateContext();
+                var service = BuildService(db, runner, new MockEventBus(), reAdoptions: flapState);
+                await service.ScanAsync(CancellationToken.None);
+            }
+
+            var generationB = SessionGeneration.Next(startedAt, DateTime.UtcNow);
+            await using (var db = CreateContext())
+            {
+                await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u
+                    .SetProperty(s => s.StartedAt, generationB)
+                    .SetProperty(s => s.Status, SessionStatus.Running));
+            }
+
+            await using (var db = CreateContext())
+            {
+                var service = BuildService(db, RunnerRunning(sessionId, generationB), new MockEventBus(), reAdoptions: flapState);
+                await service.ScanAsync(CancellationToken.None);
+            }
+
+            flapState.CountFor(sessionId).ShouldBe(2);
+            await using (var db = CreateContext())
+            {
+                await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u
+                    .SetProperty(s => s.Status, SessionStatus.Failed)
+                    .SetProperty(s => s.StartedAt, startedAt)
+                    .SetProperty(s => s.EndedAt, DateTime.UtcNow));
+                await db.Agents.Where(a => a.Id == agentId).ExecuteUpdateAsync(u => u
+                    .SetProperty(a => a.Status, AgentStatus.Failed));
+            }
+
+            await using (var db = CreateContext())
+            {
+                var service = BuildService(db, runner, new MockEventBus(), reAdoptions: flapState);
+                await service.ScanAsync(CancellationToken.None);
+            }
+
+            flapState.CountFor(sessionId).ShouldBe(3);
+            await using (var db = CreateContext())
+            {
+                await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u
+                    .SetProperty(s => s.Status, SessionStatus.Failed)
+                    .SetProperty(s => s.EndedAt, DateTime.UtcNow));
+                await db.Agents.Where(a => a.Id == agentId).ExecuteUpdateAsync(u => u
+                    .SetProperty(a => a.Status, AgentStatus.Failed));
+            }
+
+            var alerts = new RecordingAlertService();
+            await using (var db = CreateContext())
+            {
+                var service = BuildService(db, runner, new MockEventBus(), alerts, flapState);
+                await service.ScanAsync(CancellationToken.None);
+            }
+
+            flapState.CountFor(sessionId).ShouldBe(3);
+            alerts.For(sessionId).Count(a => a.Severity == AlertSeverity.Critical).ShouldBe(1);
+        }
+        finally { await CleanupAsync(marker); }
+    }
+
+    [Test]
+    public async Task Two_reconcilers_racing_one_Failed_row_commit_exactly_one_transition()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Failed, staleAgent: true, agentStatus: AgentStatus.Failed);
+            var flapState = new SessionReAdoptionState();
+            var barrier = new Barrier(2);
+            var runner = RunnerRunning(sessionId, startedAt);
+            runner.OnProbe = (_, _) =>
+            {
+                barrier.SignalAndWait(TimeSpan.FromSeconds(10));
+                return Task.CompletedTask;
+            };
+
+            await using var db1 = CreateContext();
+            await using var db2 = CreateContext();
+            var alerts = new RecordingAlertService();
+            var a = BuildService(db1, runner, new MockEventBus(), alerts, flapState);
+            var b = BuildService(db2, runner, new MockEventBus(), alerts, flapState);
+            await Task.WhenAll(a.ScanAsync(CancellationToken.None), b.ScanAsync(CancellationToken.None));
+
+            flapState.CountFor(sessionId).ShouldBe(1);
+            await using var verify = CreateContext();
+            (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Running);
+            (await verify.AgentIncidents.CountAsync(i => i.SessionId == sessionId && i.Severity == AlertSeverity.Warning))
+                .ShouldBe(1);
+            (await verify.AgentIncidents.CountAsync(i => i.SessionId == sessionId && i.Severity == AlertSeverity.Critical))
+                .ShouldBe(0);
+        }
+        finally { await CleanupAsync(marker); }
+    }
+
+    [Test]
+    [Arguments("probe")]
+    [Arguments("save")]
+    [Arguments("cancel")]
+    [Arguments("superseded")]
+    [Arguments("publish-after-commit")]
+    public async Task A_failed_or_superseded_transition_never_counts_and_a_post_commit_publish_failure_never_refunds(string shape)
+    {
+        var marker = NewMarker();
+        try
+        {
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Failed, staleAgent: true, agentStatus: AgentStatus.Failed);
+            var flapState = new SessionReAdoptionState();
+            var runner = RunnerRunning(sessionId, startedAt);
+            var eventBus = new MockEventBus();
+            var alerts = new RecordingAlertService();
+            using var cts = new CancellationTokenSource();
+            AppDbContext scan;
+            if (shape == "save")
+            {
+                var interceptor = new ThrowOnceSaveInterceptor();
+                var options = new DbContextOptionsBuilder<AppDbContext>();
+                options.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
+                {
+                    npgsql.MigrationsAssembly("Antiphon.Server");
+                    npgsql.SetPostgresVersion(16, 0);
+                });
+                options.AddInterceptors(interceptor);
+                scan = new AppDbContext(options.Options);
+            }
+            else
+            {
+                scan = CreateContext();
+            }
+
+            await using (scan)
+            {
+                if (shape == "probe")
+                    runner.BufferError = new HttpRequestException("pipe gone");
+                if (shape == "cancel")
+                    runner.OnProbe = (_, _) => throw new OperationCanceledException();
+                if (shape == "superseded")
+                {
+                    var generationB = SessionGeneration.Next(startedAt, DateTime.UtcNow);
+                    runner.OnProbe = async (_, ct) =>
+                    {
+                        await using var db = CreateContext();
+                        await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u
+                            .SetProperty(s => s.StartedAt, generationB)
+                            .SetProperty(s => s.Status, SessionStatus.Running)
+                            .SetProperty(s => s.EndedAt, (DateTime?)null)
+                            .SetProperty(s => s.ExitCode, (int?)null), ct);
+                    };
+                }
+
+                if (shape == "publish-after-commit")
+                    eventBus.ThrowOnceOnEvent = "SessionStarted";
+
+                var service = BuildService(scan, runner, eventBus, alerts, flapState);
+                if (shape == "cancel")
+                    await service.ScanAsync(cts.Token);
+                else
+                    await service.ScanAsync(CancellationToken.None);
+            }
+
+            if (shape is "probe" or "save" or "cancel")
+            {
+                flapState.CountFor(sessionId).ShouldBe(0);
+                await using var verify = CreateContext();
+                (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Failed);
+                if (shape == "save")
+                    (await verify.AgentIncidents.CountAsync(i => i.SessionId == sessionId)).ShouldBe(0);
+            }
+            else if (shape == "superseded")
+            {
+                flapState.CountFor(sessionId).ShouldBe(0);
+                await using var verify = CreateContext();
+                var row = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
+                row.Status.ShouldBe(SessionStatus.Running);
+                (await verify.AgentIncidents.CountAsync(i => i.SessionId == sessionId)).ShouldBe(0);
+            }
+            else
+            {
+                flapState.CountFor(sessionId).ShouldBe(1);
+                await using var verify = CreateContext();
+                (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Running);
+                (await verify.AgentIncidents.CountAsync(i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.SessionReAdopted))
+                    .ShouldBe(1);
+                alerts.For(sessionId).ShouldNotBeEmpty();
+            }
+        }
+        finally { await CleanupAsync(marker); }
+    }
+
+    [Test]
+    [Arguments("incident-throws")]
+    [Arguments("alert-throws")]
+    [Arguments("ambiguous-save")]
+    public async Task Cap_escalation_retries_only_unfinished_work_and_converges_to_one_incident(string shape)
+    {
+        var marker = NewMarker();
+        try
+        {
+            var (agentId, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Failed, staleAgent: true, agentStatus: AgentStatus.Failed);
+            var flapState = new SessionReAdoptionState();
+            var runner = RunnerRunning(sessionId, startedAt);
+            for (var round = 1; round <= 3; round++)
+            {
+                await using var db = CreateContext();
+                var service = BuildService(db, runner, new MockEventBus(), reAdoptions: flapState);
+                await service.ScanAsync(CancellationToken.None);
+                await using var verify = CreateContext();
+                await verify.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u
+                    .SetProperty(s => s.Status, SessionStatus.Failed)
+                    .SetProperty(s => s.EndedAt, DateTime.UtcNow));
+                await verify.Agents.Where(a => a.Id == agentId).ExecuteUpdateAsync(u => u
+                    .SetProperty(a => a.Status, AgentStatus.Failed));
+            }
+
+            var alerts = new RecordingAlertService { ThrowOnce = shape == "alert-throws" };
+            SaveChangesInterceptor? interceptor = shape switch
+            {
+                "incident-throws" => new ThrowOnceCapIncidentInterceptor(),
+                "ambiguous-save" => new ThrowOnceSaveInterceptor(onSaving: false, onSaved: true),
+                _ => null,
+            };
+            AppDbContext FirstScan()
+            {
+                if (interceptor is null)
+                    return CreateContext();
+                var options = new DbContextOptionsBuilder<AppDbContext>();
+                options.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
+                {
+                    npgsql.MigrationsAssembly("Antiphon.Server");
+                    npgsql.SetPostgresVersion(16, 0);
+                });
+                options.AddInterceptors(interceptor);
+                return new AppDbContext(options.Options);
+            }
+
+            await using (var db = FirstScan())
+            {
+                var service = BuildService(db, runner, new MockEventBus(), alerts, flapState);
+                await service.ScanAsync(CancellationToken.None);
+            }
+
+            await using (var db = CreateContext())
+            {
+                var service = BuildService(db, runner, new MockEventBus(), alerts, flapState);
+                await service.ScanAsync(CancellationToken.None);
+            }
+
+            await using var final = CreateContext();
+            (await final.AgentIncidents.CountAsync(i =>
+                i.SessionId == sessionId && i.Severity == AlertSeverity.Critical)).ShouldBe(1);
+            alerts.For(sessionId).Count(a => a.Severity == AlertSeverity.Critical).ShouldBe(1);
+
+            var reportedAlerts = alerts.Raised.Count;
+            var reportedIncidents = await final.AgentIncidents.CountAsync(i => i.SessionId == sessionId);
+            for (var i = 0; i < 10; i++)
+            {
+                await using var db = CreateContext();
+                var service = BuildService(db, runner, new MockEventBus(), alerts, flapState);
+                await service.ScanAsync(CancellationToken.None);
+            }
+
+            alerts.Raised.Count.ShouldBe(reportedAlerts);
+            await using var after = CreateContext();
+            (await after.AgentIncidents.CountAsync(i => i.SessionId == sessionId)).ShouldBe(reportedIncidents);
+        }
+        finally { await CleanupAsync(marker); }
+    }
+
+    [Test]
+    public async Task An_unclaimed_capped_session_gets_the_alert_and_no_incident()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var (agentId, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Failed, staleAgent: true, agentStatus: AgentStatus.Failed);
+            var other = Guid.NewGuid();
+            await using (var db = CreateContext())
+            {
+                await db.Agents.Where(a => a.Id == agentId).ExecuteUpdateAsync(u => u
+                    .SetProperty(a => a.PersistentSessionId, other.ToString("D")));
+            }
+
+            var flapState = new SessionReAdoptionState();
+            var alerts = new RecordingAlertService();
+            var runner = RunnerRunning(sessionId, startedAt);
+            for (var round = 1; round <= 4; round++)
+            {
+                await using var db = CreateContext();
+                var service = BuildService(db, runner, new MockEventBus(), alerts, flapState);
+                await service.ScanAsync(CancellationToken.None);
+                if (round <= 3)
+                {
+                    await using var verify = CreateContext();
+                    await verify.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u
+                        .SetProperty(s => s.Status, SessionStatus.Failed)
+                        .SetProperty(s => s.EndedAt, DateTime.UtcNow));
+                }
+            }
+
+            await using var final = CreateContext();
+            (await final.AgentIncidents.CountAsync(i => i.SessionId == sessionId)).ShouldBe(0);
+            alerts.For(sessionId).Count(a => a.Severity == AlertSeverity.Critical).ShouldBe(1);
+        }
+        finally { await CleanupAsync(marker); }
+    }
+
+    [Test]
+    public async Task A_legacy_runner_DTO_without_a_generation_closes_nothing_re_adopts_nothing_and_alerts_once()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Running, staleAgent: true);
+            var alerts = new RecordingAlertService();
+            var runner = new FakeRunnerClient
+            {
+                Sessions =
+                [
+                    new SessionRunnerSessionDto(
+                        sessionId, 1, startedAt, "Exited", 1, AgentExitReason.KilledByRequest, 1)
+                ]
+            };
+            for (var i = 0; i < 10; i++)
+            {
+                await using var db = CreateContext();
+                var service = BuildService(db, runner, new MockEventBus(), alerts);
+                await service.ScanAsync(CancellationToken.None);
+            }
+
+            await using var verify = CreateContext();
+            (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Running);
+            alerts.For(sessionId).Count.ShouldBe(1);
+
+            await using (var db = CreateContext())
+            {
+                await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u
+                    .SetProperty(s => s.Status, SessionStatus.Failed)
+                    .SetProperty(s => s.EndedAt, DateTime.UtcNow));
+            }
+
+            runner.Sessions =
+            [
+                new SessionRunnerSessionDto(
+                    sessionId, 1, startedAt, "Running", null, AgentExitReason.Unknown, 10, HostPid: 2)
+            ];
+            var flapState = new SessionReAdoptionState();
+            for (var i = 0; i < 10; i++)
+            {
+                await using var db = CreateContext();
+                var service = BuildService(db, runner, new MockEventBus(), alerts, flapState);
+                await service.ScanAsync(CancellationToken.None);
+            }
+
+            await using var failed = CreateContext();
+            (await failed.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Failed);
+            flapState.CountFor(sessionId).ShouldBe(0);
+            alerts.For(sessionId).Count.ShouldBe(1);
+        }
+        finally { await CleanupAsync(marker); }
+    }
+
     private sealed class ListLogger<T>(List<string> sink) : ILogger<T>
     {
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
@@ -963,6 +1478,26 @@ public class SessionReconciliationServiceTests
         public void Log<TState>(LogLevel level, EventId id, TState state, Exception? exception,
             Func<TState, Exception?, string> formatter) =>
             sink.Add(formatter(state, exception));
+    }
+
+    private sealed class ThrowOnceCapIncidentInterceptor : SaveChangesInterceptor
+    {
+        private int _threw;
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (eventData.Context is AppDbContext db
+                && db.ChangeTracker.Entries<AgentIncident>().Any(e =>
+                    e.State == EntityState.Added
+                    && e.Entity.FailureReason == "ReAdoptCapReached")
+                && Interlocked.Exchange(ref _threw, 1) == 0)
+            {
+                throw new InvalidOperationException("ThrowOnceCapIncidentInterceptor");
+            }
+
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
     }
 
     /// <summary>

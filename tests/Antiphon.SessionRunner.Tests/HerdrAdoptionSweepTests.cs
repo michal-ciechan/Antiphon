@@ -43,6 +43,7 @@ public class HerdrAdoptionSweepTests
         dto.Adopted.ShouldBeTrue();
         dto.Backend.ShouldBe(SessionBackends.Herdr);
         dto.Pending.ShouldBeNull();
+        dto.AcceptedStartedAt.ShouldNotBeNull();
         File.Exists(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId)).ShouldBeTrue();
         await runtimeB.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
         DeleteLogRoot(settings.SessionLogPath);
@@ -120,6 +121,7 @@ public class HerdrAdoptionSweepTests
         dto.Status.ShouldBe("Exited");
         dto.ExitReason.ShouldBe(HerdrExitReasons.RestartPresumedDead);
         dto.Backend.ShouldBe(SessionBackends.Herdr);
+        dto.AcceptedStartedAt.ShouldNotBeNull();
         File.Exists(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId)).ShouldBeFalse();
         DeleteLogRoot(settings.SessionLogPath);
     }
@@ -874,6 +876,7 @@ public class HerdrAdoptionSweepTests
                 TranscriptEnabled: transcriptEnabled,
                 TranscriptFormat: transcriptFormat,
                 Backend: SessionBackends.Herdr,
+                AcceptedStartedAt: SessionGeneration.Normalize(DateTime.UtcNow),
                 Herdr: new HerdrLaunchOptions(
                     WorkspaceKey: workspaceKey ?? $"test-{sessionId:N}"[..32],
                     WorkspaceLabel: "card0186-adopt",

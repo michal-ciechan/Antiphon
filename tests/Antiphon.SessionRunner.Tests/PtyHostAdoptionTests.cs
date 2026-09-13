@@ -51,8 +51,9 @@ public class PtyHostAdoptionTests
             var dtoB = runtimeB.Get(sessionId);
             dtoB.Status.ShouldBe("Running");
             dtoB.Pid.ShouldBe(childPid);
+            acceptedA.ShouldNotBeNull();
             dtoB.AcceptedStartedAt.ShouldBe(acceptedA);
-            dtoB.StartedAt.ShouldNotBe(acceptedA);
+            dtoB.StartedAt.ShouldNotBe(acceptedA.Value);
 
             // Interpretation rebuilt: pre-restart output is still in the snapshot.
             runtimeB.GetSnapshot(sessionId).RawOutput.ShouldContain("before-restart-marker");
@@ -153,9 +154,10 @@ public class PtyHostAdoptionTests
         Directory.CreateDirectory(settings.SessionLogPath);
         File.WriteAllText(batch, "@echo off\r\necho exiting-soon\r\nping -n 3 127.0.0.1 > nul\r\nexit /b 7\r\n");
 
+        var generationA = SessionGeneration.Normalize(DateTime.UtcNow);
         var request = new RunnerLaunchRequest(
             sessionId, Cmd, ["/d", "/c", batch], new Dictionary<string, string>(),
-            Path.GetTempPath(), Cols: 100, Rows: 25);
+            Path.GetTempPath(), Cols: 100, Rows: 25, AcceptedStartedAt: generationA);
         await runtimeA.StartAsync(request, CancellationToken.None);
 
         var hostPid = PtyHostManifest.TryLoad(manifestPath)!.HostPid;
@@ -174,6 +176,7 @@ public class PtyHostAdoptionTests
         dto.Status.ShouldBe("Exited");
         dto.ExitCode.ShouldBe(7);
         dto.ExitReason.ShouldBe("ProcessExited");
+        dto.AcceptedStartedAt.ShouldBe(generationA);
 
         // The missed SessionExited event was published for consumers.
         var sawExit = false;
