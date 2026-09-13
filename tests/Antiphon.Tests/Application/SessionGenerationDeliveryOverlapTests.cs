@@ -95,9 +95,27 @@ public class SessionGenerationDeliveryOverlapTests
                 .SetProperty(a => a.PersistentSessionId, h.SessionId.ToString("D")));
         }
 
-        await using var scope = h.Provider.CreateAsyncScope();
-        await scope.ServiceProvider.GetRequiredService<AgentControlService>()
-            .StartAsync(h.AgentId, new StartAgentRequest(), CancellationToken.None);
+        DateTime generationB;
+        string cwd;
+        await using (var db = BridgeQueueHarness.CreateContext())
+        {
+            var agent = await db.Agents.SingleAsync(a => a.Id == h.AgentId);
+            cwd = agent.WorkingDirectory;
+            var prior = (await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId)).StartedAt;
+            generationB = SessionGeneration.Next(prior, DateTime.UtcNow);
+            await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u
+                .SetProperty(s => s.StartedAt, generationB)
+                .SetProperty(s => s.Status, SessionStatus.Starting)
+                .SetProperty(s => s.EndedAt, (DateTime?)null)
+                .SetProperty(s => s.FailureReason, (string?)null)
+                .SetProperty(s => s.TerminationSource, SessionTerminationSource.Unknown));
+        }
+
+        var spec = new AgentLaunchSpec(
+            "fake", AgentKind.ClaudeCode, "cmd", [], new Dictionary<string, string>(),
+            cwd, 120, 30, SessionId: h.SessionId, AcceptedStartedAt: generationB);
+        h.Provider.GetRequiredService<AgentSessionLaunchQueue>()
+            .EnqueueInteractiveSession(h.SessionId, h.AgentId, generationB, spec, remoteControlName: null);
         await WaitUntilAsync(() => adapterB.Started);
         adapterB.KillGenerationCalls.ShouldBeEmpty();
         adapterB.Killed.ShouldBeFalse();
