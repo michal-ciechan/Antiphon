@@ -245,7 +245,9 @@ public class AgentSessionRuntimeTests
         var (sessionId, agentId, logPath, runtime, startedAt) = await SeedRunningSessionAsync();
         try
         {
-            await runtime.ObserveExitAsync(sessionId, 0, AgentExitReason.ProcessExited, CancellationToken.None, startedAt);
+            await runtime.ObserveExitAsync(
+                new SessionRunnerExitedEvent(sessionId, 0, AgentExitReason.ProcessExited, 0, startedAt),
+                CancellationToken.None);
 
             await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
@@ -266,7 +268,9 @@ public class AgentSessionRuntimeTests
             SessionTerminationSource.OperatorRequest);
         try
         {
-            await runtime.ObserveExitAsync(sessionId, 0, AgentExitReason.ProcessExited, CancellationToken.None, startedAt);
+            await runtime.ObserveExitAsync(
+                new SessionRunnerExitedEvent(sessionId, 0, AgentExitReason.ProcessExited, 0, startedAt),
+                CancellationToken.None);
 
             await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
@@ -287,7 +291,9 @@ public class AgentSessionRuntimeTests
             status: SessionStatus.Stopped);
         try
         {
-            await runtime.ObserveExitAsync(sessionId, 0, AgentExitReason.ProcessExited, CancellationToken.None, startedAt);
+            await runtime.ObserveExitAsync(
+                new SessionRunnerExitedEvent(sessionId, 0, AgentExitReason.ProcessExited, 0, startedAt),
+                CancellationToken.None);
 
             await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
@@ -308,7 +314,9 @@ public class AgentSessionRuntimeTests
         var (sessionId, agentId, logPath, runtime, startedAt) = await SeedRunningSessionAsync();
         try
         {
-            await runtime.ObserveExitAsync(sessionId, -1, AgentExitReason.CpuSpinKilled, CancellationToken.None, startedAt);
+            await runtime.ObserveExitAsync(
+                new SessionRunnerExitedEvent(sessionId, -1, AgentExitReason.CpuSpinKilled, 0, startedAt),
+                CancellationToken.None);
 
             await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
@@ -328,7 +336,9 @@ public class AgentSessionRuntimeTests
         var (sessionId, agentId, logPath, runtime, startedAt) = await SeedRunningSessionAsync();
         try
         {
-            await runtime.ObserveExitAsync(sessionId, null, AgentExitReason.HerdrPaneClosed, CancellationToken.None, startedAt);
+            await runtime.ObserveExitAsync(
+                new SessionRunnerExitedEvent(sessionId, null, AgentExitReason.HerdrPaneClosed, 0, startedAt),
+                CancellationToken.None);
 
             await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
@@ -351,7 +361,9 @@ public class AgentSessionRuntimeTests
         var (sessionId, agentId, logPath, runtime, startedAt) = await SeedRunningSessionAsync();
         try
         {
-            await runtime.ObserveExitAsync(sessionId, null, AgentExitReason.HerdrPaneLeftOpen, CancellationToken.None, startedAt);
+            await runtime.ObserveExitAsync(
+                new SessionRunnerExitedEvent(sessionId, null, AgentExitReason.HerdrPaneLeftOpen, 0, startedAt),
+                CancellationToken.None);
 
             await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
@@ -377,7 +389,8 @@ public class AgentSessionRuntimeTests
         try
         {
             await runtime.ObserveExitAsync(
-                sessionId, null, AgentExitReason.HerdrLaunchDetectTimeout, CancellationToken.None, startedAt);
+                new SessionRunnerExitedEvent(sessionId, null, AgentExitReason.HerdrLaunchDetectTimeout, 0, startedAt),
+                CancellationToken.None);
 
             await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
@@ -406,7 +419,8 @@ public class AgentSessionRuntimeTests
         var (sessionId, agentId, logPath, runtime, startedAt) = await SeedRunningSessionAsync();
         try
         {
-            await runtime.ObserveExitAsync(sessionId, null, reason, CancellationToken.None, startedAt);
+            await runtime.ObserveExitAsync(
+                new SessionRunnerExitedEvent(sessionId, null, reason, 0, startedAt), CancellationToken.None);
             await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             (await db.AgentSessions.SingleAsync(s => s.Id == sessionId)).HerdrSupervisionFailureKind.ShouldBe(expected);
         }
@@ -419,8 +433,12 @@ public class AgentSessionRuntimeTests
         var (sessionId, agentId, logPath, runtime, startedAt) = await SeedRunningSessionAsync();
         try
         {
-            await runtime.ObserveExitAsync(sessionId, null, AgentExitReason.HerdrLaunchDetectTimeout, CancellationToken.None, startedAt);
-            await runtime.ObserveExitAsync(sessionId, null, AgentExitReason.HerdrPaneClosed, CancellationToken.None, startedAt);
+            await runtime.ObserveExitAsync(
+                new SessionRunnerExitedEvent(sessionId, null, AgentExitReason.HerdrLaunchDetectTimeout, 0, startedAt),
+                CancellationToken.None);
+            await runtime.ObserveExitAsync(
+                new SessionRunnerExitedEvent(sessionId, null, AgentExitReason.HerdrPaneClosed, 0, startedAt),
+                CancellationToken.None);
             await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             (await db.AgentSessions.SingleAsync(s => s.Id == sessionId)).HerdrSupervisionFailureKind.ShouldBe(HerdrSupervisionFailureKind.DetectTimeout);
         }
@@ -433,7 +451,9 @@ public class AgentSessionRuntimeTests
         var (sessionId, agentId, logPath, runtime, startedAt) = await SeedRunningSessionAsync(SessionTerminationSource.OperatorRequest, SessionStatus.Stopped);
         try
         {
-            await runtime.ObserveExitAsync(sessionId, null, AgentExitReason.HerdrPaneClosed, CancellationToken.None, startedAt);
+            await runtime.ObserveExitAsync(
+                new SessionRunnerExitedEvent(sessionId, null, AgentExitReason.HerdrPaneClosed, 0, startedAt),
+                CancellationToken.None);
             await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             var row = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
             row.HerdrSupervisionFailureKind.ShouldBeNull();
@@ -510,6 +530,33 @@ public class AgentSessionRuntimeTests
     }
 
     [Test]
+    public async Task A_direct_overload_without_generation_cannot_close_a_reused_session()
+    {
+        var generationA = SessionGeneration.Normalize(DateTime.UtcNow.AddMinutes(-5));
+        var generationB = SessionGeneration.Next(generationA, DateTime.UtcNow);
+        var bus = new MockEventBus();
+        var (sessionId, agentId, logPath, runtime, _) = await SeedRunningSessionAsync(
+            acceptedGeneration: generationB, eventBus: bus);
+        try
+        {
+            var disposition = await runtime.ObserveExitAsync(
+                sessionId, 1, AgentExitReason.ProcessExited, CancellationToken.None);
+            disposition.ShouldBe(SessionExitDisposition.Missing);
+            await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            var row = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            row.Status.ShouldBe(SessionStatus.Running);
+            row.StartedAt.ShouldBe(generationB);
+            row.ExitCode.ShouldBeNull();
+            row.EndedAt.ShouldBeNull();
+            row.FailureReason.ShouldBeNull();
+            (await verify.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Running);
+            bus.PublishedEvents.ShouldNotContain(e => e.EventName == "SessionExited");
+            bus.PublishedEvents.ShouldNotContain(e => e.EventName == "AgentChanged");
+        }
+        finally { await CleanupSessionAsync(sessionId, agentId); DeleteDirectoryBestEffort(logPath); }
+    }
+
+    [Test]
     public async Task A_stale_exit_never_backfills_an_already_closed_row()
     {
         var generationA = SessionGeneration.Normalize(DateTime.UtcNow.AddMinutes(-5));
@@ -538,7 +585,8 @@ public class AgentSessionRuntimeTests
         try
         {
             var disposition = await runtime.ObserveExitAsync(
-                sessionId, 0, AgentExitReason.ProcessExited, CancellationToken.None, startedAt);
+                new SessionRunnerExitedEvent(sessionId, 0, AgentExitReason.ProcessExited, 0, startedAt),
+                CancellationToken.None);
             disposition.ShouldBe(SessionExitDisposition.Applied);
             await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);

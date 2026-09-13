@@ -415,7 +415,8 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
                         exited.SessionId,
                         exited.ExitCode,
                         MapExitReason(exited.ExitReason),
-                        exited.LastSequence));
+                        exited.LastSequence,
+                        exited.AcceptedStartedAt));
         }
 
         if (eventName == SessionRunnerEventNames.SessionStarted)

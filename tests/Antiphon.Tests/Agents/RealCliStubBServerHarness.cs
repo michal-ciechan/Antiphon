@@ -166,8 +166,7 @@ internal static class RealCliStubBServerHarness
                     }
                     else if (evt.Exited is not null)
                     {
-                        await runtime.ObserveExitAsync(
-                            evt.Exited.SessionId, evt.Exited.ExitCode, evt.Exited.ExitReason, CancellationToken.None);
+                        await runtime.ObserveExitAsync(evt.Exited, CancellationToken.None);
                     }
                     // Do NOT forward SessionTranscript events. Live-stream arrival order
                     // (AssistantText+TurnEnd before a late UserPrompt) rebases the prompt past

@@ -133,13 +133,13 @@ public partial class HerdrAlwaysOnChannelParityTests
                     Path.Combine(tempRoot, "session-logs"), firstSessionId))
                     .ShouldBeFalse("R2 deletes the sidecar; nothing to false-adopt next restart");
 
-                await harness.Runtime.ObserveExitAsync(
-                    firstSessionId, afterEmpty.ExitCode, afterEmpty.ExitReason, CancellationToken.None);
+                await SessionExitObservation.ObserveMatchingAsync(
+                    harness.Runtime, firstSessionId, afterEmpty.ExitCode, afterEmpty.ExitReason, CreateContext);
             }
             else
             {
-                await harness.Runtime.ObserveExitAsync(
-                    firstSessionId, 1, AgentExitReason.ProcessExited, CancellationToken.None);
+                await SessionExitObservation.ObserveMatchingAsync(
+                    harness.Runtime, firstSessionId, 1, AgentExitReason.ProcessExited, CreateContext);
                 harness.Runtime.TryRemove(firstSessionId, out _);
             }
 
@@ -304,8 +304,8 @@ public partial class HerdrAlwaysOnChannelParityTests
             await harness.Runner.SimulateRunnerRestartAsync();
             var afterEmpty = await harness.Runner.GetAsync(firstSessionId, CancellationToken.None);
             afterEmpty.Status.ShouldBe("Exited");
-            await harness.Runtime.ObserveExitAsync(
-                firstSessionId, afterEmpty.ExitCode, afterEmpty.ExitReason, CancellationToken.None);
+            await SessionExitObservation.ObserveMatchingAsync(
+                harness.Runtime, firstSessionId, afterEmpty.ExitCode, afterEmpty.ExitReason, CreateContext);
 
             await harness.Supervisor().TickAsync(CancellationToken.None);
             harness.Clock.Advance(TimeSpan.FromSeconds(10));
@@ -320,8 +320,8 @@ public partial class HerdrAlwaysOnChannelParityTests
             fake.ClearDetectedAgent(resumedPane);
             await harness.Runner.SimulateRunnerRestartAsync();
             var afterSecond = await harness.Runner.GetAsync(resumedId, CancellationToken.None);
-            await harness.Runtime.ObserveExitAsync(
-                resumedId, afterSecond.ExitCode, afterSecond.ExitReason, CancellationToken.None);
+            await SessionExitObservation.ObserveMatchingAsync(
+                harness.Runtime, resumedId, afterSecond.ExitCode, afterSecond.ExitReason, CreateContext);
 
             await using (var db = CreateContext())
             {

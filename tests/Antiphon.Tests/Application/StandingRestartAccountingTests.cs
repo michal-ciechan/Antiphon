@@ -39,7 +39,9 @@ public partial class StandingRestartAccountingTests
             for (var failure = 1; failure <= 3; failure++)
             {
                 if (failure <= 2)
-                    await h.Provider.GetRequiredService<AgentSessionRuntime>().ObserveExitAsync(id, 1, AgentExitReason.ProcessExited, default);
+                    await SessionExitObservation.ObserveMatchingAsync(
+                        h.Provider.GetRequiredService<AgentSessionRuntime>(),
+                        id, 1, AgentExitReason.ProcessExited, AgentSupervisionTests.CreateContext);
                 await h.Supervisor().TickAsync(default);
                 await h.Supervisor().TickAsync(default);
                 await using (var verify = AgentSupervisionTests.CreateContext())
@@ -112,7 +114,9 @@ public partial class StandingRestartAccountingTests
                 state.NextRestartAt = null;
                 await db.SaveChangesAsync();
             }
-            await h.Provider.GetRequiredService<AgentSessionRuntime>().ObserveExitAsync(id, 1, AgentExitReason.ProcessExited, default);
+            await SessionExitObservation.ObserveMatchingAsync(
+                h.Provider.GetRequiredService<AgentSessionRuntime>(),
+                id, 1, AgentExitReason.ProcessExited, AgentSupervisionTests.CreateContext);
             await h.Supervisor().TickAsync(default);
             await using (var db = AgentSupervisionTests.CreateContext())
             {
@@ -159,7 +163,9 @@ public partial class StandingRestartAccountingTests
             // actual runtime exit path supplies terminal evidence; the lost save invents no cause.
             var resumed = new FakeAgentProtocolAdapter();
             await using var recovered = AgentSupervisionTests.BuildHarness(root, [resumed], definitionKind: "ClaudeCode");
-            await recovered.Provider.GetRequiredService<AgentSessionRuntime>().ObserveExitAsync(id, 1, AgentExitReason.ProcessExited, default);
+            await SessionExitObservation.ObserveMatchingAsync(
+                recovered.Provider.GetRequiredService<AgentSessionRuntime>(),
+                id, 1, AgentExitReason.ProcessExited, AgentSupervisionTests.CreateContext);
             await recovered.Supervisor().TickAsync(default);
             await recovered.Supervisor().TickAsync(default);
             await using (var verify = AgentSupervisionTests.CreateContext())

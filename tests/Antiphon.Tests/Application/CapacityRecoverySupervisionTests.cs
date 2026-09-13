@@ -74,7 +74,9 @@ public class CapacityRecoverySupervisionTests
             }
 
             // No transcript confirmation or launch receipt: the next action must launch again.
-            await runtime.ObserveExitAsync(sessionId, 1, AgentExitReason.ProcessExited, CancellationToken.None);
+            await SessionExitObservation.ObserveMatchingAsync(
+                runtime, sessionId, 1, AgentExitReason.ProcessExited,
+                () => CapacityRecoveryTestSupport.CreateContext(schema));
             await runtime.DisposeSessionAsync(sessionId);
             harness.Clock.Advance(TimeSpan.FromSeconds(121));
             await recovery.ReconcileAsync(CancellationToken.None);

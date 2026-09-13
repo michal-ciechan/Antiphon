@@ -7,6 +7,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.SessionRunner.Tests;
+using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -59,7 +60,8 @@ public partial class HerdrAlwaysOnChannelParityTests
                 var exited = await WaitForRunnerStatus(h, id, "Exited");
                 exited.ExitReason.ShouldBe(AgentExitReason.HerdrPaneClosed);
                 await pump.StopAsync(CancellationToken.None);
-                await h.Runtime.ObserveExitAsync(id, exited.ExitCode, exited.ExitReason, CancellationToken.None);
+                await SessionExitObservation.ObserveMatchingAsync(
+                    h.Runtime, id, exited.ExitCode, exited.ExitReason, CreateContext);
                 await h.Supervisor().TickAsync(CancellationToken.None);
                 (await HoldState(agent.Id)).HerdrConsecutiveFailures.ShouldBe(attempt + 1);
                 h.Clock.Advance(TimeSpan.FromSeconds(20));

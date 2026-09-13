@@ -133,23 +133,16 @@ public sealed class AgentSessionRuntime
         await RecordActivityAsync(sessionId);
     }
 
-    public async Task<SessionExitDisposition> ObserveExitAsync(
+    /// <summary>
+    /// Direct observation. A missing <paramref name="acceptedStartedAt"/> is declined
+    /// (CARD-0502 D-3/D-5); this must not stamp the current row's generation onto an unbound exit.
+    /// Prefer the producer envelope overload.
+    /// </summary>
+    public Task<SessionExitDisposition> ObserveExitAsync(
         Guid sessionId, int? exitCode, AgentExitReason exitReason, CancellationToken ct,
-        DateTime? acceptedStartedAt = null)
-    {
-        if (acceptedStartedAt is null)
-        {
-            await using var scope = _scopeFactory.CreateAsyncScope();
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            acceptedStartedAt = await db.AgentSessions.AsNoTracking()
-                .Where(s => s.Id == sessionId)
-                .Select(s => (DateTime?)s.StartedAt)
-                .FirstOrDefaultAsync(ct);
-        }
-
-        return await ObserveExitAsync(
+        DateTime? acceptedStartedAt = null) =>
+        ObserveExitAsync(
             new SessionRunnerExitedEvent(sessionId, exitCode, exitReason, 0, acceptedStartedAt), ct);
-    }
 
     public async Task<SessionExitDisposition> ObserveExitAsync(
         SessionRunnerExitedEvent evt, CancellationToken ct)
