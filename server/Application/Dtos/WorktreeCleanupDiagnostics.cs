@@ -40,3 +40,5 @@ public sealed record WorktreeCleanupIdentity(Guid RequestId, Guid OperationId, G
 public sealed record WorktreeCleanupReference(Guid AttemptId, Guid RequestId, Guid OperationId,
     DateTime? At, WorktreeCleanupCaptureState State, string? Summary, string? CaptureJson,
     bool PriorAttempt = false);
+
+public sealed record WorktreeCleanupEvidence(Guid? CurrentAttemptId, WorktreeCleanupReference? Capture);

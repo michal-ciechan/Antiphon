@@ -10,7 +10,8 @@ namespace Antiphon.Server.Application.Services;
 
 /// <summary>Durable checkpoints precede their dependent mutation. Publication is monotonic.</summary>
 public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
-    IRepositoryMutationLease leases, IWorktreeManager worktrees, ILandingVerifier verifier, TimeProvider clock)
+    IRepositoryMutationLease leases, IWorktreeManager worktrees, ILandingVerifier verifier, TimeProvider clock,
+    IWorktreeCleanupJournal? cleanupJournal = null, ILogger<AgentTaskLandingProtocol>? logger = null)
 {
     private readonly AgentTaskLandingState _state = new();
 
@@ -99,7 +100,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 op.CleanupStartedAt = Now();
                 op.CleanupCompletedAt = null;
                 await SaveAsync(op, ct);
-                return await CleanupAsync(op, lease, ct);
+                return await CleanupAsync(op, lease, request, ct);
             }
 
             var source = await git.InspectAsync(coordinates, ct);
@@ -186,7 +187,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     op.VerificationSkipReason = "exact_remote_containment";
                     await TransitionAsync(op, LandPhase.Verified, ct);
                     await ConfirmAsync(op, remote, LandPublicationOutcome.AlreadyPresent, ct);
-                    return await CleanupAsync(op, lease, ct);
+                    return await CleanupAsync(op, lease, request, ct);
                 }
                 Require(await IsAncestorAsync(op.RepositoryPath, remote.Sha!, op.TargetBeforeSha, ct), "remote_ahead_or_diverged");
                 await RecheckRemoteSourceAsync(op, request, ct);
@@ -233,10 +234,14 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 await SaveAsync(op, ct);
                 if (op.RebasedSourceSha == op.OriginalSourceSha && string.IsNullOrWhiteSpace(op.VerificationFilter)
                     && (op.PreparationInputSha is null || op.PreparationInputSha == op.OriginalSourceSha))
+                {
                     op.VerificationSkipReason = "base_unchanged";
+                    try { logger?.LogInformation("Landing verifier skipped task {TaskId} operation {OperationId} request {RequestId}; no child",
+                        op.TaskId, op.Id, request?.Id); } catch (Exception) { }
+                }
                 else
                 {
-                    var verification = await verifier.VerifyAsync(op.WorktreePath, op.VerificationFilter, ct);
+                    var verification = await verifier.VerifyAsync(op.WorktreePath, op.VerificationFilter, new(op.TaskId, op.Id, request?.Id), ct);
                     Require(verification.Passed, "verification_failed");
                     op.VerificationPassed = true;
                 }
@@ -302,7 +307,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     op.PushExitCode == 0 ? LandPublicationOutcome.Landed : LandPublicationOutcome.AlreadyPresent, ct);
             }
             Require(_state.HasPublication(op), "publication_unconfirmed");
-            return await CleanupAsync(op, lease, ct);
+            return await CleanupAsync(op, lease, request, ct);
         }
         catch (Exception ex) when (ex is LandingRefusal or IOException or UnauthorizedAccessException or ArgumentException)
         {
@@ -326,7 +331,11 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         }
     }
 
-    private async Task<LandingProtocolResult> CleanupAsync(AgentTaskLanding op, RepositoryLease lease, CancellationToken ct)
+    internal Task<WorktreeCleanupEvidence> ReadCleanupEvidenceAsync(Guid operationId, Guid requestId, CancellationToken ct) =>
+        cleanupJournal?.ReadEvidenceAsync(operationId, requestId, ct) ?? Task.FromResult(new WorktreeCleanupEvidence(null, null));
+
+    private async Task<LandingProtocolResult> CleanupAsync(AgentTaskLanding op, RepositoryLease lease,
+        AgentTaskLandRequest? request, CancellationToken ct)
     {
         if (op.Phase == LandPhase.PublicationConfirmed)
         {
@@ -335,12 +344,28 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             op.Cleanup = LandCleanupStatus.Pending;
             await TransitionAsync(op, LandPhase.CleanupStarted, ct);
         }
-        var removed = await worktrees.TryRemoveAsync(new(WorktreeRemovalPurpose.Publication, Coordinates(op),
-            op.CommonDirectory, op.GitDirectory, op.VerifiedSourceSha!, op.TargetBeforeSha, op.Id, lease), ct);
+        WorktreeRemoval removed;
+        try
+        {
+            if (request is null || cleanupJournal is null)
+                removed = new(false, false, false, "cleanup_request_journal_required");
+            else
+            {
+                var attempt = await cleanupJournal.GetOrCreateAsync(new(request.Id, op.Id, op.TaskId,
+                    op.RepositoryPath, op.WorktreePath, op.CommonDirectory, op.GitDirectory,
+                    op.SourceFullRef, op.TargetFullRef, op.VerifiedSourceSha!, op.TargetBeforeSha), ct);
+                var context = new WorktreeCleanupContext(attempt.Id, request.Id, op.Id, op.TaskId);
+                removed = await worktrees.TryRemoveAsync(new(WorktreeRemovalPurpose.Publication, Coordinates(op),
+                    op.CommonDirectory, op.GitDirectory, op.VerifiedSourceSha!, op.TargetBeforeSha, op.Id, lease,
+                    CleanupContext: context), ct);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        { removed = new(false, false, false, "cleanup_evidence_storage_unavailable"); }
         op.DirectoryRemoved = removed.DirectoryGone;
         op.RegistrationRemoved = removed.Unregistered;
         op.BranchRemoved = removed.BranchDeleted;
-        op.LastReason = removed.Residue;
+        op.LastReason = removed.Residue is null ? null : WorktreeCleanupPresentation.Clip(removed.Residue, 400);
         op.Cleanup = removed.IsClean ? LandCleanupStatus.Complete : LandCleanupStatus.Refused;
         op.CleanupCompletedAt = Now();
         // The terminal cleanup evidence is committed with the outcome event and pending-task

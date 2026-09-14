@@ -6,4 +6,5 @@ public interface ILandingChildObserver
     Task BeforeStartAsync(CancellationToken ct);
     Task StartedAsync(int processId, long startTicks, CancellationToken ct);
     Task ExitedAsync(CancellationToken ct);
+    void Completed() { }
 }

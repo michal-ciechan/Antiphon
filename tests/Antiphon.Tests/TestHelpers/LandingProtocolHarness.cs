@@ -72,7 +72,7 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
         Worktrees.Removal = new GuardedWorktreeRemoval(
             Git,
             Services.GetRequiredService<IRepositoryMutationLease>(),
-            Services.GetRequiredService<IWorktreeRemovalEvidence>());
+            Services.GetRequiredService<IWorktreeRemovalEvidence>(), Services.GetRequiredService<WorktreeGuardedCleanup>());
     }
 
     public async Task RestartServicesAsync()
@@ -266,7 +266,8 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
             => throw Record("TryRemoveAsync-legacy");
 
         public Task<WorktreeRemoval> TryRemoveAsync(WorktreeRemovalRequest request, CancellationToken ct)
-            => (Removal ?? throw new InvalidOperationException("guarded removal not bound")).RemoveAsync(request, ct);
+            => (Removal ?? throw new InvalidOperationException("guarded removal not bound")).RemoveAsync(
+                request with { ManagedRoot = Path.Combine(_git.Root, "trees") }, ct);
 
         public Task TouchAsync(string worktreePath, CancellationToken ct) => Task.CompletedTask;
 

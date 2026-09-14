@@ -7,7 +7,8 @@ public sealed record LandingEvidenceDto(Guid OperationId, LandPhase Phase, LandO
     LandPublicationOutcome Publication, LandCleanupStatus Cleanup, string SourceSha, string? VerifiedSha,
     string? RemoteSha, DateTime? RemoteConfirmedAt, string DestinationRef, string? Reason,
     string? ReviewedSha = null, string? PreparationInputSha = null, string? SourceRemoteSha = null,
-    Guid? ApprovalLandRequestId = null, Guid? ReviewEvidenceId = null, int SchemaVersion = 1)
+    Guid? ApprovalLandRequestId = null, Guid? ReviewEvidenceId = null, int SchemaVersion = 1,
+    Guid? CleanupAttemptId = null, WorktreeCleanupReference? CleanupCapture = null)
 {
     public static LandingEvidenceDto From(AgentTaskLanding op) => new(op.Id, op.Phase, op.Mode,
         new Services.AgentTaskLandingState().HasPublication(op) ? op.Publication
