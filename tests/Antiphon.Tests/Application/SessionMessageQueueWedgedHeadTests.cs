@@ -279,7 +279,8 @@ public class SessionMessageQueueWedgedHeadTests
         db.AgentTasks.Add(new AgentTask
         {
             Id = id, RootTaskId = id, Title = "CARD-0501 fixture", Goal = "check fixture",
-            Role = AgentTaskRole.Check, Status = status, CreatedAt = DateTime.UtcNow,
+            Role = deadline is null ? AgentTaskRole.Check : AgentTaskRole.Distill,
+            Status = status, CreatedAt = DateTime.UtcNow,
             CompletedAt = status == AgentTaskStatus.Dispatched ? null : DateTime.UtcNow,
             FailureReason = "preserve this task outcome",
         });
