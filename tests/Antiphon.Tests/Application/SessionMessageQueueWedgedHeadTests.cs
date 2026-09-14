@@ -13,6 +13,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [NotInParallel("MessageQueue")]
+[Category("Slow")]
 public class SessionMessageQueueWedgedHeadTests
 {
     private const string Body = "[antiphon-task:419b8b34] role=Check tier=Low workspace=Shared";

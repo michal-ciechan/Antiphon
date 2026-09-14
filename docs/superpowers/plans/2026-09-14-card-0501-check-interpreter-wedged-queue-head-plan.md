@@ -330,6 +330,10 @@ supersedes the original request to execute positive controls during Code. No nam
 assembly exception is needed. Backend-unreachable deferral retains its existing uncharged rule;
 the charged arm describes failed delivery verdicts after transport acceptance.
 
+The new integration class also carries `Category("Slow")` and a reasoned registry entry:
+its first isolated harness starts/migrates PostgreSQL (28.372s observed in ordinary verification).
+The remaining 25 cases were under 5s individually; no timeout or confirmation assertion was relaxed.
+
 Generation-gate controls replay the **exact body** in history, strengthening the original
 different-marker fixture so whole-head matching alone cannot make PC-2/PC-3 pass.
 Failure/parking/kill fixtures seed an observable transcript baseline; otherwise the existing
