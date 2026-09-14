@@ -1093,9 +1093,9 @@ public class AgentSessionLaunchFailureTests
         adapter.Prompts.ShouldBe(["/remote-control", "/rename Antiphon-Orchestrator"]);
         await using var db = LaunchFixture.CreateContext();
         var leftover = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == fixture.SessionId);
-        leftover.Status.ShouldBe(QueuedMessageStatus.Canceled);
+        leftover.Status.ShouldBe(QueuedMessageStatus.Pending);
+        leftover.Origin.ShouldBe(QueuedMessageOrigin.Ui);
         leftover.Body.ShouldBe("/remote-control");
-        leftover.CanceledAt.ShouldNotBeNull();
     }
 
     [Test]
