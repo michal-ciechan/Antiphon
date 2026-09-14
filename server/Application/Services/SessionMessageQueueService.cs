@@ -3537,7 +3537,9 @@ public sealed partial class SessionMessageQueueService
         return generation is { } value ? SessionGeneration.Normalize(value) : null;
     }
 
-    private async Task HandleDeliveryFailureAsync(
+    // Internal for controlled failure-handoff coverage: a missing captured token must never
+    // be replaced with the row's current generation here, even though new Enter-only calls capture it.
+    internal async Task HandleDeliveryFailureAsync(
         Guid sessionId, IReadOnlyList<Guid>? messageIds, DeliveryVerdict verdict, CancellationToken ct,
         DateTime? capturedGeneration = null, bool enterOnlyRecovery = false)
     {

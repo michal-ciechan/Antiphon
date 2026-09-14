@@ -208,7 +208,8 @@ public class SessionMessageQueueWedgedHeadTests
     public async Task Third_failed_Enter_only_recovery_parks_and_unblocks_the_queue()
     {
         await using var h = await CreateAsync();
-        var id = await h.SeedPendingMessageAsync(Body, deliveryAttempts: 2);
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var id = await h.SeedPendingMessageAsync(Body, deliveryAttempts: 2, baselineSequence: baseline);
         const string nextBody = "the next live queue message";
         var nextId = await h.SeedPendingMessageAsync(nextBody);
         h.Adapter.PrimeComposer(Body);
@@ -217,6 +218,7 @@ public class SessionMessageQueueWedgedHeadTests
         await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
 
         (await MessageAsync(id)).DeliveryAttempts.ShouldBe(3);
+        (await MessageAsync(id)).DeliveryVerdict.ShouldBe(DeliveryVerdict.NoTranscriptRecord);
         (await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None)).Messages
             .Single(m => m.Id == id).Parked.ShouldBeTrue();
         h.Adapter.Inputs.ShouldNotContain(nextBody);
@@ -236,13 +238,15 @@ public class SessionMessageQueueWedgedHeadTests
     {
         await using var h = await CreateAsync(alwaysOn: true);
         var generation = await GenerationAsync(h);
-        var id = await h.SeedPendingMessageAsync(Body, deliveryAttempts: 1);
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var id = await h.SeedPendingMessageAsync(Body, deliveryAttempts: 1, baselineSequence: baseline);
         h.Adapter.PrimeComposer(Body);
         h.Adapter.SwallowSubmits = 99;
 
         await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
 
         (await MessageAsync(id)).DeliveryAttempts.ShouldBe(2);
+        (await MessageAsync(id)).DeliveryVerdict.ShouldBe(DeliveryVerdict.NoTranscriptRecord);
         h.Adapter.Killed.ShouldBeTrue();
         h.Adapter.KillGenerationCalls.ShouldBe([generation]);
         h.Adapter.KillCount.ShouldBe(0);
@@ -266,7 +270,8 @@ public class SessionMessageQueueWedgedHeadTests
 
         (await MessageAsync(id)).DeliveryAttempts.ShouldBe(2);
         (await MessageAsync(id)).DeliveryVerdict.ShouldBe(DeliveryVerdict.NoTranscriptRecord);
-        h.Adapter.Inputs.ShouldBe(["\r"]);
+        // The confirm loop spends all three allowed Enters before declaring the missing record.
+        h.Adapter.Inputs.ShouldBe(["\r", "\r", "\r"]);
         h.Adapter.Killed.ShouldBeFalse();
         h.Adapter.KillGenerationCalls.ShouldBeEmpty();
     }

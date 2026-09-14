@@ -332,6 +332,13 @@ the charged arm describes failed delivery verdicts after transport acceptance.
 
 Generation-gate controls replay the **exact body** in history, strengthening the original
 different-marker fixture so whole-head matching alone cannot make PC-2/PC-3 pass.
+Failure/parking/kill fixtures seed an observable transcript baseline; otherwise the existing
+Claude unobservable screen fallback can report degraded success. The working fixture asserts
+exactly three Enters, the harness's existing submit budget. CARD-0502's
+`A_deferred_re_check_of_a_row_sent_without_a_retained_generation_declines_the_recovery_kill`
+retains all no-kill assertions at a controlled `HandleDeliveryFailureAsync` handoff with a null
+token; Enter-only no longer produces a tokenless handoff. Its pending CARD-0502 PC-19 can still
+detect substitution of the current generation inside the handler.
 PC-1's integration method has both Pending and interrupted Sent variants. PC-8's method has
 Enqueue, SendNow and persisted-immediate variants; its named mutant must kill the SendNow case.
 The activation observation below is an operator follow-up, not ordinary V/R. The original head

@@ -149,21 +149,25 @@ public class SessionMessageQueueDeliveryVerificationTests
     {
         await using var h = await CreateHarnessAsync(alwaysOn: true);
         const string body = "deferred body without retained generation";
-        h.Adapter.RenderedScreenOverride = body;
-        h.Adapter.EchoTypedInputToScreen = false;
-        h.Adapter.OnSubmitted = _ => Task.CompletedTask;
         var floor = await h.CurrentTranscriptMaxSequenceAsync();
-        await h.SeedPendingMessageAsync(body, deliveryAttempts: 1, baselineSequence: floor);
+        var id = await h.SeedPendingMessageAsync(body, deliveryAttempts: 1, baselineSequence: floor,
+            status: QueuedMessageStatus.Sent, legacyNullGeneration: true);
 
-        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+        // CARD-0501 captures a NEW token before Enter-only input, so that is no longer a
+        // missing-token producer. Keep CARD-0502's guard pinned at the actual failure handoff.
+        await h.Queue.HandleDeliveryFailureAsync(h.SessionId, [id], DeliveryVerdict.NoTranscriptRecord,
+            CancellationToken.None, capturedGeneration: null);
 
         h.Adapter.KillGenerationCalls.ShouldBeEmpty();
         h.Adapter.KillCount.ShouldBe(0);
         h.Adapter.Killed.ShouldBeFalse();
+        h.Adapter.Inputs.ShouldBeEmpty();
         await using var db = CreateContext();
         var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
         message.Status.ShouldBe(QueuedMessageStatus.Pending);
         message.SentAt.ShouldBeNull();
+        message.LastDeliveryGeneration.ShouldBeNull();
+        message.DeliveryAttempts.ShouldBe(1);
         var declined = await db.AgentIncidents.SingleAsync(
             i => i.AgentId == h.AgentId
                 && i.Kind == AgentIncidentKind.DeliveryVerificationFailed
