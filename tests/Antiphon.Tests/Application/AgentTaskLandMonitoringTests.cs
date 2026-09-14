@@ -239,6 +239,8 @@ public sealed class AgentTaskLandMonitoringTests
         await new DispatchBaseWarningIntentService(db, TimeProvider.System)
             .MaterializeAsync(seeded.Intent.Id, CancellationToken.None);
         db.ChangeTracker.Clear();
+        (await db.AgentTaskDispatchWarningIntents.AsNoTracking().SingleAsync(i => i.Id == seeded.Intent.Id))
+            .LastErrorCode.ShouldBeNull();
         var note = await db.AgentTaskLandNotifications.AsNoTracking()
             .SingleAsync(n => n.Id == seeded.Intent.NotificationId);
         note.Kind.ShouldBe(LandNotificationKind.DispatchBase);
@@ -248,6 +250,10 @@ public sealed class AgentTaskLandMonitoringTests
         var notifier = new AgentTaskLandNotificationService(
             db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System);
         await notifier.ReconcileAsync(note.Id, CancellationToken.None);
+        db.ChangeTracker.Clear();
+        // Re-read: the queue identity is written by the reconcile, not by materialization.
+        note = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id);
+        note.QueueMessageId.ShouldNotBeNull();
 
         async Task<AttentionDto> ReadAsync()
         {
@@ -320,9 +326,10 @@ public sealed class AgentTaskLandMonitoringTests
         var seeded = await SeedDispatchIntentAsync(db, h.SessionId, AgentTaskReplyTo.Session, createdAt);
         if (errorCode is not null)
         {
-            seeded.Intent.LastErrorCode = errorCode;
-            seeded.Intent.LastErrorAt = createdAt;
-            await db.SaveChangesAsync();
+            await db.AgentTaskDispatchWarningIntents.Where(i => i.Id == seeded.Intent.Id)
+                .ExecuteUpdateAsync(u => u
+                    .SetProperty(i => i.LastErrorCode, errorCode)
+                    .SetProperty(i => i.LastErrorAt, createdAt));
         }
 
         var items = await ReadItemsAsync(schema, h, clock);
@@ -346,10 +353,12 @@ public sealed class AgentTaskLandMonitoringTests
         match.Evidence.ShouldContain($"notification={seeded.Intent.NotificationId:N}");
         match.Evidence.ShouldNotContain("request=");
 
+        // Both controls are seeded well past the error threshold, independently of this row age.
         // ReplyTo None owes nothing and is never a pending-receipt condition.
-        var silent = await SeedDispatchIntentAsync(db, null, AgentTaskReplyTo.None, createdAt);
+        var aged = now.AddSeconds(-1000);
+        var silent = await SeedDispatchIntentAsync(db, null, AgentTaskReplyTo.None, aged);
         // A missing destination is still owed, and stays visible.
-        var orphan = await SeedDispatchIntentAsync(db, null, AgentTaskReplyTo.Session, createdAt);
+        var orphan = await SeedDispatchIntentAsync(db, null, AgentTaskReplyTo.Session, aged);
         var second = await ReadItemsAsync(schema, h, clock);
         second.ShouldNotContain(i => i.ConditionKey == $"dispatch:{silent.Intent.NotificationId:N}:receipt");
         second.ShouldContain(i => i.ConditionKey == $"dispatch:{orphan.Intent.NotificationId:N}:receipt");
