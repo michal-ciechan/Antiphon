@@ -366,7 +366,7 @@ public class SessionMessageQueueInterruptedAttemptTests
         h.Adapter.Inputs.ShouldBeEmpty();
         await using var db = h.CreateDb();
         var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
-        row.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        row.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
     }
 
     [Test]
@@ -388,6 +388,6 @@ public class SessionMessageQueueInterruptedAttemptTests
         await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
         await using var verify = h.CreateDb();
         (await verify.SessionQueuedMessages.SingleAsync(m => m.Id == id))
-            .DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+            .DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
     }
 }
