@@ -7,21 +7,40 @@ namespace Antiphon.Server.Infrastructure.Git;
 
 /// <summary>One deletion path. Unknown authority, identity, content or I/O preserves residue.</summary>
 public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationLease leases,
-    IWorktreeRemovalEvidence evidence)
+    IWorktreeRemovalEvidence evidence, WorktreeGuardedCleanup? cleanup = null)
 {
     public async Task<WorktreeRemoval> RemoveAsync(WorktreeRemovalRequest request, CancellationToken ct)
     {
         if (request.Purpose == WorktreeRemovalPurpose.Verification)
             return await new GuardedVerificationRemoval(git, leases, evidence).RemoveAsync(request, ct);
+        if (request.Purpose == WorktreeRemovalPurpose.Publication && request.CleanupContext is not null)
+            return cleanup is null ? new(false, false, false, "cleanup_journal_required")
+                : await cleanup.RemoveAsync(request, this, ct);
+        var directory = await RemoveDirectoryAsync(request, null, TimeProvider.System, ct);
+        return directory.Result.Residue is not null ? directory.Result
+            : await CompleteBranchAsync(request, directory.Result, ct);
+    }
+
+    internal async Task<WorktreeDirectoryPass> RemoveDirectoryAsync(WorktreeRemovalRequest request,
+        Func<CancellationToken, Task<bool>>? consumeSlot, TimeProvider clock, CancellationToken ct)
+    {
         var source = request.Source;
         var directoryGone = false;
         var unregistered = false;
-        var branchGone = false;
-        WorktreeRemoval Refuse(string reason) => new(unregistered, directoryGone, branchGone, reason);
+        WorktreeGitOutcome? outcome = null;
+        long? failedAt = null;
+        WorktreeDirectoryPass Finish(string? reason) => new(new(unregistered, directoryGone, false, reason), outcome, failedAt);
         try
         {
+            if (request.CleanupContext is not null && !IsAbsent(source.WorktreePath))
+            {
+                if (request.ManagedRoot is null || !WorktreeNativeIO.Within(source.WorktreePath, request.ManagedRoot)
+                    || !LandingGit.PathsEqual(await git.CanonicalDirectoryAsync(source.WorktreePath, ct), source.WorktreePath)
+                    || !LandingGit.PathsEqual(await git.CanonicalDirectoryAsync(request.ManagedRoot, ct), request.ManagedRoot))
+                    return Finish("worktree_confinement_changed");
+            }
             var reason = await AuthorityAsync(request, ct);
-            if (reason is not null) return Refuse(reason);
+            if (reason is not null) return Finish(reason);
             var rows = await RegistrationsAsync(source.RepositoryPath, ct);
             var registration = rows.Where(r => LandingGit.PathsEqual(r.Path, source.WorktreePath)).ToList();
             // File.GetAttributes distinguishes absence from access/query errors.
@@ -29,36 +48,65 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
             unregistered = registration.Count == 0;
             if (!directoryGone)
             {
-                if (unregistered) return Refuse("unregistered_directory");
+                if (unregistered) return Finish("unregistered_directory");
                 var inspection = await git.InspectAsync(source, ct);
-                if (!Matches(inspection, request)) return Refuse(inspection.Reason ?? "source_changed");
+                if (!Matches(inspection, request)) return Finish(inspection.Reason ?? "source_changed");
                 // Non-forcing Git removal ALSO deletes ignored files. No patterns grant ownership.
-                if (HasProtectedIgnored(inspection.Snapshot!)) return Refuse("ignored_content_preserved");
+                if (HasProtectedIgnored(inspection.Snapshot!)) return Finish("ignored_content_preserved");
                 reason = await AuthorityAsync(request, ct);
-                if (reason is not null) return Refuse(reason);
+                if (reason is not null) return Finish(reason);
                 var final = await git.InspectAsync(source, ct);
-                if (!Matches(final, request)) return Refuse(final.Reason ?? "source_changed");
-                if (HasProtectedIgnored(final.Snapshot!)) return Refuse("ignored_content_preserved");
+                if (!Matches(final, request)) return Finish(final.Reason ?? "source_changed");
+                if (HasProtectedIgnored(final.Snapshot!)) return Finish("ignored_content_preserved");
+                if (consumeSlot is not null && !await consumeSlot(ct)) return Finish("cleanup_command_slot_spent");
                 // The final status/identity read can race a task-coordinate or receipt revision.
                 // Revalidate durable authority immediately before deletion without reusing a tracked row.
                 reason = await AuthorityAsync(request, ct, refreshRemote: false);
-                if (reason is not null) return Refuse(reason);
-                var removed = await git.RunAsync(source.RepositoryPath,
-                    ["worktree", "remove", "--", source.WorktreePath], ct);
-                if (!removed.Succeeded) return Refuse("worktree_remove_failed");
+                if (reason is not null) return Finish(reason);
+                LandingGitResult removed;
+                try
+                {
+                    removed = await git.RunAsync(source.RepositoryPath,
+                        ["worktree", "remove", "--", source.WorktreePath], ct);
+                    outcome = new("worktree remove", removed.ExitCode, removed.Succeeded ? "git_exit_0" : $"git_exit_{removed.ExitCode}",
+                        null, clock.GetUtcNow().UtcDateTime, true);
+                }
+                catch (Exception ex) when (ex is IOException or TimeoutException or UnauthorizedAccessException)
+                {
+                    outcome = new("worktree remove", null, ex is TimeoutException ? "git_timeout" : "git_command_error",
+                        ex.GetType().Name, clock.GetUtcNow().UtcDateTime, false);
+                    failedAt = clock.GetTimestamp();
+                    return Finish(ex is TimeoutException ? "worktree_remove_timeout" : "worktree_remove_failed");
+                }
+                if (!removed.Succeeded) { failedAt = clock.GetTimestamp(); return Finish("worktree_remove_failed"); }
                 directoryGone = IsAbsent(source.WorktreePath);
                 rows = await RegistrationsAsync(source.RepositoryPath, ct);
                 unregistered = !rows.Any(r => LandingGit.PathsEqual(r.Path, source.WorktreePath));
-                if (!directoryGone || !unregistered) return Refuse("worktree_removal_incomplete");
+                if (!directoryGone || !unregistered) { failedAt = clock.GetTimestamp(); return Finish("worktree_removal_incomplete"); }
             }
             else if (!unregistered || request.Purpose != WorktreeRemovalPurpose.Publication)
-                return Refuse("missing_source_without_cleanup_receipt");
+                return Finish("missing_source_without_cleanup_receipt");
+            return Finish(null);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or TimeoutException)
+        {
+            if (outcome is not null) failedAt ??= clock.GetTimestamp();
+            return Finish("cleanup_inspection_error");
+        }
+    }
 
+    internal async Task<WorktreeRemoval> CompleteBranchAsync(WorktreeRemovalRequest request, WorktreeRemoval directory, CancellationToken ct)
+    {
+        var source = request.Source;
+        var branchGone = false;
+        WorktreeRemoval Refuse(string reason) => directory with { BranchDeleted = branchGone, Residue = reason };
+        try
+        {
             // Refresh authority and all checkout registrations before the exact old-SHA delete.
-            reason = await AuthorityAsync(request, ct);
+            var reason = await AuthorityAsync(request, ct);
             if (reason is not null) return Refuse(reason);
             if (!IsAbsent(source.WorktreePath)) return Refuse("source_recreated");
-            rows = await RegistrationsAsync(source.RepositoryPath, ct);
+            var rows = await RegistrationsAsync(source.RepositoryPath, ct);
             if (rows.Any(r => r.Branch == source.SourceFullRef)) return Refuse("source_checked_out");
             var exists = await git.RunAsync(source.RepositoryPath, ["show-ref", "--exists", source.SourceFullRef], ct);
             if (exists.ExitCode == 2)
@@ -80,7 +128,7 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 branchGone = absent.ExitCode == 2;
                 if (!branchGone) return Refuse("branch_deletion_unconfirmed");
             }
-            return new(unregistered, directoryGone, branchGone, null);
+            return directory with { BranchDeleted = branchGone, Residue = null };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or TimeoutException)
         {
@@ -176,3 +224,5 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
         catch (DirectoryNotFoundException) { return true; }
     }
 }
+
+internal sealed record WorktreeDirectoryPass(WorktreeRemoval Result, WorktreeGitOutcome? Outcome, long? FailureTimestamp);

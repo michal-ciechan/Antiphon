@@ -8,4 +8,5 @@ public enum WorktreeRemovalPurpose { Publication, LocalMerge, Verification }
 public sealed record WorktreeRemovalRequest(WorktreeRemovalPurpose Purpose,
     LandSourceCoordinates Source, string CommonDirectory, string GitDirectory,
     string ExpectedSourceSha, string ExpectedTargetSha, Guid? LandingId, RepositoryLease Lease,
-    bool TargetCheckoutRecorded = false, string? TargetCheckoutPath = null, Guid? VerificationSealId = null);
+    bool TargetCheckoutRecorded = false, string? TargetCheckoutPath = null, Guid? VerificationSealId = null,
+    WorktreeCleanupContext? CleanupContext = null, string? ManagedRoot = null);

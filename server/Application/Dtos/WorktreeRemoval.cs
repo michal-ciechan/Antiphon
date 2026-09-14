@@ -8,7 +8,8 @@ public sealed record WorktreeRemoval(
     bool Unregistered,
     bool DirectoryGone,
     bool BranchDeleted,
-    string? Residue)
+    string? Residue,
+    WorktreeCleanupReference? Diagnostics = null)
 {
     public bool IsClean => Residue is null;
 
