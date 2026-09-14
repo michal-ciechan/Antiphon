@@ -1543,9 +1543,17 @@ public sealed partial class SessionMessageQueueService
         // types them again — that is what "parks for a human" means. They are still late-confirmed
         // above, so a park resolves itself if the body turns out to have landed complete. A
         // truncated park stays parked: identity-without-completeness is not Sent.
+        var sessionGeneration = SessionGeneration.Normalize(
+            await db.AgentSessions.AsNoTracking()
+                .Where(s => s.Id == sessionId)
+                .Select(s => s.StartedAt)
+                .FirstAsync(ct));
         var deliverable = pending
             .Where(m => m.DeliveryAttempts < MaxAttempts)
             .Where(m => m.MaintenanceKind != RemoteControlMaintenanceKind.LegacyUnclassified)
+            .Where(m => m.DeferredFromRunAttemptId == null
+                || m.MaintenanceAcceptedStartedAt is not { } deferredG
+                || SessionGeneration.Equal(deferredG, sessionGeneration))
             .ToList();
         if (deliverable.Count == 0)
             return late.Handled > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;

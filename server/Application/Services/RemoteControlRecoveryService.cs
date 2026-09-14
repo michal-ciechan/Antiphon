@@ -384,8 +384,6 @@ public sealed class RemoteControlRecoveryService
     {
         if (!observation.GenerationProven)
             return null;
-        if (!observation.Menu.IsPresent && !observation.Menu.HasRemnant)
-            return null;
 
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -395,6 +393,8 @@ public sealed class RemoteControlRecoveryService
         var now = SessionGeneration.Normalize(UtcNow());
         if (existing is not null)
         {
+            if (!observation.Menu.IsPresent && !observation.Menu.HasRemnant)
+                return existing;
             existing.LastObservedAt = now;
             existing.AfterOutputSequence = observation.LastSequence;
             if (relatedQueueId is not null && existing.RelatedMaintenanceQueueId is null)

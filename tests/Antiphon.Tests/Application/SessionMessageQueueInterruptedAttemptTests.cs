@@ -344,6 +344,7 @@ public class SessionMessageQueueInterruptedAttemptTests
         const string body = "matching complete prompt body c514";
         var id = await h.Inner.SeedPendingMessageAsync(body, deliveryAttempts: 1, baselineSequence: 0);
         await h.Inner.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, body, timestamp: DateTime.UtcNow);
+        await h.Inner.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
         h.Adapter.RemoteControlMenuOpen = true;
         var episode = await h.Recovery.DetectAsync(
             h.SessionId, h.Generation,
@@ -383,6 +384,7 @@ public class SessionMessageQueueInterruptedAttemptTests
         }
 
         await h.Inner.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, body, timestamp: DateTime.UtcNow);
+        await h.Inner.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
         await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
         await using var verify = h.CreateDb();
         (await verify.SessionQueuedMessages.SingleAsync(m => m.Id == id))
