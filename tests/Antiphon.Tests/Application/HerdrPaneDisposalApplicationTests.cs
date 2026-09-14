@@ -18,6 +18,9 @@ namespace Antiphon.Tests.Application;
 [NotInParallel]
 public sealed class HerdrPaneDisposalApplicationTests
 {
+    [Before(Class)]
+    public static Task WarmSharedStoreAsync() => TestDbFixture.Lifecycle.EnsureReadyAsync();
+
     private static async Task CurrentOwner(bool suspended, bool launching, bool active)
     {
         await using var f = new StandingRecoveryFixture(); await f.SeedAsync();
@@ -117,7 +120,9 @@ public sealed class HerdrPaneDisposalApplicationTests
     [Test] public async Task C461_G111_Explicit_disposal_only()
     {
         await using var f = new StandingRecoveryFixture(); await f.SeedAsync();
-        await using var h = new HerdrDisposalHttpFixture(); await h.StartAsync();
+        // Stop/tick run on the standing harness. The disposal fixture is only the dispatch counter;
+        // starting its unused HTTP/herdr stack waits on an unconnected named-pipe accept.
+        await using var h = new HerdrDisposalHttpFixture();
         await f.Harness.Control.StopAsync(f.Agent.Id, default);
         await f.IdleAsync(); h.Runner.Backend.Closes.ShouldBe(0);
         await using var db = f.Db(); (await db.AgentSupervisionStates.SingleAsync(s => s.AgentId == f.Agent.Id)).Suspended.ShouldBeTrue();
