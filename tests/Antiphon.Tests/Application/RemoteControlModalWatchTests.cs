@@ -26,6 +26,7 @@ public class RemoteControlModalWatchTests
                 s.RcWatch.Enabled = false;
                 s.RcModalWatch.Enabled = true;
             });
+        await h.MarkWorkingAsync();
         h.Adapter.RemoteControlMenuOpen = true;
         (await h.TickWatchAsync()).ShouldBeGreaterThan(0);
         await using var db = h.CreateDb();
@@ -86,6 +87,7 @@ public class RemoteControlModalWatchTests
             await db.SaveChangesAsync();
         }
 
+        await h.MarkWorkingAsync();
         h.Adapter.RemoteControlMenuOpen = true;
         await h.TickWatchAsync();
         await using var verify = h.CreateDb();
