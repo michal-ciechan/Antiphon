@@ -96,7 +96,8 @@ internal sealed class WorktreeLockChild : IAsyncDisposable
             if (mode == "cwd") Environment.CurrentDirectory = target;
             else if (mode == "directory")
             {
-                var directory = new WorktreeNativeIO().Open(target, 0x80, 3, 3, 0x02200000, false);
+                // FILE_LIST_DIRECTORY participates in sharing checks; metadata-only access does not.
+                var directory = new WorktreeNativeIO().Open(target, 1, 3, 3, 0x02200000, false);
                 held = directory;
                 if (!directory.Succeeded) throw new IOException("holder_directory_open_failed");
             }
