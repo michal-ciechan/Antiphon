@@ -1,6 +1,9 @@
 # CARD-0508: Choose a Worktree base deliberately, and say which one
 
 Date: 2026-09-14. Stage: Plan; verification design is a separate TestDesign stage.
+Current authority: **Plan amendment B** at the end resolves P-3/P-4 and overrides
+the conflicting A-1.1/A-2 producer contracts. The amendment A audit remains the
+historical rejection record. **Next: TestDesign; Code gate remains closed.**
 Based on Investigate task `571c79f8`
 (report: `C:/Antiphon/evidence/card-0508-571c79f8/2026-09-13-card-0508-worktree-card-branch-base.md`)
 and checkout `a17ceec3e50fd1c0233eb7f1487d9f7b4a7c9cba`.
@@ -224,14 +227,65 @@ that still belong to a kept branch guarantees a conflict at that branch's own la
 | Hold on divergence instead of ranking. | Divergent kept branches are the norm today — CARD-0499 and CARD-0502 each had two — so holding would stall Execute behind a superseded docs branch, the exact failure CARD-0146 S4's warn-and-dispatch choice avoids. |
 | Chain from a running sibling. | Its branch moves under the new worktree; `two_top_level_worktree_tasks_on_one_card_both_branch_from_repo_head` is right about that case and stays green. |
 
+### D-11. Preserve the configured default's identity through a failed probe
+
+The resolver takes `DefaultBranchProbe(Ref, ResolvesToCommit)`, not a nullable
+successful ref. B-1 defines both callers and every output arm. A failed probe
+is data about a named candidate, so losing the name is unnecessary and makes
+the warning contract impossible. Reject deriving the name from ambient config
+inside the pure resolver or hard-coding `master` in its fallback output.
+
+### D-12. The committed dispatch owns its original warning intent
+
+Save immutable per-warning intent in the successful claim transaction, anchored
+to that claim's final `Dispatched` event ID. Materialize the Warning/notification
+pair separately from that intent (B-2/B-3). A commit, including one whose
+acknowledgement is lost, creates the obligation; later launch failure does not
+cancel it. A held, refused or rolled-back claim creates none. This replaces
+A-2.3's stronger promise about launch exceptions: the warning describes the
+committed worktree/base observation, not successful native startup.
+
+### D-13. Add producer custody, reuse the delivery machine
+
+One new `AgentTaskDispatchWarningIntents` table and a scoped materializer retain
+the original IDs, destination, detail, body and digest. Extend the existing
+notification hosted service to scan this table before its notification scan.
+Do not add another queue, receipt matcher or hosted worker. A separate producer
+checkpoint preserves A-2's atomic event/note projection while closing the
+earlier claim-to-warning gap. B-5 records the rejected alternatives.
+
+### D-14. Recovery never consults moving task or Git state
+
+Replay only frozen intent. Task status, current attempt counter, current parent,
+ref movement, requeue and land are neither prerequisites nor replacement inputs.
+Serialize projection on the intent row; commit event, note and materialized
+marker together. Preserve unresolved intent through retention and show aged or
+failed materialization in the existing dispatch-warning attention kind (B-3).
+
+### D-15. S1/S2 scope is unchanged
+
+The guard still evaluates before the repository lease. Capture its result at
+claim time without re-running it; compare only observed and recorded ref names
+for S1b. Same-ref SHA drift and hold races remain S3 limitations. No sibling
+selection, ranking, chaining or new landing target is authorized. These are
+implementation decisions within the commissioned amendment, not pending human
+scope defaults.
+
+### D-16. TestDesign must reopen the verification audit
+
+B-4 supplies the missing PC-60/61 seams and names affected tests. TestDesign
+must adapt controls whose producer moved, add custody/recovery guards, and
+recompute the complete ordinary-plus-PC floor. Existing estimates are a lower
+bound, not an approved complete budget; this Plan dispatch runs no product tests.
+
 ## Implementation slices
 
 | Slice | Content | Files |
 |---|---|---|
 | S1 | Columns + migration + `WorktreeBaseResolver` (A-1), the shared D-2 chain used by provisioning **and** the pre-lease guard (`IOptions<GitSettings>` injected optionally so direct constructions keep working), base recorded on the row, base named in the `Dispatched` event, detail DTO fields, contract fixture regenerated. Fixes defect 2 on its own. | `AgentTask.cs`, `server/Migrations/*`, `AppDbContext.cs`, new `WorktreeBaseResolver.cs`, `DelegationWorktreeService.cs`, `AgentTaskDispatcher.cs` (guard base + event text), `AgentTaskDtos.cs`, `AgentTaskService.cs` (`ToDetail`), `client/src/test/fixtures/contract/agent-task-detail.json` |
-| S1b | A-1 observation report: the guard's observed base carried on `SiblingBaseGuard`, compared against the recorded `WorktreeBaseRef` after dispatch, one `base-observation-stale` `Warning` when they differ. | `AgentTaskDispatcher.cs` |
+| S1b | Guard's observed base carried on `SiblingBaseGuard`, compared against the recorded `WorktreeBaseRef` when capturing the successful claim's intent (B-2); one `base-observation-stale` warning when they differ. | `AgentTaskDispatcher.cs`, new `DispatchBaseWarningIntentService.cs` |
 | S2 | Patch-aware containment helper on `DelegationWorktreeService` (`git cherry`), replacing `IsAncestorOfBaseAsync` at both call sites. Fixes defect 3 on its own. | `DelegationWorktreeService.cs`, `AgentTaskDispatcher.cs`, `AgentTaskLandService.cs` |
-| S2b | A-2 durable dispatch-warning obligation: `RequestId` nullable, `LandNotificationKind.DispatchBase`, `DispatchBaseNotificationPayload`, obligation written atomically with the `Warning` event, inline enqueue and its swallowed `catch` deleted, `AttentionKind.DispatchWarningUnconfirmed`. Makes PC-40/41/42 executable. | `AgentTaskLandNotification.cs`, `LandingEnums.cs`, `AppDbContext.cs`, `server/Migrations/*`, `AgentTaskDispatcher.cs`, `AgentTaskLandNotificationService.cs`, `LandNotificationPayload.cs`, `AttentionService.cs`, `AttentionDtos.cs`, `client/src/api/attention.ts`, `client/src/features/attention/attentionVisuals.ts` |
+| S2b | A-2 event/note delivery, plus B-2/B-3 claim-time warning intent and recovery before event/note commit; pending-intent attention and retention. `RequestId` nullable, `DispatchBase` kind, immutable payload, existing queue/receipt worker. B-6 gives the complete added file/test slices. | `AgentTaskLandNotification.cs`, new `AgentTaskDispatchWarningIntent.cs`, `LandingEnums.cs`, `AppDbContext.cs`, `server/Migrations/*`, `AgentTaskDispatcher.cs`, new `DispatchBaseWarningIntentService.cs`, new `DispatchBaseNotificationPayload.cs`, `AgentTaskLandNotificationHostedService.cs`, `AgentTaskLandNotificationService.cs`, `Program.cs`, `AttentionService.cs`, `DataRetentionService.cs`, `AttentionDtos.cs`, `client/src/api/attention.ts`, `client/src/features/attention/attentionVisuals.ts` |
 | S3 | `WorktreeBaseSelector`: candidate query, reduce, rank, hold; wired into `DispatchOneAsync` under the lease; pre-lease guard call deleted; warnings moved into the claim transaction; `WorktreeBaseTaskId` recorded. Fixes defect 1. | `AgentTaskDispatcher.cs`, new `server/Application/Services/WorktreeBaseSelector.cs` |
 | S4 | `-BaseRef` end to end, with the SourceLanding refusal. | `scripts/delegate.ps1`, `AgentTaskDtos.cs`, `AgentTaskService.cs` |
 | S5 | Header and warning wording: `(from <base>)` on left-for-review; base-behind-default warning (D-8). | `AgentTaskReplyService.cs`, `AgentTaskDispatcher.cs` |
@@ -868,6 +922,8 @@ sharper, because `git cherry` gives a *more* accurate answer about the *wrong* b
 **A-1.1 — extract `WorktreeBaseResolver`.** New
 `server/Application/Services/WorktreeBaseResolver.cs`. One method, no I/O of its own:
 
+**Historical signature, superseded by B-1 below (P-4).**
+
 ```
 static ResolvedBase Resolve(
     string? repairStartSha,          // null unless RepairSourceTaskId is set
@@ -996,8 +1052,11 @@ unique filtered index
 ([AppDbContext.cs:1549](../../../server/Infrastructure/Data/AppDbContext.cs)) makes the
 handoff idempotent without any new mechanism.
 
-**A-2.3 — atomic commit, without pulling D-4 forward.** The obligation must commit
-atomically with **its own event**, not with the claim transaction. So
+**A-2.3 — atomic commit, without pulling D-4 forward.**
+
+**This producer timing is superseded by B-2/B-3 (P-3); the pair's atomicity remains.**
+
+The obligation must commit atomically with **its own event**, not with the claim transaction. So
 `WarnUnlandedSiblingsAsync` keeps running *after* `DispatchOneAsync` returns — the comment
 at [AgentTaskDispatcher.cs:655-657](../../../server/Application/Services/AgentTaskDispatcher.cs)
 ("a launch that throws leaves no warning about work that never started") still holds, and
@@ -1557,3 +1616,340 @@ Specified executable controls=63; PC-60/61 fail executability, and a complete
 verification floor cannot yet be certified. PC-40/41/42 and cases 26/27 are
 fully specified against A-2/A-1. **Code gate remains closed.** Return P-3/P-4
 to Plan, then TestDesign for the final all-executable audit.
+
+## Plan amendment B: P-3 and P-4 resolved
+
+Plan task `88c70cc3`, 2026-09-14. Read the full supplied brief, fetched
+`origin/master`, and reset the clean task branch to `fc3bb9bb` before inspection.
+This amendment is the binding correction to A-1.1/A-1.2 and A-2.3..A-2.6;
+the audit above documents why those previous contracts were rejected.
+Release remains **S1 + S1b + S2 + S2b**. **S3 stays deferred.**
+
+### B-0. Ground truth at the amendment baseline
+
+| Plan assumption | What `fc3bb9bb` actually does | Required correction |
+|---|---|---|
+| An atomic Warning/note pair is enough for producer recovery. | `AgentTaskDispatcher.TickAsync` selects Queued tasks; `DispatchOneAsync` commits Dispatched/session at lines 3255-3277 and only later returns to the warning call at line 677. A crash before that call loses the local guard result. | Commit original warning intent with the claim, before any postcommit launch work. |
+| Successful return from `DispatchOneAsync` is a durable dispatch boundary. | After commit it still loads attachments, builds the launch spec, resolves environment, queues launch/brief and publishes an event (lines 3279-3338). Those operations can throw after the claim is durable. | Treat the claim commit as the warning obligation boundary, including postcommit exceptions; never depend on a return or another success flag. |
+| Task ID or `Attempt` identifies a warning-producing dispatch. | One task can be requeued. The final `Dispatched` event is created with a fresh GUID for each successful claim; the earlier worktree-created event is a different event of the same type (lines 3141-3150 and 3266-3274). | Use the **final agent-dispatch event ID**, not task ID, mutable Attempt or the first event of type Dispatched. |
+| The existing worker can find a lost precommit warning. | `AgentTaskLandNotificationHostedService` pages only existing notification rows, excluding Confirmed/NotRequired/LegacyUnverified. `ReconcileAsync` starts from a notification ID. Neither scans dispatches or observed warnings. | Add an intent-materialization pass to that hosted service, with independent due/error handling. |
+| A nullable successful default is enough for `UnresolvedDefault`. | No `WorktreeBaseResolver` exists yet. Production provisioning still uses `startAtSha ?? MergeTargetRef ?? "HEAD"`; the guard separately uses `MergeTargetRef ?? "HEAD"`. The planned null input cannot distinguish two failed defaults. | Carry `(Ref, ResolvesToCommit)` to the shared resolver. |
+| Making `RequestId` nullable is the whole schema change. | Current notification FK to `SourceEventId` is required and Restrict; `SourceEventId` and keyed queue notification ID are unique (`AppDbContext.cs:1576-1584`). There is no place to store a warning before its event exists. | Add a producer-intent table; keep the existing required Warning-event FK on the eventual note. |
+| Current retention also protects pre-note destinations. | `DataRetentionService.PruneSessionsAsync`/`PruneTranscriptsAsync` consult notifications, not intents. Task pruning excludes landing/request trees, but a new dispatch-only note has no request. | Protect unmaterialized intent destinations; exclude intent/notification-owning task trees from ordinary deletion rather than hitting a Restrict FK. |
+| Existing fixtures already exercise these cuts. | DG's parent is a DB row, not a native caller. `LandDeliveryOptions.FileBoundary` recognizes land/queue/receipt cuts, not dispatch intent cuts. `LandDeliveryFixture.ReceiptAsync`/`AssertOnePromptAsync` select land kinds/headers. | Extend the real dispatcher/native fixture as the audit specifies; component rows alone cannot prove delivery. |
+
+Inspected production owners: dispatcher guard/claim/launch tail, worktree
+provisioning/reuse, notification payload/entity/worker/reconciler, event model,
+EF mappings, attention and retention. Nearest test bodies read: DG's hold,
+warning, repair and deleted-sibling tests; notification transaction/upgrade
+tests; `LandDeliveryOptions` and fixture receipt, child restart and prompt census.
+These are source observations, not executed tests or deployment evidence.
+
+### B-1. P-4: name-preserving resolver contract (S1)
+
+Replace A-1.1's fourth argument with a non-null value:
+
+```csharp
+record DefaultBranchProbe(string Ref, bool ResolvesToCommit);
+record ResolvedBase(string Ref, WorktreeBaseSource Source, string? UnresolvedDefault);
+
+static ResolvedBase Resolve(
+    string? repairStartSha,
+    string? requestedRef,
+    string? mergeTargetRef,
+    DefaultBranchProbe defaultBranch);
+```
+
+The callers choose exactly one configured default: first nonblank
+`Project.BaseBranch`, then nonblank `GitSettings.DefaultBranch`, then `master`.
+Ignore whitespace-only settings but do not rewrite a nonblank ref. Do not try
+the next setting after the chosen candidate fails to resolve; the selected
+candidate falls back to HEAD and is the name reported in the warning.
+The shared probe helper on `DelegationWorktreeService` returns
+`new DefaultBranchProbe(candidate, await RefExistsAsync(repo, candidate, ct))`.
+The candidate and bool travel together even on failure; no null sentinel.
+Cancellation propagates. The existing A-1.2 commit-only Git probe contract stays.
+
+| Condition, in order | Ref | Source | UnresolvedDefault |
+|---|---|---|---|
+| Repair SHA supplied | repair SHA | Repair | null |
+| Requested ref supplied | requested ref | Explicit | null |
+| Merge target supplied | merge target | MergeTarget | null |
+| Named default resolves to a commit | `defaultBranch.Ref` | DefaultBranch | null |
+| Named default fails to resolve | `HEAD` | RepoHead | **`defaultBranch.Ref`** |
+
+The pure resolver performs no config/DB/Git lookup and retains the name
+verbatim. Higher-priority arms suppress default warnings even when the probe
+failed. Deliberate repair/request/merge refs keep their existing failure
+contracts; this fallback applies only to the default candidate. Both guard and
+provisioning call this resolver with their own observation. Provisioning
+obtains the project setting freshly at its existing lease-protected point;
+it does not reuse the guard's tracked project or earlier probe. The repair
+skip and SourceLanding early return remain as A-1.4 specifies.
+
+The selected `ResolvedBase` is also available to dispatch capture without a
+second probe: return it as provisioning metadata alongside the task's recorded
+tuple. Reuse must distinguish the effective existing base record from a newly
+computed candidate; B does not authorize overwriting A-1.6's recorded fields.
+Emit an unresolved-default diagnostic only for a newly used fallback decision,
+not merely because an unused default failed. The warning's saved detail names
+the failed configured ref and HEAD; B-2 gives it the same custody as sibling
+and mismatch warnings. Standalone provisioning tests may inspect the returned
+diagnostic; native delivery is a dispatcher obligation.
+
+### B-2. P-3: capture immutable intent with the successful claim (S2b)
+
+Add `server/Domain/Entities/AgentTaskDispatchWarningIntent.cs` and its DbSet and
+mapping. This is a producer checkpoint, not a second delivery ledger.
+
+| Field | Contract |
+|---|---|
+| `Id` (`Guid`, PK) | Preallocated **future Warning event ID**. Never regenerated by materialization or retry. |
+| `DispatchEventId` (`Guid`) | The final agent-dispatch event in this successful claim; FK to AgentTaskEvent, Restrict. This is the dispatch-attempt identity. |
+| `TaskId` (`Guid`), `Attempt` (`int`) | Task FK, Restrict; attempt counter is a diagnostic snapshot only. Capture asserts the dispatch event belongs to this task. |
+| `WarningKey` (`string`, 100) | `sibling:<siblingTaskId:N>`, `base-observation-stale`, or `default-unresolved`. Unique `(DispatchEventId, WarningKey)`. |
+| `NotificationId` (`Guid`) | Preallocated note ID, unique. No FK to a not-yet-existing note. |
+| `ReplyTo`, `ParentSessionId` | Original route from the locked claim. Parent is a loose GUID snapshot, as on notifications; no cascading session FK. |
+| `Detail`, `Body`, `ContentDigest` | Exact Warning detail; full A-2 dispatch header plus detail; route + newline + body digest. Text is frozen at capture, not formatted again on recovery. Digest max length 128. |
+| `CreatedAt`, `InitialState` | Original claim time and A-2 payload rule: None -> NotRequired; otherwise null parent -> DestinationUnavailable; otherwise Queued. |
+| `MaterializedAt` (`DateTime?`) | Null until event, note and marker commit in one transaction. A timestamp is a projection checkpoint, never receipt evidence. |
+| `MaterializationAttempts`, `NextAttemptAt`, `LastErrorCode`, `LastErrorAt`, `ConcurrencyToken` | Retry bookkeeping; initialized to 0, CreatedAt, null, null and a fresh GUID respectively. Only these and MaterializedAt may change. Due index on `(MaterializedAt, NextAttemptAt, Id)`. |
+
+`DispatchBaseNotificationPayload` gets a capture factory that accepts the
+preallocated IDs/route/detail/time and returns the frozen payload. Its
+materialization factory accepts an intent, never the current AgentTask. Keep
+the header exactly `[dispatch-base <NotificationId:N> task=<TaskId:N> warning=<Id:N>]`
+so A's matcher and PC-62 remain applicable. The attempt-to-warning link is in
+the intent table; no new header field is required. Claim event ID plus
+WarningKey controls identity; order of the sibling list does not.
+
+Capture consumes immutable `(WarningKey, Detail)` drafts plus the final claim
+event and route metadata, not the dispatcher's private `SiblingBaseGuard`
+type. The dispatcher formats each original sibling observation once and adds
+the mismatch/default drafts without further lookups. Expose those drafts as
+an internal record in the payload file. Production DI and hand-built dispatcher
+harnesses must register the capture/materialization dependencies; missing
+registration must never silently skip persistence. Extend
+`tests/Antiphon.Tests/TestHelpers/DelegationTestServices.cs` and update direct
+constructor fixtures as necessary.
+
+Change `DispatchOneAsync` to accept the optional `SiblingBaseGuard` observation.
+The guard still runs **before** the repository lease. Resolve its observed ref
+even when it finds zero siblings, so the zero-warning mismatch case survives.
+Held and repair-skipped paths retain their existing behavior. In the cold
+Worktree path, after provisioning and all precommit refusal checks:
+
+SourceLanding produces no dispatch-base intents. For other Worktree tasks,
+default-fallback drafts do not require a CardId; sibling and mismatch drafts
+require an actual guard observation. Path-present reuse does not invent a new
+observation or relabel the recorded base.
+
+1. Keep a reference to the final agent-dispatch event that is already created
+   immediately before the successful claim save. Its GUID is the attempt ID.
+2. `DispatchBaseWarningIntentService.Capture` adds one intent per frozen sibling
+   warning, plus one mismatch if observed ref differs from the actual recorded
+   ref, plus any newly used unresolved-default diagnostic from B-1. It reads
+   the claim's route and base metadata, **performs no Git/DB re-evaluation**,
+   and never calls SaveChanges. A guard with no siblings still reaches Capture.
+3. Save and commit these intents in the **same transaction** as Dispatched,
+   the final dispatch event, task base tuple and new session. A claim loser,
+   hold, precommit failure or rollback has zero committed intents. Never place
+   capture on an earlier branch that commits Failed or returns false.
+4. Finish the existing launch tail. Remove the old direct Warning/enqueue
+   producer. A best-effort materialization after successful return may reduce
+   latency, using a fresh scope and the committed attempt ID; it is optional,
+   has no authority to reconstruct intent and cannot fail a dispatched task.
+   The hosted scan is the mandatory recovery owner.
+
+The table is already eligible when the claim commits, even if the original
+process dies before returning or launch subsequently fails. Do not add a
+post-launch `Ready` bit: losing that write would recreate P-3. D-12 explicitly
+changes the old launch-exception promise; the message describes a worktree
+whose creation/assignment committed, which remains true after startup failure.
+Uncommitted worktree filesystem residue has no warning obligation in this
+design. It continues through existing worktree adoption/recovery.
+
+Replaying the same committed attempt must reuse its intent IDs. A **new
+successful claim** gets a new final dispatch event and new warning/note IDs,
+even if TaskId, Attempt, parent and text are unchanged. Repeated ticks on a
+non-Queued task create nothing. Do not backfill historical dispatches: there
+is no trustworthy original observation or destination to recover for them.
+
+### B-3. Materialization, recovery and the complete custody chain
+
+Register scoped `DispatchBaseWarningIntentService` in `server/Program.cs`.
+Its `MaterializeAsync(Guid intentId, CancellationToken ct)`:
+
+1. Opens a DB transaction in a fresh row scope, loads the intent with
+   `SELECT ... FOR UPDATE`, and returns if already materialized. Validate
+   the saved digest/header and the dispatch-event/task binding; a mismatch
+   remains unresolved with an error, never gets silently reformatted.
+2. Adds the Warning with `Id = intent.Id`, original TaskId/Detail/CreatedAt;
+   adds DispatchBase note with `Id = intent.NotificationId`,
+   `SourceEventId = intent.Id`, null RequestId/operation, and the exact saved
+   route/body/digest/initial state. No new IDs and no current task/ref reads.
+3. Reaches `dispatch-warning-before-commit`, saves both rows and
+   `MaterializedAt`, and commits all three changes together. The existing
+   Warning-event FK and unique note.SourceEventId remain unchanged.
+   Atomic rollback leaves the committed intent pending with neither row.
+4. On an exception, dispose/rollback and clear the failed context before using
+   a fresh transaction to record attempts/error/next due time. Reload under
+   the row lock: an already committed MaterializedAt wins over a lost commit
+   acknowledgement or competing retry. Use the existing bounded 5..300 second
+   retry progression, not a permanent failure/cancel state. If error recording
+   itself fails, the pending row still makes the next scan retry possible.
+
+For a competing materializer the row lock serializes this exact projection;
+after the first commit the second is a no-op. Unexpected existing IDs with a
+null marker are an integrity error, not permission to allocate replacement
+IDs or overwrite payloads. The normal after-save failure rolls everything
+back; an ambiguous commit reload finds all three committed changes.
+
+`AgentTaskLandNotificationHostedService` first pages due intents with
+`MaterializedAt == null && NextAttemptAt <= now`, then performs its existing
+kind-agnostic notification scan. Use independent fresh row scopes, ascending
+ID cursor/128-row pages, cursor reset each boot/5-second cycle, per-row failure
+isolation, and continue the notification pass even when the intent pass fails.
+Do not filter intents by current task status/Attempt/parent, notification
+existence, or a live dispatcher. Both None and missing-parent intents are
+materialized; their saved initial states decide whether delivery is required.
+The materializer never types/enqueues. `ReconcileAsync` continues to own keyed
+enqueue, backoff, transcript catch-up and receipt after note creation.
+DispatchBase remains outside its Outcome/Conflict repository-lease gate.
+
+| Durable handoff | Identity/custody | Restart behavior |
+|---|---|---|
+| Claim -> intent | Final Dispatched event ID -> WarningKey -> intent.Id + NotificationId; exact saved route/text/digest | Boot/due intent scan finds it regardless of subsequent task state. |
+| Intent -> Warning + note | intent.Id = Warning.Id = note.SourceEventId; intent.NotificationId = note.Id; pair + marker atomic | Before commit: original pending intent retries. After commit/lost acknowledgement: marker and unique IDs make projection inert. |
+| Note -> queue | note.Id = queue.SourceLandNotificationId; existing unique key/digest guard | Insertion ambiguity reuses the existing queue row; no replacement ID. |
+| Queue -> parent receipt | Frozen destination, exact header/full body, sequence/time floor | Complete original UserPrompt confirms delivery; Sent, screen and transport acknowledgement do not. |
+
+Attention must cover the new pre-note interval. Project an unmaterialized
+intent with `ReplyTo != None` as `DispatchWarningUnconfirmed` under the same
+age/error thresholds as A-2.7, with summary `Dispatch warning awaiting
+materialization`, task target, null LandRequestId and no request clause.
+Use `ConditionKey = dispatch:<NotificationId:N>:receipt` for both pending
+intent and eventual DispatchBase note so it remains one condition. Suppress
+the intent projection when its exact note exists, and deduplicate the merged
+projection by this key to cover a materialization commit between the two reads.
+An intent may name NotificationId in detail, but `LandNotificationId` stays
+null until that row exists. Do not create an Aged land request for an intent.
+
+`DataRetentionService` must protect the original parent session and whole
+transcript while any required intent is unmaterialized, even after task route
+edits. After materialization the existing unresolved-note protection takes
+over atomically. Exclude whole task trees owning **any** intent or notification
+from task pruning, consistent with retained landing history, so the Restrict
+FK cannot abort a sweep of unrelated eligible trees. No intent-history purge
+or replay of legacy rows is added here. Retention/attention changes are the
+necessary consequences of adding pre-note custody, within S2b.
+
+### B-4. Boundary contract and TestDesign return requirements
+
+Retain `LandDeliveryBoundary` as the instance-scoped seam; the dispatcher and
+materializer accept it optionally. Add these names and observations to
+`tests/Antiphon.E2E/Fixtures/LandDeliveryOptions.cs`:
+
+| Boundary | Placement and identity | Decisive recovery requirement |
+|---|---|---|
+| `dispatch-warning-claim-before-commit` | After Capture, before successful claim SaveChanges/Commit; identity = final Dispatched event ID | Kill/rollback: no committed dispatch/session/intent/pair. A later queued dispatch is a new claim, not proof of recovery for this one. |
+| `dispatch-warning-claim-committed` | Immediately after claim CommitAsync, before attachment/spec/launch work; same identity | Committed claim and exact intents, zero pairs while materialization is gated. Kill/restart: original intents reach original parent without requeue or new request. |
+| `dispatch-warning-after-dispatch` | At successful return, before any optional materialization; same identity | Cover the audit's successful-dispatch/pre-warning cut. Recovery does not require this hook ever being reached. |
+| `dispatch-warning-before-materialize` | At MaterializeAsync entry, before opening the transaction or acquiring the row lock; identity = intent.Id | An independent fixture gate blocks both scan and optional fast path while a fresh observer inspects committed intents. Release on restart to permit normal recovery. |
+| `dispatch-warning-before-commit` | Materializer after constructing pair, before SaveChanges/Commit; identity = intent.Id | Kill or before/after-save fault: original intent survives, pair/marker roll back, scan recreates exact pair and reaches receipt. |
+| `dispatch-warning-materialized` | After pair/marker commit, before inline notification reconciliation (if any); identity = intent.Id | Lost acknowledgement/restart never creates a second pair. |
+| `dispatch-warning-intent-scan` | End of each completed intent pass, separate from notification-scan | Tests observe boot and repeated recovery without driving Tick/requeue. |
+
+The fixture needs an independent materialization gate before acquiring the
+intent row lock, for both scan and optional fast path; stopping only the
+dispatcher hook would let the background scan win the claimed crash window.
+Hold it while inspecting intents at the two postclaim cuts, then restart
+the owned server with the gate released. Scope all barriers/save faults to the
+fixture task/attempt/intent so unrelated warnings cannot satisfy them. Do not
+wait for a notification boundary in a mutant that never creates a note.
+
+TestDesign owns the final executable matrix. These concrete seams close its
+two missing design rows:
+
+| Return item | Compiling production mutation to design against | Required test result |
+|---|---|---|
+| PC-60 / V-21 | In the hosted service omit **only the intent scan invocation**, retaining Capture, MaterializeAsync, the notification scan and optional post-dispatch fast path. | `DispatchBaseWarningDeliveryE2ETests.C508_DispatchWarningPrecommitCrashRecovers`: at the immediate postclaim cut the fast path has never run; after restart committed pending intents cannot materialize in the mutant. Assert expected original note/complete native prompt count, not a fixture timeout. Restored scan must produce the same saved IDs/body/destination once. Include the pre-pair-commit and successful-return cuts in ordinary V-21. |
+| PC-61 / V-22 | Return `UnresolvedDefault = null` only on Resolve's RepoHead arm, retaining HEAD and Source. | `WorktreeBaseSelectionTests.C508_UnresolvedDefaultRetainsName`: two arbitrary distinct invalid configured refs yield HEAD/RepoHead and retain their respective original names. The mutant loses both names; restoration passes without hard-coded fixture names. Higher-priority arms still return null diagnostic. |
+
+Adapt PC-40/41/49/50/51/62 to the capture/materialization factories, not the
+deleted warning method. PC-40 still omits note insertion while keeping the
+Warning; PC-51 still tests pair/marker rollback, independently of claim
+atomicity. PC-48 and PC-65 move to the capture comparison/call site. PC-52/53
+must cover both claim-to-intent and intent-to-note custody, not only edits
+after a note already exists. PC-42 continues to target the **notification**
+scan, distinct from PC-60's **intent** scan. Existing post-note/land controls
+and false-receipt cases remain required.
+
+Add guards for atomic claim+intent insertion, attempt-key separation,
+concurrent/lost-ack projection, saved body/destination after refs and task
+route change, independent retry paging, pre-note attention and retention.
+Include postcommit launch exception and terminal task/requeue cases: recovery
+must still use the old intent; a genuinely new claim gets different IDs.
+For P-4, add caller-level default-fallback warning assertions using two
+different names and the ordinary real-Git missing-default case. A pure
+resolver test alone cannot catch a caller that discards the name beforehand.
+
+Keep DE's native parent/delegate FakeGrok, owned random runner, real Program,
+DB isolation and busy/eligible cases. Capture expected IDs/body/route from the
+committed intent with a fresh observer **before** restart; change refs or task
+route only after that capture. Require exact matching complete UserPrompt and
+native input census once per intent after two further completed scans. Reusing
+the same attempt or manually inserting an event/note is not recovery evidence.
+
+### B-5. Alternatives rejected and retained limitations
+
+| Alternative | Reason rejected |
+|---|---|
+| Only add another warning-pair transaction or retry the post-dispatch method in memory. | Neither leaves discoverable custody after process death before entry or commit. |
+| Re-evaluate siblings on restart, or requeue the task. | Ref tips, config, status and destination may have changed; it manufactures a new observation/dispatch rather than delivering the original one. |
+| Use `(TaskId, Attempt)` alone, or deduplicate by warning text. | Attempt is mutable and task retries can repeat the value; identical text on two successful claims still represents two obligations. |
+| Add a post-launch success/ready marker before making intent eligible. | The process can die after launch but before that marker, recreating the unowned recovery gap. |
+| Move selection/holds under the lease now. | That is S3 and changes the decision policy. B only moves custody of an already-computed observation into the claim. |
+| Put Warning and delivery note directly in the claim transaction. | Would also solve loss, but removes A's separate projection boundary and moves all Warning/note construction into claim handling. The chosen intent makes original observation custody explicit while preserving the already-designed pair rollback/recovery contract. |
+| Use a notification row with no Warning-event FK yet, or add a second delivery queue/worker. | Weakens existing notification identity/receipt assumptions or duplicates them. The small producer ledger hands off to the existing required-FK table. |
+| Store a single replaceable warning JSON blob on AgentTask. | Requeue can overwrite a pending prior attempt and per-warning uniqueness/recovery become implicit. Typed per-warning rows have database-enforced identity. |
+
+The pre-lease guard can still race a land. Same-ref tip movement is still not
+detected by S1b's ref comparison; snapshotting warning text does not improve
+its truth at a later instant. None of B's recovery claims certify that S3 race
+as fixed. DispatchBase may be delivered after a later failure or settlement;
+the body retains the original observation, never silently updates it.
+
+### B-6. Amendment implementation slices, files and tests
+
+Paths below are repo-relative; new files are explicitly marked. Keep each
+source slice with its named ordinary tests and commit before long runs.
+
+| Slice | Files | Required tests/coverage |
+|---|---|---|
+| B/S1: preserve failed default name | new `server/Application/Services/WorktreeBaseResolver.cs`; `server/Application/Services/DelegationWorktreeService.cs`; `server/Application/Services/AgentTaskDispatcher.cs` | new `tests/Antiphon.Tests/Application/WorktreeBaseSelectionTests.cs`: `C508_UnresolvedDefaultRetainsName`, `C508_ResolverAndCommitProbe`; existing `DelegationWorktreeTests.cs` missing-default and precedence cases; `AgentTaskDispatchBaseGuardTests.cs` actual-default matrix. |
+| B/S2b-1: schema and claim custody | new `server/Domain/Entities/AgentTaskDispatchWarningIntent.cs`; `server/Infrastructure/Data/AppDbContext.cs`; CLI-generated `server/Migrations/*` and model snapshot; new `server/Application/Services/DispatchBaseNotificationPayload.cs`; new `server/Application/Services/DispatchBaseWarningIntentService.cs`; `server/Application/Services/AgentTaskDispatcher.cs`; `server/Program.cs` | new `tests/Antiphon.Tests/Application/DispatchBaseNotificationTests.cs`: claim atomicity, same-task distinct claim IDs, frozen payload; extend `C508_RequestlessNotificationUpgrade` to verify the intent table/indexes/FKs and no legacy backfill. Preserve DG repair/hold/zero-sibling-mismatch coverage. |
+| B/S2b-2: recovery, visibility and retention | `server/Application/Services/DispatchBaseWarningIntentService.cs`; `server/Infrastructure/Orchestration/AgentTaskLandNotificationHostedService.cs`; `server/Application/Services/AttentionService.cs`; `server/Application/Services/DataRetentionService.cs`; A's attention enum/DTO/client mapping files | DBN `C508_WarningCommitCreatesObligation`, `C508_WarningCommitAtomic`, destination/retry/concurrency/lost-ack tests; `tests/Antiphon.Tests/Application/AgentTaskLandMonitoringTests.cs` pending-intent-to-note attention; `tests/Antiphon.Tests/Application/DataRetentionServiceTests.cs` original session/transcript/task-tree custody and unrelated pruning; focused `client/src/features/attention/attentionVisuals.test.ts`. |
+| B/S2b-3: native acceptance and owner docs | new `tests/Antiphon.E2E/DispatchBaseWarningDeliveryE2ETests.cs`; `tests/Antiphon.E2E/Fixtures/LandDeliveryFixture.cs`; `tests/Antiphon.E2E/Fixtures/LandDeliveryOptions.cs`; `docs/orchestration-loop.md`; `docs/antiphon-api.md` | DE `C508_DispatchWarningPrecommitCrashRecovers`, producer/receipt, boot/recovery and mismatch methods; all prior V/R land cuts remain. Docs describe claim-owned original warnings, later-failure behavior and the reused notification table, without claiming S3 selection. |
+
+Generate the intent table in the still-unimplemented S2b migration alongside
+nullable RequestId; A's two-migration upgrade requirement remains. Do not
+manually write migrations or amend an already-applied migration if Code later
+finds one exists. No product source, migration or fixture is implemented by
+this Plan amendment.
+
+### B-7. Readiness and cost handoff
+
+P-3 now has a durable producer identity, immutable body/destination, atomic
+claim boundary, specified boot/due recovery owner, replay semantics and native
+crash cuts. P-4 now has sufficient distinguishing input and defined outputs.
+There is no pending scope decision for the caller.
+
+**Next: test-design.** Re-audit PC-60/61 against B-4, relocate affected existing
+controls, add the new custody/retention/attention guards, and enumerate the
+complete verification floor before Code. The previous **413-minute lower
+bound is not a complete floor**: include both missing cycles, claim/projection
+crash variants, two-caller default diagnostics, concurrent recovery and the
+additional retention/attention tests. Recompute counts and costs rather than
+merely adding two rows to the previous 63 executable controls. No product test,
+build or mutation ran here; document consistency checks are not runtime proof.
