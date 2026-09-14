@@ -2038,11 +2038,28 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
             stage = "bridge-preflight";
             var pid = adapter.Pid;
-            var bridge = recovery is not null
-                ? recovery.ProbeBridge(pid)
-                : await WaitForResumeBridgeArmedAsync(adapter, sessionId, rcCt)
-                    ? RemoteControlBridgeState.Armed
-                    : RemoteControlBridgeState.Unknown;
+            RemoteControlBridgeState bridge;
+            if (recovery is not null)
+            {
+                bridge = recovery.ProbeBridge(pid);
+            }
+            else if (_rcProbe is null || pid is null)
+            {
+                bridge = RemoteControlBridgeState.Unknown;
+            }
+            else
+            {
+                try
+                {
+                    bridge = RemoteControlBridgeClassifier.Classify(
+                        _rcProbe.Probe(pid.Value), pid, probeFailed: false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogDebug(ex, "RC bridge probe failed for session {SessionId}", sessionId);
+                    bridge = RemoteControlBridgeState.Unknown;
+                }
+            }
 
             if (bridge == RemoteControlBridgeState.Unknown && recovery is not null)
             {
@@ -2101,7 +2118,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 var baseline = (await adapter.SnapshotRawOutputAsync(rcCt)).Length;
                 await SendBootPromptWithRetryAsync(adapter, "/remote-control", sessionId, rcCt);
                 await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, rcCt);
-                await WaitForRemoteControlArmedAsync(adapter, baseline, rcCt, ct);
+                if (await WaitForRemoteControlArmedAsync(adapter, baseline, rcCt, ct))
+                    bridge = RemoteControlBridgeState.Armed;
             }
 
             if (bridge != RemoteControlBridgeState.Armed

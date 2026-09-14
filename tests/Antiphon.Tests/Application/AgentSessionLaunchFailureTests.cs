@@ -1081,7 +1081,9 @@ public class AgentSessionLaunchFailureTests
         // CARD-0354: health-watch leftover on the persistent session must not be flushed after
         // boot just armed. Delivering it again opens the management menu and used to kill.
         var adapter = new FakeAgentProtocolAdapter { PromptOutput = "remote-control is active" };
-        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        var probe = new CountingRcProbe { Armed = false };
+        await using var fixture = await LaunchFixture.CreateAsync(
+            adapter, s => s.AddSingleton<IRcBridgeProbe>(probe));
         var queue = fixture.Services.GetRequiredService<SessionMessageQueueService>();
         await queue.EnqueueAsync(
             fixture.SessionId, "/remote-control", MessageSendMode.WhenIdle, CancellationToken.None);
@@ -1143,8 +1145,9 @@ public class AgentSessionLaunchFailureTests
 
         await fixture.LaunchInteractiveAsync(remoteControlName: "Antiphon-Orchestrator");
 
-        probe.Calls.ShouldBe(0, "a fresh launch (resumeMode null) must not skip the send");
-        adapter.Prompts.ShouldBe(["/remote-control", "/rename Antiphon-Orchestrator"]);
+        probe.Calls.ShouldBeGreaterThan(0, "D-1: fresh launches probe before an automatic arm");
+        adapter.Prompts.ShouldBe(["/rename Antiphon-Orchestrator"]);
+        adapter.Prompts.ShouldNotContain("/remote-control");
     }
 
     [Test]
@@ -1174,14 +1177,13 @@ public class AgentSessionLaunchFailureTests
 
         await fixture.LaunchInteractiveAsync(remoteControlName: "Antiphon-Orchestrator");
 
-        adapter.Prompts.ShouldBe(["/remote-control", "/rename Antiphon-Orchestrator"]);
-        adapter.Inputs.ShouldContain("\u001b");
-        adapter.RemoteControlMenuOpen.ShouldBeFalse();
+        adapter.Prompts.ShouldBeEmpty();
+        adapter.Prompts.ShouldNotContain(p => p.StartsWith("/rename", StringComparison.Ordinal));
 
         await using var db = LaunchFixture.CreateContext();
-        (await db.AgentIncidents.CountAsync(
-            i => i.AgentId == fixture.AgentId && i.Kind == AgentIncidentKind.RcDegraded))
-            .ShouldBe(0, "the menu is positive evidence the bridge is armed — not a degradation");
+        var incident = await db.AgentIncidents.SingleAsync(
+            i => i.AgentId == fixture.AgentId && i.Kind == AgentIncidentKind.RcDegraded);
+        incident.FailureReason.ShouldBe("RemoteControlMenuPresent");
         var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
         session.Status.ShouldBe(SessionStatus.Running);
     }
@@ -1200,18 +1202,13 @@ public class AgentSessionLaunchFailureTests
 
         await fixture.LaunchInteractiveAsync(remoteControlName: "Antiphon-Orchestrator");
 
-        adapter.Prompts.ShouldBe(
-            ["/remote-control", "/remote-control", "/remote-control"],
-            "slice 3 retypes the verified submit before giving up");
+        adapter.Prompts.ShouldBeEmpty();
         adapter.Prompts.ShouldNotContain(p => p.StartsWith("/rename", StringComparison.Ordinal));
-        adapter.Inputs.ShouldContain("\u001b");
-        adapter.RemoteControlMenuOpen.ShouldBeFalse();
 
         await using var db = LaunchFixture.CreateContext();
         var incident = await db.AgentIncidents.SingleAsync(
             i => i.AgentId == fixture.AgentId && i.Kind == AgentIncidentKind.RcDegraded);
-        incident.FailureReason.ShouldBe("RemoteControlNotDelivered");
-        incident.Message.ShouldContain("management menu");
+        incident.FailureReason.ShouldBe("RemoteControlMenuPresent");
         var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
         session.Status.ShouldBe(SessionStatus.Running);
     }
@@ -1250,7 +1247,9 @@ public class AgentSessionLaunchFailureTests
                 ? null
                 : new PromptDeliveryException("No composer evidence appeared for the work prompt."),
         };
-        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        var probe = new CountingRcProbe { Armed = false };
+        await using var fixture = await LaunchFixture.CreateAsync(
+            adapter, s => s.AddSingleton<IRcBridgeProbe>(probe));
         var card = await fixture.CreateCardAsync();
 
         var start = fixture.StartCardSessionAsync(
@@ -1313,7 +1312,9 @@ public class AgentSessionLaunchFailureTests
     public async Task A_swallowed_boot_prompt_is_retyped_and_the_second_attempt_lands()
     {
         var adapter = new FakeAgentProtocolAdapter { PromptOutput = "remote-control is active" };
-        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        var probe = new CountingRcProbe { Armed = false };
+        await using var fixture = await LaunchFixture.CreateAsync(
+            adapter, s => s.AddSingleton<IRcBridgeProbe>(probe));
         var typed = 0;
         adapter.PromptFailure = prompt =>
             prompt.StartsWith("/remote-control", StringComparison.Ordinal) && ++typed == 1
@@ -1343,7 +1344,9 @@ public class AgentSessionLaunchFailureTests
     public async Task Exhausted_boot_retries_are_late_confirmed_by_the_transcript_record()
     {
         var adapter = new FakeAgentProtocolAdapter();
-        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        var probe = new CountingRcProbe { Armed = false };
+        await using var fixture = await LaunchFixture.CreateAsync(
+            adapter, s => s.AddSingleton<IRcBridgeProbe>(probe));
         // A resumed session with a day of ingestion behind it — the observability gate CARD-0055
         // scoped fresh boots out of. Complete turn, so the launch writes no restart boundary.
         await fixture.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "yesterday's work");

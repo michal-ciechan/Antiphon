@@ -2534,8 +2534,8 @@ public class SessionMessageQueueDeliveryVerificationTests
         }
 
         await using var db = h.CreateDb();
-        var work = await db.SessionQueuedMessages.SingleAsync(m =>
-            m.AgentSessionId == h.SessionId && m.Body.Contains("ordinary work", StringComparison.Ordinal));
+        var work = (await db.SessionQueuedMessages.Where(m => m.AgentSessionId == h.SessionId).ToListAsync())
+            .Single(m => m.Body.Contains("ordinary work", StringComparison.Ordinal));
         work.DeliveryVerdict.ShouldNotBe(DeliveryVerdict.Delivered);
         (await db.TranscriptEntries.CountAsync(t =>
             t.AgentSessionId == h.SessionId && t.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
@@ -2604,8 +2604,8 @@ public class SessionMessageQueueDeliveryVerificationTests
             h.SessionId, "blocked work body c514", MessageSendMode.WhenIdle, CancellationToken.None);
         await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
         await using var db = h.CreateDb();
-        var row = await db.SessionQueuedMessages.SingleAsync(m =>
-            m.AgentSessionId == h.SessionId && m.Body.Contains("blocked work", StringComparison.Ordinal));
+        var row = (await db.SessionQueuedMessages.Where(m => m.AgentSessionId == h.SessionId).ToListAsync())
+            .Single(m => m.Body.Contains("blocked work", StringComparison.Ordinal));
         row.DeliveryAttempts.ShouldBe(0);
         row.Status.ShouldBe(QueuedMessageStatus.Pending);
         h.Adapter.Killed.ShouldBeFalse();
