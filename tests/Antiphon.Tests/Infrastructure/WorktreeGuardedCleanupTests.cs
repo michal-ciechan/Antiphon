@@ -212,12 +212,13 @@ public sealed class WorktreeGuardedCleanupTests
         public bool Persistent, CleanFirst, Incomplete, Timeout;
         public Func<int, Task>? OnRemove;
         public Func<string, IReadOnlyList<string>, Task<LandingGitResult?>>? OtherCommand;
-        public static async Task<RemovalHarness> CreateAsync()
+        public static async Task<RemovalHarness> CreateAsync(Func<LandingSafetyHarness, Task>? beforeRequest = null)
         {
             var h = new RemovalHarness();
             h.H = new LandingSafetyHarness { Clock = h.Clock, ConfigureServices = services => {
                 services.AddSingleton<IWorktreeLockDiagnostics>(h.Diagnostics); services.AddSingleton<IWorktreeDeleteAccessProbe>(h.Probe); } };
             await h.H.InitializeAsync(); h.SourceSha = await h.H.AddSourceAsync();
+            if (beforeRequest is not null) await beforeRequest(h.H);
             h.H.Fault.Phase = LandPhase.CleanupStarted; h.H.Fault.AfterCommit = true;
             await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.H.RunAsync());
             h.Operation = (await h.H.OperationAsync())!;
@@ -253,11 +254,12 @@ public sealed class WorktreeGuardedCleanupTests
     internal sealed class DiagnosticsDouble : IWorktreeLockDiagnostics
     {
         public int Calls; public bool Owners; public Func<Task>? Before;
+        public string OwnerName = "owned-holder", OwnerPath = ".";
         public async Task<WorktreeLockSnapshot> CaptureAsync(string root, CancellationToken ct)
         {
             Calls++; if (Before is not null) await Before(); ct.ThrowIfCancellationRequested();
             return new(Owners ? WorktreeLockStatus.OwnersObserved : WorktreeLockStatus.Unavailable,
-                Owners ? "Observed" : "InsufficientPrivileges", DateTime.UtcNow, Owners ? [new("owned-holder", 4321, ".")] : []);
+                Owners ? "Observed" : "InsufficientPrivileges", DateTime.UtcNow, Owners ? [new(OwnerName, 4321, OwnerPath)] : []);
         }
     }
     internal sealed class ProbeDouble : IWorktreeDeleteAccessProbe

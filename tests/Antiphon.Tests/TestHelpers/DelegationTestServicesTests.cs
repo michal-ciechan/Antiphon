@@ -19,6 +19,25 @@ namespace Antiphon.Tests.TestHelpers;
 public sealed class DelegationTestServicesTests
 {
     [Test]
+    public void C443_DiagnosticRegistrationPreservesOverride()
+    {
+        var diagnostics = new Moq.Mock<IWorktreeLockDiagnostics>(Moq.MockBehavior.Strict).Object;
+        var probe = new Moq.Mock<IWorktreeDeleteAccessProbe>(Moq.MockBehavior.Strict).Object;
+        var journal = new Moq.Mock<IWorktreeCleanupJournal>(Moq.MockBehavior.Strict).Object;
+        var services = new ServiceCollection(); services.AddLogging(); services.AddSingleton(TimeProvider.System);
+        services.AddSingleton(diagnostics); services.AddSingleton(probe); services.AddSingleton(journal);
+        services.AddDelegationWorktreeGraph(); services.AddDelegationWorktreeGraph();
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+        provider.GetRequiredService<IWorktreeLockDiagnostics>().ShouldBeSameAs(diagnostics);
+        provider.GetRequiredService<IWorktreeDeleteAccessProbe>().ShouldBeSameAs(probe);
+        provider.GetRequiredService<IWorktreeCleanupJournal>().ShouldBeSameAs(journal);
+        foreach (var type in new[] { typeof(IWorktreeLockDiagnostics), typeof(IWorktreeDeleteAccessProbe), typeof(IWorktreeCleanupJournal) })
+            services.Count(d => d.ServiceType == type).ShouldBe(1);
+        provider.GetRequiredService<IWorktreeManager>().ShouldNotBeNull();
+        var direct = DelegationTestServices.CreateGitGraph(new(), diagnostics: diagnostics, probe: probe, cleanupJournal: journal);
+        direct.Diagnostics.ShouldBeSameAs(diagnostics); direct.Probe.ShouldBeSameAs(probe); direct.Journal.ShouldBeSameAs(journal);
+    }
+    [Test]
     public async Task Logging_clock_and_helper_resolve_the_whole_worktree_graph()
     {
         var services = new ServiceCollection();
@@ -33,6 +52,9 @@ public sealed class DelegationTestServicesTests
         scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>().ShouldNotBeNull();
         scope.ServiceProvider.GetRequiredService<ILandingGit>().ShouldNotBeNull();
         scope.ServiceProvider.GetRequiredService<IRepositoryMutationLease>().ShouldNotBeNull();
+        scope.ServiceProvider.GetRequiredService<IWorktreeCleanupJournal>().ShouldNotBeNull();
+        scope.ServiceProvider.GetRequiredService<IWorktreeDeleteAccessProbe>().ShouldNotBeNull();
+        scope.ServiceProvider.GetRequiredService<IWorktreeLockDiagnostics>().ShouldNotBeNull();
         scope.ServiceProvider.GetRequiredService<AgentTaskLandingState>().ShouldNotBeNull();
         scope.ServiceProvider.GetRequiredService<IWorktreeManager>()
             .ShouldBeOfType<Antiphon.Server.Infrastructure.Git.WorktreeManager>();
