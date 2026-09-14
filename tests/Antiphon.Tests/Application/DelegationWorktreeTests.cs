@@ -1,3 +1,5 @@
+using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -860,6 +862,135 @@ public class DelegationWorktreeTests
     }
 
     // ---- helpers ---------------------------------------------------------------------------
+
+    /// <summary>
+    /// V-6 / G-17: base resolution and creation happen only under a lease this service's own
+    /// provider minted and still owns. An occupied lease refuses; a foreign lease is refused by
+    /// the service BEFORE the manager is called (the recording decorator's count stays zero, so
+    /// the service fence is observed independently of the manager's own guard); and the successful
+    /// arm cuts from the tip that was moved before the legitimate lease was acquired.
+    /// </summary>
+    [Test]
+    public async Task C508_BaseResolutionRequiresOwnedLease()
+    {
+        using var repo = new ScratchGitRepo("c508-lease");
+        await repo.CommitFileAsync("README.md", "B\n");
+        var settings = new GitSettings
+        {
+            WorktreeBasePath = repo.WorktreeRoot,
+            WorktreeAddTimeoutSeconds = 180,
+            DefaultBranch = "master",
+        };
+
+        var git = new LandingGit();
+        var leases = new RepositoryMutationLease(git);
+        var guarded = new GuardedWorktreeRemoval(git, leases, new NullRemovalEvidence());
+        var real = new WorktreeManager(Options.Create(settings), TimeProvider.System,
+            NullLogger<WorktreeManager>.Instance, guarded, leases, git);
+        var recording = new RecordingWorktreeManager(real);
+        var service = new DelegationWorktreeService(
+            recording,
+            new GitService(NullLogger<GitService>.Instance),
+            NullLogger<DelegationWorktreeService>.Instance,
+            new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance),
+            leases, git, gitSettings: Options.Create(settings));
+
+        // 1. Occupied: someone else holds the genuine common-directory lease.
+        var occupied = NewTask(repo.Path, mergeTarget: null);
+        await using (var held = await leases.TryAcquireAsync(repo.Path, CancellationToken.None))
+        {
+            held.ShouldNotBeNull();
+            var busy = await Should.ThrowAsync<ConflictException>(
+                () => service.CreateForTaskAsync(occupied, CancellationToken.None));
+            busy.Message.ShouldBe("repository_busy");
+        }
+
+        occupied.WorktreePath.ShouldBeNull();
+        occupied.WorktreeBaseRef.ShouldBeNull();
+        occupied.WorktreeBaseSha.ShouldBeNull();
+        occupied.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.Unset);
+        recording.CreateCalls.ShouldBe(0);
+
+        // 2. Foreign: a live lease minted by a DIFFERENT provider over the same directory.
+        var foreignProvider = new RepositoryMutationLease(git);
+        var foreignTask = NewTask(repo.Path, mergeTarget: null);
+        await using (var foreign = await foreignProvider.TryAcquireAsync(repo.Path, CancellationToken.None))
+        {
+            foreign.ShouldNotBeNull();
+            var refused = await Should.ThrowAsync<ConflictException>(
+                () => service.CreateForTaskAsync(foreignTask, foreign, CancellationToken.None));
+            refused.Message.ShouldBe("repository_lease_required");
+        }
+
+        foreignTask.WorktreePath.ShouldBeNull();
+        foreignTask.WorktreeBaseRef.ShouldBeNull();
+        foreignTask.WorktreeBaseSha.ShouldBeNull();
+        foreignTask.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.Unset);
+        recording.CreateCalls.ShouldBe(0);
+
+        // 3. The default tip moves before the legitimate lease is taken; the creation must use
+        //    the ref resolved and observed under that lease, not a tip read earlier.
+        await repo.CommitFileAsync("later.md", "advanced M\n");
+        var movedTip = (await repo.GitReadAsync("rev-parse", "master")).Trim();
+        var granted = NewTask(repo.Path, mergeTarget: null);
+        var decision = await service.CreateForTaskAsync(granted, CancellationToken.None);
+        decision.ShouldNotBeNull();
+        decision.NewlyRecorded.ShouldBeTrue();
+        decision.Resolved.Source.ShouldBe(WorktreeBaseSource.DefaultBranch);
+        decision.Resolved.Ref.ShouldBe("master");
+        granted.WorktreeBaseRef.ShouldBe("master");
+        granted.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.DefaultBranch);
+        granted.WorktreeBaseSha.ShouldBe(movedTip);
+        (await ScratchGitRepo.GitInAsync(granted.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim()
+            .ShouldBe(movedTip);
+        recording.CreateCalls.ShouldBe(1);
+    }
+
+    private sealed class NullRemovalEvidence : IWorktreeRemovalEvidence
+    {
+        public Task<AgentTaskLanding?> ReadAsync(Guid operationId, CancellationToken ct) =>
+            Task.FromResult<AgentTaskLanding?>(null);
+    }
+
+    /// <summary>
+    /// Counts creation calls so the service's own lease fence can be asserted separately from
+    /// the manager's. PC-17 removes only the service throw; the count must still be zero.
+    /// </summary>
+    private sealed class RecordingWorktreeManager(IWorktreeManager inner) : IWorktreeManager
+    {
+        public int CreateCalls { get; private set; }
+
+        public Task<Antiphon.Server.Application.Dtos.WorktreeInfo> CreateAsync(
+            string repoPath, string cardId, string baseRef, CancellationToken ct)
+        {
+            CreateCalls++;
+            return inner.CreateAsync(repoPath, cardId, baseRef, ct);
+        }
+
+        public Task<Antiphon.Server.Application.Dtos.WorktreeInfo> CreateAsync(
+            string repoPath, string cardId, string baseRef, RepositoryLease lease, CancellationToken ct)
+        {
+            CreateCalls++;
+            return inner.CreateAsync(repoPath, cardId, baseRef, lease, ct);
+        }
+
+        public Task<Antiphon.Server.Application.Dtos.WorktreeInfo> CreateVerificationAsync(
+            string repoPath, string identifier, string sha, RepositoryLease lease, CancellationToken ct)
+        {
+            CreateCalls++;
+            return inner.CreateVerificationAsync(repoPath, identifier, sha, lease, ct);
+        }
+
+        public Task<IReadOnlyList<Antiphon.Server.Application.Dtos.WorktreeInfo>> ListAsync(
+            string repoPath, CancellationToken ct) => inner.ListAsync(repoPath, ct);
+
+        public Task RemoveAsync(string repoPath, string worktreePath, CancellationToken ct) =>
+            inner.RemoveAsync(repoPath, worktreePath, ct);
+
+        public Task TouchAsync(string worktreePath, CancellationToken ct) => inner.TouchAsync(worktreePath, ct);
+
+        public Task<int> PruneStaleAsync(CancellationToken ct) => inner.PruneStaleAsync(ct);
+    }
 
     private static AgentTask NewTask(string repoPath, string? mergeTarget) => new()
     {
