@@ -461,7 +461,7 @@ public sealed class AgentTaskLandService
                 continue;
             if (!await _worktrees.KeptBranchExistsAsync(task.RepoPath, branch, ct))
                 continue;
-            if (await _worktrees.IsAncestorOfBaseAsync(rebasedHeadRepo, branch, verifiedSha ?? "HEAD", ct))
+            if (await _worktrees.ContainsPatchesAsync(rebasedHeadRepo, branch, verifiedSha ?? "HEAD", ct))
                 continue;
 
             var shortId = DelegationReportFormatter.Short(sibling.Id);

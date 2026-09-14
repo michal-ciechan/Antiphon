@@ -51,8 +51,10 @@ public class DelegationWorktreeTests
     }
 
     [Test]
-    public async Task two_top_level_worktree_tasks_on_one_card_both_branch_from_repo_head()
+    public async Task a_running_sibling_is_never_a_base()
     {
+        // CARD-0215: a still-running sibling (Queued, live worktree) is not a base. S1 cuts from
+        // the default branch, not from the sibling tip. Settled-sibling chaining is deferred (S3).
         using var repo = new ScratchGitRepo();
         await repo.CommitFileAsync("README.md", "base\n");
         var masterHead = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
@@ -74,11 +76,15 @@ public class DelegationWorktreeTests
         firstCommit.ShouldNotBe(masterHead);
 
         await service.CreateForTaskAsync(second, CancellationToken.None);
-        (await ScratchGitRepo.GitInAsync(second.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim()
-            .ShouldBe(masterHead);
+        var secondHead = (await ScratchGitRepo.GitInAsync(second.WorktreePath!, "rev-parse", "HEAD"))
+            .StdOut.Trim();
+        secondHead.ShouldBe(masterHead);
         (await ScratchGitRepo.GitInAsync(
             second.WorktreePath!, "merge-base", "--is-ancestor", firstCommit, "HEAD"))
-            .Ok.ShouldBeFalse("a sibling Worktree task branches from HEAD, never from the first task's commit");
+            .Ok.ShouldBeFalse("a running sibling is never a base; the new branch starts at the default tip");
+        second.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.DefaultBranch);
+        second.WorktreeBaseRef.ShouldBe("master");
+        second.WorktreeBaseTaskId.ShouldBeNull();
     }
 
     [Test]
@@ -231,6 +237,72 @@ public class DelegationWorktreeTests
         (await timeoutManager.ListAsync(repo.Path, CancellationToken.None)).ShouldBeEmpty();
         (await ScratchGitRepo.GitInAsync(repo.Path, "show-ref", "--verify", "--quiet", $"refs/heads/{timeoutBranch}"))
             .Ok.ShouldBeFalse("a timed-out add must not leave the branch");
+    }
+
+    [Test]
+    public async Task C508_ReuseKeepsRecordedBase()
+    {
+        using var repo = new ScratchGitRepo("c508-reuse");
+        await repo.CommitFileAsync("README.md", "B\n");
+        var masterM = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        var (service, manager) = CreateService(repo);
+        var task = NewTask(repo.Path, mergeTarget: null);
+        await service.CreateForTaskAsync(task, CancellationToken.None);
+        var recordedSha = task.WorktreeBaseSha;
+        recordedSha.ShouldBe(masterM);
+        task.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.DefaultBranch);
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "work.md"), "task work\n");
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "work.md")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "task work")).Ok.ShouldBeTrue();
+        var taskTip = (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim();
+
+        await repo.CommitFileAsync("later.md", "advanced M\n");
+        await service.CreateForTaskAsync(task, CancellationToken.None);
+        task.WorktreeBaseSha.ShouldBe(recordedSha);
+        task.WorktreeBaseRef.ShouldBe("master");
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim().ShouldBe(taskTip);
+
+        var path = task.WorktreePath;
+        task.WorktreePath = null;
+        task.WorktreeBranch = null;
+        await service.CreateForTaskAsync(task, CancellationToken.None);
+        task.WorktreePath.ShouldBe(path);
+        task.WorktreeBaseSha.ShouldBe(recordedSha);
+
+        var adversarial = NewTask(repo.Path, mergeTarget: null);
+        adversarial.WorktreeBaseRef = "explicit-E";
+        adversarial.WorktreeBaseSource = WorktreeBaseSource.Explicit;
+        adversarial.WorktreeBaseRequestedRef = null;
+        await service.CreateForTaskAsync(adversarial, CancellationToken.None);
+        (await ScratchGitRepo.GitInAsync(adversarial.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim()
+            .ShouldBe((await repo.GitReadAsync("rev-parse", "master")).Trim());
+        adversarial.WorktreeBaseRef.ShouldBe("explicit-E");
+        _ = manager;
+    }
+
+    [Test]
+    public async Task C508_RepairStartShaWins()
+    {
+        using var repo = new ScratchGitRepo("c508-repair");
+        await repo.CommitFileAsync("README.md", "B\n");
+        await repo.CommitFileAsync("master.txt", "M\n");
+        var master = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        await repo.GitAsync("checkout", "-b", "owner");
+        await repo.CommitFileAsync("owner.txt", "repair\n");
+        var repairSha = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        await repo.GitAsync("checkout", "master");
+        repairSha.ShouldNotBe(master);
+
+        var (service, _) = CreateService(repo);
+        var task = NewTask(repo.Path, mergeTarget: "master");
+        task.RepairSourceTaskId = Guid.NewGuid();
+        await service.CreateForTaskAsync(task, CancellationToken.None, startAtSha: repairSha);
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim().ShouldBe(repairSha);
+        task.WorktreeBaseRef.ShouldBe(repairSha);
+        task.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.Repair);
+        task.WorktreeBaseTaskId.ShouldBe(task.RepairSourceTaskId);
+        task.WorktreeBaseSha.ShouldBe(repairSha);
+        task.MergeTargetRef.ShouldBe("master");
     }
 
     [Test]
@@ -838,6 +910,7 @@ public class DelegationWorktreeTests
         {
             WorktreeBasePath = repo.WorktreeRoot, WorktreeStaleAfterDays = 7,
             WorktreeJanitorIntervalHours = 24, WorktreeAddTimeoutSeconds = worktreeAddTimeoutSeconds ?? 180,
+            DefaultBranch = "master",
         });
         return (graph.Worktrees, graph.Manager);
     }

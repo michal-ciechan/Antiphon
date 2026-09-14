@@ -358,7 +358,10 @@ API and is fully commented in place. The fields that change behaviour most: `rol
 [agent-kinds.md](agent-kinds.md)), `workspace`, `workingDirectory`, `scope`, `followUpOnTask`,
 `expectedMinutes`, `envOverride`, `ignoreSubscriptionQuota`, `ignoreModelDisabled`,
 `ignoreRoutingPin`, `ignoreConcurrencyLimit` (CARD-0147; omits the create-time project/role cap for this request only), `authority` (CARD-0294 standing authority, ≤ 2000 chars; `autoContinue`
-without it is 422 `auto_continue_needs_authority`).
+without it is 422 `auto_continue_needs_authority`). `mergeTargetRef` is the landing target, never a
+worktree base. Detail records `worktreeBaseRequestedRef` (S4 create input; unused in this release),
+`worktreeBaseRef`, `worktreeBaseSource`, `worktreeBaseTaskId`, and `worktreeBaseSha`.
+`AgentTaskLandNotifications` also carries `DispatchBase` notes with a null `RequestId`.
 
 `role` is `AgentTaskRole`. Dispatchable: `Investigate`, `Plan`, `TestDesign`, `Code`, `Review`,
 `Debug`, `Coverage`, `Docs`, `Commit`, `Test`, `Deploy`, `Merge`, `Custom`. Specialists `Check`,

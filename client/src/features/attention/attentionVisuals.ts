@@ -43,6 +43,7 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
   LandNoProgress: { label: 'Land aged', color: 'warning', icon: TbClockExclamation, hint: 'An accepted land has made no forward progress.' },
   LandOutcomeUnconfirmed: { label: 'Land receipt missing', color: 'danger', icon: TbMailExclamation, hint: 'The caller has no complete matching UserPrompt receipt.' },
   LandLegacyUnverified: { label: 'Historical Land receipt unknown', color: 'gray', icon: TbMailExclamation, hint: 'Historical evidence only; no new delivery obligation is inferred.' },
+  DispatchWarningUnconfirmed: { label: 'Dispatch receipt missing', color: 'danger', icon: TbMailExclamation, hint: 'The caller has no complete matching UserPrompt for a dispatch-base warning.' },
   StandingContinuityDecision: {
     label: 'Conversation decision', color: 'danger', icon: TbHelpCircle,
     hint: 'Inspect the conversation, retry after repair, select owned history, or explicitly start fresh.',

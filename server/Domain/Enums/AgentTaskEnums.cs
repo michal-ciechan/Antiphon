@@ -407,3 +407,19 @@ public static class AgentTaskRoles
     /// </summary>
     public static bool CarriesFullInlineInput(AgentTaskRole role) => role is AgentTaskRole.Check;
 }
+
+/// <summary>
+/// Why a Worktree task's recorded base was chosen (CARD-0508). <see cref="Unset"/> is the
+/// historical default; <see cref="CardCurrent"/> is reserved for the deferred sibling-selection
+/// slice and is never written by S1/S2.
+/// </summary>
+public enum WorktreeBaseSource
+{
+    Unset = 0,
+    Repair = 1,
+    Explicit = 2,
+    MergeTarget = 3,
+    CardCurrent = 4,
+    DefaultBranch = 5,
+    RepoHead = 6,
+}

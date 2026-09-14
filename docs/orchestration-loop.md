@@ -165,12 +165,18 @@ Landing (fetch, rebase, verify, fast-forward, push, worktree removal, branch del
 in-flight / queued / ready per stage, generalised across all six stage roles (CARD-0146 S4) — is
 `/orchestrator?tab=pipeline`.
 
-A Worktree task branches from its merge target, or from master HEAD when none is set — never from
-a sibling task's branch (CARD-0215). Land a Plan with `delegate.ps1 -Land <id>` before dispatching
-Execute, so the plan commit is on master and the build worktree contains it. The dispatcher holds
-Execute while that plan's land is in flight, and warns (a `Warning` event plus a WhenIdle note
-naming the branch and tip) when the plan branch is simply not landed. A `Landed` line carrying
-`unlanded-sibling=` means a same-card branch is still stranded; land or drop it. Two 2026-08-10
+A Worktree task records the ref it was cut from. Precedence is repair SHA, then an explicit
+requested ref, then the merge target, then the project's `BaseBranch` / `Git:DefaultBranch` /
+`master` when that ref resolves to a commit, then `HEAD` with a warning naming the failed default
+(CARD-0508 S1). The card's current kept sibling is not chosen as a base in this release
+(CARD-0215 policy is unchanged). Containment of a kept sibling is patch-aware (`git cherry`): a
+rebase-landed branch is silent. The dispatcher still holds while a sibling land is in flight, and
+still warns when a divergent kept branch is simply not landed. That warning is a durable
+dispatch-base obligation (`AgentTaskLandNotifications.Kind = DispatchBase`, null `RequestId`)
+captured with the successful claim; its absence from the parent session is a defect, not an
+expected loss. Land a Plan with `delegate.ps1 -Land <id>` before dispatching Execute as a
+convenience so the plan commit is on master — it is not required for a correct base. A `Landed`
+line carrying `unlanded-sibling=` means a same-card branch is still stranded; land or drop it. Two 2026-08-10
 cases (the CARD-0002 design doc and the CARD-0001 fix) sat unmerged for 9 hours before anyone
 noticed.
 
@@ -613,8 +619,8 @@ its `LandingCleanup` event updates the same publication rather than counting ano
 the last acknowledged checkpoint. Missing source components alone never prove success.
 A `Landed` line that also carries
 `unlanded-sibling=<id>:<branch>` (comma-separated if several) means a same-card kept branch is
-not an ancestor of the rebased HEAD — land or drop that sibling; the server warns rather than
-refusing.
+not present in the pinned verified SHA by patch id (`git cherry`) — land or drop that sibling; the
+server warns rather than refusing. A rebase-landed sibling no longer appears.
 
 After `-Land`, the orchestrator's own git involvement is **zero**. Do not re-run `git show`,
 `git diff`, `gh run view`, or tests to double-check a `Landed` outcome. This is the same

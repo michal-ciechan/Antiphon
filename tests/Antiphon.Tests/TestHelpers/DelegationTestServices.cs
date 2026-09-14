@@ -81,6 +81,7 @@ internal static class DelegationTestServices
         services.TryAddScoped<AgentTaskLandingProtocol>();
         services.AddGitWorkspaceService();
         services.TryAddScoped<DelegationWorktreeService>();
+        services.TryAddScoped<DispatchBaseWarningIntentService>();
         return services;
     }
 
@@ -97,7 +98,7 @@ internal static class DelegationTestServices
             new GitService(Microsoft.Extensions.Logging.Abstractions.NullLogger<GitService>.Instance),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<DelegationWorktreeService>.Instance,
             new GitWorkspaceService(Microsoft.Extensions.Logging.Abstractions.NullLogger<GitWorkspaceService>.Instance),
-            leases, git);
+            leases, git, gitSettings: Options.Create(settings), db: db);
         return (worktrees, manager, git, leases);
     }
 

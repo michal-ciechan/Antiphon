@@ -136,6 +136,9 @@ public class AgentTaskDispatchBaseGuardTests
         dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
         dispatched.WorktreePath.ShouldNotBeNull();
 
+        await MaterializeAndDeliverAsync(scope.ServiceProvider, task.Id, ct);
+        db.ChangeTracker.Clear();
+
         var warning = await db.AgentTaskEvents.AsNoTracking()
             .SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning, ct);
         warning.Detail.ShouldContain(sibling.WorktreeBranch!);
@@ -261,9 +264,24 @@ public class AgentTaskDispatchBaseGuardTests
         dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
         (await db.AgentTaskEvents.CountAsync(
             e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held, ct)).ShouldBe(0);
+        await MaterializeAndDeliverAsync(scope.ServiceProvider, task.Id, ct);
+        db.ChangeTracker.Clear();
         var warning = await db.AgentTaskEvents.AsNoTracking()
             .SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning, ct);
         warning.Detail.ShouldContain(sibling.WorktreeBranch!);
+    }
+
+    private static async Task MaterializeAndDeliverAsync(IServiceProvider services, Guid taskId, CancellationToken ct)
+    {
+        var db = services.GetRequiredService<AppDbContext>();
+        var materializer = services.GetRequiredService<DispatchBaseWarningIntentService>();
+        var intents = await db.AgentTaskDispatchWarningIntents.Where(i => i.TaskId == taskId).ToListAsync(ct);
+        foreach (var intent in intents)
+            await materializer.MaterializeAsync(intent.Id, ct);
+        var notifier = services.GetRequiredService<AgentTaskLandNotificationService>();
+        var notes = await db.AgentTaskLandNotifications.Where(n => n.TaskId == taskId).ToListAsync(ct);
+        foreach (var note in notes)
+            await notifier.ReconcileAsync(note.Id, ct);
     }
 
     private static async Task<AgentTask> SeedKeptSiblingAsync(
@@ -417,7 +435,11 @@ public class AgentTaskDispatchBaseGuardTests
         {
             WorktreeBasePath = worktreeBase,
             WorktreeAddTimeoutSeconds = 180,
+            DefaultBranch = "master",
         });
+        services.AddSingleton<CompletionNoteFlushQueue>();
+        services.AddSingleton<LandDeliveryBoundary>();
+        services.AddScoped<AgentTaskLandNotificationService>();
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentTaskDispatcher>();
         return services.BuildServiceProvider();

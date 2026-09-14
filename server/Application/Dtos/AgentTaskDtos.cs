@@ -310,7 +310,12 @@ public sealed record AgentTaskDetailDto(
     string? InternalDecisionPolicyJson = null,
     string? InternalDecisionPolicyHash = null,
     Guid? RepairSourceTaskId = null,
-    ProgressEvidenceDto? ProgressEvidence = null);
+    ProgressEvidenceDto? ProgressEvidence = null,
+    string? WorktreeBaseRequestedRef = null,
+    string? WorktreeBaseRef = null,
+    WorktreeBaseSource WorktreeBaseSource = WorktreeBaseSource.Unset,
+    Guid? WorktreeBaseTaskId = null,
+    string? WorktreeBaseSha = null);
 
 /// <summary>One accepted launch attempt for a sourced Mutation snapshot. Receipt bytes stay on the server.</summary>
 public sealed record VerificationExecutionDetailDto(

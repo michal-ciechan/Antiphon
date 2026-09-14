@@ -59,6 +59,7 @@ public class AppDbContext : DbContext
     public DbSet<VerificationExecution> VerificationExecutions => Set<VerificationExecution>();
     public DbSet<AgentTaskLandRequest> AgentTaskLandRequests => Set<AgentTaskLandRequest>();
     public DbSet<AgentTaskLandNotification> AgentTaskLandNotifications => Set<AgentTaskLandNotification>();
+    public DbSet<AgentTaskDispatchWarningIntent> AgentTaskDispatchWarningIntents => Set<AgentTaskDispatchWarningIntent>();
     public DbSet<AgentTaskEvent> AgentTaskEvents => Set<AgentTaskEvent>();
     public DbSet<StageOutcome> StageOutcomes => Set<StageOutcome>();
     public DbSet<AgentTuiProfile> AgentTuiProfiles => Set<AgentTuiProfile>();
@@ -1572,11 +1573,28 @@ public class AppDbContext : DbContext
             entity.HasKey(n => n.Id);
             entity.Property(n => n.ConcurrencyToken).IsConcurrencyToken();
             entity.Property(n => n.ContentDigest).HasMaxLength(128);
+            entity.Property(n => n.RequestId).IsRequired(false);
             entity.HasIndex(n => n.SourceEventId).IsUnique();
             entity.HasIndex(n => new { n.State, n.NextAttemptAt, n.Id });
-            entity.HasOne<AgentTaskLandRequest>().WithMany().HasForeignKey(n => n.RequestId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<AgentTaskLandRequest>().WithMany().HasForeignKey(n => n.RequestId).IsRequired(false).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<AgentTaskEvent>().WithMany().HasForeignKey(n => n.SourceEventId).OnDelete(DeleteBehavior.Restrict);
             // Destination is a snapshot, deliberately not a cascading session FK.
+        });
+        modelBuilder.Entity<AgentTaskDispatchWarningIntent>(entity =>
+        {
+            entity.ToTable("AgentTaskDispatchWarningIntents");
+            entity.HasKey(i => i.Id);
+            entity.Property(i => i.ConcurrencyToken).IsConcurrencyToken();
+            entity.Property(i => i.WarningKey).IsRequired().HasMaxLength(100);
+            entity.Property(i => i.Detail).IsRequired().HasColumnType("text");
+            entity.Property(i => i.Body).IsRequired().HasColumnType("text");
+            entity.Property(i => i.ContentDigest).IsRequired().HasMaxLength(128);
+            entity.Property(i => i.LastErrorCode).HasMaxLength(200);
+            entity.HasIndex(i => new { i.DispatchEventId, i.WarningKey }).IsUnique();
+            entity.HasIndex(i => i.NotificationId).IsUnique();
+            entity.HasIndex(i => new { i.MaterializedAt, i.NextAttemptAt, i.Id });
+            entity.HasOne<AgentTaskEvent>().WithMany().HasForeignKey(i => i.DispatchEventId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<AgentTask>().WithMany().HasForeignKey(i => i.TaskId).OnDelete(DeleteBehavior.Restrict);
         });
         modelBuilder.Entity<SessionQueuedMessage>().HasIndex(m => m.SourceLandNotificationId)
             .IsUnique().HasFilter("\"SourceLandNotificationId\" IS NOT NULL");
@@ -1703,6 +1721,11 @@ public class AppDbContext : DbContext
             // non-Legacy class. WorktreeBaseSha is the no-target git-facts base.
             entity.Property(t => t.ReportEvidence).IsRequired().HasDefaultValue(AgentTaskReportEvidence.Legacy);
             entity.Property(t => t.WorktreeBaseSha).HasMaxLength(64);
+            // CARD-0508. Null/Unset on every pre-existing row: no backfill of a historical decision.
+            entity.Property(t => t.WorktreeBaseRequestedRef).HasMaxLength(300);
+            entity.Property(t => t.WorktreeBaseRef).HasMaxLength(300);
+            entity.Property(t => t.WorktreeBaseSource).IsRequired().HasDefaultValue(WorktreeBaseSource.Unset);
+            entity.Property(t => t.WorktreeBaseTaskId).IsRequired(false);
             // CARD-0499. Null on every pre-existing row: no backfill of baselines or source identity.
             entity.Property(t => t.RepairSourceTaskId).IsRequired(false);
             entity.Property(t => t.ProgressBaselineJson).HasColumnType("text");

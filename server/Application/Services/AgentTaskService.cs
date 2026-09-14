@@ -1661,7 +1661,9 @@ public sealed class AgentTaskService
             sealId, task.VerificationExecutionRevision, task.VerificationDirectoryRemoved,
             task.VerificationRegistrationRemoved, task.VerificationBranchRemoved, executions,
             task.InternalDecisionPolicyJson, task.InternalDecisionPolicyHash,
-            task.RepairSourceTaskId, TaskProgressJson.ToDto(TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson)));
+            task.RepairSourceTaskId, TaskProgressJson.ToDto(TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson)),
+            task.WorktreeBaseRequestedRef, task.WorktreeBaseRef, task.WorktreeBaseSource, task.WorktreeBaseTaskId,
+            task.WorktreeBaseSha);
     }
 
     private static VerificationExecutionDetailDto ToExecutionDetail(VerificationExecution execution)

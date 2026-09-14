@@ -86,6 +86,8 @@ public sealed class AgentTaskDispatcher
     private readonly IRepositoryMutationLease? _repositoryLeases;
     private readonly VerificationExecutionService? _verification;
     private readonly ITaskProgressGit? _progressGit;
+    private readonly DispatchBaseWarningIntentService? _dispatchWarnings;
+    private readonly LandDeliveryBoundary? _landBoundary;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -139,11 +141,15 @@ public sealed class AgentTaskDispatcher
         CapacityRecoveryService? capacityRecovery = null,
         IRepositoryMutationLease? repositoryLeases = null,
         VerificationExecutionService? verification = null,
-        ITaskProgressGit? progressGit = null)
+        ITaskProgressGit? progressGit = null,
+        DispatchBaseWarningIntentService? dispatchWarnings = null,
+        LandDeliveryBoundary? landBoundary = null)
     {
         _repositoryLeases = repositoryLeases;
         _verification = verification;
         _progressGit = progressGit;
+        _dispatchWarnings = dispatchWarnings;
+        _landBoundary = landBoundary;
         _capacityRecovery = capacityRecovery;
         _complexityRouting = complexityRouting;
         _routingPins = routingPins;
@@ -604,10 +610,11 @@ public sealed class AgentTaskDispatcher
                 }
             }
 
-            IReadOnlyList<UnlandedSibling>? siblingWarnings = null;
+            SiblingBaseGuard? siblingObservation = null;
             if (task.Workspace == WorkspaceMode.Worktree
                 && task.CardId is not null
-                && task.WorktreePath is null)
+                && task.WorktreePath is null
+                && task.RepairSourceTaskId is null)
             {
                 var siblingGuard = await EvaluateCardSiblingBaseAsync(task, ct);
                 if (siblingGuard.Hold is { } heldSibling)
@@ -631,7 +638,7 @@ public sealed class AgentTaskDispatcher
                     continue;
                 }
 
-                siblingWarnings = siblingGuard.Warnings.Count == 0 ? null : siblingGuard.Warnings;
+                siblingObservation = siblingGuard;
             }
 
             try
@@ -641,7 +648,7 @@ public sealed class AgentTaskDispatcher
                     && !await TryRedeemCapacityWaitAsync(task, CapacityRedemptionPath.Dispatch, ct))
                     continue;
 
-                if (await DispatchOneAsync(task, ct))
+                if (await DispatchOneAsync(task, ct, siblingObservation))
                 {
                     dispatched++;
                     if (!AgentTaskRoles.IsSpecialist(task.Role))
@@ -672,9 +679,6 @@ public sealed class AgentTaskDispatcher
 
                         await _db.SaveChangesAsync(ct);
                     }
-
-                    if (siblingWarnings is not null)
-                        await WarnUnlandedSiblingsAsync(task, siblingWarnings, ct);
 
                     // The other half of the transition: a task that was held and now runs.
                     if (everHeld.Contains(task.Id))
@@ -2868,9 +2872,12 @@ public sealed class AgentTaskDispatcher
         }
     }
 
-    private sealed record SiblingBaseGuard(UnlandedSibling? Hold, IReadOnlyList<UnlandedSibling> Warnings)
+    private sealed record SiblingBaseGuard(
+        UnlandedSibling? Hold,
+        IReadOnlyList<UnlandedSibling> Warnings,
+        string? ObservedBaseRef)
     {
-        public static SiblingBaseGuard Proceed { get; } = new(null, []);
+        public static SiblingBaseGuard Proceed { get; } = new(null, [], null);
     }
 
     /// <summary>
@@ -2884,6 +2891,14 @@ public sealed class AgentTaskDispatcher
         if (task.RepoPath is null || !Directory.Exists(task.RepoPath) || task.CardId is null)
             return SiblingBaseGuard.Proceed;
 
+        var probe = await _worktrees.ProbeConfiguredDefaultAsync(task, ct);
+        var resolved = WorktreeBaseResolver.Resolve(
+            repairStartSha: null,
+            task.WorktreeBaseRequestedRef,
+            task.MergeTargetRef,
+            probe);
+        var baseRef = resolved.Ref;
+
         var siblings = await _db.AgentTasks.AsNoTracking()
             .Where(t => t.Id != task.Id
                 && t.CardId == task.CardId
@@ -2892,21 +2907,16 @@ public sealed class AgentTaskDispatcher
                 && t.WorktreeBranch != null)
             .Select(t => new { t.Id, t.WorktreeBranch, t.RepoPath, t.WorktreePath, t.LandRequestedAt })
             .ToListAsync(ct);
-        if (siblings.Count == 0)
-            return SiblingBaseGuard.Proceed;
 
         var sameRepo = siblings
             .Where(s => DelegationWorktreeService.SharesRepo(task.RepoPath, s.RepoPath)
                 || DelegationWorktreeService.SharesRepo(task.RepoPath, s.WorktreePath))
             .ToList();
-        if (sameRepo.Count == 0)
-            return SiblingBaseGuard.Proceed;
 
         var cardIdentifier = await _db.Cards.AsNoTracking()
             .Where(c => c.Id == task.CardId)
             .Select(c => c.Identifier)
             .FirstOrDefaultAsync(ct) ?? "the card";
-        var baseRef = task.MergeTargetRef ?? "HEAD";
         UnlandedSibling? hold = null;
         var warnings = new List<UnlandedSibling>();
 
@@ -2915,7 +2925,7 @@ public sealed class AgentTaskDispatcher
             var branch = sibling.WorktreeBranch!;
             if (!await _worktrees.KeptBranchExistsAsync(task.RepoPath, branch, ct))
                 continue;
-            if (await _worktrees.IsAncestorOfBaseAsync(task.RepoPath, branch, baseRef, ct))
+            if (await _worktrees.ContainsPatchesAsync(task.RepoPath, branch, baseRef, ct))
                 continue;
 
             var described = await _worktrees.DescribeKeptBranchAsync(task.RepoPath, branch, baseRef, ct);
@@ -2938,45 +2948,8 @@ public sealed class AgentTaskDispatcher
         }
 
         return hold is not null
-            ? new SiblingBaseGuard(hold, [])
-            : new SiblingBaseGuard(null, warnings);
-    }
-
-    private async Task WarnUnlandedSiblingsAsync(
-        AgentTask task, IReadOnlyList<UnlandedSibling> siblings, CancellationToken ct)
-    {
-        var warnedAt = UtcNow();
-        foreach (var sibling in siblings)
-        {
-            var detail = sibling.WarningDetail(task.Id);
-            _db.AgentTaskEvents.Add(new AgentTaskEvent
-            {
-                Id = Guid.NewGuid(),
-                AgentTaskId = task.Id,
-                Type = AgentTaskEventType.Warning,
-                Detail = detail,
-                At = warnedAt,
-            });
-
-            if (task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is Guid parentSession)
-            {
-                try
-                {
-                    await _queue.EnqueueAsync(
-                        parentSession, detail, MessageSendMode.WhenIdle, ct,
-                        QueuedMessageOrigin.Delegation, $"task:{task.Id:N}", task.Id);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.LogWarning(
-                        ex,
-                        "Could not deliver unlanded-sibling warning of task {ShortId} to parent session {SessionId}",
-                        DelegationReportFormatter.Short(task.Id), parentSession);
-                }
-            }
-        }
-
-        await _db.SaveChangesAsync(ct);
+            ? new SiblingBaseGuard(hold, [], baseRef)
+            : new SiblingBaseGuard(null, warnings, baseRef);
     }
 
     private async Task<bool> ExpireClaimedOptionalWorkAsync(AgentTask task, CancellationToken ct)
@@ -2994,7 +2967,8 @@ public sealed class AgentTaskDispatcher
         return true;
     }
 
-    private async Task<bool> DispatchOneAsync(AgentTask task, CancellationToken ct)
+    private async Task<bool> DispatchOneAsync(
+        AgentTask task, CancellationToken ct, SiblingBaseGuard? siblingObservation = null)
     {
         // Admission and landing read running claims under the same common-directory lease.
         // Hold through commit of the claim, including warm-agent and follow-up paths.
@@ -3133,9 +3107,10 @@ public sealed class AgentTaskDispatcher
             repairWarnings = prep.Warnings;
         }
 
+        WorktreeBaseDecision? baseDecision = null;
         if (claimed.Workspace == WorkspaceMode.Worktree && claimed.WorktreePath is null)
         {
-            await _worktrees.CreateForTaskAsync(claimed, repositoryLease!, ct, repairStartSha);
+            baseDecision = await _worktrees.CreateForTaskAsync(claimed, repositoryLease!, ct, repairStartSha);
 
             // The hard version of the orchestrator contract: a PreToolUse hook that refuses
             // Edit/Write with "delegate this instead". Only ever written into the task's OWN
@@ -3148,9 +3123,7 @@ public sealed class AgentTaskDispatcher
                 Id = Guid.NewGuid(),
                 AgentTaskId = claimed.Id,
                 Type = AgentTaskEventType.Dispatched,
-                Detail = $"Worktree created at {claimed.WorktreePath} on {claimed.WorktreeBranch}"
-                    + (claimed.MergeTargetRef is { } t ? $" (merges into {t})" : " (no merge target — branch left for review)")
-                    + (armed ? "; PreToolUse deny hook armed — direct edits are refused" : string.Empty),
+                Detail = FormatWorktreeCreatedDetail(claimed, armed),
                 At = now,
             });
         }
@@ -3262,7 +3235,7 @@ public sealed class AgentTaskDispatcher
         agent.UpdatedAt = now;
 
         var shippedModel = ShippedModelDisplay(claimed, agent, program);
-        _db.AgentTaskEvents.Add(new AgentTaskEvent
+        var finalDispatch = new AgentTaskEvent
         {
             Id = Guid.NewGuid(),
             AgentTaskId = claimed.Id,
@@ -3271,10 +3244,26 @@ public sealed class AgentTaskDispatcher
             Detail = $"Dispatched to agent '{agent.Name}' "
                 + $"({shippedModel}) in {claimed.WorkingDirectory}",
             At = now,
-        });
+        };
+        _db.AgentTaskEvents.Add(finalDispatch);
+
+        IReadOnlyList<Guid> capturedIntents = [];
+        if (claimed.Workspace == WorkspaceMode.Worktree && claimed.SourceLandingOperationId is null)
+        {
+            var drafts = BuildDispatchWarningDrafts(claimed, siblingObservation, baseDecision);
+            if (_dispatchWarnings is null)
+                throw new InvalidOperationException("DispatchBaseWarningIntentService is required to persist dispatch-base warnings.");
+            capturedIntents = await _dispatchWarnings.CaptureAsync(claimed, finalDispatch, drafts, ct);
+        }
+
+        if (_landBoundary is not null)
+            await _landBoundary.ReachedAsync("dispatch-warning-claim-before-commit", claimed.Id, finalDispatch.Id, ct);
 
         await _db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
+
+        if (_landBoundary is not null)
+            await _landBoundary.ReachedAsync("dispatch-warning-claim-committed", claimed.Id, finalDispatch.Id, ct);
 
         // After the commit, so a pinned agent's attachments are read from a settled view. A fresh
         // pool delegate has none — its row was created moments ago in this same transaction — so
@@ -3337,7 +3326,79 @@ public sealed class AgentTaskDispatcher
             "Dispatched task {ShortId} ({Kind}/{Role} at {Alias}) to session {SessionId} in {Dir}",
             DelegationReportFormatter.Short(claimed.Id), claimed.Kind, claimed.Role,
             shippedModel, session.Id, claimed.WorkingDirectory);
+
+        if (_landBoundary is not null)
+            await _landBoundary.ReachedAsync("dispatch-warning-after-dispatch", claimed.Id, finalDispatch.Id, ct);
+
+        if (capturedIntents.Count > 0 && _scopeFactory is not null)
+        {
+            try
+            {
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                var materializer = scope.ServiceProvider.GetRequiredService<DispatchBaseWarningIntentService>();
+                foreach (var intentId in capturedIntents)
+                    await materializer.MaterializeAsync(intentId, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Task {ShortId}: dispatch-base warning materialization will retry via the hosted scan",
+                    DelegationReportFormatter.Short(claimed.Id));
+            }
+        }
+
         return true;
+    }
+
+    private static string FormatWorktreeCreatedDetail(AgentTask claimed, bool armed)
+    {
+        var merge = claimed.MergeTargetRef is { } t
+            ? $" (merges into {t})"
+            : " (no merge target — branch left for review)";
+        var from = claimed.WorktreeBaseSource == WorktreeBaseSource.Repair
+                && claimed.WorktreeBaseRef is { } repairRef
+                && claimed.RepairSourceTaskId is Guid owner
+            ? $" from {repairRef} (repair of {DelegationReportFormatter.Short(owner)})"
+            : claimed.WorktreeBaseRef is { } baseRef
+                ? $" from {baseRef} ({claimed.WorktreeBaseSource})"
+                : "";
+        var hook = armed ? "; PreToolUse deny hook armed — direct edits are refused" : "";
+        return $"Worktree created at {claimed.WorktreePath} on {claimed.WorktreeBranch}{from}{merge}{hook}";
+    }
+
+    private static List<DispatchWarningDraft> BuildDispatchWarningDrafts(
+        AgentTask claimed, SiblingBaseGuard? observation, WorktreeBaseDecision? decision)
+    {
+        var drafts = new List<DispatchWarningDraft>();
+        if (observation is not null)
+        {
+            foreach (var sibling in observation.Warnings)
+            {
+                drafts.Add(new DispatchWarningDraft(
+                    DispatchBaseNotificationPayload.SiblingKey(sibling.TaskId),
+                    sibling.WarningDetail(claimed.Id)));
+            }
+
+            if (observation.ObservedBaseRef is { } observed
+                && claimed.WorktreeBaseRef is { } actual
+                && !string.Equals(observed, actual, StringComparison.Ordinal))
+            {
+                drafts.Add(new DispatchWarningDraft(
+                    DispatchBaseNotificationPayload.MismatchKey,
+                    DispatchBaseNotificationPayload.MismatchDetail(
+                        observed, actual, claimed.WorktreeBaseSource)));
+            }
+        }
+
+        if (decision is { NewlyRecorded: true, Resolved.UnresolvedDefault: { } failed })
+        {
+            drafts.Add(new DispatchWarningDraft(
+                DispatchBaseNotificationPayload.DefaultUnresolvedKey,
+                DispatchBaseNotificationPayload.DefaultUnresolvedDetail(failed)));
+        }
+
+        return drafts;
     }
 
     internal const string BootWedgeFailedReason =
