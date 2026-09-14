@@ -559,6 +559,14 @@ public sealed class RemoteControlRecoveryService
 
             if (!post.GenerationProven)
             {
+                if (post.Reason == "read-failure")
+                {
+                    episode.DismissalResult = RemoteControlDismissalResult.EscSentUnverified;
+                    episode.Resolution = RemoteControlEpisodeResolution.DismissUnverified;
+                    await db.SaveChangesAsync(ct);
+                    return RemoteControlDismissalResult.EscSentUnverified;
+                }
+
                 episode.DismissalResult = RemoteControlDismissalResult.GenerationMismatch;
                 await db.SaveChangesAsync(ct);
                 return RemoteControlDismissalResult.GenerationMismatch;

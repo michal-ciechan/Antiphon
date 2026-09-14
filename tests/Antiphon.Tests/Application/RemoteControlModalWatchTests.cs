@@ -154,7 +154,7 @@ public class RemoteControlModalWatchTests
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         h.Adapter.RemoteControlMenuOpen = true;
-        h.Runner.SnapshotAcceptedStartedAt = null;
+        h.Runner.OmitSnapshotGeneration = true;
         var observation = await h.Recovery.ObserveAsync(h.SessionId, h.Generation, CancellationToken.None);
         observation.ObservedGeneration.ShouldBeNull();
         observation.Reason.ShouldBe("ObservationGenerationUnproven");

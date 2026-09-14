@@ -48,7 +48,16 @@ public class RemoteControlRecoveryTests
         await using var h = await ReadyIdleMenuAsync();
         var episode = await DetectAsync(h);
         h.Adapter.SwallowEsc = 1;
-        h.Runner.RenderedScreenOverride = "Disconnect this session\nEsc to continue";
+        var n = 0;
+        h.Runner.SnapshotOverride = _ =>
+        {
+            n++;
+            var screen = n == 1
+                ? RemoteControlRecoveryHarness.MenuScreen
+                : "Disconnect this session\nEsc to continue";
+            return Task.FromResult(new Antiphon.Server.Application.Dtos.SessionRunnerSnapshotDto(
+                h.SessionId, screen, screen, h.Adapter.SnapshotSequence, h.Generation, h.Generation));
+        };
         var result = await DismissAsync(h, episode);
         result.ShouldBe(RemoteControlDismissalResult.EscSentUnverified);
         await using var db = h.CreateDb();

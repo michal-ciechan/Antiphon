@@ -83,6 +83,8 @@ internal sealed class RemoteControlRecoveryHarness : IAsyncDisposable
             generation = SessionGeneration.Normalize(session.StartedAt);
             session.StartedAt = generation;
             await db.SaveChangesAsync();
+            generation = SessionGeneration.Normalize(
+                (await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == inner.SessionId)).StartedAt);
         }
 
         inner.Adapter.AcceptedStartedAt = generation;
@@ -311,6 +313,7 @@ internal sealed class ScriptedRcRunner : ISessionRunnerClient
     public string? RenderedScreenOverride { get; set; }
     public string? RawOutputOverride { get; set; }
     public DateTime? SnapshotAcceptedStartedAt { get; set; }
+    public bool OmitSnapshotGeneration { get; set; }
     public bool HangSnapshot { get; set; }
     public HashSet<Guid> HangSessions { get; } = [];
     public TimeSpan HangDelay { get; set; } = Timeout.InfiniteTimeSpan;
@@ -369,7 +372,9 @@ internal sealed class ScriptedRcRunner : ISessionRunnerClient
             ?? "";
         var raw = RawOutputOverride ?? adapter?.SnapshotRawOutput() ?? "";
         var seq = adapter?.SnapshotSequence ?? LastSequence;
-        var gen = SnapshotAcceptedStartedAt ?? adapter?.AcceptedStartedAt ?? AcceptedStartedAt;
+        DateTime? gen = OmitSnapshotGeneration
+            ? null
+            : SnapshotAcceptedStartedAt ?? adapter?.AcceptedStartedAt ?? AcceptedStartedAt;
         return new SessionRunnerSnapshotDto(
             sessionId, raw, screen, seq, AcceptedStartedAt, gen);
     }
