@@ -1,5 +1,13 @@
 # CARD-0443: worktree cleanup diagnostics and bounded retry
 
+**Superseded implementation design (2026-09-14).** The authoritative amendment is
+[receipt-backed cleanup diagnostics and one guarded retry](2026-09-14-card-0443-receipt-backed-cleanup-plan.md).
+It resolves B1/B2/B3 against `27e46463`, preserves CARD-0448, and returns to
+**TestDesign**. The original design and 68-PC review below are retained as history;
+their filesystem fallback, four-pass retry, LastReason sizing and log-only capture
+assumptions must not be implemented. The old PC matrix and cost require revision
+against the amendment before Code.
+
 Date: 2026-09-08. Stage: Plan. Next: TestDesign (separate).
 
 Design baseline: `e4f542f8`, including the full
