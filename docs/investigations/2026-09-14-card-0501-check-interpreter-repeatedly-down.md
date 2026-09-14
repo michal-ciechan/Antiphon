@@ -1,5 +1,7 @@
 # CARD-0501: check-interpreter repeatedly down (INTERPRETER DOWN digests)
 
+Prevention and verification: [CARD-0501 implementation plan](../superpowers/plans/2026-09-14-card-0501-check-interpreter-wedged-queue-head-plan.md).
+
 Investigated 2026-09-14 (task b45ac852). All timestamps below are UTC unless marked `local`
 (server and runner Serilog files stamp `+01:00`; subtract one hour to get UTC).
 
