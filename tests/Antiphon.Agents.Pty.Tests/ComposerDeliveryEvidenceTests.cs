@@ -12,6 +12,57 @@ namespace Antiphon.Agents.Pty.Tests;
 /// </summary>
 public class ComposerDeliveryEvidenceTests
 {
+    [Test]
+    public void Whole_head_is_visible_when_the_brief_stands_in_the_composer()
+    {
+        const string body = "[antiphon-task:419b8b34] role=Check tier=Low workspace=Shared";
+        ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole("> " + body.Replace("tier=", "tier=\n"), body)
+            .ShouldBeTrue();
+    }
+
+    [Test]
+    public void A_replayed_marker_of_another_task_is_not_the_whole_head()
+    {
+        const string screen = "[antiphon-task:a42e10c4]\n[antiphon-report:a42e10c4 done]\n> ";
+        const string body = "[antiphon-task:419b8b34] role=Check tier=Low workspace=Shared";
+        ComposerDeliveryEvidence.HeadFragmentIsVisible(screen, body).ShouldBeTrue();
+        ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(screen, body).ShouldBeFalse();
+    }
+
+    [Test]
+    public void A_previous_brief_with_the_same_role_and_tier_is_not_the_whole_head()
+    {
+        ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(
+            "[antiphon-task:11111111] role=Check tier=Low\n> ",
+            "[antiphon-task:22222222] role=Check tier=Low").ShouldBeFalse();
+    }
+
+    [Test]
+    public void Whole_head_survives_wrapping_and_trimmed_rows()
+    {
+        ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(
+            "❯ [antiphon-task:419b   \n8b34] role=Che   \nck tier=Low",
+            "[antiphon-task:419b8b34] role=Check tier=Low workspace=Shared").ShouldBeTrue();
+    }
+
+    [Test]
+    public void A_body_shorter_than_the_span_must_be_visible_entirely()
+    {
+        const string body = "abcdefghijklmnopqrstuvwxy";
+        ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(body[..^1], body).ShouldBeFalse();
+        ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(body, body).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Empty_screen_and_empty_body_match_the_windowed_predicate()
+    {
+        ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole("", "body").ShouldBeFalse();
+        ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole("screen", "").ShouldBeFalse();
+        ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole("screen", " \n─❯").ShouldBeFalse();
+        ComposerDeliveryEvidence.HeadFragmentIsVisible("", "body").ShouldBeFalse();
+        ComposerDeliveryEvidence.HeadFragmentIsVisible("screen", "").ShouldBeFalse();
+    }
+
     private const string IdleScreen = "❯ Try \"how do I log an error?\"\n──────────\n  ⏵⏵ bypass permissions";
 
     [Test]

@@ -169,6 +169,21 @@ public static class ComposerDeliveryEvidence
     }
 
     /// <summary>
+    /// CARD-0501: Enter-only recovery requires the entire normalized head, so a shared fragment
+    /// in replayed history cannot stand in for this body's composer. The windowed sibling
+    /// <see cref="HeadFragmentIsVisible"/> remains the post-submit predicate for SubmitEvidence.
+    /// </summary>
+    public static bool HeadFragmentIsVisibleWhole(string screen, string body)
+    {
+        var normalizedBody = Normalize(body);
+        if (normalizedBody.Length == 0)
+            return false;
+
+        var head = normalizedBody[..Math.Min(normalizedBody.Length, FragmentSpan)];
+        return Normalize(screen).Contains(head, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// The <c>#N</c> of every <c>[Pasted text #N +M lines]</c> on a rendered screen. Read from the
     /// RAW screen, not the whitespace-stripped form, because the number is what identifies the
     /// paste and the surrounding spaces are what delimit it. Tolerant of the composer's wrapping:
