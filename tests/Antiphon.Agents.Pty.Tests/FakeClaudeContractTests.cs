@@ -1834,6 +1834,13 @@ public class FakeClaudeContractTests
         (await runner.WaitForOutputAsync(s => s.Contains("RCMENU:open"), TimeSpan.FromSeconds(5)))
             .ShouldBeTrue("submitting /remote-control must open the menu. Screen:\n" + runner.SnapshotText());
 
+        // The child prints RCMENU:open BEFORE it writes the menu body, so the marker is not
+        // evidence that the menu has painted. Wait for the footer -- the last line of the body --
+        // or this reads a half-drawn menu whenever the box is busy enough to split the write.
+        (await runner.WaitForScreenAsync(
+            s => s.Contains("Esc to continue", StringComparison.Ordinal), TimeSpan.FromSeconds(5)))
+            .ShouldBeTrue("the menu body must finish painting. Screen:\n" + runner.SnapshotScreen());
+
         var screen = runner.SnapshotScreen();
         screen.ShouldContain("Disconnect this session");
         screen.ShouldContain("Esc to continue");
@@ -1913,6 +1920,10 @@ public class FakeClaudeContractTests
         await runner.WriteAsync("\r");
         (await runner.WaitForOutputAsync(s => s.Contains("RCMENU:open"), TimeSpan.FromSeconds(5)))
             .ShouldBeTrue();
+        // Same ordering: RCMENU:open precedes the menu body on the wire, so wait for the body.
+        (await runner.WaitForScreenAsync(
+            s => s.Contains("Disconnect this session", StringComparison.Ordinal), TimeSpan.FromSeconds(5)))
+            .ShouldBeTrue("the repeat /remote-control must paint the menu. Screen:\n" + runner.SnapshotScreen());
         runner.SnapshotScreen().ShouldContain("Disconnect this session");
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
