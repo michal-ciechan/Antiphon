@@ -365,15 +365,18 @@ public sealed class RemoteControlRecoveryService
         if (bodyWrite.Outcome != ConditionalInputOutcomes.Written)
             return await FinishArmAsync(db, row, MapWriteOutcome(bodyWrite.Outcome), bodyWrite.Outcome, ct, unconfirmed: bodyWrite.Outcome == ConditionalInputOutcomes.Unknown);
 
-        if (!await WaitComposerAsync(sessionId, "/remote-control", ct))
+        if (await WaitComposerAsync(sessionId, "/remote-control", ct) is not { } composerSequence)
             return await FinishArmAsync(db, row, RemoteControlArmResult.ArmUnconfirmed, "no-composer", ct, unconfirmed: true);
 
-        var enterWrite = await SendGuardedAsync(sessionId, currentGeneration, bodyWrite.LastSequence ?? sequence, "\r", ct);
+        var enterWrite = await SendGuardedAsync(sessionId, currentGeneration, composerSequence, "\r", ct);
         if (enterWrite.Outcome != ConditionalInputOutcomes.Written)
             return await FinishArmAsync(db, row, MapWriteOutcome(enterWrite.Outcome), enterWrite.Outcome, ct, unconfirmed: enterWrite.Outcome == ConditionalInputOutcomes.Unknown);
 
-        var after = ProbeBridge(TryPid(sessionId));
-        if (after == RemoteControlBridgeState.Armed)
+        // The child writes its bridge state AFTER it processes the submitting Enter, so a single
+        // probe taken the instant the write returns races the child and reports unarmed every time
+        // against a real one. Poll for the unarmed-to-armed transition inside the same evidence
+        // budget the composer wait uses; a deadline still means ArmUnconfirmed, never assumed armed.
+        if (await WaitArmedAsync(sessionId, ct))
             return await FinishArmAsync(db, row, RemoteControlArmResult.ArmedObserved, "armed-observed", ct);
 
         return await FinishArmAsync(db, row, RemoteControlArmResult.ArmUnconfirmed, "arm-unconfirmed", ct, unconfirmed: true);
@@ -605,19 +608,46 @@ public sealed class RemoteControlRecoveryService
         return RemoteControlDismissalResult.EscSentUnverified;
     }
 
-    private async Task<bool> WaitComposerAsync(Guid sessionId, string body, CancellationToken ct)
+    /// <summary>
+    /// Waits for the composer to show <paramref name="body"/> and returns the output sequence of the
+    /// observation that saw it, or null if it never appeared.
+    ///
+    /// <para>The sequence is the point, not a convenience. The echo this method waits for IS an output
+    /// change, so the submitting Enter can never be fenced on the sequence the body write returned —
+    /// against a real terminal that is always stale by the time the composer is proven, and the
+    /// conditional write is correctly refused. The arm then leaves <c>/remote-control</c> sitting
+    /// unsubmitted in the composer: bytes typed, nothing submitted, which is the exact shape
+    /// CARD-0514 exists to prevent. Fencing the Enter on the observation that proved the composer
+    /// keeps the guard's meaning — write against the screen you last saw — and lets it hold.</para>
+    /// </summary>
+    private async Task<long?> WaitComposerAsync(Guid sessionId, string body, CancellationToken ct)
     {
         var deadline = UtcNow() + TimeSpan.FromSeconds(Math.Max(1, _settings.DeliveryVerification.EvidenceTimeoutSeconds));
         while (UtcNow() < deadline)
         {
             if (_runtime.TryGetLiveSnapshot(sessionId, out var snap)
                 && snap.RenderedScreen.Contains(body, StringComparison.Ordinal))
-                return true;
+                return snap.LastSequence;
             await Task.Delay(TimeSpan.FromMilliseconds(50), _timeProvider, ct);
         }
 
         return _runtime.TryGetLiveSnapshot(sessionId, out var last)
-            && last.RenderedScreen.Contains(body, StringComparison.Ordinal);
+            && last.RenderedScreen.Contains(body, StringComparison.Ordinal)
+                ? last.LastSequence
+                : null;
+    }
+
+    private async Task<bool> WaitArmedAsync(Guid sessionId, CancellationToken ct)
+    {
+        var deadline = UtcNow() + TimeSpan.FromSeconds(Math.Max(1, _settings.DeliveryVerification.EvidenceTimeoutSeconds));
+        while (true)
+        {
+            if (ProbeBridge(TryPid(sessionId)) == RemoteControlBridgeState.Armed)
+                return true;
+            if (UtcNow() >= deadline)
+                return false;
+            await Task.Delay(TimeSpan.FromMilliseconds(100), _timeProvider, ct);
+        }
     }
 
     private async Task<RunnerConditionalInputResult> SendGuardedAsync(

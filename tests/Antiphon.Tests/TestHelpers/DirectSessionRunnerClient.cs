@@ -179,7 +179,11 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             Herdr: spec.Herdr,
             GrokRulesPayload: spec.GrokRulesPayload,
             CommandLineBudgetChars: spec.CommandLineBudgetChars,
-            VerificationBinding: spec.VerificationBinding);
+            VerificationBinding: spec.VerificationBinding,
+            // CARD-0514: the production HTTP client forwards the accepted generation and refuses a
+            // launch that does not echo it. Dropping it here left every in-proc launch ungenerationed,
+            // so a conditional-write test on this client could never fence on the real token.
+            AcceptedStartedAt: spec.AcceptedStartedAt);
 
         _startRequests.Enqueue(request);
         BeforeStart?.Invoke();

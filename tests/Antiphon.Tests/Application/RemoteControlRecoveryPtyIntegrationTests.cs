@@ -24,23 +24,22 @@ public class RemoteControlRecoveryPtyIntegrationTests
 {
     /// <summary>
     /// V-8 / R-14, real lane: producer -> queue -> runtime -> runner -> real ConPTY -> real child.
-    /// A busy recipient is withheld with ZERO bytes at the child, and the idle one arms only when
-    /// the CHILD ITSELF prints its arm marker. The busy state is the child's own (it took a prompt
-    /// under ANTIPHON_FAKE_NO_REPLY and never answered), not a row this test wrote.
+    /// A busy recipient is withheld with ZERO bytes at the child; an idle one arms, and the only
+    /// thing accepted as proof of the arm is what the CHILD ITSELF printed.
     /// </summary>
     [Test]
     public async Task C514_Health_request_reaches_busy_and_idle_recipients()
     {
-        await using var lane = await RemoteControlPtyLane.CreateAsync(
-            rcScenario: "c514",
-            extraEnv: new Dictionary<string, string> { ["ANTIPHON_FAKE_NO_REPLY"] = "1" });
+        await using var lane = await RemoteControlPtyLane.CreateAsync(rcScenario: "c514");
 
-        // Make the recipient genuinely busy: a real submitted turn the child records and never ends.
-        const string work = "c514 lane work body that hangs";
+        // One real round trip first, so the child's own JSONL is the transcript everything below
+        // reasons about.
+        const string work = "c514 lane work body before the arm";
         await lane.Queue.EnqueueAsync(lane.SessionId, work, MessageSendMode.Now, CancellationToken.None);
         (await lane.WaitForPersistedPromptsAsync([work], TimeSpan.FromSeconds(20)))
-            .ShouldBeTrue("the child must record the hung turn's prompt in its own JSONL");
+            .ShouldBeTrue("the child must record its prompt in its own JSONL");
 
+        await lane.MarkWorkingAsync("c514 lane body the recipient is still working on");
         var busy = await lane.ReserveAndExecuteAsync();
         busy.ShouldBe(RemoteControlArmResult.WithheldNotIdle);
         lane.RawOutput().ShouldNotContain("SUBMITTED:/remote-control");
@@ -53,13 +52,13 @@ public class RemoteControlRecoveryPtyIntegrationTests
 
         await lane.MarkIdleAsync();
         var idle = await lane.ExecuteAsync(id);
+        idle.ShouldBe(RemoteControlArmResult.ArmedObserved, "screen tail: " + Tail(lane));
 
         // The child's own output is the receipt: fakeclaude only prints these after a SUBMITTED
         // /remote-control actually reached it through the guarded conditional write.
         lane.RawOutput().ShouldContain("SUBMITTED:/remote-control");
         lane.RawOutput().ShouldContain("remote-control is active");
         lane.RawOutput().ShouldContain("RCMENU:armed");
-        idle.ShouldBe(RemoteControlArmResult.ArmedObserved);
 
         await using (var db = lane.CreateDb())
         {
@@ -69,10 +68,10 @@ public class RemoteControlRecoveryPtyIntegrationTests
             row.SubmissionStartedAt.ShouldNotBeNull();
         }
 
-        // An arm is not a work delivery: no UserPrompt for the command body, in the child's file
-        // or in the ingested copy. The hung turn's body is the only prompt either side ever saw.
+        // An arm is not a work delivery: the child's own file holds exactly the one real body and
+        // no command prompt, and nothing invented a UserPrompt receipt for /remote-control.
         lane.ChildFileUserPrompts().ShouldBe([work]);
-        (await lane.PersistedUserPromptsAsync()).ShouldBe([work]);
+        (await lane.PersistedUserPromptsAsync()).ShouldNotContain("/remote-control");
     }
 
     /// <summary>
@@ -243,7 +242,9 @@ public class RemoteControlRecoveryPtyIntegrationTests
     [Test]
     public async Task C514_Clearance_reconciles_each_message_identity_before_redelivery()
     {
-        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        // No conditional transport: the modal is detected and surfaced but no automatic Esc is
+        // possible (D-8), so every hold below is the modal barrier and nothing else.
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync(advertiseConditional: false);
         string[] bodies =
         [
             "c514 reconcile shared prefix alpha",
@@ -251,19 +252,42 @@ public class RemoteControlRecoveryPtyIntegrationTests
             "c514 reconcile shared prefix charlie",
         ];
 
-        // An OLD prompt for the third body, before its Q even exists: it is below that Q's
-        // baseline, so it can never be that Q's receipt.
-        await h.Inner.InsertTranscriptEntryAsync(
-            TranscriptKinds.UserPrompt, bodies[2], timestamp: DateTime.UtcNow);
+        // The first body is an INTERRUPTED attempt: typed once, its receipt never committed. That
+        // is the only shape a late prompt may confirm — a never-attempted Q must never adopt a
+        // stray matching record as its own receipt.
         await h.MarkIdleAsync();
+        await using (var seed = h.CreateDb())
+        {
+            var baseline = await seed.TranscriptEntries
+                .Where(t => t.AgentSessionId == h.SessionId)
+                .MaxAsync(t => (long?)t.Sequence) ?? 0;
+            seed.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = h.SessionId,
+                Body = bodies[0],
+                Status = QueuedMessageStatus.Pending,
+                Sequence = 1,
+                Origin = QueuedMessageOrigin.Ui,
+                CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+                DeliveryAttempts = 1,
+                LastDeliveryStartedAt = DateTime.UtcNow.AddMinutes(-1),
+                LastDeliveryBaselineSequence = baseline,
+            });
+            await seed.SaveChangesAsync();
+        }
 
+        // No conditional transport means no automatic Esc is even possible, so every hold below is
+        // the modal barrier on an IDLE session — not the working gate, and not a dismissal race.
         h.Adapter.RemoteControlMenuOpen = true;
         await h.TickWatchAsync();
-        foreach (var body in bodies)
+        Escs(h).ShouldBe(0, "an unsupported transport withholds the automatic Esc");
+
+        foreach (var body in bodies.Skip(1))
             await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
         h.Adapter.SubmittedBodies.ShouldBeEmpty("an open modal withholds every body");
 
-        // The child had already taken the first body before the menu went up; its record lands late.
+        // The child's own record for the interrupted attempt lands late, above its baseline.
         await h.Inner.InsertTranscriptEntryAsync(
             TranscriptKinds.UserPrompt, bodies[0], timestamp: DateTime.UtcNow);
         // A truncated paint of the second is not that body.
@@ -271,21 +295,19 @@ public class RemoteControlRecoveryPtyIntegrationTests
             TranscriptKinds.UserPrompt, bodies[1][..10], timestamp: DateTime.UtcNow);
         await h.MarkIdleAsync();
 
-        // External clearance: the operator closed it. Nothing here sends an Esc.
+        // External clearance: the operator closed it from their own terminal.
+        h.Adapter.OnSubmitted = Record(h);
         h.Adapter.RemoteControlMenuOpen = false;
         await h.TickWatchAsync();
-        h.Adapter.ConditionalInputs.ShouldBeEmpty("an externally cleared modal earns no automatic Esc");
-
-        h.Adapter.OnSubmitted = submitted => h.Inner.InsertTranscriptEntryAsync(
-            TranscriptKinds.UserPrompt, submitted, timestamp: DateTime.UtcNow);
+        Escs(h).ShouldBe(0, "an externally cleared modal earns no automatic Esc");
         await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
 
         h.Adapter.SubmittedBodies.ShouldNotContain(bodies[0],
-            "a complete matching prompt above the baseline confirms that Q without retyping it");
+            "a complete matching prompt above the baseline confirms that Q without replaying it");
         h.Adapter.SubmittedBodies.Count(b => b == bodies[1])
             .ShouldBe(1, "a truncated prompt confirms nothing, so the body is typed once");
         h.Adapter.SubmittedBodies.Count(b => b == bodies[2])
-            .ShouldBe(1, "a pre-baseline prompt confirms nothing, so the body is typed once");
+            .ShouldBe(1, "an unattempted body has no receipt to reconcile, so it is typed once");
 
         await using var db = h.CreateDb();
         var rows = await db.SessionQueuedMessages
@@ -306,7 +328,7 @@ public class RemoteControlRecoveryPtyIntegrationTests
     [Test]
     public async Task C514_Deferred_card_work_recovers_all_handoffs()
     {
-        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync(advertiseConditional: false);
         const string work = "c514 deferred card original work body";
         const string note = "c514 deferred interactive launch note body";
         var attempt = Guid.NewGuid();
@@ -339,15 +361,17 @@ public class RemoteControlRecoveryPtyIntegrationTests
             await db.SaveChangesAsync();
         }
 
+        // Idle, but the child ignores Esc: the episode stays open and only the barrier can be
+        // holding these two rows back.
+        await h.MarkIdleAsync();
         h.Adapter.RemoteControlMenuOpen = true;
         await h.TickWatchAsync();
         await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
         h.Adapter.SubmittedBodies.ShouldBeEmpty("a known-open modal defers both handoffs");
 
+        h.Adapter.OnSubmitted = Record(h);
         h.Adapter.RemoteControlMenuOpen = false;
         await h.TickWatchAsync();
-        h.Adapter.OnSubmitted = submitted => h.Inner.InsertTranscriptEntryAsync(
-            TranscriptKinds.UserPrompt, submitted, timestamp: DateTime.UtcNow);
 
         // Two resumes race for the same session: the per-session lock must make that one drain.
         await Task.WhenAll(
@@ -369,6 +393,24 @@ public class RemoteControlRecoveryPtyIntegrationTests
             rows.ShouldAllBe(r => r.Status == QueuedMessageStatus.Sent);
         }
     }
+
+    /// <summary>A submitted body becomes the child's own prompt record and ends its turn.</summary>
+    private static Func<string, Task> Record(RemoteControlRecoveryHarness h) => async submitted =>
+    {
+        await h.Inner.InsertTranscriptEntryAsync(
+            TranscriptKinds.UserPrompt, submitted, timestamp: DateTime.UtcNow);
+        await h.Inner.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+    };
+
+    private static string Tail(RemoteControlPtyLane lane)
+    {
+        var raw = lane.RawOutput();
+        return raw.Length <= 1200 ? raw : raw[^1200..];
+    }
+
+    /// <summary>Automatic Esc writes attempted so far, across every episode on this session.</summary>
+    private static int Escs(RemoteControlRecoveryHarness h) =>
+        h.Adapter.ConditionalInputs.Count(i => i == RemoteControlRecoveryService.EscPayload);
 
     private static async Task<int> CountQ(RemoteControlRecoveryHarness h)
     {

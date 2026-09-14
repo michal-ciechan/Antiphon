@@ -116,6 +116,9 @@ internal sealed class RemoteControlPtyLane : IAsyncDisposable
         services.AddLogging();
         var provider = services.BuildServiceProvider();
 
+        // The generation is the server's token: it is minted here, carried on the launch, and every
+        // conditional write is fenced on the runner echoing exactly it back.
+        var generation = SessionGeneration.Normalize(DateTime.UtcNow);
         var spec = new AgentLaunchSpec(
             DefinitionName: "fakeclaude",
             Kind: AgentKind.ClaudeCode,
@@ -124,55 +127,80 @@ internal sealed class RemoteControlPtyLane : IAsyncDisposable
             Env: BuildEnv(transcriptPath, rcScenario, extraEnv),
             Cwd: cwd,
             Cols: 120,
-            Rows: 30);
+            Rows: 30,
+            AcceptedStartedAt: generation);
 
-        var started = await client.StartAsync(sessionId, spec, CancellationToken.None);
-        var ready = await WaitForRawAsync(
-            client, sessionId, s => s.Contains("Fake Claude ready"), TimeSpan.FromSeconds(20));
-        if (!ready)
-            throw new InvalidOperationException("fake Claude never reached readiness");
-
-        // The runner's own accepted generation is the equality token every conditional write is
-        // fenced on, so the session row must carry exactly it — not a fresh UtcNow.
-        var generation = SessionGeneration.Normalize(
-            started.AcceptedStartedAt ?? throw new InvalidOperationException("runner reported no generation"));
-        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+        SessionRunnerSessionDto started;
+        try
         {
-            var now = DateTime.UtcNow;
-            db.AgentSessions.Add(new AgentSession
-            {
-                Id = sessionId,
-                CardId = null,
-                DefinitionName = "fakeclaude",
-                AgentKind = AgentKind.ClaudeCode,
-                Status = SessionStatus.Running,
-                Cwd = cwd,
-                Cols = 120,
-                Rows = 30,
-                CreatedAt = now,
-                StartedAt = generation,
-                LastSeenAt = now,
-            });
-            await db.SaveChangesAsync();
+            started = await client.StartAsync(sessionId, spec, CancellationToken.None);
+        }
+        catch
+        {
+            await client.DisposeAsync();
+            await provider.DisposeAsync();
+            throw;
         }
 
-        var baseline = await SessionQueueTranscriptPump.MaxSequenceAsync(sessionId);
-        var pumpCts = new CancellationTokenSource();
-        var pumping = SessionQueueTranscriptPump.RunAsync(transcriptPath, sessionId, pumpCts.Token);
-
-        return new RemoteControlPtyLane
+        try
         {
-            Client = client,
-            Provider = provider,
-            SessionId = sessionId,
-            TranscriptPath = transcriptPath,
-            Cwd = cwd,
-            Generation = generation,
-            Probe = probe,
-            PumpCts = pumpCts,
-            Pumping = pumping,
-            Baseline = baseline,
-        };
+            var ready = await WaitForRawAsync(
+                client, sessionId, s => s.Contains("Fake Claude ready"), TimeSpan.FromSeconds(20));
+            if (!ready)
+                throw new InvalidOperationException("fake Claude never reached readiness");
+
+            if (!SessionGeneration.Equal(started.AcceptedStartedAt, generation))
+                throw new InvalidOperationException(
+                    $"runner did not echo the accepted generation (got {started.AcceptedStartedAt:O})");
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+            {
+                var now = DateTime.UtcNow;
+                db.AgentSessions.Add(new AgentSession
+                {
+                    Id = sessionId,
+                    CardId = null,
+                    DefinitionName = "fakeclaude",
+                    AgentKind = AgentKind.ClaudeCode,
+                    Status = SessionStatus.Running,
+                    Cwd = cwd,
+                    Cols = 120,
+                    Rows = 30,
+                    CreatedAt = now,
+                    StartedAt = generation,
+                    LastSeenAt = now,
+                });
+                await db.SaveChangesAsync();
+            }
+
+            var baseline = await SessionQueueTranscriptPump.MaxSequenceAsync(sessionId);
+            var pumpCts = new CancellationTokenSource();
+            var pumping = SessionQueueTranscriptPump.RunAsync(transcriptPath, sessionId, pumpCts.Token);
+
+            return new RemoteControlPtyLane
+            {
+                Client = client,
+                Provider = provider,
+                SessionId = sessionId,
+                TranscriptPath = transcriptPath,
+                Cwd = cwd,
+                Generation = generation,
+                Probe = probe,
+                PumpCts = pumpCts,
+                Pumping = pumping,
+                Baseline = baseline,
+            };
+        }
+        catch
+        {
+            // A child that outlives a failed construction locks the staged exe and breaks the next
+            // build, so nothing may escape this method holding a live pty.
+            try { await client.KillAsync(sessionId, CancellationToken.None); } catch { /* best effort */ }
+            await client.DisposeAsync();
+            await provider.DisposeAsync();
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
+            throw;
+        }
     }
 
     private static Dictionary<string, string> BuildEnv(
@@ -276,11 +304,16 @@ internal sealed class RemoteControlPtyLane : IAsyncDisposable
     }
 
     /// <summary>
-    /// Ends the child's hung turn from the server side. The BUSY state this releases was the
-    /// child's own (its JSONL user record with no reply under ANTIPHON_FAKE_NO_REPLY); only the
-    /// release is scripted, because that child never answers.
+    /// Busy/idle is a transcript fact, and these two write that fact directly rather than through a
+    /// hung child: a child stuck on a turn paints a spinner forever, and a screen that never stops
+    /// changing cannot be fenced by any observation. What the child proves in these tests is the
+    /// ARM, not its own busyness.
     /// </summary>
-    public async Task MarkIdleAsync()
+    public Task MarkWorkingAsync(string body) => InsertAsync(TranscriptKinds.UserPrompt, body, null);
+
+    public Task MarkIdleAsync() => InsertAsync(TranscriptKinds.TurnEnd, null, "end_turn");
+
+    private async Task InsertAsync(string kind, string? text, string? stopReason)
     {
         await using var db = CreateDb();
         var seq = ((await db.TranscriptEntries
@@ -291,8 +324,9 @@ internal sealed class RemoteControlPtyLane : IAsyncDisposable
             Id = Guid.NewGuid(),
             AgentSessionId = SessionId,
             Sequence = seq,
-            Kind = TranscriptKinds.TurnEnd,
-            StopReason = "end_turn",
+            Kind = kind,
+            Text = text,
+            StopReason = stopReason,
             CreatedAt = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
