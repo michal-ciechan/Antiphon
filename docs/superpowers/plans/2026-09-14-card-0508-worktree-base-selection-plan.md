@@ -69,9 +69,15 @@ Add to `AgentTask`:
 
 | Column | Meaning |
 |---|---|
-| `WorktreeBaseRef` (`string?`, 300) | The ref the worktree branch was cut from. Resolved at provisioning, then immutable. |
-| `WorktreeBaseSource` (`WorktreeBaseSource`) | Why: `Unset` (legacy rows), `Explicit`, `MergeTarget`, `CardCurrent`, `DefaultBranch`, `RepoHead`. |
-| `WorktreeBaseTaskId` (`Guid?`) | The sibling task whose branch was chosen, when `CardCurrent`. |
+| `WorktreeBaseRequestedRef` (`string?`, 300) | The base the **caller** asked for (`-BaseRef`, D-6). Written at create, never by the server. Null in S1/S2. |
+| `WorktreeBaseRef` (`string?`, 300) | The base actually **used**. Written once at provisioning, then immutable. |
+| `WorktreeBaseSource` (`WorktreeBaseSource`) | Why: `Unset` (legacy rows), `Repair`, `Explicit`, `MergeTarget`, `CardCurrent`, `DefaultBranch`, `RepoHead`. |
+| `WorktreeBaseTaskId` (`Guid?`) | The task whose branch or SHA was chosen: the sibling when `CardCurrent`, the repair owner when `Repair`. |
+
+Amended by A-1: request and record are **separate** columns, and `Repair` is a source.
+The original single `WorktreeBaseRef` was both input and output, so a reused or
+re-attempted worktree would re-read its own recorded answer and mislabel it `Explicit`.
+`CardCurrent` is reserved by S1 and first written by S3.
 
 `MergeTargetRef` is untouched and remains *only* the landing target. `WorktreeBaseSha`
 keeps its current meaning (the created worktree's HEAD SHA) and is now the pinned SHA of
@@ -82,9 +88,13 @@ Migration by CLI only, per [docs/project-context.md:125](../../project-context.m
 
 ### D-2. One precedence order, resolved once
 
-Provisioning takes `WorktreeBaseRef ?? MergeTargetRef ?? <default branch> ?? "HEAD"`, and
-the dispatcher fills `WorktreeBaseRef` beforehand. In precedence order:
+Provisioning takes
+`<repair start sha> ?? WorktreeBaseRequestedRef ?? MergeTargetRef ?? <default branch> ?? "HEAD"`
+and records the answer in `WorktreeBaseRef`/`WorktreeBaseSource`. In precedence order:
 
+0. **`Repair`** — the repair owner's tip SHA, today's `startAtSha` argument. Amended by
+   A-1: this arm already exists in production and outranks everything below it; the
+   original formula omitted it.
 1. **`Explicit`** — a base the caller chose (D-6).
 2. **`MergeTarget`** — a child of a same-repo Worktree parent, exactly as today
    (integration once per level; unchanged).
@@ -96,6 +106,10 @@ the dispatcher fills `WorktreeBaseRef` beforehand. In precedence order:
 
 Levels 4 and 5 replace today's bare `"HEAD"` and are what fix defect 2 for *every*
 Worktree task, card-bound or not.
+
+One formula, one implementation: A-1 makes this a single resolver called by **both**
+provisioning and the pre-lease dispatch guard, so the guard can no longer observe a
+different base than the one the worktree is cut from.
 
 ### D-3. What "the card's current kept branch" means
 
@@ -214,15 +228,18 @@ that still belong to a kept branch guarantees a conflict at that branch's own la
 
 | Slice | Content | Files |
 |---|---|---|
-| S1 | Columns + migration + the D-2 fallback chain in provisioning (`WorktreeBaseRef ?? MergeTargetRef ?? default branch ?? HEAD`, `IOptions<GitSettings>` injected optionally so direct constructions keep working), base recorded on the row, base named in the `Dispatched` event, detail DTO fields, contract fixture regenerated. Fixes defect 2 on its own. | `AgentTask.cs`, `server/Migrations/*`, `AppDbContext.cs`, `DelegationWorktreeService.cs`, `AgentTaskDispatcher.cs` (event text), `AgentTaskDtos.cs`, `AgentTaskService.cs` (`ToDetail`), `client/src/test/fixtures/contract/agent-task-detail.json` |
+| S1 | Columns + migration + `WorktreeBaseResolver` (A-1), the shared D-2 chain used by provisioning **and** the pre-lease guard (`IOptions<GitSettings>` injected optionally so direct constructions keep working), base recorded on the row, base named in the `Dispatched` event, detail DTO fields, contract fixture regenerated. Fixes defect 2 on its own. | `AgentTask.cs`, `server/Migrations/*`, `AppDbContext.cs`, new `WorktreeBaseResolver.cs`, `DelegationWorktreeService.cs`, `AgentTaskDispatcher.cs` (guard base + event text), `AgentTaskDtos.cs`, `AgentTaskService.cs` (`ToDetail`), `client/src/test/fixtures/contract/agent-task-detail.json` |
+| S1b | A-1 observation report: the guard's observed base carried on `SiblingBaseGuard`, compared against the recorded `WorktreeBaseRef` after dispatch, one `base-observation-stale` `Warning` when they differ. | `AgentTaskDispatcher.cs` |
 | S2 | Patch-aware containment helper on `DelegationWorktreeService` (`git cherry`), replacing `IsAncestorOfBaseAsync` at both call sites. Fixes defect 3 on its own. | `DelegationWorktreeService.cs`, `AgentTaskDispatcher.cs`, `AgentTaskLandService.cs` |
+| S2b | A-2 durable dispatch-warning obligation: `RequestId` nullable, `LandNotificationKind.DispatchBase`, `DispatchBaseNotificationPayload`, obligation written atomically with the `Warning` event, inline enqueue and its swallowed `catch` deleted, `AttentionKind.DispatchWarningUnconfirmed`. Makes PC-40/41/42 executable. | `AgentTaskLandNotification.cs`, `LandingEnums.cs`, `AppDbContext.cs`, `server/Migrations/*`, `AgentTaskDispatcher.cs`, `AgentTaskLandNotificationService.cs`, `LandNotificationPayload.cs`, `AttentionService.cs`, `AttentionDtos.cs`, `client/src/api/attention.ts`, `client/src/features/attention/attentionVisuals.ts` |
 | S3 | `WorktreeBaseSelector`: candidate query, reduce, rank, hold; wired into `DispatchOneAsync` under the lease; pre-lease guard call deleted; warnings moved into the claim transaction; `WorktreeBaseTaskId` recorded. Fixes defect 1. | `AgentTaskDispatcher.cs`, new `server/Application/Services/WorktreeBaseSelector.cs` |
 | S4 | `-BaseRef` end to end, with the SourceLanding refusal. | `scripts/delegate.ps1`, `AgentTaskDtos.cs`, `AgentTaskService.cs` |
 | S5 | Header and warning wording: `(from <base>)` on left-for-review; base-behind-default warning (D-8). | `AgentTaskReplyService.cs`, `AgentTaskDispatcher.cs` |
 | S6 | Docs (D-9). | `docs/orchestration-loop.md`, `docs/antiphon-api.md` |
 
-S1 and S2 are independently shippable and independently valuable. S3 depends on both.
-S4/S5 depend on S3; S6 follows.
+S1 and S2 are independently shippable and independently valuable. S1b depends on S1;
+S2b depends on S2. S3 depends on S1+S2. S4/S5 depend on S3; S6 follows.
+This release is S1 + S1b + S2 + S2b.
 
 ## Acceptance cases for TestDesign
 
@@ -519,7 +536,9 @@ terminal event, Sent flag, screen, or transport acknowledgement cannot satisfy
 delivery acceptance. Ordinary Review must reject evidence that ends at any of
 those substitutes without the recipient transcript.
 
-Plan return items (no human scope decision is pending):
+Plan return items (no human scope decision is pending). **Both are resolved by
+Plan amendment A at the end of this document — P-1 by A-1, P-2 by A-2.** The original
+statements are kept verbatim so the gap and its answer stay readable together:
 
 - **P-1: align the S1/S2 base observation.** The guard still chooses
   task.MergeTargetRef ?? "HEAD" before provisioning; S1 changes provisioning's
@@ -816,3 +835,280 @@ mapped=42, missing PC IDs=0, duplicate PC mappings=0. Executability gate
 or code-ready verification is made. P-1/P-2 and those three controls must return through
 TestDesign; retain S1/S2 scope. This document is the concrete rejection artifact,
 not permission to proceed to Code with incomplete recipient evidence.
+
+**Superseded by Plan amendment A (task `dd438a95`, 2026-09-14).** A-1 gives the dispatcher
+rows of V-5/V-7 a single shared base formula; A-2 gives PC-40/41/42 a production seam on
+the existing durable-notification machine. The executability gate is *not* re-asserted
+here — that verdict belongs to the next TestDesign pass, which must re-read the bodies
+named in A-2 and write the controls. Nothing in this amendment authorises Code directly.
+
+## Plan amendment A: P-1 and P-2 resolved
+
+Appended by Plan task `dd438a95` on 2026-09-14 against `origin/master` `e4aa5924`,
+answering the two return items TestDesign `1963c81d` raised at the Code gate. Scope is
+unchanged: **S1 + S2 only**, now with S1b and S2b, and **S3 stays deferred** — no sibling
+is chosen as a base in this release, acceptance cases 2/3 are not inverted, and the
+chained-land consequence (D-7) is not exercised.
+
+### A-1. One base formula, resolved by one resolver, observed once and reported
+
+**The defect.** `DelegationWorktreeService.CreateForTaskAsync` computes
+`startAtSha ?? task.MergeTargetRef ?? "HEAD"`
+([DelegationWorktreeService.cs:169](../../../server/Application/Services/DelegationWorktreeService.cs)),
+while the pre-lease dispatch guard computes its own `task.MergeTargetRef ?? "HEAD"`
+([AgentTaskDispatcher.cs:2909](../../../server/Application/Services/AgentTaskDispatcher.cs)).
+Two independent expressions of "the base". S1 changes only the first, so after S1 they
+disagree *by construction* for every card-bound task with no merge target: the guard tests
+sibling containment against the main checkout's `HEAD` while the worktree is cut from
+`master`. TestDesign named both directions — patches only in `HEAD` make the guard silent
+about a sibling the new worktree genuinely lacks; patches only in `master` make it warn or
+hold about a sibling the new worktree already has. S2 does not fix this; it makes it
+sharper, because `git cherry` gives a *more* accurate answer about the *wrong* base.
+
+**A-1.1 — extract `WorktreeBaseResolver`.** New
+`server/Application/Services/WorktreeBaseResolver.cs`. One method, no I/O of its own:
+
+```
+static ResolvedBase Resolve(
+    string? repairStartSha,          // null unless RepairSourceTaskId is set
+    string? requestedRef,            // AgentTask.WorktreeBaseRequestedRef (-BaseRef; null in S1/S2)
+    string? mergeTargetRef,
+    string? defaultBranchIfResolvable)  // null when it does not rev-parse in this repo
+
+record ResolvedBase(string Ref, WorktreeBaseSource Source, string? UnresolvedDefault);
+```
+
+Precedence is D-2 levels 0-5 exactly, with `CardCurrent` absent because S3 is deferred.
+`UnresolvedDefault` is non-null only on the `RepoHead` arm and carries the default-branch
+name that failed, so the misconfiguration warning text has one producer.
+
+**A-1.2 — one ref probe, two callers.** Add
+`Task<bool> RefExistsAsync(string repo, string theRef, CancellationToken ct)` to
+`DelegationWorktreeService` (`git rev-parse --verify --quiet <ref>^{commit}`, `Ok`-only,
+returning `false` rather than throwing). Provisioning and the guard both use it to produce
+`defaultBranchIfResolvable`. `WorktreeManager.EnsureRefExistsAsync`
+([WorktreeManager.cs:759](../../../server/Infrastructure/Git/WorktreeManager.cs)) keeps its
+throwing contract for the explicit-base failure path (acceptance case 9) and is not reused
+here — a fallback candidate that does not resolve is a routine miss, not a validation error.
+
+**A-1.3 — the guard uses the resolver.** In `EvaluateCardSiblingBaseAsync`, replace
+`var baseRef = task.MergeTargetRef ?? "HEAD";` with the resolver's `Ref`, passing
+`repairStartSha: null` (see A-1.4). Sibling containment, the hold text and the warning text
+all then quote the base the worktree will actually be cut from. In the ordinary card-bound
+case — no merge target, no explicit base, `master` resolvable — guard and provisioning now
+agree exactly, which is the whole of P-1's first half.
+
+**A-1.4 — repair tasks: recorded, not evaluated.** `startAtSha` is the repair owner's tip
+SHA and already outranks every other candidate. It is resolved inside `DispatchOneAsync` by
+`PrepareRepairSourceAsync` ([AgentTaskDispatcher.cs:4105](../../../server/Application/Services/AgentTaskDispatcher.cs)),
+which the pre-lease guard must not call — it is a multi-step git read that can *fail the
+task*, and running it twice can return two answers.
+
+- Provisioning records the repair base: `WorktreeBaseRef` = the SHA, `WorktreeBaseSource` =
+  `Repair`, `WorktreeBaseTaskId` = `RepairSourceTaskId`, `WorktreeBaseSha` = the same SHA.
+  That is the "recorded source" P-1 asks for, and `Repair` is added to the enum by A-1.
+- The guard **skips sibling evaluation entirely** when `task.RepairSourceTaskId is not null`
+  and `task.WorktreePath is null`. A repair branch is deliberately cut from one specific
+  owner commit; "the card's other kept branches are not in that commit" is true by design
+  and is not a finding. The existing owner-is-landing hold immediately above
+  ([AgentTaskDispatcher.cs:584-604](../../../server/Application/Services/AgentTaskDispatcher.cs))
+  already covers the one case that does matter, and is untouched.
+- The skip is not silent: the `Dispatched` event's base clause reads
+  `from <sha> (repair of <short>)`, which is the record. No extra `Warning` is emitted —
+  a repair dispatch that warns about every sibling on the card would be noise on every
+  repair.
+
+**A-1.5 — report the residual gap instead of hiding it (S1b).** The guard still runs before
+the repository lease, so a land taken between the guard and provisioning can still move
+`master` underneath the answer. Moving the evaluation under the lease is D-4, which is S3
+and stays deferred. What S1b adds is a *report*, not a second decision:
+
+- `SiblingBaseGuard` gains `string ObservedBaseRef`.
+- `WarnUnlandedSiblingsAsync` takes the guard rather than just its warning list. After a
+  successful dispatch it reloads `WorktreeBaseRef`/`WorktreeBaseSource` for the task and,
+  when the recorded ref differs from `ObservedBaseRef`, writes one extra `Warning` in the
+  same `SaveChangesAsync`:
+  `sibling containment was evaluated against <observed>; the worktree was cut from <actual> (<source>). Re-check before relying on the warnings above.`
+- That warning is a `DispatchBase` obligation like any other (A-2), so it reaches the parent.
+
+Deliberately **not** done here, and why: re-running containment against the recorded base
+after dispatch would produce a second answer that is no more authoritative than the first
+(the lease is already released by then), and the *hold* decision — the only one that must
+be right before launch — cannot be revisited after the session exists. The correct fix is
+D-4's move under the lease, and it belongs to S3 with the rest of the selection work.
+
+**A-1.6 — request and record are different columns.** See the amended D-1. `-BaseRef`
+(S4) writes `WorktreeBaseRequestedRef` at create; the server writes `WorktreeBaseRef` at
+provisioning and never reads it as an input. Without the split, the worktree-reuse arm
+([DelegationWorktreeService.cs:189-205](../../../server/Application/Services/DelegationWorktreeService.cs))
+and any requeued second attempt would resolve against the *previous attempt's recorded
+answer* and relabel a `DefaultBranch` base as `Explicit`. Provisioning writes the record
+once: if `WorktreeBaseRef` is already non-null on entry the existing value and source are
+left alone, which also makes the reuse arm idempotent.
+
+**A-1.7 — what this changes for verification.** V-5's "Plan must specify repair source
+label" is answered by A-1.4 (`Repair`, owner task id recorded, guard skipped). V-7's
+"P-1 must clear before these dispatcher rows can be green" is answered by A-1.1-A-1.3: the
+dispatcher's silence is now computed from the resolver's base, which is the base
+provisioning uses. G-22 ("dispatch containment uses the actual base") gets a real seam —
+its positive control mutates `WorktreeBaseResolver.Resolve` to return `"HEAD"` on the
+`DefaultBranch` arm and the guard row goes red without touching provisioning.
+
+### A-2. The dispatch-base warning becomes a durable obligation on the existing machine
+
+**The defect.** `WarnUnlandedSiblingsAsync`
+([AgentTaskDispatcher.cs:2945-2977](../../../server/Application/Services/AgentTaskDispatcher.cs))
+writes a `Warning` event and then calls `_queue.EnqueueAsync` inline inside a
+`try`/`catch` that logs and swallows. There is no per-warning identity, no snapshot of the
+body against the destination, no atomic commit of event-and-obligation, and no recovery:
+once the task leaves `Queued` no later tick reconstructs the warning, so a lost enqueue is
+lost permanently. S2 changes which warnings this path emits, so the path is in scope for
+delivery acceptance and cannot be verified as it stands — TestDesign's V-14, and PC-40/41/42
+which have nothing to mutate.
+
+**A-2.1 — reuse `AgentTaskLandNotification`, do not clone it.** That table already is a
+durable delivery obligation with an immutable body, a content digest, a destination
+snapshot, attempt/backoff state, a keyed queue handoff and transcript-only receipt
+([AgentTaskLandNotification.cs](../../../server/Domain/Entities/AgentTaskLandNotification.cs),
+[AgentTaskLandNotificationService.cs](../../../server/Application/Services/AgentTaskLandNotificationService.cs)).
+Three small changes make it carry dispatch-base notes:
+
+| Change | Detail |
+|---|---|
+| `LandNotificationKind` gains `DispatchBase` | [LandingEnums.cs:15](../../../server/Domain/Enums/LandingEnums.cs). |
+| `RequestId` becomes `Guid?` | The FK to `AgentTaskLandRequest` becomes optional ([AppDbContext.cs:1545](../../../server/Infrastructure/Data/AppDbContext.cs)); a dispatch note has no land request. Every existing row keeps its value; nothing is backfilled. |
+| `SourceEventId` points at the `Warning` event | Unchanged column, unchanged unique index ([AppDbContext.cs:1543](../../../server/Infrastructure/Data/AppDbContext.cs)). |
+
+Rejected: a parallel `AgentTaskDispatchNotification` table with its own worker. It would
+duplicate ~150 lines of a subtle recovery machine — lease probe, keyed-row reuse, parked and
+truncated verdicts, catch-up, baseline floor — and the second copy is where the drift would
+land. Also rejected: renaming the table. The name becomes a mild misnomer; a rename
+migration on a hot delivery table is not worth it inside a base-selection fix, and the
+misnomer is recorded in D-9's `docs/antiphon-api.md` line instead.
+
+**A-2.2 — the identity P-2 asked for.** `SourceEventId` **is** the durable per-warning key,
+and its unique index enforces one obligation per warning event. Two divergent siblings on
+one task produce two `Warning` events and therefore two obligations and two receipts; a task
+that is dispatched twice produces new events and new obligations. This is exactly what
+distinguishes warning identity from task identity, which the existing conversation key
+`task:{taskId:N}` cannot do. The queue row is keyed by `sourceLandNotificationId`, whose
+unique filtered index
+([AppDbContext.cs:1549](../../../server/Infrastructure/Data/AppDbContext.cs)) makes the
+handoff idempotent without any new mechanism.
+
+**A-2.3 — atomic commit, without pulling D-4 forward.** The obligation must commit
+atomically with **its own event**, not with the claim transaction. So
+`WarnUnlandedSiblingsAsync` keeps running *after* `DispatchOneAsync` returns — the comment
+at [AgentTaskDispatcher.cs:655-657](../../../server/Application/Services/AgentTaskDispatcher.cs)
+("a launch that throws leaves no warning about work that never started") still holds, and
+D-4's move into the claim transaction stays with S3. The change is to what that method does:
+
+1. For each warning: add the `Warning` event **and** an `AgentTaskLandNotification` built
+   by a new `DispatchBaseNotificationPayload.Create(task, sourceEvent)` alongside the
+   existing `LandNotificationPayload.Create`
+   ([LandNotificationPayload.cs](../../../server/Application/Services/LandNotificationPayload.cs)),
+   in the same change tracker. Same shape, same `DelegationNoteDigest.Compute(
+   $"{ReplyTo}:{ParentSessionId:N}
+{body}")` digest, same initial-state rule —
+   `ReplyTo == None` gives `NotRequired`, a null `ParentSessionId` gives
+   `DestinationUnavailable`, otherwise `Queued`. `RequestId = null`,
+   `LandingOperationId = null`, `SourceEventId = <the event's Id>`, `Kind = DispatchBase`.
+2. **The body gains a header**, exactly as land notes do:
+   `[dispatch-base <noteId:N> task=<taskId:N> warning=<eventId:N>]` on its own line above
+   today's warning text. Two warnings on one task then differ in the receipt matcher even
+   before their branch names do, which is what makes PC-41's assertion sharp rather than
+   incidental. This changes what the orchestrator reads, deliberately.
+3. One `SaveChangesAsync` wrapped in an explicit transaction, so an event never exists
+   without its obligation and an obligation never references a missing event.
+4. **Delete the inline `_queue.EnqueueAsync` call and its `catch`.** Delivery is the
+   worker's job from here; the swallowed exception disappears with the code that produced it.
+
+**A-2.4 — recovery is the existing scan, not a new worker.**
+`AgentTaskLandNotificationHostedService` selects by `State` alone and is kind-agnostic
+([AgentTaskLandNotificationHostedService.cs:22-23](../../../server/Infrastructure/Orchestration/AgentTaskLandNotificationHostedService.cs)),
+so a `DispatchBase` row is picked up by the boot scan and the 5-second backstop with no
+change. One change is needed in `ReconcileAsync`: the repository-lease probe is gated on
+`Kind is Outcome or Conflict` ([AgentTaskLandNotificationService.cs:53](../../../server/Application/Services/AgentTaskLandNotificationService.cs))
+and `DispatchBase` must stay outside that gate — the obligation is committed in its own
+transaction after the dispatcher has released the lease, so probing would only delay a note
+that is already safe to send. Everything else — destination-unavailable, backoff, keyed-row
+reuse, parked/truncated verdicts, `CatchUpTranscriptAsync`, the
+`IsConfirmedBy`/`IsCompleteIn` receipt match — applies unchanged.
+
+**A-2.5 — crash boundaries.** `LandDeliveryBoundary.ReachedAsync` takes a free-form
+boundary name ([LandDeliveryBoundary.cs:6](../../../server/Application/Services/LandDeliveryBoundary.cs)),
+so no type changes. One new producer boundary, `dispatch-warning-before-commit`, is reached
+in `WarnUnlandedSiblingsAsync` between building the event/obligation pair and committing it.
+`before-enqueue`, `queue-inserted`, `receipt-before-save`, the `completion` wakeup drop and
+`notification-scan` are all inherited. The dispatcher needs `LandDeliveryBoundary?` injected
+optionally, defaulting to null so existing direct constructions keep working.
+
+**A-2.6 — what this makes executable.**
+
+| Control | Seam it now has |
+|---|---|
+| PC-40 (durable obligation before handoff) | Mutate step 1 to add the event without the obligation, or step 2 to two `SaveChangesAsync` calls. A cut at `dispatch-warning-before-commit` then yields an event with no receipt. |
+| PC-41 (warning identity, not task identity) | Mutate the obligation key from `SourceEventId` to `TaskId`. Two divergent siblings collapse to one receipt; the unique index or the second receipt assertion goes red. |
+| PC-42 (producer recovery) | Mutate the scan query to exclude `Kind == DispatchBase`, or return early for it in `ReconcileAsync`. The enqueue-failure and ambiguous-insertion cases never recover. |
+
+**A-2.7 — the two existing readers of `RequestId`, checked.** Making the column nullable
+touches exactly two consumers, and neither needs a compatibility shim:
+
+- `AgentTaskLandMonitorService` dereferences `note.RequestId` with `SingleAsync`
+  ([AgentTaskLandMonitorService.cs:58](../../../server/Application/Services/AgentTaskLandMonitorService.cs)),
+  but its query is already filtered to `Kind == LandNotificationKind.Outcome`
+  ([:45](../../../server/Application/Services/AgentTaskLandMonitorService.cs)). A
+  `DispatchBase` row is never selected, so the aged-receipt escalation is unchanged and
+  cannot throw. Code must not widen that filter.
+- `AttentionService` selects **every** unconfirmed non-legacy note with no kind filter
+  ([AttentionService.cs:1200](../../../server/Application/Services/AttentionService.cs)), so
+  a `DispatchBase` note *will* reach the attention feed once it ages past
+  `LandWarningSeconds`. That is wanted — an undelivered dispatch warning is the same
+  condition as an undelivered land outcome — but two things must change with it:
+  `AttentionItemDto.LandRequestId` is already `Guid?`
+  ([AttentionDtos.cs:355](../../../server/Application/Dtos/AttentionDtos.cs)) so the
+  signature holds, while the summary text `Land {note.Kind} notification` and the client
+  label `Land receipt missing`
+  ([attentionVisuals.ts:44](../../../client/src/features/attention/attentionVisuals.ts))
+  are wrong for a dispatch note. Add `AttentionKind.DispatchWarningUnconfirmed` with its own
+  client label, selected on `note.Kind == DispatchBase`, and drop the `request=` clause from
+  that variant's detail string rather than printing an empty Guid.
+
+That second bullet is the one place where S2b touches the client. It is one enum value, one
+`attentionVisuals` entry and the matching `attention.ts` union member — no new component.
+
+V-14 can then arrange a real dispatcher producer against `LandDeliveryFixture`'s native
+caller, cut at `dispatch-warning-before-commit`, `before-enqueue`, `queue-inserted` and
+`receipt-before-save`, and end at a matching complete `UserPrompt` — with no test-only
+outbox and no fabricated identity. The delivery-inventory row for "S2 divergent-sibling
+dispatch warning" is superseded: persistence and durable identity are
+`AgentTaskEvent.Id` = `AgentTaskLandNotification.SourceEventId` (unique), committed
+together; recovery and receipt are the existing scan and transcript evidence.
+
+### A-3. Consequences for the rest of the plan
+
+- **D-9 documentation.** Add to `docs/antiphon-api.md`: `worktreeBaseRequestedRef` on
+  create (S4) versus the recorded `worktreeBaseRef`/`worktreeBaseSource`/`worktreeBaseTaskId`
+  on detail, and that `AgentTaskLandNotifications` now also carries `DispatchBase` notes with
+  a null `RequestId`. Add to `docs/orchestration-loop.md`: the dispatch-base warning is a
+  durable obligation with a transcript receipt, so its absence from a parent session is a
+  defect rather than an expected loss.
+- **Acceptance cases.** Cases 1-25 are unchanged in wording. Case 21 additionally asserts
+  `WorktreeBaseSource` on a repair dispatch is `Repair` with `WorktreeBaseTaskId` set
+  (A-1.4). Two cases are added, both inside the S1/S2 release:
+  26. `a_repair_worktree_records_its_owner_sha_as_the_base_and_evaluates_no_siblings`.
+  27. `a_guard_base_that_differs_from_the_recorded_base_is_warned_once` (S1b).
+- **Cost.** S1b is a warning comparison and one extra event; S2b is three schema touches,
+  a new payload factory, a delete of the inline enqueue, one new boundary name, and one
+  attention kind with its client label (A-2.7). Neither adds a worker, a table
+  or a migration beyond `AddWorktreeBaseSelection` plus a second small migration for the
+  nullable `RequestId` and the `DispatchBase` kind. The PC-40/41/42 reservation in the cost
+  table stops being "not executable authorization" and becomes ordinary budget.
+- **Still deferred, unchanged.** S3 (`WorktreeBaseSelector`, `CardCurrent`, the CARD-0215
+  reversal, moving evaluation under the lease per D-4), S4 (`-BaseRef` wiring), S5 (header
+  and base-behind-default wording), S6 (docs beyond the two lines above), and D-7's
+  chained-land consequence. Acceptance cases 2, 3, 7, 8, 11, 13 and 25 remain out of this
+  release.
+
+Next stage: **testdesign** — make PC-40/41/42 executable against the A-2 seam, re-verify
+the dispatcher rows of V-5 and V-7 against A-1, and add controls for cases 26 and 27.
