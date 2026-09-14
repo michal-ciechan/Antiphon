@@ -244,3 +244,146 @@ Pending means every declared mutation and argument/variant in the linked plan. I
 | PC-217 | `WorktreeLockDiagnosticsWindowsTests.C443_NativeFileSharing32` | Yes; coverage still requires audit | Pending |
 | PC-218 | `WorktreeLockDiagnosticsTests.C443_DiagnosticsNeverUseShell` | Yes; coverage still requires audit | Pending |
 
+
+## Ordinary verification and actual counts
+
+Evidence root: `C:\Antiphon\worktrees\card-task-6cb9c0d9\.antiphon\c443-evidence`.
+Fresh TRX files, executed method/class joins and failure text are in `trx-summary.json`
+and each run's `run.trx` / `executed.json`. `baseline-comparison.json` confirms exact
+failure-message equality for all five observed failing methods at the untouched base.
+No namespace or full-assembly test selection was used.
+
+The latest build of source `c80a8b8ab6a589490dfa1a1ee9a84617a50531f2` passed with
+226 warnings and zero errors in 2m04.91s (`build-c80a8b8a.log`). All later source-tree
+changes are documentation and the duration allowlist, not compiled C# changes.
+Build command: `dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c443/ --nologo`.
+Ordinary runs reuse that output, except the explicitly identified earlier journal/native
+runs and the untouched-base comparisons. `regression-state.json` records the checkout
+commit, compiled-source commit and test assembly SHA256.
+
+Common run command (one fresh results directory per invocation):
+
+```powershell
+dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c443/ -- --treenode-filter '<filter>' --report-trx --report-trx-filename run.trx --results-directory '<fresh-results-directory>'
+```
+
+`<filter>` and `<fresh-results-directory>` are placeholders. The exact executed filters
+and directories follow; all are relative to the evidence root above. Counts are expanded
+executions, not discovered method names. Shared commands are counted once in this table.
+
+| Command | Exact filter | Executed / passed / failed / skipped | Evidence directory |
+|---|---|---|---|
+| U | `/*/*/*/*[Category=Unit]` | 2418 / 2414 / 4 / 1 (2419 total) | `unit-c80a8b8a` |
+| O | `/*/*/AgentTaskWorktreeLockOutcomeTests/*` | 4 / 4 / 0 / 0 | `outcome-c80a8b8a` |
+| N | `/*/*/WorktreeLockDiagnosticsWindowsTests/*` | 2 / 2 / 0 / 0 | `native-666c4dab` |
+| G1 | `/*/*/WorktreeGuardedCleanupTests/C443_CaptureCommittedBeforeRetry` | 1 / 1 / 0 / 0 | `core-C443_CaptureCommittedBeforeRetry-c80a8b8a` |
+| G2 | `/*/*/WorktreeGuardedCleanupTests/C443_TwoGitSlotsMaximum` | 1 / 1 / 0 / 0 | `core-C443_TwoGitSlotsMaximum-c80a8b8a` |
+| G3 | `/*/*/WorktreeGuardedCleanupTests/C443_InitialCleanHasNoCapture` | 1 / 1 / 0 / 0 | `core-C443_InitialCleanHasNoCapture-c80a8b8a` |
+| L1 | `/*/*/WorktreeManagerGitIntegrationTests/WorktreeManager_try_remove_reports_directory_residue_when_a_file_is_held` | 1 / 1 / 0 / 0 | `r1-held-file-corrected-c80a8b8a` |
+| L2 | `/*/*/WorktreeRemovalDefaultTests/C448_V36_InterfaceDefaultsNeverDelegateDeletion` | 4 / 4 / 0 / 0 | `r1-default-c80a8b8a` |
+| L3 | `/*/*/WorktreeRemovalAuthorityTests/C448_V24_LegacyRemovalCannotEraseTaskContents` | 5 / 5 / 0 / 0 | `r1-authority-c80a8b8a` |
+| L4 | `/*/*/WorktreeResidueSweepTests/execute_never_treats_legacy_landed_event_as_cleanup_authority` | 1 / 1 / 0 / 0 | `r1-legacy-c80a8b8a` |
+| M | `/*/*/AgentTaskLandRemovalMatrixTests/C448_V20_LastRemovalBoundaryPreservesEveryRemainingComponent` | 6 / 6 / 0 / 0 | `r2-components-c80a8b8a` |
+| P | `/*/*/AgentTaskLandStageOutcomeTests/reland_of_an_already_landed_task_runs_cleanup_only` | 1 / 0 / 1 / 0 | `r3-cleanup-only-c80a8b8a` |
+| S | `/*/*/AgentTaskSettlementRaceTests/worktree_pool_settle_delivers_parent_note_when_kill_savechanges_races_retire` | 1 / 1 / 0 / 0 | `r4-settlement-c80a8b8a` |
+| R | `/*/*/AgentTaskLandReceiptTests/*` | 30 / 30 / 0 / 0 | `r6-receipts-c80a8b8a` |
+| J | Filter below | 18 / 18 / 0 / 0: journal 16, guarded cleanup 2 | `focused-fe5484a5` |
+
+J ran at `fe5484a5950411207e865f599ba0bb54bb6c76b6` with this exact filter:
+
+```text
+/*/*/(WorktreeCleanupJournalTests*)|(WorktreeGuardedCleanupTests*)/(C443_BranchNotRetried)|(C443_Attempt*)|(C443_Unknown*)|(C443_InitialSlot*)|(C443_RetrySlot*)|(C443_FirstFailureWriteOnce)|(C443_CaptureWriteOnce)|(C443_Journal*)|(C443_ContextCannot*)|(C443_Pending*)|(C443_CaptureAcknowledgement*)|(C443_LostResult*)
+```
+
+Its two guarded tests are `C443_BranchNotRetried` and
+`C443_UnknownRegistrationStopsRetry`; the other 16 are journal tests. N ran at
+`666c4dab0dbfc0bb77d3619344a842b16e7c92d4`. Current U includes all 37
+`WorktreeLockDiagnosticsTests` executions, all 30 `WorktreeDeleteAccessProbeTests`,
+five `DelegationTestServicesTests`, and seven `DelegationHarnessCensusTests`, all passed.
+O executed both methods with both boolean payload arguments, each once: busy/eligible
+recipient crossed with OwnersObserved/InsufficientPrivileges. These use the real queue
+and standing workers with a fake recipient adapter that records actual submitted text;
+they do not qualify the real Handle provider.
+
+| Required ID | Actual outcome and shared commands | Remaining acceptance |
+|---|---|---|
+| V-1 | Partial: U has 37 diagnostic passes | Two diagnostic child/owner targets and full provider qualification absent |
+| V-2 | Partial: U has 30 native-probe passes; N has two real Windows passes | Audit all specified identity/enumeration/time variants |
+| V-3 | Partial: 16 exact mapped expanded cases passed across U/J (`v3-executed.json`) | Remaining shared-budget/size/display boundaries absent |
+| V-4 | Partial: five guarded cases passed across G1/G2/G3/J; M also passed six legacy component cases | Remaining authored class cases unrun; 24 guarded and 37 authority targets absent |
+| V-5 | Partial: N passed both real owned native holder cases | Six Git/Handle qualification methods absent; Handle not configured, process unelevated |
+| V-6 | Partial: J passed 16 journal cases; CLI migration generated and fresh test databases migrated | Eight targets, ten JC physical worker cuts and legacy/idempotent migration test absent |
+| V-7 | Passed: O, all four complete immutable Outcome recipient cases | Full V-8 crash coverage remains separate |
+| V-8 | Not executed: zero new crash/recovery cases | 25 Outcome targets and all 36 DC cases absent |
+| V-9 | Not executed: lifecycle class absent; S's existing settlement regression passed separately | Seven lifecycle/owned-verifier targets absent |
+| V-10 | Partial: U's graph/census 12 passes and J's scope-lifetime one pass | Production registration and complete planned assertion audit remain |
+| R-1 | Passed: L1/L2/L3/L4, 11 expanded passes | Corrected plan/PC-17 to the actual compiled class |
+| R-2 | Partial: M six passes plus five guarded cases in G/J | Two other named matrix methods/full affected class and new authority variants remain |
+| R-3 | Failed: P, one failure; reproduced identically at base | Attempt counter expected 2, actual 1; V-6/V-8 recovery coverage remains |
+| R-4 | Partial: S, one pass | New complete-recipient and lifecycle ordering/failure coverage absent |
+| R-5 | Named graph/census/scope checks passed: 13 expanded cases shared with V-10 | Complete assertion audit remains part of V-10 |
+| R-6 | Partial: R has 30 passes and O has four | Other named notification/persistence/recovery classes and V-8 remain unrun |
+
+All missing ordinary V/R work remains Code work. The plan's minimum 309 V executions
+and 217 distinct target methods have not been satisfied. Unit-only evidence is not
+being used to close native, delivery, persistence, leases or landing acceptance.
+
+## Failures, selectors and duration checks
+
+All four current Unit failures were independently rerun at the untouched
+`1282f178d8763c4a92eacce553c5eda7d24169fa` base, each with one executed/failed method:
+
+- `/*/*/TestClassificationGuardTests/Registry_matches_compiled_metadata`
+- `/*/*/ScopedVerificationInstructionTests/C487_G142`
+- `/*/*/TestLaneCategoryGuardTests/every_test_class_is_tagged_unit_xor_integration`
+- `/*/*/TestClassificationPolicyTests/C487_G068`
+
+Three concern the existing untagged `HerdrPaneDisposalEndpointTests`. `C487_G142`
+expects the obsolete next-Mutation Code handoff. P was likewise rerun with the same
+exact filter at base: one execution and the same `LandAttempt` expected-2/actual-1
+failure (`base-r3-cleanup-only/run.trx`). All five error messages compare equal;
+this is recorded in `baseline-comparison.json`. U's one NotExecuted case is
+`AgentTuiSecretProtectorTests.Restored_key_file_symlink_is_rejected_without_mutating_target`.
+No timeout or assertion was widened to remove these failures.
+
+The plan's original held-file filter used `WorktreeManagerTests` and executed zero
+(native exit 8, `r1-held-file-c80a8b8a`). The test is in
+`WorktreeManagerGitIntegrationTests`; L1 proves one actual execution. R-1 and PC-17
+references were corrected without changing the test, guard, variants or estimated cost.
+The attempted three-method OR filter
+`/*/*/WorktreeGuardedCleanupTests/(C443_CaptureCommittedBeforeRetry)|(C443_TwoGitSlotsMaximum)|(C443_InitialCleanHasNoCapture)`
+also executed zero (exit 8, `guarded-core-c80a8b8a`); G1/G2/G3 replaced it with separate
+exact-method invocations. Neither zero-test invocation counts as evidence of a guard.
+
+Earlier new-test failures were repaired and rerun: native helper startup 0/2 passed,
+then file-only 1/2 passed, then N 2/2; Outcome 2/4 passed with a spill-pointer mismatch,
+then O 4/4 after selecting the established modern delivery profile. The complete-body
+assertion was retained. The new public DispatchProxy helper initially added a second
+cause to an already-red Unit classification guard; moving it after the test methods
+restored that guard to its base-only failure. An early combined guarded/journal run
+was stopped after a branch-not-retried failure and has no final TRX; its cause was not
+established. The exact branch method subsequently passed in J. Two other stopped
+runs (old Outcome setup and diagnostic process census) are not verification evidence.
+
+`test-duration-tripwire.ps1` passes for all three new integration classes after their
+measured costs were added to the documented allowlist. No test timeout was changed.
+The tripwire remains red for 81 executions in other existing test classes: U 42,
+L4 one, M six, P one, S one and R 30. These are measured duration findings, not a
+claim that their timing cause was proved at base. They were not waived. See
+`tripwire-summary.json` and `tripwire-<run>.log`; the last core case has its own
+`tripwire-core-C443_InitialCleanHasNoCapture-c80a8b8a.log` (exit 0).
+
+## Ownership and handoff
+
+All owned test/build commands completed or were explicitly stopped and joined;
+no test process remains from these runs. The source was frozen during active runs.
+The named regression and core loops are recorded in `regressions-c80a8b8a.json`,
+`core-runs-c80a8b8a.json`, and `run-regressions.ps1`. All meaningful code and fix slices
+were committed and pushed to the task branch. No landing, deployment or restart ran.
+
+Restart requirement after eventual reviewed landing: **server**; runner **none**.
+Original landing owner remains **6cb9c0d9**. Next stage is **Code**, followed by
+ordinary read-only Review only when implementation and ordinary V/R are complete.
+The caller retains the companion verification obligation, lands the original Code
+task after Review, then explicitly commissions SourceLanding Mutation. Every PC and
+variant in the inventory remains pending that post-land commissioning.

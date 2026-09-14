@@ -96,6 +96,30 @@ pwsh -File scripts/test-duration-tripwire.ps1 -Trx path\to\run.trx
 
 The allowlist is `tests/Antiphon.Tests/slow-tests-allowlist.txt` (exact simple or fully-qualified class names, case-insensitive). Every test class is tagged `Unit` xor `Integration` (`TestLaneCategoryGuardTests`).
 
+### CARD-0443 Windows cleanup qualification
+
+Run the explicit Windows class against the same producer-owned build, with fresh results:
+
+```powershell
+$c443WindowsResults = Join-Path '.antiphon' ('c443-windows-' + [Guid]::NewGuid().ToString('N'))
+dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c443/ -- --treenode-filter '/*/*/WorktreeLockDiagnosticsWindowsTests/*' --report-trx --report-trx-filename run.trx --results-directory $c443WindowsResults
+```
+
+The [CARD-0443 plan](superpowers/plans/2026-09-14-card-0443-receipt-backed-cleanup-plan.md)
+requires eight named methods. The current [Code checkpoint](investigations/2026-09-14-card-0443-code-checkpoint.md)
+implements only the two native-probe methods: owned file and root-directory holders,
+actual sharing error 32, unchanged bytes/attributes, and joined child release. These
+work without Handle elevation. A green two-case run does not qualify the other six.
+
+The remaining Git/Handle cases require an isolated receipt-backed repository, owned
+holder children, an explicitly configured trusted Handle executable, existing elevated
+access and completed license setup. Record file/directory calibration and PID/start/path
+evidence. Do not auto-elevate or accept the license during a test. Intact transient retry
+and partial removal are separate outcomes: retained partial residue cannot count as
+intact recovery. Report unavailable prerequisites, missing methods and actual expanded
+counts separately. Ordinary qualification uses restored production code; deliberate
+PC cycles remain method-scoped work for post-land SourceLanding Mutation.
+
 ### Lazy PostgreSQL and restart preflight cache (CARD-0476)
 
 `TestDbFixture` constructs no container until the first default-store consumer (`ConnectionString`, default `CreateDbContextOptions()`, instance `CreateDbContext()`, or `CreateIsolatedSchemaAsync()`). Explicit connection strings and `new TestDbFixture()` stay inert. Assembly teardown is a no-op when the database was never requested. `SessionDeliveryProfileTests` remains `Category("Unit")` and still starts PostgreSQL when that class runs, so the full Unit lane is not a zero-DB benchmark. `ProductionRunnerGuard` and `PtyBackendEnvGuard` stay eager and independent of the lazy task. `LandQueueRaceWorker` dispatch is a separate `[Before(Assembly)]` hook; worker children use a parent-owned connection and must not start a private database.

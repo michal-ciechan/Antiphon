@@ -1025,7 +1025,7 @@ and `StopFailed`; none asserts operating-system process exit.
 
 This is an implementation checkpoint, not rollout acceptance. Ordinary test coverage,
 worker-death/delivery cuts and real Handle qualification remain incomplete; see the
-[Code checkpoint](../docs/investigations/2026-09-14-card-0443-code-checkpoint.md).
+[Code checkpoint](investigations/2026-09-14-card-0443-code-checkpoint.md).
 
 ## Land request and caller receipt (CARD-0467)
 
