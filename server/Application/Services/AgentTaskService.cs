@@ -1625,9 +1625,10 @@ public sealed class AgentTaskService
             ? await _db.AgentTaskLandRequests.AsNoTracking().SingleOrDefaultAsync(r => r.Id == requestId, ct) : null;
         var cleanupAttempt = landing is null || landRequest is null ? null : await _db.WorktreeCleanupAttempts.AsNoTracking()
             .SingleOrDefaultAsync(a => a.OperationId == landing.Id && a.RequestId == landRequest.Id, ct);
+        var currentCleanupRequestId = landRequest?.Id;
         var cleanupCapture = landing is null ? null : await _db.WorktreeCleanupAttempts.AsNoTracking()
             .Where(a => a.OperationId == landing.Id && a.CaptureState != WorktreeCleanupCaptureState.NotNeeded)
-            .OrderByDescending(a => a.CreatedAt).ThenByDescending(a => a.Id).FirstOrDefaultAsync(ct);
+            .OrderByDescending(a => a.RequestId == currentCleanupRequestId).ThenByDescending(a => a.CreatedAt).ThenByDescending(a => a.Id).FirstOrDefaultAsync(ct);
         var landingDto = landing is null ? null : LandingEvidenceDto.From(landing) with {
             CleanupAttemptId = cleanupAttempt?.Id,
             CleanupCapture = cleanupCapture is null ? null : new WorktreeCleanupPresentation().Reference(cleanupCapture, cleanupCapture.RequestId != landRequest?.Id) };

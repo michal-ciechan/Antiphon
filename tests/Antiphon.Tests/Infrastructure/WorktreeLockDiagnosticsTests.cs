@@ -36,6 +36,12 @@ public sealed class WorktreeLockDiagnosticsTests
         (await RunAsync(io)).Reason.ShouldBe("InsufficientPrivileges"); io.Starts.ShouldBeEmpty();
     }
     [Test]
+    public async Task C443_UnpreparedLicenseNeverLaunches()
+    {
+        var io = new RecordingIO { IsLicenseReady = false };
+        (await RunAsync(io)).Reason.ShouldBe("LicenseSetupRequired"); io.Starts.ShouldBeEmpty();
+    }
+    [Test]
     public async Task C443_ReadOnlyArgumentVector()
     {
         var io = new RecordingIO(); await RunAsync(io);
@@ -148,6 +154,15 @@ public sealed class WorktreeLockDiagnosticsTests
         var result = await RunAsync(io); result.Status.ShouldBe(WorktreeLockStatus.Partial); result.Owners.Single().ProcessId.ShouldBe(12);
     }
     [Test]
+    [Arguments("\"unterminated")]
+    [Arguments("bad,pid,File,42,path\n")]
+    public async Task C443_MalformedTailRetainsOwners(string tail)
+    {
+        var io = new RecordingIO(); io.TargetCsv = RecordingIO.Header + RecordingIO.Row("owner", 12, io.Root) + tail;
+        var result = await RunAsync(io); result.Status.ShouldBe(WorktreeLockStatus.Partial);
+        result.Owners.Single().ProcessId.ShouldBe(12);
+    }
+    [Test]
     public async Task C443_ReusedPidDoesNotEnrichOldOwner()
     {
         var io = new RecordingIO(); io.TargetCsv = RecordingIO.Header + RecordingIO.Row("owner", 12, io.Root);
@@ -200,7 +215,7 @@ public sealed class WorktreeLockDiagnosticsTests
         public string Root { get; } = Path.GetFullPath("diagnostic-tree");
         public string Scratch = Path.GetFullPath("diagnostic-scratch");
         public string ControlRoot => Path.Combine(Scratch, "control");
-        public bool IsSupported = true, IsElevated = true, ToolExists = true, RootExists = true,
+        public bool IsSupported = true, IsElevated = true, IsLicenseReady = true, ToolExists = true, RootExists = true,
             FileControl = true, DirectoryControl = true, FailControlQuery, BlockControl, Truncated;
         public int ControlPid = 123, Disposals;
         public string TargetCsv = Header;
@@ -211,6 +226,7 @@ public sealed class WorktreeLockDiagnosticsTests
         private readonly long _start = DateTime.UtcNow.AddDays(-1).Ticks;
         public override bool Supported => IsSupported;
         public override bool Elevated => IsElevated;
+        public override bool LicenseReady => IsLicenseReady;
         public override string ScratchRoot => Scratch;
         public override bool Exists(string path) => RootExists;
         public override bool TrustedExecutable(string path) => ToolExists;

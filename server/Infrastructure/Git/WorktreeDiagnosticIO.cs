@@ -18,7 +18,16 @@ public class WorktreeDiagnosticIO(WorktreeNativeIO native)
             return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
         }
     }
-    public virtual bool Exists(string path) => Directory.Exists(path);
+    // Never let Handle provision its license state or display first-run setup.
+    public virtual bool LicenseReady => OperatingSystem.IsWindows()
+        && Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\Software\Sysinternals\Handle", "EulaAccepted", null) is int accepted
+        && accepted == 1;
+    public virtual bool Exists(string path)
+    {
+        try { return (File.GetAttributes(path) & FileAttributes.Directory) != 0; }
+        catch (FileNotFoundException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
+    }
     public virtual bool TrustedExecutable(string path) => Path.IsPathFullyQualified(path) && File.Exists(path)
         && (File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == 0;
     public virtual (string Version, string Identity) ToolIdentity(string path) =>
