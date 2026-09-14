@@ -1,4 +1,6 @@
 using System;
+using Antiphon.Server.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -10,6 +12,8 @@ namespace Antiphon.Server.Migrations
     /// and legacy /remote-control row classification. Isolated-output CLI equivalent: default
     /// bin/ is held by the running Antiphon.Server process.
     /// </summary>
+    [DbContext(typeof(AppDbContext))]
+    [Migration("20260914120000_Card0514RemoteControlModal")]
     public partial class Card0514RemoteControlModal : Migration
     {
         /// <inheritdoc />
