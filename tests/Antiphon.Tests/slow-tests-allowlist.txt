@@ -73,3 +73,13 @@ Antiphon.Tests.TestHelpers.TestDbFixtureLazyInitializationTests
 Antiphon.Tests.Application.RepairSourceDispatchTests
 # CARD-0499: real dispatch then settlement through AgentTaskReplyService.
 Antiphon.Tests.Application.RepairSourceSettlementTests
+# CARD-0514: isolated-schema clone for episode/arm uniqueness and receipt persistence.
+Antiphon.Tests.Application.RemoteControlModalPersistenceTests
+# CARD-0514: maintenance fault/reconcile under the production queue graph.
+Antiphon.Tests.Application.RemoteControlMaintenanceQueueTests
+# CARD-0514: recovery harness busy/idle health request.
+Antiphon.Tests.Application.RemoteControlRecoveryPtyIntegrationTests
+# CARD-0514: named V-2/V-7 launch-failure class includes boot RC and deferred-work cases.
+Antiphon.Tests.Application.AgentSessionLaunchFailureTests
+# CARD-0514: named V-2 gate class; create/PATCH HTTP factory cost.
+Antiphon.Tests.Application.AgentRemoteControlGateTests
