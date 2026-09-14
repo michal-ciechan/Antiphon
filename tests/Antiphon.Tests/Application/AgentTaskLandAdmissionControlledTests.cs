@@ -149,7 +149,12 @@ public sealed class AgentTaskLandAdmissionControlledTests
             {
                 await dispatcher.TickAsync(CancellationToken.None);
                 await using (var db = h.CreateContext())
-                    (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == writerId)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+                {
+                    var why = string.Join(" | ", await db.AgentTaskEvents.AsNoTracking()
+                        .Where(e => e.AgentTaskId == writerId).OrderBy(e => e.At)
+                        .Select(e => e.Type + ": " + e.Detail).ToListAsync());
+                    (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == writerId)).Status.ShouldBe(AgentTaskStatus.Dispatched, why);
+                }
                 h.Fixture.Git.Trace.Clear();
                 releaseAdmission.TrySetResult();
                 (await (waitingLand ?? h.RunAsync())).ShouldBe(LandRunResult.Held, "landing must reload the real committed Shared/follow-up admission claim");
