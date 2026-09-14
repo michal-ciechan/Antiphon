@@ -1198,6 +1198,14 @@ public sealed class AttentionService
                 LandRequestId: request.Id, HoldingTaskId: request.HoldingTaskId);
             items.Add(item);
         }
+        // CARD-0508: the pending-intent snapshot is taken BEFORE the notes, and the notes are
+        // matched against it afterwards. Read the other way round, a projection that commits
+        // between the two queries is invisible to both — the note query ran too early and the
+        // intent query then filters the row out as materialized — and the dispatch condition
+        // disappears for that read. Snapshot first, suppress by the note ids this same pass saw.
+        var pendingIntents = await _db.AgentTaskDispatchWarningIntents.AsNoTracking()
+            .Where(i => i.MaterializedAt == null && i.ReplyTo != AgentTaskReplyTo.None)
+            .ToListAsync(ct);
         var notes = await _db.AgentTaskLandNotifications.AsNoTracking().Where(n => !n.IsLegacy && n.ConfirmedAt == null
             && n.State != LandNotificationState.NotRequired).ToListAsync(ct);
         var noteIds = notes.Select(n => n.Id).ToHashSet();
@@ -1227,14 +1235,11 @@ public sealed class AttentionService
                 LandRequestId: dispatch ? null : note.RequestId, LandNotificationId: note.Id));
         }
 
-        var pendingIntents = await _db.AgentTaskDispatchWarningIntents.AsNoTracking()
-            .Where(i => i.MaterializedAt == null && i.ReplyTo != AgentTaskReplyTo.None)
-            .ToListAsync(ct);
+        // Added after the notes so the richer note row wins the ConditionKey de-duplication below
+        // when both halves of one obligation are visible in the same pass.
         foreach (var intent in pendingIntents)
         {
-            if (noteIds.Contains(intent.NotificationId)
-                || await _db.AgentTaskLandNotifications.AsNoTracking()
-                    .AnyAsync(n => n.Id == intent.NotificationId, ct))
+            if (noteIds.Contains(intent.NotificationId))
                 continue;
             var age = (now - intent.CreatedAt).TotalSeconds;
             if (age < _delegation.LandWarningSeconds && intent.LastErrorCode is null) continue;
