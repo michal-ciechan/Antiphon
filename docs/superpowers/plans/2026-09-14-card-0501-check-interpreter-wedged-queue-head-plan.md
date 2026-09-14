@@ -302,6 +302,41 @@ investigation doc to this plan.
 
 ## Verification design
 
+### Ordinary coverage IDs (Code task 326c349a)
+
+These IDs name the existing S1-S5 checks for the ordinary Code/Review handoff. Commands may be
+shared; fresh TRX must enumerate every intended class and every new method/argument variant.
+
+| ID | Coverage | Class / check |
+|---|---|---|
+| V-1 | S1 whole-head semantics, all six named predicate cases | `ComposerDeliveryEvidenceTests` |
+| V-2 | S2 generation stamps, refund, both gates and legacy fallback | `SessionMessageQueueWedgedHeadTests` (S2 methods; Enqueue, SendNow and persisted immediate variants) |
+| V-3 | S3 charge, park/unblock, captured-generation kill, working guard | `SessionMessageQueueWedgedHeadTests` (S3 methods) |
+| V-4 | S4 terminal-task cancellation, safe composer, expiry, human SendNow | `SessionMessageQueueWedgedHeadTests` (S4 methods; Failed/Canceled/Succeeded and legacy variants) |
+| V-5 | Generated nullable timestamp migration and matching model | `dotnet ef` generation; integration fixture migration; model diff inspection |
+| V-6 | S5 invariant, queue inspect/clear runbook, investigation pointer | Read-only documentation/diff review |
+| R-1 | Ordinary Unit lane | `Antiphon.Tests`: `/*/*/*/*[Category=Unit]` |
+| R-2 | Windowed post-submit evidence unchanged | `SubmitEvidenceTests` |
+| R-3 | Interrupted late-confirm, snapshot absence and successful Enter-only remain valid | `SessionMessageQueueInterruptedAttemptTests` |
+| R-4 | Delivery verification, retry, working/kill and transport invariants | `SessionMessageQueueDeliveryVerificationTests` |
+| R-5 | Queue ordering, persistence and transcript behavior | `SessionMessageQueueServiceTests` |
+| R-6 | Parked-row recovery | `ParkedMessageSweepServiceTests` |
+| R-7 | Task delivery watchdog | `AgentTaskDeliveryWatchdogTests` |
+| R-8 | Native Grok delivery including successful Enter-only attempt count | `SessionMessageQueueGrokPtyIntegrationTests` |
+
+Code executes ordinary V/R, then read-only Review. PC-1 through PC-8 and missing-control discovery
+remain pending for explicitly commissioned post-land SourceLanding Mutation. This stage ordering
+supersedes the original request to execute positive controls during Code. No namespace or full
+assembly exception is needed. Backend-unreachable deferral retains its existing uncharged rule;
+the charged arm describes failed delivery verdicts after transport acceptance.
+
+Generation-gate controls replay the **exact body** in history, strengthening the original
+different-marker fixture so whole-head matching alone cannot make PC-2/PC-3 pass.
+PC-1's integration method has both Pending and interrupted Sent variants. PC-8's method has
+Enqueue, SendNow and persisted-immediate variants; its named mutant must kill the SendNow case.
+The activation observation below is an operator follow-up, not ordinary V/R. The original head
+was manually removed before this Code task; do not require an exact 65-row cancellation count.
+
 Run S1 in `Antiphon.Agents.Pty.Tests`, then S2–S4 in `Antiphon.Tests`; never concurrently.
 Always build to an alternate output path with a forward slash.
 

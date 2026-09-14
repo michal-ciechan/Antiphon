@@ -3,6 +3,7 @@ using System;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260914233700_AddQueuedMessageDeliveryGeneration")]
+    partial class AddQueuedMessageDeliveryGeneration
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -6066,150 +6069,6 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("Worktrees", (string)null);
                 });
 
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.WorktreeCleanupAttempt", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<bool>("BranchDeleted")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime?>("CaptureAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CaptureJson")
-                        .HasColumnType("text");
-
-                    b.Property<int>("CaptureState")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("CommonDirectory")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<Guid>("ConcurrencyToken")
-                        .IsConcurrencyToken()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("DirectoryGone")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime?>("FinalizedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("FirstGitFailureJson")
-                        .HasMaxLength(2048)
-                        .HasColumnType("character varying(2048)");
-
-                    b.Property<string>("GitDirectory")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<Guid?>("InitialCommandId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("InitialCompletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("InitialIntentAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("LastGitOutcomeJson")
-                        .HasMaxLength(2048)
-                        .HasColumnType("character varying(2048)");
-
-                    b.Property<Guid>("OperationId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("RepositoryPath")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<Guid>("RequestId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Residue")
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<Guid?>("RetryCommandId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("RetryCompletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("RetryIntentAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("RetryReason")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<int>("SchemaVersion")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("SourceFullRef")
-                        .IsRequired()
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<string>("SourceSha")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("Summary")
-                        .HasMaxLength(600)
-                        .HasColumnType("character varying(600)");
-
-                    b.Property<string>("TargetFullRef")
-                        .IsRequired()
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<string>("TargetSha")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<Guid>("TaskId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("TerminalEventId")
-                        .HasColumnType("uuid");
-
-                    b.Property<bool>("Unregistered")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("WorktreePath")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("RequestId")
-                        .IsUnique();
-
-                    b.HasIndex("TaskId");
-
-                    b.HasIndex("TerminalEventId");
-
-                    b.HasIndex("OperationId", "CreatedAt");
-
-                    b.ToTable("WorktreeCleanupAttempts", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_WorktreeCleanupAttempts_CaptureBytes", "\"CaptureJson\" IS NULL OR octet_length(\"CaptureJson\") <= 32768");
-                        });
-                });
-
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.WorktreeHealthFinding", b =>
                 {
                     b.Property<Guid>("Id")
@@ -7217,32 +7076,6 @@ namespace Antiphon.Server.Migrations
                         .IsRequired();
 
                     b.Navigation("Card");
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.WorktreeCleanupAttempt", b =>
-                {
-                    b.HasOne("Antiphon.Server.Domain.Entities.AgentTaskLanding", null)
-                        .WithMany()
-                        .HasForeignKey("OperationId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("Antiphon.Server.Domain.Entities.AgentTaskLandRequest", null)
-                        .WithMany()
-                        .HasForeignKey("RequestId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("Antiphon.Server.Domain.Entities.AgentTask", null)
-                        .WithMany()
-                        .HasForeignKey("TaskId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("Antiphon.Server.Domain.Entities.AgentTaskEvent", null)
-                        .WithMany()
-                        .HasForeignKey("TerminalEventId")
-                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.WorktreeHealthFinding", b =>

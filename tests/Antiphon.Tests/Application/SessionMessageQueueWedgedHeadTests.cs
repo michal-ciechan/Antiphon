@@ -18,7 +18,12 @@ public class SessionMessageQueueWedgedHeadTests
     private const string Body = "[antiphon-task:419b8b34] role=Check tier=Low workspace=Shared";
     private static AppDbContext CreateContext() => BridgeQueueHarness.CreateContext();
     private static Task<BridgeQueueHarness> CreateAsync(bool alwaysOn = false) =>
-        BridgeQueueHarness.CreateAsync(new() { AlwaysOn = alwaysOn });
+        BridgeQueueHarness.CreateAsync(new()
+        {
+            AlwaysOn = alwaysOn,
+            // These cases judge the recovery verdict, not delayed transcript ingestion.
+            ConfigureDeliveryVerification = v => v.PostFailureConfirmGraceSeconds = 0,
+        });
 
     private static async Task<DateTime> GenerationAsync(BridgeQueueHarness h)
     {
@@ -53,9 +58,10 @@ public class SessionMessageQueueWedgedHeadTests
             var id = await h.SeedPendingMessageAsync(Body);
             await h.Queue.SendNowAsync(h.SessionId, id, CancellationToken.None);
         }
+        else if (path == "Immediate")
+            await h.Queue.EnqueueDeliveringNowAsync(h.SessionId, Body, CancellationToken.None);
         else
-            await h.Queue.EnqueueAsync(h.SessionId, Body,
-                path == "Immediate" ? MessageSendMode.Now : MessageSendMode.WhenIdle, CancellationToken.None);
+            await h.Queue.EnqueueAsync(h.SessionId, Body, MessageSendMode.WhenIdle, CancellationToken.None);
 
         await using var db = CreateContext();
         var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
@@ -73,8 +79,8 @@ public class SessionMessageQueueWedgedHeadTests
         await using var h = await CreateAsync();
         h.Adapter.ThrowOnSend = new ServiceUnavailableException("Herdr is unreachable.", HerdrProblemTypes.Unreachable);
         if (immediate)
-            await Should.ThrowAsync<ConflictException>(() => h.Queue.EnqueueAsync(h.SessionId, Body,
-                MessageSendMode.Now, CancellationToken.None));
+            await Should.ThrowAsync<ConflictException>(() => h.Queue.EnqueueDeliveringNowAsync(h.SessionId, Body,
+                CancellationToken.None));
         else
             await h.Queue.EnqueueAsync(h.SessionId, Body, MessageSendMode.WhenIdle, CancellationToken.None);
 
