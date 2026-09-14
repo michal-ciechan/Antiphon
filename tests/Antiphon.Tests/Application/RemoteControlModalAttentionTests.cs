@@ -13,7 +13,7 @@ public class RemoteControlModalAttentionTests
     public void C514_Channel_bound_modal_is_immediately_critical()
     {
         ((int)AttentionKind.RemoteControlModal).ShouldBe(39);
-        AlertSeverity.Critical.ShouldBeGreaterThan(AlertSeverity.Warning);
+        ((int)AlertSeverity.Critical).ShouldBeGreaterThan((int)AlertSeverity.Warning);
     }
 
     [Test]
