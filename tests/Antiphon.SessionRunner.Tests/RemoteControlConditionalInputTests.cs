@@ -86,7 +86,8 @@ public class RemoteControlConditionalInputTests
             new RunnerConditionalInputRequest(generationA, snapshot.LastSequence, "hold\r"),
             cts.Token);
         await held.Task.WaitAsync(cts.Token);
-        var replace = runtime.StartAsync(Launch(sessionId, generationB), cts.Token);
+        // Live StartAsync refuses the id; replacement is kill-generation then relaunch, both under the launch gate.
+        var replace = ReplaceGenerationAsync();
         await Task.Delay(200, cts.Token);
         replace.IsCompleted.ShouldBeFalse();
         proceed.TrySetResult();
@@ -94,7 +95,17 @@ public class RemoteControlConditionalInputTests
         result.Outcome.ShouldBe(ConditionalInputOutcomes.Written);
         await replace;
         runtime.Get(sessionId).AcceptedStartedAt.ShouldBe(generationB);
+        runtime.SnapshotBackendWrites()
+            .ShouldNotContain(w => w.Input.Contains("hold", StringComparison.Ordinal));
         await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), cts.Token);
+
+        async Task ReplaceGenerationAsync()
+        {
+            var killed = await runtime.KillGenerationAsync(
+                sessionId, generationA, TimeSpan.FromSeconds(5), cts.Token);
+            killed.Killed.ShouldBeTrue();
+            await runtime.StartAsync(Launch(sessionId, generationB), cts.Token);
+        }
     }
 
     [Test]
