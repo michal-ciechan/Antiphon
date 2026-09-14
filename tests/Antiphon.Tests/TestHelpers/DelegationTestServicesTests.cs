@@ -21,9 +21,9 @@ public sealed class DelegationTestServicesTests
     [Test]
     public void C443_DiagnosticRegistrationPreservesOverride()
     {
-        var diagnostics = new Moq.Mock<IWorktreeLockDiagnostics>(Moq.MockBehavior.Strict).Object;
-        var probe = new Moq.Mock<IWorktreeDeleteAccessProbe>(Moq.MockBehavior.Strict).Object;
-        var journal = new Moq.Mock<IWorktreeCleanupJournal>(Moq.MockBehavior.Strict).Object;
+        var diagnostics = System.Reflection.DispatchProxy.Create<IWorktreeLockDiagnostics, FailOnUseProxy>();
+        var probe = System.Reflection.DispatchProxy.Create<IWorktreeDeleteAccessProbe, FailOnUseProxy>();
+        var journal = System.Reflection.DispatchProxy.Create<IWorktreeCleanupJournal, FailOnUseProxy>();
         var services = new ServiceCollection(); services.AddLogging(); services.AddSingleton(TimeProvider.System);
         services.AddSingleton(diagnostics); services.AddSingleton(probe); services.AddSingleton(journal);
         services.AddDelegationWorktreeGraph(); services.AddDelegationWorktreeGraph();
@@ -36,6 +36,11 @@ public sealed class DelegationTestServicesTests
         provider.GetRequiredService<IWorktreeManager>().ShouldNotBeNull();
         var direct = DelegationTestServices.CreateGitGraph(new(), diagnostics: diagnostics, probe: probe, cleanupJournal: journal);
         direct.Diagnostics.ShouldBeSameAs(diagnostics); direct.Probe.ShouldBeSameAs(probe); direct.Journal.ShouldBeSameAs(journal);
+    }
+    public class FailOnUseProxy : System.Reflection.DispatchProxy
+    {
+        protected override object? Invoke(System.Reflection.MethodInfo? targetMethod, object?[]? args) =>
+            throw new InvalidOperationException("A pure composition test must not invoke external I/O: " + targetMethod?.Name);
     }
     [Test]
     public async Task Logging_clock_and_helper_resolve_the_whole_worktree_graph()
