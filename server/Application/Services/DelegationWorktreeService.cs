@@ -2,7 +2,12 @@ using System.Diagnostics;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -25,6 +30,8 @@ public sealed class DelegationWorktreeService
     private readonly GitWorkspaceService _gitWorkspace;
     private readonly ILogger<DelegationWorktreeService> _logger;
     private readonly SourceLandingAdmission? _sourceLanding;
+    private readonly GitSettings? _gitSettings;
+    private readonly AppDbContext? _db;
 
     public DelegationWorktreeService(
         IWorktreeManager worktrees,
@@ -32,7 +39,9 @@ public sealed class DelegationWorktreeService
         ILogger<DelegationWorktreeService> logger,
         GitWorkspaceService gitWorkspace,
         IRepositoryMutationLease? leases = null, ILandingGit? landingGit = null,
-        SourceLandingAdmission? sourceLanding = null)
+        SourceLandingAdmission? sourceLanding = null,
+        IOptions<GitSettings>? gitSettings = null,
+        AppDbContext? db = null)
     {
         _leases = leases;
         _sourceLanding = sourceLanding;
@@ -41,6 +50,8 @@ public sealed class DelegationWorktreeService
         _git = git;
         _logger = logger;
         _gitWorkspace = gitWorkspace;
+        _gitSettings = gitSettings?.Value;
+        _db = db;
     }
 
     /// <summary>
@@ -110,17 +121,65 @@ public sealed class DelegationWorktreeService
     }
 
     /// <summary>
-    /// True when <paramref name="branch"/> is an ancestor of <paramref name="baseRef"/>
-    /// (<c>git merge-base --is-ancestor</c>). A missing ref is not an ancestor.
+    /// True when every commit on <paramref name="branch"/> is already present in
+    /// <paramref name="baseRef"/> by patch id (<c>git cherry</c>: empty output, or every line
+    /// prefixed <c>-</c>). A failed or invalid probe is never contained.
     /// </summary>
-    public async Task<bool> IsAncestorOfBaseAsync(
+    public async Task<bool> ContainsPatchesAsync(
         string repo, string branch, string baseRef, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(branch) || string.IsNullOrWhiteSpace(baseRef)
             || !Directory.Exists(repo))
             return false;
-        var result = await GitAsync(repo, ct, "merge-base", "--is-ancestor", branch, baseRef);
+        var result = await GitAsync(repo, ct, "cherry", baseRef, branch);
+        if (!result.Ok)
+            return false;
+        var lines = result.StdOut.Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        return lines.Length == 0 || Array.TrueForAll(lines, static line => line.StartsWith('-'));
+    }
+
+    /// <summary>
+    /// Historical ancestry helper. Prefer <see cref="ContainsPatchesAsync"/>; this remains so
+    /// existing callers that have not been switched still compile, and now uses the same
+    /// patch-aware predicate.
+    /// </summary>
+    public Task<bool> IsAncestorOfBaseAsync(
+        string repo, string branch, string baseRef, CancellationToken ct) =>
+        ContainsPatchesAsync(repo, branch, baseRef, ct);
+
+    /// <summary>
+    /// True when <paramref name="theRef"/> names a commit (<c>git rev-parse --verify --quiet
+    /// &lt;ref&gt;^{commit}</c>). A missing directory, empty ref, or failed probe is false, not a throw.
+    /// </summary>
+    public async Task<bool> RefExistsAsync(string repo, string theRef, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(theRef) || !Directory.Exists(repo))
+            return false;
+        var result = await GitAsync(repo, ct, "rev-parse", "--verify", "--quiet", theRef + "^{commit}");
         return result.Ok;
+    }
+
+    /// <summary>Project, then Git settings, then <c>master</c>, probed as a commit in <paramref name="task"/>'s repo.</summary>
+    public async Task<DefaultBranchProbe> ProbeConfiguredDefaultAsync(AgentTask task, CancellationToken ct)
+    {
+        var candidate = await ChooseConfiguredDefaultAsync(task, ct);
+        var repo = task.RepoPath ?? "";
+        return new DefaultBranchProbe(candidate, await RefExistsAsync(repo, candidate, ct));
+    }
+
+    public async Task<string> ChooseConfiguredDefaultAsync(AgentTask task, CancellationToken ct)
+    {
+        string? project = null;
+        if (task.ProjectId is Guid projectId && _db is not null)
+        {
+            project = await _db.Projects.AsNoTracking()
+                .Where(p => p.Id == projectId)
+                .Select(p => p.BaseBranch)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        return WorktreeBaseResolver.ChooseConfiguredDefault(project, _gitSettings?.DefaultBranch);
     }
 
     /// <summary>Tip, commit count, and subject of <paramref name="branch"/> above <paramref name="baseRef"/>.</summary>
@@ -148,16 +207,16 @@ public sealed class DelegationWorktreeService
     public sealed record KeptBranchInfo(string Tip, int CommitsAbove, string Subject);
 
     /// <summary>Create or reuse the task's managed checkout; never infer publication here.</summary>
-    public async Task CreateForTaskAsync(AgentTask task, CancellationToken ct)
+    public async Task<WorktreeBaseDecision?> CreateForTaskAsync(AgentTask task, CancellationToken ct, string? startAtSha = null)
     {
         if (_leases is null || task.RepoPath is null)
             throw new ConflictException("repository_lease_required");
         await using var lease = await _leases.TryAcquireAsync(task.RepoPath, ct);
         if (lease is null) throw new ConflictException("repository_busy");
-        await CreateForTaskAsync(task, lease, ct);
+        return await CreateForTaskAsync(task, lease, ct, startAtSha);
     }
 
-    public async Task CreateForTaskAsync(AgentTask task, RepositoryLease lease, CancellationToken ct, string? startAtSha = null)
+    public async Task<WorktreeBaseDecision?> CreateForTaskAsync(AgentTask task, RepositoryLease lease, CancellationToken ct, string? startAtSha = null)
     {
         if (task.RepoPath is not { } repoPath)
             throw new ValidationException(nameof(task.RepoPath), "A worktree task needs a git repository.");
@@ -166,7 +225,6 @@ public sealed class DelegationWorktreeService
             throw new ConflictException("repository_lease_required");
 
         var identifier = $"task-{DelegationReportFormatter.Short(task.Id)}";
-        var baseRef = startAtSha ?? task.MergeTargetRef ?? "HEAD";
 
         if (task.SourceLandingOperationId is not null)
         {
@@ -178,8 +236,15 @@ public sealed class DelegationWorktreeService
             task.WorktreeBranch = snapshot.Branch;
             task.WorktreeBaseSha = source.VerifiedSourceSha;
             await ValidateVerificationAsync(task, lease, ct);
-            return;
+            return null;
         }
+
+        var alreadyRecorded = !string.IsNullOrWhiteSpace(task.WorktreeBaseRef);
+        var probe = await ProbeConfiguredDefaultAsync(task, ct);
+        var resolved = WorktreeBaseResolver.Resolve(
+            startAtSha, task.WorktreeBaseRequestedRef, task.MergeTargetRef, probe);
+        var decision = new WorktreeBaseDecision(resolved, NewlyRecorded: !alreadyRecorded);
+        var baseRef = resolved.Ref;
 
         Dtos.WorktreeInfo info;
         try
@@ -207,11 +272,22 @@ public sealed class DelegationWorktreeService
 
         task.WorktreePath = info.Path;
         task.WorktreeBranch = info.Branch;
-        task.WorktreeBaseSha = await _gitWorkspace.GetHeadShaAsync(info.Path, ct);
+        var head = await _gitWorkspace.GetHeadShaAsync(info.Path, ct);
+        if (!alreadyRecorded)
+        {
+            task.WorktreeBaseRef = resolved.Ref;
+            task.WorktreeBaseSource = resolved.Source;
+            task.WorktreeBaseSha = head;
+            task.WorktreeBaseTaskId = resolved.Source == WorktreeBaseSource.Repair
+                ? task.RepairSourceTaskId
+                : null;
+        }
+
         _logger.LogInformation(
-            "Task {ShortId}: worktree at {Path} on {Branch} (base {BaseRef}, sha {Sha})",
+            "Task {ShortId}: worktree at {Path} on {Branch} (base {BaseRef}, sha {Sha}, source {Source})",
             DelegationReportFormatter.Short(task.Id), info.Path, info.Branch, baseRef,
-            task.WorktreeBaseSha ?? "(unknown)");
+            (alreadyRecorded ? task.WorktreeBaseSha : head) ?? "(unknown)", resolved.Source);
+        return decision;
     }
 
     /// <summary>

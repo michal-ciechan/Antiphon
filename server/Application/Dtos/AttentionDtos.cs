@@ -265,6 +265,11 @@ public enum AttentionKind
     LandNoProgress = 36,
     LandOutcomeUnconfirmed = 37,
     LandLegacyUnverified = 38,
+    /// <summary>
+    /// CARD-0508: an unconfirmed dispatch-base warning (pending intent or DispatchBase note).
+    /// Appended after shipped 38; do not renumber.
+    /// </summary>
+    DispatchWarningUnconfirmed = 40,
 
     /// <summary>
     /// CARD-0514: an open remote-control management menu is blocking input. Process group,

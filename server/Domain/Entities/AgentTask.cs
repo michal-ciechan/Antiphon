@@ -198,6 +198,28 @@ public class AgentTask
     /// <summary>Branch a Worktree task merges into. Defaults to the parent's branch; null leaves it for a human.</summary>
     public string? MergeTargetRef { get; set; }
 
+    /// <summary>
+    /// CARD-0508. The base the caller asked for (<c>-BaseRef</c>). Written at create, never by
+    /// the server. Null in S1/S2; S4 is deferred.
+    /// </summary>
+    public string? WorktreeBaseRequestedRef { get; set; }
+
+    /// <summary>
+    /// CARD-0508. The base actually used to cut the worktree. Written once at provisioning, then
+    /// immutable. Distinct from <see cref="WorktreeBaseRequestedRef"/> so a reuse cannot relabel
+    /// a recorded DefaultBranch decision as Explicit.
+    /// </summary>
+    public string? WorktreeBaseRef { get; set; }
+
+    /// <summary>CARD-0508. Why <see cref="WorktreeBaseRef"/> was chosen. Unset on historical rows.</summary>
+    public WorktreeBaseSource WorktreeBaseSource { get; set; }
+
+    /// <summary>
+    /// CARD-0508. The sibling (CardCurrent) or repair owner (Repair) whose branch/SHA was chosen.
+    /// No FK — retained if that row is later removed.
+    /// </summary>
+    public Guid? WorktreeBaseTaskId { get; set; }
+
     /// <summary>Advisory file lease — two Shared tasks with intersecting globs are serialised.</summary>
     public string? Scope { get; set; }
 

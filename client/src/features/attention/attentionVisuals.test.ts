@@ -23,6 +23,7 @@ const ALL_KINDS: AttentionKind[] = [
   'LandNoProgress',
   'LandOutcomeUnconfirmed',
   'LandLegacyUnverified',
+  'DispatchWarningUnconfirmed',
   'HerdrSupervisionHeld',
   'StandingContinuityDecision',
   'BlockedQuestion',
@@ -116,6 +117,21 @@ describe('attentionVisuals', () => {
 
   it('collapses only the failures group by default', () => {
     expect(ATTENTION_GROUPS.filter((group) => group.collapsed).map((g) => g.key)).toEqual(['failures'])
+  })
+
+  it('draws DispatchWarningUnconfirmed as a missing dispatch receipt', () => {
+    const visual = ATTENTION_VISUALS.DispatchWarningUnconfirmed
+    expect(visual.label).toBe('Dispatch receipt missing')
+    expect(visual.color).toBe('danger')
+    expect(visual.hint.toLowerCase()).toContain('dispatch')
+    const row = item({
+      kind: 'DispatchWarningUnconfirmed',
+      severity: 'Error',
+      taskId: 'task-dispatch',
+    })
+    expect(groupOf(row)).toBe('broken')
+    expect(targetOf(row)).toBe('/orchestrator?tab=delegations&task=task-dispatch')
+    expect(keyOf(row)).toContain('DispatchWarningUnconfirmed')
   })
 
   it('sends a card row to its board, a task row to the drawer, and an agent row to incidents', () => {

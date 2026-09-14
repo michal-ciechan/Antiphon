@@ -88,6 +88,8 @@ public sealed class DataRetentionService
             && s.LastSeenAt < cutoff
             && !_db.AgentTaskLandNotifications.Any(n => n.ParentSessionId == s.Id && n.ConfirmedAt == null
                 && n.State != LandNotificationState.NotRequired)
+            && !_db.AgentTaskDispatchWarningIntents.Any(i => i.ParentSessionId == s.Id
+                && i.MaterializedAt == null && i.InitialState != LandNotificationState.NotRequired)
             && !_db.AgentTasks.Any(t => t.AgentSessionId == s.Id || t.ParentSessionId == s.Id)
             && !_db.SessionQueuedMessages.Any(m => m.AgentSessionId == s.Id && m.DeferredFromRunAttemptId != null)
             && !_db.RemoteControlModalEpisodes.Any(e => e.SessionId == s.Id && e.ResolvedAt == null));
@@ -128,7 +130,9 @@ public sealed class DataRetentionService
             .Where(s => (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed)
                 && s.LastSeenAt < cutoff
                 && !_db.AgentTaskLandNotifications.Any(n => n.ParentSessionId == s.Id && n.ConfirmedAt == null
-                    && n.State != LandNotificationState.NotRequired))
+                    && n.State != LandNotificationState.NotRequired)
+                && !_db.AgentTaskDispatchWarningIntents.Any(i => i.ParentSessionId == s.Id
+                    && i.MaterializedAt == null && i.InitialState != LandNotificationState.NotRequired))
             .Select(s => s.Id)
             .ToListAsync(ct);
         candidates = candidates.Where(id => !protectedIds.Contains(id)).ToList();
@@ -245,7 +249,9 @@ public sealed class DataRetentionService
             .Where(t => !liveRootIds.Contains(t.RootTaskId)
                 && !_db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.SourceLandingOperationId != null)
                 && !_db.AgentTaskLandings.Any(op => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == op.TaskId))
-                && !_db.AgentTaskLandRequests.Any(r => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == r.TaskId)))
+                && !_db.AgentTaskLandRequests.Any(r => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == r.TaskId))
+                && !_db.AgentTaskDispatchWarningIntents.Any(i => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == i.TaskId))
+                && !_db.AgentTaskLandNotifications.Any(n => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == n.TaskId)))
             .GroupBy(t => t.RootTaskId)
             .Where(g => g.Max(t => t.CompletedAt ?? t.CreatedAt) < cutoff)
             .Select(g => g.Key)

@@ -15,6 +15,41 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
         {
             try
             {
+                try
+                {
+                    Guid? intentCursor = null;
+                    var now = DateTime.UtcNow;
+                    while (!stoppingToken.IsCancellationRequested)
+                    {
+                        await using var scope = scopes.CreateAsyncScope();
+                        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                        now = DateTime.UtcNow;
+                        var query = db.AgentTaskDispatchWarningIntents.AsNoTracking()
+                            .Where(i => i.MaterializedAt == null && i.NextAttemptAt <= now);
+                        if (intentCursor is Guid after) query = query.Where(i => i.Id.CompareTo(after) > 0);
+                        var intentIds = await query.OrderBy(i => i.Id).Select(i => i.Id).Take(128)
+                            .ToListAsync(stoppingToken);
+                        foreach (var id in intentIds)
+                        {
+                            try
+                            {
+                                await using var rowScope = scopes.CreateAsyncScope();
+                                await rowScope.ServiceProvider.GetRequiredService<DispatchBaseWarningIntentService>()
+                                    .MaterializeAsync(id, stoppingToken);
+                            }
+                            catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
+                            { logger.LogWarning(ex, "Dispatch-base warning intent {IntentId} remains unresolved", id); }
+                        }
+                        if (intentIds.Count < 128) break;
+                        intentCursor = intentIds[^1];
+                    }
+                    await using var intentObservation = scopes.CreateAsyncScope();
+                    if (intentObservation.ServiceProvider.GetService<LandDeliveryBoundary>() is { } intentBoundary)
+                        await intentBoundary.ReachedAsync("dispatch-warning-intent-scan", Guid.Empty, Guid.Empty, stoppingToken);
+                }
+                catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
+                { logger.LogWarning(ex, "Dispatch-base warning intent scan failed"); }
+
                 Guid? cursor = null;
                 while (!stoppingToken.IsCancellationRequested)
                 {

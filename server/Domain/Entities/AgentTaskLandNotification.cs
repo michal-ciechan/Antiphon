@@ -7,7 +7,7 @@ public sealed class AgentTaskLandNotification
 {
     public Guid Id { get; set; }
     public bool IsLegacy { get; set; }
-    public Guid RequestId { get; set; }
+    public Guid? RequestId { get; set; }
     public Guid TaskId { get; set; }
     public Guid? LandingOperationId { get; set; }
     public Guid SourceEventId { get; set; }

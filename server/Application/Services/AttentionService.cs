@@ -1200,6 +1200,7 @@ public sealed class AttentionService
         }
         var notes = await _db.AgentTaskLandNotifications.AsNoTracking().Where(n => !n.IsLegacy && n.ConfirmedAt == null
             && n.State != LandNotificationState.NotRequired).ToListAsync(ct);
+        var noteIds = notes.Select(n => n.Id).ToHashSet();
         foreach (var note in notes)
         {
             var age = (now - note.CreatedAt).TotalSeconds;
@@ -1209,15 +1210,51 @@ public sealed class AttentionService
             var task = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == note.TaskId, ct);
             var busy = note.ParentSessionId is Guid destination && await SessionMessageQueueService.IsWorkingAsync(_db, destination, ct);
             var state = row is null ? "missing queue row" : row.DeliveryAttempts == 0 ? (busy ? "queued; caller busy" : "queued; caller idle") : "attempted; receipt unconfirmed";
-            items.Add(new AttentionItemDto(AttentionKind.LandOutcomeUnconfirmed,
+            var dispatch = note.Kind == LandNotificationKind.DispatchBase;
+            items.Add(new AttentionItemDto(
+                dispatch ? AttentionKind.DispatchWarningUnconfirmed : AttentionKind.LandOutcomeUnconfirmed,
                 age >= _delegation.LandErrorSeconds || note.LastErrorCode is not null || parked ? AlertSeverity.Error : AlertSeverity.Warning,
                 task.Id, note.ParentSessionId, task.AgentId, note.QueueMessageId, task.Title,
-                $"Land {note.Kind} notification: {note.State}; {state}",
-                $"notification={note.Id:N}; request={note.RequestId:N}; destination={note.ParentSessionId:N}; "
-                    + $"error={note.LastErrorCode}; parked={parked}; {note.Body}",
+                dispatch
+                    ? $"Dispatch warning notification: {note.State}; {state}"
+                    : $"Land {note.Kind} notification: {note.State}; {state}",
+                dispatch
+                    ? $"notification={note.Id:N}; destination={note.ParentSessionId:N}; error={note.LastErrorCode}; parked={parked}; {note.Body}"
+                    : $"notification={note.Id:N}; request={note.RequestId:N}; destination={note.ParentSessionId:N}; "
+                        + $"error={note.LastErrorCode}; parked={parked}; {note.Body}",
                 note.CreatedAt, null, [AttentionAction.OpenDrawer], task.CardId,
-                ConditionKey: $"land:{note.Id:N}:receipt", LandRequestId: note.RequestId, LandNotificationId: note.Id));
+                ConditionKey: dispatch ? $"dispatch:{note.Id:N}:receipt" : $"land:{note.Id:N}:receipt",
+                LandRequestId: dispatch ? null : note.RequestId, LandNotificationId: note.Id));
         }
+
+        var pendingIntents = await _db.AgentTaskDispatchWarningIntents.AsNoTracking()
+            .Where(i => i.MaterializedAt == null && i.ReplyTo != AgentTaskReplyTo.None)
+            .ToListAsync(ct);
+        foreach (var intent in pendingIntents)
+        {
+            if (noteIds.Contains(intent.NotificationId)
+                || await _db.AgentTaskLandNotifications.AsNoTracking()
+                    .AnyAsync(n => n.Id == intent.NotificationId, ct))
+                continue;
+            var age = (now - intent.CreatedAt).TotalSeconds;
+            if (age < _delegation.LandWarningSeconds && intent.LastErrorCode is null) continue;
+            var task = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == intent.TaskId, ct);
+            items.Add(new AttentionItemDto(
+                AttentionKind.DispatchWarningUnconfirmed,
+                age >= _delegation.LandErrorSeconds || intent.LastErrorCode is not null
+                    ? AlertSeverity.Error : AlertSeverity.Warning,
+                task.Id, intent.ParentSessionId, task.AgentId, null, task.Title,
+                "Dispatch warning awaiting materialization",
+                $"notification={intent.NotificationId:N}; destination={intent.ParentSessionId:N}; error={intent.LastErrorCode}; {intent.Detail}",
+                intent.CreatedAt, null, [AttentionAction.OpenDrawer], task.CardId,
+                ConditionKey: $"dispatch:{intent.NotificationId:N}:receipt",
+                LandRequestId: null, LandNotificationId: null));
+        }
+
+        items = items
+            .GroupBy(i => i.ConditionKey ?? i.Kind + ":" + i.TaskId)
+            .Select(g => g.First())
+            .ToList();
         var legacy = await _db.AgentTaskEvents.AsNoTracking().Where(e => e.LandRequestId == null
             && (e.Type == AgentTaskEventType.Landed || e.Type == AgentTaskEventType.AlreadyPresent || e.Type == AgentTaskEventType.LandedWithResidue
                 || e.Type == AgentTaskEventType.LandingCleanup || e.Type == AgentTaskEventType.LandRefused))

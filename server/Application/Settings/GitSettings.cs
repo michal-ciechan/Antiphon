@@ -6,7 +6,7 @@ public class GitSettings
     public int TimeoutSeconds { get; set; } = 15;
     public string ExecutableName { get; set; } = "git";
     public string WorkspacePath { get; set; } = "work";
-    public string DefaultBranch { get; set; } = "main";
+    public string DefaultBranch { get; set; } = "master";
     public int PollIntervalSeconds { get; set; } = 30;
     public string WorktreeBasePath { get; set; } = "/tmp/antiphon-worktrees";
     public int WorktreeStaleAfterDays { get; set; } = 7;
