@@ -241,15 +241,6 @@ public class ChannelOutboundMigrationTests
         };
     }
 
-    private static async Task ExecuteAsync(
-        NpgsqlConnection connection, CancellationToken ct, string sql, params (string Name, object Value)[] parameters)
-    {
-        await using var command = new NpgsqlCommand(sql, connection);
-        foreach (var (name, value) in parameters)
-            command.Parameters.AddWithValue(name, value);
-        await command.ExecuteNonQueryAsync(ct);
-    }
-
     /// <summary>
     /// Inserts one row into <paramref name="table"/> using the columns the caller cares about, and
     /// fills every OTHER non-nullable column that has no database default with a type-appropriate
