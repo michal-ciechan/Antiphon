@@ -410,7 +410,9 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         QueuedMessageStatus status = QueuedMessageStatus.Pending,
         DeliveryVerdict? deliveryVerdict = null,
         DateTime? lastDeliveryStartedAt = null,
-        string? conversationKey = null)
+        string? conversationKey = null,
+        DateTime? lastDeliveryGeneration = null,
+        bool legacyNullGeneration = false)
     {
         var sid = sessionId ?? SessionId;
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(ConnectionString));
@@ -422,6 +424,11 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         var created = createdAtUtc ?? DateTime.UtcNow - TimeSpan.FromMinutes(5);
         var started = lastDeliveryStartedAt
             ?? (deliveryAttempts > 0 ? DateTime.UtcNow - TimeSpan.FromMinutes(4) : null);
+        var generation = legacyNullGeneration ? null : lastDeliveryGeneration
+            ?? (deliveryAttempts > 0
+                ? SessionGeneration.Normalize(await db.AgentSessions.Where(s => s.Id == sid)
+                    .Select(s => s.StartedAt).SingleAsync())
+                : (DateTime?)null);
         db.SessionQueuedMessages.Add(new SessionQueuedMessage
         {
             Id = id,
@@ -435,6 +442,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             ConversationKey = conversationKey,
             DeliveryAttempts = deliveryAttempts,
             LastDeliveryStartedAt = started,
+            LastDeliveryGeneration = generation,
             LastDeliveryBaselineSequence = baselineSequence,
             DeliveryVerdict = deliveryVerdict,
             DeliveryVerdictAt = deliveryVerdict is null ? null : started ?? created,

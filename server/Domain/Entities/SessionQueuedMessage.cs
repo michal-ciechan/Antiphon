@@ -77,7 +77,7 @@ public class SessionQueuedMessage
     public DateTime? CanceledAt { get; set; }
 
     /// <summary>
-    /// How many times this message has been typed into a terminal (CARD-0055). Survives the revert
+    /// Typed attempts plus failed Enter-only recoveries (CARD-0055 / CARD-0501). Survives the revert
     /// a failed verification does — that is the point: it is what stops an automatic retry looping
     /// forever, and at <c>MaxDeliveryAttempts</c> the message parks for a human instead.
     /// </summary>
@@ -85,6 +85,9 @@ public class SessionQueuedMessage
 
     /// <summary>When the most recent attempt started typing.</summary>
     public DateTime? LastDeliveryStartedAt { get; set; }
+
+    /// <summary>Normalized accepted generation of the process the last attempt typed into.</summary>
+    public DateTime? LastDeliveryGeneration { get; set; }
 
     /// <summary>CARD-0412: keyed recovery action that selected this row. Unique when non-null.</summary>
     public string? CapacityRecoveryActionKey { get; set; }

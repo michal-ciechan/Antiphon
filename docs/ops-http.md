@@ -180,6 +180,11 @@ Invoke-RestMethod "$api/api/agents/$agentId/start" -Method Post -Headers $h `
 
 ## Typed input goes through the queue
 
+For a wedged head, inspect `GET /api/sessions/{id}/queue`: `deliveryAttempts` reaches the cap and
+`parked: true` means automatic delivery skips that row (CARD-0501).
+To clear a reviewed row, use `DELETE /api/sessions/{id}/queue/{messageId}`; the row id comes from
+that queue response. Terminal-task briefs with an empty composer are canceled by the next flush.
+
 `POST /api/sessions/{id}/messages` with `{"body":"...","mode":"Now"|"WhenIdle"}` (default
 `WhenIdle`, which holds until the agent finishes its turn). That queue owns the delivery contract —
 LF, bracketed paste, and a separate Enter — and the delivery verification that goes with it.

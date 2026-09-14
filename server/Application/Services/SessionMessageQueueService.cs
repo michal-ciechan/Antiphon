@@ -593,6 +593,7 @@ public sealed partial class SessionMessageQueueService
             row.SentAt = now;
             row.DeliveryAttempts = 1;
             row.LastDeliveryStartedAt = now;
+            row.LastDeliveryGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
             row.LastDeliveryBaselineSequence = nowBaseline.Observable ? nowBaseline.MaxSequence : null;
             ClearAttemptVerdict(row);
             await db.SaveChangesAsync(ct);
@@ -622,6 +623,7 @@ public sealed partial class SessionMessageQueueService
                 row.SentAt = null;
                 row.DeliveryAttempts = 0;
                 row.LastDeliveryStartedAt = null;
+                row.LastDeliveryGeneration = null;
                 row.LastDeliveryBaselineSequence = null;
                 ClearAttemptVerdict(row);
                 await db.SaveChangesAsync(ct);
@@ -982,6 +984,7 @@ public sealed partial class SessionMessageQueueService
             message.SentAt = UtcNow();
             message.DeliveryAttempts++;
             message.LastDeliveryStartedAt = UtcNow();
+            message.LastDeliveryGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
             message.LastDeliveryBaselineSequence = baseline.Observable ? baseline.MaxSequence : null;
             ClearAttemptVerdict(message);
             await db.SaveChangesAsync(ct);
@@ -1398,6 +1401,47 @@ public sealed partial class SessionMessageQueueService
     // coalesces into one delivery under the batch markers (OpenClaw's 'collect' model): a run of 1
     // is literally today's behaviour; UI/System messages and conversation changes break the run, so
     // cross-origin FIFO order is preserved and operator messages keep 1:1 turns.
+    // Null generation is reserved for pre-migration rows: only a launch after their typing
+    // proves the old composer gone. Missing evidence must never authorize cancellation.
+    private static bool DeliveryGenerationChanged(SessionQueuedMessage message, DateTime currentGeneration) =>
+        message.LastDeliveryGeneration is { } generation
+            ? !SessionGeneration.Equal(generation, currentGeneration)
+            : message.LastDeliveryStartedAt is { } started
+                && SessionGeneration.Compare(currentGeneration, started) > 0;
+
+    private async Task<bool> CancelDeadBriefsAsync(AppDbContext db,
+        IEnumerable<SessionQueuedMessage> messages, DateTime currentGeneration, CancellationToken ct)
+    {
+        var pending = messages.Where(m => m.Status == QueuedMessageStatus.Pending
+            && m.ExecutionTaskId != null).ToList();
+        var changed = await CancelExpiredBriefsAsync(db, pending, ct);
+        var taskIds = pending.Where(m => m.Status == QueuedMessageStatus.Pending)
+            .Select(m => m.ExecutionTaskId!.Value).Distinct().ToList();
+        if (taskIds.Count == 0) return changed;
+        var tasks = await db.AgentTasks.AsNoTracking().Where(t => taskIds.Contains(t.Id))
+            .Select(t => new { t.Id, t.Status }).ToDictionaryAsync(t => t.Id, ct);
+        foreach (var message in pending.Where(m => m.Status == QueuedMessageStatus.Pending))
+        {
+            if (!tasks.TryGetValue(message.ExecutionTaskId!.Value, out var task)
+                || !AgentTaskService.IsSettled(task.Status))
+                continue;
+            var untyped = message.DeliveryAttempts == 0;
+            if (!untyped && !DeliveryGenerationChanged(message, currentGeneration))
+                continue;
+
+            message.Status = QueuedMessageStatus.Canceled;
+            message.CanceledAt = UtcNow();
+            changed = true;
+            _logger.LogInformation(
+                "Canceled orphaned brief {MessageId} for terminal task {TaskId} ({Status}): {Reason}",
+                message.Id, task.Id.ToString("N")[..8], task.Status,
+                untyped ? "never typed" : "delivery generation changed");
+        }
+        if (changed) await db.SaveChangesAsync(ct);
+        return changed;
+    }
+
+    // Human SendNow and first-input deadline checks deliberately retain expiry-only semantics.
     private async Task<bool> CancelExpiredBriefsAsync(AppDbContext db,
         IEnumerable<SessionQueuedMessage> messages, CancellationToken ct)
     {
@@ -1518,7 +1562,12 @@ public sealed partial class SessionMessageQueueService
         if (pending.Count == 0)
             return FlushResult.Nothing;
 
-        if (await CancelExpiredBriefsAsync(db, pending, ct))
+        var sessionGeneration = SessionGeneration.Normalize(
+            await db.AgentSessions.AsNoTracking()
+                .Where(s => s.Id == sessionId)
+                .Select(s => s.StartedAt)
+                .FirstAsync(ct));
+        if (await CancelDeadBriefsAsync(db, pending, sessionGeneration, ct))
             pending = pending.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
         if (pending.Count == 0) return FlushResult.Nothing;
 
@@ -1543,11 +1592,6 @@ public sealed partial class SessionMessageQueueService
         // types them again — that is what "parks for a human" means. They are still late-confirmed
         // above, so a park resolves itself if the body turns out to have landed complete. A
         // truncated park stays parked: identity-without-completeness is not Sent.
-        var sessionGeneration = SessionGeneration.Normalize(
-            await db.AgentSessions.AsNoTracking()
-                .Where(s => s.Id == sessionId)
-                .Select(s => s.StartedAt)
-                .FirstAsync(ct));
         var deliverable = pending
             .Where(m => m.DeliveryAttempts < MaxAttempts)
             .Where(m => m.MaintenanceKind != RemoteControlMaintenanceKind.LegacyUnclassified)
@@ -1724,8 +1768,11 @@ public sealed partial class SessionMessageQueueService
         var spilled = !ReferenceEquals(body, composed) && body != composed;
 
         // CARD-0340 S3 / CARD-0342: a previously typed body still standing in the composer gets
-        // Enter only. Never re-type, and never treat a missing snapshot as an empty composer.
-        if (run.Any(m => m.DeliveryAttempts > 0))
+        // Enter only in the process that took the typing, with the whole head visible (CARD-0501).
+        // A new generation proves the old composer gone even when history shows the same body.
+        if (run.Any(m => m.DeliveryAttempts > 0)
+            && run.Where(m => m.DeliveryAttempts > 0)
+                .All(m => !DeliveryGenerationChanged(m, sessionGeneration)))
         {
             if (!_runtime.TryGetLiveSnapshot(sessionId, out var retrySnap))
             {
@@ -1736,7 +1783,7 @@ public sealed partial class SessionMessageQueueService
                 return FlushResult.Nothing;
             }
 
-            if (ComposerDeliveryEvidence.HeadFragmentIsVisible(retrySnap.RenderedScreen, body))
+            if (ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(retrySnap.RenderedScreen, body))
                 return await EnterOnlyConfirmLockedAsync(db, sessionId, run, body, ct, ceilings);
         }
 
@@ -1758,6 +1805,7 @@ public sealed partial class SessionMessageQueueService
             m.SentAt = now;
             m.DeliveryAttempts++;
             m.LastDeliveryStartedAt = now;
+            m.LastDeliveryGeneration = sessionGeneration;
             m.LastDeliveryBaselineSequence = baseline.Observable ? baseline.MaxSequence : null;
             ClearAttemptVerdict(m);
             if (spilled)
@@ -1828,6 +1876,7 @@ public sealed partial class SessionMessageQueueService
                 if (m.DeliveryAttempts > 0)
                     m.DeliveryAttempts--;
                 m.LastDeliveryStartedAt = null;
+                m.LastDeliveryGeneration = null;
                 m.LastDeliveryBaselineSequence = null;
                 ClearAttemptVerdict(m);
             }
@@ -2029,18 +2078,24 @@ public sealed partial class SessionMessageQueueService
             return late.Truncated > 0 ? FlushResult.Failed : FlushResult.Nothing;
         }
 
-        var body = ReconstructRunBody(remaining);
-        if (!_runtime.TryGetLiveSnapshot(sessionId, out var snapshot))
+        var currentGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
+        var generationChanged = currentGeneration is { } current
+            && remaining.Any(m => DeliveryGenerationChanged(m, current));
+        if (!generationChanged)
         {
-            _logger.LogInformation(
-                "Leaving interrupted delivery on session {SessionId} untouched: rendered snapshot "
-                + "is unavailable, so the composer cannot be shown empty",
-                sessionId);
-            return FlushResult.Nothing;
-        }
+            var body = ReconstructRunBody(remaining);
+            if (!_runtime.TryGetLiveSnapshot(sessionId, out var snapshot))
+            {
+                _logger.LogInformation(
+                    "Leaving interrupted delivery on session {SessionId} untouched: rendered snapshot "
+                    + "is unavailable, so the composer cannot be shown empty",
+                    sessionId);
+                return FlushResult.Nothing;
+            }
 
-        if (ComposerDeliveryEvidence.HeadFragmentIsVisible(snapshot.RenderedScreen, body))
-            return await EnterOnlyConfirmLockedAsync(db, sessionId, remaining, body, ct, ceilings);
+            if (ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(snapshot.RenderedScreen, body))
+                return await EnterOnlyConfirmLockedAsync(db, sessionId, remaining, body, ct, ceilings);
+        }
 
         foreach (var message in remaining.Where(m => m.Status == QueuedMessageStatus.Sent))
         {
@@ -2051,8 +2106,9 @@ public sealed partial class SessionMessageQueueService
         await db.SaveChangesAsync(ct);
         _logger.LogInformation(
             "Reverted {Count} interrupted Sent message(s) on session {SessionId} to Pending "
-            + "(attempts kept); the body is not on screen so the ordinary path may re-type",
-            remaining.Count, sessionId);
+            + "(attempts kept); {Reason}, so the ordinary path may re-type",
+            remaining.Count, sessionId,
+            generationChanged ? "delivery generation changed" : "the whole body head is not on screen");
         return FlushResult.Nothing;
     }
 
@@ -2085,6 +2141,7 @@ public sealed partial class SessionMessageQueueService
             return FlushResult.Nothing;
 
         var submitBaseline = await SettlePostEvidenceAsync(sessionId, ct);
+        var capturedGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
         try
         {
             await _runtime.SendInputAsync(sessionId, "\r", ct);
@@ -2145,7 +2202,13 @@ public sealed partial class SessionMessageQueueService
         if (outcome.Verdict == DeliveryVerdict.BackendUnreachable)
             return FlushResult.Nothing;
 
-        await HandleDeliveryFailureAsync(sessionId, ids, outcome.Verdict, ct, capturedGeneration: null);
+        // Success finishes the original typing. Failure consumes another bounded recovery cycle;
+        // retain its typing time, transcript floor and generation for late-confirm.
+        foreach (var message in run)
+            message.DeliveryAttempts++;
+        await db.SaveChangesAsync(ct);
+        await HandleDeliveryFailureAsync(sessionId, ids, outcome.Verdict, ct, capturedGeneration,
+            enterOnlyRecovery: true);
         return FlushResult.Failed;
     }
 
@@ -3467,15 +3530,16 @@ public sealed partial class SessionMessageQueueService
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        return await db.AgentSessions.AsNoTracking()
+        var generation = await db.AgentSessions.AsNoTracking()
             .Where(s => s.Id == sessionId)
             .Select(s => (DateTime?)s.StartedAt)
             .FirstOrDefaultAsync(ct);
+        return generation is { } value ? SessionGeneration.Normalize(value) : null;
     }
 
     private async Task HandleDeliveryFailureAsync(
         Guid sessionId, IReadOnlyList<Guid>? messageIds, DeliveryVerdict verdict, CancellationToken ct,
-        DateTime? capturedGeneration = null)
+        DateTime? capturedGeneration = null, bool enterOnlyRecovery = false)
     {
         if (messageIds is { Count: > 0 })
         {
@@ -3709,7 +3773,9 @@ public sealed partial class SessionMessageQueueService
                     : agent.AlwaysOn && working
                         ? " The session was NOT restarted — killing it would abort a live turn."
                         : string.Empty;
-                var detail = fate + restart;
+                var detail = (enterOnlyRecovery
+                    ? " This was after an Enter-only recovery: the composer showed the body's head but no prompt was recorded."
+                    : string.Empty) + fate + restart;
 
                 var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
                 await supervisor.RecordIncidentAsync(

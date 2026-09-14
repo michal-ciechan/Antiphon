@@ -1,5 +1,17 @@
 # Session runtime invariants
 
+- **A queue retry must belong to the composer that took the typing (CARD-0501).**
+  `LastDeliveryGeneration` records the normalized accepted generation before each typed attempt.
+  Both Pending retry and interrupted Sent recovery require that generation and the entire
+  normalized head before pressing Enter only. A changed generation bypasses screen history;
+  legacy null generations use a launch-after-typing clock check. Transcript late-confirm still
+  precedes retry. Successful Enter-only recovery finishes the original attempt; failed recovery
+  charges an attempt without moving the typing timestamp, baseline or generation. Parking bounds
+  recovery, and any kill uses the generation captured before Enter. Backend-unreachable deferral
+  remains uncharged. A terminal task's Pending brief is canceled when never typed or when its
+  generation changed; a possibly held body stays in recovery. Human SendNow retains expiry-only
+  cancellation. Pinned by `SessionMessageQueueWedgedHeadTests`.
+
 - **Tracked root exit is not descendant-exit authority (CARD-0478, incomplete Code checkpoint).**
   The opt-in modern PtyHost path retains its original job observer after root exit.
   Its irreversible seal precedes successful zero accounting and output drain;
@@ -231,7 +243,7 @@ verification report.
 
 ### Gotcha #84
 
-- **A `Sent` queue row with a null `DeliveryVerdict` is an interrupted attempt, not proof of delivery** (CARD-0340 S3 / CARD-0342). `DeliverNextLockedAsync` stamps `Sent` before typing (crash-safe for graceful shutdown, which reverts). A hard kill in the ≤80s confirm window leaves `Sent` plus a null verdict. The stranded sweep recovers it: transcript identity first (`LateConfirmed`), then Enter-only if the body head is still on a live idle screen, else revert to `Pending` with attempts kept so the same pass may re-type. A missing snapshot is not an empty composer. Grok's unobservable deadline no longer treats sequence advance as submit evidence — a body still visible is `NoSubmitOutput` and stays retryable; a sustained composer departure (head gone for `PostEvidenceSettleMs`, still gone at the deadline) is the degraded screen result. Pinned by `SessionMessageQueueInterruptedAttemptTests`, `SessionMessageQueueDeliveryVerificationTests` Grok unobservable cases, `SubmitEvidenceTests`, and `SessionMessageQueueGrokPtyIntegrationTests.Swallowed_enter_redraw_is_NoSubmitOutput_then_Enter_only_recovery`.
+- **A `Sent` queue row with a null `DeliveryVerdict` is an interrupted attempt, not proof of delivery** (CARD-0340 S3 / CARD-0342). `DeliverNextLockedAsync` stamps `Sent` before typing (crash-safe for graceful shutdown, which reverts). A hard kill in the ≤80s confirm window leaves `Sent` plus a null verdict. The stranded sweep recovers it: transcript identity first (`LateConfirmed`), then Enter-only if the whole body head is on a live idle screen in the attempt's generation (CARD-0501), else revert to `Pending` with attempts kept so the same pass may re-type. A missing snapshot is not an empty composer. Grok's unobservable deadline no longer treats sequence advance as submit evidence — a body still visible is `NoSubmitOutput` and stays retryable; a sustained composer departure (head gone for `PostEvidenceSettleMs`, still gone at the deadline) is the degraded screen result. Pinned by `SessionMessageQueueInterruptedAttemptTests`, `SessionMessageQueueDeliveryVerificationTests` Grok unobservable cases, `SubmitEvidenceTests`, and `SessionMessageQueueGrokPtyIntegrationTests.Swallowed_enter_redraw_is_NoSubmitOutput_then_Enter_only_recovery`.
 
 ### Gotcha #86
 
