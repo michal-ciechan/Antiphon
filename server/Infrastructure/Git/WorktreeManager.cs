@@ -533,7 +533,7 @@ public sealed class WorktreeManager : IWorktreeManager
     {
         if (!IsPathUnderRoot(request.Source.WorktreePath, ResolveWorktreeRoot(create: false)))
             return Task.FromResult(new WorktreeRemoval(false, false, false, "worktree_outside_managed_root"));
-        return _guardedRemoval?.RemoveAsync(request, ct)
+        return _guardedRemoval?.RemoveAsync(request with { ManagedRoot = ResolveWorktreeRoot(create: false) }, ct)
             ?? Task.FromResult(new WorktreeRemoval(false, false, false, "removal_evidence_reader_required"));
     }
 
