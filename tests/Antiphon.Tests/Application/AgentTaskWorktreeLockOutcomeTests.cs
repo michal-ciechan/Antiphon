@@ -34,7 +34,11 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
                 receiver = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false,
                     ConnectionString = producer.Schema.ConnectionString, ConfigureServices = services => {
                         services.AddSingleton<CompletionNoteFlushQueue>(); services.AddSingleton<SpecialistFailureQueue>();
+                        services.AddSingleton(sp => new PtyDeliveryProfile(sp.GetRequiredService<IServiceScopeFactory>(),
+                            NullLogger<PtyDeliveryProfile>.Instance, backendOverride: "modern"));
                         services.AddScoped<AgentTaskLandNotificationService>(); } });
+                (await receiver.Provider.GetRequiredService<PtyDeliveryProfile>().RefreshAsync(default))
+                    .ReplyInlineMaxChars.ShouldBe(14400);
                 producer.Messages = receiver.Queue;
                 await using var db = producer.CreateContext();
                 var task = await db.AgentTasks.SingleAsync(t => t.Id == producer.Fixture.TaskId);

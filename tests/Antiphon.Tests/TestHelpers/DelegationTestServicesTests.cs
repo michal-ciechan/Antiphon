@@ -37,11 +37,6 @@ public sealed class DelegationTestServicesTests
         var direct = DelegationTestServices.CreateGitGraph(new(), diagnostics: diagnostics, probe: probe, cleanupJournal: journal);
         direct.Diagnostics.ShouldBeSameAs(diagnostics); direct.Probe.ShouldBeSameAs(probe); direct.Journal.ShouldBeSameAs(journal);
     }
-    public class FailOnUseProxy : System.Reflection.DispatchProxy
-    {
-        protected override object? Invoke(System.Reflection.MethodInfo? targetMethod, object?[]? args) =>
-            throw new InvalidOperationException("A pure composition test must not invoke external I/O: " + targetMethod?.Name);
-    }
     [Test]
     public async Task Logging_clock_and_helper_resolve_the_whole_worktree_graph()
     {
@@ -111,5 +106,11 @@ public sealed class DelegationTestServicesTests
         services.Count(d => d.ServiceType == typeof(GitWorkspaceService)).ShouldBe(1);
         services.ShouldNotContain(d => d.ServiceType == typeof(DelegationWorktreeService));
         services.ShouldNotContain(d => d.ServiceType == typeof(IWorktreeManager));
+    }
+
+    public class FailOnUseProxy : System.Reflection.DispatchProxy
+    {
+        protected override object? Invoke(System.Reflection.MethodInfo? targetMethod, object?[]? args) =>
+            throw new InvalidOperationException("A pure composition test must not invoke external I/O: " + targetMethod?.Name);
     }
 }
