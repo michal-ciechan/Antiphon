@@ -59,6 +59,7 @@ public class AppDbContext : DbContext
     public DbSet<VerificationExecution> VerificationExecutions => Set<VerificationExecution>();
     public DbSet<AgentTaskLandRequest> AgentTaskLandRequests => Set<AgentTaskLandRequest>();
     public DbSet<AgentTaskLandNotification> AgentTaskLandNotifications => Set<AgentTaskLandNotification>();
+    public DbSet<WorktreeCleanupAttempt> WorktreeCleanupAttempts => Set<WorktreeCleanupAttempt>();
     public DbSet<AgentTaskEvent> AgentTaskEvents => Set<AgentTaskEvent>();
     public DbSet<StageOutcome> StageOutcomes => Set<StageOutcome>();
     public DbSet<AgentTuiProfile> AgentTuiProfiles => Set<AgentTuiProfile>();
@@ -1565,6 +1566,33 @@ public class AppDbContext : DbContext
             entity.HasIndex(r => r.TaskId).IsUnique().HasFilter("\"IsPending\" = TRUE");
             entity.HasIndex(r => new { r.IsPending, r.LastProgressAt });
             entity.HasOne<AgentTask>().WithMany().HasForeignKey(r => r.TaskId).OnDelete(DeleteBehavior.Restrict);
+        });
+        modelBuilder.Entity<WorktreeCleanupAttempt>(entity =>
+        {
+            entity.ToTable("WorktreeCleanupAttempts", table =>
+                table.HasCheckConstraint("CK_WorktreeCleanupAttempts_CaptureBytes",
+                    "\"CaptureJson\" IS NULL OR octet_length(\"CaptureJson\") <= 32768"));
+            entity.HasKey(a => a.Id);
+            entity.HasIndex(a => a.RequestId).IsUnique();
+            entity.HasIndex(a => new { a.OperationId, a.CreatedAt });
+            entity.Property(a => a.ConcurrencyToken).IsConcurrencyToken();
+            entity.Property(a => a.RepositoryPath).HasMaxLength(1000);
+            entity.Property(a => a.WorktreePath).HasMaxLength(1000);
+            entity.Property(a => a.CommonDirectory).HasMaxLength(1000);
+            entity.Property(a => a.GitDirectory).HasMaxLength(1000);
+            entity.Property(a => a.SourceFullRef).HasMaxLength(400);
+            entity.Property(a => a.TargetFullRef).HasMaxLength(400);
+            entity.Property(a => a.SourceSha).HasMaxLength(64);
+            entity.Property(a => a.TargetSha).HasMaxLength(64);
+            entity.Property(a => a.FirstGitFailureJson).HasMaxLength(2048);
+            entity.Property(a => a.LastGitOutcomeJson).HasMaxLength(2048);
+            entity.Property(a => a.Summary).HasMaxLength(600);
+            entity.Property(a => a.RetryReason).HasMaxLength(100);
+            entity.Property(a => a.Residue).HasMaxLength(400);
+            entity.HasOne<AgentTaskLandRequest>().WithMany().HasForeignKey(a => a.RequestId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<AgentTaskLanding>().WithMany().HasForeignKey(a => a.OperationId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<AgentTask>().WithMany().HasForeignKey(a => a.TaskId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<AgentTaskEvent>().WithMany().HasForeignKey(a => a.TerminalEventId).OnDelete(DeleteBehavior.Restrict);
         });
         modelBuilder.Entity<AgentTaskLandNotification>(entity =>
         {
