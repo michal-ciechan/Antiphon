@@ -8,7 +8,12 @@ namespace Antiphon.Server.Infrastructure.Git;
 public class WorktreeNativeIO
 {
     public virtual bool Supported => OperatingSystem.IsWindows();
-    public virtual bool Exists(string path) => Directory.Exists(path) || File.Exists(path);
+    public virtual bool Exists(string path)
+    {
+        try { _ = File.GetAttributes(path); return true; }
+        catch (FileNotFoundException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
+    }
     public virtual FileAttributes Attributes(string path) => File.GetAttributes(path);
     public virtual IEnumerator<string> Entries(string path) => Directory.EnumerateFileSystemEntries(path).GetEnumerator();
 

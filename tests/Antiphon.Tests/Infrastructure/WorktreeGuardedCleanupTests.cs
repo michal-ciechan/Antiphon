@@ -179,7 +179,8 @@ public sealed class WorktreeGuardedCleanupTests
     {
         await using var h = await RemovalHarness.CreateAsync();
         h.OtherCommand = (_, args) => Task.FromResult<LandingGitResult?>(args[0] == "update-ref" && args.Contains("-d") ? new(1, "", "delete_failed") : null);
-        (await h.RemoveAsync()).IsClean.ShouldBeFalse();
+        var result = await h.RemoveAsync();
+        result.Residue.ShouldBe("branch_delete_failed", System.Text.Json.JsonSerializer.Serialize(await h.RowAsync()));
         h.H.Fixture.Git.Trace.Count(a => a[0] == "update-ref" && a.Contains("-d")).ShouldBe(1);
     }
     [Test]

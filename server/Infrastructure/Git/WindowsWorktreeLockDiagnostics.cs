@@ -39,6 +39,7 @@ public sealed class WindowsWorktreeLockDiagnostics(WorktreeDiagnosticIO io, IOpt
             if (!Path.IsPathFullyQualified(executable) || !io.TrustedExecutable(executable))
                 return Result(WorktreeLockStatus.Unavailable, "UntrustedOrMissingTool");
             if (!io.Elevated) return Result(WorktreeLockStatus.Unavailable, "InsufficientPrivileges");
+            if (!io.LicenseReady) return Result(WorktreeLockStatus.Unavailable, "LicenseSetupRequired");
             root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
             if (!io.Exists(root)) return Result(WorktreeLockStatus.PathGone, "PathGone");
             var scratch = Path.GetFullPath(io.ScratchRoot);

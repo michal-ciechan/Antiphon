@@ -53,9 +53,15 @@ public sealed class WorktreeGuardedCleanup(IWorktreeCleanupJournal journal, IWor
                 CheckBudget();
                 await journal.RecordOutcomeAsync(context, first.Outcome, false, true, extra);
                 CheckBudget();
-                var handles = await diagnostics.CaptureAsync(request.Source.WorktreePath, extra);
+                WorktreeLockSnapshot handles;
+                try { handles = await diagnostics.CaptureAsync(request.Source.WorktreePath, extra); }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception) { handles = new(WorktreeLockStatus.Failed, "DiagnosticFailed", clock.GetUtcNow().UtcDateTime, []); }
                 CheckBudget();
-                var native = await probe.ObserveAsync(new(request.Source.WorktreePath, request.CommonDirectory, request.GitDirectory), handles.Owners, extra);
+                WorktreeNativeSnapshot native;
+                try { native = await probe.ObserveAsync(new(request.Source.WorktreePath, request.CommonDirectory, request.GitDirectory), handles.Owners, extra); }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception) { native = new(WorktreeLockStatus.Unavailable, "ProbeFailed", []); }
                 CheckBudget();
                 var capture = new WorktreeCleanupCapture(context.AttemptId, context.RequestId, context.OperationId,
                     context.TaskId, first.Outcome.At, first.Outcome, handles, native);

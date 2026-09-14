@@ -66,7 +66,7 @@ public sealed class WorktreeCleanupJournal(IServiceScopeFactory scopes, TimeProv
             .SingleOrDefaultAsync(a => a.OperationId == operationId && a.RequestId == requestId, ct);
         var capture = await db.WorktreeCleanupAttempts.AsNoTracking()
             .Where(a => a.OperationId == operationId && a.CaptureState != WorktreeCleanupCaptureState.NotNeeded)
-            .OrderByDescending(a => a.CreatedAt).ThenByDescending(a => a.Id).FirstOrDefaultAsync(ct);
+            .OrderByDescending(a => a.RequestId == requestId).ThenByDescending(a => a.CreatedAt).ThenByDescending(a => a.Id).FirstOrDefaultAsync(ct);
         return new(current?.Id, capture is null ? null : new WorktreeCleanupPresentation().Reference(capture, capture.RequestId != requestId));
     }
 

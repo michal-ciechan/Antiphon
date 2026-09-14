@@ -7,12 +7,15 @@ public sealed class WorktreeHandleCsv
 {
     public (IReadOnlyList<WorktreeLockOwner> Owners, bool Partial, int Omitted) Parse(string csv, string root)
     {
-        var rows = ParseRows(csv).ToList();
-        if (rows.Count == 0 || !rows[0].SequenceEqual(new[] { "Process", "PID", "Type", "Handle", "Name" }))
+        using var rows = ParseRows(csv).GetEnumerator();
+        if (!rows.MoveNext() || !rows.Current.SequenceEqual(new[] { "Process", "PID", "Type", "Handle", "Name" }))
             throw new FormatException("UnknownCsvSchema");
         var owners = new List<WorktreeLockOwner>(); var partial = false; var omitted = 0;
-        foreach (var row in rows.Skip(1))
+        try
         {
+          while (rows.MoveNext())
+          {
+            var row = rows.Current;
             if (row.Length != 5 || !int.TryParse(row[1], out var pid) || pid <= 0)
                 throw new FormatException("MalformedCsv");
             if (row[2] != "File") continue;
@@ -27,7 +30,10 @@ public sealed class WorktreeHandleCsv
             if (owners.Contains(owner)) continue;
             if (owners.Count >= 32) { partial = true; omitted++; continue; }
             owners.Add(owner);
+          }
         }
+        catch (FormatException) when (owners.Count > 0)
+        { partial = true; omitted++; }
         return (owners, partial, omitted);
     }
 
