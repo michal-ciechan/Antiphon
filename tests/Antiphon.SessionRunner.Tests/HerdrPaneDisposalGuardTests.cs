@@ -129,7 +129,8 @@ public sealed partial class HerdrPaneDisposalServiceTests
     [Test] public Task C461_G043_Other_live_binding() => Bound(true);
     [Test] public async Task C461_G044_Pending_adoption_binding()
     {
-        await using var h = new HerdrPaneDisposalFixture(); var path = SaveLocator(h, "sidecar");
+        // One refused dial establishes Pending; the production five-second timeout is not part of the binding assertion.
+        await using var h = new HerdrPaneDisposalFixture(connectTimeoutMs: 1000); var path = SaveLocator(h, "sidecar");
         await h.Runtime.AdoptOrphanedHostsAsync(new HerdrPaneDisposalConcurrencyTests.Probe(), default);
         h.Runtime.Get(h.SessionId).Pending.ShouldBe(HerdrPendingReasons.Unreachable);
         await h.StartAsync(); var p = await h.PreviewAsync(); p.Blockers.ShouldContain(HerdrProblemTypes.PaneBound);
