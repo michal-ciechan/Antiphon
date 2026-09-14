@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
@@ -2507,5 +2508,151 @@ public class SessionMessageQueueDeliveryVerificationTests
         await using var db = CreateContext();
         await db.AgentSessions.Where(s => s.Id == sessionId)
             .ExecuteUpdateAsync(u => u.SetProperty(s => s.AgentKind, kind));
+    }
+
+    [Test]
+    public async Task C514_Menu_resolution_is_not_work_delivery()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        h.Adapter.RemoteControlMenuOpen = true;
+        var episode = await h.Recovery.DetectAsync(
+            h.SessionId, h.Generation,
+            await h.Recovery.ObserveAsync(h.SessionId, h.Generation, CancellationToken.None),
+            null, CancellationToken.None);
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "ordinary work body c514xx", MessageSendMode.WhenIdle, CancellationToken.None);
+        h.Adapter.RemoteControlMenuOpen = false;
+        var sem = h.Queue.GetLock(h.SessionId);
+        await sem.WaitAsync(CancellationToken.None);
+        try
+        {
+            await h.Recovery.TryDismissIdleUnderLockAsync(h.SessionId, episode!.Id, CancellationToken.None);
+        }
+        finally
+        {
+            sem.Release();
+        }
+
+        await using var db = h.CreateDb();
+        var work = await db.SessionQueuedMessages.SingleAsync(m =>
+            m.AgentSessionId == h.SessionId && m.Body.Contains("ordinary work", StringComparison.Ordinal));
+        work.DeliveryVerdict.ShouldNotBe(DeliveryVerdict.Delivered);
+        (await db.TranscriptEntries.CountAsync(t =>
+            t.AgentSessionId == h.SessionId && t.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C514_Now_and_SendNow_wait_behind_open_modal()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        h.Adapter.RemoteControlMenuOpen = true;
+        await h.Recovery.DetectAsync(
+            h.SessionId, h.Generation,
+            await h.Recovery.ObserveAsync(h.SessionId, h.Generation, CancellationToken.None),
+            null, CancellationToken.None);
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "now body c514xxxx", MessageSendMode.Now, CancellationToken.None);
+        h.Adapter.ConditionalInputs.ShouldBeEmpty();
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        var pending = await h.Inner.SeedPendingMessageAsync("sendnow body c514x");
+        await h.Queue.SendNowAsync(h.SessionId, pending, CancellationToken.None);
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        var dto = await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None);
+        dto.ModalBlocked.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task C514_WhenIdle_flush_waits_behind_open_modal()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        h.Adapter.RemoteControlMenuOpen = true;
+        await h.Recovery.DetectAsync(
+            h.SessionId, h.Generation,
+            await h.Recovery.ObserveAsync(h.SessionId, h.Generation, CancellationToken.None),
+            null, CancellationToken.None);
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "whenidle body c514xx", MessageSendMode.WhenIdle, CancellationToken.None);
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        h.Adapter.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C514_Local_command_fast_path_obeys_modal_barrier()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        h.Adapter.RemoteControlMenuOpen = true;
+        await h.Recovery.DetectAsync(
+            h.SessionId, h.Generation,
+            await h.Recovery.ObserveAsync(h.SessionId, h.Generation, CancellationToken.None),
+            null, CancellationToken.None);
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "/rename Antiphon", MessageSendMode.Now, CancellationToken.None);
+        h.Adapter.Inputs.ShouldBeEmpty();
+        h.Adapter.Prompts.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C514_Blocked_work_spends_no_attempts_and_never_kills()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        h.Adapter.RemoteControlMenuOpen = true;
+        await h.Recovery.DetectAsync(
+            h.SessionId, h.Generation,
+            await h.Recovery.ObserveAsync(h.SessionId, h.Generation, CancellationToken.None),
+            null, CancellationToken.None);
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "blocked work body c514", MessageSendMode.WhenIdle, CancellationToken.None);
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+        await using var db = h.CreateDb();
+        var row = await db.SessionQueuedMessages.SingleAsync(m =>
+            m.AgentSessionId == h.SessionId && m.Body.Contains("blocked work", StringComparison.Ordinal));
+        row.DeliveryAttempts.ShouldBe(0);
+        row.Status.ShouldBe(QueuedMessageStatus.Pending);
+        h.Adapter.Killed.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task C514_Unrelated_prompt_or_queue_removal_cannot_release_modal()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        h.Adapter.RemoteControlMenuOpen = true;
+        await h.Recovery.DetectAsync(
+            h.SessionId, h.Generation,
+            await h.Recovery.ObserveAsync(h.SessionId, h.Generation, CancellationToken.None),
+            null, CancellationToken.None);
+        await h.Inner.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "unrelated other prompt body");
+        await using (var db = h.CreateDb())
+        {
+            var extra = new SessionQueuedMessage
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = h.SessionId,
+                Body = "to-remove",
+                Status = QueuedMessageStatus.Canceled,
+                Sequence = 50,
+                Origin = QueuedMessageOrigin.Ui,
+                CreatedAt = DateTime.UtcNow,
+                CanceledAt = DateTime.UtcNow,
+            };
+            db.SessionQueuedMessages.Add(extra);
+            await db.SaveChangesAsync();
+        }
+
+        (await h.Queue.IsModalBlockedAsync(h.SessionId, CancellationToken.None)).ShouldBeTrue();
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "still held work c514xx", MessageSendMode.WhenIdle, CancellationToken.None);
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C514_Multiline_release_keeps_LF_paste_and_separate_Enter()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        const string body = "line one of the work\nline two of the work";
+        await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.Now, CancellationToken.None);
+        h.Adapter.Inputs.Count.ShouldBeGreaterThanOrEqualTo(2);
+        h.Adapter.Inputs[^1].ShouldBe("\r");
+        h.Adapter.Inputs[^2].ShouldContain("\n");
+        h.Adapter.Inputs[^2].ShouldNotContain("\r");
     }
 }

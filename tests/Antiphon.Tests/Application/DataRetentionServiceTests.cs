@@ -598,6 +598,122 @@ public class DataRetentionServiceTests
 
     // ---------- helpers ----------
 
+    [Test]
+    public async Task C514_Retention_keeps_ambiguous_arm_veto()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var sessionId = await SeedSessionAsync(marker, SessionStatus.Running, DateTime.UtcNow);
+            var id = Guid.NewGuid();
+            await using (var db = CreateContext())
+            {
+                db.SessionQueuedMessages.Add(new SessionQueuedMessage
+                {
+                    Id = id,
+                    AgentSessionId = sessionId,
+                    Body = "/remote-control",
+                    Status = QueuedMessageStatus.Sent,
+                    Sequence = 1,
+                    Origin = QueuedMessageOrigin.Supervision,
+                    CreatedAt = DaysAgo(40),
+                    SentAt = DaysAgo(40),
+                    MaintenanceKind = RemoteControlMaintenanceKind.AutomaticArm,
+                    MaintenanceResult = RemoteControlArmResult.ArmUnconfirmed,
+                    MaintenanceAcceptedStartedAt = SessionGeneration.Normalize(DateTime.UtcNow),
+                });
+                await db.SaveChangesAsync();
+            }
+
+            await using var prune = CreateContext();
+            await CreateService(prune).PruneQueuedMessagesAsync(CancellationToken.None);
+            (await QueueExistsAsync(id)).ShouldBeTrue();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task C514_Open_modal_survives_episode_retention()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var sessionId = await SeedSessionAsync(marker, SessionStatus.Running, DateTime.UtcNow);
+            var openId = Guid.NewGuid();
+            var resolvedId = Guid.NewGuid();
+            var generation = SessionGeneration.Normalize(DateTime.UtcNow);
+            await using (var db = CreateContext())
+            {
+                db.RemoteControlModalEpisodes.Add(new RemoteControlModalEpisode
+                {
+                    Id = openId,
+                    SessionId = sessionId,
+                    AcceptedStartedAt = generation,
+                    FirstObservedAt = DaysAgo(40),
+                    LastObservedAt = DaysAgo(40),
+                });
+                db.RemoteControlModalEpisodes.Add(new RemoteControlModalEpisode
+                {
+                    Id = resolvedId,
+                    SessionId = sessionId,
+                    AcceptedStartedAt = SessionGeneration.Next(generation, DateTime.UtcNow.AddMinutes(-1)),
+                    FirstObservedAt = DaysAgo(40),
+                    LastObservedAt = DaysAgo(40),
+                    ResolvedAt = DaysAgo(40),
+                    Resolution = RemoteControlEpisodeResolution.ObservedClear,
+                });
+                await db.SaveChangesAsync();
+            }
+
+            await using var prune = CreateContext();
+            await CreateService(prune).PruneResolvedModalEpisodesAsync(CancellationToken.None);
+            await using var verify = CreateContext();
+            (await verify.RemoteControlModalEpisodes.AnyAsync(e => e.Id == openId)).ShouldBeTrue();
+            (await verify.RemoteControlModalEpisodes.AnyAsync(e => e.Id == resolvedId)).ShouldBeFalse();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task C514_Deferred_work_retains_its_attempt_and_session()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var sessionId = await SeedSessionAsync(marker, SessionStatus.Stopped, DaysAgo(100));
+            await using (var db = CreateContext())
+            {
+                db.SessionQueuedMessages.Add(new SessionQueuedMessage
+                {
+                    Id = Guid.NewGuid(),
+                    AgentSessionId = sessionId,
+                    Body = "deferred original work body c514",
+                    Status = QueuedMessageStatus.Pending,
+                    Sequence = 1,
+                    Origin = QueuedMessageOrigin.System,
+                    CreatedAt = DaysAgo(100),
+                    DeferredFromRunAttemptId = Guid.NewGuid(),
+                    MaintenanceAcceptedStartedAt = SessionGeneration.Normalize(DaysAgo(100)),
+                });
+                await db.SaveChangesAsync();
+            }
+
+            await using var prune = CreateContext();
+            await CreateService(prune).PruneSessionsAsync(CancellationToken.None);
+            (await SessionExistsAsync(sessionId)).ShouldBeTrue();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
     private static DataRetentionService CreateService(
@@ -824,6 +940,7 @@ public class DataRetentionServiceTests
         {
             await db.TranscriptEntries.Where(t => sessionIds.Contains(t.AgentSessionId)).ExecuteDeleteAsync();
             await db.SessionQueuedMessages.Where(m => sessionIds.Contains(m.AgentSessionId)).ExecuteDeleteAsync();
+            await db.RemoteControlModalEpisodes.Where(e => sessionIds.Contains(e.SessionId)).ExecuteDeleteAsync();
         }
 
         var taskIds = await db.AgentTasks.Where(t => t.Title == marker).Select(t => t.Id).ToListAsync();

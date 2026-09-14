@@ -189,6 +189,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
 
         Started = true;
         StartedAcceptedGeneration = spec.AcceptedStartedAt;
+        AcceptedStartedAt = spec.AcceptedStartedAt;
         StartedArgs = spec.Args.ToArray();
         StartedHerdr = spec.Herdr;
         StartedEnv = new Dictionary<string, string>(spec.Env, StringComparer.Ordinal);
@@ -300,12 +301,21 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     public long SnapshotSequence { get; set; }
     public List<string> ConditionalInputs { get; } = [];
     public bool ConditionalUnsupported { get; set; }
+    public string? ConditionalOutcomeOverride { get; set; }
+    public int SwallowEsc { get; set; }
+    public int ManualTurnTracked { get; set; }
 
     public async Task<RunnerConditionalInputResult> SendConditionalInputAsync(
         RunnerConditionalInputRequest request, CancellationToken ct)
     {
         if (ConditionalUnsupported)
             return new RunnerConditionalInputResult(Guid.Empty, ConditionalInputOutcomes.Unsupported, null, null);
+        if (ConditionalOutcomeOverride is { } forced)
+        {
+            ConditionalInputs.Add(request.Input);
+            return new RunnerConditionalInputResult(
+                Guid.Empty, forced, AcceptedStartedAt, SnapshotSequence);
+        }
         if (AcceptedStartedAt is { } bound
             && !SessionGeneration.Equal(bound, request.ExpectedAcceptedStartedAt))
         {
@@ -321,6 +331,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
 
         ConditionalInputs.Add(request.Input);
         await SendInputAsync(request.Input, ct);
+        SnapshotSequence++;
         return new RunnerConditionalInputResult(
             Guid.Empty, ConditionalInputOutcomes.Written, AcceptedStartedAt, SnapshotSequence);
     }
@@ -334,6 +345,11 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
         _inputs.Add(input);
         if (input == "\u001b")
         {
+            if (SwallowEsc > 0)
+            {
+                SwallowEsc--;
+                return;
+            }
             if (OverlayOpen)
             {
                 OverlayOpen = false;

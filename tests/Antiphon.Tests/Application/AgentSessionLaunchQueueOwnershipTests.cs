@@ -8,6 +8,7 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
@@ -94,6 +95,93 @@ public class AgentSessionLaunchQueueOwnershipTests
 
         adapter.Started.ShouldBeFalse();
         adapter.StartedAcceptedGeneration.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task C514_Two_recovery_workers_resume_one_original_work()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync(isolated: true);
+        var attempt = Guid.NewGuid();
+        var body = "original deferred card work c514";
+        await using (var db = h.CreateDb())
+        {
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = h.SessionId,
+                Body = body,
+                Status = QueuedMessageStatus.Pending,
+                Sequence = 1,
+                Origin = QueuedMessageOrigin.System,
+                CreatedAt = DateTime.UtcNow,
+                DeferredFromRunAttemptId = attempt,
+                MaintenanceAcceptedStartedAt = h.Generation,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await using var db2 = h.CreateDb();
+        db2.SessionQueuedMessages.Add(new SessionQueuedMessage
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = h.SessionId,
+            Body = body,
+            Status = QueuedMessageStatus.Pending,
+            Sequence = 2,
+            Origin = QueuedMessageOrigin.System,
+            CreatedAt = DateTime.UtcNow,
+            DeferredFromRunAttemptId = attempt,
+            MaintenanceAcceptedStartedAt = h.Generation,
+        });
+        var ex = await Should.ThrowAsync<DbUpdateException>(() => db2.SaveChangesAsync());
+        (ex.InnerException as Npgsql.PostgresException)!.SqlState.ShouldBe("23505");
+        await using var verify = h.CreateDb();
+        (await verify.SessionQueuedMessages.CountAsync(m =>
+            m.AgentSessionId == h.SessionId && m.DeferredFromRunAttemptId == attempt)).ShouldBe(1);
+    }
+
+    [Test]
+    public async Task C514_Failed_enqueue_cannot_drop_launch_responsibility()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        h.LaunchQueue.TryRegister(h.SessionId).ShouldBeTrue();
+        try
+        {
+            h.LaunchQueue.Owns(h.SessionId).ShouldBeTrue();
+            h.Adapter.ConditionalInputs.ShouldBeEmpty();
+        }
+        finally
+        {
+            h.LaunchQueue.Unregister(h.SessionId);
+        }
+    }
+
+    [Test]
+    public async Task C514_Old_deferred_work_never_targets_replacement()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        var oldG = h.Generation;
+        await using (var db = h.CreateDb())
+        {
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = h.SessionId,
+                Body = "old generation deferred work c514",
+                Status = QueuedMessageStatus.Pending,
+                Sequence = 1,
+                Origin = QueuedMessageOrigin.System,
+                CreatedAt = DateTime.UtcNow,
+                DeferredFromRunAttemptId = Guid.NewGuid(),
+                MaintenanceAcceptedStartedAt = oldG,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await h.ReplaceGenerationAsync();
+        h.Adapter.ConditionalInputs.Clear();
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+        h.Adapter.SubmittedBodies.ShouldNotContain("old generation deferred work c514");
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)

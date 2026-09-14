@@ -59,8 +59,11 @@ public sealed class RemoteControlRecoveryService
         _probe = probe;
     }
 
-    /// <summary>Test seam: named persist point before SaveChanges. Production never sets this.</summary>
-    public Func<string, Task>? BeforePersist { get; set; }
+    /// <summary>
+    /// Test seam: named persist point before SaveChanges. Return true to abort the persist.
+    /// Production never sets this.
+    /// </summary>
+    public Func<string, Task<bool>>? BeforePersist { get; set; }
 
     /// <summary>Test seam: held during runner I/O after intent is committed. Production never sets this.</summary>
     public Func<Task>? HoldDuringIo { get; set; }
@@ -115,10 +118,17 @@ public sealed class RemoteControlRecoveryService
             timeout.CancelAfter(TimeSpan.FromSeconds(seconds));
             snapshot = await _runner.GetSnapshotAsync(sessionId, timeout.Token);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException || ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            if (ct.IsCancellationRequested)
-                throw;
+            return new RemoteControlScreenObservation(
+                RemoteControlMenuScreen.Classify(null),
+                null,
+                false,
+                0,
+                "read-failure");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
             return new RemoteControlScreenObservation(
                 RemoteControlMenuScreen.Classify(null),
                 null,
@@ -382,7 +392,7 @@ public sealed class RemoteControlRecoveryService
         var normalized = SessionGeneration.Normalize(generation);
         var existing = await db.RemoteControlModalEpisodes
             .FirstOrDefaultAsync(e => e.SessionId == sessionId && e.AcceptedStartedAt == normalized && e.ResolvedAt == null, ct);
-        var now = UtcNow();
+        var now = SessionGeneration.Normalize(UtcNow());
         if (existing is not null)
         {
             existing.LastObservedAt = now;
@@ -739,9 +749,9 @@ public sealed class RemoteControlRecoveryService
     {
         if (BeforePersist is null)
             return false;
-        await BeforePersist(name);
+        var abort = await BeforePersist(name);
         ct.ThrowIfCancellationRequested();
-        return false;
+        return abort;
     }
 
     private static string Truncate(string value, int max) =>

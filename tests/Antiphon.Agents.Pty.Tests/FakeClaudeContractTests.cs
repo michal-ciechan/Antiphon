@@ -1889,4 +1889,61 @@ public class FakeClaudeContractTests
             try { File.Delete(path); File.Delete(path + ".timing"); } catch { }
         }
     }
+
+    [Test]
+    public async Task C514_First_arm_then_repeat_menu_and_working_hold_are_distinct()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchReadyFakeAsync(
+            env: new Dictionary<string, string> { ["ANTIPHON_FAKE_RC_SCENARIO"] = "c514" },
+            alsoAwaitBanner: "RCSCENARIO:c514");
+
+        await EchoGatedSubmit.SendAsync(runner, "/remote-control");
+        (await runner.WaitForOutputAsync(s => s.Contains("RCMENU:armed"), TimeSpan.FromSeconds(5)))
+            .ShouldBeTrue();
+        runner.SnapshotText().ShouldContain("remote-control is active");
+        runner.SnapshotScreen().ShouldNotContain("Disconnect this session");
+
+        await EchoGatedSubmit.SendAsync(runner, "/remote-control");
+        (await runner.WaitForOutputAsync(s => s.Contains("RCMENU:open"), TimeSpan.FromSeconds(5)))
+            .ShouldBeTrue();
+        runner.SnapshotScreen().ShouldContain("Disconnect this session");
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Test]
+    public async Task C514_Esc_swallow_delay_and_queue_conversion_are_independent()
+    {
+        SkipIfUnavailable();
+        var path = Path.Combine(Path.GetTempPath(), $"fakeclaude-c514-esc-{Guid.NewGuid():N}.jsonl");
+        try
+        {
+            await using var runner = await LaunchReadyFakeAsync(
+                env: new Dictionary<string, string>
+                {
+                    ["ANTIPHON_FAKE_RC_MENU"] = "1",
+                    ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = path,
+                },
+                alsoAwaitBanner: "RCMENU:");
+
+            await EchoGatedSubmit.SendAsync(runner, "/remote-control");
+            (await runner.WaitForOutputAsync(s => s.Contains("RCMENU:open"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue();
+            const string body = "queued-while-modal-c514";
+            await EchoGatedSubmit.SendAsync(runner, body);
+            (await runner.WaitForOutputAsync(s => s.Contains("RCMENU:enqueued="), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue();
+            await runner.WriteAsync("\u001b");
+            (await runner.WaitForOutputAsync(s => s.Contains("RCMENU:closed"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue();
+            var lines = await WaitForTranscriptLinesAsync(path, 3);
+            lines.ShouldContain(l => l.Contains("\"operation\":\"enqueue\"", StringComparison.Ordinal));
+            lines.ShouldContain(l => l.Contains("\"type\":\"user\"", StringComparison.Ordinal) && l.Contains(body, StringComparison.Ordinal));
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            try { File.Delete(path); File.Delete(path + ".timing"); } catch { }
+        }
+    }
 }

@@ -82,4 +82,40 @@ public class ClaudeRemoteControlMenuCanaryTests
             .ShouldBeTrue("a body typed after dismissing the menu must render. Screen:\n"
                 + runner.SnapshotScreen());
     }
+
+    [Test]
+    public async Task C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt()
+    {
+        ClSession.SkipIfNotEligible();
+        var sessionId = Guid.NewGuid().ToString("D");
+        await using var runner = new PtyAgentRunner("modern");
+        var (app, args) = ClSession.BuildLaunch(
+            ClSession.ResolveOrThrow(), "--dangerously-skip-permissions", "--session-id", sessionId);
+        await runner.StartAsync(app, args, cols: 120, rows: 30, env: ClSession.HeadedSafeEnv());
+        var ready = await new ClaudeReadyDetector().WaitAsync(runner);
+        if (!ready)
+            throw new SkipTestException("pending native acceptance: real Claude TUI did not reach ready");
+
+        await EchoGatedSubmit.SendAsync(runner, "/remote-control");
+        var appeared = await runner.WaitForScreenAsync(MenuPresent, TimeSpan.FromSeconds(12));
+        if (!appeared)
+            throw new SkipTestException(
+                "pending native acceptance: no management menu (bridge not pre-established). Screen:\n"
+                + runner.SnapshotScreen());
+
+        await runner.WriteAsync(DismissKey);
+        await Task.Delay(SettleMs);
+        var firstClear = !MenuPresent(runner.SnapshotScreen());
+        await Task.Delay(SettleMs);
+        var secondClear = !MenuPresent(runner.SnapshotScreen());
+        firstClear.ShouldBeTrue();
+        secondClear.ShouldBeTrue();
+
+        var token = "C514-OK-" + Guid.NewGuid().ToString("N")[..8];
+        await EchoGatedSubmit.SendAsync(runner, token);
+        (await runner.WaitForScreenAsync(
+            s => ComposerDeliveryEvidence.FragmentIsVisible(s, token) || s.Contains(token, StringComparison.Ordinal),
+            TimeSpan.FromSeconds(12)))
+            .ShouldBeTrue("unique prompt must convert after idle Esc. Screen:\n" + runner.SnapshotScreen());
+    }
 }

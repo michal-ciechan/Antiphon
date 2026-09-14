@@ -52,34 +52,28 @@ public class RemoteControlModalPersistenceTests
     [Test]
     public async Task C514_Legacy_rows_keep_provenance_and_become_unclassified()
     {
-        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
-        var sessionId = await SeedSessionAsync(isolated.ConnectionString);
-        await using var db = Create(isolated.ConnectionString);
-        var row = new SessionQueuedMessage
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync(isolated: true);
+        var id = Guid.NewGuid();
+        await using (var db = h.CreateDb())
         {
-            Id = Guid.NewGuid(),
-            AgentSessionId = sessionId,
-            Body = "/remote-control",
-            Status = QueuedMessageStatus.Pending,
-            Sequence = 1,
-            Origin = QueuedMessageOrigin.Ui,
-            CreatedAt = DateTime.UtcNow,
-            DeliveryAttempts = 1,
-            LastDeliveryBaselineSequence = 9,
-        };
-        db.SessionQueuedMessages.Add(row);
-        await db.SaveChangesAsync();
-
-        var classified = db.SessionQueuedMessages.Single(m => m.Id == row.Id);
-        if (classified.MaintenanceKind == RemoteControlMaintenanceKind.None)
-        {
-            classified.MaintenanceKind = RemoteControlMaintenanceKind.LegacyUnclassified;
-            classified.MaintenanceEvidence = "legacy-unclassified";
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = id,
+                AgentSessionId = h.SessionId,
+                Body = "/remote-control",
+                Status = QueuedMessageStatus.Pending,
+                Sequence = 1,
+                Origin = QueuedMessageOrigin.Ui,
+                CreatedAt = DateTime.UtcNow,
+                DeliveryAttempts = 1,
+                LastDeliveryBaselineSequence = 9,
+            });
             await db.SaveChangesAsync();
         }
 
-        await using var verify = Create(isolated.ConnectionString);
-        var reloaded = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == row.Id);
+        await h.Recovery.ReconcileLegacyRemoteControlRowsAsync(CancellationToken.None);
+        await using var verify = h.CreateDb();
+        var reloaded = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == id);
         reloaded.MaintenanceKind.ShouldBe(RemoteControlMaintenanceKind.LegacyUnclassified);
         reloaded.Origin.ShouldBe(QueuedMessageOrigin.Ui);
         reloaded.Body.ShouldBe("/remote-control");
@@ -90,26 +84,28 @@ public class RemoteControlModalPersistenceTests
     [Test]
     public async Task C514_Episode_identity_and_first_observation_are_immutable()
     {
-        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
-        var generation = SessionGeneration.Normalize(DateTime.UtcNow);
-        var sessionId = await SeedSessionAsync(isolated.ConnectionString);
-        await using var db = Create(isolated.ConnectionString);
-        var episode = Episode(sessionId, generation);
-        var first = episode.FirstObservedAt;
-        var id = episode.Id;
-        db.RemoteControlModalEpisodes.Add(episode);
-        await db.SaveChangesAsync();
-
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync(isolated: true);
+        h.Adapter.RemoteControlMenuOpen = true;
+        var first = await h.Recovery.DetectAsync(
+            h.SessionId, h.Generation,
+            await h.Recovery.ObserveAsync(h.SessionId, h.Generation, CancellationToken.None),
+            null, CancellationToken.None);
+        first.ShouldNotBeNull();
+        var id = first!.Id;
+        var observed = first.FirstObservedAt;
         for (var i = 0; i < 20; i++)
         {
-            episode.LastObservedAt = DateTime.UtcNow;
-            await db.SaveChangesAsync();
+            var again = await h.Recovery.DetectAsync(
+                h.SessionId, h.Generation,
+                await h.Recovery.ObserveAsync(h.SessionId, h.Generation, CancellationToken.None),
+                null, CancellationToken.None);
+            again!.Id.ShouldBe(id);
         }
 
-        await using var verify = Create(isolated.ConnectionString);
+        await using var verify = h.CreateDb();
         var reloaded = await verify.RemoteControlModalEpisodes.SingleAsync(e => e.Id == id);
         reloaded.Id.ShouldBe(id);
-        reloaded.FirstObservedAt.ShouldBe(first);
+        reloaded.FirstObservedAt.ShouldBe(observed);
         reloaded.RelatedMaintenanceQueueId.ShouldBeNull();
     }
 
@@ -188,54 +184,55 @@ public class RemoteControlModalPersistenceTests
     [Test]
     public async Task C514_Only_meaningful_episode_transitions_emit_incidents()
     {
-        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
-        var sessionId = await SeedSessionAsync(isolated.ConnectionString);
-        await using var db = Create(isolated.ConnectionString);
-        db.RemoteControlModalEpisodes.Add(Episode(sessionId, SessionGeneration.Normalize(DateTime.UtcNow)));
-        db.AgentIncidents.Add(new AgentIncident
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync(isolated: true);
+        h.Adapter.RemoteControlMenuOpen = true;
+        for (var i = 0; i < 20; i++)
         {
-            Id = Guid.NewGuid(),
-            SessionId = sessionId,
-            Kind = AgentIncidentKind.RemoteControlModalDetected,
-            Severity = AlertSeverity.Warning,
-            Message = "Remote Control menu blocks input",
-            FailureReason = "rc-modal:" + Guid.NewGuid().ToString("D"),
-            CreatedAt = DateTime.UtcNow,
-        });
-        await db.SaveChangesAsync();
-        (await db.AgentIncidents.CountAsync(i => i.Kind == AgentIncidentKind.RemoteControlModalDetected))
+            await h.Recovery.DetectAsync(
+                h.SessionId, h.Generation,
+                await h.Recovery.ObserveAsync(h.SessionId, h.Generation, CancellationToken.None),
+                null, CancellationToken.None);
+        }
+
+        await using var db = h.CreateDb();
+        (await db.RemoteControlModalEpisodes.CountAsync(e => e.SessionId == h.SessionId)).ShouldBe(1);
+        (await db.AgentIncidents.CountAsync(i =>
+            i.SessionId == h.SessionId && i.Kind == AgentIncidentKind.RemoteControlModalDetected))
             .ShouldBe(1);
     }
 
     [Test]
     public async Task C514_Unattributed_menu_keeps_related_request_null()
     {
-        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
-        var sessionId = await SeedSessionAsync(isolated.ConnectionString);
-        await using var db = Create(isolated.ConnectionString);
-        db.SessionQueuedMessages.Add(Arm(sessionId, SessionGeneration.Normalize(DateTime.UtcNow), active: false));
-        var episode = Episode(sessionId, SessionGeneration.Normalize(DateTime.UtcNow));
-        episode.RelatedMaintenanceQueueId = null;
-        db.RemoteControlModalEpisodes.Add(episode);
-        await db.SaveChangesAsync();
-        (await db.RemoteControlModalEpisodes.SingleAsync()).RelatedMaintenanceQueueId.ShouldBeNull();
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync(isolated: true);
+        await using (var db = h.CreateDb())
+        {
+            db.SessionQueuedMessages.Add(Arm(h.SessionId, h.Generation, active: false));
+            await db.SaveChangesAsync();
+        }
+
+        h.Adapter.RemoteControlMenuOpen = true;
+        var episode = await h.Recovery.DetectAsync(
+            h.SessionId, h.Generation,
+            await h.Recovery.ObserveAsync(h.SessionId, h.Generation, CancellationToken.None),
+            relatedQueueId: null, CancellationToken.None);
+        episode!.RelatedMaintenanceQueueId.ShouldBeNull();
     }
 
     [Test]
     public async Task C514_Repeated_observation_keeps_the_same_episode_id()
     {
-        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
-        var sessionId = await SeedSessionAsync(isolated.ConnectionString);
-        var generation = SessionGeneration.Normalize(DateTime.UtcNow);
-        await using var db = Create(isolated.ConnectionString);
-        var episode = Episode(sessionId, generation);
-        db.RemoteControlModalEpisodes.Add(episode);
-        await db.SaveChangesAsync();
-        var id = episode.Id;
-        episode.LastObservedAt = DateTime.UtcNow;
-        await db.SaveChangesAsync();
-        (await db.RemoteControlModalEpisodes.SingleAsync(e => e.SessionId == sessionId && e.ResolvedAt == null))
-            .Id.ShouldBe(id);
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync(isolated: true);
+        h.Adapter.RemoteControlMenuOpen = true;
+        var first = await h.Recovery.DetectAsync(
+            h.SessionId, h.Generation,
+            await h.Recovery.ObserveAsync(h.SessionId, h.Generation, CancellationToken.None),
+            null, CancellationToken.None);
+        var second = await h.Recovery.DetectAsync(
+            h.SessionId, h.Generation,
+            await h.Recovery.ObserveAsync(h.SessionId, h.Generation, CancellationToken.None),
+            null, CancellationToken.None);
+        second!.Id.ShouldBe(first!.Id);
     }
 
     [Test]
@@ -281,8 +278,8 @@ public class RemoteControlModalPersistenceTests
         Id = Guid.NewGuid(),
         SessionId = sessionId,
         AcceptedStartedAt = generation,
-        FirstObservedAt = DateTime.UtcNow,
-        LastObservedAt = DateTime.UtcNow,
+        FirstObservedAt = SessionGeneration.Normalize(DateTime.UtcNow),
+        LastObservedAt = SessionGeneration.Normalize(DateTime.UtcNow),
     };
 
     private static SessionQueuedMessage Arm(Guid sessionId, DateTime generation, bool active) => new()

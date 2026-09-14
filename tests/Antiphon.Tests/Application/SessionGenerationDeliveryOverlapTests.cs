@@ -18,6 +18,39 @@ namespace Antiphon.Tests.Application;
 public class SessionGenerationDeliveryOverlapTests
 {
     [Test]
+    public async Task C514_Maintenance_and_Esc_share_ordinary_delivery_exclusion()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var original = h.Adapter.EchoTypedInputToScreen;
+        h.Adapter.EchoTypedInputToScreen = true;
+        var delivery = Task.Run(async () =>
+        {
+            var sem = h.Queue.GetLock(h.SessionId);
+            await sem.WaitAsync(CancellationToken.None);
+            try
+            {
+                held.TrySetResult();
+                await proceed.Task;
+            }
+            finally
+            {
+                sem.Release();
+            }
+        });
+        await held.Task;
+        var arm = h.ReserveAndExecuteAsync();
+        await Task.Delay(200);
+        arm.IsCompleted.ShouldBeFalse();
+        h.Adapter.ConditionalInputs.ShouldBeEmpty();
+        proceed.TrySetResult();
+        await delivery;
+        await arm;
+        _ = original;
+    }
+
+    [Test]
     public async Task C502_V11_same_generation_delivery_failure_kills_G_and_the_paused_launch_tail_settles_G()
     {
         await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions { AlwaysOn = true });

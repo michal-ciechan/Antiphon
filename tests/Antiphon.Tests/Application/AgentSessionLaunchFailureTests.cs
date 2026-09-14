@@ -825,6 +825,132 @@ public class AgentSessionLaunchFailureTests
     /// jam another slash command into the composer (CARD-0240).
     /// </summary>
     [Test]
+    public async Task C514_Boot_ambiguous_arm_is_not_whole_submit_retried()
+    {
+        var adapter = new FakeAgentProtocolAdapter { EchoTypedInputToScreen = false, Pid = 4242 };
+        var runner = new ScriptedRcRunner { AdvertiseConditional = true };
+        var probe = new ScriptedRcProbe { Armed = false, StateFileFound = true };
+        runner.Adapter = adapter;
+        await using var fixture = await LaunchFixture.CreateAsync(adapter, s =>
+        {
+            s.AddSingleton<ISessionRunnerClient>(runner);
+            s.AddSingleton<IRcBridgeProbe>(probe);
+            s.AddSingleton<RemoteControlRecoveryService>();
+        });
+        adapter.RegisterOnStart = fixture.Runtime;
+        adapter.AcceptedStartedAt = DateTime.UtcNow;
+        await fixture.LaunchInteractiveAsync(remoteControlName: "C514-boot");
+        adapter.ConditionalInputs.Count(i => i == "/remote-control").ShouldBeLessThanOrEqualTo(1);
+        adapter.Prompts.Count(p => p == "/remote-control").ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C514_Rename_requires_armed_and_clear()
+    {
+        var adapter = new FakeAgentProtocolAdapter { RemoteControlMenuOpen = true, Pid = 4242 };
+        var runner = new ScriptedRcRunner { AdvertiseConditional = true, Adapter = adapter };
+        var probe = new ScriptedRcProbe { Armed = true, StateFileFound = true, Connections = 2 };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter, s =>
+        {
+            s.AddSingleton<ISessionRunnerClient>(runner);
+            s.AddSingleton<IRcBridgeProbe>(probe);
+            s.AddSingleton<RemoteControlRecoveryService>();
+        });
+        adapter.RegisterOnStart = fixture.Runtime;
+        await fixture.LaunchInteractiveAsync(remoteControlName: "C514-rename");
+        adapter.Prompts.ShouldNotContain(p => p.StartsWith("/rename", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public async Task C514_Boot_work_and_notes_wait_behind_open_modal()
+    {
+        var adapter = new FakeAgentProtocolAdapter { RemoteControlMenuOpen = true, Pid = 4242, PromptOutput = "ok" };
+        var runner = new ScriptedRcRunner { AdvertiseConditional = true, Adapter = adapter };
+        var probe = new ScriptedRcProbe { Armed = false, StateFileFound = true };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter, s =>
+        {
+            s.AddSingleton<ISessionRunnerClient>(runner);
+            s.AddSingleton<IRcBridgeProbe>(probe);
+            s.AddSingleton<RemoteControlRecoveryService>();
+        });
+        adapter.RegisterOnStart = fixture.Runtime;
+        var card = await fixture.CreateCardAsync();
+        await fixture.AssignAgentAsync(card);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var started = await fixture.StartCardSessionAsync(
+            card, "original deferred work body c514", remoteControlName: "C514", kind: AgentKind.ClaudeCode,
+            ct: deadline.Token);
+        adapter.Prompts.ShouldNotContain("original deferred work body c514");
+        await using var db = LaunchFixture.CreateContext();
+        (await db.SessionQueuedMessages.AnyAsync(m =>
+            m.AgentSessionId == started.SessionId && m.DeferredFromRunAttemptId == started.RunAttemptId))
+            .ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task C514_Deferred_original_work_is_durable_before_launch_yields()
+    {
+        await C514_Boot_work_and_notes_wait_behind_open_modal();
+    }
+
+    [Test]
+    public async Task C514_Deferred_boot_has_no_first_output_timeout_or_success()
+    {
+        var adapter = new FakeAgentProtocolAdapter { RemoteControlMenuOpen = true, Pid = 4242 };
+        var runner = new ScriptedRcRunner { AdvertiseConditional = true, Adapter = adapter };
+        var probe = new ScriptedRcProbe { Armed = true, StateFileFound = true };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter, s =>
+        {
+            s.AddSingleton<ISessionRunnerClient>(runner);
+            s.AddSingleton<IRcBridgeProbe>(probe);
+            s.AddSingleton<RemoteControlRecoveryService>();
+        });
+        adapter.RegisterOnStart = fixture.Runtime;
+        var card = await fixture.CreateCardAsync();
+        await fixture.AssignAgentAsync(card);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var started = await fixture.StartCardSessionAsync(
+            card, "deferred work must not time out c514", remoteControlName: "C514", kind: AgentKind.ClaudeCode,
+            ct: deadline.Token);
+        await using var db = LaunchFixture.CreateContext();
+        var attempt = await db.RunAttempts.SingleAsync(a => a.Id == started.RunAttemptId);
+        attempt.Phase.ShouldNotBe(RunPhase.TimedOut);
+        attempt.Phase.ShouldNotBe(RunPhase.Succeeded);
+        attempt.CompletedAt.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task C514_Deferred_run_cannot_report_success()
+    {
+        await C514_Deferred_boot_has_no_first_output_timeout_or_success();
+    }
+
+    [Test]
+    public async Task C514_Unknown_rc_without_menu_preserves_best_effort_work()
+    {
+        var adapter = new FakeAgentProtocolAdapter { Pid = 4242, PromptOutput = "work landed" };
+        var runner = new ScriptedRcRunner { AdvertiseConditional = true, Adapter = adapter };
+        var probe = new ScriptedRcProbe { StateFileFound = false };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter, s =>
+        {
+            s.AddSingleton<ISessionRunnerClient>(runner);
+            s.AddSingleton<IRcBridgeProbe>(probe);
+            s.AddSingleton<RemoteControlRecoveryService>();
+        });
+        adapter.RegisterOnStart = fixture.Runtime;
+        var card = await fixture.CreateCardAsync();
+        await fixture.AssignAgentAsync(card);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var started = await fixture.StartCardSessionAsync(
+            card, "best effort work prompt c514", remoteControlName: "C514", kind: AgentKind.ClaudeCode,
+            ct: deadline.Token);
+        adapter.Prompts.ShouldContain("best effort work prompt c514");
+        adapter.Prompts.ShouldNotContain("/remote-control");
+        await using var db = LaunchFixture.CreateContext();
+        (await db.AgentSessions.SingleAsync(s => s.Id == started.SessionId)).Status.ShouldBe(SessionStatus.Running);
+    }
+
+    [Test]
     public async Task Remote_control_that_never_arms_records_an_incident_and_does_not_rename()
     {
         var adapter = new FakeAgentProtocolAdapter { PromptOutput = "some output, but never the marker" };

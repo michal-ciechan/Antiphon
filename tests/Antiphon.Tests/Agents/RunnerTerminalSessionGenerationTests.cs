@@ -58,6 +58,30 @@ public class RunnerTerminalSessionGenerationTests
         result.ShouldNotBe(42);
     }
 
+    [Test]
+    public async Task C514_Every_maintenance_phase_is_guarded_and_stops_on_mismatch()
+    {
+        var sessionId = Guid.NewGuid();
+        var generation = SessionGeneration.Normalize(DateTime.UtcNow);
+        var client = new RecordingClient
+        {
+            StartDto = new SessionRunnerSessionDto(
+                sessionId, 1, generation, "Running", null, AgentExitReason.Unknown, 0,
+                AcceptedStartedAt: generation),
+        };
+        var session = new RunnerTerminalSession(client);
+        await session.StartAsync(Spec(sessionId, generation), CancellationToken.None);
+        var body = await session.WriteConditionalAsync(
+            new RunnerConditionalInputRequest(generation, 0, "/remote-control"), CancellationToken.None);
+        body.Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        var mismatch = await session.WriteConditionalAsync(
+            new RunnerConditionalInputRequest(generation.AddTicks(SessionGeneration.MicrosecondTicks), 0, "\r"),
+            CancellationToken.None);
+        mismatch.Outcome.ShouldBe(ConditionalInputOutcomes.GenerationMismatch);
+        client.RawInputs.ShouldBeEmpty();
+        client.ConditionalInputs.ShouldBe(["/remote-control"]);
+    }
+
     private static AgentLaunchSpec Spec(Guid sessionId, DateTime generation) =>
         new("fake", AgentKind.ClaudeCode, "cmd", [], new Dictionary<string, string>(), Path.GetTempPath(), 120, 30,
             SessionId: sessionId, AcceptedStartedAt: generation);
@@ -69,6 +93,9 @@ public class RunnerTerminalSessionGenerationTests
         public Func<Guid, SessionRunnerSessionDto>? GetOverride { get; set; }
         public List<(Guid SessionId, DateTime Expected)> KillGenerationCalls { get; } = [];
         public List<Guid> KillCalls { get; } = [];
+        public List<string> ConditionalInputs { get; } = [];
+        public List<string> RawInputs { get; } = [];
+        public DateTime? BoundGeneration { get; set; }
 
         public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
         {
@@ -95,7 +122,27 @@ public class RunnerTerminalSessionGenerationTests
         public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
             throw new NotSupportedException();
 
-        public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) => Task.CompletedTask;
+        public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
+        {
+            RawInputs.Add(input);
+            return Task.CompletedTask;
+        }
+
+        public Task<RunnerConditionalInputResult> SendConditionalInputAsync(
+            Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct)
+        {
+            var bound = BoundGeneration ?? StartDto?.AcceptedStartedAt;
+            if (bound is { } g && !SessionGeneration.Equal(g, request.ExpectedAcceptedStartedAt))
+            {
+                return Task.FromResult(new RunnerConditionalInputResult(
+                    sessionId, ConditionalInputOutcomes.GenerationMismatch, g, 0));
+            }
+
+            ConditionalInputs.Add(request.Input);
+            return Task.FromResult(new RunnerConditionalInputResult(
+                sessionId, ConditionalInputOutcomes.Written, request.ExpectedAcceptedStartedAt,
+                request.ExpectedLastSequence));
+        }
         public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) => Task.CompletedTask;
         public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) => Task.CompletedTask;
 

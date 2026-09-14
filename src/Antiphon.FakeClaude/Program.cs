@@ -212,6 +212,7 @@ internal static class Program
         if (swallow is not null) Write(swallow.Describe() + "\r\n");
         if (overlayOnCommand is not null) Write($"OVERLAY:command={overlayOnCommand}\r\n");
         if (rcMenuEnabled) Write("RCMENU:enabled\r\n");
+        if (!string.IsNullOrEmpty(rcScenario)) Write($"RCSCENARIO:{rcScenario}\r\n");
         if (deafStartMs > 0) Write($"DEAFSTART:ms={deafStartMs}\r\n");
         if (debugInput)
         {

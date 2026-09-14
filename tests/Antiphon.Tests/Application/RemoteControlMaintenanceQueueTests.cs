@@ -1,57 +1,400 @@
-using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
-[Category("Unit")]
+[Category("Integration")]
+[NotInParallel("RemoteControlRecovery")]
 public class RemoteControlMaintenanceQueueTests
 {
     [Test]
-    public void C514_Producer_identity_survives_reload()
+    public async Task C514_Executor_rechecks_kind()
     {
-        RemoteControlRecoveryService.IsExactRemoteControlToken("/remote-control").ShouldBeTrue();
-        RemoteControlRecoveryService.IsExactRemoteControlToken(" /remote-control extra").ShouldBeTrue();
-        RemoteControlRecoveryService.IsExactRemoteControlToken("/remote-control-other").ShouldBeFalse();
-        RemoteControlRecoveryService.IsExactRemoteControlToken("please remote-control").ShouldBeFalse();
-        QueuedMessageOrigin.System.ShouldNotBe(QueuedMessageOrigin.Ui);
-        QueuedMessageOrigin.Supervision.ShouldNotBe(QueuedMessageOrigin.Ui);
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        await h.ArmProbeAfterWriteAsync();
+        await h.SetKindAsync(AgentKind.Grok);
+        var result = await h.ReserveAndExecuteAsync();
+        result.ShouldBe(RemoteControlArmResult.WithheldCapability);
+        h.Adapter.ConditionalInputs.ShouldBeEmpty();
+        await h.SetKindAsync(AgentKind.ClaudeCode);
+        var allowed = await h.ReserveAndExecuteAsync();
+        allowed.ShouldBe(RemoteControlArmResult.ArmedObserved);
+        h.Adapter.ConditionalInputs.ShouldContain("/remote-control");
     }
 
     [Test]
-    public void C514_Unknown_never_authorizes_automatic_arm()
+    public async Task C514_Bridge_arms_between_enqueue_and_delivery()
     {
-        RemoteControlBridgeClassifier.Classify(null, pid: 1, probeFailed: true)
-            .ShouldBe(RemoteControlBridgeState.Unknown);
-        RemoteControlBridgeClassifier.Classify(new(false, 0, false), pid: 1, probeFailed: false)
-            .ShouldBe(RemoteControlBridgeState.Unknown);
-        RemoteControlBridgeClassifier.Classify(new(false, 0, true), pid: null, probeFailed: false)
-            .ShouldBe(RemoteControlBridgeState.Unknown);
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        var id = await h.ReserveAsync();
+        id.ShouldNotBeNull();
+        h.Probe.Armed = true;
+        h.Probe.Connections = 0;
+        var result = await h.ExecuteAsync(id!.Value);
+        result.ShouldBe(RemoteControlArmResult.SuppressedAlreadyArmed);
+        h.Adapter.ConditionalInputs.Count(i => i.Contains("/remote-control", StringComparison.Ordinal))
+            .ShouldBe(0);
     }
 
     [Test]
-    public void C514_Current_menu_independently_suppresses_arm()
+    public async Task C514_Unknown_never_authorizes_automatic_arm()
     {
-        RemoteControlMenuScreen.IsPresent(FakeMenu).ShouldBeTrue();
-        RemoteControlBridgeClassifier.Classify(new(false, 0, true), 7, false)
-            .ShouldBe(RemoteControlBridgeState.Unarmed);
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        h.Probe.Throw = true;
+        (await h.ReserveAndExecuteAsync()).ShouldBe(RemoteControlArmResult.WithheldUnknown);
+        h.Adapter.ConditionalInputs.ShouldBeEmpty();
+
+        h.Probe.Throw = false;
+        h.Probe.StateFileFound = false;
+        (await h.ReserveAndExecuteAsync()).ShouldBe(RemoteControlArmResult.WithheldUnknown);
+        h.Adapter.ConditionalInputs.ShouldBeEmpty();
+
+        h.Probe.StateFileFound = true;
+        h.Runner.Pid = null;
+        (await h.ReserveAndExecuteAsync()).ShouldBe(RemoteControlArmResult.WithheldUnknown);
+        h.Adapter.ConditionalInputs.ShouldBeEmpty();
+
+        await using var noCap = await RemoteControlRecoveryHarness.CreateAsync(advertiseConditional: false);
+        (await noCap.ReserveAndExecuteAsync()).ShouldBe(RemoteControlArmResult.WithheldTransport);
+        noCap.Adapter.ConditionalInputs.ShouldBeEmpty();
+        noCap.Runner.RawInputs.ShouldBeEmpty();
     }
 
     [Test]
-    public void C514_Boot_and_health_keep_their_explicit_origins()
+    public async Task C514_Current_menu_independently_suppresses_arm()
     {
-        ((int)QueuedMessageOrigin.System).ShouldBe(2);
-        ((int)QueuedMessageOrigin.Supervision).ShouldBe(5);
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        h.Probe.Armed = false;
+        h.Probe.StateFileFound = true;
+        h.Adapter.RemoteControlMenuOpen = true;
+        var result = await h.ReserveAndExecuteAsync();
+        result.ShouldBe(RemoteControlArmResult.WithheldMenuPresent);
+        h.Adapter.ConditionalInputs.ShouldBeEmpty();
     }
 
-    private const string FakeMenu =
-        """
-          Remote Control
-            Disconnect this session
-            Show QR code
-          > Continue
-          Enter to select . Esc to continue
-        """;
+    [Test]
+    public async Task C514_Stale_request_is_superseded_before_transport()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        var id = await h.ReserveAsync();
+        id.ShouldNotBeNull();
+        await h.ReplaceGenerationAsync();
+        var result = await h.ExecuteAsync(id!.Value);
+        result.ShouldBe(RemoteControlArmResult.SupersededGeneration);
+        h.Adapter.ConditionalInputs.ShouldBeEmpty();
+        h.Runner.ConditionalCalls.ShouldBeEmpty();
+        await using var db = h.CreateDb();
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+        row.MaintenanceResult.ShouldBe(RemoteControlArmResult.SupersededGeneration);
+    }
+
+    [Test]
+    public async Task C514_Busy_at_delivery_holds_until_fresh_TurnEnd()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        await h.ArmProbeAfterWriteAsync();
+        await h.MarkWorkingAsync();
+        var id = await h.ReserveAsync();
+        var held = await h.ExecuteAsync(id!.Value);
+        held.ShouldBe(RemoteControlArmResult.WithheldNotIdle);
+        h.Adapter.ConditionalInputs.ShouldBeEmpty();
+        await using (var db = h.CreateDb())
+        {
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+            row.MaintenanceSlotActive.ShouldBeTrue();
+        }
+
+        await h.MarkIdleAsync();
+        var after = await h.ExecuteAsync(id.Value);
+        after.ShouldBe(RemoteControlArmResult.ArmedObserved);
+        h.Adapter.ConditionalInputs.ShouldContain("/remote-control");
+    }
+
+    [Test]
+    public async Task C514_Running_launch_owner_excludes_health_delivery()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        await h.ArmProbeAfterWriteAsync();
+        h.LaunchQueue.TryRegister(h.SessionId).ShouldBeTrue();
+        try
+        {
+            var result = await h.ReserveAndExecuteAsync(QueuedMessageOrigin.Supervision);
+            result.ShouldBe(RemoteControlArmResult.WithheldLaunchOwner);
+            h.Adapter.ConditionalInputs.ShouldBeEmpty();
+        }
+        finally
+        {
+            h.LaunchQueue.Unregister(h.SessionId);
+        }
+
+        var allowed = await h.ReserveAndExecuteAsync(QueuedMessageOrigin.Supervision);
+        allowed.ShouldBe(RemoteControlArmResult.ArmedObserved);
+    }
+
+    [Test]
+    public async Task C514_Stopping_without_launch_owner_excludes_health_delivery()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        await h.SetStatusAsync(SessionStatus.Stopping);
+        var result = await h.ReserveAndExecuteAsync();
+        result.ShouldBe(RemoteControlArmResult.WithheldStopping);
+        h.Adapter.ConditionalInputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C514_Producer_identity_survives_reload()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        var boot = await h.ReserveAsync(QueuedMessageOrigin.System);
+        await using (var db = h.CreateDb())
+        {
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == boot);
+            row.Origin.ShouldBe(QueuedMessageOrigin.System);
+            row.MaintenanceKind.ShouldBe(RemoteControlMaintenanceKind.AutomaticArm);
+            row.MaintenanceAcceptedStartedAt.ShouldBe(h.Generation);
+            row.Body.ShouldBe("/remote-control");
+            row.MaintenanceSlotActive = false;
+            await db.SaveChangesAsync();
+        }
+
+        var health = await h.ReserveAsync(QueuedMessageOrigin.Supervision);
+        await using var verify = h.CreateDb();
+        var healthRow = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == health);
+        healthRow.Origin.ShouldBe(QueuedMessageOrigin.Supervision);
+        healthRow.MaintenanceKind.ShouldBe(RemoteControlMaintenanceKind.AutomaticArm);
+        healthRow.MaintenanceAcceptedStartedAt.ShouldBe(h.Generation);
+    }
+
+    [Test]
+    public async Task C514_Arm_intent_commit_precedes_first_byte()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        h.Recovery.BeforePersist = name => Task.FromResult(name == "submission-started");
+        var result = await h.ReserveAndExecuteAsync();
+        result.ShouldBe(RemoteControlArmResult.Requested);
+        h.Adapter.ConditionalInputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C514_Terminal_ambiguous_arm_veto_survives_restart()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        h.Adapter.ConditionalOutcomeOverride = ConditionalInputOutcomes.Unknown;
+        var first = await h.ReserveAndExecuteAsync();
+        first.ShouldBe(RemoteControlArmResult.ArmUnconfirmed);
+        h.Adapter.ConditionalInputs.Count.ShouldBe(1);
+
+        h.Adapter.ConditionalOutcomeOverride = null;
+        h.Adapter.ConditionalInputs.Clear();
+        var second = await h.ReserveAsync();
+        second.ShouldBeNull();
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+        h.Adapter.ConditionalInputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C514_No_composer_evidence_withholds_arm_Enter()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        h.Adapter.EchoTypedInputToScreen = false;
+        var result = await h.ReserveAndExecuteAsync();
+        result.ShouldBe(RemoteControlArmResult.ArmUnconfirmed);
+        h.Adapter.ConditionalInputs.ShouldBe(["/remote-control"]);
+        h.Adapter.ConditionalInputs.ShouldNotContain("\r");
+    }
+
+    [Test]
+    public async Task C514_Arm_without_UserPrompt_submits_one_Enter()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        await h.ArmProbeAfterWriteAsync();
+        var result = await h.ReserveAndExecuteAsync();
+        result.ShouldBe(RemoteControlArmResult.ArmedObserved);
+        h.Adapter.ConditionalInputs.ShouldBe(["/remote-control", "\r"]);
+        await using var db = h.CreateDb();
+        (await db.TranscriptEntries.CountAsync(t =>
+            t.AgentSessionId == h.SessionId && t.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C514_SendNow_and_amend_preserve_maintenance_policy()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        var id = await h.ReserveAsync();
+        await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(
+            () => h.Queue.SendNowAsync(h.SessionId, id!.Value, CancellationToken.None));
+        (await h.Queue.AmendPendingBodyAsync(
+            h.SessionId, id!.Value, "prefix", 4000, CancellationToken.None)).ShouldBeFalse();
+        await using var db = h.CreateDb();
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+        row.MaintenanceKind.ShouldBe(RemoteControlMaintenanceKind.AutomaticArm);
+        row.Origin.ShouldBe(QueuedMessageOrigin.Supervision);
+        row.Body.ShouldBe("/remote-control");
+        h.Adapter.ConditionalInputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C514_Legacy_attempted_rows_are_never_retyped()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        await using (var db = h.CreateDb())
+        {
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = h.SessionId,
+                Body = "/remote-control",
+                Status = QueuedMessageStatus.Pending,
+                Sequence = 9,
+                Origin = QueuedMessageOrigin.Ui,
+                CreatedAt = DateTime.UtcNow,
+                DeliveryAttempts = 1,
+                LastDeliveryBaselineSequence = 1,
+                MaintenanceKind = RemoteControlMaintenanceKind.LegacyUnclassified,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+        h.Adapter.Inputs.ShouldBeEmpty();
+        h.Adapter.ConditionalInputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C514_Housekeeping_preserves_operator_and_attempted_rows()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        Guid operatorId;
+        Guid attemptedId;
+        await using (var db = h.CreateDb())
+        {
+            operatorId = Guid.NewGuid();
+            attemptedId = Guid.NewGuid();
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = operatorId,
+                AgentSessionId = h.SessionId,
+                Body = "/remote-control",
+                Status = QueuedMessageStatus.Pending,
+                Sequence = 2,
+                Origin = QueuedMessageOrigin.Ui,
+                CreatedAt = DateTime.UtcNow,
+            });
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = attemptedId,
+                AgentSessionId = h.SessionId,
+                Body = "/remote-control",
+                Status = QueuedMessageStatus.Pending,
+                Sequence = 3,
+                Origin = QueuedMessageOrigin.Supervision,
+                CreatedAt = DateTime.UtcNow,
+                DeliveryAttempts = 1,
+                LastDeliveryBaselineSequence = 4,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await h.Queue.CancelPendingRemoteControlAsync(h.SessionId, CancellationToken.None);
+        await using var verify = h.CreateDb();
+        var op = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == operatorId);
+        op.Status.ShouldBe(QueuedMessageStatus.Pending);
+        var attempted = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == attemptedId);
+        attempted.Status.ShouldBe(QueuedMessageStatus.Pending);
+        attempted.DeliveryAttempts.ShouldBe(1);
+        attempted.LastDeliveryBaselineSequence.ShouldBe(4);
+    }
+
+    [Test]
+    public async Task C514_Boot_and_health_keep_their_explicit_origins()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        var boot = await h.ReserveAsync(QueuedMessageOrigin.System);
+        await using (var db = h.CreateDb())
+        {
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == boot);
+            row.Origin.ShouldBe(QueuedMessageOrigin.System);
+            row.MaintenanceSlotActive = false;
+            await db.SaveChangesAsync();
+        }
+
+        var health = await h.ReserveAsync(QueuedMessageOrigin.Supervision);
+        await using var verify = h.CreateDb();
+        (await verify.SessionQueuedMessages.SingleAsync(m => m.Id == health))
+            .Origin.ShouldBe(QueuedMessageOrigin.Supervision);
+    }
+
+    [Test]
+    public async Task C514_Arm_receipt_requires_observed_execution()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        await h.MarkWorkingAsync();
+        var id = await h.ReserveAsync();
+        await using (var db = h.CreateDb())
+        {
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+            row.MaintenanceResult.ShouldBe(RemoteControlArmResult.Requested);
+            row.MaintenanceResult.ShouldNotBe(RemoteControlArmResult.ArmedObserved);
+        }
+
+        (await dbIncidents(h)).ShouldNotContain(AgentIncidentKind.RcReArmed);
+
+        h.Probe.Armed = true;
+        var suppressed = await h.ExecuteAsync(id!.Value);
+        suppressed.ShouldBe(RemoteControlArmResult.SuppressedAlreadyArmed);
+        (await dbIncidents(h)).ShouldNotContain(AgentIncidentKind.RcReArmed);
+    }
+
+    [Test]
+    public async Task C514_Postflight_window_begins_at_execution()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        await h.ArmProbeAfterWriteAsync();
+        var id = await h.ReserveAsync();
+        await using (var db = h.CreateDb())
+        {
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+            row.CreatedAt = DateTime.UtcNow.AddMinutes(-10);
+            await db.SaveChangesAsync();
+        }
+
+        var before = DateTime.UtcNow;
+        await h.ExecuteAsync(id!.Value);
+        await using var verify = h.CreateDb();
+        var executed = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+        executed.SubmissionStartedAt.ShouldNotBeNull();
+        executed.SubmissionStartedAt!.Value.ShouldBeGreaterThan(before.AddSeconds(-2));
+        executed.CreatedAt.ShouldBeLessThan(executed.SubmissionStartedAt.Value.AddMinutes(-1));
+    }
+
+    [Test]
+    public async Task C514_Maintenance_faults_reconcile_without_retyping()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        h.Adapter.ConditionalOutcomeOverride = ConditionalInputOutcomes.Unknown;
+        await h.ReserveAndExecuteAsync();
+        var bodies = h.Adapter.ConditionalInputs.Count(i => i == "/remote-control");
+        bodies.ShouldBe(1);
+        h.Adapter.ConditionalOutcomeOverride = null;
+        h.Adapter.ConditionalInputs.Clear();
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+        h.Adapter.ConditionalInputs.ShouldBeEmpty();
+    }
+
+    private static async Task<List<AgentIncidentKind>> dbIncidents(RemoteControlRecoveryHarness h)
+    {
+        await using var db = h.CreateDb();
+        return await db.AgentIncidents
+            .Where(i => i.SessionId == h.SessionId)
+            .Select(i => i.Kind)
+            .ToListAsync();
+    }
 }

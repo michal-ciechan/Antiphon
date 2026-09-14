@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
@@ -284,5 +285,107 @@ public class SessionMessageQueueInterruptedAttemptTests
         rows.ShouldAllBe(m => m.Status == QueuedMessageStatus.Sent);
         rows.ShouldAllBe(m => m.DeliveryVerdict == DeliveryVerdict.Delivered);
         rows.ShouldAllBe(m => m.DeliveryAttempts == 1);
+    }
+
+    [Test]
+    public async Task C514_Interrupted_maintenance_never_retypes_as_work()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        Guid id;
+        await using (var db = h.CreateDb())
+        {
+            id = Guid.NewGuid();
+            db.SessionQueuedMessages.Add(new Antiphon.Server.Domain.Entities.SessionQueuedMessage
+            {
+                Id = id,
+                AgentSessionId = h.SessionId,
+                Body = "/remote-control",
+                Status = QueuedMessageStatus.Sent,
+                Sequence = 1,
+                Origin = QueuedMessageOrigin.Supervision,
+                CreatedAt = DateTime.UtcNow.AddMinutes(-10),
+                SentAt = DateTime.UtcNow.AddMinutes(-10),
+                DeliveryAttempts = 1,
+                MaintenanceKind = RemoteControlMaintenanceKind.AutomaticArm,
+                MaintenanceAcceptedStartedAt = h.Generation,
+                MaintenanceResult = RemoteControlArmResult.ArmUnconfirmed,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
+        h.Adapter.Inputs.ShouldBeEmpty();
+        h.Adapter.ConditionalInputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C514_Interrupted_composer_Enter_waits_behind_modal()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        h.Adapter.RemoteControlMenuOpen = true;
+        await h.Recovery.DetectAsync(
+            h.SessionId, h.Generation,
+            await h.Recovery.ObserveAsync(h.SessionId, h.Generation, CancellationToken.None),
+            null, CancellationToken.None);
+        h.Adapter.PrimeComposer("primed body waiting for enter");
+        await h.Inner.SeedPendingMessageAsync(
+            "primed body waiting for enter",
+            deliveryAttempts: 1,
+            deliveryVerdict: DeliveryVerdict.NoSubmitOutput,
+            baselineSequence: 0);
+        await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
+        h.Adapter.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C514_Clearance_late_confirmation_precedes_redelivery()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        const string body = "matching complete prompt body c514";
+        var id = await h.Inner.SeedPendingMessageAsync(body, deliveryAttempts: 1, baselineSequence: 0);
+        await h.Inner.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, body, timestamp: DateTime.UtcNow);
+        h.Adapter.RemoteControlMenuOpen = true;
+        var episode = await h.Recovery.DetectAsync(
+            h.SessionId, h.Generation,
+            await h.Recovery.ObserveAsync(h.SessionId, h.Generation, CancellationToken.None),
+            null, CancellationToken.None);
+        h.Adapter.RemoteControlMenuOpen = false;
+        var sem = h.Queue.GetLock(h.SessionId);
+        await sem.WaitAsync(CancellationToken.None);
+        try
+        {
+            await h.Recovery.TryDismissIdleUnderLockAsync(h.SessionId, episode!.Id, CancellationToken.None);
+        }
+        finally
+        {
+            sem.Release();
+        }
+
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+        h.Adapter.Inputs.ShouldBeEmpty();
+        await using var db = h.CreateDb();
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+        row.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+    }
+
+    [Test]
+    public async Task C514_Only_matching_complete_prompt_confirms_each_message()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        const string body = "alpha-prefix-THEN-tail-AAAA";
+        var id = await h.Inner.SeedPendingMessageAsync(body, deliveryAttempts: 1, baselineSequence: 0);
+        await h.Inner.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "alpha-prefix-THEN-tail-BBBB", timestamp: DateTime.UtcNow);
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+        await using (var db = h.CreateDb())
+        {
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+            row.DeliveryVerdict.ShouldNotBe(DeliveryVerdict.Delivered);
+        }
+
+        await h.Inner.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, body, timestamp: DateTime.UtcNow);
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+        await using var verify = h.CreateDb();
+        (await verify.SessionQueuedMessages.SingleAsync(m => m.Id == id))
+            .DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
     }
 }
