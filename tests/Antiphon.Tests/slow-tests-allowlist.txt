@@ -83,3 +83,9 @@ Antiphon.Tests.Application.RemoteControlRecoveryPtyIntegrationTests
 Antiphon.Tests.Application.AgentSessionLaunchFailureTests
 # CARD-0514: named V-2 gate class; create/PATCH HTTP factory cost.
 Antiphon.Tests.Application.AgentRemoteControlGateTests
+# CARD-0443: isolated PostgreSQL journal commits/reloads; measured 36.7-38.5s including shared cold setup.
+Antiphon.Tests.Application.WorktreeCleanupJournalTests
+# CARD-0443: real receipt publication, Git authority/content checks and isolated store; measured 114-117s.
+Antiphon.Tests.Infrastructure.WorktreeGuardedCleanupTests
+# CARD-0443: real producer plus standing notification/completion workers and recipient receipt; measured 62-85s.
+Antiphon.Tests.Application.AgentTaskWorktreeLockOutcomeTests
