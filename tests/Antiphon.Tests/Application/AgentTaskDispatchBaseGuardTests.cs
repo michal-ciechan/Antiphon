@@ -4,9 +4,11 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
@@ -374,8 +376,239 @@ public class AgentTaskDispatchBaseGuardTests
         await MaterializeAndDeliverAsync(scope.ServiceProvider, repair.Id, ct);
         db.ChangeTracker.Clear();
         (await db.AgentTaskDispatchWarningIntents.CountAsync(i => i.TaskId == repair.Id, ct)).ShouldBe(0);
+        (await db.AgentTaskLandNotifications.CountAsync(
+            n => n.TaskId == repair.Id && n.Kind == LandNotificationKind.DispatchBase, ct)).ShouldBe(0);
+        // The repair path still carries its OWN pre-existing prep warning (the owner branch is
+        // checked out, so the snapshot is routed to an isolated branch). That is not a
+        // dispatch-base warning: assert on the shape, not on a bare Warning-event count, or this
+        // guard silently also asserts unrelated repair behaviour.
+        var warnings = await db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == repair.Id && e.Type == AgentTaskEventType.Warning)
+            .ToListAsync(ct);
+        foreach (var warning in warnings)
+        {
+            warning.Detail.ShouldNotContain(other.WorktreeBranch!);
+            warning.Detail.ShouldNotContain("sibling containment was evaluated against");
+            warning.Detail.ShouldNotContain("configured default branch");
+        }
+
+        warnings.ShouldContain(w => w.Detail.Contains("occupied source", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// V-16 / G-48, G-49, G-65, G-116: one <c>base-observation-stale</c> intent per successful
+    /// claim whose observed base differs from the base the worktree was actually cut from, with
+    /// zero, one and two divergent siblings, and none at all when the two refs agree.
+    /// </summary>
+    [Test]
+    [Timeout(120_000)]
+    [Arguments(0, true)]
+    [Arguments(1, true)]
+    [Arguments(2, true)]
+    [Arguments(1, false)]
+    public async Task C508_GuardRefMismatchWarnedOnce(int divergentSiblings, bool moveTheDefault, CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c508-mismatch");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var (card, project) = await SeedCardWithProjectAsync(db, "CARD-0508");
+        // M -> P: the project's configured default is observed before the lease, then edited to a
+        // different real branch while the lease is held. The locked claim resolves the new one.
+        project.BaseBranch = "master";
+        await db.SaveChangesAsync(ct);
+        await repo.GitAsync("branch", "project-default", "master");
+        const string observedRef = "master";
+        var expectedRef = moveTheDefault ? "project-default" : "master";
+
+        var siblings = new List<AgentTask>();
+        for (var i = 0; i < divergentSiblings; i++)
+            siblings.Add(await SeedKeptSiblingAsync(db, repo, card.Id, $"divergent sibling {i}"));
+
+        var parentSessionId = Guid.NewGuid();
+        await SeedParentSessionAsync(db, parentSessionId);
+        var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, parentSessionId);
+        task.ProjectId = project.Id;
+        await db.SaveChangesAsync(ct);
+
+        var projectId = project.Id;
+        var connection = schema.ConnectionString;
+        await using var provider = CreateProvider(
+            connection, repo.WorktreeRoot,
+            onLeaseAcquired: moveTheDefault
+                ? async () =>
+                {
+                    await using var edit = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
+                    await edit.Projects.Where(p => p.Id == projectId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(p => p.BaseBranch, "project-default"), ct);
+                }
+            : null);
+        await using var scope = provider.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+
+        db.ChangeTracker.Clear();
+        var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        dispatched.WorktreeBaseRef.ShouldBe(expectedRef);
+        dispatched.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.DefaultBranch);
+
+        await MaterializeAndDeliverAsync(scope.ServiceProvider, task.Id, ct);
+        db.ChangeTracker.Clear();
+        var intents = await db.AgentTaskDispatchWarningIntents.AsNoTracking()
+            .Where(i => i.TaskId == task.Id).ToListAsync(ct);
+        var mismatches = intents
+            .Where(i => i.WarningKey == DispatchBaseNotificationPayload.MismatchKey).ToList();
+        if (moveTheDefault)
+        {
+            mismatches.ShouldHaveSingleItem();
+            mismatches[0].Detail.ShouldContain(observedRef);
+            mismatches[0].Detail.ShouldContain(expectedRef);
+            // The pair exists once, under the intent's own preallocated identity.
+            var note = await db.AgentTaskLandNotifications.AsNoTracking()
+                .SingleAsync(n => n.Id == mismatches[0].NotificationId, ct);
+            note.SourceEventId.ShouldBe(mismatches[0].Id);
+            note.Kind.ShouldBe(LandNotificationKind.DispatchBase);
+            (await db.AgentTaskEvents.CountAsync(e => e.Id == mismatches[0].Id, ct)).ShouldBe(1);
+        }
+        else
+        {
+            mismatches.ShouldBeEmpty();
+        }
+
+        var siblingIntents = intents
+            .Where(i => i.WarningKey.StartsWith(
+                DispatchBaseNotificationPayload.SiblingKeyPrefix, StringComparison.Ordinal))
+            .ToList();
+        siblingIntents.Count.ShouldBe(divergentSiblings);
+        foreach (var sibling in siblings)
+        {
+            siblingIntents.ShouldContain(
+                i => i.WarningKey == DispatchBaseNotificationPayload.SiblingKey(sibling.Id));
+        }
+
+        intents.Count.ShouldBe(divergentSiblings + (moveTheDefault ? 1 : 0));
+    }
+
+    /// <summary>
+    /// V-31 / G-22: containment is evaluated against the ACTUAL configured default, not a hard
+    /// <c>master</c>. A sibling rebased (cherry-picked, so a different sha and the same patch) onto
+    /// the configured default is contained and stays silent, even though <c>master</c> lacks it.
+    /// </summary>
+    [Test]
+    [Timeout(60_000)]
+    public async Task C508_RebasedSiblingUsesActualDefault(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c508-rebased-default");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var (card, project) = await SeedCardWithProjectAsync(db, "CARD-0508");
+        project.BaseBranch = "release";
+        await db.SaveChangesAsync(ct);
+
+        var sibling = await SeedKeptSiblingAsync(db, repo, card.Id, "rebased sibling work");
+        var siblingTip = (await repo.GitReadAsync("rev-parse", sibling.WorktreeBranch!)).Trim();
+        await repo.GitAsync("checkout", "-b", "release", "master");
+        // A commit of its own first, so the replay is a genuinely different sha and not the
+        // identical object git produces when the cherry-pick parent is the original parent.
+        await repo.CommitFileAsync("release-only.md", "release diverges\n");
+        await repo.GitAsync("cherry-pick", siblingTip);
+        var releaseTip = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        releaseTip.ShouldNotBe(siblingTip);
+        await repo.GitAsync("checkout", "master");
+
+        // The control: plain master does NOT carry the patch, so a hard-coded master base would warn.
+        CherryContains(
+            (await ScratchGitRepo.GitInAsync(repo.Path, "cherry", "master", sibling.WorktreeBranch!)).StdOut)
+            .ShouldBeFalse();
+        CherryContains(
+            (await ScratchGitRepo.GitInAsync(repo.Path, "cherry", "release", sibling.WorktreeBranch!)).StdOut)
+            .ShouldBeTrue();
+
+        var parentSessionId = Guid.NewGuid();
+        await SeedParentSessionAsync(db, parentSessionId);
+        var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, parentSessionId);
+        task.ProjectId = project.Id;
+        await db.SaveChangesAsync(ct);
+
+        await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot);
+        await using var scope = provider.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+
+        db.ChangeTracker.Clear();
+        var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        dispatched.WorktreeBaseRef.ShouldBe("release");
+        dispatched.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.DefaultBranch);
+        dispatched.WorktreeBaseSha.ShouldBe(releaseTip);
+        await MaterializeAndDeliverAsync(scope.ServiceProvider, task.Id, ct);
+        db.ChangeTracker.Clear();
+        (await db.AgentTaskDispatchWarningIntents.CountAsync(i => i.TaskId == task.Id, ct)).ShouldBe(0);
         (await db.AgentTaskEvents.CountAsync(
-            e => e.AgentTaskId == repair.Id && e.Type == AgentTaskEventType.Warning, ct)).ShouldBe(0);
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning, ct)).ShouldBe(0);
+    }
+
+    /// <summary>
+    /// V-30 / G-104: the guard observes HEAD independently once the chosen default fails to
+    /// resolve — it does not cascade to a lower-priority setting and it does not silently fall
+    /// back to <c>master</c>. Here master EXISTS and differs from HEAD, and the sibling is
+    /// contained in master but not in HEAD, so a base evaluated against master would be silent.
+    /// </summary>
+    [Test]
+    [Timeout(60_000)]
+    public async Task C508_GuardPreservesFailedDefault(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c508-failed-default");
+        await repo.CommitFileAsync("README.md", "base\n");
+        var basement = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-0508");
+        var sibling = await SeedKeptSiblingAsync(db, repo, card.Id, "sibling above the basement");
+        var siblingTip = (await repo.GitReadAsync("rev-parse", sibling.WorktreeBranch!)).Trim();
+        // master carries the sibling's patch; the detached HEAD the guard must observe does not.
+        await repo.CommitFileAsync("master-only.md", "master diverges\n");
+        await repo.GitAsync("cherry-pick", siblingTip);
+        var masterTip = (await repo.GitReadAsync("rev-parse", "master")).Trim();
+        masterTip.ShouldNotBe(basement);
+        // master must contain the patch, so only a base evaluated at HEAD can warn.
+        CherryContains(
+            (await ScratchGitRepo.GitInAsync(repo.Path, "cherry", "master", sibling.WorktreeBranch!)).StdOut)
+            .ShouldBeTrue();
+        CherryContains(
+            (await ScratchGitRepo.GitInAsync(repo.Path, "cherry", basement, sibling.WorktreeBranch!)).StdOut)
+            .ShouldBeFalse();
+        await repo.GitAsync("checkout", "--detach", basement);
+
+        var parentSessionId = Guid.NewGuid();
+        await SeedParentSessionAsync(db, parentSessionId);
+        var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, parentSessionId);
+        await db.SaveChangesAsync(ct);
+
+        var missing = "missing-" + Guid.NewGuid().ToString("N")[..8];
+        await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, defaultBranch: missing);
+        await using var scope = provider.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+
+        db.ChangeTracker.Clear();
+        var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        dispatched.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.RepoHead);
+        dispatched.WorktreeBaseRef.ShouldBe("HEAD");
+        dispatched.WorktreeBaseSha.ShouldBe(basement);
+
+        await MaterializeAndDeliverAsync(scope.ServiceProvider, task.Id, ct);
+        db.ChangeTracker.Clear();
+        var intents = await db.AgentTaskDispatchWarningIntents.AsNoTracking()
+            .Where(i => i.TaskId == task.Id).ToListAsync(ct);
+        intents.Count.ShouldBe(2);
+        var unresolved = intents.Single(i => i.WarningKey == DispatchBaseNotificationPayload.DefaultUnresolvedKey);
+        unresolved.Detail.ShouldContain(missing);
+        unresolved.Detail.ShouldNotContain("master");
+        var siblingIntent = intents.Single(
+            i => i.WarningKey == DispatchBaseNotificationPayload.SiblingKey(sibling.Id));
+        siblingIntent.Detail.ShouldContain(sibling.WorktreeBranch!);
+        intents.ShouldNotContain(i => i.WarningKey == DispatchBaseNotificationPayload.MismatchKey);
     }
 
     private static async Task MaterializeAndDeliverAsync(IServiceProvider services, Guid taskId, CancellationToken ct)
@@ -471,7 +704,22 @@ public class AgentTaskDispatchBaseGuardTests
         await Task.CompletedTask;
     }
 
-    private static async Task<Card> SeedCardAsync(AppDbContext db, string identifier)
+    /// <summary>
+    /// The same predicate the production guard uses: <c>git cherry base branch</c> means contained
+    /// when it prints nothing, or only '-' lines. A '+' line is a patch the base does not carry.
+    /// </summary>
+    private static bool CherryContains(string cherryStdOut)
+    {
+        var lines = cherryStdOut.Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        return lines.Length == 0 || Array.TrueForAll(lines, static line => line.StartsWith('-'));
+    }
+
+    private static async Task<Card> SeedCardAsync(AppDbContext db, string identifier) =>
+        (await SeedCardWithProjectAsync(db, identifier)).Card;
+
+    private static async Task<(Card Card, Project Project)> SeedCardWithProjectAsync(
+        AppDbContext db, string identifier)
     {
         var now = DateTime.UtcNow;
         var project = new Project
@@ -515,13 +763,47 @@ public class AgentTaskDispatchBaseGuardTests
         };
         db.AddRange(project, board, column, card);
         await db.SaveChangesAsync();
-        return card;
+        return (card, project);
     }
 
-    private static ServiceProvider CreateProvider(string connectionString, string worktreeBase)
+    /// <summary>
+    /// Runs <paramref name="onAcquired"/> once, the first time the repository mutation lease is
+    /// taken. That is exactly the window between the dispatcher's pre-lease base observation and
+    /// the locked claim, so a test can move the base under the claim deterministically.
+    /// </summary>
+    private sealed class LeaseHook(IRepositoryMutationLease inner, Func<Task> onAcquired)
+        : IRepositoryMutationLease
+    {
+        private int _fired;
+
+        public async Task<RepositoryLease?> TryAcquireAsync(string repository, CancellationToken ct)
+        {
+            if (Interlocked.Exchange(ref _fired, 1) == 0)
+                await onAcquired();
+            return await inner.TryAcquireAsync(repository, ct);
+        }
+
+        public bool Owns(RepositoryLease lease, string commonDirectory) =>
+            inner.Owns(lease, commonDirectory);
+    }
+
+    private static ServiceProvider CreateProvider(
+        string connectionString,
+        string worktreeBase,
+        string defaultBranch = "master",
+        Func<Task>? onLeaseAcquired = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
+        if (onLeaseAcquired is not null)
+        {
+            // Registered BEFORE the graph so its TryAdd keeps this decorator. The hook fires once,
+            // after the pre-lease base observation and before the locked claim reads the route.
+            services.AddSingleton<IRepositoryMutationLease>(sp =>
+                new LeaseHook(new RepositoryMutationLease(sp.GetRequiredService<ILandingGit>()), onLeaseAcquired));
+            services.TryAddSingleton<ILandingGit, LandingGit>();
+        }
+
         services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString));
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(TimeProvider.System);
@@ -543,7 +825,7 @@ public class AgentTaskDispatchBaseGuardTests
         {
             WorktreeBasePath = worktreeBase,
             WorktreeAddTimeoutSeconds = 180,
-            DefaultBranch = "master",
+            DefaultBranch = defaultBranch,
         });
         services.AddSingleton<CompletionNoteFlushQueue>();
         services.AddSingleton<LandDeliveryBoundary>();
