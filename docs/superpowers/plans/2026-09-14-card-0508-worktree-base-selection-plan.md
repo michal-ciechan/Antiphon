@@ -1953,3 +1953,712 @@ crash variants, two-caller default diagnostics, concurrent recovery and the
 additional retention/attention tests. Recompute counts and costs rather than
 merely adding two rows to the previous 63 executable controls. No product test,
 build or mutation ran here; document consistency checks are not runtime proof.
+
+
+## Verification design: amendment B final audit
+
+Appended by TestDesign task 3b831296 on 2026-09-14 at fetched/reset
+origin/master d5eaa24a. This section is the current verification authority.
+It supersedes the earlier failed executability/cost verdicts and the verification
+rows explicitly replaced below; the fix design and historical audits are unchanged.
+Scope remains **S1 + S1b + S2 + S2b; S3/S4/S5 remain deferred**.
+
+**Verdict: next Code.** B-1 retains the distinguishing failed-default input;
+B-2/B-3 retain the original dispatch obligation before materialization. PC-60
+and PC-61 now have compiling defects and achievable restored expectations.
+No further implementation-design or human decision is needed. “Executable”
+here means specified against the commissioned implementation, not implemented
+or run at this documentation-only baseline.
+
+### Inspection
+
+Bodies read during this pass, rather than inferred from names:
+
+- AgentTaskDispatchBaseGuardTests in full, including all seven tests and
+  SeedKeptSiblingAsync/SeedQueuedWorktreeTaskAsync/SeedParentSessionAsync/
+  SeedCardAsync/CreateProvider | pre-lease observation, owner hold, stranded
+  request, project omission and non-native parent -> V-2/V-7/V-15/V-16/V-23/V-24,
+  R-3. The existing helper writes identical plan.md content for each sibling:
+  the second divergent sibling needs a different file and branch from the common
+  seed, otherwise fixture creation can produce no commit or accidental containment.
+- DelegationWorktreeTests merge-target creation, two top-level tasks,
+  NewTask/CreateService/ExpectedCoordinates; ScratchGitRepo and
+  DelegationTestServices in full | real distinct refs, optional settings and
+  direct construction -> V-1..V-7/V-22/V-30/V-31. Unchanged adoption/cleanup,
+  land-marker, SourceLanding-world, contract and script bodies retain the
+  earlier inspections; this pass does not claim to have re-read them.
+- AgentTaskLandNotificationPersistenceTests in full; LandingSafetyHarness
+  InitializeAsync/BuildServices/SeedAsync/RestartServicesAsync/CreateContext,
+  SaveFault and TransactionFault | predecessor migration, before/after-save
+  and committed-ack faults -> V-17/V-20/V-23/V-26. EventKind alone is not a
+  task-scoped fault selector.
+- AgentTaskLandNotificationRecoveryTests and AgentTaskLandReceiptTests in full;
+  BridgeQueueHarness.CreateAsync/OnSubmitted/InsertEntryAsync; TestDbFixture
+  and IsolatedTestSchema in full | 263-row scan, keyed collisions, retry,
+  destination and false-receipt matrices, synthetic transcript source ->
+  V-18/V-25..V-27, R-6/R-7/R-9. Cloned databases, not SearchPath isolation.
+- AgentTaskLandDeliveryE2ETests.C467_V22..V32; LandDeliveryFixture and
+  LandDeliveryOptions in full, including native caller setup, child ownership,
+  ReceiptAsync, AssertOnePromptAsync, SnapshotAsync and FileBoundary |
+  native busy/eligible input, both scan observations and owned restart ->
+  V-11/V-12/V-14/V-16/V-21/V-25/V-30. These are the nearest fixtures for DE.
+- AgentTaskLandMonitoringTests in full; attentionVisuals.test.ts including
+  item/ALL_KINDS/key/target tests | threshold edges, error visibility,
+  requestless attention and total client mapping -> V-19/V-28.
+- DataRetentionServiceTests: first five transcript cases; session retention
+  and cascade cases; stale/live/recent task-tree and zero-window cases;
+  CreateService, seed/read/cleanup helpers | whole transcript, loose session
+  references, tree-wide exclusion, cleanup ordering -> V-29/R-10.
+  These are the nearest fixtures for the added retention methods.
+- DelegationTestServicesTests and DelegationHarnessCensusTests in full |
+  helper options, TryAdd and graph ownership -> R-11; these checks do not
+  substitute for resolving the complete dispatcher or real Program boot.
+- Production: dispatcher sibling guard, Warning producer, complete claim and
+  launch tail; worktree probe/creation/reuse; notification reconciler and
+  hosted scan in full; AttentionService.BuildLandItemsAsync;
+  DataRetentionService session/transcript/queue/task pruning | B's actual
+  handoffs, observable mutation seams and independently bypassable guards.
+
+Required owners read: project-context; testing-and-build (isolation, clocks,
+method filters, output custody and post-land Mutation); orchestration-loop
+stage/receipt contract; session-runtime-invariants receipt requirements.
+No build, product test or mutation ran.
+
+Missing setup is assigned to Code, with concrete completion conditions:
+
+1. Register the intent service/payload dependencies in Program and
+   DelegationTestServices; extend direct constructions. DG component tests
+   explicitly materialize committed intents, then reconcile exact note IDs.
+   TickAsync no longer promises synchronous Warning/queue visibility.
+   DBN uses DG's real dispatcher/Git graph plus the BridgeQueueHarness worker
+   graph in an isolated cloned database. Override its NoWorktreeManager when
+   composing the graphs. Register CompletionNoteFlushQueue and notifier.
+2. BS uses ScratchGitRepo/DW construction, Integration and the process limiter.
+   Pass GitSettings to the service, not just WorktreeManager. Set task.ProjectId
+   explicitly for project tests. Keep independent P/T/M/E/C/repair/H tips;
+   assert their inequality. Do not derive expected refs, digests or headers
+   from the factory under test.
+3. DE uses the real Program, real dispatcher and queue, native FakeGrok for
+   BOTH caller and dispatched delegate, fixture-owned homes, modern ConPTY,
+   Docker Postgres, pinned SDK and rebuilt client/dist. Keep the E2E process
+   limiter and C467LandDelivery group. Assert owned runner port != 17204.
+   Initialize the native parent first, then start the owned child with gates,
+   then seed a NEW Queued dispatch task/card/project/siblings. The fixture's
+   existing Succeeded landing TaskId is not that task. Do not make land
+   requests or insert intents/events/notes to stand in for native production.
+4. Extend FileBoundary with all seven B-4 names. Add an independent
+   dispatch-warning-before-materialize gate, armed before dispatch, covering
+   the scan and optional fast path before either takes the intent row lock.
+   Scope barrier/fault records by task, final dispatch-event ID and intent ID.
+   Scope queue barriers through the saved notification/queue identity.
+   Add fixture-owned SaveChanges/transaction interceptors for claim,
+   projection and retry-error writes; do not let quota/repair warnings arm them.
+   A before-save failure, SavedChangesAsync failure and
+   TransactionCommittedAsync lost acknowledgement are separate arrangements.
+5. Capture immutable expected IDs/route/body/digest/time from a NEW observer
+   after claim commit while materialization is gated. Save that snapshot
+   outside the child before killing it. Restart the same DB/runner with the
+   gate released; never requeue to prove original recovery. A preclaim rollback
+   has no committed obligation, so its later successful dispatch is a new claim.
+6. Replace land-kind/first-row receipt lookup with exact note-ID lookup.
+   Compare the saved first line AND complete saved body, destination and
+   queue attempt floor to UserPrompt and ConfirmingPromptSequence.
+   Count native user_message_chunk submissions by the exact header, and also
+   count unkeyed copies of the frozen warning detail to detect the deleted
+   inline producer returning. Expected count is one per required intent after
+   two further completed intent AND notification scans. Use a bounded collector
+   that returns rows at deadline and asserts counts; never use an unreachable
+   note boundary or generic UntilAsync timeout as PC red.
+7. Preserve the A-audit lease decorator for M->P/HEAD->M mismatch. Add a
+   post-observation, pre-claim route edit using a fresh context for V-24; force
+   the locked claim to load the changed route (do not reuse a tracked outer
+   task). For frozen-observation tests, move/delete sibling refs only after
+   observing their original draft, and before capture/projection as specified.
+8. Retention tests use an isolated clone and the nearest helpers, retaining
+   [NotInParallel] for global sweeps. Use 200-day-old terminal task trees and
+   100-day-old terminal sessions/transcripts. Remove PersistentSessionId,
+   AgentTask.AgentSessionId and current ParentSessionId references to the old
+   destination, with no queue/note before projection, so existing guards cannot
+   mask missing intent protection. Test session and transcript passes separately.
+   Dispose the clone or delete owned notes/intents before their Restrict-linked
+   events/tasks; the old CleanupAsync order alone cannot clean this new fixture.
+9. Race tests use instance-scoped DB interceptors/barriers, fresh scopes and
+   Task.WhenAll that is awaited. Intercept the intent SELECT for the row-lock
+   test: hold the first materializer before pair commit; a second scope's
+   lock acquisition must remain pending until release. Observe both completions
+   with explicit error/count assertions. A SQL constraint exception escaping
+   setup is not a passing concurrency test or a valid PC red.
+10. Attention handoff tests use command interceptors to commit projection
+    between the two reads in EACH order. Also create a newer unrelated note on
+    the same task to prove suppression is by exact NotificationId. Component
+    clock may be frozen; queue/native clock must advance with real time.
+    Retention handoff tests interleave projection at the corresponding query
+    boundary and retain the original destination in both orders.
+11. V-20 upgrades from each of the TWO new migrations' immediate predecessors,
+    using historical raw SQL as the read upgrade fixture does. Preserve an old
+    land request/pair and a historical dispatch; verify no new intents/backfill,
+    unique (DispatchEventId,WarningKey), unique NotificationId, due index,
+    Restrict task/event FKs, and nullable RequestId. Preserve existing event/
+    queue uniqueness and old enum values. Reapply migrations inertly. C508_IntentUniqueKeys also upgrades a disposable predecessor store; mutating an EF model index alone would leave an already-created database index unchanged and is not an executable PC.
+
+### Delivery inventory
+
+The following replaces all earlier dispatch-delivery inventories.
+
+| Path | Producer -> destination | Persistence boundary and durable identity | Recovery / observable receipt |
+|---|---|---|---|
+| Base/repair detail | Provisioning + successful claim -> task detail reader | TaskId and creation/final dispatch event IDs; tuple and session in claim transaction | Fresh DB/HTTP tuple/event read, V-8/V-10/V-15; query visibility, not session input |
+| Sibling warning | Frozen pre-lease guard -> Capture -> original parent | Final dispatch-event ID + sibling:<id> -> intent.Id (future Warning.Id), NotificationId; immutable route/body/digest committed with claim | Boot/due intent scan, locked projection, notification scan, keyed queue, exact complete original UserPrompt |
+| Ref-mismatch warning | Observed-ref vs recorded-ref comparison -> Capture -> original parent | Same chain, WarningKey=base-observation-stale; independent even with zero sibling warnings | Same recovery and receipt; one mismatch per successful claim |
+| Newly used unresolved-default warning | Provisioning's B-1 metadata -> Capture -> original parent | Same chain, WarningKey=default-unresolved; full failed name retained, including non-card dispatch | Same recovery and receipt, V-30; standalone provisioning result is not native acceptance |
+| Intent projection | MaterializeAsync -> Warning + DispatchBase note | intent.Id = Warning.Id = note.SourceEventId; intent.NotificationId = note.Id; pair + MaterializedAt commit atomically | Lock, rollback, due retry, lost-ack reload. MaterializedAt is not a receipt |
+| Note delivery | ReconcileAsync -> session queue -> original parent | note.Id = SourceLandNotificationId; exact QueueMessageId, digest, route and attempt floor | Keyed insert recovery, completion/notification scans, catch-up; matching complete UserPrompt + native census |
+| Land sibling marker | Real land -> caller | Existing request -> terminal event -> note -> keyed queue | All V-11/V-12 cuts retained with changed real-Git sibling payload; complete caller UserPrompt |
+| Pending warning attention | Intent or exact note -> attention HTTP/client | dispatch:<NotificationId:N>:receipt across materialization | One condition until receipt, threshold/error visibility; never creates a land request and never discharges delivery |
+
+Custody belongs to the successful claim even if launch later throws, the task
+settles, Attempt changes, the parent route changes, or refs disappear. No Ready
+bit, dispatcher liveness, current task status, new request or requeue is a
+recovery prerequisite. Same claim replays existing identities; a new successful
+claim with identical TaskId/Attempt/text owes new identities.
+
+These native cases use actual producers. Helpers can share arrangement code;
+each named method executes its own specified cut, not the entire matrix.
+This split replaces the aggregate C508_SiblingOutcomeRecovery and
+C508_WarningRecovery test names, preserving all their cases.
+
+| V ID / exact method (LD or DE alias below) | Handoff / required observation before continuation |
+|---|---|
+| V-12 LD.C508_SiblingOutcomeRollbackRecovers | Before terminal commit: event/note both absent after rollback; restart real land producer, then receipt |
+| V-12 LD.C508_SiblingOutcomeCommitRecovers | Terminal committed, no queue: same note reaches receipt; no repeated publication |
+| V-12 LD.C508_SiblingOutcomeEnqueueRecovers | Two failed before-enqueue calls: original obligation/backoff, then receipt |
+| V-12 LD.C508_SiblingOutcomeQueueInsertRecovers | Busy caller, queue insert before note QueueMessageId save: same keyed row, release, one receipt |
+| V-12 LD.C508_SiblingOutcomeLostFlushRecovers | Eligible caller, drop completion wakeup: scan delivers without new input |
+| V-12 LD.C508_SiblingOutcomeAttemptRecovers | Attempt persisted before typing: restart, same row, one complete prompt |
+| V-12 LD.C508_SiblingOutcomeVerdictRecovers | Native prompt before verdict: restart/catch-up, same prompt, no retyping |
+| V-12 LD.C508_SiblingOutcomeReceiptSaveRecovers | Prompt before receipt save: restart, same sequence, one native input |
+| V-12 LD.C508_SiblingOutcomeConfirmedDoesNotReplay | Receipt saved: restart and two more scans, no second submission |
+| V-21 DE.C508_ClaimRollbackCreatesNoObligation | dispatch-warning-claim-before-commit hard kill: zero committed final event/new session/intents/pair. No recovery receipt owed by this aborted claim |
+| V-21 DE.C508_DispatchWarningPrecommitCrashRecovers | Immediate dispatch-warning-claim-committed cut, eligible parent; fast path has not run, independent materialization gate held. Capture original intents/zero pairs; kill/restart -> exact original receipts |
+| V-21 DE.C508_ClaimCommitBusyRecovery | Same immediate postclaim cut with busy parent; zero delivery attempts before release, then original receipts |
+| V-21 DE.C508_DispatchReturnCrashRecovers | Successful dispatch-warning-after-dispatch cut with materialization gated; kill/restart -> original receipts |
+| V-21 DE.C508_ProjectionPrecommitCrashRecovers | Gate entry first to capture expected intent, release entry, kill at dispatch-warning-before-commit; pair/marker absent, original intent retries to receipt |
+| V-21 DE.C508_ProjectionSaveFailureRecovers | Two argument rows: before-save and after-save projection faults; observe rollback, restart, same IDs/body/route to receipt |
+| V-21 DE.C508_PostClaimLaunchFailureRecovers | One-shot failure in postcommit launch-spec tail after snapshot; failed task still owns intent; restart/due scan reaches original parent |
+| V-14 DE.C508_WarningBootScanReachesCaller | Pair + marker committed at dispatch-warning-materialized; hold before-enqueue, restart; scan delivers same note |
+| V-14 DE.C508_WarningPairCommitRecovers | Pair committed, before-enqueue cut; original event/note survives restart to receipt |
+| V-14 DE.C508_WarningEnqueueRecovers | Two enqueue failures, same ID/backoff; due retry -> receipt |
+| V-14 DE.C508_WarningQueueInsertRecovers | Busy parent, ambiguous insert: exact queue ID reused, one receipt |
+| V-14 DE.C508_WarningLostFlushRecovers | Eligible parent, lost wakeup: completion scan -> receipt |
+| V-14 DE.C508_WarningAttemptRecovers | Attempt-before-typing cut: original row -> complete prompt |
+| V-14 DE.C508_WarningVerdictRecovers | Prompt-before-verdict cut: same prompt after restart, no duplicate |
+| V-14 DE.C508_WarningReceiptSaveRecovers | Receipt-before-save cut: same sequence after restart, no duplicate |
+| V-14 DE.C508_WarningConfirmedDoesNotReplay | Saved receipt, restart/two further scans: one native input |
+
+Each DE required-recipient row includes at least one real divergent sibling;
+the immediate postclaim cut uses a sibling warning. V-16's two native mismatch
+methods and V-30's four default rows also snapshot at the gated postclaim cut
+and restart before delivery, exercising their own real producers through the
+same claim/projection factories. Busy x every fault x every warning kind is
+excluded: queue eligibility is common to the keyed queue, the claim cut has
+busy and eligible coverage, V-14/V-16/V-30 exercise each producer and ordinary
+components cross the payload/state boundaries. No handoff is excluded.
+
+Substitutes remain explicit: real Git proves patch/base facts; DG fake session
+rows prove claim/DB behavior; BridgeQueueHarness inserts synthetic transcripts
+and proves worker/matcher behavior; fresh HTTP proves reader visibility.
+Native FakeGrok proves the production queue/runner/native transcript path for
+that profile, not a hosted model. Acceptance, insertion, terminal event,
+MaterializedAt, Sent, ConfirmedAt without its linked complete prompt, screen
+or transport acknowledgement alone never satisfy delivery acceptance.
+**Ordinary Review must reject evidence stopping before recipient evidence.**
+
+### Proves it works now
+
+All names below are implementation requirements. DW/BS/DG/LS/LD/CS retain their
+earlier expansions. DBN = DispatchBaseNotificationTests; DE =
+DispatchBaseWarningDeliveryE2ETests; LM = AgentTaskLandMonitoringTests;
+DR = DataRetentionServiceTests. DBN/BS are new files; their nearest fixtures
+were read above. V-1..V-13 and V-15 retain the A-audit amendments except where
+this section updates setup or splits a method.
+
+| ID | Behavior / layer | Exact test / setup | Expected |
+|---|---|---|---|
+| V-2 update | Named fallback / dispatcher | DG.C508_MissingDefaultWarns: two generated invalid project/global names, card/non-card, detached valid H and unborn-H refusal; materialize capture | Newly used fallback records H/RepoHead, exactly one matching default intent/Warning/note with original name; absent usable H fails with no new session/intent |
+| V-11 update | Land marker / native | LD.C508_SiblingOutcomeReachesCaller has equivalent+eligible, equivalent+busy and mixed+eligible rows; LD.C508_SiblingOutcomeWaitsForBusyCaller has the mixed+busy row | Four distinct real-producer cases retained; complete expected marker/body and one native prompt; busy attempts remain zero before release |
+| V-14 update | Producer -> native parent | DE.C508_WarningProducerToReceipt (eligible), DE.C508_WarningBusyProducerToReceipt (busy), two divergent siblings and two genuine claims each; quiesce/stop the owned delegate before arranging Queued/adoption; keep Attempt unchanged for the second claim | Four distinct warning/notification IDs per method, two final dispatch-event IDs, one queue/complete native prompt per warning. Repeated ticks without a claim add none; busy has no typing before release |
+| V-16 update | Ref mismatch / dispatcher + native | DG.C508_GuardRefMismatchWarnedOnce keeps M->P, HEAD->M, 0/1/2 warnings and equal-ref rows; DE.C508_MismatchWarningReachesCaller eligible, DE.C508_MismatchWarningWaitsForCaller busy | One base-observation-stale intent and pair per unequal-ref claim, N+1 total; complete mismatch prompt once in original parent |
+| V-17 update | Atomic materialization / PostgreSQL | DBN.C508_WarningCommitCreatesObligation, .C508_WarningCommitAtomic, real dispatcher-produced intent then materialization; before/after-save faults | Success: exactly one Warning/note + marker with original IDs. Fault: original pending intent remains, zero pair, null marker. Dispose failed scope, retry same intent, exactly one pair |
+| V-18 update | Frozen payload/state / component | DBN.C508_WarningPayloadAndDestination captures intent first; edit task A->B before projection, again before reconcile. Retain C508_WarningStatesAndLease, C508_WarningQueueDigestCollision, C508_WarningsAreNotReports | Exact independently formatted header and route+body digest at claim, projection and queue; original destination. None has no enqueue; null/missing/stopped/failed/deleted destination remains owed. No digest collision or report consumption |
+| V-19 update | Note attention / DB+HTTP/client | LM.C508_RequestlessDispatchNotes, focused attentionVisuals.test.ts case from A | Correct kind, dispatch key, nullable request and label; Outcome aging unchanged; linked complete receipt clears note condition |
+| V-20 update | Both migration boundaries / PostgreSQL | DBN.C508_RequestlessNotificationUpgrade plus BS.C508_BaseFieldsUpgradeAndRoundTrip | Setup item 11 schema/index/FK assertions, no intent backfill, preserved old land data, independent input/output columns and stable second contract comparison |
+| V-21 replacement | Lost original producer handoffs / native | Exact DE methods in cut table above | Claim rollback owes nothing; every committed intent reaches its original parent after restart without requeue. Correct original IDs/body/time/route survive pair rollback and postclaim launch failure |
+| V-22 replacement | Failed default name / pure resolver | BS.C508_UnresolvedDefaultRetainsName generates two unequal invalid refs; all five B-1 arms crossed with success/failure probe | RepoHead retains the respective verbatim name; higher-priority arms retain their own ref/source and null diagnostic. Names are inputs, never fixture constants in production |
+| V-23 | Claim custody / dispatcher + PostgreSQL | DBN.C508_ClaimCapturesWarningIntents; .C508_ClaimIntentAtomic (before-save, after-save, before-commit); .C508_RefusedClaimHasNoIntent (lease/sibling hold, stale claim, invalid ref, failed progress baseline, optional expiry) | Successful final claim event, session/base and every expected draft commit together. Aborted/refused claims have no committed final event/session/intent; baseline-failure creation event is not mistaken for successful final dispatch |
+| V-24 | Identity and captured route / component + real dispatcher | DBN.C508_IntentAttemptIdentity; .C508_IntentCaptureRoute; .C508_IntentCaptureBinding; .C508_IntentUniqueKeys | Same committed event with reordered drafts reuses each key/ID; new final event with same task/Attempt/text gets distinct IDs. Locked claim's edited parent wins over stale outer task. Cross-task capture refuses before rows; duplicate event/key or NotificationId violates the named unique constraint |
+| V-25 | Immutable projection / component + native | DBN.C508_IntentProjectionCustody; DE.C508_IntentFrozenRecoveryReachesCaller with task Succeeded/Failed/Canceled/Queued (four rows), Attempt and route A->B edits, sibling refs moved/deleted after committed-intent snapshot | Exact saved Warning/notification IDs, detail/body/digest/CreatedAt/route; no Git re-evaluation; original parent receives once, B receives zero. Gate ordinary redispatch for Queued row until old-intent receipt, then a genuinely new claim owes different IDs |
+| V-26 | Serialized projection and integrity / PostgreSQL | DBN.C508_IntentProjectionConcurrent; .C508_IntentProjectionLostAcknowledgement; .C508_IntentProjectionIntegrity | Competing scopes block/then no-op with no caught errors, one pair/marker. Postcommit lost ack retains marker/IDs/attempts. Digest, independently bad header with valid digest, cross-task dispatch-event binding and unexpected existing IDs each leave pending marker, error and no replacement rows |
+| V-27 | Retry and scan fairness / hosted service + DB | DBN.C508_IntentMaterializationRetry; .C508_IntentRetryBookkeepingFailure; .C508_IntentScanPaging; .C508_IntentScanIsolation | 5/10/20/40/80/160/300/300 seconds; the actual worker skips before due and retries at equality (direct MaterializeAsync calls are not claimed to enforce scan eligibility). Bookkeeping failure leaves original intent discoverable. 263 intents ordered by PostgreSQL ID, poison first row, future row, terminal/edited-attempt task and materialized row; all due healthy rows across three pages progress. Next cycle revisits newly due low ID; row or whole intent-pass fault still permits unrelated note handoff |
+| V-28 | Pre-note attention / DB+HTTP | LM.C508_PendingIntentAttention; .C508_IntentAttentionHandoff; frozen clock and both read-order interleavings | At 299.999/300/899.999/900s: absent/Warning/Warning/Error. Earlier error: Error. None: absent. Missing destination: visible. Exact dispatch key remains one condition through commit, no request clause/Aged request, null LandNotificationId before row, real ID afterwards; receipt removes it |
+| V-29 | Recipient/history retention / PostgreSQL | DR.C508_IntentSessionRetention; .C508_IntentTranscriptRetention; .C508_IntentTaskTreeRetention; .C508_NotificationTaskTreeRetention | Required pending intent protects old destination and every transcript row despite task route edit, including projection interleavings; unresolved note takes over. None and confirmed-note controls permit ordinary pruning when no other references. Any intent (pending/materialized/None) or note (including confirmed/None) on a child protects entire stale tree; unrelated tree/events prune in same sweep without exception |
+| V-30 | Both default callers / real Git + native | BS.C508_ProvisioningPreservesFailedDefault; DG.C508_GuardPreservesFailedDefault; DE.C508_MissingDefaultReachesCaller: two generated invalid names x (card+busy, non-card+eligible), four rows | Provisioning metadata retains each failed name; guard independently observes HEAD after the chosen candidate fails (M exists and differs from H); materialized warning/native complete body names it. Each chosen invalid ref falls to H even with valid lower-priority setting |
+| V-31 | Default boundary combinations / real Git + component | BS.C508_DefaultCandidateSelection; .C508_DefaultProbeCancellation; extend DW.C508_ReuseKeepsRecordedBase | null/empty/whitespace project and global settings select first nonblank, then master; nonblank invalid ref retained verbatim, no cascade to next setting. Canceled probe propagates cancellation, no fallback. Unused/default probe failure on deliberate base or reuse creates no diagnostic; recorded tuple survives |
+
+V-18 also runs DispatchBase through the read false-evidence matrix, adding
+wrong task/event/header and flattened-complete cases. These are component
+matcher assertions; V-14/V-16/V-21/V-25/V-30 remain native acceptance.
+
+### Guards the regression
+
+- R-1..R-8 remain with A's request/record correction. R-3 now explicitly
+  materializes original intents before note reconciliation. Preserve hold,
+  deleted-branch, stranded-request and repair-owner assertions; no S3 inversion.
+- R-9: shared notification scan and receipt remain kind-agnostic |
+  AgentTaskLandNotificationRecoveryTests.C467_V10_BootScanFairnessAndClearedPending,
+  C467_V08_DestinationSnapshotsRemainOwed, C467_V09_KeyedQueueRacesAndDistinctEvents,
+  C467_V14_LandNotesDoNotCountAsReports; AgentTaskLandReceiptTests
+  .C467_V11_RejectFalseReceipts, .C467_V12_CatchUpAndRecoverReceiptWithoutRetyping,
+  .C467_V13_RetentionCancellationAndSupersession. Preserve exact queue ID,
+  immutable bytes, receipt floor and unconfirmed retention assertions.
+- R-10: retention still makes progress | DR stale terminal session/transcript,
+  no-referencer cascade, fully stale task tree, live/recent tree and zero-window
+  cases read above. V-29 adds unrelated eligible tree/session controls and
+  asserts caught sweep exception is null before checking retained/deleted IDs.
+- R-11: construction compatibility | DelegationTestServicesTests and
+  DelegationHarnessCensusTests (existing owner-prescribed batteries), affected
+  dispatcher classes and real Program boot resolve capture dependencies;
+  required capture is never silently skipped on null optional dependency.
+- The new focused native methods replace aggregate method names only.
+  No cut, warning producer, native receipt, two-extra-scan census or failed
+  receipt row is dropped to obtain a cheaper verification floor.
+
+### Guard inventory
+
+This is the complete current inventory, including the not-yet-implemented
+assertions. Each G-n maps 1:1 to distinct PC-n below. G-23/G-43 split patch
+awareness from pinned SHA; G-38/G-63 split destination from digest collision;
+G-52/G-71/G-73 split queue, claim and projection destination custody;
+G-51/G-67 split projection from claim atomicity; G-42/G-60 split notification
+from intent scans; G-65/G-116 split capture invocation from the guard's
+zero-sibling observation. These independent fences must not mask one another.
+No "none" justification applies. Field widths, nullable DTO shape and enum
+compatibility are V-10/V-20 checks; new identity uniqueness and binding guards
+are expressly inventoried. Existing provider/cleanup/authentication guards
+outside the changed paths remain with their owning suites.
+
+| Guard | Plan reference / safety-critical invariant | Positive control |
+|---|---|---|
+| G-1 | S1 requested ref wins | PC-1 |
+| G-2 | S1 merge target beats defaults | PC-2 |
+| G-3 | D-1 merge target is never changed | PC-3 |
+| G-4 | B-1 project default beats global | PC-4 |
+| G-5 | B-1 global default beats hard master | PC-5 |
+| G-6 | S1 direct construction defaults to master | PC-6 |
+| G-7 | S1 defaults apply without a card | PC-7 |
+| G-8 | D-1 recorded SHA equals created base | PC-8 |
+| G-9 | D-1 Source identifies selected arm | PC-9 |
+| G-10 | D-1 Ref identifies selected arm | PC-10 |
+| G-11 | S1 no fabricated sibling owner | PC-11 |
+| G-12 | B-1/B-2 used unresolved default owes warning | PC-12 |
+| G-13 | D-2 invalid deliberate base refuses | PC-13 |
+| G-14 | A-1.6 recorded decision survives reuse | PC-14 |
+| G-15 | SourceLanding uses verified L | PC-15 |
+| G-16 | A-1.4 repair start SHA wins | PC-16 |
+| G-17 | D-4/S1 service enforces owned lease | PC-17 |
+| G-18 | S2 successful empty cherry means contained | PC-18 |
+| G-19 | S2 all-minus cherry means contained | PC-19 |
+| G-20 | S2 any plus means uncontained | PC-20 |
+| G-21 | S2 failed Git read never proves containment | PC-21 |
+| G-22 | A-1/B-1 shared formula uses actual default | PC-22 |
+| G-23 | S2 land comparison is patch-aware | PC-23 |
+| G-24 | D-3 active sibling land still holds | PC-24 |
+| G-25 | D-3 stranded event is not active land | PC-25 |
+| G-26 | Delivery terminal event includes obligation | PC-26 |
+| G-27 | Delivery queue key retains note identity | PC-27 |
+| G-28 | Delivery enqueue failure remains retryable | PC-28 |
+| G-29 | Receipt requires UserPrompt kind | PC-29 |
+| G-30 | Receipt belongs to destination | PC-30 |
+| G-31 | Receipt carries matching identity | PC-31 |
+| G-32 | Receipt body is complete | PC-32 |
+| G-33 | Receipt is above sequence floor | PC-33 |
+| G-34 | Receipt respects timestamp floor | PC-34 |
+| G-35 | Queue respects busy recipient | PC-35 |
+| G-36 | Queue recovers eligible recipient's lost wakeup | PC-36 |
+| G-37 | Queue catches up receipt without retyping | PC-37 |
+| G-38 | Keyed queue rejects crossed destination | PC-38 |
+| G-39 | Terminal save failure rolls back pair | PC-39 |
+| G-40 | B-3 materialized warning includes note | PC-40 |
+| G-41 | B-2/B-3 distinct warnings never coalesce by task | PC-41 |
+| G-42 | B-3 notification scan includes DispatchBase | PC-42 |
+| G-43 | S2 land comparison pins verified SHA | PC-43 |
+| G-44 | A-1.6 recorded Ref is not input | PC-44 |
+| G-45 | A-1.4 fresh repair skips sibling evaluation | PC-45 |
+| G-46 | A-1.4 repair Source is Repair | PC-46 |
+| G-47 | A-1.4 repair records owner task | PC-47 |
+| G-48 | B-2 unequal ref observation produces mismatch | PC-48 |
+| G-49 | B-2 one mismatch per successful claim | PC-49 |
+| G-50 | B-2/B-3 mismatch owes parent delivery | PC-50 |
+| G-51 | B-3 projection pair/marker rolls back together | PC-51 |
+| G-52 | B-3 queue handoff uses note's saved destination | PC-52 |
+| G-53 | B-2 capture digest binds route and full body | PC-53 |
+| G-54 | A-2/B-2 None creates no delivery attempt | PC-54 |
+| G-55 | A-2/B-2 missing destination remains owed | PC-55 |
+| G-56 | A-2/B-3 dispatch delivery ignores occupied repo lease | PC-56 |
+| G-57 | A-2.7 monitor excludes requestless notes | PC-57 |
+| G-58 | A-2.7 note attention has dispatch kind | PC-58 |
+| G-59 | Shared warning is not completion report | PC-59 |
+| G-60 | B-3 boot/due intent scan owns pre-pair recovery | PC-60 |
+| G-61 | B-1 resolver retains failed default name | PC-61 |
+| G-62 | B-2 capture header binds note/task/warning | PC-62 |
+| G-63 | Keyed queue rejects same-destination digest collision | PC-63 |
+| G-64 | B-1 probe accepts only commit refs | PC-64 |
+| G-65 | B-2 capture executes for zero-sibling mismatch | PC-65 |
+| G-66 | B-2 successful claim includes every intent | PC-66 |
+| G-67 | B-2 claim and intents share atomic transaction | PC-67 |
+| G-68 | B-2 attempt identity is final dispatch event | PC-68 |
+| G-69 | B-2 new claim never coalesces by task/Attempt | PC-69 |
+| G-70 | B-2 replay preserves warning-key identity | PC-70 |
+| G-71 | B-2 route comes from locked claim | PC-71 |
+| G-72 | B-2 capture retains original observed detail | PC-72 |
+| G-73 | B-3 materialization retains intent destination | PC-73 |
+| G-74 | B-3 materialization retains complete saved body | PC-74 |
+| G-75 | B-3 Warning event keeps intent ID | PC-75 |
+| G-76 | B-3 note keeps preallocated NotificationId | PC-76 |
+| G-77 | B-3 row lock serializes competing materializers | PC-77 |
+| G-78 | B-3 committed projection wins lost acknowledgement | PC-78 |
+| G-79 | B-3 unexpected existing IDs are integrity refusal | PC-79 |
+| G-80 | B-3 validates saved route/body digest | PC-80 |
+| G-81 | B-3 validates identifying header independently | PC-81 |
+| G-82 | B-3 validates dispatch-event/task binding | PC-82 |
+| G-83 | B-3 materialization failure persists bounded backoff | PC-83 |
+| G-84 | B-3 failed error bookkeeping cannot discharge intent | PC-84 |
+| G-85 | B-3 scan ignores current task status | PC-85 |
+| G-86 | B-3 scan ignores changed Attempt | PC-86 |
+| G-87 | B-3 scan advances beyond page one | PC-87 |
+| G-88 | B-3 cursor resets every cycle | PC-88 |
+| G-89 | B-3 one row failure cannot stop later rows | PC-89 |
+| G-90 | B-3 intent-pass failure cannot suppress notification pass | PC-90 |
+| G-91 | B-3 session retention protects pre-note destination | PC-91 |
+| G-92 | B-3 transcript retention protects whole pre-note transcript | PC-92 |
+| G-93 | B-3 any intent protects entire task tree | PC-93 |
+| G-94 | B-3 any note protects entire task tree | PC-94 |
+| G-95 | B-3 required unmaterialized warning is visible | PC-95 |
+| G-96 | B-3 attention identity spans intent and note | PC-96 |
+| G-97 | B-3 concurrent reads merge to one condition | PC-97 |
+| G-98 | B-3 exact existing note suppresses stale intent projection | PC-98 |
+| G-99 | B-3 None has no pending-receipt attention | PC-99 |
+| G-100 | B-3 materialization errors surface before age threshold | PC-100 |
+| G-101 | B-3 overdue pending receipt escalates | PC-101 |
+| G-102 | B-3 pre-note attention never fabricates note reference | PC-102 |
+| G-103 | B-1 provisioning caller preserves failed candidate input | PC-103 |
+| G-104 | B-1 guard honors failed chosen default without cascading | PC-104 |
+| G-105 | B-1 unused deliberate-base defaults create no diagnostic | PC-105 |
+| G-106 | B-2 refusal cannot commit warning intent | PC-106 |
+| G-107 | B-2 deleted inline warning producer stays deleted | PC-107 |
+| G-108 | B-2 database enforces per-attempt warning uniqueness | PC-108 |
+| G-109 | B-2 database enforces preallocated note uniqueness | PC-109 |
+| G-110 | B-2 Capture validates event belongs to claim task | PC-110 |
+| G-111 | B-1 choose first nonblank configured default | PC-111 |
+| G-112 | B-1 cancellation is not a missing default | PC-112 |
+| G-113 | B-3 intent scan respects NextAttemptAt | PC-113 |
+| G-114 | B-3 projection preserves original age | PC-114 |
+| G-115 | B-3 projected Warning preserves original detail | PC-115 |
+| G-116 | B-2 guard observes base even when sibling query is empty | PC-116 |
+
+### Positive controls
+
+For each row: break the corresponding G by the stated compiling production
+defect, keep tests/expected values fixed, require the exact method red at its
+listed assertion, restore, rebuild and require that same method green.
+The table replaces every earlier PC definition, including the historical
+failed-seam rows. Aliases expand exactly as in V/R; select the literal class
+and exact method from each row with --treenode-filter, as the PC-60/61 commands
+below demonstrate. Parameterized methods run all their declared rows; inspect the decisive
+mutated row, not exit status alone.
+
+| Control | Compiling defect | Exact method / decisive red assertion |
+|---|---|---|
+| PC-1 | Drop requestedRef from Resolve precedence | BS.C508_BasePrecedence: E+C+P creates HEAD=E |
+| PC-2 | Drop mergeTargetRef from Resolve precedence | BS.C508_BasePrecedence: C+P creates HEAD=C |
+| PC-3 | Assign selected base to task.MergeTargetRef | BS.C508_BasePrecedence: original/null MergeTargetRef unchanged |
+| PC-4 | Choose global before nonblank project default | BS.C508_DefaultBranchMatrix: project rows HEAD=P |
+| PC-5 | Replace configured global default with master | BS.C508_DefaultBranchMatrix: global rows HEAD=T |
+| PC-6 | Use main when options absent | BS.C508_DefaultBranchMatrix: no-options HEAD=M |
+| PC-7 | Gate default resolution on non-null CardId | BS.C508_DefaultBranchMatrix: non-card HEAD=selected default |
+| PC-8 | Record main checkout HEAD instead of created worktree HEAD | BS.C508_DefaultBranchMatrix: stored SHA=created HEAD, not H |
+| PC-9 | Record RepoHead for resolved DefaultBranch | BS.C508_DefaultBranchMatrix: Source=DefaultBranch |
+| PC-10 | Record HEAD for resolved default | BS.C508_DefaultBranchMatrix: Ref=chosen default name |
+| PC-11 | Set WorktreeBaseTaskId=task.Id on default arm | BS.C508_DefaultBranchMatrix: BaseTaskId=null |
+| PC-12 | Omit default-unresolved draft from Capture input | DG.C508_MissingDefaultWarns: one default intent and Warning naming original ref |
+| PC-13 | Replace unresolved requested/merge ref with HEAD before creation | BS.C508_BasePrecedence: ValidationException naming invalid E/C; no new tree |
+| PC-14 | Overwrite BaseSha with adopted worktree's advanced HEAD | DW.C508_ReuseKeepsRecordedBase: original BaseSha unchanged |
+| PC-15 | Pass current repository HEAD instead of VerifiedSourceSha to CreateVerificationAsync | PostLandMutationWorktreeTests.C508_SourceLandingIgnoresDefault: snapshot HEAD=L |
+| PC-16 | Drop repairStartSha from Resolve precedence | DW.C508_RepairStartShaWins: HEAD=owner repair SHA |
+| PC-17 | Remove only service's failed-Owns throw, retaining manager guard | DW.C508_BaseResolutionRequiresOwnedLease: manager call count=0 after foreign-lease refusal |
+| PC-18 | Return false for empty successful cherry output | BS.C508_CherryContainmentMatrix: ancestor row true |
+| PC-19 | Restore ancestry-only helper | BS.C508_CherryContainmentMatrix: rebased non-ancestor/all-minus row true |
+| PC-20 | Use Any(minus) instead of All(minus) | BS.C508_CherryContainmentMatrix: mixed row false |
+| PC-21 | Return true for unsuccessful cherry | BS.C508_CherryContainmentMatrix: missing-ref row false |
+| PC-22 | Resolve successful DefaultBranch as Ref=HEAD, preserving Source | DG.C508_RebasedSiblingUsesActualDefault: independent expected HEAD=M and exact hold/warning result |
+| PC-23 | Use ancestry-only comparison at land call | LS.C508_RebasedSiblingMarkerMatrix: all-minus marker absent |
+| PC-24 | Skip LandRequestedAt hold arm | DG.a_sibling_land_in_flight_holds_until_the_base_contains_it: first status Queued, path null |
+| PC-25 | Treat historical LandRequested event as active despite null column | DG.a_stranded_request_row_with_a_null_column_only_warns: Dispatched and zero Held |
+| PC-26 | Omit AddNotification in terminal land producer | LD.C508_SiblingOutcomeCommitRecovers: committed terminal has one owed note and complete original receipt |
+| PC-27 | Pass fresh Guid on each reconcile keyed enqueue | LD.C508_SiblingOutcomeQueueInsertRecovers: original queue ID reused and one native prompt |
+| PC-28 | Return when EnqueueAttempts>0 and QueueMessageId=null | LD.C508_SiblingOutcomeEnqueueRecovers: original note obtains one complete prompt |
+| PC-29 | Allow QueuedUserPrompt alongside UserPrompt | AgentTaskLandReceiptTests.C467_V11_RejectFalseReceipts: queued-prompt row ConfirmedAt=null |
+| PC-30 | Remove session predicate from receipt query | AgentTaskLandReceiptTests.C488_ApprovalReceiptNeedsDestination: ConfirmedAt=null |
+| PC-31 | Strip first line from expected body in BOTH IsConfirmedBy and IsCompleteIn receipt conjuncts | AgentTaskLandReceiptTests.C488_ApprovalReceiptNeedsIdentity: wrong identity leaves ConfirmedAt=null |
+| PC-32 | Remove IsCompleteIn conjunct | AgentTaskLandReceiptTests.C488_ApprovalReceiptNeedsCompleteBody: head-only remains unconfirmed |
+| PC-33 | Remove sequence-floor predicate | AgentTaskLandReceiptTests.C488_ApprovalReceiptNeedsSequenceFloor: ConfirmedAt=null |
+| PC-34 | Remove timestamp-floor predicate | AgentTaskLandReceiptTests.C488_ApprovalReceiptNeedsTimeFloor: ConfirmedAt=null |
+| PC-35 | Force queue working verdict false in delivery eligibility | LD.C508_SiblingOutcomeWaitsForBusyCaller: DeliveryAttempts=0 before release |
+| PC-36 | Disable completion scan, retaining test's dropped wakeup | LD.C508_SiblingOutcomeLostFlushRecovers: complete prompt without new input |
+| PC-37 | Return LateConfirmCounts.Empty before attempted-row examination | LD.C508_SiblingOutcomeVerdictRecovers: native submission count=1 after catch-up |
+| PC-38 | Remove destination conflict comparison, retaining digest comparison | AgentTaskLandNotificationRecoveryTests.C467_V09_KeyedQueueRacesAndDistinctEvents: crossed-session enqueue throws ConflictException |
+| PC-39 | Commit/dispose terminal transaction before SaveChanges; remove later commit | AgentTaskLandNotificationPersistenceTests.C508_AfterSaveRollsBackOutcome: after-save fault leaves zero terminal events/notes |
+| PC-40 | In MaterializeAsync omit note insertion, retaining Warning and marker save | DBN.C508_WarningCommitCreatesObligation: Warning count=1, matching note count=1 (mutant 0) |
+| PC-41 | At projection skip note insertion if Local/DB already has a DispatchBase note for TaskId; still insert Warning/marker | DE.C508_WarningProducerToReceipt: each original warning has a note/complete native receipt; first claim note count=2 |
+| PC-42 | Add Kind!=DispatchBase to notification scan, retaining intent pass | DE.C508_WarningBootScanReachesCaller: original note complete prompt count=1 after restart/scans |
+| PC-43 | Pass moving HEAD instead of verifiedSha | LS.C508_RebasedSiblingMarkerMatrix: pinned-M row retains marker even though moving HEAD contains patch |
+| PC-44 | Pass WorktreeBaseRef instead of WorktreeBaseRequestedRef to resolver | DW.C508_ReuseKeepsRecordedBase: adversarial recorded E/null request/no managed tree creates at M |
+| PC-45 | Remove fresh-repair skip only, retaining owner land hold | DG.C508_RepairRecordsOwnerAndSkipsSiblings: other sibling's active land cannot prevent Dispatched |
+| PC-46 | Record Explicit for Repair source | DG.C508_RepairRecordsOwnerAndSkipsSiblings: persisted Source=Repair |
+| PC-47 | Set repair WorktreeBaseTaskId=null | DG.C508_RepairRecordsOwnerAndSkipsSiblings: BaseTaskId=owner.Id |
+| PC-48 | Invert mismatch comparison when building capture drafts | DG.C508_GuardRefMismatchWarnedOnce: unequal-ref/one-sibling row mismatch count=1; equal-ref count=0 |
+| PC-49 | In mismatch materialization, if claim has >1 sibling intent, add a second valid Warning/note pair with fresh IDs and same detail | DG.C508_GuardRefMismatchWarnedOnce: two-sibling claim has one mismatch and three total notes (mutant two/four), no constraint error |
+| PC-50 | Omit only mismatch note insertion in materializer; retain Warning/marker | DE.C508_MismatchWarningReachesCaller: zero-sibling mismatch has one complete native prompt |
+| PC-51 | Commit/dispose projection transaction before SaveChanges; remove later commit | DBN.C508_WarningCommitAtomic: after-save fault leaves pair counts=0 and MaterializedAt=null |
+| PC-52 | In ReconcileAsync replace DispatchBase ParentSessionId with current task parent | DBN.C508_WarningPayloadAndDestination: after second A->B edit, queue destination remains A |
+| PC-53 | Compute capture digest from body only | DBN.C508_WarningPayloadAndDestination: committed intent digest equals independent route+newline+body digest; same bytes/IDs with A vs B give different factory digests |
+| PC-54 | Remove None->NotRequired capture-state arm | DBN.C508_WarningStatesAndLease: None/valid-parent note NotRequired, queue/enqueue attempts=0 |
+| PC-55 | Use NotRequired for required/null-parent capture state | DBN.C508_WarningStatesAndLease: DestinationUnavailable and no receipt |
+| PC-56 | Include DispatchBase in ReconcileAsync lease gate | DBN.C508_WarningStatesAndLease: DispatchBase gets queue ID under occupied lease while Outcome does not |
+| PC-57 | Widen Outcome monitor query to include DispatchBase | LM.C508_RequestlessDispatchNotes: caught SweepAsync exception=null; Outcome still ages |
+| PC-58 | Map DispatchBase notes to LandOutcomeUnconfirmed | LM.C508_RequestlessDispatchNotes: kind DispatchWarningUnconfirmed and null LandRequestId |
+| PC-59 | Remove SourceLandNotificationId exclusion in HasCompletionNoteAsync | DBN.C508_WarningsAreNotReports: task-key/digest-equal warning alone returns false |
+| PC-60 | Omit ONLY hosted intent-scan invocation; retain Capture, MaterializeAsync, notification scan and any fast path | DE.C508_DispatchWarningPrecommitCrashRecovers: at immediate postclaim cut fast path never ran; after restart original note/complete prompt count=1 (mutant 0) |
+| PC-61 | Set UnresolvedDefault=null on RepoHead arm only | BS.C508_UnresolvedDefaultRetainsName: two generated invalid input names retained respectively |
+| PC-62 | Build capture body from unadorned detail, computing digest consistently | DBN.C508_WarningPayloadAndDestination: committed intent first line equals exact independent dispatch-base header |
+| PC-63 | Remove ContentDigest conflict comparison only | DBN.C508_WarningQueueDigestCollision: same key/session with changed digest throws ConflictException |
+| PC-64 | Remove ^{commit} suffix from rev-parse probe | BS.C508_ResolverAndCommitProbe: blob tag false before provisioning |
+| PC-65 | Gate capture call on guard.Warnings.Count>0 | DG.C508_GuardRefMismatchWarnedOnce: zero-sibling unequal-ref claim has one mismatch intent/pair |
+| PC-66 | Omit Capture invocation at successful final claim, retaining claim/session commit | DBN.C508_ClaimCapturesWarningIntents: committed original intent count equals draft count, not zero |
+| PC-67 | Commit/dispose claim transaction before final SaveChanges; remove later commit | DBN.C508_ClaimIntentAtomic: after-save injected fault leaves zero final dispatch events/new sessions/intents |
+| PC-68 | Use earlier worktree-created Dispatched event ID for intent.DispatchEventId | DBN.C508_ClaimCapturesWarningIntents: each DispatchEventId equals captured final agent-dispatch event ID, not creation event |
+| PC-69 | Skip capture when existing intent has same TaskId and diagnostic Attempt | DBN.C508_IntentAttemptIdentity: second successful claim with unchanged Attempt gets distinct intent/note IDs |
+| PC-70 | On replay of same committed event/key overwrite saved NotificationId with a new Guid and regenerate its valid header/digest | DBN.C508_IntentAttemptIdentity: reversed draft order/replay retains original per-key intent/notification IDs |
+| PC-71 | Pass outer tick task's pre-claim route snapshot to Capture instead of freshly locked claim route | DBN.C508_IntentCaptureRoute: preclaim A->B route edit produces intent.ParentSessionId=B and matching digest |
+| PC-72 | Before Capture, refresh sibling draft detail with current DescribeKeptBranchAsync results | DBN.C508_IntentProjectionCustody: ref moved after guard observation still yields original captured branch/tip/detail |
+| PC-73 | After payload creation overwrite note.ParentSessionId with current task parent from DB | DBN.C508_WarningPayloadAndDestination: first A->B edit before projection leaves note.ParentSessionId=A |
+| PC-74 | Replace note.Body with intent.Detail after validation, retaining saved digest | DBN.C508_IntentProjectionCustody: note.Body byte-equals committed intent.Body |
+| PC-75 | Allocate new Warning ID and assign note.SourceEventId to that new ID, preserving valid FK | DBN.C508_IntentProjectionCustody: Warning.Id=original intent.Id |
+| PC-76 | Allocate new note ID and consistently update its header/digest, without altering intent | DBN.C508_IntentProjectionCustody: note.Id=original intent.NotificationId |
+| PC-77 | Remove FOR UPDATE from intent load only | DBN.C508_IntentProjectionConcurrent: second scope has not completed its intent read while first owns projection lock; both ultimately succeed without duplicate pair |
+| PC-78 | In exception recovery clear reloaded MaterializedAt and schedule retry instead of honoring committed marker | DBN.C508_IntentProjectionLostAcknowledgement: original MaterializedAt remains non-null, no retry counters/error, one pair |
+| PC-79 | On existing pair ID with null marker set MaterializedAt=now and return instead of recording integrity error | DBN.C508_IntentProjectionIntegrity: collision row remains MaterializedAt=null with error, original unexpected bytes unchanged |
+| PC-80 | Remove digest comparison from intent validation | DBN.C508_IntentProjectionIntegrity: independently corrupted digest leaves zero projected rows and null marker |
+| PC-81 | Remove header identity validation while retaining digest check | DBN.C508_IntentProjectionIntegrity: wrong header with recomputed valid digest leaves zero projected rows and null marker |
+| PC-82 | Remove event.AgentTaskId==intent.TaskId validation | DBN.C508_IntentProjectionIntegrity: valid FK to other task's event still produces zero projected rows and null marker |
+| PC-83 | Always schedule materialization retry at 5 seconds | DBN.C508_IntentMaterializationRetry: attempt 2 NextAttemptAt=error time+10s; later delays saturate at 300s |
+| PC-84 | When recording retry error fails, fresh-update MaterializedAt=now then swallow | DBN.C508_IntentRetryBookkeepingFailure: original pending marker null after both faults; clean worker later creates original pair |
+| PC-85 | Restrict intent scan to task.Status==Dispatched | DBN.C508_IntentScanPaging: due intents on Succeeded/Failed/Canceled/Queued tasks all materialize |
+| PC-86 | Require intent.Attempt==current task.Attempt in scan | DBN.C508_IntentScanPaging: due original intent on incremented-attempt task materializes |
+| PC-87 | End intent pass after first 128-row page | DBN.C508_IntentScanPaging: all expected IDs including page three have original notes |
+| PC-88 | Keep previous pass cursor across five-second cycles instead of resetting | DBN.C508_IntentScanPaging: low-ID formerly-future intent materializes after becoming due |
+| PC-89 | Return from intent pass on first row exception instead of continuing | DBN.C508_IntentScanIsolation: healthy next row/page materializes despite first-row fault |
+| PC-90 | Continue outer hosted loop on intent-query failure before running notification pass | DBN.C508_IntentScanIsolation: preexisting unrelated due note gets keyed queue row while repeated intent-pass query faults remain armed |
+| PC-91 | Remove pending-required-intent exclusion from PruneSessionsAsync | DR.C508_IntentSessionRetention: old otherwise-unreferenced A survives; unrelated stale session deletes |
+| PC-92 | Remove pending-required-intent exclusion from PruneTranscriptsAsync | DR.C508_IntentTranscriptRetention: all old A transcript IDs survive; unrelated transcript deletes |
+| PC-93 | Remove intent-owning-tree exclusion from PruneTasksAsync, retaining note/request exclusions | DR.C508_IntentTaskTreeRetention: caught sweep exception=null and unrelated tree deleted; intent-owning entire tree survives |
+| PC-94 | Remove notification-owning-tree exclusion, retaining intent/request exclusions | DR.C508_NotificationTaskTreeRetention: note-only/no-intent/no-request tree survives, unrelated tree deleted, caught exception=null |
+| PC-95 | Omit pending-intent projection from AttentionService | LM.C508_PendingIntentAttention: at 300s original pending required intent appears once |
+| PC-96 | Use intent.Id instead of NotificationId in pending condition key | LM.C508_IntentAttentionHandoff: key before/after is dispatch:<original NotificationId:N>:receipt |
+| PC-97 | Remove final merged ConditionKey deduplication | LM.C508_IntentAttentionHandoff: commit between intent read and note read yields exactly one condition |
+| PC-98 | Suppress pending intent whenever ANY note for TaskId exists instead of exact NotificationId | LM.C508_IntentAttentionHandoff: another warning's note does not hide this pending original intent; original key still present |
+| PC-99 | Remove ReplyTo!=None filter on pending intent attention | LM.C508_PendingIntentAttention: old None intent has zero receipt conditions |
+| PC-100 | Apply age-only early continue to pending intents even with LastErrorCode | LM.C508_PendingIntentAttention: 1-second-old error intent is visible as Error |
+| PC-101 | Always choose Warning severity for pending intent | LM.C508_PendingIntentAttention: 900-second required intent severity=Error |
+| PC-102 | Assign LandNotificationId=intent.NotificationId before that row exists | LM.C508_PendingIntentAttention: pending item LandNotificationId=null, task target present |
+| PC-103 | On failed probe pass DefaultBranchProbe("master",false) from provisioning instead of original probe | BS.C508_ProvisioningPreservesFailedDefault: two arbitrary failed configured names survive returned metadata |
+| PC-104 | Choose master in guard's default probe instead of the configured failing candidate | DG.C508_GuardPreservesFailedDefault: with valid M distinct from H, both arbitrary missing-default rows observe HEAD, not master; resulting default warning still names original ref |
+| PC-105 | On Resolve's Explicit arm return failed defaultBranch.Ref in UnresolvedDefault instead of null | DG.C508_MissingDefaultWarns: requested-base row has zero default intents/pairs despite invalid configured default |
+| PC-106 | In the existing failed-progress-baseline branch add a fresh task-bound Dispatched event and Capture its frozen drafts before the existing Failed commit | DBN.C508_RefusedClaimHasNoIntent: failed-baseline row has zero intents; its committed worktree-created event does not authorize any |
+| PC-107 | After successful dispatch enqueue each frozen intent.Detail directly to saved parent using old task conversation key, while retaining durable delivery | DE.C508_WarningProducerToReceipt: native warning-detail census contains only keyed expected prompts, no unkeyed duplicate |
+| PC-108 | In CLI-generated S2b migration Up change unique:true to false ONLY on (DispatchEventId,WarningKey) index | DBN.C508_IntentUniqueKeys: predecessor-to-current upgrade then duplicate event/key with distinct IDs must throw 23505 for named index |
+| PC-109 | In CLI-generated S2b migration Up change unique:true to false ONLY on NotificationId index | DBN.C508_IntentUniqueKeys: predecessor-to-current upgrade then duplicate NotificationId with different event/key must throw 23505 for named index |
+| PC-110 | Remove Capture's event/task binding check | DBN.C508_IntentCaptureBinding: cross-task final event capture is refused and no intent is tracked/committed |
+| PC-111 | Treat whitespace-only Project.BaseBranch as the selected candidate | BS.C508_DefaultCandidateSelection: whitespace project with valid global selects T/DefaultBranch |
+| PC-112 | Catch OperationCanceledException in shared default probe and return named false probe | BS.C508_DefaultProbeCancellation: canceled call throws cancellation, no RepoHead result |
+| PC-113 | Remove NextAttemptAt<=now predicate from intent scan only | DBN.C508_IntentMaterializationRetry: worker has zero additional materialization attempts before due, then projects at exact due time |
+| PC-114 | Set note.CreatedAt and Warning.At to current materialization time | DBN.C508_IntentProjectionCustody: both equal original committed intent.CreatedAt after clock advances |
+| PC-115 | Set Warning.Detail to current generic task title instead of intent.Detail | DBN.C508_IntentProjectionCustody: Warning.Detail equals original frozen detail |
+| PC-116 | Retain the guard's old early return before resolving its observed base when siblings.Count==0 | DG.C508_GuardRefMismatchWarnedOnce: zero-sibling M->P claim emits one mismatch explicitly naming observed M and recorded P |
+
+
+PC-60's mutant retains all post-note machinery; its test inspects committed
+intents before restart and asserts missing original note/complete-prompt
+counts after bounded observation of normal notification scans. It must not
+wait for dispatch-warning-intent-scan in a mutant with that invocation removed.
+PC-42 starts from an already committed pair and observes scan completion,
+not before-enqueue that its mutant excludes. PC-51 after-save fault is inside
+the projection transaction; PC-67 after-save fault is inside the claim
+transaction. Neither can be replaced by a before-save-only assertion.
+
+PC-52/53 assertions begin at committed intent, continue through projection
+and queue, then verify original route/body. PC-71/73 independently damage the
+earlier route handoffs; PC-74/75/76/114/115 independently damage copied payload/
+identity/time. PC-108/109 mutate the generated migration's index creation,
+then the test upgrades its disposable predecessor database. Merely changing
+model metadata against a migrated template is a surviving, invalid control.
+
+PC-77 observes lock exclusion before allowing the first projection to commit;
+its finally releases both owned operations and awaits them. PC-79/80/81/82
+use valid seeded foreign keys and one deliberately corrupted semantic field
+at a time. A digest-valid bad header keeps PC-81 independent of PC-80.
+Expected integrity failures are asserted as method results/state, never
+accepted as setup failure. PC-93/94 catch the actual sweep exception and
+assert null plus successful unrelated pruning; a Restrict failure cannot
+be reported as green retention.
+
+Code implements tests and runs ordinary V/R. Separate ordinary Review judges
+the tests, evidence and pending control inventory before land. **Mutation
+runs every break/red/restore/green cycle after land**, with fresh per-PC
+TRX/results and external evidence in the recorded SourceLanding snapshot.
+No tests or positive controls were executed by this TestDesign task.
+
+### Out of scope
+
+- S3 selection, ranking, chaining, moving the guard under the lease and the
+  CARD-0215 test inversions; S4 public BaseRef wiring; S5 dependent output.
+  Owner docs describe only the commissioned S1/S2 behavior.
+- Same-ref SHA movement and held-before-claim races: B reports ref mismatch
+  only; it does not make the original observation contemporaneous with launch.
+- Historical intent backfill, intent-history purge, kept-branch mutation and
+  changed landing targets: explicitly excluded by B. History preservation
+  and ordinary unrelated pruning are nevertheless tested.
+- Native receipt for None/missing parent is impossible by contract. V-18/
+  V-28/V-29 verify NotRequired versus unresolved custody; those rows never
+  substitute for required Session-route receipt.
+- No new guard-only unresolved-name output is invented: the guard's observable
+  contract is its actual comparison ref, hold/warning text and captured drafts.
+  V-30 makes wrong chosen-candidate probing visible with M != H; provisioning
+  metadata and actual warning/native body prove preservation of the name.
+- Browser visual E2E and hosted-model canaries are unnecessary for the single
+  attention enum/label mapping and unchanged native framing. HTTP, type build,
+  focused Vitest and the owned native FakeGrok lane cover the changed behavior.
+- Exhaustive busy x fault x warning-kind combinations are excluded for the
+  shared-path reason given in Delivery inventory; every producer, handoff,
+  failure class and both queue eligibility states remain covered.
+
+### Cost
+
+**All figures are estimates**, not measured product evidence. This is a
+complete execution floor for the specified V/R and **all 116 PC cycles**,
+not the earlier 413-minute lower bound. Authoring, ordinary Review analysis,
+failure triage and report writing are additional; zero time is assigned to
+none of the required verification work. Native estimates include startup,
+restart, transcript observation and the two extra completed scans. A slow
+actual full suite is not subject to an artificial 120-minute kill deadline.
+
+| Ordinary floor (Code) | Suites / filters / arithmetic | Minutes |
+|---|---|---:|
+| Setup/build | Two CLI migrations, SDK/Docker/native prerequisites, isolated Tests/E2E builds and client build | 20 |
+| Base + existing focused V/R | DW/BS/DG/LS, PostLandMutationWorktreeTests, R-5/R-6/R-7/R-9 and helper checks | 38 |
+| Added custody/recovery/retention components | DBN, LM, DR; V-23..V-31 including 263-row worker, races, route edits, retry and false receipts | 20 |
+| Upgrade | V-10/V-20, both predecessor upgrades and identity constraint assertions | 8 |
+| HTTP contract | CS capture then independent comparison with non-null Worktree assertions | 6 |
+| Changed land native | V-11 four producer rows + V-12 nine cuts = 13 x 3 | 39 |
+| Dispatch native producers | Two producer/two-claim methods x 4 + boot x 3 + two mismatch methods x 3 | 17 |
+| Dispatch native post-note recovery | Eight exact cut methods x 3 | 24 |
+| Dispatch native claim/projection recovery | Rollback 3 + postclaim eligible/busy 6 + successful-return 3 + projection precommit 3 + before/after-save 6 + launch exception 3 | 24 |
+| Dispatch frozen/default native coverage | Four terminal/requeue-route rows x 3 + two names x two card/eligibility arrangements x 3 | 24 |
+| Client | pwsh -File scripts/test-client.ps1 attentionVisuals.test.ts | 1 |
+| Unit | /*/*/*/*[Category=Unit] | 3 |
+| One full Antiphon.Tests pass | Nine disjoint namespace chunks below; required by commissioning standing instruction, then only target failures | 120 |
+| **Ordinary total** | **setup/build 20 + V/R 324** | **344** |
+
+| PC floor (Mutation) | All cycles, exact-method scoped | Minutes |
+|---|---|---:|
+| Fresh SourceLanding setup/build | One owned snapshot, discovery and external evidence setup | 10 |
+| Component/Git controls | 103 PCs x (0.5 apply/build + 0.75 red + 0.5 restore/build + 0.75 green) | 257.5 |
+| Migration identity controls | PC-108/109: 2 x (0.5 apply/build + 2 red upgrade/method + 0.5 restore/build + 2 green upgrade/method) | 10 |
+| Single-cut native controls | PC-26/27/28/35/36/37/42/50/60: 9 x (0.5 apply/build + 3 red + 0.5 restore/build + 3 green) | 63 |
+| Two-claim native producer controls | PC-41/107: 2 x (0.5 apply/build + 4 red + 0.5 restore/build + 4 green) | 18 |
+| **Mutation total** | **setup/build 10 + all 116 cycles 348.5** | **358.5** |
+
+**Total verification floor = setup/build 30 + ordinary V/R 324 +
+PC red/restore/green work 348.5 = 702.5 minutes (11h 42m 30s), estimated.**
+The 103 component/Git PCs are every ID in 1..116 except
+26,27,28,35,36,37,41,42,50,60,107,108,109.
+PC-23 has one variant; pinned SHA is the separately counted PC-43.
+No failed-seam reservation or missing cycle remains.
+
+Estimated savings with the same coverage: splitting V-12 into exact cuts
+lets PC-26/27/28/36/37 run one three-minute cut instead of the nine-cut
+27-minute method: 5 x 2 x (27 - 3) = **240 minutes**. Exact-method component
+selection versus estimated four-minute class runs saves
+103 x 2 x (4 - 0.75) = **669.5 minutes**. Different sets of controls, so combined
+estimated saving is **909.5 minutes**. Additional batching/sharding savings
+are **0 claimed**: many defects share source files, and sourced Mutation
+owns one recorded snapshot. Savings from dropping required cases are zero.
+
+Use producer-owned forward-slash outputs. Example ordinary selections
+(after implementation, one fresh results directory/TRX per invocation):
+
+~~~powershell
+dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c508/ --nologo
+dotnet build tests/Antiphon.E2E --property:OutputPath=bin-c508/ --nologo
+dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c508/ -- --treenode-filter '/*/Antiphon.Tests.Application/(WorktreeBaseSelectionTests*)|(DelegationWorktreeTests*)|(AgentTaskDispatchBaseGuardTests*)|(AgentTaskLandStageOutcomeTests*)|(DispatchBaseNotificationTests*)|(AgentTaskLandMonitoringTests*)|(DataRetentionServiceTests*)/*' --report-trx --report-trx-filename focused.trx --results-directory .antiphon/c508-b-focused
+dotnet run --project tests/Antiphon.E2E --no-build --property:OutputPath=bin-c508/ -- --treenode-filter '/*/*/DispatchBaseWarningDeliveryE2ETests/C508_*' --report-trx --report-trx-filename warnings.trx --results-directory .antiphon/c508-b-warnings
+dotnet run --project tests/Antiphon.E2E --no-build --property:OutputPath=bin-c508/ -- --treenode-filter '/*/*/AgentTaskLandDeliveryE2ETests/C508_*' --report-trx --report-trx-filename land.trx --results-directory .antiphon/c508-b-land
+pwsh -File scripts/test-client.ps1 attentionVisuals.test.ts
+~~~
+
+The unaffected land/caller regressions named in R-6/R-7/R-9 run their exact
+methods in Antiphon.Tests. CS runs its named method separately twice; a
+capture run alone is not a comparison.
+
+The required full Tests pass uses these nine exact, disjoint namespace
+filters (inventoried at d5eaa24a):
+
+~~~text
+/*/Antiphon.Tests/*/*
+/*/Antiphon.Tests.Agents/*/*
+/*/Antiphon.Tests.AgentTui/*/*
+/*/Antiphon.Tests.ApiKeys/*/*
+/*/Antiphon.Tests.Application/*/*
+/*/Antiphon.Tests.Domain.StateMachine/*/*
+/*/Antiphon.Tests.Infrastructure/*/*
+/*/Antiphon.Tests.Scripts/*/*
+/*/Antiphon.Tests.TestHelpers/*/*
+~~~
+
+Verify executed counts in fresh TRX against the current discovered inventory;
+split the large Application chunk into disjoint class selections if a
+foreground window requires it. Do not repeat the broad pass for each fix or PC.
+
+Concrete PC-60/61 commands (red and restored-green use separate fresh result
+directories and freshly built outputs, never --no-build after a mutation):
+
+~~~powershell
+dotnet run --project tests/Antiphon.E2E --property:OutputPath=bin-c508-pc/ -- --treenode-filter '/*/*/DispatchBaseWarningDeliveryE2ETests/C508_DispatchWarningPrecommitCrashRecovers' --report-trx --report-trx-filename pc60-red.trx --results-directory .antiphon/c508-pc60-red
+dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c508-pc/ -- --treenode-filter '/*/*/WorktreeBaseSelectionTests/C508_UnresolvedDefaultRetainsName' --report-trx --report-trx-filename pc61-red.trx --results-directory .antiphon/c508-pc61-red
+~~~
+
+All runs are foreground and awaited. Commit/push Code before long runs; freeze
+source under a running test. Antiphon.Tests and native/Pty assemblies run
+sequentially. Restore PC source/timestamps and verify rebuilt DLL identity;
+SourceLanding Mutation writes only external evidence, never commits/pushes.
+Inventory output directories before creating them, validate resolved paths
+stay within the owned workspace, then remove only those producer-created
+alternate outputs. On failure, target the same methods on the base commit
+before claiming pre-existing red; never weaken assertions/retry budgets.
+
+**Readiness audit:** touched and nearest bodies read as recorded;
+guards=116, mapped=116, missing=0, duplicate PC mappings=0;
+all 116 PCs have a compiling defect and exact decisive assertion.
+Ordinary floor=344 minutes, PC floor=358.5 minutes, total=702.5 minutes,
+all estimated. P-3/P-4 executability gaps are closed; implementation/tests
+remain Code's work. **Next: code**, followed by ordinary Review, land,
+and all pending SourceLanding Mutation cycles.
