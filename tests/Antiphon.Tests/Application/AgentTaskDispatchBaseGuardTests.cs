@@ -1,4 +1,4 @@
-using Antiphon.Server.Application.Dtos;
+﻿using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -287,24 +287,66 @@ public class AgentTaskDispatchBaseGuardTests
         await using var world = await WorktreeContinuityHarness.CreateAsync();
         if (name.StartsWith("landed", StringComparison.Ordinal))
         {
+            var residue = name.Contains("residue", StringComparison.Ordinal);
             var merge = await world.SeedMergeRangeAsync();
-            var created = await world.CreateNextAsync(ct: ct);
-            created.WorktreeBase!.Decision.ShouldBeOneOf("Target", "Continue", "WaitForLand", "Incomplete");
+            var remaining = await world.SeedSucceededAsync("A", "code-a.txt", "A\n");
+            var mergeShort = DelegationReportFormatter.Short(merge.Id);
+
+            // The merge branch is a non-ancestor of master: its content reached master as two
+            // cherry-picks, so only the completed-land event can release a hold on it.
+            (await ScratchGitRepo.GitInAsync(
+                world.Repo.Path, "merge-base", "--is-ancestor", merge.WorktreeBranch!, "master"))
+                .Ok.ShouldBeFalse();
+
             await world.SetLandRequestedAsync(merge.Id);
+            var held = await world.CreateNextAsync(ct: ct);
+            held.WorktreeBase!.Decision.ShouldBe("WaitForLand");
+            held.WorktreeBase.SourceTaskId.ShouldBe(merge.Id);
             await world.TickAsync(ct);
-            await world.SeedLandedAsync(merge.Id, name.Contains("residue", StringComparison.Ordinal)
-                ? AgentTaskEventType.LandedWithResidue
-                : AgentTaskEventType.Landed);
-            await using (var db = world.CreateDb())
-            {
-                var live = await db.AgentTasks.FindAsync([merge.Id], ct);
-                live!.LandRequestedAt = null;
-                await db.SaveChangesAsync(ct);
-            }
+            await world.AssertNoLaunchAsync(held.Id);
+
+            await world.SeedLandedAsync(
+                merge.Id, residue ? AgentTaskEventType.LandedWithResidue : AgentTaskEventType.Landed);
+            if (residue)
+                await world.SetLandRequestedAsync(merge.Id); // a residue cleanup retry is still pending
+            else
+                await world.ClearLandRequestedAsync(merge.Id);
+            var pending = (await world.ReloadAsync(merge.Id)).LandRequestedAt;
+            if (residue)
+                pending.ShouldNotBeNull();
+            else
+                pending.ShouldBeNull();
+
+            // A fresh preview taken before anything is dispatched: the landed merge branch is
+            // excluded outright, so it costs no candidate Git and raises no uncertainty, and the
+            // one remaining tip is selected rather than a two-maxima ambiguity.
+            var next = await world.CreateNextAsync(ct: ct);
+            var preview = next.WorktreeBase!;
+            preview.Decision.ShouldBe("Continue");
+            preview.SourceTaskId.ShouldBe(remaining.Id);
+            preview.SourceBranch.ShouldBe(remaining.WorktreeBranch);
+            preview.Candidates.ShouldNotBeNull();
+            preview.Candidates.ShouldNotContain(c => c.TaskId == merge.Id);
+            preview.Candidates.ShouldNotContain(c => c.Branch == merge.WorktreeBranch);
+            preview.Warnings.ShouldNotBeNull();
+            preview.Warnings.ShouldNotContain(w => w.Contains(mergeShort, StringComparison.Ordinal));
+            preview.Warnings.ShouldNotContain(w => w.Contains("unknown", StringComparison.OrdinalIgnoreCase));
+            preview.Warnings.ShouldNotContain(w => w.Contains("ambiguous", StringComparison.OrdinalIgnoreCase));
 
             await world.TickAsync(ct);
-            var after = await world.ReloadAsync(created.Id);
+            var after = await world.ReloadAsync(held.Id);
             after.Status.ShouldBe(AgentTaskStatus.Dispatched);
+            after.WorktreeBaseTaskId.ShouldBe(remaining.Id);
+
+            // Negative control: a sibling whose only land evidence is LandRefused still holds.
+            var refused = await world.SeedSucceededAsync("R", "r.txt", "R\n");
+            await world.SeedLandedAsync(refused.Id, AgentTaskEventType.LandRefused);
+            await world.SetLandRequestedAsync(refused.Id);
+            var stillHeld = await world.CreateNextAsync(ct: ct);
+            stillHeld.WorktreeBase!.Decision.ShouldBe("WaitForLand");
+            stillHeld.WorktreeBase.SourceTaskId.ShouldBe(refused.Id);
+            await world.TickAsync(ct);
+            await world.AssertNoLaunchAsync(stillHeld.Id);
             return;
         }
 

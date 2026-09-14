@@ -218,6 +218,7 @@ public sealed class AgentTaskWorktreeBaseCreateTests
     {
         await using var world = await WorktreeContinuityHarness.CreateAsync(
             extraCreateGates: true,
+            grokSignInProbe: name == "provider_signin",
             delegation: name == "concurrency"
                 ? new Antiphon.Server.Application.Settings.DelegationSettings { MaxConcurrentTasks = 512, MaxOpenTasks = 1 }
                 : null);
@@ -284,12 +285,18 @@ public sealed class AgentTaskWorktreeBaseCreateTests
 
         if (name == "provider_signin")
         {
-            var created = await service.CreateAsync(
+            var ex = await Should.ThrowAsync<ProviderSignInRequiredException>(() => service.CreateAsync(
                 new CreateAgentTaskRequest("x", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree,
-                    Card: "CARD-0442", AgentKind: AgentKind.Grok, AllowUnauthenticatedProvider: false)
+                    Card: "CARD-0442", AgentKind: AgentKind.Grok)
                     { WorktreeBaseTask = owner.Id.ToString("D") },
-                world.Caller(), CancellationToken.None);
-            created.Id.ShouldNotBe(Guid.Empty);
+                world.Caller(), CancellationToken.None));
+            ex.StatusCode.ShouldBe(409);
+            ex.Code.ShouldBe("provider_sign_in_required");
+            ex.GrokHome.ShouldBe(world.GrokHome);
+            await using var refused = world.CreateDb();
+            (await refused.AgentTasks.CountAsync(t => t.Goal == "x"))
+                .ShouldBe(0, "a refused create must not leave a runnable task");
+            await world.AssertNoLaunchAsync(owner.Id);
             return;
         }
 

@@ -556,10 +556,14 @@ public sealed class AgentTaskWorktreeBaseResolverTests
         }
         else
         {
+            // Six clean kept branches in a linear chain have one maximal tip: it must resolve to
+            // that tip specifically, within the shipped 128-start budget and with no fetch.
+            resolution2.Decision.ShouldBe(WorktreeBaseDecisionKind.Continue);
+            resolution2.SourceTaskId.ShouldBe(previous!.Id);
             resolution2.Preview.CommandCount.ShouldBeLessThanOrEqualTo(128);
-            resolution2.Decision.ShouldBeOneOf(WorktreeBaseDecisionKind.Continue, WorktreeBaseDecisionKind.Ambiguous);
-            if (resolution2.Decision == WorktreeBaseDecisionKind.Continue)
-                resolution2.SourceTaskId.ShouldBe(previous!.Id);
+            resolution2.Preview.Warnings.ShouldNotBeNull();
+            resolution2.Preview.Warnings.ShouldNotContain(
+                w => w.Contains("fetch", StringComparison.OrdinalIgnoreCase));
         }
     }
 }

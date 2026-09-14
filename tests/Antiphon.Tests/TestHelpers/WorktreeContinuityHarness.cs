@@ -35,6 +35,9 @@ internal sealed class WorktreeContinuityHarness : IAsyncDisposable
     public Project Project { get; }
     public RecordingFailingWorktreeManager? FailingWorktrees { get; init; }
 
+    /// <summary>Empty GROK_HOME backing the CARD-0324 sign-in probe; null unless requested.</summary>
+    public string? GrokHome { get; init; }
+
     public static async Task<WorktreeContinuityHarness> CreateAsync(
         GitSettings? gitSettings = null,
         string prefix = "c442",
@@ -42,6 +45,7 @@ internal sealed class WorktreeContinuityHarness : IAsyncDisposable
         GitProcessGate? gate = null,
         bool failWorktreeCreate = false,
         bool extraCreateGates = false,
+        bool grokSignInProbe = false,
         DelegationSettings? delegation = null)
     {
         var repo = new ScratchGitRepo(prefix);
@@ -91,10 +95,24 @@ internal sealed class WorktreeContinuityHarness : IAsyncDisposable
         services.AddSingleton(Options.Create(new SupervisionSettings()));
         services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
         services.AddSingleton(Options.Create(delegation ?? new DelegationSettings { MaxConcurrentTasks = 512 }));
+        // CARD-0324 create-time Grok sign-in probe: an empty GROK_HOME is launch-blocking, so a
+        // registry-Grok create refuses with 409 provider_sign_in_required unless it is overridden.
+        var grokHome = grokSignInProbe
+            ? Directory.CreateTempSubdirectory($"{prefix}-grok-home").FullName
+            : null;
         services.AddOptions<AgentRegistrySettings>().Configure(s =>
         {
             s.DefaultDefinition = "claude";
             s.Definitions["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "claude" };
+            if (grokHome is null)
+                return;
+            s.GrokCredentialProbeEnabled = true;
+            s.Definitions["grok"] = new AgentDefinition
+            {
+                Kind = "Grok",
+                Exe = "grok",
+                Env = new Dictionary<string, string> { ["GROK_HOME"] = grokHome },
+            };
         });
         services.AddSingleton<AgentRegistry>();
         services.AddSingleton<AgentSessionLaunchQueue>();
@@ -130,6 +148,7 @@ internal sealed class WorktreeContinuityHarness : IAsyncDisposable
         var provider = services.BuildServiceProvider();
         return new WorktreeContinuityHarness(repo, schema, provider, card, project)
         {
+            GrokHome = grokHome,
             FailingWorktrees = failWorktreeCreate
                 ? provider.GetRequiredService<IWorktreeManager>() as RecordingFailingWorktreeManager
                 : null,
@@ -285,6 +304,14 @@ internal sealed class WorktreeContinuityHarness : IAsyncDisposable
         await db.SaveChangesAsync();
     }
 
+    public async Task ClearLandRequestedAsync(Guid taskId)
+    {
+        await using var db = CreateDb();
+        var live = await db.AgentTasks.FindAsync(taskId);
+        live!.LandRequestedAt = null;
+        await db.SaveChangesAsync();
+    }
+
     public async Task<Card> SeedOtherCardAsync(string identifier = "CARD-0443")
     {
         await using var db = CreateDb();
@@ -347,6 +374,11 @@ internal sealed class WorktreeContinuityHarness : IAsyncDisposable
         await Services.DisposeAsync();
         await Schema.DisposeAsync();
         Repo.Dispose();
+        if (GrokHome is not null)
+        {
+            try { Directory.Delete(GrokHome, recursive: true); }
+            catch (IOException) { }
+        }
     }
 }
 
