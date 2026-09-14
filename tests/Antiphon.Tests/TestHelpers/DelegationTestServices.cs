@@ -92,8 +92,10 @@ internal static class DelegationTestServices
     }
 
     internal static (DelegationWorktreeService Worktrees, WorktreeManager Manager, ILandingGit Git,
-        IRepositoryMutationLease Leases, IWorktreeCleanupJournal Journal) CreateGitGraph(GitSettings settings,
-        Antiphon.Server.Infrastructure.Data.AppDbContext? db = null)
+        IRepositoryMutationLease Leases, IWorktreeCleanupJournal Journal, IWorktreeLockDiagnostics Diagnostics,
+        IWorktreeDeleteAccessProbe Probe) CreateGitGraph(GitSettings settings,
+        Antiphon.Server.Infrastructure.Data.AppDbContext? db = null, IWorktreeLockDiagnostics? diagnostics = null,
+        IWorktreeDeleteAccessProbe? probe = null, IWorktreeCleanupJournal? cleanupJournal = null)
     {
         var git = new LandingGit();
         var leases = new RepositoryMutationLease(git);
@@ -102,11 +104,11 @@ internal static class DelegationTestServices
         persistence.AddScoped(_ => connection is null ? throw new InvalidOperationException("Journal database required")
             : new Antiphon.Server.Infrastructure.Data.AppDbContext(TestDbFixture.CreateDbContextOptions(connection)));
         var provider = persistence.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
-        var journal = new Antiphon.Server.Infrastructure.Data.WorktreeCleanupJournal(provider.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System);
+        var journal = cleanupJournal ?? new Antiphon.Server.Infrastructure.Data.WorktreeCleanupJournal(provider.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System);
         var native = new WorktreeNativeIO();
-        var cleanup = new WorktreeGuardedCleanup(journal,
-            new WindowsWorktreeLockDiagnostics(new WorktreeDiagnosticIO(native), Options.Create(new WorktreeLockSettings()), Options.Create(settings), TimeProvider.System),
-            new WindowsWorktreeDeleteAccessProbe(native, TimeProvider.System), TimeProvider.System,
+        diagnostics ??= new WindowsWorktreeLockDiagnostics(new WorktreeDiagnosticIO(native), Options.Create(new WorktreeLockSettings()), Options.Create(settings), TimeProvider.System);
+        probe ??= new WindowsWorktreeDeleteAccessProbe(native, TimeProvider.System);
+        var cleanup = new WorktreeGuardedCleanup(journal, diagnostics, probe, TimeProvider.System,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<WorktreeGuardedCleanup>.Instance);
         var guarded = new GuardedWorktreeRemoval(git, leases, new TestRemovalEvidence(db), cleanup);
         var manager = new WorktreeManager(Options.Create(settings), TimeProvider.System,
@@ -116,7 +118,7 @@ internal static class DelegationTestServices
             Microsoft.Extensions.Logging.Abstractions.NullLogger<DelegationWorktreeService>.Instance,
             new GitWorkspaceService(Microsoft.Extensions.Logging.Abstractions.NullLogger<GitWorkspaceService>.Instance),
             leases, git);
-        return (worktrees, manager, git, leases, journal);
+        return (worktrees, manager, git, leases, journal, diagnostics, probe);
     }
 
     private sealed class TestRemovalEvidence(Antiphon.Server.Infrastructure.Data.AppDbContext? database) : IWorktreeRemovalEvidence

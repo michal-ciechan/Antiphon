@@ -42,7 +42,7 @@ public sealed class WorktreeCleanupPresentation
         var facts = $"; Git {capture.GitFailure.GeneratedCode} exit={capture.GitFailure.ExitCode?.ToString() ?? "unknown"}"
             + $"; DeleteAccessOpen={(sharing is null ? capture.Native.Reason : sharing.NativeErrorCode.ToString())}"
             + $"; owners={capture.Handles.Owners.Count} omitted={capture.Omitted + capture.Handles.OmittedOwners}";
-        return Clip(minimum + facts, SummaryLimit);
+        return Clip(minimum + facts + (owner is null ? "" : $"; path={Clip(owner.RelativePath, 512)}"), SummaryLimit);
     }
 
     public string Detail(string reason, WorktreeCleanupReference? capture)
