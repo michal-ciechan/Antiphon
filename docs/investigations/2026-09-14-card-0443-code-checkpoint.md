@@ -41,7 +41,7 @@ Pending means every declared mutation and argument/variant in the linked plan. I
 | PC-14 | `WorktreeGuardedCleanupTests.C443_UnknownRegistrationStopsRetry` | Yes; coverage still requires audit | Pending |
 | PC-15 | `WorktreeGuardedCleanupTests.C443_RecheckConfinement` | No; Code required | Pending |
 | PC-16 | `WorktreeGuardedCleanupTests.C443_RetryStartsWithFreshAuthority` | No; Code required | Pending |
-| PC-17 | `WorktreeManagerTests.WorktreeManager_try_remove_reports_directory_residue_when_a_file_is_held` | Yes; coverage still requires audit | Pending |
+| PC-17 | `WorktreeManagerGitIntegrationTests.WorktreeManager_try_remove_reports_directory_residue_when_a_file_is_held` | Yes; coverage still requires audit | Pending |
 | PC-18 | `AgentTaskLandRemovalMatrixTests.C448_V20_LastRemovalBoundaryPreservesEveryRemainingComponent` | Yes; coverage still requires audit | Pending |
 | PC-19 | `WorktreeGuardedCleanupTests.C443_RetryOnlyNativeSharingCodes` | Yes; coverage still requires audit | Pending |
 | PC-20 | `WorktreeGuardedCleanupTests.C443_TwoGitSlotsMaximum` | Yes; coverage still requires audit | Pending |

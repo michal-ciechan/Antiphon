@@ -350,7 +350,7 @@ The old test bodies/fixtures reviewed by TestDesign remain useful. This amendmen
 also read `AgentTaskLandRemovalMatrixTests` and the current production removal,
 Git, protocol, terminal, notification, payload, persistence limits and DI helpers.
 In particular, its held-file row reaches **ordinary receipt-backed Git removal**;
-the old raw `WorktreeManagerTests` held-file refusal is not a substitute.
+the old raw `WorktreeManagerGitIntegrationTests` held-file refusal is not a substitute.
 
 | Previous obligation | Required amendment / executable seam |
 |---|---|
@@ -715,7 +715,7 @@ Code runs V/R and commits/pushes before ordinary Review; PCs execute after land.
 ### Guards the regression
 
 - R-1: legacy/default/age are not authority | exact methods
-  WorktreeManagerTests.WorktreeManager_try_remove_reports_directory_residue_when_a_file_is_held;
+  WorktreeManagerGitIntegrationTests.WorktreeManager_try_remove_reports_directory_residue_when_a_file_is_held;
   WorktreeRemovalDefaultTests.C448_V36_InterfaceDefaultsNeverDelegateDeletion;
   WorktreeRemovalAuthorityTests.C448_V24_LegacyRemovalCannotEraseTaskContents;
   WorktreeResidueSweepTests.execute_never_treats_legacy_landed_event_as_cleanup_authority |
@@ -1037,7 +1037,7 @@ outside the snapshot, and never commits/pushes from it.
 | PC-14 | `WorktreeGuardedCleanupTests` | `C443_UnknownRegistrationStopsRetry` | Treat a failed retry registration query as the previously accepted registration list | RemoveCount == 1 for error, timeout and malformed output; residue and index bytes remain | I |
 | PC-15 | `WorktreeGuardedCleanupTests` | `C443_RecheckConfinement` | Reuse the original canonical root after the delay barrier replaces the path with a junction | Second command count == 0; outside sentinel bytes unchanged; refusal precedes next preflight boundary | I |
 | PC-16 | `WorktreeGuardedCleanupTests` | `C443_RetryStartsWithFreshAuthority` | Skip AuthorityAsync at retry-preflight entry | Fresh committed receipt invalidation after delay refuses before retry status read; second-remove count == 0 | I |
-| PC-17 | `WorktreeManagerTests` | `WorktreeManager_try_remove_reports_directory_residue_when_a_file_is_held` | Change the raw overload's returned residue to null and all three completion flags to true | Residue == typed_removal_authority_required and DirectoryGone == false | I |
+| PC-17 | `WorktreeManagerGitIntegrationTests` | `WorktreeManager_try_remove_reports_directory_residue_when_a_file_is_held` | Change the raw overload's returned residue to null and all three completion flags to true | Residue == typed_removal_authority_required and DirectoryGone == false | I |
 | PC-18 | `AgentTaskLandRemovalMatrixTests` | `C448_V20_LastRemovalBoundaryPreservesEveryRemainingComponent` | Add --force to GuardedWorktreeRemoval's ordinary Git remove arguments | Trace contains neither --force nor prune; failed-removal sentinel remains | I |
 | PC-19 | `WorktreeGuardedCleanupTests` | `C443_RetryOnlyNativeSharingCodes` | Include native code 5 in the DeleteAccessOpen nomination predicate | AdditionalRemoveCount == 0 for 5,145,null,unknown and successful opens; == 1 for valid failed opens 32 and deterministic 33 | I |
 | PC-20 | `WorktreeGuardedCleanupTests` | `C443_TwoGitSlotsMaximum` | After the second nonzero result, invoke the same ordinary git.RunAsync removal a third time with the remaining token | Persistent nominated conflict has exactly 2 consumed slots, 2 ordinary removals, 1 capture and no third command | I |
