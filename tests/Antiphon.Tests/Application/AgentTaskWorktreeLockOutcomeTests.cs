@@ -43,12 +43,9 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
                 workers = new(receiver); await workers.StartAsync();
             });
             var bridge = receiver!;
-            // The independently owed approval note is delivered before this cleanup-specific barrier.
-            await UntilAsync(async () => {
-                await using var db = h.H.CreateContext();
-                return await db.AgentTaskLandNotifications.AnyAsync(n => n.TaskId == h.Context.TaskId
-                    && n.Kind != LandNotificationKind.Outcome && n.State == LandNotificationState.Confirmed);
-            });
+            // Successful admission does not create a notification; this cut precedes the Outcome.
+            await using (var db = h.H.CreateContext())
+                (await db.AgentTaskLandNotifications.AnyAsync(n => n.TaskId == h.Context.TaskId)).ShouldBeFalse();
             var baselineSubmissions = bridge.Adapter.SubmittedBodies.Count;
             await using (var db = h.H.CreateContext())
                 (await db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == bridge.SessionId && m.Status == QueuedMessageStatus.Pending)).ShouldBeFalse();
