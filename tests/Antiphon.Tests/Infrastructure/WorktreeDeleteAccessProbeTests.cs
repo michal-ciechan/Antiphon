@@ -79,7 +79,7 @@ public sealed class WorktreeDeleteAccessProbeTests
     {
         var io = new RecordingIO(); io.Children.Add(io.Child("file"));
         await RunAsync(io);
-        io.Trace.ShouldAllBe(t => t is "identity" or "attributes" or "entries" or "open" or "exists");
+        io.Trace.ShouldAllBe(t => t == "identity" || t == "attributes" || t == "entries" || t == "open" || t == "exists");
     }
     [Test]
     public async Task C443_ProbeDoesNotTraverseReparse()
