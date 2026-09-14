@@ -687,7 +687,45 @@ public sealed class AgentTaskLandService
                     || e.Type == AgentTaskEventType.LandedWithResidue || e.Type == AgentTaskEventType.AlreadyPresent), ct);
             if (alreadyReported) type = AgentTaskEventType.LandingCleanup;
         }
+        WorktreeCleanupAttempt? cleanupAttempt = null;
+        if (op is not null && _protocol is not null)
+        {
+            var cleanupEvidence = await _protocol.ReadCleanupEvidenceAsync(op.Id, request.Id, ct);
+            if (cleanupEvidence.CurrentAttemptId is Guid attemptId)
+            {
+                cleanupAttempt = await _db.WorktreeCleanupAttempts.SingleAsync(a => a.Id == attemptId, ct);
+                if (cleanupAttempt.CaptureState == WorktreeCleanupCaptureState.Pending
+                    || cleanupAttempt.InitialCommandId is not null && cleanupAttempt.InitialCompletedAt is null
+                        && cleanupAttempt.CaptureState == WorktreeCleanupCaptureState.NotNeeded)
+                {
+                    cleanupAttempt.CaptureState = WorktreeCleanupCaptureState.Interrupted;
+                    cleanupAttempt.Summary = $"capture={cleanupAttempt.Id:N} at {cleanupAttempt.CaptureAt ?? cleanupAttempt.InitialIntentAt:O}; Interrupted";
+                    cleanupEvidence = cleanupEvidence with { Capture = new WorktreeCleanupPresentation().Reference(cleanupAttempt) };
+                }
+            }
+            var detail = new WorktreeCleanupPresentation().Detail(op.LastReason ?? "cleanup complete", cleanupEvidence.Capture);
+            if (cleanupEvidence.Capture is not null) outcome += "; " + detail;
+            if (op.CleanupStartedAt is not null && new AgentTaskLandingState().HasPublication(op))
+            {
+                var stage = _db.StageOutcomes.Local.LastOrDefault(s => s.SubjectTaskId == task.Id
+                    && s.Stage == OrchestrationStage.Cleanup && _db.Entry(s).State == EntityState.Added);
+                if (stage is null) Record(task, OrchestrationStage.Cleanup,
+                    op.Cleanup == LandCleanupStatus.Complete ? StageOutcomeKind.Clean : StageOutcomeKind.Failed,
+                    DurationSeconds(op, OrchestrationStage.Cleanup), detail);
+                else stage.Detail = detail;
+            }
+        }
         var terminal = Event(task.Id, type, outcome, now);
+        if (cleanupAttempt is not null && op is not null)
+        {
+            cleanupAttempt.DirectoryGone = op.DirectoryRemoved;
+            cleanupAttempt.Unregistered = op.RegistrationRemoved;
+            cleanupAttempt.BranchDeleted = op.BranchRemoved;
+            cleanupAttempt.Residue = op.LastReason;
+            cleanupAttempt.FinalizedAt = now;
+            cleanupAttempt.TerminalEventId = terminal.Id;
+            cleanupAttempt.ConcurrencyToken = Guid.NewGuid();
+        }
         SetLandingEvidence(terminal, op);
         _db.AgentTaskEvents.Add(terminal);
         CompleteRequest(task, request, terminal);
@@ -890,6 +928,7 @@ public sealed class AgentTaskLandService
         }
         await Task.WhenAll(stdout, stderr);
         if (observer is not null) await observer.ExitedAsync(CancellationToken.None);
+        try { observer?.Completed(); } catch (Exception) { /* Secondary observation only. */ }
         return new ProcessResult(process.ExitCode == 0, await stdout, await stderr);
     }
 

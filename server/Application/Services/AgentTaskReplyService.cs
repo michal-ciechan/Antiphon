@@ -1655,6 +1655,7 @@ public sealed class AgentTaskReplyService
         {
             try
             {
+                ObserveWorktreeRelease(task, sessionId, "StopRequested");
                 // CARD-0319: resolve the stopper from a NEW scope so KillAsync's SaveChanges
                 // cannot flush this caller's still-dirty change tracker. AgentSessionService is
                 // scoped and IDelegateSessionStopper is the same instance.
@@ -1662,14 +1663,24 @@ public sealed class AgentTaskReplyService
                 await killScope.ServiceProvider
                     .GetRequiredService<IDelegateSessionStopper>()
                     .KillAsync(sessionId, ct);
+                ObserveWorktreeRelease(task, sessionId, "StopReturned");
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                ObserveWorktreeRelease(task, sessionId, "StopFailed");
                 _logger.LogWarning(ex, "Could not stop finished delegate session {SessionId}", sessionId);
             }
         }
 
         db.Agents.Remove(agent);
+    }
+
+    private void ObserveWorktreeRelease(AgentTask task, Guid sessionId, string step)
+    {
+        if (task.Workspace != WorkspaceMode.Worktree) return;
+        try { _logger.LogInformation("Worktree release observation task {TaskId} session {SessionId} step {Step}; process exit unverified",
+            task.Id, sessionId, step); }
+        catch (Exception) { /* Observation failure cannot change release or parent delivery. */ }
     }
 
     /// <summary>

@@ -319,6 +319,14 @@ try
     builder.Services.AddSingleton<ITaskProgressGit, TaskProgressGit>();
     builder.Services.AddScoped<TaskCompletionProgressService>();
     builder.Services.AddSingleton<IWorktreeRemovalEvidence, WorktreeRemovalEvidence>();
+    builder.Services.AddOptions<WorktreeLockSettings>().Bind(builder.Configuration.GetSection("WorktreeLockDiagnostics"));
+    builder.Services.AddSingleton<IValidateOptions<WorktreeLockSettings>, WorktreeLockSettingsValidator>();
+    builder.Services.AddSingleton<WorktreeNativeIO>();
+    builder.Services.AddSingleton<WorktreeDiagnosticIO>();
+    builder.Services.AddSingleton<IWorktreeLockDiagnostics, WindowsWorktreeLockDiagnostics>();
+    builder.Services.AddSingleton<IWorktreeDeleteAccessProbe, WindowsWorktreeDeleteAccessProbe>();
+    builder.Services.AddSingleton<IWorktreeCleanupJournal, WorktreeCleanupJournal>();
+    builder.Services.AddSingleton<WorktreeGuardedCleanup>();
     builder.Services.AddSingleton<GuardedWorktreeRemoval>();
     builder.Services.AddSingleton<IRepositoryMutationLease, RepositoryMutationLease>();
     builder.Services.AddScoped<AgentTaskLandingState>();

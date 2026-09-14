@@ -58,6 +58,18 @@ public sealed class WorktreeCleanupJournal(IServiceScopeFactory scopes, TimeProv
         return row;
     }
 
+    public async Task<WorktreeCleanupEvidence> ReadEvidenceAsync(Guid operationId, Guid requestId, CancellationToken ct)
+    {
+        await using var scope = scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var current = await db.WorktreeCleanupAttempts.AsNoTracking()
+            .SingleOrDefaultAsync(a => a.OperationId == operationId && a.RequestId == requestId, ct);
+        var capture = await db.WorktreeCleanupAttempts.AsNoTracking()
+            .Where(a => a.OperationId == operationId && a.CaptureState != WorktreeCleanupCaptureState.NotNeeded)
+            .OrderByDescending(a => a.CreatedAt).ThenByDescending(a => a.Id).FirstOrDefaultAsync(ct);
+        return new(current?.Id, capture is null ? null : new WorktreeCleanupPresentation().Reference(capture, capture.RequestId != requestId));
+    }
+
     public async Task<bool> ConsumeSlotAsync(WorktreeCleanupContext context, Guid commandId, bool retry, CancellationToken ct)
     {
         if (commandId == Guid.Empty) throw new ArgumentException("cleanup_command_identity_required");

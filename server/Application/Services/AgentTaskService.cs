@@ -1623,6 +1623,14 @@ public sealed class AgentTaskService
 
         var landRequest = task.CurrentLandRequestId is Guid requestId
             ? await _db.AgentTaskLandRequests.AsNoTracking().SingleOrDefaultAsync(r => r.Id == requestId, ct) : null;
+        var cleanupAttempt = landing is null || landRequest is null ? null : await _db.WorktreeCleanupAttempts.AsNoTracking()
+            .SingleOrDefaultAsync(a => a.OperationId == landing.Id && a.RequestId == landRequest.Id, ct);
+        var cleanupCapture = landing is null ? null : await _db.WorktreeCleanupAttempts.AsNoTracking()
+            .Where(a => a.OperationId == landing.Id && a.CaptureState != WorktreeCleanupCaptureState.NotNeeded)
+            .OrderByDescending(a => a.CreatedAt).ThenByDescending(a => a.Id).FirstOrDefaultAsync(ct);
+        var landingDto = landing is null ? null : LandingEvidenceDto.From(landing) with {
+            CleanupAttemptId = cleanupAttempt?.Id,
+            CleanupCapture = cleanupCapture is null ? null : new WorktreeCleanupPresentation().Reference(cleanupCapture, cleanupCapture.RequestId != landRequest?.Id) };
         var landNotes = landRequest is null ? [] : await _db.AgentTaskLandNotifications.AsNoTracking()
             .Where(n => n.TaskId == task.Id).OrderBy(n => n.CreatedAt).ToListAsync(ct);
         var legacyLand = await _db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == task.Id && e.LandRequestId == null
@@ -1650,7 +1658,7 @@ public sealed class AgentTaskService
             task.ResultFilePath, task.DeliverablePath, task.DeliverableRef,
             task.FailureReason, task.MergeTargetRef, events, task.FailureCode, blocked,
             task.StandingAuthority, task.AutoContinueOnWait, task.NextStage, task.NextHandoff,
-            task.DistilledResult, landing is null ? null : LandingEvidenceDto.From(landing),
+            task.DistilledResult, landingDto,
             landRequest is null ? null : LandRequestStatusDto.From(landRequest, _timeProvider.GetUtcNow().UtcDateTime,
                 landNotes.Select(LandNotificationStatusDto.From).ToList()),
             legacyLand is null ? null : new LegacyLandReceiptDto(legacyLand.Id, legacyLand.At,

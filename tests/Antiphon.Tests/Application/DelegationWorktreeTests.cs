@@ -1028,7 +1028,7 @@ public class DelegationWorktreeTests
             TimeProvider.System,
             Options.Create(new DelegationSettings()),
             NullLogger<AgentTaskLandService>.Instance,
-            new AgentTaskLandingProtocol(db, graph.Git, graph.Leases, graph.Manager, new LandingSafetyHarness.ControlledVerifier(), TimeProvider.System),
+            new AgentTaskLandingProtocol(db, graph.Git, graph.Leases, graph.Manager, new LandingSafetyHarness.ControlledVerifier(), TimeProvider.System, graph.Journal),
             graph.Leases, graph.Git);
         return (land, worktrees);
     }

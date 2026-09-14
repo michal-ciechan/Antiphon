@@ -610,7 +610,7 @@ public class AgentTaskLandStageOutcomeTests
             TimeProvider.System,
             Options.Create(new DelegationSettings()),
             NullLogger<AgentTaskLandService>.Instance,
-            new AgentTaskLandingProtocol(db, graph.Git, graph.Leases, graph.Manager, new LandingVerifier(), TimeProvider.System),
+            new AgentTaskLandingProtocol(db, graph.Git, graph.Leases, graph.Manager, new LandingVerifier(), TimeProvider.System, graph.Journal),
             graph.Leases, graph.Git);
         return (land, worktrees);
     }
