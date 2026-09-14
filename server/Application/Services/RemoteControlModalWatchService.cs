@@ -111,9 +111,6 @@ public sealed class RemoteControlModalWatchService
         if (episode is null)
             return observation.Menu.IsPresent || observation.Menu.HasRemnant;
 
-        if (!observation.Menu.IsPresent)
-            return true;
-
         var sem = _queue.GetLock(session.Id);
         var entered = await sem.WaitAsync(TimeSpan.Zero, ct);
         if (!entered)
