@@ -1904,7 +1904,13 @@ public class FakeClaudeContractTests
         runner.SnapshotText().ShouldContain("remote-control is active");
         runner.SnapshotScreen().ShouldNotContain("Disconnect this session");
 
-        await EchoGatedSubmit.SendAsync(runner, "/remote-control");
+        // EchoGatedSubmit treats leftover SUBMITTED:/remote-control as composer evidence and
+        // fires Enter immediately; wait for new echo bytes, then submit.
+        var marked = runner.SnapshotText().Length;
+        await runner.WriteAsync("/remote-control");
+        (await runner.WaitForOutputAsync(s => s.Length > marked, TimeSpan.FromSeconds(5)))
+            .ShouldBeTrue("repeat /remote-control must echo after the first SUBMITTED line");
+        await runner.WriteAsync("\r");
         (await runner.WaitForOutputAsync(s => s.Contains("RCMENU:open"), TimeSpan.FromSeconds(5)))
             .ShouldBeTrue();
         runner.SnapshotScreen().ShouldContain("Disconnect this session");
