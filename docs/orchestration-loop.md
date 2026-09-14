@@ -1001,6 +1001,38 @@ the preparation can be recorded or a local child merge can advance its parent.
 The CARD-0448 continuation is not rollout-ready until its complete verification matrix and
 creation-recovery/admission coverage are accepted. Do not deploy a checkpoint independently.
 
+## CARD-0443 receipt-backed cleanup checkpoint
+
+The [CARD-0443 plan](superpowers/plans/2026-09-14-card-0443-receipt-backed-cleanup-plan.md)
+adds one durable cleanup attempt per land request. The attempt records independent
+initial/retry command intents, first Git failure, capture and final component facts.
+Committed command slots remain spent across restart. This journal is evidence, not
+deletion authority: every removal still requires the current receipt, genuine lease,
+canonical identities, remote containment and both content inspections.
+
+After a failed directory removal, the coordinator checkpoints its result and captures
+bounded Handle and native delete-access observations. Only a normally exited nonzero
+Git removal plus an identity-validated native sharing error 32/33 can nominate one
+additional ordinary Git removal. Checkpoint, capture and retry work share a monotonic
+ten-second allowance, including one 250 ms delay. Partial or unknown state retains
+residue. Branch deletion is never retried automatically.
+
+Configure `WorktreeLockDiagnostics:HandleExecutablePath` as an absolute trusted Windows
+executable path. Collection requires existing elevated access and completed Handle
+license setup; the server does not elevate, search PATH, accept the license or invoke
+a shell. Missing prerequisites are recorded as unavailable. The independent native
+probe does not delete or modify files. Observed owners are not authority to stop them.
+
+Task detail and the existing immutable Outcome expose bounded capture evidence, with
+prior-request provenance when appropriate. Successful cleanup keeps `LastReason` null
+while retaining earlier diagnostics. The existing complete UserPrompt receipt remains
+the delivery verdict. Worktree release logs distinguish `StopRequested`, `StopReturned`
+and `StopFailed`; none asserts operating-system process exit.
+
+This is an implementation checkpoint, not rollout acceptance. Ordinary test coverage,
+worker-death/delivery cuts and real Handle qualification remain incomplete; see the
+[Code checkpoint](../docs/investigations/2026-09-14-card-0443-code-checkpoint.md).
+
 ## Land request and caller receipt (CARD-0467)
 
 An accepted request has its own identity before a landing operation exists. A hold
