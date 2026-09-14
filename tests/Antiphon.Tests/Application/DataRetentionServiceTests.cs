@@ -714,6 +714,264 @@ public class DataRetentionServiceTests
         }
     }
 
+    /// <summary>
+    /// V-29 / G-91: a pending dispatch-warning intent is the ONLY thing naming its original
+    /// destination — no agent PersistentSessionId, no task AgentSessionId/ParentSessionId, no
+    /// queue row and no note — and the session survives the sweep anyway. Materializing it, or
+    /// capturing it with ReplyTo None, releases the session.
+    /// </summary>
+    [Test]
+    public async Task C508_IntentSessionRetention()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var sessionId = await SeedSessionAsync(marker, SessionStatus.Stopped, DaysAgo(100));
+            var loose = await SeedSessionAsync(marker, SessionStatus.Stopped, DaysAgo(100));
+            var notRequired = await SeedSessionAsync(marker, SessionStatus.Stopped, DaysAgo(100));
+            var taskId = await SeedDetachedTaskAsync(marker, DaysAgo(200));
+            await SeedIntentAsync(taskId, sessionId, AgentTaskReplyTo.Session, DaysAgo(100), materialized: false);
+            await SeedIntentAsync(taskId, loose, AgentTaskReplyTo.Session, DaysAgo(100), materialized: true);
+            await SeedIntentAsync(taskId, notRequired, AgentTaskReplyTo.None, DaysAgo(100), materialized: false);
+
+            await using var db = CreateContext();
+            await CreateService(db).PruneSessionsAsync(CancellationToken.None);
+
+            (await SessionExistsAsync(sessionId)).ShouldBeTrue(
+                "a pending dispatch-warning intent still owes this destination a prompt");
+            (await SessionExistsAsync(loose)).ShouldBeFalse("a materialized intent owes the session nothing");
+            (await SessionExistsAsync(notRequired)).ShouldBeFalse("ReplyTo None never owed a prompt");
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    /// <summary>
+    /// V-29 / G-92: transcript pruning is per-session all-or-nothing, and the protected
+    /// destination keeps EVERY row — including rows far older than the window — while an
+    /// otherwise identical unprotected session in the same sweep loses all of its.
+    /// </summary>
+    [Test]
+    public async Task C508_IntentTranscriptRetention()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var protectedSession = await SeedSessionAsync(marker, SessionStatus.Stopped, DaysAgo(100));
+            var control = await SeedSessionAsync(marker, SessionStatus.Stopped, DaysAgo(100));
+            var taskId = await SeedDetachedTaskAsync(marker, DaysAgo(200));
+            await SeedIntentAsync(taskId, protectedSession, AgentTaskReplyTo.Session, DaysAgo(100), materialized: false);
+
+            var oldest = await SeedTranscriptAsync(protectedSession, 1, TranscriptKinds.UserPrompt, DaysAgo(120));
+            var middle = await SeedTranscriptAsync(protectedSession, 2, TranscriptKinds.AssistantText, DaysAgo(110));
+            var newest = await SeedTranscriptAsync(protectedSession, 3, TranscriptKinds.TurnEnd, DaysAgo(100));
+            var controlRow = await SeedTranscriptAsync(control, 1, TranscriptKinds.UserPrompt, DaysAgo(120));
+
+            await using var db = CreateContext();
+            await CreateService(db).PruneTranscriptsAsync(CancellationToken.None);
+
+            (await ExistsAsync(oldest)).ShouldBeTrue();
+            (await ExistsAsync(middle)).ShouldBeTrue();
+            (await ExistsAsync(newest)).ShouldBeTrue();
+            (await ExistsAsync(controlRow)).ShouldBeFalse(
+                "the unprotected session in the same sweep must still make progress");
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    /// <summary>
+    /// V-29 / G-93: any intent on ANY member of a stale terminal tree — pending or materialized —
+    /// protects the whole tree, and an unrelated eligible tree still prunes in the same sweep.
+    /// </summary>
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task C508_IntentTaskTreeRetention(bool materialized)
+    {
+        var marker = NewMarker();
+        try
+        {
+            var stale = DaysAgo(200);
+            var rootId = Guid.NewGuid();
+            var childId = Guid.NewGuid();
+            await SeedTaskRowAsync(marker, rootId, rootId, parentTaskId: null, depth: 0,
+                AgentTaskStatus.Succeeded, stale, stale.AddHours(1));
+            await SeedTaskRowAsync(marker, childId, rootId, rootId, depth: 1,
+                AgentTaskStatus.Succeeded, stale, stale.AddHours(2));
+            // The intent hangs off the CHILD; the whole tree must be retained.
+            await SeedIntentAsync(childId, parentSessionId: null, AgentTaskReplyTo.Session,
+                stale.AddHours(2), materialized);
+
+            var otherRoot = Guid.NewGuid();
+            await SeedTaskRowAsync(marker, otherRoot, otherRoot, parentTaskId: null, depth: 0,
+                AgentTaskStatus.Succeeded, stale, stale.AddHours(1));
+            var otherEvent = await SeedTaskEventAsync(otherRoot, stale.AddHours(1));
+
+            await using var db = CreateContext();
+            Exception? caught = null;
+            try { await CreateService(db).PruneTasksAsync(CancellationToken.None); }
+            catch (Exception ex) { caught = ex; }
+
+            caught.ShouldBeNull();
+            (await TaskExistsAsync(rootId)).ShouldBeTrue("a partial tree delete is forbidden");
+            (await TaskExistsAsync(childId)).ShouldBeTrue();
+            (await TaskExistsAsync(otherRoot)).ShouldBeFalse(
+                "an unrelated eligible tree still prunes in the same sweep");
+            (await TaskEventExistsAsync(otherEvent)).ShouldBeFalse();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    /// <summary>
+    /// V-29 / G-94: the same protection for a notification on any member, including a CONFIRMED
+    /// note and a NotRequired one — the row is history the tree delete would silently destroy.
+    /// </summary>
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task C508_NotificationTaskTreeRetention(bool confirmed)
+    {
+        var marker = NewMarker();
+        try
+        {
+            var stale = DaysAgo(200);
+            var rootId = Guid.NewGuid();
+            var childId = Guid.NewGuid();
+            await SeedTaskRowAsync(marker, rootId, rootId, parentTaskId: null, depth: 0,
+                AgentTaskStatus.Succeeded, stale, stale.AddHours(1));
+            await SeedTaskRowAsync(marker, childId, rootId, rootId, depth: 1,
+                AgentTaskStatus.Succeeded, stale, stale.AddHours(2));
+            await SeedDispatchNoteAsync(childId, stale.AddHours(2), confirmed);
+
+            var otherRoot = Guid.NewGuid();
+            await SeedTaskRowAsync(marker, otherRoot, otherRoot, parentTaskId: null, depth: 0,
+                AgentTaskStatus.Succeeded, stale, stale.AddHours(1));
+
+            await using var db = CreateContext();
+            Exception? caught = null;
+            try { await CreateService(db).PruneTasksAsync(CancellationToken.None); }
+            catch (Exception ex) { caught = ex; }
+
+            caught.ShouldBeNull();
+            (await TaskExistsAsync(rootId)).ShouldBeTrue();
+            (await TaskExistsAsync(childId)).ShouldBeTrue();
+            (await TaskExistsAsync(otherRoot)).ShouldBeFalse();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    /// <summary>
+    /// A task that names no session at all, so only the intent under test can protect anything.
+    /// </summary>
+    private static async Task<Guid> SeedDetachedTaskAsync(string marker, DateTime createdAt)
+    {
+        var id = Guid.NewGuid();
+        await using var db = CreateContext();
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = id,
+            RootTaskId = id,
+            Title = marker,
+            Goal = "retention intent custody",
+            Kind = AgentTaskKind.Worker,
+            Role = AgentTaskRole.Code,
+            WorkingDirectory = Path.Combine(Path.GetTempPath(), marker),
+            AgentSessionId = null,
+            ParentSessionId = null,
+            Status = AgentTaskStatus.Succeeded,
+            ReplyTo = AgentTaskReplyTo.None,
+            CreatedAt = createdAt,
+            CompletedAt = createdAt.AddHours(1),
+        });
+        await db.SaveChangesAsync();
+        return id;
+    }
+
+    private static async Task<Guid> SeedIntentAsync(
+        Guid taskId, Guid? parentSessionId, AgentTaskReplyTo replyTo, DateTime createdAt, bool materialized)
+    {
+        var intentId = Guid.NewGuid();
+        var notificationId = Guid.NewGuid();
+        await using var db = CreateContext();
+        var dispatchEventId = Guid.NewGuid();
+        db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = dispatchEventId,
+            AgentTaskId = taskId,
+            Type = AgentTaskEventType.Dispatched,
+            Detail = "retention dispatch",
+            At = createdAt,
+        });
+        var payload = DispatchBaseNotificationPayload.Capture(
+            intentId, notificationId, taskId, dispatchEventId, 0,
+            DispatchBaseNotificationPayload.MismatchKey, replyTo, parentSessionId,
+            "retention dispatch-base warning", createdAt);
+        db.AgentTaskDispatchWarningIntents.Add(new AgentTaskDispatchWarningIntent
+        {
+            Id = payload.WarningEventId,
+            DispatchEventId = payload.DispatchEventId,
+            TaskId = payload.TaskId,
+            Attempt = payload.Attempt,
+            WarningKey = payload.WarningKey,
+            NotificationId = payload.NotificationId,
+            ReplyTo = payload.ReplyTo,
+            ParentSessionId = payload.ParentSessionId,
+            Detail = payload.Detail,
+            Body = payload.Body,
+            ContentDigest = payload.ContentDigest,
+            CreatedAt = payload.CreatedAt,
+            InitialState = payload.InitialState,
+            NextAttemptAt = payload.CreatedAt,
+            MaterializedAt = materialized ? createdAt : null,
+        });
+        await db.SaveChangesAsync();
+        return intentId;
+    }
+
+    private static async Task<Guid> SeedDispatchNoteAsync(Guid taskId, DateTime createdAt, bool confirmed)
+    {
+        var noteId = Guid.NewGuid();
+        var warningId = Guid.NewGuid();
+        await using var db = CreateContext();
+        db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = warningId,
+            AgentTaskId = taskId,
+            Type = AgentTaskEventType.Warning,
+            Detail = "retention dispatch-base warning",
+            At = createdAt,
+        });
+        db.AgentTaskLandNotifications.Add(new AgentTaskLandNotification
+        {
+            Id = noteId,
+            RequestId = null,
+            TaskId = taskId,
+            SourceEventId = warningId,
+            Kind = LandNotificationKind.DispatchBase,
+            ReplyTo = confirmed ? AgentTaskReplyTo.Session : AgentTaskReplyTo.None,
+            ParentSessionId = null,
+            Body = "retention dispatch-base note",
+            ContentDigest = "digest",
+            CreatedAt = createdAt,
+            NextAttemptAt = createdAt,
+            State = confirmed ? LandNotificationState.Confirmed : LandNotificationState.NotRequired,
+            ConfirmedAt = confirmed ? createdAt : null,
+        });
+        await db.SaveChangesAsync();
+        return noteId;
+    }
+
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
     private static DataRetentionService CreateService(
@@ -946,6 +1204,10 @@ public class DataRetentionServiceTests
         var taskIds = await db.AgentTasks.Where(t => t.Title == marker).Select(t => t.Id).ToListAsync();
         if (taskIds.Count > 0)
         {
+            // CARD-0508: intents and notifications hold Restrict FKs to the events and tasks
+            // below, so they have to go first or the whole cleanup fails.
+            await db.AgentTaskDispatchWarningIntents.Where(i => taskIds.Contains(i.TaskId)).ExecuteDeleteAsync();
+            await db.AgentTaskLandNotifications.Where(n => taskIds.Contains(n.TaskId)).ExecuteDeleteAsync();
             await db.AgentTaskEvents.Where(e => taskIds.Contains(e.AgentTaskId)).ExecuteDeleteAsync();
             var depths = await db.AgentTasks
                 .Where(t => t.Title == marker)
