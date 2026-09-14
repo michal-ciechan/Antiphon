@@ -1,4 +1,4 @@
-using Antiphon.Server.Domain.Entities;
+﻿using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
@@ -11,6 +11,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
+[Category("Slow")]
 public class RemoteControlModalPersistenceTests
 {
     [Test]

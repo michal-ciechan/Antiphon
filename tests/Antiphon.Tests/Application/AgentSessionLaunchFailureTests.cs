@@ -1,4 +1,4 @@
-using Antiphon.Agents.Pty;
+﻿using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -37,6 +37,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [Category("Integration")]
 [NotInParallel("AgentSessionLaunchFailure")]
+[Category("Slow")]
 public class AgentSessionLaunchFailureTests
 {
     [Test]

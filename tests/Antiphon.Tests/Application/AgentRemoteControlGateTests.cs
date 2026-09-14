@@ -1,4 +1,4 @@
-using Antiphon.Server.Application.Dtos;
+﻿using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -19,6 +19,7 @@ namespace Antiphon.Tests.Application;
 /// <see cref="AgentCreateSupervisionTests.CreateAsync_persists_create_time_always_on_and_remote_control"/>.
 /// </summary>
 [Category("Integration")]
+[Category("Slow")]
 public class AgentRemoteControlGateTests
 {
     [Test]

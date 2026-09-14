@@ -42,7 +42,8 @@ internal sealed class RemoteControlRecoveryHarness : IAsyncDisposable
         bool isolated = false,
         bool transcriptBound = true,
         bool advertiseConditional = true,
-        Action<SupervisionSettings>? configureSupervision = null)
+        Action<SupervisionSettings>? configureSupervision = null,
+        Action<IServiceCollection>? extraServices = null)
     {
         IsolatedTestSchema? isolatedSchema = null;
         string? cs = null;
@@ -71,6 +72,9 @@ internal sealed class RemoteControlRecoveryHarness : IAsyncDisposable
                 services.AddScoped<AttentionService>();
                 services.AddScoped<IAgentIncidentRecorder>(sp =>
                     sp.GetRequiredService<AgentSupervisorService>());
+                // Runs last on purpose: a caller that supplies its own ISessionRunnerClient (a
+                // real transport in front of this adapter, say) must win over the scripted one.
+                extraServices?.Invoke(services);
             },
         });
 
