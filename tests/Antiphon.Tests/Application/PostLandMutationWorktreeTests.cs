@@ -24,6 +24,30 @@ namespace Antiphon.Tests.Application;
 public sealed class PostLandMutationWorktreeTests
 {
     [Test]
+    public async Task C508_SourceLandingIgnoresDefault()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync(provision: false);
+        await using var scope = world.Host.Services.CreateAsyncScope();
+        var created = await world.TaskService(scope.ServiceProvider).CreateAsync(world.Request(world.Companion), world.Caller, default);
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == created.Id);
+        var l = task.SourceLandingSha;
+        l.ShouldNotBeNull();
+        await File.WriteAllTextAsync(Path.Combine(world.Host.Fixture.Repository, "later-master.txt"), "advance\n");
+        await world.Host.Fixture.RequiredAsync(world.Host.Fixture.Repository, "add", ".");
+        await world.Host.Fixture.RequiredAsync(world.Host.Fixture.Repository, "commit", "-m", "advance master");
+        await using var lease = await world.Host.Services.GetRequiredService<IRepositoryMutationLease>()
+            .TryAcquireAsync(task.RepoPath!, default);
+        await scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>().CreateForTaskAsync(task, lease!, default);
+        await db.SaveChangesAsync();
+        task.WorktreeBaseSha.ShouldBe(l);
+        (await world.Host.Fixture.RequiredAsync(task.WorktreePath!, "rev-parse", "HEAD")).Trim().ShouldBe(l);
+        task.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.Unset);
+        (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning))
+            .ShouldBe(0);
+    }
+
+    [Test]
     public async Task C478_V02_RebasedSnapshotAfterSourceRemoval()
     {
         await using var world = await PostLandMutationWorld.CreateAsync();

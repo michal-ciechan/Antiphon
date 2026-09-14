@@ -271,6 +271,112 @@ public class AgentTaskDispatchBaseGuardTests
         warning.Detail.ShouldContain(sibling.WorktreeBranch!);
     }
 
+    [Test]
+    [Timeout(30_000)]
+    public async Task C508_MissingDefaultWarns(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c508-missing-default");
+        await repo.CommitFileAsync("README.md", "base\n");
+        var head = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-0508");
+        var parentSessionId = Guid.NewGuid();
+        await SeedParentSessionAsync(db, parentSessionId);
+        var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, parentSessionId);
+        await db.SaveChangesAsync(ct);
+
+        var missing = "missing-" + Guid.NewGuid().ToString("N")[..8];
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(schema.ConnectionString));
+        services.AddSingleton<IEventBus, MockEventBus>();
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton(Options.Create(new SupervisionSettings()));
+        services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
+        services.AddSingleton(Options.Create(new DelegationSettings { MaxConcurrentTasks = 512 }));
+        services.AddOptions<AgentRegistrySettings>().Configure(s =>
+        {
+            s.DefaultDefinition = "claude";
+            s.Definitions["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "claude" };
+        });
+        services.AddSingleton<AgentRegistry>();
+        services.AddSingleton<AgentSessionLaunchQueue>();
+        services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<SessionMessageQueueService>();
+        services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
+        services.AddSingleton<DelegationWorkspaceResolver>();
+        services.AddDelegationWorktreeGraph(new GitSettings
+        {
+            WorktreeBasePath = repo.WorktreeRoot,
+            WorktreeAddTimeoutSeconds = 180,
+            DefaultBranch = missing,
+        });
+        services.AddSingleton<CompletionNoteFlushQueue>();
+        services.AddSingleton<LandDeliveryBoundary>();
+        services.AddScoped<AgentTaskLandNotificationService>();
+        services.AddScoped<AgentTaskService>();
+        services.AddScoped<AgentTaskDispatcher>();
+        await using var provider = services.BuildServiceProvider();
+        await using var scope = provider.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+
+        db.ChangeTracker.Clear();
+        var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        dispatched.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.RepoHead);
+        dispatched.WorktreeBaseRef.ShouldBe("HEAD");
+        (await ScratchGitRepo.GitInAsync(dispatched.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim().ShouldBe(head);
+        await MaterializeAndDeliverAsync(scope.ServiceProvider, task.Id, ct);
+        db.ChangeTracker.Clear();
+        var intent = await db.AgentTaskDispatchWarningIntents.AsNoTracking()
+            .SingleAsync(i => i.TaskId == task.Id && i.WarningKey == DispatchBaseNotificationPayload.DefaultUnresolvedKey, ct);
+        intent.Detail.ShouldContain(missing);
+        var warning = await db.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.Id == intent.Id, ct);
+        warning.Detail.ShouldContain(missing);
+        warning.Type.ShouldBe(AgentTaskEventType.Warning);
+    }
+
+    [Test]
+    [Timeout(30_000)]
+    public async Task C508_RepairRecordsOwnerAndSkipsSiblings(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c508-repair-skip");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var ownerCard = await SeedCardAsync(db, "CARD-0499");
+        var repairCard = await SeedCardAsync(db, "CARD-0508");
+        var owner = await SeedKeptSiblingAsync(db, repo, ownerCard.Id, "owner work");
+        owner.Role = AgentTaskRole.Code;
+        await repo.GitAsync("checkout", owner.WorktreeBranch!);
+        var ownerSha = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        var other = await SeedKeptSiblingAsync(db, repo, repairCard.Id, "other sibling");
+        other.LandRequestedAt = DateTime.UtcNow.AddMinutes(-1);
+        var parentSessionId = Guid.NewGuid();
+        await SeedParentSessionAsync(db, parentSessionId);
+        var repair = await SeedQueuedWorktreeTaskAsync(db, repo.Path, repairCard.Id, parentSessionId);
+        repair.RepairSourceTaskId = owner.Id;
+        await db.SaveChangesAsync(ct);
+
+        await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot);
+        await using var scope = provider.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        db.ChangeTracker.Clear();
+        var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == repair.Id, ct);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        dispatched.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.Repair);
+        dispatched.WorktreeBaseTaskId.ShouldBe(owner.Id);
+        dispatched.WorktreeBaseRef.ShouldBe(ownerSha);
+        (await db.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == repair.Id && e.Type == AgentTaskEventType.Held, ct)).ShouldBe(0);
+        await MaterializeAndDeliverAsync(scope.ServiceProvider, repair.Id, ct);
+        db.ChangeTracker.Clear();
+        (await db.AgentTaskDispatchWarningIntents.CountAsync(i => i.TaskId == repair.Id, ct)).ShouldBe(0);
+        (await db.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == repair.Id && e.Type == AgentTaskEventType.Warning, ct)).ShouldBe(0);
+    }
+
     private static async Task MaterializeAndDeliverAsync(IServiceProvider services, Guid taskId, CancellationToken ct)
     {
         var db = services.GetRequiredService<AppDbContext>();
