@@ -54,7 +54,39 @@ human step on the retained PDF.
 | V-25 | The live mav-ref installation, an approved converter profile and an active mikeysbot-slack thread. Out of scope for a local pass. |
 | PC-1..PC-30 | Mutation stage. Not executed here by instruction. |
 
+## Reply-group re-run at `f4e784cc` (2026-09-14, task `6886d58b`)
+
+The Code stage's 191-test reply group was last executed at `ea77a5b3`, before two
+of its cases were fixed, and the follow-up pass could not re-run it inside its
+foreground window. Re-run here in three class-sized chunks against `f4e784cc`
+(build `--property:OutputPath=bin-c418f/`, removed after the runs).
+
+| Class | TRX | Executed | Pass | Fail | Duration |
+|---|---|---|---|---|---|
+| `ChannelBridgeTests` | `.antiphon/c418f/c418f-bridge.trx` | 40 | 40 | 0 | 11m13s |
+| `ChannelReplyDurabilityTests` | `.antiphon/c418f/c418f-durability.trx` | 24 | 23 | 1 inherited | 24s |
+| `AgentTaskReplyIntegrationTests` | `.antiphon/c418f/c418f-reply.trx` | 127 | 127 | 0 | 1m01s |
+| **Total** | | **191** | **190** | **1 inherited** | |
+
+The one failure is the already-documented
+`ChannelReplyDurabilityTests.Claude_production_session_limit_stub_withholds_and_adopts_the_AssistantText_reset`.
+Attribution confirmed rather than assumed: `git diff --name-only $(git merge-base
+master HEAD) HEAD` touches neither that test file nor any session-limit
+production code, and the assertion hard-codes
+`new DateTime(2026, 9, 5, 16, 22, 0, DateTimeKind.Utc)` against a stub the parser
+resolves relative to the wall clock — a calendar time bomb that has been red
+since 2026-09-06 and is red on `master` for the same reason. Not a CARD-0418
+regression; it needs its own fix, not a loosened assertion here.
+
+With this, every production change on the branch is covered by an executed
+green run at the branch HEAD. The only production delta between the Code stage
+`ea77a5b3` and `f4e784cc` is inside
+`server/Application/Services/OutboundConversionManifest.cs`
+(`UnpackSourceZip`), which has no production caller (finding 4), so no other
+previously-green run is stale against the current source.
+
 ## Findings
+
 
 1. **Nonacceptance is never retried and never terminal.** Every producer
    exception becomes `PublishUncertain`, and `PumpOnceAsync` selects only
