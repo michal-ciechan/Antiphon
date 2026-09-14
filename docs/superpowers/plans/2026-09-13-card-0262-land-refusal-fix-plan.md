@@ -276,3 +276,25 @@ Required next stage: **investigate**, because the brief's ongoing-publication-fa
 premise is no longer true. Handoff: confirm current cleanup receipt and measure
 artifact/process custody for the retained S1 worktree; return a bounded disposition
 without deleting files or changing the already-active concurrency fix.
+
+## Custody disposition (2026-09-14, task `0e348410`)
+
+The custody measurement (task `73c8de31`) partitioned the 1,635 ignored files /
+547.3 MB retained in `C:\Antiphon\worktrees\card-task-604d1c73` into four classes.
+Only class D — the seven `.antiphon\<run>\` test-result directories, 21 files /
+12.63 MB — is irreplaceable; classes A (`bin-review-2a5e61bd\`, 342.7 MB),
+B (`bin\`, 126.9 MB) and C (`obj\`, 65.1 MB) are regenerable build output.
+
+Class D is preserved at **`C:\Antiphon\evidence\card-0262-73c8de31\`**, byte-for-byte
+(per-file md5 verified at copy time), with a `README.md` there carrying the
+re-parsed TRX counter table and the run-by-run failing test names. That directory
+is the durable record; the originals under the worktree may be deleted with A/B/C.
+
+`8ccdb1c9` is contained in `origin/master`, and the worktree is clean, so nothing
+tracked in it is unlanded. With class D preserved, removing A/B/C and the class D
+originals leaves the worktree with no irreplaceable content, and the guarded
+removal this plan defers can then run without a retained-residue exception.
+
+Note for CARD-0516 (the structural `ignored_content_preserved` refusal): deleting
+these directories removes this particular reproduction. The refusal reproduces from
+any ignored file in any worktree, so no artefact needs to be retained for it.
