@@ -13,4 +13,13 @@
     <ProjectReference Include="..\..\server\Antiphon.Server.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Stated explicitly, at the server's own floating versions: without these the probe's
+         restore graph pinned an older EF than the server assembly binds to, and the probe died on
+         a FileNotFoundException for Microsoft.EntityFrameworkCore.Relational at startup. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.*" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.*" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.*" />
+  </ItemGroup>
+
 </Project>
