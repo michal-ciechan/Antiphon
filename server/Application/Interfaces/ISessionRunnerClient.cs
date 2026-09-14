@@ -84,6 +84,15 @@ public interface ISessionRunnerClient
     Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct);
     Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct);
     Task SendInputAsync(Guid sessionId, string input, CancellationToken ct);
+
+    /// <summary>
+    /// CARD-0514: generation-and-sequence-conditional maintenance write.
+    /// Default is Unsupported so untouched fakes never fall through to <see cref="SendInputAsync"/>.
+    /// </summary>
+    Task<RunnerConditionalInputResult> SendConditionalInputAsync(
+        Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct) =>
+        Task.FromResult(new RunnerConditionalInputResult(
+            sessionId, ConditionalInputOutcomes.Unsupported, null, null));
     Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct);
     Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct);
     Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct);

@@ -9,6 +9,12 @@ public interface ISessionHealthActions
     /// <summary>Queue text into the session's composer, delivered when the agent is idle.</summary>
     Task EnqueueWhenIdleAsync(Guid sessionId, string text, CancellationToken ct);
 
+    /// <summary>
+    /// CARD-0514: reserve a typed automatic <c>/remote-control</c> maintenance request
+    /// (Supervision origin, accepted generation). Null when coalesced/vetoed.
+    /// </summary>
+    Task<Guid?> RequestAutomaticArmAsync(Guid sessionId, DateTime acceptedStartedAt, CancellationToken ct);
+
     /// <summary>Kill the session process (the supervisor's ladder then restarts always-on agents).</summary>
     Task KillSessionAsync(Guid sessionId, CancellationToken ct);
 

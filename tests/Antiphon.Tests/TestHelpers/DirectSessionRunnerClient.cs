@@ -54,6 +54,12 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
     /// <summary>CARD-0384: when false, GetCapabilitiesAsync omits herdr-named-tab-placement.</summary>
     public bool AdvertiseHerdrNamedTabPlacement { get; set; } = true;
 
+    /// <summary>CARD-0502: when false, omits sessionGenerationV1.</summary>
+    public bool AdvertiseSessionGeneration { get; set; } = true;
+
+    /// <summary>CARD-0514: when false, omits conditionalMaintenanceInputV1 and refuses the operation.</summary>
+    public bool AdvertiseConditionalInput { get; set; } = true;
+
     /// <param name="ptyBackend">
     /// Which pseudoconsole the detached pty-hosts this client spawns should use (<c>inbox</c> /
     /// <c>modern</c>), or null to leave it to the environment.
@@ -211,6 +217,10 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
         }
         if (AdvertiseVerificationCustody && _runtime.VerificationCustodyBackend is not null)
             features!.Add(RunnerCapabilityFeatures.VerificationCustodyV1);
+        if (AdvertiseSessionGeneration)
+            features!.Add(RunnerCapabilityFeatures.SessionGenerationV1);
+        if (AdvertiseConditionalInput)
+            features!.Add(RunnerCapabilityFeatures.ConditionalMaintenanceInputV1);
         return Task.FromResult<RunnerCapabilitiesDto?>(new(
             "ModernConPty",
             "modern",
@@ -323,7 +333,8 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             snapshot.RawOutput,
             snapshot.RenderedScreen,
             snapshot.LastSequence,
-            snapshot.StartedAt));
+            snapshot.StartedAt,
+            snapshot.AcceptedStartedAt));
     }
 
     public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
@@ -338,6 +349,15 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
 
     public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) =>
         _runtime.SendInputAsync(sessionId, input, ct);
+
+    public Task<RunnerConditionalInputResult> SendConditionalInputAsync(
+        Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct)
+    {
+        if (!AdvertiseConditionalInput)
+            return Task.FromResult(new RunnerConditionalInputResult(
+                sessionId, ConditionalInputOutcomes.Unsupported, null, null));
+        return _runtime.SendConditionalInputAsync(sessionId, request, ct);
+    }
 
     public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) =>
         _runtime.ClearLiveBufferAsync(sessionId, ct);

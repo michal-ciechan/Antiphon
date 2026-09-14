@@ -62,6 +62,25 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// </summary>
     internal int StartCoreSessionRegistrations => _startCoreSessionRegistrations;
 
+    /// <summary>
+    /// CARD-0514 test seam: fires after generation/sequence validation and before the backend write.
+    /// Production never sets this.
+    /// </summary>
+    internal Func<Guid, RunnerConditionalInputRequest, Task>? ConditionalInputBeforeWrite { get; set; }
+
+    /// <summary>CARD-0514 test seam: actual backend writes, not the runner input log.</summary>
+    internal IReadOnlyList<(Guid SessionId, string Input)> SnapshotBackendWrites()
+    {
+        var list = new List<(Guid SessionId, string Input)>();
+        foreach (var (id, session) in _sessions)
+        {
+            foreach (var input in session.BackendInput)
+                list.Add((id, input));
+        }
+
+        return list;
+    }
+
     public SessionRunnerRuntime(
         IOptions<SessionRunnerSettings> settings,
         ILogger<SessionRunnerRuntime> logger,
@@ -762,6 +781,64 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         finally { gate.Release(); }
     }
 
+    /// <summary>
+    /// CARD-0514 D-8: write only if this object still matches the accepted generation and
+    /// expected output sequence. Lookup, check and write share the launch gate.
+    /// </summary>
+    public async Task<RunnerConditionalInputResult> SendConditionalInputAsync(
+        Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(request.Input))
+            return new RunnerConditionalInputResult(sessionId, ConditionalInputOutcomes.Written, null, null);
+
+        var gate = _launchLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            if (!_sessions.TryGetValue(sessionId, out var session))
+                return new RunnerConditionalInputResult(sessionId, ConditionalInputOutcomes.Missing, null, null);
+
+            if (!SessionGeneration.Equal(session.AcceptedStartedAt, request.ExpectedAcceptedStartedAt))
+            {
+                return new RunnerConditionalInputResult(
+                    sessionId, ConditionalInputOutcomes.GenerationMismatch, session.AcceptedStartedAt, session.LastSequence);
+            }
+
+            if (session.HasExited)
+            {
+                return new RunnerConditionalInputResult(
+                    sessionId, ConditionalInputOutcomes.Exited, session.AcceptedStartedAt, session.LastSequence);
+            }
+
+            if (session.LastSequence != request.ExpectedLastSequence)
+            {
+                return new RunnerConditionalInputResult(
+                    sessionId, ConditionalInputOutcomes.StaleObservation, session.AcceptedStartedAt, session.LastSequence);
+            }
+
+            if (ConditionalInputBeforeWrite is { } beforeWrite)
+                await beforeWrite(sessionId, request);
+
+            if (!SessionGeneration.Equal(session.AcceptedStartedAt, request.ExpectedAcceptedStartedAt)
+                || session.HasExited
+                || session.LastSequence != request.ExpectedLastSequence)
+            {
+                var outcome = session.HasExited
+                    ? ConditionalInputOutcomes.Exited
+                    : !SessionGeneration.Equal(session.AcceptedStartedAt, request.ExpectedAcceptedStartedAt)
+                        ? ConditionalInputOutcomes.GenerationMismatch
+                        : ConditionalInputOutcomes.StaleObservation;
+                return new RunnerConditionalInputResult(
+                    sessionId, outcome, session.AcceptedStartedAt, session.LastSequence);
+            }
+
+            await session.WriteAsync(request.Input, ct);
+            return new RunnerConditionalInputResult(
+                sessionId, ConditionalInputOutcomes.Written, session.AcceptedStartedAt, session.LastSequence);
+        }
+        finally { gate.Release(); }
+    }
+
     /// <summary>Explicit expiry by an artifact owner; never called by kill, retirement, or worktree cleanup.</summary>
     public async Task ExpireRulesArtifactAsync(Guid sessionId, CancellationToken ct)
     {
@@ -1410,6 +1487,17 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private DateTime? _acceptedStartedAt;
 
         internal DateTime? AcceptedStartedAt => _acceptedStartedAt;
+
+        internal long LastSequence
+        {
+            get
+            {
+                lock (_gate)
+                    return _lastSequence;
+            }
+        }
+
+        internal ConcurrentQueue<string> BackendInput { get; } = new();
 
         internal void BindAcceptedGeneration(DateTime? value) =>
             _acceptedStartedAt = value is { } v ? SessionGeneration.Normalize(v) : null;
@@ -2594,7 +2682,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                                 screen.Text,
                                 screen.Text,
                                 _lastSequence,
-                                _startedAt);
+                                _startedAt,
+                                _acceptedStartedAt);
                         }
                     }
                 }
@@ -2615,7 +2704,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _liveBuffer.ToString(),
                     _screen?.GetScreenText() ?? "",
                     _lastSequence,
-                    _startedAt);
+                    _startedAt,
+                    _acceptedStartedAt);
             }
         }
 
@@ -2644,11 +2734,13 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 if (!await _clientReady.Task.WaitAsync(ct))
                     throw new InvalidOperationException("Herdr session ended before it was ready for input.");
                 await herdr.WriteAsync(input, ct);
+                BackendInput.Enqueue(input);
                 return;
             }
 
             var client = await AwaitClientAsync(ct);
             await client.InputAsync(input, ct);
+            BackendInput.Enqueue(input);
         }
 
         public async Task ClearLiveBufferAsync(CancellationToken ct)

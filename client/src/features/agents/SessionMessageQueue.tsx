@@ -93,12 +93,14 @@ export function SessionMessageQueue({ sessionId }: SessionMessageQueueProps) {
     }
   }
 
-  const { messages, working } = queue
-  const statusBadge = working
-    ? { color: 'yellow', label: 'Working…' }
-    : messages.length > 0
-      ? { color: 'blue', label: 'Idle — flushing queue' }
-      : { color: 'green', label: 'Idle / waiting' }
+  const { messages, working, modalBlocked, modalBlockedReason } = queue
+  const statusBadge = modalBlocked
+    ? { color: 'orange', label: modalBlockedReason || 'Remote Control menu blocks input' }
+    : working
+      ? { color: 'yellow', label: 'Working…' }
+      : messages.length > 0
+        ? { color: 'blue', label: 'Idle — flushing queue' }
+        : { color: 'green', label: 'Idle / waiting' }
 
   return (
     <Stack gap="sm">
@@ -143,6 +145,16 @@ export function SessionMessageQueue({ sessionId }: SessionMessageQueueProps) {
                           Parked
                         </Badge>
                       </Tooltip>
+                    )}
+                    {m.modalBlocked && (
+                      <>
+                        <Badge size="xs" variant="light" color="orange">
+                          Modal blocked
+                        </Badge>
+                        <Text size="xs" c="dimmed">
+                          attempts {m.deliveryAttempts}
+                        </Text>
+                      </>
                     )}
                     <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                       {m.body}

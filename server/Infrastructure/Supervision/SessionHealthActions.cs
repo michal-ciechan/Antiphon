@@ -1,6 +1,7 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -31,6 +32,15 @@ public sealed class SessionHealthActions : ISessionHealthActions
 
     public async Task EnqueueWhenIdleAsync(Guid sessionId, string text, CancellationToken ct) =>
         await _queue.EnqueueAsync(sessionId, text, MessageSendMode.WhenIdle, ct);
+
+    public async Task<Guid?> RequestAutomaticArmAsync(
+        Guid sessionId, DateTime acceptedStartedAt, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var recovery = scope.ServiceProvider.GetRequiredService<RemoteControlRecoveryService>();
+        return await recovery.TryReserveAutomaticArmAsync(
+            sessionId, acceptedStartedAt, QueuedMessageOrigin.Supervision, ct);
+    }
 
     public Task KillSessionAsync(Guid sessionId, CancellationToken ct) =>
         _sessions.KillAsync(sessionId, ct);

@@ -89,7 +89,7 @@ readiness or qualification alone cannot resolve a real-service outage.
 | Land a succeeded Worktree task | POST | `/api/agent-tasks/{id}/land/v2` (CARD-0495; same body and handler as `/land`) — `{ expectedSourceSha: string, reviewEvidenceId?: guid, verify?: string }` — 202 `{ status: "queued" \| "requeued" }`. `GET /api/version` advertises `capabilities: ["land-v2"]` with the build SHA. `delegate.ps1 -Land` requires that exact marker (case-sensitive) and a full 40/64-hex SHA, then POSTs only `/land/v2`; missing marker/SHA, 404 version, or timeout is exit 1 with zero POSTs. A 404/405 on `/land/v2` is a loud compatibility failure, never a retry to `/land`. Fresh work requires a full 40- or 64-hex `expectedSourceSha` (422 `expected_source_sha_required` if omitted; 422 `expected_source_sha_invalid` if abbreviated). Optional `reviewEvidenceId` must name a clean Review row whose subject/SHA/ref/repository match (409 otherwise). A pending request cannot change SHA, evidence or filter (409 `land_request_identity_conflict`). 409 `land_running` means a land is running in this server now. Read `Landed` / `AlreadyPresent` / `LandedWithResidue` / `LandRefused` and the structured `landing` / `landRequest` / `reviewEvidence` on the task. `GET /api/agent-tasks/{id}` exposes `landRequestedAt`, `landStartedAt`, `landAttempt`, approved original vs verified SHAs. Re-POST of identical pending fields preserves identity; omitted resume fields inherit stored approval. `LandRefused` does not imply the local target stayed unchanged. Legacy `/land` remains for old clients on an upgraded server. |
 | Record/override a stage finding (CARD-0272) | POST | `/api/agent-tasks/{id}/finding` (`RecordStageFindingRequest`: `stage` name, `found` bool, `detail?`). Writes a `Source=Orchestrator` `StageOutcome` row that supersedes the latest for that (task, stage); `delegate.ps1 -Finding <id> -Stage … -Found "…"` / `-Clean`. |
 | Per-stage hit rate vs. cost (CARD-0272) | GET | `/api/stage-outcomes` (`since`, `until`, `stage`, `cardId`, `latestOnly` default true) — rows plus a per-stage summary (runs, found/clean/skipped/failed/unreported, hit %, USD spent, USD per finding, server seconds). `scripts/stage-value-report.ps1` prints it as a table. |
-| Live runner sessions / rendered screen | GET | `:17204/sessions`, `:17204/sessions/{id}/snapshot` |
+| Live runner sessions / rendered screen | GET | `:17204/sessions`, `:17204/sessions/{id}/snapshot` (CARD-0514: snapshot may include `acceptedStartedAt`; automatic RC uses `POST :17204/sessions/{id}/conditional-input` when `/capabilities` lists `conditionalMaintenanceInputV1`, never raw `/input`) |
 
 ```powershell
 $api = if ($env:ANTIPHON_API) { $env:ANTIPHON_API } else { 'http://localhost:17202' }
@@ -186,8 +186,11 @@ LF, bracketed paste, and a separate Enter — and the delivery verification that
 
 `POST /api/sessions/{id}/input` (`{"input":"..."}`) is a raw keystroke bypass, and the runner's
 `POST :17204/sessions/{id}/input` is a further bypass beneath that. Neither is for work bodies:
-they skip the paste contract and nothing records whether the prompt landed. See
-[session-runtime-invariants.md](session-runtime-invariants.md) for why, and treat
+they skip the paste contract and nothing records whether the prompt landed. CARD-0514 automatic
+`/remote-control` and idle Esc use `POST :17204/sessions/{id}/conditional-input` with
+`expectedAcceptedStartedAt` and `expectedLastSequence` when the runner advertises
+`conditionalMaintenanceInputV1`; a 404 or missing capability is Unsupported, never a retry to
+`/input`. See [session-runtime-invariants.md](session-runtime-invariants.md) for why, and treat
 transcript-confirmed `UserPrompt` evidence — not a screen redraw — as the delivery verdict.
 
 ## Killing

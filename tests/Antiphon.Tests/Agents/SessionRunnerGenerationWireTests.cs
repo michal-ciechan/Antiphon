@@ -133,6 +133,40 @@ public class SessionRunnerGenerationWireTests
         handler.Requests.ShouldContain(r => r.RequestUri!.AbsolutePath.EndsWith($"/sessions/{sessionId:D}/kill-generation", StringComparison.Ordinal));
     }
 
+    [Test]
+    public async Task C514_Conditional_transport_never_falls_back_to_raw_input()
+    {
+        var sessionId = Guid.NewGuid();
+        var generation = SessionGeneration.Normalize(DateTime.UtcNow);
+        var handler = new StubHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/capabilities" => Json(Capabilities(null)),
+            _ => new HttpResponseMessage(HttpStatusCode.NotFound),
+        });
+        var client = Client(handler);
+        var result = await client.SendConditionalInputAsync(
+            sessionId,
+            new RunnerConditionalInputRequest(generation, 1, "\u001b"),
+            CancellationToken.None);
+        result.Outcome.ShouldBe(ConditionalInputOutcomes.Unsupported);
+        handler.Requests.ShouldNotContain(r => r.RequestUri!.AbsolutePath.EndsWith("/input", StringComparison.Ordinal)
+            && !r.RequestUri.AbsolutePath.Contains("conditional-input", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public async Task C514_Lost_conditional_reply_is_unknown()
+    {
+        var sessionId = Guid.NewGuid();
+        var generation = SessionGeneration.Normalize(DateTime.UtcNow);
+        var handler = new StubHandler(_ => throw new HttpRequestException("lost"));
+        var client = Client(handler);
+        var result = await client.SendConditionalInputAsync(
+            sessionId,
+            new RunnerConditionalInputRequest(generation, 1, "\u001b"),
+            CancellationToken.None);
+        result.Outcome.ShouldBe(ConditionalInputOutcomes.Unknown);
+    }
+
     private static AgentLaunchSpec Spec(DateTime generation) =>
         new("fake", AgentKind.ClaudeCode, "cmd", [], new Dictionary<string, string>(), Path.GetTempPath(), 120, 30,
             AcceptedStartedAt: generation);

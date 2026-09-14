@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -129,6 +130,13 @@ public sealed class RunnerClaudeAdapter : IAgentProtocolAdapter, IAttachableProt
     {
         EnsureStarted();
         await _terminal.WriteAsync(input, ct);
+    }
+
+    public Task<RunnerConditionalInputResult> SendConditionalInputAsync(
+        RunnerConditionalInputRequest request, CancellationToken ct)
+    {
+        EnsureStarted();
+        return _terminal.WriteConditionalAsync(request, ct);
     }
 
     public Task ResizeAsync(int cols, int rows, CancellationToken ct)

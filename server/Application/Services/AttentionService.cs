@@ -205,6 +205,7 @@ public sealed class AttentionService
         items.AddRange(BuildFailureUnacknowledgedItems(unacknowledged, costs, checkDigests));
         items.AddRange(await BuildOrchestratorInvestigationItemsAsync(since, ct));
         items.AddRange(await BuildOrchestratorWorkspaceItemsAsync(since, ct));
+        items.AddRange(await BuildRemoteControlModalItemsAsync(ct));
         items.AddRange(await BuildQueuedInputStuckItemsAsync(since, ct));
         items.AddRange(await BuildBootReplyMissingItemsAsync(since, ct));
         items.AddRange(await BuildHerdrSupervisionHeldItemsAsync(ct));
@@ -1763,6 +1764,74 @@ public sealed class AttentionService
     // ---- CARD-0292: queued input that never converted --------------------------------------------
 
     /// <summary>
+    private async Task<List<AttentionItemDto>> BuildRemoteControlModalItemsAsync(CancellationToken ct)
+    {
+        var open = await _db.RemoteControlModalEpisodes.AsNoTracking()
+            .Where(e => e.ResolvedAt == null)
+            .ToListAsync(ct);
+        if (open.Count == 0)
+            return [];
+
+        var sessionIds = open.Select(e => e.SessionId).Distinct().ToList();
+        var sessions = await _db.AgentSessions.AsNoTracking()
+            .Where(s => sessionIds.Contains(s.Id))
+            .Select(s => new { s.Id, s.Status })
+            .ToListAsync(ct);
+        var live = sessions
+            .Where(s => s.Status is SessionStatus.Starting or SessionStatus.Running or SessionStatus.Stopping)
+            .Select(s => s.Id)
+            .ToHashSet();
+
+        var agentRows = await _db.Agents.AsNoTracking()
+            .Where(a => a.PersistentSessionId != null)
+            .Select(a => new { a.Id, a.Name, a.PersistentSessionId })
+            .ToListAsync(ct);
+        var agentsBySession = agentRows
+            .Where(a => Guid.TryParse(a.PersistentSessionId, out _))
+            .ToDictionary(a => Guid.Parse(a.PersistentSessionId!), a => (a.Id, a.Name));
+
+        var items = new List<AttentionItemDto>();
+        foreach (var episode in open)
+        {
+            if (!live.Contains(episode.SessionId))
+                continue;
+            agentsBySession.TryGetValue(episode.SessionId, out var agent);
+            var title = agent.Name ?? $"Session {DelegationReportFormatter.Short(episode.SessionId)}";
+            var working = episode.TranscriptWorking == true ? "working" : "idle";
+            var esc = episode.DismissalIntentAt is null
+                ? "Esc withheld"
+                : episode.DismissalVerifiedAt is not null
+                    ? "Esc verified"
+                    : "Esc attempted";
+            var headline = "Remote Control menu blocks input";
+            var evidence =
+                $"Observed {episode.FirstObservedAt:u}. Session is {working}. {esc}. "
+                + "Input conversion remains unproven. Episode "
+                + RemoteControlRecoveryService.EpisodeReason(episode.Id)
+                + ".";
+            var actions = agent.Id == Guid.Empty
+                ? new[] { AttentionAction.OpenDrawer }
+                : new[] { AttentionAction.OpenAgent, AttentionAction.OpenDrawer };
+            items.Add(new AttentionItemDto(
+                AttentionKind.RemoteControlModal,
+                episode.ChannelBound ? AlertSeverity.Critical : AlertSeverity.Warning,
+                null,
+                episode.SessionId,
+                agent.Id == Guid.Empty ? null : agent.Id,
+                null,
+                title,
+                headline,
+                evidence,
+                episode.FirstObservedAt,
+                null,
+                actions,
+                ConditionKey: RemoteControlRecoveryService.EpisodeReason(episode.Id)));
+        }
+
+        return items;
+    }
+
+    /// <summary>
     /// Projects <see cref="AttentionKind.QueuedInputStuck"/> from open
     /// <see cref="AgentIncidentKind.QueuedInputNeverConverted"/> incidents, so the row appears in
     /// the feed at Warning — not only via the recent-critical sweep when channel-bound. "Open" is
@@ -1812,6 +1881,9 @@ public sealed class AttentionService
         {
             var sessionId = episode.SessionId!.Value;
             if (!liveSessions.Contains(sessionId))
+                continue;
+            if (await _db.RemoteControlModalEpisodes.AsNoTracking().AnyAsync(
+                    e => e.SessionId == sessionId && e.ResolvedAt == null, ct))
                 continue;
             if (!QueuedInputWatchdogService.TryParseEpisodeKey(episode.FailureReason, out var enqueueSeq))
                 continue;

@@ -30,7 +30,10 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
     public bool AdvertiseHerdrNamedTabPlacement { get; set; } = true;
 
     public bool AdvertiseSessionGeneration { get; set; } = true;
+    public bool AdvertiseConditionalInput { get; set; } = true;
     public List<(Guid SessionId, DateTime Expected)> KillGenerationCalls { get; } = [];
+    public List<(Guid SessionId, RunnerConditionalInputRequest Request)> ConditionalInputCalls { get; } = [];
+    public RunnerConditionalInputResult? ConditionalInputResult { get; set; }
 
     public IReadOnlyList<HerdrPlacementCheckRequest> CheckCalls
     {
@@ -52,6 +55,8 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
             features.Add(RunnerCapabilityFeatures.HerdrNamedTabPlacement);
         if (AdvertiseSessionGeneration)
             features.Add(RunnerCapabilityFeatures.SessionGenerationV1);
+        if (AdvertiseConditionalInput)
+            features.Add(RunnerCapabilityFeatures.ConditionalMaintenanceInputV1);
         return Task.FromResult<RunnerCapabilitiesDto?>(new(
             "ModernConPty",
             "modern",
@@ -125,6 +130,18 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
         KillGenerationCalls.Add((sessionId, expectedAcceptedStartedAt));
         return Task.FromResult(new RunnerKillGenerationResult(
             sessionId, true, KillGenerationOutcomes.Killed, expectedAcceptedStartedAt));
+    }
+
+    public Task<RunnerConditionalInputResult> SendConditionalInputAsync(
+        Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct)
+    {
+        if (!AdvertiseConditionalInput)
+            return Task.FromResult(new RunnerConditionalInputResult(
+                sessionId, ConditionalInputOutcomes.Unsupported, null, null));
+        ConditionalInputCalls.Add((sessionId, request));
+        return Task.FromResult(ConditionalInputResult
+            ?? new RunnerConditionalInputResult(
+                sessionId, ConditionalInputOutcomes.Written, request.ExpectedAcceptedStartedAt, request.ExpectedLastSequence));
     }
 
     public Func<VerificationExecutionBinding, bool, CancellationToken, Task<VerificationCustodyStatus>>? VerificationCustody { get; set; }

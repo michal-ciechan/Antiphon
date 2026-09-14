@@ -373,7 +373,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             snapshot.RawOutput,
             snapshot.RenderedScreen,
             snapshot.LastSequence,
-            snapshot.StartedAt);
+            snapshot.StartedAt,
+            snapshot.AcceptedStartedAt);
     }
 
     public async Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
@@ -394,6 +395,46 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             JsonOptions,
             ct);
         await EnsureRunnerSuccessAsync(response, ct);
+    }
+
+    public async Task<RunnerConditionalInputResult> SendConditionalInputAsync(
+        Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct)
+    {
+        HttpResponseMessage response;
+        try
+        {
+            response = await _httpClient.PostAsJsonAsync(
+                $"sessions/{sessionId:D}/conditional-input",
+                request,
+                JsonOptions,
+                ct);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            return new RunnerConditionalInputResult(sessionId, ConditionalInputOutcomes.Unknown, request.ExpectedAcceptedStartedAt, request.ExpectedLastSequence);
+        }
+
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            response.Dispose();
+            return new RunnerConditionalInputResult(sessionId, ConditionalInputOutcomes.Unsupported, null, null);
+        }
+
+        try
+        {
+            await ThrowForRunnerProblemAsync(response, ct);
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadFromJsonAsync<RunnerConditionalInputResult>(JsonOptions, ct)
+                ?? new RunnerConditionalInputResult(sessionId, ConditionalInputOutcomes.Unknown, request.ExpectedAcceptedStartedAt, request.ExpectedLastSequence);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException and not RunnerProblemException)
+        {
+            return new RunnerConditionalInputResult(sessionId, ConditionalInputOutcomes.Unknown, request.ExpectedAcceptedStartedAt, request.ExpectedLastSequence);
+        }
+        finally
+        {
+            response.Dispose();
+        }
     }
 
     public async Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct)

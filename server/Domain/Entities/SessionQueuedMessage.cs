@@ -139,5 +139,35 @@ public class SessionQueuedMessage
     /// </summary>
     public DateTime? ChannelReplySettledAt { get; set; }
 
+    /// <summary>
+    /// CARD-0514: automatic remote-control arm discriminator. Ordinary rows stay
+    /// <see cref="RemoteControlMaintenanceKind.None"/>. The row <see cref="Id"/> is the request identity.
+    /// </summary>
+    public RemoteControlMaintenanceKind MaintenanceKind { get; set; }
+
+    /// <summary>Accepted generation this automatic arm is bound to. Null on ordinary rows.</summary>
+    public DateTime? MaintenanceAcceptedStartedAt { get; set; }
+
+    public RemoteControlArmResult? MaintenanceResult { get; set; }
+    public DateTime? MaintenanceResultAt { get; set; }
+
+    /// <summary>Short typed evidence (no screens, bodies, URLs, credentials).</summary>
+    public string? MaintenanceEvidence { get; set; }
+
+    /// <summary>Committed before the first possible automatic-arm write.</summary>
+    public DateTime? SubmissionStartedAt { get; set; }
+
+    /// <summary>
+    /// True while this automatic arm occupies the per-generation unique slot.
+    /// Cleared on a terminal result so a generation-level veto can survive without blocking history.
+    /// </summary>
+    public bool MaintenanceSlotActive { get; set; }
+
+    /// <summary>
+    /// CARD-0514 D-7: original direct-card work deferred while a modal is open.
+    /// Null on ordinary rows. Combined with <see cref="MaintenanceAcceptedStartedAt"/> this is W.
+    /// </summary>
+    public Guid? DeferredFromRunAttemptId { get; set; }
+
     public AgentSession AgentSession { get; set; } = null!;
 }

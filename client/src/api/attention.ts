@@ -156,6 +156,8 @@ export type AttentionKind =
    */
   | 'CapacityRecoveryExhausted'
   | 'StandingSpecialistHealth'
+  /** CARD-0514: a remote-control management menu is blocking input. */
+  | 'RemoteControlModal'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

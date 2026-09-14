@@ -253,8 +253,10 @@ outside `TranscriptTailer`.
   15,000 ms; the shared startup/probe deadline never restarts for recurring dialogs.
   This is a narrow startup exception, not authorization to confirm arbitrary choice menus.
 - Remote control (`/remote-control`) is supported and is what puts a session in the claude.ai
-  session list. A failed `/remote-control` degrades to an `RcDegraded` incident; it never fails the
-  launch.
+  session list. A failed or unknown `/remote-control` degrades (`RcDegraded` / `RemoteControlArmSuppressed` /
+  `RemoteControlMonitoringDegraded`); it never fails the launch. CARD-0514: never type it into an
+  already-armed child; a standing management menu is an open `RemoteControlModalEpisode` (Attention:
+  "Remote Control menu blocks input"), not a reason to restart.
 - `--append-system-prompt` is supported.
 - Manual `/compact` is a turn **end**; auto-compaction is mid-turn housekeeping. Both need the
   CARD-0041 handling — see AGENTS.md / CLAUDE.md gotchas.

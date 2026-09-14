@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -34,15 +35,7 @@ public sealed class SessionHealthStateStore
         public int ReArmAttempts;
         public DateTime? ReArmSettleUntilUtc;
         public bool DegradedAlerted;
-
-        /// <summary>
-        /// CARD-0292 S5: set by the DEAD-BRIDGE re-arm only — it types /remote-control into a TUI
-        /// that believes it is bridged, which can open the management menu instead of re-arming.
-        /// The first pass after the settle window checks the screen and Escs a standing menu
-        /// before probing again. The never-armed arm does not set this: with no bridgeSessionId
-        /// there is nothing to open a menu about.
-        /// </summary>
-        public bool PendingMenuCheck;
+        public DateTime? LastAcceptedStartedAt;
     }
 
     public ConcurrentDictionary<Guid, Entry> Sessions { get; } = new();
@@ -79,6 +72,7 @@ public sealed class SessionHealthService
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<SessionHealthService> _logger;
+    private readonly RemoteControlRecoveryService? _recovery;
 
     public SessionHealthService(
         AppDbContext db,
@@ -90,7 +84,8 @@ public sealed class SessionHealthService
         IOptions<SupervisionSettings> settings,
         IEventBus eventBus,
         TimeProvider timeProvider,
-        ILogger<SessionHealthService> logger)
+        ILogger<SessionHealthService> logger,
+        RemoteControlRecoveryService? recovery = null)
     {
         _db = db;
         _runner = runner;
@@ -102,6 +97,7 @@ public sealed class SessionHealthService
         _eventBus = eventBus;
         _timeProvider = timeProvider;
         _logger = logger;
+        _recovery = recovery;
     }
 
     public async Task<int> TickAsync(CancellationToken ct)
@@ -138,7 +134,21 @@ public sealed class SessionHealthService
             {
                 LastSequence = live.LastSequence,
                 LastSequenceChangeUtc = now,
+                LastAcceptedStartedAt = SessionGeneration.Normalize(session.StartedAt),
             });
+
+            var generation = SessionGeneration.Normalize(session.StartedAt);
+            if (entry.LastAcceptedStartedAt is { } prior
+                && !SessionGeneration.Equal(prior, generation))
+            {
+                entry.ConsecutiveZeroConnProbes = 0;
+                entry.ConsecutiveUnarmedProbes = 0;
+                entry.ReArmAttempts = 0;
+                entry.DegradedAlerted = false;
+                entry.ReArmSettleUntilUtc = null;
+            }
+
+            entry.LastAcceptedStartedAt = generation;
 
             // Idle tracking: any output-sequence movement stamps activity and resets streaks —
             // busy sessions are never probed or repaired.
@@ -181,43 +191,21 @@ public sealed class SessionHealthService
         if (entry.ReArmSettleUntilUtc is { } settle && now < settle)
             return false;
 
-        // CARD-0292 S5: the dead-bridge arm's in-place /remote-control repair types the command
-        // into a TUI that believes it is bridged — the exact shape that opens the management menu
-        // instead of re-arming (the launch-preamble incident, latent here). After the settle
-        // window, before probing again, look once: a standing menu is dismissed with one
-        // screen-verified Esc (idle-guarded inside the action) and recorded on the RcReArmed
-        // trail. If /remote-control on an armed-but-dead bridge reconnects cleanly instead, there
-        // is no menu and this costs one snapshot.
-        if (entry.PendingMenuCheck)
+        RcProbeResult probe;
+        try
         {
-            entry.PendingMenuCheck = false;
-            if (await _actions.TryDismissRemoteControlMenuAsync(session.Id, ct))
-            {
-                await RecordAsync(agent.Id, session.Id, AgentIncidentKind.RcReArmed, AlertSeverity.Warning,
-                    "The in-place /remote-control re-arm opened the management menu (the bridge was "
-                    + "already live as far as the TUI is concerned); dismissed it with Esc so the "
-                    + "session is not wedged.",
-                    ct);
-                _logger.LogWarning(
-                    "Agent {AgentName}: re-arm opened the remote-control management menu on session "
-                    + "{SessionId}; dismissed",
-                    agent.Name, session.Id);
-                return true;
-            }
+            probe = _probe.Probe(childPid);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "RC probe failed for session {SessionId}", session.Id);
+            return false;
         }
 
-        var probe = _probe.Probe(childPid);
+        var bridge = RemoteControlBridgeClassifier.Classify(probe, childPid, probeFailed: false);
 
-        // ── Never armed ────────────────────────────────────────────────────────────────────
-        // Checked BEFORE the idle gate and BEFORE the connection count, because it is a fact
-        // rather than an inference: bridgeSessionId is written by the bridge itself, so its
-        // absence means /remote-control never took. Connection count cannot see this — a working
-        // session holds Anthropic connections for its OWN api calls whether or not the bridge is
-        // armed — and the idle gate cannot see it either, which is how a live agent sat NO-RC for
-        // 3.5h on 2026-08-08: arming half-succeeded (the rename landed, /remote-control did not),
-        // the agent then worked continuously, so it was never idle enough to probe and its own
-        // API traffic made it look healthy anyway.
-        if (probe.StateFileFound && !probe.Armed)
+        // Never-armed: schedule a typed maintenance request. Delivery waits for idle.
+        if (bridge == RemoteControlBridgeState.Unarmed)
         {
             entry.ConsecutiveUnarmedProbes++;
             if (entry.ConsecutiveUnarmedProbes < _settings.RcWatch.ConsecutiveFailedProbesBeforeAction)
@@ -226,23 +214,22 @@ public sealed class SessionHealthService
             entry.ConsecutiveUnarmedProbes = 0;
             entry.ReArmAttempts++;
             entry.ReArmSettleUntilUtc = now.AddMinutes(_settings.RcWatch.ReArmSettleMinutes);
-            // WhenIdle, not immediate: arming must not interrupt the turn in flight. The point is
-            // that the REPAIR is scheduled while busy, not that it is delivered while busy.
-            await _actions.EnqueueWhenIdleAsync(session.Id, "/remote-control", ct);
-            await RecordAsync(agent.Id, session.Id, AgentIncidentKind.RcReArmed, AlertSeverity.Warning,
-                "Remote control was never armed on this session (no bridgeSessionId); "
-                + $"queued /remote-control (attempt {entry.ReArmAttempts}).",
+            var reserved = await _actions.RequestAutomaticArmAsync(
+                session.Id, SessionGeneration.Normalize(session.StartedAt), ct);
+            await RecordAsync(agent.Id, session.Id, AgentIncidentKind.RemoteControlArmSuppressed, AlertSeverity.Warning,
+                reserved is null
+                    ? "Remote control was never armed; an automatic arm is already reserved or vetoed for this generation."
+                    : "Remote control was never armed on this session (no bridgeSessionId); "
+                      + $"queued a typed /remote-control maintenance request (attempt {entry.ReArmAttempts}).",
                 ct);
             _logger.LogWarning(
-                "Agent {AgentName}: session {SessionId} was never armed for remote control; queued /remote-control",
-                agent.Name, session.Id);
+                "Agent {AgentName}: session {SessionId} was never armed for remote control; reserved automatic arm {RequestId}",
+                agent.Name, session.Id, reserved);
             return true;
         }
 
         entry.ConsecutiveUnarmedProbes = 0;
 
-        // Everything below infers liveness from connection count, which is only meaningful on a
-        // quiet session — a busy one holds connections regardless.
         if (!isIdle)
             return false;
 
@@ -267,48 +254,21 @@ public sealed class SessionHealthService
         if (entry.ConsecutiveZeroConnProbes < _settings.RcWatch.ConsecutiveFailedProbesBeforeAction)
             return false;
 
-        if (entry.ReArmAttempts < _settings.RcWatch.ReArmAttemptsBeforeRestart)
-        {
-            entry.ReArmAttempts++;
-            entry.ConsecutiveZeroConnProbes = 0;
-            entry.ReArmSettleUntilUtc = now.AddMinutes(_settings.RcWatch.ReArmSettleMinutes);
-            // CARD-0292 S5: this arm types /remote-control at a TUI that believes it is bridged —
-            // check for the management menu once the settle window ends.
-            entry.PendingMenuCheck = true;
-            await _actions.EnqueueWhenIdleAsync(session.Id, "/remote-control", ct);
-            await RecordAsync(agent.Id, session.Id, AgentIncidentKind.RcReArmed, AlertSeverity.Warning,
-                $"Remote-control bridge dead for {_settings.RcWatch.ConsecutiveFailedProbesBeforeAction} probes; "
-                + $"re-armed /remote-control in place (attempt {entry.ReArmAttempts}/{_settings.RcWatch.ReArmAttemptsBeforeRestart}).",
-                ct);
-            _logger.LogWarning(
-                "Agent {AgentName}: RC bridge dead; re-arming /remote-control (attempt {Attempt})",
-                agent.Name, entry.ReArmAttempts);
-            return true;
-        }
-
+        entry.ConsecutiveZeroConnProbes = 0;
         if (!entry.DegradedAlerted)
         {
             entry.DegradedAlerted = true;
-            entry.ConsecutiveZeroConnProbes = 0;
-            await RecordAsync(agent.Id, session.Id, AgentIncidentKind.RcRestart, AlertSeverity.Warning,
-                "Re-arms failed to restore the remote-control bridge; restarting the session while idle "
-                + "(conversation resumes; a fresh Claude process re-establishes the bridge).",
+            await RecordAsync(agent.Id, session.Id, AgentIncidentKind.RcDegraded, AlertSeverity.Warning,
+                "Remote-control bridge has zero connections while the child reports armed; "
+                + "degrading monitoring rather than sending /remote-control or restarting.",
                 ct);
             _logger.LogWarning(
-                "Agent {AgentName}: restarting idle session {SessionId} to restore remote control",
+                "Agent {AgentName}: RC bridge degraded on session {SessionId}; not re-arming or killing",
                 agent.Name, session.Id);
-            await _actions.KillSessionAsync(session.Id, ct);
-            _store.Sessions.TryRemove(session.Id, out _);
             return true;
         }
 
-        // Restart cycle already spent and still dead: record once, hold until healthy resets us.
-        await RecordAsync(agent.Id, session.Id, AgentIncidentKind.RcDegraded, AlertSeverity.Error,
-            "Remote control remains degraded after re-arms and a session restart; holding "
-            + "(likely a claude.ai-side outage). Will keep probing.",
-            ct);
-        entry.ConsecutiveZeroConnProbes = int.MinValue / 2; // hold: don't re-alert every probe
-        return true;
+        return false;
     }
 
     private async Task RecordAsync(

@@ -545,4 +545,32 @@ public enum AgentIncidentKind
     StandingFreshSelected = 59,
     StandingResumeSelected = 60,
     ResumeUnsupported = 61,
+
+    /// <summary>
+    /// CARD-0514: an exact remote-control management menu was observed on a live session.
+    /// <c>FailureReason</c> is the versioned episode id, not free-form screen state.
+    /// Warning unbound; Critical when channel-bound. Detection never waits three minutes.
+    /// </summary>
+    RemoteControlModalDetected = 62,
+
+    /// <summary>CARD-0514: verified idle Esc dismissal of a remote-control menu episode.</summary>
+    RemoteControlModalDismissed = 63,
+
+    /// <summary>
+    /// CARD-0514: automatic <c>/remote-control</c> was withheld or suppressed (already armed,
+    /// unknown probe, stale generation, missing capability). Honest, not <see cref="RcReArmed"/>.
+    /// </summary>
+    RemoteControlArmSuppressed = 64,
+
+    /// <summary>
+    /// CARD-0514: an automatic arm write may have reached the child without confirmed armed
+    /// evidence. Generation-level rearm veto. Warning.
+    /// </summary>
+    RemoteControlArmUnconfirmed = 65,
+
+    /// <summary>
+    /// CARD-0514: automatic RC is withheld because the runner lacks conditional-input capability
+    /// or generation identity is unproven. Passive observation continues. Warning.
+    /// </summary>
+    RemoteControlMonitoringDegraded = 66,
 }

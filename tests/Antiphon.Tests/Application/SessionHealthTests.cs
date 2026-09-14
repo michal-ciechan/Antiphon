@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -24,7 +25,7 @@ namespace Antiphon.Tests.Application;
 public class SessionHealthTests
 {
     [Test]
-    public async Task Rc_degraded_re_arms_then_restarts_when_idle()
+    public async Task C514_Armed_zero_connections_never_reserves_arm()
     {
         var tempRoot = NewTempRoot();
         try
@@ -32,23 +33,44 @@ public class SessionHealthTests
             await using var harness = BuildHarness(tempRoot);
             var (agent, sessionId) = await CreateSupervisedRunningAgentAsync(harness, tempRoot);
             harness.Runner.Sessions = [RunnerDto(sessionId, pid: 4242, lastSeq: 10)];
+            harness.Probe.Armed = true;
             harness.Probe.Connections = 0;
 
-            // Threshold 2: first zero-probe waits, second re-arms.
             (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(0);
             (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(1);
-            harness.Actions.EnqueuedWhenIdle.ShouldContain(x => x.SessionId == sessionId && x.Text == "/remote-control");
-
-            // Still dead after the single allowed re-arm: streak rebuilds, then restart.
-            (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(0);
-            (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(1);
-            harness.Actions.KilledSessions.ShouldContain(sessionId);
+            harness.Actions.AutomaticArms.ShouldBeEmpty();
+            harness.Actions.EnqueuedWhenIdle.ShouldBeEmpty();
+            harness.Actions.KilledSessions.ShouldBeEmpty();
 
             await using var verify = CreateContext();
             (await verify.AgentIncidents.AnyAsync(
-                i => i.AgentId == agent.Id && i.Kind == AgentIncidentKind.RcReArmed)).ShouldBeTrue();
+                i => i.AgentId == agent.Id && i.Kind == AgentIncidentKind.RcDegraded)).ShouldBeTrue();
             (await verify.AgentIncidents.AnyAsync(
-                i => i.AgentId == agent.Id && i.Kind == AgentIncidentKind.RcRestart)).ShouldBeTrue();
+                i => i.AgentId == agent.Id && i.Kind == AgentIncidentKind.RcRestart)).ShouldBeFalse();
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task C514_Repeated_rc_degradation_never_kills()
+    {
+        var tempRoot = NewTempRoot();
+        try
+        {
+            await using var harness = BuildHarness(tempRoot);
+            var (_, sessionId) = await CreateSupervisedRunningAgentAsync(harness, tempRoot);
+            harness.Runner.Sessions = [RunnerDto(sessionId, pid: 4242, lastSeq: 10)];
+            harness.Probe.Armed = true;
+            harness.Probe.Connections = 0;
+
+            for (var i = 0; i < 8; i++)
+                await harness.Health().TickAsync(CancellationToken.None);
+
+            harness.Actions.KilledSessions.ShouldBeEmpty();
+            harness.Actions.AutomaticArms.ShouldBeEmpty();
         }
         finally
         {
@@ -137,14 +159,13 @@ public class SessionHealthTests
             }
 
             actions.ShouldBeGreaterThanOrEqualTo(1);
-            harness.Actions.EnqueuedWhenIdle
-                .ShouldContain(x => x.SessionId == sessionId && x.Text == "/remote-control");
-            // Repaired in place — a never-armed bridge is not a reason to kill a working session.
+            harness.Actions.AutomaticArms.ShouldContain(x => x.SessionId == sessionId);
+            harness.Actions.EnqueuedWhenIdle.ShouldBeEmpty();
             harness.Actions.KilledSessions.ShouldBeEmpty();
 
             await using var verify = CreateContext();
             var incident = await verify.AgentIncidents
-                .Where(i => i.AgentId == agent.Id && i.Kind == AgentIncidentKind.RcReArmed)
+                .Where(i => i.AgentId == agent.Id && i.Kind == AgentIncidentKind.RemoteControlArmSuppressed)
                 .OrderBy(i => i.CreatedAt)
                 .FirstAsync();
             incident.Message.ShouldContain("never armed");
@@ -168,21 +189,10 @@ public class SessionHealthTests
 
             (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(0);
             (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(1);
-            harness.Actions.EnqueuedWhenIdle.ShouldContain(x => x.SessionId == sessionId && x.Text == "/remote-control");
-
-            harness.Actions.MenuPresent = true;
-            (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(1);
-            harness.Actions.MenuDismissChecks.ShouldContain(sessionId);
-            harness.Actions.RawInputs.ShouldContain(x => x.SessionId == sessionId && x.Input == "\u001b");
-            harness.Actions.MenuPresent.ShouldBeFalse();
-
-            await using var verify = CreateContext();
-            var trail = await verify.AgentIncidents
-                .Where(i => i.AgentId == agent.Id && i.Kind == AgentIncidentKind.RcReArmed)
-                .OrderBy(i => i.CreatedAt)
-                .Select(i => i.Message)
-                .ToListAsync();
-            trail.ShouldContain(m => m.Contains("management menu"));
+            harness.Actions.AutomaticArms.ShouldBeEmpty();
+            harness.Actions.EnqueuedWhenIdle.ShouldBeEmpty();
+            harness.Actions.KilledSessions.ShouldBeEmpty();
+            harness.Actions.RawInputs.ShouldBeEmpty();
         }
         finally
         {
@@ -203,12 +213,9 @@ public class SessionHealthTests
 
             (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(0);
             (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(1);
-
-            harness.Actions.MenuPresent = false;
-            var actions = await harness.Health().TickAsync(CancellationToken.None);
-            harness.Actions.MenuDismissChecks.ShouldContain(sessionId);
-            harness.Actions.RawInputs.ShouldBeEmpty("no menu → no Esc");
-            actions.ShouldBe(0, "a clean reconnect is not an action; the check cost one snapshot");
+            harness.Actions.AutomaticArms.ShouldBeEmpty();
+            harness.Actions.MenuDismissChecks.ShouldBeEmpty();
+            harness.Actions.RawInputs.ShouldBeEmpty();
         }
         finally
         {
@@ -233,8 +240,8 @@ public class SessionHealthTests
             for (var i = 0; i < 3; i++)
                 await harness.Health().TickAsync(CancellationToken.None);
 
-            harness.Actions.EnqueuedWhenIdle
-                .ShouldContain(x => x.SessionId == sessionId && x.Text == "/remote-control");
+            harness.Actions.AutomaticArms.ShouldContain(x => x.SessionId == sessionId);
+            harness.Actions.EnqueuedWhenIdle.ShouldBeEmpty();
         }
         finally
         {
@@ -265,8 +272,37 @@ public class SessionHealthTests
                 (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(0);
 
             harness.Actions.EnqueuedWhenIdle.ShouldBeEmpty();
+            harness.Actions.AutomaticArms.ShouldBeEmpty();
             await using var verify = CreateContext();
             (await verify.AgentIncidents.AnyAsync(i => i.AgentId == agent.Id)).ShouldBeFalse();
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task C514_New_generation_resets_health_streaks()
+    {
+        var tempRoot = NewTempRoot();
+        try
+        {
+            await using var harness = BuildHarness(tempRoot);
+            var (_, sessionId) = await CreateSupervisedRunningAgentAsync(harness, tempRoot);
+            harness.Runner.Sessions = [RunnerDto(sessionId, pid: 4242, lastSeq: 10)];
+            harness.Probe.Armed = true;
+            harness.Probe.Connections = 0;
+            (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(0);
+
+            await using var db = CreateContext();
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            session.StartedAt = SessionGeneration.Next(session.StartedAt, DateTime.UtcNow.AddMinutes(1));
+            await db.SaveChangesAsync();
+
+            harness.Actions.AutomaticArms.Clear();
+            (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(0);
+            harness.Actions.AutomaticArms.ShouldBeEmpty();
         }
         finally
         {
@@ -547,6 +583,7 @@ public class SessionHealthTests
     private sealed class RecordingHealthActions : ISessionHealthActions
     {
         public List<(Guid SessionId, string Text)> EnqueuedWhenIdle { get; } = [];
+        public List<(Guid SessionId, DateTime Generation)> AutomaticArms { get; } = [];
         public List<Guid> KilledSessions { get; } = [];
         public List<(Guid SessionId, string Input)> RawInputs { get; } = [];
         public string ScreenText { get; set; } = "screen";
@@ -559,6 +596,13 @@ public class SessionHealthTests
         {
             EnqueuedWhenIdle.Add((sessionId, text));
             return Task.CompletedTask;
+        }
+
+        public Task<Guid?> RequestAutomaticArmAsync(
+            Guid sessionId, DateTime acceptedStartedAt, CancellationToken ct)
+        {
+            AutomaticArms.Add((sessionId, acceptedStartedAt));
+            return Task.FromResult<Guid?>(Guid.NewGuid());
         }
 
         public Task KillSessionAsync(Guid sessionId, CancellationToken ct)

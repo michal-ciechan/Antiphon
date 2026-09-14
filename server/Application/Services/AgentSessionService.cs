@@ -218,6 +218,16 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             await SendRemoteControlCommandsAsync(
                 adapter, request.RemoteControlName, session, card.AssignedAgentId, resumeMode: null, ct);
 
+            if (await _messageQueue.IsModalBlockedAsync(session.Id, ct))
+            {
+                await PersistDeferredOriginalWorkAsync(session, attempt, prompt, ct);
+                session.Status = SessionStatus.Running;
+                session.LastSeenAt = UtcNow();
+                attempt.LastEventAt = UtcNow();
+                await _db.SaveChangesAsync(ct);
+                return new AgentSessionStartResult(session.Id, attempt.Id, worktree.Id, false);
+            }
+
             await SendBootPromptWithRetryAsync(adapter, prompt, session.Id, ct);
             var firstDeltaReceived = await adapter.WaitForFirstPromptOutputAsync(
                 TimeSpan.FromMilliseconds(Math.Max(100, _settings.FirstDeltaTimeoutMs)),
@@ -2022,71 +2032,95 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
         try
         {
-            // CARD-0292 S1: on a resume, Claude re-establishes the bridge by itself — the ground
-            // truth is bridgeSessionId in its own per-process state file, written by the bridge.
-            // Armed observed → the send is skipped entirely (typing /remote-control here is what
-            // opens the menu wedge) and the rename proceeds, which works because the bridge is
-            // armed. Window expiry falls through to today's send (a never-bridged resume
-            // legitimately never arms; S2 catches the late-arm race). Fresh launches never probe.
-            var bridgeAlreadyArmed = false;
-            if (resumeMode is AgentSessionResumeMode.Resume or AgentSessionResumeMode.Continue)
+            await using var recoveryScope = _scopeFactory.CreateAsyncScope();
+            var recovery = recoveryScope.ServiceProvider.GetService<RemoteControlRecoveryService>();
+            var generation = SessionGeneration.Normalize(session.StartedAt);
+
+            stage = "bridge-preflight";
+            var pid = adapter.Pid;
+            var bridge = recovery is not null
+                ? recovery.ProbeBridge(pid)
+                : await WaitForResumeBridgeArmedAsync(adapter, sessionId, rcCt)
+                    ? RemoteControlBridgeState.Armed
+                    : RemoteControlBridgeState.Unknown;
+
+            if (bridge == RemoteControlBridgeState.Unknown && recovery is not null)
             {
-                stage = "resume-bridge-probe";
-                bridgeAlreadyArmed = await WaitForResumeBridgeArmedAsync(adapter, sessionId, rcCt);
+                await RaiseRemoteControlDegradedAsync(
+                    sessionId, agentId,
+                    "Remote-control preflight was Unknown (missing pid, state file, or probe). "
+                    + "Automatic /remote-control was withheld. The session is running.",
+                    "RemoteControlUnknown",
+                    ct);
+                return;
             }
 
-            if (!bridgeAlreadyArmed)
+            var observation = recovery is not null
+                ? await recovery.ObserveAsync(sessionId, generation, rcCt)
+                : new RemoteControlScreenObservation(
+                    RemoteControlMenuScreen.Classify(adapter.SnapshotRenderedScreen()),
+                    generation, true, 0, null);
+
+            if (observation.Menu.IsPresent)
             {
-                // Baseline BEFORE arming: a resumed TUI can redraw a previous run's "remote-control is
-                // active" line, which must not satisfy the wait.
-                stage = "baseline";
-                var baseline = (await adapter.SnapshotRawOutputAsync(rcCt)).Length;
+                if (recovery is not null)
+                    await recovery.DetectAsync(sessionId, generation, observation, null, ct);
+                await RaiseRemoteControlDegradedAsync(
+                    sessionId, agentId,
+                    "Remote-control management menu is on screen; automatic arm was withheld.",
+                    "RemoteControlMenuPresent",
+                    ct);
+                return;
+            }
 
+            if (bridge == RemoteControlBridgeState.Unarmed && recovery is not null)
+            {
                 stage = "remote-control-submit";
+                var sem = _messageQueue.GetLock(sessionId);
+                await sem.WaitAsync(rcCt);
+                try
+                {
+                    var requestId = await recovery.ReserveAutomaticArmUnderLockAsync(
+                        sessionId, generation, QueuedMessageOrigin.System, rcCt);
+                    if (requestId is Guid q)
+                        await recovery.ExecuteAutomaticArmUnderLockAsync(sessionId, q, rcCt);
+                }
+                finally
+                {
+                    sem.Release();
+                }
+
+                bridge = recovery.ProbeBridge(adapter.Pid);
+                observation = await recovery.ObserveAsync(sessionId, generation, rcCt);
+                if (observation.Menu.IsPresent)
+                    await recovery.DetectAsync(sessionId, generation, observation, null, ct);
+            }
+            else if (bridge != RemoteControlBridgeState.Armed)
+            {
+                stage = "remote-control-submit";
+                var baseline = (await adapter.SnapshotRawOutputAsync(rcCt)).Length;
                 await SendBootPromptWithRetryAsync(adapter, "/remote-control", sessionId, rcCt);
-
-                stage = "first-output-wait";
                 await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, rcCt);
+                await WaitForRemoteControlArmedAsync(adapter, baseline, rcCt, ct);
+            }
 
-                stage = "armed-marker-wait";
-                if (!await WaitForRemoteControlArmedAsync(adapter, baseline, rcCt, ct))
+            if (bridge != RemoteControlBridgeState.Armed
+                || observation.Menu.IsPresent
+                || observation.Menu.HasRemnant)
+            {
+                _logger.LogWarning(
+                    "Remote-control rename skipped for session {SessionId}: armed={Armed} menu={Menu} remnant={Remnant}",
+                    sessionId, bridge, observation.Menu.IsPresent, observation.Menu.HasRemnant);
+                if (bridge != RemoteControlBridgeState.Armed)
                 {
-                    // CARD-0292 S2: no armed marker with the management menu on screen IS the armed
-                    // case — the menu only renders for a session whose bridge is already live (it
-                    // shows the session's claude.ai URL), and degrade-and-return used to leave it
-                    // standing, which was the wedge. One screen-verified Esc clears it; the rename
-                    // then proceeds because the bridge is armed (CARD-0240's ordering rule is
-                    // satisfied without the marker).
-                    stage = "menu-dismiss";
-                    if (await TryDismissRemoteControlMenuAsync(adapter, rcCt))
-                    {
-                        _logger.LogInformation(
-                            "Remote-control management menu dismissed for session {SessionId}: the "
-                            + "bridge was already live, so the unarmed wait was the menu blocking "
-                            + "the screen",
-                            sessionId);
-                    }
-                    else
-                    {
-                        _logger.LogWarning(
-                            "Remote-control setup unarmed for session {SessionId} at stage {Stage}",
-                            sessionId, stage);
-                        await RaiseRemoteControlDegradedAsync(
-                            sessionId,
-                            agentId,
-                            $"Remote control did not report itself armed within {_settings.RemoteControlArmTimeoutMs}ms "
-                            + $"(setup budget {setupTimeoutMs}ms, stage {stage}). "
-                            + "The session is running; it may not be reachable from claude.ai. /rename was skipped "
-                            + "because Claude only syncs a title while the bridge is armed.",
-                            "RemoteControlNotArmed",
-                            ct);
-                        return;
-                    }
+                    await RaiseRemoteControlDegradedAsync(
+                        sessionId, agentId,
+                        "Remote control did not observe an armed bridge; /rename was skipped.",
+                        "RemoteControlNotArmed",
+                        ct);
                 }
-                else
-                {
-                    _logger.LogInformation("Remote-control armed for session {SessionId}", sessionId);
-                }
+
+                return;
             }
 
             stage = "rename-submit";
@@ -2097,9 +2131,6 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
             _logger.LogInformation("Remote-control setup completed for session {SessionId}", sessionId);
 
-            // CARD-0354: a health-watch leftover /remote-control on this persistent session must
-            // not be flushed after we just armed (or found the bridge already live). Delivering it
-            // again opens the management menu and used to CARD-0055-kill the always-on agent.
             try
             {
                 await _messageQueue.CancelPendingRemoteControlAsync(sessionId, ct);
@@ -2158,6 +2189,47 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                       + "(CARD-0056), so the launch continued.",
                 reason,
                 ct);
+        }
+    }
+
+    private async Task PersistDeferredOriginalWorkAsync(
+        AgentSession session, RunAttempt attempt, string prompt, CancellationToken ct)
+    {
+        var generation = SessionGeneration.Normalize(session.StartedAt);
+        var sem = _messageQueue.GetLock(session.Id);
+        await sem.WaitAsync(ct);
+        try
+        {
+            var existing = await _db.SessionQueuedMessages.AnyAsync(
+                m => m.DeferredFromRunAttemptId == attempt.Id, ct);
+            if (existing)
+                return;
+
+            var nextSequence = await _db.SessionQueuedMessages
+                .Where(m => m.AgentSessionId == session.Id)
+                .Select(m => (long?)m.Sequence)
+                .MaxAsync(ct) ?? 0;
+            _db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = session.Id,
+                Body = prompt,
+                Status = QueuedMessageStatus.Pending,
+                Sequence = nextSequence + 1,
+                Origin = QueuedMessageOrigin.System,
+                CreatedAt = UtcNow(),
+                DeferredFromRunAttemptId = attempt.Id,
+                MaintenanceAcceptedStartedAt = generation,
+            });
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException)
+        {
+            // Unique deferred-work constraint: a competing worker already reserved W.
+        }
+        finally
+        {
+            sem.Release();
         }
     }
 

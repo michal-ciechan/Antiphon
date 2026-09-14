@@ -230,6 +230,32 @@ describe('AttentionPanel', () => {
     expect(screen.getByText('Idle past estimate')).toBeInTheDocument()
   })
 
+  it('C514 renders a working remote-control modal with unproven input conversion', async () => {
+    serve({
+      items: [
+        item({
+          kind: 'RemoteControlModal',
+          severity: 'Warning',
+          title: 'orchestrator',
+          sessionId: 's-rc',
+          agentId: 'a-rc',
+          headline: 'Remote Control menu blocks input',
+          evidence: 'Observed 2026-09-13T16:47:44Z. Session is working. Esc withheld. Input conversion remains unproven.',
+          actions: ['OpenAgent', 'OpenDrawer'],
+        }),
+      ],
+    })
+
+    renderWithProviders(<AttentionPanel />)
+
+    expect(await screen.findByText('Remote Control menu blocks input')).toBeInTheDocument()
+    expect(screen.getByText('RC menu blocks input')).toBeInTheDocument()
+    expect(screen.getByText(/Input conversion remains unproven/)).toBeInTheDocument()
+    expect(screen.getByText(/Esc withheld/)).toBeInTheDocument()
+    expect(screen.queryByText(/Delivered/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Recovered/i)).not.toBeInTheDocument()
+  })
+
   it('opens the task drawer on the sibling tab when a task row is clicked', async () => {
     serve({
       items: [

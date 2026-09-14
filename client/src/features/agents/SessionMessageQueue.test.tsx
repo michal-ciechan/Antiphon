@@ -52,10 +52,10 @@ function message(overrides: Record<string, unknown> = {}) {
   }
 }
 
-function serve(messages: unknown[]) {
+function serve(messages: unknown[], extras: Record<string, unknown> = {}) {
   server.use(
     http.get('/api/sessions/s1/messages', () =>
-      HttpResponse.json({ sessionId: 's1', messages, working: false }),
+      HttpResponse.json({ sessionId: 's1', messages, working: false, ...extras }),
     ),
   )
 }
@@ -96,5 +96,21 @@ describe('SessionMessageQueue', () => {
       expect(screen.getByText('the guest list, as asked')).toBeInTheDocument(),
     )
     expect(screen.queryByText('Parked')).not.toBeInTheDocument()
+  })
+
+  it('C514 renders modal blocked without parking or changing attempts', async () => {
+    serve(
+      [message({ deliveryAttempts: 0, parked: false, modalBlocked: true, body: 'held work prompt body' })],
+      { modalBlocked: true, modalBlockedReason: 'Remote Control menu blocks input' },
+    )
+
+    renderWithProviders(<SessionMessageQueue sessionId="s1" />)
+
+    expect(await screen.findByText('Remote Control menu blocks input')).toBeInTheDocument()
+    expect(screen.getByText('Modal blocked')).toBeInTheDocument()
+    expect(screen.getByText('attempts 0')).toBeInTheDocument()
+    expect(screen.queryByText('Parked')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Delivered/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Recovered/i)).not.toBeInTheDocument()
   })
 })

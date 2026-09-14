@@ -70,7 +70,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
           Remote Control
 
           This session is available in the Claude mobile app and at
-          https://claude.ai/code/session_011D79CHh3qcgGNB3mXGgdPz.
+          https://claude.ai/code/session_SYNTHETIC_C514_FIXTURE.
 
             Disconnect this session
             Show QR code  Scan with your phone to open this session
@@ -295,6 +295,35 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     // so Multi-line delivery-wrap tests can pin the markers.
     private readonly List<string> _submittedBodies = [];
     public IReadOnlyList<string> SubmittedBodies => _submittedBodies;
+
+    public DateTime? AcceptedStartedAt { get; set; }
+    public long SnapshotSequence { get; set; }
+    public List<string> ConditionalInputs { get; } = [];
+    public bool ConditionalUnsupported { get; set; }
+
+    public async Task<RunnerConditionalInputResult> SendConditionalInputAsync(
+        RunnerConditionalInputRequest request, CancellationToken ct)
+    {
+        if (ConditionalUnsupported)
+            return new RunnerConditionalInputResult(Guid.Empty, ConditionalInputOutcomes.Unsupported, null, null);
+        if (AcceptedStartedAt is { } bound
+            && !SessionGeneration.Equal(bound, request.ExpectedAcceptedStartedAt))
+        {
+            return new RunnerConditionalInputResult(
+                Guid.Empty, ConditionalInputOutcomes.GenerationMismatch, bound, SnapshotSequence);
+        }
+
+        if (SnapshotSequence != request.ExpectedLastSequence)
+        {
+            return new RunnerConditionalInputResult(
+                Guid.Empty, ConditionalInputOutcomes.StaleObservation, AcceptedStartedAt, SnapshotSequence);
+        }
+
+        ConditionalInputs.Add(request.Input);
+        await SendInputAsync(request.Input, ct);
+        return new RunnerConditionalInputResult(
+            Guid.Empty, ConditionalInputOutcomes.Written, AcceptedStartedAt, SnapshotSequence);
+    }
 
     public async Task SendInputAsync(string input, CancellationToken ct)
     {

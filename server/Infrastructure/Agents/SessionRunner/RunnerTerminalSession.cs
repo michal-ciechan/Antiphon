@@ -93,6 +93,13 @@ internal sealed class RunnerTerminalSession
         await _client.SendInputAsync(_sessionId, input, ct);
     }
 
+    public Task<RunnerConditionalInputResult> WriteConditionalAsync(
+        RunnerConditionalInputRequest request, CancellationToken ct)
+    {
+        EnsureStarted();
+        return _client.SendConditionalInputAsync(_sessionId, request, ct);
+    }
+
     public async Task SendLineAsync(string line, CancellationToken ct)
     {
         EnsureStarted();

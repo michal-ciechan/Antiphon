@@ -35,6 +35,7 @@ public class AppDbContext : DbContext
     public DbSet<TranscriptEntry> TranscriptEntries => Set<TranscriptEntry>();
     public DbSet<ApiErrorRecovery> ApiErrorRecoveries => Set<ApiErrorRecovery>();
     public DbSet<SessionQueuedMessage> SessionQueuedMessages => Set<SessionQueuedMessage>();
+    public DbSet<RemoteControlModalEpisode> RemoteControlModalEpisodes => Set<RemoteControlModalEpisode>();
     public DbSet<RunAttempt> RunAttempts => Set<RunAttempt>();
     public DbSet<Worktree> Worktrees => Set<Worktree>();
     public DbSet<BoardWorkflowDefinition> BoardWorkflowDefinitions => Set<BoardWorkflowDefinition>();
@@ -1282,6 +1283,37 @@ public class AppDbContext : DbContext
             entity.HasOne(m => m.AgentSession)
                 .WithMany()
                 .HasForeignKey(m => m.AgentSessionId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.Property(m => m.MaintenanceEvidence).HasMaxLength(500);
+            entity.HasIndex(m => new { m.AgentSessionId, m.MaintenanceAcceptedStartedAt })
+                .IsUnique()
+                .HasFilter("\"MaintenanceSlotActive\" = TRUE")
+                .HasDatabaseName("IX_SessionQueuedMessages_ActiveAutomaticArm");
+            entity.HasIndex(m => m.DeferredFromRunAttemptId)
+                .IsUnique()
+                .HasFilter("\"DeferredFromRunAttemptId\" IS NOT NULL")
+                .HasDatabaseName("IX_SessionQueuedMessages_DeferredFromRunAttemptId");
+        });
+
+        modelBuilder.Entity<RemoteControlModalEpisode>(entity =>
+        {
+            entity.ToTable("RemoteControlModalEpisodes");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.SessionId).IsRequired();
+            entity.Property(e => e.AcceptedStartedAt).IsRequired();
+            entity.Property(e => e.FirstObservedAt).IsRequired();
+            entity.Property(e => e.LastObservedAt).IsRequired();
+            entity.Property(e => e.LastTransition).HasMaxLength(80);
+            entity.HasIndex(e => new { e.SessionId, e.AcceptedStartedAt })
+                .IsUnique()
+                .HasFilter("\"ResolvedAt\" IS NULL")
+                .HasDatabaseName("IX_RemoteControlModalEpisodes_OpenGeneration");
+            entity.HasIndex(e => e.ResolvedAt)
+                .HasDatabaseName("IX_RemoteControlModalEpisodes_ResolvedAt");
+            entity.HasOne(e => e.AgentSession)
+                .WithMany()
+                .HasForeignKey(e => e.SessionId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

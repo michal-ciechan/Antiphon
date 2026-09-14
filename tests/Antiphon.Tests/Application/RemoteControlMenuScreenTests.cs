@@ -25,7 +25,7 @@ public class RemoteControlMenuScreenTests
           Remote Control
 
           This session is available in the Claude mobile app and at
-          https://claude.ai/code/session_011D79CHh3qcgGNB3mXGgdPz.
+          https://claude.ai/code/session_SYNTHETIC_C514_FIXTURE.
 
             Disconnect this session
             Show QR code  Scan with your phone to open this session
@@ -78,5 +78,52 @@ public class RemoteControlMenuScreenTests
     {
         RemoteControlMenuScreen.IsPresent(null).ShouldBeFalse();
         RemoteControlMenuScreen.IsPresent("").ShouldBeFalse();
+    }
+
+    [Test]
+    public void C514_Reordered_help_and_prose_are_not_actionable()
+    {
+        RemoteControlMenuScreen.IsPresent(
+            "Esc to continue\nContinue\nShow QR code\nDisconnect this session\nRemote Control")
+            .ShouldBeFalse();
+        RemoteControlMenuScreen.IsPresent(
+            "help: Remote Control disconnect this session and Esc to continue")
+            .ShouldBeFalse();
+        RemoteControlMenuScreen.Classify(
+            "The docs mention Remote Control and Disconnect this session in passing.")
+            .IsPresent.ShouldBeFalse();
+    }
+
+    [Test]
+    public void C514_Partial_menu_is_only_a_remnant()
+    {
+        var classification = RemoteControlMenuScreen.Classify(
+            "Remote Control\nDisconnect this session\nShow QR code");
+        classification.IsPresent.ShouldBeFalse();
+        classification.HasRemnant.ShouldBeTrue();
+        classification.IsClear.ShouldBeFalse();
+    }
+
+    [Test]
+    public void C514_Sanitized_menu_shapes_replay_fragmented_and_clear()
+    {
+        var menu0514 =
+            """
+                      Remote Control
+
+                      This session is available in the Claude mobile app and at
+                      https://claude.ai/code/session_SYNTHETIC_C514_FIXTURE.
+
+                        Disconnect this session
+                        Show QR code  Scan with your phone to open this session
+                      > Continue
+
+                      Enter to select . Esc to continue
+            """;
+        RemoteControlMenuScreen.IsPresent(menu0514).ShouldBeTrue();
+        RemoteControlMenuScreen.IsPresent(IncidentScreen).ShouldBeTrue();
+        RemoteControlMenuScreen.Classify("> ").IsClear.ShouldBeTrue();
+        RemoteControlMenuScreen.HasRemnant("Disconnect this session").ShouldBeTrue();
+        RemoteControlMenuScreen.IsPresent("Disconnect this session").ShouldBeFalse();
     }
 }

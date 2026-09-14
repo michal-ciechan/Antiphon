@@ -29,6 +29,12 @@ public sealed class SupervisionSettings
     public int IncidentCapPerAgent { get; set; } = 500;
 
     public RcWatchSettings RcWatch { get; set; } = new();
+
+    /// <summary>
+    /// CARD-0514 D-4: exact-modal observation. Independent of <see cref="RcWatchSettings.Enabled"/>.
+    /// Global <see cref="SupervisionSettings.Enabled"/> still stops background work.
+    /// </summary>
+    public RcModalWatchSettings RcModalWatch { get; set; } = new();
     public DeliveryVerificationSettings DeliveryVerification { get; set; } = new();
     public ApiErrorRecoverySettings ApiErrorRecovery { get; set; } = new();
     public HerdrCorroborationSettings HerdrCorroboration { get; set; } = new();
@@ -259,10 +265,23 @@ public sealed class RcWatchSettings
     public int IdleQuietMinutes { get; set; } = 5;
 
     public int ConsecutiveFailedProbesBeforeAction { get; set; } = 5;
+
+    /// <summary>
+    /// CARD-0514 D-3: retained for historical configuration. RC-only process restart is no longer
+    /// performed; the value is not read by the watch.
+    /// </summary>
     public int ReArmAttemptsBeforeRestart { get; set; } = 2;
 
     /// <summary>How long after a re-arm before the bridge is probed again (arming takes seconds).</summary>
     public int ReArmSettleMinutes { get; set; } = 3;
+}
+
+/// <summary>CARD-0514: passive rendered-screen sweep for the remote-control management menu.</summary>
+public sealed class RcModalWatchSettings
+{
+    public bool Enabled { get; set; } = true;
+    public int ProbeIntervalSeconds { get; set; } = 60;
+    public int SnapshotTimeoutSeconds { get; set; } = 5;
 }
 
 /// <summary>

@@ -50,6 +50,7 @@ public sealed class DataRetentionService
         var sessions = await PruneSessionsAsync(ct);
         var transcripts = await PruneTranscriptsAsync(ct);
         var queued = await PruneQueuedMessagesAsync(ct);
+        await PruneResolvedModalEpisodesAsync(ct);
         var tasks = await PruneTasksAsync(ct);
         var usage = await PruneSubscriptionUsageSamplesAsync(ct);
         var auditRecords = 0;
@@ -87,7 +88,9 @@ public sealed class DataRetentionService
             && s.LastSeenAt < cutoff
             && !_db.AgentTaskLandNotifications.Any(n => n.ParentSessionId == s.Id && n.ConfirmedAt == null
                 && n.State != LandNotificationState.NotRequired)
-            && !_db.AgentTasks.Any(t => t.AgentSessionId == s.Id || t.ParentSessionId == s.Id));
+            && !_db.AgentTasks.Any(t => t.AgentSessionId == s.Id || t.ParentSessionId == s.Id)
+            && !_db.SessionQueuedMessages.Any(m => m.AgentSessionId == s.Id && m.DeferredFromRunAttemptId != null)
+            && !_db.RemoteControlModalEpisodes.Any(e => e.SessionId == s.Id && e.ResolvedAt == null));
 
         if (protectedIds.Count > 0)
         {
@@ -184,6 +187,9 @@ public sealed class DataRetentionService
         var removed = await _db.SessionQueuedMessages
             .Where(m => (m.Status == QueuedMessageStatus.Sent || m.Status == QueuedMessageStatus.Canceled)
                 && m.CreatedAt < cutoff
+                && m.MaintenanceResult != RemoteControlArmResult.ArmUnconfirmed
+                && !m.MaintenanceSlotActive
+                && m.DeferredFromRunAttemptId == null
                 && (m.SourceLandNotificationId == null || _db.AgentTaskLandNotifications.Any(n =>
                     n.Id == m.SourceLandNotificationId && n.ConfirmedAt != null))
                 && (m.Origin != QueuedMessageOrigin.Channel || m.ChannelReplySettledAt != null))
@@ -196,6 +202,20 @@ public sealed class DataRetentionService
         }
 
         return removed;
+    }
+
+    /// <summary>
+    /// CARD-0514: resolved modal episodes follow ordinary queue retention. Open episodes are never
+    /// pruned — Attention reads them independently of incident history.
+    /// </summary>
+    public async Task<int> PruneResolvedModalEpisodesAsync(CancellationToken ct)
+    {
+        if (_settings.QueuedMessageRetentionDays <= 0)
+            return 0;
+        var cutoff = UtcNow().AddDays(-_settings.QueuedMessageRetentionDays);
+        return await _db.RemoteControlModalEpisodes
+            .Where(e => e.ResolvedAt != null && e.ResolvedAt < cutoff)
+            .ExecuteDeleteAsync(ct);
     }
 
     /// <summary>

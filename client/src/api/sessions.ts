@@ -82,6 +82,8 @@ export interface QueuedMessageDto {
   parked: boolean
   /** Present on scheduled rows — the queue badge text (CARD-0057). */
   noteHeader?: string | null
+  /** CARD-0514: this row is held because a remote-control menu is open. */
+  modalBlocked?: boolean
 }
 
 /** CARD-0180 S3: how a Mode:Now delivery was confirmed. */
@@ -100,6 +102,9 @@ export interface SessionQueueDto {
   working: boolean
   /** Populated only on the Mode:Now response. */
   lastDelivery?: DeliveryReceiptDto | null
+  /** CARD-0514: an open remote-control menu is withholding automated delivery. */
+  modalBlocked?: boolean
+  modalBlockedReason?: string | null
 }
 
 /** Global SignalR `SessionFinished` payload — broadcast when an agent finishes with an empty queue. */

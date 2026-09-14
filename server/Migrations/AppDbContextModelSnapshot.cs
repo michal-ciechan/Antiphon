@@ -4208,6 +4208,92 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("Projects", (string)null);
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.RemoteControlModalEpisode", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("AcceptedStartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long?>("AfterOutputSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("BeforeOutputSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<bool>("ChannelBound")
+                        .HasColumnType("boolean");
+
+                    b.Property<int?>("ChildPid")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("DismissalIntentAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("DismissalResult")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("DismissalSentAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DismissalVerifiedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("FirstObservedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LastIncidentAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("LastObservedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastTransition")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<long?>("ObservedDrainSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("ObservedEnqueueSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("ObservedPromptSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid?>("RelatedMaintenanceQueueId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("Resolution")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("ResolvedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("SessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long?>("TranscriptCatchUpWatermark")
+                        .HasColumnType("bigint");
+
+                    b.Property<bool?>("TranscriptWorking")
+                        .HasColumnType("boolean");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ResolvedAt")
+                        .HasDatabaseName("IX_RemoteControlModalEpisodes_ResolvedAt");
+
+                    b.HasIndex("SessionId", "AcceptedStartedAt")
+                        .IsUnique()
+                        .HasDatabaseName("IX_RemoteControlModalEpisodes_OpenGeneration")
+                        .HasFilter("\"ResolvedAt\" IS NULL");
+
+                    b.ToTable("RemoteControlModalEpisodes", (string)null);
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.RetrySchedule", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4670,6 +4756,31 @@ namespace Antiphon.Server.Migrations
                     b.Property<DateTime?>("HoldUntil")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("DeferredFromRunAttemptId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("MaintenanceAcceptedStartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("MaintenanceEvidence")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<int>("MaintenanceKind")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("MaintenanceResult")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("MaintenanceResultAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("MaintenanceSlotActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("SubmissionStartedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<long?>("LastDeliveryBaselineSequence")
                         .HasColumnType("bigint");
 
@@ -4779,6 +4890,16 @@ namespace Antiphon.Server.Migrations
 
                     b.HasIndex("AgentSessionId", "Status", "Sequence")
                         .HasDatabaseName("IX_SessionQueuedMessages_AgentSessionId_Status_Sequence");
+
+                    b.HasIndex("DeferredFromRunAttemptId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_SessionQueuedMessages_DeferredFromRunAttemptId")
+                        .HasFilter("\"DeferredFromRunAttemptId\" IS NOT NULL");
+
+                    b.HasIndex("AgentSessionId", "MaintenanceAcceptedStartedAt")
+                        .IsUnique()
+                        .HasDatabaseName("IX_SessionQueuedMessages_ActiveAutomaticArm")
+                        .HasFilter("\"MaintenanceSlotActive\" = TRUE");
 
                     b.ToTable("SessionQueuedMessages", (string)null);
                 });
@@ -6700,6 +6821,17 @@ namespace Antiphon.Server.Migrations
                         .IsRequired();
 
                     b.Navigation("Schedule");
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.RemoteControlModalEpisode", b =>
+                {
+                    b.HasOne("Antiphon.Server.Domain.Entities.AgentSession", "AgentSession")
+                        .WithMany()
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("AgentSession");
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.SessionQueuedMessage", b =>

@@ -44,7 +44,8 @@ public sealed record SessionRunnerSnapshotDto(
     string RawOutput,
     string RenderedScreen,
     long LastSequence,
-    DateTime StartedAt);
+    DateTime StartedAt,
+    DateTime? AcceptedStartedAt = null);
 
 public sealed record SessionRunnerOutputEvent(
     Guid SessionId,

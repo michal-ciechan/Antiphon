@@ -182,8 +182,8 @@ app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings, SessionRunne
         ? [SessionBackends.PtyHost, SessionBackends.Herdr]
         : [SessionBackends.PtyHost];
     IReadOnlyList<string>? features = herdrSettings.Value.Enabled
-        ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement, HerdrPaneDisposalCodes.Capability, HerdrPaneDisposalCodes.BestEffortCapability, GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1]
-        : [GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1];
+        ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement, HerdrPaneDisposalCodes.Capability, HerdrPaneDisposalCodes.BestEffortCapability, GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1]
+        : [GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1];
     if (runtime.VerificationCustodyBackend is not null)
         features = [.. features, RunnerCapabilityFeatures.VerificationCustodyV1];
     return Results.Ok(new RunnerCapabilitiesDto(
@@ -368,6 +368,16 @@ app.MapPost("/sessions/{id:guid}/kill-generation", async (
         id, request.ExpectedAcceptedStartedAt, TimeSpan.FromSeconds(5), cancellationToken);
     return Results.Ok(result);
 });
+
+app.MapPost("/sessions/{id:guid}/conditional-input", async (
+    Guid id,
+    RunnerConditionalInputRequest request,
+    SessionRunnerRuntime runtime,
+    CancellationToken cancellationToken) =>
+{
+    var result = await runtime.SendConditionalInputAsync(id, request, cancellationToken);
+    return Results.Ok(result);
+}).AddEndpointFilter(HerdrUnreachableFilter);
 
 app.MapGet("/events", async (HttpContext context, SessionRunnerRuntime runtime, IConfiguration config) =>
 {

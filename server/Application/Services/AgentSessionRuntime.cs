@@ -1090,6 +1090,15 @@ public sealed class AgentSessionRuntime
             TryStartManualTurnTracking(sessionId, sequenceBeforeInput);
     }
 
+    public async Task<RunnerConditionalInputResult> SendConditionalInputAsync(
+        Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct)
+    {
+        if (_testAdapters.TryGetValue(sessionId, out var adapter))
+            return await adapter.SendConditionalInputAsync(request, ct);
+
+        return await _runnerClient.SendConditionalInputAsync(sessionId, request, ct);
+    }
+
     public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) =>
         _testAdapters.TryGetValue(sessionId, out var adapter)
             ? adapter.ResizeAsync(cols, rows, ct)

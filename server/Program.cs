@@ -422,6 +422,8 @@ try
     builder.Services.AddScoped<ChannelIngressIncidentService>();
     builder.Services.AddScoped<DataRetentionService>();
     builder.Services.AddScoped<SessionHealthService>();
+    builder.Services.AddScoped<RemoteControlRecoveryService>();
+    builder.Services.AddScoped<RemoteControlModalWatchService>();
     builder.Services.AddScoped<Antiphon.Server.Application.Interfaces.ISessionHealthActions,
         Antiphon.Server.Infrastructure.Supervision.SessionHealthActions>();
     builder.Services.AddSingleton<Antiphon.Server.Application.Interfaces.IRcBridgeProbe,

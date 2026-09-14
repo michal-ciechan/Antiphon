@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.Server.Application.Interfaces;
 
@@ -31,6 +32,15 @@ public interface IAgentProtocolAdapter : IAsyncDisposable
     Task<bool> WaitForFirstPromptOutputAsync(TimeSpan timeout, CancellationToken ct);
 
     Task SendInputAsync(string input, CancellationToken ct);
+
+    /// <summary>
+    /// CARD-0514: generation-and-sequence-conditional maintenance write. Default Unsupported —
+    /// never a raw <see cref="SendInputAsync"/> fallback.
+    /// </summary>
+    Task<RunnerConditionalInputResult> SendConditionalInputAsync(
+        RunnerConditionalInputRequest request, CancellationToken ct) =>
+        Task.FromResult(new RunnerConditionalInputResult(
+            Guid.Empty, ConditionalInputOutcomes.Unsupported, null, null));
 
     Task ResizeAsync(int cols, int rows, CancellationToken ct);
 

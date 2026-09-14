@@ -36,7 +36,8 @@ public sealed record QueuedMessageDto(
     int DeliveryAttempts = 0,
     string Origin = "Ui",
     bool Parked = false,
-    string? NoteHeader = null);
+    string? NoteHeader = null,
+    bool ModalBlocked = false);
 
 /// <summary>
 /// How a Mode:Now delivery was confirmed. Values of <see cref="DeliveryReceiptDto.ConfirmedBy"/>.
@@ -68,4 +69,6 @@ public sealed record SessionQueueDto(
     Guid SessionId,
     IReadOnlyList<QueuedMessageDto> Messages,
     bool Working,
-    DeliveryReceiptDto? LastDelivery = null);
+    DeliveryReceiptDto? LastDelivery = null,
+    bool ModalBlocked = false,
+    string? ModalBlockedReason = null);

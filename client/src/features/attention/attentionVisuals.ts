@@ -251,6 +251,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     icon: TbClockPause,
     hint: 'Inspect candidate readiness and the latest Check attempt. Qualification alone does not resolve a service outage.',
   },
+  RemoteControlModal: {
+    label: 'RC menu blocks input',
+    color: 'warning',
+    icon: TbPlugConnectedX,
+    hint: 'The remote-control management menu is on screen. Input conversion is unproven until it is dismissed.',
+  },
 }
 
 export type AttentionGroupKey = 'now' | 'broken' | 'suspect' | 'failures'

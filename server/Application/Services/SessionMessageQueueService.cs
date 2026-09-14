@@ -289,6 +289,15 @@ public sealed partial class SessionMessageQueueService
                     throw new ConflictException(
                         $"Agent session '{sessionId}' cannot accept input because herdr is unreachable; try again when it is back.");
                 }
+                if (outcome.Verdict == DeliveryVerdict.ModalBlocked)
+                {
+                    return (await GetQueueAsync(sessionId, ct)) with
+                    {
+                        ModalBlocked = true,
+                        ModalBlockedReason = "Remote Control menu blocks input",
+                    };
+                }
+
                 if (outcome.Verdict != DeliveryVerdict.Delivered)
                 {
                     // CARD-0164 B4: Mode:Now has no message row, so HandleDeliveryFailureAsync's
@@ -712,6 +721,8 @@ public sealed partial class SessionMessageQueueService
 
             if (message.Status != QueuedMessageStatus.Pending || message.DeliveryAttempts != 0)
                 return false;
+            if (message.MaintenanceKind != RemoteControlMaintenanceKind.None)
+                return false;
 
             var intro = prefix.TrimEnd();
             if (message.Body.StartsWith(intro, StringComparison.Ordinal))
@@ -771,6 +782,24 @@ public sealed partial class SessionMessageQueueService
             var now = UtcNow();
             foreach (var message in pending)
             {
+                if (message.MaintenanceKind == RemoteControlMaintenanceKind.AutomaticArm
+                    && message.DeliveryAttempts == 0
+                    && message.MaintenanceResult is RemoteControlArmResult.Requested
+                        or null)
+                {
+                    message.Status = QueuedMessageStatus.Canceled;
+                    message.CanceledAt = now;
+                    message.MaintenanceSlotActive = false;
+                    canceled++;
+                    continue;
+                }
+
+                if (message.MaintenanceKind != RemoteControlMaintenanceKind.None)
+                    continue;
+                if (message.DeliveryAttempts != 0)
+                    continue;
+                if (message.Origin is QueuedMessageOrigin.Ui or QueuedMessageOrigin.Channel)
+                    continue;
                 if (!string.Equals(FirstCommandToken(message.Body), "/remote-control", StringComparison.OrdinalIgnoreCase))
                     continue;
                 message.Status = QueuedMessageStatus.Canceled;
@@ -913,6 +942,20 @@ public sealed partial class SessionMessageQueueService
 
             if (message.Status != QueuedMessageStatus.Pending)
                 throw new ConflictException("Message is no longer pending.");
+
+            if (message.MaintenanceKind is RemoteControlMaintenanceKind.AutomaticArm
+                or RemoteControlMaintenanceKind.LegacyUnclassified)
+            {
+                throw new ConflictException(
+                    "This remote-control maintenance request cannot be forced through SendNow.");
+            }
+
+            if (await IsModalBlockedAsync(sessionId, ct))
+                return await GetQueueAsync(sessionId, ct) with
+                {
+                    ModalBlocked = true,
+                    ModalBlockedReason = "Remote Control menu blocks input",
+                };
 
             // Same late-confirm as the automatic paths: a previously attempted message whose body
             // is already in the transcript went in, and re-typing it here would put it in twice.
@@ -1440,6 +1483,9 @@ public sealed partial class SessionMessageQueueService
             return FlushResult.Nothing;
         }
 
+        if (await IsModalBlockedLockedAsync(db, sessionId, ct))
+            return FlushResult.Nothing;
+
         var interrupted = await LoadInterruptedSentRunAsync(db, sessionId, ct);
         if (rulesClosed && interrupted.Any(m => m.RulesRefreshKey is null))
         {
@@ -1497,11 +1543,24 @@ public sealed partial class SessionMessageQueueService
         // types them again — that is what "parks for a human" means. They are still late-confirmed
         // above, so a park resolves itself if the body turns out to have landed complete. A
         // truncated park stays parked: identity-without-completeness is not Sent.
-        var deliverable = pending.Where(m => m.DeliveryAttempts < MaxAttempts).ToList();
+        var deliverable = pending
+            .Where(m => m.DeliveryAttempts < MaxAttempts)
+            .Where(m => m.MaintenanceKind != RemoteControlMaintenanceKind.LegacyUnclassified)
+            .ToList();
         if (deliverable.Count == 0)
             return late.Handled > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
 
         pending = deliverable;
+
+        if (pending.Count > 0
+            && pending[0].MaintenanceKind == RemoteControlMaintenanceKind.AutomaticArm)
+        {
+            await using var recoveryScope = _scopeFactory.CreateAsyncScope();
+            var recovery = recoveryScope.ServiceProvider.GetService<RemoteControlRecoveryService>();
+            if (recovery is not null)
+                await recovery.ExecuteAutomaticArmUnderLockAsync(sessionId, pending[0].Id, ct);
+            return FlushResult.Nothing;
+        }
 
         // CARD-0132 S1.3: the per-session lock already protects this read and cancellation from a
         // concurrent flush. A check whose subject settled never consumes the caller's next turn;
@@ -1944,6 +2003,10 @@ public sealed partial class SessionMessageQueueService
         LateConfirmCollector? lateConfirmed = null)
     {
         if (run.Count == 0)
+            return FlushResult.Nothing;
+        if (run.Any(m => m.MaintenanceKind != RemoteControlMaintenanceKind.None))
+            return FlushResult.Nothing;
+        if (await IsModalBlockedLockedAsync(db, sessionId, ct))
             return FlushResult.Nothing;
 
         var late = await LateConfirmAttemptedMessagesAsync(db, sessionId, run, ct);
@@ -2398,6 +2461,9 @@ public sealed partial class SessionMessageQueueService
         // fragment exactly like the 2026-07-29 live miss. Shared with every other typing path via
         // PtyInputEncoding (SendLineAsync callers were the 2026-08-08 miss).
         var trimmed = Antiphon.Agents.Pty.PtyInputEncoding.NormalizeBody(body);
+
+        if (await IsModalBlockedAsync(sessionId, ct))
+            return DeliveryOutcome.Of(DeliveryVerdict.ModalBlocked, "remote-control-modal");
 
         // CARD-0137 S3 / L0: refuse Forbidden bodies before a byte is typed. Codex `/usage` is the
         // founding case — typing it opens a picker whose highlighted option redeems the account's
@@ -4040,10 +4106,50 @@ public sealed partial class SessionMessageQueueService
                 m.DeliveryAttempts,
                 m.Origin.ToString(),
                 m.DeliveryAttempts >= maxAttempts,
-                m.NoteHeader))
+                m.NoteHeader,
+                false))
             .ToListAsync(ct);
         var working = await IsWorkingAsync(db, sessionId, ct);
-        return new SessionQueueDto(sessionId, messages, working);
+        var session = await db.AgentSessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+        var modalBlocked = false;
+        if (session is not null)
+        {
+            var generation = SessionGeneration.Normalize(session.StartedAt);
+            modalBlocked = await db.RemoteControlModalEpisodes.AsNoTracking().AnyAsync(
+                e => e.SessionId == sessionId
+                    && e.AcceptedStartedAt == generation
+                    && e.ResolvedAt == null, ct);
+        }
+
+        var dtos = modalBlocked
+            ? messages.Select(m => m with { ModalBlocked = true }).ToList()
+            : messages;
+        return new SessionQueueDto(
+            sessionId,
+            dtos,
+            working,
+            ModalBlocked: modalBlocked,
+            ModalBlockedReason: modalBlocked ? "Remote Control menu blocks input" : null);
+    }
+
+    internal async Task<bool> IsModalBlockedAsync(Guid sessionId, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await IsModalBlockedLockedAsync(db, sessionId, ct);
+    }
+
+    internal static async Task<bool> IsModalBlockedLockedAsync(
+        AppDbContext db, Guid sessionId, CancellationToken ct)
+    {
+        var session = await db.AgentSessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+        if (session is null)
+            return false;
+        var generation = SessionGeneration.Normalize(session.StartedAt);
+        return await db.RemoteControlModalEpisodes.AsNoTracking().AnyAsync(
+            e => e.SessionId == sessionId
+                && e.AcceptedStartedAt == generation
+                && e.ResolvedAt == null, ct);
     }
 
     private async Task<AgentKind> RequireSessionKindAsync(Guid sessionId, CancellationToken ct)
@@ -4293,6 +4399,9 @@ public sealed partial class SessionMessageQueueService
     private async Task<LocalCommandTypeResult> TypeLocalCommandAsync(
         Guid sessionId, string command, CancellationToken ct, int? sequenceTimeoutSeconds = null)
     {
+        if (await IsModalBlockedAsync(sessionId, ct))
+            return LocalCommandTypeResult.NotAccepted;
+
         if (!_runtime.TryGetLiveSnapshot(sessionId, out var before))
             return LocalCommandTypeResult.NotAccepted;
 

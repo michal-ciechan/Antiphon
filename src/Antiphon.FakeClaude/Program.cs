@@ -184,6 +184,8 @@ internal static class Program
         // which discards); Esc clears the menu and drains the queue (enqueue → dequeue → user).
         // Mirrors the measured incident shapes from session 70eb4c2d.
         var rcMenuEnabled = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_RC_MENU") == "1";
+        var rcScenario = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_RC_SCENARIO");
+        var rcArmedOnce = false;
         var deafStartMs = int.TryParse(
             Environment.GetEnvironmentVariable("ANTIPHON_FAKE_DEAF_START_MS"), out var ds) && ds > 0 ? ds : 0;
         TryEnableRawConsole();
@@ -471,8 +473,17 @@ internal static class Program
                     return true;
                 }
 
-                if (rcMenuEnabled && text == "/remote-control")
+                if ((rcMenuEnabled || rcScenario == "c514") && text == "/remote-control")
                 {
+                    if (rcScenario == "c514" && !rcArmedOnce)
+                    {
+                        rcArmedOnce = true;
+                        Write("\r\n");
+                        Write($"SUBMITTED:{text}\r\n");
+                        Write("remote-control is active\r\n");
+                        Write("RCMENU:armed\r\n");
+                        return true;
+                    }
                     // The menu shape from the incident's runner snapshot: heading, action rows,
                     // footer — and deliberately NO "remote-control is active" line and no turn-end
                     // signal. The modal blocks until Enter or Esc; nobody is at a keyboard.

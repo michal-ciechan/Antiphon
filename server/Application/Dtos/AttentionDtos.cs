@@ -265,6 +265,12 @@ public enum AttentionKind
     LandNoProgress = 36,
     LandOutcomeUnconfirmed = 37,
     LandLegacyUnverified = 38,
+
+    /// <summary>
+    /// CARD-0514: an open remote-control management menu is blocking input. Process group,
+    /// OpenAgent/OpenDrawer. Visible independently of incident pruning.
+    /// </summary>
+    RemoteControlModal = 39,
 }
 
 /// <summary>

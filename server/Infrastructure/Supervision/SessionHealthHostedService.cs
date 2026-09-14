@@ -29,30 +29,58 @@ public sealed class SessionHealthHostedService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!_settings.Enabled || !_settings.RcWatch.Enabled)
+        if (!_settings.Enabled)
         {
             _logger.LogInformation("Session health watch disabled by configuration");
             return;
         }
 
-        using var timer = new PeriodicTimer(
-            TimeSpan.FromSeconds(Math.Max(10, _settings.RcWatch.ProbeIntervalSeconds)));
+        if (!_settings.RcWatch.Enabled && !_settings.RcModalWatch.Enabled)
+        {
+            _logger.LogInformation("RC connection watch and modal watch are both disabled");
+            return;
+        }
+
+        var interval = Math.Max(10, Math.Min(
+            _settings.RcWatch.Enabled ? _settings.RcWatch.ProbeIntervalSeconds : int.MaxValue,
+            _settings.RcModalWatch.Enabled ? _settings.RcModalWatch.ProbeIntervalSeconds : int.MaxValue));
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(interval));
         try
         {
             while (await timer.WaitForNextTickAsync(stoppingToken))
             {
-                try
+                if (_settings.RcWatch.Enabled)
                 {
-                    await using var scope = _scopeFactory.CreateAsyncScope();
-                    await scope.ServiceProvider.GetRequiredService<SessionHealthService>().TickAsync(stoppingToken);
+                    try
+                    {
+                        await using var scope = _scopeFactory.CreateAsyncScope();
+                        await scope.ServiceProvider.GetRequiredService<SessionHealthService>().TickAsync(stoppingToken);
+                    }
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                    {
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Session health tick failed");
+                    }
                 }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+
+                if (_settings.RcModalWatch.Enabled)
                 {
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Session health tick failed");
+                    try
+                    {
+                        await using var scope = _scopeFactory.CreateAsyncScope();
+                        await scope.ServiceProvider.GetRequiredService<RemoteControlModalWatchService>().TickAsync(stoppingToken);
+                    }
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                    {
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Remote-control modal watch tick failed");
+                    }
                 }
 
                 try

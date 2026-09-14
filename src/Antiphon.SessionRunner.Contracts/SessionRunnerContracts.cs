@@ -148,6 +148,13 @@ public static class RunnerCapabilityFeatures
     /// generation-conditional kill all work on this runner.
     /// </summary>
     public const string SessionGenerationV1 = "sessionGenerationV1";
+
+    /// <summary>
+    /// CARD-0514: generation-and-sequence-conditional maintenance input
+    /// (<c>POST /sessions/{id}/conditional-input</c>). Absence forbids automatic RC writes;
+    /// there is no fallback to unguarded <c>/input</c>.
+    /// </summary>
+    public const string ConditionalMaintenanceInputV1 = "conditionalMaintenanceInputV1";
 }
 
 /// <summary>Values for <see cref="RunnerLaunchRequest.TranscriptFormat"/>.</summary>
@@ -229,7 +236,8 @@ public sealed record RunnerSnapshotDto(
     string RawOutput,
     string RenderedScreen,
     long LastSequence,
-    DateTime StartedAt);
+    DateTime StartedAt,
+    DateTime? AcceptedStartedAt = null);
 
 public sealed record RunnerOutputEvent(
     Guid SessionId,

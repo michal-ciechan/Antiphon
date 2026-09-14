@@ -17,4 +17,10 @@ public enum DeliveryVerdict
     LocalCommandNotAccepted = 6,
     BackendUnreachable = 7,
     LateConfirmed = 8,
+
+    /// <summary>
+    /// CARD-0514: an open remote-control modal withheld this delivery. Not a failure: no attempt
+    /// charge, park, or kill.
+    /// </summary>
+    ModalBlocked = 9,
 }
