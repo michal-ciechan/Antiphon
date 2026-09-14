@@ -318,6 +318,45 @@ public class ContractSnapshotTests
             workspace: null, scrubTimestamps: false, scrubGuids: false);
         await SnapshotAsync(app, $"/api/agent-tasks/{install:D}", "agent-task-detail.json",
             workspace: null, scrubTimestamps: false, scrubGuids: false);
+
+        // CARD-0508 V-10. The legacy drawer above proves the four-null/Unset default shape; this
+        // half proves the same five fields carry a REAL recorded decision out over HTTP, by their
+        // exact JSON names, without disturbing the merge target that sits beside them. Asserted on
+        // the raw body rather than a DTO so a rename cannot pass by deserialising into the old
+        // property, and asserted on the Worktree task because that is the only workspace mode for
+        // which a base is ever recorded.
+        const string baseSha = "4d1f0a9c7b2e5d3846af90c1b7e25d8f3a6c0b14";
+        using (var scope = app.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var worktreeTask = await db.AgentTasks.SingleAsync(t => t.Id == schema);
+            worktreeTask.WorktreeBaseRequestedRef = "feat/pg18";
+            worktreeTask.WorktreeBaseRef = "master";
+            worktreeTask.WorktreeBaseSource = Server.Domain.Enums.WorktreeBaseSource.DefaultBranch;
+            worktreeTask.WorktreeBaseTaskId = null;
+            worktreeTask.WorktreeBaseSha = baseSha;
+            await db.SaveChangesAsync();
+        }
+
+        var drawer = await app.HttpClient.GetAsync($"/api/agent-tasks/{schema:D}");
+        drawer.EnsureSuccessStatusCode();
+        var drawerJson = await drawer.Content.ReadAsStringAsync();
+        using var drawerDoc = JsonDocument.Parse(drawerJson);
+        var drawerRoot = drawerDoc.RootElement;
+        // GetProperty throws on a renamed field, so each line pins the wire NAME as well as value.
+        drawerRoot.GetProperty("worktreeBaseRequestedRef").GetString().ShouldBe("feat/pg18");
+        drawerRoot.GetProperty("worktreeBaseRef").GetString().ShouldBe("master");
+        drawerRoot.GetProperty("worktreeBaseSource").GetString().ShouldBe("DefaultBranch");
+        drawerRoot.GetProperty("worktreeBaseTaskId").ValueKind.ShouldBe(JsonValueKind.Null);
+        drawerRoot.GetProperty("worktreeBaseSha").GetString().ShouldBe(baseSha);
+        // The base is a new, independent field: recording it never edits the merge target.
+        drawerRoot.GetProperty("mergeTargetRef").GetString().ShouldBe("feat/pg18");
+
+        // Board summaries are deliberately NOT widened by this card: the five fields belong to the
+        // drawer only, so a board row must still not mention any of them.
+        var board = await app.HttpClient.GetAsync($"/api/agent-tasks?rootId={root:D}");
+        board.EnsureSuccessStatusCode();
+        (await board.Content.ReadAsStringAsync()).ShouldNotContain("worktreeBase");
     }
 
     /// <summary>
