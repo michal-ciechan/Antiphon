@@ -19,6 +19,8 @@ Antiphon.Tests.Infrastructure.WorktreeManagerGitIntegrationTests
 Antiphon.Tests.Application.DelegationWorktreeTests
 # CARD-0508: real Git default-branch selection and cherry containment.
 Antiphon.Tests.Application.WorktreeBaseSelectionTests
+# CARD-0508: real dispatcher claim capture against a real Git repo.
+Antiphon.Tests.Application.DispatchBaseNotificationTests
 # CARD-0487: historical allowance, session Git/PTY integration.
 Antiphon.Tests.Application.AgentSessionServiceIntegrationTests
 # CARD-0487: historical allowance, live runtime cost.
