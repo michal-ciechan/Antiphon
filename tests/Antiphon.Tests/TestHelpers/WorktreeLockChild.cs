@@ -10,7 +10,7 @@ namespace Antiphon.Tests.TestHelpers;
 internal sealed class WorktreeLockChild : IAsyncDisposable
 {
     private readonly NamedPipeServerStream _pipe;
-    private readonly StreamWriter _writer;
+    private StreamWriter? _writer;
     private readonly Process _child;
     private readonly Task<string> _stdout, _stderr;
     private readonly string _scratch;
@@ -22,7 +22,6 @@ internal sealed class WorktreeLockChild : IAsyncDisposable
     private WorktreeLockChild(NamedPipeServerStream pipe, Process child, string scratch)
     {
         _pipe = pipe; _child = child; _scratch = scratch;
-        _writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
         _stdout = child.StandardOutput.ReadToEndAsync(); _stderr = child.StandardError.ReadToEndAsync();
         StartTicks = child.StartTime.ToUniversalTime().Ticks;
     }
@@ -52,6 +51,7 @@ internal sealed class WorktreeLockChild : IAsyncDisposable
         {
             using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             await pipe.WaitForConnectionAsync(budget.Token);
+            child._writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
             using var reader = new StreamReader(pipe, leaveOpen: true);
             var ready = JsonSerializer.Deserialize<Ready>((await reader.ReadLineAsync(budget.Token))!)!;
             if (ready.Pid != child.ProcessId || ready.StartTicks != child.StartTicks || ready.Mode != mode)
@@ -65,7 +65,7 @@ internal sealed class WorktreeLockChild : IAsyncDisposable
     {
         if (_released) return;
         _released = true;
-        if (_pipe.IsConnected && !_child.HasExited) await _writer.WriteLineAsync("release");
+        if (_pipe.IsConnected && !_child.HasExited && _writer is not null) await _writer.WriteLineAsync("release");
         using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await _child.WaitForExitAsync(budget.Token);
         await Task.WhenAll(_stdout, _stderr);
@@ -79,7 +79,7 @@ internal sealed class WorktreeLockChild : IAsyncDisposable
         {
             if (!_child.HasExited) _child.Kill(entireProcessTree: true);
             await _child.WaitForExitAsync(); await Task.WhenAll(_stdout, _stderr);
-            _writer.Dispose(); _pipe.Dispose(); _child.Dispose();
+            _writer?.Dispose(); _pipe.Dispose(); _child.Dispose();
             var full = Path.GetFullPath(_scratch);
             if (!WorktreeNativeIO.Within(full, Path.GetTempPath()) || !Path.GetFileName(full).StartsWith("antiphon-c443-child-", StringComparison.Ordinal))
                 throw new InvalidOperationException("Child cleanup escaped owned scratch");
