@@ -231,14 +231,14 @@ public class WorktreeBaseSelectionTests
         invalidE.WorktreeBaseRequestedRef = "no-such-E";
         invalidE.MergeTargetRef = "parent-C";
         var failedE = await Should.ThrowAsync<ValidationException>(() => service.CreateForTaskAsync(invalidE, CancellationToken.None));
-        failedE.Message.ShouldContain("no-such-E");
+        string.Join(" ", failedE.Errors.SelectMany(e => e.Value)).ShouldContain("no-such-E");
         invalidE.WorktreePath.ShouldBeNull();
         (await manager.ListAsync(repo.Path, CancellationToken.None)).Count.ShouldBe(3);
 
         var invalidC = NewTask(repo.Path);
         invalidC.MergeTargetRef = "no-such-C";
         var failedC = await Should.ThrowAsync<ValidationException>(() => service.CreateForTaskAsync(invalidC, CancellationToken.None));
-        failedC.Message.ShouldContain("no-such-C");
+        string.Join(" ", failedC.Errors.SelectMany(e => e.Value)).ShouldContain("no-such-C");
         invalidC.WorktreePath.ShouldBeNull();
     }
 
@@ -252,16 +252,24 @@ public class WorktreeBaseSelectionTests
         await repo.GitAsync("checkout", "-b", "topic");
         await repo.CommitFileAsync("topic.txt", "unique\n");
         var topicTip = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        var topicTree = (await repo.GitReadAsync("rev-parse", "topic^{tree}")).Trim();
         await repo.GitAsync("checkout", "master");
-        (await ScratchGitRepo.GitInAsync(repo.Path, "cherry-pick", topicTip)).Ok.ShouldBeTrue();
-        var rebasedOnMaster = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        (await repo.GitReadAsync("rev-parse", "--abbrev-ref", "HEAD")).Trim().ShouldBe("master");
+        var published = (await repo.GitReadAsync("commit-tree", topicTree, "-p", master, "-m", "published equivalent")).Trim();
+        published.ShouldNotBeNullOrWhiteSpace();
+        published.ShouldNotBe(topicTip);
+        await repo.GitAsync("update-ref", "refs/heads/master", published);
+        var rebasedOnMaster = (await repo.GitReadAsync("rev-parse", "master")).Trim();
+        rebasedOnMaster.ShouldBe(published);
         rebasedOnMaster.ShouldNotBe(topicTip);
+        rebasedOnMaster.ShouldNotBe(master);
         (await ScratchGitRepo.GitInAsync(repo.Path, "merge-base", "--is-ancestor", "topic", "master"))
             .Ok.ShouldBeFalse();
         var cherry = await ScratchGitRepo.GitInAsync(repo.Path, "cherry", "master", "topic");
         cherry.Ok.ShouldBeTrue();
-        cherry.StdOut.Trim().Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .ShouldAllBe(line => line.StartsWith('-'));
+        var cherryLines = cherry.StdOut.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        cherryLines.ShouldNotBeEmpty();
+        cherryLines.ShouldAllBe(line => line.StartsWith('-'));
 
         var (service, _) = CreateService(repo, new GitSettings { DefaultBranch = "master", WorktreeBasePath = repo.WorktreeRoot });
         (await service.ContainsPatchesAsync(repo.Path, "master", "master", CancellationToken.None)).ShouldBeTrue();
