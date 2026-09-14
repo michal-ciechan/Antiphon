@@ -358,6 +358,7 @@ public class AgentTaskDispatchBaseGuardTests
         var repair = await SeedQueuedWorktreeTaskAsync(db, repo.Path, repairCard.Id, parentSessionId);
         repair.RepairSourceTaskId = owner.Id;
         await db.SaveChangesAsync(ct);
+        await repo.GitAsync("checkout", owner.WorktreeBranch!);
 
         await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot);
         await using var scope = provider.CreateAsyncScope();
@@ -396,8 +397,9 @@ public class AgentTaskDispatchBaseGuardTests
         var id = Guid.NewGuid();
         var branch = $"feat/card-task-{DelegationReportFormatter.Short(id)}";
         await repo.GitAsync("checkout", "-b", branch);
-        await File.WriteAllTextAsync(Path.Combine(repo.Path, "plan.md"), "the plan\n");
-        await repo.GitAsync("add", "plan.md");
+        var file = $"plan-{DelegationReportFormatter.Short(id)}.md";
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, file), commitMessage + "\n");
+        await repo.GitAsync("add", file);
         await repo.GitAsync("commit", "-m", commitMessage);
         await repo.GitAsync("checkout", "master");
 
