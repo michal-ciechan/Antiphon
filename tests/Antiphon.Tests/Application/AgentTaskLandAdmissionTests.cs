@@ -51,6 +51,7 @@ public sealed class AgentTaskLandAdmissionTests
             services.AddSingleton<DelegationWorkspaceResolver>();
             services.AddScoped<AgentTaskService>();
             services.AddScoped<AgentTaskDispatcher>();
+            services.AddScoped<DispatchBaseWarningIntentService>();
         };
         await h.InitializeAsync();
         h.Services.GetServices<IHostedService>().ShouldBeEmpty("this fixture never starts a launch worker or real Program");
