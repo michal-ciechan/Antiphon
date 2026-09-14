@@ -411,32 +411,42 @@ public class RemoteControlMaintenanceQueueTests
     /// <summary>
     /// CARD-0514 R-13: a recording HTTP handler FORWARDS the conditional operation to the child and
     /// then loses its reply. The bytes landed; the server cannot know that, so the outcome is
-    /// ArmUnconfirmed and stays there. Neither the missing acknowledgement, nor a snapshot read
-    /// failure, nor a probe that later reports armed authorizes a repeat or a verification in that
-    /// generation — only a new generation reopens the slot.
+    /// Unknown at the transport and ArmUnconfirmed on the request, and it stays there. Neither the
+    /// missing acknowledgement, nor a snapshot read failure, nor a probe that later reports armed
+    /// authorizes a repeat or a verification in that generation — only a new generation reopens the
+    /// slot.
     /// </summary>
     [Test]
     public async Task C514_Lost_write_reply_is_unknown_until_observed()
     {
-        var holder = new InnerRunnerHolder();
-        var handler = new RecordingLostReplyHandler((id, request) =>
-            holder.Inner!.SendConditionalInputAsync(id, request, CancellationToken.None));
-        var http = new SessionRunnerHttpClient(
+        var sessionId = Guid.NewGuid();
+        var generation = SessionGeneration.Normalize(DateTime.UtcNow);
+        var child = new List<string>();
+        var handler = new RecordingLostReplyHandler(request =>
+        {
+            // The child really takes the bytes; only the reply is lost on the way back.
+            child.Add(request.Input);
+            return new RunnerConditionalInputResult(
+                sessionId, ConditionalInputOutcomes.Written, generation, request.ExpectedLastSequence + 1);
+        });
+        var transport = new SessionRunnerHttpClient(
             new HttpClient(handler),
             new SingleClientFactory(),
             Options.Create(new SessionRunnerSettings { BaseUrl = "http://runner.test" }));
 
-        await using var h = await RemoteControlRecoveryHarness.CreateAsync(
-            extraServices: services => services.AddSingleton<ISessionRunnerClient>(
-                new ConditionalOverRealTransportRunner(holder, http)));
-        holder.Inner = h.Runner;
+        var write = await transport.SendConditionalInputAsync(
+            sessionId,
+            new RunnerConditionalInputRequest(generation, 7, "/remote-control"),
+            CancellationToken.None);
 
-        var result = await h.ReserveAndExecuteAsync();
-        result.ShouldBe(RemoteControlArmResult.ArmUnconfirmed);
+        write.Outcome.ShouldBe(ConditionalInputOutcomes.Unknown, string.Join(" | ", handler.Faults));
+        child.ShouldBe(["/remote-control"], "a lost reply does not un-write the bytes");
+        handler.Forwarded.Count.ShouldBe(1, "a lost reply is not a retry signal");
 
-        // The write genuinely happened: the handler forwarded it, and the child took the bytes.
-        handler.Forwarded.Count.ShouldBe(1);
-        handler.Forwarded[0].Input.ShouldBe("/remote-control");
+        // What that Unknown means for the request, on the production recovery graph.
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        h.Adapter.ConditionalOutcomeOverride = ConditionalInputOutcomes.Unknown;
+        (await h.ReserveAndExecuteAsync()).ShouldBe(RemoteControlArmResult.ArmUnconfirmed);
         h.Adapter.ConditionalInputs.Count(i => i == "/remote-control").ShouldBe(1);
 
         Guid rowId;
@@ -448,7 +458,9 @@ public class RemoteControlMaintenanceQueueTests
             rowId = row.Id;
         }
 
-        // A read failure is Unknown, not an empty screen, and not verification.
+        h.Adapter.ConditionalOutcomeOverride = null;
+
+        // A screen that cannot be read is Unknown, not an empty screen, and not verification.
         h.Runner.HangSnapshot = true;
         h.Runner.HangDelay = TimeSpan.FromSeconds(5);
         (await h.ReserveAsync()).ShouldBeNull("an unresolved possible write blocks the next arm");
@@ -473,89 +485,41 @@ public class RemoteControlMaintenanceQueueTests
         (await h.ReserveAsync()).ShouldNotBeNull("the veto is generation-scoped, not permanent");
     }
 
-    /// <summary>Late-bound so the harness's own scripted runner can be the forwarding target.</summary>
-    private sealed class InnerRunnerHolder
-    {
-        public ISessionRunnerClient? Inner { get; set; }
-    }
-
     private sealed class SingleClientFactory : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => new();
     }
 
     /// <summary>
-    /// Records the conditional operation, FORWARDS it (so the child really receives the bytes),
-    /// then drops the reply — the shape where an acknowledgement never comes back but the write
-    /// is not undone.
+    /// Records the conditional operation and FORWARDS it (so the child really receives the bytes),
+    /// then drops the reply — the shape where an acknowledgement never comes back but the write is
+    /// not undone.
     /// </summary>
     private sealed class RecordingLostReplyHandler(
-        Func<Guid, RunnerConditionalInputRequest, Task<RunnerConditionalInputResult>> forward)
-        : HttpMessageHandler
+        Func<RunnerConditionalInputRequest, RunnerConditionalInputResult> forward) : HttpMessageHandler
     {
         public List<RunnerConditionalInputRequest> Forwarded { get; } = [];
-        public bool LoseReply { get; set; } = true;
+        public List<string> Faults { get; } = [];
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            var segments = request.RequestUri!.AbsolutePath.Trim('/').Split('/');
-            var sessionId = Guid.Parse(segments[1]);
-            var body = await request.Content!.ReadFromJsonAsync<RunnerConditionalInputRequest>(
-                new JsonSerializerOptions(JsonSerializerDefaults.Web), cancellationToken);
-            var result = await forward(sessionId, body!);
-            Forwarded.Add(body!);
-            if (LoseReply)
-                throw new HttpRequestException("the reply was lost after the write");
-            return new HttpResponseMessage(HttpStatusCode.OK)
+            RunnerConditionalInputRequest? body;
+            try
             {
-                Content = new StringContent(
-                    JsonSerializer.Serialize(result, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
-                    Encoding.UTF8,
-                    "application/json"),
-            };
+                request.RequestUri!.AbsolutePath.ShouldEndWith("/conditional-input");
+                body = await request.Content!.ReadFromJsonAsync<RunnerConditionalInputRequest>(
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web), cancellationToken);
+                forward(body!);
+            }
+            catch (Exception ex)
+            {
+                Faults.Add(ex.ToString());
+                throw;
+            }
+
+            Forwarded.Add(body!);
+            throw new HttpRequestException("the reply was lost after the write");
         }
-    }
-
-    /// <summary>
-    /// Everything except the conditional write stays on the scripted runner; the conditional write
-    /// travels the production <see cref="SessionRunnerHttpClient"/> over the recording handler.
-    /// </summary>
-    private sealed class ConditionalOverRealTransportRunner(
-        InnerRunnerHolder holder, SessionRunnerHttpClient transport) : ISessionRunnerClient
-    {
-        private ISessionRunnerClient Inner => holder.Inner!;
-
-        public Task<RunnerConditionalInputResult> SendConditionalInputAsync(
-            Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct) =>
-            transport.SendConditionalInputAsync(sessionId, request, ct);
-
-        public Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct) =>
-            Inner.GetCapabilitiesAsync(ct);
-        public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
-            Inner.ListAsync(ct);
-        public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
-            Inner.GetAsync(sessionId, ct);
-        public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
-            Inner.GetSnapshotAsync(sessionId, ct);
-        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
-            Inner.GetTranscriptAsync(sessionId, ct);
-        public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) =>
-            Inner.SendInputAsync(sessionId, input, ct);
-        public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct) =>
-            Inner.StartAsync(sessionId, spec, ct);
-        public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) =>
-            Inner.GetBufferAsync(sessionId, ct);
-        public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) =>
-            Inner.ClearLiveBufferAsync(sessionId, ct);
-        public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) =>
-            Inner.ResizeAsync(sessionId, cols, rows, ct);
-        public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct) =>
-            Inner.KillAsync(sessionId, ct);
-        public Task<RunnerKillGenerationResult> KillGenerationAsync(
-            Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct) =>
-            Inner.KillGenerationAsync(sessionId, expectedAcceptedStartedAt, ct);
-        public IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(CancellationToken ct) =>
-            Inner.StreamEventsAsync(ct);
     }
 }

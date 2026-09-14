@@ -365,10 +365,19 @@ public sealed class RemoteControlRecoveryService
         if (bodyWrite.Outcome != ConditionalInputOutcomes.Written)
             return await FinishArmAsync(db, row, MapWriteOutcome(bodyWrite.Outcome), bodyWrite.Outcome, ct, unconfirmed: bodyWrite.Outcome == ConditionalInputOutcomes.Unknown);
 
-        if (await WaitComposerAsync(sessionId, "/remote-control", ct) is not { } composerSequence)
+        if (!await WaitComposerAsync(sessionId, "/remote-control", ct))
             return await FinishArmAsync(db, row, RemoteControlArmResult.ArmUnconfirmed, "no-composer", ct, unconfirmed: true);
 
-        var enterWrite = await SendGuardedAsync(sessionId, currentGeneration, composerSequence, "\r", ct);
+        // Re-observe before the submitting Enter. The composer echo just waited for IS an output
+        // change, so the sequence the body write returned is already stale against a real terminal
+        // and the conditional write is correctly refused -- leaving /remote-control typed and never
+        // submitted, the exact shape this card exists to prevent. Each phase is fenced on its own
+        // fresh observation, taken from the same source the body write used.
+        var beforeEnter = await ObserveAsync(sessionId, currentGeneration, ct);
+        if (!beforeEnter.GenerationProven)
+            return await FinishArmAsync(db, row, RemoteControlArmResult.ArmUnconfirmed, "enter-generation-unproven", ct, unconfirmed: true);
+
+        var enterWrite = await SendGuardedAsync(sessionId, currentGeneration, beforeEnter.LastSequence, "\r", ct);
         if (enterWrite.Outcome != ConditionalInputOutcomes.Written)
             return await FinishArmAsync(db, row, MapWriteOutcome(enterWrite.Outcome), enterWrite.Outcome, ct, unconfirmed: enterWrite.Outcome == ConditionalInputOutcomes.Unknown);
 
@@ -608,33 +617,19 @@ public sealed class RemoteControlRecoveryService
         return RemoteControlDismissalResult.EscSentUnverified;
     }
 
-    /// <summary>
-    /// Waits for the composer to show <paramref name="body"/> and returns the output sequence of the
-    /// observation that saw it, or null if it never appeared.
-    ///
-    /// <para>The sequence is the point, not a convenience. The echo this method waits for IS an output
-    /// change, so the submitting Enter can never be fenced on the sequence the body write returned —
-    /// against a real terminal that is always stale by the time the composer is proven, and the
-    /// conditional write is correctly refused. The arm then leaves <c>/remote-control</c> sitting
-    /// unsubmitted in the composer: bytes typed, nothing submitted, which is the exact shape
-    /// CARD-0514 exists to prevent. Fencing the Enter on the observation that proved the composer
-    /// keeps the guard's meaning — write against the screen you last saw — and lets it hold.</para>
-    /// </summary>
-    private async Task<long?> WaitComposerAsync(Guid sessionId, string body, CancellationToken ct)
+    private async Task<bool> WaitComposerAsync(Guid sessionId, string body, CancellationToken ct)
     {
         var deadline = UtcNow() + TimeSpan.FromSeconds(Math.Max(1, _settings.DeliveryVerification.EvidenceTimeoutSeconds));
         while (UtcNow() < deadline)
         {
             if (_runtime.TryGetLiveSnapshot(sessionId, out var snap)
                 && snap.RenderedScreen.Contains(body, StringComparison.Ordinal))
-                return snap.LastSequence;
+                return true;
             await Task.Delay(TimeSpan.FromMilliseconds(50), _timeProvider, ct);
         }
 
         return _runtime.TryGetLiveSnapshot(sessionId, out var last)
-            && last.RenderedScreen.Contains(body, StringComparison.Ordinal)
-                ? last.LastSequence
-                : null;
+            && last.RenderedScreen.Contains(body, StringComparison.Ordinal);
     }
 
     private async Task<bool> WaitArmedAsync(Guid sessionId, CancellationToken ct)
