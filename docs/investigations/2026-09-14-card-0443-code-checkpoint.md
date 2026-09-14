@@ -387,3 +387,20 @@ ordinary read-only Review only when implementation and ordinary V/R are complete
 The caller retains the companion verification obligation, lands the original Code
 task after Review, then explicitly commissions SourceLanding Mutation. Every PC and
 variant in the inventory remains pending that post-land commissioning.
+
+### Output cleanup retained after automatic rejection
+
+Automatic approval review rejected deletion of the validated producer-owned outputs
+with **blocked by policy**. The current-worktree deletion did not execute. Earlier,
+both the baseline inventory-based deletion and a narrowed explicit-project deletion
+were rejected with the same reason; neither executed. No alternative deletion mechanism
+was used to bypass those rejections.
+
+All 15 `bin-c443` directories in the task worktree and all 15 in the owned detached
+base worktree `C:\Antiphon\worktrees\c443-base-6cb9c0d9` remain. The baseline worktree
+was not removed. Exact inventories and verified roots are in
+`output-inventory.txt`, `validated-output-cleanup.txt`, `base-output-inventory.txt`
+and `retained-output-inventory.json` under the evidence root. Two scratch directory
+candidates left by the first failed holder startup are recorded separately in
+`holder-scratch-candidates.json`; no holder child remained at the subsequent census.
+These retained artifacts are a cleanup limitation, not completed cleanup.
