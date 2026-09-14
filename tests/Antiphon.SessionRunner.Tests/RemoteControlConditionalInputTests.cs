@@ -22,6 +22,7 @@ public class RemoteControlConditionalInputTests
         var generation = SessionGeneration.Normalize(DateTime.UtcNow);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         await runtime.StartAsync(Launch(sessionId, generation), cts.Token);
+        await Task.Delay(300, cts.Token);
         var snapshot = runtime.GetSnapshot(sessionId);
 
         var written = await runtime.SendConditionalInputAsync(
@@ -70,6 +71,7 @@ public class RemoteControlConditionalInputTests
         var generationB = SessionGeneration.Next(generationA, DateTime.UtcNow.AddMinutes(1));
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(40));
         await runtime.StartAsync(Launch(sessionId, generationA), cts.Token);
+        await Task.Delay(300, cts.Token);
         var snapshot = runtime.GetSnapshot(sessionId);
         var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
