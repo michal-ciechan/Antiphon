@@ -2854,7 +2854,10 @@ public sealed class AgentTaskDispatcher
         string CardIdentifier,
         string Tip,
         int CommitsAbove,
-        string Subject)
+        string Subject,
+        DateTime CreatedAt,
+        string? FullTipSha,
+        int CoveredCount = 0)
     {
         public string ShortId => DelegationReportFormatter.Short(TaskId);
 
@@ -2867,8 +2870,9 @@ public sealed class AgentTaskDispatcher
                 ? $"1 commit: '{Subject}'"
                 : $"{CommitsAbove} commits: '{Subject}'";
             return $"task {DelegationReportFormatter.Short(newTaskId)} branched from {BaseRef} without "
-                + $"{CardIdentifier}'s kept branch {Branch} ({Tip}, {commits}). "
-                + $"Land {ShortId} first, or expect its commits to be absent from this branch.";
+                + $"{CardIdentifier}'s kept branch {Branch} ({FullTipSha ?? Tip}, {commits}). "
+                + $"Land {ShortId} first, or expect its commits to be absent from this branch."
+                + (CoveredCount == 0 ? "" : $" At the observed tips, this warning also covers {CoveredCount} other kept sibling branches.");
         }
     }
 
@@ -2905,7 +2909,7 @@ public sealed class AgentTaskDispatcher
                 && t.Workspace == WorkspaceMode.Worktree
                 && (t.Status == AgentTaskStatus.Succeeded || t.Status == AgentTaskStatus.Blocked)
                 && t.WorktreeBranch != null)
-            .Select(t => new { t.Id, t.WorktreeBranch, t.RepoPath, t.WorktreePath, t.LandRequestedAt })
+            .Select(t => new { t.Id, t.WorktreeBranch, t.RepoPath, t.WorktreePath, t.LandRequestedAt, t.CreatedAt })
             .ToListAsync(ct);
 
         var sameRepo = siblings
@@ -2925,10 +2929,12 @@ public sealed class AgentTaskDispatcher
             var branch = sibling.WorktreeBranch!;
             if (!await _worktrees.KeptBranchExistsAsync(task.RepoPath, branch, ct))
                 continue;
-            if (await _worktrees.ContainsPatchesAsync(task.RepoPath, branch, baseRef, ct))
+            var fullTip = await _worktrees.ResolveKeptBranchTipAsync(task.RepoPath, branch, ct);
+            if (fullTip is not null && await _worktrees.ContainsPatchesAsync(task.RepoPath, fullTip, baseRef, ct))
                 continue;
 
-            var described = await _worktrees.DescribeKeptBranchAsync(task.RepoPath, branch, baseRef, ct);
+            var described = fullTip is null ? null
+                : await _worktrees.DescribeKeptBranchAsync(task.RepoPath, fullTip, baseRef, ct);
             var unlanded = new UnlandedSibling(
                 sibling.Id,
                 branch,
@@ -2936,7 +2942,9 @@ public sealed class AgentTaskDispatcher
                 cardIdentifier,
                 described?.Tip ?? "unknown",
                 described?.CommitsAbove ?? 0,
-                described?.Subject ?? "");
+                described?.Subject ?? "",
+                sibling.CreatedAt,
+                fullTip);
 
             if (sibling.LandRequestedAt is not null)
             {
@@ -2947,9 +2955,19 @@ public sealed class AgentTaskDispatcher
             warnings.Add(unlanded);
         }
 
-        return hold is not null
-            ? new SiblingBaseGuard(hold, [], baseRef)
-            : new SiblingBaseGuard(null, warnings, baseRef);
+        // Check every original landing hold before collapse. Containment is no landing authority.
+        if (hold is not null) return new SiblingBaseGuard(hold, [], baseRef);
+        var tips = warnings.Select(w => w.FullTipSha).OfType<string>().Distinct(StringComparer.Ordinal).ToList();
+        var edges = new List<(string Ancestor, string Descendant)>();
+        foreach (var ancestor in tips)
+            foreach (var descendant in tips)
+                if (ancestor != descendant && await _worktrees.IsCommitAncestorAsync(task.RepoPath, ancestor, descendant, ct))
+                    edges.Add((ancestor, descendant));
+        var byTask = warnings.ToDictionary(w => w.TaskId);
+        var reduced = SiblingWarningReducer.Reduce(
+            warnings.Select(w => new SiblingWarningReducer.Candidate(w.TaskId, w.Branch, w.CreatedAt, w.FullTipSha)), edges);
+        return new SiblingBaseGuard(null, reduced.Select(g => byTask[g.Representative.TaskId]
+            with { CoveredCount = g.Members.Count - 1 }).ToList(), baseRef);
     }
 
     private async Task<bool> ExpireClaimedOptionalWorkAsync(AgentTask task, CancellationToken ct)

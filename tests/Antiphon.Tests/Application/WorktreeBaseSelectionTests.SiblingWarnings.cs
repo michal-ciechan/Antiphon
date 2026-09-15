@@ -26,7 +26,7 @@ public partial class WorktreeBaseSelectionTests
         await repo.GitAsync("branch", "-f", "old", after);
         (await service.IsCommitAncestorAsync(repo.Path, a!, b!, default)).ShouldBeTrue();
         git.Commands.Last().ShouldBe(new[] { "merge-base", "--is-ancestor", before, after });
-        (await service.DescribeKeptBranchAsync(repo.Path, a!, b!, default))!.Subject.ShouldBe("add base");
+        (await service.DescribeKeptBranchAsync(repo.Path, a!, b!, default))!.Subject.ShouldBe("edit base");
         foreach (var output in new[] { "deadbeef", "unknown", before + "\n" + after, new string('g', 40) })
         {
             git.Probe = _ => new(0, output, "");
