@@ -17,7 +17,7 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 [Category("Slow")]
-public class WorktreeBaseSelectionTests
+public partial class WorktreeBaseSelectionTests
 {
     [Test]
     public async Task C508_UnresolvedDefaultRetainsName()
