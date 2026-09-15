@@ -87,6 +87,7 @@ internal static class DelegationTestServices
         services.TryAddSingleton<ILandingVerifier, LandingVerifier>();
         services.TryAddScoped<AgentTaskLandingProtocol>();
         services.AddGitWorkspaceService();
+        services.TryAddSingleton<GatedCommitService>();
         services.TryAddScoped<DelegationWorktreeService>();
         services.TryAddScoped<DispatchBaseWarningIntentService>();
         return services;
