@@ -169,6 +169,63 @@ public partial class AgentTaskDispatchBaseGuardTests
     }
 
     [Test]
+    public async Task C540_ClaimLoserOwesNoIntent()
+    {
+        await using var w = await SiblingWorld.CreateAsync();
+        var a = await w.AddAsync(); await w.AddAsync(a, alias: true);
+        await w.Db.SaveChangesAsync();
+        await using var provider = CreateProvider(w.Connection, w.Repo.WorktreeRoot, onLeaseAcquired: async () =>
+        {
+            await using var edit = w.Fresh();
+            await edit.AgentTasks.Where(t => t.Id == w.Task.Id).ExecuteUpdateAsync(s => s.SetProperty(t => t.ConcurrencyToken, Guid.NewGuid()));
+        });
+        await using var scope = provider.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+        await using var db = w.Fresh();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == w.Task.Id);
+        task.Status.ShouldBe(AgentTaskStatus.Queued); task.WorktreePath.ShouldBeNull(); task.AgentSessionId.ShouldBeNull();
+        (await db.AgentTaskDispatchWarningIntents.CountAsync(i => i.TaskId == task.Id)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C540_ObservationsRemainPinned()
+    {
+        await using var w = await SiblingWorld.CreateAsync();
+        var a = await w.AddAsync(); var b = await w.AddAsync(a);
+        await w.Db.SaveChangesAsync();
+        var before = new Dictionary<string, string>();
+        foreach (var row in new[] { a, b }) before.Add(row.WorktreeBranch!, (await w.Repo.GitReadAsync("rev-parse", row.WorktreeBranch!)).Trim());
+        var git = new MovingSiblingGit(before.Keys.ToHashSet());
+        await using var provider = CreateProvider(w.Connection, w.Repo.WorktreeRoot, git: git);
+        await using var scope = provider.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+        await using var db = w.Fresh();
+        var intent = (await db.AgentTaskDispatchWarningIntents.Where(i => i.TaskId == w.Task.Id).ToListAsync()).ShouldHaveSingleItem();
+        intent.WarningKey.ShouldBe(DispatchBaseNotificationPayload.SiblingKey(b.Id));
+        intent.Detail.ShouldContain(before[b.WorktreeBranch!]); intent.Detail.ShouldContain("also covers 1");
+        foreach (var tip in before.Values)
+        {
+            git.Commands.ShouldContain(args => args.SequenceEqual(new[] { "cherry", "master", tip }));
+            git.Commands.ShouldContain(args => args.SequenceEqual(new[] { "log", "-1", "--format=%s", tip }));
+        }
+        git.Commands.ShouldContain(args => args.SequenceEqual(new[] { "merge-base", "--is-ancestor", before[a.WorktreeBranch!], before[b.WorktreeBranch!] }));
+    }
+
+    private sealed class MovingSiblingGit(HashSet<string> branches) : LandingGit
+    {
+        public List<string[]> Commands { get; } = [];
+        public override async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
+        {
+            Commands.Add(arguments.ToArray());
+            var result = await base.RunAsync(repository, arguments, ct);
+            foreach (var branch in branches)
+                if (arguments.SequenceEqual(new[] { "rev-parse", "--verify", "--quiet", $"refs/heads/{branch}^{{commit}}" }))
+                    (await base.RunAsync(repository, new[] { "update-ref", "refs/heads/" + branch, "master" }, ct)).Succeeded.ShouldBeTrue();
+            return result;
+        }
+    }
+
+    [Test]
     [Arguments(0)]
     [Arguments(1)]
     [Arguments(20)]
@@ -177,6 +234,12 @@ public partial class AgentTaskDispatchBaseGuardTests
         await using var w = await SiblingWorld.CreateAsync();
         var expected = new List<(AgentTask, int)>();
         for (var i = 0; i < uniqueTips; i++) expected.Add((await w.AddAsync(), 0));
+        if (uniqueTips == 1)
+        {
+            var alias = await w.AddAsync(expected[0].Item1, alias: true);
+            alias.CreatedAt = expected[0].Item1.CreatedAt.AddMinutes(1);
+            expected[0] = (alias, 1);
+        }
         var git = new AncestryCensus();
         var watch = Stopwatch.StartNew();
         await w.RunAsync(expected.ToArray(), git: git);

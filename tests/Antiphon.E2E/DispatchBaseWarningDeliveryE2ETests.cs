@@ -37,6 +37,9 @@ public class DispatchBaseWarningDeliveryE2ETests
             (await db.TranscriptEntries.CountAsync(p => p.AgentSessionId == f.CallerId && p.Kind == TranscriptKinds.UserPrompt
                 && (p.Text!.Contains("[dispatch-base ") || p.Text.Contains("kept branch")))).ShouldBe(0);
         }
+        Directory.GetFiles(Path.Combine(f.Root, "native"), "updates.jsonl", SearchOption.AllDirectories)
+            .SelectMany(File.ReadAllLines).Count(line => line.Contains("user_message_chunk")
+                && (line.Contains("[dispatch-base ") || line.Contains("kept branch"))).ShouldBe(0);
         await f.ReleaseBusyAsync(); await f.AssertDispatchReceiptsAsync(intents);
     }
 
@@ -109,7 +112,7 @@ public class DispatchBaseWarningDeliveryE2ETests
             else if (cut is "receipt" or "verdict")
             {
                 var prompts = await db.TranscriptEntries.Where(p => p.AgentSessionId == f.CallerId && p.Kind == TranscriptKinds.UserPrompt).ToListAsync();
-                prompts.ShouldContain(p => intents.Any(i => Antiphon.Agents.Pty.PromptSubmissionMatch.IsCompleteIn(i.Body, p.Text ?? "")));
+                prompts.ShouldContain(p => intents.Any(i => PromptSubmissionMatch.IsCompleteIn(i.Body, p.Text ?? "")));
             }
             else if (cut == "attempt")
             {
