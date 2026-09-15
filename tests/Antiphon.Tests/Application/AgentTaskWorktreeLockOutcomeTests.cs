@@ -130,8 +130,20 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
                 var prompt = await db.TranscriptEntries.AsNoTracking().SingleAsync(p => p.AgentSessionId == bridge.SessionId
                     && p.Sequence == confirmed.ConfirmingPromptSequence && p.Kind == TranscriptKinds.UserPrompt);
                 PromptSubmissionMatch.Normalize(prompt.Text!).ShouldBe(PromptSubmissionMatch.Normalize(original.Body));
-                if (siblingWarning is not null) prompt.Text!.ShouldContain(siblingCount == 1 ? siblingWarning
-                    : $"unlanded-sibling={siblingCount} siblings, showing first 0");
+                if (siblingWarning is not null && siblingCount == 1) prompt.Text!.ShouldContain(siblingWarning);
+                else if (siblingWarning is not null)
+                {
+                    var summary = original.Body.Split('\n').Single(line => line.StartsWith("unlanded-sibling="));
+                    summary.ShouldStartWith($"unlanded-sibling={siblingCount} siblings, showing first ");
+                    var countAndNames = summary.Split("showing first ")[1].Split(": ", 2);
+                    var shown = int.Parse(countAndNames[0]);
+                    shown.ShouldBeGreaterThan(0); shown.ShouldBeLessThan(siblingCount);
+                    var names = countAndNames[1].Split(',');
+                    names.Length.ShouldBe(shown);
+                    var expectedTokens = siblingWarning["unlanded-sibling=".Length..].Split(',');
+                    foreach (var token in names) expectedTokens.ShouldContain(token);
+                    prompt.Text!.ShouldContain(summary);
+                }
                 else prompt.Text!.ShouldNotContain("unlanded-sibling=");
                 bridge.Adapter.SubmittedBodies.Skip(baselineSubmissions).ShouldBe([original.Body]);
                 (await db.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId == original.Id)).ShouldBe(1);
