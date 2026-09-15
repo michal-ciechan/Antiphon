@@ -125,6 +125,106 @@ public class AgentTaskDeliveryWatchdogTests
         stopper.Killed.ShouldContain(sessionId);
     }
 
+    // CARD-0501 re-review R2 (F2b): the window BETWEEN the reuse path's two commits. TickAsync
+    // commits Dispatched and only then calls DeliverReuseMessagesAsync, whose brief insert is a
+    // separate commit in a separate scope (CARD-0077 made the two enqueues independently
+    // fault-isolated, which is also what makes them separately losable). Interrupt in between —
+    // the enqueue throws, or the process simply dies — and the durable record is a Dispatched task
+    // on a live reused session with NO brief row of its own: no queue row to strand, so nothing in
+    // the queue's own recovery can see it, and the inherited history plus a surviving refocus
+    // /compact is exactly the evidence that used to read as "it started".
+    //
+    // The two arms are the same window with and without a witness: a caught throw leaves a
+    // DeliveryTransportFailed incident, a crash between the commits leaves nothing at all. Neither
+    // is allowed to change the verdict — an incident is a breadcrumb for a human, never the thing
+    // the watchdog waits on.
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task a_reuse_brief_lost_between_the_two_commits_is_failed(bool incidentRecorded)
+    {
+        var (harness, stopper) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        var sessionId = task.AgentSessionId!.Value;
+        var dispatched = task.DispatchedAt!.Value;
+        // The reused session's inherited history, then the refocus compact that DID commit.
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            "[antiphon-task:deadbeef] The previous task's brief.",
+            dispatched.AddMinutes(-20));
+        await SeedEntryAsync(sessionId, TranscriptKinds.TurnEnd, null, dispatched.AddMinutes(-12));
+        await SeedReuseCompactionHousekeepingAsync(sessionId, dispatched.AddSeconds(2));
+        await SeedCompactQueueRowAsync(sessionId);
+        if (incidentRecorded)
+            await SeedTransportFailedIncidentAsync(sessionId, task.Id);
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.SessionQueuedMessages.AnyAsync(
+            m => m.AgentSessionId == sessionId
+                && m.Body.Contains(DelegationReportFormatter.TaskMarker(task.Id))))
+            .ShouldBeFalse("the arrangement is the lost brief — the fixture must not have one");
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed,
+            "a task whose brief insert never committed has nothing left to deliver it; leaving it "
+            + "Dispatched is the 26-minute strand CARD-0003 exists to end");
+        failed.FailureReason.ShouldContain("never delivered");
+        failed.FailureReason.ShouldContain("no turn prompt of either kind for this task",
+            customMessage: "a surviving /compact is housekeeping, not this task's brief arriving");
+        stopper.Killed.ShouldContain(sessionId);
+    }
+
+    private static async Task SeedCompactQueueRowAsync(Guid sessionId)
+    {
+        await using var db = CreateContext();
+        db.SessionQueuedMessages.Add(new SessionQueuedMessage
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = sessionId,
+            Body = "/compact This session is being handed NEW, unrelated work. Keep only context useful for: X",
+            Status = QueuedMessageStatus.Sent,
+            DeliveryVerdict = DeliveryVerdict.Delivered,
+            Sequence = 1,
+            Origin = QueuedMessageOrigin.Delegation,
+            DeliveryAttempts = 1,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedTransportFailedIncidentAsync(Guid sessionId, Guid taskId)
+    {
+        await using var db = CreateContext();
+        var agentId = Guid.NewGuid();
+        var name = $"reuse-lost-{agentId:N}"[..16];
+        db.Agents.Add(new Agent
+        {
+            Id = agentId,
+            Name = name,
+            Slug = name,
+            WorkingDirectory = Path.GetTempPath(),
+            Details = "CARD-0501 R2 lost-brief fixture.",
+            Status = AgentStatus.Running,
+            Kind = AgentKind.ClaudeCode,
+            ModelLevel = AgentModelLevel.Medium,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        });
+        db.AgentIncidents.Add(new AgentIncident
+        {
+            Id = Guid.NewGuid(),
+            AgentId = agentId,
+            SessionId = sessionId,
+            Kind = AgentIncidentKind.DeliveryTransportFailed,
+            Severity = AlertSeverity.Warning,
+            Message = $"Reuse brief was not queued for task {DelegationReportFormatter.Short(taskId)}: boom",
+            FailureReason = nameof(InvalidOperationException),
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+    }
+
     [Test]
     public async Task a_reused_session_with_a_real_prompt_after_dispatch_is_left_alone()
     {
