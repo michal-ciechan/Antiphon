@@ -28,6 +28,8 @@ public sealed partial class AgentTaskCommitEndpointTests
     public Task ResetAsync()
     {
         _factory.Spy.Verbs.Clear();
+        _factory.Spy.OverrideRun = null;
+        _factory.Spy.BeforeRun = null;
         return _factory.ResetAsync();
     }
 

@@ -833,7 +833,7 @@ public class GitWorkspaceService
         string workingDirectory, string sha, CancellationToken ct)
     {
         var (code, stdout, stderr) = await RunAsync(
-            workingDirectory, ct, "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", sha);
+            workingDirectory, ct, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-z", sha);
         if (code != 0)
             return new(false, [], code, "git diff-tree inspection failed: " + stderr);
         return new(true, stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries)
@@ -903,6 +903,14 @@ public class GitWorkspaceService
     /// <summary>Recovery accepts only the exact trailer block for this settlement, never prose mentioning a task.</summary>
     public async Task<GitStrictList<string>> FindSettlementCommitsAsync(
         string repo, Guid taskId, string settlement, CancellationToken ct)
+        => await FindGatedCommitsAsync(repo, taskId, "antiphon-settlement", settlement, ct);
+
+    public Task<GitStrictList<string>> FindCommitOperationAsync(
+        string repo, Guid taskId, Guid operationId, CancellationToken ct) =>
+        FindGatedCommitsAsync(repo, taskId, "antiphon-operation", operationId.ToString("D"), ct);
+
+    private async Task<GitStrictList<string>> FindGatedCommitsAsync(
+        string repo, Guid taskId, string identityKey, string identity, CancellationToken ct)
     {
         var head = await RunAsync(repo, ct, "rev-parse", "--verify", "--quiet", "HEAD");
         if (head.Code != 0)
@@ -921,7 +929,7 @@ public class GitWorkspaceService
             return new(false, [], head.Code, head.Stderr);
         }
         var result = await RunAsync(repo, ct, "log", "--fixed-strings",
-            $"--grep=antiphon-settlement: {settlement}", "--format=%H");
+            $"--grep={identityKey}: {identity}", "--format=%H");
         if (result.Code != 0) return new(false, [], result.Code, result.Stderr);
         var matches = new List<string>();
         foreach (var sha in result.Stdout.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
@@ -930,7 +938,7 @@ public class GitWorkspaceService
             if (trailers.Code != 0) return new(false, [], trailers.Code, trailers.Stderr);
             var lines = trailers.Stdout.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
             if (Exact("antiphon", "true") && Exact("antiphon-task", taskId.ToString("D"))
-                && Exact("antiphon-commit", "gated") && Exact("antiphon-settlement", settlement))
+                && Exact("antiphon-commit", "gated") && Exact(identityKey, identity))
                 matches.Add(sha);
             bool Exact(string key, string value) => lines.Count(l => l.StartsWith(key + ":", StringComparison.Ordinal)) == 1
                 && lines.Contains(key + ": " + value, StringComparer.Ordinal);

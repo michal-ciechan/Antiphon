@@ -12,6 +12,29 @@ namespace Antiphon.Tests.Application;
 public sealed class GatedCommitServiceTests
 {
     [Test]
+    public async Task Post_commit_receipt_uses_the_operation_even_when_HEAD_advances()
+    {
+        using var repo = await SeedAsync();
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "new.txt"), "new");
+        var (svc, spy) = Gate();
+        string? committed = null;
+        spy.BeforeRun = async args =>
+        {
+            if (committed is null && spy.Verbs.Contains("commit") && args[0] == "rev-parse")
+            {
+                committed = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+                await repo.CommitFileAsync("later.txt", "later");
+            }
+        };
+        var result = await svc.CommitAsync(repo.Path, ["new.txt"], Message(), Trailers(), CancellationToken.None);
+        committed.ShouldNotBeNull();
+        result.Sha.ShouldBe(committed);
+        result.Files.ShouldBe(new[] { "new.txt" });
+        (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldNotBe(committed);
+        spy.Verbs.Count(v => v == "commit").ShouldBe(1);
+    }
+
+    [Test]
     [Arguments("unborn")]
     [Arguments("head-error")]
     [Arguments("history-error")]

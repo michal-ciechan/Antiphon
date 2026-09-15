@@ -275,6 +275,13 @@ POST   /api/agent-tasks/{id}/commit          gated commit of named paths (task-t
                                              409 codes: ignored_path_staged, ignore_rules_changed,
                                              nothing_to_commit, repository_busy, commit_failed.
                                              403 `delegation_token_required` / `commit_on_settle_never`.
+                                             503 `commit_inspection_pending` means the commit succeeded:
+                                             `{ committed: true, operationId, sha? }`; files are unknown.
+                                             Recover that operation before another POST.
+GET    /api/agent-tasks/{id}/commit/{operationId} read-only recovery, same task token required.
+                                             200 `{ sha, files }` for the exact task/operation trailers,
+                                             even after HEAD advances or policy is disabled. 404 no match;
+                                             503 inspection unavailable/ambiguous. Never commits or pushes.
 POST   /api/agent-tasks/{id}/cancel  |  /retry  |  /escalate
 POST   /api/agent-tasks/{id}/reply           answer a Blocked delegate's question.
                                              Body `ReplyToAgentTaskRequest`:
