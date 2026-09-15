@@ -565,7 +565,8 @@ public class AgentTaskPoolTests
         await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
         stopper.Killed.ShouldNotContain(session);
         await using var db = CreateContext();
-        (await db.Agents.SingleAsync(a => a.Id == agent)).PoolIdleSince.ShouldBeGreaterThanOrEqualTo(before);
+        (await db.Agents.SingleAsync(a => a.Id == agent)).PoolIdleSince.ShouldNotBeNull()
+            .ShouldBeGreaterThanOrEqualTo(before);
     }
 
     [Test]
