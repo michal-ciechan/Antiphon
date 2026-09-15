@@ -2983,6 +2983,8 @@ public sealed class AgentTaskReplyService
             return null;
         var dirtyPaths = dirty.Items
             .Select(c => c.Path.Replace('\\', '/'))
+            .Where(p => !p.Equals(".antiphon", StringComparison.OrdinalIgnoreCase)
+                && !p.StartsWith(".antiphon/", StringComparison.OrdinalIgnoreCase))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
 

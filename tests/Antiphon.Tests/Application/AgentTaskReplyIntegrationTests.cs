@@ -3391,6 +3391,7 @@ public partial class AgentTaskReplyIntegrationTests
     public async Task a_shared_report_whose_claimed_paths_are_clean_reports_git_landed()
     {
         using var repo = new ScratchGitRepo("antiphon-reply-shared-landed");
+        await repo.CommitFileAsync(".gitignore", ".antiphon/\n");
         Directory.CreateDirectory(Path.Combine(repo.Path, "docs", "superpowers"));
         await repo.CommitFileAsync("docs/superpowers/committed-plan.md", "committed plan\n");
         var factory = new TestScopeFactory(repo.WorktreeRoot);
