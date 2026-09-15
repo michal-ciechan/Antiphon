@@ -33,6 +33,36 @@ namespace Antiphon.Tests.Application;
 public class AgentTaskReplyIntegrationTests
 {
     [Test]
+    public async Task releasing_a_shared_task_whose_session_is_mid_turn_pools_it_and_warns()
+    {
+        using var workspace = new TempWorkspace();
+        var agent = await SeedAgentAsync(workspace.Path, $"c492-{Guid.NewGuid():N}");
+        var (task, session) = await SeedDispatchedTaskAsync(workspace.Path, configure: t =>
+        {
+            t.AgentId = agent;
+            t.Status = AgentTaskStatus.Failed;
+        });
+        await using var db = CreateContext();
+        db.TranscriptEntries.Add(NewEntry(session, 1, TranscriptKinds.UserPrompt, "Still working"));
+        await db.SaveChangesAsync();
+        using var factory = new TestScopeFactory();
+        var logger = new SettlementLogger();
+        var service = CreateService(factory, logger: logger);
+        // Exercise release directly: a real later prompt now prevents stale-stub failure.
+        var release = typeof(AgentTaskReplyService).GetMethod("ReleaseDelegateAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        await (Task)release.Invoke(service,
+            [factory.ServiceProvider, db, task, DateTime.UtcNow, CancellationToken.None, true])!;
+        await db.SaveChangesAsync();
+        await using var verify = CreateContext();
+        var stored = await verify.Agents.SingleAsync(a => a.Id == agent);
+        stored.Status.ShouldBe(AgentStatus.Idle);
+        stored.PoolIdleSince.ShouldNotBeNull();
+        factory.Stopper.Killed.ShouldBeEmpty();
+        logger.Warnings.ShouldContain(e => e.Message.Contains("pooled warm while session"));
+    }
+
+    [Test]
     public Task a_transient_stub_with_a_later_prompt_does_not_fail_the_task() =>
         AssertResumedStubAsync(TranscriptKinds.UserPrompt);
 
@@ -3886,6 +3916,11 @@ public class AgentTaskReplyIntegrationTests
     {
         private readonly object _gate = new();
         private readonly List<LogEntry> _entries = [];
+
+        public LogEntry[] Warnings
+        {
+            get { lock (_gate) return _entries.Where(e => e.Level == LogLevel.Warning).ToArray(); }
+        }
 
         public LogEntry[] SettlementFailures
         {

@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -23,7 +24,7 @@ namespace Antiphon.Tests.Application;
 /// both correlations), and the janitor keeps "warm Claudes" a bounded trade, not a leak.
 /// </summary>
 [Category("Integration")]
-[NotInParallel("AgentQueue")]
+[NotInParallel]
 public class AgentTaskPoolTests
 {
     [Test]
@@ -551,6 +552,111 @@ public class AgentTaskPoolTests
     }
 
     // ---- the janitor -----------------------------------------------------------------------
+
+    [Test]
+    public async Task the_janitor_does_not_retire_a_warm_agent_whose_session_is_mid_turn()
+    {
+        using var workspace = new TempWorkspace();
+        var (dispatcher, stopper, provider) = CreateHarness();
+        using var ownedProvider = provider;
+        var (agent, session) = await SeedWarmAgentAsync(workspace.Path, AgentModelLevel.Medium, 120);
+        await SeedMidTurnTranscriptAsync(session);
+        var before = DateTime.UtcNow.AddMinutes(-1);
+        await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
+        stopper.Killed.ShouldNotContain(session);
+        await using var db = CreateContext();
+        (await db.Agents.SingleAsync(a => a.Id == agent)).PoolIdleSince.ShouldBeGreaterThanOrEqualTo(before);
+    }
+
+    [Test]
+    public async Task the_janitor_retires_it_after_the_turn_ends_and_the_ttl_elapses_again()
+    {
+        using var workspace = new TempWorkspace();
+        var (dispatcher, stopper, provider) = CreateHarness();
+        using var ownedProvider = provider;
+        var (agent, session) = await SeedWarmAgentAsync(workspace.Path, AgentModelLevel.Medium, 120);
+        await SeedMidTurnTranscriptAsync(session);
+        await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
+        stopper.Killed.ShouldNotContain(session);
+        await using (var db = CreateContext())
+        {
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(), AgentSessionId = session, Sequence = 2,
+                Kind = TranscriptKinds.TurnEnd, StopReason = "end_turn", CreatedAt = DateTime.UtcNow,
+            });
+            await db.Agents.Where(a => a.Id == agent).ExecuteUpdateAsync(u =>
+                u.SetProperty(a => a.PoolIdleSince, DateTime.UtcNow.AddMinutes(-120)));
+            await db.SaveChangesAsync();
+        }
+        var (next, nextStopper, nextProvider) = CreateHarness();
+        using var nextOwnedProvider = nextProvider;
+        await next.RetireIdleWarmAgentsAsync(CancellationToken.None);
+        nextStopper.Killed.ShouldContain(session);
+        await using var verify = CreateContext();
+        (await verify.Agents.AnyAsync(a => a.Id == agent)).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task the_janitor_retires_a_working_reading_session_silent_for_a_full_ttl()
+    {
+        using var workspace = new TempWorkspace();
+        var (dispatcher, stopper, provider) = CreateHarness();
+        using var ownedProvider = provider;
+        var (_, session) = await SeedWarmAgentAsync(workspace.Path, AgentModelLevel.Medium, 120);
+        await SeedMidTurnTranscriptAsync(session, DateTime.UtcNow.AddMinutes(-10));
+        await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
+        stopper.Killed.ShouldContain(session);
+    }
+
+    [Test]
+    public async Task the_per_directory_cap_skips_a_mid_turn_agent()
+    {
+        using var workspace = new TempWorkspace();
+        var (dispatcher, stopper, provider) = CreateHarness();
+        using var ownedProvider = provider;
+        var agents = new List<(Guid AgentId, Guid SessionId)>();
+        for (var i = 0; i < 5; i++)
+            agents.Add(await SeedWarmAgentAsync(workspace.Path, AgentModelLevel.Medium, i));
+        await SeedMidTurnTranscriptAsync(agents[4].SessionId);
+        await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
+        stopper.Killed.ShouldNotContain(agents[4].SessionId);
+        stopper.Killed.ShouldContain(agents[3].SessionId);
+        stopper.Killed.ShouldContain(agents[2].SessionId);
+        await using var verify = CreateContext();
+        var ids = agents.Select(a => a.AgentId).ToList();
+        (await verify.Agents.CountAsync(a => ids.Contains(a.Id))).ShouldBe(3);
+    }
+
+    [Test]
+    public async Task a_mid_turn_warm_agent_is_not_reused_by_the_unpinned_shop()
+    {
+        using var workspace = new TempWorkspace();
+        var (dispatcher, _, provider) = CreateHarness();
+        using var ownedProvider = provider;
+        var (busy, session) = await SeedWarmAgentAsync(workspace.Path, AgentModelLevel.Medium, 3);
+        var (idle, _) = await SeedWarmAgentAsync(workspace.Path, AgentModelLevel.Medium, 4);
+        await SeedMidTurnTranscriptAsync(session);
+        var task = await SeedQueuedTaskAsync(workspace.Path, AgentModelLevel.Medium);
+        (await dispatcher.TryReuseWarmAgentAsync(task, DateTime.UtcNow, CancellationToken.None))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.Reused);
+        task.AgentId.ShouldBe(idle);
+        var second = await SeedQueuedTaskAsync(workspace.Path, AgentModelLevel.Medium);
+        (await dispatcher.TryReuseWarmAgentAsync(second, DateTime.UtcNow, CancellationToken.None))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.SpawnFresh);
+        second.AgentId.ShouldNotBe(busy);
+    }
+
+    private static async Task SeedMidTurnTranscriptAsync(Guid session, DateTime? at = null)
+    {
+        await using var db = CreateContext();
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(), AgentSessionId = session, Sequence = 1,
+            Kind = TranscriptKinds.UserPrompt, Text = "Keep working", CreatedAt = at ?? DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+    }
 
     [Test]
     public async Task the_janitor_retires_agents_idle_past_the_ttl()
