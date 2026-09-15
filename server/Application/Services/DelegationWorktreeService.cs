@@ -120,6 +120,48 @@ public sealed class DelegationWorktreeService
         return exists.Ok;
     }
 
+    /// <summary>Snapshot one local branch as a full commit identity; unknown is never equality.</summary>
+    public async Task<string?> ResolveKeptBranchTipAsync(string repo, string branch, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(branch) || !Directory.Exists(repo)) return null;
+        try
+        {
+            var result = await GitAsync(repo, ct, "rev-parse", "--verify", "--quiet", $"refs/heads/{branch}^{{commit}}");
+            var tip = result.Ok ? SiblingWarningReducer.NormalizeTip(result.StdOut.Trim()) : null;
+            if (tip is null)
+                _logger.LogWarning("Sibling tip observation unavailable (exit {ExitCode})", result.ExitCode);
+            return tip;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning("Sibling tip observation failed ({ExceptionType})", ex.GetType().Name);
+            return null;
+        }
+    }
+
+    /// <summary>Strict historical ancestry of frozen full IDs, independent of patch equivalence.</summary>
+    public async Task<bool> IsCommitAncestorAsync(
+        string repo, string ancestorSha, string descendantSha, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (SiblingWarningReducer.NormalizeTip(ancestorSha) is not { } ancestor
+            || SiblingWarningReducer.NormalizeTip(descendantSha) is not { } descendant
+            || ancestor == descendant || !Directory.Exists(repo)) return false;
+        try
+        {
+            var result = await GitAsync(repo, ct, "merge-base", "--is-ancestor", ancestor, descendant);
+            if (!result.Ok && result.ExitCode != 1)
+                _logger.LogWarning("Sibling ancestry observation unavailable (exit {ExitCode})", result.ExitCode);
+            return result.Ok;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning("Sibling ancestry observation failed ({ExceptionType})", ex.GetType().Name);
+            return false;
+        }
+    }
+
     /// <summary>
     /// True when every commit on <paramref name="branch"/> is already present in
     /// <paramref name="baseRef"/> by patch id (<c>git cherry</c>: empty output, or every line
@@ -622,14 +664,14 @@ public sealed class DelegationWorktreeService
             TargetCheckoutRecorded: true, TargetCheckoutPath: expectedCheckout), ct);
     }
 
-    private sealed record GitResult(bool Ok, string StdOut, string StdErr, string? RebaseHeadSha = null);
+    private sealed record GitResult(bool Ok, string StdOut, string StdErr, string? RebaseHeadSha = null, int ExitCode = -1);
 
     private async Task<GitResult> GitAsync(string workingDirectory, CancellationToken ct, params string[] args)
     {
         if (_landingGit is not null)
         {
             var result = await _landingGit.RunAsync(workingDirectory, args, ct);
-            return new(result.Succeeded, result.Output, result.Diagnostic, result.RebaseHeadSha);
+            return new(result.Succeeded, result.Output, result.Diagnostic, result.RebaseHeadSha, result.ExitCode);
         }
         var psi = new ProcessStartInfo
         {
@@ -653,6 +695,6 @@ public sealed class DelegationWorktreeService
             await process.WaitForExitAsync(CancellationToken.None);
             throw;
         }
-        return new GitResult(process.ExitCode == 0, await stdout, await stderr);
+        return new GitResult(process.ExitCode == 0, await stdout, await stderr, ExitCode: process.ExitCode);
     }
 }
