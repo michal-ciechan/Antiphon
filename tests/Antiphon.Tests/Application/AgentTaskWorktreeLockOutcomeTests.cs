@@ -85,7 +85,14 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
                 original = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.RequestId == h.Context.RequestId && n.Kind == LandNotificationKind.Outcome);
                 capture.FinalizedAt.ShouldNotBeNull(); capture.TerminalEventId.ShouldBe(original.SourceEventId);
                 var terminal = await db.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.Id == original.SourceEventId);
-                if (siblingWarning is not null) terminal.Detail.ShouldContain(siblingWarning);
+                if (siblingWarning is not null)
+                {
+                    terminal.Detail.ShouldContain("unlanded-sibling=");
+                    // The sibling query has no ordering contract. Require every complete
+                    // task/branch token, including when the database returns a different order.
+                    foreach (var token in siblingWarning["unlanded-sibling=".Length..].Split(','))
+                        terminal.Detail.ShouldContain(token);
+                }
                 System.Text.Encoding.UTF8.GetByteCount(original.Body).ShouldBeLessThanOrEqualTo(1024);
                 original.ParentSessionId.ShouldBe(bridge.SessionId); original.Body.ShouldContain(capture.Id.ToString("N"));
                 original.Body.ShouldContain(owners ? h.Diagnostics.OwnerName : "InsufficientPrivileges");
@@ -141,6 +148,8 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
 
     private static async Task<string> AddUnlandedSiblingAsync(LandingSafetyHarness producer, int count, bool longBranches)
     {
+        // Valid long refs exceed MAX_PATH under this fixture's temporary root on Windows.
+        if (longBranches) await producer.Fixture.RequiredAsync(producer.Fixture.Repository, "config", "core.longpaths", "true");
         await using var db = producer.CreateContext();
         var project = new Project { Id = Guid.NewGuid(), Name = "C443 sibling warning" };
         var board = new Board { Id = Guid.NewGuid(), ProjectId = project.Id, Name = "C443 sibling warning" };
