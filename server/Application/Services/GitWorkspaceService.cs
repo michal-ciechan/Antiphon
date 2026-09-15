@@ -708,8 +708,160 @@ public class GitWorkspaceService
         return GitFileStatus.Modified;
     }
 
-    private async Task<(int Code, string Stdout, string Stderr)> RunAsync(
-        string workingDirectory, CancellationToken ct, params string[] args)
+    public sealed record GitIgnoreMatch(string Path, string Source, int Line, string Pattern)
+    {
+        public string Rule => $"{Source}:{Line}:{Pattern}";
+    }
+
+    /// <summary>
+    /// <c>git check-ignore --no-index -v -z --stdin</c> over <paramref name="paths"/>.
+    /// Exit 1 (none ignored) is an empty list; exit 0 is the matching records.
+    /// </summary>
+    public async Task<IReadOnlyList<GitIgnoreMatch>> CheckIgnoredAsync(
+        string workingDirectory, IReadOnlyList<string> paths, CancellationToken ct)
+    {
+        if (paths.Count == 0)
+            return [];
+
+        var stdin = string.Concat(paths.Select(p => p.Replace('\\', '/') + "\0"));
+        var (code, stdout, stderr) = await RunWithInputAsync(
+            workingDirectory, stdin, ct, "check-ignore", "--no-index", "-v", "-z", "--stdin");
+        if (code is not (0 or 1))
+        {
+            _logger.LogDebug("git check-ignore failed in {Dir}: {Err}", workingDirectory, stderr);
+            return [];
+        }
+
+        var matches = new List<GitIgnoreMatch>();
+        var fields = stdout.Split('\0');
+        for (var i = 0; i + 3 < fields.Length; i += 4)
+        {
+            var source = fields[i].Replace('\\', '/');
+            if (source.Length == 0)
+                break;
+            _ = int.TryParse(fields[i + 1], out var line);
+            var pattern = fields[i + 2];
+            var path = fields[i + 3].Replace('\\', '/');
+            var sourceName = source;
+            if (sourceName.Contains('/'))
+                sourceName = sourceName.Contains(".gitignore", StringComparison.Ordinal)
+                    ? sourceName
+                    : System.IO.Path.GetFileName(sourceName);
+            matches.Add(new GitIgnoreMatch(path, sourceName, line, pattern));
+        }
+
+        return matches;
+    }
+
+    public async Task<(int Code, string Stderr)> StageAsync(
+        string workingDirectory, IReadOnlyList<string>? pathspec, CancellationToken ct)
+    {
+        var args = pathspec is null || pathspec.Count == 0
+            ? new[] { "add", "-A" }
+            : ["add", "-A", "--", .. pathspec];
+        var (code, _, stderr) = await RunAsync(workingDirectory, ct, args);
+        return (code, stderr);
+    }
+
+    public async Task<IReadOnlyList<string>> StagedPathsAsync(string workingDirectory, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunAsync(
+            workingDirectory, ct, "diff", "--cached", "--name-only", "-z");
+        if (code != 0)
+            return [];
+        return stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => p.Replace('\\', '/'))
+            .ToArray();
+    }
+
+    public async Task<(int Code, string Stderr)> UnstageAsync(
+        string workingDirectory, IReadOnlyList<string> paths, CancellationToken ct)
+    {
+        if (paths.Count == 0)
+            return (0, "");
+        var (code, _, stderr) = await RunAsync(
+            workingDirectory, ct, ["reset", "-q", "--", .. paths]);
+        return (code, stderr);
+    }
+
+    public async Task<(int Code, string Stderr)> CommitOnlyAsync(
+        string workingDirectory,
+        IReadOnlyList<string>? pathspec,
+        string message,
+        IReadOnlyList<(string Key, string Value)> trailers,
+        CancellationToken ct)
+    {
+        var args = new List<string> { "commit" };
+        if (pathspec is { Count: > 0 })
+            args.Add("--only");
+        args.Add("-m");
+        args.Add(message);
+        foreach (var (key, value) in trailers)
+        {
+            args.Add("--trailer");
+            args.Add($"{key}={value}");
+        }
+
+        if (pathspec is { Count: > 0 })
+        {
+            args.Add("--");
+            args.AddRange(pathspec);
+        }
+
+        var (code, _, stderr) = await RunAsync(workingDirectory, ct, [.. args]);
+        return (code, stderr);
+    }
+
+    public async Task<string?> HeadShaAsync(string workingDirectory, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunAsync(workingDirectory, ct, "rev-parse", "HEAD");
+        var sha = stdout.Trim();
+        return code == 0 && sha.Length > 0 ? sha : null;
+    }
+
+    public async Task<IReadOnlyList<string>> DiffTreePathsAsync(
+        string workingDirectory, string sha, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunAsync(
+            workingDirectory, ct, "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", sha);
+        if (code != 0)
+            return [];
+        return stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => p.Replace('\\', '/'))
+            .ToArray();
+    }
+
+    public async Task<IReadOnlyList<(string Status, string Path)>> DiffTreeNameStatusAsync(
+        string workingDirectory, string sha, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunAsync(
+            workingDirectory, ct, "diff-tree", "--no-commit-id", "--name-status", "-r", "-z", sha);
+        if (code != 0)
+            return [];
+        var records = stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        var list = new List<(string, string)>();
+        for (var i = 0; i + 1 < records.Length; i += 2)
+            list.Add((records[i], records[i + 1].Replace('\\', '/')));
+        return list;
+    }
+
+    public async Task<string?> RevParseAsync(string workingDirectory, string rev, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunAsync(workingDirectory, ct, "rev-parse", rev);
+        var sha = stdout.Trim();
+        return code == 0 && sha.Length > 0 ? sha : null;
+    }
+
+    protected internal virtual Task<(int Code, string Stdout, string Stderr)> RunAsync(
+        string workingDirectory, CancellationToken ct, params string[] args) =>
+        RunCoreAsync(workingDirectory, stdin: null, ct, args);
+
+    protected internal virtual Task<(int Code, string Stdout, string Stderr)> RunWithInputAsync(
+        string workingDirectory, string input, CancellationToken ct, params string[] args) =>
+        RunCoreAsync(workingDirectory, input, ct, args);
+
+    private async Task<(int Code, string Stdout, string Stderr)> RunCoreAsync(
+        string workingDirectory, string? stdin, CancellationToken ct, params string[] args)
     {
         Process? process = null;
         try
@@ -720,11 +872,14 @@ public class GitWorkspaceService
                 WorkingDirectory = workingDirectory,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                RedirectStandardInput = stdin is not null,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8,
             };
+            if (stdin is not null)
+                psi.StandardInputEncoding = new UTF8Encoding(false);
             foreach (var a in args)
                 psi.ArgumentList.Add(a);
 
@@ -738,6 +893,12 @@ public class GitWorkspaceService
             timeoutCts.CancelAfter(timeout);
             var stdoutTask = process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
             var stderrTask = process.StandardError.ReadToEndAsync(timeoutCts.Token);
+            if (stdin is not null)
+            {
+                await process.StandardInput.WriteAsync(stdin.AsMemory(), timeoutCts.Token);
+                process.StandardInput.Close();
+            }
+
             await process.WaitForExitAsync(timeoutCts.Token);
             return (process.ExitCode, await stdoutTask, await stderrTask);
         }

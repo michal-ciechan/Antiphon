@@ -12,6 +12,7 @@ public sealed class ScratchGitRepo : IDisposable
 {
     public string Path { get; }
     public string WorktreeRoot { get; }
+    private string? _bareOrigin;
 
     public ScratchGitRepo(string prefix = "antiphon-deleg-wt")
     {
@@ -68,10 +69,29 @@ public sealed class ScratchGitRepo : IDisposable
         return new GitResult(p.ExitCode == 0, await stdout, await stderr);
     }
 
+    public async Task AddBareOriginAsync()
+    {
+        _bareOrigin = Directory.CreateTempSubdirectory("c527-origin").FullName;
+        (await GitInAsync(_bareOrigin, "init", "--bare")).Ok.ShouldBeTrue();
+        await GitAsync("remote", "add", "origin", _bareOrigin);
+        await GitAsync("push", "-u", "origin", "master");
+    }
+
+    public async Task InstallFailingPreCommitHookAsync(string message)
+    {
+        var hooks = System.IO.Path.Combine(Path, ".git", "hooks");
+        Directory.CreateDirectory(hooks);
+        var hook = System.IO.Path.Combine(hooks, "pre-commit");
+        var escaped = message.Replace("\"", "\\\"");
+        var script = "#!/bin/sh\necho \"" + escaped + "\" >&2\nexit 1\n";
+        await File.WriteAllTextAsync(hook, script.Replace("\r\n", "\n"));
+    }
+
     public void Dispose()
     {
-        foreach (var dir in new[] { WorktreeRoot, Path })
+        foreach (var dir in new[] { WorktreeRoot, Path, _bareOrigin })
         {
+            if (dir is null) continue;
             try
             {
                 // git object files are read-only on Windows; strip attributes or Delete throws.
