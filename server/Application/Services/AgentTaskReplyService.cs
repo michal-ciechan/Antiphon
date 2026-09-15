@@ -1546,7 +1546,10 @@ public sealed class AgentTaskReplyService
         // source event commit with settlement and any spawned child, before queue insertion.
         var durableCompletion = task.SourceLandingOperationId is null
             && task.Workspace == WorkspaceMode.Shared
-            && (CommitOnSettleEligibility.IsEligible(task) || task.Role == AgentTaskRole.Commit)
+            && (task.Role == AgentTaskRole.Commit || git is not null
+                && (git.StartsWith("committed:", StringComparison.Ordinal)
+                    || git.StartsWith("commit refused:", StringComparison.Ordinal)
+                    || git.Contains("commit task", StringComparison.Ordinal)))
             && task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is not null;
         if (durableCompletion)
         {
