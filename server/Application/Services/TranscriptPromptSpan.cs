@@ -102,6 +102,12 @@ internal static class TranscriptPromptSpan
         AppDbContext db, Guid sessionId, DateTime? dispatchedAt, CancellationToken ct) =>
         (await LoadAsync(db, sessionId, dispatchedAt, ct)).TurnPrompts.Count > 0;
 
+    /// <summary>A real typed or queued prompt supersedes an older API-error boundary.</summary>
+    internal static async Task<bool> HasTurnPromptAfterAsync(
+        AppDbContext db, Guid sessionId, long afterSequence, CancellationToken ct) =>
+        (await LoadAsync(db, sessionId, dispatchedAt: null, ct)).TurnPrompts
+            .Any(p => p.Sequence > afterSequence);
+
     /// <summary>
     /// A prompt record that no one typed as a prompt. SETTLEMENT AND the delivery watchdog
     /// (CARD-0077) — both ask whether a real prompt exists, not whether the session is working.

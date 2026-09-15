@@ -1036,6 +1036,25 @@ public sealed class AgentTaskReplyService
                 ct, raiseIncident: false)
             : null;
 
+        // The newest TurnEnd can still be the dead turn while its successor is working.
+        // Adoption comes first; every classification then follows the transcript's verdict.
+        if (await TranscriptPromptSpan.HasTurnPromptAfterAsync(db, sessionId, stub.Sequence, ct))
+        {
+            var promoted = task.Status == AgentTaskStatus.Dispatched;
+            if (promoted)
+                task.Status = AgentTaskStatus.Working;
+            var prompts = await TranscriptPromptSpan.LoadAsync(db, sessionId, dispatchedAt: null, ct);
+            var resumed = prompts.TurnPrompts.First(p => p.Sequence > stub.Sequence);
+            var recorded = await RecordApiErrorDeferredAsync(
+                db, task, stub, classification, $"session resumed at seq {resumed.Sequence}", now, ct);
+            await db.SaveChangesAsync(ct);
+            if (recorded || promoted)
+                await PublishAsync(task, ct);
+            _logger.LogDebug("Task {ShortId}: ignoring stale API-error seq {Sequence}; session resumed at seq {Resumed}",
+                DelegationReportFormatter.Short(task.Id), stub.Sequence, resumed.Sequence);
+            return;
+        }
+
         // CARD-0090 S5: a chain-chosen task re-walks on a Wall (both subclasses). The hold is
         // already written. Kill goes through StopDelegateAsync via RequeueAsync, never a raw
         // session kill. Required pins and a session-limit with no alternative fall through.
@@ -1043,19 +1062,6 @@ public sealed class AgentTaskReplyService
             && classification == ApiErrorClassification.Wall
             && services.GetService<AgentTaskService>() is { } tasks)
         {
-            // CARD-0022 FireOneAsync already treats a later UserPrompt as Superseded. AssistantText
-            // re-triggers OnTurnEndAsync while the newest TurnEnd is still this stub; without this
-            // guard, RerouteOnWallAsync would StopDelegateAsync a session that has already resumed.
-            // CARD-0135: a body accepted while the TUI was busy is QueuedUserPrompt with no user
-            // record — same kinds TranscriptPromptSpan matches. Inline (not a helper) so EF translates.
-            var laterPrompt = await db.TranscriptEntries.AsNoTracking().AnyAsync(
-                t => t.AgentSessionId == sessionId
-                    && (t.Kind == TranscriptKinds.UserPrompt
-                        || t.Kind == TranscriptKinds.QueuedUserPrompt)
-                    && t.Sequence > stub.Sequence, ct);
-            if (laterPrompt)
-                return;
-
             var fallbackAlias = ModelLevelAliases.For(task.AgentKind, task.ModelLevel);
             var evidenceAt = recovery?.EvidenceAt ?? now;
             var wall = UsageLimitWallParser.Parse(evidenceAt, stub.ErrorText, fallbackAlias);
@@ -1194,20 +1200,11 @@ public sealed class AgentTaskReplyService
         if (task.Status == AgentTaskStatus.Dispatched)
             task.Status = AgentTaskStatus.Working;
 
-        var seqNeedle = $"seq {stub.Sequence}";
-        var alreadyDeferred = await db.AgentTaskEvents.AnyAsync(
-            e => e.AgentTaskId == task.Id
-                && e.Type == AgentTaskEventType.ApiErrorDeferred
-                && e.Detail.Contains(seqNeedle), ct);
-        if (!alreadyDeferred)
-        {
-            var when = recovery.NextAttemptAt is DateTime fire
-                ? $"resume scheduled {fire:u}"
-                : "resume pending";
-            db.AgentTaskEvents.Add(NewEvent(
-                task.Id, AgentTaskEventType.ApiErrorDeferred,
-                $"turn killed by {classification} — {when} ({seqNeedle})", now));
-        }
+        var when = recovery.NextAttemptAt is DateTime fire
+            ? $"resume scheduled {fire:u}"
+            : "resume pending";
+        var alreadyDeferred = !await RecordApiErrorDeferredAsync(
+            db, task, stub, classification, when, now, ct);
 
         await db.SaveChangesAsync(ct);
         if (!alreadyDeferred)
@@ -1246,6 +1243,20 @@ public sealed class AgentTaskReplyService
                 DelegationReportFormatter.Short(task.Id), sessionId, classification,
                 stub.ErrorClass, stub.ErrorStatus, recovery.NextAttemptAt);
         }
+    }
+
+    private static async Task<bool> RecordApiErrorDeferredAsync(
+        AppDbContext db, AgentTask task, ApiErrorStubFacts stub, ApiErrorClassification classification,
+        string detail, DateTime now, CancellationToken ct)
+    {
+        // Include the parentheses: seq 3 must not match seq 30 or the resumed prompt's seq.
+        var seqNeedle = $"(seq {stub.Sequence})";
+        if (await db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == task.Id
+                && e.Type == AgentTaskEventType.ApiErrorDeferred && e.Detail.Contains(seqNeedle), ct))
+            return false;
+        db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.ApiErrorDeferred,
+            $"turn killed by {classification} — {detail} {seqNeedle}", now));
+        return true;
     }
 
     /// <summary>
