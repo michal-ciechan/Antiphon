@@ -374,6 +374,39 @@ Positive controls (red-then-green, method-scoped filters; also the seed list for
 | PC-7 | Drop the generation clause in the orphan rule (cancel any terminal-task brief) | `Typed_brief_of_a_failed_task_in_this_generation_is_left_to_recovery` |
 | PC-8 | Stamp the generation only in `DeliverNextLockedAsync`, not `SendNowAsync` | `Typed_attempt_records_the_session_generation` (SendNow variant) |
 
+### Round-3 evidence repair (Code FollowUp f95bd1fe)
+
+Fix base: `92fc5a55c8d03274cc6875ddd37a6e0cd3a18b19`, original landing owner
+`326c349a-dd36-4adb-8ff6-fe533d91a73a`. Only tests and evidence documentation change.
+
+| ID | Coverage | Class / check |
+|---|---|---|
+| V-14 | Direct PostgreSQL candidate inclusion before capped Sent recovery and exclusion after parking, independent of the downstream cap | `SessionMessageQueueWedgedHeadTests.A_parked_row_stops_being_discovered_once_it_is_at_rest` (alwaysOn false/true) |
+| V-15 | Fresh NoSubmitOutput inclusion under a nonzero stranded age, exact complete UserPrompt receipt, and fresh ordinary Pending exclusion | `SessionMessageQueueWedgedHeadTests.Fresh_NoSubmitOutput_is_discovered_before_stranded_age_and_delivered_whole`, `Fresh_ordinary_Pending_is_excluded_until_stranded_age` (each alwaysOn false/true) |
+| V-16 | Correct specialist/check inventory with nonzero per-class execution | `AgentTaskCheckInterpreterTests` (check production, declared/unqualified/qualified request routing) and `SpecialistTaskRunnerDeadlineTests` (holds, deadlines, cancellation races) |
+
+The standard affected sweep remains Unit plus the original V/R classes. Include the existing
+FollowUp coverage owners: `CheckNoteDeliveryHandoffTests` (V-8/V-12/V-13 and abandoned-write
+dispatcher exclusion), `AgentTaskReuseEnqueueTests` (reuse enqueue fault),
+`SpecialistPublicationTests` (routed publication) and `AgentTaskStandingAgentDispatchTests`
+(standing dispatch). V-7/V-9/V-10/V-11 share `SessionMessageQueueWedgedHeadTests`.
+Run the two V-16 classes individually to make the repaired inventory unambiguous. Keep class
+OR selections for the other affected checks, inspect every intended method/argument in fresh TRX,
+and run the server and Pty projects sequentially. No namespace/full-assembly exception is needed.
+
+Additional pending method-scoped controls (post-land SourceLanding Mutation owns red/restore/green):
+
+| PC | Mutation | Must go red / variants |
+|---|---|---|
+| R3-PC-1 | Remove `DeliveryAttempts < maxAttempts` from `QueueAttention.DeliverablePending` | `A_parked_row_stops_being_discovered_once_it_is_at_rest`, false/true: candidate list must be empty after parking |
+| R3-PC-2 | Remove the `NoSubmitOutput` recovery disjunct from `QueueAttention.DeliverablePending` | `Fresh_NoSubmitOutput_is_discovered_before_stranded_age_and_delivered_whole`, false/true: fresh row must be selected and received whole |
+| R3-PC-3 | Bypass the Pending stranded-age/recovery condition in `QueueAttention.DeliverablePending` | `Fresh_ordinary_Pending_is_excluded_until_stranded_age`, false/true: candidate list must be empty |
+
+Each cycle uses `/*/*/SessionMessageQueueWedgedHeadTests/<ExactTestMethod>` and verifies both
+expanded arguments. Existing PC-1 through PC-8, FollowUp F1/F3 controls and R2-PC-1 through
+R2-PC-4 remain pending for the commissioned post-land pass, regardless of historical local
+red/green claims in older reports. This Code task executes no deliberate mutants.
+
 Post-land activation check (operator, after `restart-apphost.ps1` and `GET /api/version` shows the
 landed SHA): within two minutes, `GET /api/sessions/cea73d57-3072-4cc2-8cb0-ab859e7d3415/queue`
 shows no Pending row older than the restart, the server log shows the orphan-cancel lines for the
