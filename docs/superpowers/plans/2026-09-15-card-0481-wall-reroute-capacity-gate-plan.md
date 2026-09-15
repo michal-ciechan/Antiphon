@@ -683,3 +683,18 @@ queue row the delivery watchdog fails the task (`AgentTaskDeliveryWatchdogTests`
 does not reconstruct the lost brief. This repair does not claim automatic pre-insert
 replay. Cold-launch/native-transcript ingestion and the prior sweep/redemption race
 coverage gaps remain visible to Review and Mutation discovery.
+
+V-17 closes the pre-insert outcome-delivery inventory:
+`ReceiptFailureDeliveryTests.Receipt_failure_before_enqueue_reports_the_lost_brief_after_service_recreation`
+(busyCaller=false/true) fails the actual brief insert, then the capacity receipt. The
+producer leaves Dispatched with no queue row, is disposed, and the recreated dispatcher's
+real delivery watchdog runs after its unchanged ten-minute window. It fails the same
+attempt with `never delivered`, produces a real caller queue row keyed by SourceTaskId
+and root conversation, and the busy/eligible caller receives one complete matching
+UserPrompt. The failed task's original wait is canceled by the real orphan sweep.
+Thus pre-insert recovery delivers the failure outcome; it does not claim the missing
+worker brief was accepted or automatically replay it. No native child is launched.
+
+PC-17 (pending): exact V-17 method, busyCaller=false/true; remove the watchdog's failure
+note enqueue. Intended red is missing caller queue row / complete UserPrompt. The busy
+arm also protects against premature delivery. Coverage remains in the same new class.
