@@ -698,3 +698,152 @@ worker brief was accepted or automatically replay it. No native child is launche
 PC-17 (pending): exact V-17 method, busyCaller=false/true; remove the watchdog's failure
 note enqueue. Intended red is missing caller queue row / complete UserPrompt. The busy
 arm also protects against premature delivery. Coverage remains in the same new class.
+
+## Round-2 repair ordinary evidence (Code task 7928a7de)
+
+F1 and F2 are implemented. Final ordinary coverage: **2,723 expanded cases,
+2,709 passed, 13 inherited failures, one unchanged skip**. Every new case passes.
+V-12 remains inherited red; this is not an all-green suite. No deliberate PC ran.
+Ordinary read-only Review is next, with original landing owner **00222dc7** and
+restart target **server**. This repair did not land or deploy.
+
+- Repair branch: `feat/card-task-7928a7de`.
+- Exact worktree: `C:\Antiphon\worktrees\card-task-7928a7de`.
+- Reviewed base: `eec7d4245865a6aae2164f18781e3612d5672f22`.
+- Final tested production/test source: `7ffb569eb3ec011cba08528332c0e81f33ab13ef`.
+  The final evidence commit changes this document only.
+- Evidence root: `C:\Antiphon\worktrees\card-task-7928a7de\.antiphon\c481r2-evidence`.
+  Fresh TRX, complete logs, SHA-256 `trx-manifest.json`, per-lane `*-summary.json`,
+  `verification-matrix.json`, `baseline-comparison.json`, and `review-comparison.json`
+  retain methods, variants, counts, failures and timing. `summarize.py` plus
+  `verify-matrix.py` regenerate and assert the inventory.
+
+### Commands, source identities and actual expanded counts
+
+Final build: `dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c481r2/ --nologo`
+(`verified-build.log`): zero errors, 233 existing warnings. The same final isolated
+build served I and U using `--no-build`; no source changed during any owned run.
+Checkpoint builds at earlier authored slices are retained as `build.log` and
+`final-build.log` (the latter had one nullable test warning, fixed before final I/U).
+Each source/test slice was committed and pushed before its build/test command.
+
+Common execution:
+
+```powershell
+dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c481r2/ -- --treenode-filter '<filter>' --report-trx --report-trx-filename '<lane>.trx' --results-directory '.antiphon/c481r2-evidence/<fresh-lane>'
+```
+
+- **I**: `/*/*/(WallRerouteDispatchTests*)|(CapacityWaitOrphanSweepTests*)|(ComplexityWallRerouteTests*)|(CapacityRecoveryTaskTests*)|(CapacityRecoveryGrantLivenessTests*)|(CapacityRecoveryAttentionTests*)|(CapacityRecoveryCompatibilityTests*)|(CapacityRecoverySupervisionTests*)|(RoutingPinCandidateDispatchTests*)|(ModelAvailabilityDispatcherTests*)|(ApiErrorRecoveryServiceTests*)|(AgentTaskReplyIntegrationTests*)|(CapacityRecoveryAcceptanceTests*)|(ReceiptFailureDeliveryTests*)/*`
+- **U**: `/*/*/*/*[Category=Unit]`
+- **T** (checkpoint `0fa16cce11a0645f2d1bc42c443a73ed4024bb48`): `/*/*/(WallRerouteDispatchTests*)|(ReceiptFailureDeliveryTests*)/*`
+- **P** (checkpoint `2f23d3f53fcad15ac6260d559a97999a5479d38b`): `/*/*/ReceiptFailureDeliveryTests/Receipt_failure_before_enqueue_reports_the_lost_brief_after_service_recreation`
+- **B**: the 13 inherited failing method names, joined as `/*/*/*/(MethodA*)|(MethodB*)|...`;
+  exact filter in `baseline-expanded-filter.txt`. Executed at unchanged eec7d424 in
+  the owned detached worktree `C:\Antiphon\worktrees\card-task-7928a7de-base`, using
+  `bin-c481r2base/`. No deliberate defect was introduced. An initial exact-name OR
+  without suffix wildcards selected zero tests (exit 8); its `baseline/baseline.trx`
+  is retained as rejected filter evidence, never credited as verification.
+
+| Run | Expanded actual outcome | Duration | Fresh TRX under evidence root |
+|---|---|---|---|
+| T | 20/20 pass | 50.377 s | `target/target.trx` |
+| P | 2/2 pass | 86.322 s | `preinsert/preinsert.trx` |
+| B | 13/13 fail, exactly the inherited names | 58.273 s | `baseline-expanded/baseline.trx` |
+| I | 263: 254 pass / 9 inherited fail | 198.224 s | `integration/integration.trx` |
+| U | 2,460: 2,455 pass / 4 inherited fail / 1 skip | 144.496 s | `unit/unit.trx` |
+
+All intended classes and methods were checked in fresh TRX, with nonzero expanded
+counts; I contains exactly the fourteen intended classes. Final class outcomes:
+
+| Class | Expanded outcome (I) |
+|---|---|
+| WallRerouteDispatchTests | 15/15 pass |
+| ReceiptFailureDeliveryTests | 7/7 pass |
+| CapacityWaitOrphanSweepTests | 6/6 pass |
+| ComplexityWallRerouteTests | 11: 9 pass / 2 fail |
+| CapacityRecoveryTaskTests | 6/6 pass |
+| CapacityRecoveryGrantLivenessTests | 12/12 pass |
+| CapacityRecoveryAttentionTests | 3/3 pass |
+| CapacityRecoveryCompatibilityTests | 4/4 pass |
+| CapacityRecoverySupervisionTests | 6/6 pass |
+| RoutingPinCandidateDispatchTests | 11/11 pass |
+| ModelAvailabilityDispatcherTests | 3/3 pass |
+| ApiErrorRecoveryServiceTests | 36: 29 pass / 7 fail |
+| AgentTaskReplyIntegrationTests | 128/128 pass |
+| CapacityRecoveryAcceptanceTests | 15/15 pass |
+
+### Every V / R outcome
+
+| ID | Actual outcome | Shared command |
+|---|---|---|
+| V-1 | PASS, 1 | I |
+| V-2 | PASS, 1 | I |
+| V-3 | PASS, 1 | I |
+| V-4 | PASS, 1 | I |
+| V-5 | PASS, 2 | I |
+| V-5b | PASS, 1 | I |
+| V-6 | PASS, 1 | I |
+| V-6b | PASS, 1 | I |
+| V-6c | PASS, 1 | I |
+| V-8 | PASS, 3 | I |
+| V-9 | PASS, 1 | I |
+| V-10 | PASS, 1 | I |
+| V-10b | PASS, 1 | I |
+| V-11 | PASS, 2 | I |
+| V-12 | INHERITED RED: I 9 fail; U 4 fail / 1 skip; all 13 independently reproduced by B | I + U + B |
+| V-13 | PASS, 1 | I |
+| V-14 | PASS, 1 | I |
+| V-15 | PASS, 2 | I |
+| V-16 | PASS, 3 | I |
+| V-17 | PASS, 2 | I |
+
+No V-7 or R-n IDs are defined. The PC-11 ordinary guard
+`Repeated_model_hold_persists_the_new_wait_without_duplicate_trace` also passes once
+in I. The matrix script asserts every stated expansion and passing outcome.
+
+All thirteen final failures match the fresh base run by exact class/method identity.
+Eleven assertion messages match exactly. Fable/Grok fallback-hold assertions still
+fail on subsecond precision; their two messages differ only in current timestamp
+values. The four Unit failures and skip match the prior review exactly. Full names
+are in this plan's original evidence section and in both comparison JSON files.
+No inherited failure was repaired, hidden or relabeled passing.
+
+Duration tripwire (`scripts/test-duration-tripwire.ps1 -Trx <fresh-trx>`): I has **32**
+unlisted >=5-second rows, U **41**, T **5**, P **2**; all four checks exit 1. I includes
+all seven new delivery rows (36.250-36.801 s each); T's five were 35.122-35.157 s, and
+P's two were 83.307-83.332 s. These cases start together and await the lazy shared
+Postgres template before their isolated database clones; the measurements include
+fixture initialization, and are retained without claiming an isolated timing proof.
+No timeout, assertion or slow allowlist was widened. Timing remains a Review caveat.
+
+### Pending Mutation, limits and cleanup
+
+**PC-1 through PC-17 and every variant remain pending**. No deliberate mutant or
+red/restore/green cycle ran, and Mutation still owns missing-control discovery.
+PC-1..12 retain the prior inventory (including PC-2's corrected V-1/V-2 red targets,
+PC-4's false/true arms, PC-6's Stopped/Failed/missing session, PC-7's four terminal/
+missing task owners, PC-8's Blocked/live controls, PC-9's withWait true/false and
+PC-12's now-single-use receipt fault). PC-13 targets V-14. PC-14 targets V-15's
+busy/eligible arms with enqueue-removal and busy-gate variants. PC-15 targets
+V-16's queue-committed and attempt-committed recovery; PC-16 targets its prompt-
+accepted late-confirm; PC-17 targets V-17's busy/eligible caller failure note.
+All Mutation runs must be exact-method scoped and explicitly commissioned post-land.
+
+Remaining coverage limits: fake protocol adapter acceptance through the real queue,
+not live-provider/native-pty ingestion; in-process EF crash cuts and service graph
+recreation, not abrupt worker-death custody. Pre-insert loss intentionally yields a
+caller-confirmed failure rather than replaying the missing brief. Failed capacity
+bookkeeping remains Admitted until its normal reconciliation/owner-ending path.
+Prior cold-launch/early-transcript, retained-return redemption and concurrent
+sweep/redemption coverage gaps remain for Review and Mutation discovery. The live
+post-land database census still belongs to the caller after server activation.
+
+All commands finished. Both sets of **15** owned isolated output directories were
+removed, including 26 final and 23 baseline residual generated files after
+`dotnet clean`. Zero `bin-c481r2`/`bin-c481r2base` directories remain. Automatic
+approval review rejected recursive baseline directory deletion; cleanup succeeded
+through the documented clean, exact-file and nonrecursive-empty-directory route.
+`output-cleanup.json`, `base-output-cleanup.json`, output inventories and cleanup
+logs retain evidence. The clean detached baseline worktree was removed with ordinary
+`git worktree remove` (no force); `base-worktree-cleanup.json` records its identity.
+The primary worktree and all external raw evidence remain available for Review.
