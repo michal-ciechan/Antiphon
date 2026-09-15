@@ -742,7 +742,11 @@ public sealed class AgentTaskReplyService
                 workspaceNote = await MergeBackAsync(services, db, task, now, ct);
         }
 
-        var (gitHeader, gitWarning) = await TryDescribeGitAsync(services, db, task, settledBody, now, ct);
+        var (gitHeader, gitWarning) = await TryCommitOnSettleAsync(services, db, task, settledBody, now, ct);
+        if (gitHeader is null)
+            (gitHeader, gitWarning) = await TryDescribeGitAsync(services, db, task, settledBody, now, ct);
+        var auditWarning = await AuditCommitChildAsync(services, db, task, now, ct);
+        if (auditWarning is not null) gitWarning = gitWarning is null ? auditWarning : gitWarning + "\n" + auditWarning;
         if (gitWarning is not null)
             callerWarning = callerWarning is null ? gitWarning : $"{callerWarning}\n\n{gitWarning}";
 
@@ -2930,6 +2934,112 @@ public sealed class AgentTaskReplyService
         AgentTaskReportEvidence.Exempt => "exempt",
         _ => null,
     };
+
+    private async Task<(string? Header, string? Warning)> TryCommitOnSettleAsync(
+        IServiceProvider services, AppDbContext db, AgentTask task, string report, DateTime now, CancellationToken ct)
+    {
+        if (!CommitOnSettleEligibility.IsEligible(task) || task.RepoPath is not { } repo || !Directory.Exists(repo)) return (null, null);
+        var git = services.GetRequiredService<GitWorkspaceService>();
+        if (!await git.IsRepositoryAsync(repo, ct)) return (null, null);
+        // Git is durable before SaveChanges. Recover the exact task trailer before inspecting dirt.
+        var previous = await git.ListCommitsByGrepAsync(repo, $"antiphon-task: {task.Id}", 1, ct);
+        if (previous is { Count: > 0 })
+        {
+            var sha = previous[0].Sha;
+            var paths = await git.DiffTreePathsAsync(repo, sha, ct);
+            db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Committed, $"{sha}: {string.Join(", ", paths)}", now));
+            return ($"committed:{sha[..7]} ({paths.Count} files)", null);
+        }
+        var status = await git.TryGetChangesAsync(repo, ct);
+        if (!status.Succeeded) return ("unattributable", "Repository status could not be read.");
+        var dirty = status.Items.SelectMany(c => c.OldPath is null ? new[] { c.Path } : new[] { c.Path, c.OldPath }).Distinct(StringComparer.Ordinal).ToArray();
+        if (dirty.Length == 0) return (null, null);
+        var project = task.ProjectId is Guid projectId ? await db.Projects.Where(p => p.Id == projectId).Select(p => p.CommitOnSettle).FirstOrDefaultAsync(ct) : null;
+        var settings = services.GetService<IOptions<DelegationSettings>>()?.Value ?? _settings;
+        var policy = CommitOnSettlePolicyResolver.Resolve(task.CommitOnSettle, project, settings.CommitOnSettle);
+        if (policy == EffectiveCommitOnSettle.Off)
+        {
+            var noCommit = task.CommitOnSettle == CommitOnSettlePolicy.Never;
+            var warning = noCommit ? $"{dirty.Length} file(s) left uncommitted as requested (-NoCommit)."
+                : $"{dirty.Length} file(s) are still uncommitted in the shared checkout; the work has not landed. Commit before building on it.";
+            db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, warning + " " + string.Join(", ", dirty), now));
+            return ($"uncommitted:{dirty.Length} ({(noCommit ? "no-commit" : "commit-on-settle off")})", warning);
+        }
+        var edited = task.AgentSessionId is Guid session
+            ? await services.GetRequiredService<AgentFilesService>().GetEditedPathsAsync(session, repo, task.DispatchedAt, ct) : [];
+        var footprint = edited.Concat(ExtractReportedRepositoryPaths(report, repo)).Intersect(dirty, StringComparer.Ordinal).ToArray();
+        string reason; string? refusal = null;
+        if (policy == EffectiveCommitOnSettle.AgentOnly) reason = "agent-policy";
+        else if (footprint.Length == 0) reason = "unattributable";
+        else
+        {
+            var subject = $"task {DelegationReportFormatter.Short(task.Id)}: {task.Title}";
+            var firstLine = report.Split('\n').FirstOrDefault(l => !string.IsNullOrWhiteSpace(l))?.Trim() ?? "";
+            var message = subject[..Math.Min(72, subject.Length)] + "\n\n" + firstLine[..Math.Min(500, firstLine.Length)];
+            if (task.CardId is Guid cardId)
+                message += "\n\nCard: " + await db.Cards.Where(c => c.Id == cardId).Select(c => c.Identifier).FirstOrDefaultAsync(ct);
+            var result = await services.GetRequiredService<GatedCommitService>().CommitAsync(repo, footprint, message,
+                new Dictionary<string, string> { ["antiphon"] = "true", ["antiphon-task"] = task.Id.ToString(), ["antiphon-commit"] = "gated" }, ct);
+            if (result.Outcome == GatedCommitOutcome.Committed && result.Sha is { } sha)
+            {
+                var paths = result.Files!;
+                db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Committed, $"{sha}: {string.Join(", ", paths)}", now));
+                var residual = dirty.Except(paths, StringComparer.Ordinal).Count();
+                return ($"committed:{sha[..7]} ({paths.Count} files)" + (residual == 0 ? "" : $"; {residual} other dirty path(s) left as found"), null);
+            }
+            reason = result.Outcome switch
+            {
+                GatedCommitOutcome.IgnoreRulesChanged => "ignore-rules-changed",
+                GatedCommitOutcome.IgnoredPathStaged => "ignored-path-staged",
+                GatedCommitOutcome.RepositoryBusy => "repository-busy",
+                _ => "commit-failed",
+            };
+            refusal = result.Outcome == GatedCommitOutcome.IgnoreRulesChanged
+                ? $"ignore rules changed ({string.Join(", ", result.Refusals!.Select(r => r.Path))})"
+                : result.Outcome + ": " + string.Join(", ", result.Refusals?.Select(r => $"{r.Path} ({r.Rule})") ?? []) + result.Stderr;
+            db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, refusal, now));
+        }
+        var child = await services.GetRequiredService<AgentTaskService>().CreateCommitTaskAsync(task, reason, dirty, ct);
+        if (child is not null)
+        {
+            if (refusal is not null) child.Goal += "\nGate refusal: " + refusal;
+            return ($"uncommitted:{dirty.Length} -> commit task {DelegationReportFormatter.Short(child.Id)}", refusal);
+        }
+        return (refusal is null ? $"uncommitted:{dirty.Length} (commit task not spawned: run at task cap)" : "commit refused: " + refusal,
+            refusal ?? $"{dirty.Length} file(s) still uncommitted. Commit before building on it.");
+    }
+
+    private async Task<string?> AuditCommitChildAsync(IServiceProvider services, AppDbContext db, AgentTask task, DateTime now, CancellationToken ct)
+    {
+        if (task.Role != AgentTaskRole.Commit || task.CommitBaselineSha is not { } baseline || task.RepoPath is not { } repo) return null;
+        var git = services.GetRequiredService<GitWorkspaceService>();
+        var warnings = new List<string>();
+        var (code, range, error) = await git.RunReadOnlyAsync(repo, ct, "rev-list", baseline + "..HEAD");
+        if (code != 0) warnings.Add("Commit audit unavailable: " + error);
+        else foreach (var sha in range.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()))
+        {
+            var paths = await git.DiffTreePathsAsync(repo, sha, ct);
+            var ignored = await git.CheckIgnoredAsync(repo, paths, ct);
+            if (ignored.Count > 0)
+            {
+                var warning = $"REVERT commit {sha[..7]}: it contains ignored path(s) {string.Join(", ", ignored.Select(r => r.Path))}";
+                warnings.Add(warning);
+                db.AgentIncidents.Add(new() { Id = Guid.NewGuid(), AgentId = task.AgentId, SessionId = task.AgentSessionId,
+                    Kind = AgentIncidentKind.DelegateCommitAudit, Severity = AlertSeverity.Warning,
+                    Message = warning[..Math.Min(warning.Length, AgentIncident.MessageMaxLength)], CreatedAt = now });
+            }
+            var (_, body, _) = await git.RunReadOnlyAsync(repo, ct, "show", "-s", "--format=%B", sha);
+            if (!body.Split('\n').Any(l => l.Trim() == "antiphon-commit: gated")) warnings.Add($"commit {sha[..7]} was made outside the gate");
+        }
+        const string prefix = "Commit upstream baseline: ";
+        var created = await db.AgentTaskEvents.Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Created).Select(e => e.Detail).ToListAsync(ct);
+        var upstreamBefore = created.SelectMany(d => d.Split('\n')).FirstOrDefault(l => l.StartsWith(prefix, StringComparison.Ordinal))?[prefix.Length..];
+        var upstreamAfter = await git.ResolveCommitAsync(repo, "@{u}", ct);
+        if (upstreamBefore is not null && upstreamBefore != "none" && upstreamAfter is not null && upstreamAfter != upstreamBefore)
+            warnings.Add($"Commit child pushed or moved its upstream to {upstreamAfter[..7]}.");
+        foreach (var warning in warnings) db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, warning, now));
+        return warnings.Count == 0 ? null : string.Join('\n', warnings);
+    }
 
     private async Task<(string? Header, string? Warning)> TryDescribeGitAsync(
         IServiceProvider services, AppDbContext db, AgentTask task, string report, DateTime now,

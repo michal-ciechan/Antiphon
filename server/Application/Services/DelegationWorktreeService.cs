@@ -466,8 +466,14 @@ public sealed class DelegationWorktreeService
         {
             // The delegate may have left uncommitted work — a report that says "done" with a dirty
             // tree is normal, not an error. Sweep it into the task branch first.
-            await _git.CommitAllChangesAsync(
-                worktree, $"task {DelegationReportFormatter.Short(task.Id)}: {task.Title}", ct);
+            var commit = await new GatedCommitService(_gitWorkspace, _leases, _landingGit).CommitAsync(
+                worktree, null, $"task {DelegationReportFormatter.Short(task.Id)}: {task.Title}",
+                new Dictionary<string, string> { ["antiphon"] = "true", ["antiphon-task"] = task.Id.ToString(), ["antiphon-commit"] = "gated" }, lease, ct);
+            if (commit.Outcome == GatedCommitOutcome.CommitFailed)
+                return new MergeOutcome(MergeResult.Failed, [], "Committing the delegate's work failed: " + commit.Stderr);
+            if (commit.Outcome is not (GatedCommitOutcome.Committed or GatedCommitOutcome.NothingToCommit))
+                return new MergeOutcome(MergeResult.LeftForHuman, [], "Commit refused: " + commit.Outcome + "; "
+                    + string.Join(", ", commit.Refusals?.Select(r => $"{r.Path} ({r.Rule})") ?? []));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

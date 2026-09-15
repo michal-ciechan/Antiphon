@@ -2,6 +2,8 @@
 
 namespace Antiphon.Server.Application.Dtos;
 
+public sealed record CommitAgentTaskRequest(IReadOnlyList<string> Paths, string Message);
+
 /// <summary>
 /// Create a delegated task. Sent by the delegate script (agent-invoked) or the UI (manual) — the
 /// caller's identity comes from the bearer token, never from the body, so a caller cannot claim to

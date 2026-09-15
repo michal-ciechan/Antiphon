@@ -573,4 +573,5 @@ public enum AgentIncidentKind
     /// or generation identity is unproven. Passive observation continues. Warning.
     /// </summary>
     RemoteControlMonitoringDegraded = 66,
+    DelegateCommitAudit = 67,
 }

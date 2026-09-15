@@ -14,6 +14,35 @@ public static class AgentTaskEndpoints
     {
         var tasks = app.MapGroup("/api/agent-tasks").WithTags("AgentTasks");
 
+        tasks.MapPost("/{id}/commit", async (string id, CommitAgentTaskRequest request, HttpContext http,
+            AgentTaskService service, GatedCommitService gate, CancellationToken ct) =>
+        {
+            var caller = await ResolveCallerAsync(http, service, ct);
+            if (caller.Task is null) throw new ForbiddenException("A task token is required.", "delegation_token_required");
+            var task = caller.Task;
+            if (await service.ResolveTaskIdAsync(id, ct) != task.Id) throw new ForbiddenException("The token must belong to this task.", "delegation_token_required");
+            if (task.CommitOnSettle == CommitOnSettlePolicy.Never && task.Role != AgentTaskRole.Commit)
+                throw new ForbiddenException("This task requested no commits.", "commit_on_settle_never");
+            if (task.Workspace == WorkspaceMode.ReadOnly || task.SourceLandingOperationId is not null)
+                throw new ForbiddenException("This workspace does not authorize commits.", "commit_workspace_read_only");
+            if (task.RepoPath is not { } repo || !Directory.Exists(repo)) throw new ValidationException("RepoPath", "Task repository is unavailable.");
+            if (request.Paths is not { Count: > 0 } || request.Paths.Any(p => string.IsNullOrWhiteSpace(p) || Path.IsPathRooted(p) || p.Replace('\\', '/').Split('/').Contains("..")))
+                throw new ValidationException("Paths", "Supply explicit repository-relative paths.");
+            if (string.IsNullOrWhiteSpace(request.Message)) throw new ValidationException("Message", "A commit message is required.");
+            var result = await gate.CommitAsync(repo, request.Paths.Select(p => p.Replace('\\', '/')).ToArray(), request.Message,
+                new Dictionary<string, string> { ["antiphon"] = "true", ["antiphon-task"] = task.Id.ToString(), ["antiphon-commit"] = "gated" }, ct);
+            if (result.Outcome == GatedCommitOutcome.Committed) return Results.Ok(new { sha = result.Sha, files = result.Files });
+            var code = result.Outcome switch
+            {
+                GatedCommitOutcome.IgnoreRulesChanged => "ignore_rules_changed",
+                GatedCommitOutcome.IgnoredPathStaged => "ignored_path_staged",
+                GatedCommitOutcome.RepositoryBusy => "repository_busy",
+                GatedCommitOutcome.NothingToCommit => "nothing_to_commit",
+                _ => "commit_failed",
+            };
+            throw new ConflictException(code, code, new Dictionary<string, object?> { ["refusals"] = result.Refusals, ["stderr"] = result.Stderr });
+        });
+
         // Agent-invoked AND manual creation land here. The caller is resolved from the token, never
         // from the body — a delegate cannot claim to be someone else's parent.
         tasks.MapPost("/", async (

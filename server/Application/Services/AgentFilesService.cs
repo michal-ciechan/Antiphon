@@ -558,6 +558,12 @@ public sealed class AgentFilesService : IWorkspaceProgressProbe
 
     private sealed record ActivityInfo(int Edits, DateTime LastEditAt, bool External);
 
+    public async Task<IReadOnlyList<string>> GetEditedPathsAsync(Guid sessionId, string root, DateTime? since, CancellationToken ct)
+    {
+        var activity = await GetAgentActivityAsync(new Agent { PersistentSessionId = sessionId.ToString() }, root, since, ct);
+        return activity.Where(p => !p.Value.External).Select(p => p.Key).ToArray();
+    }
+
     /// <param name="since">
     /// Baseline instant. This half of the union has to be scoped too, or a sign-off leaves every
     /// file the agent ever touched on screen and the new baseline appears to have done nothing.

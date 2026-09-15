@@ -2337,6 +2337,71 @@ public sealed class AgentTaskService
     /// It is a CHILD of the conflicted task (the tree records that this work needed a merge hand)
     /// and reports to the same parent session, working directly in the conflicted worktree.
     /// </summary>
+    internal async Task<AgentTask?> CreateCommitTaskAsync(AgentTask settled, string reason, IReadOnlyList<string> dirtyPaths, CancellationToken ct)
+    {
+        if (await _db.AgentTasks.CountAsync(t => t.RootTaskId == settled.RootTaskId, ct) >= _settings.MaxTasksPerRoot
+            || settled.Depth + 1 > _settings.MaxDepth) return null;
+        var pair = ResolveRoutingPair(AgentTaskKind.Worker, AgentTaskRole.Commit, null, null);
+        Guid? pinId = null;
+        string? warning = null;
+        try
+        {
+            if (_routingPins is null) warning = "Commit routing pin service unavailable; using role policy.";
+            else
+            {
+                var decision = await _routingPins.ResolveAsync(settled.CardId, AgentTaskRole.Commit, new(null, null, null, false), ct);
+                var composed = RoutingCandidates.Compose(decision, null, null, null, null,
+                    (k, l) => ResolveRoutingPair(AgentTaskKind.Worker, AgentTaskRole.Commit, k, l));
+                if (composed.Candidates.Count > 0) pair = composed.Candidates[0];
+                _routingPins.EnforceForbiddenAliases(decision, pair.Kind, pair.Level);
+                if (composed.Walked) pinId = decision.Pin!.Id;
+            }
+        }
+        catch (ConflictException) { throw; } // A forbidden alias must never become a fallback.
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        { warning = $"Commit routing pin service failed ({ex.GetType().Name}); using role policy."; pair = ResolveRoutingPair(AgentTaskKind.Worker, AgentTaskRole.Commit, null, null); }
+        var git = new GitWorkspaceService(Microsoft.Extensions.Logging.Abstractions.NullLogger<GitWorkspaceService>.Instance);
+        var repo = settled.RepoPath!;
+        var baseline = await git.GetHeadShaAsync(repo, ct);
+        var upstream = await git.ResolveCommitAsync(repo, "@{u}", ct);
+        var (token, hash) = NewToken();
+        var id = Guid.NewGuid(); var now = UtcNow();
+        var task = new AgentTask
+        {
+            Id = id, RootTaskId = settled.RootTaskId, ParentTaskId = settled.Id,
+            ParentSessionId = settled.ParentSessionId, ReplyTo = settled.ReplyTo,
+            CardId = settled.CardId, ProjectId = settled.ProjectId, RepoPath = repo,
+            StandingAuthority = settled.StandingAuthority, Depth = settled.Depth + 1,
+            Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Commit, Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = settled.WorkingDirectory, Ephemeral = true, MaxAttempts = 2,
+            CommitOnSettle = CommitOnSettlePolicy.Never, CommitBaselineSha = baseline,
+            Title = "Commit: " + Clamp(settled.Title, 240), AgentKind = pair.Kind, ModelLevel = pair.Level,
+            RoutingPinId = pinId, Status = AgentTaskStatus.Queued, TokenHash = hash, CreatedAt = now,
+            ExpectedDurationMinutes = Math.Clamp(_settings.DefaultExpectedMinutes, 1, 1440),
+            Goal = $"""
+                Commit the work of task {DelegationReportFormatter.Short(settled.Id)}: {settled.Title}.
+                Report: {Clamp((settled.Result ?? "").Split('\n').FirstOrDefault(l => !string.IsNullOrWhiteSpace(l)) ?? "", 500)}
+                Reason: {reason}
+                Dirty paths:
+                {string.Join('\n', dirtyPaths.Take(60).Select(p => "- " + p))}
+                {(dirtyPaths.Count > 60 ? $"+{dirtyPaths.Count - 60} more" : "")}
+                Judge attribution from that task's report and git diff. Commit ONLY that task's paths
+                through scripts/task-commit.ps1 -Paths ... -MessageFile ... . Use the gated endpoint,
+                never direct git add/commit, never git add -f, never edit .gitignore or info/exclude,
+                never push, never touch another task's dirty paths. Report a refusal verbatim; do not
+                work around it. Report the sha and paths on success. The gated endpoint is the only
+                authorized commit for this Commit-role child; its Never policy prevents recursive settlement.
+                """,
+        };
+        _db.AgentTasks.Add(task);
+        _db.AgentTaskEvents.Add(new() { Id = Guid.NewGuid(), AgentTaskId = id, Type = AgentTaskEventType.Created,
+            ModelLevel = task.ModelLevel, At = now, Detail = $"Spawned by the server to commit {dirtyPaths.Count} dirty path(s) left by task {DelegationReportFormatter.Short(settled.Id)} ({reason}).\nCommit upstream baseline: {upstream ?? "none"}" });
+        if (warning is not null) _db.AgentTaskEvents.Add(new() { Id = Guid.NewGuid(), AgentTaskId = id,
+            Type = AgentTaskEventType.Warning, Detail = warning, At = now });
+        RawTokens[id] = token;
+        return task;
+    }
+
     internal async Task<AgentTask?> CreateMergeTaskAsync(
         AgentTask conflicted, IReadOnlyList<string> conflictFiles, CancellationToken ct,
         string? landingTarget = null)
