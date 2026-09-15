@@ -23,6 +23,18 @@ public sealed partial class AgentTaskCommitEndpointTests
     [Arguments(true)]
     public async Task Spawned_child_complete_brief_gated_operation_and_parent_receipt(bool recover)
     {
+        // Endpoint fixtures intentionally leave Working rows. A dispatcher scenario owns
+        // a fresh database so those independent requests cannot consume its task capacity.
+        await using var isolated = new CommitEndpointWebAppFactory();
+        await new CommitChildChain(isolated).RunAsync(recover);
+    }
+
+    private sealed class CommitChildChain(CommitEndpointWebAppFactory factory)
+    {
+    private readonly CommitEndpointWebAppFactory _factory = factory;
+
+    public async Task RunAsync(bool recover)
+    {
         using var repo = await SeedRepoAsync();
         using var client = _factory.CreateClient();
         await repo.AddBareOriginAsync();
@@ -90,6 +102,8 @@ public sealed partial class AgentTaskCommitEndpointTests
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var child = await db.AgentTasks.SingleAsync(t => t.ParentTaskId == taskId);
+            (await db.AgentTasks.CountAsync(t => t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Dispatched))
+                .ShouldBe(0, "the chain must not inherit another endpoint test's active tasks");
             childId = child.Id;
             child.CommitOnSettle.ShouldBe(CommitOnSettlePolicy.Never);
             child.AgentKind.ShouldBe(AgentKind.ClaudeCode);
@@ -216,5 +230,6 @@ public sealed partial class AgentTaskCommitEndpointTests
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var id = await db.AgentTaskLandNotifications.Where(n => n.TaskId == task).Select(n => n.Id).SingleAsync();
         await scope.ServiceProvider.GetRequiredService<AgentTaskLandNotificationService>().ReconcileAsync(id, CancellationToken.None);
+    }
     }
 }
