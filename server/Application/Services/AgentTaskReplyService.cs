@@ -3165,9 +3165,15 @@ public sealed class AgentTaskReplyService
             var sha7 = sha.Length >= 7 ? sha[..7] : sha;
             var paths = await git.DiffTreePathsAsync(task.RepoPath, sha, ct);
             var ignored = await git.CheckIgnoredAsync(task.RepoPath, paths, ct);
-            if (ignored.Count > 0)
+            if (!ignored.Succeeded)
             {
-                var names = string.Join(", ", ignored.Select(m => m.Path));
+                var unavailable = $"commit {sha7} audit unavailable: {ignored.Error}";
+                db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, unavailable, now));
+                lines.Add(unavailable);
+            }
+            if (ignored.Items.Count > 0)
+            {
+                var names = string.Join(", ", ignored.Items.Select(m => m.Path));
                 var revert = $"REVERT commit {sha7}: it contains ignored path(s) {names}";
                 db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, revert, now));
                 db.AgentIncidents.Add(new AgentIncident

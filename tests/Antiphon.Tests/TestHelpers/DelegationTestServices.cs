@@ -40,8 +40,11 @@ internal static class DelegationTestServices
     /// <c>AgentTaskReplyService</c> / <c>DelegateBindRefusalRecovery</c> /
     /// <c>AgentReviewCheckpointService</c> but have no worktree graph of their own.
     /// </summary>
-    public static IServiceCollection AddGitWorkspaceService(this IServiceCollection services)
+    public static IServiceCollection AddGitWorkspaceService(
+        this IServiceCollection services, GitWorkspaceService? workspaceGit = null)
     {
+        if (workspaceGit is not null)
+            services.TryAddSingleton<GitWorkspaceService>(workspaceGit);
         services.AddOptions<global::Antiphon.SessionRunner.Contracts.GrokRulesSettings>();
         services.TryAddSingleton<GrokRulesRefreshService>();
         services.TryAddSingleton<GitWorkspaceService>();

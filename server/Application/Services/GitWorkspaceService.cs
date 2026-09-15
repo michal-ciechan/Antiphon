@@ -56,7 +56,7 @@ public class GitWorkspaceService
         return code == 0 && origin.Length > 0 ? origin : null;
     }
 
-    public sealed record GitStrictList<T>(bool Succeeded, IReadOnlyList<T> Items, int ExitCode);
+    public sealed record GitStrictList<T>(bool Succeeded, IReadOnlyList<T> Items, int ExitCode, string? Error = null);
 
     /// <summary>Working tree + index changes vs HEAD (porcelain v1 -z), untracked included.</summary>
     public async Task<IReadOnlyList<GitChange>> GetChangesAsync(string workingDirectory, CancellationToken ct)
@@ -717,11 +717,11 @@ public class GitWorkspaceService
     /// <c>git check-ignore --no-index -v -z --stdin</c> over <paramref name="paths"/>.
     /// Exit 1 (none ignored) is an empty list; exit 0 is the matching records.
     /// </summary>
-    public async Task<IReadOnlyList<GitIgnoreMatch>> CheckIgnoredAsync(
+    public async Task<GitStrictList<GitIgnoreMatch>> CheckIgnoredAsync(
         string workingDirectory, IReadOnlyList<string> paths, CancellationToken ct)
     {
         if (paths.Count == 0)
-            return [];
+            return new(true, [], 0);
 
         var stdin = string.Concat(paths.Select(p => p.Replace('\\', '/') + "\0"));
         var (code, stdout, stderr) = await RunWithInputAsync(
@@ -729,7 +729,7 @@ public class GitWorkspaceService
         if (code is not (0 or 1))
         {
             _logger.LogDebug("git check-ignore failed in {Dir}: {Err}", workingDirectory, stderr);
-            return [];
+            return new(false, [], code, $"git check-ignore failed ({code}): {stderr}");
         }
 
         var matches = new List<GitIgnoreMatch>();
@@ -750,7 +750,7 @@ public class GitWorkspaceService
             matches.Add(new GitIgnoreMatch(path, sourceName, line, pattern));
         }
 
-        return matches;
+        return new(true, matches, code);
     }
 
     public async Task<(int Code, string Stderr)> StageAsync(
@@ -763,16 +763,22 @@ public class GitWorkspaceService
         return (code, stderr);
     }
 
-    public async Task<IReadOnlyList<string>> StagedPathsAsync(string workingDirectory, CancellationToken ct)
+    public async Task<GitStrictList<string>> StagedPathsAsync(string workingDirectory, CancellationToken ct)
     {
-        var (code, stdout, _) = await RunAsync(
+        var (code, stdout, stderr) = await RunAsync(
             workingDirectory, ct, "diff", "--cached", "--name-only", "-z");
         if (code != 0)
-            return [];
-        return stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            return new(false, [], code, $"git staged-path inspection failed ({code}): {stderr}");
+        return new(true, stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries)
             .Select(p => p.Replace('\\', '/'))
-            .ToArray();
+            .ToArray(), 0);
     }
+
+    public Task<(int Code, string Stdout, string Stderr)> CaptureIndexAsync(string repo, CancellationToken ct) =>
+        RunAsync(repo, ct, "write-tree");
+
+    public Task<(int Code, string Stdout, string Stderr)> RestoreIndexAsync(string repo, string tree, CancellationToken ct) =>
+        RunAsync(repo, ct, "read-tree", tree);
 
     public async Task<(int Code, string Stderr)> UnstageAsync(
         string workingDirectory, IReadOnlyList<string> paths, CancellationToken ct)

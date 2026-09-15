@@ -8,6 +8,7 @@ public sealed class RecordingGitWorkspaceService : GitWorkspaceService
 {
     public List<string> Verbs { get; } = [];
     public Func<string[], Task>? BeforeRun { get; set; }
+    public Func<string[], (int Code, string Stdout, string Stderr)?>? OverrideRun { get; set; }
 
     public RecordingGitWorkspaceService() : base(NullLogger<GitWorkspaceService>.Instance) { }
 
@@ -15,6 +16,7 @@ public sealed class RecordingGitWorkspaceService : GitWorkspaceService
         string workingDirectory, CancellationToken ct, params string[] args)
     {
         await RecordAsync(args);
+        if (OverrideRun?.Invoke(args) is { } result) return result;
         return await base.RunAsync(workingDirectory, ct, args);
     }
 
@@ -22,6 +24,7 @@ public sealed class RecordingGitWorkspaceService : GitWorkspaceService
         string workingDirectory, string input, CancellationToken ct, params string[] args)
     {
         await RecordAsync(args);
+        if (OverrideRun?.Invoke(args) is { } result) return result;
         return await base.RunWithInputAsync(workingDirectory, input, ct, args);
     }
 

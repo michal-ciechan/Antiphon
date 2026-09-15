@@ -84,9 +84,14 @@ public sealed class GatedCommitService
         if (status.Items.Count == 0)
             return new GatedCommitResult(GatedCommitOutcome.NothingToCommit, null, [], []);
 
-        var ignoreRuleHits = status.Items
-            .Where(c => string.Equals(System.IO.Path.GetFileName(c.Path.Replace('\\', '/')), ".gitignore", StringComparison.Ordinal))
-            .Select(c => new GatedCommitRefusal(c.Path.Replace('\\', '/'), "gitignore"))
+        var dirty = status.Items
+            .SelectMany(c => c.OldPath is null ? new[] { c.Path } : new[] { c.Path, c.OldPath })
+            .Select(p => p.Replace('\\', '/'))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var ignoreRuleHits = dirty
+            .Where(p => string.Equals(System.IO.Path.GetFileName(p), ".gitignore", StringComparison.Ordinal))
+            .Select(p => new GatedCommitRefusal(p, "gitignore"))
             .ToArray();
         if (ignoreRuleHits.Length > 0)
         {
@@ -94,27 +99,34 @@ public sealed class GatedCommitService
                 GatedCommitOutcome.IgnoreRulesChanged, null, [], ignoreRuleHits);
         }
 
-        var dirty = status.Items
-            .Select(c => c.Path.Replace('\\', '/'))
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
+        // A rename is one change: selecting either endpoint must include the other endpoint.
+        var selected = pathspec is null ? dirty : status.Items
+            .Where(c => pathspec.Contains(c.Path, StringComparer.Ordinal)
+                || c.OldPath is not null && pathspec.Contains(c.OldPath, StringComparer.Ordinal))
+            .SelectMany(c => c.OldPath is null ? new[] { c.Path } : new[] { c.Path, c.OldPath })
+            .Select(p => p.Replace('\\', '/')).Distinct(StringComparer.Ordinal).ToArray();
         var candidates = pathspec is null
             ? dirty
-            : dirty.Where(p => pathspec.Any(s => string.Equals(s.Replace('\\', '/'), p, StringComparison.Ordinal)))
-                .ToArray();
+            : selected;
         if (candidates.Length == 0)
             return new GatedCommitResult(GatedCommitOutcome.NothingToCommit, null, [], []);
 
         var ignored = await _git.CheckIgnoredAsync(repo, candidates, ct);
-        if (ignored.Count > 0)
+        if (!ignored.Succeeded)
+            return new(GatedCommitOutcome.CommitFailed, null, [], [], ignored.Error);
+        if (ignored.Items.Count > 0)
         {
             return new GatedCommitResult(
                 GatedCommitOutcome.IgnoredPathStaged,
                 null,
                 [],
-                ignored.Select(m => new GatedCommitRefusal(m.Path, m.Rule)).ToArray());
+                ignored.Items.Select(m => new GatedCommitRefusal(m.Path, m.Rule)).ToArray());
         }
 
+        // Keep the exact staged contents, including foreign partial staging, for a late refusal.
+        var index = await _git.CaptureIndexAsync(repo, ct);
+        if (index.Code != 0)
+            return new(GatedCommitOutcome.CommitFailed, null, [], [], index.Stderr);
         var staged = await _git.StageAsync(repo, pathspec is null ? null : candidates, ct);
         if (staged.Code != 0)
         {
@@ -122,18 +134,25 @@ public sealed class GatedCommitService
                 GatedCommitOutcome.CommitFailed, null, [], [], staged.Stderr);
         }
 
-        var stagedPaths = await _git.StagedPathsAsync(repo, ct);
+        var inspection = await _git.StagedPathsAsync(repo, ct);
+        if (!inspection.Succeeded)
+            return await RefuseAfterStageAsync(inspection.Error);
+        var stagedPaths = inspection.Items;
         if (pathspec is null)
         {
             var lateIgnored = await _git.CheckIgnoredAsync(repo, stagedPaths, ct);
-            if (lateIgnored.Count > 0)
+            if (!lateIgnored.Succeeded)
+                return await RefuseAfterStageAsync(lateIgnored.Error);
+            if (lateIgnored.Items.Count > 0)
             {
-                await _git.UnstageAsync(repo, stagedPaths, ct);
+                var restored = await _git.RestoreIndexAsync(repo, index.Stdout.Trim(), ct);
+                if (restored.Code != 0)
+                    return new(GatedCommitOutcome.CommitFailed, null, [], [], "Index restore failed: " + restored.Stderr);
                 return new GatedCommitResult(
                     GatedCommitOutcome.IgnoredPathStaged,
                     null,
                     [],
-                    lateIgnored.Select(m => new GatedCommitRefusal(m.Path, m.Rule)).ToArray());
+                    lateIgnored.Items.Select(m => new GatedCommitRefusal(m.Path, m.Rule)).ToArray());
             }
         }
         else
@@ -164,5 +183,12 @@ public sealed class GatedCommitService
         var sha = await _git.HeadShaAsync(repo, ct);
         var files = sha is null ? Array.Empty<string>() : await _git.DiffTreePathsAsync(repo, sha, ct);
         return new GatedCommitResult(GatedCommitOutcome.Committed, sha, files, []);
+
+        async Task<GatedCommitResult> RefuseAfterStageAsync(string? error)
+        {
+            var restored = await _git.RestoreIndexAsync(repo, index.Stdout.Trim(), ct);
+            return new(GatedCommitOutcome.CommitFailed, null, [], [], error
+                + (restored.Code == 0 ? "" : "; index restore failed: " + restored.Stderr));
+        }
     }
 }
