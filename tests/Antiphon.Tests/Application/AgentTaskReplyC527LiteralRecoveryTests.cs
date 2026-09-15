@@ -26,14 +26,15 @@ public partial class AgentTaskReplyIntegrationTests
         var initial = C527Factory(repo.WorktreeRoot, gitSpy: spy, saveInterceptor: new ThrowOnceSaveInterceptor());
         await SeedTurnAsync(seeded.SessionId, DelegationReportFormatter.TaskMarker(seeded.Task.Id), report);
         var before = int.Parse((await repo.GitReadAsync("rev-list", "--count", "HEAD")).Trim());
-        var expectedIdentity = DelegationNoteDigest.Compute(
-            $"{seeded.Task.Id:D}|{seeded.Task.AgentSessionId:D}|{seeded.Task.DispatchedAt:O}|{report}");
         spy.BeforeRun = async args =>
         {
             if (args[0] != "commit") return;
             await using var db = CreateContext();
             var obligation = await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == seeded.Task.Id
                 && e.Type == AgentTaskEventType.CommitRecoveryStarted);
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == seeded.Task.Id);
+            var expectedIdentity = DelegationNoteDigest.Compute(
+                $"{task.Id:D}|{task.AgentSessionId:D}|{task.DispatchedAt:O}|{report}");
             obligation.Detail.ShouldBe(expectedIdentity);
             (await db.AgentTasks.SingleAsync(t => t.Id == seeded.Task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
             (await db.AgentTaskLandNotifications.AnyAsync(n => n.TaskId == seeded.Task.Id)).ShouldBeFalse();
@@ -123,6 +124,57 @@ public partial class AgentTaskReplyIntegrationTests
         (await db.AgentTasks.SingleAsync(t => t.Id == seeded.Task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
         (await db.AgentTaskLandNotifications.AnyAsync(n => n.TaskId == seeded.Task.Id)).ShouldBeFalse();
         terminal.SubmittedBodies.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C527_literal_footprint_reaches_complete_parent_receipt_without_matching_neighbor(bool recover)
+    {
+        var seeded = await SeedC527Async();
+        using var repo = seeded.Repo;
+        const string selected = "item[ab].md";
+        const string neighbor = "itema.md";
+        await repo.CommitFileAsync(selected, "selected base");
+        await repo.CommitFileAsync(neighbor, "neighbor base");
+        await repo.CommitFileAsync(".gitignore", "*.md\n!item\\[ab\\].md\n");
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, selected), "selected work");
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, neighbor), "neighbor staged");
+        await repo.GitAsync("add", "-f", neighbor);
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, neighbor), "neighbor work");
+        await SeedFileEditAsync(seeded.SessionId, "Write", Path.Combine(repo.Path, selected), DateTime.UtcNow);
+        const string report = "Wrote `item[ab].md`.";
+        await SeedTurnAsync(seeded.SessionId, DelegationReportFormatter.TaskMarker(seeded.Task.Id), report);
+        var factory = C527Factory(repo.WorktreeRoot, saveInterceptor: recover ? new ThrowOnceSaveInterceptor() : null);
+        var terminal = AttachTerminal(factory, seeded.Parent);
+        await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+        var committed = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        if (recover)
+        {
+            terminal.SubmittedBodies.ShouldBeEmpty();
+            factory = C527Factory(repo.WorktreeRoot);
+            terminal = AttachTerminal(factory, seeded.Parent);
+            await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+        }
+        await Queue(factory).FlushSessionAsync(seeded.Parent, CancellationToken.None);
+        var receipt = await AssertParentReceivedNoteAsync(seeded.Parent, seeded.Task, report);
+        receipt.Prompt.Text.ShouldContain($"git=committed:{committed[..7]} (1 files)");
+        await using var db = CreateContext();
+        var commitEvent = await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == seeded.Task.Id
+            && e.Type == AgentTaskEventType.Committed);
+        commitEvent.Detail.ShouldContain(selected);
+        commitEvent.Detail.ShouldNotContain(neighbor);
+        var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == seeded.Task.Id);
+        receipt.Prompt.Text.ShouldBe(note.Body);
+        receipt.Note.SourceLandNotificationId.ShouldBe(note.Id);
+        (await repo.GitReadAsync("diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD")).Trim().ShouldBe(selected);
+        (await repo.GitReadAsync("show", $"HEAD:{neighbor}")).ShouldBe("neighbor base");
+        (await repo.GitReadAsync("show", $":{neighbor}")).ShouldBe("neighbor staged");
+        (await File.ReadAllTextAsync(Path.Combine(repo.Path, neighbor))).ShouldBe("neighbor work");
+        await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+        await Queue(factory).FlushSessionAsync(seeded.Parent, CancellationToken.None);
+        terminal.SubmittedBodies.Count.ShouldBe(1);
+        (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldBe(committed);
     }
 
     private sealed class RefuseRecoveryObligation : SaveChangesInterceptor

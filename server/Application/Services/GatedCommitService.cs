@@ -1,6 +1,7 @@
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Exceptions;
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -164,23 +165,21 @@ public sealed class GatedCommitService
         }
         else
         {
-            var extra = stagedPaths
-                .Where(p => !candidates.Contains(p, StringComparer.Ordinal))
-                .ToArray();
-            // --only leaves foreign staged paths in the index; they must not be in THIS commit.
-            // The staged-set for the commit is the intersection with candidates.
+            // Existing foreign staged contents are allowed, but staging must not alter them.
+            var changed = await _git.ChangedIndexPathsAsync(repo, index.Stdout.Trim(), ct);
+            if (!changed.Succeeded || changed.Items.Any(p => !candidates.Contains(p, StringComparer.Ordinal)))
+                return await RefuseAfterStageAsync("Scoped staging changed paths outside the approved selection: " + changed.Error);
             var ours = stagedPaths.Where(p => candidates.Contains(p, StringComparer.Ordinal)).ToArray();
             if (ours.Length == 0)
             {
                 return new GatedCommitResult(GatedCommitOutcome.NothingToCommit, null, [], []);
             }
-
-            _ = extra;
         }
 
         var commit = await _git.CommitOnlyAsync(
             repo, pathspec is null ? null : candidates, message,
-            [.. trailers, ("antiphon-operation", operationId.ToString("D"))], ct);
+            [.. trailers, ("antiphon-operation", operationId.ToString("D")),
+                ("antiphon-paths", JsonSerializer.Serialize(pathspec is null ? stagedPaths : candidates))], ct);
         if (commit.Code != 0)
         {
             _logger.LogInformation("Gated commit failed in {Repo}: {Err}", repo, commit.Stderr);
@@ -218,9 +217,29 @@ public sealed class GatedCommitService
                 "commit_recovery_unavailable");
         }
         var sha = commits.Items[0];
-        var files = await _git.TryDiffTreePathsAsync(repo, sha, ct);
+        var files = await InspectCommittedFilesAsync(repo, sha, requireApprovedPaths: knownCommitted, ct);
         if (!files.Succeeded || files.Items.Count == 0)
             throw new CommitInspectionPendingException(operationId, sha);
         return new GatedCommitResult(GatedCommitOutcome.Committed, sha, files.Items, []);
+    }
+
+    /// <summary>All commit receipts, including settlement recovery, validate the same saved selection.</summary>
+    public async Task<GitWorkspaceService.GitStrictList<string>> InspectCommittedFilesAsync(
+        string repo, string sha, bool requireApprovedPaths, CancellationToken ct)
+    {
+        var files = await _git.TryDiffTreePathsAsync(repo, sha, ct);
+        if (!files.Succeeded || files.Items.Count == 0) return files;
+        var approved = await _git.ApprovedCommitPathsAsync(repo, sha, ct);
+        if (approved.Code != 0) return new(false, [], approved.Code, approved.Stderr);
+        // Older gated commits predate the manifest. New successful mutations require it.
+        if (string.IsNullOrWhiteSpace(approved.Stdout) && !requireApprovedPaths) return files;
+        try
+        {
+            var paths = JsonSerializer.Deserialize<string[]>(approved.Stdout.Trim());
+            if (paths is { Length: > 0 } && paths.ToHashSet(StringComparer.Ordinal).SetEquals(files.Items))
+                return files;
+        }
+        catch (JsonException) { }
+        return new(false, [], -1, "Committed paths do not match the approved selection.");
     }
 }

@@ -3067,7 +3067,7 @@ public sealed class AgentTaskReplyService
         if (existing.Items.Count == 1)
         {
             var sha = existing.Items[0];
-            var inspection = await git.TryDiffTreePathsAsync(repo, sha, ct);
+            var inspection = await gated.InspectCommittedFilesAsync(repo, sha, recoveryStarted, ct);
             if (!inspection.Succeeded || inspection.Items.Count == 0)
                 throw new ServiceUnavailableException("The settlement commit exists; its paths are not yet available.",
                     "settlement_recovery_unavailable");

@@ -775,7 +775,7 @@ public class GitWorkspaceService
     {
         var args = pathspec is null || pathspec.Count == 0
             ? new[] { "add", "-A" }
-            : ["add", "-A", "--", .. pathspec];
+            : ["add", "-A", "--", .. pathspec.Select(LiteralPath)];
         var (code, _, stderr) = await RunAsync(workingDirectory, ct, args);
         return (code, stderr);
     }
@@ -797,13 +797,20 @@ public class GitWorkspaceService
     public Task<(int Code, string Stdout, string Stderr)> RestoreIndexAsync(string repo, string tree, CancellationToken ct) =>
         RunAsync(repo, ct, "read-tree", tree);
 
+    public async Task<GitStrictList<string>> ChangedIndexPathsAsync(string repo, string tree, CancellationToken ct)
+    {
+        var (code, stdout, stderr) = await RunAsync(repo, ct,
+            "diff", "--cached", "--name-only", "--no-renames", "-z", tree);
+        return new(code == 0, stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries), code, stderr);
+    }
+
     public async Task<(int Code, string Stderr)> UnstageAsync(
         string workingDirectory, IReadOnlyList<string> paths, CancellationToken ct)
     {
         if (paths.Count == 0)
             return (0, "");
         var (code, _, stderr) = await RunAsync(
-            workingDirectory, ct, ["reset", "-q", "--", .. paths]);
+            workingDirectory, ct, ["reset", "-q", "--", .. paths.Select(LiteralPath)]);
         return (code, stderr);
     }
 
@@ -828,12 +835,18 @@ public class GitWorkspaceService
         if (pathspec is { Count: > 0 })
         {
             args.Add("--");
-            args.AddRange(pathspec);
+            args.AddRange(pathspec.Select(LiteralPath));
         }
 
         var (code, _, stderr) = await RunAsync(workingDirectory, ct, [.. args]);
         return (code, stderr);
     }
+
+    private static string LiteralPath(string path) => ":(literal)" + path;
+
+    public Task<(int Code, string Stdout, string Stderr)> ApprovedCommitPathsAsync(
+        string repo, string sha, CancellationToken ct) =>
+        RunAsync(repo, ct, "log", "-1", "--format=%(trailers:key=antiphon-paths,valueonly,unfold)", sha);
 
     public async Task<string?> HeadShaAsync(string workingDirectory, CancellationToken ct)
     {

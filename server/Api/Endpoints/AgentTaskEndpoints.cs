@@ -281,6 +281,8 @@ public static class AgentTaskEndpoints
 
     private static bool IsExplicitCommitPath(string? path)
     {
+        // This validates file names, not Git patterns. The Git adapter applies literal
+        // pathspec semantics, including for legal bracket characters accepted here.
         if (string.IsNullOrWhiteSpace(path) || Path.IsPathRooted(path)
             || path.Any(c => char.IsControl(c) || "<>\"|?*:".Contains(c)))
             return false;
