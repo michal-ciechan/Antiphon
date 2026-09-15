@@ -245,6 +245,11 @@ public class ReceiptFailureDeliveryTests
             confirmed.QueueMessageId.ShouldBe(note.Id);
             confirmed.ConfirmingPromptSequence.ShouldBe(receipt.Sequence);
             confirmed.ConfirmedAt.ShouldNotBeNull();
+            var stamped = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+            stamped.CompletionNoteQueuedAt.ShouldNotBeNull();
+            stamped.CompletionNoteDigest.ShouldBe(obligation.ContentDigest);
+            (await AgentTaskCheckService.HasCompletionNoteAsync(verify, callerId, task.RootTaskId, default))
+                .ShouldBeTrue();
             // A further recreation must neither produce another queue row nor type again.
             await recovered.DisposeAsync();
             recovered = CreateProvider(schema, null, clock);

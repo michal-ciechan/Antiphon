@@ -1345,6 +1345,8 @@ public sealed class AgentTaskDispatcher
                         QueuedMessageOrigin.Delegation, $"task:{task.RootTaskId:N}",
                         task.Id, notification.ContentDigest, notification.Body.Split('\n')[0],
                         sourceLandNotificationId: notification.Id);
+                    await CompletionNoteStamp.ApplyAsync(
+                        _db, task.Id, notification.ContentDigest, UtcNow(), ct);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
