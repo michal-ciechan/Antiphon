@@ -22,9 +22,15 @@ public sealed class WorktreeCleanupPresentation
                     OmittedOwners = capture.Handles.OmittedOwners + 1, Status = WorktreeLockStatus.Partial },
                     Omitted = capture.Omitted + 1 };
             else if (capture.Native.Observations.Count > 1)
+            {
+                // Preserve the first qualifying observation even when it is the last candidate.
+                var observations = capture.Native.Observations.ToList();
+                var qualifying = observations.FindIndex(WorktreeNativeSnapshot.IsSharingConflict);
+                observations.RemoveAt(qualifying == observations.Count - 1 ? observations.Count - 2 : observations.Count - 1);
                 capture = capture with { Native = capture.Native with {
-                    Observations = capture.Native.Observations.SkipLast(1).ToArray(), Status = WorktreeLockStatus.Partial },
+                    Observations = observations, Status = WorktreeLockStatus.Partial },
                     Omitted = capture.Omitted + 1 };
+            }
             else throw new ArgumentException("cleanup_capture_too_large");
             json = JsonSerializer.Serialize(capture);
         }
@@ -37,8 +43,7 @@ public sealed class WorktreeCleanupPresentation
         var minimum = $"capture={capture.Id:N} at {capture.At:O}; "
             + (owner is null ? $"Handle {capture.Handles.Status}/{capture.Handles.Reason}"
                 : $"{Clip(owner.Name, 80)} PID={owner.ProcessId}");
-        var sharing = capture.Native.Observations.FirstOrDefault(o => o.IdentityVerified
-            && !o.Succeeded && o.NativeErrorCode is 32 or 33);
+        var sharing = capture.Native.Observations.FirstOrDefault(WorktreeNativeSnapshot.IsSharingConflict);
         var facts = $"; Git {capture.GitFailure.GeneratedCode} exit={capture.GitFailure.ExitCode?.ToString() ?? "unknown"}"
             + $"; DeleteAccessOpen={(sharing is null ? capture.Native.Reason : sharing.NativeErrorCode.ToString())}"
             + $"; owners={capture.Handles.Owners.Count} omitted={capture.Omitted + capture.Handles.OmittedOwners}";
@@ -56,6 +61,20 @@ public sealed class WorktreeCleanupPresentation
     public WorktreeCleanupReference Reference(WorktreeCleanupAttempt attempt, bool prior = false) =>
         new(attempt.Id, attempt.RequestId, attempt.OperationId, attempt.CaptureAt,
             attempt.CaptureState, attempt.Summary, attempt.CaptureJson, prior);
+
+    public static string ClipUtf8(string text, int byteLimit)
+    {
+        if (Encoding.UTF8.GetByteCount(text) <= byteLimit) return text;
+        var result = new StringBuilder();
+        var bytes = 0;
+        foreach (var rune in text.EnumerateRunes())
+        {
+            if (bytes + rune.Utf8SequenceLength > byteLimit - 1) break;
+            result.Append(rune.ToString());
+            bytes += rune.Utf8SequenceLength;
+        }
+        return result.Append('~').ToString();
+    }
 
     public static string Clip(string text, int limit) => text.Length <= limit ? text : text[..(limit - 1)] + "~";
 }

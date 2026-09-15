@@ -59,8 +59,21 @@ public sealed class AgentTaskLandReceiptTests
         var recovery = new AgentTaskLandNotificationService(restarted, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System);
         await recovery.ReconcileAsync(note.Id, CancellationToken.None); await recovery.ReconcileAsync(note.Id, CancellationToken.None);
         var saved = await restarted.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id);
+        if (cut == "spilled")
+        {
+            saved.State.ShouldNotBe(LandNotificationState.Confirmed);
+            saved.ConfirmingPromptSequence.ShouldBeNull();
+            saved.LastErrorCode.ShouldBe("queue_payload_changed_unconfirmed");
+            // A subsequent complete immutable body is positive evidence even for an old pointer row.
+            restarted.TranscriptEntries.Add(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = h.SessionId,
+                Sequence = 12, Kind = TranscriptKinds.UserPrompt, Text = note.Body,
+                Timestamp = DateTime.UtcNow, CreatedAt = DateTime.UtcNow });
+            await restarted.SaveChangesAsync();
+            await recovery.ReconcileAsync(note.Id, CancellationToken.None);
+            saved = await restarted.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id);
+        }
         saved.State.ShouldBe(LandNotificationState.Confirmed); saved.ConfirmingPromptSequence.ShouldNotBeNull().ShouldBeGreaterThan(10);
-        (await restarted.TranscriptEntries.CountAsync(p => p.AgentSessionId == h.SessionId && p.Kind == TranscriptKinds.UserPrompt)).ShouldBe(1);
+        (await restarted.TranscriptEntries.CountAsync(p => p.AgentSessionId == h.SessionId && p.Kind == TranscriptKinds.UserPrompt)).ShouldBe(cut == "spilled" ? 2 : 1);
         h.Adapter.Inputs.ShouldBeEmpty("native catch-up and receipt persistence must not retype");
     }
 

@@ -17,6 +17,18 @@ public sealed class WindowsWorktreeDeleteAccessProbe(WorktreeNativeIO io, TimePr
         var reason = "Observed";
         var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(target.Root));
         bool Expired() => clock.GetElapsedTime(start) >= TimeSpan.FromSeconds(2);
+        void CheckBudget()
+        {
+            ct.ThrowIfCancellationRequested();
+            if (Expired()) throw new TimeoutException("ProbeBudgetExpired");
+        }
+        string? Identity(string path)
+        {
+            CheckBudget();
+            var identity = io.Identity(path, CheckBudget);
+            CheckBudget();
+            return identity;
+        }
         bool Allowed(string path) => WorktreeNativeIO.Within(path, root)
             && !WorktreeNativeIO.Within(path, target.CommonDirectory) && !WorktreeNativeIO.Within(path, target.GitDirectory)
             && !Path.GetRelativePath(root, path).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
@@ -25,22 +37,24 @@ public sealed class WindowsWorktreeDeleteAccessProbe(WorktreeNativeIO io, TimePr
             reason, observations, candidates);
         try
         {
+            CheckBudget();
             if (!io.Exists(root)) return Task.FromResult(new WorktreeNativeSnapshot(WorktreeLockStatus.PathGone, "PathGone", []));
-            var rootIdentity = io.Identity(root);
+            var rootIdentity = Identity(root);
             if (rootIdentity is null || !Allowed(root))
                 return Task.FromResult(new WorktreeNativeSnapshot(WorktreeLockStatus.Unavailable, "RootIdentityUnverifiable", []));
             void Probe(string path)
             {
                 ct.ThrowIfCancellationRequested();
                 if (Expired()) { partial = true; reason = "ProbeBudgetExpired"; return; }
-                if (!Allowed(path) || io.Identity(root) != rootIdentity)
+                if (!Allowed(path) || Identity(root) != rootIdentity)
                 { partial = true; reason = "PathIdentityUnverifiable"; return; }
-                var before = io.Identity(path);
+                var before = Identity(path);
                 if (before is null) { partial = true; reason = "PathIdentityUnverifiable"; return; }
-                using var handle = io.Open(path, 0x00010000, 7, 3, 0x02200000, false);
+                CheckBudget();
+                using var handle = io.Open(path, 0x00010000, 7, 3, 0x02200000, false, CheckBudget);
                 var error = handle.Error;
                 var valid = handle.Succeeded ? WorktreeNativeIO.Same(handle.FinalPath, path) && !handle.ReparsePoint
-                    : before == io.Identity(path) && rootIdentity == io.Identity(root);
+                    : before == Identity(path) && rootIdentity == Identity(root);
                 observations.Add(new("DeleteAccessOpen", Path.GetRelativePath(root, path), clock.GetUtcNow().UtcDateTime,
                     handle.Succeeded && valid, error, valid));
                 if (!valid) { partial = true; reason = "PathIdentityUnverifiable"; }
@@ -62,17 +76,21 @@ public sealed class WindowsWorktreeDeleteAccessProbe(WorktreeNativeIO io, TimePr
             {
                 ct.ThrowIfCancellationRequested();
                 var directory = pending.Pop();
-                if (io.Identity(root) != rootIdentity || !Allowed(directory)
-                    || (io.Attributes(directory) & FileAttributes.ReparsePoint) != 0)
+                if (Identity(root) != rootIdentity || !Allowed(directory))
                 { partial = true; reason = "PathIdentityUnverifiable"; continue; }
+                CheckBudget();
+                if ((io.Attributes(directory) & FileAttributes.ReparsePoint) != 0)
+                { partial = true; reason = "PathIdentityUnverifiable"; continue; }
+                CheckBudget();
                 using var entries = io.Entries(directory);
                 while (candidates < 64 && !Expired())
                 {
-                    ct.ThrowIfCancellationRequested();
+                    CheckBudget();
                     if (!entries.MoveNext()) break;
                     candidates++;
                     var path = entries.Current;
                     if (!Allowed(path)) continue;
+                    CheckBudget();
                     var attributes = io.Attributes(path);
                     if ((attributes & FileAttributes.ReparsePoint) != 0) { partial = true; reason = "ReparsePointExcluded"; continue; }
                     if (seen.Add(path)) Probe(path);
@@ -81,6 +99,7 @@ public sealed class WindowsWorktreeDeleteAccessProbe(WorktreeNativeIO io, TimePr
             }
             if (candidates >= 64 || Expired()) { partial = true; reason = "ProbeLimit"; }
         }
+        catch (TimeoutException) { partial = true; reason = "ProbeBudgetExpired"; }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         { partial = true; reason = "ProbeAccessLimited"; }
         ct.ThrowIfCancellationRequested();

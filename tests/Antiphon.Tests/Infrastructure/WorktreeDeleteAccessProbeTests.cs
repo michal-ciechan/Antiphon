@@ -160,6 +160,45 @@ public sealed class WorktreeDeleteAccessProbeTests
         error.CancellationToken.ShouldBe(source.Token); io.Opens.ShouldBeEmpty();
     }
 
+    [Test]
+    [Arguments(1)] [Arguments(2)] [Arguments(3)]
+    public async Task C443_IdentityExpiryPreventsDeleteOpen(int identityRead)
+    {
+        var clock = new FakeTimeProvider(); var io = new RecordingIO(); var reads = 0;
+        io.IdentityRead = path => {
+            if (++reads == identityRead) clock.Advance(TimeSpan.FromSeconds(2));
+            return path;
+        };
+        var result = await RunAsync(io, clock: clock);
+        result.Reason.ShouldBe("ProbeBudgetExpired"); result.HasSharingConflict.ShouldBeFalse();
+        io.Opens.ShouldBeEmpty(); reads.ShouldBe(identityRead);
+    }
+
+    [Test]
+    [Arguments(1)] [Arguments(2)] [Arguments(3)]
+    public async Task C443_IdentityCancellationPreventsDeleteOpen(int identityRead)
+    {
+        using var source = new CancellationTokenSource(); var io = new RecordingIO(); var reads = 0;
+        io.IdentityRead = path => { if (++reads == identityRead) source.Cancel(); return path; };
+        var error = await Should.ThrowAsync<OperationCanceledException>(() => RunAsync(io, ct: source.Token));
+        error.CancellationToken.ShouldBe(source.Token); io.Opens.ShouldBeEmpty(); reads.ShouldBe(identityRead);
+    }
+
+    [Test]
+    [Arguments(false)] [Arguments(true)]
+    public async Task C443_IdentityWalkStopsBetweenNativeOpens(bool cancel)
+    {
+        using var source = new CancellationTokenSource(); var clock = new FakeTimeProvider();
+        var io = new RecordingIO { UseNativeIdentity = true };
+        io.BeforeOpen = _ => { if (cancel) source.Cancel(); else clock.Advance(TimeSpan.FromSeconds(2)); };
+        if (cancel)
+            (await Should.ThrowAsync<OperationCanceledException>(() => RunAsync(io, clock: clock, ct: source.Token)))
+                .CancellationToken.ShouldBe(source.Token);
+        else (await RunAsync(io, clock: clock)).Reason.ShouldBe("ProbeBudgetExpired");
+        io.Opens.Count.ShouldBe(1); io.Opens[0].Access.ShouldBe(0x80u);
+        io.Outstanding.ShouldBe(0); io.Disposals.ShouldBe(1);
+    }
+
     private static async Task<OpenCall> OpenAsync()
     { var io = new RecordingIO(); await RunAsync(io); return io.Opens.Single(); }
     internal static Task<WorktreeNativeSnapshot> RunAsync(RecordingIO io, IReadOnlyList<WorktreeLockOwner>? owners = null,
@@ -173,6 +212,7 @@ public sealed class WorktreeDeleteAccessProbeTests
         public string Admin => Path.GetFullPath("fixture-admin");
         public string Child(string path) => Path.Combine(Root, path);
         public bool IsSupported = true;
+        public bool UseNativeIdentity;
         public int? Error;
         public bool DeniedEnumeration;
         public int Outstanding, Disposals, NextEntries;
@@ -186,7 +226,11 @@ public sealed class WorktreeDeleteAccessProbeTests
         public Dictionary<string, FileAttributes> AttributeOverrides { get; } = [];
         public override bool Supported => IsSupported;
         public override bool Exists(string path) { Trace.Add("exists"); return true; }
-        public override string? Identity(string path) { Trace.Add("identity"); return IdentityRead is null ? path : IdentityRead(path); }
+        public override string? Identity(string path, Action checkBudget)
+        {
+            Trace.Add("identity");
+            return UseNativeIdentity ? base.Identity(path, checkBudget) : IdentityRead is null ? path : IdentityRead(path);
+        }
         public override FileAttributes Attributes(string path) { Trace.Add("attributes"); return AttributeOverrides.GetValueOrDefault(path, path == Root ? FileAttributes.Directory : FileAttributes.Normal); }
         public override IEnumerator<string> Entries(string path)
         {
@@ -195,7 +239,7 @@ public sealed class WorktreeDeleteAccessProbeTests
             return Enumerate().GetEnumerator();
             IEnumerable<string> Enumerate() { foreach (var child in path == Root ? Children : []) { NextEntries++; yield return child; } }
         }
-        public override WorktreeNativeHandle Open(string path, uint desiredAccess, uint shareMode, uint disposition, uint flags, bool inherit)
+        public override WorktreeNativeHandle Open(string path, uint desiredAccess, uint shareMode, uint disposition, uint flags, bool inherit, Action? checkBudget = null)
         {
             BeforeOpen?.Invoke(path); Trace.Add("open"); Opens.Add(new(path, desiredAccess, shareMode, disposition, flags, inherit));
             if (Error is not null) return new(false, Error, null, null, false, null);
