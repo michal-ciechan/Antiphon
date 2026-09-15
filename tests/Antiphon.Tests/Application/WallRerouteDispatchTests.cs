@@ -294,6 +294,56 @@ public class WallRerouteDispatchTests
     }
 
     [Test]
+    public async Task Failed_receipt_cannot_resurrect_a_concurrently_superseded_wait()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var task = await SeedQueuedOpusAsync(schema, workspace.Path);
+        var (service, _, provider) = CapacityRecoveryTestSupport.CreateService(schema);
+        await using var services = provider;
+        var wait = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+            $"task:{task.Id:N}", CapacityWaitConsumerKind.QueuedTask, taskId: task.Id,
+            holdAlreadyCleared: true), CancellationToken.None);
+        (await service.GrantReadyAsync(CancellationToken.None)).ShouldBe(1);
+        var fault = new ThrowOnReceiptSave();
+        var result = await CapacityRecoveryTaskTests.CreateDispatcher(schema.ConnectionString, fault)
+            .TickAsync(CancellationToken.None);
+        fault.Throws.ShouldBe(1);
+        result.Dispatched.ShouldBe(1);
+        result.Failures.ShouldBe(0);
+        var dispatcherDb = fault.Context!;
+        dispatcherDb.Database.CurrentTransaction.ShouldBeNull();
+
+        await using var concurrent = CreateContext(schema);
+        (await service.SupersedeTaskWaitsOnAsync(concurrent, task.Id, "concurrent-supersede",
+            CancellationToken.None)).ShouldBe(1);
+        var ended = await concurrent.CapacityRecoveryWaits.AsNoTracking().SingleAsync(w => w.Id == wait.Id);
+        ended.State.ShouldBe(CapacityRecoveryWaitState.Superseded);
+
+        // Same scoped dispatcher context, after the failed receipt transaction released
+        // its lock: the post-dispatch warning path also saves unrelated task events here.
+        var warningId = Guid.NewGuid();
+        dispatcherDb.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = warningId, AgentTaskId = task.Id, Type = AgentTaskEventType.Warning,
+            At = DateTime.UtcNow, Detail = "subsequent dispatcher warning",
+        });
+        await dispatcherDb.SaveChangesAsync();
+        var stored = await concurrent.CapacityRecoveryWaits.AsNoTracking().SingleAsync(w => w.Id == wait.Id);
+        stored.State.ShouldBe(CapacityRecoveryWaitState.Superseded);
+        stored.Outcome.ShouldBe(ended.Outcome);
+        stored.OutcomeReason.ShouldBe(ended.OutcomeReason);
+        stored.Version.ShouldBe(ended.Version);
+        stored.SessionId.ShouldBeNull();
+        stored.LaunchSessionId.ShouldBeNull();
+        stored.DispatchAttemptId.ShouldBeNull();
+        (await concurrent.AgentTaskEvents.CountAsync(e => e.Id == warningId)).ShouldBe(1);
+        (await concurrent.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id))
+            .Status.ShouldBe(AgentTaskStatus.Dispatched);
+        fault.Throws.ShouldBe(1, "the receipt fault must be single-use, including subsequent saves");
+    }
+
+    [Test]
     [Arguments(true)]
     [Arguments(false)]
     public async Task Redeemed_dispatch_receipts_the_wait_and_the_transcript_progresses_it(bool withWait)
@@ -358,15 +408,17 @@ public class WallRerouteDispatchTests
     private sealed class ThrowOnReceiptSave : SaveChangesInterceptor
     {
         public int Throws;
+        public AppDbContext? Context;
 
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
             DbContextEventData eventData, InterceptionResult<int> result,
             CancellationToken cancellationToken = default)
         {
-            if (eventData.Context?.ChangeTracker.Entries<CapacityRecoveryWait>()
-                    .Any(e => e.Entity.State == CapacityRecoveryWaitState.StartAccepted) == true)
+            if (eventData.Context is AppDbContext db && db.ChangeTracker.Entries<CapacityRecoveryWait>()
+                    .Any(e => e.Entity.State == CapacityRecoveryWaitState.StartAccepted)
+                && Interlocked.CompareExchange(ref Throws, 1, 0) == 0)
             {
-                Interlocked.Increment(ref Throws);
+                Context = db;
                 throw new InvalidOperationException("injected receipt save failure");
             }
 
