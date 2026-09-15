@@ -128,7 +128,10 @@ public sealed class GatedCommitService
         var index = await _git.CaptureIndexAsync(repo, ct);
         if (index.Code != 0)
             return new(GatedCommitOutcome.CommitFailed, null, [], [], index.Stderr);
-        var staged = await _git.StageAsync(repo, pathspec is null ? null : candidates, ct);
+        // Porcelain rename records already have the old endpoint removed from the index.
+        // Stage the current paths; commit --only below still includes both HEAD endpoints.
+        var stageCandidates = candidates.Where(p => status.Items.Any(c => c.Path.Replace('\\', '/') == p)).ToArray();
+        var staged = await _git.StageAsync(repo, pathspec is null ? null : stageCandidates, ct);
         if (staged.Code != 0)
         {
             return new GatedCommitResult(

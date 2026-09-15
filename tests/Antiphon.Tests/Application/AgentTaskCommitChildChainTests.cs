@@ -109,14 +109,17 @@ public sealed partial class AgentTaskCommitEndpointTests
             await scanner.StartAsync(CancellationToken.None);
             try
             {
-                using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-                while (true)
+                var deadline = DateTime.UtcNow.AddSeconds(15);
+                var queued = false;
+                while (DateTime.UtcNow < deadline)
                 {
                     await using var scope = _factory.Services.CreateAsyncScope();
                     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                    if (await db.SessionQueuedMessages.AnyAsync(m => m.SourceLandNotificationId == parentNoteId, stop.Token)) break;
-                    await Task.Delay(50, stop.Token);
+                    queued = await db.SessionQueuedMessages.AnyAsync(m => m.SourceLandNotificationId == parentNoteId);
+                    if (queued) break;
+                    await Task.Delay(50);
                 }
+                queued.ShouldBeTrue("the hosted scanner must recover the durable completion");
             }
             finally { await scanner.StopAsync(CancellationToken.None); }
         }
@@ -133,7 +136,8 @@ public sealed partial class AgentTaskCommitEndpointTests
             var child = await db.AgentTasks.SingleAsync(t => t.Id == childId);
             child.Status.ShouldBe(AgentTaskStatus.Dispatched);
             child.AgentSessionId.ShouldBe(childSession);
-            var brief = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == childSession && m.SourceTaskId == childId);
+            var brief = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == childSession && m.ExecutionTaskId == childId);
+            brief.ExecutionTaskId.ShouldBe(child.Id);
             var prompt = await db.TranscriptEntries.SingleAsync(p => p.AgentSessionId == childSession
                 && p.Kind == TranscriptKinds.UserPrompt && p.Sequence > brief.LastDeliveryBaselineSequence);
             prompt.Text.ShouldBe(brief.Body);
