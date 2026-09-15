@@ -220,6 +220,10 @@ new send path — the spec's explicit S5 test); a wall parks after 3 deaths.
 with an `AgentTaskEvent` naming the class and the scheduled fire time (§D6), and settle normally when
 the resumed turn reports.
 
+Historical correction (CARD-0492): that settlement promise was false until the recovery prompt
+carried the open task marker and stale-stub settlement was guarded. See
+[the CARD-0492 S1/S2 fix](2026-09-14-card-0492-stale-api-error-stub-settlement-plan.md).
+
 Three things it must get right, all of which are easy to get wrong:
 
 - **Do not call `ReleaseDelegateAsync`.** The delegate still owns the session for its resumed turn;
