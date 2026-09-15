@@ -1005,6 +1005,22 @@ public class DelegationWorktreeTests
         CreatedAt = DateTime.UtcNow,
     };
 
+    [Test]
+    public async Task a_worktree_with_a_force_added_ignored_file_is_left_for_review_naming_it()
+    {
+        using var repo = new ScratchGitRepo("c527-worktree");
+        await repo.CommitFileAsync(".gitignore", "*.secret\n"); await repo.GitAsync("branch", "feat/parent");
+        var before = await repo.GitReadAsync("rev-parse", "feat/parent"); var (service, _) = CreateService(repo);
+        var task = NewTask(repo.Path, "feat/parent"); await service.CreateForTaskAsync(task, default);
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "a.secret"), "first");
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "-f", "a.secret")).Ok.ShouldBeTrue();
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "a.secret"), "dirty");
+        var outcome = await service.TryMergeBackAsync(task, default);
+        outcome.Result.ShouldBe(DelegationWorktreeService.MergeResult.LeftForHuman);
+        outcome.Detail.ShouldContain("a.secret"); outcome.Detail.ShouldContain("*.secret");
+        Directory.Exists(task.WorktreePath).ShouldBeTrue(); (await repo.GitReadAsync("rev-parse", "feat/parent")).ShouldBe(before);
+    }
+
     private static (AgentTaskLandService Land, DelegationWorktreeService Worktrees) CreateLand(
         AppDbContext db, ScratchGitRepo repo)
     {

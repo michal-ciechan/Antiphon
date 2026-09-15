@@ -30,7 +30,8 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 // Wall recovery upserts a global kind/alias hold; its snapshot/restore must exclude all writers.
 [NotInParallel]
-public class AgentTaskReplyIntegrationTests
+[ParallelLimiter<ProcessSpawnLimit>]
+public partial class AgentTaskReplyIntegrationTests
 {
     [Test]
     public async Task a_failed_api_error_task_names_session_liveness()
@@ -3335,7 +3336,7 @@ public class AgentTaskReplyIntegrationTests
         var claimedPath = Path.Combine(repo.Path, "docs", "superpowers", "uncommitted-plan.md");
         Directory.CreateDirectory(Path.GetDirectoryName(claimedPath)!);
         await File.WriteAllTextAsync(claimedPath, "uncommitted plan\n");
-        var factory = new TestScopeFactory(repo.WorktreeRoot);
+        var factory = new TestScopeFactory(repo.WorktreeRoot, delegation: new DelegationSettings { CommitOnSettle = false });
         var parentSessionId = await SeedSessionAsync(repo.Path);
         var (task, sessionId) = await SeedDispatchedTaskAsync(repo.Path, parentSessionId, t =>
         {
@@ -3353,7 +3354,7 @@ public class AgentTaskReplyIntegrationTests
                 && e.Detail.Contains("still uncommitted"));
         warning.Detail.ShouldContain("docs/superpowers/uncommitted-plan.md");
         var note = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parentSessionId);
-        note.NoteHeader.ShouldContain("git=uncommitted:1");
+        note.NoteHeader.ShouldContain("git=uncommitted:1 (commit-on-settle off)");
         note.Body.ShouldContain("the work has not landed");
     }
 
@@ -3418,6 +3419,7 @@ public class AgentTaskReplyIntegrationTests
         var merge = await verify.AgentTasks.SingleAsync(t => t.ParentTaskId == task.Id);
         merge.Role.ShouldBe(AgentTaskRole.Merge);
         merge.ModelLevel.ShouldBe(AgentModelLevel.High, "conflict resolution is High-tier work by policy");
+        merge.CommitOnSettle.ShouldBe(CommitOnSettlePolicy.Never);
         merge.WorkingDirectory.ShouldBe(TaskWorktreePath(task), "it resolves IN the conflicted worktree");
         merge.ParentSessionId.ShouldBe(parentSessionId, "its report goes to the same caller");
         merge.Goal.ShouldContain("shared.md");
@@ -4934,6 +4936,7 @@ public class AgentTaskReplyIntegrationTests
     private sealed class TestScopeFactory : IServiceScopeFactory, IServiceScope, IServiceProvider
     {
         private readonly ServiceProvider _provider;
+        private readonly bool _freshScopes;
 
         /// <summary>Records what the settle path asked to stop — the ephemeral-cleanup assertion.</summary>
         public RecordingSessionStopper Stopper { get; } = new();
@@ -4941,11 +4944,15 @@ public class AgentTaskReplyIntegrationTests
         public TestScopeFactory(
             string? worktreeRoot = null,
             SupervisionSettings? supervision = null,
-            DelegationSettings? delegation = null)
+            DelegationSettings? delegation = null,
+            bool routingPins = false, RecordingGitWorkspaceService? gitSpy = null,
+            Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesInterceptor? saveInterceptor = null)
         {
             var services = new ServiceCollection();
+            _freshScopes = saveInterceptor is not null;
             services.AddLogging();
-            services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
+            services.AddDbContext<AppDbContext>(o => { o.UseNpgsql(TestDbFixture.ConnectionString); if (saveInterceptor is not null) o.AddInterceptors(saveInterceptor); });
+            if (routingPins) services.AddScoped<RoutingPinService>();
             services.AddSingleton<Antiphon.Server.Application.Interfaces.IEventBus, MockEventBus>();
             services.AddSingleton(Options.Create(supervision ?? new SupervisionSettings()));
             services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
@@ -4970,7 +4977,7 @@ public class AgentTaskReplyIntegrationTests
                 WorktreeBasePath = worktreeRoot ?? Path.Combine(Path.GetTempPath(), "antiphon-reply-wt"),
                 WorktreeStaleAfterDays = 7,
                 WorktreeJanitorIntervalHours = 24,
-            });
+            }, workspaceGit: gitSpy);
             services.AddSingleton(Options.Create(new DeliverablesSettings
             {
                 BrowserPath = Path.Combine(Path.GetTempPath(), "antiphon-missing-browser", "msedge.exe"),
@@ -4980,7 +4987,7 @@ public class AgentTaskReplyIntegrationTests
             _provider = services.BuildServiceProvider();
         }
 
-        public IServiceScope CreateScope() => this;
+        public IServiceScope CreateScope() => _freshScopes ? _provider.CreateScope() : this;
         public IServiceProvider ServiceProvider => _provider;
         public object? GetService(Type serviceType) => _provider.GetService(serviceType);
         public void Dispose() { }
