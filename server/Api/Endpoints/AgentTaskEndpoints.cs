@@ -240,6 +240,9 @@ public static class AgentTaskEndpoints
                 GatedCommitOutcome.CommitFailed => throw new ConflictException(
                     "Commit failed.", "commit_failed",
                     new Dictionary<string, object?> { ["stderr"] = result.Stderr }),
+                GatedCommitOutcome.InspectionFailed => throw new ConflictException(
+                    "Ignore inspection failed.", "inspection_failed",
+                    new Dictionary<string, object?> { ["stderr"] = result.Stderr }),
                 _ => throw new ConflictException("Commit refused.", "commit_failed"),
             };
         });

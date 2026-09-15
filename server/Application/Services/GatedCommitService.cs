@@ -11,6 +11,7 @@ public enum GatedCommitOutcome
     IgnoredPathStaged = 3,
     CommitFailed = 4,
     RepositoryBusy = 5,
+    InspectionFailed = 6,
 }
 
 public sealed record GatedCommitRefusal(string Path, string Rule);
@@ -85,8 +86,9 @@ public sealed class GatedCommitService
             return new GatedCommitResult(GatedCommitOutcome.NothingToCommit, null, [], []);
 
         var ignoreRuleHits = status.Items
-            .Where(c => string.Equals(System.IO.Path.GetFileName(c.Path.Replace('\\', '/')), ".gitignore", StringComparison.Ordinal))
-            .Select(c => new GatedCommitRefusal(c.Path.Replace('\\', '/'), "gitignore"))
+            .Where(c => ChangePaths(c).Any(IsIgnoreRulePath))
+            .SelectMany(c => ChangePaths(c).Select(p => new GatedCommitRefusal(p, "gitignore")))
+            .DistinctBy(r => r.Path, StringComparer.Ordinal)
             .ToArray();
         if (ignoreRuleHits.Length > 0)
         {
@@ -94,25 +96,31 @@ public sealed class GatedCommitService
                 GatedCommitOutcome.IgnoreRulesChanged, null, [], ignoreRuleHits);
         }
 
-        var dirty = status.Items
-            .Select(c => c.Path.Replace('\\', '/'))
+        var matching = status.Items
+            .Where(c => pathspec is null || MatchesPathspec(c, pathspec))
+            .ToArray();
+        var candidates = matching
+            .SelectMany(ChangePaths)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
-        var candidates = pathspec is null
-            ? dirty
-            : dirty.Where(p => pathspec.Any(s => string.Equals(s.Replace('\\', '/'), p, StringComparison.Ordinal)))
-                .ToArray();
         if (candidates.Length == 0)
             return new GatedCommitResult(GatedCommitOutcome.NothingToCommit, null, [], []);
 
         var ignored = await _git.CheckIgnoredAsync(repo, candidates, ct);
-        if (ignored.Count > 0)
+        if (!ignored.Succeeded)
+        {
+            return new GatedCommitResult(
+                GatedCommitOutcome.InspectionFailed, null, [], [],
+                ignored.Stderr ?? ignored.ExitCode.ToString());
+        }
+
+        if (ignored.Items.Count > 0)
         {
             return new GatedCommitResult(
                 GatedCommitOutcome.IgnoredPathStaged,
                 null,
                 [],
-                ignored.Select(m => new GatedCommitRefusal(m.Path, m.Rule)).ToArray());
+                ignored.Items.Select(m => new GatedCommitRefusal(m.Path, m.Rule)).ToArray());
         }
 
         var staged = await _git.StageAsync(repo, pathspec is null ? null : candidates, ct);
@@ -123,27 +131,43 @@ public sealed class GatedCommitService
         }
 
         var stagedPaths = await _git.StagedPathsAsync(repo, ct);
+        if (!stagedPaths.Succeeded)
+        {
+            await _git.UnstageAsync(repo, candidates, ct);
+            return new GatedCommitResult(
+                GatedCommitOutcome.InspectionFailed, null, [], [],
+                stagedPaths.Stderr ?? stagedPaths.ExitCode.ToString());
+        }
+
         if (pathspec is null)
         {
-            var lateIgnored = await _git.CheckIgnoredAsync(repo, stagedPaths, ct);
-            if (lateIgnored.Count > 0)
+            var lateIgnored = await _git.CheckIgnoredAsync(repo, stagedPaths.Items, ct);
+            if (!lateIgnored.Succeeded)
             {
-                await _git.UnstageAsync(repo, stagedPaths, ct);
+                await _git.UnstageAsync(repo, stagedPaths.Items, ct);
+                return new GatedCommitResult(
+                    GatedCommitOutcome.InspectionFailed, null, [], [],
+                    lateIgnored.Stderr ?? lateIgnored.ExitCode.ToString());
+            }
+
+            if (lateIgnored.Items.Count > 0)
+            {
+                await _git.UnstageAsync(repo, stagedPaths.Items, ct);
                 return new GatedCommitResult(
                     GatedCommitOutcome.IgnoredPathStaged,
                     null,
                     [],
-                    lateIgnored.Select(m => new GatedCommitRefusal(m.Path, m.Rule)).ToArray());
+                    lateIgnored.Items.Select(m => new GatedCommitRefusal(m.Path, m.Rule)).ToArray());
             }
         }
         else
         {
-            var extra = stagedPaths
+            var extra = stagedPaths.Items
                 .Where(p => !candidates.Contains(p, StringComparer.Ordinal))
                 .ToArray();
             // --only leaves foreign staged paths in the index; they must not be in THIS commit.
             // The staged-set for the commit is the intersection with candidates.
-            var ours = stagedPaths.Where(p => candidates.Contains(p, StringComparer.Ordinal)).ToArray();
+            var ours = stagedPaths.Items.Where(p => candidates.Contains(p, StringComparer.Ordinal)).ToArray();
             if (ours.Length == 0)
             {
                 return new GatedCommitResult(GatedCommitOutcome.NothingToCommit, null, [], []);
@@ -164,5 +188,27 @@ public sealed class GatedCommitService
         var sha = await _git.HeadShaAsync(repo, ct);
         var files = sha is null ? Array.Empty<string>() : await _git.DiffTreePathsAsync(repo, sha, ct);
         return new GatedCommitResult(GatedCommitOutcome.Committed, sha, files, []);
+    }
+
+    internal static bool IsIgnoreRulePath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+        var name = System.IO.Path.GetFileName(path.Replace('\\', '/'));
+        return string.Equals(name, ".gitignore", StringComparison.Ordinal);
+    }
+
+    internal static IEnumerable<string> ChangePaths(GitWorkspaceService.GitChange change)
+    {
+        yield return change.Path.Replace('\\', '/');
+        if (!string.IsNullOrWhiteSpace(change.OldPath))
+            yield return change.OldPath.Replace('\\', '/');
+    }
+
+    private static bool MatchesPathspec(GitWorkspaceService.GitChange change, IReadOnlyList<string> pathspec)
+    {
+        var paths = ChangePaths(change).ToArray();
+        return pathspec.Any(s =>
+            paths.Contains(s.Replace('\\', '/'), StringComparer.Ordinal));
     }
 }

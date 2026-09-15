@@ -51,6 +51,18 @@ internal static class DelegationTestServices
     }
 
     /// <summary>
+    /// Replace a previously registered <see cref="GitWorkspaceService"/> (production or helper)
+    /// with a spy. Uses <c>TryAdd</c> so the census still owns the one-liner.
+    /// </summary>
+    public static IServiceCollection ReplaceGitWorkspaceService(
+        this IServiceCollection services, GitWorkspaceService workspaceGit)
+    {
+        services.RemoveAll<GitWorkspaceService>();
+        services.TryAddSingleton<GitWorkspaceService>(workspaceGit);
+        return services.AddGitWorkspaceService();
+    }
+
+    /// <summary>
     /// The production worktree graph: <c>IOptions&lt;GitSettings&gt;</c>, the real
     /// <see cref="WorktreeManager"/> and <see cref="GitService"/>, <see cref="GitWorkspaceService"/>,
     /// and the scoped <see cref="DelegationWorktreeService"/> that needs all four.

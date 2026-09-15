@@ -56,7 +56,8 @@ public class GitWorkspaceService
         return code == 0 && origin.Length > 0 ? origin : null;
     }
 
-    public sealed record GitStrictList<T>(bool Succeeded, IReadOnlyList<T> Items, int ExitCode);
+    public sealed record GitStrictList<T>(
+        bool Succeeded, IReadOnlyList<T> Items, int ExitCode, string? Stderr = null);
 
     /// <summary>Working tree + index changes vs HEAD (porcelain v1 -z), untracked included.</summary>
     public async Task<IReadOnlyList<GitChange>> GetChangesAsync(string workingDirectory, CancellationToken ct)
@@ -715,21 +716,23 @@ public class GitWorkspaceService
 
     /// <summary>
     /// <c>git check-ignore --no-index -v -z --stdin</c> over <paramref name="paths"/>.
-    /// Exit 1 (none ignored) is an empty list; exit 0 is the matching records.
+    /// Exit 1 (none ignored) is an empty successful list; exit 0 is the matching records.
+    /// Any other exit is a failed inspection, never an empty "all clear".
     /// </summary>
-    public async Task<IReadOnlyList<GitIgnoreMatch>> CheckIgnoredAsync(
+    public async Task<GitStrictList<GitIgnoreMatch>> CheckIgnoredAsync(
         string workingDirectory, IReadOnlyList<string> paths, CancellationToken ct)
     {
         if (paths.Count == 0)
-            return [];
+            return new(true, [], 0);
 
         var stdin = string.Concat(paths.Select(p => p.Replace('\\', '/') + "\0"));
         var (code, stdout, stderr) = await RunWithInputAsync(
             workingDirectory, stdin, ct, "check-ignore", "--no-index", "-v", "-z", "--stdin");
         if (code is not (0 or 1))
         {
-            _logger.LogDebug("git check-ignore failed in {Dir}: {Err}", workingDirectory, stderr);
-            return [];
+            _logger.LogWarning("git check-ignore failed in {Dir} (exit {Code}): {Err}",
+                workingDirectory, code, stderr);
+            return new(false, [], code, stderr);
         }
 
         var matches = new List<GitIgnoreMatch>();
@@ -750,7 +753,7 @@ public class GitWorkspaceService
             matches.Add(new GitIgnoreMatch(path, sourceName, line, pattern));
         }
 
-        return matches;
+        return new(true, matches, code);
     }
 
     public async Task<(int Code, string Stderr)> StageAsync(
@@ -763,15 +766,16 @@ public class GitWorkspaceService
         return (code, stderr);
     }
 
-    public async Task<IReadOnlyList<string>> StagedPathsAsync(string workingDirectory, CancellationToken ct)
+    public async Task<GitStrictList<string>> StagedPathsAsync(string workingDirectory, CancellationToken ct)
     {
-        var (code, stdout, _) = await RunAsync(
+        var (code, stdout, stderr) = await RunAsync(
             workingDirectory, ct, "diff", "--cached", "--name-only", "-z");
         if (code != 0)
-            return [];
-        return stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            return new(false, [], code, stderr);
+        var paths = stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries)
             .Select(p => p.Replace('\\', '/'))
             .ToArray();
+        return new(true, paths, 0);
     }
 
     public async Task<(int Code, string Stderr)> UnstageAsync(
@@ -866,6 +870,51 @@ public class GitWorkspaceService
     {
         var (code, stdout, _) = await RunAsync(workingDirectory, ct, "log", "-1", "--format=%B", sha);
         return code == 0 ? stdout : null;
+    }
+
+    /// <summary>
+    /// Recent HEAD commit messages, newest first. Used to bind recovery to exact gated trailers
+    /// rather than a GUID substring in an unrelated body.
+    /// </summary>
+    public async Task<IReadOnlyList<(string Sha, string Message)>> ListRecentCommitMessagesAsync(
+        string workingDirectory, int limit, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunAsync(
+            workingDirectory, ct, "log", $"-{Math.Max(1, limit)}", "--format=%H%x00%B%x1e");
+        if (code != 0)
+            return [];
+
+        var list = new List<(string, string)>();
+        foreach (var record in stdout.Split('\x1e', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var trimmed = record.TrimStart('\n', '\r');
+            var split = trimmed.IndexOf('\0');
+            if (split <= 0)
+                continue;
+            list.Add((trimmed[..split], trimmed[(split + 1)..]));
+        }
+
+        return list;
+    }
+
+    internal static bool HasGatedSettlementTrailers(string message, Guid taskId)
+    {
+        var id = taskId.ToString("D");
+        var antiphon = false;
+        var task = false;
+        var gated = false;
+        foreach (var raw in message.Replace("\r\n", "\n").Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.Equals("antiphon: true", StringComparison.OrdinalIgnoreCase))
+                antiphon = true;
+            else if (line.Equals($"antiphon-task: {id}", StringComparison.OrdinalIgnoreCase))
+                task = true;
+            else if (line.Equals("antiphon-commit: gated", StringComparison.OrdinalIgnoreCase))
+                gated = true;
+        }
+
+        return antiphon && task && gated;
     }
 
     public Task<string?> UpstreamShaAsync(string workingDirectory, CancellationToken ct) =>

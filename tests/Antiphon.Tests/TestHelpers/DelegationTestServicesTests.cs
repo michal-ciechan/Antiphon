@@ -108,6 +108,19 @@ public sealed class DelegationTestServicesTests
         services.ShouldNotContain(d => d.ServiceType == typeof(IWorktreeManager));
     }
 
+    [Test]
+    public void ReplaceGitWorkspaceService_registers_the_spy_once()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        var spy = new RecordingGitWorkspaceService();
+        services.AddGitWorkspaceService();
+        services.ReplaceGitWorkspaceService(spy);
+        services.Count(d => d.ServiceType == typeof(GitWorkspaceService)).ShouldBe(1);
+        using var provider = services.BuildServiceProvider();
+        provider.GetRequiredService<GitWorkspaceService>().ShouldBe(spy);
+    }
+
     public class FailOnUseProxy : System.Reflection.DispatchProxy
     {
         protected override object? Invoke(System.Reflection.MethodInfo? targetMethod, object?[]? args) =>

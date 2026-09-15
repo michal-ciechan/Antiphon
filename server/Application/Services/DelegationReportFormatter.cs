@@ -140,6 +140,9 @@ public static class DelegationReportFormatter
     internal const string DoNotCommitLine =
         "Do NOT commit or push. Leave your changes in the working tree for the caller to review, and name every file you changed in your report.";
 
+    internal const string CommitChildAuthorityLine =
+        "Commit through scripts/task-commit.ps1 (the gated endpoint). Do NOT git add -f, do NOT push, and do NOT spawn another commit task. Automatic settlement will not commit for you.";
+
     /// <summary>
     /// The full brief: marker, metadata, the caller's goal verbatim, then the reporting contract.
     /// Composed SERVER-SIDE so a calling agent cannot forget it and every delegate gets the same one.
@@ -211,6 +214,8 @@ public static class DelegationReportFormatter
 
         if (task.Workspace == WorkspaceMode.ReadOnly)
             sb.AppendLine("Do NOT modify any files. This is a read-only task — report findings only.").AppendLine();
+        else if (task.Workspace == WorkspaceMode.Shared && task.Role == AgentTaskRole.Commit)
+            sb.AppendLine(CommitChildAuthorityLine).AppendLine();
         else if (task.Workspace == WorkspaceMode.Shared && task.CommitOnSettle == CommitOnSettlePolicy.Never)
             sb.AppendLine(DoNotCommitLine).AppendLine();
         else if (task.Workspace == WorkspaceMode.Shared

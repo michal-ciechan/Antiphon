@@ -28,6 +28,8 @@ public sealed class AgentTaskCommitEndpointTests
     public Task ResetAsync()
     {
         _factory.Spy.Verbs.Clear();
+        _factory.Spy.ForcedCheckIgnoreExit = null;
+        _factory.Spy.ForcedDiffCachedExit = null;
         return _factory.ResetAsync();
     }
 
@@ -144,6 +146,24 @@ public sealed class AgentTaskCommitEndpointTests
     }
 
     [Test]
+    public async Task Commit_when_ignore_inspection_fails_is_409_inspection_failed()
+    {
+        using var repo = await SeedRepoAsync();
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "x.md"), "x");
+        var token = "tok-" + Guid.NewGuid().ToString("N");
+        var task = await SeedTaskAsync(repo.Path, token, AgentTaskRole.Commit, CommitOnSettlePolicy.Never);
+        _factory.Spy.ForcedCheckIgnoreExit = 128;
+        using var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Antiphon-Task-Token", token);
+        var response = await client.PostAsJsonAsync($"/api/agent-tasks/{task.Id}/commit",
+            new { paths = new[] { "x.md" }, message = "x" });
+        _factory.Spy.ForcedCheckIgnoreExit = null;
+        response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString()
+            .ShouldBe("inspection_failed");
+    }
+
+    [Test]
     public async Task Commit_without_a_token_is_403()
     {
         using var repo = await SeedRepoAsync();
@@ -253,7 +273,6 @@ public sealed class CommitEndpointWebAppFactory : AntiphonWebAppFactory
         var hosted = services.Where(d => d.ServiceType == typeof(Microsoft.Extensions.Hosting.IHostedService)).ToList();
         foreach (var descriptor in hosted)
             services.Remove(descriptor);
-        services.RemoveAll<GitWorkspaceService>();
-        services.AddSingleton<GitWorkspaceService>(Spy);
+        services.ReplaceGitWorkspaceService(Spy);
     }
 }

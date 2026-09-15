@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -529,6 +530,7 @@ public partial class AgentTaskReplyIntegrationTests
         {
             t.Role = AgentTaskRole.Commit;
             t.CommitBaselineSha = baseline;
+            t.CommitBaselineUpstreamSha = baseline;
             t.RepoPath = repo.Path;
         });
         await SeedTurnAsync(childSession, DelegationReportFormatter.TaskMarker(child.Id), "pushed");
@@ -772,6 +774,336 @@ public partial class AgentTaskReplyIntegrationTests
         await using var verify = CreateContext();
         (await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == seeded.Parent))
             .NoteHeader.ShouldContain("(25 files)");
+    }
+
+    [Test]
+    public async Task F1_renamed_gitignore_spawns_the_child_and_does_not_commit()
+    {
+        var seeded = await SeedC527Async();
+        using var repo = seeded.Repo;
+        await repo.GitAsync("mv", ".gitignore", "ignore.rules");
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "x.md"), "x");
+        await SeedFileEditAsync(seeded.SessionId, "Write", Path.Combine(repo.Path, "x.md"), DateTime.UtcNow);
+        var head = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        var factory = C527Factory(repo.WorktreeRoot);
+        await SeedTurnAsync(seeded.SessionId, DelegationReportFormatter.TaskMarker(seeded.Task.Id), "Wrote `x.md`.");
+        await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+
+        (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldBe(head);
+        await using var verify = CreateContext();
+        var child = await verify.AgentTasks.SingleAsync(t => t.ParentTaskId == seeded.Task.Id);
+        child.Goal.ShouldContain("ignore-rules-changed");
+        (await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == seeded.Parent))
+            .NoteHeader.ShouldContain("commit task");
+    }
+
+    [Test]
+    public async Task F2_failed_ignore_check_refuses_mutation_and_spawns_the_child()
+    {
+        var spy = new RecordingGitWorkspaceService { ForcedCheckIgnoreExit = 128 };
+        var seeded = await SeedC527Async();
+        using var repo = seeded.Repo;
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "a.md"), "a");
+        await SeedFileEditAsync(seeded.SessionId, "Write", Path.Combine(repo.Path, "a.md"), DateTime.UtcNow);
+        var head = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        var factory = C527Factory(repo.WorktreeRoot, gitSpy: spy);
+        await SeedTurnAsync(seeded.SessionId, DelegationReportFormatter.TaskMarker(seeded.Task.Id), "Wrote a.md");
+        await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+
+        (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldBe(head);
+        spy.Verbs.ShouldNotContain("commit");
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.ParentTaskId == seeded.Task.Id))
+            .Goal.ShouldContain("inspection-failed");
+    }
+
+    [Test]
+    public async Task F3_enqueue_failure_after_settlement_recovers_the_stored_committed_note()
+    {
+        var interceptor = new FailSessionQueuedMessageInsertInterceptor();
+        var seeded = await SeedC527Async();
+        using var repo = seeded.Repo;
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "a.md"), "a");
+        await SeedFileEditAsync(seeded.SessionId, "Write", Path.Combine(repo.Path, "a.md"), DateTime.UtcNow);
+        var factory = C527Factory(repo.WorktreeRoot, saveInterceptor: interceptor);
+        var terminal = AttachTerminal(factory, seeded.Parent);
+        await SeedTurnAsync(seeded.SessionId, DelegationReportFormatter.TaskMarker(seeded.Task.Id), "Wrote a.md");
+        await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+
+        await using (var verify = CreateContext())
+        {
+            var task = await verify.AgentTasks.SingleAsync(t => t.Id == seeded.Task.Id);
+            task.Status.ShouldBe(AgentTaskStatus.Succeeded);
+            task.CompletionNoteBody.ShouldNotBeNull();
+            task.CompletionNoteBody.ShouldContain("git=committed:");
+            task.CompletionNoteQueuedAt.ShouldBeNull();
+            (await verify.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == seeded.Parent)).ShouldBe(0);
+        }
+
+        await using (var recoveryDb = CreateContext())
+            await CompletionNoteRecovery.RecoverMissingAsync(
+                factory.ServiceProvider, recoveryDb, CancellationToken.None);
+        await Queue(factory).FlushSessionAsync(seeded.Parent, CancellationToken.None);
+        var note = await AssertParentReceivedNoteAsync(seeded.Parent, seeded.Task, "Wrote a.md");
+        note.Prompt.Text.ShouldContain("git=committed:");
+        terminal.SubmittedBodies.Count.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task F3_busy_parent_recovers_the_queued_note_then_receives_it_on_turn_end()
+    {
+        var interceptor = new FailSessionQueuedMessageInsertInterceptor();
+        var seeded = await SeedC527Async();
+        using var repo = seeded.Repo;
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "a.md"), "a");
+        await SeedFileEditAsync(seeded.SessionId, "Write", Path.Combine(repo.Path, "a.md"), DateTime.UtcNow);
+        var factory = C527Factory(repo.WorktreeRoot, saveInterceptor: interceptor);
+        var terminal = AttachTerminal(factory, seeded.Parent);
+        await SeedEntryAsync(seeded.Parent, TranscriptKinds.AssistantText, "still working", DateTime.UtcNow);
+        await SeedTurnAsync(seeded.SessionId, DelegationReportFormatter.TaskMarker(seeded.Task.Id), "Wrote a.md");
+        await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+        await using (var recoveryDb = CreateContext())
+            await CompletionNoteRecovery.RecoverMissingAsync(
+                factory.ServiceProvider, recoveryDb, CancellationToken.None);
+        await Queue(factory).FlushSessionAsync(seeded.Parent, CancellationToken.None);
+        terminal.Inputs.Count.ShouldBe(0);
+        await using (var verify = CreateContext())
+        {
+            (await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == seeded.Parent))
+                .Status.ShouldBe(QueuedMessageStatus.Pending);
+        }
+
+        await SeedEntryAsync(seeded.Parent, TranscriptKinds.TurnEnd, null, DateTime.UtcNow);
+        await Queue(factory).OnTurnEndAsync(seeded.Parent, CancellationToken.None);
+        var note = await AssertParentReceivedNoteAsync(seeded.Parent, seeded.Task, "Wrote a.md");
+        note.Prompt.Text.ShouldContain("git=committed:");
+    }
+
+    [Test]
+    public async Task F4_spawned_commit_child_brief_is_queued_commits_through_the_gate_and_parent_receives()
+    {
+        var seeded = await SeedC527Async();
+        using var repo = seeded.Repo;
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "x.md"), "x");
+        var factory = C527Factory(repo.WorktreeRoot);
+        AttachTerminal(factory, seeded.Parent);
+        await SeedTurnAsync(seeded.SessionId, DelegationReportFormatter.TaskMarker(seeded.Task.Id), "all done");
+        await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+        await Queue(factory).FlushSessionAsync(seeded.Parent, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var child = await verify.AgentTasks.SingleAsync(t => t.ParentTaskId == seeded.Task.Id);
+        var settings = new DelegationSettings { PtySingleChunkBytes = 43_200 };
+        var brief = DelegationReportFormatter.BuildBrief(child, settings);
+        brief.ShouldContain(DelegationReportFormatter.CommitChildAuthorityLine);
+        brief.ShouldNotContain(DelegationReportFormatter.DoNotCommitLine);
+
+        var childSession = await SeedSessionAsync(repo.Path);
+        await using (var db = CreateContext())
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == child.Id);
+            row.Status = AgentTaskStatus.Working;
+            row.AgentSessionId = childSession;
+            row.DispatchedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        AttachTerminal(factory, childSession);
+        await Queue(factory).EnqueueAsync(
+            childSession, brief, MessageSendMode.WhenIdle, CancellationToken.None,
+            QueuedMessageOrigin.Delegation, deliverIfIdle: false);
+        await Queue(factory).FlushSessionAsync(childSession, CancellationToken.None);
+        await using (var childDb = CreateContext())
+        {
+            var prompt = await childDb.TranscriptEntries.SingleAsync(t =>
+                t.AgentSessionId == childSession && t.Kind == TranscriptKinds.UserPrompt);
+            prompt.Text.ShouldBe(brief);
+        }
+
+        var gated = factory.ServiceProvider.GetRequiredService<GatedCommitService>();
+        var committed = await gated.CommitAsync(
+            repo.Path,
+            ["x.md"],
+            $"task {DelegationReportFormatter.Short(child.Id)}: x.md",
+            [("antiphon", "true"), ("antiphon-task", child.Id.ToString("D")), ("antiphon-commit", "gated")],
+            CancellationToken.None);
+        committed.Outcome.ShouldBe(GatedCommitOutcome.Committed);
+        (await repo.GitReadAsync("status", "--porcelain")).Trim().ShouldBeEmpty();
+
+        await SeedTurnAsync(childSession, DelegationReportFormatter.TaskMarker(child.Id), "committed x.md");
+        await CreateService(factory).OnTurnEndAsync(childSession, CancellationToken.None);
+        await Queue(factory).FlushSessionAsync(seeded.Parent, CancellationToken.None);
+        await using var parentDb = CreateContext();
+        var childNote = await parentDb.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == child.Id);
+        childNote.Status.ShouldBe(QueuedMessageStatus.Sent);
+        childNote.Body.ShouldContain("committed x.md");
+        var prompts = await parentDb.TranscriptEntries
+            .Where(t => t.AgentSessionId == seeded.Parent && t.Kind == TranscriptKinds.UserPrompt)
+            .ToListAsync();
+        prompts.ShouldContain(t => t.Text == childNote.Body);
+    }
+
+    [Test]
+    public async Task F4_child_note_enqueue_failure_recovers_to_the_parent()
+    {
+        var seeded = await SeedC527Async();
+        using var repo = seeded.Repo;
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "x.md"), "x");
+        var factory = C527Factory(repo.WorktreeRoot);
+        AttachTerminal(factory, seeded.Parent);
+        await SeedTurnAsync(seeded.SessionId, DelegationReportFormatter.TaskMarker(seeded.Task.Id), "all done");
+        await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+        await Queue(factory).FlushSessionAsync(seeded.Parent, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var child = await verify.AgentTasks.SingleAsync(t => t.ParentTaskId == seeded.Task.Id);
+        var childSession = await SeedSessionAsync(repo.Path);
+        await using (var db = CreateContext())
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == child.Id);
+            row.Status = AgentTaskStatus.Working;
+            row.AgentSessionId = childSession;
+            row.DispatchedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        var interceptor = new FailSessionQueuedMessageInsertInterceptor();
+        var childFactory = C527Factory(repo.WorktreeRoot, saveInterceptor: interceptor);
+        AttachTerminal(childFactory, seeded.Parent);
+        await SeedTurnAsync(childSession, DelegationReportFormatter.TaskMarker(child.Id), "committed x.md");
+        await CreateService(childFactory).OnTurnEndAsync(childSession, CancellationToken.None);
+        await using (var after = CreateContext())
+        {
+            var stored = await after.AgentTasks.SingleAsync(t => t.Id == child.Id);
+            stored.Status.ShouldBe(AgentTaskStatus.Succeeded);
+            stored.CompletionNoteBody.ShouldNotBeNull();
+            stored.CompletionNoteQueuedAt.ShouldBeNull();
+            (await after.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == child.Id)).ShouldBe(0);
+        }
+
+        await using (var recoveryDb = CreateContext())
+            await CompletionNoteRecovery.RecoverMissingAsync(
+                childFactory.ServiceProvider, recoveryDb, CancellationToken.None);
+        await Queue(childFactory).FlushSessionAsync(seeded.Parent, CancellationToken.None);
+        await using var parentDb = CreateContext();
+        var childNote = await parentDb.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == child.Id);
+        childNote.Status.ShouldBe(QueuedMessageStatus.Sent);
+        childNote.Body.ShouldContain("committed x.md");
+    }
+
+    [Test]
+    public async Task F5_divergent_unchanged_upstream_is_not_reported_as_pushed()
+    {
+        var seeded = await SeedC527Async();
+        using var repo = seeded.Repo;
+        await repo.AddBareOriginAsync();
+        var origin = (await repo.GitReadAsync("rev-parse", "origin/master")).Trim();
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "ahead.md"), "a");
+        await repo.GitAsync("add", "ahead.md");
+        await repo.GitAsync("commit", "-m", "local ahead");
+        var local = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        local.ShouldNotBe(origin);
+        var factory = C527Factory(repo.WorktreeRoot);
+        var (child, childSession) = await SeedDispatchedTaskAsync(repo.Path, seeded.Parent, t =>
+        {
+            t.Role = AgentTaskRole.Commit;
+            t.CommitBaselineSha = local;
+            t.CommitBaselineUpstreamSha = origin;
+            t.RepoPath = repo.Path;
+        });
+        await SeedTurnAsync(childSession, DelegationReportFormatter.TaskMarker(child.Id), "nothing");
+        await CreateService(factory).OnTurnEndAsync(childSession, CancellationToken.None);
+        await using var verify = CreateContext();
+        (await verify.AgentTaskEvents.AnyAsync(e =>
+            e.AgentTaskId == child.Id && e.Type == AgentTaskEventType.Warning && e.Detail.Contains("origin moved")))
+            .ShouldBeFalse();
+        (await verify.AgentTaskEvents.AnyAsync(e =>
+            e.AgentTaskId == child.Id && e.Detail.Contains("pushed"))).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task F5_unrelated_upstream_movement_is_not_labeled_pushed()
+    {
+        var seeded = await SeedC527Async();
+        using var repo = seeded.Repo;
+        await repo.AddBareOriginAsync();
+        var originAtSpawn = (await repo.GitReadAsync("rev-parse", "origin/master")).Trim();
+        var local = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "other.md"), "o");
+        await repo.GitAsync("add", "other.md");
+        await repo.GitAsync("commit", "-m", "unrelated");
+        await repo.GitAsync("push", "origin", "master");
+        await repo.GitAsync("reset", "--hard", local);
+        var factory = C527Factory(repo.WorktreeRoot);
+        var (child, childSession) = await SeedDispatchedTaskAsync(repo.Path, seeded.Parent, t =>
+        {
+            t.Role = AgentTaskRole.Commit;
+            t.CommitBaselineSha = local;
+            t.CommitBaselineUpstreamSha = originAtSpawn;
+            t.RepoPath = repo.Path;
+        });
+        await SeedTurnAsync(childSession, DelegationReportFormatter.TaskMarker(child.Id), "no push");
+        await CreateService(factory).OnTurnEndAsync(childSession, CancellationToken.None);
+        await using var verify = CreateContext();
+        var warning = await verify.AgentTaskEvents.SingleAsync(e =>
+            e.AgentTaskId == child.Id && e.Type == AgentTaskEventType.Warning && e.Detail.Contains("origin moved"));
+        warning.Detail.ShouldNotContain("pushed;");
+    }
+
+    [Test]
+    public async Task F6_incidental_guid_in_a_commit_does_not_count_as_settlement()
+    {
+        var seeded = await SeedC527Async();
+        using var repo = seeded.Repo;
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "a.md"), "a");
+        await SeedFileEditAsync(seeded.SessionId, "Write", Path.Combine(repo.Path, "a.md"), DateTime.UtcNow);
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "mention.md"), "m");
+        await repo.GitAsync("add", "mention.md");
+        await repo.GitAsync("commit", "-m", $"unrelated mention of {seeded.Task.Id:D}");
+        var factory = C527Factory(repo.WorktreeRoot);
+        await SeedTurnAsync(seeded.SessionId, DelegationReportFormatter.TaskMarker(seeded.Task.Id), "Wrote a.md");
+        await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+        var names = (await repo.GitReadAsync("diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"))
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        names.ShouldContain("a.md");
+        await using var verify = CreateContext();
+        (await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == seeded.Parent))
+            .NoteHeader.ShouldContain("committed:");
+        (await verify.AgentTaskEvents.CountAsync(e =>
+            e.AgentTaskId == seeded.Task.Id && e.Type == AgentTaskEventType.Committed)).ShouldBe(1);
+    }
+
+    [Test]
+    public async Task F6_partial_gated_commit_does_not_hide_remaining_footprint()
+    {
+        var seeded = await SeedC527Async();
+        using var repo = seeded.Repo;
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "a.md"), "a");
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "b.md"), "b");
+        await SeedFileEditAsync(seeded.SessionId, "Write", Path.Combine(repo.Path, "a.md"), DateTime.UtcNow);
+        await SeedFileEditAsync(seeded.SessionId, "Write", Path.Combine(repo.Path, "b.md"), DateTime.UtcNow);
+        var svc = new GatedCommitService(
+            new RecordingGitWorkspaceService(),
+            new Antiphon.Server.Infrastructure.Git.RepositoryMutationLease(
+                new Antiphon.Server.Infrastructure.Git.LandingGit()),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<GatedCommitService>.Instance);
+        var partial = await svc.CommitAsync(
+            repo.Path,
+            ["a.md"],
+            $"task {DelegationReportFormatter.Short(seeded.Task.Id)}: partial",
+            [("antiphon", "true"), ("antiphon-task", seeded.Task.Id.ToString("D")), ("antiphon-commit", "gated")],
+            CancellationToken.None);
+        partial.Outcome.ShouldBe(GatedCommitOutcome.Committed);
+        var factory = C527Factory(repo.WorktreeRoot);
+        await SeedTurnAsync(seeded.SessionId, DelegationReportFormatter.TaskMarker(seeded.Task.Id), "Wrote a.md and b.md.");
+        await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+        var names = (await repo.GitReadAsync("diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"))
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        names.ShouldContain("b.md");
+        (await repo.GitReadAsync("status", "--porcelain")).Trim().ShouldBeEmpty();
+        await using var verify = CreateContext();
+        (await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == seeded.Parent))
+            .NoteHeader.ShouldContain("committed:");
     }
 
     public enum Ineligible { Blocked, Failed, ReadOnly, CommitRole, MutationRole, SourceLanding }

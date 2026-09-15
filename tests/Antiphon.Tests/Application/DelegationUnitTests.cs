@@ -562,6 +562,20 @@ public class DelegationReportFormatterTests
     }
 
     [Test]
+    public void a_commit_child_brief_authorizes_the_gated_endpoint_and_forbids_push()
+    {
+        var task = NewTask();
+        task.Workspace = WorkspaceMode.Shared;
+        task.Role = AgentTaskRole.Commit;
+        task.CommitOnSettle = CommitOnSettlePolicy.Never;
+        var brief = DelegationReportFormatter.BuildBrief(task, Settings);
+        brief.ShouldContain(DelegationReportFormatter.CommitChildAuthorityLine);
+        brief.ShouldContain("task-commit.ps1");
+        brief.ShouldNotContain(DelegationReportFormatter.DoNotCommitLine);
+        brief.ShouldNotContain(DelegationReportFormatter.SharedWriteCommitLine);
+    }
+
+    [Test]
     public void a_never_commit_readonly_brief_keeps_the_read_only_line()
     {
         var task = NewTask();

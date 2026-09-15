@@ -486,9 +486,12 @@ public sealed class DelegationWorktreeService
                     lease,
                     ct);
                 if (gated.Outcome is GatedCommitOutcome.IgnoreRulesChanged
-                    or GatedCommitOutcome.IgnoredPathStaged)
+                    or GatedCommitOutcome.IgnoredPathStaged
+                    or GatedCommitOutcome.InspectionFailed)
                 {
-                    var named = string.Join(", ", gated.Refusals.Select(r => $"{r.Path} ({r.Rule})"));
+                    var named = gated.Refusals.Count > 0
+                        ? string.Join(", ", gated.Refusals.Select(r => $"{r.Path} ({r.Rule})"))
+                        : gated.Stderr ?? gated.Outcome.ToString();
                     return new MergeOutcome(
                         MergeResult.LeftForHuman, [],
                         $"Gated commit refused: {named}");

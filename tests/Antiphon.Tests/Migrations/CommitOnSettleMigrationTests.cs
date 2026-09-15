@@ -28,6 +28,18 @@ public sealed class CommitOnSettleMigrationTests
     }
 
     [Test]
+    public void AddCommitOnSettleReviewRepairs_is_additive()
+    {
+        var operations = new AddCommitOnSettleReviewRepairs().UpOperations;
+        operations.Count.ShouldBe(3);
+        operations.ShouldAllBe(o => o is AddColumnOperation);
+        var columns = operations.Cast<AddColumnOperation>().ToArray();
+        columns.ShouldContain(c => c.Table == "AgentTasks" && c.Name == "CommitBaselineUpstreamSha" && c.IsNullable);
+        columns.ShouldContain(c => c.Table == "AgentTasks" && c.Name == "CompletionNoteBody" && c.IsNullable);
+        columns.ShouldContain(c => c.Table == "AgentTasks" && c.Name == "CompletionNoteHeader" && c.IsNullable);
+    }
+
+    [Test]
     public async Task Existing_rows_resolve_to_inherit()
     {
         await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();

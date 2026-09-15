@@ -368,6 +368,13 @@ public static class AgentTaskRoles
         role is AgentTaskRole.Check or AgentTaskRole.Distill or AgentTaskRole.Diagnose;
 
     /// <summary>
+    /// CARD-0527 D-2. Commit/Merge/Mutation and specialists never enter commit-on-settle.
+    /// </summary>
+    public static bool IsCommitOnSettleExcluded(AgentTaskRole role) =>
+        role is AgentTaskRole.Commit or AgentTaskRole.Merge or AgentTaskRole.Mutation
+        || IsSpecialist(role);
+
+    /// <summary>
     /// Pipeline stages (CARD-0146). Helpers (Debug, Test, Coverage, Docs, Commit, Deploy, Merge,
     /// Custom) and specialists are not stages. Keys the handoff block, stage bundles, and ready
     /// projection.

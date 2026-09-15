@@ -265,6 +265,84 @@ public sealed class GatedCommitServiceTests
         (await repo.GitReadAsync("diff", "--cached", "--name-only")).Trim().ShouldBe("new.txt");
     }
 
+    [Test]
+    public async Task F1_renamed_gitignore_is_refused_before_staging()
+    {
+        using var repo = await SeedAsync();
+        await repo.GitAsync("mv", ".gitignore", "ignore.rules");
+        await File.WriteAllTextAsync(System.IO.Path.Combine(repo.Path, "new.txt"), "new");
+        var (svc, spy) = Gate();
+        var head = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+
+        foreach (IReadOnlyList<string>? pathspec in new IReadOnlyList<string>?[] { null, ["new.txt"] })
+        {
+            spy.Verbs.Clear();
+            var result = await svc.CommitAsync(repo.Path, pathspec, Message(), Trailers(), CancellationToken.None);
+            result.Outcome.ShouldBe(GatedCommitOutcome.IgnoreRulesChanged);
+            result.Refusals.ShouldContain(r => r.Path == ".gitignore");
+            result.Refusals.ShouldContain(r => r.Path == "ignore.rules");
+            spy.Verbs.ShouldNotContain("add");
+            spy.Verbs.ShouldNotContain("commit");
+            (await repo.GitReadAsync("diff", "--cached", "--name-only")).Trim().ShouldBeEmpty();
+            (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldBe(head);
+        }
+    }
+
+    [Test]
+    public async Task F1_rename_onto_gitignore_is_refused_before_staging()
+    {
+        using var repo = await SeedAsync();
+        await File.WriteAllTextAsync(System.IO.Path.Combine(repo.Path, "rules.txt"), "extra\n");
+        await repo.GitAsync("add", "rules.txt");
+        await repo.GitAsync("commit", "-m", "rules");
+        Directory.CreateDirectory(System.IO.Path.Combine(repo.Path, "nested"));
+        await repo.GitAsync("mv", "rules.txt", "nested/.gitignore");
+        await File.WriteAllTextAsync(System.IO.Path.Combine(repo.Path, "new.txt"), "new");
+        var (svc, spy) = Gate();
+
+        var result = await svc.CommitAsync(repo.Path, ["new.txt"], Message(), Trailers(), CancellationToken.None);
+        result.Outcome.ShouldBe(GatedCommitOutcome.IgnoreRulesChanged);
+        result.Refusals.ShouldContain(r => r.Path.EndsWith(".gitignore", StringComparison.Ordinal));
+        spy.Verbs.ShouldNotContain("add");
+    }
+
+    [Test]
+    public async Task F2_failed_check_ignore_refuses_and_does_not_stage()
+    {
+        using var repo = await SeedAsync();
+        await File.WriteAllTextAsync(System.IO.Path.Combine(repo.Path, "new.txt"), "new");
+        var (svc, spy) = Gate();
+        spy.ForcedCheckIgnoreExit = 128;
+        var head = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+
+        var result = await svc.CommitAsync(repo.Path, ["new.txt"], Message(), Trailers(), CancellationToken.None);
+
+        result.Outcome.ShouldBe(GatedCommitOutcome.InspectionFailed);
+        spy.Verbs.ShouldNotContain("add");
+        spy.Verbs.ShouldNotContain("commit");
+        (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldBe(head);
+        (await repo.GitReadAsync("diff", "--cached", "--name-only")).Trim().ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task F2_failed_post_stage_inspection_unstages()
+    {
+        using var repo = await SeedAsync();
+        await File.WriteAllTextAsync(System.IO.Path.Combine(repo.Path, "new.txt"), "new");
+        var (svc, spy) = Gate();
+        spy.ForcedDiffCachedExit = 128;
+        var head = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+
+        var result = await svc.CommitAsync(repo.Path, ["new.txt"], Message(), Trailers(), CancellationToken.None);
+
+        result.Outcome.ShouldBe(GatedCommitOutcome.InspectionFailed);
+        spy.Verbs.ShouldContain("add");
+        spy.Verbs.ShouldContain("reset");
+        spy.Verbs.ShouldNotContain("commit");
+        (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldBe(head);
+        (await repo.GitReadAsync("diff", "--cached", "--name-only")).Trim().ShouldBeEmpty();
+    }
+
     private static (GatedCommitService Svc, RecordingGitWorkspaceService Spy) Gate()
     {
         var spy = new RecordingGitWorkspaceService();

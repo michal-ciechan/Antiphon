@@ -2444,7 +2444,7 @@ public sealed class AgentTaskService
     /// </summary>
     internal async Task<AgentTask?> CreateCommitTaskAsync(
         AgentTask settled, string reason, IReadOnlyList<string> dirtyPaths, string? headSha,
-        string? stderr, CancellationToken ct)
+        string? stderr, CancellationToken ct, string? upstreamSha = null)
     {
         var siblings = await _db.AgentTasks.CountAsync(t => t.RootTaskId == settled.RootTaskId, ct);
         if (siblings >= _settings.MaxTasksPerRoot || settled.Depth + 1 > _settings.MaxDepth)
@@ -2547,6 +2547,7 @@ public sealed class AgentTaskService
             AutoContinueOnWait = false,
             CommitOnSettle = CommitOnSettlePolicy.Never,
             CommitBaselineSha = headSha,
+            CommitBaselineUpstreamSha = upstreamSha,
         };
 
         _db.AgentTasks.Add(task);

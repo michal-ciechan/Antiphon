@@ -343,6 +343,15 @@ public class AgentTask
     /// <summary>Digest of the report last stamped into a caller completion note for this task.</summary>
     public string? CompletionNoteDigest { get; set; }
 
+    /// <summary>
+    /// CARD-0527 F3. Fully rendered caller note owed at settlement, persisted with the task row
+    /// before queue insert so a crash between save and enqueue can recover the same body.
+    /// </summary>
+    public string? CompletionNoteBody { get; set; }
+
+    /// <summary>CARD-0527 F3. Header of <see cref="CompletionNoteBody"/>.</summary>
+    public string? CompletionNoteHeader { get; set; }
+
     /// <summary>Guards against two dispatcher ticks claiming the same task.</summary>
     public Guid ConcurrencyToken { get; set; } = Guid.NewGuid();
 
@@ -514,6 +523,12 @@ public class AgentTask
     /// commits it produced. Null on every other role.
     /// </summary>
     public string? CommitBaselineSha { get; set; }
+
+    /// <summary>
+    /// CARD-0527 F5. Upstream SHA (<c>@{u}</c>) at spawn of a Commit-role child. Independent of
+    /// <see cref="CommitBaselineSha"/>. Null when no upstream existed.
+    /// </summary>
+    public string? CommitBaselineUpstreamSha { get; set; }
 
     /// <summary>
     /// CARD-0299 S2. How many times a cold Codex first-delivery <c>NoSubmitOutput</c> has

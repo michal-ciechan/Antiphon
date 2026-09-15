@@ -1716,6 +1716,8 @@ public class AppDbContext : DbContext
             entity.Property(t => t.LastPolledResultHash).HasColumnType("text");
             entity.Property(t => t.CompletionNoteDigest).HasColumnType("text");
             entity.Property(t => t.CompletionNoteQueuedAt).IsRequired(false);
+            entity.Property(t => t.CompletionNoteBody).HasColumnType("text");
+            entity.Property(t => t.CompletionNoteHeader).HasColumnType("text");
             entity.Property(t => t.DistilledResult).HasColumnType("text");
             entity.Property(t => t.ResultFilePath).HasMaxLength(1000);
             entity.Property(t => t.DeliverablePath).HasMaxLength(1000);
@@ -1792,6 +1794,7 @@ public class AppDbContext : DbContext
             // CARD-0527. Null on every pre-existing row: inherit project then global.
             entity.Property(t => t.CommitOnSettle).HasConversion<string>().IsRequired(false);
             entity.Property(t => t.CommitBaselineSha).HasMaxLength(64);
+            entity.Property(t => t.CommitBaselineUpstreamSha).HasMaxLength(64);
             // CARD-0146 S2. Null on every pre-existing row: enrichment at settlement, never a gate.
             entity.Property(t => t.NextStage).IsRequired(false);
             entity.Property(t => t.NextHandoff).HasMaxLength(400);
