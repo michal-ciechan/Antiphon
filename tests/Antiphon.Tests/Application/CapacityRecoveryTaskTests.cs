@@ -262,7 +262,7 @@ public class CapacityRecoveryTaskTests
         (await verify.CapacityRecoveryWaits.CountAsync(w => w.TaskId == task.Id)).ShouldBe(1);
     }
 
-    private static AgentTaskDispatcher CreateDispatcher(string connectionString)
+    internal static AgentTaskDispatcher CreateDispatcher(string connectionString)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -305,6 +305,8 @@ public class CapacityRecoveryTaskTests
         services.AddSingleton<CapacityRecoveryService>();
         services.AddScoped<AgentTaskService>();
         services.AddScoped<ModelAvailability>();
+        services.AddScoped<RoutingPinService>();
+        services.AddScoped<ComplexityRoutingService>();
         services.AddScoped<AgentTaskDispatcher>();
         return services.BuildServiceProvider().CreateScope().ServiceProvider
             .GetRequiredService<AgentTaskDispatcher>();

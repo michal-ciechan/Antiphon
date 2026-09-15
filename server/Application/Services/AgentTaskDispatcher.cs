@@ -644,8 +644,8 @@ public sealed class AgentTaskDispatcher
             try
             {
                 if (_capacityRecovery is { IsEnabled: true }
-                    && await HasUnfinishedCapacityWaitAsync(task, ct)
-                    && !await TryRedeemCapacityWaitAsync(task, CapacityRedemptionPath.Dispatch, ct))
+                    && await FindUnfinishedCapacityWaitAsync(task, ct) is { } wait
+                    && !await TryRedeemCapacityWaitAsync(task, wait, CapacityRedemptionPath.Dispatch, ct))
                     continue;
 
                 if (await DispatchOneAsync(task, ct, siblingObservation))
@@ -737,6 +737,9 @@ public sealed class AgentTaskDispatcher
         var from = currentAlias;
         task.AgentKind = chosen.Kind;
         task.ModelLevel = chosen.Level;
+        if (_capacityRecovery is not null)
+            await _capacityRecovery.SupersedeTaskWaitsOnAsync(
+                _db, task.Id, "rerouted-at-dispatch", ct, (chosen.Kind, chosen.Alias));
         var index = 0;
         for (var i = 0; i < walk.Outcomes.Count; i++)
         {
@@ -792,13 +795,14 @@ public sealed class AgentTaskDispatcher
         return true;
     }
 
-    private async Task<bool> HasUnfinishedCapacityWaitAsync(AgentTask task, CancellationToken ct)
+    private async Task<CapacityRecoveryWait?> FindUnfinishedCapacityWaitAsync(AgentTask task, CancellationToken ct)
     {
         if (_capacityRecovery is null)
-            return false;
+            return null;
         var key = $"task:{task.Id:N}";
-        return await _db.CapacityRecoveryWaits.AnyAsync(
+        return await _db.CapacityRecoveryWaits.AsNoTracking().FirstOrDefaultAsync(
             w => (w.TaskId == task.Id || w.ConsumerKey == key)
+                && w.ExecutionKind == task.AgentKind
                 && w.State != CapacityRecoveryWaitState.Progressed
                 && w.State != CapacityRecoveryWaitState.Canceled
                 && w.State != CapacityRecoveryWaitState.Superseded
@@ -809,27 +813,22 @@ public sealed class AgentTaskDispatcher
     private async Task<bool> TryRedeemCapacityWaitAsync(
         AgentTask task, CapacityRedemptionPath path, CancellationToken ct)
     {
-        if (_capacityRecovery is null)
-            return true;
-        var key = $"task:{task.Id:N}";
-        var wait = await _db.CapacityRecoveryWaits.FirstOrDefaultAsync(
-            w => (w.TaskId == task.Id || w.ConsumerKey == key)
-                && w.State != CapacityRecoveryWaitState.Progressed
-                && w.State != CapacityRecoveryWaitState.Canceled
-                && w.State != CapacityRecoveryWaitState.Superseded
-                && w.State != CapacityRecoveryWaitState.Exhausted,
-            ct);
-        if (wait is null)
-            return true;
+        var wait = await FindUnfinishedCapacityWaitAsync(task, ct);
+        return wait is null || await TryRedeemCapacityWaitAsync(task, wait, path, ct);
+    }
+
+    private async Task<bool> TryRedeemCapacityWaitAsync(
+        AgentTask task, CapacityRecoveryWait wait, CapacityRedemptionPath path, CancellationToken ct)
+    {
         if (wait.State == CapacityRecoveryWaitState.WaitingForHold)
             return false;
-        var provider = await _db.Set<CapacityRecoveryProviderState>()
+        var provider = await _db.Set<CapacityRecoveryProviderState>().AsNoTracking()
             .FirstOrDefaultAsync(s => s.Kind == wait.ExecutionKind, ct);
         if (provider is null
             || provider.GrantedWaitId != wait.Id
             || provider.GrantedActionKey != wait.ActionKey)
             return false;
-        var result = await _capacityRecovery.RedeemAsync(
+        var result = await _capacityRecovery!.RedeemAsync(
             wait.Id, wait.ActionKey, wait.ExecutionKind, path, ct);
         return result.Ok;
     }
@@ -870,6 +869,8 @@ public sealed class AgentTaskDispatcher
 
             if (_capacityRecovery is not null)
             {
+                await _capacityRecovery.SupersedeTaskWaitsOnAsync(
+                    _db, task.Id, "resumed-routing-blocked", ct, (chosen.Kind, chosen.Alias));
                 await _capacityRecovery.EnsureWaitOnAsync(_db, new CapacityWaitRegistration
                 {
                     ConsumerKey = $"task:{task.Id:N}",

@@ -327,6 +327,70 @@ public sealed class CapacityRecoveryService
         AppDbContext db, CapacityWaitRegistration registration, CancellationToken ct) =>
         EnsureWaitCoreAsync(db, registration, UtcNow(), ct);
 
+    /// <summary>End the previous task attempt's waits and release their provider grants.</summary>
+    public async Task<int> SupersedeTaskWaitsOnAsync(
+        AppDbContext db, Guid taskId, string reason, CancellationToken ct,
+        (AgentKind Kind, string? Alias)? keep = null)
+    {
+        var key = $"task:{taskId:N}";
+        var matching = db.CapacityRecoveryWaits.Where(w => w.TaskId == taskId || w.ConsumerKey == key);
+        var kinds = await matching.AsNoTracking().Select(w => w.ExecutionKind).Distinct().OrderBy(k => k).ToListAsync(ct);
+        var count = 0;
+        foreach (var kind in kinds)
+        {
+            IDbContextTransaction? owned = null;
+            if (db.Database.CurrentTransaction is null)
+                owned = await db.Database.BeginTransactionAsync(ct);
+            try
+            {
+                await TakeProviderLockAsync(db, kind, ct);
+                var waits = await Unfinished(matching).Where(w => w.ExecutionKind == kind).ToListAsync(ct);
+                var state = await db.CapacityRecoveryProviderStates.FirstOrDefaultAsync(s => s.Kind == kind, ct);
+                if (state is not null)
+                    await db.Entry(state).ReloadAsync(ct);
+                var now = UtcNow();
+                foreach (var wait in waits)
+                {
+                    // This context may have read the wait before another consumer redeemed it.
+                    await db.Entry(wait).ReloadAsync(ct);
+                    if (IsFinished(wait) || (keep is { } candidate
+                            && wait.ExecutionKind == candidate.Kind && wait.RequestedAlias == candidate.Alias))
+                        continue;
+                    wait.State = CapacityRecoveryWaitState.Superseded;
+                    wait.Outcome = nameof(CapacityRecoveryWaitState.Superseded);
+                    wait.OutcomeReason = reason;
+                    wait.Version++;
+                    wait.UpdatedAt = now;
+                    if (state?.GrantedWaitId == wait.Id)
+                        ClearGrant(state, now);
+                    count++;
+                    _logger.LogInformation(
+                        "Capacity recovery superseded wait {WaitId} consumer {ConsumerKey} kind {Kind}: {Reason}",
+                        wait.Id, wait.ConsumerKey, kind, reason);
+                }
+                await db.SaveChangesAsync(ct);
+                if (owned is not null)
+                    await owned.CommitAsync(ct);
+            }
+            finally
+            {
+                if (owned is not null)
+                    await owned.DisposeAsync();
+            }
+        }
+        return count;
+    }
+
+    private static IQueryable<CapacityRecoveryWait> Unfinished(IQueryable<CapacityRecoveryWait> waits) =>
+        waits.Where(w => w.State != CapacityRecoveryWaitState.Progressed
+            && w.State != CapacityRecoveryWaitState.Canceled
+            && w.State != CapacityRecoveryWaitState.Superseded
+            && w.State != CapacityRecoveryWaitState.Exhausted);
+
+    private static bool IsFinished(CapacityRecoveryWait wait) =>
+        wait.State is CapacityRecoveryWaitState.Progressed or CapacityRecoveryWaitState.Canceled
+            or CapacityRecoveryWaitState.Superseded or CapacityRecoveryWaitState.Exhausted;
+
     private async Task<CapacityRecoveryWait> EnsureWaitCoreAsync(
         AppDbContext db, CapacityWaitRegistration registration, DateTime now, CancellationToken ct)
     {
