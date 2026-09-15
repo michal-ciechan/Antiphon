@@ -49,10 +49,10 @@ public sealed class WorktreeCleanupPresentationTests
         var capture = Capture(32) with { Handles = new(WorktreeLockStatus.OwnersObserved, "Observed", DateTime.UtcNow,
             [new(new string('\u754c', 80), 4321, new string('\u754c', 512))]) };
         var presentation = new WorktreeCleanupPresentation();
-        var reference = new WorktreeCleanupReference(capture.Id, request.Id, Guid.NewGuid(), capture.At,
+        var reference = new WorktreeCleanupReference(capture.Id, capture.RequestId, capture.OperationId, capture.At,
             WorktreeCleanupCaptureState.Captured, presentation.Summary(capture), presentation.Serialize(capture));
         var note = LandNotificationPayload.Create(request, source, LandNotificationKind.Outcome,
-            presentation.Detail("worktree_remove_failed", reference), marker);
+            reference, Enumerable.Range(1, siblings).Select(i => $"{i:D8}:feat/\u754c-plan-{i}").ToArray(), "worktree_remove_failed");
         Encoding.UTF8.GetByteCount(note.Body).ShouldBeLessThanOrEqualTo(1024);
         note.Body.ShouldContain(capture.Id.ToString("N")); note.Body.ShouldContain(new string('\u754c', 80));
         note.Body.ShouldContain("PID=4321"); note.Body.ShouldContain("DeleteAccessOpen=32");
@@ -71,12 +71,14 @@ public sealed class WorktreeCleanupPresentationTests
     [Arguments(false, 0, 0, true, true)] [Arguments(true, 0, 0, true, true)]
     [Arguments(false, 32, 189, true, true)] [Arguments(true, 32, 189, true, true)]
     [Arguments(false, 64, 189, true, false)] [Arguments(true, 64, 189, true, false)]
+    [Arguments(true, 4, 189, false, true, 64)] [Arguments(true, 128, 10, false, false, 64)]
+    [Arguments(true, 32, 189, true, true, 64)] [Arguments(true, 1, 14, true, true, 64)]
     public void C443_D9_DiagnosticsSurviveEitherEnvelopeExtreme(bool differentShas, int siblings,
-        int branchLength, bool verbose, bool owners)
+        int branchLength, bool verbose, bool owners, int shaLength = 40)
     {
         var request = new AgentTaskLandRequest { Id = Guid.NewGuid(), TaskId = Guid.NewGuid(),
-            ExpectedSourceSha = new('a', 40), LocalBeforeSha = new(differentShas ? 'b' : 'a', 40),
-            RemoteSourceSha = new(differentShas ? 'c' : 'a', 40), CandidateSourceSha = new(differentShas ? 'd' : 'a', 40) };
+            ExpectedSourceSha = new('a', shaLength), LocalBeforeSha = new(differentShas ? 'b' : 'a', shaLength),
+            RemoteSourceSha = new(differentShas ? 'c' : 'a', shaLength), CandidateSourceSha = new(differentShas ? 'd' : 'a', shaLength) };
         var tokens = Enumerable.Range(1, siblings)
             .Select(i => $"{i:D8}:feat/{i:D3}-" + new string('s', branchLength - 9)).ToArray();
         var marker = siblings == 0 ? null : "unlanded-sibling=" + string.Join(",", tokens);
@@ -87,12 +89,16 @@ public sealed class WorktreeCleanupPresentationTests
             owners ? "Observed" : "InsufficientPrivileges", DateTime.UtcNow,
             owners ? [new(verbose ? new string('\u754c', 80) : "dotnet", 4321, verbose ? new string('\u754c', 512) : ".")] : []) };
         var presentation = new WorktreeCleanupPresentation();
-        var reference = new WorktreeCleanupReference(capture.Id, request.Id, Guid.NewGuid(), capture.At,
+        var reference = new WorktreeCleanupReference(capture.Id, capture.RequestId, capture.OperationId, capture.At,
             WorktreeCleanupCaptureState.Captured, presentation.Summary(capture), presentation.Serialize(capture));
         var note = LandNotificationPayload.Create(request, source, LandNotificationKind.Outcome,
-            presentation.Detail(verbose ? new string('\u754c', 400) : "cleanup failed", reference), marker);
+            reference, tokens, verbose ? new string('\u754c', 400) : "cleanup failed");
 
         Encoding.UTF8.GetByteCount(note.Body).ShouldBeLessThanOrEqualTo(1024);
+        note.Body.ShouldContain($"expected={request.ExpectedSourceSha}");
+        note.Body.ShouldContain($"local={(differentShas ? request.LocalBeforeSha : "expected")}");
+        note.Body.ShouldContain($"remote={(differentShas ? request.RemoteSourceSha : "expected")}");
+        note.Body.ShouldContain($"candidate={(differentShas ? request.CandidateSourceSha : "expected")}");
         note.Body.ShouldContain($"capture={capture.Id:N}");
         note.Body.ShouldContain(capture.At.ToString("O"));
         note.Body.ShouldContain("Git git_exit_128 exit=128");
@@ -103,10 +109,60 @@ public sealed class WorktreeCleanupPresentationTests
             note.Body.ShouldContain("PID=4321");
         }
         else note.Body.ShouldContain("InsufficientPrivileges");
-        if (siblings > 0) note.Body.ShouldContain("unlanded-sibling=");
+        if (siblings > 0)
+        {
+            var siblingLine = note.Body.Split('\n').Single(line => line.StartsWith("unlanded-sibling="));
+            if (siblingLine.Contains(" siblings, showing first "))
+            {
+                siblingLine.ShouldStartWith($"unlanded-sibling={siblings} siblings, showing first ");
+                var countAndNames = siblingLine.Split("showing first ")[1].Split(": ", 2);
+                var shown = int.Parse(countAndNames[0]);
+                shown.ShouldBeLessThan(siblings);
+                if (shown > 0) countAndNames[1].ShouldBe(string.Join(",", tokens.Take(shown)));
+                else countAndNames.Length.ShouldBe(1);
+            }
+            else siblingLine.ShouldBe(marker);
+        }
         else note.Body.ShouldNotContain("unlanded-sibling=");
         note.Body.ShouldNotContain("\ufffd");
         source.Detail.ShouldBe("full publication narrative; " + marker);
+    }
+
+    [Test]
+    [Arguments("captured")] [Arguments("interrupted")] [Arguments("malformed")] [Arguments("mismatch")]
+    public void C443_D9_PriorCaptureKeepsItsIdentityAndAvailability(string evidence)
+    {
+        var capture = Capture(33);
+        var presentation = new WorktreeCleanupPresentation();
+        var json = presentation.Serialize(capture);
+        var reference = new WorktreeCleanupReference(capture.Id, capture.RequestId, capture.OperationId, capture.At,
+            evidence == "interrupted" ? WorktreeCleanupCaptureState.Interrupted : WorktreeCleanupCaptureState.Captured,
+            new string('\u754c', 600), evidence switch { "interrupted" => null, "malformed" => "{", _ => json }, true);
+        if (evidence == "mismatch") reference = reference with { AttemptId = Guid.NewGuid() };
+        var request = new AgentTaskLandRequest { Id = Guid.NewGuid(), TaskId = capture.TaskId,
+            ExpectedSourceSha = new('a', 64), LocalBeforeSha = new('b', 64),
+            RemoteSourceSha = new('c', 64), CandidateSourceSha = new('d', 64) };
+        var source = new AgentTaskEvent { Id = Guid.NewGuid(), Type = AgentTaskEventType.LandingCleanup,
+            LandingPublication = LandPublicationOutcome.AlreadyPresent, LandingCleanup = LandCleanupStatus.Complete };
+        var note = LandNotificationPayload.Create(request, source, LandNotificationKind.Outcome, reference,
+            Enumerable.Range(0, 64).Select(i => $"{i:D8}:feat/" + new string('s', 180)).ToArray(), new string('\u754c', 400));
+        Encoding.UTF8.GetByteCount(note.Body).ShouldBeLessThanOrEqualTo(1024);
+        note.Body.ShouldContain($"capture={reference.AttemptId:N}");
+        note.Body.ShouldContain($"prior attempt request={capture.RequestId:N}");
+        note.Body.ShouldContain(capture.At.ToString("O"));
+        note.Body.ShouldContain("unlanded-sibling=64 siblings, showing first 0");
+        if (evidence == "captured")
+        {
+            note.Body.ShouldContain("InsufficientPrivileges");
+            note.Body.ShouldContain("Git git_exit_128 exit=128");
+            note.Body.ShouldContain("DeleteAccessOpen=33");
+        }
+        else
+        {
+            note.Body.ShouldContain($"{reference.State}; diagnostic evidence unavailable");
+            note.Body.ShouldNotContain("DeleteAccessOpen=33");
+        }
+        reference.Summary.ShouldBe(new string('\u754c', 600));
     }
 
     internal static WorktreeCleanupCapture Capture(int code) => new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),

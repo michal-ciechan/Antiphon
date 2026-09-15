@@ -33,7 +33,13 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
     [Arguments(true, "inbox")] [Arguments(false, "inbox")]
     public Task C443_EligibleRecipientGetsUnlandedSiblingWarning(bool owners, string backend) => DeliverAsync(false, owners, backend, sibling: true);
 
-    private static async Task DeliverAsync(bool busy, bool owners, string backend, bool sibling = false)
+    [Test] [Arguments(true, "modern")] [Arguments(false, "modern")]
+    [Arguments(true, "inbox")] [Arguments(false, "inbox")]
+    public Task C443_D9_RecipientGetsSummarizedSiblingsAndDiagnostics(bool busy, string backend) =>
+        DeliverAsync(busy, true, backend, sibling: true, siblingCount: 4, longBranches: true);
+
+    private static async Task DeliverAsync(bool busy, bool owners, string backend, bool sibling = false,
+        int siblingCount = 1, bool longBranches = false)
     {
         BridgeQueueHarness? receiver = null;
         DeliveryWorkers? workers = null;
@@ -58,7 +64,7 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
                 workers = new(receiver); await workers.StartAsync();
             });
             var bridge = receiver!;
-            if (sibling) siblingWarning = await AddUnlandedSiblingAsync(h.H);
+            if (sibling) siblingWarning = await AddUnlandedSiblingAsync(h.H, siblingCount, longBranches);
             // Successful admission does not create a notification; this cut precedes the Outcome.
             await using (var db = h.H.CreateContext())
                 (await db.AgentTaskLandNotifications.AnyAsync(n => n.TaskId == h.Context.TaskId)).ShouldBeFalse();
@@ -83,6 +89,9 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
                 System.Text.Encoding.UTF8.GetByteCount(original.Body).ShouldBeLessThanOrEqualTo(1024);
                 original.ParentSessionId.ShouldBe(bridge.SessionId); original.Body.ShouldContain(capture.Id.ToString("N"));
                 original.Body.ShouldContain(owners ? h.Diagnostics.OwnerName : "InsufficientPrivileges");
+                original.Body.ShouldContain("Git git_exit_128 exit=128");
+                original.Body.ShouldContain("DeleteAccessOpen=");
+                if (owners) original.Body.ShouldContain("PID=4321");
                 capture.CaptureState.ShouldBe(WorktreeCleanupCaptureState.Captured);
                 if (owners) capture.Summary!.Length.ShouldBe(600);
                 var after = await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.Id == publication.Id);
@@ -113,7 +122,8 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
                 var prompt = await db.TranscriptEntries.AsNoTracking().SingleAsync(p => p.AgentSessionId == bridge.SessionId
                     && p.Sequence == confirmed.ConfirmingPromptSequence && p.Kind == TranscriptKinds.UserPrompt);
                 PromptSubmissionMatch.Normalize(prompt.Text!).ShouldBe(PromptSubmissionMatch.Normalize(original.Body));
-                if (siblingWarning is not null) prompt.Text!.ShouldContain(siblingWarning);
+                if (siblingWarning is not null) prompt.Text!.ShouldContain(siblingCount == 1 ? siblingWarning
+                    : $"unlanded-sibling={siblingCount} siblings, showing first 0");
                 else prompt.Text!.ShouldNotContain("unlanded-sibling=");
                 bridge.Adapter.SubmittedBodies.Skip(baselineSubmissions).ShouldBe([original.Body]);
                 (await db.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId == original.Id)).ShouldBe(1);
@@ -129,15 +139,8 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
         }
     }
 
-    private static async Task<string> AddUnlandedSiblingAsync(LandingSafetyHarness producer)
+    private static async Task<string> AddUnlandedSiblingAsync(LandingSafetyHarness producer, int count, bool longBranches)
     {
-        var id = Guid.NewGuid();
-        var branch = $"feat/card-task-{DelegationReportFormatter.Short(id)}";
-        var path = Path.Combine(producer.Fixture.Root, "trees", "sibling");
-        await producer.Fixture.RequiredAsync(producer.Fixture.Repository, "worktree", "add", "-b", branch, path, producer.Fixture.SeedSha);
-        await File.WriteAllTextAsync(Path.Combine(path, "unlanded-plan.md"), "same-card work remains unlanded\n");
-        await producer.Fixture.RequiredAsync(path, "add", "unlanded-plan.md");
-        await producer.Fixture.RequiredAsync(path, "commit", "-m", "unlanded sibling");
         await using var db = producer.CreateContext();
         var project = new Project { Id = Guid.NewGuid(), Name = "C443 sibling warning" };
         var board = new Board { Id = Guid.NewGuid(), ProjectId = project.Id, Name = "C443 sibling warning" };
@@ -147,13 +150,26 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
         db.Projects.Add(project); db.Boards.Add(board); db.BoardColumns.Add(column); db.Cards.Add(card);
         var task = await db.AgentTasks.SingleAsync(t => t.Id == producer.Fixture.TaskId);
         task.CardId = card.Id;
-        db.AgentTasks.Add(new AgentTask { Id = id, RootTaskId = id, CardId = card.Id,
-            Title = "Unlanded sibling", Goal = "retain plan", Kind = AgentTaskKind.Worker,
-            Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Worktree, Status = AgentTaskStatus.Succeeded,
-            WorkingDirectory = path, RepoPath = producer.Fixture.Repository, WorktreePath = path,
-            WorktreeBranch = branch, ReplyTo = AgentTaskReplyTo.None, CreatedAt = DateTime.UtcNow, CompletedAt = DateTime.UtcNow });
+        var tokens = new List<string>();
+        for (var i = 0; i < count; i++)
+        {
+            var id = Guid.NewGuid();
+            var branch = $"feat/card-task-{DelegationReportFormatter.Short(id)}";
+            if (longBranches) branch += new string('s', 189 - branch.Length);
+            var path = Path.Combine(producer.Fixture.Root, "trees", $"sibling-{i}");
+            await producer.Fixture.RequiredAsync(producer.Fixture.Repository, "worktree", "add", "-b", branch, path, producer.Fixture.SeedSha);
+            await File.WriteAllTextAsync(Path.Combine(path, "unlanded-plan.md"), "same-card work remains unlanded\n");
+            await producer.Fixture.RequiredAsync(path, "add", "unlanded-plan.md");
+            await producer.Fixture.RequiredAsync(path, "commit", "-m", "unlanded sibling");
+            db.AgentTasks.Add(new AgentTask { Id = id, RootTaskId = id, CardId = card.Id,
+                Title = "Unlanded sibling", Goal = "retain plan", Kind = AgentTaskKind.Worker,
+                Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Worktree, Status = AgentTaskStatus.Succeeded,
+                WorkingDirectory = path, RepoPath = producer.Fixture.Repository, WorktreePath = path,
+                WorktreeBranch = branch, ReplyTo = AgentTaskReplyTo.None, CreatedAt = DateTime.UtcNow, CompletedAt = DateTime.UtcNow });
+            tokens.Add($"{DelegationReportFormatter.Short(id)}:{branch}");
+        }
         await db.SaveChangesAsync();
-        return $"unlanded-sibling={DelegationReportFormatter.Short(id)}:{branch}";
+        return $"unlanded-sibling={string.Join(",", tokens)}";
     }
 
     private static async Task UntilAsync(Func<Task<bool>> predicate)

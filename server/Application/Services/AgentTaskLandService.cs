@@ -355,8 +355,9 @@ public sealed class AgentTaskLandService
             DurationSeconds(op, OrchestrationStage.Cleanup), result.Reason ?? "cleanup complete");
         var type = op.Publication == LandPublicationOutcome.AlreadyPresent ? AgentTaskEventType.AlreadyPresent
             : op.Cleanup == LandCleanupStatus.Complete ? AgentTaskEventType.Landed : AgentTaskEventType.LandedWithResidue;
-        var (marker, warnings) = await CollectUnlandedSiblingsAsync(task, op.RepositoryPath, ct, op.VerifiedSourceSha);
-        await SettleLandedAsync(task, type, AppendUnlandedMarker(FormatOutcome(op), marker), warnings, marker, ct);
+        var (siblings, warnings) = await CollectUnlandedSiblingsAsync(task, op.RepositoryPath, ct, op.VerifiedSourceSha);
+        var marker = siblings.Count == 0 ? null : $"unlanded-sibling={string.Join(",", siblings)}";
+        await SettleLandedAsync(task, type, AppendUnlandedMarker(FormatOutcome(op), marker), warnings, siblings, ct);
         return LandRunResult.Complete;
     }
 
@@ -409,7 +410,7 @@ public sealed class AgentTaskLandService
         AgentTaskEventType type,
         string outcome,
         IReadOnlyList<string> warnings,
-        string? unlandedSiblingMarker,
+        IReadOnlyList<string>? unlandedSiblings,
         CancellationToken ct)
     {
         var expectedRequest = task.CurrentLandRequestId;
@@ -420,7 +421,7 @@ public sealed class AgentTaskLandService
         var request = await EnsureRequestAsync(task, ct);
         await _db.Entry(request).ReloadAsync(ct);
         if (request.TerminalEventId is not null) return;
-        await CompleteTerminalLockedAsync(task, request, type, outcome, warnings, unlandedSiblingMarker, ct);
+        await CompleteTerminalLockedAsync(task, request, type, outcome, warnings, unlandedSiblings, ct);
     }
 
     private static string AppendUnlandedMarker(string outcome, string? marker) =>
@@ -430,11 +431,11 @@ public sealed class AgentTaskLandService
     /// Same-card kept Worktree branches whose tip is not an ancestor of the rebased HEAD
     /// (CARD-0215). Warn on a surviving uncontained branch; absence grants no landing authority.
     /// </summary>
-    private async Task<(string? Marker, IReadOnlyList<string> Warnings)> CollectUnlandedSiblingsAsync(
+    private async Task<(IReadOnlyList<string> Siblings, IReadOnlyList<string> Warnings)> CollectUnlandedSiblingsAsync(
         AgentTask task, string rebasedHeadRepo, CancellationToken ct, string? verifiedSha = null)
     {
         if (task.CardId is null || task.RepoPath is null || !Directory.Exists(rebasedHeadRepo))
-            return (null, []);
+            return ([], []);
 
         var siblings = await _db.AgentTasks.AsNoTracking()
             .Where(t => t.Id != task.Id
@@ -445,7 +446,7 @@ public sealed class AgentTaskLandService
             .Select(t => new { t.Id, t.WorktreeBranch, t.RepoPath, t.WorktreePath })
             .ToListAsync(ct);
         if (siblings.Count == 0)
-            return (null, []);
+            return ([], []);
 
         var cardIdentifier = await _db.Cards.AsNoTracking()
             .Where(c => c.Id == task.CardId)
@@ -471,9 +472,7 @@ public sealed class AgentTaskLandService
                 $"{cardIdentifier}'s kept branch {branch} (task {shortId}) is not an ancestor of the rebased HEAD.");
         }
 
-        return tokens.Count == 0
-            ? (null, [])
-            : ($"unlanded-sibling={string.Join(",", tokens)}", warnings);
+        return (tokens, warnings);
     }
 
     /// <summary>Pure form of the Shared-writer rule, kept visible for the lease contract tests.</summary>
@@ -671,7 +670,7 @@ public sealed class AgentTaskLandService
     }
 
     private async Task CompleteTerminalLockedAsync(AgentTask task, AgentTaskLandRequest request,
-        AgentTaskEventType type, string outcome, IReadOnlyList<string> warnings, string? unlandedSiblingMarker,
+        AgentTaskEventType type, string outcome, IReadOnlyList<string> warnings, IReadOnlyList<string>? unlandedSiblings,
         CancellationToken ct)
     {
         var now = _clock.GetUtcNow().UtcDateTime;
@@ -690,7 +689,7 @@ public sealed class AgentTaskLandService
             if (alreadyReported) type = AgentTaskEventType.LandingCleanup;
         }
         WorktreeCleanupAttempt? cleanupAttempt = null;
-        string? notificationCleanupDetail = null;
+        WorktreeCleanupReference? notificationCapture = null;
         if (op is not null && _protocol is not null)
         {
             var cleanupEvidence = await _protocol.ReadCleanupEvidenceAsync(op.Id, request.Id, ct);
@@ -710,7 +709,7 @@ public sealed class AgentTaskLandService
             if (cleanupEvidence.Capture is not null)
             {
                 outcome += "; " + detail;
-                notificationCleanupDetail = detail;
+                notificationCapture = cleanupEvidence.Capture;
             }
             if (op.CleanupStartedAt is not null && new AgentTaskLandingState().HasPublication(op))
             {
@@ -736,7 +735,7 @@ public sealed class AgentTaskLandService
         SetLandingEvidence(terminal, op);
         _db.AgentTaskEvents.Add(terminal);
         CompleteRequest(task, request, terminal);
-        AddNotification(task, request, terminal, LandNotificationKind.Outcome, notificationCleanupDetail, unlandedSiblingMarker);
+        AddNotification(task, request, terminal, LandNotificationKind.Outcome, notificationCapture, unlandedSiblings, op?.LastReason);
         ClearPending(task);
         await _db.SaveChangesAsync(ct);
         if (_db.Database.CurrentTransaction is { } open) await open.CommitAsync(ct);
@@ -877,8 +876,8 @@ public sealed class AgentTaskLandService
     }
 
     private void AddNotification(AgentTask task, AgentTaskLandRequest request, AgentTaskEvent source, LandNotificationKind kind,
-        string? cleanupDetail = null, string? unlandedSiblingMarker = null)
-        => _db.AgentTaskLandNotifications.Add(LandNotificationPayload.Create(request, source, kind, cleanupDetail, unlandedSiblingMarker));
+        WorktreeCleanupReference? cleanupCapture = null, IReadOnlyList<string>? unlandedSiblings = null, string? cleanupReason = null)
+        => _db.AgentTaskLandNotifications.Add(LandNotificationPayload.Create(request, source, kind, cleanupCapture, unlandedSiblings, cleanupReason));
 
     internal static async Task<LandVerification> VerifyAsync(string worktree, string? filter, CancellationToken ct)
         => await VerifyWithObserverAsync(worktree, filter, null, ct);
