@@ -573,4 +573,10 @@ public enum AgentIncidentKind
     /// or generation identity is unproven. Passive observation continues. Warning.
     /// </summary>
     RemoteControlMonitoringDegraded = 66,
+
+    /// <summary>
+    /// CARD-0527. A Commit-role child settled with an ignored path in a commit it produced.
+    /// Warning; no automatic revert.
+    /// </summary>
+    DelegateCommitAudit = 67,
 }

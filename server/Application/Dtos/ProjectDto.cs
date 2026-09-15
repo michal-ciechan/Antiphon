@@ -18,6 +18,10 @@ public record ProjectDto(
 {
     public Antiphon.Server.Domain.Enums.RepositoryVisibility RepositoryVisibility { get; init; }
     public string[] CardFileWarnings { get; init; } = [];
+    /// <summary>On, Off, or null (inherit the global default).</summary>
+    public string? CommitOnSettle { get; init; }
+    /// <summary>Resolved project-or-global switch. True means settlement will try to commit.</summary>
+    public bool EffectiveCommitOnSettle { get; init; }
 }
 
 /// <summary>

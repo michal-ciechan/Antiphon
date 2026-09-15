@@ -21,6 +21,7 @@ public class ProjectService
     private readonly ILogger<ProjectService> _logger;
     private readonly ProjectReadinessCache? _readinessCache;
     private readonly IEventBus? _eventBus;
+    private readonly DelegationSettings _delegation;
 
     public ProjectService(
         AppDbContext db,
@@ -29,7 +30,8 @@ public class ProjectService
         ILogger<ProjectService> logger,
         ProjectReadinessCache? readinessCache = null,
         IEventBus? eventBus = null,
-        CardTaskFileService? cardFiles = null)
+        CardTaskFileService? cardFiles = null,
+        IOptions<DelegationSettings>? delegation = null)
     {
         _db = db;
         _cardFiles = cardFiles;
@@ -38,6 +40,7 @@ public class ProjectService
         _logger = logger;
         _readinessCache = readinessCache;
         _eventBus = eventBus;
+        _delegation = delegation?.Value ?? new DelegationSettings();
     }
 
     public async Task<List<ProjectDto>> GetAllAsync(CancellationToken cancellationToken) =>
@@ -144,6 +147,11 @@ public class ProjectService
             project.DefaultLaunchEnvJson = AgentLaunchEnv.Serialize(
                 AgentLaunchEnv.ValidateOverride(request.DefaultLaunchEnv, "defaultLaunchEnv"));
         }
+
+        var parsedProjectCommit = CommitOnSettlePolicyResolver.ParseProjectValue(
+            request.CommitOnSettle, leaveUnchangedWhenNull: true, out var leaveCommitOnSettle);
+        if (!leaveCommitOnSettle)
+            project.CommitOnSettle = parsedProjectCommit;
 
         project.UpdatedAt = DateTime.UtcNow;
 
@@ -456,7 +464,7 @@ public class ProjectService
         catch (Exception) { return ToDto(project) with { CardFileWarnings = [install ? "card_files_ignore_missing" : "status_unavailable"] }; }
     }
 
-    private static ProjectDto ToDto(Project entity) =>
+    private ProjectDto ToDto(Project entity) =>
         new(
             entity.Id,
             entity.Name,
@@ -471,7 +479,12 @@ public class ProjectService
             AgentLaunchEnv.Parse(entity.DefaultLaunchEnvJson),
             entity.ArchivedAt,
             entity.ArchivedReason,
-            entity.ArchivedBy) { RepositoryVisibility = entity.RepositoryVisibility };
+            entity.ArchivedBy)
+        {
+            RepositoryVisibility = entity.RepositoryVisibility,
+            CommitOnSettle = CommitOnSettlePolicyResolver.FormatProjectValue(entity.CommitOnSettle),
+            EffectiveCommitOnSettle = entity.CommitOnSettle ?? _delegation.CommitOnSettle,
+        };
 }
 
 public record TestGitConnectivityResult(bool Success, string Message);

@@ -40,6 +40,19 @@ public class GitWorkspaceService
         return code == 0 && stdout.Trim() == "true";
     }
 
+    public enum RepositoryInspection { Worktree, NotWorktree, Unavailable }
+
+    /// <summary>Distinguishes Git's explicit negative from a failed prerequisite inspection.</summary>
+    public async Task<RepositoryInspection> InspectRepositoryAsync(string workingDirectory, CancellationToken ct)
+    {
+        var (code, stdout, stderr) = await RunAsync(workingDirectory, ct, "rev-parse", "--is-inside-work-tree");
+        if (code == 0 && stdout.Trim() == "true") return RepositoryInspection.Worktree;
+        if (code == 0 && stdout.Trim() == "false") return RepositoryInspection.NotWorktree;
+        if (code == 128 && stderr.Trim() == "fatal: not a git repository (or any of the parent directories): .git")
+            return RepositoryInspection.NotWorktree;
+        return RepositoryInspection.Unavailable;
+    }
+
     /// <summary>The checkout root for a directory, or null when git cannot resolve one.</summary>
     public async Task<string?> GetRepoToplevelAsync(string workingDirectory, CancellationToken ct)
     {
@@ -56,7 +69,7 @@ public class GitWorkspaceService
         return code == 0 && origin.Length > 0 ? origin : null;
     }
 
-    public sealed record GitStrictList<T>(bool Succeeded, IReadOnlyList<T> Items, int ExitCode);
+    public sealed record GitStrictList<T>(bool Succeeded, IReadOnlyList<T> Items, int ExitCode, string? Error = null);
 
     /// <summary>Working tree + index changes vs HEAD (porcelain v1 -z), untracked included.</summary>
     public async Task<IReadOnlyList<GitChange>> GetChangesAsync(string workingDirectory, CancellationToken ct)
@@ -708,8 +721,258 @@ public class GitWorkspaceService
         return GitFileStatus.Modified;
     }
 
-    private async Task<(int Code, string Stdout, string Stderr)> RunAsync(
-        string workingDirectory, CancellationToken ct, params string[] args)
+    public sealed record GitIgnoreMatch(string Path, string Source, int Line, string Pattern)
+    {
+        public string Rule => $"{Source}:{Line}:{Pattern}";
+    }
+
+    /// <summary>
+    /// <c>git check-ignore --no-index -v -z --stdin</c> over <paramref name="paths"/>.
+    /// Verbose output includes effective negation rules; only exclusion records are returned.
+    /// </summary>
+    public async Task<GitStrictList<GitIgnoreMatch>> CheckIgnoredAsync(
+        string workingDirectory, IReadOnlyList<string> paths, CancellationToken ct)
+    {
+        if (paths.Count == 0)
+            return new(true, [], 0);
+
+        var stdin = string.Concat(paths.Select(p => p.Replace('\\', '/') + "\0"));
+        var (code, stdout, stderr) = await RunWithInputAsync(
+            workingDirectory, stdin, ct, "check-ignore", "--no-index", "-v", "-z", "--stdin");
+        if (code is not (0 or 1))
+        {
+            _logger.LogDebug("git check-ignore failed in {Dir}: {Err}", workingDirectory, stderr);
+            return new(false, [], code, $"git check-ignore failed ({code}): {stderr}");
+        }
+
+        var matches = new List<GitIgnoreMatch>();
+        var fields = stdout.Split('\0');
+        for (var i = 0; i + 3 < fields.Length; i += 4)
+        {
+            var source = fields[i].Replace('\\', '/');
+            if (source.Length == 0)
+                break;
+            _ = int.TryParse(fields[i + 1], out var line);
+            var pattern = fields[i + 2];
+            // Git reports the winning rule even when it re-includes the path. An escaped
+            // leading exclamation mark (\!) is a literal exclusion and must remain a match.
+            if (pattern.StartsWith('!'))
+                continue;
+            var path = fields[i + 3].Replace('\\', '/');
+            var sourceName = source;
+            if (sourceName.Contains('/'))
+                sourceName = sourceName.Contains(".gitignore", StringComparison.Ordinal)
+                    ? sourceName
+                    : System.IO.Path.GetFileName(sourceName);
+            matches.Add(new GitIgnoreMatch(path, sourceName, line, pattern));
+        }
+
+        return new(true, matches, code);
+    }
+
+    public async Task<(int Code, string Stderr)> StageAsync(
+        string workingDirectory, IReadOnlyList<string>? pathspec, CancellationToken ct)
+    {
+        var args = pathspec is null || pathspec.Count == 0
+            ? new[] { "add", "-A" }
+            : ["add", "-A", "--", .. pathspec];
+        var (code, _, stderr) = await RunAsync(workingDirectory, ct, args);
+        return (code, stderr);
+    }
+
+    public async Task<GitStrictList<string>> StagedPathsAsync(string workingDirectory, CancellationToken ct)
+    {
+        var (code, stdout, stderr) = await RunAsync(
+            workingDirectory, ct, "diff", "--cached", "--name-only", "-z");
+        if (code != 0)
+            return new(false, [], code, $"git staged-path inspection failed ({code}): {stderr}");
+        return new(true, stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => p.Replace('\\', '/'))
+            .ToArray(), 0);
+    }
+
+    public Task<(int Code, string Stdout, string Stderr)> CaptureIndexAsync(string repo, CancellationToken ct) =>
+        RunAsync(repo, ct, "write-tree");
+
+    public Task<(int Code, string Stdout, string Stderr)> RestoreIndexAsync(string repo, string tree, CancellationToken ct) =>
+        RunAsync(repo, ct, "read-tree", tree);
+
+    public async Task<(int Code, string Stderr)> UnstageAsync(
+        string workingDirectory, IReadOnlyList<string> paths, CancellationToken ct)
+    {
+        if (paths.Count == 0)
+            return (0, "");
+        var (code, _, stderr) = await RunAsync(
+            workingDirectory, ct, ["reset", "-q", "--", .. paths]);
+        return (code, stderr);
+    }
+
+    public async Task<(int Code, string Stderr)> CommitOnlyAsync(
+        string workingDirectory,
+        IReadOnlyList<string>? pathspec,
+        string message,
+        IReadOnlyList<(string Key, string Value)> trailers,
+        CancellationToken ct)
+    {
+        var args = new List<string> { "commit" };
+        if (pathspec is { Count: > 0 })
+            args.Add("--only");
+        args.Add("-m");
+        args.Add(message);
+        foreach (var (key, value) in trailers)
+        {
+            args.Add("--trailer");
+            args.Add($"{key}={value}");
+        }
+
+        if (pathspec is { Count: > 0 })
+        {
+            args.Add("--");
+            args.AddRange(pathspec);
+        }
+
+        var (code, _, stderr) = await RunAsync(workingDirectory, ct, [.. args]);
+        return (code, stderr);
+    }
+
+    public async Task<string?> HeadShaAsync(string workingDirectory, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunAsync(workingDirectory, ct, "rev-parse", "HEAD");
+        var sha = stdout.Trim();
+        return code == 0 && sha.Length > 0 ? sha : null;
+    }
+
+    public async Task<IReadOnlyList<string>> DiffTreePathsAsync(
+        string workingDirectory, string sha, CancellationToken ct) =>
+        (await TryDiffTreePathsAsync(workingDirectory, sha, ct)).Items;
+
+    public async Task<GitStrictList<string>> TryDiffTreePathsAsync(
+        string workingDirectory, string sha, CancellationToken ct)
+    {
+        var (code, stdout, stderr) = await RunAsync(
+            workingDirectory, ct, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-z", sha);
+        if (code != 0)
+            return new(false, [], code, "git diff-tree inspection failed: " + stderr);
+        return new(true, stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => p.Replace('\\', '/'))
+            .ToArray(), 0);
+    }
+
+    public async Task<IReadOnlyList<(string Status, string Path)>> DiffTreeNameStatusAsync(
+        string workingDirectory, string sha, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunAsync(
+            workingDirectory, ct, "diff-tree", "--no-commit-id", "--name-status", "-r", "-z", sha);
+        if (code != 0)
+            return [];
+        var records = stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        var list = new List<(string, string)>();
+        for (var i = 0; i + 1 < records.Length; i += 2)
+            list.Add((records[i], records[i + 1].Replace('\\', '/')));
+        return list;
+    }
+
+    public async Task<string?> RevParseAsync(string workingDirectory, string rev, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunAsync(workingDirectory, ct, "rev-parse", rev);
+        var sha = stdout.Trim();
+        return code == 0 && sha.Length > 0 ? sha : null;
+    }
+
+    public async Task<IReadOnlyList<string>> ListShasBetweenAsync(
+        string workingDirectory, string fromInclusive, string toInclusive, CancellationToken ct) =>
+        (await TryListShasBetweenAsync(workingDirectory, fromInclusive, toInclusive, ct)).Items;
+
+    public async Task<GitStrictList<string>> TryListShasBetweenAsync(
+        string workingDirectory, string fromInclusive, string toInclusive, CancellationToken ct)
+    {
+        var (code, stdout, stderr) = await RunAsync(
+            workingDirectory, ct, "log", "--format=%H", "-z", $"{fromInclusive}..{toInclusive}");
+        if (code != 0)
+            return new(false, [], code, "git history inspection failed: " + stderr);
+        return new(true, stdout.Split('\0', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries), 0);
+    }
+
+    public async Task<string?> CommitMessageAsync(string workingDirectory, string sha, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunAsync(workingDirectory, ct, "log", "-1", "--format=%B", sha);
+        return code == 0 ? stdout : null;
+    }
+
+    public Task<string?> UpstreamShaAsync(string workingDirectory, CancellationToken ct) =>
+        RevParseAsync(workingDirectory, "@{u}", ct);
+
+    public sealed record UpstreamSnapshot(bool Succeeded, string? Ref, string? Sha);
+
+    public async Task<UpstreamSnapshot> InspectUpstreamAsync(string repo, CancellationToken ct)
+    {
+        var branch = await RunAsync(repo, ct, "symbolic-ref", "--quiet", "HEAD");
+        if (branch.Code == 1) return new(true, null, null); // Detached HEAD has no configured upstream.
+        if (branch.Code != 0) return new(false, null, null);
+        var reference = await RunAsync(repo, ct, "for-each-ref", "--format=%(upstream)", branch.Stdout.Trim());
+        if (reference.Code != 0) return new(false, null, null);
+        var name = reference.Stdout.Trim();
+        if (name.Length == 0) return new(true, null, null);
+        var sha = await RevParseAsync(repo, name, ct);
+        return new(sha is not null, name, sha);
+    }
+
+    /// <summary>Recovery accepts only the exact trailer block for this settlement, never prose mentioning a task.</summary>
+    public async Task<GitStrictList<string>> FindSettlementCommitsAsync(
+        string repo, Guid taskId, string settlement, CancellationToken ct)
+        => await FindGatedCommitsAsync(repo, taskId, "antiphon-settlement", settlement, ct);
+
+    public Task<GitStrictList<string>> FindCommitOperationAsync(
+        string repo, Guid taskId, Guid operationId, CancellationToken ct) =>
+        FindGatedCommitsAsync(repo, taskId, "antiphon-operation", operationId.ToString("D"), ct);
+
+    private async Task<GitStrictList<string>> FindGatedCommitsAsync(
+        string repo, Guid taskId, string identityKey, string identity, CancellationToken ct)
+    {
+        var head = await RunAsync(repo, ct, "rev-parse", "--verify", "--quiet", "HEAD");
+        if (head.Code != 0)
+        {
+            // An unborn branch has no settlement history. Prove the symbolic branch is
+            // absent; an unavailable/corrupt HEAD is still an inspection failure.
+            if (head.Code == 1)
+            {
+                var branch = await RunAsync(repo, ct, "symbolic-ref", "--quiet", "HEAD");
+                if (branch.Code == 0 && branch.Stdout.Trim().StartsWith("refs/heads/", StringComparison.Ordinal))
+                {
+                    var exists = await RunAsync(repo, ct, "show-ref", "--verify", "--quiet", branch.Stdout.Trim());
+                    if (exists.Code == 1) return new(true, [], 0);
+                }
+            }
+            return new(false, [], head.Code, head.Stderr);
+        }
+        var result = await RunAsync(repo, ct, "log", "--fixed-strings",
+            $"--grep={identityKey}: {identity}", "--format=%H");
+        if (result.Code != 0) return new(false, [], result.Code, result.Stderr);
+        var matches = new List<string>();
+        foreach (var sha in result.Stdout.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            var trailers = await RunAsync(repo, ct, "log", "-1", "--format=%(trailers:only,unfold)", sha);
+            if (trailers.Code != 0) return new(false, [], trailers.Code, trailers.Stderr);
+            var lines = trailers.Stdout.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            if (Exact("antiphon", "true") && Exact("antiphon-task", taskId.ToString("D"))
+                && Exact("antiphon-commit", "gated") && Exact(identityKey, identity))
+                matches.Add(sha);
+            bool Exact(string key, string value) => lines.Count(l => l.StartsWith(key + ":", StringComparison.Ordinal)) == 1
+                && lines.Contains(key + ": " + value, StringComparer.Ordinal);
+        }
+        return new(true, matches, 0);
+    }
+
+    protected internal virtual Task<(int Code, string Stdout, string Stderr)> RunAsync(
+        string workingDirectory, CancellationToken ct, params string[] args) =>
+        RunCoreAsync(workingDirectory, stdin: null, ct, args);
+
+    protected internal virtual Task<(int Code, string Stdout, string Stderr)> RunWithInputAsync(
+        string workingDirectory, string input, CancellationToken ct, params string[] args) =>
+        RunCoreAsync(workingDirectory, input, ct, args);
+
+    private async Task<(int Code, string Stdout, string Stderr)> RunCoreAsync(
+        string workingDirectory, string? stdin, CancellationToken ct, params string[] args)
     {
         Process? process = null;
         try
@@ -720,13 +983,19 @@ public class GitWorkspaceService
                 WorkingDirectory = workingDirectory,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                RedirectStandardInput = stdin is not null,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8,
             };
+            if (stdin is not null)
+                psi.StandardInputEncoding = new UTF8Encoding(false);
             foreach (var a in args)
                 psi.ArgumentList.Add(a);
+            // Only this prerequisite needs a diagnostic for Git's explicit negative result.
+            if (args is ["rev-parse", "--is-inside-work-tree"])
+                psi.Environment["LC_ALL"] = "C";
 
             using var lease = await _gate.EnterAsync(ct);
             process = Process.Start(psi);
@@ -738,6 +1007,12 @@ public class GitWorkspaceService
             timeoutCts.CancelAfter(timeout);
             var stdoutTask = process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
             var stderrTask = process.StandardError.ReadToEndAsync(timeoutCts.Token);
+            if (stdin is not null)
+            {
+                await process.StandardInput.WriteAsync(stdin.AsMemory(), timeoutCts.Token);
+                process.StandardInput.Close();
+            }
+
             await process.WaitForExitAsync(timeoutCts.Token);
             return (process.ExitCode, await stdoutTask, await stderrTask);
         }

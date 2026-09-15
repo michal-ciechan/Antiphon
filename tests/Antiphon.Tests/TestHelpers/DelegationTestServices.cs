@@ -40,11 +40,16 @@ internal static class DelegationTestServices
     /// <c>AgentTaskReplyService</c> / <c>DelegateBindRefusalRecovery</c> /
     /// <c>AgentReviewCheckpointService</c> but have no worktree graph of their own.
     /// </summary>
-    public static IServiceCollection AddGitWorkspaceService(this IServiceCollection services)
+    public static IServiceCollection AddGitWorkspaceService(
+        this IServiceCollection services, GitWorkspaceService? workspaceGit = null)
     {
+        if (workspaceGit is not null)
+            services.TryAddSingleton<GitWorkspaceService>(workspaceGit);
         services.AddOptions<global::Antiphon.SessionRunner.Contracts.GrokRulesSettings>();
         services.TryAddSingleton<GrokRulesRefreshService>();
         services.TryAddSingleton<GitWorkspaceService>();
+        services.TryAddSingleton<CompletionNoteFlushQueue>();
+        services.TryAddScoped<AgentTaskLandNotificationService>();
         services.AddOptions<DelegationSettings>();
         services.TryAddSingleton<IAgentReportStore, Antiphon.Server.Infrastructure.Files.AgentReportStore>();
         return services;
@@ -87,6 +92,7 @@ internal static class DelegationTestServices
         services.TryAddSingleton<ILandingVerifier, LandingVerifier>();
         services.TryAddScoped<AgentTaskLandingProtocol>();
         services.AddGitWorkspaceService();
+        services.TryAddSingleton<GatedCommitService>();
         services.TryAddScoped<DelegationWorktreeService>();
         services.TryAddScoped<DispatchBaseWarningIntentService>();
         return services;
@@ -114,11 +120,14 @@ internal static class DelegationTestServices
         var guarded = new GuardedWorktreeRemoval(git, leases, new TestRemovalEvidence(db), cleanup);
         var manager = new WorktreeManager(Options.Create(settings), TimeProvider.System,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<WorktreeManager>.Instance, guarded, leases, git);
+        var workspaceGit = new GitWorkspaceService(Microsoft.Extensions.Logging.Abstractions.NullLogger<GitWorkspaceService>.Instance);
+        var gated = new GatedCommitService(
+            workspaceGit, leases, Microsoft.Extensions.Logging.Abstractions.NullLogger<GatedCommitService>.Instance);
         var worktrees = new DelegationWorktreeService(manager,
             new GitService(Microsoft.Extensions.Logging.Abstractions.NullLogger<GitService>.Instance),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<DelegationWorktreeService>.Instance,
-            new GitWorkspaceService(Microsoft.Extensions.Logging.Abstractions.NullLogger<GitWorkspaceService>.Instance),
-            leases, git, gitSettings: Options.Create(settings), db: db);
+            workspaceGit,
+            leases, git, gitSettings: Options.Create(settings), db: db, gatedCommit: gated);
         return (worktrees, manager, git, leases, journal, diagnostics, probe);
     }
 

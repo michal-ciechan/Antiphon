@@ -256,6 +256,10 @@ public sealed class AgentTaskCheckService
     internal static async Task<bool> HasCompletionNoteAsync(
         AppDbContext db, Guid parentSessionId, Guid rootTaskId, CancellationToken ct)
     {
+        if (await db.AgentTaskLandNotifications.AsNoTracking().AnyAsync(n =>
+            n.Kind == LandNotificationKind.TaskCompletion && n.ParentSessionId == parentSessionId
+            && db.AgentTasks.Any(t => t.Id == n.TaskId && t.RootTaskId == rootTaskId), ct))
+            return true;
         if (await db.SessionQueuedMessages.AsNoTracking().AnyAsync(
                 m => m.AgentSessionId == parentSessionId
                     && m.SourceLandNotificationId == null

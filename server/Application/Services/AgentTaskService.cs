@@ -58,6 +58,7 @@ public sealed class AgentTaskService
     private readonly CapacityRecoveryService? _capacityRecovery;
     private readonly SourceLandingAdmission? _sourceLanding;
     private readonly ILandingGit? _landingGit;
+    private readonly GitWorkspaceService? _workspaceGit;
 
     public AgentTaskService(
         AppDbContext db,
@@ -79,7 +80,8 @@ public sealed class AgentTaskService
         DelegationOpenGate? openGate = null,
         CapacityRecoveryService? capacityRecovery = null,
         SourceLandingAdmission? sourceLanding = null,
-        ILandingGit? landingGit = null)
+        ILandingGit? landingGit = null,
+        GitWorkspaceService? workspaceGit = null)
     {
         _areas = areas;
         _db = db;
@@ -101,6 +103,7 @@ public sealed class AgentTaskService
         _capacityRecovery = capacityRecovery;
         _sourceLanding = sourceLanding;
         _landingGit = landingGit;
+        _workspaceGit = workspaceGit;
     }
 
     /// <summary>
@@ -234,6 +237,9 @@ public sealed class AgentTaskService
                 "auto_continue_needs_authority");
         }
 
+        var parsedCommitOnSettle = CommitOnSettlePolicyResolver.ParseTaskValue(request.CommitOnSettle);
+        var requestSetCommitOnSettle = request.CommitOnSettle is not null;
+
         var launchEnvOverride = AgentLaunchEnv.ValidateOverride(
             request.LaunchEnvOverride, "launchEnvOverride");
         var suppliedInheritedLlmEnv = AgentLaunchEnv.ValidateOverride(
@@ -263,6 +269,7 @@ public sealed class AgentTaskService
         Guid? followUpOfTaskId = null;
         string? followUpMessage = null;
         var liveFollowUp = false;
+        CommitOnSettlePolicy? priorCommitOnSettle = null;
 
         // CARD-0291: a standing agent named by -Agent resolves HERE, before the CARD-0140 pin
         // block, so that path receives a plain AgentId and nothing downstream changes. Refusals
@@ -301,6 +308,7 @@ public sealed class AgentTaskService
             var prior = await _db.AgentTasks.AsNoTracking().FirstAsync(t => t.Id == priorId, ct);
             followUpOfTaskId = priorId;
             followUpCardId = prior.CardId;
+            priorCommitOnSettle = prior.CommitOnSettle;
             var followAgent = prior.AgentId is Guid followAgentId
                 ? await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == followAgentId, ct)
                 : null;
@@ -850,6 +858,26 @@ public sealed class AgentTaskService
         var projectId = parent is null
             ? await DeriveCallerProjectAsync(caller, ct)
             : parent.ProjectId;
+        if (!requestSetCommitOnSettle && CommitOnSettlePolicyResolver.MentionsDoNotCommit(request.Goal))
+        {
+            bool? projectValue = null;
+            if (projectId is Guid pid)
+            {
+                projectValue = await _db.Projects.AsNoTracking()
+                    .Where(p => p.Id == pid)
+                    .Select(p => p.CommitOnSettle)
+                    .FirstOrDefaultAsync(ct);
+            }
+
+            if (CommitOnSettlePolicyResolver.Resolve(null, projectValue, _settings.CommitOnSettle)
+                != CommitOnSettleEffective.Off)
+            {
+                const string advisory =
+                    "Goal text mentions not committing, but commit-on-settle is on for this project; pass -NoCommit if the tree must stay uncommitted.";
+                warning = warning is null ? advisory : warning + " " + advisory;
+            }
+        }
+
         AgentTask? repairOwner = null;
         if (request.RepairSourceTaskId is Guid repairOwnerId)
         {
@@ -950,6 +978,7 @@ public sealed class AgentTaskService
             ExpectedDurationMinutes = expectedMinutes,
             StandingAuthority = standingAuthority,
             AutoContinueOnWait = request.AutoContinue && standingAuthority is not null,
+            CommitOnSettle = parsedCommitOnSettle ?? priorCommitOnSettle,
         };
 
         if (storedPolicy is not null)
@@ -1686,7 +1715,8 @@ public sealed class AgentTaskService
             task.InternalDecisionPolicyJson, task.InternalDecisionPolicyHash,
             task.RepairSourceTaskId, TaskProgressJson.ToDto(TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson)),
             task.WorktreeBaseRequestedRef, task.WorktreeBaseRef, task.WorktreeBaseSource, task.WorktreeBaseTaskId,
-            task.WorktreeBaseSha, Session: sessionDetail);
+            task.WorktreeBaseSha, Session: sessionDetail, CommitOnSettle: task.CommitOnSettle,
+            CommitBaselineSha: task.CommitBaselineSha);
     }
 
     private static VerificationExecutionDetailDto ToExecutionDetail(VerificationExecution execution)
@@ -2392,6 +2422,7 @@ public sealed class AgentTaskService
             // CARD-0294 S1: a conflict resolver has no approval wait to skip.
             StandingAuthority = conflicted.StandingAuthority,
             AutoContinueOnWait = false,
+            CommitOnSettle = CommitOnSettlePolicy.Never,
         };
 
         _db.AgentTasks.Add(task);
@@ -2406,6 +2437,148 @@ public sealed class AgentTaskService
                 + ProjectScopeSuffix(task.ProjectId),
             At = now,
         });
+        RawTokens[id] = token;
+        return task;
+    }
+
+    /// <summary>
+    /// CARD-0527 D-7. Spawn a Commit-role child to judge and commit the settled task's leftover
+    /// dirty paths through the gated endpoint. Same shape as <see cref="CreateMergeTaskAsync"/>.
+    /// </summary>
+    internal async Task<AgentTask?> CreateCommitTaskAsync(
+        AgentTask settled, string reason, IReadOnlyList<string> dirtyPaths, string? headSha,
+        string? stderr, CancellationToken ct)
+    {
+        var siblings = await _db.AgentTasks.CountAsync(t => t.RootTaskId == settled.RootTaskId, ct);
+        if (siblings >= _settings.MaxTasksPerRoot || settled.Depth + 1 > _settings.MaxDepth)
+        {
+            _logger.LogWarning(
+                "Task {ShortId}: commit child not spawned — run at task/depth cap",
+                DelegationReportFormatter.Short(settled.Id));
+            return null;
+        }
+
+        var id = Guid.NewGuid();
+        var now = UtcNow();
+        var (token, tokenHash) = NewToken();
+        var listed = dirtyPaths.Take(60).ToArray();
+        var more = dirtyPaths.Count - listed.Length;
+        var pathBlock = string.Join("\n", listed.Select(p => $"- {p}"))
+            + (more > 0 ? $"\n+{more} more" : "");
+        var firstLine = (settled.Result ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault() ?? settled.Title;
+        var stderrBit = string.IsNullOrWhiteSpace(stderr) ? "" : $"\nGated commit stderr:\n{stderr.Trim()}\n";
+
+        var agentKind = ResolveAgentKind(AgentTaskKind.Worker, AgentTaskRole.Commit, null);
+        var level = ResolveLevel(AgentTaskKind.Worker, AgentTaskRole.Commit, null);
+        Guid? routingPinId = null;
+        string? pinWarning = null;
+        if (_routingPins is not null)
+        {
+            try
+            {
+                var pinDecision = await _routingPins.ResolveAsync(
+                    settled.CardId,
+                    AgentTaskRole.Commit,
+                    new RoutingPinService.Ask(null, null, null, false),
+                    ct);
+                var composed = RoutingCandidates.Compose(
+                    pinDecision,
+                    chain: null,
+                    chainLabel: null,
+                    null,
+                    null,
+                    (k, l) => ResolveRoutingPair(AgentTaskKind.Worker, AgentTaskRole.Commit, k, l));
+                if (composed.Candidates.Count > 0)
+                {
+                    agentKind = composed.Candidates[0].Kind;
+                    level = composed.Candidates[0].Level;
+                }
+
+                if (composed.Walked && pinDecision.Applied)
+                    routingPinId = pinDecision.Pin!.Id;
+                _routingPins.EnforceForbiddenAliases(pinDecision, agentKind, level);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                pinWarning = $"Routing pin service failed ({ex.GetType().Name}); using role policy.";
+            }
+        }
+        else
+        {
+            pinWarning = "Routing pin service is not available; using role policy.";
+        }
+
+        var task = new AgentTask
+        {
+            Id = id,
+            RootTaskId = settled.RootTaskId,
+            ParentTaskId = settled.Id,
+            ParentSessionId = settled.ParentSessionId,
+            Depth = settled.Depth + 1,
+            Title = $"Commit: {Clamp(settled.Title, 240)}",
+            Goal = $"""
+                Task {DelegationReportFormatter.Short(settled.Id)} ({settled.Title}) left dirty paths.
+                Report first line: {firstLine}
+                Reason: {reason}
+                Dirty paths:
+                {pathBlock}
+                {stderrBit}
+                Commit only paths that are task {DelegationReportFormatter.Short(settled.Id)}'s work, judged from the report and git diff.
+                Use scripts/task-commit.ps1 -Paths ... -MessageFile ... which refuses ignored paths and ignore-rule edits.
+                Never git add -f, never edit .gitignore or info/exclude, never push, never touch other dirty paths.
+                A refusal is reported, not worked around. Report the sha and paths, or the refusal verbatim.
+                """.ReplaceLineEndings("\n"),
+            Kind = AgentTaskKind.Worker,
+            Role = AgentTaskRole.Commit,
+            ProjectId = settled.ProjectId,
+            CardId = settled.CardId,
+            AgentKind = agentKind,
+            ModelLevel = level,
+            RoutingPinId = routingPinId,
+            Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = settled.WorkingDirectory,
+            RepoPath = settled.RepoPath,
+            Ephemeral = true,
+            Status = AgentTaskStatus.Queued,
+            ReplyTo = settled.ReplyTo,
+            MaxAttempts = 2,
+            CreatedAt = now,
+            TokenHash = tokenHash,
+            ExpectedDurationMinutes = Math.Clamp(_settings.DefaultExpectedMinutes, 1, 1440),
+            StandingAuthority = settled.StandingAuthority,
+            AutoContinueOnWait = false,
+            CommitOnSettle = CommitOnSettlePolicy.Never,
+            CommitBaselineSha = headSha,
+            CommitUpstreamBaselineJson = JsonSerializer.Serialize(
+                _workspaceGit is not null && settled.RepoPath is not null
+                    ? await _workspaceGit.InspectUpstreamAsync(settled.RepoPath, ct)
+                    : new GitWorkspaceService.UpstreamSnapshot(false, null, null)),
+        };
+
+        _db.AgentTasks.Add(task);
+        _db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = id,
+            Type = AgentTaskEventType.Created,
+            ModelLevel = task.ModelLevel,
+            Detail = $"Spawned by the server to commit {dirtyPaths.Count} dirty path(s) left by task "
+                + $"{DelegationReportFormatter.Short(settled.Id)} ({reason}).",
+            At = now,
+        });
+        if (pinWarning is not null)
+        {
+            _db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(),
+                AgentTaskId = id,
+                Type = AgentTaskEventType.Warning,
+                Detail = pinWarning,
+                At = now,
+            });
+        }
+
         RawTokens[id] = token;
         return task;
     }

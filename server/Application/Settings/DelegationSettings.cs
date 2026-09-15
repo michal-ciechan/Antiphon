@@ -38,6 +38,13 @@ public sealed class DelegationSettings
     public int MaxTasksPerRoot { get; set; } = 40;
 
     /// <summary>
+    /// CARD-0527. Global default for committing a Shared task's own footprint at settle.
+    /// On by default: the commit is local, unpushed, and footprint-scoped.
+    /// Per-task <c>-NoCommit</c> and per-project Off inherit on top of this.
+    /// </summary>
+    public bool CommitOnSettle { get; set; } = true;
+
+    /// <summary>
     /// The real ceiling on a recursive tree: it can only run away by spending. Crossing it stops
     /// further dispatch for that root; work already in flight is left alone and still reports.
     ///

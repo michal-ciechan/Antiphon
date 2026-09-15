@@ -165,7 +165,13 @@ public sealed record CreateAgentTaskRequest(
     /// CARD-0499. Full GUID of the original Code/Worktree landing owner this repair is attributed
     /// against. Callers cannot supply an evidence directory, remote URL or baseline SHA.
     /// </summary>
-    Guid? RepairSourceTaskId = null);
+    Guid? RepairSourceTaskId = null,
+    /// <summary>
+    /// CARD-0527. Never, Always, or Agent. Null inherits from the project, then
+    /// <c>Delegation:CommitOnSettle</c>. Anything else is 422. <c>delegate.ps1 -NoCommit</c>
+    /// sends Never; Always and Agent are API-only in this card.
+    /// </summary>
+    string? CommitOnSettle = null);
 
 public sealed record AgentTaskSummaryDto(
     Guid Id,
@@ -320,7 +326,9 @@ public sealed record AgentTaskDetailDto(
     WorktreeBaseSource WorktreeBaseSource = WorktreeBaseSource.Unset,
     Guid? WorktreeBaseTaskId = null,
     string? WorktreeBaseSha = null,
-    AgentTaskSessionDto? Session = null);
+    AgentTaskSessionDto? Session = null,
+    CommitOnSettlePolicy? CommitOnSettle = null,
+    string? CommitBaselineSha = null);
 
 /// <summary>One accepted launch attempt for a sourced Mutation snapshot. Receipt bytes stay on the server.</summary>
 public sealed record VerificationExecutionDetailDto(
@@ -474,6 +482,10 @@ public sealed record ReplyToAgentTaskRequest(
     AnswerOrigin? Origin = null);
 
 /// <summary>Optional narrow test filter for an explicit <c>POST /land</c> verification.</summary>
+public sealed record CommitAgentTaskRequest(IReadOnlyList<string>? Paths, string Message);
+
+public sealed record CommitAgentTaskResponse(string Sha, IReadOnlyList<string> Files);
+
 public sealed record LandAgentTaskRequest(
     string? Verify = null,
     string? ExpectedSourceSha = null,

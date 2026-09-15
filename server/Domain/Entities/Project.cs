@@ -44,6 +44,12 @@ public class Project
     /// </summary>
     public DateTime? OrchestratorWorkspaceAcknowledgedAt { get; set; }
 
+    /// <summary>
+    /// CARD-0527. Project-level commit-on-settle switch. Null inherits
+    /// <c>Delegation:CommitOnSettle</c>. True is On, false is Off.
+    /// </summary>
+    public bool? CommitOnSettle { get; set; }
+
     public ICollection<Board> Boards { get; set; } = new List<Board>();
 
     /// <summary>

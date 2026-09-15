@@ -28,9 +28,10 @@ namespace Antiphon.Tests.Application;
 /// a delegate's terminal can never be mistaken for that task finishing.
 /// </summary>
 [Category("Integration")]
+[ParallelLimiter<ProcessSpawnLimit>]
 // Wall recovery upserts a global kind/alias hold; its snapshot/restore must exclude all writers.
 [NotInParallel]
-public class AgentTaskReplyIntegrationTests
+public partial class AgentTaskReplyIntegrationTests
 {
     [Test]
     public async Task a_failed_api_error_task_names_session_liveness()
@@ -3335,7 +3336,8 @@ public class AgentTaskReplyIntegrationTests
         var claimedPath = Path.Combine(repo.Path, "docs", "superpowers", "uncommitted-plan.md");
         Directory.CreateDirectory(Path.GetDirectoryName(claimedPath)!);
         await File.WriteAllTextAsync(claimedPath, "uncommitted plan\n");
-        var factory = new TestScopeFactory(repo.WorktreeRoot);
+        var factory = new TestScopeFactory(
+            repo.WorktreeRoot, delegation: new DelegationSettings { CommitOnSettle = false });
         var parentSessionId = await SeedSessionAsync(repo.Path);
         var (task, sessionId) = await SeedDispatchedTaskAsync(repo.Path, parentSessionId, t =>
         {
@@ -3345,7 +3347,8 @@ public class AgentTaskReplyIntegrationTests
 
         await SeedTurnAsync(
             sessionId, DelegationReportFormatter.TaskMarker(task.Id), $"Wrote {claimedPath}.");
-        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+        await CreateService(factory, new DelegationSettings { CommitOnSettle = false })
+            .OnTurnEndAsync(sessionId, CancellationToken.None);
 
         await using var verify = CreateContext();
         var warning = await verify.AgentTaskEvents.SingleAsync(e =>
@@ -3353,14 +3356,43 @@ public class AgentTaskReplyIntegrationTests
                 && e.Detail.Contains("still uncommitted"));
         warning.Detail.ShouldContain("docs/superpowers/uncommitted-plan.md");
         var note = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parentSessionId);
-        note.NoteHeader.ShouldContain("git=uncommitted:1");
+        note.NoteHeader.ShouldContain("git=uncommitted:1 (commit-on-settle off)");
         note.Body.ShouldContain("the work has not landed");
+    }
+
+    [Test]
+    public async Task a_shared_report_naming_an_uncommitted_path_is_committed_when_the_policy_is_on()
+    {
+        using var repo = new ScratchGitRepo("antiphon-reply-shared-committed");
+        var claimedPath = Path.Combine(repo.Path, "docs", "superpowers", "uncommitted-plan.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(claimedPath)!);
+        await File.WriteAllTextAsync(claimedPath, "uncommitted plan\n");
+        var factory = new TestScopeFactory(repo.WorktreeRoot);
+        var parentSessionId = await SeedSessionAsync(repo.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(repo.Path, parentSessionId, t =>
+        {
+            t.RepoPath = repo.Path;
+            t.Workspace = WorkspaceMode.Shared;
+            t.DispatchedAt = DateTime.UtcNow.AddMinutes(-1);
+        });
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id), $"Wrote {claimedPath}.");
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var note = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parentSessionId);
+        note.NoteHeader.ShouldContain("git=committed:");
+        (await verify.AgentTaskEvents.AnyAsync(e =>
+            e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning && e.Detail.Contains("still uncommitted")))
+            .ShouldBeFalse();
     }
 
     [Test]
     public async Task a_shared_report_whose_claimed_paths_are_clean_reports_git_landed()
     {
         using var repo = new ScratchGitRepo("antiphon-reply-shared-landed");
+        await repo.CommitFileAsync(".gitignore", ".antiphon/\n");
         Directory.CreateDirectory(Path.Combine(repo.Path, "docs", "superpowers"));
         await repo.CommitFileAsync("docs/superpowers/committed-plan.md", "committed plan\n");
         var factory = new TestScopeFactory(repo.WorktreeRoot);
@@ -4941,11 +4973,21 @@ public class AgentTaskReplyIntegrationTests
         public TestScopeFactory(
             string? worktreeRoot = null,
             SupervisionSettings? supervision = null,
-            DelegationSettings? delegation = null)
+            DelegationSettings? delegation = null,
+            bool routingPins = false,
+            RecordingGitWorkspaceService? gitSpy = null,
+            Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesInterceptor? saveInterceptor = null,
+            LandDeliveryBoundary? boundary = null)
         {
             var services = new ServiceCollection();
             services.AddLogging();
-            services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
+            if (boundary is not null) services.AddSingleton<LandDeliveryBoundary>(boundary);
+            services.AddDbContext<AppDbContext>(o =>
+            {
+                o.UseNpgsql(TestDbFixture.ConnectionString);
+                if (saveInterceptor is not null)
+                    o.AddInterceptors(saveInterceptor);
+            });
             services.AddSingleton<Antiphon.Server.Application.Interfaces.IEventBus, MockEventBus>();
             services.AddSingleton(Options.Create(supervision ?? new SupervisionSettings()));
             services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
@@ -4962,6 +5004,8 @@ public class AgentTaskReplyIntegrationTests
             services.AddSingleton<Antiphon.Server.Application.Interfaces.IDelegateSessionStopper>(Stopper);
             services.AddSingleton<DelegationWorkspaceResolver>();
             services.AddScoped<AgentTaskService>();
+            if (routingPins)
+                services.AddScoped<RoutingPinService>();
             services.AddScoped<AgentReviewCheckpointService>();
             services.AddScoped<AgentFilesService>();
             services.AddScoped<IWorkspaceProgressProbe>(sp => sp.GetRequiredService<AgentFilesService>());
@@ -4970,7 +5014,7 @@ public class AgentTaskReplyIntegrationTests
                 WorktreeBasePath = worktreeRoot ?? Path.Combine(Path.GetTempPath(), "antiphon-reply-wt"),
                 WorktreeStaleAfterDays = 7,
                 WorktreeJanitorIntervalHours = 24,
-            });
+            }, workspaceGit: gitSpy);
             services.AddSingleton(Options.Create(new DeliverablesSettings
             {
                 BrowserPath = Path.Combine(Path.GetTempPath(), "antiphon-missing-browser", "msedge.exe"),
