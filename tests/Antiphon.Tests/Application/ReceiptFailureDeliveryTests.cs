@@ -55,7 +55,13 @@ public class ReceiptFailureDeliveryTests
     public async Task Caller_failure_obligation_survives_persistence_cuts(bool busyCaller, string cut) =>
         await VerifyCallerFailureAsync(busyCaller, cut);
 
-    private static async Task VerifyCallerFailureAsync(bool busyCaller, string cut)
+    [Test]
+    [Arguments(SessionStatus.Stopped)]
+    [Arguments(SessionStatus.Failed)]
+    public async Task Delivered_caller_failure_is_confirmed_after_caller_stops_and_services_restart(SessionStatus terminalCaller) =>
+        await VerifyCallerFailureAsync(false, "none", terminalCaller);
+
+    private static async Task VerifyCallerFailureAsync(bool busyCaller, string cut, SessionStatus? terminalCaller = null)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         using var workspace = new TempWorkspace();
@@ -237,6 +243,19 @@ public class ReceiptFailureDeliveryTests
                 && t.Kind == TranscriptKinds.UserPrompt).ToListAsync()).ShouldHaveSingleItem();
             PromptSubmissionMatch.IsCompleteIn(note.Body, receipt.Text!).ShouldBeTrue();
             receipt.Sequence.ShouldBeGreaterThan(delivered.LastDeliveryBaselineSequence ?? 0);
+            if (terminalCaller is { } terminalStatus)
+            {
+                // Immediate watchdog delivery commits the row and complete prompt, but not the outbox link.
+                obligation.QueueMessageId.ShouldBeNull();
+                delivered.Status.ShouldBe(QueuedMessageStatus.Sent);
+                delivered.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+                await verify.AgentSessions.Where(s => s.Id == callerId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, terminalStatus));
+                await recovered.DisposeAsync();
+                recovered = CreateProvider(schema, null, clock);
+                recovered.GetRequiredService<Microsoft.Extensions.Options.IOptions<DelegationSettings>>()
+                    .Value.CheckEnabled = false;
+            }
             using (var scope = recovered.CreateScope())
                 await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
                     .RemindUnacknowledgedFailuresAsync(default);
@@ -245,6 +264,17 @@ public class ReceiptFailureDeliveryTests
             confirmed.QueueMessageId.ShouldBe(note.Id);
             confirmed.ConfirmingPromptSequence.ShouldBe(receipt.Sequence);
             confirmed.ConfirmedAt.ShouldNotBeNull();
+            if (terminalCaller is { } expectedStatus)
+            {
+                confirmed.LastErrorCode.ShouldBeNull();
+                confirmed.EnqueueAttempts.ShouldBe(0, "recovery links the existing row without a new enqueue");
+                (await verify.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == callerId)).Status.ShouldBe(expectedStatus);
+                var recoveredRow = await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == note.Id);
+                recoveredRow.Sequence.ShouldBe(delivered.Sequence);
+                recoveredRow.DeliveryAttempts.ShouldBe(delivered.DeliveryAttempts);
+                recoveredRow.LastDeliveryBaselineSequence.ShouldBe(delivered.LastDeliveryBaselineSequence);
+                recoveredRow.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+            }
             var stamped = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
             stamped.CompletionNoteQueuedAt.ShouldNotBeNull();
             stamped.CompletionNoteDigest.ShouldBe(obligation.ContentDigest);
