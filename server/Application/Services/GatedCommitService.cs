@@ -213,7 +213,7 @@ public sealed class GatedCommitService
         {
             if (knownCommitted) throw new CommitInspectionPendingException(operationId);
             if (commits.Succeeded && commits.Items.Count == 0)
-                throw new NotFoundException("No completed commit matches this task and operation.");
+                throw new NotFoundException("Commit operation", operationId);
             throw new ServiceUnavailableException("Commit recovery inspection is unavailable or ambiguous.",
                 "commit_recovery_unavailable");
         }
