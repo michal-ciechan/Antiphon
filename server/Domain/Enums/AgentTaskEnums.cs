@@ -244,6 +244,9 @@ public enum AgentTaskEventType
     /// Detail is the sha plus the committed paths. Never a push.
     /// </summary>
     Committed = 33,
+
+    /// <summary>Durable settlement identity saved before a gated commit can mutate Git.</summary>
+    CommitRecoveryStarted = 34,
 }
 
 /// <summary>

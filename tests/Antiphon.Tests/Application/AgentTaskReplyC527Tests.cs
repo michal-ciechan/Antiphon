@@ -791,7 +791,7 @@ public partial class AgentTaskReplyIntegrationTests
 
         public override InterceptionResult<int> SavingChanges(DbContextEventData eventData, InterceptionResult<int> result)
         {
-            if (System.Threading.Interlocked.Exchange(ref _remaining, 0) == 1)
+            if (IsSettlement(eventData) && System.Threading.Interlocked.Exchange(ref _remaining, 0) == 1)
                 throw new InvalidOperationException("save failed after commit");
             return base.SavingChanges(eventData, result);
         }
@@ -799,9 +799,13 @@ public partial class AgentTaskReplyIntegrationTests
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
             DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
         {
-            if (System.Threading.Interlocked.Exchange(ref _remaining, 0) == 1)
+            if (IsSettlement(eventData) && System.Threading.Interlocked.Exchange(ref _remaining, 0) == 1)
                 throw new InvalidOperationException("save failed after commit");
             return base.SavingChangesAsync(eventData, result, cancellationToken);
         }
+
+        private static bool IsSettlement(DbContextEventData eventData) =>
+            eventData.Context!.ChangeTracker.Entries<AgentTask>()
+                .Any(e => e.Entity.Status == AgentTaskStatus.Succeeded);
     }
 }
