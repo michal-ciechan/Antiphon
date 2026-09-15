@@ -366,71 +366,206 @@ before the next PC; refresh the restored file's timestamp (CARD-0403 note).
 
 ## Build evidence (Code task 00222dc7)
 
-Original landing owner: `00222dc7`. Branch: `feat/card-task-00222dc7`.
-Worktree: `C:\Antiphon\worktrees\card-task-00222dc7`.
-Evidence root: `.antiphon/c481-evidence/` in that worktree; fresh TRX plus parsed JSON
-record each executed class/method, outcome and diagnostic. `summarize.py` regenerates JSON.
-Restart after ordinary Review and caller-owned land: **server**. No landing or restart by Code.
+Implementation and every specified ordinary V check are complete. All **19 new expanded
+cases pass**. Final distinct ordinary coverage is **2,714 cases: 2,700 passed, 13 inherited
+failures, one skip**. This is not an all-green result: V-12 remains inherited red.
+No deliberate PC has run; ordinary read-only Review is next.
 
-### Baseline and coverage amendments
+- Original Code task / landing owner: `00222dc7`.
+- Branch: `feat/card-task-00222dc7`.
+- Exact worktree: `C:\Antiphon\worktrees\card-task-00222dc7`.
+- Base: `06889a0afb56309e1348abc5066f8a4ebd0f7d06`. Its production/test code is identical to
+  `9b91429801e60cd2df7f701ed17ef78c9656154d`; the diff contains three documentation files only.
+- Final tested source/test commit: `c7493cb1a176ddd2851fdafbc3ddaad55f888a66`.
+  The final evidence commit changes this section only.
+- Full combined I verified `afeb884237e5c4c8774b38ed034abccd2c2fe6e0`; the later commit changes
+  only the new receipt test's setup. T reruns that entire class; U runs at the final tested commit.
+- Evidence root: `C:\Antiphon\worktrees\card-task-00222dc7\.antiphon\c481-evidence`.
+  Raw TRX, logs, parsed JSON, `verification-matrix.json`, `filters.json`, baseline comparisons,
+  and SHA-256 `trx-manifest.json` are retained there. `summarize.py` regenerates parsed JSON.
+- Restart target: **server**. Code did not land or deploy. Caller retains landing ownership,
+  records the companion verification obligation, and commissions SourceLanding Mutation after
+  ordinary Review, publication and activation.
 
-Baseline `06889a0afb56309e1348abc5066f8a4ebd0f7d06` has the exact production/test code of
-`9b91429801e60cd2df7f701ed17ef78c9656154d` (`git diff` contains only three documentation files).
-A build into producer-owned `bin-c481/` passed. Baseline execution:
+### Builds, filters and actual executions
 
-- `base-unit/unit.trx`: `/*/*/*/*[Category=Unit]`, **2,460 total: 2,455 passed,
-  four failed, one skipped**. The four exact methods and diagnostics match the documented
-  inherited classification/stage-order failures; they were executed at unchanged base source.
-- `base-int/baseline.trx`: the plan's combined integration filter, excluding the two new
-  classes, **220 total: 205 passed, 15 failed**. Actual existing class counts are
-  ComplexityWallRerouteTests 11 (not the plan estimate 12), CapacityRecoveryTaskTests 6,
-  CapacityRecoveryGrantLivenessTests 12, CapacityRecoveryAttentionTests 3,
-  CapacityRecoveryCompatibilityTests 4, CapacityRecoverySupervisionTests 6,
-  RoutingPinCandidateDispatchTests 11, ModelAvailabilityDispatcherTests 3,
-  ApiErrorRecoveryServiceTests 36 and AgentTaskReplyIntegrationTests 128.
-  Full base failure messages are in `base-int/baseline.json`.
-- Added bounded coverage: **CapacityRecoveryAcceptanceTests** also calls ReconcileAsync and
-  checks stalled admissions. Its affected fixture must keep a live task owner after S3.
-  Run that named class in addition to the plan's exact combined filter.
+Builds used `dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c481/ --nologo`.
+Each slice/checkpoint was committed and pushed before its build/test run; sources were frozen
+until each owned command finished. The final build was reused for T and U without rebuilding.
+All builds passed (final build: 233 existing warnings, zero errors). No timeout or assertion was
+loosened. Build logs are `base-build.log`, `s1-build.log`, `s2-build.log`, `s3-build.log`,
+`s3-fix-build.log`, `final-build.log`, and `final-fix-build.log`.
 
-### Slice checks
+Run recipe, using a fresh results directory for each invocation:
 
-- S1: `9bfdfa8e`, build passed; `/*/*/WallRerouteDispatchTests/*`, `s1/s1.trx`:
-  **7/7 passed**, including both V-5 variants. V-1, V-2, V-3, V-4, V-5 and V-5b executed.
+```powershell
+dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c481/ -- --treenode-filter '<filter below>' --report-trx --report-trx-filename '<name>.trx' --results-directory '.antiphon/c481-evidence/<fresh-directory>'
+```
 
-### Pending obligations and noticed design gaps
+- **U**: `/*/*/*/*[Category=Unit]`
+- **I**: `/*/*/(WallRerouteDispatchTests*)|(CapacityWaitOrphanSweepTests*)|(ComplexityWallRerouteTests*)|(CapacityRecoveryTaskTests*)|(CapacityRecoveryGrantLivenessTests*)|(CapacityRecoveryAttentionTests*)|(CapacityRecoveryCompatibilityTests*)|(CapacityRecoverySupervisionTests*)|(RoutingPinCandidateDispatchTests*)|(ModelAvailabilityDispatcherTests*)|(ApiErrorRecoveryServiceTests*)|(AgentTaskReplyIntegrationTests*)/*`
+- **T**: `/*/*/(WallRerouteDispatchTests*)|(CapacityRecoveryAcceptanceTests*)/*`
+- **S1**: `/*/*/WallRerouteDispatchTests/*`
+- **S2**: `/*/*/(WallRerouteDispatchTests*)|(RoutingPinCandidateDispatchTests*)|(ModelAvailabilityDispatcherTests*)|(CapacityRecoveryAcceptanceTests*)/*`
+- **S3**: `/*/*/(CapacityWaitOrphanSweepTests*)|(CapacityRecoveryGrantLivenessTests*)|(CapacityRecoveryAttentionTests*)|(CapacityRecoveryAcceptanceTests*)|(CapacityRecoveryCompatibilityTests*)|(CapacityRecoverySupervisionTests*)|(WallRerouteDispatchTests*)/*`
+- **G**: `/*/*/CapacityRecoveryGrantLivenessTests/*`
 
-All **PC-1 through PC-10**, including their named red/green comparison variants, remain
-pending for post-land SourceLanding Mutation; no deliberate mutants have run.
-The plan has no V-7 and defines no R-n IDs.
+| Execution | Tested commit | Expanded outcome | Fresh TRX under evidence root |
+|---|---|---|---|
+| Base U | `06889a0a` | 2,460: 2,455 pass / 4 fail / 1 skip | `base-unit/unit.trx` |
+| Base I, omitting the two new classes | `06889a0a` | 220: 205 pass / 15 fail | `base-int/baseline.trx` |
+| S1 | `9bfdfa8e` | 7/7 pass | `s1/s1.trx` |
+| S2 | `6cf406ee` | 39/39 pass | `s2/s2.trx` |
+| S3 | `75525578` | 57: 51 pass / 6 fixture precision failures | `s3/s3.trx` |
+| G, after fixture precision repair | `56860672` | 12/12 pass | `s3-grant-fix/grant.trx` |
+| I | `afeb8842` | 239: 229 pass / 9 inherited failures / 1 receipt fixture setup failure | `final-int/c481.trx` |
+| T, after receipt setup repair | `c7493cb1` | 28/28 pass: WallRerouteDispatchTests 13, CapacityRecoveryAcceptanceTests 15 | `final-target/target.trx` |
+| U | `c7493cb1` | 2,460: 2,455 pass / 4 inherited failures / 1 skip | `final-unit/unit.trx` |
 
-PC-2 says the complete V-1 method should stay green when requeue supersession is disabled,
-but V-1 also explicitly asserts Superseded. Dispatch on the new kind can stay green while
-that wait-state assertion fails. Mutation must distinguish those assertions when recording
-its V-1 comparison; the ordinary V-1 assertion has not been loosened.
-V-8's B wait necessarily changes Ready to ActionPending and increments Version when the
-same reconcile grants it; its ownership, identity and admission count should stay unchanged.
+Base I used the exact I expression above with only `(WallRerouteDispatchTests*)` and
+`(CapacityWaitOrphanSweepTests*)` omitted. Actual method names and nonzero counts were inspected
+in every TRX. Final integration coverage combines I with the newer T result for the repaired
+class: **254 distinct cases, 245 pass / 9 inherited failures**. Actual executions, including
+superseded setup failures, are recorded separately above and are not relabeled green.
 
-The post-land database census is pending caller-owned publication and server activation.
-The plan's 18-to-3 prediction is a dated snapshot, not an assertion against a changing fleet.
-Check actual owners and grant liveness within two supervisor ticks, recording the observed counts.
+Coverage amendment: `CapacityRecoveryAcceptanceTests` also exercises ReconcileAsync's stalled
+admission path, so this named class was added. S2 measured its pre-sweep 15/15 baseline and T
+verified its final 15/15. The new sweep needs live owner rows in grant-expiry/admission fixtures;
+those fixtures now model unresponsive live consumers rather than orphaned owners. The task owner
+is Dispatched so compatibility does not create a replacement episode after MarkProgressed.
 
-- S2: `6cf406ee`, build passed; filter
-  `/*/*/(WallRerouteDispatchTests*)|(RoutingPinCandidateDispatchTests*)|(ModelAvailabilityDispatcherTests*)|(CapacityRecoveryAcceptanceTests*)/*`,
-  `s2/s2.trx`: **39/39 passed** (10 + 11 + 3 + 15). This also records the
-  added acceptance class before the sweep change.
-- Additional ordinary guard: `WallRerouteDispatchTests.Repeated_model_hold_persists_the_new_wait_without_duplicate_trace`
-  pins durable registration when the same Held detail already exists. Superseding an old
-  attempt must not make the next attempt's new wait depend on writing a duplicate event.
-  Keep this method in Mutation's discovery inventory; no deliberate PC has been authored for it.
-- S3 fixture changes keep live owners for existing grant-expiry/admission tests. Six baseline
-  grant-liveness failures were fake clocks moved backward to September 8; their setup now uses
-  the factory's current fake instant, preserving all relative durations and assertions.
+Six original grant-class failures came from moving a fake clock backwards to September 8.
+The fixture now starts at the current fake instant, normalized to PostgreSQL microseconds;
+all relative durations and exact assertions remain. The receipt test's first I execution used
+separate clocks for registration and grant, making the wait briefly future-due; T uses one clock.
+No production repair was needed for either test setup issue.
 
-- S3: `75525578`, build passed; `s3/s3.trx`, seven named classes:
-  **57 total, 51 passed, six failed**. All six new orphan cases and all 11 wall dispatch
-  cases passed. The six grant cases now reached exact timestamp assertions and exposed
-  sub-microsecond fake-clock values that PostgreSQL cannot persist. Fixture fix `56860672`
-  starts the fake clock at PostgreSQL microsecond precision; the targeted
-  `/*/*/CapacityRecoveryGrantLivenessTests/*` rerun (`s3-grant-fix/grant.trx`) is **12/12 passed**.
-  No timeout or assertion changed.
+### Coverage-to-class counts
+
+| Class | Base expanded outcome | Final expanded outcome / command |
+|---|---|---|
+| `WallRerouteDispatchTests` | new | 13: 13 pass / 0 fail (T) |
+| `CapacityWaitOrphanSweepTests` | new | 6: 6 pass / 0 fail (I) |
+| `ComplexityWallRerouteTests` | 11: 9 pass / 2 fail | 11: 9 pass / 2 fail (I) |
+| `CapacityRecoveryTaskTests` | 6: 6 pass / 0 fail | 6: 6 pass / 0 fail (I) |
+| `CapacityRecoveryGrantLivenessTests` | 12: 6 pass / 6 fail | 12: 12 pass / 0 fail (I) |
+| `CapacityRecoveryAttentionTests` | 3: 3 pass / 0 fail | 3: 3 pass / 0 fail (I) |
+| `CapacityRecoveryCompatibilityTests` | 4: 4 pass / 0 fail | 4: 4 pass / 0 fail (I) |
+| `CapacityRecoverySupervisionTests` | 6: 6 pass / 0 fail | 6: 6 pass / 0 fail (I) |
+| `RoutingPinCandidateDispatchTests` | 11: 11 pass / 0 fail | 11: 11 pass / 0 fail (I) |
+| `ModelAvailabilityDispatcherTests` | 3: 3 pass / 0 fail | 3: 3 pass / 0 fail (I) |
+| `ApiErrorRecoveryServiceTests` | 36: 29 pass / 7 fail | 36: 29 pass / 7 fail (I) |
+| `AgentTaskReplyIntegrationTests` | 128: 128 pass / 0 fail | 128: 128 pass / 0 fail (I) |
+| `CapacityRecoveryAcceptanceTests` | 15/15 pass (S2) | 15: 15 pass / 0 fail (T) |
+
+The plan estimated 12 ComplexityWallRerouteTests cases; both base and final actually execute
+**11**, with the same method inventory. Unit executes 2,460 at both source states.
+
+### Every V / R ID
+
+| ID | Actual ordinary outcome | Shared command |
+|---|---|---|
+| V-1 | PASS, 1 expanded case(s) | T |
+| V-2 | PASS, 1 expanded case(s) | T |
+| V-3 | PASS, 1 expanded case(s) | T |
+| V-4 | PASS, 1 expanded case(s) | T |
+| V-5 | PASS, 2 expanded case(s) | T |
+| V-5b | PASS, 1 expanded case(s) | T |
+| V-6 | PASS, 1 expanded case(s) | T |
+| V-6b | PASS, 1 expanded case(s) | T |
+| V-6c | PASS, 1 expanded case(s) | T |
+| V-8 | PASS, 3 expanded case(s) | I |
+| V-9 | PASS, 1 expanded case(s) | I |
+| V-10 | PASS, 1 expanded case(s) | I |
+| V-10b | PASS, 1 expanded case(s) | I |
+| V-11 | PASS, 2 expanded case(s) | T |
+| V-12 | INHERITED RED: existing classes 226 pass / 9 fail, Unit 2,455 pass / 4 fail / 1 skip | I + T + U |
+
+No V-7 or R-n IDs are defined in this plan. The additional ordinary guard
+`WallRerouteDispatchTests.Repeated_model_hold_persists_the_new_wait_without_duplicate_trace`
+passes once in T. A repeated hold reason cannot suppress persistence of a fresh attempt's wait.
+
+### Remaining inherited failures and timing
+
+Unit's four failure messages match base **exactly** (`unit-baseline-comparison.json`):
+
+- `Antiphon.TestSupport.TestClassificationGuardTests.Registry_matches_compiled_metadata`.
+- `Antiphon.Tests.Application.ScopedVerificationInstructionTests.C487_G142`.
+- `Antiphon.Tests.TestHelpers.TestLaneCategoryGuardTests.every_test_class_is_tagged_unit_xor_integration`.
+- `Antiphon.Tests.TestHelpers.TestClassificationPolicyTests.C487_G068`.
+
+The first, lane-category and classification-policy failures name the unclassified
+HerdrPaneDisposalEndpointTests. The stage-order test expects obsolete Code-to-Mutation wording.
+The unchanged skip is AgentTuiSecretProtectorTests.Restored_key_file_symlink_is_rejected_without_mutating_target.
+
+All nine remaining integration failures were executed at unchanged base before implementation
+(`integration-baseline-comparison.json`; full assertions in base/final JSON):
+
+- `ComplexityWallRerouteTests.Non_chain_task_fails_on_Fable_5_as_today`.
+- `ComplexityWallRerouteTests.Required_pinned_task_is_untouched_on_a_Fable_5_wall`.
+- `ApiErrorRecoveryServiceTests.Wall_parks_after_three_deaths`.
+- `ApiErrorRecoveryServiceTests.Claude_production_shape_session_limit_uses_AssistantText_not_the_6h_fallback`.
+- `ApiErrorRecoveryServiceTests.Session_limit_stub_schedules_one_resume_at_reset_plus_padding`.
+- `ApiErrorRecoveryServiceTests.Codex_TurnEnd_text_without_AssistantText_still_parses_session_limit`.
+- `ApiErrorRecoveryServiceTests.Empty_wall_adopt_is_repaired_when_a_later_call_supplies_the_real_text`.
+- `ApiErrorRecoveryServiceTests.Grok_402_stub_writes_a_fallback_hold_for_grok_4_6_and_never_enqueues`.
+- `ApiErrorRecoveryServiceTests.Fable_5_stub_writes_a_fallback_hold_and_does_not_enqueue`.
+
+The two ComplexityWallRerouteTests assertions expect Failed but observe Working. The seven API
+recovery failures concern dated reset/fallback timestamps or pre-existing recovery-reason
+expectations. Those production paths and assertions were not changed by this card.
+
+Duration tripwire ran on I, T and U: respectively **24, 1 and 15** unlisted >=5-second rows,
+all existing test methods; each command exited 1. Both new classes have **zero** >=5-second rows
+in final evidence (I/T). Full rows are `tripwire-int.log`, `tripwire-target.log`, `tripwire-unit.log`.
+No timeout, assertion or slow-test allowlist was widened.
+
+### Pending Mutation inventory and coverage gaps
+
+Every row below is **pending**, including the indicated comparison/control variants. No deliberate
+mutant, red/restore/green cycle or Mutation discovery pass was executed by Code.
+
+| PC | Pending exact-method ordinary target / variants |
+|---|---|
+| PC-1 | V-1 and V-3, remove kind scope plus requeue supersession |
+| PC-2 | V-2 intended red; V-1 cross-kind dispatch comparison (see inconsistency below) |
+| PC-3 | V-4, disable rewalk supersession |
+| PC-4 | V-5: old-candidate false arm intended red; already-chosen true arm control |
+| PC-5 | V-6b intended red; V-6 unchanged-reason control |
+| PC-6 | V-8: Stopped, Failed and missing-session variants |
+| PC-7 | V-9: Succeeded, Failed, Canceled and missing-task owner cases |
+| PC-8 | V-10: Blocked owner plus all live/excluded-consumer controls |
+| PC-9 | V-11: withWait=true intended red; withWait=false no-wait control |
+| PC-10 | V-6, omitted SkippedCapacityWait increment |
+
+Noticed gaps for ordinary Review and post-land Mutation discovery:
+
+1. PC-2 says the complete V-1 method should stay green when requeue supersession is disabled,
+   but V-1 also explicitly asserts Superseded. Cross-kind **dispatch** can stay green while its
+   wait-state assertion fails. Mutation must distinguish the assertions; Code kept the required
+   V-1 assertion intact.
+2. The extra durable-registration guard has no planned PC. Mutation owns missing-control discovery.
+3. No planned test forces supersede-versus-redemption races, owner reactivation between sweep
+   discovery and cancellation, or a cold-launch/early-transcript/crash cut around the dispatch
+   receipt. V-11 uses warm reuse and direct calls to the real transcript observer, as designed.
+4. The named retained-return regression class covers counting/claiming and hold registration;
+   it does not directly drive the retained-return redemption loop.
+5. V-8's new grantee necessarily changes Ready to ActionPending and increments Version. The
+   test checks those exact grant effects plus unchanged ownership and admission count; the
+   plan's phrase 'unchanged otherwise' must not be read as an unchanged state/version.
+
+### Cleanup and post-land acceptance
+
+All owned commands finished. All **15** producer-owned `bin-c481` directories were removed,
+and a final recursive read found zero remaining. `owned-output.txt` and `output-cleanup.json`
+record exact paths. Automatic review rejected recursive directory deletion; cleanup completed
+through `dotnet clean`, explicit residual generated files, and explicit nonrecursive removal
+of verified empty directories. `output-clean.log` / `output-after-clean.json` retain that evidence.
+Raw test evidence remains under the evidence root; no source or test edit followed final U/T.
+
+Post-land database census is **pending** caller-owned publication and server activation. Within
+two supervisor ticks, record the actual unfinished wait count and confirm every outstanding grant
+has a live owner. The plan's 18-to-3 forecast is a dated fleet snapshot, not an assertion against
+later live traffic. The three retained Blocked-owner waits may legitimately retain grants.
+Do not claim all provider grants must become null. Restart: **server**; original landing owner:
+**00222dc7**. Ordinary read-only Review precedes land; all PCs remain post-land obligations.
