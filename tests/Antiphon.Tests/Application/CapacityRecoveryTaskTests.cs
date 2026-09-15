@@ -264,7 +264,13 @@ public class CapacityRecoveryTaskTests
     }
 
     internal static AgentTaskDispatcher CreateDispatcher(
-        string connectionString, IInterceptor? interceptor = null)
+        string connectionString, IInterceptor? interceptor = null) =>
+        CreateDispatcherProvider(connectionString, interceptor).CreateScope().ServiceProvider
+            .GetRequiredService<AgentTaskDispatcher>();
+
+    internal static ServiceProvider CreateDispatcherProvider(
+        string connectionString, IInterceptor? interceptor = null, TimeProvider? timeProvider = null,
+        DeliveryVerificationSettings? deliveryVerification = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -275,9 +281,10 @@ public class CapacityRecoveryTaskTests
                 o.AddInterceptors(interceptor);
         });
         services.AddSingleton<IEventBus, MockEventBus>();
-        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton(timeProvider ?? TimeProvider.System);
         services.AddSingleton(Options.Create(new SupervisionSettings
         {
+            DeliveryVerification = deliveryVerification ?? new(),
             CapacityRecovery = new CapacityRecoverySettings
             {
                 Enabled = true,
@@ -315,8 +322,7 @@ public class CapacityRecoveryTaskTests
         services.AddScoped<RoutingPinService>();
         services.AddScoped<ComplexityRoutingService>();
         services.AddScoped<AgentTaskDispatcher>();
-        return services.BuildServiceProvider().CreateScope().ServiceProvider
-            .GetRequiredService<AgentTaskDispatcher>();
+        return services.BuildServiceProvider();
     }
 
     private sealed class TempWorkspace : IDisposable

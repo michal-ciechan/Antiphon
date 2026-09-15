@@ -633,3 +633,53 @@ No R-n IDs. Same nine integration failures and four Unit failures as `00222dc7`.
 Tripwire: I 24 unlisted >=5s (existing methods; WallRerouteDispatchTests 0 slow rows in I);
 T 1 (cold-start `Grok_wall_reroute_to_Claude_dispatches_on_the_next_tick`); U 39 unlisted
 existing methods. No timeout, assertion or allowlist widened. PC-1..PC-12 remain pending.
+
+## Round-2 repair verification design (Code task 7928a7de)
+
+Base: `eec7d4245865a6aae2164f18781e3612d5672f22`. Original landing owner remains
+`00222dc7`; this repair is on `feat/card-task-7928a7de` in
+`C:\Antiphon\worktrees\card-task-7928a7de`. Restart target: server.
+
+Receipt persistence now detaches only its abandoned wait on failure, before releasing
+its provider lock. The task and unrelated dispatcher changes remain usable. The fault
+used by V-13 is single-use, so PC-12 can reach the generic failure persistence path.
+
+Additional ordinary coverage (no deliberate mutants in Code):
+
+| ID | Class.method | Required evidence |
+|---|---|---|
+| V-14 | `WallRerouteDispatchTests.Failed_receipt_cannot_resurrect_a_concurrently_superseded_wait` | Actual receipt save failure, a second context supersedes under the provider lock, then the original dispatcher context persists a warning. Superseded state, outcome, version and empty receipt fields survive; the warning commits and the task stays Dispatched. |
+| V-15 | `ReceiptFailureDeliveryTests.Receipt_failure_preserves_complete_brief_acceptance` | Busy=false/true. Real dispatcher and queue; the fake TUI produces UserPrompt only from submitted composer bytes. Eligible recipient accepts inline; busy recipient remains Pending with zero submissions until a real turn-end flush. Whole prompt matches the produced brief. |
+| V-16 | `ReceiptFailureDeliveryTests.Receipt_failure_recovers_the_same_queue_row_after_service_recreation` | queue-committed, attempt-committed, prompt-accepted cuts, each combined with failed capacity receipt. EF interceptors cut after insert commit, after Sent/attempt commit before typing, or after accepted prompt before verdict commit. Dispose the service provider, recreate services against the same schema, retain the recipient composer, then invoke the real stranded sweep. Same queue ID/body/sequence, task ID/attempt/session and wait ID/action/admission survive; exactly one complete prompt. Accepted-before-verdict becomes LateConfirmed without another submission. |
+
+Delivery inventory: producer `AgentTaskDispatcher.DeliverReuseMessagesAsync`;
+destination the selected warm delegate's session; durable `SessionQueuedMessage`
+(`ExecutionTaskId` joins `AgentTask.Id` and `CapacityRecoveryWait.TaskId`, task attempt 3);
+recovery `SessionMessageQueueService.FlushStrandedQueuesAsync`; receipt is the complete
+matching destination UserPrompt after the queue attempt floor. The failed capacity
+receipt has no DispatchAttemptId/LaunchSessionId: tests explicitly keep these absent
+instead of claiming that queue acceptance repaired capacity bookkeeping. The real queue
+uses a fake protocol adapter, not a live paid provider or a native pty process.
+
+Coverage-to-class: retain all 13 named integration classes from the prior repair and
+add `ReceiptFailureDeliveryTests`. Unit remains mandatory. Run all together into one
+fresh integration TRX using the documented parenthesized class OR filter, and Unit in
+its own fresh TRX against the same `bin-c481r2/` build. No namespace/assembly expansion.
+Use an offset over the real clock for queue recovery deadlines, retaining production
+attempt/confirmation assertions. The duration tripwire follows both runs.
+
+Pending post-land Mutation additions (all existing PC-1 through PC-12 also remain pending):
+
+| PC | Exact-method target / variants | Deliberate defect and intended red |
+|---|---|---|
+| PC-13 | V-14 exact method | Remove abandoned wait detachment: unrelated warning save resurrects StartAccepted over Superseded. |
+| PC-14 | V-15 exact method, busy=false and busy=true | Skip the reuse brief enqueue: missing producer queue row / complete prompt. Also invert/bypass the queue busy gate: busy=true's zero-submission guard fails; busy=false is the control. |
+| PC-15 | V-16 exact method, queue-committed and attempt-committed | Remove delegation-brief discovery from the stranded sweep: pending/interrupted row remains unaccepted after service recreation. |
+| PC-16 | V-16 exact method, prompt-accepted | Bypass transcript late-confirm during interrupted-Sent recovery: wrong verdict or duplicate submission, rather than one LateConfirmed prompt. |
+
+These are process-local crash-boundary persistence cuts, not worker-kill custody proof.
+The pre-insert reuse crash gap remains a separate existing contract: without a committed
+queue row the delivery watchdog fails the task (`AgentTaskDeliveryWatchdogTests`), it
+does not reconstruct the lost brief. This repair does not claim automatic pre-insert
+replay. Cold-launch/native-transcript ingestion and the prior sweep/redemption race
+coverage gaps remain visible to Review and Mutation discovery.
