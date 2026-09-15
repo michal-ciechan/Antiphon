@@ -32,6 +32,18 @@ public sealed class ScratchGitRepo : IDisposable
     public async Task GitAsync(params string[] args) =>
         (await GitInAsync(Path, args)).Ok.ShouldBeTrue($"git {string.Join(' ', args)} must succeed");
 
+    public async Task AddBareOriginAsync()
+    {
+        var origin = System.IO.Path.Combine(WorktreeRoot, "origin.git");
+        await GitAsync("init", "--bare", origin);
+        await GitAsync("remote", "add", "origin", origin);
+        await GitAsync("push", "-u", "origin", "master");
+    }
+
+    public Task InstallFailingPreCommitHookAsync(string message) => File.WriteAllTextAsync(
+        System.IO.Path.Combine(Path, ".git", "hooks", "pre-commit"),
+        "#!/bin/sh\nprintf '%s\\n' '" + message.Replace("'", "'\"'\"'") + "' >&2\nexit 1\n");
+
     public async Task<string> GitReadAsync(params string[] args)
     {
         var result = await GitInAsync(Path, args);

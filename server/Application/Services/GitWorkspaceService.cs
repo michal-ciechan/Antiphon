@@ -34,6 +34,57 @@ public class GitWorkspaceService
 
     public sealed record GitChange(string Path, GitFileStatus Status, string? OldPath);
 
+    public sealed record IgnoredPath(string Path, string Rule);
+
+    public async Task<IReadOnlyList<IgnoredPath>> CheckIgnoredAsync(
+        string repo, IReadOnlyList<string> paths, CancellationToken ct)
+    {
+        if (paths.Count == 0) return [];
+        var (code, output, error) = await RunWithInputAsync(repo, string.Join('\0', paths) + '\0',
+            ["check-ignore", "--no-index", "-v", "-z", "--stdin"], ct);
+        if (code is not (0 or 1)) throw new InvalidOperationException($"git check-ignore failed: {error}");
+        var fields = output.Split('\0');
+        var matches = new List<IgnoredPath>();
+        for (var i = 0; i + 3 < fields.Length; i += 4)
+        {
+            // Verbose output includes negations: they explicitly allow the path.
+            if (fields[i + 2].Length > 0 && !fields[i + 2].StartsWith('!'))
+                matches.Add(new(fields[i + 3], $"{fields[i]}:{fields[i + 1]}:{fields[i + 2]}"));
+        }
+        return matches;
+    }
+
+    public Task<(int Code, string Stdout, string Stderr)> StageAsync(
+        string repo, IReadOnlyList<string>? paths, CancellationToken ct) =>
+        RunAsync(repo, ct, paths is null ? ["add", "-A"] : ["--literal-pathspecs", "add", "-A", "--", .. paths]);
+
+    public async Task<IReadOnlyList<string>> StagedPathsAsync(string repo, CancellationToken ct)
+    {
+        var (code, output, error) = await RunAsync(repo, ct, "diff", "--cached", "--name-only", "-z");
+        if (code != 0) throw new InvalidOperationException($"git diff failed: {error}");
+        return output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    public Task<(int Code, string Stdout, string Stderr)> UnstageAsync(
+        string repo, IReadOnlyList<string> paths, CancellationToken ct) =>
+        RunAsync(repo, ct, ["--literal-pathspecs", "reset", "-q", "--", .. paths]);
+
+    public Task<(int Code, string Stdout, string Stderr)> CommitOnlyAsync(
+        string repo, IReadOnlyList<string>? paths, string message, IReadOnlyDictionary<string, string> trailers, CancellationToken ct)
+    {
+        var args = new List<string> { "--literal-pathspecs", "commit", "-m", message };
+        foreach (var (key, value) in trailers) { args.Add("--trailer"); args.Add($"{key}={value}"); }
+        if (paths is not null) { args.Add("--only"); args.Add("--"); args.AddRange(paths); }
+        return RunAsync(repo, ct, args.ToArray());
+    }
+
+    public async Task<IReadOnlyList<string>> DiffTreePathsAsync(string repo, string sha, CancellationToken ct)
+    {
+        var (code, output, error) = await RunAsync(repo, ct, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-z", sha, "--");
+        if (code != 0) throw new InvalidOperationException($"git diff-tree failed: {error}");
+        return output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+    }
+
     public async Task<bool> IsRepositoryAsync(string workingDirectory, CancellationToken ct)
     {
         var (code, stdout, _) = await RunAsync(workingDirectory, ct, "rev-parse", "--is-inside-work-tree");
@@ -708,8 +759,16 @@ public class GitWorkspaceService
         return GitFileStatus.Modified;
     }
 
-    private async Task<(int Code, string Stdout, string Stderr)> RunAsync(
-        string workingDirectory, CancellationToken ct, params string[] args)
+    protected internal virtual Task<(int Code, string Stdout, string Stderr)> RunAsync(
+        string workingDirectory, CancellationToken ct, params string[] args) =>
+        RunCoreAsync(workingDirectory, null, args, ct);
+
+    protected internal virtual Task<(int Code, string Stdout, string Stderr)> RunWithInputAsync(
+        string workingDirectory, string input, string[] args, CancellationToken ct) =>
+        RunCoreAsync(workingDirectory, input, args, ct);
+
+    private async Task<(int Code, string Stdout, string Stderr)> RunCoreAsync(
+        string workingDirectory, string? input, string[] args, CancellationToken ct)
     {
         Process? process = null;
         try
@@ -720,6 +779,7 @@ public class GitWorkspaceService
                 WorkingDirectory = workingDirectory,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                RedirectStandardInput = input is not null,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 StandardOutputEncoding = Encoding.UTF8,
@@ -738,6 +798,11 @@ public class GitWorkspaceService
             timeoutCts.CancelAfter(timeout);
             var stdoutTask = process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
             var stderrTask = process.StandardError.ReadToEndAsync(timeoutCts.Token);
+            if (input is not null)
+            {
+                await process.StandardInput.WriteAsync(input.AsMemory(), timeoutCts.Token);
+                process.StandardInput.Close();
+            }
             await process.WaitForExitAsync(timeoutCts.Token);
             return (process.ExitCode, await stdoutTask, await stderrTask);
         }
