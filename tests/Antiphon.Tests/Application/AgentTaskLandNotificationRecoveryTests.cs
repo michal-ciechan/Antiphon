@@ -12,6 +12,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Orchestration;
+using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
 
@@ -161,6 +162,99 @@ public sealed class AgentTaskLandNotificationRecoveryTests
         await Should.ThrowAsync<DbUpdateException>(() => db.SaveChangesAsync());
         first.Adapter.Inputs.ShouldBeEmpty();
         second.Adapter.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Arguments(SessionStatus.Running)]
+    [Arguments(SessionStatus.Stopped)]
+    [Arguments(SessionStatus.Failed)]
+    public async Task C481_Recovery_rejects_a_keyed_row_with_a_different_destination(SessionStatus callerStatus) =>
+        await AssertRecoveredIdentityMismatchAsync(callerStatus, differentDestination: true);
+
+    [Test]
+    [Arguments(SessionStatus.Running)]
+    [Arguments(SessionStatus.Stopped)]
+    [Arguments(SessionStatus.Failed)]
+    public async Task C481_Recovery_rejects_a_keyed_row_with_a_different_digest(SessionStatus callerStatus) =>
+        await AssertRecoveredIdentityMismatchAsync(callerStatus, differentDestination: false);
+
+    private static async Task AssertRecoveredIdentityMismatchAsync(SessionStatus callerStatus, bool differentDestination)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var caller = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var other = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        await using var db = new AppDbContext(options);
+        var note = await AgentTaskLandReceiptTests.SeedAsync(db, caller.SessionId);
+        var destination = differentDestination ? other.SessionId : caller.SessionId;
+        var digest = differentDestination ? note.ContentDigest : DelegationNoteDigest.Compute("different recovered payload");
+        (destination != note.ParentSessionId).ShouldBe(differentDestination);
+        (digest != note.ContentDigest).ShouldBe(!differentDestination);
+
+        // Insert once, before recovery, while no keyed row exists. This does not exercise
+        // enqueue's collision guard: ReconcileAsync must validate the recovered identity itself.
+        await caller.Queue.EnqueueAsync(destination, note.Body, MessageSendMode.WhenIdle, CancellationToken.None,
+            QueuedMessageOrigin.Delegation, sourceTaskId: note.TaskId, contentDigest: digest,
+            deliverIfIdle: false, sourceLandNotificationId: note.Id);
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.SourceLandNotificationId == note.Id);
+        row.Status = QueuedMessageStatus.Sent;
+        row.DeliveryVerdict = DeliveryVerdict.Delivered;
+        row.DeliveryAttempts = 1;
+        row.LastDeliveryBaselineSequence = 10;
+        row.LastDeliveryStartedAt = DateTime.UtcNow.AddSeconds(-1);
+        // Keep every receipt precondition satisfied except the one identity comparison.
+        // In particular, body equality must not mask a missing digest guard.
+        db.TranscriptEntries.Add(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = caller.SessionId,
+            Sequence = 11, Kind = TranscriptKinds.UserPrompt, Text = note.Body,
+            Timestamp = DateTime.UtcNow, CreatedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        await db.Entry(row).ReloadAsync();
+        await db.AgentSessions.Where(s => s.Id == caller.SessionId)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, callerStatus));
+        (await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id)).QueueMessageId.ShouldBeNull();
+
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var enqueueBoundary = new FailedInsert();
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            await using var recoveredDb = new AppDbContext(options);
+            var recovery = new AgentTaskLandNotificationService(recoveredDb, caller.Queue,
+                new CompletionNoteFlushQueue(), caller.Runtime, clock, enqueueBoundary);
+            await recovery.ReconcileAsync(note.Id, CancellationToken.None);
+            var saved = await recoveredDb.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id);
+            saved.QueueMessageId.ShouldBeNull("a mismatched recovered identity must never be linked");
+            saved.EnqueuedAt.ShouldBeNull();
+            saved.ConfirmedAt.ShouldBeNull();
+            saved.ConfirmingPromptSequence.ShouldBeNull();
+            saved.State.ShouldBe(LandNotificationState.RetryPending);
+            saved.LastErrorCode.ShouldBe("notification_reconcile_failed:ConflictException");
+            saved.EnqueueAttempts.ShouldBe(attempt);
+            saved.ParentSessionId.ShouldBe(caller.SessionId);
+            saved.Body.ShouldBe(note.Body);
+            saved.ContentDigest.ShouldBe(note.ContentDigest);
+
+            var rows = await recoveredDb.SessionQueuedMessages.AsNoTracking()
+                .Where(m => m.SourceLandNotificationId == note.Id || m.SourceTaskId == note.TaskId).ToListAsync();
+            var retained = rows.ShouldHaveSingleItem("recovery must neither replace nor duplicate the rejected row");
+            retained.Id.ShouldBe(row.Id);
+            retained.SourceLandNotificationId.ShouldBe(note.Id);
+            retained.AgentSessionId.ShouldBe(destination);
+            retained.ContentDigest.ShouldBe(digest);
+            retained.Body.ShouldBe(note.Body);
+            retained.Sequence.ShouldBe(row.Sequence);
+            retained.Status.ShouldBe(QueuedMessageStatus.Sent);
+            retained.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+            retained.DeliveryAttempts.ShouldBe(1);
+            retained.LastDeliveryBaselineSequence.ShouldBe(10);
+            retained.LastDeliveryStartedAt.ShouldBe(row.LastDeliveryStartedAt);
+            (await recoveredDb.AgentSessions.SingleAsync(s => s.Id == caller.SessionId)).Status.ShouldBe(callerStatus);
+            enqueueBoundary.Calls.ShouldBe(0);
+            caller.Adapter.Inputs.ShouldBeEmpty();
+            caller.Adapter.SubmittedBodies.ShouldBeEmpty();
+            other.Adapter.Inputs.ShouldBeEmpty();
+            other.Adapter.SubmittedBodies.ShouldBeEmpty();
+            clock.SetUtcNow(saved.NextAttemptAt);
+        }
     }
 
     [Test]
