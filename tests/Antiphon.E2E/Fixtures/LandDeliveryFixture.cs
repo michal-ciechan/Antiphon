@@ -19,7 +19,7 @@ using Shouldly;
 namespace Antiphon.E2E.Fixtures;
 
 /// <summary>Real Program/runner/queue/native FakeGrok. The parent owns resources across child server death.</summary>
-public sealed class LandDeliveryFixture : IAsyncDisposable
+public sealed partial class LandDeliveryFixture : IAsyncDisposable
 {
     public string Root { get; } = Path.Combine(AntiphonAppFixture.FindRepositoryRoot(), ".antiphon", "acceptance", "card-0467", Guid.NewGuid().ToString("N"));
     private readonly string _suffix = "";
@@ -43,13 +43,14 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
     private string _address = "";
     private bool _hostSuspended;
 
-    public async Task InitializeAsync(bool busy = false, string cut = "none")
+    public async Task InitializeAsync(bool busy = false, string cut = "none", bool dispatch = false)
     {
         OperatingSystem.IsWindows().ShouldBeTrue();
         ConPtyRedistributable.TryLocate(out _, out var why).ShouldBeTrue(why);
         File.Exists(Path.Combine(AppContext.BaseDirectory, "fakegrok", "fakegrok.exe")).ShouldBeTrue("native FakeGrok must be staged");
         Directory.CreateDirectory(Repository);
         Directory.CreateDirectory(CallerDirectory);
+        if (dispatch) await File.WriteAllTextAsync(Path.Combine(Root, "dispatch-task.txt"), TaskId.ToString("N"));
         await GitAsync(Repository, "init", "-b", "master");
         await GitAsync(Repository, "config", "core.longpaths", "true");
         await GitAsync(Root, "init", "--bare", Remote);
@@ -108,7 +109,7 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
             var (token, hash) = AgentTaskService.NewToken(); _token = token;
             var session = await db.AgentSessions.SingleAsync(s => s.Id == CallerId);
             session.DelegationTokenHash = hash;
-            db.AgentTasks.Add(new AgentTask { Id = TaskId, RootTaskId = TaskId, Title = "C467 real Land delivery", Goal = "owned fixture",
+            if (!dispatch) db.AgentTasks.Add(new AgentTask { Id = TaskId, RootTaskId = TaskId, Title = "C467 real Land delivery", Goal = "owned fixture",
                 Role = AgentTaskRole.Code, Kind = AgentTaskKind.Worker, Workspace = WorkspaceMode.Worktree, Status = AgentTaskStatus.Succeeded,
                 WorkingDirectory = Source, RepoPath = Repository, WorktreePath = Source, WorktreeBranch = "c467-source",
                 ReplyTo = AgentTaskReplyTo.Session, ParentSessionId = CallerId, CreatedAt = DateTime.UtcNow, CompletedAt = DateTime.UtcNow });
@@ -182,20 +183,23 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
         return text;
     }
 
-    public async Task<AgentTaskLandNotification> ReceiptAsync(LandNotificationKind kind = LandNotificationKind.Outcome, Guid? requestId = null)
+    public async Task<AgentTaskLandNotification> ReceiptAsync(LandNotificationKind kind = LandNotificationKind.Outcome,
+        Guid? requestId = null, Guid? notificationId = null)
     {
         AgentTaskLandNotification? result = null;
         await UntilAsync(async () => {
             await using var db = CreateContext();
-            result = await db.AgentTaskLandNotifications.AsNoTracking().FirstOrDefaultAsync(n => n.TaskId == TaskId && n.Kind == kind && n.ConfirmedAt != null && (requestId == null || n.RequestId == requestId));
+            result = await db.AgentTaskLandNotifications.AsNoTracking().FirstOrDefaultAsync(n => n.TaskId == TaskId && n.Kind == kind && n.ConfirmedAt != null && (requestId == null || n.RequestId == requestId)
+                && (notificationId == null || n.Id == notificationId));
             return result is not null;
         }, "complete native Land receipt");
         await using var observer = CreateContext();
         var row = await observer.SessionQueuedMessages.SingleAsync(m => m.Id == result!.QueueMessageId);
         var prompt = await observer.TranscriptEntries.SingleAsync(p => p.AgentSessionId == CallerId && p.Sequence == result!.ConfirmingPromptSequence);
         prompt.Kind.ShouldBe(TranscriptKinds.UserPrompt);
-        PromptSubmissionMatch.IsConfirmedBy(row.Body, prompt.Text!).ShouldBeTrue();
-        PromptSubmissionMatch.IsCompleteIn(row.Body, prompt.Text!).ShouldBeTrue();
+        row.Body.ShouldBe(result!.Body);
+        PromptSubmissionMatch.IsConfirmedBy(result.Body, prompt.Text!).ShouldBeTrue();
+        PromptSubmissionMatch.IsCompleteIn(result.Body, prompt.Text!).ShouldBeTrue();
         if (row.LastDeliveryBaselineSequence is long floor) prompt.Sequence.ShouldBeGreaterThan(floor);
         else (prompt.Timestamp >= row.LastDeliveryStartedAt).ShouldBeTrue();
         await SnapshotAsync();
@@ -214,9 +218,10 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
             "two additional completed notification scans");
         await using var db = CreateContext();
         var prompts = await db.TranscriptEntries.Where(p => p.AgentSessionId == CallerId && p.Kind == TranscriptKinds.UserPrompt && p.Text != null).ToListAsync();
-        prompts.Count(p => p.Text!.Contains("[land " + note.Id.ToString("N"))).ShouldBe(1);
+        var header = note.Body.Split('\n')[0];
+        prompts.Count(p => p.Text!.Contains(header)).ShouldBe(1);
         var native = Directory.GetFiles(Path.Combine(Root, "native"), "updates.jsonl", SearchOption.AllDirectories)
-            .SelectMany(File.ReadAllLines).Count(line => line.Contains("user_message_chunk") && line.Contains("[land " + note.Id.ToString("N")));
+            .SelectMany(File.ReadAllLines).Count(line => line.Contains("user_message_chunk") && line.Contains(header));
         native.ShouldBe(1);
     }
 
@@ -274,6 +279,7 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
             operations = await db.AgentTaskLandings.AsNoTracking().Where(o => o.TaskId == TaskId).ToListAsync(),
             events = await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == TaskId).Select(e => new { e.Id, e.Type, e.LandRequestId, e.LandingOperationId, e.At }).ToListAsync(),
             notifications = await db.AgentTaskLandNotifications.AsNoTracking().Where(n => n.TaskId == TaskId).ToListAsync(),
+            intents = await db.AgentTaskDispatchWarningIntents.AsNoTracking().Where(i => i.TaskId == TaskId).ToListAsync(),
             queue = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.SourceTaskId == TaskId).ToListAsync(),
             prompts = await db.TranscriptEntries.AsNoTracking().Where(p => p.AgentSessionId == CallerId && p.Kind == TranscriptKinds.UserPrompt).ToListAsync() }));
         File.Copy(Path.Combine(Root, "delivery-evidence.json"), Path.Combine(Root, $"delivery-evidence-{TaskId:N}-{Guid.NewGuid():N}.json"));

@@ -40,7 +40,7 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
     }
     public void ConfigureServices(IServiceCollection services)
     {
-        services.AddSingleton<LandDeliveryBoundary>(new FileBoundary(this));
+        services.AddSingleton<LandDeliveryBoundary>(p => new FileBoundary(this, p.GetRequiredService<IServiceScopeFactory>()));
         var clock = new LandClock(Root);
         services.AddScoped(p => ActivatorUtilities.CreateInstance<AgentTaskLandService>(p, clock));
         services.AddScoped(p => ActivatorUtilities.CreateInstance<AgentTaskLandingProtocol>(p, clock));
@@ -56,29 +56,49 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
         services.AddSingleton<Antiphon.Messaging.Client.IAntiphonMessagingConsumer, RefusingCanaryMessaging>();
     }
 
-    private sealed class FileBoundary(LandDeliveryOptions options) : LandDeliveryBoundary
+    private sealed class FileBoundary(LandDeliveryOptions options, IServiceScopeFactory scopes) : LandDeliveryBoundary
     {
         private int _enqueueCalls;
         public override bool DropWakeup(string boundary, Guid identity) => options.Cut == "lost-flush" && boundary == "completion"
             || options.Cut == "lost-request" && boundary == "land-request";
         public override async Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
         {
-            if (boundary is "completion-scan" or "notification-scan" or "queue-existing-key")
+            if (boundary is "completion-scan" or "notification-scan" or "queue-existing-key" or "dispatch-warning-intent-scan")
                 await File.WriteAllTextAsync(Path.Combine(options.Root, $"{boundary}-{Guid.NewGuid():N}.observation.json"),
                     JsonSerializer.Serialize(new { boundary, taskId, identity, at = DateTime.UtcNow, pid = Environment.ProcessId }), ct);
+            var dispatchFile = Path.Combine(options.Root, "dispatch-task.txt");
+            if (File.Exists(dispatchFile))
+            {
+                var owned = Guid.Parse(await File.ReadAllTextAsync(dispatchFile, ct));
+                if (boundary == "dispatch-warning-before-materialize")
+                {
+                    await using var scope = scopes.CreateAsyncScope();
+                    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    taskId = await db.AgentTaskDispatchWarningIntents.Where(i => i.Id == identity).Select(i => i.TaskId).SingleAsync(ct);
+                }
+                if (taskId != owned) return;
+            }
             if (options.Cut == "enqueue-errors" && boundary == "before-enqueue" && Interlocked.Increment(ref _enqueueCalls) <= 2)
+            {
+                await File.WriteAllTextAsync(Path.Combine(options.Root, $"enqueue-failure-{Guid.NewGuid():N}.json"),
+                    JsonSerializer.Serialize(new { taskId, identity }), ct);
                 throw new IOException("Owned notification insert failure");
+            }
             var blocked = boundary == "before-execution" && !File.Exists(Path.Combine(options.Root, "execute.release"))
                 || options.Cut == "terminal" && boundary is "terminal-committed" or "before-enqueue"
                 || options.Cut == "queue" && boundary == "queue-inserted"
                 || options.Cut == "receipt" && boundary == "receipt-before-save"
                 || options.Cut == "attempt" && boundary == "queue-before-typing"
                 || options.Cut == "verdict" && boundary == "queue-before-verdict";
+            blocked |= options.Cut == "dispatch-claim" && boundary is "dispatch-warning-claim-committed" or "dispatch-warning-before-materialize"
+                || options.Cut == "dispatch-projection" && boundary == "dispatch-warning-before-commit"
+                || options.Cut == "pre-enqueue" && boundary == "before-enqueue";
             if (!blocked || File.Exists(Path.Combine(options.Root, boundary + ".release"))) return;
             var barrierPath = Path.Combine(options.Root, boundary + ".barrier.json");
-            await File.WriteAllTextAsync(barrierPath + ".tmp", JsonSerializer.Serialize(new
+            var temporary = barrierPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(new
             { boundary, taskId, identity, nonce = Path.GetFileName(options.Root), pid = Environment.ProcessId, start = System.Diagnostics.Process.GetCurrentProcess().StartTime.ToUniversalTime() }), ct);
-            File.Move(barrierPath + ".tmp", barrierPath, true);
+            File.Move(temporary, barrierPath, true);
             while (!File.Exists(Path.Combine(options.Root, boundary + ".release"))
                 && !(boundary == "before-execution" && File.Exists(Path.Combine(options.Root, "execute.release"))))
                 await Task.Delay(50, ct);
