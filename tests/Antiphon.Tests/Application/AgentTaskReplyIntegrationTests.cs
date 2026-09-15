@@ -39,15 +39,22 @@ public class AgentTaskReplyIntegrationTests
         var parent = await SeedSessionAsync(workspace.Path);
         var agent = await SeedAgentAsync(workspace.Path, $"c492-{Guid.NewGuid():N}");
         var (task, session) = await SeedDispatchedTaskAsync(workspace.Path, parent, t => t.AgentId = agent);
+        using var factory = NewDeliveryFactory();
+        var terminal = AttachTerminal(factory, parent);
+        await SeedParentHistoryAsync(parent);
         await SeedApiErrorStubTurnAsync(session, DelegationReportFormatter.TaskMarker(task.Id),
             errorText: "Please log in", apiErrorClass: "authentication_failed", apiErrorStatus: 401);
-        await CreateService().OnTurnEndAsync(session, CancellationToken.None);
+        await CreateService(factory).OnTurnEndAsync(session, CancellationToken.None);
         await using var verify = CreateContext();
         var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
         stored.Status.ShouldBe(AgentTaskStatus.Failed);
         stored.FailureReason.ShouldNotBeNull().ShouldContain("At settlement that session was live and idle");
         (await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parent))
             .Body.Split('\n')[0].ShouldContain("session=live-idle");
+        await Queue(factory).FlushSessionAsync(parent, CancellationToken.None);
+        var (note, receipt) = await AssertParentReceivedNoteAsync(parent, task, stored.FailureReason!);
+        terminal.SubmittedBodies.ShouldHaveSingleItem().ShouldBe(note.Body);
+        receipt.Text.ShouldNotBeNull().ShouldContain("session=live-idle");
     }
 
     [Test]
@@ -166,11 +173,45 @@ public class AgentTaskReplyIntegrationTests
         var (task, session) = await SeedDispatchedTaskAsync(workspace.Path, parent, t => t.AgentId = agent);
         await SeedApiErrorStubTurnAsync(session, DelegationReportFormatter.TaskMarker(task.Id),
             errorText: "API error", apiErrorClass: "server_error", apiErrorStatus: 500);
-        var service = CreateService();
+        using var factory = NewDeliveryFactory();
+        var terminal = AttachTerminal(factory, session);
+        terminal.OnSubmitted = submitted => SeedEntryAsync(
+            session, TranscriptKinds.UserPrompt, submitted, DateTime.UtcNow);
+        var service = CreateService(factory);
         await service.OnTurnEndAsync(session, CancellationToken.None);
-        await SeedCodexTurnAsync(session,
-            DelegationReportFormatter.TaskMarker(task.Id) + " " + new ApiErrorRecoverySettings().TransientPrompt,
-            "Continuing the implementation.", "Implemented and verified the change.");
+        var recoveryDb = factory.ServiceProvider.GetRequiredService<AppDbContext>();
+        var recovery = await recoveryDb.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == session);
+        recovery.NextAttemptAt = DateTime.UtcNow.AddSeconds(-1);
+        await recoveryDb.SaveChangesAsync();
+        await factory.ServiceProvider.GetRequiredService<ApiErrorRecoveryService>().SweepAsync(CancellationToken.None);
+        await Queue(factory).FlushSessionAsync(session, CancellationToken.None);
+        await using (var receipt = CreateContext())
+        {
+            var resume = await receipt.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == session
+                && m.Origin == QueuedMessageOrigin.Supervision);
+            resume.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+            var prompt = await receipt.TranscriptEntries.SingleAsync(t => t.AgentSessionId == session
+                && t.Kind == TranscriptKinds.UserPrompt && t.Sequence > 3);
+            prompt.Text.ShouldBe(resume.Body);
+        }
+        // The actual recovery prompt is now the owning prompt. No hand-seeded marker can mask
+        // a producer regression: removing FireOne's prefix must strand this report too (R-5).
+        await service.OnTurnEndAsync(session, CancellationToken.None);
+        await using (var db = CreateContext())
+        {
+            var seq = await db.TranscriptEntries.Where(t => t.AgentSessionId == session).MaxAsync(t => t.Sequence);
+            var apiCallId = $"msg_{Guid.NewGuid():N}";
+            db.TranscriptEntries.Add(NewEntry(session, ++seq, TranscriptKinds.AssistantText, "Continuing the implementation."));
+            var final = NewEntry(session, ++seq, TranscriptKinds.AssistantText,
+                "Implemented and verified the change.\n" + DelegationReportFormatter.ReportToken(task.Id, "done"));
+            final.ApiCallId = apiCallId;
+            db.TranscriptEntries.Add(final);
+            var end = NewEntry(session, ++seq, TranscriptKinds.TurnEnd, null);
+            end.ApiCallId = apiCallId;
+            end.StopReason = "end_turn";
+            db.TranscriptEntries.Add(end);
+            await db.SaveChangesAsync();
+        }
         await service.OnTurnEndAsync(session, CancellationToken.None);
         await using var verify = CreateContext();
         var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
@@ -214,7 +255,8 @@ public class AgentTaskReplyIntegrationTests
     public async Task an_unmarked_resumed_turn_is_still_uncorrelated()
     {
         using var workspace = new TempWorkspace();
-        var (task, session) = await SeedDispatchedTaskAsync(workspace.Path);
+        var agent = await SeedAgentAsync(workspace.Path, $"c492-{Guid.NewGuid():N}");
+        var (task, session) = await SeedDispatchedTaskAsync(workspace.Path, configure: t => t.AgentId = agent);
         await SeedApiErrorStubTurnAsync(session, DelegationReportFormatter.TaskMarker(task.Id),
             errorText: "API error", apiErrorClass: "server_error", apiErrorStatus: 500);
         var service = CreateService();

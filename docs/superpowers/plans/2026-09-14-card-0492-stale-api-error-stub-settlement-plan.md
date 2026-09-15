@@ -323,8 +323,10 @@ S1+S2 stay together on this original Code branch. Restart target: server; landin
 Clarifications found during implementation: V-22's table is authoritative (`live-idle`); S4's
 earlier `live-working` fixture is impossible after D-1. Cap protection must select replacement
 idle members to satisfy V-16, not merely remove protected members from the original retire set.
-V-10 seeds a marked resume and tests settlement; omitting the producer prefix (R-5) is directly
-detected by V-7/V-9, not V-10. Mutation should retain that missing end-to-end control finding.
+The original hand-seeded V-10 would not detect the producer-prefix mutation R-5. Code closes
+that gap by firing the real recovery service, confirming its queued prompt in the delegate's
+transcript, then appending the resumed final report without another prompt. V-22 additionally
+flushes the failure note through the real queue and checks its matching parent UserPrompt.
 
 Build to an alternate output path (`--property:OutputPath=bin-c492/`, forward slash) while the
 daemons hold `bin`. Run TUnit with `dotnet run --project tests/Antiphon.Tests -- --treenode-filter
