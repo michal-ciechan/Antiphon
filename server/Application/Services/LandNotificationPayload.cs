@@ -1,4 +1,5 @@
 using System.Text;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 
@@ -6,14 +7,19 @@ namespace Antiphon.Server.Application.Services;
 
 internal static class LandNotificationPayload
 {
+    private const int EnvelopeBytes = 1024;
+    // Leaves room for a sibling count even with four distinct 64-character SHAs.
+    private const int DiagnosticReserveBytes = 448;
+
     public static AgentTaskLandNotification Create(AgentTaskLandRequest request, AgentTaskEvent source, LandNotificationKind kind,
-        string? cleanupDetail = null, string? unlandedSiblingMarker = null)
+        WorktreeCleanupReference? cleanupCapture = null, IReadOnlyList<string>? unlandedSiblings = null,
+        string? cleanupReason = null)
     {
         var id = Guid.NewGuid();
         var header = $"[land {id:N} request={request.Id:N} task={request.TaskId:N} outcome={source.Type}]";
         var approval = $"expected={request.ExpectedSourceSha ?? "null"}; local={request.LocalBeforeSha ?? "null"}; remote={request.RemoteSourceSha ?? "null"}; candidate={request.CandidateSourceSha ?? "null"}";
         var body = $"{header}\npublication={source.LandingPublication?.ToString() ?? "Unconfirmed"}; cleanup={source.LandingCleanup?.ToString() ?? "NotStarted"}\n{approval}\n{source.Detail}";
-        if (cleanupDetail is not null)
+        if (cleanupCapture is not null)
         {
             // Keep the detailed publication narrative on the source event. The immutable
             // diagnostic envelope must also fit the supported inbox-conhost write contract.
@@ -29,10 +35,15 @@ internal static class LandNotificationPayload
                 values.TryAdd(value, name);
             }
             var prefix = $"{header}\npublication={source.LandingPublication?.ToString() ?? "Unconfirmed"}; cleanup={source.LandingCleanup?.ToString() ?? "NotStarted"}\n{string.Join("; ", fields)}\n";
-            // The sibling warning is actionable publication evidence. Carry the producer's
-            // exact marker ahead of optional diagnostic display text without parsing prose.
-            var detail = unlandedSiblingMarker is null ? cleanupDetail : $"{unlandedSiblingMarker}\n{cleanupDetail}";
-            body = prefix + WorktreeCleanupPresentation.ClipUtf8(detail, 1024 - Encoding.UTF8.GetByteCount(prefix));
+            // Reserve diagnostics FIRST. Sibling names cannot borrow this space even when
+            // the capture is small; optional diagnostic detail can use any leftover bytes.
+            var remaining = EnvelopeBytes - Encoding.UTF8.GetByteCount(prefix);
+            var (required, optional) = new WorktreeCleanupPresentation().NotificationParts(
+                cleanupCapture, cleanupReason ?? "cleanup complete", DiagnosticReserveBytes);
+            var siblings = SummarizeSiblings(unlandedSiblings, remaining - DiagnosticReserveBytes - 1);
+            body = prefix + required + (siblings is null ? "" : "\n" + siblings);
+            remaining = EnvelopeBytes - Encoding.UTF8.GetByteCount(body) - 1;
+            if (remaining > 0) body += "\n" + WorktreeCleanupPresentation.ClipUtf8(optional, remaining);
         }
         return new AgentTaskLandNotification
         {
@@ -44,5 +55,25 @@ internal static class LandNotificationPayload
             State = request.ReplyTo == AgentTaskReplyTo.None ? LandNotificationState.NotRequired
                 : request.ParentSessionId is null ? LandNotificationState.DestinationUnavailable : LandNotificationState.Queued,
         };
+    }
+
+    private static string? SummarizeSiblings(IReadOnlyList<string>? siblings, int byteLimit)
+    {
+        if (siblings is null || siblings.Count == 0) return null;
+        const string marker = "unlanded-sibling=";
+        var full = marker + string.Join(",", siblings);
+        if (Encoding.UTF8.GetByteCount(full) <= byteLimit) return full;
+
+        var shown = new List<string>();
+        var summary = $"{marker}{siblings.Count} siblings, showing first 0";
+        foreach (var sibling in siblings)
+        {
+            var candidate = $"{marker}{siblings.Count} siblings, showing first {shown.Count + 1}: "
+                + string.Join(",", shown.Append(sibling));
+            if (Encoding.UTF8.GetByteCount(candidate) > byteLimit) break;
+            shown.Add(sibling);
+            summary = candidate;
+        }
+        return summary;
     }
 }
