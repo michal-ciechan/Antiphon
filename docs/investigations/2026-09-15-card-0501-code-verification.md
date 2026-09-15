@@ -509,7 +509,7 @@ Each was run with only the named production change reverted, then restored.
 | PC | Reverted | Test | Red observed |
 |---|---|---|---|
 | R2-PC-1 | `SessionMessageQueueService.cs` to 92857c4a | `A_lone_capped_crashed_row_is_discovered_and_parked_by_the_sweep` | `row.Status should be Pending but was Sent` |
-| R2-PC-2 | same | `The_sweep_reaches_the_same_resting_state_as_a_direct_flush` | 1/6 failed, `(CappedCrashedSent)` only: `Rest { Status = Pending, ... }` vs `Rest { Status = Sent, ... }`. The five control shapes passed, which is what shows the widening is confined to the cap axis |
+| R2-PC-2 | same | `The_sweep_reaches_the_same_resting_state_as_a_direct_flush` | 1/6 failed, `(CappedCrashedSent)` only: `Rest { Status = Pending, ... }` vs `Rest { Status = Sent, ... }`. The other five shapes matched the outcome comparison; this did not independently test the Pending discovery guards. |
 | R2-PC-3 | `SpecialistTaskRunner.cs` to 92857c4a | `An_abandoned_interpretation_is_never_dispatched_after_its_write_failed` and `An_interpretation_that_cannot_be_persisted_still_delivers_a_degraded_note_whole` | both failed; `CountAsync(AgentId == interpreter) should be 0 but was 1` |
 | R2-PC-4 | `AgentTaskDispatcher.cs`, the never-started arm's condition inverted to `started && briefNeverTyped` | `a_reuse_brief_lost_between_the_two_commits_is_failed` | both arguments (True/False) failed |
 
@@ -544,3 +544,193 @@ intersects its candidates with `_runtime.ListLiveSessions()`, and a direct flush
 session is not possible either. That bound is older than this card and unchanged by it — recovery
 of a dead session's queue belongs to session-end reconciliation, not to a delivery sweep. Named
 here so the next reader does not mistake it for part of this fix.
+
+# Round-3 evidence repair (Code FollowUp `f95bd1fe`)
+
+**F1-R3 and F2-R3 are fixed.** Ordinary verification is complete: 399 affected cases passed;
+Unit has 2,346 passes, four failures reproduced individually at the exact reviewed base, and
+one existing skip. Return to ordinary read-only Review. No production code changed in this pass.
+
+## Source and evidence identity
+
+- Fix base: `92fc5a55c8d03274cc6875ddd37a6e0cd3a18b19`.
+- Built/tested implementation: `02940c4d486e4c8619341449a79497aa6984e104`, committed and pushed
+  before verification. The final report commit changes documentation only; its full SHA is in
+  the task settlement and `final-source.json`.
+- Branch: `feat/card-task-326c349a`; exact worktree: `C:\Antiphon\worktrees\card-task-326c349a`.
+- Original Code task / landing owner: `326c349a-dd36-4adb-8ff6-fe533d91a73a`.
+- Plan: `docs/superpowers/plans/2026-09-14-card-0501-check-interpreter-wedged-queue-head-plan.md`.
+- Evidence root: `C:\src\Antiphon\.git\antiphon\evidence\f95bd1fe`.
+- Changed files: `SessionMessageQueueWedgedHeadTests.cs`, this report, the plan and
+  `docs/session-runtime-invariants.md`. `production-diff.txt` confirms an empty `server/` + `src/`
+  diff from the fix base.
+
+## F1-R3: independent discovery evidence
+
+`A_parked_row_stops_being_discovered_once_it_is_at_rest` now executes both production
+`QueueAttention` discovery expressions through PostgreSQL. It asserts the candidate row is
+included while capped/interrupted Sent, and excluded after the real sweep parks it Pending.
+The downstream attempts cap cannot satisfy that candidate-list assertion. The no-input checks
+remain, with the old claim that an empty composer made them sufficient removed.
+
+Two additional methods use `StrandedAgeSeconds = 600` and a freshly persisted `CreatedAt`:
+
+- `Fresh_NoSubmitOutput_is_discovered_before_stranded_age_and_delivered_whole`: direct candidate
+  inclusion, one Enter, exact submitted body and complete matching persisted `UserPrompt`, Sent /
+  Delivered, and attempts still one.
+- `Fresh_ordinary_Pending_is_excluded_until_stranded_age`: direct candidate exclusion, zero
+  inputs/prompts and an unchanged unattempted Pending row.
+
+All three methods ran with `alwaysOn=false` and `alwaysOn=true`: **six passing expanded cases**.
+The original six-shape direct/sweep comparison remains as outcome coverage; its parked and aged
+NoSubmitOutput arms are no longer described as independent discovery proof.
+
+## F2-R3: actual coverage owners
+
+The historical R2-C row above is corrected: its 49 passes belonged to two classes, and the two
+nonexistent class names contributed zero. This pass reran the real classes separately:
+
+| Behavior | Actual coverage owner / method | Fresh class outcome |
+|---|---|---|
+| Check production, interpreter success/degradation, persisted reading and caller-note formatting | `AgentTaskCheckInterpreterTests`, including `a_settled_interpretation_replaces_the_digest_in_the_note`, `the_check_event_stores_the_reading_above_the_digest` | **42/42 passed**, `interpreter/run.trx` |
+| SpecialistRequestService routing admission and legacy fallback | Same class: `an_undeclared_chain_still_runs_the_legacy_interpreter`, `a_declared_but_unqualified_chain_still_runs_the_legacy_interpreter`, `a_declared_and_qualified_chain_routes_through_the_request_graph` | All three methods passed within those 42 cases |
+| SpecialistTaskRunner hold, deadline and cancellation boundaries | `SpecialistTaskRunnerDeadlineTests`, including `Terminal_read_returning_after_deadline_is_late`, `Hold_and_dispatch_race_cancel_only_queued` (both arguments), `Expired_ensure_return_does_not_create_work` | **7/7 passed**, `specialist/run.trx` |
+| Failed interpretation persistence, no abandoned dispatch, and complete interpreter/recipient delivery | `CheckNoteDeliveryHandoffTests` | **7/7 passed**, `queue/run.trx` |
+| Routed publication rollback and durable identity across two queue instances | `SpecialistPublicationTests.Card0415_V14_publication_rolls_back_and_two_queue_instances_reuse_one_durable_identity` | **1/1 passed**, `native/run.trx` |
+
+These are bounded owners for the affected behaviors, not a claim that all SpecialistRequestService
+behavior ran. The producer/recipient distinction and fake interpreter settlement described above
+still apply.
+
+## Commands, filters and expanded counts
+
+Built each test project once into `--property:OutputPath=bin-c501-f95bd1fe/`:
+`dotnet build tests/<project> --property:OutputPath=bin-c501-f95bd1fe/ --nologo`.
+Server build: zero errors / 228 warnings; Pty build: zero errors / one warning. Server tests
+finished before building/running Pty tests. The separate base build used its own output/worktree.
+
+Each invocation used:
+
+```powershell
+dotnet run --project tests/<project> --no-build --property:OutputPath=bin-c501-f95bd1fe/ -- --treenode-filter '<filter>' --report-trx --report-trx-filename run.trx --results-directory 'C:\src\Antiphon\.git\antiphon\evidence\f95bd1fe\<run>'
+```
+
+| Run | Project | Exact filter | Actual per-class outcome |
+|---|---|---|---|
+| unit | Antiphon.Tests | `/*/*/*/*[Category=Unit]` | 2,351 cases: 2,346 passed / 4 failed / 1 skipped |
+| queue | Antiphon.Tests | `/*/*/(SessionMessageQueueWedgedHeadTests*)\|(SessionMessageQueueInterruptedAttemptTests*)\|(CheckNoteDeliveryHandoffTests*)\|(AgentTaskReuseEnqueueTests*)/*` | WedgedHead **51**, InterruptedAttempt **15**, CheckNoteDeliveryHandoff **7**, AgentTaskReuseEnqueue **7**: **80/80 passed** |
+| sweeps | Antiphon.Tests | `/*/*/(AgentTaskDeliveryWatchdogTests*)\|(ParkedMessageSweepServiceTests*)\|(SessionMessageQueueDeliveryVerificationTests*)\|(SessionMessageQueueServiceTests*)/*` | Watchdog **75**, ParkedSweep **9**, DeliveryVerification **114**, QueueService **25**: **223/223 passed** |
+| interpreter | Antiphon.Tests | `/*/*/AgentTaskCheckInterpreterTests/*` | **42/42 passed** |
+| specialist | Antiphon.Tests | `/*/*/SpecialistTaskRunnerDeadlineTests/*` | **7/7 passed** |
+| native | Antiphon.Tests | `/*/*/(SessionMessageQueueGrokPtyIntegrationTests*)\|(SpecialistPublicationTests*)\|(AgentTaskStandingAgentDispatchTests*)/*` | Grok **4**, Publication **1**, StandingDispatch **10**: **15/15 passed**, zero skips |
+| pty | Antiphon.Agents.Pty.Tests | `/*/*/(ComposerDeliveryEvidenceTests*)\|(SubmitEvidenceTests*)/*` | ComposerDeliveryEvidence **24**, SubmitEvidence **8**: **32/32 passed** |
+
+The table escapes `|` for Markdown; actual selectors contain plain `|`. Each run directory holds
+fresh `run.trx`, `run.log`, `execution.json`, `methods.json`, `classes.json` and `duration.log`.
+`inspect-trx.py` joins results to definitions, rejects zero/unexpected class counts, and checks
+every scoped source test method and Arguments count. `run-check.ps1` preserves each native test
+exit (Unit 2; all affected selections 0). No namespace or full-assembly selection was used.
+Aggregate ordinary executions: **2,750 cases; 2,745 passed, four failed, one skipped**.
+
+## Every ordinary verification ID
+
+| ID | Actual outcome / shared run |
+|---|---|
+| V-1 | PASS, pty: 24 ComposerDeliveryEvidence cases including the six original new cases. |
+| V-2 | PASS, queue: generation stamps, both gates, refunds and legacy variants. |
+| V-3 | PASS, queue: failed Enter charge, parking, captured-generation kill and working guard. |
+| V-4 | PASS, queue: terminal-task, composer safety, expiry and human SendNow variants. |
+| V-5 | PASS: database fixtures migrate; no pending model changes using the built output (`model-check.log`); generated migration unchanged. |
+| V-6 | PASS: runtime/runbook/plan-pointer audit, empty production diff and `git diff --check` (`v6-doc-audit.txt`, `diff-check.log`). |
+| V-7 | PASS, queue: held composer and release paths. |
+| V-8 | PASS, queue: CheckNoteDeliveryHandoffTests 7/7. |
+| V-9 | PASS, queue: persisted charge/handler crash boundary and multi-row charging. |
+| V-10 | PASS, queue: interrupted cap, Flush/Sweep, repeated cycles and mixed batch. |
+| V-11 | PASS, queue: below-cap rescue, late-confirm and relaunch release. |
+| V-12 | PASS, queue: real producer/dispatcher with complete interpreter-leg receipt in both recipient shapes. |
+| V-13 | PASS, queue: failed interpretation persistence and failed note enqueue/retry; abandoned row never dispatches. |
+| V-14 | PASS, queue: direct pre/post-parking candidate assertions, two arguments. |
+| V-15 | PASS, queue: fresh NoSubmitOutput and ordinary Pending, four arguments total. |
+| V-16 | PASS, interpreter 42/42 and specialist 7/7, each selected individually. |
+| R-1 | INHERITED RED, unit: 2,346 pass / four base-reproduced failures / one skip. |
+| R-2 | PASS, pty: SubmitEvidenceTests 8/8. |
+| R-3 | PASS, queue: SessionMessageQueueInterruptedAttemptTests 15/15. |
+| R-4 | PASS, sweeps: SessionMessageQueueDeliveryVerificationTests 114/114. |
+| R-5 | PASS, sweeps: SessionMessageQueueServiceTests 25/25. |
+| R-6 | PASS, sweeps: ParkedMessageSweepServiceTests 9/9. |
+| R-7 | PASS, sweeps: AgentTaskDeliveryWatchdogTests 75/75. |
+| R-8 | PASS, native: SessionMessageQueueGrokPtyIntegrationTests 4/4, zero skips. |
+
+EF ran `dotnet ef migrations has-pending-model-changes --project server --no-build` with
+`OutputPath=bin-c501-f95bd1fe/`, `AppendTargetFrameworkToOutputPath=false`, disabled runner,
+supervision, channel bridge and Hangfire workers, runner URL `http://127.0.0.1:1` and a design-only
+database on port 1. No live queue or live database was modified, and no service was restarted.
+
+### Fresh base reproduction and timing
+
+At exact base `92fc5a55c8d03274cc6875ddd37a6e0cd3a18b19`, a separate build in
+`C:\Antiphon\verification\card0501\f95bd1fe-base` used `bin-c501-f95bd1fe-base/`.
+Each exact method filter below executed **one failed case**, with an identical error to Unit:
+
+- `/*/*/TestClassificationGuardTests/Registry_matches_compiled_metadata` (`base-classification`).
+- `/*/*/TestClassificationPolicyTests/C487_G068` (`base-classification-policy`).
+- `/*/*/TestLaneCategoryGuardTests/every_test_class_is_tagged_unit_xor_integration` (`base-lane-category`).
+- `/*/*/ScopedVerificationInstructionTests/C487_G142` (`base-stage-order`).
+
+The first three name unclassified HerdrPaneDisposalEndpointTests; the fourth expects obsolete
+Code-to-Mutation ordering. `baseline-comparison.json` records four exact error matches. The Unit
+skip remains `AgentTuiSecretProtectorTests.Restored_key_file_symlink_is_rejected_without_mutating_target`.
+
+Duration tripwire unlisted rows at least five seconds: Unit 15, queue 1, interpreter 1,
+specialist 1, native 2, sweeps 0, Pty 0. These are unchanged tests/classes; the changed wedged-head
+class retains its existing Slow metadata/registry. The queue outlier is
+`AgentTaskReuseEnqueueTests.A_grok_reuse_enqueue_queues_only_the_brief` at 27.489s.
+No timeout or assertion was loosened, no retry added and no timing baseline equivalence claimed.
+
+## Pending Mutation and remaining coverage bounds
+
+**No deliberate mutant ran in this pass.** Post-land SourceLanding Mutation owns all
+red/restore/fresh-build/green cycles and missing-control discovery. Pending inventory:
+
+- **PC-1:** pure replayed marker; queue Pending=false / interrupted Sent=true variants.
+- **PC-2:** previous-generation Pending retype, exact body replayed in history.
+- **PC-3:** previous-generation interrupted Sent revert/retype, exact body replayed in history.
+- **PC-4:** failure charging and third-failure park/unblock; include the inherited multi-row and
+  charge/handler crash-boundary coverage when discovering missing controls.
+- **PC-5:** captured-generation kill and Enter-only incident wording.
+- **PC-6:** untyped terminal Failed/Canceled/Succeeded variants and the orphan/live-row mixture.
+- **PC-7:** same-generation terminal-task composer preserved for recovery.
+- **PC-8:** Enqueue/SendNow/persisted Immediate stamps; named mutation must fail SendNow.
+- **Inherited F1/F3 control families:** remove held-composer hold (parked head); remove interrupted
+  cap (Flush/Sweep, repeated sweeps and mixed batch), with below-cap/late-confirm/relaunch contrasts.
+- **R2-PC-1:** lone capped crashed Sent discovery/parking.
+- **R2-PC-2:** all six direct/sweep shapes; CappedCrashedSent must fail under the narrowed selector.
+- **R2-PC-3:** abandoned interpretation exclusion and degraded-note persistence-failure methods.
+- **R2-PC-4:** missing reuse brief between commits, incident present/absent (true/false).
+- **R3-PC-1:** remove Pending discovery cap; direct post-parking candidate assertion, false/true.
+- **R3-PC-2:** remove NoSubmitOutput recovery disjunct; fresh complete-prompt case, false/true.
+- **R3-PC-3:** bypass Pending age/recovery condition; fresh ordinary Pending exclusion, false/true.
+
+R3 controls and exact method filters are in the plan. Historical local red/green statements in
+earlier sections do not discharge the commissioned post-land obligation. Controls remain
+method-scoped; no deliberate mutation is needed before ordinary Review.
+
+Remaining bounds are unchanged: real interpreter reasoning is replaced by direct task settlement;
+both missing generation and missing typing timestamp, an exception escaping Enter-only confirmation,
+collapsed-paste head absence, and capped crashed Sent on a dead session are not newly covered.
+Multi-row charging and the charge/handler crash boundary are covered by prior FollowUps, superseding
+the original report's gap for those shapes. F1-R3/F2-R3 leave no known unresolved finding in this scope.
+
+## Cleanup and next stage
+
+All owned builds, tests, model checks and cleanup commands completed. Removed **16** producer-owned
+outputs from the original worktree and **15** from the temporary base tree after validating exact
+paths, reparse absence and no executable process in those outputs. Removed the clean temporary
+base worktree. Inventories, cleanup results and output hashes remain in the external evidence root.
+Older output directories from prior tasks, including the original 31 under the caller's waiver,
+were not owned by this pass and were left intact. No automatic approval rejection occurred.
+
+Next: **ordinary read-only Review**. Original landing owner remains
+`326c349a-dd36-4adb-8ff6-fe533d91a73a`; restart after authorized publication: **server**.
+The caller records the companion verification obligation, lands the original Code task after
+Review and explicitly commissions SourceLanding Mutation. No land, deploy or restart occurred here.
