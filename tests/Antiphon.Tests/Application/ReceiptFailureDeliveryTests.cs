@@ -33,6 +33,112 @@ public class ReceiptFailureDeliveryTests
     public async Task Receipt_failure_recovers_the_same_queue_row_after_service_recreation(string cut) =>
         await VerifyDeliveryAsync(false, cut);
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Receipt_failure_before_enqueue_reports_the_lost_brief_after_service_recreation(bool busyCaller)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var (agentId, sessionId) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
+            schema.ConnectionString, workspace.Path);
+        var (_, callerId) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
+            schema.ConnectionString, workspace.Path);
+        var task = await ModelAvailabilityDispatcherTests.SeedQueuedTaskAsync(
+            schema.ConnectionString, workspace.Path, agentId, AgentModelLevel.High, "lost receipt-failure brief");
+        await using (var db = CreateContext(schema))
+        {
+            (await db.Agents.SingleAsync(a => a.Id == agentId)).ModelLevel = AgentModelLevel.High;
+            var stored = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            stored.Attempt = 3;
+            stored.ParentSessionId = callerId;
+            stored.ReplyTo = AgentTaskReplyTo.Session;
+            await db.SaveChangesAsync();
+        }
+        var clock = new OffsetClock();
+        var fault = new DeliveryFault(task.Id, "before-queue-commit");
+        Guid waitId;
+        await using (var producer = CreateProvider(schema, fault, clock))
+        {
+            var capacity = producer.GetRequiredService<CapacityRecoveryService>();
+            var wait = await capacity.EnsureWaitAsync(new CapacityWaitRegistration
+            {
+                ConsumerKey = $"task:{task.Id:N}", ConsumerKind = CapacityWaitConsumerKind.QueuedTask,
+                ExecutionKind = AgentKind.ClaudeCode, RequestedKind = AgentKind.ClaudeCode,
+                RequestedAlias = "opus", TaskId = task.Id, HoldAlreadyCleared = true,
+                BlockedAt = clock.GetUtcNow().UtcDateTime,
+            }, CancellationToken.None);
+            waitId = wait.Id;
+            (await capacity.GrantReadyAsync(CancellationToken.None)).ShouldBe(1);
+            using var scope = producer.CreateScope();
+            var result = await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+            result.Dispatched.ShouldBe(1);
+            result.Failures.ShouldBe(0);
+            fault.QueueThrows.ShouldBe(1);
+            fault.ReceiptThrows.ShouldBe(1);
+        }
+        await using var verify = CreateContext(schema);
+        (await verify.SessionQueuedMessages.CountAsync(m => m.ExecutionTaskId == task.Id)).ShouldBe(0);
+        (await verify.CapacityRecoveryWaits.AsNoTracking().SingleAsync(w => w.Id == waitId))
+            .State.ShouldBe(CapacityRecoveryWaitState.Admitted);
+        (await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id))
+            .Status.ShouldBe(AgentTaskStatus.Dispatched);
+
+        await using var recovered = CreateProvider(schema, null, clock);
+        await using var caller = new FakeAgentProtocolAdapter();
+        caller.OnSubmitted = async submitted =>
+        {
+            await BridgeQueueHarness.InsertEntryAsync(callerId, TranscriptKinds.UserPrompt, submitted,
+                timestamp: clock.GetUtcNow().UtcDateTime, connectionString: schema.ConnectionString);
+            await BridgeQueueHarness.InsertEntryAsync(callerId, TranscriptKinds.TurnEnd,
+                stopReason: TranscriptKinds.StopReasons.EndTurn, connectionString: schema.ConnectionString);
+        };
+        recovered.GetRequiredService<AgentSessionRuntime>().Register(callerId, caller);
+        if (busyCaller)
+            await BridgeQueueHarness.InsertEntryAsync(callerId, TranscriptKinds.AssistantText,
+                "caller is busy", connectionString: schema.ConnectionString);
+        clock.Advance(TimeSpan.FromMinutes(11));
+        using (var scope = recovered.CreateScope())
+            (await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
+                .FailNeverStartedAsync(CancellationToken.None)).ShouldBe(1);
+        var failed = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.Attempt.ShouldBe(3);
+        failed.AgentSessionId.ShouldBe(sessionId);
+        failed.ParentSessionId.ShouldBe(callerId);
+        failed.FailureReason.ShouldContain("never delivered");
+        var note = await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.SourceTaskId == task.Id);
+        note.AgentSessionId.ShouldBe(callerId);
+        note.ConversationKey.ShouldBe($"task:{task.Id:N}");
+        if (busyCaller)
+        {
+            note.Status.ShouldBe(QueuedMessageStatus.Pending);
+            caller.SubmittedBodies.ShouldBeEmpty();
+            await BridgeQueueHarness.InsertEntryAsync(callerId, TranscriptKinds.TurnEnd,
+                stopReason: TranscriptKinds.StopReasons.EndTurn, connectionString: schema.ConnectionString);
+            await recovered.GetRequiredService<SessionMessageQueueService>().OnTurnEndAsync(callerId, default);
+        }
+        var delivered = await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == note.Id);
+        delivered.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        delivered.SourceTaskId.ShouldBe(task.Id);
+        delivered.AgentSessionId.ShouldBe(callerId);
+        var submittedNote = caller.SubmittedBodies.ShouldHaveSingleItem();
+        submittedNote.ShouldContain("never delivered");
+        PromptSubmissionMatch.Normalize(submittedNote).ShouldBe(PromptSubmissionMatch.Normalize(note.Body));
+        var receipt = (await verify.TranscriptEntries.AsNoTracking().Where(t => t.AgentSessionId == callerId
+            && t.Kind == TranscriptKinds.UserPrompt).ToListAsync()).ShouldHaveSingleItem();
+        PromptSubmissionMatch.IsCompleteIn(note.Body, receipt.Text!).ShouldBeTrue();
+        receipt.Sequence.ShouldBeGreaterThan(delivered.LastDeliveryBaselineSequence ?? 0);
+        (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == sessionId
+            && t.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
+        (await recovered.GetRequiredService<CapacityRecoveryService>().CancelOrphanedWaitsAsync(default)).ShouldBe(1);
+        var ended = await verify.CapacityRecoveryWaits.AsNoTracking().SingleAsync(w => w.Id == waitId);
+        ended.TaskId.ShouldBe(task.Id);
+        ended.State.ShouldBe(CapacityRecoveryWaitState.Canceled);
+        ended.OutcomeReason.ShouldBe("task-terminal");
+        ended.AdmissionCount.ShouldBe(1);
+    }
+
     private static async Task VerifyDeliveryAsync(bool busy, string cut)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -228,6 +334,11 @@ public class ReceiptFailureDeliveryTests
                 .SingleOrDefault(e => e.Entity.ExecutionTaskId == taskId);
             if (queue is not null && QueueThrows == 0)
             {
+                if (cut == "before-queue-commit" && queue.State == EntityState.Added)
+                {
+                    QueueThrows++;
+                    throw new IOException("cut before brief insert commit");
+                }
                 if (cut == "prompt-accepted" && queue.Entity.DeliveryVerdict == DeliveryVerdict.Delivered)
                 {
                     QueueThrows++;
