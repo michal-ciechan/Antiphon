@@ -23,7 +23,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-public class AgentTaskDispatchBaseGuardTests
+public partial class AgentTaskDispatchBaseGuardTests
 {
     [Test]
     [Timeout(30_000)]
@@ -625,15 +625,19 @@ public class AgentTaskDispatchBaseGuardTests
     }
 
     private static async Task<AgentTask> SeedKeptSiblingAsync(
-        AppDbContext db, ScratchGitRepo repo, Guid cardId, string commitMessage)
+        AppDbContext db, ScratchGitRepo repo, Guid cardId, string commitMessage,
+        string? startRef = null, bool alias = false)
     {
         var id = Guid.NewGuid();
         var branch = $"feat/card-task-{DelegationReportFormatter.Short(id)}";
-        await repo.GitAsync("checkout", "-b", branch);
+        await repo.GitAsync("checkout", "-b", branch, startRef ?? "HEAD");
         var file = $"plan-{DelegationReportFormatter.Short(id)}.md";
-        await File.WriteAllTextAsync(Path.Combine(repo.Path, file), commitMessage + "\n");
-        await repo.GitAsync("add", file);
-        await repo.GitAsync("commit", "-m", commitMessage);
+        if (!alias)
+        {
+            await File.WriteAllTextAsync(Path.Combine(repo.Path, file), commitMessage + "\n");
+            await repo.GitAsync("add", file);
+            await repo.GitAsync("commit", "-m", commitMessage);
+        }
         await repo.GitAsync("checkout", "master");
 
         var task = new AgentTask
@@ -791,10 +795,14 @@ public class AgentTaskDispatchBaseGuardTests
         string connectionString,
         string worktreeBase,
         string defaultBranch = "master",
-        Func<Task>? onLeaseAcquired = null)
+        Func<Task>? onLeaseAcquired = null,
+        Microsoft.EntityFrameworkCore.Diagnostics.IInterceptor? interceptor = null,
+        LandDeliveryBoundary? boundary = null,
+        ILandingGit? git = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
+        if (git is not null) services.AddSingleton(git);
         if (onLeaseAcquired is not null)
         {
             // Registered BEFORE the graph so its TryAdd keeps this decorator. The hook fires once,
@@ -804,7 +812,11 @@ public class AgentTaskDispatchBaseGuardTests
             services.TryAddSingleton<ILandingGit, LandingGit>();
         }
 
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString));
+        services.AddDbContext<AppDbContext>(o =>
+        {
+            o.UseNpgsql(connectionString);
+            if (interceptor is not null) o.AddInterceptors(interceptor);
+        });
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton(Options.Create(new SupervisionSettings()));
@@ -828,7 +840,7 @@ public class AgentTaskDispatchBaseGuardTests
             DefaultBranch = defaultBranch,
         });
         services.AddSingleton<CompletionNoteFlushQueue>();
-        services.AddSingleton<LandDeliveryBoundary>();
+        services.AddSingleton<LandDeliveryBoundary>(boundary ?? new LandDeliveryBoundary());
         services.AddScoped<AgentTaskLandNotificationService>();
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentTaskDispatcher>();
