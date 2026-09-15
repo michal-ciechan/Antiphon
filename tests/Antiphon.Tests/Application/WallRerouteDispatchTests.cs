@@ -273,7 +273,9 @@ public class WallRerouteDispatchTests
         var task = await SeedQueuedOpusAsync(schema, workspace.Path);
         var (service, time, provider) = CapacityRecoveryTestSupport.CreateService(schema);
         await using var services = provider;
-        var wait = withWait ? await SeedWaitAsync(schema, task.Id, AgentKind.ClaudeCode, "opus") : null;
+        var wait = withWait ? await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+            $"task:{task.Id:N}", CapacityWaitConsumerKind.QueuedTask, taskId: task.Id,
+            holdAlreadyCleared: true), CancellationToken.None) : null;
         if (withWait)
             (await service.GrantReadyAsync(CancellationToken.None)).ShouldBe(1);
         var result = await CapacityRecoveryTaskTests.CreateDispatcher(schema.ConnectionString).TickAsync(CancellationToken.None);
