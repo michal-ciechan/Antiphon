@@ -18,7 +18,7 @@ namespace Antiphon.Tests.Application;
 [ClassDataSource<CommitEndpointWebAppFactory>(Shared = SharedType.PerClass)]
 [ParallelLimiter<ProcessSpawnLimit>]
 [Category("Integration")]
-public sealed class AgentTaskCommitEndpointTests
+public sealed partial class AgentTaskCommitEndpointTests
 {
     private readonly CommitEndpointWebAppFactory _factory;
 
@@ -247,6 +247,7 @@ public sealed class AgentTaskCommitEndpointTests
 public sealed class CommitEndpointWebAppFactory : AntiphonWebAppFactory
 {
     public RecordingGitWorkspaceService Spy { get; } = new();
+    public CommitChainBoundary Boundary { get; } = new();
 
     protected override void ApplyTestOverrides(IServiceCollection services)
     {
@@ -255,5 +256,24 @@ public sealed class CommitEndpointWebAppFactory : AntiphonWebAppFactory
             services.Remove(descriptor);
         services.RemoveAll<GitWorkspaceService>();
         services.AddGitWorkspaceService(Spy);
+        services.AddSingleton<LandDeliveryBoundary>(Boundary);
+        services.RemoveAll<Antiphon.Server.Application.Interfaces.IDelegateSessionStopper>();
+        services.AddSingleton<Antiphon.Server.Application.Interfaces.IDelegateSessionStopper, RecordingSessionStopper>();
+    }
+}
+
+public sealed class CommitChainBoundary : LandDeliveryBoundary
+{
+    public Guid? InterruptedTask { get; set; }
+    public bool Interrupted { get; private set; }
+    public override Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
+    {
+        if (boundary == "settlement-saved" && taskId == InterruptedTask)
+        {
+            InterruptedTask = null;
+            Interrupted = true;
+            throw new InvalidOperationException("C527 producer interrupted after durable settlement");
+        }
+        return Task.CompletedTask;
     }
 }

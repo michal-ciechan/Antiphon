@@ -211,6 +211,11 @@ public static class DelegationReportFormatter
 
         if (task.Workspace == WorkspaceMode.ReadOnly)
             sb.AppendLine("Do NOT modify any files. This is a read-only task — report findings only.").AppendLine();
+        else if (task.Workspace == WorkspaceMode.Shared && task.Role == AgentTaskRole.Commit
+            && task.ParentTaskId is not null && task.CommitOnSettle == CommitOnSettlePolicy.Never)
+            sb.AppendLine("Automatic commit-on-settle is disabled for this child to prevent recursion. "
+                + "You are explicitly authorized to commit the assigned paths through scripts/task-commit.ps1. "
+                + "Do NOT push. Report a gate refusal verbatim.").AppendLine();
         else if (task.Workspace == WorkspaceMode.Shared && task.CommitOnSettle == CommitOnSettlePolicy.Never)
             sb.AppendLine(DoNotCommitLine).AppendLine();
         else if (task.Workspace == WorkspaceMode.Shared

@@ -1541,10 +1541,34 @@ public sealed class AgentTaskReplyService
         string? git = null,
         Func<CancellationToken, Task>? afterPersist = null)
     {
+        // Reuse the durable outbox (also used by dispatch warnings). Its immutable body and
+        // source event commit with settlement and any spawned child, before queue insertion.
+        var durableCompletion = task.SourceLandingOperationId is null
+            && task.Workspace == WorkspaceMode.Shared
+            && (CommitOnSettleEligibility.IsEligible(task) || task.Role == AgentTaskRole.Commit)
+            && task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is not null;
+        if (durableCompletion)
+        {
+            var note = await BuildParentNoteAsync(task, report, ct, workspaceNote, warning, drift, git);
+            var source = db.ChangeTracker.Entries<AgentTaskEvent>()
+                .Where(e => e.State == EntityState.Added && e.Entity.AgentTaskId == task.Id)
+                .Select(e => e.Entity)
+                .First(e => e.Type is AgentTaskEventType.Completed or AgentTaskEventType.Failed or AgentTaskEventType.Blocked);
+            db.AgentTaskLandNotifications.Add(new AgentTaskLandNotification
+            {
+                Id = Guid.NewGuid(), TaskId = task.Id, SourceEventId = source.Id,
+                Kind = LandNotificationKind.TaskCompletion, ReplyTo = task.ReplyTo,
+                ParentSessionId = task.ParentSessionId, Body = note.Body,
+                ContentDigest = DelegationNoteDigest.Compute(report), CreatedAt = now, NextAttemptAt = now,
+                State = LandNotificationState.Queued,
+            });
+        }
         try
         {
             using var observation = new RuntimePhase(_logger, _timeProvider, task.AgentSessionId ?? Guid.Empty,
                 "settlement.save", task.Id);
+            if (services.GetService<LandDeliveryBoundary>() is { } beforeSave)
+                await beforeSave.ReachedAsync("settlement-before-save", task.Id, task.Id, ct);
             await db.SaveChangesAsync(ct);
             observation.Completed();
         }
@@ -1558,10 +1582,24 @@ public sealed class AgentTaskReplyService
                 DelegationReportFormatter.Short(task.Id), task.Status);
         }
 
+        if (services.GetService<LandDeliveryBoundary>() is { } saved)
+            await saved.ReachedAsync("settlement-saved", task.Id, task.Id, ct);
         if (afterPersist is not null)
             await afterPersist(ct);
 
-        await DeliverToParentAsync(task, report, ct, workspaceNote, warning, drift, git);
+        if (durableCompletion)
+        {
+            await using var deliveryScope = _scopeFactory.CreateAsyncScope();
+            var store = deliveryScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var notificationId = await store.AgentTaskLandNotifications.AsNoTracking()
+                .Where(n => n.TaskId == task.Id && n.Kind == LandNotificationKind.TaskCompletion
+                    && n.ContentDigest == DelegationNoteDigest.Compute(report))
+                .Select(n => n.Id).SingleAsync(ct);
+            await deliveryScope.ServiceProvider.GetRequiredService<AgentTaskLandNotificationService>()
+                .ReconcileAsync(notificationId, ct);
+        }
+        else
+            await DeliverToParentAsync(task, report, ct, workspaceNote, warning, drift, git);
         await PublishAsync(task, ct);
 
         if (!release)
@@ -1737,20 +1775,27 @@ public sealed class AgentTaskReplyService
         if (task.ReplyTo != AgentTaskReplyTo.Session || task.ParentSessionId is not Guid parentSession)
             return;
 
+        var note = await BuildParentNoteAsync(task, report, ct, workspaceNote, warning, drift, git);
+        await EnqueueParentNoteAsync(task, report, parentSession, note, ct);
+    }
+
+    private async Task<DelegationReportFormatter.Note> BuildParentNoteAsync(
+        AgentTask task, string report, CancellationToken ct, string? workspaceNote = null,
+        string? warning = null, string? drift = null, string? git = null)
+    {
         if (BlockedNote.IsQuestionBlock(task))
         {
             var bits = BlockedNote.Format(task, report, _settings);
             warning = string.IsNullOrWhiteSpace(warning) ? bits : warning.Trim() + "\n\n" + bits;
         }
 
-        using var observation = new RuntimePhase(_logger, _timeProvider, parentSession, "settlement.parent-note-enqueue");
         await using var factsScope = _scopeFactory.CreateAsyncScope();
         var factsDb = factsScope.ServiceProvider.GetRequiredService<AppDbContext>();
         var sessionLiveness = task.Status is AgentTaskStatus.Failed or AgentTaskStatus.Blocked
             && task.AgentSessionId is Guid sessionId
             ? await SessionLivenessAsync(factsDb, sessionId, ct)
             : null;
-        var note = DelegationReportFormatter.BuildCompletionNote(
+        return DelegationReportFormatter.BuildCompletionNote(
             task, _settings, report, workspaceNote, ReplyInlineMaxChars, warning,
             await DescribeOverlappingRunningAsync(task, ct), drift,
             ReportEvidenceHeader(task.ReportEvidence), git,
@@ -1758,6 +1803,12 @@ public sealed class AgentTaskReplyService
             PipelineHandoff.HeaderBit(task.Role, PipelineHandoff.TryParse(report)),
             await LandCompletionFacts.LoadAsync(factsScope.ServiceProvider.GetRequiredService<AppDbContext>(), task, ct),
             await LandCompletionFacts.LoadReviewAsync(factsDb, task, ct), sessionLiveness);
+    }
+
+    private async Task EnqueueParentNoteAsync(AgentTask task, string report, Guid parentSession,
+        DelegationReportFormatter.Note note, CancellationToken ct)
+    {
+        using var observation = new RuntimePhase(_logger, _timeProvider, parentSession, "settlement.parent-note-enqueue");
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
@@ -2968,21 +3019,12 @@ public sealed class AgentTaskReplyService
         if (git is null || gated is null || !await git.IsRepositoryAsync(repo, ct))
             return null;
 
-        var existing = await git.ListCommitsByGrepAsync(repo, task.Id.ToString("D"), 5, ct);
-        if (existing is { Count: > 0 })
-        {
-            var sha = existing[0].Sha;
-            var sha7 = sha.Length >= 7 ? sha[..7] : sha;
-            var existingFiles = await git.DiffTreePathsAsync(repo, sha, ct);
-            RecordCommitted(db, task, sha7, existingFiles, now);
-            return new CommitOnSettleNote($"committed:{sha7} ({existingFiles.Count} files)", null);
-        }
-
         var dirty = await git.TryGetChangesAsync(repo, ct);
         if (!dirty.Succeeded)
-            return null;
+            return new("commit refused: status inspection unavailable", "Git status could not be inspected; no commit attempted.");
         var dirtyPaths = dirty.Items
-            .Select(c => c.Path.Replace('\\', '/'))
+            .SelectMany(c => c.OldPath is null ? new[] { c.Path } : new[] { c.Path, c.OldPath })
+            .Select(p => p.Replace('\\', '/'))
             .Where(p => !p.Equals(".antiphon", StringComparison.OrdinalIgnoreCase)
                 && !p.StartsWith(".antiphon/", StringComparison.OrdinalIgnoreCase))
             .Distinct(StringComparer.Ordinal)
@@ -3021,6 +3063,24 @@ public sealed class AgentTaskReplyService
                 now));
             return new CommitOnSettleNote(
                 $"uncommitted:{dirtyPaths.Length} (commit-on-settle off)", offWarning);
+        }
+
+        // The dispatch generation and complete report distinguish this settlement from an
+        // earlier explicit/partial commit by the same task. The value is stable after a failed save.
+        var settlement = DelegationNoteDigest.Compute(
+            $"{task.Id:D}|{task.AgentSessionId:D}|{task.DispatchedAt:O}|{report}");
+        var existing = await git.FindSettlementCommitsAsync(repo, task.Id, settlement, ct);
+        if (!existing.Succeeded || existing.Items.Count > 1)
+            return new("commit refused: settlement identity unavailable", "Settlement recovery requires one exact identity; inspect git history.");
+        if (existing.Items.Count == 1)
+        {
+            var sha = existing.Items[0];
+            var existingFiles = await git.DiffTreePathsAsync(repo, sha, ct);
+            RecordCommitted(db, task, sha[..7], existingFiles, now);
+            var remaining = dirtyPaths.Length == 0 ? null
+                : $"{dirtyPaths.Length} dirty path(s) remain after recovered settlement, left as found: {string.Join(", ", dirtyPaths)}. Inspect before committing.";
+            return new($"committed:{sha[..7]} ({existingFiles.Count} files)"
+                + (remaining is null ? "" : $"; {dirtyPaths.Length} dirty path(s) left as found"), remaining);
         }
 
         if (dirtyPaths.Length == 0)
@@ -3071,6 +3131,7 @@ public sealed class AgentTaskReplyService
             ("antiphon", "true"),
             ("antiphon-task", task.Id.ToString("D")),
             ("antiphon-commit", "gated"),
+            ("antiphon-settlement", settlement),
         };
 
         var result = await gated.CommitAsync(repo, footprint, message, trailers, ct);
@@ -3199,14 +3260,21 @@ public sealed class AgentTaskReplyService
             }
         }
 
-        var upstream = await git.UpstreamShaAsync(task.RepoPath, ct);
-        if (upstream is not null
-            && !string.Equals(upstream, task.CommitBaselineSha, StringComparison.OrdinalIgnoreCase))
+        GitWorkspaceService.UpstreamSnapshot? baseline = null;
+        try { baseline = JsonSerializer.Deserialize<GitWorkspaceService.UpstreamSnapshot>(task.CommitUpstreamBaselineJson ?? "null"); }
+        catch (JsonException) { }
+        var upstream = await git.InspectUpstreamAsync(task.RepoPath, ct);
+        string? upstreamWarning = baseline?.Succeeded != true || !upstream.Succeeded
+            ? "upstream audit unavailable: a valid independent baseline and current inspection are required"
+            : baseline.Ref != upstream.Ref
+                ? $"upstream configuration changed: {baseline.Ref ?? "none"} -> {upstream.Ref ?? "none"}; child action is unproven"
+                : baseline.Sha != upstream.Sha
+                    ? $"upstream moved: {upstream.Ref} now {upstream.Sha?[..7]}; child action is unproven"
+                    : null;
+        if (upstreamWarning is not null)
         {
-            var sha7 = upstream.Length >= 7 ? upstream[..7] : upstream;
-            var pushed = $"pushed; origin moved to {sha7}";
-            db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, pushed, now));
-            lines.Add(pushed);
+            db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, upstreamWarning, now));
+            lines.Add(upstreamWarning);
         }
 
         return lines.Count == 0 ? null : string.Join("\n", lines);

@@ -48,6 +48,8 @@ internal static class DelegationTestServices
         services.AddOptions<global::Antiphon.SessionRunner.Contracts.GrokRulesSettings>();
         services.TryAddSingleton<GrokRulesRefreshService>();
         services.TryAddSingleton<GitWorkspaceService>();
+        services.TryAddSingleton<CompletionNoteFlushQueue>();
+        services.TryAddScoped<AgentTaskLandNotificationService>();
         services.AddOptions<DelegationSettings>();
         services.TryAddSingleton<IAgentReportStore, Antiphon.Server.Infrastructure.Files.AgentReportStore>();
         return services;

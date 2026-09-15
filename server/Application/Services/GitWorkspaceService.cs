@@ -877,6 +877,43 @@ public class GitWorkspaceService
     public Task<string?> UpstreamShaAsync(string workingDirectory, CancellationToken ct) =>
         RevParseAsync(workingDirectory, "@{u}", ct);
 
+    public sealed record UpstreamSnapshot(bool Succeeded, string? Ref, string? Sha);
+
+    public async Task<UpstreamSnapshot> InspectUpstreamAsync(string repo, CancellationToken ct)
+    {
+        var branch = await RunAsync(repo, ct, "symbolic-ref", "--quiet", "HEAD");
+        if (branch.Code == 1) return new(true, null, null); // Detached HEAD has no configured upstream.
+        if (branch.Code != 0) return new(false, null, null);
+        var reference = await RunAsync(repo, ct, "for-each-ref", "--format=%(upstream)", branch.Stdout.Trim());
+        if (reference.Code != 0) return new(false, null, null);
+        var name = reference.Stdout.Trim();
+        if (name.Length == 0) return new(true, null, null);
+        var sha = await RevParseAsync(repo, name, ct);
+        return new(sha is not null, name, sha);
+    }
+
+    /// <summary>Recovery accepts only the exact trailer block for this settlement, never prose mentioning a task.</summary>
+    public async Task<GitStrictList<string>> FindSettlementCommitsAsync(
+        string repo, Guid taskId, string settlement, CancellationToken ct)
+    {
+        var result = await RunAsync(repo, ct, "log", "--fixed-strings",
+            $"--grep=antiphon-settlement: {settlement}", "--format=%H");
+        if (result.Code != 0) return new(false, [], result.Code, result.Stderr);
+        var matches = new List<string>();
+        foreach (var sha in result.Stdout.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            var trailers = await RunAsync(repo, ct, "log", "-1", "--format=%(trailers:only,unfold)", sha);
+            if (trailers.Code != 0) return new(false, [], trailers.Code, trailers.Stderr);
+            var lines = trailers.Stdout.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            if (Exact("antiphon", "true") && Exact("antiphon-task", taskId.ToString("D"))
+                && Exact("antiphon-commit", "gated") && Exact("antiphon-settlement", settlement))
+                matches.Add(sha);
+            bool Exact(string key, string value) => lines.Count(l => l.StartsWith(key + ":", StringComparison.Ordinal)) == 1
+                && lines.Contains(key + ": " + value, StringComparer.Ordinal);
+        }
+        return new(true, matches, 0);
+    }
+
     protected internal virtual Task<(int Code, string Stdout, string Stderr)> RunAsync(
         string workingDirectory, CancellationToken ct, params string[] args) =>
         RunCoreAsync(workingDirectory, stdin: null, ct, args);
