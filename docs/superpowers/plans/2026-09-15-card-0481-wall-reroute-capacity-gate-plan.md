@@ -901,7 +901,7 @@ method-scoped red/restore/green cycle. Code executes no deliberate mutant.
 | PC | Deliberate defect | Intended ordinary target/variant and red |
 |---|---|---|
 | PC-18 | Omit the watchdog obligation insert | obligation-insert: atomic-pair/fault boundary is absent; other arms: missing obligation |
-| PC-19 | Commit Failed before adding the obligation | failed-committed: injected post-commit cut leaves zero obligations; obligation-insert: Failed escapes the failed pair write |
+| PC-19 | Commit Failed before adding the obligation | obligation-insert, both busy/eligible: Failed escapes the failed pair write. failed-committed remains ordinary recovery coverage; its interceptor is tied to the combined write, so do not claim it independently detects a newly split earlier commit |
 | PC-20 | Restrict obligation discovery to Dispatched owners; separately put it behind CheckEnabled | failed-committed and note-insert, both busy/eligible: no recovered queue row while task is Failed / checks disabled |
 | PC-21 | Omit sourceLandNotificationId on recovery enqueue | note-committed: duplicate row or wrong durable queue identity after recreation |
 | PC-22 | Accept Sent as outbox confirmation without whole UserPrompt | attempt-committed, both busy/eligible: AwaitingReceipt assertion fails before any submission |
@@ -929,3 +929,176 @@ Checkpoint a3f5340f6516b66d36865bc1be7c20c763f90158 built with 0 errors / 233
 existing warnings; T expanded 19/19 pass; U expanded 2460: 2455 pass, four known
 failures, one known skip. The completion-stamp compatibility fix follows this
 checkpoint; final I/U will use its fresh build. No timeout/assertion was loosened.
+
+## Round-3 F2 ordinary evidence (Code task 5e4076c9)
+
+F2 is repaired: final ordinary coverage is **2,905 expanded cases: 2,891 passed,
+13 unchanged inherited failures, one unchanged skip**. Every V except inherited-red
+V-12 passes. No R-n or V-7 exists. All 19 delivery cases pass, including the 12 added
+busy/eligible persistence cuts. F1 production code is unchanged and its V-14 passes.
+No deliberate mutant ran. Next: ordinary read-only Review.
+
+- Repair task: `5e4076c9`; original Code/landing owner: **00222dc7**.
+- Branch: `feat/card-task-5e4076c9`.
+- Exact worktree: `C:\Antiphon\worktrees\card-task-5e4076c9`.
+- Reviewed base: `df757a5ded14eabbc5cfe6b24ad50e478df93561`.
+- Final production/test source: `7e23a7a11f06a30e819e25f38a45e45f5d655493`.
+  The final evidence commit changes this plan only.
+- Evidence: `C:\Antiphon\worktrees\card-task-5e4076c9\.antiphon\c481r3-evidence`.
+- Restart target: **server**. No land, deployment or restart was performed.
+
+The implementation slice `a3f5340f6516b66d36865bc1be7c20c763f90158` and the final
+completion-stamp compatibility slice were committed/pushed before their builds.
+Final build: `dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c481r3/ --nologo`
+(`final-build.log`), **0 errors / 233 existing warnings**. Final I and U both reuse
+that same build with --no-build, with no production/test edits during or after the runs.
+
+### Actual commands and expanded results
+
+Common invocation:
+
+```powershell
+dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c481r3/ -- --treenode-filter '<filter>' --report-trx --report-trx-filename '<lane>.trx' --results-directory '.antiphon/c481r3-evidence/<fresh-directory>'
+```
+
+- **I**: `/*/*/(WallRerouteDispatchTests*)|(CapacityWaitOrphanSweepTests*)|(ComplexityWallRerouteTests*)|(CapacityRecoveryTaskTests*)|(CapacityRecoveryGrantLivenessTests*)|(CapacityRecoveryAttentionTests*)|(CapacityRecoveryCompatibilityTests*)|(CapacityRecoverySupervisionTests*)|(RoutingPinCandidateDispatchTests*)|(ModelAvailabilityDispatcherTests*)|(ApiErrorRecoveryServiceTests*)|(AgentTaskReplyIntegrationTests*)|(CapacityRecoveryAcceptanceTests*)|(ReceiptFailureDeliveryTests*)|(AgentTaskDeliveryWatchdogTests*)|(AgentTaskDispatchFailureTests*)|(AgentTaskLandReceiptTests*)|(AgentTaskLandNotificationRecoveryTests*)|(AgentTaskLandNotificationPersistenceTests*)|(DispatchBaseNotificationTests*)/*`
+- **U**: `/*/*/*/*[Category=Unit]`
+- **T**: `/*/*/ReceiptFailureDeliveryTests/*`
+- **B**: `/*/*/*/(Registry_matches_compiled_metadata*)|(C487_G142*)|(C487_G068*)|(every_test_class_is_tagged_unit_xor_integration*)|(Non_chain_task_fails_on_Fable_5_as_today*)|(Required_pinned_task_is_untouched_on_a_Fable_5_wall*)|(Claude_production_shape_session_limit_uses_AssistantText_not_the_6h_fallback*)|(Codex_TurnEnd_text_without_AssistantText_still_parses_session_limit*)|(Empty_wall_adopt_is_repaired_when_a_later_call_supplies_the_real_text*)|(Fable_5_stub_writes_a_fallback_hold_and_does_not_enqueue*)|(Grok_402_stub_writes_a_fallback_hold_for_grok_4_6_and_never_enqueues*)|(Session_limit_stub_schedules_one_resume_at_reset_plus_padding*)|(Wall_parks_after_three_deaths*)`
+
+B uses `bin-c481r3base/` at the untouched reviewed base in detached worktree
+`C:\Antiphon\worktrees\card-task-5e4076c9-base`. T and checkpoint U verified
+a3f5340f; final I/U verify 7e23a7a1. Every intended class/method and expansion was
+checked in fresh TRX. `filters.json`, `summarize.py`, `verify-matrix.py`,
+`verification-matrix.json`, lane summaries, `baseline-comparison.json`, and the
+SHA-256 `trx-manifest.json` retain the full execution inventory.
+
+| Run | Actual expanded outcome | Duration | TRX relative to evidence root |
+|---|---|---|---|
+| T checkpoint | 19/19 pass | 47.681 s | target/target.trx |
+| U checkpoint | 2,460: 2,455 pass / 4 inherited fail / 1 skip | 131.054 s | unit/unit.trx |
+| B unchanged reviewed base | 13/13 inherited fail | 75.410 s | baseline/baseline.trx |
+| I final | 445: 436 pass / 9 inherited fail | 615.992 s | integration/integration.trx |
+| U final | 2,460: 2,455 pass / 4 inherited fail / 1 skip | 121.632 s | unit-final/unit.trx |
+
+### Coverage-to-class: final I
+
+| Class | Actual expanded outcome |
+|---|---|
+| AgentTaskDeliveryWatchdogTests | 75: 75 pass / 0 fail |
+| AgentTaskDispatchFailureTests | 15: 15 pass / 0 fail |
+| AgentTaskLandNotificationPersistenceTests | 9: 9 pass / 0 fail |
+| AgentTaskLandNotificationRecoveryTests | 21: 21 pass / 0 fail |
+| AgentTaskLandReceiptTests | 30: 30 pass / 0 fail |
+| AgentTaskReplyIntegrationTests | 128: 128 pass / 0 fail |
+| ApiErrorRecoveryServiceTests | 36: 29 pass / 7 fail |
+| CapacityRecoveryAcceptanceTests | 15: 15 pass / 0 fail |
+| CapacityRecoveryAttentionTests | 3: 3 pass / 0 fail |
+| CapacityRecoveryCompatibilityTests | 4: 4 pass / 0 fail |
+| CapacityRecoveryGrantLivenessTests | 12: 12 pass / 0 fail |
+| CapacityRecoverySupervisionTests | 6: 6 pass / 0 fail |
+| CapacityRecoveryTaskTests | 6: 6 pass / 0 fail |
+| CapacityWaitOrphanSweepTests | 6: 6 pass / 0 fail |
+| ComplexityWallRerouteTests | 11: 9 pass / 2 fail |
+| DispatchBaseNotificationTests | 20: 20 pass / 0 fail |
+| ModelAvailabilityDispatcherTests | 3: 3 pass / 0 fail |
+| ReceiptFailureDeliveryTests | 19: 19 pass / 0 fail |
+| RoutingPinCandidateDispatchTests | 11: 11 pass / 0 fail |
+| WallRerouteDispatchTests | 15: 15 pass / 0 fail |
+
+### Every V / R outcome
+
+| ID | Actual ordinary outcome | Shared command |
+|---|---|---|
+| V-1 | PASS, 1 | I |
+| V-2 | PASS, 1 | I |
+| V-3 | PASS, 1 | I |
+| V-4 | PASS, 1 | I |
+| V-5 | PASS, 2 | I |
+| V-5b | PASS, 1 | I |
+| V-6 | PASS, 1 | I |
+| V-6b | PASS, 1 | I |
+| V-6c | PASS, 1 | I |
+| V-8 | PASS, 3 | I |
+| V-9 | PASS, 1 | I |
+| V-10 | PASS, 1 | I |
+| V-10b | PASS, 1 | I |
+| V-11 | PASS, 2 | I |
+| V-13 | PASS, 1 | I |
+| V-14 | PASS, 1 | I |
+| V-15 | PASS, 2 | I |
+| V-16 | PASS, 3 | I |
+| V-18 | PASS, 12 | I |
+| V-17 | PASS, 2 | I |
+| guard-PC-11 | PASS, 1 | I |
+| V-12 | INHERITED RED: I 9 fail; U 4 fail / 1 skip; B independently reproduced all 13 | I + U + B |
+
+No R-n or V-7 is defined. The existing PC-11 ordinary guard also passes in I.
+All final failures match B by exact class/method identity. Eleven assertion messages
+match exactly; Fable/Grok fallback-hold messages differ only in timestamp values,
+retaining the same subsecond precision failure. Exact failure names:
+
+- `Antiphon.Tests.Application.ScopedVerificationInstructionTests.C487_G142`.
+- `Antiphon.TestSupport.TestClassificationGuardTests.Registry_matches_compiled_metadata`.
+- `Antiphon.Tests.TestHelpers.TestClassificationPolicyTests.C487_G068`.
+- `Antiphon.Tests.TestHelpers.TestLaneCategoryGuardTests.every_test_class_is_tagged_unit_xor_integration`.
+- `Antiphon.Tests.Application.ComplexityWallRerouteTests.Non_chain_task_fails_on_Fable_5_as_today`.
+- `Antiphon.Tests.Application.ComplexityWallRerouteTests.Required_pinned_task_is_untouched_on_a_Fable_5_wall`.
+- `Antiphon.Tests.Application.ApiErrorRecoveryServiceTests.Session_limit_stub_schedules_one_resume_at_reset_plus_padding`.
+- `Antiphon.Tests.Application.ApiErrorRecoveryServiceTests.Claude_production_shape_session_limit_uses_AssistantText_not_the_6h_fallback`.
+- `Antiphon.Tests.Application.ApiErrorRecoveryServiceTests.Codex_TurnEnd_text_without_AssistantText_still_parses_session_limit`.
+- `Antiphon.Tests.Application.ApiErrorRecoveryServiceTests.Empty_wall_adopt_is_repaired_when_a_later_call_supplies_the_real_text`.
+- `Antiphon.Tests.Application.ApiErrorRecoveryServiceTests.Fable_5_stub_writes_a_fallback_hold_and_does_not_enqueue`.
+- `Antiphon.Tests.Application.ApiErrorRecoveryServiceTests.Grok_402_stub_writes_a_fallback_hold_for_grok_4_6_and_never_enqueues`.
+- `Antiphon.Tests.Application.ApiErrorRecoveryServiceTests.Wall_parks_after_three_deaths`.
+
+The unchanged skip is
+`AgentTuiSecretProtectorTests.Restored_key_file_symlink_is_rejected_without_mutating_target`.
+No inherited failure was repaired or relabeled passing.
+
+Duration tripwire exits 1: final I **18** unlisted >=5-second rows; final U **40**;
+checkpoint T **19**. All final I slow rows are existing tests. The 19 delivery rows
+in final I are **1.260–2.719 s**, with zero over five seconds. Checkpoint T includes
+43.742–45.668 s lazy shared fixture startup; its duration is retained as measured.
+No timeout, assertion, or slow-test allowlist was widened.
+
+### Pending Mutation and remaining limits
+
+**Every PC-1 through PC-25 and every named variant remains pending**, using the
+exact-method targets in the prior inventory and the F2 table above. This includes
+PC-14 enqueue/busy-gate variants, PC-15 queue/attempt cuts, PC-16 prompt acceptance,
+PC-17 both callers, PC-18..25 all listed persistence/caller/stamp variants, and
+PC-20's two independent discovery defects. Mutation owns red/restore/green and
+missing-control discovery after explicit post-land SourceLanding commissioning.
+
+PC-19's intended red is the obligation-insert atomic rollback guard. The
+failed-committed interceptor observes the existing combined write, so its boundary
+must not be represented as independently detecting a newly split earlier task-only
+commit. All prior native/cold-launch/early-transcript, retained-return redemption
+and concurrent sweep/redemption gaps remain. The new cases use real PostgreSQL and
+queue recovery with a fake adapter and service recreation, not abrupt worker death
+or live native/provider ingestion. Existing generic outbox tests cover other kinds;
+this repair does not add DeliveryFailure-specific hosted pagination or retention
+cases. Historical Failed tasks without an outbox row are not backfilled. The shared
+attention projection still uses its land-notification category/wording for this
+new outbox kind; no attention-specific guard was added here.
+
+The caller owns ordinary Review, integration through original landing owner
+**00222dc7**, the companion verification obligation, publication/activation and
+the post-land capacity-wait census. Do not land this repair directly.
+
+### Command settlement and output cleanup
+
+All owned build/test commands finished; no owned test run remains active. Both
+`dotnet clean` commands succeeded with zero errors. Automatic approval review
+rejected baseline directory cleanup, then explicit baseline file removal, and
+primary checked nonrecursive cleanup. Its only stated reason was **blocked by
+policy**. No alternative deletion mechanism was used after these rejections.
+
+Cleanup therefore remains incomplete: **15 primary output directories / 56 residual
+files**, and **15 baseline output directories / 23 residual files** remain. Exact
+paths are in `owned-output.txt`, `base-owned-output.txt`, both clean inventories,
+`output-cleanup.json` and `base-output-cleanup.json`. The detached baseline worktree
+is retained at its unchanged base SHA. Queue-race child logs/results were copied to
+`queue-race-children` outside the output directories. All raw TRX, logs and evidence
+remain available for Review; the source worktree has no uncommitted source changes.
