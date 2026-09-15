@@ -13,6 +13,7 @@ public partial class AgentTaskReplyIntegrationTests
 {
     [Test]
     [Arguments("repository")]
+    [Arguments("repository-negative")]
     [Arguments("status")]
     public async Task C527_retry_prerequisite_failure_preserves_commit_until_complete_parent_receipt(string inspection)
     {
@@ -40,11 +41,13 @@ public partial class AgentTaskReplyIntegrationTests
         };
         spy.OverrideRun = args =>
         {
-            if (!(inspection == "repository" ? args.Contains("--is-inside-work-tree") : args[0] == "status"))
+            if (!(inspection.StartsWith("repository", StringComparison.Ordinal) ? args.Contains("--is-inside-work-tree") : args[0] == "status"))
                 return null;
             recoveredBeforeFailure.ShouldBeTrue();
             failures++;
-            return (128, "", "retry prerequisite unavailable");
+            return (128, "", inspection == "repository-negative"
+                ? "fatal: not a git repository (or any of the parent directories): .git"
+                : "retry prerequisite unavailable");
         };
         for (var attempt = 1; attempt <= 2; attempt++)
         {
