@@ -1391,3 +1391,208 @@ by V-20/V-21. Other prior limits remain: native ingestion/abrupt worker death,
 cold launch/early transcript, retained return, sweep/redemption races, DeliveryFailure
 hosted pagination/retention/attention and historical no-outbox backfill. Live census
 and server activation remain caller-owned.
+
+
+## Round-6 F4 ordinary evidence (Code task 7f3e581c)
+
+F4 is covered: six new recovery identity cases pass. Ordinary verification is complete:
+**2,913 cases, 2,899 passed, 13 independently baseline-reproduced failures, one unchanged skip**.
+Every V ID other than inherited-red V-12 passes. Next: ordinary read-only Review.
+
+- Tested commit: `097adef84239a6ec4cb700285c6e871f2bebd46e`; final evidence commit changes this plan only.
+- Repair branch: `feat/card-task-7f3e581c`.
+- Exact worktree: `C:\Antiphon\worktrees\card-task-7f3e581c`.
+- Original Code/landing owner: **00222dc7**. Restart target: **server** for the accumulated implementation.
+- Subject: `fee656059ae3c066048d05d154ba1ca03a582b9e`; F1/F2/F3 production code is unchanged.
+- Untouched baseline: `bc2d2715de0ec4ea684f74489d88e288d327e053` in `C:\Antiphon\worktrees\card-task-7f3e581c-base`.
+- Evidence root: `C:\Antiphon\worktrees\card-task-7f3e581c\.antiphon\c481r6-evidence`.
+
+The implementation/test slice was committed and pushed before verification. One primary build
+used `dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c481r6/ --nologo`:
+**0 errors / 233 warnings**, 73.01 s. One separate baseline build used `bin-c481r6base/`:
+**0 errors / 233 warnings**, 197.70 s. Every test invocation used `--no-build`.
+No source changed under a test run. No deliberate mutant, land, deployment or restart ran.
+
+### Commands and actual expanded outcomes
+
+Common invocation (use a new results directory when rerunning):
+
+```powershell
+dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c481r6/ -- --treenode-filter "<filter>" --report-trx --report-trx-filename "<lane>.trx" --results-directory "<fresh-results>"
+```
+
+B uses the untouched baseline worktree and `bin-c481r6base/`. Outputs have been removed;
+rebuild before rerunning. Full argv, cwd, SHA, start/end, native exit and duration are in
+`f4-command.json`, `integration-command.json`, `unit-command.json`, `baseline-command.json`.
+
+- **T**: `/*/*/AgentTaskLandNotificationRecoveryTests/(C481_Recovery_rejects_a_keyed_row_with_a_different_destination*)|(C481_Recovery_rejects_a_keyed_row_with_a_different_digest*)`
+- **I**: `/*/*/(WallRerouteDispatchTests*)|(CapacityWaitOrphanSweepTests*)|(ComplexityWallRerouteTests*)|(CapacityRecoveryTaskTests*)|(CapacityRecoveryGrantLivenessTests*)|(CapacityRecoveryAttentionTests*)|(CapacityRecoveryCompatibilityTests*)|(CapacityRecoverySupervisionTests*)|(RoutingPinCandidateDispatchTests*)|(ModelAvailabilityDispatcherTests*)|(ApiErrorRecoveryServiceTests*)|(AgentTaskReplyIntegrationTests*)|(CapacityRecoveryAcceptanceTests*)|(ReceiptFailureDeliveryTests*)|(AgentTaskDeliveryWatchdogTests*)|(AgentTaskDispatchFailureTests*)|(AgentTaskLandReceiptTests*)|(AgentTaskLandNotificationRecoveryTests*)|(AgentTaskLandNotificationPersistenceTests*)|(DispatchBaseNotificationTests*)/*`
+- **U**: `/*/*/*/*[Category=Unit]`
+- **B**: `/*/*/*/(Registry_matches_compiled_metadata*)|(C487_G142*)|(C487_G068*)|(every_test_class_is_tagged_unit_xor_integration*)|(Non_chain_task_fails_on_Fable_5_as_today*)|(Required_pinned_task_is_untouched_on_a_Fable_5_wall*)|(Claude_production_shape_session_limit_uses_AssistantText_not_the_6h_fallback*)|(Codex_TurnEnd_text_without_AssistantText_still_parses_session_limit*)|(Empty_wall_adopt_is_repaired_when_a_later_call_supplies_the_real_text*)|(Fable_5_stub_writes_a_fallback_hold_and_does_not_enqueue*)|(Grok_402_stub_writes_a_fallback_hold_for_grok_4_6_and_never_enqueues*)|(Session_limit_stub_schedules_one_resume_at_reset_plus_padding*)|(Wall_parks_after_three_deaths*)|(a_git_timeout_fails_one_task_not_the_tick*)`
+
+| Run | Expanded outcomes | Command wall seconds | TRX under evidence root |
+|---|---|---|---|
+| T | 6: 6 Passed | 139.820 | f4/f4.trx |
+| I | 453: 444 Passed, 9 Failed | 939.471 | integration/integration.trx |
+| U | 2460: 2455 Passed, 1 NotExecuted, 4 Failed | 112.515 | unit/unit.trx |
+| B | 14: 14 Failed | 38.705 | baseline/baseline.trx |
+
+T is additional targeted evidence; the ordinary total counts I + U once.
+Fresh TRX inspection found exactly all twenty intended integration classes and all expected
+method expansions. `verification-matrix.json` includes each V method, variants and outcomes;
+`trx-manifest.json` records all four TRX SHA-256 hashes.
+
+### Coverage-to-class: actual I
+
+| Class | Passed / failed / total |
+|---|---|
+| AgentTaskDeliveryWatchdogTests | 75 / 0 / 75 |
+| AgentTaskDispatchFailureTests | 15 / 0 / 15 |
+| AgentTaskLandNotificationPersistenceTests | 9 / 0 / 9 |
+| AgentTaskLandNotificationRecoveryTests | 27 / 0 / 27 |
+| AgentTaskLandReceiptTests | 30 / 0 / 30 |
+| AgentTaskReplyIntegrationTests | 128 / 0 / 128 |
+| ApiErrorRecoveryServiceTests | 29 / 7 / 36 |
+| CapacityRecoveryAcceptanceTests | 15 / 0 / 15 |
+| CapacityRecoveryAttentionTests | 3 / 0 / 3 |
+| CapacityRecoveryCompatibilityTests | 4 / 0 / 4 |
+| CapacityRecoveryGrantLivenessTests | 12 / 0 / 12 |
+| CapacityRecoverySupervisionTests | 6 / 0 / 6 |
+| CapacityRecoveryTaskTests | 6 / 0 / 6 |
+| CapacityWaitOrphanSweepTests | 6 / 0 / 6 |
+| ComplexityWallRerouteTests | 9 / 2 / 11 |
+| DispatchBaseNotificationTests | 20 / 0 / 20 |
+| ModelAvailabilityDispatcherTests | 3 / 0 / 3 |
+| ReceiptFailureDeliveryTests | 21 / 0 / 21 |
+| RoutingPinCandidateDispatchTests | 11 / 0 / 11 |
+| WallRerouteDispatchTests | 15 / 0 / 15 |
+
+### Every V / R outcome
+
+| ID | Actual ordinary outcome | Command |
+|---|---|---|
+| V-1 | PASS, 1 expanded cases | I |
+| V-2 | PASS, 1 expanded cases | I |
+| V-3 | PASS, 1 expanded cases | I |
+| V-4 | PASS, 1 expanded cases | I |
+| V-5 | PASS, 2 expanded cases | I |
+| V-5b | PASS, 1 expanded cases | I |
+| V-6 | PASS, 1 expanded cases | I |
+| V-6b | PASS, 1 expanded cases | I |
+| V-6c | PASS, 1 expanded cases | I |
+| V-8 | PASS, 3 expanded cases | I |
+| V-9 | PASS, 1 expanded cases | I |
+| V-10 | PASS, 1 expanded cases | I |
+| V-10b | PASS, 1 expanded cases | I |
+| V-11 | PASS, 2 expanded cases | I |
+| V-13 | PASS, 1 expanded cases | I |
+| V-14 | PASS, 1 expanded cases | I |
+| V-15 | PASS, 2 expanded cases | I |
+| V-16 | PASS, 3 expanded cases | I |
+| V-20 | PASS, 3 expanded cases | I |
+| V-21 | PASS, 3 expanded cases | I |
+| V-19 | PASS, 2 expanded cases | I |
+| V-18 | PASS, 12 expanded cases | I |
+| V-17 | PASS, 2 expanded cases | I |
+| guard-PC-11 | PASS, 1 expanded cases | I |
+| V-12 | INHERITED RED: I 9 + U 4 reproduced by B; unchanged Unit skip | I + U + B |
+
+All **24 V IDs** and the ordinary PC-11 guard are accounted for. The plan defines no R-n
+or V-7. V-20/V-21 each execute Running, Stopped and Failed, both in T and I.
+
+### Baseline comparison and timing
+
+B executed the thirteen inherited failures plus the previously observed Git-timeout method:
+**14/14 failed**. All thirteen current failures reproduced: eleven messages match exactly;
+Fable/Grok fallback-hold messages differ only in timestamps and retain the same fractional-
+second mismatch. No other message difference or unexplained current failure remains.
+
+Current failing methods (full assertions in the per-lane summaries and baseline comparison):
+
+- `Antiphon.Tests.Application.ComplexityWallRerouteTests.Required_pinned_task_is_untouched_on_a_Fable_5_wall`.
+- `Antiphon.Tests.Application.ComplexityWallRerouteTests.Non_chain_task_fails_on_Fable_5_as_today`.
+- `Antiphon.Tests.Application.ApiErrorRecoveryServiceTests.Wall_parks_after_three_deaths`.
+- `Antiphon.Tests.Application.ApiErrorRecoveryServiceTests.Claude_production_shape_session_limit_uses_AssistantText_not_the_6h_fallback`.
+- `Antiphon.Tests.Application.ApiErrorRecoveryServiceTests.Grok_402_stub_writes_a_fallback_hold_for_grok_4_6_and_never_enqueues`.
+- `Antiphon.Tests.Application.ApiErrorRecoveryServiceTests.Fable_5_stub_writes_a_fallback_hold_and_does_not_enqueue`.
+- `Antiphon.Tests.Application.ApiErrorRecoveryServiceTests.Empty_wall_adopt_is_repaired_when_a_later_call_supplies_the_real_text`.
+- `Antiphon.Tests.Application.ApiErrorRecoveryServiceTests.Codex_TurnEnd_text_without_AssistantText_still_parses_session_limit`.
+- `Antiphon.Tests.Application.ApiErrorRecoveryServiceTests.Session_limit_stub_schedules_one_resume_at_reset_plus_padding`.
+- `Antiphon.TestSupport.TestClassificationGuardTests.Registry_matches_compiled_metadata`.
+- `Antiphon.Tests.Application.ScopedVerificationInstructionTests.C487_G142`.
+- `Antiphon.Tests.TestHelpers.TestLaneCategoryGuardTests.every_test_class_is_tagged_unit_xor_integration`.
+- `Antiphon.Tests.TestHelpers.TestClassificationPolicyTests.C487_G068`.
+
+`AgentTaskDispatchFailureTests.a_git_timeout_fails_one_task_not_the_tick` passed in I
+(13.212 s), but hit its existing 30-second timeout in B (30.163 s). This is the prior
+intermittent fourteenth failure, absent from the current ordinary failure set. No timeout,
+assertion, retry or allowlist was changed. The unchanged Unit skip is
+`AgentTuiSecretProtectorTests.Restored_key_file_symlink_is_rejected_without_mutating_target`.
+
+Duration tripwire: **T 2, I 17, U 21** unlisted rows at or above five seconds (exit 1).
+Two T F4 rows took 102.557 and 12.025 s; all six F4 rows in I took 0.713-1.652 s.
+The primary test and separate baseline build overlapped during T, and another test process
+was observed then; timings are observations, not an isolated benchmark. I took 15m23.888s
+inside the runner, U 1m49.592s, T 2m08.152s, B 35.789s. A read-only stack and test-owned
+PostgreSQL activity snapshot during I showed continued work; both diagnostic commands ended.
+
+### Pending Mutation inventory
+
+Every PC and named variant remains **pending**. No red/restore/green cycle ran.
+Mutation owns exact-method controls and missing-control discovery after ordinary Review,
+original-owner landing, companion recording and explicit SourceLanding commissioning.
+
+| PC | Pending target / variants |
+|---|---|
+| PC-1 | V-1 and V-3: remove kind scope plus requeue supersession |
+| PC-2 | V-1 and V-2 red; V-3 isolates kind scope from supersession |
+| PC-3 | V-4: disable rewalk supersession |
+| PC-4 | V-5 old-candidate false arm; already-chosen true control |
+| PC-5 | V-6b red; V-6 unchanged-reason control |
+| PC-6 | V-8 Stopped, Failed, missing-session arms |
+| PC-7 | V-9 Succeeded, Failed, Canceled, missing-task owners |
+| PC-8 | V-10 Blocked, live-owner and excluded-consumer controls |
+| PC-9 | V-11 withWait true/false |
+| PC-10 | V-6 omitted counter |
+| PC-11 | Repeated_model_hold_persists_the_new_wait_without_duplicate_trace omitted SaveChanges |
+| PC-12 | V-13 unwrapped receipt catch |
+| PC-13 | V-14 abandoned-wait detachment |
+| PC-14 | V-15 busy/eligible; enqueue-removal and busy-gate defects |
+| PC-15 | V-16 queue-committed and attempt-committed |
+| PC-16 | V-16 prompt-accepted late-confirm |
+| PC-17 | V-17 busy/eligible keyed failure-note delivery |
+| PC-18 | V-18 obligation omission; obligation-insert and other persistence cuts, busy/eligible |
+| PC-19 | V-18 obligation-insert atomic rollback, busy/eligible; failed-committed does not independently detect a newly split earlier commit |
+| PC-20 | V-18 failed-committed/note-insert, busy/eligible; Dispatched-only and CheckEnabled gating are separate defects |
+| PC-21 | V-18 note-committed key omission, busy/eligible |
+| PC-22 | V-18 attempt-committed false receipt, busy/eligible |
+| PC-23 | V-18 prompt-accepted late-confirm, busy/eligible |
+| PC-24 | V-18 failed-committed/note-insert truncated body, busy/eligible |
+| PC-25 | V-18 failed-committed/note-insert/note-committed completion stamp, busy/eligible |
+| PC-26 | V-19 Stopped/Failed; move rediscovery below terminal guard; Confirmed assertion must observe DestinationUnavailable |
+| PC-27 | `/*/*/AgentTaskLandNotificationRecoveryTests/C481_Recovery_rejects_a_keyed_row_with_a_different_destination` - Remove only `existing.AgentSessionId != session` from the recovery comparison; leave digest validation intact. Running/Stopped/Failed variants must fail the no-link assertion (and would otherwise accept the complete receipt). |
+| PC-28 | `/*/*/AgentTaskLandNotificationRecoveryTests/C481_Recovery_rejects_a_keyed_row_with_a_different_digest` - Remove only `existing.ContentDigest != note.ContentDigest`; leave destination validation intact. Running/Stopped/Failed variants must fail the no-link assertion, with matching body preventing a different guard from detecting this defect. |
+
+F4 closes the previously listed recovered-row destination/digest negative-test gap.
+Remaining limits: adversarial stored identity and fake adapters with real queue/PostgreSQL;
+native ingestion/abrupt worker death, cold-launch/early-transcript, retained-return and
+sweep/redemption races; DeliveryFailure hosted pagination, retention and attention projection;
+historical Failed tasks without an outbox are not backfilled. V-19 is the existing matching-
+identity receipt control. Live post-land census remains caller-owned after server activation.
+
+### Command settlement and cleanup
+
+Every owned build, test and diagnostic command completed. The guarded output inventory
+confirmed all paths were under the two assigned roots, absent before their producer build,
+and contained no reparse points; no executable from either worktree remained active.
+**All 30 alternate output directories were removed; zero remain.** Queue-race child evidence
+was copied first to `queue-race-children`. `output-cleanup-inventory.json`, `output-cleanup.json`
+and the cleanup log retain the removal evidence. Initial cleanup dry runs encountered an
+empty-file handling error before any deletion; the final validated cleanup completed.
+Raw logs/TRX/JSON remain under the evidence root; the unchanged detached baseline checkout
+is retained. No inherited worktree/output from an earlier task was deleted.
+
+Caller: commission ordinary read-only Review of this repair and its evidence. Preserve
+**00222dc7** as landing owner; record the companion verification obligation and handle
+integration/publication/server activation, then explicitly commission SourceLanding Mutation.
+Code does not land this branch.
