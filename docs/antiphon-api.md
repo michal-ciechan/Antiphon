@@ -254,6 +254,10 @@ GET    /api/agent-tasks                      list. Query: rootId, status (comma 
                                              CompletedAt. Omitting every filter returns the full
                                              table — scripts and `delegate.ps1` depend on that.
 GET    /api/agent-tasks/{id}                 {id} accepts the 8-char short id.
+                                             `session` is read-time liveness: sessionId,
+                                             status, working, lastSeenAt, endedAt,
+                                             lastTranscriptAt. Null without a session row.
+                                             Working is transcript-derived for Running sessions.
                                              Blocked tasks include `blocked`
                                              (`BlockedContextDto`): kind, round,
                                              isolated question, prior rounds,

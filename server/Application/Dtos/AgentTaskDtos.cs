@@ -260,6 +260,10 @@ public sealed record AgentTaskListSummaryDto(
     decimal TotalCostUsd,
     IReadOnlyDictionary<string, int> ByStatus);
 
+public sealed record AgentTaskSessionDto(
+    Guid SessionId, SessionStatus Status, bool Working, DateTime LastSeenAt,
+    DateTime? EndedAt, DateTime? LastTranscriptAt);
+
 public sealed record AgentTaskDetailDto(
     AgentTaskSummaryDto Summary,
     string Goal,
@@ -315,7 +319,8 @@ public sealed record AgentTaskDetailDto(
     string? WorktreeBaseRef = null,
     WorktreeBaseSource WorktreeBaseSource = WorktreeBaseSource.Unset,
     Guid? WorktreeBaseTaskId = null,
-    string? WorktreeBaseSha = null);
+    string? WorktreeBaseSha = null,
+    AgentTaskSessionDto? Session = null);
 
 /// <summary>One accepted launch attempt for a sourced Mutation snapshot. Receipt bytes stay on the server.</summary>
 public sealed record VerificationExecutionDetailDto(

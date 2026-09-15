@@ -1107,6 +1107,13 @@ public sealed class AgentTaskReplyService
         }
 
         var terminalReason = recovery?.ResolvedReason;
+        var sessionLiveness = await SessionLivenessAsync(db, sessionId, ct);
+        var sessionDescription = sessionLiveness switch
+        {
+            "live-working" => "live and mid-turn",
+            "live-idle" => "live and idle",
+            _ => "already ended",
+        };
         var reason =
             $"The delegate's turn was killed by an API error ({classification}: "
             + (stub.ErrorClass ?? "no error class")
@@ -1116,7 +1123,9 @@ public sealed class AgentTaskReplyService
                 ? string.Empty
                 : $" Recovery ended ({terminalReason}).")
             + " The error text is not a report and no report exists. The work may "
-            + $"well be real — read session {sessionId} before re-running this task.";
+            + $"well be real — read session {sessionId} before re-running this task."
+            + $" At settlement that session was {sessionDescription}; a Shared release with pooling enabled"
+            + " pools it warm rather than killing it; a Worktree release stops the delegate.";
 
         task.Status = AgentTaskStatus.Failed;
         task.FailureReason = reason;
@@ -1717,6 +1726,11 @@ public sealed class AgentTaskReplyService
 
         using var observation = new RuntimePhase(_logger, _timeProvider, parentSession, "settlement.parent-note-enqueue");
         await using var factsScope = _scopeFactory.CreateAsyncScope();
+        var factsDb = factsScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var sessionLiveness = task.Status is AgentTaskStatus.Failed or AgentTaskStatus.Blocked
+            && task.AgentSessionId is Guid sessionId
+            ? await SessionLivenessAsync(factsDb, sessionId, ct)
+            : null;
         var note = DelegationReportFormatter.BuildCompletionNote(
             task, _settings, report, workspaceNote, ReplyInlineMaxChars, warning,
             await DescribeOverlappingRunningAsync(task, ct), drift,
@@ -1724,7 +1738,7 @@ public sealed class AgentTaskReplyService
             DescribeDeliverable(task),
             PipelineHandoff.HeaderBit(task.Role, PipelineHandoff.TryParse(report)),
             await LandCompletionFacts.LoadAsync(factsScope.ServiceProvider.GetRequiredService<AppDbContext>(), task, ct),
-            await LandCompletionFacts.LoadReviewAsync(factsScope.ServiceProvider.GetRequiredService<AppDbContext>(), task, ct));
+            await LandCompletionFacts.LoadReviewAsync(factsDb, task, ct), sessionLiveness);
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
@@ -2643,6 +2657,13 @@ public sealed class AgentTaskReplyService
                 return trimmed;
         }
         return string.Empty;
+    }
+
+    private async Task<string> SessionLivenessAsync(AppDbContext db, Guid sessionId, CancellationToken ct)
+    {
+        if (!await IsSessionLiveAsync(db, sessionId, ct))
+            return "ended";
+        return await SessionMessageQueueService.IsWorkingAsync(db, sessionId, ct) ? "live-working" : "live-idle";
     }
 
     private async Task<bool> IsSessionLiveAsync(AppDbContext db, Guid sessionId, CancellationToken ct)

@@ -553,6 +553,16 @@ switch ($PSCmdlet.ParameterSetName) {
                 Write-Output ("Progress: {0}; commit {1}" -f $origin.origin, $origin.commit)
             }
         }
+        if ($task.session) {
+            $session = $task.session
+            if ($session.endedAt) {
+                Write-Output "Session: $($session.sessionId) ended $($session.endedAt)"
+            } else {
+                $activity = if ($session.working) { 'working' } else { 'idle' }
+                $lastTranscript = if ($session.lastTranscriptAt) { $session.lastTranscriptAt } else { 'none' }
+                Write-Output "Session: $($session.sessionId) $($session.status), $activity; last transcript $lastTranscript"
+            }
+        }
         if ($task.result) { Write-Output ''; Write-Output $task.result }
         elseif ($task.failureReason) { Write-Output ''; Write-Output "failed: $($task.failureReason)" }
         return

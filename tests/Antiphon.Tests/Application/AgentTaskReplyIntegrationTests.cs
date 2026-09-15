@@ -33,6 +33,24 @@ namespace Antiphon.Tests.Application;
 public class AgentTaskReplyIntegrationTests
 {
     [Test]
+    public async Task a_failed_api_error_task_names_session_liveness()
+    {
+        using var workspace = new TempWorkspace();
+        var parent = await SeedSessionAsync(workspace.Path);
+        var agent = await SeedAgentAsync(workspace.Path, $"c492-{Guid.NewGuid():N}");
+        var (task, session) = await SeedDispatchedTaskAsync(workspace.Path, parent, t => t.AgentId = agent);
+        await SeedApiErrorStubTurnAsync(session, DelegationReportFormatter.TaskMarker(task.Id),
+            errorText: "Please log in", apiErrorClass: "authentication_failed", apiErrorStatus: 401);
+        await CreateService().OnTurnEndAsync(session, CancellationToken.None);
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Failed);
+        stored.FailureReason.ShouldNotBeNull().ShouldContain("At settlement that session was live and idle");
+        (await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parent))
+            .Body.Split('\n')[0].ShouldContain("session=live-idle");
+    }
+
+    [Test]
     public async Task releasing_a_shared_task_whose_session_is_mid_turn_pools_it_and_warns()
     {
         using var workspace = new TempWorkspace();
@@ -206,7 +224,7 @@ public class AgentTaskReplyIntegrationTests
         await service.OnTurnEndAsync(session, CancellationToken.None);
         await using var verify = CreateContext();
         (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Working);
-        (await verify.AgentIncidents.CountAsync(i => i.AgentSessionId == session
+        (await verify.AgentIncidents.CountAsync(i => i.SessionId == session
             && i.Kind == AgentIncidentKind.DelegateReportUncorrelated)).ShouldBe(1);
     }
 

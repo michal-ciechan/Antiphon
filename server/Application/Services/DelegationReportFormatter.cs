@@ -555,13 +555,15 @@ public static class DelegationReportFormatter
         int? replyInlineMaxChars = null, string? warning = null, string? overlappingRunning = null,
         string? drift = null, string? reportEvidence = null, string? git = null,
         DeliverableNote? deliverable = null, string? next = null, LandCompletionFacts? land = null,
-        ReviewEvidenceFacts? reviewEvidence = null)
+        ReviewEvidenceFacts? reviewEvidence = null, string? sessionLiveness = null)
     {
         var header = new StringBuilder();
         header.Append('[').Append("task ").Append(Short(task.Id)).Append(' ')
               .Append(StatusWord(task.Status)).Append(']');
 
         var bits = new List<string>();
+        if (!string.IsNullOrWhiteSpace(sessionLiveness))
+            bits.Add($"session={sessionLiveness.Trim()}");
         if (task.Workspace == WorkspaceMode.Worktree)
             bits.Add($"delegate={task.Status.ToString().ToLowerInvariant()}; publication={land?.Publication ?? "Unconfirmed"}; cleanup={land?.Cleanup ?? "NotStarted"}; land={land?.Land ?? (task.LandRequestedAt is not null ? "Pending" : "NotRequested")}; receipt={land?.Receipt ?? "Unverified"}");
         if (!string.IsNullOrWhiteSpace(task.Title)) bits.Add(task.Title.Trim());
