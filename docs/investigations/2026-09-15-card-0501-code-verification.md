@@ -1,9 +1,10 @@
 # CARD-0501 Code: implementation and ordinary verification
 
-S1-S5 are implemented and pushed. All affected cases pass after fixture corrections. Unit has
-four failures reproduced at the base commit and one privilege-dependent skip. **Output cleanup
-is blocked by automatic approval policy: 31 owned build directories remain.** No landing,
-deployment, restart, or deliberate mutation was performed. Ordinary read-only Review is next.
+S1-S5 are complete and pushed. All affected cases pass after fixture corrections. Unit has
+four failures reproduced at the base commit and one privilege-dependent skip. The caller waived
+local cleanup of the 31 producer-owned build directories under CARD-0455; they remain for the
+weekly cleanup-build-junk job. No landing, deployment, restart, or deliberate mutation was
+performed. Ordinary read-only Review is next.
 
 ## Identity and source
 
@@ -150,8 +151,10 @@ Automatic approval review rejected both the initial bulk output deletion and the
 validated literal-path deletion with only `blocked by policy`. Read-only validation established
 31 producer-owned paths inside the exact worktree, with no reparse points. **None was deleted.**
 `owned-output-inventory.txt`, `output-cleanup.json`, `final-output-hashes.json` and
-`evidence-manifest.json` preserve the evidence. Operator cleanup is still required; do not infer
-worktree cleanup eligibility from this Code result. Standard `obj/` files remain as usual.
+`evidence-manifest.json` preserve the evidence. The caller subsequently identified this as the
+known CARD-0455 policy issue and explicitly instructed Code to leave all 31 directories as-is
+for the weekly cleanup-build-junk job and settle complete. This removes the Code completion
+blocker; no further local cleanup is required for this task. Standard `obj/` files remain as usual.
 
 Next: ordinary read-only Review of this diff, V/R evidence, inherited failures and pending PC
 inventory. Restart target after authorized publication: **server**. Original landing owner:
