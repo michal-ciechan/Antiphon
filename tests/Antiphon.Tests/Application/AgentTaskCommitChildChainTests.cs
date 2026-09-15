@@ -34,6 +34,7 @@ public sealed partial class AgentTaskCommitEndpointTests
         await using (var scope = _factory.Services.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await db.RoutingPins.Where(p => p.Reason == "C527 child receipt").ExecuteDeleteAsync();
             foreach (var session in new[] { parent, workerSession, childSession })
             {
                 db.AgentSessions.Add(new AgentSession
@@ -212,4 +213,3 @@ public sealed partial class AgentTaskCommitEndpointTests
         await scope.ServiceProvider.GetRequiredService<AgentTaskLandNotificationService>().ReconcileAsync(id, CancellationToken.None);
     }
 }
-

@@ -15,6 +15,38 @@ namespace Antiphon.Tests.Application;
 public partial class AgentTaskReplyIntegrationTests
 {
     [Test]
+    [Arguments("check-ignore")]
+    [Arguments("diff-tree")]
+    [Arguments("history")]
+    [Arguments("upstream")]
+    public async Task C527_unavailable_child_audit_is_reported_to_parent(string inspection)
+    {
+        var seeded = await SeedC527Async(t => { t.Role = AgentTaskRole.Commit; t.CommitOnSettle = CommitOnSettlePolicy.Never; });
+        using var repo = seeded.Repo;
+        var baseline = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        await repo.CommitFileAsync("a.md", "a");
+        await using (var db = CreateContext())
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == seeded.Task.Id);
+            task.CommitBaselineSha = baseline;
+            task.CommitUpstreamBaselineJson = JsonSerializer.Serialize(new GitWorkspaceService.UpstreamSnapshot(true, null, null));
+            await db.SaveChangesAsync();
+        }
+        var spy = new RecordingGitWorkspaceService();
+        spy.OverrideRun = args => (inspection == "history" ? args[0] == "log" && args.Contains("-z")
+            : inspection == "upstream" ? args[0] == "symbolic-ref" : args[0] == inspection)
+            ? (-1, "", "inspection timeout") : null;
+        var factory = C527Factory(repo.WorktreeRoot, gitSpy: spy);
+        AttachTerminal(factory, seeded.Parent);
+        await SeedTurnAsync(seeded.SessionId, DelegationReportFormatter.TaskMarker(seeded.Task.Id), "Audit report.");
+        await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+        await Queue(factory).FlushSessionAsync(seeded.Parent, CancellationToken.None);
+        var receipt = await AssertParentReceivedNoteAsync(seeded.Parent, seeded.Task, "Audit report.");
+        receipt.Prompt.Text.ShouldContain("audit unavailable");
+        if (inspection != "upstream") receipt.Prompt.Text.ShouldContain("inspection timeout");
+    }
+
+    [Test]
     [Arguments("settlement-before-save", false, false)]
     [Arguments("settlement-before-save", false, true)]
     [Arguments("settlement-before-save", true, false)]

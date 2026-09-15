@@ -826,15 +826,19 @@ public class GitWorkspaceService
     }
 
     public async Task<IReadOnlyList<string>> DiffTreePathsAsync(
+        string workingDirectory, string sha, CancellationToken ct) =>
+        (await TryDiffTreePathsAsync(workingDirectory, sha, ct)).Items;
+
+    public async Task<GitStrictList<string>> TryDiffTreePathsAsync(
         string workingDirectory, string sha, CancellationToken ct)
     {
-        var (code, stdout, _) = await RunAsync(
+        var (code, stdout, stderr) = await RunAsync(
             workingDirectory, ct, "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", sha);
         if (code != 0)
-            return [];
-        return stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            return new(false, [], code, "git diff-tree inspection failed: " + stderr);
+        return new(true, stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries)
             .Select(p => p.Replace('\\', '/'))
-            .ToArray();
+            .ToArray(), 0);
     }
 
     public async Task<IReadOnlyList<(string Status, string Path)>> DiffTreeNameStatusAsync(
@@ -859,13 +863,17 @@ public class GitWorkspaceService
     }
 
     public async Task<IReadOnlyList<string>> ListShasBetweenAsync(
+        string workingDirectory, string fromInclusive, string toInclusive, CancellationToken ct) =>
+        (await TryListShasBetweenAsync(workingDirectory, fromInclusive, toInclusive, ct)).Items;
+
+    public async Task<GitStrictList<string>> TryListShasBetweenAsync(
         string workingDirectory, string fromInclusive, string toInclusive, CancellationToken ct)
     {
-        var (code, stdout, _) = await RunAsync(
+        var (code, stdout, stderr) = await RunAsync(
             workingDirectory, ct, "log", "--format=%H", "-z", $"{fromInclusive}..{toInclusive}");
         if (code != 0)
-            return [];
-        return stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+            return new(false, [], code, "git history inspection failed: " + stderr);
+        return new(true, stdout.Split('\0', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries), 0);
     }
 
     public async Task<string?> CommitMessageAsync(string workingDirectory, string sha, CancellationToken ct)

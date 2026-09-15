@@ -1,5 +1,6 @@
 ﻿using Antiphon.Agents.Pty;
 using System.Collections.Concurrent;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -3219,13 +3220,21 @@ public sealed class AgentTaskReplyService
         if (git is null)
             return null;
 
-        var shas = await git.ListShasBetweenAsync(task.RepoPath, task.CommitBaselineSha, "HEAD", ct);
         var lines = new List<string>();
-        foreach (var sha in shas)
+        var history = await git.TryListShasBetweenAsync(task.RepoPath, task.CommitBaselineSha, "HEAD", ct);
+        if (!history.Succeeded)
+        {
+            var unavailable = "commit audit unavailable: " + history.Error;
+            db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, unavailable, now));
+            lines.Add(unavailable);
+        }
+        foreach (var sha in history.Items)
         {
             var sha7 = sha.Length >= 7 ? sha[..7] : sha;
-            var paths = await git.DiffTreePathsAsync(task.RepoPath, sha, ct);
-            var ignored = await git.CheckIgnoredAsync(task.RepoPath, paths, ct);
+            var paths = await git.TryDiffTreePathsAsync(task.RepoPath, sha, ct);
+            var ignored = paths.Succeeded
+                ? await git.CheckIgnoredAsync(task.RepoPath, paths.Items, ct)
+                : new GitWorkspaceService.GitStrictList<GitWorkspaceService.GitIgnoreMatch>(false, [], paths.ExitCode, paths.Error);
             if (!ignored.Succeeded)
             {
                 var unavailable = $"commit {sha7} audit unavailable: {ignored.Error}";
