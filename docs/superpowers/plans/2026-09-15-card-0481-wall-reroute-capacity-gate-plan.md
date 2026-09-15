@@ -847,3 +847,70 @@ through the documented clean, exact-file and nonrecursive-empty-directory route.
 logs retain evidence. The clean detached baseline worktree was removed with ordinary
 `git worktree remove` (no force); `base-worktree-cleanup.json` records its identity.
 The primary worktree and all external raw evidence remain available for Review.
+
+## Round-3 F2 repair design (Code task 5e4076c9)
+
+Reviewed base: `df757a5ded14eabbc5cfe6b24ad50e478df93561`. Original Code/landing
+owner remains **00222dc7**. Repair branch `feat/card-task-5e4076c9`, worktree
+`C:\Antiphon\worktrees\card-task-5e4076c9`. Restart: **server**. F1 is unchanged.
+
+The watchdog commits its Failed task, Failed event and immutable caller notification
+in one SaveChanges transaction. The existing notification outbox (already used for
+DispatchBase as well as land) gains `DeliveryFailure`, an appended integer enum value;
+no schema migration is required. The notification snapshots the destination and body
+and references the Failed event. Its unique queue key is SourceLandNotificationId;
+SourceTaskId and the root task conversation remain intact. Immediate enqueue uses the
+same key as recovery. Optional check reminders cannot disarm this obligation.
+
+RemindUnacknowledgedFailuresAsync first scans these unresolved outbox rows, including
+already-Failed tasks and when CheckEnabled is false, using separate reconciliation
+scopes. The existing boot/periodic outbox scanner also discovers them. Materialization
+reuses the existing queue; its attempt floor and complete destination UserPrompt are
+the only receipt. Queue Sent, insertion, polling and task terminal status are not receipt.
+The immutable outbox and its queue/transcript retention survive ordinary pruning.
+
+### Additional ordinary coverage
+
+V-17 keeps its two successful-insertion busy/eligible cases and now also verifies the
+outbox key and complete receipt, then repeats recovery after service recreation to
+assert exactly one queue row and one submission.
+
+| ID | Exact class.method | Variants and required evidence |
+|---|---|---|
+| V-18 | ReceiptFailureDeliveryTests.Caller_failure_obligation_survives_persistence_cuts | busyCaller=false/true crossed with obligation-insert, failed-committed, note-insert, note-committed, attempt-committed, prompt-accepted (12 cases). Each starts with the real dispatcher's failed worker-brief insertion plus failed capacity receipt at attempt 3. Before-save obligation failure leaves task Dispatched with neither Failed event nor obligation; retry succeeds in a new scope. After-Failed-commit interruption and caller-note insert failure leave Failed plus its obligation and zero notes. A committed queue/attempt survives with the same key and row. Accepted-before-verdict recovers LateConfirmed without submitting twice. Dispose/recreate all server services across each cut, invoke the real watchdog/reminder and stranded queue sweep, preserve busy zero-submission gates until real turn end, require the entire note in the caller UserPrompt after its attempt floor, Confirmed outbox and idempotent later recreation. CheckEnabled=false during recovery. |
+
+Coverage-to-class retains the fourteen round-2 classes, adds
+`AgentTaskDeliveryWatchdogTests` and `AgentTaskDispatchFailureTests` for the changed
+watchdog/reminder paths, and `AgentTaskLandReceiptTests`,
+`AgentTaskLandNotificationRecoveryTests`, `AgentTaskLandNotificationPersistenceTests`
+and `DispatchBaseNotificationTests` for the shared outbox's other producers/receipts.
+Run these twenty named classes as I, Unit as U, from one `bin-c481r3/` build, each with
+fresh TRX. B reruns exactly the thirteen inherited failures on untouched reviewed base
+in an owned detached worktree. No namespace or full-assembly expansion. Test process
+lanes retain existing limiters; no new test spawns a native process.
+
+### Pending controls added by F2
+
+Every prior PC-1..PC-17 and all variants remain pending. PC-17's failure-note enqueue
+is now the watchdog's keyed enqueue plus the durable obligation's materialization;
+its target remains the exact V-17 method and busy/eligible arms.
+
+All rows below target the exact V-18 method above; each deliberate defect is a separate
+method-scoped red/restore/green cycle. Code executes no deliberate mutant.
+
+| PC | Deliberate defect | Intended ordinary target/variant and red |
+|---|---|---|
+| PC-18 | Omit the watchdog obligation insert | obligation-insert: atomic-pair/fault boundary is absent; other arms: missing obligation |
+| PC-19 | Commit Failed before adding the obligation | failed-committed: injected post-commit cut leaves zero obligations; obligation-insert: Failed escapes the failed pair write |
+| PC-20 | Restrict obligation discovery to Dispatched owners; separately put it behind CheckEnabled | failed-committed and note-insert, both busy/eligible: no recovered queue row while task is Failed / checks disabled |
+| PC-21 | Omit sourceLandNotificationId on recovery enqueue | note-committed: duplicate row or wrong durable queue identity after recreation |
+| PC-22 | Accept Sent as outbox confirmation without whole UserPrompt | attempt-committed, both busy/eligible: AwaitingReceipt assertion fails before any submission |
+| PC-23 | Bypass interrupted queue transcript late-confirm | prompt-accepted, both busy/eligible: wrong LateConfirmed verdict or duplicate submission |
+| PC-24 | Truncate the recovered failure note to its header | failed-committed and note-insert: immutable full body / complete caller prompt assertion fails |
+
+Limits: process-local persistence faults and service recreation with a fake adapter,
+not abrupt process death or live native/provider ingestion. The pre-insert brief is
+reported failed rather than replayed. Existing cold-launch/early-transcript,
+retained-return redemption and sweep/redemption race gaps remain visible. The caller
+still owns live post-land database census after activation. Review precedes original
+owner landing; SourceLanding Mutation is commissioned explicitly afterward.

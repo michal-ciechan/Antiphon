@@ -310,6 +310,8 @@ public class CapacityRecoveryTaskTests
         services.AddSingleton<AgentSessionLaunchQueue>();
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
+        services.AddSingleton<CompletionNoteFlushQueue>();
+        services.AddScoped<AgentTaskLandNotificationService>();
         services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
         services.AddSingleton<DelegationWorkspaceResolver>();
         services.AddDelegationWorktreeGraph(new GitSettings
