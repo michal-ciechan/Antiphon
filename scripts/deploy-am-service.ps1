@@ -1,11 +1,12 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-    Safely deploy the source-built am-service gateway on server2.
+    Safely deploy the source-built am-service gateway to an explicit SSH target.
 
 .DESCRIPTION
-    This fixed-target command deploys only mc@server2:/home/mc/antiphon-messaging,
-    messaging-service, and am-service. Its archive manifest is derived solely from
+    Select -SshTarget user@host explicitly; there is no default or environment fallback.
+    This optional remote command supports only /home/mc/antiphon-messaging,
+    messaging-service, and am-service, not the desktop Slack sidecar. Its archive manifest is derived solely from
     src/Antiphon.Messaging.Service/Dockerfile COPY sources; unsupported COPY syntax
     refuses before archive/upload. Default and -WhatIf are read-only preflights.
 
@@ -18,10 +19,11 @@
     check remains the Antiphon-Family test-group round trip, never live Family.
 
 .EXAMPLE
-    pwsh -NoProfile -File scripts/deploy-am-service.ps1
+    # Replace both placeholders with the confirmed destination before use.
+    pwsh -NoProfile -File scripts/deploy-am-service.ps1 -SshTarget '<user>@<confirmed-host>'
 
 .EXAMPLE
-    pwsh -NoProfile -File scripts/deploy-am-service.ps1 -Deploy -Confirm
+    pwsh -NoProfile -File scripts/deploy-am-service.ps1 -SshTarget '<user>@<confirmed-host>' -Deploy -Confirm
 
 .OUTPUTS
     REMOTE DEPLOY VERDICT: ok
@@ -34,9 +36,22 @@
 param(
     [switch]$Deploy,
     [switch]$SkipRealTrafficCheck,
-    [ValidateRange(10, 3600)] [int]$TimeoutSec = 180
+    [ValidateRange(10, 3600)] [int]$TimeoutSec = 180,
+    [string]$SshTarget
 )
 $ErrorActionPreference = 'Stop'
+
+function Assert-AmServiceSshTarget {
+    param([string]$SshTarget)
+    if ([string]::IsNullOrWhiteSpace($SshTarget)) {
+        throw 'Configuration: -SshTarget is required; specify one user@host destination.'
+    }
+    # Do not trim or reinterpret input. IPv6, port suffixes and SSH options are outside
+    # this narrow interface; an explicitly configured SSH alias can carry those settings.
+    if ($SshTarget -cnotmatch '\A[A-Za-z0-9_][A-Za-z0-9_.-]*@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\z') {
+        throw 'Configuration: invalid -SshTarget; expected one user@host (SSH alias, DNS hostname or IPv4), without whitespace, options, paths or port suffixes.'
+    }
+}
 
 function ConvertTo-DockerfileLogicalLines {
     param([Parameter(Mandatory)][string]$DockerfilePath)
@@ -264,7 +279,8 @@ function Invoke-AmServiceDeployment {
     param(
         [Parameter(Mandatory)][string]$RepositoryRoot, [Parameter(Mandatory)][bool]$PerformDeploy,
         [Parameter(Mandatory)][bool]$SkipTrafficCheck, [Parameter(Mandatory)][int]$PollTimeoutSec,
-        [scriptblock]$SshRunner, [scriptblock]$ScpRunner, [scriptblock]$HttpRunner
+        [scriptblock]$SshRunner, [scriptblock]$ScpRunner, [scriptblock]$HttpRunner,
+        [string]$SshTarget
     )
     try {
         $result = Invoke-AmServiceDeploymentCore @PSBoundParameters
@@ -280,11 +296,14 @@ function Invoke-AmServiceDeploymentCore {
     param(
         [Parameter(Mandatory)][string]$RepositoryRoot, [Parameter(Mandatory)][bool]$PerformDeploy,
         [Parameter(Mandatory)][bool]$SkipTrafficCheck, [Parameter(Mandatory)][int]$PollTimeoutSec,
-        [scriptblock]$SshRunner, [scriptblock]$ScpRunner, [scriptblock]$HttpRunner
+        [scriptblock]$SshRunner, [scriptblock]$ScpRunner, [scriptblock]$HttpRunner,
+        [string]$SshTarget
     )
-    $hostName = 'mc@server2'; $remoteRoot = '/home/mc/antiphon-messaging'; $remoteContext = "$remoteRoot/build/src"; $dockerfileRelative = 'Antiphon.Messaging.Service/Dockerfile'
+    Assert-AmServiceSshTarget -SshTarget $SshTarget
+    $remoteRoot = '/home/mc/antiphon-messaging'; $remoteContext = "$remoteRoot/build/src"; $dockerfileRelative = 'Antiphon.Messaging.Service/Dockerfile'
+    Write-Host "Remote target: ${SshTarget}:$remoteRoot"
     $context = Join-Path $RepositoryRoot 'src'; $dockerfile = Join-Path $context $dockerfileRelative; $migrationDirectory = Join-Path $context 'Antiphon.Messaging.Service\Migrations'
-    if ($null -eq $SshRunner) { $SshRunner = { param($command) $output = @(& ssh $hostName $command 2>&1 | ForEach-Object { $_.ToString() }); [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $output } } }
+    if ($null -eq $SshRunner) { $SshRunner = { param($command) $output = @(& ssh $SshTarget $command 2>&1 | ForEach-Object { $_.ToString() }); [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $output } } }
     if ($null -eq $ScpRunner) { $ScpRunner = { param($source, $destination) $output = @(& scp $source $destination 2>&1 | ForEach-Object { $_.ToString() }); [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $output } } }
     if ($null -eq $HttpRunner) { $HttpRunner = { param($url,$headers) $r = Invoke-WebRequest -Uri $url -Headers $headers -UseBasicParsing -TimeoutSec 15; [pscustomobject]@{ StatusCode=[int]$r.StatusCode; Body=$r.Content } } }
     $identity = Get-AmServiceServerIdentity $HttpRunner
@@ -323,7 +342,7 @@ function Invoke-AmServiceDeploymentCore {
     }
     Write-Host "Previous am-service container/image/status: $previous"
     Write-Host "Previous Compose service status: $composeStatus"
-    $result = [ordered]@{ DockerfileHash=$hash; Manifest=$manifest; RemoteContext=$projection.context; RemoteDockerfile=$projection.dockerfile; PreviousContainer=$previous; ComposeStatus=$composeStatus; BackupPath=$null; MigrationCount=0; AdapterNames=@() }
+    $result = [ordered]@{ SshTarget=$SshTarget; DockerfileHash=$hash; Manifest=$manifest; RemoteContext=$projection.context; RemoteDockerfile=$projection.dockerfile; PreviousContainer=$previous; ComposeStatus=$composeStatus; BackupPath=$null; MigrationCount=0; AdapterNames=@() }
     $result.OverridePath = $override.Path; $result.OverrideBackupPath = $null
     if (-not $PerformDeploy) { return [pscustomobject]$result }
     $latest = Get-AmServiceServerIdentity $HttpRunner
@@ -344,7 +363,7 @@ function Invoke-AmServiceDeploymentCore {
         if ($merged.AntiphonConsumerGroup -cne $identity.consumerGroup -or $merged.ExpectedAntiphonConsumerGroup -cne $identity.consumerGroup) { throw 'Merged docker compose config lacks matching watched/expected groups.' }
         if ($merged.ConsumerGroup -cne $gateway.ConsumerGroup -or $merged.InboundTopic -cne $gateway.InboundTopic -or $merged.BootstrapServers -cne $gateway.BootstrapServers) { throw 'Merged docker compose config changed unrelated gateway settings.' }
         Write-Host "Managed override: $($override.Path); retained override backup: $($result.OverrideBackupPath)"
-        Invoke-AmServiceRunner $ScpRunner @($archive.Path, "$hostName`:$upload") 'archive upload' | Out-Null; $uploaded = $true
+        Invoke-AmServiceRunner $ScpRunner @($archive.Path, "${SshTarget}:$upload") 'archive upload' | Out-Null; $uploaded = $true
         $checks = @($manifest | ForEach-Object { "test -e '$stage/$($_.Path)'" }) -join "`n"
         $replace = "set -eu`narchive='$upload'`nstaging='$stage'`ncurrent='$remoteContext'`nbackup='$backup'`ncleanup() { rm -f -- `"`$archive`"; }`ntrap cleanup EXIT HUP INT TERM`nrm -rf -- `"`$staging`"`nmkdir -p `"`$staging`"`ntar xzf `"`$archive`" -C `"`$staging`"`n$checks`nactual_hash=`$(sha256sum `"`$staging/$dockerfileRelative`" | awk '{print `$1}')`ntest `"`$actual_hash`" = '$hash'`ntest -d `"`$current`"`nmv `"`$current`" `"`$backup`"`nmv `"`$staging`" `"`$current`"`ncd '$remoteRoot'`ndocker compose build messaging-service`ndocker compose up -d --no-deps messaging-service"
         try { Invoke-AmServiceRunner $SshRunner @($replace) 'remote archive replacement/build/recreate' | Out-Null } catch { throw "Remote replacement/build/recreate failed; retained source backup: $backup; staging path: $stage. $($_.Exception.Message)" }
@@ -377,10 +396,11 @@ function Invoke-AmServiceDeploymentCore {
 if ($MyInvocation.InvocationName -eq '.') { return }
 $failure = $null
 try {
+    Assert-AmServiceSshTarget -SshTarget $SshTarget
     $root = Split-Path -Parent $PSScriptRoot
-    Invoke-AmServiceDeployment $root $false $SkipRealTrafficCheck $TimeoutSec | Out-Null
+    Invoke-AmServiceDeployment -RepositoryRoot $root -PerformDeploy $false -SkipTrafficCheck $SkipRealTrafficCheck -PollTimeoutSec $TimeoutSec -SshTarget $SshTarget | Out-Null
     if ($Deploy) {
-        if ($PSCmdlet.ShouldProcess('mc@server2:/home/mc/antiphon-messaging', 'replace build/src and recreate am-service')) { Invoke-AmServiceDeployment $root $true $SkipRealTrafficCheck $TimeoutSec | Out-Null }
+        if ($PSCmdlet.ShouldProcess("${SshTarget}:/home/mc/antiphon-messaging", 'replace build/src and recreate am-service')) { Invoke-AmServiceDeployment -RepositoryRoot $root -PerformDeploy $true -SkipTrafficCheck $SkipRealTrafficCheck -PollTimeoutSec $TimeoutSec -SshTarget $SshTarget | Out-Null }
         else { Write-Host 'Deployment not approved; read-only preflight completed.' }
     }
 } catch { $failure = ($_.Exception.Message -replace '\s+', ' ').Trim() }
