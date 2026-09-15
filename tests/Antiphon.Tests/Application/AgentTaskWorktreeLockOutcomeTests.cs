@@ -85,7 +85,8 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
                 original = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.RequestId == h.Context.RequestId && n.Kind == LandNotificationKind.Outcome);
                 capture.FinalizedAt.ShouldNotBeNull(); capture.TerminalEventId.ShouldBe(original.SourceEventId);
                 var terminal = await db.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.Id == original.SourceEventId);
-                if (siblingWarning is not null)
+                if (siblingWarning is not null && siblingCount == 1) terminal.Detail.ShouldContain(siblingWarning);
+                else if (siblingWarning is not null)
                 {
                     terminal.Detail.ShouldContain("unlanded-sibling=");
                     // The sibling query has no ordering contract. Require every complete
