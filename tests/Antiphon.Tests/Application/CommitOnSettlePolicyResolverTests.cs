@@ -16,14 +16,23 @@ public sealed class CommitOnSettlePolicyResolverTests
     [Arguments(null, false, true, CommitOnSettleEffective.Off)]
     [Arguments(null, false, false, CommitOnSettleEffective.Off)]
     [Arguments(CommitOnSettlePolicy.Never, null, true, CommitOnSettleEffective.Off)]
+    [Arguments(CommitOnSettlePolicy.Never, null, false, CommitOnSettleEffective.Off)]
     [Arguments(CommitOnSettlePolicy.Never, true, true, CommitOnSettleEffective.Off)]
+    [Arguments(CommitOnSettlePolicy.Never, true, false, CommitOnSettleEffective.Off)]
+    [Arguments(CommitOnSettlePolicy.Never, false, true, CommitOnSettleEffective.Off)]
     [Arguments(CommitOnSettlePolicy.Never, false, false, CommitOnSettleEffective.Off)]
+    [Arguments(CommitOnSettlePolicy.Always, null, true, CommitOnSettleEffective.Tier1)]
     [Arguments(CommitOnSettlePolicy.Always, null, false, CommitOnSettleEffective.Tier1)]
+    [Arguments(CommitOnSettlePolicy.Always, false, true, CommitOnSettleEffective.Tier1)]
     [Arguments(CommitOnSettlePolicy.Always, false, false, CommitOnSettleEffective.Tier1)]
     [Arguments(CommitOnSettlePolicy.Always, true, true, CommitOnSettleEffective.Tier1)]
+    [Arguments(CommitOnSettlePolicy.Always, true, false, CommitOnSettleEffective.Tier1)]
     [Arguments(CommitOnSettlePolicy.Agent, null, true, CommitOnSettleEffective.AgentOnly)]
+    [Arguments(CommitOnSettlePolicy.Agent, null, false, CommitOnSettleEffective.AgentOnly)]
+    [Arguments(CommitOnSettlePolicy.Agent, false, true, CommitOnSettleEffective.AgentOnly)]
     [Arguments(CommitOnSettlePolicy.Agent, false, false, CommitOnSettleEffective.AgentOnly)]
     [Arguments(CommitOnSettlePolicy.Agent, true, true, CommitOnSettleEffective.AgentOnly)]
+    [Arguments(CommitOnSettlePolicy.Agent, true, false, CommitOnSettleEffective.AgentOnly)]
     public void Resolve_task_then_project_then_global(
         CommitOnSettlePolicy? task,
         bool? project,

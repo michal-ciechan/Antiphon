@@ -16,6 +16,18 @@ namespace Antiphon.Tests.Migrations;
 public sealed class CommitOnSettleMigrationTests
 {
     [Test]
+    public void AddCommitUpstreamBaseline_is_nullable_and_additive()
+    {
+        var operations = new AddCommitUpstreamBaseline().UpOperations;
+        operations.Count.ShouldBe(1);
+        var column = operations.Single().ShouldBeOfType<AddColumnOperation>();
+        column.Table.ShouldBe("AgentTasks");
+        column.Name.ShouldBe("CommitUpstreamBaselineJson");
+        column.IsNullable.ShouldBeTrue();
+        column.ColumnType.ShouldBe("text");
+    }
+
+    [Test]
     public void AddCommitOnSettlePolicy_is_additive()
     {
         var operations = new AddCommitOnSettlePolicy().UpOperations;
