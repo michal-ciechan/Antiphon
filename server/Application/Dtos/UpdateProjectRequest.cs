@@ -14,4 +14,9 @@ public record UpdateProjectRequest(
     // Null = leave unchanged (an older UI build PUTting a project must not wipe a default env
     // somebody configured). An empty dictionary is the explicit clear. ANTIPHON_* refused 422.
     IReadOnlyDictionary<string, string>? DefaultLaunchEnv = null,
-    [property: JsonConverter(typeof(RepositoryVisibilityConverter))] RepositoryVisibility? RepositoryVisibility = null);
+    [property: JsonConverter(typeof(RepositoryVisibilityConverter))] RepositoryVisibility? RepositoryVisibility = null,
+    /// <summary>
+    /// CARD-0527. On / Off / Inherit. Null leaves the stored value unchanged (the DefaultLaunchEnv
+    /// rule). Inherit clears the column so the global default applies.
+    /// </summary>
+    string? CommitOnSettle = null);

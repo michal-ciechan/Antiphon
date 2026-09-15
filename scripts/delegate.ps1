@@ -13,6 +13,10 @@
 # CARD-0147 / CARD-0366: create is sequential-by-default. A 409 concurrency_limit names the
 # occupants and the cap (counts and occupants are the calling session's project only);
 # re-send with -IgnoreConcurrencyLimit only when the user asked for parallel work.
+#
+# CARD-0527: settlement commits a Shared task's own footprint unless you pass -NoCommit.
+# That is the only opt-out an instruction can carry; prose in -Goal is an advisory, not a
+# behaviour change. Always/Agent are API-only.
 [CmdletBinding(DefaultParameterSetName = 'Create')]
 param(
     [Parameter(ParameterSetName = 'Create', Position = 0)]
@@ -149,6 +153,11 @@ param(
     # Use only when the user asked for parallel work this turn.
     [Parameter(ParameterSetName = 'Create')]
     [switch]$IgnoreConcurrencyLimit,
+
+    # CARD-0527. Leave this task's changes uncommitted at settle. Sends commitOnSettle=Never.
+    # Always/Agent are API-only; there is no -CommitAlways / -CommitAgent switch.
+    [Parameter(ParameterSetName = 'Create')]
+    [switch]$NoCommit,
 
     # Record this dispatch's Role/Card/Kind/Level as a HUMAN, REQUIRED routing pin (CARD-0305), so
     # the next create against this card+stage runs the same way without being told again. Refused
@@ -789,6 +798,7 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($IgnoreRoutingPin) { $body['ignoreRoutingPin'] = $true }
         if ($Complexity) { $body['complexity'] = $Complexity }
         if ($RefuseIfExhausted) { $body['refuseIfExhausted'] = $true }
+        if ($NoCommit) { $body['commitOnSettle'] = 'Never' }
         if ($EnvOverride -and $EnvOverride.Count -gt 0) { $body['launchEnvOverride'] = $EnvOverride }
         $authorityText = $null
         if (-not [string]::IsNullOrWhiteSpace($AuthorityFile)) {

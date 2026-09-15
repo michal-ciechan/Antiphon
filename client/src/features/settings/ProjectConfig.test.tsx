@@ -100,6 +100,37 @@ it('submits configured visibility only when the operator changes the repository 
   await waitFor(() => expect(put).toHaveBeenCalledWith(expect.objectContaining({ repositoryVisibility: 'Public' })))
 })
 
+it('submits commitOnSettle only when the operator changes the select', async () => {
+  const put = vi.fn()
+  const projectWithEffective = { ...project, commitOnSettle: null, effectiveCommitOnSettle: true }
+  server.use(
+    http.get('/api/projects', () => HttpResponse.json([projectWithEffective])),
+    http.get('/api/boards', () => HttpResponse.json([])),
+    http.get('/api/github/repos', () => HttpResponse.json([])),
+    http.get('/api/projects/readiness', () => HttpResponse.json([emptyReadiness])),
+    http.get('/api/projects/:id/api-keys', () => HttpResponse.json([])),
+    http.put('/api/projects/:id', async ({ request }) => {
+      put(await request.json())
+      return HttpResponse.json(projectWithEffective)
+    }),
+  )
+
+  renderWithProviders(<ProjectConfig />)
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit project' }))
+  const commitSelect = screen.getByRole('textbox', { name: 'Commit on settle' })
+  expect(commitSelect).toHaveValue('Inherit (on)')
+  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  expect(put).toHaveBeenCalledWith(expect.not.objectContaining({ commitOnSettle: expect.anything() }))
+
+  put.mockClear()
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit project' }))
+  await userEvent.click(screen.getByRole('textbox', { name: 'Commit on settle' }))
+  await userEvent.click(await screen.findByRole('option', { name: 'Off' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() => expect(put).toHaveBeenCalledWith(expect.objectContaining({ commitOnSettle: 'Off' })))
+})
+
 describe('ProjectConfig readiness column', () => {
   it('replaces the Features badges with a readiness cell and empty-state copy', async () => {
     server.use(
