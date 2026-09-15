@@ -1102,3 +1102,42 @@ paths are in `owned-output.txt`, `base-owned-output.txt`, both clean inventories
 is retained at its unchanged base SHA. Queue-race child logs/results were copied to
 `queue-race-children` outside the output directories. All raw TRX, logs and evidence
 remain available for Review; the source worktree has no uncommitted source changes.
+
+## Round-4 F3 repair design (Code task 4d7a799b)
+
+Reviewed base: `bc2d2715de0ec4ea684f74489d88e288d327e053`. Original Code/landing
+owner remains **00222dc7**. Repair branch `feat/card-task-4d7a799b`, exact worktree
+`C:\Antiphon\worktrees\card-task-4d7a799b`. Restart: **server**. F1/F2 production
+paths are unchanged.
+
+Recovery first discovers an unlinked queue row by SourceLandNotificationId, validates
+the same destination/digest identity as keyed enqueue, and persists the outbox link
+and enqueue metadata. Only the absence of an existing row permits the stopped/failed
+destination guard to block new input. The recovered row then follows the existing
+complete UserPrompt check after its attempt floor. Delivered alone is not receipt.
+DeliveryFailure recovery retains the completion stamp; no new row or submission is
+needed for an already delivered note.
+
+| ID | Exact class.method | Required evidence |
+|---|---|---|
+| V-19 | ReceiptFailureDeliveryTests.Delivered_caller_failure_is_confirmed_after_caller_stops_and_services_restart | Stopped and Failed variants. Real dispatcher/watchdog produces the keyed failure note; real queue and fake adapter deliver its whole UserPrompt, persisting Delivered while the outbox QueueMessageId remains null. Mark caller terminal, dispose/recreate all server services without registering a caller adapter, disable optional checks, and run real reminder recovery. Require Confirmed, the original queue ID and prompt sequence, unchanged attempt/baseline/queue sequence/verdict, zero recovery enqueues, unchanged terminal caller, complete body and one submission. Further service recreation remains idempotent. |
+
+Coverage-to-class and V/R filters remain the twenty round-3 integration classes (I)
+and Unit (U), built once into producer-owned `bin-c481r4/`, with fresh TRX for each.
+Expected I expansion is 447 (ReceiptFailureDeliveryTests 21); U remains 2,460.
+B reruns precisely the thirteen inherited failing methods at the untouched reviewed
+base in an owned detached worktree, using `bin-c481r4base/`. No namespace or
+full-assembly expansion and no deliberate mutant in Code.
+
+**PC-26 pending:** exact V-19 method, both Stopped and Failed variants. Move keyed-row
+rediscovery below the stopped/failed destination guard (restore the F3 ordering).
+Intended red: Confirmed assertion instead observes DestinationUnavailable, with no
+outbox queue link or confirming sequence. Mutation must run method-scoped
+red/restore/green; all PC-1..25 and their existing variants also remain pending.
+
+Limits remain the prior plan's fake-adapter/service-recreation boundaries, native
+ingestion/cold-launch/early-transcript, retained-return, sweep/redemption races,
+DeliveryFailure-specific hosted pagination/retention and attention projection gaps.
+The existing destination matrix covers terminal callers without a queue row; this
+repair adds the delivered-row case. Caller owns live post-land census after server
+activation, ordinary Review, original-owner landing and SourceLanding commissioning.

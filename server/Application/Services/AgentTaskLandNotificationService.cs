@@ -1,5 +1,6 @@
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -36,6 +37,25 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 note.NextAttemptAt = now.AddMinutes(5);
                 await db.SaveChangesAsync(ct);
                 return;
+            }
+            // The producer can commit and deliver the keyed row before this outbox links it.
+            // Recover that evidence even if the caller has since stopped; status gates new input only.
+            if (note.QueueMessageId is null)
+            {
+                var existing = await db.SessionQueuedMessages.AsNoTracking()
+                    .SingleOrDefaultAsync(m => m.SourceLandNotificationId == note.Id, ct);
+                if (existing is not null)
+                {
+                    if (existing.AgentSessionId != session || existing.ContentDigest != note.ContentDigest)
+                        throw new ConflictException("Land notification identity has a different destination or payload.");
+                    note.QueueMessageId = existing.Id;
+                    note.EnqueuedAt = existing.CreatedAt;
+                    note.State = LandNotificationState.AwaitingReceipt;
+                    note.LastErrorCode = null;
+                    if (note.Kind == LandNotificationKind.DeliveryFailure)
+                        await CompletionNoteStamp.ApplyAsync(db, note.TaskId, note.ContentDigest, existing.CreatedAt, ct);
+                    await db.SaveChangesAsync(ct);
+                }
             }
             if (note.QueueMessageId is null)
             {
