@@ -85,51 +85,64 @@ function Invoke-ExpectedDeployment {
 
 function Initialize-C496Fake {
     param([string]$RepositoryRoot, [string]$Variant = '')
-    Reset-MonitorFake
-    $script:c496Root = $RepositoryRoot; $script:c496Variant = $Variant
     $script:c496Events = New-Object 'System.Collections.Generic.List[object]'
-    $script:commands = New-Object 'System.Collections.Generic.List[string]'
-    $script:c496Manifest = @(Get-AmServiceDockerfileManifest (Join-Path $RepositoryRoot 'src/Antiphon.Messaging.Service/Dockerfile') (Join-Path $RepositoryRoot 'src'))
-    $script:c496Migrations = @(Get-AmServiceMigrationIds (Join-Path $RepositoryRoot 'src/Antiphon.Messaging.Service/Migrations'))
-    $script:c496Ssh = Add-MonitorFake {
-        param($command)
-        $script:commands.Add($command)
-        if ($command -match 'docker compose config') {
-            $context = if ($script:c496Variant -eq 'wrong-context') { '/different/build/src' } else { '/home/mc/antiphon-messaging/build/src' }
-            $dockerfile = if ($script:c496Variant -eq 'wrong-dockerfile') { 'different/Dockerfile' } else { 'Antiphon.Messaging.Service/Dockerfile' }
-            return [pscustomobject]@{ExitCode=0;Output=(@{context=$context;dockerfile=$dockerfile;secret='never-log-this'} | ConvertTo-Json -Compress)}
-        }
-        if ($command -match 'curl -fsS') { return [pscustomobject]@{ExitCode=0;Output=(@('[{"channel":"telegram"},{"channel":"slack"}]') + $script:c496Migrations)} }
-        if ($command -match 'docker inspect') { return [pscustomobject]@{ExitCode=0;Output=@('aaaaaaaaaaaa sha256:aaaaaaaaaaaa running','{"State":"running","secret":"never-log-this"}')} }
-        return [pscustomobject]@{ExitCode=0;Output=@()}
+    # Process-local state: the public entry creates a different script scope, so native
+    # shims must not resolve their state through that entry's $script: scope.
+    $global:C496Fixture = @{
+        Events=$script:c496Events; Variant=$Variant; Persisted=$false
+        Manifest=@(Get-AmServiceDockerfileManifest (Join-Path $RepositoryRoot 'src/Antiphon.Messaging.Service/Dockerfile') (Join-Path $RepositoryRoot 'src'))
+        Migrations=@(Get-AmServiceMigrationIds (Join-Path $RepositoryRoot 'src/Antiphon.Messaging.Service/Migrations'))
     }
     # These functions replace native boundaries only in the owned child process.
     # No injected SshRunner is used: tests observe the actual default runner argv.
     function script:ssh {
-        $script:c496Events.Add([pscustomobject]@{Kind='ssh';Arguments=@($args)})
-        $reply = & $script:c496Ssh $args[1]
-        $global:LASTEXITCODE = $reply.ExitCode
-        $reply.Output
+        $state = $global:C496Fixture
+        $state.Events.Add([pscustomobject]@{Kind='ssh';Arguments=@($args)})
+        $command = $args[1]; $global:LASTEXITCODE = 0
+        if ($command -match 'C0410_GATEWAY_SETTINGS') {
+            $group = if ($state.Persisted) { 'antiphon-server-bridge' } else { 'antiphon-consumer' }
+            return (@{AntiphonConsumerGroup=$group;ExpectedAntiphonConsumerGroup=$group;InboundTopic='channels.inbound';ConsumerGroup='antiphon-messaging-service';BootstrapServers='am-redpanda:9092';secret='never-log-this'} | ConvertTo-Json -Compress)
+        }
+        if ($command -match 'C0410_OVERRIDE') { return '{"name":"docker-compose.override.yml","exists":false,"managed":true}' }
+        if ($command -match 'rpk cluster info') { return '{"cluster_name":"c496-cluster"}' }
+        if ($command -match 'C0410_MANAGED') { $state.Persisted=$true; return }
+        if ($command -match '/health/inbound-unconsumed') {
+            return @('{"state":"Ready","watchedGroup":"antiphon-server-bridge","expectedGroup":"antiphon-server-bridge","topic":"channels.inbound","ageSeconds":12,"partitions":[{"partition":0,"status":"CommittedOffset","committedNextOffset":12}]}','200')
+        }
+        if ($command -match 'rpk group describe') { return 'channels.inbound 0 12 0 12 0' }
+        if ($command -match 'docker compose config') {
+            $context = if ($state.Variant -eq 'wrong-context') { '/different/build/src' } else { '/home/mc/antiphon-messaging/build/src' }
+            $dockerfile = if ($state.Variant -eq 'wrong-dockerfile') { 'different/Dockerfile' } else { 'Antiphon.Messaging.Service/Dockerfile' }
+            return (@{context=$context;dockerfile=$dockerfile;secret='never-log-this'} | ConvertTo-Json -Compress)
+        }
+        if ($command -match 'curl -fsS') { return (@('[{"channel":"telegram"},{"channel":"slack"}]') + $state.Migrations) }
+        if ($command -match '^docker inspect') {
+            if ($command -match '&&') { return @('aaaaaaaaaaaa sha256:aaaaaaaaaaaa running','{"State":"running","secret":"never-log-this"}') }
+            return 'bbbbbbbbbbbb sha256:bbbbbbbbbbbb running'
+        }
+        if ($command -match 'tar xzf|^rm -f -- ') { return }
+        throw 'Unexpected fixture SSH command.'
     }
     function script:scp {
-        $script:c496Events.Add([pscustomobject]@{Kind='scp';Arguments=@($args)})
+        $global:C496Fixture.Events.Add([pscustomobject]@{Kind='scp';Arguments=@($args)})
         $global:LASTEXITCODE = 0
     }
     function script:tar {
-        $script:c496Events.Add([pscustomobject]@{Kind='archive';Arguments=@($args)})
+        $global:C496Fixture.Events.Add([pscustomobject]@{Kind='archive';Arguments=@($args)})
         if ($args[0] -eq '-czf') {
             if ($args[1] -notmatch '^am-service-src-[a-f0-9]{32}\.tgz$') { throw 'Unexpected fixture archive name.' }
             [IO.File]::WriteAllText((Join-Path (Get-Location).Path $args[1]), 'owned fake archive')
         } elseif ($args[0] -eq '-tzf') {
-            $script:c496Manifest | ForEach-Object { $_.Path }
+            $global:C496Fixture.Manifest | ForEach-Object { $_.Path }
         } else { throw 'Unexpected fixture tar command.' }
         $global:LASTEXITCODE = 0
     }
     function script:Invoke-WebRequest {
         param($Uri, $Headers, [switch]$UseBasicParsing, $TimeoutSec)
-        $script:c496Events.Add([pscustomobject]@{Kind='http';Arguments=@($Uri)})
-        $reply = & $http $Uri $Headers
-        [pscustomobject]@{StatusCode=$reply.StatusCode;Content=$reply.Body}
+        $global:C496Fixture.Events.Add([pscustomobject]@{Kind='http';Arguments=@($Uri)})
+        if ($Uri -like '*/api/version') { return [pscustomobject]@{StatusCode=200;Content='{"version":"0123456789012345678901234567890123456789"}'} }
+        if ($Uri -notlike '*/api/channels/consumer') { throw 'Unexpected fixture HTTP request.' }
+        [pscustomobject]@{StatusCode=200;Content='{"consumerGroup":"antiphon-server-bridge","inboundTopic":"channels.inbound","enabled":true,"brokers":[{"host":"am-redpanda","port":9092}]}'}
     }
 }
 
@@ -328,7 +341,7 @@ try {
     Assert-True (($fixtureManifest.Path -join ',') -eq 'one,two,three') 'parser handles shell COPY, comments, continuations, order, and de-duplication' ($fixtureManifest.Path -join ',')
     Assert-True ($fixtureManifest.Count -eq 3) 'parser excludes final-stage COPY --from' "count=$($fixtureManifest.Count)"
     $unsafe = @(@('json', 'COPY ["one", "./"]'), @('variable', 'COPY ${SOURCE} ./'), @('glob', 'COPY one/* ./'), @('absolute', 'COPY /one ./'), @('parent', 'COPY ../one ./'), @('option', 'COPY --chown=1000 one ./'), @('missing', 'COPY absent ./'))
-    foreach ($case in $unsafe) { [IO.File]::WriteAllText($fixtureDockerfile, $case[1]); Assert-Throws { Get-AmServiceDockerfileManifest $fixtureDockerfile $fixture | Out-Null } "unsafe syntax refuses before archive: $($case[0])" }
+    foreach ($legacyCase in $unsafe) { [IO.File]::WriteAllText($fixtureDockerfile, $legacyCase[1]); Assert-Throws { Get-AmServiceDockerfileManifest $fixtureDockerfile $fixture | Out-Null } "unsafe syntax refuses before archive: $($legacyCase[0])" }
 
     $manifest = @(Get-AmServiceDockerfileManifest $dockerfile $context)
     Assert-True ($manifest.Count -gt 0) 'real Dockerfile derives source entries'
@@ -387,10 +400,10 @@ try {
     Reset-MonitorFake; $script:monitorCase='legacy-cluster'; $script:commands.Clear()
     $legacyLog = @(Invoke-AmServiceDeployment -SshTarget 'operator@gateway.example.invalid' $root $false $false 10 $successSsh $scp $http 6>&1 | ForEach-Object { $_.ToString() }) -join "`n"
     Assert-True ($legacyLog.Contains('Broker listener metadata identifies the same cluster.')) 'preflight still accepts undotted cluster identity' $legacyLog
-    foreach ($case in @(@('404','identity endpoint 404 refuses'), @('disabled','disabled bridge refuses'), @('topic','inbound topic mismatch refuses'), @('rename','identity change between preview and write refuses'), @('unmarked','unmarked existing override refuses before any write'))) {
-        Reset-MonitorFake; $script:monitorCase=$case[0]; $script:commands.Clear(); $script:scpCalls.Clear()
-        Assert-Throws { Invoke-AmServiceDeployment -SshTarget 'operator@gateway.example.invalid' $root $true $true 10 $successSsh $scp $http | Out-Null } $case[1]
-        Assert-True ($script:scpCalls.Count -eq 0 -and ($script:commands -join "`n") -notmatch 'cat >|tar xzf|docker compose up') ($case[1] + ' without writes')
+    foreach ($legacyCase in @(@('404','identity endpoint 404 refuses'), @('disabled','disabled bridge refuses'), @('topic','inbound topic mismatch refuses'), @('rename','identity change between preview and write refuses'), @('unmarked','unmarked existing override refuses before any write'))) {
+        Reset-MonitorFake; $script:monitorCase=$legacyCase[0]; $script:commands.Clear(); $script:scpCalls.Clear()
+        Assert-Throws { Invoke-AmServiceDeployment -SshTarget 'operator@gateway.example.invalid' $root $true $true 10 $successSsh $scp $http | Out-Null } $legacyCase[1]
+        Assert-True ($script:scpCalls.Count -eq 0 -and ($script:commands -join "`n") -notmatch 'cat >|tar xzf|docker compose up') ($legacyCase[1] + ' without writes')
     }
     Reset-MonitorFake; $script:monitorCase='override'
     $log = @(Invoke-AmServiceDeployment -SshTarget 'operator@gateway.example.invalid' $root $false $false 10 $successSsh $scp $http 6>&1 | ForEach-Object { $_.ToString() }) -join "`n"
@@ -408,20 +421,20 @@ try {
     $success = Invoke-ExpectedDeployment $root $successSsh $scp $http
     $all = $script:commands -join "`n"
     Assert-True ($success.OverrideBackupPath -match 'docker-compose.override.yml.bak-' -and $all.IndexOf('cp --') -lt $all.IndexOf('cat >')) 'marked existing override is backed up and reported'
-    foreach ($case in @('degraded','wrong-group','stale','no-commit','readiness-404','missing-merged','no-numeric')) {
-        Reset-MonitorFake; $script:monitorCase=$case
-        Assert-Throws { Invoke-AmServiceDeployment -SshTarget 'operator@gateway.example.invalid' $root $true $true 10 $successSsh $scp $http | Out-Null } "postdeploy verification refuses $case"
+    foreach ($legacyCase in @('degraded','wrong-group','stale','no-commit','readiness-404','missing-merged','no-numeric')) {
+        Reset-MonitorFake; $script:monitorCase=$legacyCase
+        Assert-Throws { Invoke-AmServiceDeployment -SshTarget 'operator@gateway.example.invalid' $root $true $true 10 $successSsh $scp $http | Out-Null } "postdeploy verification refuses $legacyCase"
     }
     Assert-True (($script:commands -join "`n") -notmatch 'rpk topic consume|--group |kafka-console-consumer') 'verification never consumes from a group'
     Reset-MonitorFake; $script:commands.Clear()
     $log = @(Invoke-AmServiceDeployment -SshTarget 'operator@gateway.example.invalid' $root $true $true 10 $successSsh $scp $http 6>&1 | ForEach-Object { $_.ToString() }) -join "`n"
     $written = @($script:commands | Where-Object { $_ -match 'C0410_MANAGED' }) -join "`n"
     Assert-True (-not $log.Contains('never-log-this') -and -not $written.Contains('never-log-this')) 'identity, compose, and container output never leak'
-    foreach ($case in @('ambiguous-compose','broker-mismatch','invalid-cluster')) {
-        Reset-MonitorFake; $script:monitorCase=$case; $script:commands.Clear(); $script:scpCalls.Clear()
+    foreach ($legacyCase in @('ambiguous-compose','broker-mismatch','invalid-cluster')) {
+        Reset-MonitorFake; $script:monitorCase=$legacyCase; $script:commands.Clear(); $script:scpCalls.Clear()
         $failureLog = ''
-        try { $failureLog = @(Invoke-AmServiceDeployment -SshTarget 'operator@gateway.example.invalid' $root $true $true 10 $successSsh $scp $http 6>&1 | ForEach-Object { $_.ToString() }) -join "`n"; Fail "$case refuses" 'did not throw' } catch { Pass "$case refuses" }
-        Assert-True ($script:scpCalls.Count -eq 0 -and ($script:commands -join "`n") -notmatch 'cat >|tar xzf|docker compose up') "$case refuses without writes"
+        try { $failureLog = @(Invoke-AmServiceDeployment -SshTarget 'operator@gateway.example.invalid' $root $true $true 10 $successSsh $scp $http 6>&1 | ForEach-Object { $_.ToString() }) -join "`n"; Fail "$legacyCase refuses" 'did not throw' } catch { Pass "$legacyCase refuses" }
+        Assert-True ($script:scpCalls.Count -eq 0 -and ($script:commands -join "`n") -notmatch 'cat >|tar xzf|docker compose up') "$legacyCase refuses without writes"
     }
     Reset-MonitorFake; $script:monitorCase='compose-yaml'
     $preview = Invoke-AmServiceDeployment -SshTarget 'operator@gateway.example.invalid' $root $false $false 10 $successSsh $scp $http
