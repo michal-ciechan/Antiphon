@@ -257,6 +257,11 @@ public sealed class CommitEndpointWebAppFactory : AntiphonWebAppFactory
         services.RemoveAll<GitWorkspaceService>();
         services.AddGitWorkspaceService(Spy);
         services.AddSingleton<LandDeliveryBoundary>(Boundary);
+        services.RemoveAll<PtyDeliveryProfile>();
+        services.AddSingleton(sp => new PtyDeliveryProfile(sp.GetRequiredService<IServiceScopeFactory>(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<PtyDeliveryProfile>.Instance,
+            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Antiphon.Server.Application.Settings.DelegationSettings>>(),
+            TimeProvider.System, "modern"));
         services.RemoveAll<Antiphon.Server.Application.Interfaces.IDelegateSessionStopper>();
         services.AddSingleton<Antiphon.Server.Application.Interfaces.IDelegateSessionStopper, RecordingSessionStopper>();
     }

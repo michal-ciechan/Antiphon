@@ -28,6 +28,7 @@ namespace Antiphon.Tests.Application;
 /// a delegate's terminal can never be mistaken for that task finishing.
 /// </summary>
 [Category("Integration")]
+[ParallelLimiter<ProcessSpawnLimit>]
 // Wall recovery upserts a global kind/alias hold; its snapshot/restore must exclude all writers.
 [NotInParallel]
 public partial class AgentTaskReplyIntegrationTests
