@@ -1093,39 +1093,23 @@ public sealed partial class SessionMessageQueueService
         await using (var scope = _scopeFactory.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            // Parked messages (CARD-0055: at MaxDeliveryAttempts) are excluded here and in the
-            // delegation query below. This watchdog is the automatic retry path, and parking means
-            // exactly "no automatic retry" — a session whose only pending message is parked must not
-            // even be woken up for it.
+            // CARD-0501 re-review R2: discovery is <see cref="QueueAttention.NeedsAttention"/> and
+            // nothing else. This query used to carry its own hand-written filter, and the hand-written
+            // filter excluded rows at the attempts cap on EVERY arm — right for a Pending row (parking
+            // means exactly "no automatic retry", and a session whose only pending message is parked
+            // must not even be woken up for it), wrong for an interrupted Sent one. A crashed Sent row
+            // at the cap has NOT parked yet: it still owes a late-confirm and a revert to the visible
+            // parked shape, and the flush path it would reach withholds the Enter on its own. Excluding
+            // it from discovery meant a session holding only that row was never brought into scope at
+            // all, and the row sat Sent forever — past this sweep, past ParkedMessageSweepService (which
+            // reads Pending-at-the-cap), past everything but an unrelated direct flush.
             var maxAttempts = MaxAttempts;
-            var pendingSessionIds = await db.SessionQueuedMessages
+            var scopedSessionIds = await db.SessionQueuedMessages
                 .AsNoTracking()
-                .Where(m => m.Status == QueuedMessageStatus.Pending
-                    && m.CreatedAt <= cutoff
-                    && m.DeliveryAttempts < maxAttempts)
+                .Where(QueueAttention.NeedsAttention(maxAttempts, cutoff, interruptedAge, interruptedFloor))
                 .Select(m => m.AgentSessionId)
                 .Distinct()
                 .ToListAsync(ct);
-
-            // CARD-0340 S3: Sent + null verdict, old enough that this process did not live to
-            // judge. CARD-0342: Pending NoSubmitOutput (known Grok body-still-visible) inside
-            // the same bounded window, without waiting for CreatedAt to age.
-            var recoverySessionIds = await db.SessionQueuedMessages
-                .AsNoTracking()
-                .Where(m => m.DeliveryAttempts < maxAttempts
-                    && m.LastDeliveryStartedAt != null
-                    && m.LastDeliveryStartedAt >= interruptedFloor
-                    && (
-                        (m.Status == QueuedMessageStatus.Sent
-                            && m.DeliveryVerdict == null
-                            && m.LastDeliveryStartedAt <= interruptedAge)
-                        || (m.Status == QueuedMessageStatus.Pending
-                            && m.DeliveryVerdict == DeliveryVerdict.NoSubmitOutput)))
-                .Select(m => m.AgentSessionId)
-                .Distinct()
-                .ToListAsync(ct);
-
-            var scopedSessionIds = pendingSessionIds.Union(recoverySessionIds).ToList();
             if (scopedSessionIds.Count == 0)
                 return 0;
 
@@ -1144,21 +1128,9 @@ public sealed partial class SessionMessageQueueService
                 .ToListAsync(ct);
             var machineOriginSessionIds = await db.SessionQueuedMessages
                 .AsNoTracking()
-                .Where(m => scopedSessionIds.Contains(m.AgentSessionId)
-                    && m.DeliveryAttempts < maxAttempts
-                    && (m.Origin == QueuedMessageOrigin.Delegation
-                        || m.Origin == QueuedMessageOrigin.Supervision)
-                    && (
-                        (m.Status == QueuedMessageStatus.Pending && m.CreatedAt <= cutoff)
-                        || (m.Status == QueuedMessageStatus.Sent
-                            && m.DeliveryVerdict == null
-                            && m.LastDeliveryStartedAt != null
-                            && m.LastDeliveryStartedAt <= interruptedAge
-                            && m.LastDeliveryStartedAt >= interruptedFloor)
-                        || (m.Status == QueuedMessageStatus.Pending
-                            && m.DeliveryVerdict == DeliveryVerdict.NoSubmitOutput
-                            && m.LastDeliveryStartedAt != null
-                            && m.LastDeliveryStartedAt >= interruptedFloor)))
+                .Where(m => scopedSessionIds.Contains(m.AgentSessionId))
+                .Where(QueueAttention.MachineOriginNeedsAttention(
+                    maxAttempts, cutoff, interruptedAge, interruptedFloor))
                 .Select(m => m.AgentSessionId)
                 .Distinct()
                 .ToListAsync(ct);
@@ -2089,13 +2061,11 @@ public sealed partial class SessionMessageQueueService
         var now = UtcNow();
         var ageFloor = now - InterruptedAttemptAge;
         var windowFloor = now - InterruptedAttemptWindow;
+        // CARD-0501 re-review R2: the SAME expression the sweep discovers on, so the two cannot
+        // drift. This selector has no attempts-cap clause on purpose — see QueueAttention.
         var rows = await db.SessionQueuedMessages
-            .Where(m => m.AgentSessionId == sessionId
-                && m.Status == QueuedMessageStatus.Sent
-                && m.DeliveryVerdict == null
-                && m.LastDeliveryStartedAt != null
-                && m.LastDeliveryStartedAt <= ageFloor
-                && m.LastDeliveryStartedAt >= windowFloor)
+            .Where(m => m.AgentSessionId == sessionId)
+            .Where(QueueAttention.InterruptedSent(ageFloor, windowFloor))
             .OrderBy(m => m.Sequence)
             .ToListAsync(ct);
         if (rows.Count == 0)
