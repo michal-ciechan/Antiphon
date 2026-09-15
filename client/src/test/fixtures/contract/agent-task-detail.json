@@ -140,6 +140,7 @@
   "worktreeBaseSource": "Unset",
   "worktreeBaseTaskId": null,
   "worktreeBaseSha": null,
+  "session": null,
   "commitOnSettle": null,
   "commitBaselineSha": null
 }
