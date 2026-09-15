@@ -1336,3 +1336,58 @@ outputs to `queue-race-children`. Raw TRX, logs and diagnostics remain available
 Caller owns ordinary read-only Review, integration through original landing owner
 **00222dc7**, companion verification recording, publication/server activation and
 explicit post-land SourceLanding Mutation. Do not land this repair directly.
+
+## Round-6 F4 recovery identity coverage (Code task 7f3e581c)
+
+Subject: `fee656059ae3c066048d05d154ba1ca03a582b9e`. Original Code/landing owner
+remains **00222dc7**. Repair branch `feat/card-task-7f3e581c`, exact worktree
+`C:\Antiphon\worktrees\card-task-7f3e581c`. Restart: **server** for the accumulated
+implementation; this repair changes tests and this plan only. F1/F2/F3 production
+paths are unchanged.
+
+The recovery lookup bypasses keyed enqueue, so its destination and digest comparisons
+need independent negative coverage. Each case commits an unlinked keyed queue row,
+then invokes the real `AgentTaskLandNotificationService.ReconcileAsync` twice using
+fresh contexts/services and the persisted retry deadline. The destination mismatch
+keeps the digest valid; the digest mismatch keeps the destination and complete body
+valid. A Sent/Delivered attempt and a complete destination UserPrompt above its floor
+make receipt confirmation otherwise possible. Real PostgreSQL and queue insertion
+are used; adapters record any input/submission. This is adversarial stored-identity
+coverage, not evidence that the seeded prompt came from native transport.
+
+| ID | Exact class.method | Variants and required evidence |
+|---|---|---|
+| V-20 | AgentTaskLandNotificationRecoveryTests.C481_Recovery_rejects_a_keyed_row_with_a_different_destination | Running, Stopped, Failed caller. No queue link/enqueue timestamp, no confirmation/time/sequence, RetryPending with ConflictException, no enqueue boundary, no replacement or duplicate row, unchanged row identity/body/attempt/floor/verdict, no adapter input or submission to either session, unchanged caller status. Repeat at the due retry in a fresh recovery service. |
+| V-21 | AgentTaskLandNotificationRecoveryTests.C481_Recovery_rejects_a_keyed_row_with_a_different_digest | Same three caller states and assertions; only digest differs. Body remains equal so a body check cannot mask a missing digest comparison. |
+
+Coverage-to-class remains the twenty named integration classes in round-4 I plus
+Unit U. `AgentTaskLandNotificationRecoveryTests` grows from 21 to 27 cases; expected
+I total is **453**, U **2,460**. Build once into producer-owned `bin-c481r6/` and use
+`--no-build`, fresh TRX, exact class/method inventories and nonzero counts. Run the
+unchanged I/U filters above, plus the two exact F4 methods as a targeted first check.
+Run B's thirteen named inherited failures plus D's exact Git-timeout method on the
+untouched prior baseline `bc2d2715de0ec4ea684f74489d88e288d327e053` in an owned detached
+worktree and `bin-c481r6base/`. Compare actual outcomes/messages; any new current red
+requires exact-method diagnosis on current and baseline. No namespace/full assembly
+expansion. No R-n or V-7 is defined by this plan. Ordinary verification is pending
+at this implementation checkpoint.
+
+### Pending F4 positive controls
+
+| PC | Exact method filter | Mutation and intended red |
+|---|---|---|
+| PC-27 | `/*/*/AgentTaskLandNotificationRecoveryTests/C481_Recovery_rejects_a_keyed_row_with_a_different_destination` | Remove only `existing.AgentSessionId != session` from the recovery comparison; leave digest validation intact. Running/Stopped/Failed variants must fail the no-link assertion (and would otherwise accept the complete receipt). |
+| PC-28 | `/*/*/AgentTaskLandNotificationRecoveryTests/C481_Recovery_rejects_a_keyed_row_with_a_different_digest` | Remove only `existing.ContentDigest != note.ContentDigest`; leave destination validation intact. Running/Stopped/Failed variants must fail the no-link assertion, with matching body preventing a different guard from detecting this defect. |
+
+PC-1 through PC-26 and every variant in the round-4 inventory remain pending;
+PC-27 and PC-28 add three variants each. These controls share a production method
+and must run separately, with exact-method red/restore/fresh-build/green evidence.
+No deliberate mutant is authorized by ordinary Code. Mutation also owns missing-
+control discovery after ordinary Review, original-owner landing and explicit
+SourceLanding commissioning. V-19 remains the matching-identity receipt control.
+
+The dedicated recovered-row destination/digest gap recorded in round-4 is addressed
+by V-20/V-21. Other prior limits remain: native ingestion/abrupt worker death,
+cold launch/early transcript, retained return, sweep/redemption races, DeliveryFailure
+hosted pagination/retention/attention and historical no-outbox backfill. Live census
+and server activation remain caller-owned.
