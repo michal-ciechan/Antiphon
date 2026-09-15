@@ -236,7 +236,7 @@ public static class DelegationReportFormatter
             AgentTaskRole.Diagnose => DiagnoseReportingContract(task.Id, inlineMax),
             _ => ReportingContract(task.Id, task.Kind, inlineMax, task.Role, task.Stage),
         });
-        return sb.ToString();
+        return sb.ToString().ReplaceLineEndings("\n");
     }
 
     /// <summary>

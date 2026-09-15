@@ -2528,7 +2528,7 @@ public sealed class AgentTaskService
                 Use scripts/task-commit.ps1 -Paths ... -MessageFile ... which refuses ignored paths and ignore-rule edits.
                 Never git add -f, never edit .gitignore or info/exclude, never push, never touch other dirty paths.
                 A refusal is reported, not worked around. Report the sha and paths, or the refusal verbatim.
-                """,
+                """.ReplaceLineEndings("\n"),
             Kind = AgentTaskKind.Worker,
             Role = AgentTaskRole.Commit,
             ProjectId = settled.ProjectId,

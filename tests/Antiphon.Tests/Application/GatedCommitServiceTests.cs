@@ -12,6 +12,24 @@ namespace Antiphon.Tests.Application;
 public sealed class GatedCommitServiceTests
 {
     [Test]
+    [Arguments("unborn")]
+    [Arguments("head-error")]
+    [Arguments("history-error")]
+    public async Task Settlement_recovery_distinguishes_unborn_from_unavailable_history(string variant)
+    {
+        using var repo = new ScratchGitRepo("c527-unborn");
+        if (variant == "history-error") await repo.CommitFileAsync("seed.txt", "seed");
+        var spy = new RecordingGitWorkspaceService();
+        spy.OverrideRun = args => (variant == "head-error" && args[0] == "rev-parse")
+            || (variant == "history-error" && args[0] == "log") ? (128, "", "inspection unavailable") : null;
+        var result = await spy.FindSettlementCommitsAsync(repo.Path, Guid.NewGuid(), new string('a', 64), CancellationToken.None);
+        result.Succeeded.ShouldBe(variant == "unborn");
+        result.Items.ShouldBeEmpty();
+        spy.Verbs.ShouldNotContain("add");
+        spy.Verbs.ShouldNotContain("commit");
+    }
+
+    [Test]
     [Arguments("valid")]
     [Arguments("body")]
     [Arguments("task")]
