@@ -12,6 +12,19 @@
   generation changed; a possibly held body stays in recovery. Human SendNow retains expiry-only
   cancellation. Pinned by `SessionMessageQueueWedgedHeadTests`.
 
+- **Skipping a queue row does not empty its composer (CARD-0501 review F1).**
+  A Pending row a flush declines to deliver — a park at the attempts cap is the reachable case,
+  and parking deliberately does not restart the session — may still be standing unsubmitted in
+  the composer. Nothing may be typed on top of it: the terminal would receive both bodies as one
+  prompt and the containment matcher would mark the innocent row `Delivered`. The flush therefore
+  holds while any held-back row was typed in the current generation and the whole normalized head
+  of its body is still on the rendered screen — the same predicate pair the Enter-only recovery
+  uses to conclude the body is in the composer, so the two can never disagree. An unreadable
+  snapshot holds too. Release is a late-confirm (the ordinary exit), a terminal-task cancellation,
+  a demonstrably cleared composer, or a new generation. The hold charges no attempt, parks
+  nothing and kills nothing. A produced check note's whole journey — production, enqueue,
+  recovery, recipient `UserPrompt` — is pinned end to end by `CheckNoteDeliveryHandoffTests`.
+
 - **Tracked root exit is not descendant-exit authority (CARD-0478, incomplete Code checkpoint).**
   The opt-in modern PtyHost path retains its original job observer after root exit.
   Its irreversible seal precedes successful zero accounting and output drain;
