@@ -1551,6 +1551,7 @@ public sealed class AgentTaskReplyService
                     || git.StartsWith("commit refused:", StringComparison.Ordinal)
                     || git.Contains("commit task", StringComparison.Ordinal)))
             && task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is not null;
+        Guid? completionNotificationId = null;
         if (durableCompletion)
         {
             var note = await BuildParentNoteAsync(task, report, ct, workspaceNote, warning, drift, git);
@@ -1558,9 +1559,10 @@ public sealed class AgentTaskReplyService
                 .Where(e => e.State == EntityState.Added && e.Entity.AgentTaskId == task.Id)
                 .Select(e => e.Entity)
                 .First(e => e.Type is AgentTaskEventType.Completed or AgentTaskEventType.Failed or AgentTaskEventType.Blocked);
+            completionNotificationId = Guid.NewGuid();
             db.AgentTaskLandNotifications.Add(new AgentTaskLandNotification
             {
-                Id = Guid.NewGuid(), TaskId = task.Id, SourceEventId = source.Id,
+                Id = completionNotificationId.Value, TaskId = task.Id, SourceEventId = source.Id,
                 Kind = LandNotificationKind.TaskCompletion, ReplyTo = task.ReplyTo,
                 ParentSessionId = task.ParentSessionId, Body = note.Body,
                 ContentDigest = DelegationNoteDigest.Compute(report), CreatedAt = now, NextAttemptAt = now,
@@ -1598,7 +1600,11 @@ public sealed class AgentTaskReplyService
             var notificationId = await store.AgentTaskLandNotifications.AsNoTracking()
                 .Where(n => n.TaskId == task.Id && n.Kind == LandNotificationKind.TaskCompletion
                     && n.ContentDigest == DelegationNoteDigest.Compute(report))
-                .Select(n => n.Id).SingleAsync(ct);
+                // A reopened task can report identical text. Prefer this transaction's
+                // exact obligation; after a concurrency loss use the newest persisted one.
+                .OrderByDescending(n => n.Id == completionNotificationId)
+                .ThenByDescending(n => n.CreatedAt)
+                .Select(n => n.Id).FirstAsync(ct);
             await deliveryScope.ServiceProvider.GetRequiredService<AgentTaskLandNotificationService>()
                 .ReconcileAsync(notificationId, ct);
         }

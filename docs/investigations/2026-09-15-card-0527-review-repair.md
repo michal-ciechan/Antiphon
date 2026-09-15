@@ -43,6 +43,7 @@ Build each producer once into `bin-c527fix360/` and reuse --no-build. Rebuild af
 
 ## Additional ordinary cases
 
+- The specified V-50 matrix had only 15 of 24 combinations. Add all nine missing variants. AddCommitUpstreamBaseline_is_nullable_and_additive checks the new migration. Settlement_recovery_distinguishes_unborn_from_unavailable_history covers a new repository and failed HEAD/history inspection (3). C527_repeated_report_selects_this_settlements_notification proves an old matching report digest cannot replace the new obligation. Generated Commit-child goals and complete briefs now persist canonical LF, matching terminal delivery byte for byte.
 - F1: Renamed_ignore_rule_endpoint_refuses_before_staging: scoped/whole x original/destination endpoint (4); Scoped_rename_selecting_either_endpoint_commits_both (2).
 - F2: Unavailable_ignore_check_refuses_before_staging: error 128 / timeout result -1 (2); Unavailable_post_stage_inspection_restores_exact_prior_index: scoped/whole staged-path error and whole late-ignore error (3). C527_unavailable_child_audit_is_reported_to_parent: ignore/path/history/upstream failure (4).
 - F3: C527_completion_outbox_recovers_complete_receipt: five boundaries (settlement-before-save, settlement-saved, before-enqueue, queue-inserted, receipt-before-save) x busy/eligible x parent-handoff/child-audit (20). V-30 now flushes and verifies complete parent receipt after a git-commit/save interruption.
@@ -73,10 +74,11 @@ Additional per-method controls (all pending, no broad red runs):
 | PC-40 | Accept grep matches without validating the parsed unique trailer block | GatedCommitServiceTests.Settlement_recovery_requires_exact_unique_trailers; zero recovered matches for invalid variants (5 invalid + valid companion) |
 | PC-41 | Suppress remaining-dirty-work warning on recovered settlement | AgentTaskReplyIntegrationTests.C527_recovered_settlement_reports_new_dirty_work_without_committing_it; complete prompt names both remaining paths |
 | PC-42 | Treat unavailable child audit input as clear | AgentTaskReplyIntegrationTests.C527_unavailable_child_audit_is_reported_to_parent; complete prompt contains audit unavailable (ignore/path/history/upstream variants, mutate each seam separately) |
+| PC-43 | Treat failed HEAD/history lookup as successful empty history | GatedCommitServiceTests.Settlement_recovery_distinguishes_unborn_from_unavailable_history; failed Succeeded assertion (HEAD/history error variants, each seam separately; unborn companion) |
+| PC-44 | Select the oldest same-digest completion instead of this transaction's identity | AgentTaskReplyIntegrationTests.C527_repeated_report_selects_this_settlements_notification; new queue/complete prompt correlation fails |
 
 Every red and restored green uses `/*/*/<Class>/<ExactMethod>`. Parameterized methods execute their named variants together; mutation evidence must identify the decisive variant. Missing-control discovery remains Mutation's responsibility.
 
 ## Evidence and disposition
 
 Execution results, expanded per-class/per-method counts and V/R mapping will be added after ordinary verification. Native provider execution is not claimed: the queue tests use controlled adapters that persist submitted complete UserPrompts, while the endpoint and git operations are real. No live broker, production runner, land or deploy is used.
-

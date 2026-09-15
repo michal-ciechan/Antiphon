@@ -15,6 +15,46 @@ namespace Antiphon.Tests.Application;
 public partial class AgentTaskReplyIntegrationTests
 {
     [Test]
+    public async Task C527_repeated_report_selects_this_settlements_notification()
+    {
+        var seeded = await SeedC527Async();
+        using var repo = seeded.Repo;
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "x.md"), "x");
+        const string report = "Work completed.";
+        var oldId = Guid.NewGuid();
+        await using (var db = CreateContext())
+        {
+            var priorEvent = new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(), AgentTaskId = seeded.Task.Id, Type = AgentTaskEventType.Completed,
+                Detail = report, At = DateTime.UtcNow.AddDays(-1),
+            };
+            db.AgentTaskEvents.Add(priorEvent);
+            db.AgentTaskLandNotifications.Add(new AgentTaskLandNotification
+            {
+                Id = oldId, TaskId = seeded.Task.Id, SourceEventId = priorEvent.Id,
+                Kind = LandNotificationKind.TaskCompletion, ReplyTo = AgentTaskReplyTo.Session,
+                ParentSessionId = seeded.Parent, Body = "Prior settlement", ContentDigest = DelegationNoteDigest.Compute(report),
+                CreatedAt = priorEvent.At, NextAttemptAt = priorEvent.At, ConfirmedAt = priorEvent.At,
+                State = LandNotificationState.Confirmed,
+            });
+            await db.SaveChangesAsync();
+        }
+        var factory = C527Factory(repo.WorktreeRoot);
+        var terminal = AttachTerminal(factory, seeded.Parent);
+        await SeedTurnAsync(seeded.SessionId, DelegationReportFormatter.TaskMarker(seeded.Task.Id), report);
+        await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+        await Queue(factory).FlushSessionAsync(seeded.Parent, CancellationToken.None);
+        await using var verify = CreateContext();
+        var current = await verify.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == seeded.Task.Id && n.Id != oldId);
+        var receipt = await AssertParentReceivedNoteAsync(seeded.Parent, seeded.Task, report);
+        receipt.Note.SourceLandNotificationId.ShouldBe(current.Id);
+        receipt.Prompt.Text.ShouldBe(current.Body);
+        receipt.Prompt.Text.ShouldContain("commit task ");
+        terminal.SubmittedBodies.Count.ShouldBe(1);
+    }
+
+    [Test]
     [Arguments("check-ignore")]
     [Arguments("diff-tree")]
     [Arguments("history")]
