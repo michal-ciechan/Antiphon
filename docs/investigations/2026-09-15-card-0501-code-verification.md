@@ -418,3 +418,125 @@ this pass's renamed methods and its `Integration`/`Slow` tagging are still valid
 
 No timeout was widened, no assertion loosened, no retry added. PC-1…PC-8 and the new F1/F3
 controls remain the commissioned post-land Mutation task's work.
+
+# Re-review round 2 (task `0a2217c5`): three findings, one shape
+
+Round 2 reported F3-R2, F2-R2a and F2-R2b as separate defects and asked for the underlying
+pattern instead of three patches. They are the same pattern: **every caller that asks "what needs
+recovery / discovery / reconciliation" wrote its own partial filter, and the partial filters
+disagreed with what the acting code would actually do.**
+
+## The invariant
+
+**Discovery must be a superset of action.** `server/Application/Services/QueueAttention.cs` states
+it once, as `Expression`s so the same predicate runs in the database on a discovery query and in
+memory on a loaded run. `FlushStrandedQueuesAsync` (both of its queries) and
+`LoadInterruptedSentRunAsync` now read it instead of restating it.
+
+The asymmetry inside it is the whole finding, so it is written down rather than merely coded: the
+attempts cap gates the `Pending` arms and NOT the interrupted-`Sent` arm. "Parked" is a RESTING
+state a row must first be brought **to**; it is not a licence to stop looking at rows that have
+not reached it.
+
+## F3-R2 — the root issue
+
+`FlushStrandedQueuesAsync` excluded `DeliveryAttempts >= MaxAttempts` on every arm. Right for a
+Pending row: parking means exactly "no automatic retry", and a session whose only pending message
+is parked must not be woken for it. Wrong for a crashed `Sent` row at the cap, because
+`LoadInterruptedSentRunAsync` has no cap clause **on purpose** — that row still owes a
+late-confirm and a revert to the visible parked shape, and the F3 cap gate added in round 1
+withholds its Enter regardless.
+
+So a session holding ONE capped crashed `Sent` row and nothing else was never brought into scope.
+The row stayed `Sent` forever: not delivered, not parked, therefore also invisible to
+`ParkedMessageSweepService`, which only discards `Pending`-at-the-cap. Nothing but an unrelated
+direct flush could settle it. That is the live-incident shape — one wedged head, nothing behind
+it — and round 1's `Crashed_Sent_row_at_the_cap_parks_instead_of_Entering_again(Sweep)` only
+passed because its fixture seeded a second live row to widen the sweep on the wedged row's
+behalf. The companion was papering over the defect, not describing the shape.
+
+Widening discovery types nothing and charges nothing: the flush path's own gates (the cap, the F1
+composer hold, the generation gate, the working/Starting guards) still decide. And the row it
+brings to rest stops matching, so the cost is one extra pass, not a standing one — pinned by
+`A_parked_row_stops_being_discovered_once_it_is_at_rest`.
+
+## F2-R2a — the abandoned row that stayed dispatchable
+
+A failed `SaveChangesAsync` does not untrack what it tried to insert; EF only accepts changes on
+success. `SpecialistTaskRunner.CreateRunTaskAsync` therefore left the interpretation task `Added`
+on the **scoped** context, and the check's own next save through that same context published it.
+Measured, not inferred: with the fix reverted, `CountAsync(t => t.AgentId == interpreter)` returns
+**1** after the write "failed".
+
+Round 1's assertion read `t.Status != AgentTaskStatus.Queued`, which carved out exactly the row
+that survived. It now demands no row at all, and a second test drives the consequence out: a real
+`AgentTaskDispatcher.TickAsync` after the failed write must find nothing to place. Left in, the
+dispatcher would place a `Queued` run pinned to the standing interpreter on its live session,
+enqueue a brief for a check that already shipped its degraded note, bill the result, and occupy
+the seat against the next real interpretation (`PlaceOnStandingAgentAsync` allows one task at a
+time on a live composer).
+
+## F2-R2b — the window between the reuse path's two commits
+
+`TickAsync` commits `Dispatched`, then `DeliverReuseMessagesAsync` inserts the brief in a separate
+commit in a separate scope. Interrupted in between — the enqueue throws, or the process dies — the
+durable record is a `Dispatched` task on a live reused session with no brief row of its own. No
+queue row means nothing in the queue's own recovery can see it; the delivery watchdog owns it.
+Production already handled this (`briefRow` null, `started` false, so the never-started arm
+fires); what was missing was the proof, which is what round 2 asked for. Both arms are pinned: a
+caught throw leaves a `DeliveryTransportFailed` incident, a crash leaves nothing at all, and
+neither may change the verdict. The fixture also keeps the refocus `/compact` that DID commit,
+because that housekeeping is the evidence that used to read as "it started".
+
+## The property
+
+`The_sweep_reaches_the_same_resting_state_as_a_direct_flush` is the general test round 2 asked
+for. For a session holding ONE row, the automatic sweep and a direct flush must reach the same
+`(Status, Attempts, Verdict, bodies typed, submits)`. The sweep only chooses WHICH sessions to
+flush; the direct flush is the oracle because it has no discovery filter of its own to be wrong.
+Six shapes, and two of them are "neither path acts" controls that pin the axes this widening did
+NOT move — parked-`Pending` stays at rest, and the interrupted window's bound on re-pressing
+Enter is untouched. Without those two, "make discovery wider" would have no stopping rule.
+
+## Positive controls (red then green)
+
+Each was run with only the named production change reverted, then restored.
+
+| PC | Reverted | Test | Red observed |
+|---|---|---|---|
+| R2-PC-1 | `SessionMessageQueueService.cs` to 92857c4a | `A_lone_capped_crashed_row_is_discovered_and_parked_by_the_sweep` | `row.Status should be Pending but was Sent` |
+| R2-PC-2 | same | `The_sweep_reaches_the_same_resting_state_as_a_direct_flush` | 1/6 failed, `(CappedCrashedSent)` only: `Rest { Status = Pending, ... }` vs `Rest { Status = Sent, ... }`. The five control shapes passed, which is what shows the widening is confined to the cap axis |
+| R2-PC-3 | `SpecialistTaskRunner.cs` to 92857c4a | `An_abandoned_interpretation_is_never_dispatched_after_its_write_failed` and `An_interpretation_that_cannot_be_persisted_still_delivers_a_degraded_note_whole` | both failed; `CountAsync(AgentId == interpreter) should be 0 but was 1` |
+| R2-PC-4 | `AgentTaskDispatcher.cs`, the never-started arm's condition inverted to `started && briefNeverTyped` | `a_reuse_brief_lost_between_the_two_commits_is_failed` | both arguments (True/False) failed |
+
+R2-PC-4 mutates rather than reverts, because F2-R2b is a coverage gap over behaviour that was
+already correct; the mutation is what shows the new test has teeth. `git status` was verified
+clean after each restore.
+
+## Verification runs (this pass)
+
+| Run | Filter | Result |
+|---|---|---|
+| R2-A | `(SessionMessageQueueWedgedHeadTests*)`, `(SessionMessageQueueInterruptedAttemptTests*)`, `(CheckNoteDeliveryHandoffTests*)`, `(AgentTaskReuseEnqueueTests*)` | 75/75 pass, 2m05s (`queue.trx`) |
+| R2-B | `(AgentTaskDeliveryWatchdogTests*)`, `(ParkedMessageSweepServiceTests*)`, `(SessionMessageQueueDeliveryVerificationTests*)`, `(SessionMessageQueueServiceTests*)` | 223/223 pass, 6m08s (`sweeps.trx`) |
+| R2-C | `(SpecialistTaskRunnerDeadlineTests*)`, `(AgentTaskCheckInterpreterTests*)`, `(SpecialistRequestServiceTests*)`, `(AgentTaskCheckServiceTests*)` | 49/49 pass, 46s (`specialist.trx`) |
+| R2-D | `[Category=Unit]` | 2,351 total: 2,346 pass, 4 fail, 1 skip, 2m06s (`unit.trx`) |
+
+R2-B and R2-C are the widening's blast radius: `ParkedMessageSweepService` is the other reader of
+"at the cap", and the specialist/check suites are the other users of the detached context.
+
+R2-D's four failures are the same inherited set as R-1, unchanged in count and cause — the two
+guard tests still name exactly one offender,
+`Antiphon.Tests.Application.HerdrPaneDisposalEndpointTests`, and none of this pass's new or
+renamed methods. TRX artifacts are under `.antiphon/c501r2/`.
+
+No timeout was widened, no assertion loosened, no retry added. One assertion was TIGHTENED
+(`t.Status != Queued` to no row at all), which is the F2-R2a fix.
+
+## Not fixed, and why
+
+A capped crashed `Sent` row on a session that is no longer live is still not reached: the sweep
+intersects its candidates with `_runtime.ListLiveSessions()`, and a direct flush into a dead
+session is not possible either. That bound is older than this card and unchanged by it — recovery
+of a dead session's queue belongs to session-end reconciliation, not to a delivery sweep. Named
+here so the next reader does not mistake it for part of this fix.

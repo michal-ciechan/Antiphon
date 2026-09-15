@@ -1,5 +1,26 @@
 # Session runtime invariants
 
+- **Queue discovery must be a superset of queue action (CARD-0501 re-review R2).**
+  Every query that asks "what needs recovery/discovery/reconciliation" reads
+  `QueueAttention`, not its own filter. The attempts cap gates the `Pending` arms — a parked row
+  is at REST, and a session holding only parked rows is not woken — and deliberately does NOT
+  gate the interrupted-`Sent` arm, because a crashed `Sent` row at the cap has not parked yet: it
+  still owes a late-confirm and a revert to the visible parked shape. Excluding it from discovery
+  stranded it `Sent` past the stranded sweep, past `ParkedMessageSweepService` (which reads
+  `Pending`-at-the-cap), past everything but an unrelated direct flush. Widening discovery types
+  nothing and charges nothing on its own — the flush path's own gates still decide — and a row it
+  brings to rest stops being discovered, so the cost is one pass, not a standing one. Pinned by
+  `SessionMessageQueueWedgedHeadTests.The_sweep_reaches_the_same_resting_state_as_a_direct_flush`,
+  which holds the sweep and a direct flush to the same outcome over six lone-row shapes.
+
+- **Abandoned work must not stay dispatchable (CARD-0501 re-review R2).**
+  A failed `SaveChangesAsync` does not untrack what it tried to insert, so a caller that reports
+  the failure through the same scoped context republishes it. `SpecialistTaskRunner` detaches the
+  abandoned run task and its event where the write is given up on; otherwise a `Queued`
+  interpretation nobody waits on reaches the dispatcher, occupies the standing specialist's seat
+  against the next real run, and bills a result nobody reads. Pinned by
+  `CheckNoteDeliveryHandoffTests.An_abandoned_interpretation_is_never_dispatched_after_its_write_failed`.
+
 - **A queue retry must belong to the composer that took the typing (CARD-0501).**
   `LastDeliveryGeneration` records the normalized accepted generation before each typed attempt.
   Both Pending retry and interrupted Sent recovery require that generation and the entire
