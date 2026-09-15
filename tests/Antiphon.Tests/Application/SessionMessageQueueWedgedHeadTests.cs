@@ -628,10 +628,12 @@ public class SessionMessageQueueWedgedHeadTests
     // already spent every attempt - 3 attempts became 4, and nothing bounded the one after that.
     // Both entry points reproduced it, so both are pinned.
     private static Task<Guid> SeedCrashedAtCapAsync(BridgeQueueHarness h, long baseline,
-        string body = Body, string? conversationKey = null, int attempts = 3) =>
+        string body = Body, string? conversationKey = null, int attempts = 3,
+        QueuedMessageOrigin origin = QueuedMessageOrigin.Delegation,
+        DateTime? startedAt = null) =>
         h.SeedPendingMessageAsync(body, deliveryAttempts: attempts, baselineSequence: baseline,
-            status: QueuedMessageStatus.Sent, conversationKey: conversationKey,
-            lastDeliveryStartedAt: DateTime.UtcNow - TimeSpan.FromMinutes(4));
+            status: QueuedMessageStatus.Sent, conversationKey: conversationKey, origin: origin,
+            lastDeliveryStartedAt: startedAt ?? DateTime.UtcNow - TimeSpan.FromMinutes(4));
 
     [Test]
     [Arguments("Flush")]
@@ -644,7 +646,10 @@ public class SessionMessageQueueWedgedHeadTests
         // The sweep only widens to a session some row brings into scope, and a capped row brings
         // none - which is how the live shape looked: one live brief waiting behind a wedged head.
         const string liveBody = "the next live queue message";
-        var liveId = path == "Sweep" ? await h.SeedPendingMessageAsync(liveBody) : (Guid?)null;
+        var liveId = path == "Sweep"
+            ? await h.SeedPendingMessageAsync(liveBody, origin: QueuedMessageOrigin.Delegation,
+                conversationKey: "task:c501-cap-live")
+            : (Guid?)null;
         h.Adapter.PrimeComposer(Body);
 
         if (path == "Sweep")
@@ -697,8 +702,12 @@ public class SessionMessageQueueWedgedHeadTests
         var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
         const string first = "batch first body that is long enough";
         const string second = "batch second body that is long enough";
-        var firstId = await SeedCrashedAtCapAsync(h, baseline, first, "task:c501-cap-batch");
-        var secondId = await SeedCrashedAtCapAsync(h, baseline, second, "task:c501-cap-batch", attempts: 1);
+        // One typing, so ONE LastDeliveryStartedAt: that identity is what makes the two rows a run.
+        var started = DateTime.UtcNow - TimeSpan.FromMinutes(4);
+        var firstId = await SeedCrashedAtCapAsync(h, baseline, first, "task:c501-cap-batch",
+            startedAt: started);
+        var secondId = await SeedCrashedAtCapAsync(h, baseline, second, "task:c501-cap-batch",
+            attempts: 1, startedAt: started);
         h.Adapter.PrimeComposer(ChannelPromptFormat.FormatBatch([first], second));
 
         await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
@@ -743,6 +752,9 @@ public class SessionMessageQueueWedgedHeadTests
         var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
         var id = await SeedCrashedAtCapAsync(h, baseline);
         await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, Body);
+        // The turn the prompt started has to end, or the flush defers on the working rule and the
+        // case would prove nothing about the cap gate.
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
         h.Adapter.PrimeComposer(Body);
 
         await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
