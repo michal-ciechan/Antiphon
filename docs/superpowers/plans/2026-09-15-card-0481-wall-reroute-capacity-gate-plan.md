@@ -575,3 +575,61 @@ has a live owner. The plan's 18-to-3 forecast is a dated fleet snapshot, not an 
 later live traffic. The three retained Blocked-owner waits may legitimately retain grants.
 Do not claim all provider grants must become null. Restart: **server**; original landing owner:
 **00222dc7**. Ordinary read-only Review precedes land; all PCs remain post-land obligations.
+
+## Build evidence (Code task 83db9844)
+
+Review-defect repair on `04feae10`. Receipt throw after launch no longer fails the running
+task; PC-2 expected-red now lists V-1 with V-2; PC-11 covers the hold-skip `SaveChangesAsync`;
+PC-12 covers the new receipt catch. V-13 added. No deliberate PC ran.
+
+- Repair Code task: `83db9844`. Original Code / landing owner: `00222dc7`.
+- Branch: `feat/card-task-83db9844`.
+- Exact worktree: `C:\Antiphon\worktrees\card-task-83db9844`.
+- Tested source: `f54e81d7373c85205a97f83fd1c34d9fab6c3cc7` (`b3793c4d` fix + this plan
+  correction). This evidence commit does not change production or tests.
+- Evidence root: `C:\Antiphon\worktrees\card-task-83db9844\.antiphon\c481r-evidence`.
+- Restart target: **server**. Do not land or deploy from this repair; Review this worktree,
+  then land `00222dc7` (or this branch if the caller rebases the owner onto it).
+
+Build: `dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c481r/ --nologo`
+(0 errors, 233 existing warnings). Same isolated output, `--no-build`, for T then I then U.
+
+| Execution | Filter | Expanded outcome | Fresh TRX |
+|---|---|---|---|
+| T | `/*/*/WallRerouteDispatchTests/*` | 14/14 pass (includes V-13) | `target/target.trx` |
+| I | plan named classes plus `CapacityRecoveryAcceptanceTests` | 255: 246 pass / 9 inherited fail | `int/c481.trx` |
+| U | `/*/*/*/*[Category=Unit]` | 2,460: 2,455 pass / 4 inherited fail / 1 skip | `unit/unit.trx` |
+
+I class counts: WallRerouteDispatchTests 14/14; CapacityWaitOrphanSweepTests 6/6;
+ComplexityWallRerouteTests 11: 9 pass / 2 fail; CapacityRecoveryTaskTests 6/6;
+CapacityRecoveryGrantLivenessTests 12/12; CapacityRecoveryAttentionTests 3/3;
+CapacityRecoveryCompatibilityTests 4/4; CapacityRecoverySupervisionTests 6/6;
+RoutingPinCandidateDispatchTests 11/11; ModelAvailabilityDispatcherTests 3/3;
+ApiErrorRecoveryServiceTests 36: 29 pass / 7 fail; AgentTaskReplyIntegrationTests 128/128;
+CapacityRecoveryAcceptanceTests 15/15.
+
+| ID | Actual ordinary outcome | Shared command |
+|---|---|---|
+| V-1 | PASS, 1 | T, I |
+| V-2 | PASS, 1 | T, I |
+| V-3 | PASS, 1 | T, I |
+| V-4 | PASS, 1 | T, I |
+| V-5 | PASS, 2 | T, I |
+| V-5b | PASS, 1 | T, I |
+| V-6 | PASS, 1 | T, I |
+| V-6b | PASS, 1 | T, I |
+| V-6c | PASS, 1 | T, I |
+| V-8 | PASS, 3 | I |
+| V-9 | PASS, 1 | I |
+| V-10 | PASS, 1 | I |
+| V-10b | PASS, 1 | I |
+| V-11 | PASS, 2 | T, I |
+| V-13 | PASS, 1 | T, I |
+| V-12 | INHERITED RED: I 9 fail, U 4 fail / 1 skip | I + U |
+
+No R-n IDs. Same nine integration failures and four Unit failures as `00222dc7`. The skip is
+`AgentTuiSecretProtectorTests.Restored_key_file_symlink_is_rejected_without_mutating_target`.
+
+Tripwire: I 24 unlisted >=5s (existing methods; WallRerouteDispatchTests 0 slow rows in I);
+T 1 (cold-start `Grok_wall_reroute_to_Claude_dispatches_on_the_next_tick`); U 39 unlisted
+existing methods. No timeout, assertion or allowlist widened. PC-1..PC-12 remain pending.
