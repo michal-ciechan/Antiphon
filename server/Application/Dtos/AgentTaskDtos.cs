@@ -165,7 +165,8 @@ public sealed record CreateAgentTaskRequest(
     /// CARD-0499. Full GUID of the original Code/Worktree landing owner this repair is attributed
     /// against. Callers cannot supply an evidence directory, remote URL or baseline SHA.
     /// </summary>
-    Guid? RepairSourceTaskId = null);
+    Guid? RepairSourceTaskId = null,
+    string? CommitOnSettle = null);
 
 public sealed record AgentTaskSummaryDto(
     Guid Id,
@@ -320,7 +321,9 @@ public sealed record AgentTaskDetailDto(
     WorktreeBaseSource WorktreeBaseSource = WorktreeBaseSource.Unset,
     Guid? WorktreeBaseTaskId = null,
     string? WorktreeBaseSha = null,
-    AgentTaskSessionDto? Session = null);
+    AgentTaskSessionDto? Session = null,
+    CommitOnSettlePolicy? CommitOnSettle = null,
+    string? CommitBaselineSha = null);
 
 /// <summary>One accepted launch attempt for a sourced Mutation snapshot. Receipt bytes stay on the server.</summary>
 public sealed record VerificationExecutionDetailDto(

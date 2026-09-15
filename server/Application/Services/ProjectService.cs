@@ -21,6 +21,7 @@ public class ProjectService
     private readonly ILogger<ProjectService> _logger;
     private readonly ProjectReadinessCache? _readinessCache;
     private readonly IEventBus? _eventBus;
+    private readonly DelegationSettings _delegation;
 
     public ProjectService(
         AppDbContext db,
@@ -29,9 +30,11 @@ public class ProjectService
         ILogger<ProjectService> logger,
         ProjectReadinessCache? readinessCache = null,
         IEventBus? eventBus = null,
-        CardTaskFileService? cardFiles = null)
+        CardTaskFileService? cardFiles = null,
+        IOptions<DelegationSettings>? delegation = null)
     {
         _db = db;
+        _delegation = delegation?.Value ?? new();
         _cardFiles = cardFiles;
         _httpClientFactory = httpClientFactory;
         _githubSettings = githubSettings.Value;
@@ -112,7 +115,16 @@ public class ProjectService
         ValidateRequest(request.Name, request.GitRepositoryUrl, request.LocalRepositoryPath);
         ValidateVisibility(request.RepositoryVisibility);
 
+        var commitOnSettle = request.CommitOnSettle switch
+        {
+            null => project.CommitOnSettle,
+            "On" => true,
+            "Off" => false,
+            "Inherit" => (bool?)null,
+            _ => throw new ValidationException("CommitOnSettle", "Expected On, Off, or Inherit."),
+        };
         await _db.Entry(project).ReloadAsync(cancellationToken);
+        if (request.CommitOnSettle is not null) project.CommitOnSettle = commitOnSettle;
         _cardFiles?.ValidateProjectTarget(request.LocalRepositoryPath);
         var pathChanged = !SamePath(project.LocalRepositoryPath, request.LocalRepositoryPath);
         var targetChanged = pathChanged || !string.Equals(project.GitRepositoryUrl, request.GitRepositoryUrl, StringComparison.Ordinal);
@@ -456,7 +468,7 @@ public class ProjectService
         catch (Exception) { return ToDto(project) with { CardFileWarnings = [install ? "card_files_ignore_missing" : "status_unavailable"] }; }
     }
 
-    private static ProjectDto ToDto(Project entity) =>
+    private ProjectDto ToDto(Project entity) =>
         new(
             entity.Id,
             entity.Name,
@@ -471,7 +483,9 @@ public class ProjectService
             AgentLaunchEnv.Parse(entity.DefaultLaunchEnvJson),
             entity.ArchivedAt,
             entity.ArchivedReason,
-            entity.ArchivedBy) { RepositoryVisibility = entity.RepositoryVisibility };
+            entity.ArchivedBy) { RepositoryVisibility = entity.RepositoryVisibility,
+                CommitOnSettle = entity.CommitOnSettle,
+                EffectiveCommitOnSettle = entity.CommitOnSettle ?? _delegation.CommitOnSettle };
 }
 
 public record TestGitConnectivityResult(bool Success, string Message);

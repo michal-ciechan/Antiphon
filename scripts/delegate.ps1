@@ -101,6 +101,8 @@ param(
 
     [Parameter(ParameterSetName = 'Create')]
     [switch]$ReadOnly,
+    # Leave work uncommitted for caller review; overrides commit-on-settle policy.
+    [switch]$NoCommit,
 
     # Do not arm the PreToolUse deny hook in a sub-orchestrator's worktree (it blocks direct
     # Edit/Write with "delegate this instead"). Use when the orchestrator must write a plan file.
@@ -764,6 +766,7 @@ switch ($PSCmdlet.ParameterSetName) {
         # a sub-orchestrator gets its own worktree unless it already has its own -Dir.
         if ($Worktree) { $body['workspace'] = 'Worktree' }
         elseif ($ReadOnly) { $body['workspace'] = 'ReadOnly' }
+        if ($NoCommit) { $body['commitOnSettle'] = 'Never' }
         elseif ($Shared) { $body['workspace'] = 'Shared' }
         if ($AllowDirectEdits) { $body['denyDirectEdits'] = $false }
         if ($OnAgent) { $body['followUpOnTask'] = $OnAgent }

@@ -13,6 +13,8 @@ namespace Antiphon.Server.Domain.Entities;
 /// </summary>
 public class AgentTask
 {
+    public CommitOnSettlePolicy? CommitOnSettle { get; set; }
+    public string? CommitBaselineSha { get; set; }
     /// <summary>Internal no-tool Check transport capability. Never accepted from the public task API.</summary>
     public string? SpecialistInputPolicyJson { get; set; }
     /// <summary>Original optional-work deadline. Null preserves historical dispatch behavior.</summary>

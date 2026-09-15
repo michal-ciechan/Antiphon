@@ -95,6 +95,8 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
 
   const [formVisibility, setFormVisibility] = useState<RepositoryVisibility>('Unknown')
   const [visibilityEdited, setVisibilityEdited] = useState(false)
+  const [formCommitOnSettle, setFormCommitOnSettle] = useState<'On' | 'Off' | 'Inherit'>('Inherit')
+  const [commitOnSettleEdited, setCommitOnSettleEdited] = useState(false)
   const [formName, setFormName] = useState('')
   const [formGitUrl, setFormGitUrl] = useState('')
   const [formLocalRepoPath, setFormLocalRepoPath] = useState('')
@@ -140,6 +142,8 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
     setEditingProject(project)
     setFormVisibility(project.repositoryVisibility ?? 'Unknown')
     setVisibilityEdited(false)
+    setFormCommitOnSettle(project.commitOnSettle == null ? 'Inherit' : project.commitOnSettle ? 'On' : 'Off')
+    setCommitOnSettleEdited(false)
     setFormName(project.name)
     setFormGitUrl(project.gitRepositoryUrl)
     setFormLocalRepoPath(project.localRepositoryPath ?? '')
@@ -190,6 +194,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
         data: {
           name: formName,
           ...(visibilityEdited ? { repositoryVisibility: formVisibility } : {}),
+          ...(commitOnSettleEdited ? { commitOnSettle: formCommitOnSettle } : {}),
           gitRepositoryUrl: formGitUrl,
           localRepositoryPath: formLocalRepoPath || undefined,
           baseBranch: formBaseBranch || 'master',
@@ -448,6 +453,9 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
           )}
           <Select label="Repository visibility" description="Configured locally; not checked with the provider. Unknown blocks publication." data={['Unknown', 'Private', 'Public']} value={formVisibility} onChange={(v) => { setFormVisibility((v as RepositoryVisibility) ?? 'Unknown'); setVisibilityEdited(true) }} />
           {(editingProject?.cardFileWarnings ?? []).map((w) => <Text key={w} c="orange">{w}: review card-file ignore protection and pending cleanup.</Text>)}
+          <Select label="Commit on settle" description="Commit a successful task's own changes locally."
+            data={[{ value: 'Inherit', label: `Inherit (${editingProject?.effectiveCommitOnSettle ? 'on' : 'off'})` }, { value: 'On', label: 'On' }, { value: 'Off', label: 'Off' }]}
+            value={formCommitOnSettle} onChange={(v) => { setFormCommitOnSettle((v as 'On' | 'Off' | 'Inherit') ?? 'Inherit'); setCommitOnSettleEdited(true) }} />
           <TextInput
             label="Local Repository Path"
             placeholder="D:\src\MyProject"

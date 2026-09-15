@@ -18,6 +18,8 @@ public record ProjectDto(
 {
     public Antiphon.Server.Domain.Enums.RepositoryVisibility RepositoryVisibility { get; init; }
     public string[] CardFileWarnings { get; init; } = [];
+    public bool? CommitOnSettle { get; init; }
+    public bool EffectiveCommitOnSettle { get; init; }
 }
 
 /// <summary>

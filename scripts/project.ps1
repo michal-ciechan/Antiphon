@@ -10,6 +10,7 @@
 #                        [-Bundles a,b] [-PromptFile p] [-RemoteControl] [-Start] [-Json]
 #   project.ps1 readiness <project name|guid> [-Json]
 #   project.ps1 catalog   [-Json]
+#   project.ps1 set <project name|guid> -CommitOnSettle On|Off|Inherit [-Json]
 #
 # -PromptFile is read with Get-Content -Raw and sent as-is, so newlines, quotes and shell
 # metacharacters survive untouched. Use a file for prompt text rather than trying to quote it.
@@ -20,11 +21,13 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0, Mandatory = $true)]
-    [ValidateSet('new', 'readiness', 'catalog')]
+    [ValidateSet('new', 'readiness', 'catalog', 'set')]
     [string]$Verb,
 
     [Parameter(Position = 1)]
     [string]$Project,
+    [ValidateSet('On', 'Off', 'Inherit')]
+    [string]$CommitOnSettle,
 
     [string]$Dir,
     [switch]$CreateDirectory,
@@ -169,6 +172,23 @@ function Write-Catalog($Catalog) {
 }
 
 switch ($Verb) {
+    'set' {
+        if (-not $PSBoundParameters.ContainsKey('CommitOnSettle')) { Fail 'set requires -CommitOnSettle On|Off|Inherit.' }
+        $resolved = Resolve-Project $Project
+        $body = @{
+            name = $resolved.name
+            gitRepositoryUrl = $resolved.gitRepositoryUrl
+            localRepositoryPath = $resolved.localRepositoryPath
+            baseBranch = $resolved.baseBranch
+            constitutionPath = $resolved.constitutionPath
+            gitHubIntegrationEnabled = $resolved.gitHubIntegrationEnabled
+            notificationsEnabled = $resolved.notificationsEnabled
+            commitOnSettle = $CommitOnSettle
+        }
+        $updated = Invoke-Antiphon -Method PUT -Path ("/api/projects/{0}" -f $resolved.id) -Body $body
+        if ($Json) { $updated | ConvertTo-Json -Depth 10 } else { Write-Output ("Project {0}: commit-on-settle {1}" -f $updated.name, $CommitOnSettle) }
+        return
+    }
     'catalog' {
         if ($Project) { Fail 'catalog takes no project argument.' }
         $catalog = Invoke-Antiphon -Method GET -Path '/api/projects/setup-catalog'

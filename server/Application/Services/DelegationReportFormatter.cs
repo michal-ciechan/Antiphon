@@ -209,7 +209,9 @@ public static class DelegationReportFormatter
         if (task.Workspace == WorkspaceMode.ReadOnly)
             sb.AppendLine("Do NOT modify any files. This is a read-only task — report findings only.").AppendLine();
 
-        if (task.Workspace == WorkspaceMode.Shared
+        if (task.CommitOnSettle == CommitOnSettlePolicy.Never && task.Workspace != WorkspaceMode.ReadOnly)
+            sb.AppendLine("Do NOT commit or push. Leave your changes in the working tree for the caller to review, and name every file you changed in your report.").AppendLine();
+        else if (task.Workspace == WorkspaceMode.Shared
             && task.Role is AgentTaskRole.Plan or AgentTaskRole.Docs or AgentTaskRole.Code)
         {
             sb.AppendLine(SharedWriteCommitLine).AppendLine();

@@ -9,6 +9,26 @@ import { ProjectConfig } from './ProjectConfig'
 
 beforeAll(() => { Element.prototype.scrollIntoView = vi.fn() })
 
+it('submits commitOnSettle only when the operator changes the select', async () => {
+  const put = vi.fn()
+  server.use(http.get('/api/projects', () => HttpResponse.json([{ ...project, commitOnSettle: null, effectiveCommitOnSettle: true }])),
+    http.get('/api/boards', () => HttpResponse.json([])), http.get('/api/github/repos', () => HttpResponse.json([])),
+    http.get('/api/projects/readiness', () => HttpResponse.json([emptyReadiness])), http.get('/api/projects/:id/api-keys', () => HttpResponse.json([])),
+    http.put('/api/projects/:id', async ({ request }) => { put(await request.json()); return HttpResponse.json(project) }))
+  renderWithProviders(<ProjectConfig />)
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit project' }))
+  expect(screen.getByRole('textbox', { name: 'Commit on settle' })).toHaveValue('Inherit (on)')
+  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+  expect(put.mock.calls[0][0]).not.toHaveProperty('commitOnSettle')
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Save Changes' })).not.toBeInTheDocument())
+  await userEvent.click(screen.getByRole('button', { name: 'Edit project' }))
+  await userEvent.click(screen.getByRole('textbox', { name: 'Commit on settle' }))
+  await userEvent.click(await screen.findByRole('option', { name: 'Off' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() => expect(put).toHaveBeenCalledWith(expect.objectContaining({ commitOnSettle: 'Off' })))
+})
+
 const notificationMock = vi.hoisted(() => ({ show: vi.fn() }))
 
 vi.mock('@mantine/notifications', () => ({

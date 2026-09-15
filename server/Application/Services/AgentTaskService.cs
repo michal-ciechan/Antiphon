@@ -189,6 +189,7 @@ public sealed class AgentTaskService
         Caller caller,
         CancellationToken ct)
     {
+        var commitPolicy = CommitOnSettlePolicyResolver.Parse(request.CommitOnSettle);
         if (string.IsNullOrWhiteSpace(request.Goal))
             throw new ValidationException(nameof(request.Goal), "A goal is required.");
         if (request.Goal.Length > 20_000)
@@ -299,6 +300,7 @@ public sealed class AgentTaskService
         {
             var priorId = await ResolveTaskIdAsync(request.FollowUpOnTask, ct);
             var prior = await _db.AgentTasks.AsNoTracking().FirstAsync(t => t.Id == priorId, ct);
+            commitPolicy ??= prior.CommitOnSettle;
             followUpOfTaskId = priorId;
             followUpCardId = prior.CardId;
             var followAgent = prior.AgentId is Guid followAgentId
@@ -895,9 +897,21 @@ public sealed class AgentTaskService
                 $"'{explicitStage}' is not an orchestration stage. Use Rebase, Verify, Cleanup, Review, FollowUp, or Deploy.");
         }
 
+        if (request.CommitOnSettle is null && commitPolicy is null
+            && System.Text.RegularExpressions.Regex.IsMatch(request.Goal,
+                @"do not commit|don't commit|no commit|without committing", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            && CommitOnSettlePolicyResolver.Resolve(null,
+                projectId is Guid commitProject ? await _db.Projects.Where(p => p.Id == commitProject).Select(p => p.CommitOnSettle).FirstOrDefaultAsync(ct) : null,
+                _settings.CommitOnSettle) != EffectiveCommitOnSettle.Off)
+        {
+            const string advisory = "Goal text mentions not committing, but commit-on-settle is on for this project; pass -NoCommit if the tree must stay uncommitted.";
+            warning = warning is null ? advisory : warning + " " + advisory;
+        }
+
         var task = new AgentTask
         {
             Id = id,
+            CommitOnSettle = commitPolicy,
             RootTaskId = parent?.RootTaskId ?? id,
             ParentTaskId = parent?.Id,
             FollowUpOfTaskId = followUpOfTaskId,
@@ -1686,7 +1700,8 @@ public sealed class AgentTaskService
             task.InternalDecisionPolicyJson, task.InternalDecisionPolicyHash,
             task.RepairSourceTaskId, TaskProgressJson.ToDto(TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson)),
             task.WorktreeBaseRequestedRef, task.WorktreeBaseRef, task.WorktreeBaseSource, task.WorktreeBaseTaskId,
-            task.WorktreeBaseSha, Session: sessionDetail);
+            task.WorktreeBaseSha, Session: sessionDetail, CommitOnSettle: task.CommitOnSettle,
+            CommitBaselineSha: task.CommitBaselineSha);
     }
 
     private static VerificationExecutionDetailDto ToExecutionDetail(VerificationExecution execution)
@@ -2374,6 +2389,7 @@ public sealed class AgentTaskService
                 """,
             Kind = AgentTaskKind.Worker,
             Role = AgentTaskRole.Merge,
+            CommitOnSettle = CommitOnSettlePolicy.Never,
             ProjectId = conflicted.ProjectId,
             // CARD-0040: integrating a task's work is still that task's card's work.
             CardId = conflicted.CardId,

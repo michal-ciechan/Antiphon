@@ -238,7 +238,10 @@ public enum AgentTaskEventType
     LandingCleanup = 30,
     HeldReleased = 31,
     LandAged = 32,
+    Committed = 33,
 }
+
+public enum CommitOnSettlePolicy { Never, Always, Agent }
 
 /// <summary>
 /// Caller-declared work hardness for a complexity chain (CARD-0090). Distinct from

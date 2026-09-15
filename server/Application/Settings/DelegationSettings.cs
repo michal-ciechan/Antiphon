@@ -11,6 +11,7 @@ namespace Antiphon.Server.Application.Settings;
 /// </summary>
 public sealed class DelegationSettings
 {
+    public bool CommitOnSettle { get; set; } = true;
     public bool Enabled { get; set; } = true;
 
     public int PollIntervalSeconds { get; set; } = 5;

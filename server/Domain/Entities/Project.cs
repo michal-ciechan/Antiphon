@@ -6,6 +6,7 @@ namespace Antiphon.Server.Domain.Entities;
 /// </summary>
 public class Project
 {
+    public bool? CommitOnSettle { get; set; }
     public Antiphon.Server.Domain.Enums.RepositoryVisibility RepositoryVisibility { get; set; } = Antiphon.Server.Domain.Enums.RepositoryVisibility.Unknown;
 
     public Guid Id { get; set; }

@@ -5,6 +5,8 @@ import { apiGet, apiPost, apiPut, apiDelete } from './client'
 // --- Project types ---
 
 export interface ProjectDto {
+  commitOnSettle?: boolean | null
+  effectiveCommitOnSettle?: boolean
   repositoryVisibility?: RepositoryVisibility
   cardFileWarnings?: string[]
   id: string
@@ -33,6 +35,7 @@ export interface CreateProjectRequest {
 }
 
 export interface UpdateProjectRequest {
+  commitOnSettle?: 'On' | 'Off' | 'Inherit'
   repositoryVisibility?: RepositoryVisibility
   name: string
   gitRepositoryUrl: string
