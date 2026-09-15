@@ -49,9 +49,13 @@ public partial class AgentTaskReplyIntegrationTests
         for (var attempt = 1; attempt <= 2; attempt++)
         {
             recoveredBeforeFailure = false;
-            await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+            // This fixture returns itself as a scope. Give each attempt the fresh scoped
+            // DbContext production uses, so failed-save tracked entities cannot leak across retries.
+            var retry = C527Factory(repo.WorktreeRoot, gitSpy: spy);
+            var retryTerminal = AttachTerminal(retry, seeded.Parent);
+            await CreateService(retry).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
             failures.ShouldBe(attempt);
-            await Queue(factory).FlushSessionAsync(seeded.Parent, CancellationToken.None);
+            await Queue(retry).FlushSessionAsync(seeded.Parent, CancellationToken.None);
             await using var db = CreateContext();
             (await db.AgentTasks.SingleAsync(t => t.Id == seeded.Task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
             (await db.AgentTasks.AnyAsync(t => t.ParentTaskId == seeded.Task.Id)).ShouldBeFalse();
@@ -59,19 +63,24 @@ public partial class AgentTaskReplyIntegrationTests
                 && e.Type == AgentTaskEventType.Committed)).ShouldBeFalse();
             (await db.AgentTaskLandNotifications.AnyAsync(n => n.TaskId == seeded.Task.Id)).ShouldBeFalse();
             terminal.SubmittedBodies.ShouldBeEmpty();
+            retryTerminal.SubmittedBodies.ShouldBeEmpty();
         }
         spy.OverrideRun = null;
-        await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
-        await Queue(factory).FlushSessionAsync(seeded.Parent, CancellationToken.None);
+        var recovery = C527Factory(repo.WorktreeRoot, gitSpy: spy);
+        var recoveredTerminal = AttachTerminal(recovery, seeded.Parent);
+        await CreateService(recovery).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+        await Queue(recovery).FlushSessionAsync(seeded.Parent, CancellationToken.None);
         await AssertC527RecoveredReceiptAsync(seeded.Task, seeded.Parent, report, committed, 2);
         var receipt = await AssertParentReceivedNoteAsync(seeded.Parent, seeded.Task, report);
+        receipt.Prompt.Text.ShouldNotBeNull();
         receipt.Prompt.Text.ShouldContain("foreign.md");
         receipt.Prompt.Text.ShouldNotContain("no commit attempted");
         receipt.Prompt.Text.ShouldNotContain("git=landed");
         // A subsequent healthy sweep neither mutates nor delivers a second completion.
-        await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
-        await Queue(factory).FlushSessionAsync(seeded.Parent, CancellationToken.None);
-        terminal.SubmittedBodies.Count.ShouldBe(1);
+        await CreateService(recovery).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+        await Queue(recovery).FlushSessionAsync(seeded.Parent, CancellationToken.None);
+        terminal.SubmittedBodies.ShouldBeEmpty();
+        recoveredTerminal.SubmittedBodies.Count.ShouldBe(1);
         (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldBe(committed);
         int.Parse((await repo.GitReadAsync("rev-list", "--count", "HEAD")).Trim()).ShouldBe(before + 1);
         (await repo.GitReadAsync("status", "--porcelain")).ShouldContain("?? foreign.md");
