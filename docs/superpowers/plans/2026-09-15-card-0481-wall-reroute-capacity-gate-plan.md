@@ -914,3 +914,18 @@ reported failed rather than replayed. Existing cold-launch/early-transcript,
 retained-return redemption and sweep/redemption race gaps remain visible. The caller
 still owns live post-land database census after activation. Review precedes original
 owner landing; SourceLanding Mutation is commissioned explicitly afterward.
+
+The keyed failure note also preserves CompletionNoteQueuedAt/CompletionNoteDigest after
+successful insertion (and repairs them during outbox recovery). V-17/V-18 require that
+stamp and AgentTaskCheckService.HasCompletionNoteAsync=true, so checks still recognize
+the caller's completion after the notification becomes keyed. This stamp is enqueue
+idempotency/check suppression, never recipient receipt.
+
+PC-25 (pending, exact V-18 method, failed-committed/note-insert/note-committed both
+busy/eligible): omit the recovery completion stamp. The stamp and real check-suppression
+assertions fail. V-17 also pins the immediate producer's stamp.
+
+Checkpoint a3f5340f6516b66d36865bc1be7c20c763f90158 built with 0 errors / 233
+existing warnings; T expanded 19/19 pass; U expanded 2460: 2455 pass, four known
+failures, one known skip. The completion-stamp compatibility fix follows this
+checkpoint; final I/U will use its fresh build. No timeout/assertion was loosened.

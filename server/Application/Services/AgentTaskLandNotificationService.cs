@@ -78,6 +78,10 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                     note.Body.Split('\n')[0], onCreated: message => note.QueueMessageId = message,
                     deliverIfIdle: false, sourceLandNotificationId: note.Id,
                     afterLandQueueInsert: boundary is null ? null : (queueId, token) => boundary.ReachedAsync("queue-inserted", note.TaskId, queueId, token));
+                // This outbox kind is also the caller's completion note. Preserve the
+                // check-suppression stamp, including recovery after a lost insert acknowledgement.
+                if (note.Kind == LandNotificationKind.DeliveryFailure)
+                    await CompletionNoteStamp.ApplyAsync(db, note.TaskId, note.ContentDigest, now, ct);
                 note.EnqueuedAt = now;
                 note.State = LandNotificationState.AwaitingReceipt;
                 note.LastErrorCode = null;
