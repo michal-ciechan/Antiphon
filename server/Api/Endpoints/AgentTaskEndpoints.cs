@@ -193,6 +193,57 @@ public static class AgentTaskEndpoints
             string id, AgentTaskService service, VerificationCleanupService cleanup, CancellationToken ct) =>
             Results.Ok(await cleanup.CleanupAsync(await service.ResolveTaskIdAsync(id, ct), ct)));
 
+        tasks.MapPost("/{id}/commit", async (
+            string id,
+            CommitAgentTaskRequest request,
+            HttpContext http,
+            AgentTaskService service,
+            GatedCommitService gated,
+            CancellationToken ct) =>
+        {
+            var caller = await ResolveCallerAsync(http, service, ct);
+            if (caller.Task is null)
+                throw new ForbiddenException("A delegation token is required.", "delegation_token_required");
+            var taskId = await service.ResolveTaskIdAsync(id, ct);
+            if (caller.Task.Id != taskId)
+                throw new ForbiddenException("This token cannot commit that task.", "delegation_token_required");
+            if (caller.Task.CommitOnSettle == CommitOnSettlePolicy.Never
+                && caller.Task.Role != AgentTaskRole.Commit)
+            {
+                throw new ForbiddenException(
+                    "This task asked not to commit (-NoCommit).", "commit_on_settle_never");
+            }
+
+            var repo = caller.Task.RepoPath ?? caller.Task.WorkingDirectory;
+            var trailers = new (string Key, string Value)[]
+            {
+                ("antiphon", "true"),
+                ("antiphon-task", caller.Task.Id.ToString("D")),
+                ("antiphon-commit", "gated"),
+            };
+            var result = await gated.CommitAsync(
+                repo, request.Paths, request.Message, trailers, ct);
+            return result.Outcome switch
+            {
+                GatedCommitOutcome.Committed when result.Sha is { } sha =>
+                    Results.Ok(new CommitAgentTaskResponse(sha, result.Files)),
+                GatedCommitOutcome.IgnoredPathStaged => throw new ConflictException(
+                    "An ignored path would be staged.", "ignored_path_staged",
+                    new Dictionary<string, object?> { ["refusals"] = result.Refusals }),
+                GatedCommitOutcome.IgnoreRulesChanged => throw new ConflictException(
+                    "Ignore rules changed.", "ignore_rules_changed",
+                    new Dictionary<string, object?> { ["refusals"] = result.Refusals }),
+                GatedCommitOutcome.NothingToCommit => throw new ConflictException(
+                    "Nothing to commit.", "nothing_to_commit"),
+                GatedCommitOutcome.RepositoryBusy => throw new ConflictException(
+                    "Repository is busy.", "repository_busy"),
+                GatedCommitOutcome.CommitFailed => throw new ConflictException(
+                    "Commit failed.", "commit_failed",
+                    new Dictionary<string, object?> { ["stderr"] = result.Stderr }),
+                _ => throw new ConflictException("Commit refused.", "commit_failed"),
+            };
+        });
+
         // CARD-0495: /land/v2 is the same handler; an old process has no v2 route at all.
         tasks.MapPost("/{id}/land", QueueLandAsync);
         tasks.MapPost("/{id}/land/v2", QueueLandAsync);

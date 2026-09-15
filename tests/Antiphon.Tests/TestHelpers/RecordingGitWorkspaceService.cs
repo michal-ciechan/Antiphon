@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Antiphon.Tests.TestHelpers;
 
 /// <summary>CARD-0527. Spy seam over <see cref="GitWorkspaceService.RunAsync"/>.</summary>
-internal sealed class RecordingGitWorkspaceService : GitWorkspaceService
+public sealed class RecordingGitWorkspaceService : GitWorkspaceService
 {
     public List<string> Verbs { get; } = [];
     public Func<string[], Task>? BeforeRun { get; set; }

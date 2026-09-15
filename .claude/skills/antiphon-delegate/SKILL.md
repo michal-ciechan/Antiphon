@@ -62,7 +62,7 @@ to answer one narrow question, carries no stage bundle, and the block is optiona
 | `Coverage` | check what a change missed | opus |
 | `Merge` | resolve a conflict left by a worktree task (auto-spawned after TryMergeBackAsync fails; rarely by hand) | opus |
 | `Docs` | prose, markdown, comments | sonnet |
-| `Commit` | git add/commit/push/branch, PRs | sonnet |
+| `Commit` | git add/commit/push/branch, PRs; also the CARD-0527 settle child that commits leftover Shared paths through the gated endpoint | sonnet |
 | `Test` | run a suite or build and report what failed | haiku |
 | `Deploy` | run a script, restart a service, check health | haiku |
 
@@ -149,6 +149,7 @@ A sub-orchestrator defaults to `Plan` and never runs below opus.
 | `-Continue <taskId>` | replay that standing authority as the answer to a Blocked-on-question task. One action; the child resumes and reports back |
 | `-Stage <name>` | which landing-step question this task answers: `Rebase`/`Verify`/`Cleanup`/`Review`/`FollowUp`/`Deploy` (CARD-0272). Omitted, the role maps: Review, Test→Verify, Merge→Rebase, Deploy; `-OnAgent` → FollowUp. Code and Plan never default. **Not** `-Role` (pipeline seat). A Debug titled "verify" is `-Stage Verify`. Unknown names 422 |
 | `-Finding <id> -Stage … -Found "…" / -Clean` | orchestrator override of a stage finding (rare: the delegate said clean and you acted). Writes an Orchestrator row that supersedes the latest for that (task, stage) |
+| `-NoCommit` | CARD-0527. Leave this Shared task's changes uncommitted at settle (`commitOnSettle=Never`). The only opt-out an instruction can carry; goal prose is an advisory. Project/global default is `Delegation:CommitOnSettle` (on). |
 
 **LLM project routing follows the caller by default.** `delegate.ps1` forwards the live shell's
 `X_LLM_PROJECT` and `X_LLM_KEY` into the child's inherited routing layer, because the server cannot
@@ -165,7 +166,8 @@ the card nowhere, and a move you make by hand is never overridden — the sweep 
 newer than your last move. **Review → Done is still yours.**
 
 **Workers default to shared** — the delegate runs right in the directory, like you would yourself.
-That default is only safe when it is the only write-capable worker in there. Decide explicitly, every
+That default is only safe when it is the only write-capable worker in there. Settlement will commit
+this task's own footprint unless you pass `-NoCommit`. Decide explicitly, every
 dispatch, don't just accept the default:
 
 - **Nothing else is currently active in the shared directory** → shared is fine.

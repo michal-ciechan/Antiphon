@@ -605,6 +605,31 @@ public class DelegationWorktreeTests
     }
 
     [Test]
+    public async Task a_worktree_with_a_force_added_ignored_file_is_left_for_review_naming_it()
+    {
+        using var repo = new ScratchGitRepo();
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, ".gitignore"), "*.secret\n");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("branch", "feat/parent");
+
+        var (service, _) = CreateService(repo);
+        var task = NewTask(repo.Path, mergeTarget: "feat/parent");
+        await service.CreateForTaskAsync(task, CancellationToken.None);
+        var parentBefore = (await repo.GitReadAsync("rev-parse", "feat/parent")).Trim();
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "a.secret"), "secret\n");
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "-f", "a.secret")).Ok.ShouldBeTrue();
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "a.secret"), "changed\n");
+
+        var outcome = await service.TryMergeBackAsync(task, CancellationToken.None);
+
+        outcome.Result.ShouldBe(DelegationWorktreeService.MergeResult.LeftForHuman);
+        outcome.Detail.ShouldContain("a.secret");
+        outcome.Detail.ShouldContain("*.secret");
+        Directory.Exists(task.WorktreePath).ShouldBeTrue();
+        (await repo.GitReadAsync("rev-parse", "feat/parent")).Trim().ShouldBe(parentBefore);
+    }
+
+    [Test]
     public async Task the_target_advances_even_while_checked_out_in_the_main_repo()
     {
         // The common real case: the task targets the branch the parent (or the human) is sitting

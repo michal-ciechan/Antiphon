@@ -852,6 +852,25 @@ public class GitWorkspaceService
         return code == 0 && sha.Length > 0 ? sha : null;
     }
 
+    public async Task<IReadOnlyList<string>> ListShasBetweenAsync(
+        string workingDirectory, string fromInclusive, string toInclusive, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunAsync(
+            workingDirectory, ct, "log", "--format=%H", "-z", $"{fromInclusive}..{toInclusive}");
+        if (code != 0)
+            return [];
+        return stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    public async Task<string?> CommitMessageAsync(string workingDirectory, string sha, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunAsync(workingDirectory, ct, "log", "-1", "--format=%B", sha);
+        return code == 0 ? stdout : null;
+    }
+
+    public Task<string?> UpstreamShaAsync(string workingDirectory, CancellationToken ct) =>
+        RevParseAsync(workingDirectory, "@{u}", ct);
+
     protected internal virtual Task<(int Code, string Stdout, string Stderr)> RunAsync(
         string workingDirectory, CancellationToken ct, params string[] args) =>
         RunCoreAsync(workingDirectory, stdin: null, ct, args);

@@ -546,6 +546,36 @@ public class DelegationReportFormatterTests
     }
 
     [Test]
+    [Arguments(AgentTaskRole.Plan)]
+    [Arguments(AgentTaskRole.Docs)]
+    [Arguments(AgentTaskRole.Code)]
+    [Arguments(AgentTaskRole.Custom)]
+    public void a_never_commit_brief_carries_the_do_not_commit_line_and_not_the_commit_line(AgentTaskRole role)
+    {
+        var task = NewTask();
+        task.Workspace = WorkspaceMode.Shared;
+        task.Role = role;
+        task.CommitOnSettle = CommitOnSettlePolicy.Never;
+        var brief = DelegationReportFormatter.BuildBrief(task, Settings);
+        brief.ShouldContain(DelegationReportFormatter.DoNotCommitLine);
+        brief.ShouldNotContain(DelegationReportFormatter.SharedWriteCommitLine);
+    }
+
+    [Test]
+    public void a_never_commit_readonly_brief_keeps_the_read_only_line()
+    {
+        var task = NewTask();
+        task.Workspace = WorkspaceMode.ReadOnly;
+        task.Role = AgentTaskRole.Code;
+        task.CommitOnSettle = CommitOnSettlePolicy.Never;
+        var brief = DelegationReportFormatter.BuildBrief(task, Settings);
+        brief.ShouldContain("Do NOT modify any files");
+        var first = brief.IndexOf(DelegationReportFormatter.DoNotCommitLine, StringComparison.Ordinal);
+        var last = brief.LastIndexOf(DelegationReportFormatter.DoNotCommitLine, StringComparison.Ordinal);
+        (first < 0 || first == last).ShouldBeTrue();
+    }
+
+    [Test]
     public void reported_repository_paths_normalize_relative_and_absolute_windows_forms()
     {
         var paths = AgentTaskReplyService.ExtractReportedRepositoryPaths(

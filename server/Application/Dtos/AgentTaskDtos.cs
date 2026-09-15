@@ -482,6 +482,10 @@ public sealed record ReplyToAgentTaskRequest(
     AnswerOrigin? Origin = null);
 
 /// <summary>Optional narrow test filter for an explicit <c>POST /land</c> verification.</summary>
+public sealed record CommitAgentTaskRequest(IReadOnlyList<string> Paths, string Message);
+
+public sealed record CommitAgentTaskResponse(string Sha, IReadOnlyList<string> Files);
+
 public sealed record LandAgentTaskRequest(
     string? Verify = null,
     string? ExpectedSourceSha = null,

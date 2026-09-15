@@ -137,6 +137,9 @@ public static class DelegationReportFormatter
     internal const string SharedWriteCommitLine =
         "When finished: git add the files you changed, commit with the real outcome in the message, and push, before your final report.";
 
+    internal const string DoNotCommitLine =
+        "Do NOT commit or push. Leave your changes in the working tree for the caller to review, and name every file you changed in your report.";
+
     /// <summary>
     /// The full brief: marker, metadata, the caller's goal verbatim, then the reporting contract.
     /// Composed SERVER-SIDE so a calling agent cannot forget it and every delegate gets the same one.
@@ -208,8 +211,9 @@ public static class DelegationReportFormatter
 
         if (task.Workspace == WorkspaceMode.ReadOnly)
             sb.AppendLine("Do NOT modify any files. This is a read-only task — report findings only.").AppendLine();
-
-        if (task.Workspace == WorkspaceMode.Shared
+        else if (task.Workspace == WorkspaceMode.Shared && task.CommitOnSettle == CommitOnSettlePolicy.Never)
+            sb.AppendLine(DoNotCommitLine).AppendLine();
+        else if (task.Workspace == WorkspaceMode.Shared
             && task.Role is AgentTaskRole.Plan or AgentTaskRole.Docs or AgentTaskRole.Code)
         {
             sb.AppendLine(SharedWriteCommitLine).AppendLine();
