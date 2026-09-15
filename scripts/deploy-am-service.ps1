@@ -371,7 +371,9 @@ function Invoke-AmServiceDeploymentCore {
         $verify = "set -eu`ncd '$remoteRoot'`ndeadline=`$((`$(date +%s) + $PollTimeoutSec))`nwhile [ `"`$(docker inspect --format '{{.State.Running}}' am-service 2>/dev/null || true)`" != true ]; do [ `"`$(date +%s)`" -lt `"`$deadline`" ] || exit 41; sleep 2; done`nchannels=`$(curl -fsS http://localhost:18090/api/channels)`nprintf '%s\n' `"`$channels`"`ndocker compose exec -T am-postgres sh -c 'psql -X -At -v ON_ERROR_STOP=1 -U `"`$POSTGRES_USER`" -d `"`$POSTGRES_DB`" -c '\''SELECT `"MigrationId`" FROM `"__EFMigrationsHistory`" ORDER BY `"MigrationId`";'\'''`nif docker logs --since 5m --tail 100 am-service 2>&1 | grep -Eiq 'Unhandled exception|fail:|crit:'; then exit 42; fi"
         $remoteVerify = Invoke-AmServiceRunner $SshRunner @($verify) 'remote technical verification'
         if ($remoteVerify.Count -lt 1) { throw 'Remote technical verification returned no channel JSON.' }
-        try { $channels = @($remoteVerify[0] | ConvertFrom-Json -ErrorAction Stop) } catch { throw 'The am-service /api/channels response was not parseable channel JSON.' }
+        # Windows PowerShell 5.1 emits the JSON array as one pipeline object; enumerate
+        # it before reading adapter names so both supported shells verify each adapter.
+        try { $channels = @($remoteVerify[0] | ConvertFrom-Json -ErrorAction Stop | ForEach-Object { $_ }) } catch { throw 'The am-service /api/channels response was not parseable channel JSON.' }
         $names = @($channels | ForEach-Object { if ($null -ne $_.channel) { $_.channel.ToString() } elseif ($null -ne $_.name) { $_.name.ToString() } else { 'unnamed' } })
         $remoteMigrations = @($remoteVerify | Select-Object -Skip 1 | Where-Object { $_ -match '^\d{14}_.+$' }); $sourceMigrations = @(Get-AmServiceMigrationIds $migrationDirectory); $missing = @($sourceMigrations | Where-Object { $_ -notin $remoteMigrations })
         if ($missing.Count) { throw "Remote am-postgres migration history is missing: $($missing -join ', ')" }

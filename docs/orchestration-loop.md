@@ -678,8 +678,12 @@ smoke, and checks the live EF migration history against `server/Migrations/`. It
 the deploy result: `DEPLOY VERDICT: ok` or `DEPLOY VERDICT: failed <detail>`. Read that one line;
 do not reconstruct the former multi-command deploy sequence by hand.
 
-For the separately scoped `am-service` remote target, the same rule applies through
-`pwsh -NoProfile -File scripts/deploy-am-service.ps1`. Once a Deploy-role brief explicitly
+For a separately scoped `am-service` remote instance in the fixed
+`/home/mc/antiphon-messaging` layout, select its SSH destination explicitly:
+`pwsh -NoProfile -File scripts/deploy-am-service.ps1 -SshTarget '<user>@<confirmed-host>'`.
+Replace the placeholders with the confirmed destination; there is no default target.
+See [remote messaging operations](telegram-bot-ops.md#deploying-an-optional-remote-messaging-service).
+Once a Deploy-role brief explicitly
 authorizes `-Deploy`, that Deploy-role delegate may run this script and report its final
 `REMOTE DEPLOY VERDICT`; it may not reconstruct the SSH/tar/Compose sequence ad hoc. Its default
 run is a read-only preflight, and its human traffic check remains the Antiphon-Family test group.

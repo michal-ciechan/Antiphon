@@ -216,7 +216,10 @@ exit $code
     try {
         # Synchronous, noninteractive child of the same shell (7 or 5.1); no real network.
         $shellPath = (Get-Process -Id $PID).Path
-        $output = @(& $shellPath -NoProfile -NonInteractive -File $wrapper -TestScript $PSCommandPath -ReportPath $report -Mode $Mode -TargetValue $TargetValue -Variant $Variant 2>&1 | ForEach-Object { $_.ToString() }) -join "`n"
+        $childArgs = @('-NoProfile','-NonInteractive','-File',$wrapper,'-TestScript',$PSCommandPath,'-ReportPath',$report,'-Mode',$Mode,'-TargetValue',$TargetValue)
+        # Windows PowerShell drops empty native arguments; omit the optional switch.
+        if ($Variant) { $childArgs += @('-Variant',$Variant) }
+        $output = @(& $shellPath @childArgs 2>&1 | ForEach-Object { $_.ToString() }) -join "`n"
         $code = $LASTEXITCODE
         if (-not (Test-Path -LiteralPath $report)) { throw "Child produced no report: $output" }
         [pscustomobject]@{ExitCode=$code;Log=$output;Report=(Get-Content -Raw -LiteralPath $report | ConvertFrom-Json)}
