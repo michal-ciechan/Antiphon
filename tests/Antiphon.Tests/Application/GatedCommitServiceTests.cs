@@ -138,6 +138,17 @@ public class GatedCommitServiceTests
     }
 
     [Test]
+    public async Task Held_lease_overload_commits_without_reacquiring_the_repository()
+    {
+        using var repo = await Repo(); await Write(repo, "new.txt");
+        var git = new LandingGit(); var leases = new RepositoryMutationLease(git);
+        await using var held = await leases.TryAcquireAsync(repo.Path, default); held.ShouldNotBeNull();
+        var result = await new GatedCommitService(new RecordingGitWorkspaceService(), leases, git)
+            .CommitAsync(repo.Path, null, "held lease", Trailers, held, default);
+        result.Outcome.ShouldBe(GatedCommitOutcome.Committed); result.Files.ShouldBe(["new.txt"]);
+    }
+
+    [Test]
     public async Task Nothing_is_ever_pushed()
     {
         using var repo = await Repo(); await repo.AddBareOriginAsync(); var spy = new RecordingGitWorkspaceService();
