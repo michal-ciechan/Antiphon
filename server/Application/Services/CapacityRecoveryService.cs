@@ -392,6 +392,45 @@ public sealed class CapacityRecoveryService
         wait.State is CapacityRecoveryWaitState.Progressed or CapacityRecoveryWaitState.Canceled
             or CapacityRecoveryWaitState.Superseded or CapacityRecoveryWaitState.Exhausted;
 
+    /// <summary>Bind a redeemed dispatch to the session whose transcript will confirm it.</summary>
+    public async Task ReceiptDispatchOnAsync(
+        AppDbContext db, Guid taskId, AgentKind kind, Guid launchedSessionId, CancellationToken ct)
+    {
+        IDbContextTransaction? owned = null;
+        if (db.Database.CurrentTransaction is null)
+            owned = await db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            await TakeProviderLockAsync(db, kind, ct);
+            var key = $"task:{taskId:N}";
+            var wait = await db.CapacityRecoveryWaits.FirstOrDefaultAsync(
+                w => (w.TaskId == taskId || w.ConsumerKey == key) && w.ExecutionKind == kind
+                    && w.State == CapacityRecoveryWaitState.Admitted, ct);
+            if (wait is not null)
+            {
+                await db.Entry(wait).ReloadAsync(ct);
+                if (wait.State == CapacityRecoveryWaitState.Admitted)
+                {
+                    wait.SessionId = wait.LaunchSessionId = launchedSessionId;
+                    wait.DispatchAttemptId = Guid.NewGuid();
+                    wait.State = CapacityRecoveryWaitState.StartAccepted;
+                    wait.Outcome = nameof(CapacityRecoveryWaitState.StartAccepted);
+                    wait.OutcomeReason = nameof(CapacityRedemptionPath.Dispatch);
+                    wait.Version++;
+                    wait.UpdatedAt = UtcNow();
+                    await db.SaveChangesAsync(ct);
+                }
+            }
+            if (owned is not null)
+                await owned.CommitAsync(ct);
+        }
+        finally
+        {
+            if (owned is not null)
+                await owned.DisposeAsync();
+        }
+    }
+
     /// <summary>Cancel a bounded batch of ended consumers before re-arming or granting.</summary>
     public async Task<int> CancelOrphanedWaitsAsync(CancellationToken ct)
     {

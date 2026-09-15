@@ -619,6 +619,8 @@ public sealed class AgentTaskDispatcher
 
                 if (await DispatchOneAsync(task, ct, siblingObservation))
                 {
+                    if (_capacityRecovery is { IsEnabled: true } && task.AgentSessionId is { } launchedSessionId)
+                        await _capacityRecovery.ReceiptDispatchOnAsync(_db, task.Id, task.AgentKind, launchedSessionId, ct);
                     dispatched++;
                     if (!AgentTaskRoles.IsSpecialist(task.Role))
                         dispatchedAgainstCap++;

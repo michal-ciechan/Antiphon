@@ -426,3 +426,11 @@ Check actual owners and grant liveness within two supervisor ticks, recording th
 - S3 fixture changes keep live owners for existing grant-expiry/admission tests. Six baseline
   grant-liveness failures were fake clocks moved backward to September 8; their setup now uses
   the factory's current fake instant, preserving all relative durations and assertions.
+
+- S3: `75525578`, build passed; `s3/s3.trx`, seven named classes:
+  **57 total, 51 passed, six failed**. All six new orphan cases and all 11 wall dispatch
+  cases passed. The six grant cases now reached exact timestamp assertions and exposed
+  sub-microsecond fake-clock values that PostgreSQL cannot persist. Fixture fix `56860672`
+  starts the fake clock at PostgreSQL microsecond precision; the targeted
+  `/*/*/CapacityRecoveryGrantLivenessTests/*` rerun (`s3-grant-fix/grant.trx`) is **12/12 passed**.
+  No timeout or assertion changed.
