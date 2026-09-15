@@ -1,0 +1,47 @@
+CARD-0462  InProgress  High/Normal  rank 7 (auto)  Follow live Herdr tab rename into Agent herdrTabLabel (hourly, not in-agent) [enhancement]
+id          0b14040a-4382-44c0-9bd0-3a1156cd07b3
+board       8988ca03-7414-47ad-b0b6-51556c701703
+column      770bddfb-d7bb-4a99-940d-377b918630a7
+importance  High
+urgency     Normal
+rank        7
+token       54980285-704a-4561-b2b8-8b39bd6a52ef
+revisions   1
+external    #47
+
+Observed need 2026-09-09 after pinning PM-Orchestrator-Grok (`2ee02f40`) to Herdr tab `PM-Orchestrator-Grok` (`w2:tZ`). Operator asked: if they rename that tab, can Antiphon follow so a later restart still reuses the same tab.
+
+## Today
+
+Named placement (`Agent.HerdrWorkspaceLabel` / `HerdrTabLabel`, CARD-0384) matches **exact current Herdr tab label**. Sidecar `TabLabel` is a **launch snapshot**, not live. Runner event pump handles pane close/status only (`HerdrEventPumpService`); it ignores tab rename. `RefreshHerdrSurfaceAsync` reads `pane.get` revision/status, not `tab.get` label.
+
+So a live rename of `w2:tZ` leaves the DB pin on the old string. Next Start looks for the old label, finds none, **creates a new tab**, and leaves the renamed one behind. Live session stays on the renamed pane (ids, not labels).
+
+## Do not put this in the agent turn
+
+End-of-turn inside Grok/Claude would spend orchestrator context, miss idle AlwaysOn seats that never turn, and cannot write `Agent.HerdrTabLabel` (runner has no DB; agents should not PATCH themselves).
+
+## Wanted
+
+Follow a **live tab/workspace label change on the bound pane** into Antiphon’s pin, with a cooldown (default **1 hour**), so restart/relaunch reuses the same tab.
+
+Trigger (either is enough; both may fire, cooldown shared):
+
+1. Runner already talks to Herdr: on event-pump baseline / `pane.get` refresh, also `tab.get` (and workspace get) for the sidecar’s tab/workspace ids.
+2. Optional extra: server `OnTurnEnd` for that session if cooldown elapsed (does not replace 1; idle seats never turn).
+
+Write path:
+
+- If sidecar pane id still exists and its tab id is unchanged → this is a **rename**, not a move. Update sidecar `TabLabel` / `WorkspaceLabel`, last-pane snapshot if present, and the owning standing agent’s `HerdrTabLabel` / `HerdrWorkspaceLabel` when those pins are already set.
+- Do **not** invent a pin on an unpinned allocator-packed agent (would change restart from “pack into lowest tab” to “dedicated named tab”).
+- Do **not** follow a **pane move** to another tab (tab id changed). That is occupancy/placement, not rename. Leave pin; next start still targets the pinned name.
+- Refuse pin update when the new label is **ambiguous** in that workspace (duplicate tab label) or the tab is no longer a single pane (`herdr_tab_invalid` shape). Log + skip; do not create furniture.
+- Workspace: token-owned workspaces (`antiphon-ws`) already survive label edits. Only follow workspace **label** for untagged operator workspaces, and only when the unique-untagged match would still hold.
+- Attached-origin: no pin follow (detach contract; Antiphon does not own the pane).
+- Cooldown per agent (or per session), default 1h, skip if labels already equal.
+
+## Not in scope
+
+Closing leftover panes (#46). Allocator packing. Creating pins. Moving a live pane. Herdr `tab.rename` RPC from Antiphon.
+
+Related: CARD-0384, `docs/herdr-sessions.md` §3–4, `HerdrPaneSidecar.TabLabel`, `Agent.HerdrTabLabel`.
