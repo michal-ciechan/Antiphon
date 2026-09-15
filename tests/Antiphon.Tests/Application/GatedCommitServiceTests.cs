@@ -12,6 +12,44 @@ namespace Antiphon.Tests.Application;
 public sealed class GatedCommitServiceTests
 {
     [Test]
+    [Arguments("allowed.txt", false, true)]
+    [Arguments("allowed.txt", false, false)]
+    [Arguments("blocked.txt", true, true)]
+    [Arguments("blocked.txt", true, false)]
+    [Arguments("!literal.txt", true, true)]
+    [Arguments("!literal.txt", true, false)]
+    public async Task Ignore_exceptions_and_escaped_literals_follow_Git_semantics(string path, bool ignored, bool scoped)
+    {
+        using var repo = await SeedAsync();
+        await repo.CommitFileAsync(".gitignore", "_private/\n*.txt\n!allowed.txt\n\\!literal.txt\n");
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, path), "candidate");
+        if (ignored) await repo.GitAsync("add", "-f", path);
+        var head = await repo.GitReadAsync("rev-parse", "HEAD");
+        var index = await repo.GitReadAsync("diff", "--cached", "--binary");
+        var (svc, spy) = Gate();
+        var result = await svc.CommitAsync(repo.Path, scoped ? [path] : null, Message(), Trailers(), CancellationToken.None);
+        result.Outcome.ShouldBe(ignored ? GatedCommitOutcome.IgnoredPathStaged : GatedCommitOutcome.Committed);
+        if (ignored)
+        {
+            result.Refusals.ShouldHaveSingleItem().Path.ShouldBe(path);
+            result.Refusals[0].Rule.ShouldEndWith(path == "!literal.txt" ? "\\!literal.txt" : "*.txt");
+            spy.Verbs.ShouldNotContain("add");
+            spy.Verbs.ShouldNotContain("commit");
+            (await repo.GitReadAsync("rev-parse", "HEAD")).ShouldBe(head);
+            (await repo.GitReadAsync("diff", "--cached", "--binary")).ShouldBe(index);
+        }
+        else
+        {
+            result.Files.ShouldBe(new[] { path });
+            result.Refusals.ShouldBeEmpty();
+            result.Sha.ShouldBe((await repo.GitReadAsync("rev-parse", "HEAD")).Trim());
+            (await repo.GitReadAsync("show", $"HEAD:{path}")).ShouldBe("candidate");
+        }
+        (await File.ReadAllTextAsync(Path.Combine(repo.Path, path))).ShouldBe("candidate");
+        spy.Verbs.ShouldNotContain("push");
+    }
+
+    [Test]
     public async Task Post_commit_receipt_uses_the_operation_even_when_HEAD_advances()
     {
         using var repo = await SeedAsync();

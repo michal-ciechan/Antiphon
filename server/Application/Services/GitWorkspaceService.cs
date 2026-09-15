@@ -715,7 +715,7 @@ public class GitWorkspaceService
 
     /// <summary>
     /// <c>git check-ignore --no-index -v -z --stdin</c> over <paramref name="paths"/>.
-    /// Exit 1 (none ignored) is an empty list; exit 0 is the matching records.
+    /// Verbose output includes effective negation rules; only exclusion records are returned.
     /// </summary>
     public async Task<GitStrictList<GitIgnoreMatch>> CheckIgnoredAsync(
         string workingDirectory, IReadOnlyList<string> paths, CancellationToken ct)
@@ -741,6 +741,10 @@ public class GitWorkspaceService
                 break;
             _ = int.TryParse(fields[i + 1], out var line);
             var pattern = fields[i + 2];
+            // Git reports the winning rule even when it re-includes the path. An escaped
+            // leading exclamation mark (\!) is a literal exclusion and must remain a match.
+            if (pattern.StartsWith('!'))
+                continue;
             var path = fields[i + 3].Replace('\\', '/');
             var sourceName = source;
             if (sourceName.Contains('/'))
