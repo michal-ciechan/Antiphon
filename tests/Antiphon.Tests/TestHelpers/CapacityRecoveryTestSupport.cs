@@ -24,7 +24,10 @@ internal static class CapacityRecoveryTestSupport
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        // PostgreSQL timestamps preserve microseconds; start on that precision so exact
+        // persisted-clock assertions do not compare an unrepresentable 100 ns remainder.
+        var now = DateTimeOffset.UtcNow;
+        var time = new FakeTimeProvider(new DateTimeOffset(now.Ticks - now.Ticks % 10, TimeSpan.Zero));
         services.AddSingleton<TimeProvider>(time);
         services.AddSingleton<IOptions<SupervisionSettings>>(Options.Create(new SupervisionSettings
         {
