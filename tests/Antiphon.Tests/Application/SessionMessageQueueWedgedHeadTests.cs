@@ -41,6 +41,19 @@ public class SessionMessageQueueWedgedHeadTests
             .ExecuteUpdateAsync(u => u.SetProperty(s => s.StartedAt, next));
     }
 
+    // The UserPrompt rows the fake recorded, in order: the only evidence that says WHAT actually
+    // went in, as opposed to which row the queue decided to mark Delivered.
+    private static async Task AssertUserPromptsAsync(BridgeQueueHarness h, IReadOnlyList<string> expected)
+    {
+        await using var db = CreateContext();
+        var prompts = await db.TranscriptEntries.AsNoTracking()
+            .Where(e => e.AgentSessionId == h.SessionId && e.Kind == TranscriptKinds.UserPrompt)
+            .OrderBy(e => e.Sequence)
+            .Select(e => e.Text)
+            .ToListAsync();
+        prompts.ShouldBe(expected);
+    }
+
     private static async Task<SessionQueuedMessage> MessageAsync(Guid id)
     {
         await using var db = CreateContext();
@@ -223,15 +236,103 @@ public class SessionMessageQueueWedgedHeadTests
         (await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None)).Messages
             .Single(m => m.Id == id).Parked.ShouldBeTrue();
         h.Adapter.Inputs.ShouldNotContain(nextBody);
-        // Model the subsequent fresh composer; the test isolates parking from supervision.
+        // A relaunch is the one release that needs no screen evidence: a new process has a new
+        // composer, so the parked body cannot still be standing in it.
         await AdvanceGenerationAsync(h);
         h.Adapter.PrimeComposer("");
         h.Adapter.SwallowSubmits = 0;
         await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
 
         h.Adapter.Inputs.ShouldContain(nextBody);
+        // The exact prompt, not a containment match: the parked body must not ride along.
+        h.Adapter.SubmittedBodies.ShouldBe([nextBody]);
+        await AssertUserPromptsAsync(h, [nextBody]);
         (await MessageAsync(nextId)).DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
         (await MessageAsync(id)).DeliveryAttempts.ShouldBe(3);
+    }
+
+    // CARD-0501 review F1. Parking the head charges the third attempt and stops re-typing it, but
+    // it does NOT empty the composer: the body is still standing there, unsubmitted. Typing the
+    // next queue row on top of it submits BOTH as one UserPrompt and marks the next row Delivered
+    // for a prompt it never owned. Nothing here clears the composer or advances the generation —
+    // that is the whole point of the case the earlier regression hid.
+    [Test]
+    public async Task Parked_head_left_in_the_composer_holds_the_next_message()
+    {
+        await using var h = await CreateAsync();
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var id = await h.SeedPendingMessageAsync(Body, deliveryAttempts: 2, baselineSequence: baseline);
+        const string nextBody = "the next live queue message";
+        var nextId = await h.SeedPendingMessageAsync(nextBody);
+        h.Adapter.PrimeComposer(Body);
+        h.Adapter.SwallowSubmits = 99;
+
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+
+        (await MessageAsync(id)).DeliveryAttempts.ShouldBe(3);
+
+        // The composer still holds the parked body and the session was never restarted.
+        h.Adapter.SwallowSubmits = 0;
+        var inputsBefore = h.Adapter.Inputs.Count;
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.Inputs.Skip(inputsBefore).ShouldBeEmpty();
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        await AssertUserPromptsAsync(h, []);
+        var next = await MessageAsync(nextId);
+        next.Status.ShouldBe(QueuedMessageStatus.Pending);
+        next.DeliveryAttempts.ShouldBe(0);
+        next.DeliveryVerdict.ShouldBeNull();
+        // The hold is a defer, never a park or a kill.
+        (await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None)).Messages
+            .Single(m => m.Id == nextId).Parked.ShouldBeFalse();
+        h.Adapter.Killed.ShouldBeFalse();
+    }
+
+    // The other release: no relaunch, but the composer is demonstrably clear again (a human
+    // submitted or cleared the parked body). The next row then delivers its OWN body, exactly.
+    [Test]
+    public async Task Cleared_composer_releases_the_next_message_with_its_exact_body()
+    {
+        await using var h = await CreateAsync();
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var id = await h.SeedPendingMessageAsync(Body, deliveryAttempts: 2, baselineSequence: baseline);
+        const string nextBody = "the next live queue message";
+        var nextId = await h.SeedPendingMessageAsync(nextBody);
+        h.Adapter.PrimeComposer(Body);
+        h.Adapter.SwallowSubmits = 99;
+
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+        (await MessageAsync(id)).DeliveryAttempts.ShouldBe(3);
+
+        h.Adapter.PrimeComposer("");
+        h.Adapter.SwallowSubmits = 0;
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.SubmittedBodies.ShouldBe([nextBody]);
+        await AssertUserPromptsAsync(h, [nextBody]);
+        (await MessageAsync(nextId)).DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        (await MessageAsync(id)).DeliveryAttempts.ShouldBe(3);
+    }
+
+    // A parked row whose typing predates the CURRENT generation cannot be in this composer, so it
+    // must not hold anything — the no-regression twin of the two cases above.
+    [Test]
+    public async Task Parked_head_from_a_previous_generation_does_not_hold_the_next_message()
+    {
+        await using var h = await CreateAsync();
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        await h.SeedPendingMessageAsync(Body, deliveryAttempts: 3, baselineSequence: baseline,
+            lastDeliveryGeneration: SessionGeneration.Normalize(DateTime.UtcNow.AddMinutes(-30)));
+        const string nextBody = "the next live queue message";
+        var nextId = await h.SeedPendingMessageAsync(nextBody);
+        // The parked body is still painted on screen; only the generation says it is not ours.
+        h.Adapter.PrimeComposer(Body);
+
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldContain(nextBody);
+        (await MessageAsync(nextId)).DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
     }
 
     [Test]
