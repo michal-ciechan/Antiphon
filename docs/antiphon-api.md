@@ -272,6 +272,9 @@ GET    /api/agent-tasks/summary              fleet-wide counters (active, blocke
                                              totalCostUsd, byStatus), independent of the list window
 POST   /api/agent-tasks/{id}/commit          gated commit of named paths (task-token caller).
                                              Body `{ paths, message }`. 200 `{ sha, files }`.
+                                             Paths is a required nonempty array of explicit repository-relative
+                                             file paths. Missing/null/empty or malformed selections are 422
+                                             before lease admission or Git mutation; no whole-tree default.
                                              409 codes: ignored_path_staged, ignore_rules_changed,
                                              nothing_to_commit, repository_busy, commit_failed.
                                              403 `delegation_token_required` / `commit_on_settle_never`.
