@@ -38,7 +38,8 @@ public partial class AgentTaskReplyIntegrationTests
         DelegationSettings? delegation = null,
         bool routingPins = false,
         RecordingGitWorkspaceService? gitSpy = null,
-        SaveChangesInterceptor? saveInterceptor = null) =>
+        SaveChangesInterceptor? saveInterceptor = null,
+        LandDeliveryBoundary? boundary = null) =>
         new(
             worktreeRoot,
             supervision: new SupervisionSettings
@@ -56,7 +57,8 @@ public partial class AgentTaskReplyIntegrationTests
             delegation: delegation ?? new DelegationSettings { PtySingleChunkBytes = 43_200 },
             routingPins: routingPins,
             gitSpy: gitSpy,
-            saveInterceptor: saveInterceptor);
+            saveInterceptor: saveInterceptor,
+            boundary: boundary);
 
     private static async Task<(ScratchGitRepo Repo, AgentTask Task, Guid SessionId, Guid Parent)> SeedC527Async(
         Action<AgentTask>? configure = null, string prefix = "c527")
@@ -468,6 +470,7 @@ public partial class AgentTaskReplyIntegrationTests
             t.Role = AgentTaskRole.Commit;
             t.ParentTaskId = seeded.Task.Id;
             t.CommitBaselineSha = baseline;
+            t.CommitUpstreamBaselineJson = JsonSerializer.Serialize(new GitWorkspaceService.UpstreamSnapshot(true, null, null));
             t.RepoPath = repo.Path;
             t.Workspace = WorkspaceMode.Shared;
         });
@@ -500,6 +503,7 @@ public partial class AgentTaskReplyIntegrationTests
             t.Role = AgentTaskRole.Commit;
             t.ParentTaskId = seeded.Task.Id;
             t.CommitBaselineSha = baseline;
+            t.CommitUpstreamBaselineJson = JsonSerializer.Serialize(new GitWorkspaceService.UpstreamSnapshot(true, null, null));
             t.RepoPath = repo.Path;
         });
         await SeedTurnAsync(childSession, DelegationReportFormatter.TaskMarker(child.Id), "committed");
@@ -529,14 +533,16 @@ public partial class AgentTaskReplyIntegrationTests
         {
             t.Role = AgentTaskRole.Commit;
             t.CommitBaselineSha = baseline;
+            t.CommitUpstreamBaselineJson = JsonSerializer.Serialize(new GitWorkspaceService.UpstreamSnapshot(true, "refs/remotes/origin/master", baseline));
             t.RepoPath = repo.Path;
         });
         await SeedTurnAsync(childSession, DelegationReportFormatter.TaskMarker(child.Id), "pushed");
         await CreateService(factory).OnTurnEndAsync(childSession, CancellationToken.None);
         await using var verify = CreateContext();
         var warning = await verify.AgentTaskEvents.FirstAsync(e =>
-            e.AgentTaskId == child.Id && e.Type == AgentTaskEventType.Warning && e.Detail.Contains("pushed"));
+            e.AgentTaskId == child.Id && e.Type == AgentTaskEventType.Warning && e.Detail.Contains("upstream moved"));
         warning.Detail.ShouldContain(origin);
+        warning.Detail.ShouldContain("child action is unproven");
     }
 
     [Test]
@@ -653,7 +659,10 @@ public partial class AgentTaskReplyIntegrationTests
         await SeedTurnAsync(seeded.SessionId, DelegationReportFormatter.TaskMarker(seeded.Task.Id), "Wrote a.md");
         await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
         var factory2 = C527Factory(repo.WorktreeRoot);
+        AttachTerminal(factory2, seeded.Parent);
         await CreateService(factory2).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+        await Queue(factory2).FlushSessionAsync(seeded.Parent, CancellationToken.None);
+        await AssertParentReceivedNoteAsync(seeded.Parent, seeded.Task, "Wrote a.md");
         var after = int.Parse((await repo.GitReadAsync("rev-list", "--count", "HEAD")).Trim());
         after.ShouldBe(before + 1);
         (await repo.GitReadAsync("log", "--grep", seeded.Task.Id.ToString("D"), "--format=%H"))

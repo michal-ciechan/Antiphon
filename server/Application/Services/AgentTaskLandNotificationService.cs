@@ -90,7 +90,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 }
                 if (boundary is not null) await boundary.ReachedAsync("before-enqueue", note.TaskId, note.Id, ct);
                 note.EnqueueAttempts++;
-                var conversationKey = note.Kind == LandNotificationKind.DeliveryFailure
+                var conversationKey = note.Kind is LandNotificationKind.DeliveryFailure or LandNotificationKind.TaskCompletion
                     ? $"task:{await db.AgentTasks.Where(t => t.Id == note.TaskId).Select(t => t.RootTaskId).SingleAsync(ct):N}"
                     : $"land:{note.Id:N}";
                 await messages.EnqueueAsync(session, note.Body, MessageSendMode.WhenIdle, ct,

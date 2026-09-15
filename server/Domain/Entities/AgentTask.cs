@@ -515,6 +515,9 @@ public class AgentTask
     /// </summary>
     public string? CommitBaselineSha { get; set; }
 
+    /// <summary>Independent upstream identity, SHA and inspection outcome at Commit-child creation.</summary>
+    public string? CommitUpstreamBaselineJson { get; set; }
+
     /// <summary>
     /// CARD-0299 S2. How many times a cold Codex first-delivery <c>NoSubmitOutput</c> has
     /// already killed-and-relaunched this task. Default 0. Compared to

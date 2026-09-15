@@ -4975,10 +4975,12 @@ public partial class AgentTaskReplyIntegrationTests
             DelegationSettings? delegation = null,
             bool routingPins = false,
             RecordingGitWorkspaceService? gitSpy = null,
-            Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesInterceptor? saveInterceptor = null)
+            Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesInterceptor? saveInterceptor = null,
+            LandDeliveryBoundary? boundary = null)
         {
             var services = new ServiceCollection();
             services.AddLogging();
+            if (boundary is not null) services.AddSingleton<LandDeliveryBoundary>(boundary);
             services.AddDbContext<AppDbContext>(o =>
             {
                 o.UseNpgsql(TestDbFixture.ConnectionString);

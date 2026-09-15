@@ -12,6 +12,30 @@ namespace Antiphon.Tests.Application;
 public sealed class GatedCommitServiceTests
 {
     [Test]
+    [Arguments("valid")]
+    [Arguments("body")]
+    [Arguments("task")]
+    [Arguments("gate")]
+    [Arguments("identity")]
+    [Arguments("duplicate")]
+    public async Task Settlement_recovery_requires_exact_unique_trailers(string variant)
+    {
+        using var repo = await SeedAsync();
+        var id = Guid.NewGuid();
+        var settlement = new string('a', 64);
+        var task = variant == "task" ? Guid.NewGuid() : id;
+        var gate = variant == "gate" ? "ungated" : "gated";
+        var identity = variant == "identity" ? new string('b', 64) : settlement;
+        var trailers = $"antiphon: true\nantiphon-task: {task:D}\nantiphon-commit: {gate}\nantiphon-settlement: {identity}";
+        if (variant == "duplicate") trailers += "\nantiphon-task: " + Guid.NewGuid();
+        var message = "settlement fixture\n\n" + trailers + (variant == "body" ? "\n\nOrdinary prose after the apparent trailers." : "");
+        await repo.GitAsync("commit", "--allow-empty", "-m", message);
+        var result = await new RecordingGitWorkspaceService().FindSettlementCommitsAsync(repo.Path, id, settlement, CancellationToken.None);
+        result.Succeeded.ShouldBeTrue();
+        result.Items.Count.ShouldBe(variant == "valid" ? 1 : 0);
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(true, false)]
     [Arguments(false, true)]

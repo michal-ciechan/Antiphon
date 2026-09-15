@@ -58,6 +58,7 @@ public sealed class AgentTaskService
     private readonly CapacityRecoveryService? _capacityRecovery;
     private readonly SourceLandingAdmission? _sourceLanding;
     private readonly ILandingGit? _landingGit;
+    private readonly GitWorkspaceService? _workspaceGit;
 
     public AgentTaskService(
         AppDbContext db,
@@ -79,7 +80,8 @@ public sealed class AgentTaskService
         DelegationOpenGate? openGate = null,
         CapacityRecoveryService? capacityRecovery = null,
         SourceLandingAdmission? sourceLanding = null,
-        ILandingGit? landingGit = null)
+        ILandingGit? landingGit = null,
+        GitWorkspaceService? workspaceGit = null)
     {
         _areas = areas;
         _db = db;
@@ -101,6 +103,7 @@ public sealed class AgentTaskService
         _capacityRecovery = capacityRecovery;
         _sourceLanding = sourceLanding;
         _landingGit = landingGit;
+        _workspaceGit = workspaceGit;
     }
 
     /// <summary>
@@ -2552,6 +2555,10 @@ public sealed class AgentTaskService
             AutoContinueOnWait = false,
             CommitOnSettle = CommitOnSettlePolicy.Never,
             CommitBaselineSha = headSha,
+            CommitUpstreamBaselineJson = JsonSerializer.Serialize(
+                _workspaceGit is not null && settled.RepoPath is not null
+                    ? await _workspaceGit.InspectUpstreamAsync(settled.RepoPath, ct)
+                    : new GitWorkspaceService.UpstreamSnapshot(false, null, null)),
         };
 
         _db.AgentTasks.Add(task);
