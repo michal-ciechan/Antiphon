@@ -504,6 +504,18 @@ public class AgentTask
     public string? CompletionProgressEvidenceJson { get; set; }
 
     /// <summary>
+    /// CARD-0527. Per-task commit-on-settle policy. Null inherits from the project, then
+    /// <c>Delegation:CommitOnSettle</c>. Merge and Commit children are created as Never.
+    /// </summary>
+    public CommitOnSettlePolicy? CommitOnSettle { get; set; }
+
+    /// <summary>
+    /// CARD-0527. Repo HEAD at spawn of a Commit-role child, so its settlement can audit the
+    /// commits it produced. Null on every other role.
+    /// </summary>
+    public string? CommitBaselineSha { get; set; }
+
+    /// <summary>
     /// CARD-0299 S2. How many times a cold Codex first-delivery <c>NoSubmitOutput</c> has
     /// already killed-and-relaunched this task. Default 0. Compared to
     /// <c>DelegationSettings.BootWedgeRelaunchLimit</c> (1).

@@ -10,6 +10,7 @@
 #                        [-Bundles a,b] [-PromptFile p] [-RemoteControl] [-Start] [-Json]
 #   project.ps1 readiness <project name|guid> [-Json]
 #   project.ps1 catalog   [-Json]
+#   project.ps1 set       <project name|guid> -CommitOnSettle On|Off|Inherit [-Json]
 #
 # -PromptFile is read with Get-Content -Raw and sent as-is, so newlines, quotes and shell
 # metacharacters survive untouched. Use a file for prompt text rather than trying to quote it.
@@ -20,11 +21,14 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0, Mandatory = $true)]
-    [ValidateSet('new', 'readiness', 'catalog')]
+    [ValidateSet('new', 'readiness', 'catalog', 'set')]
     [string]$Verb,
 
     [Parameter(Position = 1)]
     [string]$Project,
+
+    [ValidateSet('On', 'Off', 'Inherit')]
+    [string]$CommitOnSettle,
 
     [string]$Dir,
     [switch]$CreateDirectory,
@@ -169,6 +173,26 @@ function Write-Catalog($Catalog) {
 }
 
 switch ($Verb) {
+    'set' {
+        if ([string]::IsNullOrWhiteSpace($CommitOnSettle)) { Fail 'set requires -CommitOnSettle On|Off|Inherit.' }
+        $resolved = Resolve-Project $Project
+        $body = @{
+            name = $resolved.name
+            gitRepositoryUrl = $resolved.gitRepositoryUrl
+            constitutionPath = $resolved.constitutionPath
+            gitHubIntegrationEnabled = $resolved.gitHubIntegrationEnabled
+            notificationsEnabled = $resolved.notificationsEnabled
+            baseBranch = $resolved.baseBranch
+            commitOnSettle = $CommitOnSettle
+        }
+        if ($null -ne $resolved.localRepositoryPath) { $body.localRepositoryPath = $resolved.localRepositoryPath }
+        if ($null -ne $resolved.repositoryVisibility) { $body.repositoryVisibility = $resolved.repositoryVisibility }
+        $updated = Invoke-Antiphon -Method PUT -Path ("/api/projects/{0}" -f $resolved.id) -Body $body
+        if ($Json) { $updated | ConvertTo-Json -Depth 10; return }
+        Write-Output ("Project: {0} ({1}) commitOnSettle={2} effective={3}" -f `
+            $updated.name, $updated.id, $updated.commitOnSettle, $updated.effectiveCommitOnSettle)
+        return
+    }
     'catalog' {
         if ($Project) { Fail 'catalog takes no project argument.' }
         $catalog = Invoke-Antiphon -Method GET -Path '/api/projects/setup-catalog'

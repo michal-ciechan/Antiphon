@@ -234,6 +234,9 @@ public sealed class AgentTaskService
                 "auto_continue_needs_authority");
         }
 
+        var parsedCommitOnSettle = CommitOnSettlePolicyResolver.ParseTaskValue(request.CommitOnSettle);
+        var requestSetCommitOnSettle = request.CommitOnSettle is not null;
+
         var launchEnvOverride = AgentLaunchEnv.ValidateOverride(
             request.LaunchEnvOverride, "launchEnvOverride");
         var suppliedInheritedLlmEnv = AgentLaunchEnv.ValidateOverride(
@@ -263,6 +266,7 @@ public sealed class AgentTaskService
         Guid? followUpOfTaskId = null;
         string? followUpMessage = null;
         var liveFollowUp = false;
+        CommitOnSettlePolicy? priorCommitOnSettle = null;
 
         // CARD-0291: a standing agent named by -Agent resolves HERE, before the CARD-0140 pin
         // block, so that path receives a plain AgentId and nothing downstream changes. Refusals
@@ -301,6 +305,7 @@ public sealed class AgentTaskService
             var prior = await _db.AgentTasks.AsNoTracking().FirstAsync(t => t.Id == priorId, ct);
             followUpOfTaskId = priorId;
             followUpCardId = prior.CardId;
+            priorCommitOnSettle = prior.CommitOnSettle;
             var followAgent = prior.AgentId is Guid followAgentId
                 ? await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == followAgentId, ct)
                 : null;
@@ -850,6 +855,26 @@ public sealed class AgentTaskService
         var projectId = parent is null
             ? await DeriveCallerProjectAsync(caller, ct)
             : parent.ProjectId;
+        if (!requestSetCommitOnSettle && CommitOnSettlePolicyResolver.MentionsDoNotCommit(request.Goal))
+        {
+            bool? projectValue = null;
+            if (projectId is Guid pid)
+            {
+                projectValue = await _db.Projects.AsNoTracking()
+                    .Where(p => p.Id == pid)
+                    .Select(p => p.CommitOnSettle)
+                    .FirstOrDefaultAsync(ct);
+            }
+
+            if (CommitOnSettlePolicyResolver.Resolve(null, projectValue, _settings.CommitOnSettle)
+                != CommitOnSettleEffective.Off)
+            {
+                const string advisory =
+                    "Goal text mentions not committing, but commit-on-settle is on for this project; pass -NoCommit if the tree must stay uncommitted.";
+                warning = warning is null ? advisory : warning + " " + advisory;
+            }
+        }
+
         AgentTask? repairOwner = null;
         if (request.RepairSourceTaskId is Guid repairOwnerId)
         {
@@ -950,6 +975,7 @@ public sealed class AgentTaskService
             ExpectedDurationMinutes = expectedMinutes,
             StandingAuthority = standingAuthority,
             AutoContinueOnWait = request.AutoContinue && standingAuthority is not null,
+            CommitOnSettle = parsedCommitOnSettle ?? priorCommitOnSettle,
         };
 
         if (storedPolicy is not null)
@@ -1686,7 +1712,8 @@ public sealed class AgentTaskService
             task.InternalDecisionPolicyJson, task.InternalDecisionPolicyHash,
             task.RepairSourceTaskId, TaskProgressJson.ToDto(TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson)),
             task.WorktreeBaseRequestedRef, task.WorktreeBaseRef, task.WorktreeBaseSource, task.WorktreeBaseTaskId,
-            task.WorktreeBaseSha, Session: sessionDetail);
+            task.WorktreeBaseSha, Session: sessionDetail, CommitOnSettle: task.CommitOnSettle,
+            CommitBaselineSha: task.CommitBaselineSha);
     }
 
     private static VerificationExecutionDetailDto ToExecutionDetail(VerificationExecution execution)
@@ -2392,6 +2419,7 @@ public sealed class AgentTaskService
             // CARD-0294 S1: a conflict resolver has no approval wait to skip.
             StandingAuthority = conflicted.StandingAuthority,
             AutoContinueOnWait = false,
+            CommitOnSettle = CommitOnSettlePolicy.Never,
         };
 
         _db.AgentTasks.Add(task);

@@ -104,6 +104,8 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
   const [formGitHubEnabled, setFormGitHubEnabled] = useState(false)
   const [formNotificationsEnabled, setFormNotificationsEnabled] = useState(false)
   const [formDefaultLaunchEnvText, setFormDefaultLaunchEnvText] = useState('')
+  const [formCommitOnSettle, setFormCommitOnSettle] = useState('Inherit')
+  const [commitOnSettleEdited, setCommitOnSettleEdited] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
@@ -149,6 +151,8 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
     setFormGitHubEnabled(project.gitHubIntegrationEnabled)
     setFormNotificationsEnabled(project.notificationsEnabled)
     setFormDefaultLaunchEnvText(envToText(project.defaultLaunchEnv ?? {}))
+    setFormCommitOnSettle(project.commitOnSettle ?? 'Inherit')
+    setCommitOnSettleEdited(false)
     setFormError(null)
     setTestResult(null)
     setEditModalOpen(true)
@@ -197,6 +201,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
           gitHubIntegrationEnabled: formGitHubEnabled,
           notificationsEnabled: formNotificationsEnabled,
           defaultLaunchEnv: parsedDefaultEnv.env,
+          ...(commitOnSettleEdited ? { commitOnSettle: formCommitOnSettle } : {}),
         },
       })
       setEditModalOpen(false)
@@ -480,6 +485,23 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
             description="Enable notifications for workflow events in this project."
             checked={formNotificationsEnabled}
             onChange={(e) => setFormNotificationsEnabled(e.currentTarget.checked)}
+          />
+          <Select
+            label="Commit on settle"
+            description="When a Shared task settles, commit its own footprint through the gated primitive. Inherit follows Delegation:CommitOnSettle."
+            data={[
+              {
+                value: 'Inherit',
+                label: editingProject?.effectiveCommitOnSettle === false ? 'Inherit (off)' : 'Inherit (on)',
+              },
+              { value: 'On', label: 'On' },
+              { value: 'Off', label: 'Off' },
+            ]}
+            value={formCommitOnSettle}
+            onChange={(value) => {
+              setFormCommitOnSettle(value ?? 'Inherit')
+              setCommitOnSettleEdited(true)
+            }}
           />
           <Textarea
             label="Default launch environment (KEY=value per line)"

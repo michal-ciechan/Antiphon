@@ -238,6 +238,24 @@ public enum AgentTaskEventType
     LandingCleanup = 30,
     HeldReleased = 31,
     LandAged = 32,
+
+    /// <summary>
+    /// CARD-0527. The server committed this Shared task's footprint through the gated primitive.
+    /// Detail is the sha plus the committed paths. Never a push.
+    /// </summary>
+    Committed = 33,
+}
+
+/// <summary>
+/// CARD-0527. Per-task override for whether settlement commits this task's own dirty footprint.
+/// Null on the row means inherit from the project column, then <c>Delegation:CommitOnSettle</c>.
+/// Stored as text.
+/// </summary>
+public enum CommitOnSettlePolicy
+{
+    Never = 0,
+    Always = 1,
+    Agent = 2,
 }
 
 /// <summary>

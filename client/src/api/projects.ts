@@ -18,6 +18,8 @@ export interface ProjectDto {
   createdAt: string
   updatedAt: string
   defaultLaunchEnv?: Record<string, string>
+  commitOnSettle?: string | null
+  effectiveCommitOnSettle?: boolean
 }
 
 export interface CreateProjectRequest {
@@ -30,6 +32,7 @@ export interface CreateProjectRequest {
   gitHubIntegrationEnabled: boolean
   notificationsEnabled: boolean
   defaultLaunchEnv?: Record<string, string> | null
+  commitOnSettle?: string | null
 }
 
 export interface UpdateProjectRequest {
@@ -42,6 +45,7 @@ export interface UpdateProjectRequest {
   gitHubIntegrationEnabled: boolean
   notificationsEnabled: boolean
   defaultLaunchEnv?: Record<string, string> | null
+  commitOnSettle?: string | null
 }
 
 export interface TestGitConnectivityResult {
