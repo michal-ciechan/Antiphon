@@ -81,13 +81,22 @@ public sealed class WorktreeGuardedCleanupTests
         h.Clock.Delays[1].ShouldBe(TimeSpan.FromMilliseconds(250));
     }
     [Test]
-    public async Task C443_RetryReportsRefusalReason()
+    public async Task C443_SharingNominationCannotBypassDeadline()
     {
         await using var h = await RemovalHarness.CreateAsync();
+        var reached = false;
+        h.H.Fixture.Git.AfterCommand = (_, args, _) => {
+            if (h.Removes == 1 && args[0] == "fetch")
+            { reached = true; h.Clock.Advance(TimeSpan.FromSeconds(10)); }
+            return Task.CompletedTask;
+        };
         var result = await h.RemoveAsync();
-        var evidence = System.Text.Json.JsonSerializer.Serialize(new { result, attempt = await h.RowAsync() });
-        Console.WriteLine(evidence);
-        h.Removes.ShouldBe(2, evidence); result.IsClean.ShouldBeTrue(evidence);
+        var row = await h.RowAsync();
+        var evidence = System.Text.Json.JsonSerializer.Serialize(new { result, attempt = row });
+        reached.ShouldBeTrue(); h.Removes.ShouldBe(1, evidence);
+        result.Residue.ShouldBe("cleanup_additional_budget_expired", evidence);
+        System.Text.Json.JsonSerializer.Deserialize<WorktreeCleanupCapture>(row.CaptureJson!)!.Native.HasSharingConflict.ShouldBeTrue();
+        row.RetryCommandId.ShouldBeNull(); row.RetryReason.ShouldBe("cleanup_additional_budget_expired");
     }
 
     [Test]
@@ -325,7 +334,10 @@ public sealed class WorktreeGuardedCleanupTests
     internal sealed class RecordingClock : TimeProvider
     {
         private readonly Microsoft.Extensions.Time.Testing.FakeTimeProvider _controlled = new();
-        public bool Controlled;
+        // These tests select retry policy over real Git, not the speed of this shared host.
+        // UTC remains live for the persistence graph. Advance the monotonic allowance
+        // explicitly in deadline tests; the ordinary 250 ms backoff still runs in real time.
+        public bool Controlled = true;
         public void Advance(TimeSpan amount) => _controlled.Advance(amount);
         public override long GetTimestamp() => Controlled ? _controlled.GetTimestamp() : base.GetTimestamp();
         public override long TimestampFrequency => Controlled ? _controlled.TimestampFrequency : base.TimestampFrequency;

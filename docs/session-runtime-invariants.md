@@ -316,3 +316,11 @@ a complete UserPrompt in the destination after LastDeliveryBaselineSequence, or 
 attempt timestamp when no sequence baseline exists. Sent/screen confirmation is not
 this proof. Recovery catches up transcript evidence; typing remains in the session queue.
 Unresolved keyed rows and their destination transcript are retained by ordinary pruning.
+
+CARD-0443 capture-bearing Outcomes are composed once into a 1,024-byte UTF-8 envelope,
+including approval coordinates and bounded diagnostics; equal coordinates name the earlier
+field. The full publication narrative remains on the terminal event and structured diagnostics
+remain in the capture. Optional display text uses an explicit `~` truncation marker. Receipt
+matches the immutable notification Body, including on inbox-conhost fallback. A legacy queue
+row whose Body became a spill pointer stays unconfirmed until the complete original body is
+observed after its attempt floor.
