@@ -60,6 +60,30 @@ function detail(): AgentTaskDetailDto {
   }
 }
 
+it('shows session liveness under a failed task', async () => {
+  const task: AgentTaskDetailDto = {
+    ...detail(), summary: summary({ status: 'Failed' }), failureReason: 'API error',
+    session: {
+      sessionId: 'session-1', status: 'Running', working: true,
+      lastSeenAt: '2026-09-14T12:00:00Z', endedAt: null, lastTranscriptAt: '2026-09-14T12:00:00Z',
+    },
+  }
+  server.use(http.get('/api/agent-tasks/:id', () => HttpResponse.json(task)))
+  renderWithProviders(<TaskDetailBody taskId={FLY_ID} onClose={() => {}} />)
+  expect(await screen.findByText('still working')).toBeInTheDocument()
+  expect(screen.getByTestId('task-session-liveness')).toHaveTextContent('Session: session-1 Running, working; last transcript 2026-09-14T12:00:00Z')
+  expect(screen.getByText('API error')).toBeInTheDocument()
+})
+
+it('omits it when the detail has no session', async () => {
+  const task = { ...detail(), summary: summary({ status: 'Failed' }), failureReason: 'API error' }
+  server.use(http.get('/api/agent-tasks/:id', () => HttpResponse.json(task)))
+  renderWithProviders(<TaskDetailBody taskId={FLY_ID} onClose={() => {}} />)
+  expect(await screen.findByText('API error')).toBeInTheDocument()
+  expect(screen.queryByTestId('task-session-liveness')).not.toBeInTheDocument()
+  expect(screen.queryByText('still working')).not.toBeInTheDocument()
+})
+
 
 it.each([null, 'feat/card-task-ce744e22'])('C470 renders canonical mutation handoff with ref %s', async (deliverableRef) => {
   const task = { ...detail(), nextStage: 'Mutation', nextHandoff: 'PCs pending; original owner ce744e22',

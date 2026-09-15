@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -17,6 +18,53 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public class AgentTaskDetailBlockedContextTests
 {
+    [Test]
+    public Task GetAsync_reports_session_liveness_for_a_live_working_session() => AssertSessionAsync(ended: false);
+
+    [Test]
+    public Task GetAsync_reports_session_liveness_for_an_ended_session() => AssertSessionAsync(ended: true);
+
+    private static async Task AssertSessionAsync(bool ended)
+    {
+        using var workspace = new TempWorkspace();
+        var id = Guid.NewGuid();
+        var at = new DateTime(2026, 9, 14, 12, 0, 0, DateTimeKind.Utc);
+        await using var db = CreateContext();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = id, Status = ended ? SessionStatus.Stopped : SessionStatus.Running,
+            DefinitionName = "fake", Cwd = workspace.Path, CreatedAt = at, StartedAt = at,
+            LastSeenAt = at, EndedAt = ended ? at : null,
+        });
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(), AgentSessionId = id, Sequence = 1,
+            Kind = TranscriptKinds.UserPrompt, Text = "Work", CreatedAt = at,
+        });
+        await db.SaveChangesAsync();
+        var task = await SeedAsync(workspace.Path, AgentTaskStatus.Failed, sessionId: id);
+        var session = (await CreateService(db).GetAsync(task.Id, CancellationToken.None)).Session.ShouldNotBeNull();
+        session.SessionId.ShouldBe(id);
+        session.Status.ShouldBe(ended ? SessionStatus.Stopped : SessionStatus.Running);
+        session.Working.ShouldBe(!ended);
+        session.LastTranscriptAt.ShouldBe(at);
+        session.LastSeenAt.ShouldBe(at);
+        session.EndedAt.ShouldBe(ended ? at : null);
+        await DeleteAsync(task.Id);
+        await db.TranscriptEntries.Where(t => t.AgentSessionId == id).ExecuteDeleteAsync();
+        await db.AgentSessions.Where(s => s.Id == id).ExecuteDeleteAsync();
+    }
+
+    [Test]
+    public async Task GetAsync_reports_session_liveness_is_null_without_a_session()
+    {
+        using var workspace = new TempWorkspace();
+        var task = await SeedAsync(workspace.Path, AgentTaskStatus.Failed);
+        await using var db = CreateContext();
+        (await CreateService(db).GetAsync(task.Id, CancellationToken.None)).Session.ShouldBeNull();
+        await DeleteAsync(task.Id);
+    }
+
     [Test]
     public async Task a_question_blocked_task_isolates_the_trailing_question()
     {

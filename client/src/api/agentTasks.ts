@@ -249,7 +249,17 @@ export interface VerificationExecutionDetailDto {
   hasReceipt: boolean
 }
 
+export interface AgentTaskSessionDto {
+  sessionId: string
+  status: string
+  working: boolean
+  lastSeenAt: string
+  endedAt: string | null
+  lastTranscriptAt: string | null
+}
+
 export interface AgentTaskDetailDto {
+  session?: AgentTaskSessionDto | null
   sourceLandingOperationId?: string | null
   sourceLandingSha?: string | null
   verificationCleanupResidue?: string | null

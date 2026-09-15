@@ -1654,6 +1654,20 @@ public sealed class AgentTaskService
             try { sealId = JsonSerializer.Deserialize<VerificationCleanupSeal>(task.VerificationCleanupSealJson)?.Id; }
             catch (JsonException) { }
         }
+        AgentTaskSessionDto? sessionDetail = null;
+        if (task.AgentSessionId is Guid sessionId)
+        {
+            var session = await _db.AgentSessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+            if (session is not null)
+            {
+                var working = session.Status == SessionStatus.Running
+                    && await SessionMessageQueueService.IsWorkingAsync(_db, sessionId, ct);
+                var lastTranscriptAt = await _db.TranscriptEntries.AsNoTracking()
+                    .Where(t => t.AgentSessionId == sessionId).MaxAsync(t => (DateTime?)t.CreatedAt, ct);
+                sessionDetail = new AgentTaskSessionDto(sessionId, session.Status, working,
+                    session.LastSeenAt, session.EndedAt, lastTranscriptAt);
+            }
+        }
         return new AgentTaskDetailDto(
             ToSummary(task, family, await LoadCardIdentifiersAsync([task], ct)), task.Goal, task.Result,
             task.ResultFilePath, task.DeliverablePath, task.DeliverableRef,
@@ -1672,7 +1686,7 @@ public sealed class AgentTaskService
             task.InternalDecisionPolicyJson, task.InternalDecisionPolicyHash,
             task.RepairSourceTaskId, TaskProgressJson.ToDto(TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson)),
             task.WorktreeBaseRequestedRef, task.WorktreeBaseRef, task.WorktreeBaseSource, task.WorktreeBaseTaskId,
-            task.WorktreeBaseSha);
+            task.WorktreeBaseSha, Session: sessionDetail);
     }
 
     private static VerificationExecutionDetailDto ToExecutionDetail(VerificationExecution execution)

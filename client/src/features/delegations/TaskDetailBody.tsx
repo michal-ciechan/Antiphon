@@ -258,6 +258,18 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
         </Alert>
       )}
 
+      {detail.session && (
+        <Group gap="xs" data-testid="task-session-liveness">
+          <Text size="sm" c="dimmed">
+            Session: {detail.session.sessionId}{' '}
+            {detail.session.endedAt
+              ? `ended ${detail.session.endedAt}`
+              : `${detail.session.status}, ${detail.session.working ? 'working' : 'idle'}; last transcript ${detail.session.lastTranscriptAt ?? 'none'}`}
+          </Text>
+          {detail.session.working && <Badge color="blue">still working</Badge>}
+        </Group>
+      )}
+
       {detail.distilledResult && (
         <Section title="Distilled">
           <ScrollArea.Autosize mah={200} data-testid="task-distilled">
