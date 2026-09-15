@@ -53,6 +53,7 @@ public class WallRerouteDispatchTests
         var result = await CapacityRecoveryTaskTests.CreateDispatcher(schema.ConnectionString).TickAsync(CancellationToken.None);
         result.Dispatched.ShouldBe(1);
         result.Failures.ShouldBe(0);
+        result.SkippedCapacityWait.ShouldBe(0);
         await using var verify = CreateContext(schema);
         var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
         stored.Status.ShouldBe(AgentTaskStatus.Dispatched);
@@ -169,6 +170,73 @@ public class WallRerouteDispatchTests
         ended.State.ShouldBe(CapacityRecoveryWaitState.Superseded);
         ended.OutcomeReason.ShouldBe("task-canceled");
         (await verify.CapacityRecoveryProviderStates.SingleAsync(s => s.Kind == AgentKind.ClaudeCode)).GrantedWaitId.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task Gate_skip_writes_one_Held_event_and_counts() => await AssertGateTraceAsync(priorLease: false);
+
+    [Test]
+    public async Task Prior_lease_hold_does_not_mute_the_capacity_trace() => await AssertGateTraceAsync(priorLease: true);
+
+    private static async Task AssertGateTraceAsync(bool priorLease)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var task = await SeedQueuedOpusAsync(schema, workspace.Path);
+        var wait = await SeedWaitAsync(schema, task.Id, AgentKind.ClaudeCode, "opus");
+        if (priorLease)
+        {
+            await using var db = CreateContext(schema);
+            for (var i = 0; i < 3; i++)
+                db.AgentTaskEvents.Add(new AgentTaskEvent
+                {
+                    Id = Guid.NewGuid(), AgentTaskId = task.Id, Type = AgentTaskEventType.Held,
+                    Detail = "Held: repository mutation lease is occupied or unavailable.",
+                    At = DateTime.UtcNow.AddMinutes(-3 + i),
+                });
+            await db.SaveChangesAsync();
+        }
+        var dispatcher = CapacityRecoveryTaskTests.CreateDispatcher(schema.ConnectionString);
+        for (var tick = 0; tick < (priorLease ? 4 : 3); tick++)
+        {
+            var result = await dispatcher.TickAsync(CancellationToken.None);
+            result.SkippedCapacityWait.ShouldBe(1);
+            result.Dispatched.ShouldBe(0);
+        }
+        await using var verify = CreateContext(schema);
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Queued);
+        stored.CapacityWaitId.ShouldBe(wait.Id);
+        stored.CapacityWaitRetained.ShouldBeFalse();
+        stored.CapacityWaitReason.ShouldBeNull();
+        var held = await verify.AgentTaskEvents.Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held).ToListAsync();
+        held.Count.ShouldBe(priorLease ? 4 : 1);
+        held.Single(e => e.Detail.Contains("waiting for ClaudeCode capacity"))
+            .Detail.ShouldContain(DelegationReportFormatter.Short(wait.Id));
+    }
+
+    [Test]
+    public async Task Scope_hold_still_traces_once()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var (holder, _, _) = await SeedWorkingChainTaskAsync(schema, workspace.Path, complexity: null);
+        var task = await SeedQueuedOpusAsync(schema, workspace.Path);
+        await using (var db = CreateContext(schema))
+        {
+            foreach (var row in await db.AgentTasks.Where(t => t.Id == holder.Id || t.Id == task.Id).ToListAsync())
+                row.Scope = "server/Application/Services";
+            await db.SaveChangesAsync();
+        }
+        var dispatcher = CapacityRecoveryTaskTests.CreateDispatcher(schema.ConnectionString);
+        for (var tick = 0; tick < 2; tick++)
+        {
+            var result = await dispatcher.TickAsync(CancellationToken.None);
+            result.SkippedScope.ShouldBe(1);
+            result.Dispatched.ShouldBe(0);
+        }
+        await using var verify = CreateContext(schema);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held)).ShouldBe(1);
     }
 
     private static async Task<(Guid AgentId, Guid SessionId)> SeedWarmOpusAsync(IsolatedTestSchema schema, string directory)
