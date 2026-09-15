@@ -12,6 +12,74 @@ namespace Antiphon.Tests.Application;
 public partial class AgentTaskReplyIntegrationTests
 {
     [Test]
+    [Arguments("repository")]
+    [Arguments("status")]
+    public async Task C527_retry_prerequisite_failure_preserves_commit_until_complete_parent_receipt(string inspection)
+    {
+        var seeded = await SeedC527Async();
+        using var repo = seeded.Repo;
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "a.md"), "a");
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "b.md"), "b");
+        const string report = "Wrote `a.md` and `b.md`.";
+        var spy = new RecordingGitWorkspaceService();
+        var factory = C527Factory(repo.WorktreeRoot, gitSpy: spy, saveInterceptor: new ThrowOnceSaveInterceptor());
+        var terminal = AttachTerminal(factory, seeded.Parent);
+        await SeedTurnAsync(seeded.SessionId, DelegationReportFormatter.TaskMarker(seeded.Task.Id), report);
+        var before = int.Parse((await repo.GitReadAsync("rev-list", "--count", "HEAD")).Trim());
+        await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+        var committed = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        (await repo.GitReadAsync("log", "-1", "--format=%B")).ShouldContain("antiphon-settlement:");
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "foreign.md"), "later foreign work");
+        var failures = 0;
+        var recoveredBeforeFailure = false;
+        spy.BeforeRun = args =>
+        {
+            if (args.Any(a => a.StartsWith("--grep=antiphon-settlement:", StringComparison.Ordinal)))
+                recoveredBeforeFailure = true;
+            return Task.CompletedTask;
+        };
+        spy.OverrideRun = args =>
+        {
+            if (!(inspection == "repository" ? args.Contains("--is-inside-work-tree") : args[0] == "status"))
+                return null;
+            recoveredBeforeFailure.ShouldBeTrue();
+            failures++;
+            return (128, "", "retry prerequisite unavailable");
+        };
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            recoveredBeforeFailure = false;
+            await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+            failures.ShouldBe(attempt);
+            await Queue(factory).FlushSessionAsync(seeded.Parent, CancellationToken.None);
+            await using var db = CreateContext();
+            (await db.AgentTasks.SingleAsync(t => t.Id == seeded.Task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+            (await db.AgentTasks.AnyAsync(t => t.ParentTaskId == seeded.Task.Id)).ShouldBeFalse();
+            (await db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == seeded.Task.Id
+                && e.Type == AgentTaskEventType.Committed)).ShouldBeFalse();
+            (await db.AgentTaskLandNotifications.AnyAsync(n => n.TaskId == seeded.Task.Id)).ShouldBeFalse();
+            terminal.SubmittedBodies.ShouldBeEmpty();
+        }
+        spy.OverrideRun = null;
+        await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+        await Queue(factory).FlushSessionAsync(seeded.Parent, CancellationToken.None);
+        await AssertC527RecoveredReceiptAsync(seeded.Task, seeded.Parent, report, committed, 2);
+        var receipt = await AssertParentReceivedNoteAsync(seeded.Parent, seeded.Task, report);
+        receipt.Prompt.Text.ShouldContain("foreign.md");
+        receipt.Prompt.Text.ShouldNotContain("no commit attempted");
+        receipt.Prompt.Text.ShouldNotContain("git=landed");
+        // A subsequent healthy sweep neither mutates nor delivers a second completion.
+        await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+        await Queue(factory).FlushSessionAsync(seeded.Parent, CancellationToken.None);
+        terminal.SubmittedBodies.Count.ShouldBe(1);
+        (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldBe(committed);
+        int.Parse((await repo.GitReadAsync("rev-list", "--count", "HEAD")).Trim()).ShouldBe(before + 1);
+        (await repo.GitReadAsync("status", "--porcelain")).ShouldContain("?? foreign.md");
+        (await File.ReadAllTextAsync(Path.Combine(repo.Path, "foreign.md"))).ShouldBe("later foreign work");
+        spy.Verbs.Count(v => v == "commit").ShouldBe(1);
+    }
+
+    [Test]
     [Arguments("sha")]
     [Arguments("paths")]
     public async Task C527_post_commit_inspection_failure_defers_settlement_until_complete_receipt(string inspection)

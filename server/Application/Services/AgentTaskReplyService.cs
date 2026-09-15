@@ -3021,17 +3021,32 @@ public sealed class AgentTaskReplyService
             return null;
 
         var repo = task.RepoPath!;
-        if (!Directory.Exists(repo))
-            return null;
-
         var git = services.GetService<GitWorkspaceService>();
         var gated = services.GetService<GatedCommitService>();
-        if (git is null || gated is null || !await git.IsRepositoryAsync(repo, ct))
+        if (git is null || gated is null)
             return null;
+
+        // Recover past mutation before inspecting the current checkout. A failed inspection
+        // after a failed settlement save cannot turn a completed commit into "landed"/refused.
+        var settlement = DelegationNoteDigest.Compute(
+            $"{task.Id:D}|{task.AgentSessionId:D}|{task.DispatchedAt:O}|{report}");
+        var existing = await git.FindSettlementCommitsAsync(repo, task.Id, settlement, ct);
+        if (!existing.Succeeded || existing.Items.Count > 1)
+            throw new ServiceUnavailableException("Settlement recovery requires one exact identity; inspect git history.",
+                "settlement_recovery_unavailable");
+
+        if (!Directory.Exists(repo) || !await git.IsRepositoryAsync(repo, ct))
+            throw new ServiceUnavailableException("Settlement repository inspection is unavailable.",
+                "settlement_recovery_unavailable");
 
         var dirty = await git.TryGetChangesAsync(repo, ct);
         if (!dirty.Succeeded)
+        {
+            if (existing.Items.Count == 1)
+                throw new ServiceUnavailableException("The settlement commit exists; residual status is not yet available.",
+                    "settlement_recovery_unavailable");
             return new("commit refused: status inspection unavailable", "Git status could not be inspected; no commit attempted.");
+        }
         var dirtyPaths = dirty.Items
             .SelectMany(c => c.OldPath is null ? new[] { c.Path } : new[] { c.Path, c.OldPath })
             .Select(p => p.Replace('\\', '/'))
@@ -3040,14 +3055,6 @@ public sealed class AgentTaskReplyService
             .Distinct(StringComparer.Ordinal)
             .ToArray();
 
-        // The dispatch generation and complete report distinguish this settlement from an
-        // earlier explicit/partial commit by the same task. The value is stable after a failed save.
-        var settlement = DelegationNoteDigest.Compute(
-            $"{task.Id:D}|{task.AgentSessionId:D}|{task.DispatchedAt:O}|{report}");
-        var existing = await git.FindSettlementCommitsAsync(repo, task.Id, settlement, ct);
-        if (!existing.Succeeded || existing.Items.Count > 1)
-            throw new ServiceUnavailableException("Settlement recovery requires one exact identity; inspect git history.",
-                "settlement_recovery_unavailable");
         if (existing.Items.Count == 1)
         {
             var sha = existing.Items[0];
