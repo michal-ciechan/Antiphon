@@ -1,4 +1,4 @@
-﻿using Antiphon.Agents.Pty;
+using Antiphon.Agents.Pty;
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -3040,6 +3040,29 @@ public sealed class AgentTaskReplyService
             .Distinct(StringComparer.Ordinal)
             .ToArray();
 
+        // The dispatch generation and complete report distinguish this settlement from an
+        // earlier explicit/partial commit by the same task. The value is stable after a failed save.
+        var settlement = DelegationNoteDigest.Compute(
+            $"{task.Id:D}|{task.AgentSessionId:D}|{task.DispatchedAt:O}|{report}");
+        var existing = await git.FindSettlementCommitsAsync(repo, task.Id, settlement, ct);
+        if (!existing.Succeeded || existing.Items.Count > 1)
+            throw new ServiceUnavailableException("Settlement recovery requires one exact identity; inspect git history.",
+                "settlement_recovery_unavailable");
+        if (existing.Items.Count == 1)
+        {
+            var sha = existing.Items[0];
+            var inspection = await git.TryDiffTreePathsAsync(repo, sha, ct);
+            if (!inspection.Succeeded || inspection.Items.Count == 0)
+                throw new ServiceUnavailableException("The settlement commit exists; its paths are not yet available.",
+                    "settlement_recovery_unavailable");
+            var existingFiles = inspection.Items;
+            RecordCommitted(db, task, sha[..7], existingFiles, now);
+            var remaining = dirtyPaths.Length == 0 ? null
+                : $"{dirtyPaths.Length} dirty path(s) remain after recovered settlement, left as found: {string.Join(", ", dirtyPaths)}. Inspect before committing.";
+            return new($"committed:{sha[..7]} ({existingFiles.Count} files)"
+                + (remaining is null ? "" : $"; {dirtyPaths.Length} dirty path(s) left as found"), remaining);
+        }
+
         bool? projectValue = null;
         if (task.ProjectId is Guid pid)
         {
@@ -3073,24 +3096,6 @@ public sealed class AgentTaskReplyService
                 now));
             return new CommitOnSettleNote(
                 $"uncommitted:{dirtyPaths.Length} (commit-on-settle off)", offWarning);
-        }
-
-        // The dispatch generation and complete report distinguish this settlement from an
-        // earlier explicit/partial commit by the same task. The value is stable after a failed save.
-        var settlement = DelegationNoteDigest.Compute(
-            $"{task.Id:D}|{task.AgentSessionId:D}|{task.DispatchedAt:O}|{report}");
-        var existing = await git.FindSettlementCommitsAsync(repo, task.Id, settlement, ct);
-        if (!existing.Succeeded || existing.Items.Count > 1)
-            return new("commit refused: settlement identity unavailable", "Settlement recovery requires one exact identity; inspect git history.");
-        if (existing.Items.Count == 1)
-        {
-            var sha = existing.Items[0];
-            var existingFiles = await git.DiffTreePathsAsync(repo, sha, ct);
-            RecordCommitted(db, task, sha[..7], existingFiles, now);
-            var remaining = dirtyPaths.Length == 0 ? null
-                : $"{dirtyPaths.Length} dirty path(s) remain after recovered settlement, left as found: {string.Join(", ", dirtyPaths)}. Inspect before committing.";
-            return new($"committed:{sha[..7]} ({existingFiles.Count} files)"
-                + (remaining is null ? "" : $"; {dirtyPaths.Length} dirty path(s) left as found"), remaining);
         }
 
         if (dirtyPaths.Length == 0)

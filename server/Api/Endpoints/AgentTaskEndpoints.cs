@@ -193,6 +193,18 @@ public static class AgentTaskEndpoints
             string id, AgentTaskService service, VerificationCleanupService cleanup, CancellationToken ct) =>
             Results.Ok(await cleanup.CleanupAsync(await service.ResolveTaskIdAsync(id, ct), ct)));
 
+        tasks.MapGet("/{id}/commit/{operationId:guid}", async (
+            string id, Guid operationId, HttpContext http, AgentTaskService service,
+            GatedCommitService gated, CancellationToken ct) =>
+        {
+            var caller = await ResolveCallerAsync(http, service, ct);
+            if (caller.Task is null || caller.Task.Id != await service.ResolveTaskIdAsync(id, ct))
+                throw new ForbiddenException("This task token is required to recover its commit.", "delegation_token_required");
+            var result = await gated.RecoverAsync(caller.Task.RepoPath ?? caller.Task.WorkingDirectory,
+                caller.Task.Id, operationId, ct);
+            return Results.Ok(new CommitAgentTaskResponse(result.Sha!, result.Files));
+        });
+
         tasks.MapPost("/{id}/commit", async (
             string id,
             CommitAgentTaskRequest request,

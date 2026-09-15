@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Exceptions;
 using Microsoft.Extensions.Logging;
 
 namespace Antiphon.Server.Application.Services;
@@ -74,6 +75,8 @@ public sealed class GatedCommitService
         IReadOnlyList<(string Key, string Value)> trailers,
         CancellationToken ct)
     {
+        var taskId = Guid.Parse(trailers.Single(t => t.Key == "antiphon-task").Value);
+        var operationId = Guid.NewGuid();
         var status = await _git.TryGetChangesAsync(repo, ct);
         if (!status.Succeeded)
         {
@@ -176,7 +179,8 @@ public sealed class GatedCommitService
         }
 
         var commit = await _git.CommitOnlyAsync(
-            repo, pathspec is null ? null : candidates, message, trailers, ct);
+            repo, pathspec is null ? null : candidates, message,
+            [.. trailers, ("antiphon-operation", operationId.ToString("D"))], ct);
         if (commit.Code != 0)
         {
             _logger.LogInformation("Gated commit failed in {Repo}: {Err}", repo, commit.Stderr);
@@ -184,9 +188,9 @@ public sealed class GatedCommitService
                 GatedCommitOutcome.CommitFailed, null, [], [], commit.Stderr);
         }
 
-        var sha = await _git.HeadShaAsync(repo, ct);
-        var files = sha is null ? Array.Empty<string>() : await _git.DiffTreePathsAsync(repo, sha, ct);
-        return new GatedCommitResult(GatedCommitOutcome.Committed, sha, files, []);
+        // A successful mutation must never turn into a refusal or an invented empty footprint.
+        // Use the operation trailer, since another commit (including a hook) can advance HEAD.
+        return await InspectCommitAsync(repo, taskId, operationId, knownCommitted: true, ct);
 
         async Task<GatedCommitResult> RefuseAfterStageAsync(string? error)
         {
@@ -194,5 +198,29 @@ public sealed class GatedCommitService
             return new(GatedCommitOutcome.CommitFailed, null, [], [], error
                 + (restored.Code == 0 ? "" : "; index restore failed: " + restored.Stderr));
         }
+    }
+
+    /// <summary>Read the exact completed operation without staging or committing again.</summary>
+    public Task<GatedCommitResult> RecoverAsync(
+        string repo, Guid taskId, Guid operationId, CancellationToken ct) =>
+        InspectCommitAsync(repo, taskId, operationId, knownCommitted: false, ct);
+
+    private async Task<GatedCommitResult> InspectCommitAsync(
+        string repo, Guid taskId, Guid operationId, bool knownCommitted, CancellationToken ct)
+    {
+        var commits = await _git.FindCommitOperationAsync(repo, taskId, operationId, ct);
+        if (!commits.Succeeded || commits.Items.Count != 1)
+        {
+            if (knownCommitted) throw new CommitInspectionPendingException(operationId);
+            if (commits.Succeeded && commits.Items.Count == 0)
+                throw new NotFoundException("No completed commit matches this task and operation.");
+            throw new ServiceUnavailableException("Commit recovery inspection is unavailable or ambiguous.",
+                "commit_recovery_unavailable");
+        }
+        var sha = commits.Items[0];
+        var files = await _git.TryDiffTreePathsAsync(repo, sha, ct);
+        if (!files.Succeeded || files.Items.Count == 0)
+            throw new CommitInspectionPendingException(operationId, sha);
+        return new GatedCommitResult(GatedCommitOutcome.Committed, sha, files.Items, []);
     }
 }

@@ -59,6 +59,12 @@ try {
 catch {
     $detail = $_.ErrorDetails.Message
     if ([string]::IsNullOrWhiteSpace($detail)) { $detail = $_.Exception.Message }
+    $problem = $null
+    try { $problem = $detail | ConvertFrom-Json } catch { }
+    if ($problem.code -eq 'commit_inspection_pending') {
+        Write-Error ("Commit succeeded; inspection pending. Recover with GET /api/agent-tasks/{0}/commit/{1} using the task token. {2}" -f $taskId, $problem.operationId, $detail)
+        exit 1
+    }
     Write-Error "commit refused: $detail"
     exit 1
 }

@@ -122,6 +122,25 @@ public sealed class CommitOnSettleScriptTests
         }
     }
 
+    [Test]
+    public async Task Task_commit_script_preserves_a_completed_commit_with_pending_inspection()
+    {
+        const string operation = "22222222-2222-2222-2222-222222222222";
+        using var stub = new CommitApiStub(503, """{"code":"commit_inspection_pending","committed":true,"operationId":"22222222-2222-2222-2222-222222222222"}""");
+        var messageFile = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllTextAsync(messageFile, "x");
+            var run = await RunTaskCommitAsync(stub.BaseUrl, "11111111-1111-1111-1111-111111111111", "tok",
+                "-Paths", "x.md", "-MessageFile", messageFile);
+            run.ExitCode.ShouldNotBe(0);
+            run.Output.ShouldContain("Commit succeeded; inspection pending");
+            run.Output.ShouldContain("/commit/" + operation);
+            run.Output.ShouldNotContain("commit refused");
+        }
+        finally { File.Delete(messageFile); }
+    }
+
     private static async Task<(int ExitCode, string Output)> RunTaskCommitAsync(
         string api, string taskId, string token, params string[] args)
     {
