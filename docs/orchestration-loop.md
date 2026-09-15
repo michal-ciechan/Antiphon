@@ -171,10 +171,17 @@ requested ref, then the merge target, then the project's `BaseBranch` / `Git:Def
 (CARD-0508 S1). The card's current kept sibling is not chosen as a base in this release
 (CARD-0215 policy is unchanged). Containment of a kept sibling is patch-aware (`git cherry`): a
 rebase-landed branch is silent. The dispatcher still holds while a sibling land is in flight, and
-still warns when a divergent kept branch is simply not landed. That warning is a durable
+still warns when a divergent kept branch is simply not landed. CARD-0540 snapshots full sibling
+commit IDs and emits one warning per surviving observed tip: identical tips share a deterministic
+representative, strict ancestors are covered by containing tips, and divergent tips remain separate.
+Unknown tips or failed ancestry probes retain visibility. Any original eligible sibling's landing
+hold takes precedence over this reduction. The warning names the representative's full observed SHA
+and counts other covered branches; it confers no cleanup or publication authority. That warning is a durable
 dispatch-base obligation (`AgentTaskLandNotifications.Kind = DispatchBase`, null `RequestId`)
 captured with the successful claim; its absence from the parent session is a defect, not an
-expected loss. Land a Plan with `delegate.ps1 -Land <id>` before dispatching Execute as a
+expected loss. The reduced identities, body and route freeze in the claim transaction; recovery
+delivers those original obligations without regrouping moved refs. Historical intents are unchanged.
+Land a Plan with `delegate.ps1 -Land <id>` before dispatching Execute as a
 convenience so the plan commit is on master — it is not required for a correct base. A `Landed`
 line carrying `unlanded-sibling=` means a same-card branch is still stranded; land or drop it. Two 2026-08-10
 cases (the CARD-0002 design doc and the CARD-0001 fix) sat unmerged for 9 hours before anyone

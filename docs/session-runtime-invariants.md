@@ -290,6 +290,15 @@ verification report.
 
 ### Gotcha #82
 
+CARD-0540 reduces dispatch sibling warnings before CARD-0508's durable claim capture.
+Equal full commit tips share one representative (newest task creation, ordinal branch,
+then full task GUID); strict ancestors are covered by a surviving descendant. Forked
+tips remain separate, and unresolved relationships stay visible. Every original eligible
+landing hold still blocks dispatch. The saved identities, full observed tip, covered count,
+body and original route survive recovery without consulting current branches. Commit
+containment changes warning cardinality only; it grants no publication or dirty-worktree
+cleanup authority. The observation remains before the repository lease.
+
 - **A Worktree task branches from its merge target or master HEAD, never from a sibling task's branch** (CARD-0215): `CreateForTaskAsync` passes `task.MergeTargetRef ?? "HEAD"` to `git worktree add`. A top-level Plan therefore leaves its commit only on `feat/card-task-<planId>`; the next Execute is a sibling off master, and the later land rebases `master..HEAD` of the build branch — the plan commit was never in that range. Land the Plan (`delegate.ps1 -Land`) before dispatching Execute. The dispatcher holds a card-bound Worktree task while a same-card kept Succeeded/Blocked sibling's `LandRequestedAt` is set and the sibling is not yet an ancestor of the dispatch base; otherwise it dispatches with a `Warning` and a WhenIdle note naming the branch and tip. A `Landed` outcome carrying `unlanded-sibling=<id>:<branch>` means a same-card branch is still stranded. Do not add `-BaseOn`/`mergeTargetRef` on `delegate.ps1` to "fix" this — that knob is also the merge-back target. Pinned by `AgentTaskDispatchBaseGuardTests`, `AgentTaskLandStageOutcomeTests`, `DelegationWorktreeTests`.
 
 ### Gotcha #87
