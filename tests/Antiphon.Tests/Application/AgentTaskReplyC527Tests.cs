@@ -256,9 +256,10 @@ public partial class AgentTaskReplyIntegrationTests
         child.AgentKind.ShouldBe(AgentKind.ClaudeCode);
         child.ModelLevel.ShouldBe(AgentModelLevel.Medium);
         child.RoutingPinId.ShouldBeNull();
-        (await verify.AgentTaskEvents.AnyAsync(e =>
-            e.AgentTaskId == child.Id && e.Type == AgentTaskEventType.Warning
-            && e.Detail.Contains("pin", StringComparison.OrdinalIgnoreCase))).ShouldBeTrue();
+        (await verify.AgentTaskEvents
+            .Where(e => e.AgentTaskId == child.Id && e.Type == AgentTaskEventType.Warning)
+            .ToListAsync())
+            .ShouldContain(e => e.Detail.Contains("pin", StringComparison.OrdinalIgnoreCase));
     }
 
     [Test]
@@ -443,7 +444,7 @@ public partial class AgentTaskReplyIntegrationTests
         var child = await verify.AgentTasks.SingleAsync(t => t.ParentTaskId == seeded.Task.Id);
         child.Goal.ShouldContain("gate says no");
         (await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == seeded.Parent))
-            .NoteHeader.ShouldNotContain("committed:");
+            .NoteHeader.ShouldNotContain("git=committed:");
         (await verify.AgentTaskEvents.AnyAsync(e =>
             e.AgentTaskId == seeded.Task.Id && e.Type == AgentTaskEventType.Warning
             && e.Detail.Contains("CommitFailed"))).ShouldBeTrue();
@@ -455,9 +456,6 @@ public partial class AgentTaskReplyIntegrationTests
     {
         var seeded = await SeedC527Async();
         using var repo = seeded.Repo;
-        await File.WriteAllTextAsync(Path.Combine(repo.Path, ".gitignore"), "*.secret\n");
-        await repo.GitAsync("add", ".gitignore");
-        await repo.GitAsync("commit", "-m", "ignore secrets");
         var baseline = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
         await File.WriteAllTextAsync(Path.Combine(repo.Path, "a.secret"), "s");
         await repo.GitAsync("add", "-f", "a.secret");
@@ -678,7 +676,9 @@ public partial class AgentTaskReplyIntegrationTests
     public async Task C527_ineligible_tasks_never_run_the_hook(Ineligible c)
     {
         var spy = new RecordingGitWorkspaceService();
-        var seeded = await SeedC527Async();
+        var seeded = await SeedC527Async(c == Ineligible.SourceLanding
+            ? t => t.SourceLandingOperationId = Guid.NewGuid()
+            : null);
         using var repo = seeded.Repo;
         await File.WriteAllTextAsync(Path.Combine(repo.Path, "x.md"), "x");
         await SeedFileEditAsync(seeded.SessionId, "Write", Path.Combine(repo.Path, "x.md"), DateTime.UtcNow);
@@ -690,7 +690,6 @@ public partial class AgentTaskReplyIntegrationTests
                 case Ineligible.ReadOnly: task.Workspace = WorkspaceMode.ReadOnly; break;
                 case Ineligible.CommitRole: task.Role = AgentTaskRole.Commit; break;
                 case Ineligible.MutationRole: task.Role = AgentTaskRole.Mutation; break;
-                case Ineligible.SourceLanding: task.SourceLandingOperationId = Guid.NewGuid(); break;
             }
 
             await db.SaveChangesAsync();

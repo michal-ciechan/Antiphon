@@ -3027,7 +3027,8 @@ public sealed class AgentTaskReplyService
         if (effective == CommitOnSettleEffective.AgentOnly)
         {
             return await SpawnCommitChildAsync(
-                services, db, task, dirtyPaths, "agent-policy", now, ct);
+                services, db, task, dirtyPaths, "agent-policy", now, ct)
+                ?? CapNote(dirtyPaths.Length);
         }
 
         var files = services.GetService<AgentFilesService>();
@@ -3043,7 +3044,8 @@ public sealed class AgentTaskReplyService
         if (footprint.Length == 0)
         {
             return await SpawnCommitChildAsync(
-                services, db, task, dirtyPaths, "unattributable", now, ct);
+                services, db, task, dirtyPaths, "unattributable", now, ct)
+                ?? CapNote(dirtyPaths.Length);
         }
 
         var subject = ClampSubject($"task {DelegationReportFormatter.Short(task.Id)}: {task.Title}");
@@ -3124,13 +3126,13 @@ public sealed class AgentTaskReplyService
     {
         var tasks = services.GetService<AgentTaskService>();
         if (tasks is null)
-            return CapNote(dirtyPaths.Count);
+            return null;
 
         var git = services.GetRequiredService<GitWorkspaceService>();
         var head = await git.HeadShaAsync(task.RepoPath!, ct);
         var child = await tasks.CreateCommitTaskAsync(task, reason, dirtyPaths, head, stderr, ct);
         if (child is null)
-            return CapNote(dirtyPaths.Count);
+            return null;
         return new CommitOnSettleNote(
             $"uncommitted:{dirtyPaths.Count} → commit task {DelegationReportFormatter.Short(child.Id)}",
             null);
