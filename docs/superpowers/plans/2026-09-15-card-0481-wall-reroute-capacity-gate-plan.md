@@ -321,6 +321,7 @@ Delete every `bin-c481` directory before finishing (CARD-0448).
 | V-10 | S3 | `…Live_owners_are_kept` (controls) | Waits for: a `Running` session; a `Queued` task; a `Blocked` task; an `agent:` `StandingStart` wait whose agent's session is `Stopped`; a `Working` retained task. | None changes state or version. |
 | V-10b | S3 | `…Sweep_is_batch_bounded_and_idempotent` | 150 orphaned waits, `ReconciliationBatchSize = 100`. | First pass cancels 100, second the remaining 50, third changes nothing. |
 | V-11 | S4 | `WallRerouteDispatchTests.Redeemed_dispatch_receipts_the_wait_and_the_transcript_progresses_it` | Queued task with a `task:` wait granted for its kind; warm Claude agent; tick (redeems, dispatches); then `ObserveTranscriptAsync(newSession, UserPrompt, seq 1)` and `(TurnEnd, isApiError:false)`. | After the tick: wait `StartAccepted`, `SessionId == LaunchSessionId == task.AgentSessionId`, `DispatchAttemptId` set, `AdmissionCount == 1`. After the prompt: `PromptConfirmed`. After the turn end: `Progressed`. Control: a wait that was not redeemed (task dispatched on an unheld kind with no wait) — no wait is created. |
+| V-13 | S4 | `WallRerouteDispatchTests.Receipt_throw_after_launch_leaves_the_task_dispatched` | V-11 `withWait=true` arrangement; dispatcher `DbContext` interceptor throws on the receipt `StartAccepted` save. | Tick `Dispatched == 1`, `Failures == 0`; task stays `Dispatched` with `AgentSessionId` set and `FailureReason` null; wait remains `Admitted` (receipt skipped). |
 | V-12 | all | Existing: `ComplexityWallRerouteTests` (12), `CapacityRecoveryTaskTests` (6), `CapacityRecoveryGrantLivenessTests`, `CapacityRecoveryAttentionTests`, `CapacityRecoveryCompatibilityTests`, `CapacityRecoverySupervisionTests`, `RoutingPinCandidateDispatchTests`, `ModelAvailabilityDispatcherTests`, `ApiErrorRecoveryServiceTests`, `AgentTaskReplyIntegrationTests`, Unit lane. | — | Green with the same executed counts as at `9b914298` (record both). Four Unit failures are known pre-existing at base (CARD-0501 commit `9b914298` message); re-run those four at base only if they appear, do not fix them here. |
 
 ### Positive controls (Mutation stage; method-scoped filters)
@@ -328,7 +329,7 @@ Delete every `bin-c481` directory before finishing (CARD-0448).
 | PC | Mutation | Expected red |
 |---|---|---|
 | PC-1 | Remove `&& w.ExecutionKind == task.AgentKind` from `FindUnfinishedCapacityWaitAsync` and disable the `RequeueAsync` supersede call. | V-1 (task stays `Queued`), V-3 (stays `Queued`). |
-| PC-2 | Disable only the `RequeueAsync` supersede call (kind-scoping intact). | V-2 red (same-kind wait still matches); V-1 stays green — this pair proves D-2 is load-bearing beyond D-1. |
+| PC-2 | Disable only the `RequeueAsync` supersede call (kind-scoping intact). | V-1 red (`ended.State == Superseded` and `OutcomeReason == "requeued:Rerouted:attempt-2"`) and V-2 red (same-kind wait still matches). D-1-vs-D-2 isolation rests on V-3 (`Gate_ignores_an_unfinished_wait_on_another_kind`), not on V-1 staying green. |
 | PC-3 | Disable the rewalk supersede. | V-4 red (task stays `Queued` behind the fable `WaitingForHold` wait). |
 | PC-4 | Disable the resume supersede. | V-5 red (new wait absent; old row still `Grok`). |
 | PC-5 | `TraceHeldAsync` returns false whenever the task has any prior `Held` event (the old rule). | V-6b red; V-6 green. |
@@ -337,6 +338,8 @@ Delete every `bin-c481` directory before finishing (CARD-0448).
 | PC-8 | Sweep also cancels `Blocked` owners. | V-10 red (the control). |
 | PC-9 | Skip the receipt (`ReceiptDispatchOnAsync` not called). | V-11 red (`Admitted`, `SessionId` null after the tick). |
 | PC-10 | Gate skip does not increment `SkippedCapacityWait`. | V-6 red. |
+| PC-11 | Remove the `SaveChangesAsync` after `EnsureWaitOnAsync` on the model-hold skip (`AgentTaskDispatcher` `:536-538`). | `WallRerouteDispatchTests.Repeated_model_hold_persists_the_new_wait_without_duplicate_trace` red (the fresh wait is not persisted). |
+| PC-12 | Unwrap the receipt `try/catch` so `ReceiptDispatchOnAsync` exceptions fall through to the generic dispatch catch. | V-13 red (task `Failed`, `Failures == 1`, reason starts with `Dispatch failed before a session existed`). |
 
 Zero tests or a build error is not red. Restore each mutation and re-run the same filter green
 before the next PC; refresh the restored file's timestamp (CARD-0403 note).
@@ -528,7 +531,7 @@ mutant, red/restore/green cycle or Mutation discovery pass was executed by Code.
 | PC | Pending exact-method ordinary target / variants |
 |---|---|
 | PC-1 | V-1 and V-3, remove kind scope plus requeue supersession |
-| PC-2 | V-2 intended red; V-1 cross-kind dispatch comparison (see inconsistency below) |
+| PC-2 | V-1 and V-2 intended red; D-1-vs-D-2 isolation is V-3, not V-1 staying green |
 | PC-3 | V-4, disable rewalk supersession |
 | PC-4 | V-5: old-candidate false arm intended red; already-chosen true arm control |
 | PC-5 | V-6b intended red; V-6 unchanged-reason control |
@@ -537,17 +540,20 @@ mutant, red/restore/green cycle or Mutation discovery pass was executed by Code.
 | PC-8 | V-10: Blocked owner plus all live/excluded-consumer controls |
 | PC-9 | V-11: withWait=true intended red; withWait=false no-wait control |
 | PC-10 | V-6, omitted SkippedCapacityWait increment |
+| PC-11 | Repeated_model_hold_persists_the_new_wait_without_duplicate_trace, remove the hold-skip SaveChangesAsync |
+| PC-12 | V-13, unwrap the receipt try/catch |
 
 Noticed gaps for ordinary Review and post-land Mutation discovery:
 
-1. PC-2 says the complete V-1 method should stay green when requeue supersession is disabled,
-   but V-1 also explicitly asserts Superseded. Cross-kind **dispatch** can stay green while its
-   wait-state assertion fails. Mutation must distinguish the assertions; Code kept the required
-   V-1 assertion intact.
-2. The extra durable-registration guard has no planned PC. Mutation owns missing-control discovery.
+1. PC-2 expected-red now lists both V-1 and V-2. Cross-kind **dispatch** can still succeed
+   under PC-2 (kind-scoping alone); the wait-state assertions in V-1 do not. D-1-vs-D-2
+   isolation is V-3, which ignores an unfinished wait on another kind with no requeue.
+2. PC-11 covers the extra durable-registration SaveChanges that
+   `Repeated_model_hold_persists_the_new_wait_without_duplicate_trace` requires.
 3. No planned test forces supersede-versus-redemption races, owner reactivation between sweep
    discovery and cancellation, or a cold-launch/early-transcript/crash cut around the dispatch
    receipt. V-11 uses warm reuse and direct calls to the real transcript observer, as designed.
+   V-13 forces the receipt save to throw and keeps the launched task Dispatched.
 4. The named retained-return regression class covers counting/claiming and hold registration;
    it does not directly drive the retained-return redemption loop.
 5. V-8's new grantee necessarily changes Ready to ActionPending and increments Version. The
