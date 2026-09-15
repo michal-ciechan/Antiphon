@@ -22,8 +22,22 @@
   uses to conclude the body is in the composer, so the two can never disagree. An unreadable
   snapshot holds too. Release is a late-confirm (the ordinary exit), a terminal-task cancellation,
   a demonstrably cleared composer, or a new generation. The hold charges no attempt, parks
-  nothing and kills nothing. A produced check note's whole journey — production, enqueue,
-  recovery, recipient `UserPrompt` — is pinned end to end by `CheckNoteDeliveryHandoffTests`.
+  nothing and kills nothing. A produced check note's whole journey — interpretation produced by
+  `SpecialistTaskRunner`, placed by the real dispatcher, received as the interpreter's own whole
+  `UserPrompt`, then the note's own enqueue, recovery and recipient `UserPrompt` — is pinned end
+  to end by `CheckNoteDeliveryHandoffTests`.
+
+- **The delivery attempts cap is durable, so interrupted recovery obeys it too (CARD-0501
+  re-review F3).** Interrupted-`Sent` recovery selects on status, verdict and attempt age, and it
+  runs before the Pending `DeliveryAttempts < MaxAttempts` filter — so the cap has to be enforced
+  on that path in its own right. A crash between the Enter-only attempt charge and its failure
+  handler leaves a row `Sent` with a null verdict already at the cap; recovery must not press
+  Enter for it. Such a run is reverted to `Pending` with attempts kept — the parked shape every
+  cap predicate reads — so the row stays visible, stays late-confirmable, and is held behind the
+  F1 composer gate. No verdict is invented, because the crash lost that observation. The check is
+  all-or-nothing across a recovered run: it is one composed body under one Enter, so one capped
+  row parks the whole run. Late-confirm still runs first, a row below the cap still gets the
+  Enter-only rescue, and nothing kills. Pinned by `SessionMessageQueueWedgedHeadTests`.
 
 - **Tracked root exit is not descendant-exit authority (CARD-0478, incomplete Code checkpoint).**
   The opt-in modern PtyHost path retains its original job observer after root exit.
