@@ -208,7 +208,7 @@ public sealed partial class AgentTaskCommitEndpointTests
         (await ScratchGitRepo.GitInAsync(repo.Path, "rev-parse", "origin/master")).StdOut.Trim().ShouldBe(origin);
     }
 
-    private async Task<ScratchGitRepo> SeedRepoAsync()
+    private static async Task<ScratchGitRepo> SeedRepoAsync()
     {
         var repo = new ScratchGitRepo("c527-ep");
         await File.WriteAllTextAsync(Path.Combine(repo.Path, ".gitignore"), "*.secret\n");

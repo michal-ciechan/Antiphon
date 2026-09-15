@@ -37,6 +37,7 @@ Run all original V-1..V-55 and R-1..R-17. The original plan's narrow 'Unit' exam
 | Reused outbox identity, receipts, recovery, attention and retention | AgentTaskLandNotificationPersistenceTests; AgentTaskLandNotificationRecoveryTests; AgentTaskLandReceiptTests; AgentTaskLandMonitoringTests; DispatchBaseNotificationTests; DataRetentionServiceTests; AttentionServiceTests | 5 |
 | Ordinary report delivery preserved | OutputDistillationDeliveryTests | 3 |
 | Settings modal V-54/R-12 | ProjectConfig.test.tsx through scripts/test-client.ps1 | 1 |
+| R-17 nullable session fixture compatibility | TaskDrawer.test.tsx; TaskDetailBody.test.tsx through scripts/test-client.ps1 | 1 |
 | R-17 serialized response contract | Antiphon.E2E/ContractSnapshotTests.Delegated_task_board_and_drawer_contracts | 2 |
 
 Build each producer once into `bin-c527fix360/` and reuse --no-build. Rebuild after source repairs as necessary. Expected ordinary cost ~24 minutes plus compilation. No namespace/full-assembly integration run is authorized or needed. New tests remain within existing integration classes. All deliberate mutants stay pending for SourceLanding Mutation.
@@ -76,6 +77,7 @@ Additional per-method controls (all pending, no broad red runs):
 | PC-42 | Treat unavailable child audit input as clear | AgentTaskReplyIntegrationTests.C527_unavailable_child_audit_is_reported_to_parent; complete prompt contains audit unavailable (ignore/path/history/upstream variants, mutate each seam separately) |
 | PC-43 | Treat failed HEAD/history lookup as successful empty history | GatedCommitServiceTests.Settlement_recovery_distinguishes_unborn_from_unavailable_history; failed Succeeded assertion (HEAD/history error variants, each seam separately; unborn companion) |
 | PC-44 | Select the oldest same-digest completion instead of this transaction's identity | AgentTaskReplyIntegrationTests.C527_repeated_report_selects_this_settlements_notification; new queue/complete prompt correlation fails |
+| PC-45 | Omit LF normalization from BuildBrief | AgentTaskCommitEndpointTests.Spawned_child_complete_brief_gated_operation_and_parent_receipt; complete UserPrompt equals stored brief fails (both variants on Windows) |
 
 Every red and restored green uses `/*/*/<Class>/<ExactMethod>`. Parameterized methods execute their named variants together; mutation evidence must identify the decisive variant. Missing-control discovery remains Mutation's responsibility.
 
