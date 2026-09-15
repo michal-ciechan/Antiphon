@@ -375,7 +375,9 @@ function Invoke-AmServiceDeploymentCore {
             throw
         }
         if ($remoteVerify.Count -lt 1) { throw 'Remote technical verification returned no channel JSON.' }
-        try { $channels = @($remoteVerify[0] | ConvertFrom-Json -ErrorAction Stop) } catch { throw 'The am-service /api/channels response was not parseable channel JSON.' }
+        # Windows PowerShell 5.1 emits the JSON array as one pipeline object; enumerate
+        # it before reading adapter names so both supported shells verify each adapter.
+        try { $channels = @($remoteVerify[0] | ConvertFrom-Json -ErrorAction Stop | ForEach-Object { $_ }) } catch { throw 'The am-service /api/channels response was not parseable channel JSON.' }
         $names = @($channels | ForEach-Object { if ($null -ne $_.channel) { $_.channel.ToString() } elseif ($null -ne $_.name) { $_.name.ToString() } else { 'unnamed' } })
         $remoteMigrations = @($remoteVerify | Select-Object -Skip 1 | Where-Object { $_ -match '^\d{14}_.+$' }); $sourceMigrations = @(Get-AmServiceMigrationIds $migrationDirectory); $missing = @($sourceMigrations | Where-Object { $_ -notin $remoteMigrations })
         if ($missing.Count) { throw "Remote am-postgres migration history is missing: $($missing -join ', ')" }
