@@ -28,6 +28,7 @@ public sealed class DelegationWorktreeService
     private readonly IWorktreeManager _worktrees;
     private readonly IGitService _git;
     private readonly GitWorkspaceService _gitWorkspace;
+    private readonly GatedCommitService? _gated;
     private readonly ILogger<DelegationWorktreeService> _logger;
     private readonly SourceLandingAdmission? _sourceLanding;
     private readonly GitSettings? _gitSettings;
@@ -41,7 +42,8 @@ public sealed class DelegationWorktreeService
         IRepositoryMutationLease? leases = null, ILandingGit? landingGit = null,
         SourceLandingAdmission? sourceLanding = null,
         IOptions<GitSettings>? gitSettings = null,
-        AppDbContext? db = null)
+        AppDbContext? db = null,
+        GatedCommitService? gatedCommit = null)
     {
         _leases = leases;
         _sourceLanding = sourceLanding;
@@ -52,6 +54,7 @@ public sealed class DelegationWorktreeService
         _gitWorkspace = gitWorkspace;
         _gitSettings = gitSettings?.Value;
         _db = db;
+        _gated = gatedCommit;
     }
 
     /// <summary>
@@ -465,9 +468,44 @@ public sealed class DelegationWorktreeService
         try
         {
             // The delegate may have left uncommitted work — a report that says "done" with a dirty
-            // tree is normal, not an error. Sweep it into the task branch first.
-            await _git.CommitAllChangesAsync(
-                worktree, $"task {DelegationReportFormatter.Short(task.Id)}: {task.Title}", ct);
+            // tree is normal, not an error. Sweep it into the task branch first, through the
+            // CARD-0527 ignore gate (held lease: we already own it).
+            if (_gated is not null)
+            {
+                var trailers = new (string Key, string Value)[]
+                {
+                    ("antiphon", "true"),
+                    ("antiphon-task", task.Id.ToString("D")),
+                    ("antiphon-commit", "gated"),
+                };
+                var gated = await _gated.CommitAsync(
+                    worktree,
+                    pathspec: null,
+                    $"task {DelegationReportFormatter.Short(task.Id)}: {task.Title}",
+                    trailers,
+                    lease,
+                    ct);
+                if (gated.Outcome is GatedCommitOutcome.IgnoreRulesChanged
+                    or GatedCommitOutcome.IgnoredPathStaged)
+                {
+                    var named = string.Join(", ", gated.Refusals.Select(r => $"{r.Path} ({r.Rule})"));
+                    return new MergeOutcome(
+                        MergeResult.LeftForHuman, [],
+                        $"Gated commit refused: {named}");
+                }
+
+                if (gated.Outcome == GatedCommitOutcome.CommitFailed)
+                {
+                    return new MergeOutcome(
+                        MergeResult.Failed, [],
+                        $"Committing the delegate's work failed: {gated.Stderr}");
+                }
+            }
+            else
+            {
+                await _git.CommitAllChangesAsync(
+                    worktree, $"task {DelegationReportFormatter.Short(task.Id)}: {task.Title}", ct);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

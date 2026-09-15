@@ -270,6 +270,11 @@ GET    /api/agent-tasks/{id}                 {id} accepts the 8-char short id.
                                              reading events).
 GET    /api/agent-tasks/summary              fleet-wide counters (active, blocked, runs,
                                              totalCostUsd, byStatus), independent of the list window
+POST   /api/agent-tasks/{id}/commit          gated commit of named paths (task-token caller).
+                                             Body `{ paths, message }`. 200 `{ sha, files }`.
+                                             409 codes: ignored_path_staged, ignore_rules_changed,
+                                             nothing_to_commit, repository_busy, commit_failed.
+                                             403 `delegation_token_required` / `commit_on_settle_never`.
 POST   /api/agent-tasks/{id}/cancel  |  /retry  |  /escalate
 POST   /api/agent-tasks/{id}/reply           answer a Blocked delegate's question.
                                              Body `ReplyToAgentTaskRequest`:
@@ -361,7 +366,7 @@ API and is fully commented in place. The fields that change behaviour most: `rol
 (`Worker` / `Orchestrator`), `modelLevel`, `agentKind` (ClaudeCode / Grok / Codex — see
 [agent-kinds.md](agent-kinds.md)), `workspace`, `workingDirectory`, `scope`, `followUpOnTask`,
 `expectedMinutes`, `envOverride`, `ignoreSubscriptionQuota`, `ignoreModelDisabled`,
-`ignoreRoutingPin`, `ignoreConcurrencyLimit` (CARD-0147; omits the create-time project/role cap for this request only), `authority` (CARD-0294 standing authority, ≤ 2000 chars; `autoContinue`
+`ignoreRoutingPin`, `ignoreConcurrencyLimit` (CARD-0147; omits the create-time project/role cap for this request only), `commitOnSettle` (`Never`/`Always`/`Agent`; omitted inherits project then `Delegation:CommitOnSettle`; `-NoCommit` sends Never), `authority` (CARD-0294 standing authority, ≤ 2000 chars; `autoContinue`
 without it is 422 `auto_continue_needs_authority`). `mergeTargetRef` is the landing target, never a
 worktree base. Detail records `worktreeBaseRequestedRef` (S4 create input; unused in this release),
 `worktreeBaseRef`, `worktreeBaseSource`, `worktreeBaseTaskId`, and `worktreeBaseSha`.

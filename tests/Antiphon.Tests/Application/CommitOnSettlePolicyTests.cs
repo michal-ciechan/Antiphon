@@ -183,11 +183,19 @@ public sealed class CommitOnSettlePolicyTests
         conflicted.MergeTargetRef = "master";
         await db.SaveChangesAsync();
 
-        var merge = await CreateService(db).CreateMergeTaskAsync(
+        var service = CreateService(db);
+        var merge = await service.CreateMergeTaskAsync(
             conflicted, ["conflicted.cs"], CancellationToken.None);
         merge.ShouldNotBeNull();
         merge!.CommitOnSettle.ShouldBe(CommitOnSettlePolicy.Never);
         merge.CommitBaselineSha.ShouldBeNull();
+
+        const string head = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+        var commit = await service.CreateCommitTaskAsync(
+            conflicted, "unattributable", ["x.md"], head, null, CancellationToken.None);
+        commit.ShouldNotBeNull();
+        commit!.CommitOnSettle.ShouldBe(CommitOnSettlePolicy.Never);
+        commit.CommitBaselineSha.ShouldBe(head);
     }
 
     private static UpdateProjectRequest Update(ProjectDto project, string? commitOnSettle) =>

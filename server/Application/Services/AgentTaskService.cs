@@ -2444,6 +2444,144 @@ public sealed class AgentTaskService
     }
 
     /// <summary>
+    /// CARD-0527 D-7. Spawn a Commit-role child to judge and commit the settled task's leftover
+    /// dirty paths through the gated endpoint. Same shape as <see cref="CreateMergeTaskAsync"/>.
+    /// </summary>
+    internal async Task<AgentTask?> CreateCommitTaskAsync(
+        AgentTask settled, string reason, IReadOnlyList<string> dirtyPaths, string? headSha,
+        string? stderr, CancellationToken ct)
+    {
+        var siblings = await _db.AgentTasks.CountAsync(t => t.RootTaskId == settled.RootTaskId, ct);
+        if (siblings >= _settings.MaxTasksPerRoot || settled.Depth + 1 > _settings.MaxDepth)
+        {
+            _logger.LogWarning(
+                "Task {ShortId}: commit child not spawned — run at task/depth cap",
+                DelegationReportFormatter.Short(settled.Id));
+            return null;
+        }
+
+        var id = Guid.NewGuid();
+        var now = UtcNow();
+        var (token, tokenHash) = NewToken();
+        var listed = dirtyPaths.Take(60).ToArray();
+        var more = dirtyPaths.Count - listed.Length;
+        var pathBlock = string.Join("\n", listed.Select(p => $"- {p}"))
+            + (more > 0 ? $"\n+{more} more" : "");
+        var firstLine = (settled.Result ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault() ?? settled.Title;
+        var stderrBit = string.IsNullOrWhiteSpace(stderr) ? "" : $"\nGated commit stderr:\n{stderr.Trim()}\n";
+
+        var agentKind = ResolveAgentKind(AgentTaskKind.Worker, AgentTaskRole.Commit, null);
+        var level = ResolveLevel(AgentTaskKind.Worker, AgentTaskRole.Commit, null);
+        Guid? routingPinId = null;
+        string? pinWarning = null;
+        if (_routingPins is not null)
+        {
+            try
+            {
+                var pinDecision = await _routingPins.ResolveAsync(
+                    settled.CardId,
+                    AgentTaskRole.Commit,
+                    new RoutingPinService.Ask(null, null, null, false),
+                    ct);
+                var composed = RoutingCandidates.Compose(
+                    pinDecision,
+                    chain: null,
+                    chainLabel: null,
+                    null,
+                    null,
+                    (k, l) => ResolveRoutingPair(AgentTaskKind.Worker, AgentTaskRole.Commit, k, l));
+                if (composed.Candidates.Count > 0)
+                {
+                    agentKind = composed.Candidates[0].Kind;
+                    level = composed.Candidates[0].Level;
+                }
+
+                if (composed.Walked && pinDecision.Applied)
+                    routingPinId = pinDecision.Pin!.Id;
+                _routingPins.EnforceForbiddenAliases(pinDecision, agentKind, level);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                pinWarning = $"Routing pin service failed ({ex.GetType().Name}); using role policy.";
+            }
+        }
+        else
+        {
+            pinWarning = "Routing pin service is not available; using role policy.";
+        }
+
+        var task = new AgentTask
+        {
+            Id = id,
+            RootTaskId = settled.RootTaskId,
+            ParentTaskId = settled.Id,
+            ParentSessionId = settled.ParentSessionId,
+            Depth = settled.Depth + 1,
+            Title = $"Commit: {Clamp(settled.Title, 240)}",
+            Goal = $"""
+                Task {DelegationReportFormatter.Short(settled.Id)} ({settled.Title}) left dirty paths.
+                Report first line: {firstLine}
+                Reason: {reason}
+                Dirty paths:
+                {pathBlock}
+                {stderrBit}
+                Commit only paths that are task {DelegationReportFormatter.Short(settled.Id)}'s work, judged from the report and git diff.
+                Use scripts/task-commit.ps1 -Paths ... -MessageFile ... which refuses ignored paths and ignore-rule edits.
+                Never git add -f, never edit .gitignore or info/exclude, never push, never touch other dirty paths.
+                A refusal is reported, not worked around. Report the sha and paths, or the refusal verbatim.
+                """,
+            Kind = AgentTaskKind.Worker,
+            Role = AgentTaskRole.Commit,
+            ProjectId = settled.ProjectId,
+            CardId = settled.CardId,
+            AgentKind = agentKind,
+            ModelLevel = level,
+            RoutingPinId = routingPinId,
+            Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = settled.WorkingDirectory,
+            RepoPath = settled.RepoPath,
+            Ephemeral = true,
+            Status = AgentTaskStatus.Queued,
+            ReplyTo = settled.ReplyTo,
+            MaxAttempts = 2,
+            CreatedAt = now,
+            TokenHash = tokenHash,
+            ExpectedDurationMinutes = Math.Clamp(_settings.DefaultExpectedMinutes, 1, 1440),
+            StandingAuthority = settled.StandingAuthority,
+            AutoContinueOnWait = false,
+            CommitOnSettle = CommitOnSettlePolicy.Never,
+            CommitBaselineSha = headSha,
+        };
+
+        _db.AgentTasks.Add(task);
+        _db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = id,
+            Type = AgentTaskEventType.Created,
+            ModelLevel = task.ModelLevel,
+            Detail = $"Spawned by the server to commit {dirtyPaths.Count} dirty path(s) left by task "
+                + $"{DelegationReportFormatter.Short(settled.Id)} ({reason}).",
+            At = now,
+        });
+        if (pinWarning is not null)
+        {
+            _db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(),
+                AgentTaskId = id,
+                Type = AgentTaskEventType.Warning,
+                Detail = pinWarning,
+                At = now,
+            });
+        }
+
+        RawTokens[id] = token;
+        return task;
+    }
+
+    /// <summary>
     /// End the delegate's session if it has one. Best-effort: a session the runner has already lost
     /// must not stop the caller from cancelling or requeueing the task.
     /// </summary>

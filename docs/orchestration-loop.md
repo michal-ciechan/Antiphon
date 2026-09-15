@@ -249,12 +249,19 @@ is optional for it (typically `next: none` when present at all).
 | `Coverage` | check what a change missed | opus |
 | `Merge` | resolving a conflict left behind by a worktree task (auto-spawned after TryMergeBackAsync fails, rarely dispatched by hand) | opus |
 | `Docs` | prose, markdown, comments | sonnet |
-| `Commit` | git plumbing, branches, PRs | sonnet |
+| `Commit` | git plumbing, and the CARD-0527 settle child that commits a Shared task's leftover dirty paths through `POST /api/agent-tasks/{id}/commit` | sonnet |
 | `Test` / `Deploy` | RUN a thing and report what happened | haiku |
 
 Code owns implementation and ordinary V/R; ordinary Review follows before land. Post-land
 Mutation owns all deliberate PCs/variants and missing-control discovery in an independent
 snapshot, freeing the Code role slot for another card.
+
+### Commit on settle
+
+A Succeeded Shared task's own footprint is committed in-process at settle through `GatedCommitService`
+(ignore-rule gate, no push) unless `-NoCommit` / `commitOnSettle=Never`, the project column, or
+`Delegation:CommitOnSettle` turns it off. Unattributable dirty trees spawn a Commit-role child
+routed by the live pin. Worktree merge-back uses the same gate.
 
 ### Default stage shape by complexity (CARD-0352's `complexity:` label)
 

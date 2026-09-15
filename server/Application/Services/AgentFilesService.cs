@@ -563,6 +563,52 @@ public sealed class AgentFilesService : IWorkspaceProgressProbe
     /// file the agent ever touched on screen and the new baseline appears to have done nothing.
     /// Null (a HEAD baseline) means "no sign-off instant exists" — report the whole history.
     /// </param>
+    /// <summary>
+    /// CARD-0527 D-6. Write/Edit/NotebookEdit paths on this session with <c>CreatedAt &gt; since</c>,
+    /// repo-relative forward-slash when they fall under <paramref name="root"/>.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> GetEditedPathsAsync(
+        Guid sessionId, string root, DateTime? since, CancellationToken ct)
+    {
+        var query = _db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId
+                && t.Kind == TranscriptKinds.ToolCall
+                && t.ToolName != null && FileToolNames.Contains(t.ToolName)
+                && t.ToolInput != null);
+        if (since is not null)
+            query = query.Where(t => t.CreatedAt > since.Value);
+
+        var calls = await query.Select(t => t.ToolInput).ToListAsync(ct);
+        var paths = new HashSet<string>(StringComparer.Ordinal);
+        var normalizedRoot = Normalize(root).TrimEnd('/') + "/";
+        foreach (var input in calls)
+        {
+            string? filePath = null;
+            try
+            {
+                using var doc = JsonDocument.Parse(input!);
+                if (doc.RootElement.TryGetProperty("file_path", out var fp))
+                    filePath = fp.GetString();
+                else if (doc.RootElement.TryGetProperty("notebook_path", out var np))
+                    filePath = np.GetString();
+            }
+            catch (JsonException)
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(filePath))
+                continue;
+            var full = Normalize(Path.GetFullPath(filePath));
+            if (full.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase))
+                paths.Add(full[normalizedRoot.Length..].Replace('\\', '/'));
+            else
+                paths.Add(full.Replace('\\', '/'));
+        }
+
+        return paths.ToArray();
+    }
+
     private async Task<Dictionary<string, ActivityInfo>> GetAgentActivityAsync(
         Agent agent, string root, DateTime? since, CancellationToken ct)
     {

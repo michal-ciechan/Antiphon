@@ -22,6 +22,85 @@ namespace Antiphon.Tests.Application;
 public sealed class RoutingPinCandidateDispatchTests
 {
     [Test]
+    public async Task C527_queued_commit_child_rewalks_to_the_next_pin_candidate_at_dispatch()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        Guid pinId;
+        await using (var db = CreateContext(schema))
+        {
+            var pin = new RoutingPin
+            {
+                Id = Guid.NewGuid(),
+                Role = AgentTaskRole.Commit,
+                Provenance = RoutingPinProvenance.Human,
+                Strength = RoutingPinStrength.Required,
+                CandidatesJson = RoutingCandidate.Serialize(
+                [
+                    new(AgentKind.Codex, AgentModelLevel.Low),
+                    new(AgentKind.ClaudeCode, AgentModelLevel.Medium),
+                ]),
+                Reason = "commit pin",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
+            };
+            db.RoutingPins.Add(pin);
+            await db.SaveChangesAsync();
+            pinId = pin.Id;
+        }
+
+        await using (var db = CreateContext(schema))
+        {
+            db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
+            {
+                Id = Guid.NewGuid(),
+                Kind = AgentKind.Codex,
+                ModelAlias = ModelLevelAliases.For(AgentKind.Codex, AgentModelLevel.Low),
+                Source = ModelAvailabilitySource.Manual,
+                DisabledUntil = DateTime.UtcNow.AddHours(1),
+                HitAt = DateTime.UtcNow,
+                Reason = "codex hold",
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var (agentId, _) = await SeedWarmAgentAsync(schema, workspace.Path);
+        var id = Guid.NewGuid();
+        await using (var db = CreateContext(schema))
+        {
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = id,
+                RootTaskId = id,
+                Title = "commit child",
+                Goal = "commit",
+                Role = AgentTaskRole.Commit,
+                AgentKind = AgentKind.Codex,
+                ModelLevel = AgentModelLevel.Low,
+                RoutingPinId = pinId,
+                Workspace = WorkspaceMode.Shared,
+                WorkingDirectory = workspace.Path,
+                Status = AgentTaskStatus.Queued,
+                AgentId = agentId,
+                Ephemeral = false,
+                CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var dispatcher = CreateDispatcher(schema);
+        await dispatcher.TickAsync(CancellationToken.None);
+        await using var verify = CreateContext(schema);
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == id);
+        stored.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        stored.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+        stored.ModelLevel.ShouldBe(AgentModelLevel.Medium);
+        var rerouted = await verify.AgentTaskEvents.SingleAsync(
+            e => e.AgentTaskId == id && e.Type == AgentTaskEventType.Rerouted);
+        rerouted.Detail.ShouldContain("Commit stage pin");
+    }
+
+    [Test]
     public async Task Queued_walked_task_rewalks_to_the_next_pin_candidate_at_dispatch()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
