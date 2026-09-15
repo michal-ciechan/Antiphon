@@ -255,3 +255,36 @@ out of scope by the plan). Backend-unreachable still defers without charging.
 | V-7 | F1 hold, both release arms, previous-generation no-regression twin | `SessionMessageQueueWedgedHeadTests` (`Parked_head_left_in_the_composer_holds_the_next_message`, `Cleared_composer_releases_the_next_message_with_its_exact_body`, `Parked_head_from_a_previous_generation_does_not_hold_the_next_message`, strengthened `Third_failed_Enter_only_recovery_parks_and_unblocks_the_queue`) |
 | V-8 | F2 producer-to-recipient handoff, busy and already-eligible | `CheckNoteDeliveryHandoffTests` |
 | V-9 | F2 charge/handler crash boundary and multi-row batch charging | `SessionMessageQueueWedgedHeadTests` (`A_crash_between_the_charge_and_the_failure_handler_keeps_the_attempt_charged`, `Failed_Enter_only_recovery_charges_every_row_of_the_batch`) |
+
+## FollowUp V/R rerun
+
+All runs used one build at `5fb816bf` into `--property:OutputPath=bin-c501fu/` (forward slash),
+then `dotnet run --no-build` against that output. Pty and server assemblies ran sequentially,
+never concurrently. TRX under `.antiphon/c501-fu/<run>/` in the worktree. The 16 `bin-c501fu`
+directories this pass produced were deleted afterwards; the 31 `bin-c501-326c349a` directories
+from the original Code task remain under the caller's CARD-0455 waiver and were not touched.
+
+| Run | Project | Filter | Outcome |
+|---|---|---|---|
+| P | Antiphon.Agents.Pty.Tests | `/*/*/(ComposerDeliveryEvidenceTests*)\|(SubmitEvidenceTests*)/*` | 32/32 pass (`pty/pty.trx`) |
+| Q | Antiphon.Tests | `/*/*/(SessionMessageQueueWedgedHeadTests*)\|(SessionMessageQueueInterruptedAttemptTests*)\|(SessionMessageQueueDeliveryVerificationTests*)\|(SessionMessageQueueServiceTests*)\|(ParkedMessageSweepServiceTests*)\|(AgentTaskDeliveryWatchdogTests*)\|(CheckNoteDeliveryHandoffTests*)/*` | 269/269 pass, 7m26s (`queue/queue.trx`). 262 before this pass; the seven added are the three F1 methods, the two F2 methods and the two handoff methods. |
+| N | Antiphon.Tests | `/*/*/SessionMessageQueueGrokPtyIntegrationTests/*` | 4/4 pass (`grok/grok.trx`) |
+| U | Antiphon.Tests | `/*/*/*/*[Category=Unit]` | 2,351 total: 2,346 pass, 4 fail, 1 skip (`unit/unit.trx`) |
+
+V-1..V-6 and R-2..R-8 are all re-confirmed PASS inside P, Q and N. V-7, V-8 and V-9 pass in Q.
+
+R-1's four failures are the same inherited set the original Code pass reproduced at
+`eea127b0`, unchanged in count and in cause. Their messages name only classes and text this
+branch never touches: three are `lane-xor` / untagged on
+`Antiphon.Tests.Application.HerdrPaneDisposalEndpointTests`
+(`Registry_matches_compiled_metadata`, `every_test_class_is_tagged_unit_xor_integration`,
+`C487_G068`), and `ScopedVerificationInstructionTests.C487_G142` expects the obsolete
+Code-to-Mutation stage order. `git diff --name-only origin/master...HEAD` contains no Herdr,
+stage-bundle, classification or lane-category file. The skip is unchanged
+(`AgentTuiSecretProtectorTests.Restored_key_file_symlink_is_rejected_without_mutating_target`,
+Windows file-symlink privilege).
+
+`Registry_matches_compiled_metadata` also validates the Slow registry: its only error is the
+pre-existing Herdr one, so `CheckNoteDeliveryHandoffTests`'s new allowlist entry and its
+`Integration`/`Slow` tagging are both accepted. No timeout was widened, no assertion loosened,
+and no retry added anywhere in this pass.
