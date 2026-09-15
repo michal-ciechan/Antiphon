@@ -9,6 +9,28 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
+[Category("Unit")]
+public class DelegationUnitTests
+{
+    [Test]
+    [Arguments(AgentTaskRole.Plan)][Arguments(AgentTaskRole.Docs)][Arguments(AgentTaskRole.Code)][Arguments(AgentTaskRole.Custom)]
+    public void a_never_commit_brief_carries_the_do_not_commit_line_and_not_the_commit_line(AgentTaskRole role)
+    {
+        var task = new AgentTask { Role = role, Workspace = WorkspaceMode.Shared, CommitOnSettle = CommitOnSettlePolicy.Never };
+        var brief = DelegationReportFormatter.BuildBrief(task, new DelegationSettings());
+        brief.ShouldContain("Do NOT commit or push. Leave your changes in the working tree for the caller to review, and name every file you changed in your report.");
+        brief.ShouldNotContain(DelegationReportFormatter.SharedWriteCommitLine);
+    }
+
+    [Test]
+    public void a_never_commit_readonly_brief_keeps_the_read_only_line()
+    {
+        var brief = DelegationReportFormatter.BuildBrief(new AgentTask { Workspace = WorkspaceMode.ReadOnly, CommitOnSettle = CommitOnSettlePolicy.Never }, new DelegationSettings());
+        brief.ShouldContain("Do NOT modify any files");
+        brief.ShouldNotContain("Leave your changes in the working tree");
+    }
+}
+
 /// <summary>
 /// Unit tests for the two pure pieces of delegation that carry the most weight: the path boundary
 /// that decides where a delegate may run (a security control, since a task's directory is a

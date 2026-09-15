@@ -23,6 +23,24 @@ public class CommitOnSettlePolicyTests
     private static AgentTaskService.Caller Caller => new(null, null, Path.GetTempPath());
 
     [Test]
+    public async Task Project_PUT_null_leaves_On_Inherit_clears_Off_sets()
+    {
+        await using var db = Db();
+        var service = new ProjectService(db, new ClientFactory(), Options.Create(new GithubSettings()), NullLogger<ProjectService>.Instance);
+        var project = await service.CreateAsync(new(Guid.NewGuid().ToString(), "https://example.test/repo.git", null, false, false, null, "master"), default);
+        UpdateProjectRequest Request(string? value) => new(project.Name, project.GitRepositoryUrl, null, false, false, null, "master", CommitOnSettle: value);
+        foreach (var (value, stored, effective) in new (string?, bool?, bool)[] { ("On", true, true), (null, true, true), ("Inherit", null, true), ("Off", false, false) })
+        {
+            var result = await service.UpdateAsync(project.Id, Request(value), default);
+            result.CommitOnSettle.ShouldBe(stored); result.EffectiveCommitOnSettle.ShouldBe(effective);
+        }
+        var error = await Should.ThrowAsync<ValidationException>(() => service.UpdateAsync(project.Id, Request("Sideways"), default));
+        error.Errors.ShouldContainKey("CommitOnSettle");
+    }
+
+    private sealed class ClientFactory : IHttpClientFactory { public HttpClient CreateClient(string name) => new(); }
+
+    [Test]
     public async Task Create_with_an_unknown_commitOnSettle_is_422()
     {
         await using var db = Db(); var title = Guid.NewGuid().ToString();
