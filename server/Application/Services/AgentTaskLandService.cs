@@ -356,7 +356,7 @@ public sealed class AgentTaskLandService
         var type = op.Publication == LandPublicationOutcome.AlreadyPresent ? AgentTaskEventType.AlreadyPresent
             : op.Cleanup == LandCleanupStatus.Complete ? AgentTaskEventType.Landed : AgentTaskEventType.LandedWithResidue;
         var (marker, warnings) = await CollectUnlandedSiblingsAsync(task, op.RepositoryPath, ct, op.VerifiedSourceSha);
-        await SettleLandedAsync(task, type, AppendUnlandedMarker(FormatOutcome(op), marker), warnings, ct);
+        await SettleLandedAsync(task, type, AppendUnlandedMarker(FormatOutcome(op), marker), warnings, marker, ct);
         return LandRunResult.Complete;
     }
 
@@ -409,6 +409,7 @@ public sealed class AgentTaskLandService
         AgentTaskEventType type,
         string outcome,
         IReadOnlyList<string> warnings,
+        string? unlandedSiblingMarker,
         CancellationToken ct)
     {
         var expectedRequest = task.CurrentLandRequestId;
@@ -419,7 +420,7 @@ public sealed class AgentTaskLandService
         var request = await EnsureRequestAsync(task, ct);
         await _db.Entry(request).ReloadAsync(ct);
         if (request.TerminalEventId is not null) return;
-        await CompleteTerminalLockedAsync(task, request, type, outcome, warnings, ct);
+        await CompleteTerminalLockedAsync(task, request, type, outcome, warnings, unlandedSiblingMarker, ct);
     }
 
     private static string AppendUnlandedMarker(string outcome, string? marker) =>
@@ -642,14 +643,14 @@ public sealed class AgentTaskLandService
             if (op.Cleanup != LandCleanupStatus.Complete) op.Cleanup = LandCleanupStatus.Pending;
             var type = op.Publication == LandPublicationOutcome.AlreadyPresent ? AgentTaskEventType.AlreadyPresent
                 : op.Cleanup == LandCleanupStatus.Complete ? AgentTaskEventType.Landed : AgentTaskEventType.LandedWithResidue;
-            await CompleteTerminalLockedAsync(task, request, type, FormatOutcome(op), [], ct);
+            await CompleteTerminalLockedAsync(task, request, type, FormatOutcome(op), [], null, ct);
             return;
         }
 
         if (task.LandRequestedAt is null) return;
         var line = LandFailureDiagnostic.FormatUnconfirmed(code, diagnosticId, typeName, request);
         await CompleteTerminalLockedAsync(task, request, AgentTaskEventType.LandRefused, line,
-            [$"Landing not confirmed; no cleanup authorized by this result. {code}"], ct);
+            [$"Landing not confirmed; no cleanup authorized by this result. {code}"], null, ct);
     }
 
     private async Task RefuseAsync(AgentTask task, string detail, CancellationToken ct) =>
@@ -666,11 +667,12 @@ public sealed class AgentTaskLandService
         await _db.Entry(request).ReloadAsync(ct);
         if (request.TerminalEventId is not null) return;
         await CompleteTerminalLockedAsync(task, request, AgentTaskEventType.LandRefused, line,
-            [$"Landing not confirmed; no cleanup authorized by this result. {warningDetail}"], ct);
+            [$"Landing not confirmed; no cleanup authorized by this result. {warningDetail}"], null, ct);
     }
 
     private async Task CompleteTerminalLockedAsync(AgentTask task, AgentTaskLandRequest request,
-        AgentTaskEventType type, string outcome, IReadOnlyList<string> warnings, CancellationToken ct)
+        AgentTaskEventType type, string outcome, IReadOnlyList<string> warnings, string? unlandedSiblingMarker,
+        CancellationToken ct)
     {
         var now = _clock.GetUtcNow().UtcDateTime;
         foreach (var warning in warnings)
@@ -734,7 +736,7 @@ public sealed class AgentTaskLandService
         SetLandingEvidence(terminal, op);
         _db.AgentTaskEvents.Add(terminal);
         CompleteRequest(task, request, terminal);
-        AddNotification(task, request, terminal, LandNotificationKind.Outcome, notificationCleanupDetail);
+        AddNotification(task, request, terminal, LandNotificationKind.Outcome, notificationCleanupDetail, unlandedSiblingMarker);
         ClearPending(task);
         await _db.SaveChangesAsync(ct);
         if (_db.Database.CurrentTransaction is { } open) await open.CommitAsync(ct);
@@ -874,8 +876,9 @@ public sealed class AgentTaskLandService
         request.ConcurrencyToken = Guid.NewGuid();
     }
 
-    private void AddNotification(AgentTask task, AgentTaskLandRequest request, AgentTaskEvent source, LandNotificationKind kind, string? cleanupDetail = null)
-        => _db.AgentTaskLandNotifications.Add(LandNotificationPayload.Create(request, source, kind, cleanupDetail));
+    private void AddNotification(AgentTask task, AgentTaskLandRequest request, AgentTaskEvent source, LandNotificationKind kind,
+        string? cleanupDetail = null, string? unlandedSiblingMarker = null)
+        => _db.AgentTaskLandNotifications.Add(LandNotificationPayload.Create(request, source, kind, cleanupDetail, unlandedSiblingMarker));
 
     internal static async Task<LandVerification> VerifyAsync(string worktree, string? filter, CancellationToken ct)
         => await VerifyWithObserverAsync(worktree, filter, null, ct);

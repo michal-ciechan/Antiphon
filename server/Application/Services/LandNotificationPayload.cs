@@ -6,7 +6,8 @@ namespace Antiphon.Server.Application.Services;
 
 internal static class LandNotificationPayload
 {
-    public static AgentTaskLandNotification Create(AgentTaskLandRequest request, AgentTaskEvent source, LandNotificationKind kind, string? cleanupDetail = null)
+    public static AgentTaskLandNotification Create(AgentTaskLandRequest request, AgentTaskEvent source, LandNotificationKind kind,
+        string? cleanupDetail = null, string? unlandedSiblingMarker = null)
     {
         var id = Guid.NewGuid();
         var header = $"[land {id:N} request={request.Id:N} task={request.TaskId:N} outcome={source.Type}]";
@@ -28,7 +29,10 @@ internal static class LandNotificationPayload
                 values.TryAdd(value, name);
             }
             var prefix = $"{header}\npublication={source.LandingPublication?.ToString() ?? "Unconfirmed"}; cleanup={source.LandingCleanup?.ToString() ?? "NotStarted"}\n{string.Join("; ", fields)}\n";
-            body = prefix + WorktreeCleanupPresentation.ClipUtf8(cleanupDetail, 1024 - Encoding.UTF8.GetByteCount(prefix));
+            // The sibling warning is actionable publication evidence. Carry the producer's
+            // exact marker ahead of optional diagnostic display text without parsing prose.
+            var detail = unlandedSiblingMarker is null ? cleanupDetail : $"{unlandedSiblingMarker}\n{cleanupDetail}";
+            body = prefix + WorktreeCleanupPresentation.ClipUtf8(detail, 1024 - Encoding.UTF8.GetByteCount(prefix));
         }
         return new AgentTaskLandNotification
         {
