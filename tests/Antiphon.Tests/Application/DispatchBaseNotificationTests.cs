@@ -30,7 +30,7 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 [Category("Slow")]
-public class DispatchBaseNotificationTests
+public partial class DispatchBaseNotificationTests
 {
     /// <summary>
     /// V-23 / G-66, G-67: one successful claim commits its final dispatch event, the session and
