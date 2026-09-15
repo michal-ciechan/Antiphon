@@ -23,61 +23,55 @@ downgrading to a binary without Phone.
 
 ## Per-bot deployment model
 
-One `Antiphon.Messaging.Service` instance per bot token (bot name = persona). The `family`
-pilot uses `@antiphon_assistant_bot` (token in Bitwarden item "Antiphon Telegram Bot").
+Use one `Antiphon.Messaging.Service` instance per bot token (bot name = persona), with
+independent broker and database state as described in [messaging-standalone.md](messaging-standalone.md).
+The server defaults to local Redpanda at `localhost:19092`. Live gateways are provisioned
+per machine and remain outside AppHost. CARD-0496 records a
+[desktop Slack sidecar](slack-bot-ops.md#desktop-slack-sidecar) using that local broker;
+that sidecar is not evidence of Telegram support or a configured Telegram gateway.
 
-**Verified against server2 on 2026-08-21** (this paragraph previously claimed the family gateway
-shared the `school_revision` instance's image and Kafka — it does not, and
-[messaging-standalone.md](messaging-standalone.md)'s "own Kafka, own Postgres" description is the
-accurate one):
+For an intentional broker override, first confirm the chosen gateway's effective broker.
+Replace both placeholders before using this optional example:
 
-| | `family` (the live Antiphon gateway) | `school_revision` |
-|---|---|---|
-| Compose project | `antiphon-messaging`, dir `/home/mc/antiphon-messaging` | `~/docker/schoolrevision` |
-| Service / container | `messaging-service` / **`am-service`** (host port 18090) | `antiphon-messaging-telegram` |
-| Image | **built from source** (`build: ./build/src`) → `antiphon-messaging-messaging-service` | `ghcr.io/michal-ciechan/antiphon-messaging-telegram` |
-| Broker | its own **`am-redpanda`** (external listener `100.93.77.126:19092`) | its own `schoolrevision-messaging-redpanda-1` |
-| Postgres | its own **`am-postgres`**, db `antiphon_messaging` | its own `schoolrevision-postgres-1` |
-
-The two share **nothing** — not the image, not the broker, not the database. The main Antiphon
-server reaches the family broker over Tailscale only as a per-machine opt-in (CARD-0185) — never
-from a hostname in `Antiphon.AppHost/Program.cs`:
-
-```
-dotnet user-secrets set "AntiphonMessaging:BootstrapServers" "server2:19092" --project Antiphon.AppHost
+```powershell
+dotnet user-secrets set "AntiphonMessaging:BootstrapServers" "<confirmed-broker-host>:<port>" --project Antiphon.AppHost
 ```
 
-Accepted alternative: a gitignored `Antiphon.AppHost/appsettings.Development.json` with the same
-key. The AppHost forwards that value to the server as `AntiphonMessaging__BootstrapServers`.
-Without it, the server stays on `localhost:19092` (the local `antiphon-redpanda` + fake gateway).
-It is one broker or the other: while live, `POST :17208/inbound` does not reach the server. To
-go local for a smoke, `dotnet user-secrets remove "AntiphonMessaging:BootstrapServers" --project
-Antiphon.AppHost` and restart the AppHost; to return, set the secret again and restart.
+The AppHost user-secrets id is `aspire-antiphon-apphost`. A gitignored
+`Antiphon.AppHost/appsettings.Development.json` with the same key is also accepted.
+AppHost forwards a nonblank trimmed value only to the server as
+`AntiphonMessaging__BootstrapServers`; FakeGateway configuration is unchanged.
+The two are separated only when their effective brokers differ. Local traffic can be live;
+removing an override does not establish test isolation. Synthetic tests require a broker
+with no real gateway attached.
 
-Secrets are **not** inline in the compose file: it interpolates `${TELEGRAM_TOKEN}` (and, since
-CARD-0107, `${SLACK_BOT_TOKEN}` / `${SLACK_APP_TOKEN}`) from a mode-600 `.env` beside it.
-
-**No `Telegram__AllowedChatIds` is configured on this instance** — the fail-closed allowlist that
-earlier revisions of this doc described is available in `TelegramSettings` but is not currently set,
-so the gateway accepts every chat the bot is in. Treat adding it as an open hardening task, not as
-something already in force.
+For an optional remote Compose instance, keep tokens in its protected environment source
+(for example a mode-600 `.env`), never inline in tracked Compose or logs. Configure and verify
+that instance's `Telegram__AllowedChatIds`; an empty list accepts every chat the bot is in.
+The dated [Slack deployment](superpowers/plans/2026-08-20-card-0107-slack-channel-plan.md) and
+[broker opt-in](superpowers/plans/2026-08-25-card-0185-apphost-broker-opt-in-plan.md) record
+historical deployments, not this machine's current inventory.
 
 **Known limitation (accepted):** `ChatChannel` is keyed `(Provider, ExternalId)` — two bots
 joined to the SAME Telegram group would collide on one channel row and route to whichever
 agent that row is bound to. Policy: one bot per group. Future fix: a `BotId` discriminator
 column.
 
-## Deploying the messaging service (server2)
+## Deploying an optional remote messaging service
 
-The `family` gateway on server2 is rebuilt from this repo's messaging source, not from a published
-image bump alone. Its only source-built deploy procedure is:
+Select and confirm an SSH destination explicitly. The helper supports only the existing
+`/home/mc/antiphon-messaging` layout, source context `build/src`, Compose service
+`messaging-service`, and container `am-service` (host port 18090). It is not a desktop
+sidecar tool or a general Compose deployer. There is no default target or environment fallback.
+Use one `user@host` (SSH alias, DNS hostname, or IPv4; no port suffix or custom arguments).
+Replace `<user>@<confirmed-host>` in both examples before use:
 
 ```powershell
 # Read-only preflight: validates the Dockerfile-derived archive manifest and the remote Compose build contract.
-pwsh -NoProfile -File scripts/deploy-am-service.ps1
+pwsh -NoProfile -File scripts/deploy-am-service.ps1 -SshTarget '<user>@<confirmed-host>'
 
 # Production only after explicit authorization. -Confirm gives the final interactive confirmation.
-pwsh -NoProfile -File scripts/deploy-am-service.ps1 -Deploy -Confirm
+pwsh -NoProfile -File scripts/deploy-am-service.ps1 -SshTarget '<user>@<confirmed-host>' -Deploy -Confirm
 ```
 
 The script derives its archive entries from local
@@ -89,10 +83,14 @@ Dockerfile before every write, replaces rather than overlays `build/src`, and re
 reconstruct SSH, tar, or Compose commands by hand. It never prints Compose environment values,
 tokens, or arbitrary logs.
 
-Kafka topics `channels.inbound` / `channels.outbound` carry `max.message.bytes=20971520`.
+For this supported remote layout, Kafka topics `channels.inbound` / `channels.outbound`
+use `max.message.bytes=20971520`. Historical contracts:
+[remote deploy helper](superpowers/plans/2026-08-31-card-0270-am-service-remote-deploy-plan.md) and
+[consumer identity](superpowers/plans/2026-09-06-card-0410-gateway-consumer-group-plan.md).
 
 The script technically verifies the running container, registered adapters, migration history, and
-a bounded redacted startup-log scan. Then prove both directions with real traffic. Send to the
+a bounded redacted startup-log scan on the selected instance. With separate traffic authorization,
+confirm that instance serves the designated test group, then prove both directions. Send to the
 **`Antiphon-Family` test group
 (`-5370465377`)**, never the live `Family` group: `dotnet run scripts/tg-send.cs -- --to
 -5370465377 --text "..."` from `C:\src\ClaudeBot` should log `[outbound] sent via telegram -> <id>`,
@@ -122,9 +120,10 @@ and a reply typed back into that group should log `[ingress] telegram -537046537
 
 ## Dev-stack smoke (fake gateway, no Telegram)
 
-Prereqs: `dev-aspire.ps1` stack up (server 17202, fake gateway 17208), local broker running,
-an agent bound to a channel with a preamble set. Executed 2026-07-22 against the `Family`
-agent; re-run after changes touching the bridge/queue/dispatcher:
+Prereqs: the canonical Aspire stack is up (server 17202, fake gateway 17208), both use
+the same isolated test broker, and no real gateway is attached to that broker. A local broker
+or an unset override alone does not prove isolation. Bind a test agent to a test channel
+with a preamble set; re-run after changes touching the bridge/queue/dispatcher:
 
 1. **Batching path** — three rapid inbounds from one sender:
    ```powershell

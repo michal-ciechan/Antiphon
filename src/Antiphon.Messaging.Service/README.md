@@ -55,7 +55,10 @@ change per instance:
 | `Kafka__ConsumerGroup`        | `antiphon-messaging-service`          | **Set a per-instance group** if instances ever share a broker, so they don't steal each other's messages. |
 | `ConnectionStrings__Messaging`| `Host=localhost;...Database=antiphon_messaging;...` | Postgres for the inbox. Give each instance **its own database**. |
 
-## Example: the `school_revision` instance (server2, in the school-revision compose)
+## Example: a `school_revision` Compose instance
+
+This portable example is not a current deployment inventory. Choose the machine's
+gateway and broker using [messaging operations](../../docs/messaging-standalone.md).
 
 ```yaml
   messaging-redpanda:                                  # this instance's own Kafka

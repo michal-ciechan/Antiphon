@@ -1,6 +1,6 @@
 ---
 name: telegram-e2e-smoke
-description: End-to-end smoke-test the Telegram channel pipeline (text, outbound attachments, inbound attachments) using the Antiphon-Family group as the test bed. Use after touching the bridge, dispatcher, messaging contracts, Kafka config, or the server2 gateway — a channel change is NOT done until this passes.
+description: End-to-end smoke-test the Telegram channel pipeline (text, outbound attachments, inbound attachments) using the Antiphon-Family group as the test bed. Use after touching the bridge, dispatcher, messaging contracts, Kafka config, or the machine's configured Telegram gateway — a channel change is NOT done until this passes.
 ---
 
 # telegram-e2e-smoke — verify the Telegram pipeline end to end
@@ -14,8 +14,8 @@ Telegram chat**.
 
 ## The pipeline under test
 
-inbound:  Telegram → gateway `am-service` (server2, downloads attachment bytes via getFile)
-          → Redpanda `channels.inbound` (20 MB cap) → desktop bridge (saves attachments to
+inbound:  Telegram → the configured Telegram gateway (downloads attachment bytes via getFile)
+          → its configured broker `channels.inbound` (20 MB cap) → desktop bridge (saves attachments to
           `<workspace>\.antiphon\inbox\`, envelopes the message) → agent session
 outbound: agent reply (`[[attach: <path>]]` markers) → dispatcher (inlines file bytes)
           → `channels.outbound` → gateway sendMessage/sendDocument → Telegram
@@ -50,9 +50,12 @@ cdp("Page.setInterceptFileChooserDialog", enabled=False)
 
 1. **Channel ingested** — `GET :17202/api/channels`: the Antiphon-Family row's
    `lastMessageAt`/`messageCount` moved (attachment-only messages show `lastMessagePreview: null`).
-   If not: gateway or broker. Check `ssh mc@server2 'docker logs am-service --since 5m'` and
-   `docker exec am-redpanda rpk topic consume channels.inbound -o -3 -n 3` (always pass `-n`,
-   an unbounded consume hangs).
+   If not: identify this machine's configured Telegram gateway and effective broker using
+   [channel ops](../../../docs/telegram-bot-ops.md#per-bot-deployment-model). Check that gateway's
+   known health/log location without dumping secrets. The
+   [desktop Slack sidecar](../../../docs/slack-bot-ops.md#desktop-slack-sidecar) is not evidence
+   of a Telegram gateway. Do not assume a remote host or fall through to SSH when a local
+   task is absent. Any broker sampling must be bounded (always pass `-n` to `rpk topic consume`).
 2. **Delivered into the session** — Family's `persistentSessionId` from `/api/agents`, then
    `GET :17202/api/sessions/{sid}/transcript`: a `UserPrompt` with the `[Telegram ...]` envelope;
    photos show `[photo attached: C:\src\ClaudeBot\agents\family\.antiphon\inbox\...]` and that
@@ -92,6 +95,10 @@ cdp("Page.setInterceptFileChooserDialog", enabled=False)
   syntax) only apply after a session relaunch — include the syntax in the test message itself.
 - Mike uses these agents for real work: check the transcript for an in-flight turn before piling
   on test messages, and keep tests to one message at a time.
-- Server restarts: `pwsh -File scripts/restart-apphost.ps1` (dispatcher/bridge changes);
-  gateway: tar-sync `src/Antiphon.Messaging*` to server2 `/home/mc/antiphon-messaging/build/src`,
-  `docker compose build messaging-service && docker compose up -d messaging-service`.
+- Server restarts: follow the [canonical restart runbook](../../../docs/apphost-runbook.md)
+  for dispatcher/bridge changes. Real gateways have an independent lifecycle outside AppHost.
+  For an explicitly chosen remote gateway in the fixed `/home/mc/antiphon-messaging` layout,
+  follow [remote deployment operations](../../../docs/telegram-bot-ops.md#deploying-an-optional-remote-messaging-service)
+  and the `deploy-am-service.ps1 -SshTarget '<user>@<confirmed-host>'` helper. Replace the
+  placeholders before use; default/WhatIf is read-only preflight, while writes require
+  separate deployment authorization and `-Deploy` with ShouldProcess.
