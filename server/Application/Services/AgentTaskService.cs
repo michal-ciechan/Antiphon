@@ -1741,6 +1741,8 @@ public sealed class AgentTaskService
         // Stop the delegate BEFORE relabelling the row. A cancel that only changes a status leaves
         // a Claude running against the run's cost ceiling while the board says the work stopped.
         await StopDelegateAsync(task, ct);
+        if (_capacityRecovery is not null)
+            await _capacityRecovery.SupersedeTaskWaitsOnAsync(_db, task.Id, "task-canceled", ct);
         await RemoveEphemeralAgentAsync(task, task.AgentId, ct);
 
         var now = UtcNow();
@@ -2194,6 +2196,9 @@ public sealed class AgentTaskService
         AgentTask task, AgentTaskEventType type, AgentModelLevel level, string detail, CancellationToken ct)
     {
         await StopDelegateAsync(task, ct);
+        if (_capacityRecovery is not null)
+            await _capacityRecovery.SupersedeTaskWaitsOnAsync(
+                _db, task.Id, $"requeued:{type}:attempt-{task.Attempt + 1}", ct);
 
         var now = UtcNow();
         task.Attempt++;
