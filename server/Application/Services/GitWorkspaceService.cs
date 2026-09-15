@@ -904,6 +904,22 @@ public class GitWorkspaceService
     public async Task<GitStrictList<string>> FindSettlementCommitsAsync(
         string repo, Guid taskId, string settlement, CancellationToken ct)
     {
+        var head = await RunAsync(repo, ct, "rev-parse", "--verify", "--quiet", "HEAD");
+        if (head.Code != 0)
+        {
+            // An unborn branch has no settlement history. Prove the symbolic branch is
+            // absent; an unavailable/corrupt HEAD is still an inspection failure.
+            if (head.Code == 1)
+            {
+                var branch = await RunAsync(repo, ct, "symbolic-ref", "--quiet", "HEAD");
+                if (branch.Code == 0 && branch.Stdout.Trim().StartsWith("refs/heads/", StringComparison.Ordinal))
+                {
+                    var exists = await RunAsync(repo, ct, "show-ref", "--verify", "--quiet", branch.Stdout.Trim());
+                    if (exists.Code == 1) return new(true, [], 0);
+                }
+            }
+            return new(false, [], head.Code, head.Stderr);
+        }
         var result = await RunAsync(repo, ct, "log", "--fixed-strings",
             $"--grep=antiphon-settlement: {settlement}", "--format=%H");
         if (result.Code != 0) return new(false, [], result.Code, result.Stderr);
