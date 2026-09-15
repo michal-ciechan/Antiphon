@@ -1304,7 +1304,10 @@ public sealed class AgentTaskDispatcher
                 withholdKill = true;
             }
 
-            await FailAsync(task, reason, ct);
+            // The Failed commit must carry the caller's immutable delivery obligation.
+            // Queue insertion and even this process may fail after that commit.
+            var notificationId = Guid.NewGuid();
+            await FailAsync(task, reason, ct, deliveryFailureNotificationId: notificationId);
 
             if (!withholdKill)
             {
@@ -1333,13 +1336,15 @@ public sealed class AgentTaskDispatcher
             // completion, and the board sees the status flip.
             if (task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is Guid parentSession)
             {
-                var note = DelegationReportFormatter.BuildCompletionNote(task, _settings, reason, land: await LandCompletionFacts.LoadAsync(_db, task, ct));
+                var notification = await _db.AgentTaskLandNotifications.AsNoTracking()
+                    .SingleAsync(n => n.Id == notificationId, ct);
                 try
                 {
                     await _queue.EnqueueAsync(
-                        parentSession, note.Body, MessageSendMode.WhenIdle, ct,
+                        parentSession, notification.Body, MessageSendMode.WhenIdle, ct,
                         QueuedMessageOrigin.Delegation, $"task:{task.RootTaskId:N}",
-                        task.Id, DelegationNoteDigest.Compute(reason), note.Header);
+                        task.Id, notification.ContentDigest, notification.Body.Split('\n')[0],
+                        sourceLandNotificationId: notification.Id);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -2612,8 +2617,11 @@ public sealed class AgentTaskDispatcher
     /// </summary>
     internal async Task<int> RemindUnacknowledgedFailuresAsync(CancellationToken ct)
     {
+        // Delivery obligations are independent of the optional check ramp and remain
+        // discoverable after Failed (or a later retry). Only whole UserPrompt proof closes them.
+        var recovered = await RecoverDeliveryFailureNotificationsAsync(ct);
         if (!_settings.CheckEnabled)
-            return 0;
+            return recovered;
 
         var now = UtcNow();
         var due = await _db.AgentTasks.AsNoTracking()
@@ -2627,7 +2635,7 @@ public sealed class AgentTaskDispatcher
             .OrderBy(t => t.NextCheckAt)
             .ToListAsync(ct);
         if (due.Count == 0)
-            return 0;
+            return recovered;
 
         var ids = due.Select(t => t.Id).ToList();
         var notes = await _db.SessionQueuedMessages.AsNoTracking()
@@ -2661,7 +2669,34 @@ public sealed class AgentTaskDispatcher
             }
         }
 
-        return acted;
+        return acted + recovered;
+    }
+
+    private async Task<int> RecoverDeliveryFailureNotificationsAsync(CancellationToken ct)
+    {
+        if (_scopeFactory is null)
+            return 0;
+        var ids = await _db.AgentTaskLandNotifications.AsNoTracking()
+            .Where(n => n.Kind == LandNotificationKind.DeliveryFailure
+                && n.State != LandNotificationState.Confirmed
+                && n.State != LandNotificationState.NotRequired
+                && n.NextAttemptAt <= UtcNow())
+            .OrderBy(n => n.NextAttemptAt).ThenBy(n => n.Id)
+            .Select(n => n.Id).Take(128).ToListAsync(ct);
+        foreach (var id in ids)
+        {
+            try
+            {
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                await scope.ServiceProvider.GetRequiredService<AgentTaskLandNotificationService>()
+                    .ReconcileAsync(id, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Delivery failure notification {NotificationId} remains owed", id);
+            }
+        }
+        return ids.Count;
     }
 
     private async Task<bool> RemindOneUnacknowledgedFailureAsync(
@@ -4295,7 +4330,8 @@ public sealed class AgentTaskDispatcher
     }
 
     private async Task FailAsync(
-        AgentTask task, string reason, CancellationToken ct, AgentTaskFailureCode? failureCode = null)
+        AgentTask task, string reason, CancellationToken ct, AgentTaskFailureCode? failureCode = null,
+        Guid? deliveryFailureNotificationId = null)
     {
         var now = UtcNow();
         task.Status = AgentTaskStatus.Failed;
@@ -4303,14 +4339,29 @@ public sealed class AgentTaskDispatcher
         task.FailureCode = failureCode;
         task.CompletedAt = now;
         task.ConcurrencyToken = Guid.NewGuid();
-        _db.AgentTaskEvents.Add(new AgentTaskEvent
+        var failedEvent = new AgentTaskEvent
         {
             Id = Guid.NewGuid(),
             AgentTaskId = task.Id,
             Type = AgentTaskEventType.Failed,
             Detail = reason.Length <= 4000 ? reason : reason[..4000],
             At = now,
-        });
+        };
+        _db.AgentTaskEvents.Add(failedEvent);
+        if (deliveryFailureNotificationId is Guid notificationId
+            && task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is not null)
+        {
+            var note = DelegationReportFormatter.BuildCompletionNote(task, _settings, reason,
+                land: await LandCompletionFacts.LoadAsync(_db, task, ct));
+            _db.AgentTaskLandNotifications.Add(new AgentTaskLandNotification
+            {
+                Id = notificationId, TaskId = task.Id, SourceEventId = failedEvent.Id,
+                Kind = LandNotificationKind.DeliveryFailure, ReplyTo = task.ReplyTo,
+                ParentSessionId = task.ParentSessionId, Body = note.Body,
+                ContentDigest = DelegationNoteDigest.Compute(reason),
+                CreatedAt = now, NextAttemptAt = now, State = LandNotificationState.Queued,
+            });
+        }
         await _db.SaveChangesAsync(ct);
     }
 

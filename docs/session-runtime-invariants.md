@@ -387,3 +387,13 @@ remain in the capture. Optional display text uses an explicit `~` truncation mar
 matches the immutable notification Body, including on inbox-conhost fallback. A legacy queue
 row whose Body became a spill pointer stays unconfirmed until the complete original body is
 observed after its attempt floor.
+
+### Delivery-watchdog caller failures (CARD-0481 F2)
+
+The delivery watchdog commits Failed, its event and a DeliveryFailure notification
+outbox row together. Caller-note insertion cannot be the only surviving obligation.
+The failure reminder pass recovers these rows even for already-Failed tasks and with
+optional checks disabled; the notification boot/periodic scan is also a backstop.
+Immediate and recovered enqueue use the same unique notification key. Only a complete
+caller UserPrompt after the queue attempt floor confirms receipt; Sent or task failure
+does not. Pinned by ReceiptFailureDeliveryTests busy/eligible persistence cuts.
