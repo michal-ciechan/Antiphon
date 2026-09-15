@@ -1409,6 +1409,53 @@ public sealed partial class SessionMessageQueueService
             : message.LastDeliveryStartedAt is { } started
                 && SessionGeneration.Compare(currentGeneration, started) > 0;
 
+    // True when a Pending row that this flush is NOT going to deliver may still be holding the
+    // composer: it was typed at least once, its typing belongs to the CURRENT generation, and the
+    // whole head of its body is still on the rendered screen. Deliberately the same predicate pair
+    // (<see cref="DeliveryGenerationChanged"/> + HeadFragmentIsVisibleWhole) the Enter-only
+    // recovery uses to decide "that body is standing in the composer" — the two must agree, or the
+    // queue would re-press Enter for a body it simultaneously believed was gone.
+    //
+    // An unreadable snapshot holds too: "the composer cannot be shown empty" is the same answer
+    // RecoverDeliveryRunLockedAsync gives, and guessing empty is the direction that corrupts a
+    // delivery rather than delaying one.
+    private bool HeldBackTypingBlocksTheComposer(
+        Guid sessionId,
+        IReadOnlyList<SessionQueuedMessage> pending,
+        IReadOnlyList<SessionQueuedMessage> deliverable,
+        DateTime sessionGeneration)
+    {
+        var deliverableIds = deliverable.Select(m => m.Id).ToHashSet();
+        var heldBack = pending
+            .Where(m => !deliverableIds.Contains(m.Id))
+            .Where(m => m.DeliveryAttempts > 0 && !DeliveryGenerationChanged(m, sessionGeneration))
+            .ToList();
+        if (heldBack.Count == 0)
+            return false;
+
+        if (!_runtime.TryGetLiveSnapshot(sessionId, out var snapshot))
+        {
+            _logger.LogInformation(
+                "Holding delivery to session {SessionId}: {Count} held-back message(s) were typed in "
+                + "this generation and the rendered snapshot is unavailable, so the composer cannot "
+                + "be shown empty",
+                sessionId, heldBack.Count);
+            return true;
+        }
+
+        var standing = heldBack.FirstOrDefault(
+            m => ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(snapshot.RenderedScreen, m.Body));
+        if (standing is null)
+            return false;
+
+        _logger.LogWarning(
+            "Holding delivery to session {SessionId}: message {MessageId} ({Attempts} attempt(s)) is "
+            + "still standing whole in the composer, so nothing may be typed on top of it. Release is "
+            + "a cleared composer, a late-confirm, or a new session generation",
+            sessionId, standing.Id, standing.DeliveryAttempts);
+        return true;
+    }
+
     private async Task<bool> CancelDeadBriefsAsync(AppDbContext db,
         IEnumerable<SessionQueuedMessage> messages, DateTime currentGeneration, CancellationToken ct)
     {
@@ -1600,6 +1647,22 @@ public sealed partial class SessionMessageQueueService
                 || SessionGeneration.Equal(deferredG, sessionGeneration))
             .ToList();
         if (deliverable.Count == 0)
+            return late.Handled > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
+
+        // CARD-0501 review F1: SKIPPING a held-back row does not EMPTY its composer. A row that was
+        // typed in this generation and never confirmed may still be standing there unsubmitted (the
+        // Enter-only park above is exactly how that state is reached, and parking deliberately does
+        // not restart the session). Typing the next body on top of it makes the terminal receive
+        // BOTH as one prompt, and the containment matcher would then mark the next row Delivered for
+        // a prompt it never owned. So: hold everything until the composer is demonstrably clear, or
+        // a new generation proves the old composer gone. This is a defer — no attempt is charged,
+        // nothing is parked, and the no-kill guards above are untouched.
+        //
+        // The ordinary exit is the late-confirm that already ran: a held body that really did land
+        // becomes Sent and stops being a held-back row at all. CancelDeadBriefsAsync and a relaunch
+        // are the other two.
+        if (HeldBackTypingBlocksTheComposer(
+                sessionId, pending, deliverable, sessionGeneration))
             return late.Handled > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
 
         pending = deliverable;
