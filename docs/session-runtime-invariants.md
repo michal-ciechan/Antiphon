@@ -148,6 +148,14 @@
 
 ### Preserved Gotcha #25
 
+- **A stale API-error stub cannot settle a resumed task (CARD-0492).** After recovery adoption,
+  settlement checks for a real typed or queued prompt after the stub, excluding compaction and
+  other housekeeping records. A later prompt keeps the task Working for every error class.
+  Recovery prompts carry the open task marker so the resumed report can settle normally.
+  Shared release still pools a live session and warns if it is mid-turn. Unpinned reuse skips
+  working sessions; TTL and cap retirement defer recently active turns and restart the idle
+  clock. A working verdict with no transcript activity for a full idle TTL can still retire.
+
 - **A task row that says Succeeded does not end a process, and a process nobody owns is a zombie
   by construction** (CARD-0221): `RecoverFromBindRefusalAsync` (CARD-0085) released a Worktree
   delegate with neither a kill nor a pool mark, so the janitor never saw it, reconciliation saw

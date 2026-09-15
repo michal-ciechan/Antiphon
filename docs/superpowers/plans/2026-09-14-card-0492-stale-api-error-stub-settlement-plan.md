@@ -300,6 +300,32 @@ committed before any long run.
 
 ## Verification design
 
+### Code-stage execution clarification (2026-09-15, task db8d01f9)
+
+The current stage contract and testing Fast lane supersede the historical full-namespace sweep
+below. Ordinary verification builds once into `bin-c492/`, then runs Unit and these bounded
+integration classes from that output. Fresh TRX files must contain every intended method/class:
+
+| Coverage | Classes |
+|---|---|
+| Adoption, housekeeping, marked recovery | `ApiErrorRecoveryServiceTests` |
+| Settlement, idempotence, release, parent note | `AgentTaskReplyIntegrationTests`, `AgentTaskSettlementRaceTests`, `ComplexityWallRerouteTests` |
+| Pool retirement/reuse and dispatcher regressions | `AgentTaskPoolTests`, `AgentTaskCheckScheduleTests`, `GrokDelegateDispatchTests` |
+| Read-time liveness | `AgentTaskDetailBlockedContextTests` |
+| Header rendering | Unit lane including `DelegationReportFormatterTests` |
+| Drawer liveness | Client suite including `TaskDetailBody.test.tsx` |
+
+V-1 through V-23 also get exact-method ordinary runs; V-24 is the two named Vitest cases.
+R-1 through R-14 below are deliberate mutations (PCs), not ordinary regression cases. All remain
+pending for explicitly commissioned post-land SourceLanding Mutation after ordinary Review.
+S1+S2 stay together on this original Code branch. Restart target: server; landing owner: db8d01f9.
+
+Clarifications found during implementation: V-22's table is authoritative (`live-idle`); S4's
+earlier `live-working` fixture is impossible after D-1. Cap protection must select replacement
+idle members to satisfy V-16, not merely remove protected members from the original retire set.
+V-10 seeds a marked resume and tests settlement; omitting the producer prefix (R-5) is directly
+detected by V-7/V-9, not V-10. Mutation should retain that missing end-to-end control finding.
+
 Build to an alternate output path (`--property:OutputPath=bin-c492/`, forward slash) while the
 daemons hold `bin`. Run TUnit with `dotnet run --project tests/Antiphon.Tests -- --treenode-filter
 "/*/*/<Class>/<Method>"`; the classes below are all in `Antiphon.Tests.Application`. Full-assembly

@@ -390,6 +390,11 @@ the skill). Parallelism on one model: let the pool spawn another, or pass `-Work
 "2–3 reusable workers per directory+model+tier, scale only for real parallelism" policy, implemented
 by the pool rather than by named rows.
 
+The unpinned pool skips sessions whose transcript still reads working. Retirement by TTL or
+directory cap protects a working session with transcript activity inside the idle TTL and
+restarts its idle clock; a full TTL of silence permits retirement. Shared release warns when
+it pools a mid-turn session. This preserves process ownership while a resumed turn finishes.
+
 `POST /api/agents` is for a **standing identity**, not a unit of work: an orchestrator seat, a
 channel-bound agent, the check interpreter, or a human-facing named worker that should outlive a
 card. Pass an existing `BoardId` (the project's real board). A unique `workingDirectory` that is not
@@ -565,6 +570,12 @@ curl -s localhost:17202/api/sessions/<sessionId>/transcript
 
 **Traps:**
 
+- Task detail and `delegate.ps1 -Status` include a read-time `Session:` line: status, working/idle
+  and last transcript time, or its end time. Failed/Blocked completion headers carry
+  `session=live-working|live-idle|ended`, observed before release. The API-error failure reason
+  also names that observation. `Recovery ended (...)` can still describe an exhausted or
+  human-required recovery without a later real prompt; it cannot settle from an older stub
+  after a real resume. Task terminal status alone does not establish that its session ended.
 - **Do not scan processes by command-line substring.** A scan for `*bin-c45*` matched *the scanning
   command itself*, "finding" a runaway agent that was the orchestrator's own session, and the
   follow-up kill terminated its own tool shell. Exclude self and ancestors, or key on session
