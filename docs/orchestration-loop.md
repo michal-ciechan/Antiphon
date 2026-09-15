@@ -353,6 +353,9 @@ is exhausted the task is **Blocked** (or 409 `routing_exhausted` with `-RefuseIf
 **relay that to the operator and never pick a kind yourself.** A human answers with Retry,
 `delegate.ps1 -Reroute <id> -Kind … -Level …`, Cancel, or by clearing a hold. Auto-resume onto
 an already-listed candidate when capacity returns is executing the instruction, not a new guess.
+A usage-wall reroute is ordinary work on the new candidate: the walled session's capacity wait
+ends with the session, and the requeued row dispatches on the next tick unless the new candidate
+is itself held (CARD-0481).
 
 **A Blocked-on-question child (CARD-0294 S1+S2).** The parent `[task … blocked]` note carries
 `reason:` / `asks:` / `authority:` / `next:` above the body, outside the excerpt window. If
