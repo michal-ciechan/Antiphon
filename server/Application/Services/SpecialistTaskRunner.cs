@@ -341,8 +341,7 @@ public sealed class SpecialistTaskRunner
             CreatedAt = now,
             ExecutionDeadlineAt = executionDeadlineAt,
         };
-        _db.AgentTasks.Add(row);
-        _db.AgentTaskEvents.Add(new AgentTaskEvent
+        var created = new AgentTaskEvent
         {
             Id = Guid.NewGuid(),
             AgentTaskId = id,
@@ -352,8 +351,29 @@ public sealed class SpecialistTaskRunner
                 + $" Execution: {row.AgentKind}/{row.ModelLevel}/{row.SpecialistModelAlias}."
                 + $" Session: {row.SpecialistSessionId:D} at {row.SpecialistSessionStartedAt:O}.",
             At = now,
-        });
-        await _db.SaveChangesAsync(ct);
+        };
+        _db.AgentTasks.Add(row);
+        _db.AgentTaskEvents.Add(created);
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch
+        {
+            // CARD-0501 re-review R2 (F2a): the same "needs attention" failure in a different
+            // subsystem. A failed SaveChanges does NOT untrack what it tried to insert — EF only
+            // accepts changes on success — so both rows stay Added on this SCOPED context. The
+            // caller reports the failure through that same context, and its save then flushes
+            // them: a Queued interpretation task that nothing is waiting on, published minutes
+            // after the check it belonged to already gave up and shipped a degraded note. The
+            // dispatcher does not know it is abandoned; it places it on the specialist seat, the
+            // seat occupancy rule blocks the NEXT real run behind it, and the result is billed and
+            // read by nobody. Abandoned work must not stay dispatchable, so it is detached here,
+            // at the only point that knows the write is being given up on.
+            _db.Entry(row).State = EntityState.Detached;
+            _db.Entry(created).State = EntityState.Detached;
+            throw;
+        }
         return row;
     }
 
