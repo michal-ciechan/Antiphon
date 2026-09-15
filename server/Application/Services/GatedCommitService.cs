@@ -100,9 +100,10 @@ public sealed class GatedCommitService
         }
 
         // A rename is one change: selecting either endpoint must include the other endpoint.
-        var selected = pathspec is null ? dirty : status.Items
-            .Where(c => pathspec.Contains(c.Path, StringComparer.Ordinal)
-                || c.OldPath is not null && pathspec.Contains(c.OldPath, StringComparer.Ordinal))
+        var scopePaths = pathspec?.Select(p => p.Replace('\\', '/')).ToHashSet(StringComparer.Ordinal);
+        var selected = scopePaths is null ? dirty : status.Items
+            .Where(c => scopePaths.Contains(c.Path.Replace('\\', '/'))
+                || c.OldPath is not null && scopePaths.Contains(c.OldPath.Replace('\\', '/')))
             .SelectMany(c => c.OldPath is null ? new[] { c.Path } : new[] { c.Path, c.OldPath })
             .Select(p => p.Replace('\\', '/')).Distinct(StringComparer.Ordinal).ToArray();
         var candidates = pathspec is null
