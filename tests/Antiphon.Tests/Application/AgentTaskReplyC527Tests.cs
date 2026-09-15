@@ -676,9 +676,7 @@ public partial class AgentTaskReplyIntegrationTests
     public async Task C527_ineligible_tasks_never_run_the_hook(Ineligible c)
     {
         var spy = new RecordingGitWorkspaceService();
-        var seeded = await SeedC527Async(c == Ineligible.SourceLanding
-            ? t => t.SourceLandingOperationId = Guid.NewGuid()
-            : null);
+        var seeded = await SeedC527Async();
         using var repo = seeded.Repo;
         await File.WriteAllTextAsync(Path.Combine(repo.Path, "x.md"), "x");
         await SeedFileEditAsync(seeded.SessionId, "Write", Path.Combine(repo.Path, "x.md"), DateTime.UtcNow);
@@ -690,9 +688,25 @@ public partial class AgentTaskReplyIntegrationTests
                 case Ineligible.ReadOnly: task.Workspace = WorkspaceMode.ReadOnly; break;
                 case Ineligible.CommitRole: task.Role = AgentTaskRole.Commit; break;
                 case Ineligible.MutationRole: task.Role = AgentTaskRole.Mutation; break;
+                case Ineligible.SourceLanding:
+                {
+                    var landingId = Guid.NewGuid();
+                    db.AgentTaskLandings.Add(new AgentTaskLanding
+                    {
+                        Id = landingId,
+                        TaskId = task.Id,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow,
+                    });
+                    await db.SaveChangesAsync();
+                    await db.Database.ExecuteSqlInterpolatedAsync(
+                        $"UPDATE \"AgentTasks\" SET \"SourceLandingOperationId\" = {landingId} WHERE \"Id\" = {task.Id}");
+                    break;
+                }
             }
 
-            await db.SaveChangesAsync();
+            if (c != Ineligible.SourceLanding)
+                await db.SaveChangesAsync();
         }
 
         var head = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
