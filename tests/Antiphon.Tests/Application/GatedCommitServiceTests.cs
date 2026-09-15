@@ -9,7 +9,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-public sealed class GatedCommitServiceTests
+public sealed partial class GatedCommitServiceTests
 {
     [Test]
     [Arguments("worktree")]
