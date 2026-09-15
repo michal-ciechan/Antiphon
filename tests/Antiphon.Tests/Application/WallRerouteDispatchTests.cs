@@ -4,6 +4,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
@@ -264,6 +265,35 @@ public class WallRerouteDispatchTests
     }
 
     [Test]
+    public async Task Receipt_throw_after_launch_leaves_the_task_dispatched()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var task = await SeedQueuedOpusAsync(schema, workspace.Path);
+        var (service, _, provider) = CapacityRecoveryTestSupport.CreateService(schema);
+        await using var services = provider;
+        var wait = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+            $"task:{task.Id:N}", CapacityWaitConsumerKind.QueuedTask, taskId: task.Id,
+            holdAlreadyCleared: true), CancellationToken.None);
+        (await service.GrantReadyAsync(CancellationToken.None)).ShouldBe(1);
+        var fault = new ThrowOnReceiptSave();
+        var result = await CapacityRecoveryTaskTests.CreateDispatcher(schema.ConnectionString, fault)
+            .TickAsync(CancellationToken.None);
+        fault.Throws.ShouldBe(1);
+        result.Dispatched.ShouldBe(1);
+        result.Failures.ShouldBe(0);
+        await using var verify = CreateContext(schema);
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        stored.AgentSessionId.ShouldNotBeNull();
+        stored.FailureReason.ShouldBeNull();
+        var leftover = await verify.CapacityRecoveryWaits.SingleAsync(w => w.Id == wait.Id);
+        leftover.State.ShouldBe(CapacityRecoveryWaitState.Admitted);
+        leftover.SessionId.ShouldBeNull();
+        leftover.LaunchSessionId.ShouldBeNull();
+    }
+
+    [Test]
     [Arguments(true)]
     [Arguments(false)]
     public async Task Redeemed_dispatch_receipts_the_wait_and_the_transcript_progresses_it(bool withWait)
@@ -322,6 +352,25 @@ public class WallRerouteDispatchTests
             var progressed = await verify.CapacityRecoveryWaits.SingleAsync(w => w.Id == wait.Id);
             progressed.State.ShouldBe(CapacityRecoveryWaitState.Progressed);
             progressed.AdmissionCount.ShouldBe(1);
+        }
+    }
+
+    private sealed class ThrowOnReceiptSave : SaveChangesInterceptor
+    {
+        public int Throws;
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (eventData.Context?.ChangeTracker.Entries<CapacityRecoveryWait>()
+                    .Any(e => e.Entity.State == CapacityRecoveryWaitState.StartAccepted) == true)
+            {
+                Interlocked.Increment(ref Throws);
+                throw new InvalidOperationException("injected receipt save failure");
+            }
+
+            return ValueTask.FromResult(result);
         }
     }
 
