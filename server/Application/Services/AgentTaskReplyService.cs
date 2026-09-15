@@ -1629,6 +1629,10 @@ public sealed class AgentTaskReplyService
 
         if (_settings.PoolEnabled && task.SourceLandingOperationId is null && task.Workspace == WorkspaceMode.Shared && sessionAlive)
         {
+            if (await SessionMessageQueueService.IsWorkingAsync(db, task.AgentSessionId!.Value, ct))
+                _logger.LogWarning(
+                    "Delegate '{Name}' pooled warm while session {Id} is mid-turn (task {ShortId} {Status}) — the janitor defers retirement while the turn remains active",
+                    agent.Name, task.AgentSessionId, DelegationReportFormatter.Short(task.Id), task.Status);
             agent.Status = AgentStatus.Idle;
             agent.PoolIdleSince = now;
             // Reserved for ITS run first: the caller that just used it can send follow-up work to

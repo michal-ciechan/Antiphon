@@ -4423,13 +4423,21 @@ public sealed class AgentTaskDispatcher
                     && a.Kind == claimed.AgentKind)
                 .ToListAsync(ct);
 
-            agent = warm
+            var candidates = warm
                 .Where(a => SameDirectory(a.WorkingDirectory, claimed.WorkingDirectory))
                 .Where(a => claimed.Workspace != WorkspaceMode.Shared
                     || !IsWorktreeWorkingDirectory(a.WorkingDirectory))
                 .Where(a => InheritedEnvMatchesPool(a, claimed))
                 .Where(a => a.PoolReservedForRootTaskId == claimed.RootTaskId
                     || a.PoolIdleSince <= reservationCutoff)
+                .ToList();
+            var candidateSessions = candidates
+                .Select(a => Guid.TryParse(a.PersistentSessionId, out var id) ? (Guid?)id : null)
+                .OfType<Guid>().Distinct().ToList();
+            var working = await SessionMessageQueueService.IsWorkingBatchAsync(_db, candidateSessions, ct);
+            agent = candidates
+                .Where(a => !Guid.TryParse(a.PersistentSessionId, out var id)
+                    || !working.GetValueOrDefault(id))
                 // Same-run context first — that agent has just read the code this run cares
                 // about; then the freshest context.
                 .OrderByDescending(a => a.PoolReservedForRootTaskId == claimed.RootTaskId)
@@ -4879,6 +4887,43 @@ public sealed class AgentTaskDispatcher
             .ToListAsync(ct))
             .ToHashSet();
 
+        // Protect recent work in both the TTL and cap arms. Query the whole warm set so a
+        // protected cap member is replaced by the next oldest idle member, never another worker.
+        var warmSessions = parsed.Where(p => warm.Contains(p.Agent) && p.SessionId.HasValue)
+            .Select(p => p.SessionId!.Value).Distinct().ToList();
+        var workingSessions = await SessionMessageQueueService.IsWorkingBatchAsync(_db, warmSessions, ct);
+        var lastTranscript = await _db.TranscriptEntries.AsNoTracking()
+            .Where(t => warmSessions.Contains(t.AgentSessionId))
+            .GroupBy(t => t.AgentSessionId)
+            .Select(g => new { SessionId = g.Key, At = g.Max(t => t.CreatedAt) })
+            .ToDictionaryAsync(t => t.SessionId, t => t.At, ct);
+        var protectedAgents = parsed.Where(p => p.SessionId is Guid sid
+                && liveSessionIds.Contains(sid) && workingSessions.GetValueOrDefault(sid)
+                && lastTranscript.GetValueOrDefault(sid) > cutoff)
+            .Select(p => p.Agent).ToHashSet();
+        var acted = 0;
+        foreach (var agent in retire.Where(protectedAgents.Contains).ToList())
+        {
+            retire.Remove(agent);
+            if (sourcedOwnerIds.Contains(agent.Id))
+                continue;
+            agent.PoolIdleSince = now;
+            var sid = Guid.Parse(agent.PersistentSessionId!);
+            _logger.LogWarning(
+                "Deferred retirement of warm delegate '{Name}': session {Id} is mid-turn (last transcript {At:O})",
+                agent.Name, sid, lastTranscript[sid]);
+            acted++;
+        }
+        foreach (var group in warm.GroupBy(a => (
+            Directory: DelegationWorkspaceResolver.NormalizeSeparators(a.WorkingDirectory).ToUpperInvariant(), a.Kind)))
+        {
+            var needed = group.Count() - Math.Max(0, _settings.PoolMaxIdlePerDirectory)
+                - group.Count(retire.Contains);
+            foreach (var extra in group.Where(a => !retire.Contains(a) && !protectedAgents.Contains(a))
+                .OrderBy(a => a.PoolIdleSince).Take(Math.Max(0, needed)))
+                retire.Add(extra);
+        }
+
         var stale = new HashSet<Agent>();
         foreach (var row in parsed)
         {
@@ -4900,11 +4945,15 @@ public sealed class AgentTaskDispatcher
             .ToListAsync(ct))
             .ToHashSet();
 
-        var acted = 0;
         foreach (var agent in retire)
         {
             if (sourcedOwnerIds.Contains(agent.Id))
                 continue;
+            if (Guid.TryParse(agent.PersistentSessionId, out var sid)
+                && workingSessions.GetValueOrDefault(sid))
+                _logger.LogWarning(
+                    "Retiring warm delegate '{Name}': session {Id} reads mid-turn but has been silent since {At:O} (full idle TTL elapsed)",
+                    agent.Name, sid, lastTranscript.GetValueOrDefault(sid));
             var idleSince = agent.PoolIdleSince;
             await KillPooledSessionAsync(agent, ct);
             FinishPoolRetire(agent, incidentAgentIds.Contains(agent.Id), now);
