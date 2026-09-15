@@ -2267,9 +2267,20 @@ public sealed partial class SessionMessageQueueService
 
         // Success finishes the original typing. Failure consumes another bounded recovery cycle;
         // retain its typing time, transcript floor and generation for late-confirm.
+        //
+        // The charge is saved BEFORE the handler runs and in a different scope from it, deliberately
+        // (CARD-0501 D-3): HandleDeliveryFailureAsync reloads the rows and computes "parked" from the
+        // count it reads, so the count has to be durable first. A crash in between therefore costs
+        // the attempt and loses the incident, which is the safe direction — the alternative is an
+        // Enter-only cycle that can repeat without bound. The boundary below is the observation seam
+        // for that ordering; production installs the no-op base class.
         foreach (var message in run)
             message.DeliveryAttempts++;
         await db.SaveChangesAsync(ct);
+        using (var boundaryScope = _scopeFactory.CreateScope())
+            if (boundaryScope.ServiceProvider.GetService<LandDeliveryBoundary>() is { } chargeBoundary)
+                await chargeBoundary.ReachedAsync(
+                    "queue-enter-only-charged", head.ExecutionTaskId ?? Guid.Empty, head.Id, ct);
         await HandleDeliveryFailureAsync(sessionId, ids, outcome.Verdict, ct, capturedGeneration,
             enterOnlyRecovery: true);
         return FlushResult.Failed;

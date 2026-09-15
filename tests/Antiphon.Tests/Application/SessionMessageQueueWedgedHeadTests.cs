@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Application.Exceptions;
@@ -6,6 +7,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
 
@@ -18,12 +20,14 @@ public class SessionMessageQueueWedgedHeadTests
 {
     private const string Body = "[antiphon-task:419b8b34] role=Check tier=Low workspace=Shared";
     private static AppDbContext CreateContext() => BridgeQueueHarness.CreateContext();
-    private static Task<BridgeQueueHarness> CreateAsync(bool alwaysOn = false) =>
+    private static Task<BridgeQueueHarness> CreateAsync(
+        bool alwaysOn = false, Action<IServiceCollection>? configureServices = null) =>
         BridgeQueueHarness.CreateAsync(new()
         {
             AlwaysOn = alwaysOn,
             // These cases judge the recovery verdict, not delayed transcript ingestion.
             ConfigureDeliveryVerification = v => v.PostFailureConfirmGraceSeconds = 0,
+            ConfigureServices = configureServices,
         });
 
     private static async Task<DateTime> GenerationAsync(BridgeQueueHarness h)
@@ -376,6 +380,95 @@ public class SessionMessageQueueWedgedHeadTests
         h.Adapter.Inputs.ShouldBe(["\r", "\r", "\r"]);
         h.Adapter.Killed.ShouldBeFalse();
         h.Adapter.KillGenerationCalls.ShouldBeEmpty();
+    }
+
+    // CARD-0501 review F2. The charge and the incident are two writes in two scopes, and the order
+    // is load-bearing: HandleDeliveryFailureAsync reloads the rows and decides "parked" from the
+    // count it reads, so the count must already be durable. A crash in between must therefore cost
+    // the attempt - losing it would let an Enter-only cycle repeat without bound, which is the loop
+    // this card exists to close.
+    [Test]
+    public async Task A_crash_between_the_charge_and_the_failure_handler_keeps_the_attempt_charged()
+    {
+        var boundary = new CrashAtChargeBoundary();
+        await using var h = await CreateAsync(
+            configureServices: services => services.AddSingleton<LandDeliveryBoundary>(boundary));
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var id = await h.SeedPendingMessageAsync(Body, deliveryAttempts: 1, baselineSequence: baseline);
+        h.Adapter.PrimeComposer(Body);
+        h.Adapter.SwallowSubmits = 99;
+
+        await Should.ThrowAsync<IOException>(
+            () => h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None));
+
+        boundary.Calls.ShouldBe(1);
+        var charged = await MessageAsync(id);
+        charged.DeliveryAttempts.ShouldBe(2, "the charge is committed before the handler is called");
+        charged.Status.ShouldBe(QueuedMessageStatus.Pending);
+        charged.DeliveryVerdict.ShouldBeNull("the handler never ran, so it stamped nothing");
+        h.Adapter.Killed.ShouldBeFalse();
+        await using (var db = CreateContext())
+            (await db.AgentIncidents.AnyAsync(i => i.AgentId == h.AgentId)).ShouldBeFalse();
+
+        // The bound still holds across the crash: the third cycle parks instead of Entering again.
+        await Should.ThrowAsync<IOException>(
+            () => h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None));
+        (await MessageAsync(id)).DeliveryAttempts.ShouldBe(3);
+
+        var enters = h.Adapter.Inputs.Count;
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+        boundary.Calls.ShouldBe(2, "a parked row is never Entered again");
+        h.Adapter.Inputs.Count.ShouldBe(enters);
+        (await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None)).Messages
+            .Single(m => m.Id == id).Parked.ShouldBeTrue();
+    }
+
+    private sealed class CrashAtChargeBoundary : LandDeliveryBoundary
+    {
+        public int Calls;
+        public override Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
+        {
+            if (boundary != "queue-enter-only-charged")
+                return Task.CompletedTask;
+            Calls++;
+            return Task.FromException(new IOException("owned crash between the charge and the handler"));
+        }
+    }
+
+    // A recovered run can be a BATCH (CARD-0342): one composed body, one Enter, several rows. The
+    // charge is per row, so a failure must move every row of the run - charging only the head would
+    // leave the tail able to re-enter the same cycle forever behind a parked head.
+    [Test]
+    public async Task Failed_Enter_only_recovery_charges_every_row_of_the_batch()
+    {
+        await using var h = await CreateAsync();
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var started = DateTime.UtcNow - TimeSpan.FromMinutes(4);
+        const string first = "batch first body that is long enough";
+        const string second = "batch second body that is long enough";
+        var firstId = await h.SeedPendingMessageAsync(first, deliveryAttempts: 1,
+            baselineSequence: baseline, origin: QueuedMessageOrigin.Delegation,
+            status: QueuedMessageStatus.Sent, lastDeliveryStartedAt: started,
+            conversationKey: "task:c501-batch");
+        var secondId = await h.SeedPendingMessageAsync(second, deliveryAttempts: 1,
+            baselineSequence: baseline, origin: QueuedMessageOrigin.Delegation,
+            status: QueuedMessageStatus.Sent, lastDeliveryStartedAt: started,
+            conversationKey: "task:c501-batch");
+        h.Adapter.PrimeComposer(ChannelPromptFormat.FormatBatch([first], second));
+        h.Adapter.SwallowSubmits = 99;
+
+        await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldAllBe(input => input == "\r", "one composed body, Enter only");
+        foreach (var id in new[] { firstId, secondId })
+        {
+            var row = await MessageAsync(id);
+            row.DeliveryAttempts.ShouldBe(2);
+            row.Status.ShouldBe(QueuedMessageStatus.Pending);
+            row.DeliveryVerdict.ShouldBe(DeliveryVerdict.NoTranscriptRecord);
+            row.LastDeliveryStartedAt.ShouldNotBeNull().ShouldBe(started, TimeSpan.FromSeconds(1));
+            row.LastDeliveryBaselineSequence.ShouldBe(baseline);
+        }
     }
 
     private static async Task<Guid> AttachTaskAsync(Guid messageId, AgentTaskStatus status,
