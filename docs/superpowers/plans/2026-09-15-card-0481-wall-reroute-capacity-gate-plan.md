@@ -1141,3 +1141,198 @@ DeliveryFailure-specific hosted pagination/retention and attention projection ga
 The existing destination matrix covers terminal callers without a queue row; this
 repair adds the delivered-row case. Caller owns live post-land census after server
 activation, ordinary Review, original-owner landing and SourceLanding commissioning.
+
+
+## Round-4 F3 ordinary evidence (Code task 4d7a799b)
+
+F3 is repaired. Both stopped/failed caller regressions pass; the full receipt class
+passes **21/21**. Final ordinary I/U coverage is **2,907 cases: 2,892 passed,
+14 inherited failures, one unchanged skip**. The thirteen failures named in the brief
+remain unchanged. One additional Git timeout reproduced in isolation on both fixed
+source and untouched reviewed base; it is reported separately, not relabeled passing.
+Every V except inherited-red V-12 passes. No deliberate mutant ran. Next: ordinary
+read-only Review, preserving original Code/landing owner **00222dc7**.
+
+- Repair task: `4d7a799b`; branch: `feat/card-task-4d7a799b`.
+- Exact worktree: `C:\Antiphon\worktrees\card-task-4d7a799b`.
+- Tested production/test commit: `63f6770eedd39ec0e30492e8da252657bcf2e5d9`.
+  The final evidence commit changes this plan only.
+- Reviewed base: `bc2d2715de0ec4ea684f74489d88e288d327e053`.
+- Evidence root: `C:\Antiphon\worktrees\card-task-4d7a799b\.antiphon\c481r4-evidence`.
+- Restart: **server**. No landing, deployment or restart was performed.
+
+Production recovery now links the existing keyed row before the stopped/failed
+destination guard, validates its destination/digest identity, preserves completion
+stamping, and reconciles the complete destination UserPrompt against its attempt
+floor. The watchdog and capacity-receipt production paths (F1/F2) are unchanged.
+
+The implementation slice was committed and pushed before verification. One primary
+build (`dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c481r4/ --nologo`)
+passed with **0 errors / 233 existing warnings**, 73.28 s. The separate untouched-base
+build used `bin-c481r4base/`, also 0 errors / 233 warnings, 86.42 s. All test commands
+used `--no-build`; no production/test source changed during or after these runs.
+
+### Exact filters and actual results
+
+Common command:
+
+```powershell
+dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c481r4/ -- --treenode-filter '<filter>' --report-trx --report-trx-filename '<lane>.trx' --results-directory '.antiphon/c481r4-evidence/<lane>'
+```
+
+B and DB run from the untouched detached baseline worktree
+`C:\Antiphon\worktrees\card-task-4d7a799b-base`, using `bin-c481r4base/` and absolute
+results paths under the primary evidence root. D/DB use the same exact-method filter.
+- **I**: `/*/*/(WallRerouteDispatchTests*)|(CapacityWaitOrphanSweepTests*)|(ComplexityWallRerouteTests*)|(CapacityRecoveryTaskTests*)|(CapacityRecoveryGrantLivenessTests*)|(CapacityRecoveryAttentionTests*)|(CapacityRecoveryCompatibilityTests*)|(CapacityRecoverySupervisionTests*)|(RoutingPinCandidateDispatchTests*)|(ModelAvailabilityDispatcherTests*)|(ApiErrorRecoveryServiceTests*)|(AgentTaskReplyIntegrationTests*)|(CapacityRecoveryAcceptanceTests*)|(ReceiptFailureDeliveryTests*)|(AgentTaskDeliveryWatchdogTests*)|(AgentTaskDispatchFailureTests*)|(AgentTaskLandReceiptTests*)|(AgentTaskLandNotificationRecoveryTests*)|(AgentTaskLandNotificationPersistenceTests*)|(DispatchBaseNotificationTests*)/*`
+- **U**: `/*/*/*/*[Category=Unit]`
+- **B**: `/*/*/*/(Registry_matches_compiled_metadata*)|(C487_G142*)|(C487_G068*)|(every_test_class_is_tagged_unit_xor_integration*)|(Non_chain_task_fails_on_Fable_5_as_today*)|(Required_pinned_task_is_untouched_on_a_Fable_5_wall*)|(Claude_production_shape_session_limit_uses_AssistantText_not_the_6h_fallback*)|(Codex_TurnEnd_text_without_AssistantText_still_parses_session_limit*)|(Empty_wall_adopt_is_repaired_when_a_later_call_supplies_the_real_text*)|(Fable_5_stub_writes_a_fallback_hold_and_does_not_enqueue*)|(Grok_402_stub_writes_a_fallback_hold_for_grok_4_6_and_never_enqueues*)|(Session_limit_stub_schedules_one_resume_at_reset_plus_padding*)|(Wall_parks_after_three_deaths*)`
+- **D**: `/*/*/AgentTaskDispatchFailureTests/a_git_timeout_fails_one_task_not_the_tick`
+
+| Run | Actual expanded outcome | Duration | TRX under evidence root |
+|---|---|---|---|
+| I | 447: 437 pass / 10 fail | 1,676.130 s | integration/integration.trx |
+| U | 2,460: 2,455 pass / 4 fail / 1 skip | 324.199 s | unit/unit.trx |
+| B | 13/13 inherited fail | 45.651 s | baseline/baseline.trx |
+| D | 1/1 timeout, fixed source | 31.912 s | timeout-current/timeout-current.trx |
+| DB | 1/1 same timeout, untouched base | 31.625 s | timeout-base/timeout-base.trx |
+
+I includes an async diagnostic capture pause of about 307 s. The snapshot found an
+existing landing-persistence test awaiting a PostgreSQL commit; the run subsequently
+completed. This is a raw observed duration, not a clean timing benchmark. Capture,
+analysis and test commands all finished. `integration-wait.dmp`, `dumpasync.log` and
+`diagnostic-capture.json` preserve this evidence.
+
+Fresh TRX inspection confirmed exactly the twenty intended integration classes,
+every intended method/variant and nonzero counts. `summarize.py`, `verify-matrix.py`,
+`verification-matrix.json`, `baseline-comparison.json`, per-lane summaries and the
+SHA-256 `trx-manifest.json` retain the complete execution inventory.
+
+### Coverage-to-class: actual I
+
+| Class | Expanded outcome |
+|---|---|
+| AgentTaskDeliveryWatchdogTests | 75: 75 pass / 0 fail |
+| AgentTaskDispatchFailureTests | 15: 14 pass / 1 fail |
+| AgentTaskLandNotificationPersistenceTests | 9: 9 pass / 0 fail |
+| AgentTaskLandNotificationRecoveryTests | 21: 21 pass / 0 fail |
+| AgentTaskLandReceiptTests | 30: 30 pass / 0 fail |
+| AgentTaskReplyIntegrationTests | 128: 128 pass / 0 fail |
+| ApiErrorRecoveryServiceTests | 36: 29 pass / 7 fail |
+| CapacityRecoveryAcceptanceTests | 15: 15 pass / 0 fail |
+| CapacityRecoveryAttentionTests | 3: 3 pass / 0 fail |
+| CapacityRecoveryCompatibilityTests | 4: 4 pass / 0 fail |
+| CapacityRecoveryGrantLivenessTests | 12: 12 pass / 0 fail |
+| CapacityRecoverySupervisionTests | 6: 6 pass / 0 fail |
+| CapacityRecoveryTaskTests | 6: 6 pass / 0 fail |
+| CapacityWaitOrphanSweepTests | 6: 6 pass / 0 fail |
+| ComplexityWallRerouteTests | 11: 9 pass / 2 fail |
+| DispatchBaseNotificationTests | 20: 20 pass / 0 fail |
+| ModelAvailabilityDispatcherTests | 3: 3 pass / 0 fail |
+| ReceiptFailureDeliveryTests | 21: 21 pass / 0 fail |
+| RoutingPinCandidateDispatchTests | 11: 11 pass / 0 fail |
+| WallRerouteDispatchTests | 15: 15 pass / 0 fail |
+
+### Every V / R outcome
+
+| ID | Actual ordinary outcome | Shared command |
+|---|---|---|
+| V-1 | PASS, 1 | I |
+| V-2 | PASS, 1 | I |
+| V-3 | PASS, 1 | I |
+| V-4 | PASS, 1 | I |
+| V-5 | PASS, 2 | I |
+| V-5b | PASS, 1 | I |
+| V-6 | PASS, 1 | I |
+| V-6b | PASS, 1 | I |
+| V-6c | PASS, 1 | I |
+| V-8 | PASS, 3 | I |
+| V-9 | PASS, 1 | I |
+| V-10 | PASS, 1 | I |
+| V-10b | PASS, 1 | I |
+| V-11 | PASS, 2 | I |
+| V-13 | PASS, 1 | I |
+| V-14 | PASS, 1 | I |
+| V-15 | PASS, 2 | I |
+| V-16 | PASS, 3 | I |
+| V-19 | PASS, 2 | I |
+| V-18 | PASS, 12 | I |
+| V-17 | PASS, 2 | I |
+| guard-PC-11 | PASS, 1 | I |
+| V-12 | INHERITED RED: original I 9 + U 4 reproduced by B; additional I Git timeout reproduced by D/DB; U skip unchanged | I + U + B + D + DB |
+
+No R-n or V-7 exists. All twenty-two V IDs and the PC-11 ordinary guard are accounted
+for. V-19's Failed/Stopped variants pass in 2.152 / 2.339 s respectively.
+
+The thirteen original failure names are unchanged from the round-3 evidence above.
+Eleven assertion messages match exactly; Fable/Grok fallback-hold messages differ
+only in timestamp values and retain the same subsecond-precision mismatch. The extra
+failure is `AgentTaskDispatchFailureTests.a_git_timeout_fails_one_task_not_the_tick`:
+the existing 30-second timeout fails in I, then in exact-method D and DB. Its source
+and the dispatcher path it exercises are unchanged. There are no unexplained added
+or removed failures after the independent baseline diagnostic. No failure was repaired
+or called flaky; no timeout, assertion or allowlist was loosened.
+
+Duration tripwire: I **25** and U **50** unlisted >=5-second rows (both exit 1).
+The two new V-19 rows are below five seconds. Timing remains a Review caveat.
+
+### Pending Mutation inventory
+
+Every row and named variant below is **pending**. No red/restore/green cycle ran.
+Mutation owns those exact-method cycles and missing-control discovery only after
+ordinary Review, original-owner landing and explicit SourceLanding commissioning.
+
+| PC | Pending targets / variants |
+|---|---|
+| PC-1 | V-1 and V-3: remove kind scope plus requeue supersession |
+| PC-2 | V-1 and V-2 red; V-3 isolates kind scope from supersession |
+| PC-3 | V-4: disable rewalk supersession |
+| PC-4 | V-5 old-candidate false arm; already-chosen true control |
+| PC-5 | V-6b red; V-6 unchanged-reason control |
+| PC-6 | V-8 Stopped, Failed, missing-session arms |
+| PC-7 | V-9 Succeeded, Failed, Canceled, missing-task owners |
+| PC-8 | V-10 Blocked, live-owner and excluded-consumer controls |
+| PC-9 | V-11 withWait true/false |
+| PC-10 | V-6 omitted counter |
+| PC-11 | Repeated_model_hold_persists_the_new_wait_without_duplicate_trace omitted SaveChanges |
+| PC-12 | V-13 unwrapped receipt catch |
+| PC-13 | V-14 abandoned-wait detachment |
+| PC-14 | V-15 busy/eligible; enqueue-removal and busy-gate defects |
+| PC-15 | V-16 queue-committed and attempt-committed |
+| PC-16 | V-16 prompt-accepted late-confirm |
+| PC-17 | V-17 busy/eligible keyed failure-note delivery |
+| PC-18 | V-18 obligation omission; obligation-insert and other persistence cuts, busy/eligible |
+| PC-19 | V-18 obligation-insert atomic rollback, busy/eligible; failed-committed does not independently detect a newly split earlier commit |
+| PC-20 | V-18 failed-committed/note-insert, busy/eligible; Dispatched-only and CheckEnabled gating are separate defects |
+| PC-21 | V-18 note-committed key omission, busy/eligible |
+| PC-22 | V-18 attempt-committed false receipt, busy/eligible |
+| PC-23 | V-18 prompt-accepted late-confirm, busy/eligible |
+| PC-24 | V-18 failed-committed/note-insert truncated body, busy/eligible |
+| PC-25 | V-18 failed-committed/note-insert/note-committed completion stamp, busy/eligible |
+| PC-26 | V-19 Stopped/Failed; move rediscovery below terminal guard; Confirmed assertion must observe DestinationUnavailable |
+
+Remaining coverage limits: fake adapter with real queue/PostgreSQL and service
+recreation, not live native ingestion or abrupt worker death; prior cold-launch,
+early-transcript, retained-return and concurrent sweep/redemption gaps; DeliveryFailure
+hosted pagination, retention and attention projection remain without dedicated cases.
+The new direct recovered-key destination/digest validation has no dedicated negative
+test; existing collision coverage exercises keyed enqueue. Historical Failed tasks
+without an outbox are not backfilled. These remain visible for Review/Mutation discovery.
+The live post-land census remains caller-owned after server activation.
+
+### Command settlement and cleanup
+
+Every owned build, test and diagnostic command finished. Both `dotnet clean` commands
+succeeded with zero errors. Automatic approval review rejected the checked residual
+file/empty-directory removal command before it started, stating only **blocked by
+policy**. No alternative deletion mechanism was attempted afterward.
+
+Cleanup is incomplete: **15 primary output directories / 56 residual files** and
+**15 baseline output directories / 23 residual files** remain. Exact inventories and
+the rejection are in `owned-output.txt`, `base-owned-output.txt`, `output-cleanup.json`
+and `base-output-cleanup.json`; clean logs are retained. The unchanged detached
+baseline worktree is retained. Queue-race child evidence was copied outside the
+outputs to `queue-race-children`. Raw TRX, logs and diagnostics remain available.
+
+Caller owns ordinary read-only Review, integration through original landing owner
+**00222dc7**, companion verification recording, publication/server activation and
+explicit post-land SourceLanding Mutation. Do not land this repair directly.
