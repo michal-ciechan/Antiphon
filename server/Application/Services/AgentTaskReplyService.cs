@@ -3030,11 +3030,15 @@ public sealed class AgentTaskReplyService
         // after a failed settlement save cannot turn a completed commit into "landed"/refused.
         var settlement = DelegationNoteDigest.Compute(
             $"{task.Id:D}|{task.AgentSessionId:D}|{task.DispatchedAt:O}|{report}");
+        var recoveryStarted = await db.AgentTaskEvents.AsNoTracking().AnyAsync(e =>
+            e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.CommitRecoveryStarted
+            && e.Detail == settlement, ct);
         var existing = await git.FindSettlementCommitsAsync(repo, task.Id, settlement, ct);
         var repository = await git.InspectRepositoryAsync(repo, ct);
-        // Shared work outside Git is ineligible. A known commit takes precedence even
-        // over an explicit negative observed after history (the checkout may have changed).
-        if (repository == GitWorkspaceService.RepositoryInspection.NotWorktree && existing.Items.Count == 0)
+        // Only a task with no prior mutation obligation can be classified as non-Git.
+        // Failed history has no items too; losing .git cannot erase a durable attempt.
+        if (!recoveryStarted && repository == GitWorkspaceService.RepositoryInspection.NotWorktree
+            && existing.Items.Count == 0)
             return null;
         if (!existing.Succeeded || existing.Items.Count > 1)
             throw new ServiceUnavailableException("Settlement recovery requires one exact identity; inspect git history.",
@@ -3160,6 +3164,17 @@ public sealed class AgentTaskReplyService
             ("antiphon-commit", "gated"),
             ("antiphon-settlement", settlement),
         };
+
+        if (!recoveryStarted)
+        {
+            // An independent context saves ONLY the recovery obligation. The outer context
+            // already tracks settlement; saving it here would publish completion before Git.
+            await using var recoveryScope = services.CreateAsyncScope();
+            var recoveryDb = recoveryScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            recoveryDb.AgentTaskEvents.Add(NewEvent(
+                task.Id, AgentTaskEventType.CommitRecoveryStarted, settlement, now));
+            await recoveryDb.SaveChangesAsync(ct);
+        }
 
         var result = await gated.CommitAsync(repo, footprint, message, trailers, ct);
         if (result.Outcome == GatedCommitOutcome.Committed && result.Sha is { } shaCommitted)
