@@ -38,6 +38,9 @@ public sealed partial class AgentTaskCommitEndpointTests
     {
         using var repo = await SeedRepoAsync();
         await File.WriteAllTextAsync(Path.Combine(repo.Path, "x.md"), "x");
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "foreign.md"), "foreign staged");
+        await repo.GitAsync("add", "foreign.md");
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "foreign.md"), "foreign unstaged");
         var token = "tok-" + Guid.NewGuid().ToString("N");
         var task = await SeedTaskAsync(repo.Path, token, AgentTaskRole.Commit, CommitOnSettlePolicy.Never);
         using var client = _factory.CreateClient();
@@ -51,8 +54,75 @@ public sealed partial class AgentTaskCommitEndpointTests
         var sha = body.GetProperty("sha").GetString();
         sha.ShouldBe((await ScratchGitRepo.GitInAsync(repo.Path, "rev-parse", "HEAD")).StdOut.Trim());
         body.GetProperty("files")[0].GetString().ShouldBe("x.md");
+        body.GetProperty("files").GetArrayLength().ShouldBe(1);
+        (await repo.GitReadAsync("show", ":foreign.md")).ShouldBe("foreign staged");
+        (await File.ReadAllTextAsync(Path.Combine(repo.Path, "foreign.md"))).ShouldBe("foreign unstaged");
+        (await repo.GitReadAsync("ls-tree", "--name-only", "HEAD")).ShouldNotContain("foreign.md");
         (await ScratchGitRepo.GitInAsync(repo.Path, "log", "-1", "--format=%B")).StdOut.ShouldContain("antiphon-commit: gated");
         _factory.Spy.Verbs.ShouldNotContain("push");
+    }
+
+    [Test]
+    [Arguments("omitted")]
+    [Arguments("null")]
+    [Arguments("empty")]
+    [Arguments("null-entry")]
+    [Arguments("blank-entry")]
+    [Arguments("empty-entry")]
+    [Arguments("parent")]
+    [Arguments("rooted")]
+    [Arguments("pathspec")]
+    [Arguments("directory")]
+    [Arguments("nul")]
+    public async Task Commit_requires_explicit_paths_before_lease_or_mutation(string selection)
+    {
+        using var repo = await SeedRepoAsync();
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "assigned.md"), "assigned");
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "foreign.md"), "foreign staged");
+        await repo.GitAsync("add", "foreign.md");
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "foreign.md"), "foreign unstaged");
+        var head = await repo.GitReadAsync("rev-parse", "HEAD");
+        var index = await File.ReadAllBytesAsync(Path.Combine(repo.Path, ".git", "index"));
+        var token = "tok-" + Guid.NewGuid().ToString("N");
+        var task = await SeedTaskAsync(repo.Path, token, AgentTaskRole.Commit, CommitOnSettlePolicy.Never);
+        using var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Antiphon-Task-Token", token);
+        var body = new Dictionary<string, object?> { ["message"] = "selected commit" };
+        if (selection != "omitted")
+            body["paths"] = selection switch
+            {
+                "null" => null,
+                "empty" => Array.Empty<string>(),
+                "null-entry" => new string?[] { "assigned.md", null },
+                "blank-entry" => new[] { "assigned.md", " " },
+                "empty-entry" => new[] { "assigned.md", "" },
+                "parent" => new[] { "assigned.md", "../foreign.md" },
+                "rooted" => new[] { "assigned.md", Path.Combine(repo.Path, "foreign.md") },
+                "pathspec" => new[] { "assigned.md", ":(glob)*" },
+                "directory" => new[] { "assigned.md", "." },
+                "nul" => new[] { "assigned.md", "bad\0path" },
+                _ => throw new ArgumentOutOfRangeException(nameof(selection)),
+            };
+        var leases = _factory.Services.GetRequiredService<Antiphon.Server.Application.Interfaces.IRepositoryMutationLease>();
+        // Invalid input must remain a validation error even when mutation admission is busy.
+        await using (var held = await leases.TryAcquireAsync(repo.Path, CancellationToken.None))
+        {
+            held.ShouldNotBeNull();
+            await AssertRefusalAsync();
+        }
+        await AssertRefusalAsync();
+        _factory.Spy.Verbs.ShouldBeEmpty();
+        (await File.ReadAllBytesAsync(Path.Combine(repo.Path, ".git", "index"))).ShouldBe(index);
+        (await repo.GitReadAsync("rev-parse", "HEAD")).ShouldBe(head);
+        (await File.ReadAllTextAsync(Path.Combine(repo.Path, "assigned.md"))).ShouldBe("assigned");
+        (await File.ReadAllTextAsync(Path.Combine(repo.Path, "foreign.md"))).ShouldBe("foreign unstaged");
+        (await repo.GitReadAsync("ls-tree", "--name-only", "HEAD")).ShouldNotContain("foreign.md");
+
+        async Task AssertRefusalAsync()
+        {
+            using var response = await client.PostAsJsonAsync($"/api/agent-tasks/{task.Id}/commit", body);
+            response.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
+        }
     }
 
     [Test]

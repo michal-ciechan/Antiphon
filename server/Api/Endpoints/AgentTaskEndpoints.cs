@@ -226,6 +226,12 @@ public static class AgentTaskEndpoints
                     "This task asked not to commit (-NoCommit).", "commit_on_settle_never");
             }
 
+            // Null is the internal Worktree sweep's whole-tree mode, never an HTTP default.
+            // Validate the complete selection before taking a lease or changing the index.
+            if (request.Paths is not { Count: > 0 } || request.Paths.Any(p => !IsExplicitCommitPath(p)))
+                throw new ValidationException(nameof(request.Paths),
+                    "Paths must contain explicit repository-relative file paths.");
+
             var repo = caller.Task.RepoPath ?? caller.Task.WorkingDirectory;
             var trailers = new (string Key, string Value)[]
             {
@@ -271,6 +277,14 @@ public static class AgentTaskEndpoints
         var taskId = await service.ResolveTaskIdAsync(id, ct);
         return Results.Accepted($"/api/agent-tasks/{taskId}",
             await lands.RequestAsync(taskId, request ?? new LandAgentTaskRequest(), ct));
+    }
+
+    private static bool IsExplicitCommitPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || Path.IsPathRooted(path)
+            || path.Any(c => char.IsControl(c) || "<>\"|?*:".Contains(c)))
+            return false;
+        return path.Replace('\\', '/').Split('/').All(segment => segment is not ("" or "." or ".."));
     }
 
     private static DistillationFeedback ParseDistillationFeedback(string? verdict)
