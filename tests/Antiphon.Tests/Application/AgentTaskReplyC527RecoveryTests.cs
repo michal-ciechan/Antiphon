@@ -15,6 +15,59 @@ namespace Antiphon.Tests.Application;
 public partial class AgentTaskReplyIntegrationTests
 {
     [Test]
+    [Arguments("allowed.txt", false)]
+    [Arguments("blocked.txt", true)]
+    [Arguments("!literal.txt", true)]
+    public async Task C527_child_audit_distinguishes_ignore_exceptions_in_complete_parent_receipt(string path, bool ignored)
+    {
+        var seeded = await SeedC527Async(t => { t.Role = AgentTaskRole.Commit; t.CommitOnSettle = CommitOnSettlePolicy.Never; });
+        using var repo = seeded.Repo;
+        await repo.CommitFileAsync(".gitignore", "*.txt\n!allowed.txt\n\\!literal.txt\n");
+        var baseline = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, path), "child work");
+        await repo.GitAsync("add", "-f", path);
+        await repo.GitAsync("commit", "-m", "child commit", "--trailer", "antiphon-commit=gated");
+        var sha = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        await using (var db = CreateContext())
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == seeded.Task.Id);
+            task.CommitBaselineSha = baseline;
+            task.CommitUpstreamBaselineJson = JsonSerializer.Serialize(new GitWorkspaceService.UpstreamSnapshot(true, null, null));
+            await db.SaveChangesAsync();
+        }
+        var factory = C527Factory(repo.WorktreeRoot);
+        AttachTerminal(factory, seeded.Parent);
+        const string report = "Child work committed.";
+        await SeedTurnAsync(seeded.SessionId, DelegationReportFormatter.TaskMarker(seeded.Task.Id), report);
+        await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+        await Queue(factory).FlushSessionAsync(seeded.Parent, CancellationToken.None);
+        var receipt = await AssertParentReceivedNoteAsync(seeded.Parent, seeded.Task, report);
+        await using var verify = CreateContext();
+        var warnings = await verify.AgentTaskEvents.Where(e => e.AgentTaskId == seeded.Task.Id
+            && e.Type == AgentTaskEventType.Warning && e.Detail.Contains("REVERT commit")).ToListAsync();
+        var incidents = await verify.AgentIncidents.Where(i => i.SessionId == seeded.SessionId
+            && i.Kind == AgentIncidentKind.DelegateCommitAudit).ToListAsync();
+        if (ignored)
+        {
+            var expected = $"REVERT commit {sha[..7]}: it contains ignored path(s) {path}";
+            warnings.ShouldHaveSingleItem().Detail.ShouldBe(expected);
+            incidents.ShouldHaveSingleItem().Message.ShouldBe(expected);
+            receipt.Prompt.Text.ShouldContain(expected);
+        }
+        else
+        {
+            warnings.ShouldBeEmpty();
+            incidents.ShouldBeEmpty();
+            receipt.Prompt.Text.ShouldNotContain("REVERT commit");
+            receipt.Prompt.Text.ShouldNotContain("ignored path");
+        }
+        var notification = await verify.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == seeded.Task.Id);
+        receipt.Prompt.Text.ShouldBe(notification.Body);
+        receipt.Note.SourceLandNotificationId.ShouldBe(notification.Id);
+        (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldBe(sha);
+    }
+
+    [Test]
     public async Task C527_repeated_report_selects_this_settlements_notification()
     {
         var seeded = await SeedC527Async();
