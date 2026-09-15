@@ -12,6 +12,103 @@ namespace Antiphon.Tests.Application;
 public sealed class GatedCommitServiceTests
 {
     [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task Renamed_ignore_rule_endpoint_refuses_before_staging(bool scoped, bool destination)
+    {
+        using var repo = await SeedAsync();
+        if (destination)
+        {
+            await repo.GitAsync("mv", "tracked.txt", "nested-ignore");
+            await repo.GitAsync("commit", "-m", "rename fixture");
+            Directory.CreateDirectory(System.IO.Path.Combine(repo.Path, "nested"));
+            await repo.GitAsync("mv", "nested-ignore", "nested/.gitignore");
+        }
+        else
+            await repo.GitAsync("mv", ".gitignore", "saved-rules.txt");
+        await File.WriteAllTextAsync(System.IO.Path.Combine(repo.Path, "new.txt"), "new");
+        var head = await repo.GitReadAsync("rev-parse", "HEAD");
+        var index = await repo.GitReadAsync("diff", "--cached", "--binary");
+        var (svc, spy) = Gate();
+
+        var result = await svc.CommitAsync(repo.Path, scoped ? ["new.txt"] : null,
+            Message(), Trailers(), CancellationToken.None);
+
+        result.Outcome.ShouldBe(GatedCommitOutcome.IgnoreRulesChanged);
+        result.Refusals.ShouldContain(r => r.Path == (destination ? "nested/.gitignore" : ".gitignore"));
+        spy.Verbs.ShouldNotContain("add");
+        spy.Verbs.ShouldNotContain("commit");
+        (await repo.GitReadAsync("rev-parse", "HEAD")).ShouldBe(head);
+        (await repo.GitReadAsync("diff", "--cached", "--binary")).ShouldBe(index);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Scoped_rename_selecting_either_endpoint_commits_both(bool oldEndpoint)
+    {
+        using var repo = await SeedAsync();
+        await repo.GitAsync("mv", "tracked.txt", "renamed.txt");
+        var (svc, _) = Gate();
+        var result = await svc.CommitAsync(repo.Path, [oldEndpoint ? "tracked.txt" : "renamed.txt"],
+            Message(), Trailers(), CancellationToken.None);
+        result.Outcome.ShouldBe(GatedCommitOutcome.Committed);
+        result.Files.Order().ShouldBe(new[] { "renamed.txt", "tracked.txt" });
+        (await repo.GitReadAsync("status", "--porcelain")).ShouldBeEmpty();
+    }
+
+    [Test]
+    [Arguments(128)]
+    [Arguments(-1)]
+    public async Task Unavailable_ignore_check_refuses_before_staging(int exitCode)
+    {
+        using var repo = await SeedAsync();
+        await File.WriteAllTextAsync(System.IO.Path.Combine(repo.Path, "new.txt"), "new");
+        var (svc, spy) = Gate();
+        spy.OverrideRun = args => args[0] == "check-ignore" ? (exitCode, "", "inspection unavailable") : null;
+        var head = await repo.GitReadAsync("rev-parse", "HEAD");
+        var result = await svc.CommitAsync(repo.Path, ["new.txt"], Message(), Trailers(), CancellationToken.None);
+        result.Outcome.ShouldBe(GatedCommitOutcome.CommitFailed);
+        result.Stderr.ShouldContain("inspection unavailable");
+        spy.Verbs.ShouldNotContain("add");
+        spy.Verbs.ShouldNotContain("commit");
+        (await repo.GitReadAsync("rev-parse", "HEAD")).ShouldBe(head);
+        (await repo.GitReadAsync("diff", "--cached", "--name-only")).ShouldBeEmpty();
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    public async Task Unavailable_post_stage_inspection_restores_exact_prior_index(bool scoped, bool ignoreCheck)
+    {
+        using var repo = await SeedAsync();
+        await File.WriteAllTextAsync(System.IO.Path.Combine(repo.Path, "tracked.txt"), "staged version");
+        await repo.GitAsync("add", "tracked.txt");
+        await File.WriteAllTextAsync(System.IO.Path.Combine(repo.Path, "tracked.txt"), "unstaged version");
+        await File.WriteAllTextAsync(System.IO.Path.Combine(repo.Path, "new.txt"), "new");
+        var index = await repo.GitReadAsync("diff", "--cached", "--binary");
+        var head = await repo.GitReadAsync("rev-parse", "HEAD");
+        var (svc, spy) = Gate();
+        var staged = false;
+        spy.BeforeRun = args => { if (args[0] == "add") staged = true; return Task.CompletedTask; };
+        spy.OverrideRun = args => staged && (ignoreCheck ? args[0] == "check-ignore"
+            : args[0] == "diff" && args.Contains("--cached")) ? (128, "", "late inspection unavailable") : null;
+
+        var result = await svc.CommitAsync(repo.Path, scoped ? ["new.txt"] : null,
+            Message(), Trailers(), CancellationToken.None);
+
+        result.Outcome.ShouldBe(GatedCommitOutcome.CommitFailed);
+        result.Stderr.ShouldContain("late inspection unavailable");
+        spy.Verbs.ShouldNotContain("commit");
+        (await repo.GitReadAsync("diff", "--cached", "--binary")).ShouldBe(index);
+        (await repo.GitReadAsync("rev-parse", "HEAD")).ShouldBe(head);
+        (await File.ReadAllTextAsync(System.IO.Path.Combine(repo.Path, "tracked.txt"))).ShouldBe("unstaged version");
+    }
+
+    [Test]
     public async Task Case1_new_file_beside_ignored_untracked_commits_only_the_new_file()
     {
         using var repo = await SeedAsync();

@@ -10,7 +10,7 @@ public static class CommitOnSettleEligibility
         task.Status == AgentTaskStatus.Succeeded
         && task.Workspace == WorkspaceMode.Shared
         && task.SourceLandingOperationId is null
-        && task.Role is not (AgentTaskRole.Commit or AgentTaskRole.Merge or AgentTaskRole.Mutation
-            or AgentTaskRole.Check or AgentTaskRole.Distill or AgentTaskRole.Diagnose)
+        && task.Role is not (AgentTaskRole.Commit or AgentTaskRole.Merge or AgentTaskRole.Mutation)
+        && !AgentTaskRoles.IsSpecialist(task.Role)
         && !string.IsNullOrWhiteSpace(task.RepoPath);
 }

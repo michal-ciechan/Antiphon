@@ -254,6 +254,6 @@ public sealed class CommitEndpointWebAppFactory : AntiphonWebAppFactory
         foreach (var descriptor in hosted)
             services.Remove(descriptor);
         services.RemoveAll<GitWorkspaceService>();
-        services.AddSingleton<GitWorkspaceService>(Spy);
+        services.AddGitWorkspaceService(Spy);
     }
 }
