@@ -19,8 +19,11 @@ public sealed record WorktreeNativeObservation(string Operation, string Relative
 public sealed record WorktreeNativeSnapshot(WorktreeLockStatus Status, string Reason,
     IReadOnlyList<WorktreeNativeObservation> Observations, int Candidates = 0)
 {
-    public bool HasSharingConflict => Observations.Any(o => o.Operation == "DeleteAccessOpen"
-        && o.IdentityVerified && !o.Succeeded && o.NativeErrorCode is 32 or 33);
+    public bool HasSharingConflict => Observations.Any(IsSharingConflict);
+
+    public static bool IsSharingConflict(WorktreeNativeObservation observation) =>
+        observation.Operation == "DeleteAccessOpen" && observation.IdentityVerified
+        && !observation.Succeeded && observation.NativeErrorCode is 32 or 33;
 }
 
 public sealed record WorktreeGitOutcome(string Operation, int? ExitCode, string GeneratedCode,

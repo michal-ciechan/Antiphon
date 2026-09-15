@@ -11,6 +11,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Infrastructure;
 
 [Category("Integration")]
+[Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class WorktreeGuardedCleanupTests
 {
@@ -58,7 +59,8 @@ public sealed class WorktreeGuardedCleanupTests
     public async Task C443_RetryOnlyNativeSharingCodes(int code, bool retry)
     {
         await using var h = await RemovalHarness.CreateAsync(); h.Probe.Code = code < 0 ? null : code;
-        await h.RemoveAsync(); h.Removes.ShouldBe(retry ? 2 : 1);
+        var result = await h.RemoveAsync();
+        h.Removes.ShouldBe(retry ? 2 : 1, System.Text.Json.JsonSerializer.Serialize(new { result, attempt = await h.RowAsync() }));
     }
     [Test]
     public async Task C443_TwoGitSlotsMaximum()
@@ -72,7 +74,57 @@ public sealed class WorktreeGuardedCleanupTests
     public async Task C443_SingleBackoff()
     {
         await using var h = await RemovalHarness.CreateAsync(); await h.RemoveAsync();
-        h.Clock.Delays.Where(d => d < TimeSpan.FromSeconds(10)).ShouldBe([TimeSpan.FromMilliseconds(250)]);
+        // The first timer is the remaining allowance; it has already aged by a few ticks.
+        h.Clock.Delays.Count.ShouldBe(2);
+        h.Clock.Delays[0].ShouldBeGreaterThan(TimeSpan.Zero);
+        h.Clock.Delays[0].ShouldBeLessThanOrEqualTo(TimeSpan.FromSeconds(10));
+        h.Clock.Delays[1].ShouldBe(TimeSpan.FromMilliseconds(250));
+    }
+    [Test]
+    public async Task C443_RetryReportsRefusalReason()
+    {
+        await using var h = await RemovalHarness.CreateAsync();
+        var result = await h.RemoveAsync();
+        var evidence = System.Text.Json.JsonSerializer.Serialize(new { result, attempt = await h.RowAsync() });
+        Console.WriteLine(evidence);
+        h.Removes.ShouldBe(2, evidence); result.IsClean.ShouldBeTrue(evidence);
+    }
+
+    [Test]
+    public async Task C443_PostRetryBranchUsesRemainingBudget()
+    {
+        await using var h = await RemovalHarness.CreateAsync(); h.Clock.Controlled = true;
+        var reached = false;
+        h.H.Fixture.Git.AfterCommand = (_, args, _) => {
+            // The retry's registration read finishes before branch authority starts. Spend
+            // the remaining allowance inside the latter's fresh remote read.
+            if (h.Removes == 2 && args[0] == "fetch")
+            { reached = true; h.Clock.Advance(TimeSpan.FromSeconds(10)); }
+            return Task.CompletedTask;
+        };
+        var result = await h.RemoveAsync();
+        reached.ShouldBeTrue(); h.Removes.ShouldBe(2);
+        result.Residue.ShouldBe("cleanup_additional_budget_expired");
+        result.DirectoryGone.ShouldBeTrue(); result.Unregistered.ShouldBeTrue(); result.BranchDeleted.ShouldBeFalse();
+        (await h.RowAsync()).RetryReason.ShouldBe("cleanup_additional_budget_expired");
+        h.H.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "update-ref" && a.Contains("-d"));
+        (await h.H.Fixture.RequiredAsync(h.H.Fixture.Repository, "rev-parse", h.H.Fixture.SourceRef)).Trim().ShouldBe(h.SourceSha);
+    }
+
+    [Test]
+    public async Task C443_RetryUsesBoundedCommittedCapture()
+    {
+        await using var h = await RemovalHarness.CreateAsync(); h.Clock.Controlled = true;
+        h.Probe.Observations = Antiphon.Tests.Application.WorktreeCleanupPresentationTests.Capture(32).Native.Observations;
+        h.OnRemove = async count => {
+            if (count != 2) return;
+            var row = await h.RowAsync();
+            var committed = System.Text.Json.JsonSerializer.Deserialize<WorktreeCleanupCapture>(row.CaptureJson!)!;
+            committed.Native.HasSharingConflict.ShouldBeTrue(); committed.Omitted.ShouldBeGreaterThan(0);
+            committed.Native.Observations.ShouldContain(h.Probe.Observations[^1]);
+            row.Summary.ShouldContain("DeleteAccessOpen=32");
+        };
+        var result = await h.RemoveAsync(); h.Removes.ShouldBe(2); result.IsClean.ShouldBeTrue();
     }
     [Test]
     public async Task C443_PreserveFirstAndLastGitOutcomes()
@@ -265,14 +317,25 @@ public sealed class WorktreeGuardedCleanupTests
     internal sealed class ProbeDouble : IWorktreeDeleteAccessProbe
     {
         public int Calls; public int? Code = 32;
+        public IReadOnlyList<WorktreeNativeObservation>? Observations;
         public Task<WorktreeNativeSnapshot> ObserveAsync(WorktreeProbeTarget target, IReadOnlyList<WorktreeLockOwner> owners, CancellationToken ct)
         { Calls++; ct.ThrowIfCancellationRequested(); return Task.FromResult(new WorktreeNativeSnapshot(WorktreeLockStatus.Partial,
-            "ControlledObservation", [new("DeleteAccessOpen", ".", DateTime.UtcNow, Code is null, Code, true)])); }
+            "ControlledObservation", Observations ?? [new("DeleteAccessOpen", ".", DateTime.UtcNow, Code is null, Code, true)])); }
     }
     internal sealed class RecordingClock : TimeProvider
     {
+        private readonly Microsoft.Extensions.Time.Testing.FakeTimeProvider _controlled = new();
+        public bool Controlled;
+        public void Advance(TimeSpan amount) => _controlled.Advance(amount);
+        public override long GetTimestamp() => Controlled ? _controlled.GetTimestamp() : base.GetTimestamp();
+        public override long TimestampFrequency => Controlled ? _controlled.TimestampFrequency : base.TimestampFrequency;
         public List<TimeSpan> Delays { get; } = [];
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
-        { Delays.Add(dueTime); return TimeProvider.System.CreateTimer(callback, state, dueTime, period); }
+        {
+            Delays.Add(dueTime);
+            return Controlled && dueTime != TimeSpan.FromMilliseconds(250)
+                ? _controlled.CreateTimer(callback, state, dueTime, period)
+                : TimeProvider.System.CreateTimer(callback, state, dueTime, period);
+        }
     }
 }

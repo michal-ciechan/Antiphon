@@ -688,6 +688,7 @@ public sealed class AgentTaskLandService
             if (alreadyReported) type = AgentTaskEventType.LandingCleanup;
         }
         WorktreeCleanupAttempt? cleanupAttempt = null;
+        string? notificationCleanupDetail = null;
         if (op is not null && _protocol is not null)
         {
             var cleanupEvidence = await _protocol.ReadCleanupEvidenceAsync(op.Id, request.Id, ct);
@@ -704,7 +705,11 @@ public sealed class AgentTaskLandService
                 }
             }
             var detail = new WorktreeCleanupPresentation().Detail(op.LastReason ?? "cleanup complete", cleanupEvidence.Capture);
-            if (cleanupEvidence.Capture is not null) outcome += "; " + detail;
+            if (cleanupEvidence.Capture is not null)
+            {
+                outcome += "; " + detail;
+                notificationCleanupDetail = detail;
+            }
             if (op.CleanupStartedAt is not null && new AgentTaskLandingState().HasPublication(op))
             {
                 var stage = _db.StageOutcomes.Local.LastOrDefault(s => s.SubjectTaskId == task.Id
@@ -729,7 +734,7 @@ public sealed class AgentTaskLandService
         SetLandingEvidence(terminal, op);
         _db.AgentTaskEvents.Add(terminal);
         CompleteRequest(task, request, terminal);
-        AddNotification(task, request, terminal, LandNotificationKind.Outcome);
+        AddNotification(task, request, terminal, LandNotificationKind.Outcome, notificationCleanupDetail);
         ClearPending(task);
         await _db.SaveChangesAsync(ct);
         if (_db.Database.CurrentTransaction is { } open) await open.CommitAsync(ct);
@@ -869,8 +874,8 @@ public sealed class AgentTaskLandService
         request.ConcurrencyToken = Guid.NewGuid();
     }
 
-    private void AddNotification(AgentTask task, AgentTaskLandRequest request, AgentTaskEvent source, LandNotificationKind kind)
-        => _db.AgentTaskLandNotifications.Add(LandNotificationPayload.Create(request, source, kind));
+    private void AddNotification(AgentTask task, AgentTaskLandRequest request, AgentTaskEvent source, LandNotificationKind kind, string? cleanupDetail = null)
+        => _db.AgentTaskLandNotifications.Add(LandNotificationPayload.Create(request, source, kind, cleanupDetail));
 
     internal static async Task<LandVerification> VerifyAsync(string worktree, string? filter, CancellationToken ct)
         => await VerifyWithObserverAsync(worktree, filter, null, ct);

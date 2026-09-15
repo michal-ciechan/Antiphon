@@ -17,7 +17,7 @@ public class WorktreeNativeIO
     public virtual FileAttributes Attributes(string path) => File.GetAttributes(path);
     public virtual IEnumerator<string> Entries(string path) => Directory.EnumerateFileSystemEntries(path).GetEnumerator();
 
-    public virtual string? Identity(string path)
+    public virtual string? Identity(string path, Action checkBudget)
     {
         if (!Supported) return null;
         path = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
@@ -26,7 +26,8 @@ public class WorktreeNativeIO
         var identities = new StringBuilder();
         foreach (var part in parts)
         {
-            using var handle = Open(part, 0x80, 7, 3, 0x02200000, false);
+            checkBudget();
+            using var handle = Open(part, 0x80, 7, 3, 0x02200000, false, checkBudget);
             if (!handle.Succeeded || !Same(handle.FinalPath, part)
                 || handle.ReparsePoint || handle.FileIdentity is null) return null;
             identities.Append(handle.FileIdentity).Append(';');
@@ -35,10 +36,11 @@ public class WorktreeNativeIO
     }
 
     public virtual WorktreeNativeHandle Open(string path, uint desiredAccess, uint shareMode,
-        uint disposition, uint flags, bool inherit)
+        uint disposition, uint flags, bool inherit, Action? checkBudget = null)
     {
         if (!Supported) throw new PlatformNotSupportedException();
         if (inherit) throw new ArgumentException("inheritable_probe_handle_forbidden");
+        checkBudget?.Invoke();
         var handle = CreateFileW(path, desiredAccess, shareMode, IntPtr.Zero, disposition, flags, IntPtr.Zero);
         // Must precede every other native/managed metadata operation.
         var error = handle.IsInvalid ? Marshal.GetLastPInvokeError() : (int?)null;
@@ -46,8 +48,10 @@ public class WorktreeNativeIO
         try
         {
             var name = new StringBuilder(32768);
+            checkBudget?.Invoke();
             var size = GetFinalPathNameByHandleW(handle, name, (uint)name.Capacity, 0);
             var final = size is > 0 and < 32768 ? Normalize(name.ToString()) : null;
+            checkBudget?.Invoke();
             var hasInfo = GetFileInformationByHandle(handle, out var info);
             var id = hasInfo ? $"{info.VolumeSerialNumber:x8}:{info.FileIndexHigh:x8}{info.FileIndexLow:x8}:{info.CreationTimeHigh:x8}{info.CreationTimeLow:x8}" : null;
             return new(true, null, final, id, hasInfo && (info.FileAttributes & 0x400) != 0, handle);

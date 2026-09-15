@@ -99,6 +99,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
             else if (row.Status == QueuedMessageStatus.Pending && row.DeliveryAttempts >= Math.Max(1,
                 (supervision?.Value ?? new SupervisionSettings()).DeliveryVerification.MaxDeliveryAttempts))
                 note.LastErrorCode = "queue_parked_unconfirmed";
+            if (row.Body != note.Body) note.LastErrorCode = "queue_payload_changed_unconfirmed";
             if (row.DeliveryAttempts > 0)
             {
                 await runtime.CatchUpTranscriptAsync(session, ct);
@@ -114,8 +115,8 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 }
                 else return;
                 var evidence = (await prompts.OrderBy(p => p.Sequence).ToListAsync(ct))
-                    .FirstOrDefault(p => PromptSubmissionMatch.IsConfirmedBy(row.Body, p.Text!)
-                        && PromptSubmissionMatch.IsCompleteIn(row.Body, p.Text!));
+                    .FirstOrDefault(p => PromptSubmissionMatch.IsConfirmedBy(note.Body, p.Text!)
+                        && PromptSubmissionMatch.IsCompleteIn(note.Body, p.Text!));
                 if (evidence is not null)
                 {
                     if (boundary is not null) await boundary.ReachedAsync("receipt-before-save", note.TaskId, note.Id, ct);

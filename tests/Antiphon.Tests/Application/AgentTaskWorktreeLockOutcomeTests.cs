@@ -15,15 +15,18 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
+[Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class AgentTaskWorktreeLockOutcomeTests
 {
-    [Test] [Arguments(true)] [Arguments(false)]
-    public Task C443_BusyRecipientGetsOutcomeWhenIdle(bool owners) => DeliverAsync(true, owners);
-    [Test] [Arguments(true)] [Arguments(false)]
-    public Task C443_EligibleRecipientGetsOutcome(bool owners) => DeliverAsync(false, owners);
+    [Test] [Arguments(true, "modern")] [Arguments(false, "modern")]
+    [Arguments(true, "inbox")] [Arguments(false, "inbox")]
+    public Task C443_BusyRecipientGetsOutcomeWhenIdle(bool owners, string backend) => DeliverAsync(true, owners, backend);
+    [Test] [Arguments(true, "modern")] [Arguments(false, "modern")]
+    [Arguments(true, "inbox")] [Arguments(false, "inbox")]
+    public Task C443_EligibleRecipientGetsOutcome(bool owners, string backend) => DeliverAsync(false, owners, backend);
 
-    private static async Task DeliverAsync(bool busy, bool owners)
+    private static async Task DeliverAsync(bool busy, bool owners, string backend)
     {
         BridgeQueueHarness? receiver = null;
         DeliveryWorkers? workers = null;
@@ -35,10 +38,10 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
                     ConnectionString = producer.Schema.ConnectionString, ConfigureServices = services => {
                         services.AddSingleton<CompletionNoteFlushQueue>(); services.AddSingleton<SpecialistFailureQueue>();
                         services.AddSingleton(sp => new PtyDeliveryProfile(sp.GetRequiredService<IServiceScopeFactory>(),
-                            NullLogger<PtyDeliveryProfile>.Instance, backendOverride: "modern"));
+                            NullLogger<PtyDeliveryProfile>.Instance, backendOverride: backend));
                         services.AddScoped<AgentTaskLandNotificationService>(); } });
                 (await receiver.Provider.GetRequiredService<PtyDeliveryProfile>().RefreshAsync(default))
-                    .ReplyInlineMaxChars.ShouldBe(14400);
+                    .SingleWriteMaxBytes.ShouldBe(backend == "modern" ? 86400 : 1024);
                 producer.Messages = receiver.Queue;
                 await using var db = producer.CreateContext();
                 var task = await db.AgentTasks.SingleAsync(t => t.Id == producer.Fixture.TaskId);
@@ -66,6 +69,7 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
                 capture = await db.WorktreeCleanupAttempts.AsNoTracking().SingleAsync(a => a.Id == h.Context.AttemptId);
                 original = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.RequestId == h.Context.RequestId && n.Kind == LandNotificationKind.Outcome);
                 capture.FinalizedAt.ShouldNotBeNull(); capture.TerminalEventId.ShouldBe(original.SourceEventId);
+                System.Text.Encoding.UTF8.GetByteCount(original.Body).ShouldBeLessThanOrEqualTo(1024);
                 original.ParentSessionId.ShouldBe(bridge.SessionId); original.Body.ShouldContain(capture.Id.ToString("N"));
                 original.Body.ShouldContain(owners ? h.Diagnostics.OwnerName : "InsufficientPrivileges");
                 capture.CaptureState.ShouldBe(WorktreeCleanupCaptureState.Captured);

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -29,11 +30,11 @@ public sealed class WorktreeGuardedCleanup(IWorktreeCleanupJournal journal, IWor
                 : journal.ConsumeSlotAsync(context, initialCommand, false, token), clock, ct);
             result = first.Result;
             if (first.Outcome is null)
-                return await FinishAsync();
+                return await FinishAsync(ct);
             if (first.Result.Residue is null)
             {
                 await journal.RecordOutcomeAsync(context, first.Outcome, false, false, ct);
-                return await FinishAsync();
+                return await FinishAsync(ct);
             }
 
             var failureStart = first.FailureTimestamp ?? clock.GetTimestamp();
@@ -71,8 +72,14 @@ public sealed class WorktreeGuardedCleanup(IWorktreeCleanupJournal journal, IWor
                 try { logger.LogInformation("Cleanup capture {CaptureId} request {RequestId} operation {OperationId} task {TaskId}: {Summary}",
                     context.AttemptId, context.RequestId, context.OperationId, context.TaskId, reference.Summary); }
                 catch (Exception) { /* A secondary observation sink cannot change cleanup. */ }
-                var nominated = first.Outcome.NormallyExited && first.Outcome.ExitCode is not null and not 0
-                    && first.Result.Residue == "worktree_remove_failed" && native.HasSharingConflict;
+                // Nomination must use the exact bounded evidence whose commit was observed.
+                var committed = reference.State == WorktreeCleanupCaptureState.Captured && reference.CaptureJson is not null
+                    ? JsonSerializer.Deserialize<WorktreeCleanupCapture>(reference.CaptureJson) : null;
+                var nominated = committed is not null && committed.Id == context.AttemptId
+                    && committed.RequestId == context.RequestId && committed.OperationId == context.OperationId
+                    && committed.TaskId == context.TaskId && committed.GitFailure.NormallyExited
+                    && committed.GitFailure.ExitCode is not null and not 0
+                    && first.Result.Residue == "worktree_remove_failed" && committed.Native.HasSharingConflict;
                 CheckBudget();
                 await journal.DecideAsync(context, nominated ? "delete_access_sharing_observed" : "no_retry_nomination", extra);
                 if (!nominated) return result with { Diagnostics = reference };
@@ -90,10 +97,11 @@ public sealed class WorktreeGuardedCleanup(IWorktreeCleanupJournal journal, IWor
                     await journal.RecordOutcomeAsync(context, second.Outcome, true, false, extra);
                 CheckBudget();
                 await journal.DecideAsync(context, second.Result.Residue ?? "retry_directory_complete", extra);
+                CheckBudget();
+                return await FinishAsync(extra);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             { return await BudgetExpiredAsync(); }
-            return await FinishAsync();
 
             async Task<WorktreeRemoval> BudgetExpiredAsync()
             {
@@ -103,10 +111,10 @@ public sealed class WorktreeGuardedCleanup(IWorktreeCleanupJournal journal, IWor
                 return result with { Residue = "cleanup_additional_budget_expired", Diagnostics = reference };
             }
 
-            async Task<WorktreeRemoval> FinishAsync()
+            async Task<WorktreeRemoval> FinishAsync(CancellationToken token)
             {
                 if (result.Residue is null)
-                    result = await guarded.CompleteBranchAsync(request, result, ct);
+                    result = await guarded.CompleteBranchAsync(request, result, token);
                 return result with { Diagnostics = reference };
             }
         }
