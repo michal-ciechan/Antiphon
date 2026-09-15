@@ -10,8 +10,11 @@
   `Pending`-at-the-cap), past everything but an unrelated direct flush. Widening discovery types
   nothing and charges nothing on its own — the flush path's own gates still decide — and a row it
   brings to rest stops being discovered, so the cost is one pass, not a standing one. Pinned by
-  `SessionMessageQueueWedgedHeadTests.The_sweep_reaches_the_same_resting_state_as_a_direct_flush`,
-  which holds the sweep and a direct flush to the same outcome over six lone-row shapes.
+  `SessionMessageQueueWedgedHeadTests.The_sweep_reaches_the_same_resting_state_as_a_direct_flush`
+  compares six lone-row outcomes. Independent candidate assertions in
+  `A_parked_row_stops_being_discovered_once_it_is_at_rest` pin exclusion after parking;
+  `Fresh_NoSubmitOutput_is_discovered_before_stranded_age_and_delivered_whole` and
+  `Fresh_ordinary_Pending_is_excluded_until_stranded_age` isolate the fresh-row recovery arm.
 
 - **Abandoned work must not stay dispatchable (CARD-0501 re-review R2).**
   A failed `SaveChangesAsync` does not untrack what it tried to insert, so a caller that reports

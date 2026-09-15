@@ -1,5 +1,8 @@
 # CARD-0501 Code: implementation and ordinary verification
 
+Latest FollowUp: task `f95bd1fe` corrects round-3 discovery evidence and the R2-C class inventory.
+Its source identity, fresh results and pending controls are recorded at the end of this document.
+
 S1-S5 are complete and pushed. All affected cases pass after fixture corrections. Unit has
 four failures reproduced at the base commit and one privilege-dependent skip. The caller waived
 local cleanup of the 31 producer-owned build directories under CARD-0455; they remain for the
@@ -494,9 +497,10 @@ because that housekeeping is the evidence that used to read as "it started".
 for. For a session holding ONE row, the automatic sweep and a direct flush must reach the same
 `(Status, Attempts, Verdict, bodies typed, submits)`. The sweep only chooses WHICH sessions to
 flush; the direct flush is the oracle because it has no discovery filter of its own to be wrong.
-Six shapes, and two of them are "neither path acts" controls that pin the axes this widening did
-NOT move — parked-`Pending` stays at rest, and the interrupted window's bound on re-pressing
-Enter is untouched. Without those two, "make discovery wider" would have no stopping rule.
+Six shapes compare resting outcomes, including parked-`Pending` and the interrupted-window
+bound. They do not independently prove candidate exclusion: downstream gates can mask excessive
+discovery. The aged `NoSubmitOutputPending` shape also cannot isolate its recovery disjunct.
+The round-3 FollowUp below adds direct predicate assertions and fresh-row cases for those claims.
 
 ## Positive controls (red then green)
 
@@ -519,7 +523,7 @@ clean after each restore.
 |---|---|---|
 | R2-A | `(SessionMessageQueueWedgedHeadTests*)`, `(SessionMessageQueueInterruptedAttemptTests*)`, `(CheckNoteDeliveryHandoffTests*)`, `(AgentTaskReuseEnqueueTests*)` | 75/75 pass, 2m05s (`queue.trx`) |
 | R2-B | `(AgentTaskDeliveryWatchdogTests*)`, `(ParkedMessageSweepServiceTests*)`, `(SessionMessageQueueDeliveryVerificationTests*)`, `(SessionMessageQueueServiceTests*)` | 223/223 pass, 6m08s (`sweeps.trx`) |
-| R2-C | `(SpecialistTaskRunnerDeadlineTests*)`, `(AgentTaskCheckInterpreterTests*)`, `(SpecialistRequestServiceTests*)`, `(AgentTaskCheckServiceTests*)` | 49/49 pass, 46s (`specialist.trx`) |
+| R2-C | Historical selector also named nonexistent `SpecialistRequestServiceTests` and `AgentTaskCheckServiceTests`; actual owners are `SpecialistTaskRunnerDeadlineTests` and `AgentTaskCheckInterpreterTests` | 49/49 pass: **7** SpecialistTaskRunnerDeadlineTests + **42** AgentTaskCheckInterpreterTests; **0** from each nonexistent class, 46s (`specialist.trx`). Corrected exact-class reruns are recorded below. |
 | R2-D | `[Category=Unit]` | 2,351 total: 2,346 pass, 4 fail, 1 skip, 2m06s (`unit.trx`) |
 
 R2-B and R2-C are the widening's blast radius: `ParkedMessageSweepService` is the other reader of

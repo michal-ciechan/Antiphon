@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Application.Exceptions;
@@ -8,6 +9,7 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -21,12 +23,17 @@ public class SessionMessageQueueWedgedHeadTests
     private const string Body = "[antiphon-task:419b8b34] role=Check tier=Low workspace=Shared";
     private static AppDbContext CreateContext() => BridgeQueueHarness.CreateContext();
     private static Task<BridgeQueueHarness> CreateAsync(
-        bool alwaysOn = false, Action<IServiceCollection>? configureServices = null) =>
+        bool alwaysOn = false, Action<IServiceCollection>? configureServices = null,
+        int strandedAgeSeconds = 0) =>
         BridgeQueueHarness.CreateAsync(new()
         {
             AlwaysOn = alwaysOn,
             // These cases judge the recovery verdict, not delayed transcript ingestion.
-            ConfigureDeliveryVerification = v => v.PostFailureConfirmGraceSeconds = 0,
+            ConfigureDeliveryVerification = v =>
+            {
+                v.PostFailureConfirmGraceSeconds = 0;
+                v.StrandedAgeSeconds = strandedAgeSeconds;
+            },
             ConfigureServices = configureServices,
         });
 
@@ -828,16 +835,21 @@ public class SessionMessageQueueWedgedHeadTests
     // ...and having parked it, the sweep must stop seeing it: a resting row is not woken for. This
     // is the half that justifies the widening - it is one extra pass, not a new standing cost.
     [Test]
-    public async Task A_parked_row_stops_being_discovered_once_it_is_at_rest()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_parked_row_stops_being_discovered_once_it_is_at_rest(bool alwaysOn)
     {
-        await using var h = await CreateAsync();
+        await using var h = await CreateAsync(alwaysOn: alwaysOn);
         var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
         var id = await SeedCrashedAtCapAsync(h, baseline);
         h.Adapter.PrimeComposer(Body);
+        await AssertDiscoveryAsync(h, id, expected: true);
         await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
         (await MessageAsync(id)).Status.ShouldBe(QueuedMessageStatus.Pending);
+        await AssertDiscoveryAsync(h, id, expected: false);
 
-        // An empty composer removes the F1 hold, so nothing but discovery decides the outcome now.
+        // No-input alone cannot prove exclusion: the downstream Pending cap also withholds input.
+        // Query the discovery expressions above, independently of that second gate.
         h.Adapter.PrimeComposer("");
         for (var cycle = 0; cycle < 3; cycle++)
             await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
@@ -847,6 +859,77 @@ public class SessionMessageQueueWedgedHeadTests
         (await MessageAsync(id)).Status.ShouldBe(QueuedMessageStatus.Pending);
     }
 
+    private static async Task AssertDiscoveryAsync(BridgeQueueHarness h, Guid id, bool expected)
+    {
+        var settings = h.Provider.GetRequiredService<IOptions<SupervisionSettings>>()
+            .Value.DeliveryVerification;
+        var now = DateTime.UtcNow;
+        var cutoff = now - TimeSpan.FromSeconds(settings.StrandedAgeSeconds);
+        var ageFloor = now - TimeSpan.FromSeconds(
+            Math.Max(0, settings.TranscriptConfirmTimeoutSeconds)
+            + Math.Max(0, settings.PostFailureConfirmGraceSeconds)
+            + Math.Max(0, settings.UnobservableBaselineConfirmClockToleranceSeconds));
+        var windowFloor = now - TimeSpan.FromMinutes(Math.Max(0, settings.InterruptedAttemptWindowMinutes));
+        var maxAttempts = Math.Max(1, settings.MaxDeliveryAttempts);
+        await using var db = CreateContext();
+        var rows = db.SessionQueuedMessages.AsNoTracking().Where(m => m.AgentSessionId == h.SessionId);
+        Guid[] expectedIds = expected ? [id] : [];
+
+        // Execute the production predicates through PostgreSQL, before any delivery/attempt gate.
+        (await rows.Where(QueueAttention.NeedsAttention(maxAttempts, cutoff, ageFloor, windowFloor))
+            .Select(m => m.Id).ToListAsync()).ShouldBe(expectedIds);
+        (await rows.Where(QueueAttention.MachineOriginNeedsAttention(maxAttempts, cutoff, ageFloor, windowFloor))
+            .Select(m => m.Id).ToListAsync()).ShouldBe(expectedIds);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Fresh_NoSubmitOutput_is_discovered_before_stranded_age_and_delivered_whole(bool alwaysOn)
+    {
+        const int strandedAgeSeconds = 600;
+        await using var h = await CreateAsync(alwaysOn: alwaysOn, strandedAgeSeconds: strandedAgeSeconds);
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var id = await h.SeedPendingMessageAsync(Body, deliveryAttempts: 1, baselineSequence: baseline,
+            createdAtUtc: DateTime.UtcNow, origin: QueuedMessageOrigin.Delegation,
+            deliveryVerdict: DeliveryVerdict.NoSubmitOutput, lastDeliveryStartedAt: DateTime.UtcNow);
+        h.Adapter.PrimeComposer(Body);
+        (await MessageAsync(id)).CreatedAt.ShouldBeGreaterThan(DateTime.UtcNow.AddSeconds(-strandedAgeSeconds));
+        await AssertDiscoveryAsync(h, id, expected: true);
+
+        await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBe(["\r"]);
+        h.Adapter.SubmittedBodies.ShouldBe([Body]);
+        await AssertUserPromptsAsync(h, [Body]);
+        var row = await MessageAsync(id);
+        row.Status.ShouldBe(QueuedMessageStatus.Sent);
+        row.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        row.DeliveryAttempts.ShouldBe(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Fresh_ordinary_Pending_is_excluded_until_stranded_age(bool alwaysOn)
+    {
+        const int strandedAgeSeconds = 600;
+        await using var h = await CreateAsync(alwaysOn: alwaysOn, strandedAgeSeconds: strandedAgeSeconds);
+        var id = await h.SeedPendingMessageAsync(Body, createdAtUtc: DateTime.UtcNow,
+            origin: QueuedMessageOrigin.Delegation);
+        (await MessageAsync(id)).CreatedAt.ShouldBeGreaterThan(DateTime.UtcNow.AddSeconds(-strandedAgeSeconds));
+        await AssertDiscoveryAsync(h, id, expected: false);
+
+        await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBeEmpty();
+        await AssertUserPromptsAsync(h, []);
+        var row = await MessageAsync(id);
+        row.Status.ShouldBe(QueuedMessageStatus.Pending);
+        row.DeliveryVerdict.ShouldBeNull();
+        row.DeliveryAttempts.ShouldBe(0);
+    }
+
     // The property behind all three round-2 findings, stated as a test rather than as three
     // patches: for a session holding ONE row, the automatic sweep and a direct flush must reach the
     // same resting state. The sweep only chooses WHICH sessions to flush; if its choice disagrees
@@ -854,9 +937,9 @@ public class SessionMessageQueueWedgedHeadTests
     // shape runs twice on two fresh sessions - the oracle is the direct flush, which has no
     // discovery filter of its own to be wrong.
     //
-    // The two "neither acts" shapes are not filler: they pin the axes this widening did NOT move.
-    // Parked-Pending proves a resting row is still not woken; outside-the-window proves the bound
-    // on re-pressing Enter is untouched. Without them "make discovery wider" has no stopping rule.
+    // The two "neither acts" shapes compare outcomes only. Discovery exclusion and the fresh
+    // NoSubmitOutput inclusion arm are independently asserted by the predicate tests above;
+    // downstream caps and this property's zero stranded age can otherwise mask those guards.
     public enum LoneRow { CappedCrashedSent, CrashedSentBelowCap, ParkedPending, AgedPending, NoSubmitOutputPending, CrashedSentOutsideWindow }
 
     private static async Task<Guid> SeedLoneRowAsync(BridgeQueueHarness h, LoneRow shape)
