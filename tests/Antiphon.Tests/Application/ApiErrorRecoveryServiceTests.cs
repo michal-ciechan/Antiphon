@@ -61,7 +61,9 @@ public class ApiErrorRecoveryServiceTests
         await using var h = await CreateHarnessAsync();
         var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var taskId = Guid.NewGuid();
-        var seq = await SeedTransientStubAsync(h.SessionId);
+        var seq = wall
+            ? await SeedStubAsync(h.SessionId, "rate_limit", 429, UsageLimitWallParser.SessionLimitFixtureText)
+            : await SeedTransientStubAsync(h.SessionId);
         await using (var db = CreateContext())
         {
             if (hasTask)
