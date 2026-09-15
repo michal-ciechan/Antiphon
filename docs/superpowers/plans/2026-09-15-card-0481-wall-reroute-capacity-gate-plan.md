@@ -363,3 +363,66 @@ before the next PC; refresh the restored file's timestamp (CARD-0403 note).
 - The per-tick lease `Held` event and the sibling-base hold's silence — CARD-0535.
 - The 0.4 s stale-alias rewalk after a reroute — investigation uncertainty 1; no card until it
   changes an outcome.
+
+## Build evidence (Code task 00222dc7)
+
+Original landing owner: `00222dc7`. Branch: `feat/card-task-00222dc7`.
+Worktree: `C:\Antiphon\worktrees\card-task-00222dc7`.
+Evidence root: `.antiphon/c481-evidence/` in that worktree; fresh TRX plus parsed JSON
+record each executed class/method, outcome and diagnostic. `summarize.py` regenerates JSON.
+Restart after ordinary Review and caller-owned land: **server**. No landing or restart by Code.
+
+### Baseline and coverage amendments
+
+Baseline `06889a0afb56309e1348abc5066f8a4ebd0f7d06` has the exact production/test code of
+`9b91429801e60cd2df7f701ed17ef78c9656154d` (`git diff` contains only three documentation files).
+A build into producer-owned `bin-c481/` passed. Baseline execution:
+
+- `base-unit/unit.trx`: `/*/*/*/*[Category=Unit]`, **2,460 total: 2,455 passed,
+  four failed, one skipped**. The four exact methods and diagnostics match the documented
+  inherited classification/stage-order failures; they were executed at unchanged base source.
+- `base-int/baseline.trx`: the plan's combined integration filter, excluding the two new
+  classes, **220 total: 205 passed, 15 failed**. Actual existing class counts are
+  ComplexityWallRerouteTests 11 (not the plan estimate 12), CapacityRecoveryTaskTests 6,
+  CapacityRecoveryGrantLivenessTests 12, CapacityRecoveryAttentionTests 3,
+  CapacityRecoveryCompatibilityTests 4, CapacityRecoverySupervisionTests 6,
+  RoutingPinCandidateDispatchTests 11, ModelAvailabilityDispatcherTests 3,
+  ApiErrorRecoveryServiceTests 36 and AgentTaskReplyIntegrationTests 128.
+  Full base failure messages are in `base-int/baseline.json`.
+- Added bounded coverage: **CapacityRecoveryAcceptanceTests** also calls ReconcileAsync and
+  checks stalled admissions. Its affected fixture must keep a live task owner after S3.
+  Run that named class in addition to the plan's exact combined filter.
+
+### Slice checks
+
+- S1: `9bfdfa8e`, build passed; `/*/*/WallRerouteDispatchTests/*`, `s1/s1.trx`:
+  **7/7 passed**, including both V-5 variants. V-1, V-2, V-3, V-4, V-5 and V-5b executed.
+
+### Pending obligations and noticed design gaps
+
+All **PC-1 through PC-10**, including their named red/green comparison variants, remain
+pending for post-land SourceLanding Mutation; no deliberate mutants have run.
+The plan has no V-7 and defines no R-n IDs.
+
+PC-2 says the complete V-1 method should stay green when requeue supersession is disabled,
+but V-1 also explicitly asserts Superseded. Dispatch on the new kind can stay green while
+that wait-state assertion fails. Mutation must distinguish those assertions when recording
+its V-1 comparison; the ordinary V-1 assertion has not been loosened.
+V-8's B wait necessarily changes Ready to ActionPending and increments Version when the
+same reconcile grants it; its ownership, identity and admission count should stay unchanged.
+
+The post-land database census is pending caller-owned publication and server activation.
+The plan's 18-to-3 prediction is a dated snapshot, not an assertion against a changing fleet.
+Check actual owners and grant liveness within two supervisor ticks, recording the observed counts.
+
+- S2: `6cf406ee`, build passed; filter
+  `/*/*/(WallRerouteDispatchTests*)|(RoutingPinCandidateDispatchTests*)|(ModelAvailabilityDispatcherTests*)|(CapacityRecoveryAcceptanceTests*)/*`,
+  `s2/s2.trx`: **39/39 passed** (10 + 11 + 3 + 15). This also records the
+  added acceptance class before the sweep change.
+- Additional ordinary guard: `WallRerouteDispatchTests.Repeated_model_hold_persists_the_new_wait_without_duplicate_trace`
+  pins durable registration when the same Held detail already exists. Superseding an old
+  attempt must not make the next attempt's new wait depend on writing a duplicate event.
+  Keep this method in Mutation's discovery inventory; no deliberate PC has been authored for it.
+- S3 fixture changes keep live owners for existing grant-expiry/admission tests. Six baseline
+  grant-liveness failures were fake clocks moved backward to September 8; their setup now uses
+  the factory's current fake instant, preserving all relative durations and assertions.

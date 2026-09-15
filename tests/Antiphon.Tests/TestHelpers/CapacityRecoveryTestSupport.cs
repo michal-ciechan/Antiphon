@@ -51,6 +51,41 @@ internal static class CapacityRecoveryTestSupport
     public static AppDbContext CreateContext(IsolatedTestSchema schema) =>
         new(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
 
+    /// <summary>
+    /// Grant-expiry tests model a live owner that is not redeeming, rather than an orphan.
+    /// A dispatched task also stays outside compatibility's legacy queued-task registration.
+    /// </summary>
+    public static async Task<CapacityRecoveryWait> EnsureWaitWithLiveOwnerAsync(
+        CapacityRecoveryService service, IsolatedTestSchema schema, CapacityWaitRegistration registration,
+        CancellationToken ct)
+    {
+        await using var db = CreateContext(schema);
+        var now = DateTime.UtcNow;
+        if (registration.ConsumerKind == CapacityWaitConsumerKind.LiveSession)
+        {
+            var id = registration.SessionId ?? Guid.Parse(registration.ConsumerKey["session:".Length..]);
+            if (!await db.AgentSessions.AnyAsync(s => s.Id == id, ct))
+                db.AgentSessions.Add(new AgentSession
+                {
+                    Id = id, DefinitionName = "fake", AgentKind = registration.ExecutionKind,
+                    Status = SessionStatus.Running, CreatedAt = now, StartedAt = now,
+                });
+        }
+        else if (registration.ConsumerKind is CapacityWaitConsumerKind.QueuedTask or CapacityWaitConsumerKind.RoutingBlockedTask)
+        {
+            var id = registration.TaskId ?? Guid.Parse(registration.ConsumerKey["task:".Length..]);
+            if (!await db.AgentTasks.AnyAsync(t => t.Id == id, ct))
+                db.AgentTasks.Add(new AgentTask
+                {
+                    Id = id, RootTaskId = id, Title = "live capacity consumer", Goal = "test",
+                    AgentKind = registration.ExecutionKind, Status = AgentTaskStatus.Dispatched,
+                    CreatedAt = now, ConcurrencyToken = Guid.NewGuid(),
+                });
+        }
+        await db.SaveChangesAsync(ct);
+        return await service.EnsureWaitAsync(registration, ct);
+    }
+
     public static ModelAvailabilityHold Hold(
         Guid id,
         string alias = "opus",

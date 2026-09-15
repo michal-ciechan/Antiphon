@@ -27,7 +27,7 @@ public class CapacityRecoveryGrantLivenessTests
         var deadWaits = new List<CapacityRecoveryWait>();
         for (var index = 0; index < 2; index++)
         {
-            var wait = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+            var wait = await CapacityRecoveryTestSupport.EnsureWaitWithLiveOwnerAsync(service, schema, CapacityRecoveryTestSupport.Registration(
                 $"session:{Guid.NewGuid():N}", CapacityWaitConsumerKind.LiveSession,
                 holdAlreadyCleared: true, blockedAt: now.AddMinutes(-30 + index)), CancellationToken.None);
             deadWaits.Add(wait);
@@ -42,7 +42,7 @@ public class CapacityRecoveryGrantLivenessTests
                 await db.SaveChangesAsync();
             }
         }
-        var healthy = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+        var healthy = await CapacityRecoveryTestSupport.EnsureWaitWithLiveOwnerAsync(service, schema, CapacityRecoveryTestSupport.Registration(
             $"task:{Guid.NewGuid():N}", CapacityWaitConsumerKind.QueuedTask,
             holdAlreadyCleared: true, blockedAt: now.AddMinutes(-1)), CancellationToken.None);
 
@@ -62,7 +62,7 @@ public class CapacityRecoveryGrantLivenessTests
                 admittedTick = tick;
                 break;
             }
-            // Only the healthy consumer redeems; the two orphan consumers never do.
+            // Only the healthy consumer redeems; the two unresponsive live consumers never do.
             time.Advance(TimeSpan.FromSeconds(60));
         }
 
@@ -85,18 +85,17 @@ public class CapacityRecoveryGrantLivenessTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var (service, time, provider) = CapacityRecoveryTestSupport.CreateService(schema);
         await using var services = provider;
-        time.SetUtcNow(new DateTimeOffset(2026, 9, 8, 12, 0, 0, TimeSpan.Zero));
         var now = time.GetUtcNow().UtcDateTime;
-        var older = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+        var older = await CapacityRecoveryTestSupport.EnsureWaitWithLiveOwnerAsync(service, schema, CapacityRecoveryTestSupport.Registration(
             $"session:{Guid.NewGuid():N}", CapacityWaitConsumerKind.LiveSession,
             holdAlreadyCleared: true, blockedAt: now.AddMinutes(-30)), CancellationToken.None);
-        var younger = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+        var younger = await CapacityRecoveryTestSupport.EnsureWaitWithLiveOwnerAsync(service, schema, CapacityRecoveryTestSupport.Registration(
             $"task:{Guid.NewGuid():N}", CapacityWaitConsumerKind.QueuedTask,
             holdAlreadyCleared: true, blockedAt: now.AddMinutes(-1)), CancellationToken.None);
         var receipt = Guid.NewGuid();
         if (hasReceipt)
         {
-            // A's consumer has disappeared after executing: its durable receipt remains,
+            // A's live consumer stopped redeeming after executing: its durable receipt remains,
             // but nobody will redeem another grant. B still has an active dispatch consumer.
             await using var db = CapacityRecoveryTestSupport.CreateContext(schema);
             var wait = await db.CapacityRecoveryWaits.SingleAsync(w => w.Id == older.Id);
@@ -170,7 +169,7 @@ public class CapacityRecoveryGrantLivenessTests
         await using var services = provider;
         var waits = new List<CapacityRecoveryWait>();
         for (var index = 0; index < 3; index++)
-            waits.Add(await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+            waits.Add(await CapacityRecoveryTestSupport.EnsureWaitWithLiveOwnerAsync(service, schema, CapacityRecoveryTestSupport.Registration(
                 $"task:{Guid.NewGuid():N}", CapacityWaitConsumerKind.QueuedTask,
                 holdAlreadyCleared: true, blockedAt: time.GetUtcNow().UtcDateTime.AddMinutes(-30 + index)),
                 CancellationToken.None));
@@ -220,7 +219,6 @@ public class CapacityRecoveryGrantLivenessTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var (service, time, provider) = CapacityRecoveryTestSupport.CreateService(schema);
         await using var services = provider;
-        time.SetUtcNow(new DateTimeOffset(2026, 9, 8, 12, 0, 0, TimeSpan.Zero));
         var sessionId = Guid.NewGuid();
         var registration = CapacityRecoveryTestSupport.Registration(
             $"session:{sessionId:N}", CapacityWaitConsumerKind.LiveSession,
@@ -287,8 +285,7 @@ public class CapacityRecoveryGrantLivenessTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var (service, time, provider) = CapacityRecoveryTestSupport.CreateService(schema);
         await using var services = provider;
-        time.SetUtcNow(new DateTimeOffset(2026, 9, 8, 12, 0, 0, TimeSpan.Zero));
-        var wait = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+        var wait = await CapacityRecoveryTestSupport.EnsureWaitWithLiveOwnerAsync(service, schema, CapacityRecoveryTestSupport.Registration(
             $"agent:{Guid.NewGuid():N}", CapacityWaitConsumerKind.StandingStart,
             holdAlreadyCleared: true), CancellationToken.None);
         await using (var db = CapacityRecoveryTestSupport.CreateContext(schema))
@@ -330,10 +327,10 @@ public class CapacityRecoveryGrantLivenessTests
         var (service, time, provider) = CapacityRecoveryTestSupport.CreateService(schema, interceptor: pause);
         await using var services = provider;
         var now = time.GetUtcNow().UtcDateTime;
-        var older = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+        var older = await CapacityRecoveryTestSupport.EnsureWaitWithLiveOwnerAsync(service, schema, CapacityRecoveryTestSupport.Registration(
             $"session:{Guid.NewGuid():N}", CapacityWaitConsumerKind.LiveSession,
             holdAlreadyCleared: true, blockedAt: now.AddMinutes(-30)), CancellationToken.None);
-        await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+        await CapacityRecoveryTestSupport.EnsureWaitWithLiveOwnerAsync(service, schema, CapacityRecoveryTestSupport.Registration(
             $"task:{Guid.NewGuid():N}", CapacityWaitConsumerKind.QueuedTask,
             holdAlreadyCleared: true, blockedAt: now.AddMinutes(-1)), CancellationToken.None);
         await using (var db = CapacityRecoveryTestSupport.CreateContext(schema))

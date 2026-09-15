@@ -239,6 +239,29 @@ public class WallRerouteDispatchTests
         (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held)).ShouldBe(1);
     }
 
+    [Test]
+    public async Task Repeated_model_hold_persists_the_new_wait_without_duplicate_trace()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var task = await SeedQueuedOpusAsync(schema, workspace.Path);
+        await SeedHoldAsync(schema, AgentKind.ClaudeCode, "opus");
+        await using (var db = CreateContext(schema))
+        {
+            db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(), AgentTaskId = task.Id, Type = AgentTaskEventType.Held,
+                Detail = "opus is held; dispatch paused for that model.", At = DateTime.UtcNow.AddMinutes(-1),
+            });
+            await db.SaveChangesAsync();
+        }
+        var result = await CapacityRecoveryTaskTests.CreateDispatcher(schema.ConnectionString).TickAsync(CancellationToken.None);
+        result.SkippedModelAvailability.ShouldBe(1);
+        await using var verify = CreateContext(schema);
+        (await verify.CapacityRecoveryWaits.SingleAsync(w => w.TaskId == task.Id)).State.ShouldBe(CapacityRecoveryWaitState.WaitingForHold);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held)).ShouldBe(1);
+    }
+
     private static async Task<(Guid AgentId, Guid SessionId)> SeedWarmOpusAsync(IsolatedTestSchema schema, string directory)
     {
         var warm = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(schema.ConnectionString, directory);
