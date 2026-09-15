@@ -162,3 +162,96 @@ inventory. Restart target after authorized publication: **server**. Original lan
 original Code task after Review, activates the server through the canonical checkout/runbook,
 and explicitly commissions SourceLanding Mutation. The manually removed live head is not a
 remaining row to delete, and the post-land cancellation count must not be fixed at 65.
+
+---
+
+# FollowUp pass (task `babf4d32`): review defects F1 and F2
+
+Review `b615578c` rejected `fdb56356`. Both defects are fixed on the same branch; nothing was
+landed, deployed or restarted. PC execution still belongs to the post-land Mutation task.
+
+## F1 (P1) — a parked head's composer is not empty
+
+**The defect.** Parking the head at `MaxDeliveryAttempts` stops it being re-typed, but skipping a
+row is not the same as emptying its composer, and parking deliberately does not restart the
+session. The body was still standing there unsubmitted, so the next flush typed the next row's
+body straight on top of it: the terminal received `<parked brief><next message>` as ONE prompt,
+and the containment matcher then marked the next row `Delivered` for a prompt it never owned.
+The earlier regression hid this by advancing the generation and calling `PrimeComposer("")`
+before the second flush — a state no production path produces at that moment.
+
+**The fix** (`DeliverNextLockedAsync`, after the `deliverable` filter; helper
+`HeldBackTypingBlocksTheComposer`). A flush holds — `FlushResult.Nothing` / `LateConfirmed`,
+no attempt charged, nothing parked, no kill — whenever a Pending row it is NOT going to deliver
+was typed in the CURRENT generation and the whole head of its body is still on the rendered
+screen. That is deliberately the same predicate pair (`DeliveryGenerationChanged` +
+`HeadFragmentIsVisibleWhole`) the Enter-only recovery uses to conclude "that body is in the
+composer"; the two must agree, or the queue would re-press Enter for a body it simultaneously
+believed was gone. An unreadable snapshot also holds, matching
+`RecoverDeliveryRunLockedAsync`'s existing "the composer cannot be shown empty" answer.
+
+**Release paths, in the order they normally fire.** The late-confirm that already ran earlier in
+the same flush is the ordinary one: a held body that really did land becomes `Sent` and stops
+being a held-back row at all — which is also why the "body is in the scrollback, not the composer"
+false positive self-resolves rather than wedging the queue. Then `CancelDeadBriefsAsync` for a
+terminal task, a demonstrably cleared composer, and a new generation.
+
+**Existing no-kill guards are untouched.** The hold is a defer; it reaches no kill path, and the
+regression asserts `Killed == false` and the next row un-parked.
+
+## F2 (P2) — the handoff nothing owned
+
+Three separate gaps, all closed with ordinary coverage.
+
+1. **Producer to recipient.** `AgentTaskCheckInterpreterTests` runs real production but reads the
+   result back off the QUEUE ROW (`NotesToCallerAsync`); its caller session has no adapter, so
+   nothing is ever typed. The queue suites run real delivery and recovery but hand-seed rows.
+   CARD-0501's live failure lived exactly between them. New `CheckNoteDeliveryHandoffTests`
+   carries a note produced by the real `AgentTaskCheckService` through the real queue to a
+   complete, correlated `UserPrompt`, for both live recipient shapes — BUSY at production time
+   and already ELIGIBLE — each finished by the Enter-only recovery after a swallowed first submit.
+   The interpretation half stays with `AgentTaskCheckInterpreterTests`; the interpreter is not
+   wired here, which is the plain slice-3 digest note — the shape of the stranded rows.
+2. **The charge/handler boundary.** The attempt charge is saved before
+   `HandleDeliveryFailureAsync` and in a different scope, because the handler reloads the rows and
+   recomputes `parked` from the count it reads. A crash in between must cost the attempt; losing
+   it would let an Enter-only cycle repeat without bound. `EnterOnlyConfirmLockedAsync` now
+   reaches the existing `LandDeliveryBoundary` seam at `"queue-enter-only-charged"` (production
+   installs the no-op base class), and the test crashes there twice, then shows the row parked on
+   the third cycle with no further Enter.
+3. **Multi-row failure charging.** A recovered run can be a CARD-0342 batch: one composed body,
+   one Enter, several rows. Every row is charged, not only the head — otherwise the tail could
+   re-enter the same cycle forever behind a parked head. This was named as a discovery gap in
+   the section above; it is now covered.
+
+## Delivery handoff inventory
+
+Every handoff a produced check note crosses before it is a prompt in the recipient's transcript,
+and what now owns each one. "Owner" is the ordinary test that fails if the handoff breaks.
+
+| # | Handoff | Production site | What is lost if it breaks | Ordinary owner |
+|---|---|---|---|---|
+| H-1 | facts to note body | `AgentTaskCheckService.RunCheckAsync` then `BuildNote` | a note that cannot be traced to the task it is about | `CheckNoteDeliveryHandoffTests` (header short id); `AgentTaskCheckInterpreterTests` owns the body's content |
+| H-2 | note to queue row | `_queue.EnqueueAsync(parentSession, …, Check, ConversationKey(taskId), sourceTaskId)` | correlation: nothing can tie the row back to the checked task | `CheckNoteDeliveryHandoffTests` (`ConversationKey`, `SourceTaskId` on the persisted row) |
+| H-3 | queue row to first typing | `DeliverNextLockedAsync` (busy defers, idle types) | a busy recipient typed into mid-turn | `A_check_note_reaches_a_busy_recipient_as_one_whole_prompt_after_recovery` (attempts 0, no inputs while working) |
+| H-4 | typed body to submit | `DeliverAsync` and the confirm loop | a swallowed Enter silently reported as delivered | both handoff tests (attempts 1, Pending, zero prompts) |
+| H-5 | standing body to Enter-only recovery | retry branch then `EnterOnlyConfirmLockedAsync` | a duplicate retype, or an Enter into a dead composer | `SessionMessageQueueWedgedHeadTests` S2 gate methods; `A_check_note_reaches_an_already_eligible_recipient_as_one_whole_prompt` asserts no retype |
+| H-6 | Enter-only failure to attempt charge | `EnterOnlyConfirmLockedAsync` charge | an uncharged cycle repeating forever (the CARD-0501 loop) | `Failed_Enter_only_recovery_charges_an_attempt`, `Failed_Enter_only_recovery_charges_every_row_of_the_batch` |
+| H-7 | charge save to failure handler | save, then `HandleDeliveryFailureAsync` in its own scope | a crash losing the charge and unbounding the cycle | `A_crash_between_the_charge_and_the_failure_handler_keeps_the_attempt_charged` |
+| H-8 | parked head to the next row | `deliverable` filter plus the F1 composer hold | the parked body riding into the next row's prompt (F1) | `Parked_head_left_in_the_composer_holds_the_next_message` plus its two release arms |
+| H-9 | submit to recipient `UserPrompt` | transcript ingestion then verification | a row marked `Delivered` for a prompt the agent never received whole | both handoff tests (`prompts.ShouldBe([row.Body])`, exact) |
+| H-10 | terminal task to brief cancellation | `CancelDeadBriefsAsync` | orphans accumulating behind the head | `SessionMessageQueueWedgedHeadTests` S4 methods |
+
+Still not owned by an ordinary test, and deliberately so: the interpreter's own wait/degrade
+arms (H-1's body, owned by `AgentTaskCheckInterpreterTests`), a legacy row with BOTH the
+generation and the typing timestamp absent, an exception escaping the Enter-only confirmation
+path, and a collapsed `[Pasted text #N]` body that shows no head at all (pre-existing, named
+out of scope by the plan). Backend-unreachable still defers without charging.
+
+## FollowUp coverage IDs
+
+| ID | Coverage | Class / check |
+|---|---|---|
+| V-7 | F1 hold, both release arms, previous-generation no-regression twin | `SessionMessageQueueWedgedHeadTests` (`Parked_head_left_in_the_composer_holds_the_next_message`, `Cleared_composer_releases_the_next_message_with_its_exact_body`, `Parked_head_from_a_previous_generation_does_not_hold_the_next_message`, strengthened `Third_failed_Enter_only_recovery_parks_and_unblocks_the_queue`) |
+| V-8 | F2 producer-to-recipient handoff, busy and already-eligible | `CheckNoteDeliveryHandoffTests` |
+| V-9 | F2 charge/handler crash boundary and multi-row batch charging | `SessionMessageQueueWedgedHeadTests` (`A_crash_between_the_charge_and_the_failure_handler_keeps_the_attempt_charged`, `Failed_Enter_only_recovery_charges_every_row_of_the_batch`) |
