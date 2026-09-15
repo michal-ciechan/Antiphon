@@ -12,6 +12,33 @@ namespace Antiphon.Tests.Application;
 public sealed class GatedCommitServiceTests
 {
     [Test]
+    [Arguments("worktree")]
+    [Arguments("nonrepo")]
+    [Arguments("bare")]
+    [Arguments("unavailable")]
+    [Arguments("invalid-metadata")]
+    public async Task Repository_inspection_distinguishes_explicit_negatives_from_failures(string variant)
+    {
+        using var repo = await SeedAsync();
+        var directory = variant is "worktree" or "unavailable" ? repo.Path : repo.WorktreeRoot;
+        if (variant == "bare")
+            (await ScratchGitRepo.GitInAsync(directory, "init", "--bare")).Ok.ShouldBeTrue();
+        if (variant == "invalid-metadata")
+            await File.WriteAllTextAsync(Path.Combine(directory, ".git"), "invalid git metadata");
+        var spy = new RecordingGitWorkspaceService();
+        if (variant == "unavailable") spy.OverrideRun = _ => (128, "", "inspection unavailable");
+        var result = await spy.InspectRepositoryAsync(directory, CancellationToken.None);
+        result.ShouldBe(variant switch
+        {
+            "worktree" => GitWorkspaceService.RepositoryInspection.Worktree,
+            "nonrepo" or "bare" => GitWorkspaceService.RepositoryInspection.NotWorktree,
+            _ => GitWorkspaceService.RepositoryInspection.Unavailable,
+        });
+        spy.Verbs.ShouldNotContain("add");
+        spy.Verbs.ShouldNotContain("commit");
+    }
+
+    [Test]
     [Arguments("allowed.txt", false, true)]
     [Arguments("allowed.txt", false, false)]
     [Arguments("blocked.txt", true, true)]

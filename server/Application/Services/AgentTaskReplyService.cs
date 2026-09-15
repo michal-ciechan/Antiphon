@@ -3031,11 +3031,16 @@ public sealed class AgentTaskReplyService
         var settlement = DelegationNoteDigest.Compute(
             $"{task.Id:D}|{task.AgentSessionId:D}|{task.DispatchedAt:O}|{report}");
         var existing = await git.FindSettlementCommitsAsync(repo, task.Id, settlement, ct);
+        var repository = await git.InspectRepositoryAsync(repo, ct);
+        // Shared work outside Git is ineligible. A known commit takes precedence even
+        // over an explicit negative observed after history (the checkout may have changed).
+        if (repository == GitWorkspaceService.RepositoryInspection.NotWorktree && existing.Items.Count == 0)
+            return null;
         if (!existing.Succeeded || existing.Items.Count > 1)
             throw new ServiceUnavailableException("Settlement recovery requires one exact identity; inspect git history.",
                 "settlement_recovery_unavailable");
 
-        if (!Directory.Exists(repo) || !await git.IsRepositoryAsync(repo, ct))
+        if (repository != GitWorkspaceService.RepositoryInspection.Worktree)
             throw new ServiceUnavailableException("Settlement repository inspection is unavailable.",
                 "settlement_recovery_unavailable");
 

@@ -40,6 +40,19 @@ public class GitWorkspaceService
         return code == 0 && stdout.Trim() == "true";
     }
 
+    public enum RepositoryInspection { Worktree, NotWorktree, Unavailable }
+
+    /// <summary>Distinguishes Git's explicit negative from a failed prerequisite inspection.</summary>
+    public async Task<RepositoryInspection> InspectRepositoryAsync(string workingDirectory, CancellationToken ct)
+    {
+        var (code, stdout, stderr) = await RunAsync(workingDirectory, ct, "rev-parse", "--is-inside-work-tree");
+        if (code == 0 && stdout.Trim() == "true") return RepositoryInspection.Worktree;
+        if (code == 0 && stdout.Trim() == "false") return RepositoryInspection.NotWorktree;
+        if (code == 128 && stderr.Trim() == "fatal: not a git repository (or any of the parent directories): .git")
+            return RepositoryInspection.NotWorktree;
+        return RepositoryInspection.Unavailable;
+    }
+
     /// <summary>The checkout root for a directory, or null when git cannot resolve one.</summary>
     public async Task<string?> GetRepoToplevelAsync(string workingDirectory, CancellationToken ct)
     {
@@ -980,6 +993,9 @@ public class GitWorkspaceService
                 psi.StandardInputEncoding = new UTF8Encoding(false);
             foreach (var a in args)
                 psi.ArgumentList.Add(a);
+            // Only this prerequisite needs a diagnostic for Git's explicit negative result.
+            if (args is ["rev-parse", "--is-inside-work-tree"])
+                psi.Environment["LC_ALL"] = "C";
 
             using var lease = await _gate.EnterAsync(ct);
             process = Process.Start(psi);
