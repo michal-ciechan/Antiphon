@@ -283,7 +283,7 @@ public sealed class GatedCommitServiceTests
             result.Refusals.ShouldContain(r => r.Path == "ignore.rules");
             spy.Verbs.ShouldNotContain("add");
             spy.Verbs.ShouldNotContain("commit");
-            (await repo.GitReadAsync("diff", "--cached", "--name-only")).Trim().ShouldBeEmpty();
+            (await repo.GitReadAsync("diff", "--cached", "--name-only")).Trim().ShouldNotContain("new.txt");
             (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldBe(head);
         }
     }

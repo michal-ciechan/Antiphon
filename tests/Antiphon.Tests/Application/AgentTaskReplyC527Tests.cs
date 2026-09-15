@@ -917,7 +917,7 @@ public partial class AgentTaskReplyIntegrationTests
         {
             var prompt = await childDb.TranscriptEntries.SingleAsync(t =>
                 t.AgentSessionId == childSession && t.Kind == TranscriptKinds.UserPrompt);
-            prompt.Text.ShouldBe(brief);
+            prompt.Text.ReplaceLineEndings("\n").ShouldBe(brief.ReplaceLineEndings("\n"));
         }
 
         var gated = factory.ServiceProvider.GetRequiredService<GatedCommitService>();
