@@ -15,29 +15,36 @@ Postgres DB** — so you can run several side by side (e.g. an `antiphon` bot an
 Full table + a compose example: **[src/Antiphon.Messaging.Service/README.md](../src/Antiphon.Messaging.Service/README.md)**.
 Slack setup, manifest, and Socket Mode diagnostics: **[slack-bot-ops.md](slack-bot-ops.md)**.
 
-**Live (both verified on server2, 2026-08-21):**
+## Choose the machine's deployment
 
-- The `family` instance — the one Antiphon itself uses — runs in compose project
-  `antiphon-messaging` (`/home/mc/antiphon-messaging`): service `messaging-service`, container
-  **`am-service`** on host port 18090, **built from source** (`build: ./build/src`) rather than from
-  the published image, with its own `am-redpanda` (external listener `100.93.77.126:19092`),
-  `am-postgres` (db `antiphon_messaging`) and `am-console` (18080). Since CARD-0107 this single
-  instance registers **both** the Telegram and Slack adapters — one process, two channels. Ops
-  procedure: [telegram-bot-ops.md](telegram-bot-ops.md).
-- The `school_revision` instance runs on server2 inside the school-revision compose
-  (`~/docker/schoolrevision`) — service `antiphon-messaging-telegram` + its own `messaging-redpanda`
-  + DB `school_revision_messaging`, using `school_revision_bot`.
+The server defaults to local Redpanda at `localhost:19092`. Live gateways are provisioned
+per machine, outside AppHost. CARD-0496 records a separately managed
+[desktop Slack sidecar](slack-bot-ops.md#desktop-slack-sidecar) on that local broker;
+a fresh clone does not install it or establish real chat connectivity.
 
-The two share nothing — separate brokers, separate databases, separate images. "One instance per
-bot" is about the *bot token*, not about the channel: a single instance happily serves several
-providers at once, as `am-service` now does.
+An optional remote instance needs an explicitly confirmed SSH destination and broker.
+[Remote deployment operations](telegram-bot-ops.md#deploying-an-optional-remote-messaging-service)
+describe `-SshTarget` and the helper's fixed `/home/mc/antiphon-messaging` Compose layout.
+An intentional server broker override belongs in AppHost user-secrets
+(`aspire-antiphon-apphost`) or its gitignored development overlay, and is forwarded only
+to the server. The local desktop path needs no remote override.
+
+Keep separate instances' broker/database state independent. "One instance per bot" is
+about the bot token: an instance can register several providers when their tokens are
+configured. Restart impact depends on which adapters actually share that instance.
+The [August Slack deployment](superpowers/plans/2026-08-20-card-0107-slack-channel-plan.md)
+and [broker opt-in plan](superpowers/plans/2026-08-25-card-0185-apphost-broker-opt-in-plan.md)
+are dated evidence, not a current host census.
 
 ## Fake gateway (local dev / integration tests)
 
 `src/Antiphon.Messaging.FakeGateway` (NuGet: `Antiphon.Messaging.FakeGateway`, dotnet tool
 `antiphon-fake-gateway`) is a Kafka-connected stand-in for this service: real broker semantics,
-no real Telegram. The AppHost runs it on **http://localhost:17208** in the dev stack; deployed
-environments run only the real gateway.
+no real Telegram or Slack egress of its own. AppHost runs it on **http://localhost:17208**.
+Sharing its broker with a real gateway defeats test isolation: synthetic input can produce
+real replies through that gateway. Synthetic tests require a broker with no real gateway
+attached. The server and FakeGateway are separated only when their effective brokers differ;
+changing a hostname or removing an override does not prove isolation.
 
 - Hosts `FakeChannelAdapter` (telegram + slack) on `Antiphon.Messaging.Gateway`. Ingress
   produces `channels.inbound`; outbound consumes `channels.outbound` (group

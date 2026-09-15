@@ -33,9 +33,9 @@ builder.AddDaemonProcess("session-runner", new DaemonProcessConfig(
     BuildProjectDir:  sessionRunnerDir));
 
 // ── FAKE messaging gateway (dev/test only — records would-be deliveries, injects inbound) ──
-// The REAL Antiphon.Messaging.Service (actual Telegram egress) is deliberately NOT part of the
-// dev stack (spec Q9); deployed environments run only the real gateway. Built-exe pattern for
-// the same reason as the session-runner (no `dotnet run` kill-on-close job).
+// Real Slack/Telegram gateways are provisioned separately per machine, never owned by AppHost.
+// A local sidecar can make this broker live; synthetic tests need a broker with no real gateway.
+// Built-exe pattern for the same reason as the session-runner (no `dotnet run` kill-on-close job).
 var fakeGatewayDir = Path.Combine(repoRoot, "src", "Antiphon.Messaging.FakeGateway");
 builder.AddDaemonProcess("fake-gateway", new DaemonProcessConfig(
     Executable:       Path.Combine(fakeGatewayDir, "bin", "Debug", "net9.0", "Antiphon.Messaging.FakeGateway.exe"),
@@ -47,14 +47,13 @@ builder.AddDaemonProcess("fake-gateway", new DaemonProcessConfig(
 
 // ── Messaging broker (CARD-0185) ──────────────────────────────────────────────────────────
 // Default: whatever server/appsettings.json says — localhost:19092, the docker-compose.dev.yml
-// Redpanda that the fake gateway (:17208) also uses. A LIVE broker (this machine: am-redpanda on
-// server2 over Tailscale, which the real Family Telegram gateway produces to) is a per-machine
-// opt-in that never appears in source:
-//   dotnet user-secrets set "AntiphonMessaging:BootstrapServers" "server2:19092" --project Antiphon.AppHost
-// or the gitignored Antiphon.AppHost/appsettings.Development.json. Forwarded verbatim as the
-// server's AntiphonMessaging__BootstrapServers; the fake gateway is deliberately NOT forwarded
-// (a fake inbound on the live broker would be answered through the real bot), so while live,
-// POST :17208/inbound does not reach the server. It is one broker or the other.
+// Redpanda that the fake gateway (:17208) also uses. Live gateways are provisioned per machine.
+// An intentional broker override belongs in AppHost user-secrets (aspire-antiphon-apphost)
+// or the gitignored Antiphon.AppHost/appsettings.Development.json, never a source hostname.
+// The nonblank trimmed override is forwarded only as the server's
+// AntiphonMessaging__BootstrapServers; fake-gateway configuration is unchanged.
+// They are separated only when their effective brokers differ. Local does not imply fake-only;
+// removing an override does not establish test isolation. See docs/slack-bot-ops.md.
 var liveBroker = builder.Configuration["AntiphonMessaging:BootstrapServers"];
 
 // ── .NET API server ───────────────────────────────────────────────────────────
@@ -113,7 +112,7 @@ logger.LogInformation(
 if (!string.IsNullOrWhiteSpace(liveBroker))
 {
     logger.LogInformation(
-        "Messaging broker for server: {Broker} ({Source}); fake-gateway stays on localhost:19092 and will not reach the server while the live broker is selected",
+        "Messaging broker for server: {Broker} ({Source}); fake-gateway configuration is unchanged",
         liveBroker.Trim(),
         "AppHost configuration (per-machine opt-in)");
 }

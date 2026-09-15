@@ -572,7 +572,7 @@ health episode. A committed caller note keeps its durable queue identity through
 
 ### Preserved Gotcha #13
 
-- **The AppHost no longer names a messaging broker** (CARD-0185): `Antiphon.AppHost/Program.cs` forwards `AntiphonMessaging:BootstrapServers` from its own configuration only when set. Fresh clones stay on `localhost:19092` (the `docker-compose.dev.yml` Redpanda). The live Family Telegram path on this machine is the `aspire-antiphon-apphost` user-secret (`dotnet user-secrets set "AntiphonMessaging:BootstrapServers" "server2:19092" --project Antiphon.AppHost`). Never put the hostname back in `Program.cs`, and never forward it to the fake gateway (a `POST :17208/inbound` on the live broker would be answered through the real bot).
+- **The AppHost no longer names a messaging broker** (CARD-0185): `Antiphon.AppHost/Program.cs` forwards `AntiphonMessaging:BootstrapServers` from its own configuration only when set. Fresh clones stay on `localhost:19092` (the `docker-compose.dev.yml` Redpanda). Live gateways are provisioned per machine; the [desktop Slack sidecar](slack-bot-ops.md#desktop-slack-sidecar) uses that local broker. An intentional override belongs in AppHost user-secrets (id `aspire-antiphon-apphost`) or the gitignored `Antiphon.AppHost/appsettings.Development.json`; [channel ops](telegram-bot-ops.md#per-bot-deployment-model) explains explicit broker selection. Never put a broker hostname in `Program.cs` or forward the override to FakeGateway. Its configuration stays independent, but separation exists only when effective brokers differ. Local does not imply fake-only; synthetic tests require a broker with no real gateway attached.
 
 ### Preserved Gotcha #55
 

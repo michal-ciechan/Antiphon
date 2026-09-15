@@ -96,11 +96,11 @@ Three facts worth having before you touch this again, all measured on app `A0BRR
 - **No reinstall is required. Saving the manifest is the whole fix.** CARD-0119 pasted the
   `app_home` block into the **App Manifest** editor, clicked Save Changes ("Your changes have been
   successfully saved."), reloaded the Slack client, and the DM composer was there. No
-  `oauth.v2.access`, no bot-token rotation, no `.env` edit, and **nothing on server2 touched** —
-  which matters, because the Slack adapter shares one `am-service` process with the live Telegram
-  gateway, so an unnecessary reinstall would have risked the Family and AZ Care conversations for
-  nothing. `features.app_home` is not an OAuth scope change; treat reinstall as a fallback that was
-  not needed, not as a step.
+  `oauth.v2.access`, no bot-token rotation, no `.env` edit, and no gateway deployment.
+  This is an app-configuration fix, not evidence of today's gateway topology. If Slack and
+  Telegram share an instance, restarting it affects both. `features.app_home` is not an OAuth
+  scope change; reinstall was not needed in this observation. See the dated
+  [Slack DM plan](superpowers/plans/2026-08-21-card-0119-slack-dm-plan.md).
 - **A missing `app_home` block in the manifest is NOT evidence the tab is off.** Slack omits the
   block entirely when it has never been set, while the underlying toggles still have values. Read
   the real state on **App Home** instead — the checkboxes are `#message_tab_toggle` and
@@ -121,11 +121,44 @@ names and mentions; `channels:read`, `groups:read`, `im:read`, and `mpim:read` r
 conversation titles with `conversations.info`; and `files:read`/`files:write` handle attachments.
 The sole app-level scope is `connections:write` for Socket Mode.
 
-## Configure and deploy the gateway
+## Desktop Slack sidecar
+
+CARD-0496 records the desktop setup on **2026-09-12**: `MikeysBotSlackGateway` uses local
+Redpanda at `localhost:19092`, managed separately by the Scheduled Task
+**`Antiphon MikeysBot Slack Gateway`**. This is an operator-recorded setup, not an installer
+contract or a claim that the task is installed or running on every clone. The planning
+environment did not have a matching task. This Slack sidecar does not establish Telegram support.
+
+AppHost owns FakeGateway, not the real Slack/Telegram gateways. Its health or restart does
+not prove sidecar health or restart the sidecar. `scripts/install-autostart.ps1` does not
+provision this task. Begin with read-only discovery:
+
+```powershell
+Get-ScheduledTask -TaskName 'Antiphon MikeysBot Slack Gateway' |
+    Select-Object TaskName, State
+Get-ScheduledTaskInfo -TaskName 'Antiphon MikeysBot Slack Gateway' |
+    Select-Object LastRunTime, LastTaskResult, NextRunTime, NumberOfMissedRuns
+```
+
+If the task is absent, this machine has not been shown to have that setup. Consult the
+operator-provided sidecar provisioning details; do not fall through to SSH or invent a
+launcher. If present, `Running` proves neither broker nor Slack connectivity. Check the
+configured gateway's known health/log location and effective broker using its provisioning
+details. Do not dump task arguments, tokens, Compose environments, or all user-secrets.
+Diagnose broker connectivity and the Slack Socket Mode connection independently before
+requesting a sidecar restart through its actual lifecycle owner.
+
+The server also defaults to `localhost:19092`; this local path needs no remote override.
+An intentional broker override belongs in AppHost user-secrets (`aspire-antiphon-apphost`)
+or its gitignored development overlay and is forwarded only to the server. FakeGateway's
+configuration is unchanged. Synthetic tests require a broker with no real gateway attached;
+removing an override does not establish isolation.
+
+## Configure and deploy an optional remote gateway
 
 The same `Antiphon.Messaging.Service` image can register Telegram, Slack, or both. It registers an
 adapter only when its bot token is configured, and logs a warning if neither adapter is present.
-Add these environment values to the chosen server2 compose instance after the app exists:
+Add these environment values to the explicitly chosen Compose instance after the app exists:
 
 ```yaml
 Slack__BotToken: "${SLACK_BOT_TOKEN}"       # xoxb-… from Bitwarden
@@ -134,31 +167,31 @@ Slack__AppToken: "${SLACK_APP_TOKEN}"       # xapp-… with connections:write
 Slack__AllowedConversationIds__0: "C0123456789"
 ```
 
-**Deployed 2026-08-21 (CARD-0107): Slack joins the existing `family` gateway** — the same
-`am-service` container that carries the live Family and AZ Care Telegram conversations, in compose
-project `antiphon-messaging` at `/home/mc/antiphon-messaging` on server2. It was *not* given a
-separate gateway: one process now registers both adapters, sharing that instance's `am-redpanda`
-and `am-postgres`. The full, re-verified tar-sync + build + rollback procedure lives in
-[telegram-bot-ops.md](telegram-bot-ops.md#deploying-the-messaging-service-server2) — it is the same
-gateway, so there is one copy of those steps, not two.
+The [August Slack deployment](superpowers/plans/2026-08-20-card-0107-slack-channel-plan.md)
+records a historical shared instance. Confirm today's adapters and lifecycle for the selected
+machine. The supported remote helper is restricted to `/home/mc/antiphon-messaging`,
+`build/src`, service `messaging-service`, and container `am-service`; it is not the desktop
+sidecar's deploy tool. Follow
+[remote deployment operations](telegram-bot-ops.md#deploying-an-optional-remote-messaging-service).
+Replace `<user>@<confirmed-host>` before this read-only preflight (there is no default target):
 
-Both tokens are supplied the same way the Telegram one already was: compose interpolates
-`${SLACK_BOT_TOKEN}` / `${SLACK_APP_TOKEN}` from the mode-600 `.env` beside `docker-compose.yml`.
-Nothing is inline in the compose file, and no token value need ever be printed to add one:
-
-```bash
-# check interpolation WITHOUT revealing values — lengths only (xoxb- is 56, xapp- is 98)
-ssh mc@server2 'cd /home/mc/antiphon-messaging && docker compose config' \
-  | grep -E 'Slack__|Telegram__Bot' | awk -F': ' '{gsub(/"/,"",$2); print $1": len=" length($2)}'
+```powershell
+pwsh -NoProfile -File scripts/deploy-am-service.ps1 -SshTarget '<user>@<confirmed-host>'
 ```
 
-Because the two adapters share one process, **a Slack deploy restarts the live Telegram gateway.**
-Verify Telegram in both directions afterwards, per that doc's verify step — do not stop at "it
-built".
+Compose interpolates
+`${SLACK_BOT_TOKEN}` / `${SLACK_APP_TOKEN}` from the mode-600 `.env` beside `docker-compose.yml`.
+Nothing is inline in the tracked Compose file. Use the helper's safe projections; never dump
+the Compose environment or token values for diagnosis.
+
+If both adapters share the chosen process, a Slack deploy also restarts its Telegram adapter.
+With separate traffic authorization, verify each configured provider in both directions
+afterwards using its designated test conversation.
 
 Startup should log one `[ingress] starting channel …` line per adapter, then the Socket Mode
-handshake. The authoritative registration check is `curl -s localhost:18090/api/channels`, which
-lists each adapter's capabilities — prefer it over the startup log line.
+handshake. For that supported remote layout, `/api/channels` on the selected host's port 18090
+lists registered adapters and capabilities; the helper checks it. This is not a sidecar health
+port or proof of message delivery.
 
 ## Bind a Slack conversation to an agent
 
@@ -204,12 +237,13 @@ resolve it from the mutable channel row.
   token carrying `connections:write`, and `Slack__BotToken` is the installed app’s `xoxb-…` token.
 - Repeated `disconnect` envelopes are normal Slack connection rotation. The adapter acknowledges
   envelopes immediately and opens a fresh socket; investigate only if reconnects do not settle.
-- **Never run two adapters on the same app token at once** — e.g. a local instance left running
-  while you deploy to server2. Slack accepts multiple Socket Mode connections per app and
+- **Never run two adapters on the same app token at once** — e.g. an old instance left running
+  while you deploy a replacement. Slack accepts multiple Socket Mode connections per app and
   *load-balances* events across them, so roughly half the messages vanish into whichever process
   you weren't watching. There is no error and both sockets look healthy; the only symptom is
-  intermittently missing inbound. Stop the local one before deploying (this is why the local
-  pre-deploy check in CARD-0107 was torn down before the server2 build).
+  intermittently missing inbound. Establish ownership of both instances and coordinate the
+  old instance's shutdown with the authorized replacement; location alone does not identify
+  which instance should stop.
 - Duplicate events indicate a delayed envelope acknowledgement or Slack redelivery. The adapter
   acknowledges before normalization and the bridge deduplicates by channel message id; check logs
   for socket stalls before changing code.

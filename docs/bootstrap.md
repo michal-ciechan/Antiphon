@@ -90,12 +90,13 @@ Pick one before touching the machine.
 `~/.claude` is a git checkout of this operator's private `claude-home` repo
 (not a public clone URL — a stranger cannot use it). On the new box: clone
 that repo into `~/.claude`, run the `sync` skill, then the machine steps
-below. Recurring build-junk cleanup is Windmill on server2
+below. Recurring build-junk cleanup is an operator-managed Windmill job
 (`u/lndcobra/antiphon_build_junk_cleanup`, Mon 09:00 Europe/London), not a
 Windows Scheduled Task — do not re-add a local task. The overnight
 build+test job is the same shape (`u/lndcobra/antiphon_nightly_tests`,
 00:30 Europe/London, `scripts/nightly-run.ps1`); do not add a local
-Scheduled Task for that either.
+Scheduled Task for that either. Check current registration and qualification in
+[testing and build operations](testing-and-build.md#nightly); a job name alone is not evidence it runs.
 
 ### (b) New operator
 
@@ -186,9 +187,10 @@ docker compose -f docker-compose.dev.yml up -d
 
 Brings up `antiphon-postgres` on **17280** and Redpanda on **19092**. A
 fresh machine is on that local Redpanda and needs nothing — the AppHost
-only forwards a live broker when `AntiphonMessaging:BootstrapServers` is
+only forwards an intentional broker override when `AntiphonMessaging:BootstrapServers` is
 set in the AppHost's own user-secrets (or gitignored
-`Antiphon.AppHost/appsettings.Development.json`). Only Postgres is
+`Antiphon.AppHost/appsettings.Development.json`). Live gateways are provisioned
+per machine; a local broker can carry real traffic. Only Postgres is
 required for "done". Channel bridge stays `Enabled: false` in the tracked
 file (AppHost forces it on). Telegram / Kafka is not part of `/health` —
 [telegram-bot-ops.md](telegram-bot-ops.md).
@@ -243,6 +245,11 @@ Start-ScheduledTask -TaskName "Antiphon AppHost"
 Start-ScheduledTask -TaskName "Antiphon AppHost Watchdog State Observer"
 ```
 
+Real messaging gateways have an independent lifecycle. The card-recorded
+[desktop Slack sidecar](slack-bot-ops.md#desktop-slack-sidecar) is separately managed
+by `Antiphon MikeysBot Slack Gateway`; `install-autostart.ps1` does not install it.
+A fresh clone is not evidence that this task or real chat is configured.
+
 ### 7. Start the Aspire stack
 
 Follow the [canonical local restart runbook](apphost-runbook.md#first-start-and-apphost-restart).
@@ -289,7 +296,7 @@ Never print a secret value. Config keys stay empty in the tracked file.
 | Agent TUI wrapper auth | `~/.claude` (Claude), `~/.grok/auth.json` (Grok). | Log the TUI in as the Windows user. |
 | Agent TUI managed secrets + Data Protection ring | DB ciphertext + `%LOCALAPPDATA%\Antiphon\DataProtection-Keys`. | Fresh ring is expected; re-enter managed secrets. On a migration, back up the ring *with* the `dev-backup.ps1` output ([ai-agent-tui-configuration.md](ai-agent-tui-configuration.md)). |
 | Telegram bot token | Bitwarden item **Telegram Bot Tokens (Antiphon / School Revision)** (type: Secure Note). Fields include `antiphon_assistant_bot`, `school_revision_bot`, `antiphon_test_bot`, `school_revision_test_bot`. Stand-up is [telegram-bot-ops.md](telegram-bot-ops.md). | Only if standing up channels. Env / user-secrets on the *gateway*, not the desktop `appsettings.json`. |
-| `AntiphonMessaging:BootstrapServers` | This machine: `server2:19092` via `aspire-antiphon-apphost` user-secrets (`dotnet user-secrets set "AntiphonMessaging:BootstrapServers" "server2:19092" --project Antiphon.AppHost`). | Leave unset. Fresh clone uses `localhost:19092` from `server/appsettings.json`. |
+| `AntiphonMessaging:BootstrapServers` | Optional per-machine override in AppHost user-secrets (id `aspire-antiphon-apphost`) or its gitignored development overlay; forwarded only to the server. [Channel ops](telegram-bot-ops.md#per-bot-deployment-model) requires an explicitly confirmed broker. | Leave unset for the local path: `localhost:19092` from `server/appsettings.json`. Real gateways are provisioned separately; local does not establish test isolation. |
 
 User-secrets against the server project:
 

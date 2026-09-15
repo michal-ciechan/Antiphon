@@ -34,9 +34,9 @@ services:
 
   # Local Kafka-compatible broker for the channel bridge dev loop: the fake gateway (17208)
   # produces channels.inbound here and consumes channels.outbound; the dev server's bridge
-  # consumes/produces the same topics (AntiphonMessaging: localhost:19092). The REAL Telegram
-  # gateway is never run locally — this broker exists purely so the whole bridge path is
-  # exercisable offline.
+  # consumes/produces the same topics (AntiphonMessaging: localhost:19092). A fresh clone
+  # supplies dev infrastructure; real gateways are provisioned separately per machine and
+  # may use this local broker. Synthetic tests need a broker with no real gateway attached.
   redpanda:
     image: redpandadata/redpanda:latest
     container_name: antiphon-redpanda
