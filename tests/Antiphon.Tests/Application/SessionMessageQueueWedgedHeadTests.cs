@@ -618,4 +618,163 @@ public class SessionMessageQueueWedgedHeadTests
         await using var db = CreateContext();
         (await db.AgentTasks.SingleAsync(t => t.Id == taskId)).Status.ShouldBe(AgentTaskStatus.Failed);
     }
+
+    // ---- CARD-0501 re-review F3: the durable cap binds interrupted-Sent recovery too -----------
+    //
+    // The crash-boundary case above stops one write short of the worst state: the charge commits,
+    // the failure handler never runs, and the row is left Sent with NO verdict AT the attempts cap.
+    // LoadInterruptedSentRunAsync selects on Status/verdict/age alone and runs BEFORE the Pending
+    // `DeliveryAttempts < MaxAttempts` filter, so the next sweep pressed Enter on a row that had
+    // already spent every attempt - 3 attempts became 4, and nothing bounded the one after that.
+    // Both entry points reproduced it, so both are pinned.
+    private static Task<Guid> SeedCrashedAtCapAsync(BridgeQueueHarness h, long baseline,
+        string body = Body, string? conversationKey = null, int attempts = 3) =>
+        h.SeedPendingMessageAsync(body, deliveryAttempts: attempts, baselineSequence: baseline,
+            status: QueuedMessageStatus.Sent, conversationKey: conversationKey,
+            lastDeliveryStartedAt: DateTime.UtcNow - TimeSpan.FromMinutes(4));
+
+    [Test]
+    [Arguments("Flush")]
+    [Arguments("Sweep")]
+    public async Task Crashed_Sent_row_at_the_cap_parks_instead_of_Entering_again(string path)
+    {
+        await using var h = await CreateAsync();
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var id = await SeedCrashedAtCapAsync(h, baseline);
+        // The sweep only widens to a session some row brings into scope, and a capped row brings
+        // none - which is how the live shape looked: one live brief waiting behind a wedged head.
+        const string liveBody = "the next live queue message";
+        var liveId = path == "Sweep" ? await h.SeedPendingMessageAsync(liveBody) : (Guid?)null;
+        h.Adapter.PrimeComposer(Body);
+
+        if (path == "Sweep")
+            await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
+        else
+            await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBeEmpty("a row at the cap is never Entered and never re-typed");
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        await AssertUserPromptsAsync(h, []);
+        var row = await MessageAsync(id);
+        row.DeliveryAttempts.ShouldBe(3, "the cap is durable - recovery may not spend a fourth");
+        row.Status.ShouldBe(QueuedMessageStatus.Pending, "reverted to the visible parked shape");
+        row.DeliveryVerdict.ShouldBeNull("the crash lost that observation; none is invented");
+        (await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None)).Messages
+            .Single(m => m.Id == id).Parked.ShouldBeTrue();
+        h.Adapter.Killed.ShouldBeFalse();
+        if (liveId is { } live)
+        {
+            // F1 still owns the composer: the parked body is standing in it, so the live row waits.
+            var next = await MessageAsync(live);
+            next.DeliveryAttempts.ShouldBe(0);
+            next.Status.ShouldBe(QueuedMessageStatus.Pending);
+        }
+    }
+
+    // A second and third cycle must add nothing. The old behaviour was unbounded, so "it stops" is
+    // the claim under test, not merely "it did not fire this once".
+    [Test]
+    public async Task Repeated_sweeps_over_a_capped_crashed_row_add_no_attempts_and_no_Enters()
+    {
+        await using var h = await CreateAsync();
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var id = await SeedCrashedAtCapAsync(h, baseline);
+        h.Adapter.PrimeComposer(Body);
+
+        for (var cycle = 0; cycle < 3; cycle++)
+            await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBeEmpty();
+        (await MessageAsync(id)).DeliveryAttempts.ShouldBe(3);
+    }
+
+    // A recovered run is ONE composed body under ONE Enter, so the cap is all-or-nothing across it:
+    // a single capped row means the tail must not be submitted either, whatever its own count says.
+    [Test]
+    public async Task One_capped_row_parks_the_whole_interrupted_batch()
+    {
+        await using var h = await CreateAsync();
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        const string first = "batch first body that is long enough";
+        const string second = "batch second body that is long enough";
+        var firstId = await SeedCrashedAtCapAsync(h, baseline, first, "task:c501-cap-batch");
+        var secondId = await SeedCrashedAtCapAsync(h, baseline, second, "task:c501-cap-batch", attempts: 1);
+        h.Adapter.PrimeComposer(ChannelPromptFormat.FormatBatch([first], second));
+
+        await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBeEmpty();
+        await AssertUserPromptsAsync(h, []);
+        (await MessageAsync(firstId)).DeliveryAttempts.ShouldBe(3);
+        var tail = await MessageAsync(secondId);
+        tail.DeliveryAttempts.ShouldBe(1, "the tail keeps its own count - nothing was attempted");
+        tail.Status.ShouldBe(QueuedMessageStatus.Pending);
+        foreach (var id in new[] { firstId, secondId })
+            (await MessageAsync(id)).DeliveryVerdict.ShouldBeNull();
+        h.Adapter.Killed.ShouldBeFalse();
+    }
+
+    // Control: the cap is a CEILING, not a new refusal. An interrupted row below it still gets the
+    // Enter-only rescue this card added, on the same screen evidence.
+    [Test]
+    public async Task Crashed_Sent_row_below_the_cap_still_recovers_by_Enter_only()
+    {
+        await using var h = await CreateAsync();
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var id = await SeedCrashedAtCapAsync(h, baseline, attempts: 2);
+        h.Adapter.PrimeComposer(Body);
+
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBe(["\r"], "the body is on screen, so it is Entered and not re-typed");
+        h.Adapter.SubmittedBodies.ShouldBe([Body]);
+        var row = await MessageAsync(id);
+        row.Status.ShouldBe(QueuedMessageStatus.Sent);
+        row.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        row.DeliveryAttempts.ShouldBe(2, "a successful Enter finishes the original typing");
+    }
+
+    // Control: late-confirm runs BEFORE the cap gate, so a capped row whose body really did land is
+    // still resolved as Sent - the cap withholds the Enter, it does not withhold the evidence.
+    [Test]
+    public async Task A_capped_crashed_row_whose_body_landed_is_still_late_confirmed()
+    {
+        await using var h = await CreateAsync();
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var id = await SeedCrashedAtCapAsync(h, baseline);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, Body);
+        h.Adapter.PrimeComposer(Body);
+
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBeEmpty();
+        var row = await MessageAsync(id);
+        row.Status.ShouldBe(QueuedMessageStatus.Sent);
+        row.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+        row.DeliveryAttempts.ShouldBe(3);
+    }
+
+    // Control: the release side. Once the generation moves (a relaunch), the parked crashed row
+    // stops holding the composer and the live row delivers ALONE - its own body, exactly.
+    [Test]
+    public async Task A_relaunch_releases_the_queue_behind_a_capped_crashed_row()
+    {
+        await using var h = await CreateAsync();
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var id = await SeedCrashedAtCapAsync(h, baseline);
+        const string liveBody = "the next live queue message";
+        var liveId = await h.SeedPendingMessageAsync(liveBody);
+        h.Adapter.PrimeComposer(Body);
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+        (await MessageAsync(id)).Status.ShouldBe(QueuedMessageStatus.Pending);
+
+        await AdvanceGenerationAsync(h);
+        h.Adapter.PrimeComposer("");
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.SubmittedBodies.ShouldBe([liveBody]);
+        await AssertUserPromptsAsync(h, [liveBody]);
+        (await MessageAsync(liveId)).DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        (await MessageAsync(id)).DeliveryAttempts.ShouldBe(3, "still parked, still never re-typed");
+    }
 }

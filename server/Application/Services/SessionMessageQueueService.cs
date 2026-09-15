@@ -2141,10 +2141,29 @@ public sealed partial class SessionMessageQueueService
             return late.Truncated > 0 ? FlushResult.Failed : FlushResult.Nothing;
         }
 
+        // CARD-0501 re-review F3: the attempts cap is DURABLE, but it is filtered in
+        // DeliverNextLockedAsync over the PENDING set only — and interrupted-Sent recovery runs
+        // before that filter, selecting purely on Status/verdict/age. A crash between the Enter-only
+        // charge and its failure handler (the seam EnterOnlyConfirmLockedAsync documents) leaves the
+        // row Sent, verdict null, ALREADY AT the cap; without this the next sweep presses Enter
+        // again and charges MaxAttempts+1, and the cycle that CARD-0501 exists to bound repeats
+        // without limit.
+        //
+        // The cap is therefore enforced here too, by falling through to the revert below: Pending
+        // with attempts kept is exactly the parked shape every `DeliveryAttempts >= MaxAttempts`
+        // predicate already reads, so the row becomes visible-and-parked, stays late-confirmable on
+        // every later flush, and is covered by the F1 composer hold — which is what keeps the body
+        // still standing in the composer from being typed on top of. No verdict is invented: the
+        // crash lost that observation, and inventing one would claim evidence we never had.
+        //
+        // All-or-nothing across the run: a recovered run is ONE composed body under ONE Enter, so a
+        // single capped row means none of it may be submitted.
+        var atCap = remaining.Any(m => m.DeliveryAttempts >= MaxAttempts);
+
         var currentGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
         var generationChanged = currentGeneration is { } current
             && remaining.Any(m => DeliveryGenerationChanged(m, current));
-        if (!generationChanged)
+        if (!generationChanged && !atCap)
         {
             var body = ReconstructRunBody(remaining);
             if (!_runtime.TryGetLiveSnapshot(sessionId, out var snapshot))
@@ -2169,9 +2188,13 @@ public sealed partial class SessionMessageQueueService
         await db.SaveChangesAsync(ct);
         _logger.LogInformation(
             "Reverted {Count} interrupted Sent message(s) on session {SessionId} to Pending "
-            + "(attempts kept); {Reason}, so the ordinary path may re-type",
+            + "(attempts kept); {Reason}, so {Next}",
             remaining.Count, sessionId,
-            generationChanged ? "delivery generation changed" : "the whole body head is not on screen");
+            atCap ? $"a message in the run has already been charged {MaxAttempts} attempt(s)"
+                : generationChanged ? "delivery generation changed"
+                : "the whole body head is not on screen",
+            atCap ? "it parks for a human rather than consuming another attempt"
+                : "the ordinary path may re-type");
         return FlushResult.Nothing;
     }
 
