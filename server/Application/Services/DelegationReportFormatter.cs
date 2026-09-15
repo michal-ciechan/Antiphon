@@ -308,7 +308,7 @@ public static class DelegationReportFormatter
         resolved a conflict, or changed a file because of what this pass found; write
         `{FindingToken(taskId, "clean")}` if it ran clean. Running tests or reading code is not a
         finding; a change you had to make is.
-        """;
+        """.ReplaceLineEndings("\n");
 
     public static string FindingToken(Guid taskId, string verdict) =>
         $"[antiphon-finding:{Short(taskId)} {verdict.Trim().ToLowerInvariant()}]";
