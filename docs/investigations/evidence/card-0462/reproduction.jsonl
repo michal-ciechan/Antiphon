@@ -1,0 +1,7 @@
+{"step":"launch","data":{"sessionId":"5bf305e5-1842-484d-b2f9-5ba43a01b69e","WorkspaceId":"w1","TabId":"w1:t2","PaneId":"w1:p2","WorkspaceLabel":"Original workspace","TabLabel":"Original tab","status":"Running"}}
+{"step":"baseline-and-get-after-rename","data":{"Status":"Running","PaneId":"w1:p2","TabId":"w1:t2","sidecarTabLabel":"Original tab","liveTabLabel":"Renamed tab","sidecarWorkspaceLabel":"Original workspace","liveWorkspaceLabel":"Renamed workspace","refreshMethods":{"pane.get":4,"pane.process_info":2,"pane.read":1}}}
+{"step":"next-start-preflight","data":{"Action":"create","WorkspaceId":"w1","TabId":null,"PaneId":null}}
+{"step":"retired-after-child-exit","data":{"PaneId":"w1:p2","TabId":"w1:t2","TabLabel":"Original tab","WorkspaceLabel":"Original workspace","status":"Exited"}}
+{"step":"restart","data":{"PaneId":"w1:p3","TabId":"w1:t3","TabLabel":"Original tab","createdTabs":1,"workspaceCount":1,"tabs":[{"TabId":"w1:t1","Label":"1","panes":1},{"TabId":"w1:t2","Label":"Renamed tab","panes":1},{"TabId":"w1:t3","Label":"Original tab","panes":1}]}}
+{"step":"existing-guards-windows","data":{"ambiguous":"herdr_tab_ambiguous","reportedInvalid":"herdr_tab_invalid","enumeratedInvalid":"herdr_tab_invalid"}}
+{"step":"verdict","data":{"reproduced":true,"backend":"isolated FakeHerdrServer","liveProviderProcesses":0}}

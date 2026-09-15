@@ -1,0 +1,37 @@
+{
+  "capturedAtUtc": "2026-09-15T20:39:12.5547325Z",
+  "agentPath": "/api/agents/2ee02f40-7b6d-48b1-96fc-c4344c651910",
+  "httpStatus": 404,
+  "herdrVersion": "herdr 0.8.2",
+  "defaultSocketTabGet": {
+    "id": "cli:tab:get",
+    "error": {
+      "code": "server_not_running",
+      "message": "no herdr server is running at C:\\Users\\lndco\\AppData\\Roaming\\herdr\\herdr.sock; run `herdr` to start or attach it"
+    }
+  },
+  "reproducedCommit": "af43de4a",
+  "runExitCode": 0,
+  "harnessExecutions": 1,
+  "harnessFailures": 0,
+  "buildWarnings": [
+    "CS8603: evidence Program.cs:96 possible null reference return"
+  ],
+  "liveProviderProcessesLaunched": 0,
+  "cleanup": {
+    "status": "automatic_approval_rejected",
+    "reason": "blocked by policy",
+    "rejectedAttempts": 2,
+    "producerOutputDirectories": [
+      "C:\\Antiphon\\worktrees\\card-task-a61aba72\\docs\\investigations\\evidence\\card-0462\\bin-c462",
+      "C:\\Antiphon\\worktrees\\card-task-a61aba72\\src\\Antiphon.Agents.Pty\\bin-c462",
+      "C:\\Antiphon\\worktrees\\card-task-a61aba72\\src\\Antiphon.PtyHost\\bin-c462",
+      "C:\\Antiphon\\worktrees\\card-task-a61aba72\\src\\Antiphon.PtyHost.Client\\bin-c462",
+      "C:\\Antiphon\\worktrees\\card-task-a61aba72\\src\\Antiphon.PtyHost.Protocol\\bin-c462",
+      "C:\\Antiphon\\worktrees\\card-task-a61aba72\\src\\Antiphon.SessionRunner\\bin-c462",
+      "C:\\Antiphon\\worktrees\\card-task-a61aba72\\src\\Antiphon.SessionRunner.Contracts\\bin-c462"
+    ],
+    "harnessObj": "C:\\Antiphon\\worktrees\\card-task-a61aba72\\docs\\investigations\\evidence\\card-0462\\obj",
+    "deletedDirectories": 0
+  }
+}
