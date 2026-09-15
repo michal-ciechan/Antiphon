@@ -540,9 +540,13 @@ public class CheckNoteDeliveryHandoffTests
         failure.Hits.ShouldBe(1, "the interpretation task write is the one that failed");
         await using (var db = h.CreateContext())
         {
-            (await db.AgentTasks.CountAsync(t => t.AgentId == h.InterpreterAgentId
-                    && t.Status != AgentTaskStatus.Queued))
-                .ShouldBe(0, "nothing the failed write left behind was ever placed or run");
+            // CARD-0501 re-review R2 (F2a): this used to read `t.Status != Queued`, which carved out
+            // the one row that actually survived. A failed SaveChanges does not untrack what it
+            // tried to insert — EF only accepts changes on success — so the abandoned run stayed
+            // Added on the SCOPED context and the check's own next save published it. NO row is the
+            // assertion: a Queued interpretation task is a dispatchable one.
+            (await db.AgentTasks.CountAsync(t => t.AgentId == h.InterpreterAgentId))
+                .ShouldBe(0, "nothing the failed write left behind was ever placed, run, or published");
             (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == h.InterpreterSessionId))
                 .ShouldBe(0, "and no brief was enqueued for a run the check already gave up on");
         }
@@ -551,6 +555,41 @@ public class CheckNoteDeliveryHandoffTests
         // which puts it over the brief ceiling: it ships as a pointer, and the file is the note.
         await AssertNoteArrivedWholeAsync(h, taskId,
             carries: AgentTaskCheckService.InterpreterDownMarker, spilled: true);
+    }
+
+    // The consequence the count above only implies, driven to the surface: the REAL dispatcher gets
+    // a tick after the failed write. If the abandoned row were still there it would be Queued,
+    // pinned to the standing interpreter, and indistinguishable from real work — so the dispatcher
+    // would place it on the interpreter's live session, enqueue a brief for a check that already
+    // shipped its degraded note, bill the run and occupy the seat against the NEXT interpretation
+    // (PlaceOnStandingAgentAsync allows one task at a time on a live composer). "Still tracked"
+    // and "still dispatchable" are the same defect seen from two ends.
+    [Test]
+    public async Task An_abandoned_interpretation_is_never_dispatched_after_its_write_failed()
+    {
+        var failure = new FailFirstInsert("AgentTasks");
+        await using var h = await Handoff.CreateAsync(withInterpreter: true,
+            configureDbContext: o => o.AddInterceptors(failure));
+        await h.EnsureInterpreterAsync();
+        await h.H.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var taskId = await SeedCheckedDelegateAsync(h);
+
+        failure.Armed = true;
+        (await h.Resolve<AgentTaskCheckService>().RunCheckAsync(taskId, CancellationToken.None))
+            .ShouldBe(AgentTaskCheckService.CheckOutcome.Delivered);
+
+        await h.Resolve<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
+
+        await using (var db = h.CreateContext())
+        {
+            (await db.AgentTasks.CountAsync(t => t.AgentId == h.InterpreterAgentId))
+                .ShouldBe(0, "there is nothing for the dispatcher to find");
+            (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == h.InterpreterSessionId))
+                .ShouldBe(0, "so the interpreter's seat is free for the next real interpretation");
+        }
+
+        h.InterpreterAdapter.Inputs.ShouldBeEmpty("and nothing was typed at it");
+        (await h.PromptsAsync(h.InterpreterSessionId)).ShouldBeEmpty();
     }
 
     // The RECIPIENT leg's persistence failure: the queue row cannot be written, so the check reports

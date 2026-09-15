@@ -789,4 +789,131 @@ public class SessionMessageQueueWedgedHeadTests
         (await MessageAsync(liveId)).DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
         (await MessageAsync(id)).DeliveryAttempts.ShouldBe(3, "still parked, still never re-typed");
     }
+
+    // ---- CARD-0501 re-review R2: discovery must be a superset of action ------------------------
+    //
+    // The F3 fix above taught RecoverDeliveryRunLockedAsync to park a capped crashed row instead of
+    // Entering it again. Its Sweep arm needed a SECOND live row to make the sweep look at the
+    // session at all - and that companion row was the fixture papering over the real defect, not a
+    // property of the shape. FlushStrandedQueuesAsync discovered on its own hand-written filter,
+    // and that filter excluded the attempts cap on EVERY arm, so the session in the live incident
+    // shape - ONE wedged head and nothing else - was never brought into scope. The row stayed Sent
+    // forever: not delivered, not parked, so invisible to ParkedMessageSweepService as well, which
+    // only discards Pending-at-the-cap. Only an unrelated direct flush could ever settle it.
+
+    // The regression proper: the lone row, no companion to widen the sweep on its behalf.
+    [Test]
+    public async Task A_lone_capped_crashed_row_is_discovered_and_parked_by_the_sweep()
+    {
+        await using var h = await CreateAsync();
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var id = await SeedCrashedAtCapAsync(h, baseline);
+        h.Adapter.PrimeComposer(Body);
+
+        await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
+
+        var row = await MessageAsync(id);
+        row.Status.ShouldBe(QueuedMessageStatus.Pending,
+            "the sweep has to REACH a capped crashed row to park it - excluding it from discovery "
+            + "does not park it, it strands it Sent");
+        row.DeliveryAttempts.ShouldBe(3, "reaching it costs no attempt; the cap gate still binds");
+        row.DeliveryVerdict.ShouldBeNull();
+        h.Adapter.Inputs.ShouldBeEmpty("discovery is not delivery");
+        await AssertUserPromptsAsync(h, []);
+        h.Adapter.Killed.ShouldBeFalse();
+        (await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None)).Messages
+            .Single(m => m.Id == id).Parked.ShouldBeTrue();
+    }
+
+    // ...and having parked it, the sweep must stop seeing it: a resting row is not woken for. This
+    // is the half that justifies the widening - it is one extra pass, not a new standing cost.
+    [Test]
+    public async Task A_parked_row_stops_being_discovered_once_it_is_at_rest()
+    {
+        await using var h = await CreateAsync();
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var id = await SeedCrashedAtCapAsync(h, baseline);
+        h.Adapter.PrimeComposer(Body);
+        await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
+        (await MessageAsync(id)).Status.ShouldBe(QueuedMessageStatus.Pending);
+
+        // An empty composer removes the F1 hold, so nothing but discovery decides the outcome now.
+        h.Adapter.PrimeComposer("");
+        for (var cycle = 0; cycle < 3; cycle++)
+            await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBeEmpty();
+        (await MessageAsync(id)).DeliveryAttempts.ShouldBe(3);
+        (await MessageAsync(id)).Status.ShouldBe(QueuedMessageStatus.Pending);
+    }
+
+    // The property behind all three round-2 findings, stated as a test rather than as three
+    // patches: for a session holding ONE row, the automatic sweep and a direct flush must reach the
+    // same resting state. The sweep only chooses WHICH sessions to flush; if its choice disagrees
+    // with what a flush would have done, the difference is a stranded row by construction. Each
+    // shape runs twice on two fresh sessions - the oracle is the direct flush, which has no
+    // discovery filter of its own to be wrong.
+    //
+    // The two "neither acts" shapes are not filler: they pin the axes this widening did NOT move.
+    // Parked-Pending proves a resting row is still not woken; outside-the-window proves the bound
+    // on re-pressing Enter is untouched. Without them "make discovery wider" has no stopping rule.
+    public enum LoneRow { CappedCrashedSent, CrashedSentBelowCap, ParkedPending, AgedPending, NoSubmitOutputPending, CrashedSentOutsideWindow }
+
+    private static async Task<Guid> SeedLoneRowAsync(BridgeQueueHarness h, LoneRow shape)
+    {
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        return shape switch
+        {
+            LoneRow.CappedCrashedSent => await SeedCrashedAtCapAsync(h, baseline),
+            LoneRow.CrashedSentBelowCap => await SeedCrashedAtCapAsync(h, baseline, attempts: 2),
+            LoneRow.CrashedSentOutsideWindow => await SeedCrashedAtCapAsync(h, baseline, attempts: 2,
+                startedAt: DateTime.UtcNow - TimeSpan.FromMinutes(90)),
+            LoneRow.ParkedPending => await h.SeedPendingMessageAsync(Body, deliveryAttempts: 3,
+                baselineSequence: baseline, origin: QueuedMessageOrigin.Delegation),
+            LoneRow.AgedPending => await h.SeedPendingMessageAsync(Body,
+                baselineSequence: baseline, origin: QueuedMessageOrigin.Delegation),
+            LoneRow.NoSubmitOutputPending => await h.SeedPendingMessageAsync(Body,
+                deliveryAttempts: 1, baselineSequence: baseline,
+                origin: QueuedMessageOrigin.Delegation,
+                deliveryVerdict: DeliveryVerdict.NoSubmitOutput),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape)),
+        };
+    }
+
+    private sealed record Rest(QueuedMessageStatus Status, int Attempts, DeliveryVerdict? Verdict, int Typed, int Submits);
+
+    private static async Task<Rest> ObserveAsync(
+        LoneRow shape, Func<BridgeQueueHarness, Task> act, bool primeComposer)
+    {
+        await using var h = await CreateAsync();
+        var id = await SeedLoneRowAsync(h, shape);
+        // The Sent shapes were typed before the crash, so their body is what is standing on screen.
+        if (primeComposer) h.Adapter.PrimeComposer(Body);
+        await act(h);
+        var row = await MessageAsync(id);
+        return new Rest(row.Status, row.DeliveryAttempts, row.DeliveryVerdict,
+            h.Adapter.Inputs.Count(i => i != "\r"), h.Adapter.SubmittedBodies.Count);
+    }
+
+    [Test]
+    [Arguments(LoneRow.CappedCrashedSent)]
+    [Arguments(LoneRow.CrashedSentBelowCap)]
+    [Arguments(LoneRow.ParkedPending)]
+    [Arguments(LoneRow.AgedPending)]
+    [Arguments(LoneRow.NoSubmitOutputPending)]
+    [Arguments(LoneRow.CrashedSentOutsideWindow)]
+    public async Task The_sweep_reaches_the_same_resting_state_as_a_direct_flush(LoneRow shape)
+    {
+        var primeComposer = shape is LoneRow.CappedCrashedSent or LoneRow.CrashedSentBelowCap
+            or LoneRow.CrashedSentOutsideWindow;
+
+        var direct = await ObserveAsync(shape,
+            h => h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None), primeComposer);
+        var swept = await ObserveAsync(shape,
+            async h => await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None), primeComposer);
+
+        swept.ShouldBe(direct,
+            $"{shape}: the sweep decides only WHICH sessions to flush. A shape the direct flush "
+            + "settles and the sweep never reaches is a row stranded by discovery alone");
+    }
 }
