@@ -620,7 +620,25 @@ public sealed class AgentTaskDispatcher
                 if (await DispatchOneAsync(task, ct, siblingObservation))
                 {
                     if (_capacityRecovery is { IsEnabled: true } && task.AgentSessionId is { } launchedSessionId)
-                        await _capacityRecovery.ReceiptDispatchOnAsync(_db, task.Id, task.AgentKind, launchedSessionId, ct);
+                    {
+                        try
+                        {
+                            await _capacityRecovery.ReceiptDispatchOnAsync(
+                                _db, task.Id, task.AgentKind, launchedSessionId, ct);
+                        }
+                        catch (Exception ex)
+                        {
+                            // Skipping a receipt is harmless: the wait stays Admitted and re-arms.
+                            // Swallowing here is required — the generic dispatch catch would mark
+                            // an already-running session Failed with a false "before a session existed" reason.
+                            if (ex is OperationCanceledException && ct.IsCancellationRequested)
+                                throw;
+                            _logger.LogWarning(
+                                ex,
+                                "Capacity dispatch receipt failed for task {ShortId}; launched session {SessionId} is kept",
+                                DelegationReportFormatter.Short(task.Id), launchedSessionId);
+                        }
+                    }
                     dispatched++;
                     if (!AgentTaskRoles.IsSpecialist(task.Role))
                         dispatchedAgainstCap++;

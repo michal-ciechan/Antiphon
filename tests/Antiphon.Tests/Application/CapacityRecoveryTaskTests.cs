@@ -6,6 +6,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -262,11 +263,17 @@ public class CapacityRecoveryTaskTests
         (await verify.CapacityRecoveryWaits.CountAsync(w => w.TaskId == task.Id)).ShouldBe(1);
     }
 
-    internal static AgentTaskDispatcher CreateDispatcher(string connectionString)
+    internal static AgentTaskDispatcher CreateDispatcher(
+        string connectionString, IInterceptor? interceptor = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString));
+        services.AddDbContext<AppDbContext>(o =>
+        {
+            o.UseNpgsql(connectionString);
+            if (interceptor is not null)
+                o.AddInterceptors(interceptor);
+        });
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton(Options.Create(new SupervisionSettings
