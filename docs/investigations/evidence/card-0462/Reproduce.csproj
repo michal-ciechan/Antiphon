@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- Existing friend assembly access, solely for this isolated investigation harness. -->
+    <AssemblyName>Antiphon.SessionRunner.Tests</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Shouldly" Version="4.*" />
+    <ProjectReference Include="../../../../src/Antiphon.SessionRunner/Antiphon.SessionRunner.csproj" />
+    <Compile Include="../../../../tests/Antiphon.SessionRunner.Tests/FakeHerdrServer.cs" Link="FakeHerdrServer.cs" />
+    <Compile Include="../../../../tests/Antiphon.SessionRunner.Tests/PowershellProcessProbe.cs" Link="PowershellProcessProbe.cs" />
+  </ItemGroup>
+</Project>
