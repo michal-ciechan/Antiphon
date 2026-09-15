@@ -62,6 +62,53 @@ public sealed class WorktreeCleanupPresentationTests
         source.Detail.ShouldBe(narrative);
     }
 
+    [Test]
+    [Arguments(false, 4, 189, false, true)] [Arguments(true, 4, 189, false, true)]
+    [Arguments(false, 64, 189, false, true)] [Arguments(true, 64, 189, false, true)]
+    [Arguments(false, 128, 10, false, false)] [Arguments(true, 128, 10, false, false)]
+    [Arguments(false, 1, 230, false, true)] [Arguments(true, 1, 230, false, true)]
+    [Arguments(false, 1, 14, true, true)] [Arguments(true, 1, 14, true, true)]
+    [Arguments(false, 0, 0, true, true)] [Arguments(true, 0, 0, true, true)]
+    [Arguments(false, 32, 189, true, true)] [Arguments(true, 32, 189, true, true)]
+    [Arguments(false, 64, 189, true, false)] [Arguments(true, 64, 189, true, false)]
+    public void C443_D9_DiagnosticsSurviveEitherEnvelopeExtreme(bool differentShas, int siblings,
+        int branchLength, bool verbose, bool owners)
+    {
+        var request = new AgentTaskLandRequest { Id = Guid.NewGuid(), TaskId = Guid.NewGuid(),
+            ExpectedSourceSha = new('a', 40), LocalBeforeSha = new(differentShas ? 'b' : 'a', 40),
+            RemoteSourceSha = new(differentShas ? 'c' : 'a', 40), CandidateSourceSha = new(differentShas ? 'd' : 'a', 40) };
+        var tokens = Enumerable.Range(1, siblings)
+            .Select(i => $"{i:D8}:feat/{i:D3}-" + new string('s', branchLength - 9)).ToArray();
+        var marker = siblings == 0 ? null : "unlanded-sibling=" + string.Join(",", tokens);
+        var source = new AgentTaskEvent { Id = Guid.NewGuid(), Type = AgentTaskEventType.LandedWithResidue,
+            LandingPublication = LandPublicationOutcome.Landed, LandingCleanup = LandCleanupStatus.Refused,
+            Detail = "full publication narrative; " + marker };
+        var capture = Capture(32) with { Handles = new(owners ? WorktreeLockStatus.OwnersObserved : WorktreeLockStatus.Unavailable,
+            owners ? "Observed" : "InsufficientPrivileges", DateTime.UtcNow,
+            owners ? [new(verbose ? new string('\u754c', 80) : "dotnet", 4321, verbose ? new string('\u754c', 512) : ".")] : []) };
+        var presentation = new WorktreeCleanupPresentation();
+        var reference = new WorktreeCleanupReference(capture.Id, request.Id, Guid.NewGuid(), capture.At,
+            WorktreeCleanupCaptureState.Captured, presentation.Summary(capture), presentation.Serialize(capture));
+        var note = LandNotificationPayload.Create(request, source, LandNotificationKind.Outcome,
+            presentation.Detail(verbose ? new string('\u754c', 400) : "cleanup failed", reference), marker);
+
+        Encoding.UTF8.GetByteCount(note.Body).ShouldBeLessThanOrEqualTo(1024);
+        note.Body.ShouldContain($"capture={capture.Id:N}");
+        note.Body.ShouldContain(capture.At.ToString("O"));
+        note.Body.ShouldContain("Git git_exit_128 exit=128");
+        note.Body.ShouldContain("DeleteAccessOpen=32");
+        if (owners)
+        {
+            note.Body.ShouldContain(verbose ? new string('\u754c', 80) : "dotnet");
+            note.Body.ShouldContain("PID=4321");
+        }
+        else note.Body.ShouldContain("InsufficientPrivileges");
+        if (siblings > 0) note.Body.ShouldContain("unlanded-sibling=");
+        else note.Body.ShouldNotContain("unlanded-sibling=");
+        note.Body.ShouldNotContain("\ufffd");
+        source.Detail.ShouldBe("full publication narrative; " + marker);
+    }
+
     internal static WorktreeCleanupCapture Capture(int code) => new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
         DateTime.UtcNow, new("worktree remove", 128, "git_exit_128", null, DateTime.UtcNow, true),
         new(WorktreeLockStatus.Unavailable, "InsufficientPrivileges", DateTime.UtcNow, []),
