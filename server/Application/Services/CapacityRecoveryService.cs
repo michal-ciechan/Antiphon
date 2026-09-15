@@ -396,6 +396,7 @@ public sealed class CapacityRecoveryService
     public async Task ReceiptDispatchOnAsync(
         AppDbContext db, Guid taskId, AgentKind kind, Guid launchedSessionId, CancellationToken ct)
     {
+        CapacityRecoveryWait? wait = null;
         IDbContextTransaction? owned = null;
         if (db.Database.CurrentTransaction is null)
             owned = await db.Database.BeginTransactionAsync(ct);
@@ -403,7 +404,7 @@ public sealed class CapacityRecoveryService
         {
             await TakeProviderLockAsync(db, kind, ct);
             var key = $"task:{taskId:N}";
-            var wait = await db.CapacityRecoveryWaits.FirstOrDefaultAsync(
+            wait = await db.CapacityRecoveryWaits.FirstOrDefaultAsync(
                 w => (w.TaskId == taskId || w.ConsumerKey == key) && w.ExecutionKind == kind
                     && w.State == CapacityRecoveryWaitState.Admitted, ct);
             if (wait is not null)
@@ -423,6 +424,15 @@ public sealed class CapacityRecoveryService
             }
             if (owned is not null)
                 await owned.CommitAsync(ct);
+        }
+        catch
+        {
+            // Rollback does not undo EF's tracked changes. The dispatcher keeps this
+            // context after a receipt failure, so abandon this receipt before releasing
+            // the provider lock. A later unrelated save must not overwrite a supersede.
+            if (wait is not null)
+                db.Entry(wait).State = EntityState.Detached;
+            throw;
         }
         finally
         {

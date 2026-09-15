@@ -628,7 +628,8 @@ public sealed class AgentTaskDispatcher
                         }
                         catch (Exception ex)
                         {
-                            // Skipping a receipt is harmless: the wait stays Admitted and re-arms.
+                            // Receipt persistence discards abandoned tracked changes on failure;
+                            // the durable wait stays Admitted and can re-arm.
                             // Swallowing here is required — the generic dispatch catch would mark
                             // an already-running session Failed with a false "before a session existed" reason.
                             if (ex is OperationCanceledException && ct.IsCancellationRequested)
