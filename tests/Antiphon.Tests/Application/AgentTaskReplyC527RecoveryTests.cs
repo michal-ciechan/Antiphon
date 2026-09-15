@@ -112,6 +112,7 @@ public partial class AgentTaskReplyIntegrationTests
         }
 
         await using var verify = CreateContext();
+        (await verify.AgentTaskLandNotifications.CountAsync(n => n.TaskId == seeded.Task.Id)).ShouldBe(1);
         var note = await verify.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.TaskId == seeded.Task.Id);
         note.Kind.ShouldBe(LandNotificationKind.TaskCompletion);
         note.ContentDigest.ShouldBe(DelegationNoteDigest.Compute(report));
