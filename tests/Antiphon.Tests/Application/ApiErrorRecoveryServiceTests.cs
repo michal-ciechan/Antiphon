@@ -31,6 +31,70 @@ public class ApiErrorRecoveryServiceTests
         BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions { AlwaysOn = true });
 
     [Test]
+    public async Task A_local_command_record_after_the_stub_does_not_supersede_the_resume()
+    {
+        await using var h = await CreateHarnessAsync();
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await SeedTransientStubAsync(h.SessionId);
+        await SweepAsync(h, time: time);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "<command-name>/compact</command-name>");
+        time.Advance(TimeSpan.FromMinutes(1));
+        await SweepAsync(h, time: time);
+        (await SupervisionMessagesAsync(h.SessionId)).ShouldHaveSingleItem();
+        await using var db = CreateContext();
+        var row = await db.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == h.SessionId);
+        row.ResolvedReason.ShouldBeNull();
+        row.AttemptCount.ShouldBe(1);
+    }
+
+    [Test]
+    public Task The_resume_prompt_carries_the_open_tasks_marker() => AssertResumePromptAsync(hasTask: true);
+
+    [Test]
+    public Task A_taskless_session_gets_the_bare_resume_prompt() => AssertResumePromptAsync(hasTask: false);
+
+    [Test]
+    public Task The_wall_resume_prompt_carries_the_marker_too() => AssertResumePromptAsync(hasTask: true, wall: true);
+
+    private static async Task AssertResumePromptAsync(bool hasTask, bool wall = false)
+    {
+        await using var h = await CreateHarnessAsync();
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var taskId = Guid.NewGuid();
+        var seq = await SeedTransientStubAsync(h.SessionId);
+        await using (var db = CreateContext())
+        {
+            if (hasTask)
+                db.AgentTasks.Add(new AgentTask
+                {
+                    Id = taskId, RootTaskId = taskId, AgentSessionId = h.SessionId,
+                    Status = AgentTaskStatus.Working, Title = "Recovery marker", Goal = "Finish the task",
+                    WorkingDirectory = Path.GetTempPath(), CreatedAt = DateTime.UtcNow,
+                });
+            // A scheduled session-limit row isolates FireOne's prompt choice from wall parsing.
+            db.ApiErrorRecoveries.Add(new ApiErrorRecovery
+            {
+                Id = Guid.NewGuid(), AgentSessionId = h.SessionId, StubSequence = seq,
+                Classification = wall ? ApiErrorClassification.Wall : ApiErrorClassification.Transient,
+                DetectedAt = time.GetUtcNow().UtcDateTime,
+                NextAttemptAt = time.GetUtcNow().UtcDateTime.AddMinutes(1),
+            });
+            await db.SaveChangesAsync();
+        }
+        time.Advance(TimeSpan.FromMinutes(1));
+        await SweepAsync(h, time: time);
+        var message = (await SupervisionMessagesAsync(h.SessionId)).ShouldHaveSingleItem();
+        var expected = wall ? new ApiErrorRecoverySettings().WallPrompt : new ApiErrorRecoverySettings().TransientPrompt;
+        if (hasTask)
+        {
+            message.Body.ShouldStartWith(DelegationReportFormatter.TaskMarker(taskId) + " ");
+            message.Body.ShouldEndWith(expected);
+        }
+        else
+            message.Body.ShouldBe(expected);
+    }
+
+    [Test]
     public async Task A_stub_adopts_once_and_a_resweep_does_not_double_insert()
     {
         await using var h = await CreateHarnessAsync();

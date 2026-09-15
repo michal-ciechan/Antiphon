@@ -32,6 +32,154 @@ namespace Antiphon.Tests.Application;
 [NotInParallel]
 public class AgentTaskReplyIntegrationTests
 {
+    [Test]
+    public Task a_transient_stub_with_a_later_prompt_does_not_fail_the_task() =>
+        AssertResumedStubAsync(TranscriptKinds.UserPrompt);
+
+    [Test]
+    public Task a_transient_stub_with_a_later_queued_prompt_does_not_fail_the_task() =>
+        AssertResumedStubAsync(TranscriptKinds.QueuedUserPrompt);
+
+    [Test]
+    public Task a_needs_human_stub_with_a_later_prompt_does_not_fail_the_task() =>
+        AssertResumedStubAsync(TranscriptKinds.UserPrompt, needsHuman: true);
+
+    [Test]
+    public Task the_skip_arm_records_the_death_once_on_the_timeline() =>
+        AssertResumedStubAsync(TranscriptKinds.UserPrompt, repeat: true);
+
+    private static async Task AssertResumedStubAsync(string kind, bool needsHuman = false, bool repeat = false)
+    {
+        using var workspace = new TempWorkspace();
+        var parent = await SeedSessionAsync(workspace.Path);
+        var agent = await SeedAgentAsync(workspace.Path, $"c492-{Guid.NewGuid():N}");
+        var (task, session) = await SeedDispatchedTaskAsync(workspace.Path, parent, t => t.AgentId = agent);
+        await SeedApiErrorStubTurnAsync(session, DelegationReportFormatter.TaskMarker(task.Id),
+            errorText: "API error", apiErrorClass: needsHuman ? "authentication_failed" : "server_error",
+            apiErrorStatus: needsHuman ? 401 : 500);
+        await using (var db = CreateContext())
+        {
+            db.ApiErrorRecoveries.Add(new ApiErrorRecovery
+            {
+                Id = Guid.NewGuid(), AgentSessionId = session, StubSequence = 3,
+                Classification = needsHuman ? ApiErrorClassification.NeedsHuman : ApiErrorClassification.Transient,
+                DetectedAt = DateTime.UtcNow, ResolvedAt = DateTime.UtcNow,
+                ResolvedReason = needsHuman ? ApiErrorRecoveryReasons.NeedsHuman : ApiErrorRecoveryReasons.Superseded,
+            });
+            db.TranscriptEntries.Add(NewEntry(session, 4, kind, "Continue"));
+            db.TranscriptEntries.Add(NewEntry(session, 5, TranscriptKinds.AssistantText, "Still implementing."));
+            await db.SaveChangesAsync();
+        }
+        using var factory = new TestScopeFactory();
+        var service = CreateService(factory);
+        await service.OnTurnEndAsync(session, CancellationToken.None);
+        if (repeat)
+            await service.OnTurnEndAsync(session, CancellationToken.None);
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Working);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Failed)).ShouldBe(0);
+        (await verify.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == parent)).ShouldBe(0);
+        (await verify.Agents.SingleAsync(a => a.Id == agent)).Status.ShouldBe(AgentStatus.Running);
+        factory.Stopper.Killed.ShouldBeEmpty();
+        var ev = (await verify.AgentTaskEvents.Where(e => e.AgentTaskId == task.Id
+            && e.Type == AgentTaskEventType.ApiErrorDeferred).ToListAsync()).ShouldHaveSingleItem();
+        ev.Detail.ShouldContain("resumed at seq 4");
+        ev.Detail.ShouldContain("(seq 3)");
+    }
+
+    [Test]
+    public async Task a_housekeeping_record_after_the_stub_is_not_a_resume()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, session) = await SeedDispatchedTaskAsync(workspace.Path);
+        await SeedApiErrorStubTurnAsync(session, DelegationReportFormatter.TaskMarker(task.Id),
+            errorText: "API error", apiErrorClass: "server_error", apiErrorStatus: 500);
+        await using (var db = CreateContext())
+        {
+            db.TranscriptEntries.Add(NewEntry(session, 4, TranscriptKinds.UserPrompt,
+                "<command-name>/compact</command-name>"));
+            await db.SaveChangesAsync();
+        }
+        await CreateService().OnTurnEndAsync(session, CancellationToken.None);
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Working);
+        var ev = (await verify.AgentTaskEvents.Where(e => e.AgentTaskId == task.Id
+            && e.Type == AgentTaskEventType.ApiErrorDeferred).ToListAsync()).ShouldHaveSingleItem();
+        ev.Detail.ShouldContain("resume scheduled");
+        ev.Detail.ShouldNotContain("resumed at");
+    }
+
+    [Test]
+    public async Task the_resumed_turns_marked_report_settles_the_task()
+    {
+        using var workspace = new TempWorkspace();
+        var parent = await SeedSessionAsync(workspace.Path);
+        var agent = await SeedAgentAsync(workspace.Path, $"c492-{Guid.NewGuid():N}");
+        var (task, session) = await SeedDispatchedTaskAsync(workspace.Path, parent, t => t.AgentId = agent);
+        await SeedApiErrorStubTurnAsync(session, DelegationReportFormatter.TaskMarker(task.Id),
+            errorText: "API error", apiErrorClass: "server_error", apiErrorStatus: 500);
+        var service = CreateService();
+        await service.OnTurnEndAsync(session, CancellationToken.None);
+        await SeedCodexTurnAsync(session,
+            DelegationReportFormatter.TaskMarker(task.Id) + " " + new ApiErrorRecoverySettings().TransientPrompt,
+            "Continuing the implementation.", "Implemented and verified the change.");
+        await service.OnTurnEndAsync(session, CancellationToken.None);
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        stored.Result.ShouldBe("Implemented and verified the change.");
+        stored.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
+        (await verify.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == parent)).ShouldBe(1);
+        (await verify.Agents.SingleAsync(a => a.Id == agent)).Status.ShouldBe(AgentStatus.Idle);
+    }
+
+    [Test]
+    public async Task a_second_stub_on_the_resumed_turn_defers_on_its_own_row()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, session) = await SeedDispatchedTaskAsync(workspace.Path);
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+        await SeedApiErrorStubTurnAsync(session, marker, errorText: "First API error",
+            apiErrorClass: "server_error", apiErrorStatus: 500);
+        var service = CreateService();
+        await service.OnTurnEndAsync(session, CancellationToken.None);
+        await using (var db = CreateContext())
+        {
+            var recovery = await db.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == session);
+            recovery.ResolvedAt = DateTime.UtcNow;
+            recovery.ResolvedReason = ApiErrorRecoveryReasons.Superseded;
+            await db.SaveChangesAsync();
+        }
+        await SeedApiErrorStubTurnAsync(session, marker + " " + new ApiErrorRecoverySettings().TransientPrompt,
+            errorText: "Second API error", apiErrorClass: "server_error", apiErrorStatus: 500);
+        await service.OnTurnEndAsync(session, CancellationToken.None);
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Working);
+        (await verify.ApiErrorRecoveries.CountAsync(r => r.AgentSessionId == session && r.StubSequence == 6)).ShouldBe(1);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Failed)).ShouldBe(0);
+        (await verify.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == task.Id
+            && e.Type == AgentTaskEventType.ApiErrorDeferred && e.Detail.Contains("(seq 6)")))
+            .Detail.ShouldContain("resume scheduled");
+    }
+
+    [Test]
+    public async Task an_unmarked_resumed_turn_is_still_uncorrelated()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, session) = await SeedDispatchedTaskAsync(workspace.Path);
+        await SeedApiErrorStubTurnAsync(session, DelegationReportFormatter.TaskMarker(task.Id),
+            errorText: "API error", apiErrorClass: "server_error", apiErrorStatus: 500);
+        var service = CreateService();
+        await service.OnTurnEndAsync(session, CancellationToken.None);
+        await SeedCodexTurnAsync(session, new ApiErrorRecoverySettings().TransientPrompt,
+            "Continuing.", "Finished.\n" + DelegationReportFormatter.ReportToken(task.Id, "done"));
+        await service.OnTurnEndAsync(session, CancellationToken.None);
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Working);
+        (await verify.AgentIncidents.CountAsync(i => i.AgentSessionId == session
+            && i.Kind == AgentIncidentKind.DelegateReportUncorrelated)).ShouldBe(1);
+    }
+
     // ---- CARD-0417 V-5: the parent's note is only reported when the PARENT actually receives it ----
     //
     // Review f42b6b25 rejected a V-5 that stopped at the SessionQueuedMessages row. A row is an

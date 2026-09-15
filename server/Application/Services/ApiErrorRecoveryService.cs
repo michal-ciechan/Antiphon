@@ -252,10 +252,8 @@ public sealed class ApiErrorRecoveryService
         // Never act on "the transcript does not contain X" without pulling first (CARD-0055).
         await _runtime.CatchUpTranscriptAsync(recovery.AgentSessionId, ct);
 
-        var laterPrompt = await db.TranscriptEntries.AsNoTracking().AnyAsync(
-            t => t.AgentSessionId == recovery.AgentSessionId
-                && t.Kind == TranscriptKinds.UserPrompt
-                && t.Sequence > recovery.StubSequence, ct);
+        var laterPrompt = await TranscriptPromptSpan.HasTurnPromptAfterAsync(
+            db, recovery.AgentSessionId, recovery.StubSequence, ct);
         if (laterPrompt)
         {
             Resolve(recovery, UtcNow(), ApiErrorRecoveryReasons.Superseded);
@@ -285,6 +283,14 @@ public sealed class ApiErrorRecoveryService
                 recovery.Classification, recovery.Id);
             return false;
         }
+
+        var openTaskId = await db.AgentTasks.AsNoTracking()
+            .Where(t => t.AgentSessionId == recovery.AgentSessionId
+                && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working))
+            .Select(t => (Guid?)t.Id)
+            .FirstOrDefaultAsync(ct);
+        if (openTaskId is { } taskId)
+            prompt = $"{DelegationReportFormatter.TaskMarker(taskId)} {prompt}";
 
         await _queue.EnqueueAsync(
             recovery.AgentSessionId, prompt, MessageSendMode.WhenIdle, ct,
