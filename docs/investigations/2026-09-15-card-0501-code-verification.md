@@ -226,27 +226,49 @@ Three separate gaps, all closed with ordinary coverage.
 
 ## Delivery handoff inventory
 
-Every handoff a produced check note crosses before it is a prompt in the recipient's transcript,
-and what now owns each one. "Owner" is the ordinary test that fails if the handoff breaks.
+**Corrected by the re-review pass (`ceb90cb5`).** The first version of this table stopped at the
+recipient and treated the interpretation as somebody else's problem, which is what review F2
+rejected: the rows that stranded in the live incident were Check EXECUTION BRIEFS, on the leg
+into the interpreter, and that leg had no owner at all here. A produced check note crosses two
+delivery legs, and both are inventoried below. "Owner" is the ordinary test that fails if the
+handoff breaks.
+
+### Leg I — producing the interpretation and getting its brief into the interpreter
 
 | # | Handoff | Production site | What is lost if it breaks | Ordinary owner |
 |---|---|---|---|---|
-| H-1 | facts to note body | `AgentTaskCheckService.RunCheckAsync` then `BuildNote` | a note that cannot be traced to the task it is about | `CheckNoteDeliveryHandoffTests` (header short id); `AgentTaskCheckInterpreterTests` owns the body's content |
+| I-1 | check to interpretation request | `AgentTaskCheckService.InterpretAsync` then `SpecialistTaskRunner.RunAsync` | no interpretation is ever asked for; every note silently degrades to the digest | `A_dispatched_interpretation_reaches_an_already_eligible_recipient_whole` (the run task exists, pinned to the provisioned interpreter) |
+| I-2 | interpretation row that cannot be written | `SpecialistTaskRunner.CreateRunTaskAsync` failing | a failed write silencing the check entirely | `An_interpretation_that_cannot_be_persisted_still_delivers_a_degraded_note_whole` |
+| I-3 | Queued run to the interpreter's live session | `AgentTaskDispatcher.TickAsync` then `PlaceOnStandingAgentAsync` | a second session for one standing agent, or a brief that never leaves the queue | `A_dispatched_interpretation_reaches_*` (`Dispatched`, `AgentSessionId == InterpreterSessionId`) |
+| I-4 | brief row to the interpreter's typing and recovery | the enqueue's idle delivery, then `EnterOnlyConfirmLockedAsync` | THE live failure: a brief standing unsubmitted in the interpreter's composer forever | `A_dispatched_interpretation_reaches_*` (first submit swallowed, no retype, Enter-only finishes) |
+| I-5 | submit to the interpreter's `UserPrompt` | transcript ingestion then verification | a brief marked `Delivered` that the interpreter never received whole | `AssertBriefArrivedWholeAsync` — exactly one prompt, equal to the row body, carrying the interpretation's task marker, at `DeliveryAttempts >= 1` |
+
+### Leg H — the note reaching the recipient
+
+| # | Handoff | Production site | What is lost if it breaks | Ordinary owner |
+|---|---|---|---|---|
+| H-1 | facts (plus interpretation) to note body | `AgentTaskCheckService.RunCheckAsync` then `BuildNote` | a note that cannot be traced to the task it is about | `CheckNoteDeliveryHandoffTests` (header short id, and the settled reading appearing in the delivered prompt); `AgentTaskCheckInterpreterTests` owns the body's other arms |
 | H-2 | note to queue row | `_queue.EnqueueAsync(parentSession, …, Check, ConversationKey(taskId), sourceTaskId)` | correlation: nothing can tie the row back to the checked task | `CheckNoteDeliveryHandoffTests` (`ConversationKey`, `SourceTaskId` on the persisted row) |
-| H-3 | queue row to first typing | `DeliverNextLockedAsync` (busy defers, idle types) | a busy recipient typed into mid-turn | `A_check_note_reaches_a_busy_recipient_as_one_whole_prompt_after_recovery` (attempts 0, no inputs while working) |
-| H-4 | typed body to submit | `DeliverAsync` and the confirm loop | a swallowed Enter silently reported as delivered | both handoff tests (attempts 1, Pending, zero prompts) |
-| H-5 | standing body to Enter-only recovery | retry branch then `EnterOnlyConfirmLockedAsync` | a duplicate retype, or an Enter into a dead composer | `SessionMessageQueueWedgedHeadTests` S2 gate methods; `A_check_note_reaches_an_already_eligible_recipient_as_one_whole_prompt` asserts no retype |
+| H-2b | queue row that cannot be written | the same enqueue, failing | a half-published check: a timeline row saying the caller was told, and no note | `A_note_whose_queue_row_cannot_be_persisted_fails_cleanly_and_the_retry_delivers` |
+| H-3 | queue row to first typing | `DeliverNextLockedAsync` (busy defers, idle types) | a busy recipient typed into mid-turn | `A_dispatched_interpretation_reaches_a_busy_recipient_whole_after_recovery`, `A_digest_note_reaches_a_busy_recipient_as_one_whole_prompt_after_recovery` (attempts 0, no inputs while working) |
+| H-4 | typed body to submit | `DeliverAsync` and the confirm loop | a swallowed Enter silently reported as delivered | all four recipient handoff tests (attempts 1, Pending, zero prompts) |
+| H-5 | standing body to Enter-only recovery | retry branch then `EnterOnlyConfirmLockedAsync` | a duplicate retype, or an Enter into a dead composer | `SessionMessageQueueWedgedHeadTests` S2 gate methods; the already-eligible handoff tests assert no retype |
 | H-6 | Enter-only failure to attempt charge | `EnterOnlyConfirmLockedAsync` charge | an uncharged cycle repeating forever (the CARD-0501 loop) | `Failed_Enter_only_recovery_charges_an_attempt`, `Failed_Enter_only_recovery_charges_every_row_of_the_batch` |
 | H-7 | charge save to failure handler | save, then `HandleDeliveryFailureAsync` in its own scope | a crash losing the charge and unbounding the cycle | `A_crash_between_the_charge_and_the_failure_handler_keeps_the_attempt_charged` |
-| H-8 | parked head to the next row | `deliverable` filter plus the F1 composer hold | the parked body riding into the next row's prompt (F1) | `Parked_head_left_in_the_composer_holds_the_next_message` plus its two release arms |
-| H-9 | submit to recipient `UserPrompt` | transcript ingestion then verification | a row marked `Delivered` for a prompt the agent never received whole | both handoff tests (`prompts.ShouldBe([row.Body])`, exact) |
+| H-7b | crashed `Sent` row back into recovery | `LoadInterruptedSentRunAsync` then the cap gate in `RecoverDeliveryRunLockedAsync` | F3: recovery spending attempt `MaxAttempts + 1`, and every one after it, because the durable cap was only filtered on the Pending side | `Crashed_Sent_row_at_the_cap_parks_instead_of_Entering_again(Flush\|Sweep)`, `Repeated_sweeps_over_a_capped_crashed_row_add_no_attempts_and_no_Enters`, `One_capped_row_parks_the_whole_interrupted_batch` |
+| H-8 | parked head to the next row | `deliverable` filter plus the F1 composer hold | the parked body riding into the next row's prompt (F1) | `Parked_head_left_in_the_composer_holds_the_next_message` plus its two release arms; `A_relaunch_releases_the_queue_behind_a_capped_crashed_row` for the F3 shape |
+| H-9 | submit to recipient `UserPrompt` | transcript ingestion then verification | a row marked `Delivered` for a prompt the agent never received whole | all four recipient handoff tests (`prompts.ShouldBe([row.Body])`, exact); the spilled arm reads the file |
 | H-10 | terminal task to brief cancellation | `CancelDeadBriefsAsync` | orphans accumulating behind the head | `SessionMessageQueueWedgedHeadTests` S4 methods |
+| H-11 | capped row to late-confirm | `LateConfirmAttemptedMessagesAsync`, which runs before the cap gate | a body that really landed staying parked forever because the cap silenced its evidence | `A_capped_crashed_row_whose_body_landed_is_still_late_confirmed` |
 
-Still not owned by an ordinary test, and deliberately so: the interpreter's own wait/degrade
-arms (H-1's body, owned by `AgentTaskCheckInterpreterTests`), a legacy row with BOTH the
-generation and the typing timestamp absent, an exception escaping the Enter-only confirmation
-path, and a collapsed `[Pasted text #N]` body that shows no head at all (pre-existing, named
-out of scope by the plan). Backend-unreachable still defers without charging.
+Still not owned by an ordinary test, and deliberately so: the interpreter AGENT itself — no real
+Claude reads the brief, so the interpretation task is settled directly with a reading, and its
+wait/timeout/busy/empty arms stay with `AgentTaskCheckInterpreterTests`; the ROUTED publication
+path (`SpecialistRequestService` + `PublishCheckRequestAsync`), which `SpecialistPublicationTests`
+owns and which is a different producer from the `SpecialistTaskRunner` one the live incident used;
+a legacy row with BOTH the generation and the typing timestamp absent; an exception escaping the
+Enter-only confirmation path; and a collapsed `[Pasted text #N]` body that shows no head at all
+(pre-existing, named out of scope by the plan). Backend-unreachable still defers without charging.
 
 ## FollowUp coverage IDs
 
@@ -288,3 +310,111 @@ Windows file-symlink privilege).
 pre-existing Herdr one, so `CheckNoteDeliveryHandoffTests`'s new allowlist entry and its
 `Integration`/`Slow` tagging are both accepted. No timeout was widened, no assertion loosened,
 and no retry added anywhere in this pass.
+
+# Re-review pass (task `ceb90cb5`): landing blockers F2 and F3
+
+Re-review `2ce2c755` rejected `ac2d49d8`. Both blockers are fixed; the delivery handoff
+inventory above is corrected rather than appended to, because its first version was wrong about
+what it covered.
+
+## F3 (serious) — the durable attempts cap did not bind interrupted-Sent recovery
+
+`RecoverDeliveryRunLockedAsync` is reached from `DeliverNextLockedAsync` via
+`LoadInterruptedSentRunAsync`, which selects rows on `Status == Sent`, `DeliveryVerdict == null`
+and the attempt's age — and nothing else. The `DeliveryAttempts < MaxAttempts` filter lives
+further down, over the PENDING set, so it never saw these rows at all.
+
+The state that exposes it is the one the FollowUp pass had just documented as deliberate: the
+Enter-only charge commits, and `HandleDeliveryFailureAsync` is called afterwards in its own
+scope. A crash in between leaves the row `Sent`, verdict `null`, already AT the cap. The next
+sweep then pressed Enter again and charged attempt 4 — and the one after that attempt 5, because
+nothing in the path was reading the counter. Reproduced from both entry points (direct
+`FlushSessionAsync` and the automatic `FlushStrandedQueuesAsync`), 3 -> 4 attempts and extra
+Enters, before the fix.
+
+**The fix** (`SessionMessageQueueService.cs`, `RecoverDeliveryRunLockedAsync`): any row of the
+recovered run at `DeliveryAttempts >= MaxAttempts` falls through to the existing revert —
+`Pending` with attempts kept. That is exactly the parked shape every
+`DeliveryAttempts >= MaxAttempts` predicate already reads, so the row becomes visible and parked
+in the queue view, is still late-confirmed on every later flush, and is held behind the F1
+composer gate so nothing is typed on top of a body that may still be standing there. No verdict
+is invented: the crash lost that observation, and stamping one would claim evidence we never had.
+The check is all-or-nothing across the run, because a recovered run is ONE composed body under
+ONE Enter — a capped head means the tail must not be submitted either.
+
+Three things it deliberately does NOT change: late-confirm still runs first (H-11), an
+interrupted row BELOW the cap still gets the Enter-only rescue, and nothing kills.
+
+## F2 — the handoff test proved the wrong path
+
+The first F2 pass disabled the interpreter and delivered a plain digest note. That exercises
+`_queue.EnqueueAsync` at the recipient and nothing else, while the rows that stranded in the live
+incident were Check EXECUTION BRIEFS on the leg INTO the interpreter — produced by
+`SpecialistTaskRunner`, placed by `AgentTaskDispatcher`, and delivered into the standing
+interpreter's own session queue. None of that had an owner.
+
+`CheckNoteDeliveryHandoffTests` now runs the real graph: the real `CheckInterpreterProvisioner`
+creates the standing interpreter, `AgentTaskCheckService.InterpretAsync` asks
+`SpecialistTaskRunner` for a reading, the real `AgentTaskDispatcher.TickAsync` places the
+interpretation on the interpreter's live session, and the brief that enqueues there has its first
+submit swallowed so the Enter-only recovery is what finishes it. The assertion is the
+interpreter's own `UserPrompt`: exactly one, equal to the persisted row body, carrying the
+interpretation's task marker, taken after its attempt floor (`DeliveryAttempts >= 1`). The note
+that interpretation produces then travels the recipient leg for both live shapes, busy and
+already-eligible, through the same recovery.
+
+Both persistence failures are covered: the interpretation row that cannot be written (leg
+degrades to `QueueFailed`, the note ships carrying `INTERPRETER DOWN` and the whole digest — over
+the brief ceiling, so it ships as a pointer and the test reads the spill file to prove it intact)
+and the recipient queue row that cannot be written (`CheckOutcome.DeliveryFailed`, no partial row,
+no timeline row claiming the caller was told, and the next run delivers whole).
+
+The two interpreter-off digest cases are kept and renamed (`A_digest_note_reaches_*`): a host
+with no interpreter is a real configuration, and that note shape is what the 65 stranded rows on
+session `cea73d57` looked like.
+
+## Re-review coverage IDs
+
+| ID | Coverage | Class / check |
+|---|---|---|
+| V-10 | F3 cap gate on interrupted recovery, both entry points, repeated cycles, mixed batch | `SessionMessageQueueWedgedHeadTests` (`Crashed_Sent_row_at_the_cap_parks_instead_of_Entering_again(Flush\|Sweep)`, `Repeated_sweeps_over_a_capped_crashed_row_add_no_attempts_and_no_Enters`, `One_capped_row_parks_the_whole_interrupted_batch`) |
+| V-11 | F3 controls: below-cap rescue, late-confirm past the gate, relaunch release | `Crashed_Sent_row_below_the_cap_still_recovers_by_Enter_only`, `A_capped_crashed_row_whose_body_landed_is_still_late_confirmed`, `A_relaunch_releases_the_queue_behind_a_capped_crashed_row` |
+| V-12 | F2 real producer + dispatcher + interpreter-leg receipt, both recipient shapes | `A_dispatched_interpretation_reaches_an_already_eligible_recipient_whole`, `A_dispatched_interpretation_reaches_a_busy_recipient_whole_after_recovery` |
+| V-13 | F2 persistence failures on each leg | `An_interpretation_that_cannot_be_persisted_still_delivers_a_degraded_note_whole`, `A_note_whose_queue_row_cannot_be_persisted_fails_cleanly_and_the_retry_delivers` |
+
+Red-then-green for V-10: with `server/Application/Services/SessionMessageQueueService.cs` checked
+out at `ac2d49d8` and the new tests unchanged, five methods fail (`h.Adapter.Inputs should be
+empty but had …` on four of them, and the relaunch case on the un-reverted `Sent` status); the two
+V-11 controls pass on both sides, which is what makes them controls.
+
+## Re-review V/R rerun
+
+`Antiphon.Tests` built once into `--property:OutputPath=bin-c501f3/` and `Antiphon.Agents.Pty.Tests`
+into `--property:OutputPath=bin-c501rr/` (forward slashes), then `dotnet run --no-build` against
+those outputs. The two assemblies ran sequentially, never concurrently.
+
+| Run | Project | Filter | Outcome |
+|---|---|---|---|
+| P | Antiphon.Agents.Pty.Tests | `(ComposerDeliveryEvidenceTests*)\|(SubmitEvidenceTests*)` | 32/32 pass |
+| Q1 | Antiphon.Tests | `(SessionMessageQueueWedgedHeadTests*)\|(CheckNoteDeliveryHandoffTests*)\|(SessionMessageQueueInterruptedAttemptTests*)` | 59/59 pass, 1m53s (38 wedged-head, up from 31; 6 handoff, up from 2) |
+| Q2 | Antiphon.Tests | `(SessionMessageQueueDeliveryVerificationTests*)\|(SessionMessageQueueServiceTests*)\|(ParkedMessageSweepServiceTests*)\|(AgentTaskDeliveryWatchdogTests*)` | 221/221 pass, 5m45s |
+| N | Antiphon.Tests | `(SessionMessageQueueGrokPtyIntegrationTests*)\|(AgentTaskCheckInterpreterTests*)\|(SpecialistPublicationTests*)\|(AgentTaskStandingAgentDispatchTests*)` | 57/57 pass, 55s |
+| U | Antiphon.Tests | `[Category=Unit]` | 2,351 total: 2,346 pass, 4 fail, 1 skip |
+
+Q was split into Q1/Q2 so each run fits one foreground window; together they are the same 280
+methods the FollowUp pass ran as one 269-method Q, plus the eleven added here. N was widened
+beyond the previous pass's Grok-only filter to take the three suites this pass's new wiring could
+plausibly disturb — the interpreter producer, the routed publication path and standing-agent
+dispatch. All three are unchanged and green.
+
+R-1's four failures are the same inherited set, unchanged in count and cause:
+`Registry_matches_compiled_metadata` and `every_test_class_is_tagged_unit_xor_integration` name
+exactly one offender, `Antiphon.Tests.Application.HerdrPaneDisposalEndpointTests`; `C487_G068` is
+the same lane classification; `ScopedVerificationInstructionTests.C487_G142` expects the obsolete
+Code-to-Mutation stage order (`Compose(AgentTaskRole.Code)`). `git diff --name-only
+origin/master...HEAD` contains no Herdr, stage-bundle, classification or lane-category file. The
+one skip is unchanged. The registry check accepting only that one offender is also what confirms
+this pass's renamed methods and its `Integration`/`Slow` tagging are still valid.
+
+No timeout was widened, no assertion loosened, no retry added. PC-1…PC-8 and the new F1/F3
+controls remain the commissioned post-land Mutation task's work.
