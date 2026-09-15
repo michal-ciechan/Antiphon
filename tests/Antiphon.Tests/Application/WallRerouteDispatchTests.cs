@@ -1,6 +1,7 @@
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -260,6 +261,66 @@ public class WallRerouteDispatchTests
         await using var verify = CreateContext(schema);
         (await verify.CapacityRecoveryWaits.SingleAsync(w => w.TaskId == task.Id)).State.ShouldBe(CapacityRecoveryWaitState.WaitingForHold);
         (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held)).ShouldBe(1);
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task Redeemed_dispatch_receipts_the_wait_and_the_transcript_progresses_it(bool withWait)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var task = await SeedQueuedOpusAsync(schema, workspace.Path);
+        var (service, time, provider) = CapacityRecoveryTestSupport.CreateService(schema);
+        await using var services = provider;
+        var wait = withWait ? await SeedWaitAsync(schema, task.Id, AgentKind.ClaudeCode, "opus") : null;
+        if (withWait)
+            (await service.GrantReadyAsync(CancellationToken.None)).ShouldBe(1);
+        var result = await CapacityRecoveryTaskTests.CreateDispatcher(schema.ConnectionString).TickAsync(CancellationToken.None);
+        result.Dispatched.ShouldBe(1);
+        result.Failures.ShouldBe(0);
+        Guid sessionId;
+        await using (var verify = CreateContext(schema))
+        {
+            var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            stored.Status.ShouldBe(AgentTaskStatus.Dispatched);
+            stored.AgentSessionId.ShouldNotBeNull();
+            sessionId = stored.AgentSessionId.Value;
+            if (wait is null)
+            {
+                (await verify.CapacityRecoveryWaits.CountAsync(w => w.TaskId == task.Id)).ShouldBe(0);
+                return;
+            }
+            var receipted = await verify.CapacityRecoveryWaits.SingleAsync(w => w.Id == wait.Id);
+            receipted.State.ShouldBe(CapacityRecoveryWaitState.StartAccepted);
+            receipted.Outcome.ShouldBe("StartAccepted");
+            receipted.OutcomeReason.ShouldBe("Dispatch");
+            receipted.SessionId.ShouldBe(sessionId);
+            receipted.LaunchSessionId.ShouldBe(sessionId);
+            receipted.DispatchAttemptId.ShouldNotBeNull();
+            receipted.AdmissionCount.ShouldBe(1);
+            (await verify.CapacityRecoveryProviderStates.SingleAsync(s => s.Kind == AgentKind.ClaudeCode)).GrantedWaitId.ShouldBeNull();
+        }
+
+        // A running dispatch is not a stalled admission, even after its old timeout.
+        time.Advance(TimeSpan.FromMinutes(3));
+        await service.ReconcileAsync(CancellationToken.None);
+        await using (var verify = CreateContext(schema))
+            (await verify.CapacityRecoveryWaits.SingleAsync(w => w.Id == wait.Id)).State.ShouldBe(CapacityRecoveryWaitState.StartAccepted);
+        await service.ObserveTranscriptAsync(sessionId, TranscriptKinds.UserPrompt, false, CancellationToken.None, sequence: 1);
+        await using (var verify = CreateContext(schema))
+        {
+            var confirmed = await verify.CapacityRecoveryWaits.SingleAsync(w => w.Id == wait.Id);
+            confirmed.State.ShouldBe(CapacityRecoveryWaitState.PromptConfirmed);
+            confirmed.ConfirmedPromptSequence.ShouldBe(1);
+        }
+        await service.ObserveTranscriptAsync(sessionId, TranscriptKinds.TurnEnd, false, CancellationToken.None);
+        await using (var verify = CreateContext(schema))
+        {
+            var progressed = await verify.CapacityRecoveryWaits.SingleAsync(w => w.Id == wait.Id);
+            progressed.State.ShouldBe(CapacityRecoveryWaitState.Progressed);
+            progressed.AdmissionCount.ShouldBe(1);
+        }
     }
 
     private static async Task<(Guid AgentId, Guid SessionId)> SeedWarmOpusAsync(IsolatedTestSchema schema, string directory)
