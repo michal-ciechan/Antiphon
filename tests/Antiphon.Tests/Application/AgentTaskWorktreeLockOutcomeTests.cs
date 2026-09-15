@@ -26,11 +26,19 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
     [Arguments(true, "inbox")] [Arguments(false, "inbox")]
     public Task C443_EligibleRecipientGetsOutcome(bool owners, string backend) => DeliverAsync(false, owners, backend);
 
-    private static async Task DeliverAsync(bool busy, bool owners, string backend)
+    [Test] [Arguments(true, "modern")] [Arguments(false, "modern")]
+    [Arguments(true, "inbox")] [Arguments(false, "inbox")]
+    public Task C443_BusyRecipientGetsUnlandedSiblingWarning(bool owners, string backend) => DeliverAsync(true, owners, backend, sibling: true);
+    [Test] [Arguments(true, "modern")] [Arguments(false, "modern")]
+    [Arguments(true, "inbox")] [Arguments(false, "inbox")]
+    public Task C443_EligibleRecipientGetsUnlandedSiblingWarning(bool owners, string backend) => DeliverAsync(false, owners, backend, sibling: true);
+
+    private static async Task DeliverAsync(bool busy, bool owners, string backend, bool sibling = false)
     {
         BridgeQueueHarness? receiver = null;
         DeliveryWorkers? workers = null;
         WorktreeGuardedCleanupTests.RemovalHarness? producerHarness = null;
+        string? siblingWarning = null;
         try
         {
             var h = producerHarness = await WorktreeGuardedCleanupTests.RemovalHarness.CreateAsync(async producer => {
@@ -50,6 +58,7 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
                 workers = new(receiver); await workers.StartAsync();
             });
             var bridge = receiver!;
+            if (sibling) siblingWarning = await AddUnlandedSiblingAsync(h.H);
             // Successful admission does not create a notification; this cut precedes the Outcome.
             await using (var db = h.H.CreateContext())
                 (await db.AgentTaskLandNotifications.AnyAsync(n => n.TaskId == h.Context.TaskId)).ShouldBeFalse();
@@ -69,6 +78,8 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
                 capture = await db.WorktreeCleanupAttempts.AsNoTracking().SingleAsync(a => a.Id == h.Context.AttemptId);
                 original = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.RequestId == h.Context.RequestId && n.Kind == LandNotificationKind.Outcome);
                 capture.FinalizedAt.ShouldNotBeNull(); capture.TerminalEventId.ShouldBe(original.SourceEventId);
+                var terminal = await db.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.Id == original.SourceEventId);
+                if (siblingWarning is not null) terminal.Detail.ShouldContain(siblingWarning);
                 System.Text.Encoding.UTF8.GetByteCount(original.Body).ShouldBeLessThanOrEqualTo(1024);
                 original.ParentSessionId.ShouldBe(bridge.SessionId); original.Body.ShouldContain(capture.Id.ToString("N"));
                 original.Body.ShouldContain(owners ? h.Diagnostics.OwnerName : "InsufficientPrivileges");
@@ -102,6 +113,8 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
                 var prompt = await db.TranscriptEntries.AsNoTracking().SingleAsync(p => p.AgentSessionId == bridge.SessionId
                     && p.Sequence == confirmed.ConfirmingPromptSequence && p.Kind == TranscriptKinds.UserPrompt);
                 PromptSubmissionMatch.Normalize(prompt.Text!).ShouldBe(PromptSubmissionMatch.Normalize(original.Body));
+                if (siblingWarning is not null) prompt.Text!.ShouldContain(siblingWarning);
+                else prompt.Text!.ShouldNotContain("unlanded-sibling=");
                 bridge.Adapter.SubmittedBodies.Skip(baselineSubmissions).ShouldBe([original.Body]);
                 (await db.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId == original.Id)).ShouldBe(1);
                 var queued = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == confirmed.QueueMessageId);
@@ -114,6 +127,33 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
             if (receiver is not null) await receiver.DisposeAsync();
             if (producerHarness is not null) await producerHarness.DisposeAsync();
         }
+    }
+
+    private static async Task<string> AddUnlandedSiblingAsync(LandingSafetyHarness producer)
+    {
+        var id = Guid.NewGuid();
+        var branch = $"feat/card-task-{DelegationReportFormatter.Short(id)}";
+        var path = Path.Combine(producer.Fixture.Root, "trees", "sibling");
+        await producer.Fixture.RequiredAsync(producer.Fixture.Repository, "worktree", "add", "-b", branch, path, producer.Fixture.SeedSha);
+        await File.WriteAllTextAsync(Path.Combine(path, "unlanded-plan.md"), "same-card work remains unlanded\n");
+        await producer.Fixture.RequiredAsync(path, "add", "unlanded-plan.md");
+        await producer.Fixture.RequiredAsync(path, "commit", "-m", "unlanded sibling");
+        await using var db = producer.CreateContext();
+        var project = new Project { Id = Guid.NewGuid(), Name = "C443 sibling warning" };
+        var board = new Board { Id = Guid.NewGuid(), ProjectId = project.Id, Name = "C443 sibling warning" };
+        var column = new BoardColumn { Id = Guid.NewGuid(), BoardId = board.Id, Name = "Work" };
+        var card = new Card { Id = Guid.NewGuid(), BoardId = board.Id, BoardColumnId = column.Id,
+            Identifier = "CARD-0443", Title = "C443 sibling warning" };
+        db.Projects.Add(project); db.Boards.Add(board); db.BoardColumns.Add(column); db.Cards.Add(card);
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == producer.Fixture.TaskId);
+        task.CardId = card.Id;
+        db.AgentTasks.Add(new AgentTask { Id = id, RootTaskId = id, CardId = card.Id,
+            Title = "Unlanded sibling", Goal = "retain plan", Kind = AgentTaskKind.Worker,
+            Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Worktree, Status = AgentTaskStatus.Succeeded,
+            WorkingDirectory = path, RepoPath = producer.Fixture.Repository, WorktreePath = path,
+            WorktreeBranch = branch, ReplyTo = AgentTaskReplyTo.None, CreatedAt = DateTime.UtcNow, CompletedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        return $"unlanded-sibling={DelegationReportFormatter.Short(id)}:{branch}";
     }
 
     private static async Task UntilAsync(Func<Task<bool>> predicate)
