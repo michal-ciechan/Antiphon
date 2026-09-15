@@ -106,7 +106,7 @@ public class ReceiptFailureDeliveryTests
         failed.Attempt.ShouldBe(3);
         failed.AgentSessionId.ShouldBe(sessionId);
         failed.ParentSessionId.ShouldBe(callerId);
-        failed.FailureReason.ShouldContain("never delivered");
+        failed.FailureReason.ShouldNotBeNull().ShouldContain("never delivered");
         var note = await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.SourceTaskId == task.Id);
         note.AgentSessionId.ShouldBe(callerId);
         note.ConversationKey.ShouldBe($"task:{task.Id:N}");
