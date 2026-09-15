@@ -50,6 +50,7 @@ public sealed class CapacityRecoveryService
         if (!IsEnabled)
             return;
         await ReconcileCompatibilityAsync(ct);
+        await CancelOrphanedWaitsAsync(ct);
         await RearmStalledAdmissionsAsync(ct);
         await GrantReadyAsync(ct);
     }
@@ -390,6 +391,83 @@ public sealed class CapacityRecoveryService
     private static bool IsFinished(CapacityRecoveryWait wait) =>
         wait.State is CapacityRecoveryWaitState.Progressed or CapacityRecoveryWaitState.Canceled
             or CapacityRecoveryWaitState.Superseded or CapacityRecoveryWaitState.Exhausted;
+
+    /// <summary>Cancel a bounded batch of ended consumers before re-arming or granting.</summary>
+    public async Task<int> CancelOrphanedWaitsAsync(CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var batch = Math.Clamp(Settings.ReconciliationBatchSize, 1, 1000);
+        var candidates = await OrphanedWaits(db).AsNoTracking()
+            .OrderBy(w => w.BlockedAt).ThenBy(w => w.Id)
+            .Take(batch).Select(w => new { w.Id, w.ExecutionKind }).ToListAsync(ct);
+        var count = 0;
+        foreach (var group in candidates.GroupBy(w => w.ExecutionKind).OrderBy(g => g.Key))
+        {
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await TakeProviderLockAsync(db, group.Key, ct);
+            var ids = group.Select(w => w.Id).ToList();
+            // Discovery is only a hint. Recheck both the wait and its owner after the lock.
+            var waits = await OrphanedWaits(db).Where(w => ids.Contains(w.Id)).ToListAsync(ct);
+            var state = await db.CapacityRecoveryProviderStates.FirstOrDefaultAsync(s => s.Kind == group.Key, ct);
+            var now = UtcNow();
+            foreach (var wait in waits)
+            {
+                string? reason = null;
+                if (wait.ConsumerKind == CapacityWaitConsumerKind.LiveSession)
+                {
+                    var session = await db.AgentSessions.AsNoTracking().FirstOrDefaultAsync(
+                        s => wait.SessionId != null ? s.Id == wait.SessionId
+                            : wait.ConsumerKey == "session:" + s.Id.ToString().Replace("-", ""), ct);
+                    reason = session is null ? "owner-missing"
+                        : session.Status is SessionStatus.Stopped or SessionStatus.Failed ? "session-ended" : null;
+                }
+                if (reason is null && (wait.TaskId is not null
+                        || wait.ConsumerKind is CapacityWaitConsumerKind.QueuedTask or CapacityWaitConsumerKind.RoutingBlockedTask))
+                {
+                    var task = await db.AgentTasks.AsNoTracking().FirstOrDefaultAsync(
+                        t => wait.TaskId != null ? t.Id == wait.TaskId
+                            : wait.ConsumerKey == "task:" + t.Id.ToString().Replace("-", ""), ct);
+                    reason = task is null ? "owner-missing"
+                        : task.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled
+                            ? "task-terminal" : null;
+                }
+                if (reason is null)
+                    continue;
+                wait.State = CapacityRecoveryWaitState.Canceled;
+                wait.Outcome = nameof(CapacityRecoveryWaitState.Canceled);
+                wait.OutcomeReason = reason;
+                wait.Version++;
+                wait.UpdatedAt = now;
+                if (state?.GrantedWaitId == wait.Id)
+                    ClearGrant(state, now);
+                count++;
+                _logger.LogInformation(
+                    "Capacity recovery canceled wait {WaitId} consumer {ConsumerKey} kind {Kind} blockedAt {BlockedAt:u} action {ActionOrdinal}: {Reason}",
+                    wait.Id, wait.ConsumerKey, wait.ExecutionKind, wait.BlockedAt, wait.ActionOrdinal, reason);
+            }
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+        }
+        return count;
+    }
+
+    private static IQueryable<CapacityRecoveryWait> OrphanedWaits(AppDbContext db) =>
+        Unfinished(db.CapacityRecoveryWaits)
+            .Where(w => w.ConsumerKey != CompatibilityCursorKey
+                && (w.ConsumerKind == CapacityWaitConsumerKind.LiveSession
+                    || w.ConsumerKind == CapacityWaitConsumerKind.QueuedTask
+                    || w.ConsumerKind == CapacityWaitConsumerKind.RoutingBlockedTask))
+            .Where(w => (w.ConsumerKind == CapacityWaitConsumerKind.LiveSession
+                    && !db.AgentSessions.Any(s => (w.SessionId != null ? s.Id == w.SessionId
+                            : w.ConsumerKey == "session:" + s.Id.ToString().Replace("-", ""))
+                        && s.Status != SessionStatus.Stopped && s.Status != SessionStatus.Failed))
+                || ((w.TaskId != null || w.ConsumerKind == CapacityWaitConsumerKind.QueuedTask
+                        || w.ConsumerKind == CapacityWaitConsumerKind.RoutingBlockedTask)
+                    && !db.AgentTasks.Any(t => (w.TaskId != null ? t.Id == w.TaskId
+                            : w.ConsumerKey == "task:" + t.Id.ToString().Replace("-", ""))
+                        && t.Status != AgentTaskStatus.Succeeded && t.Status != AgentTaskStatus.Failed
+                        && t.Status != AgentTaskStatus.Canceled)));
 
     private async Task<CapacityRecoveryWait> EnsureWaitCoreAsync(
         AppDbContext db, CapacityWaitRegistration registration, DateTime now, CancellationToken ct)

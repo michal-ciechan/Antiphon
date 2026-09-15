@@ -533,6 +533,9 @@ public sealed class AgentTaskDispatcher
                                 HoldRevision = hold?.Revision ?? 0,
                                 HoldAlreadyCleared = hold is null,
                             }, ct);
+                            // A new attempt can hit the same reason already traced by an old one.
+                            // Its fresh wait must persist even when TraceHeldAsync is silent.
+                            await _db.SaveChangesAsync(ct);
                         }
 
                         if (await TraceHeldAsync(task, $"{alias} is held; dispatch paused for that model.", lastHeld, ct))

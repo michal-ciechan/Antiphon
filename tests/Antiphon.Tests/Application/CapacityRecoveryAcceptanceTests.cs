@@ -504,7 +504,7 @@ public class CapacityRecoveryAcceptanceTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var (service, time, _) = CapacityRecoveryTestSupport.CreateService(
             schema, intervalSeconds: 1, jitterSeconds: 0);
-        var wait = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+        var wait = await CapacityRecoveryTestSupport.EnsureWaitWithLiveOwnerAsync(service, schema, CapacityRecoveryTestSupport.Registration(
             $"task:{Guid.NewGuid():N}",
             CapacityWaitConsumerKind.QueuedTask,
             holdAlreadyCleared: true), CancellationToken.None);

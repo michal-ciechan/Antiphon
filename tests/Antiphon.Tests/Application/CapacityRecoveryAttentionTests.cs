@@ -24,7 +24,7 @@ public class CapacityRecoveryAttentionTests
         var (service, time, provider) = CapacityRecoveryTestSupport.CreateService(schema);
         await using var services = provider;
         var taskId = Guid.NewGuid();
-        var wait = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+        var wait = await CapacityRecoveryTestSupport.EnsureWaitWithLiveOwnerAsync(service, schema, CapacityRecoveryTestSupport.Registration(
             $"task:{taskId:N}", CapacityWaitConsumerKind.QueuedTask,
             holdAlreadyCleared: true, taskId: taskId), CancellationToken.None);
         await service.ReconcileAsync(CancellationToken.None);
@@ -110,7 +110,7 @@ public class CapacityRecoveryAttentionTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var (service, _, _) = CapacityRecoveryTestSupport.CreateService(schema);
-        var wait = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+        var wait = await CapacityRecoveryTestSupport.EnsureWaitWithLiveOwnerAsync(service, schema, CapacityRecoveryTestSupport.Registration(
             $"task:{Guid.NewGuid():N}",
             CapacityWaitConsumerKind.QueuedTask,
             holdAlreadyCleared: true), CancellationToken.None);
