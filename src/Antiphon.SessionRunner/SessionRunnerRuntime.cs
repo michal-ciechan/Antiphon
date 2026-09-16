@@ -36,6 +36,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     private readonly ShadowCopyStore _shadowStore;
     private readonly PtyHostLauncher _launcher;
     private readonly HerdrClient? _herdrClient;
+    private readonly TimeProvider _labelClock;
     private readonly IProcessLivenessProbe _processLiveness;
     private readonly ILogger<SessionRunnerRuntime> _logger;
     private readonly RunnerStartupDiagnostics _startup;
@@ -86,13 +87,15 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         ILogger<SessionRunnerRuntime> logger,
         HerdrClient? herdrClient = null,
         IProcessLivenessProbe? processLiveness = null,
-        RunnerStartupDiagnostics? startupDiagnostics = null)
+        RunnerStartupDiagnostics? startupDiagnostics = null,
+        TimeProvider? timeProvider = null)
     {
         _settings = settings.Value;
         _custody = new(() => new RunnerCustodyLedger(Path.Combine(_settings.SessionLogPath, "verification-custody")));
         _logger = logger;
         _startup = startupDiagnostics ?? new RunnerStartupDiagnostics(logger);
         _herdrClient = herdrClient;
+        _labelClock = timeProvider ?? TimeProvider.System;
         _processLiveness = processLiveness ?? new SystemProcessLivenessProbe();
         _shadowStore = new ShadowCopyStore(_settings.PtyHostBinDir);
         _launcher = new PtyHostLauncher(_shadowStore, _settings.ResolvedPtyHostSourceDir);
@@ -710,10 +713,31 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     public async Task<RunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct)
     {
         var session = GetSession(sessionId);
+        if (session.LabelChild?.LabelObservationInFlight == true) return session.ToDto();
         if (_herdrClient is not null)
             await session.TryStampHerdrVerifiedAsync(_herdrClient, ct);
         await session.RefreshHerdrSurfaceAsync(ct);
-        return session.ToDto();
+        await ObserveHerdrLabelsAsync(session, ct);
+        var observation = session.LabelChild is { } child
+            ? await child.ReadLabelObservationAsync(_labelClock, () => OwnsLabelSession(session), ct) : null;
+        return session.ToDto() with { LabelObservation = observation };
+    }
+
+    private bool OwnsLabelSession(RunnerSession session) =>
+        _sessions.TryGetValue(session.ToDto().SessionId, out var current) && ReferenceEquals(current, session)
+        && session.ToDto().Status == "Running";
+
+    internal Task ObserveHerdrLabelsAsync(RunnerSession session, CancellationToken ct) =>
+        session.LabelChild is { } child && OwnsLabelSession(session)
+            ? child.FollowLabelsAsync(_labelClock, () => OwnsLabelSession(session), ct) : Task.CompletedTask;
+
+    internal async Task SweepHerdrLabelsAsync(CancellationToken ct)
+    {
+        foreach (var pane in LiveHerdrPanes())
+        {
+            ct.ThrowIfCancellationRequested();
+            await ObserveHerdrLabelsAsync(pane.Session, ct);
+        }
     }
 
     public RunnerBufferDto GetBuffer(Guid sessionId) => GetSession(sessionId).GetBuffer();
@@ -1529,6 +1553,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         /// <summary>CARD-0162: pane id when this session is on the herdr lane.</summary>
         private HerdrPaneSidecar? _retiredHerdrSidecar;
         private HerdrPlacementCoordinator? _herdrPlacement;
+        internal HerdrPaneChild? LabelChild => _herdrChild as HerdrPaneChild;
         internal HerdrPaneSidecar? HerdrLocator => (_herdrChild as HerdrPaneChild)?.Sidecar ?? _retiredHerdrSidecar;
         internal string? HerdrPaneId => (_herdrChild as HerdrPaneChild)?.PaneId ?? _retiredHerdrSidecar?.PaneId;
 
@@ -2900,7 +2925,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 // CARD-0224: the pane is still standing — retire to last-pane so the next
                 // launch of this id can target it. KillAsync's pane.close / PaneLeftOpen
                 // paths still plain-delete.
-                HerdrPaneSidecar.Retire(_settings.SessionLogPath, _sessionId, "ProcessVanished");
+                if (_herdrChild is HerdrPaneChild herdr) herdr.RetireLabelSnapshot("ProcessVanished");
                 _onHerdrPaneSetChanged?.Invoke();
                 return true;
             }

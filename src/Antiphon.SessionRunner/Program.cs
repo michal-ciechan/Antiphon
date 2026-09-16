@@ -42,6 +42,9 @@ builder.Services.PostConfigure<SessionRunnerSettings>(settings =>
 // CARD-0120: the raw client is additive only. No launch or delivery path resolves it until the
 // explicitly separate Herdr backend slices opt a session in; HerdrSettings.Enabled defaults false.
 builder.Services.Configure<HerdrSettings>(builder.Configuration.GetSection("SessionRunner:Herdr"));
+builder.Services.AddOptions<HerdrSettings>().Validate(s => s.LabelFollowCooldownMinutes > 0,
+    "LabelFollowCooldownMinutes must be positive").Validate(s => s.LabelFollowObservationTimeoutSeconds > 0,
+    "LabelFollowObservationTimeoutSeconds must be positive").ValidateOnStart();
 builder.Services.AddSingleton<HerdrClient>();
 builder.Services.AddSingleton(sp => new RunnerStartupDiagnostics(
     sp.GetRequiredService<ILogger<RunnerStartupDiagnostics>>(),
