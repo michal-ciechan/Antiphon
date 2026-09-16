@@ -1,0 +1,21 @@
+BEGIN
+          observed_at
+-------------------------------
+ 2026-09-16 08:48:04.494407+00
+(1 row)
+
+ workspace_id | path | enabled | script_path | schedule | timezone
+--------------+------+---------+-------------+----------+----------
+(0 rows)
+
+ retained_nightly_jobs
+-----------------------
+                     0
+(1 row)
+
+ workspace_id |                  path                  |   tag   | language | archived | deleted
+--------------+----------------------------------------+---------+----------+----------+---------
+ mc           | u/lndcobra/antiphon_build_junk_cleanup | desktop | bash     | f        | f
+(1 row)
+
+COMMIT

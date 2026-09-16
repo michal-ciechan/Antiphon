@@ -1,0 +1,14 @@
+{
+  "sha": "829e516a797044a354894790c06d6f8ebb7944e8",
+  "ref": "feat/card-task-2aab4b1c",
+  "succeeded": false,
+  "startedAt": "2026-09-04T17:48:48.7725828+01:00",
+  "completedAt": "2026-09-04T17:56:37.3004268+01:00",
+  "durationSeconds": 468.528,
+  "logDir": "C:\\Antiphon\\nightly\\logs\\2026-09-04-1748",
+  "summaryPath": "C:\\Antiphon\\nightly\\logs\\2026-09-04-1748\\summary.json",
+  "testExit": 1,
+  "reportExit": 0,
+  "exitCode": 1,
+  "unchanged": false
+}

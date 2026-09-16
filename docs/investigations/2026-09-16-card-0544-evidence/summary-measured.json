@@ -1,0 +1,471 @@
+[
+  {
+    "task": "89bfbbdf",
+    "evidenceRoot": "C:\\Antiphon\\evidence\\review-89bfbbdf",
+    "role": "Review",
+    "status": "Succeeded",
+    "wallMinutes": 19.06476543333333,
+    "costUsd": 9.122524,
+    "firstMatrixTrxMinutes": 6.625970416666666,
+    "baselineTrxMinutes": 0.16648996666666666,
+    "repeatOrTargetedTrxMinutes": 0.0,
+    "allTrxUnionMinutes": 6.792460383333334,
+    "firstMatrixUnionMinutes": 6.625970416666666,
+    "matrixSharePercent": 34.75505869629871,
+    "buildLogMinutes": 2.652333333333333,
+    "buildLogs": [
+      {
+        "path": "C:\\Antiphon\\evidence\\review-89bfbbdf\\baseline-build.log",
+        "seconds": 59.36
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\review-89bfbbdf\\build.log",
+        "seconds": 99.78
+      }
+    ],
+    "firstMatrixCommandOverheadMinutes": 0,
+    "unitTrxMinutes": 2.352246666666667,
+    "outboxDistillationTrxMinutes": 0.0,
+    "outboxDistillationUnionMinutes": 0.0,
+    "incrementalVRange": null,
+    "incrementalExpanded": 0,
+    "incrementalMethodCount": 0,
+    "incrementalBodyMinutes": 0.0,
+    "incrementalBodyPassed": 0
+  },
+  {
+    "task": "360e223e",
+    "evidenceRoot": "C:\\Antiphon\\evidence\\code-360e223e",
+    "role": "Code",
+    "status": "Succeeded",
+    "wallMinutes": 98.33780515,
+    "costUsd": 38.097286,
+    "firstMatrixTrxMinutes": 18.387077683333334,
+    "baselineTrxMinutes": 0.8947936333333334,
+    "repeatOrTargetedTrxMinutes": 13.769792883333333,
+    "allTrxUnionMinutes": 33.051664200000005,
+    "firstMatrixUnionMinutes": 18.387077683333334,
+    "matrixSharePercent": 18.697872761433434,
+    "buildLogMinutes": 15.206666666666667,
+    "buildLogs": [
+      {
+        "path": "C:\\Antiphon\\evidence\\code-360e223e\\base-build.log",
+        "seconds": 62.44
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-360e223e\\base-e2e-build.log",
+        "seconds": 106.78999999999999
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-360e223e\\build-1.log",
+        "seconds": 76.2
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-360e223e\\build-2.log",
+        "seconds": 48.69
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-360e223e\\build-3.log",
+        "seconds": 54.22
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-360e223e\\build-4.log",
+        "seconds": 50.77
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-360e223e\\build-5.log",
+        "seconds": 53.19
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-360e223e\\build-6.log",
+        "seconds": 55.96
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-360e223e\\build-7.log",
+        "seconds": 51.81
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-360e223e\\build-8.log",
+        "seconds": 130.24
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-360e223e\\build-9.log",
+        "seconds": 58.7
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-360e223e\\e2e-build-2.log",
+        "seconds": 30.52
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-360e223e\\e2e-build-3.log",
+        "seconds": 28.11
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-360e223e\\e2e-build-4.log",
+        "seconds": 35.77
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-360e223e\\e2e-build-5.log",
+        "seconds": 31.71
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-360e223e\\e2e-build.log",
+        "seconds": 37.28
+      }
+    ],
+    "firstMatrixCommandOverheadMinutes": 0,
+    "unitTrxMinutes": 2.512430616666667,
+    "outboxDistillationTrxMinutes": 10.485087533333333,
+    "outboxDistillationUnionMinutes": 10.485087533333333,
+    "incrementalVRange": null,
+    "incrementalExpanded": 0,
+    "incrementalMethodCount": 0,
+    "incrementalBodyMinutes": 0.0,
+    "incrementalBodyPassed": 0
+  },
+  {
+    "task": "4d210064",
+    "evidenceRoot": "C:\\Antiphon\\evidence\\review-4d210064",
+    "role": "Review",
+    "status": "Succeeded",
+    "wallMinutes": 42.6413475,
+    "costUsd": 6.196563,
+    "firstMatrixTrxMinutes": 26.854638333333334,
+    "baselineTrxMinutes": 0.12545195,
+    "repeatOrTargetedTrxMinutes": 0.0,
+    "allTrxUnionMinutes": 26.980090283333332,
+    "firstMatrixUnionMinutes": 26.854638333333334,
+    "matrixSharePercent": 62.97793082953894,
+    "buildLogMinutes": null,
+    "buildLogs": [],
+    "firstMatrixCommandOverheadMinutes": 0,
+    "unitTrxMinutes": 2.476293683333333,
+    "outboxDistillationTrxMinutes": 16.686573316666667,
+    "outboxDistillationUnionMinutes": 16.686573316666667,
+    "incrementalVRange": null,
+    "incrementalExpanded": 0,
+    "incrementalMethodCount": 0,
+    "incrementalBodyMinutes": 0.0,
+    "incrementalBodyPassed": 0
+  },
+  {
+    "task": "0d48a707",
+    "evidenceRoot": "C:\\Antiphon\\evidence\\code-0d48a707",
+    "role": "Code",
+    "status": "Succeeded",
+    "wallMinutes": 37.76959051666667,
+    "costUsd": 12.660624,
+    "firstMatrixTrxMinutes": 19.55625775,
+    "baselineTrxMinutes": 0.08163633333333334,
+    "repeatOrTargetedTrxMinutes": 0.0,
+    "allTrxUnionMinutes": 19.2475013,
+    "firstMatrixUnionMinutes": 19.165864966666664,
+    "matrixSharePercent": 50.744169329051374,
+    "buildLogMinutes": 2.8571666666666666,
+    "buildLogs": [
+      {
+        "path": "C:\\Antiphon\\evidence\\code-0d48a707\\base-build.log",
+        "seconds": 58.83
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-0d48a707\\build-2.log",
+        "seconds": 55.9
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-0d48a707\\build.log",
+        "seconds": 24.52
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-0d48a707\\e2e-build.log",
+        "seconds": 32.18
+      }
+    ],
+    "firstMatrixCommandOverheadMinutes": 0.28789231666666665,
+    "unitTrxMinutes": 1.74341685,
+    "outboxDistillationTrxMinutes": 10.747845816666667,
+    "outboxDistillationUnionMinutes": 10.747845816666667,
+    "incrementalVRange": "V-56..V-61",
+    "incrementalExpanded": 13,
+    "incrementalMethodCount": 6,
+    "incrementalBodyMinutes": 1.0386214833333332,
+    "incrementalBodyPassed": 13
+  },
+  {
+    "task": "32c1f938",
+    "evidenceRoot": "C:\\Antiphon\\evidence\\review-32c1f938",
+    "role": "Review",
+    "status": "Succeeded",
+    "wallMinutes": 33.883869116666666,
+    "costUsd": 11.89192,
+    "firstMatrixTrxMinutes": 26.01068718333333,
+    "baselineTrxMinutes": 0.36041728333333334,
+    "repeatOrTargetedTrxMinutes": 0.0,
+    "allTrxUnionMinutes": 25.315980999999997,
+    "firstMatrixUnionMinutes": 25.315980999999997,
+    "matrixSharePercent": 74.71396171680898,
+    "buildLogMinutes": 4.089,
+    "buildLogs": [
+      {
+        "path": "C:\\Antiphon\\evidence\\review-32c1f938\\base-build.log",
+        "seconds": 66.41
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\review-32c1f938\\build.log",
+        "seconds": 130.18
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\review-32c1f938\\e2e-build.log",
+        "seconds": 48.75
+      }
+    ],
+    "firstMatrixCommandOverheadMinutes": 0.4194735166666672,
+    "unitTrxMinutes": 1.8184205666666666,
+    "outboxDistillationTrxMinutes": 13.649484466666665,
+    "outboxDistillationUnionMinutes": 13.649484466666665,
+    "incrementalVRange": "V-56..V-61",
+    "incrementalExpanded": 13,
+    "incrementalMethodCount": 6,
+    "incrementalBodyMinutes": 1.9902459900000002,
+    "incrementalBodyPassed": 13
+  },
+  {
+    "task": "b23741b2",
+    "evidenceRoot": "C:\\Antiphon\\evidence\\code-b23741b2",
+    "role": "Code",
+    "status": "Succeeded",
+    "wallMinutes": 67.87061658333333,
+    "costUsd": 23.864774,
+    "firstMatrixTrxMinutes": 22.68782003333333,
+    "baselineTrxMinutes": 2.1854269166666667,
+    "repeatOrTargetedTrxMinutes": 9.26778935,
+    "allTrxUnionMinutes": 34.11238805,
+    "firstMatrixUnionMinutes": 22.65917178333334,
+    "matrixSharePercent": 33.3858345835297,
+    "buildLogMinutes": 7.8134999999999994,
+    "buildLogs": [
+      {
+        "path": "C:\\Antiphon\\evidence\\code-b23741b2\\base-build.log",
+        "seconds": 65.9
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-b23741b2\\build-2.log",
+        "seconds": 127.71
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-b23741b2\\build-3.log",
+        "seconds": 113.81
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-b23741b2\\build.log",
+        "seconds": 84.39
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-b23741b2\\e2e-build-2.log",
+        "seconds": 31.34
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-b23741b2\\e2e-build.log",
+        "seconds": 45.66
+      }
+    ],
+    "firstMatrixCommandOverheadMinutes": 0.3483172833333339,
+    "unitTrxMinutes": 2.6721379166666663,
+    "outboxDistillationTrxMinutes": 10.5179328,
+    "outboxDistillationUnionMinutes": 10.5179328,
+    "incrementalVRange": "V-62..V-67",
+    "incrementalExpanded": 37,
+    "incrementalMethodCount": 7,
+    "incrementalBodyMinutes": 3.011622810000001,
+    "incrementalBodyPassed": 37
+  },
+  {
+    "task": "7ef54b1c",
+    "evidenceRoot": "C:\\Antiphon\\evidence\\review-7ef54b1c",
+    "role": "Review",
+    "status": "Succeeded",
+    "wallMinutes": 48.41928338333333,
+    "costUsd": 18.66147,
+    "firstMatrixTrxMinutes": 42.22865906666666,
+    "baselineTrxMinutes": 0.6092901000000001,
+    "repeatOrTargetedTrxMinutes": 1.8773777166666663,
+    "allTrxUnionMinutes": 41.398701599999995,
+    "firstMatrixUnionMinutes": 41.398701599999995,
+    "matrixSharePercent": 85.50044260723213,
+    "buildLogMinutes": 3.414833333333333,
+    "buildLogs": [
+      {
+        "path": "C:\\Antiphon\\evidence\\review-7ef54b1c\\base-build.log",
+        "seconds": 69.26
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\review-7ef54b1c\\build.log",
+        "seconds": 72.75
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\review-7ef54b1c\\e2e-build.log",
+        "seconds": 62.88
+      }
+    ],
+    "firstMatrixCommandOverheadMinutes": 1.4403194833333326,
+    "unitTrxMinutes": 5.266477233333333,
+    "outboxDistillationTrxMinutes": 20.680247466666668,
+    "outboxDistillationUnionMinutes": 20.680247466666668,
+    "incrementalVRange": "V-62..V-67",
+    "incrementalExpanded": 37,
+    "incrementalMethodCount": 7,
+    "incrementalBodyMinutes": 3.6463344633333326,
+    "incrementalBodyPassed": 37
+  },
+  {
+    "task": "ca4eef9c",
+    "evidenceRoot": "C:\\Antiphon\\evidence\\code-ca4eef9c",
+    "role": "Code",
+    "status": "Succeeded",
+    "wallMinutes": 46.0190008,
+    "costUsd": 17.917418,
+    "firstMatrixTrxMinutes": 28.823794099999997,
+    "baselineTrxMinutes": 0.8769532499999999,
+    "repeatOrTargetedTrxMinutes": 2.786298566666667,
+    "allTrxUnionMinutes": 23.331912816666666,
+    "firstMatrixUnionMinutes": 20.969143799999998,
+    "matrixSharePercent": 45.566273572806466,
+    "buildLogMinutes": 3.214,
+    "buildLogs": [
+      {
+        "path": "C:\\Antiphon\\evidence\\code-ca4eef9c\\base-build.log",
+        "seconds": 68.76
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-ca4eef9c\\build.log",
+        "seconds": 75.98
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-ca4eef9c\\e2e-build.log",
+        "seconds": 48.1
+      }
+    ],
+    "firstMatrixCommandOverheadMinutes": 0.5436389333333337,
+    "unitTrxMinutes": 3.1727279666666663,
+    "outboxDistillationTrxMinutes": 15.815005283333333,
+    "outboxDistillationUnionMinutes": 10.171361816666666,
+    "incrementalVRange": "V-68..V-74",
+    "incrementalExpanded": 15,
+    "incrementalMethodCount": 7,
+    "incrementalBodyMinutes": 1.0049459933333333,
+    "incrementalBodyPassed": 15
+  },
+  {
+    "task": "80155ada",
+    "evidenceRoot": "C:\\Antiphon\\evidence\\review-80155ada",
+    "role": "Review",
+    "status": "Succeeded",
+    "wallMinutes": 39.216324650000004,
+    "costUsd": 13.224814,
+    "firstMatrixTrxMinutes": 31.976028349999996,
+    "baselineTrxMinutes": 0.24258085,
+    "repeatOrTargetedTrxMinutes": 0.0,
+    "allTrxUnionMinutes": 31.97602835,
+    "firstMatrixUnionMinutes": 31.97602835,
+    "matrixSharePercent": 81.53754497745877,
+    "buildLogMinutes": 5.078666666666667,
+    "buildLogs": [
+      {
+        "path": "C:\\Antiphon\\evidence\\review-80155ada\\build-base.log",
+        "seconds": 86.11
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\review-80155ada\\build-e2e.log",
+        "seconds": 93.25999999999999
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\review-80155ada\\build-tests.log",
+        "seconds": 125.35
+      }
+    ],
+    "firstMatrixCommandOverheadMinutes": 0.4421857500000007,
+    "unitTrxMinutes": 2.46689155,
+    "outboxDistillationTrxMinutes": 12.833672466666666,
+    "outboxDistillationUnionMinutes": 12.833672466666666,
+    "incrementalVRange": "V-68..V-74",
+    "incrementalExpanded": 15,
+    "incrementalMethodCount": 7,
+    "incrementalBodyMinutes": 0.9588842133333334,
+    "incrementalBodyPassed": 15
+  },
+  {
+    "task": "151b4e13",
+    "evidenceRoot": "C:\\Antiphon\\evidence\\code-151b4e13",
+    "role": "Code",
+    "status": "Succeeded",
+    "wallMinutes": 45.27429535,
+    "costUsd": 16.189886,
+    "firstMatrixTrxMinutes": 27.170890550000003,
+    "baselineTrxMinutes": 0.45566111666666675,
+    "repeatOrTargetedTrxMinutes": 0.29344433333333336,
+    "allTrxUnionMinutes": 27.919995999999994,
+    "firstMatrixUnionMinutes": 27.170890550000003,
+    "matrixSharePercent": 60.0139446455239,
+    "buildLogMinutes": 3.4848333333333334,
+    "buildLogs": [
+      {
+        "path": "C:\\Antiphon\\evidence\\code-151b4e13\\base-build.log",
+        "seconds": 88.6
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-151b4e13\\build.log",
+        "seconds": 70.72
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\code-151b4e13\\e2e-build.log",
+        "seconds": 49.77
+      }
+    ],
+    "firstMatrixCommandOverheadMinutes": 0.3622641333333337,
+    "unitTrxMinutes": 1.9530538333333332,
+    "outboxDistillationTrxMinutes": 12.157269883333333,
+    "outboxDistillationUnionMinutes": 12.157269883333333,
+    "incrementalVRange": "V-75..V-79",
+    "incrementalExpanded": 12,
+    "incrementalMethodCount": 5,
+    "incrementalBodyMinutes": 1.0645777633333333,
+    "incrementalBodyPassed": 12
+  },
+  {
+    "task": "1d0539bc",
+    "evidenceRoot": "C:\\Antiphon\\evidence\\review-1d0539bc",
+    "role": "Review",
+    "status": "Dispatched",
+    "wallMinutes": null,
+    "costUsd": 0.0,
+    "firstMatrixTrxMinutes": 25.20628085,
+    "baselineTrxMinutes": 1.420349216666667,
+    "repeatOrTargetedTrxMinutes": 1.4773768833333334,
+    "allTrxUnionMinutes": 28.104006950000002,
+    "firstMatrixUnionMinutes": 25.20628085,
+    "matrixSharePercent": null,
+    "buildLogMinutes": 2.5046666666666666,
+    "buildLogs": [
+      {
+        "path": "C:\\Antiphon\\evidence\\review-1d0539bc\\base-build.log",
+        "seconds": 55.26
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\review-1d0539bc\\build.log",
+        "seconds": 59.62
+      },
+      {
+        "path": "C:\\Antiphon\\evidence\\review-1d0539bc\\e2e-build.log",
+        "seconds": 35.4
+      }
+    ],
+    "firstMatrixCommandOverheadMinutes": 0.3864081833333335,
+    "unitTrxMinutes": 2.0541097,
+    "outboxDistillationTrxMinutes": 12.436467,
+    "outboxDistillationUnionMinutes": 12.436467,
+    "incrementalVRange": "V-75..V-79",
+    "incrementalExpanded": 12,
+    "incrementalMethodCount": 5,
+    "incrementalBodyMinutes": 0.7558544450000001,
+    "incrementalBodyPassed": 12
+  }
+]

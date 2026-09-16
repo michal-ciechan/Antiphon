@@ -1,0 +1,16 @@
+tests/Antiphon.Tests/Application/AgentTaskCommitEndpointTests.cs
+tests/Antiphon.Tests/Application/AgentTaskCommitInspectionEndpointTests.cs
+tests/Antiphon.Tests/Application/AgentTaskCommitLiteralPathsTests.cs
+tests/Antiphon.Tests/Application/AgentTaskCommitStagedManifestTests.cs
+tests/Antiphon.Tests/Application/AgentTaskReplyC527InspectionTests.cs
+tests/Antiphon.Tests/Application/AgentTaskReplyC527LiteralRecoveryTests.cs
+tests/Antiphon.Tests/Application/AgentTaskReplyC527MovedBranchTests.cs
+tests/Antiphon.Tests/Application/AgentTaskReplyC527RecoveryTests.cs
+tests/Antiphon.Tests/Application/AgentTaskReplyC527StagedManifestTests.cs
+tests/Antiphon.Tests/Application/AgentTaskReplyC527Tests.cs
+tests/Antiphon.Tests/Application/GatedCommitLiteralPathsTests.cs
+tests/Antiphon.Tests/Application/GatedCommitRecoveryIdentityTests.cs
+tests/Antiphon.Tests/Application/GatedCommitServiceTests.cs
+tests/Antiphon.Tests/Application/GatedCommitStagedManifestTests.cs
+tests/Antiphon.Tests/Scripts/CommitOnSettleScriptTests.cs
+tests/Antiphon.Tests/TestHelpers/RecordingGitWorkspaceService.cs

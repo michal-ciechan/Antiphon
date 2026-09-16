@@ -1,0 +1,28 @@
+BEGIN
+          observed_at
+-------------------------------
+ 2026-09-16 08:41:09.017312+00
+(1 row)
+
+ workspace_id |                   path                    | enabled |                script_path                |   schedule    |   timezone    | on_failure
+--------------+-------------------------------------------+---------+-------------------------------------------+---------------+---------------+------------
+ mc           | u/lndcobra/claude_session_cleanup         | t       | u/lndcobra/claude_session_cleanup         | 0 15 9 * * 1  | Europe/London |
+ mc           | u/lndcobra/antiphon_codex_residue_cleanup | t       | u/lndcobra/antiphon_codex_residue_cleanup | 0 30 9 * * 1  | Europe/London |
+ mc           | u/lndcobra/antiphon_github_sync           | t       | u/lndcobra/antiphon_github_sync           | 0 0 */3 * * * | Europe/London |
+ mc           | u/lndcobra/antiphon_build_junk_cleanup    | t       | u/lndcobra/antiphon_build_junk_cleanup    | 0 0 9 * * 1   | Europe/London |
+(4 rows)
+
+ workspace_id | path | archived | deleted | tag | timeout
+--------------+------+----------+---------+-----+---------
+(0 rows)
+
+ workspace_id |                  id                  |             runnable_path              |          created_at           | status  |         completed_at
+--------------+--------------------------------------+----------------------------------------+-------------------------------+---------+-------------------------------
+ mc           | 01a09eee-3dc9-f6cc-f2f6-ebad7a2c8d93 | u/lndcobra/antiphon_build_junk_cleanup | 2026-09-14 08:00:08.508935+00 |         |
+ mc           | 01a07ae1-affa-d0f9-e6f4-52c519a6f1be | u/lndcobra/antiphon_build_junk_cleanup | 2026-09-07 08:00:05.807004+00 | success | 2026-09-14 08:00:08.508935+00
+ mc           | 01a056d5-55b3-464e-aeb7-4ffef1ed4161 | u/lndcobra/antiphon_build_junk_cleanup | 2026-08-31 08:00:16.625861+00 | success | 2026-09-07 08:00:05.807004+00
+ mc           | 01a032c8-9572-720d-79e4-c000ac54a641 | u/lndcobra/antiphon_build_junk_cleanup | 2026-08-24 08:00:01.108946+00 | success | 2026-08-31 08:00:16.625861+00
+ mc           | 01a00ebc-13e8-b48a-7359-f33c2fb06456 | u/lndcobra/antiphon_build_junk_cleanup | 2026-08-17 08:00:01.873435+00 | success | 2026-08-24 08:00:01.108946+00
+(5 rows)
+
+COMMIT
