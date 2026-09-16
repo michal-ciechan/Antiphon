@@ -851,7 +851,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             dto.HerdrVerifiedAtUtc,
             dto.HerdrOrigin,
             dto.GrokRulesReceipt,
-            dto.AcceptedStartedAt);
+            dto.AcceptedStartedAt,
+            dto.LabelObservation is { Version: 1, Intent.Version: 1 } observation ? observation : null);
 
     private static AgentExitReason MapExitReason(string reason) =>
         Enum.TryParse<AgentExitReason>(reason, ignoreCase: true, out var parsed)

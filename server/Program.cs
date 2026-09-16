@@ -28,6 +28,7 @@ using Antiphon.Server.Infrastructure.GitHub;
 using Antiphon.Server.Infrastructure.IssueTrackers;
 using Antiphon.Server.Infrastructure.Orchestration;
 using Antiphon.Server.Infrastructure.Realtime;
+using Antiphon.Server.Infrastructure.Supervision;
 using Antiphon.Server.Infrastructure.WorkspaceHooks;
 using Antiphon.Server.Infrastructure.WorkflowDefinitions;
 
@@ -614,6 +615,10 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddScoped<DecisionCardNotifier>();
     builder.Services.AddScoped<IncidentPageNotifier>();
     builder.Services.AddScoped<HerdrPaneDisposalService>();
+    builder.Services.AddOptions<HerdrLabelFollowSettings>().Bind(builder.Configuration.GetSection("HerdrLabelFollow"))
+        .Validate(s => s.SweepPeriodSeconds > 0, "SweepPeriodSeconds must be positive").ValidateOnStart();
+    builder.Services.AddScoped<HerdrLabelFollowService>();
+    builder.Services.AddHostedService<HerdrLabelFollowHostedService>();
     builder.Services.AddScoped<IHerdrPaneDisposalOwnership, HerdrPaneDisposalOwnership>();
     builder.Services.AddScoped<CostTrackingService>();
     builder.Services.AddScoped<FeatureStatusService>();
