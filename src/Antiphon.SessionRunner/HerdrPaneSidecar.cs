@@ -76,7 +76,7 @@ public sealed record HerdrPaneSidecar
                 stream.Flush(flushToDisk: true);
             }
             beforeReplace?.Invoke(tmp);
-            File.Move(tmp, path, overwrite: true);
+            HerdrSnapshotFile.Replace(tmp, path);
         }
         catch (Exception ex) when (GrokRulesReceipt is not null && ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         { throw new global::Antiphon.SessionRunner.Contracts.GrokRulesTransportException("grok_rules_file_write_failed", "metadata", 500); }
