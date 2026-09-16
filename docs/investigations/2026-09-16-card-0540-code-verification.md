@@ -8,10 +8,13 @@ Plan: [sibling-warning collapse](../superpowers/plans/2026-09-15-card-0540-sibli
 
 ## Status
 
-Implementation and V-1 through V-19 are complete. R-1, R-3 and R-4 pass.
-R-2 has five exact-method baseline reproductions. R-5 qualification is in progress:
-the first current V22 run timed out, although its retained snapshot later contains
-the complete receipt; baseline confirmation and the remaining methods are pending.
+Implementation and ordinary verification are complete. V-1 through V-19,
+R-1, R-3 and R-4 pass. R-2 has five exact-method baseline failures. R-5 has
+two passes and two failures, both reproduced by the same methods at base.
+The extra shared-repository V23 regression passes. The Unit lane has four
+baseline-confirmed failures and one privilege-dependent skip. This is not an
+all-green suite claim. Output-directory removal remains blocked by automatic
+approval review; scoped MSBuild cleaning succeeded in both worktrees.
 No deliberate mutant, feature-branch land or deployment has run. Restart: **server**.
 
 ## Implementation
@@ -32,8 +35,9 @@ No deliberate mutant, feature-branch land or deployment has run. Restart: **serv
 
 Production was last changed in `96e01cbfdca2b2983bb4475bbe7cfc55c63f93e5`.
 The final guard fixture build is `1904dde153a254ba35e6355050e20fdafe2352ee`.
-The qualified native runs use the code at `f92f24b2` (full identity will be recorded
-in the final execution index). Later changes so far are tests and documentation.
+The qualified native runs use `f92f24b22dfbcc4b1a154a0ca64cbdba471bb260`.
+Changes after that source commit are documentation only. Each meaningful slice
+and the final ordinary-tested state were committed and pushed on the task branch.
 
 ## Commands and actual counts
 
@@ -42,6 +46,10 @@ Native per-fixture evidence is under
 `C:\Antiphon\worktrees\card-task-40927996\.antiphon\acceptance\card-0467`.
 It includes original IDs, database snapshots, full native input, child barriers,
 runner ownership, hashes and server MVIDs.
+`execution-index.json` records exact filters, full source commits, fresh TRX hashes,
+numeric expanded counts, every executed method/outcome and each native fixture root.
+`built-identities-qualified.json` and `built-identities-baseline-native.json` record
+binary hashes before cleanup. `cleanup-final.json` inventories every residual path.
 
 The stage brief's Fast lane scope supersedes the plan's historical full-suite cost
 estimate: Unit plus the named affected integration classes and native methods.
@@ -62,12 +70,18 @@ dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c
 | C2: `custody-02/custody.trx`, 96e01cbf | `/*/Antiphon.Tests.Application/(AgentTaskDispatchBaseGuardTests*)|(DispatchBaseNotificationTests*)/*` | 64: 63 passed, 1 cold-start hold timeout |
 | G3: `guard-03/guard.trx`, 1904dde1 | `/*/*/AgentTaskDispatchBaseGuardTests/*` | 40 passed, including all four strengthened rollback rows and the original hold deadline |
 | NQ: `native-qualified-<method>/native.trx`, f92f24b2 | `/*/*/DispatchBaseWarningDeliveryE2ETests/<exact C540 method below>`; project `tests/Antiphon.E2E` | Ten separate methods, one passed row each; exact class/method checked in every TRX |
-| R5 initial: `native-qualified-C467_V22_AlreadyIdleGetsOutcomeWithoutNewInput/native.trx` | `/*/*/AgentTaskLandDeliveryE2ETests/C467_V22_AlreadyIdleGetsOutcomeWithoutNewInput` | One failed: complete native Land receipt deadline |
+| R5 V22: `native-qualified-C467_V22_AlreadyIdleGetsOutcomeWithoutNewInput/native.trx` | `/*/*/AgentTaskLandDeliveryE2ETests/C467_V22_AlreadyIdleGetsOutcomeWithoutNewInput` | 1 failed: complete native Land receipt deadline; same failure at base |
+| R5 V26: `native-qualified-C467_V26_HardCrashAfterQueueInsertReusesRow/native.trx` | `/*/*/AgentTaskLandDeliveryE2ETests/C467_V26_HardCrashAfterQueueInsertReusesRow` | 1 passed |
+| R5 V30: `native-qualified-C467_V30_ReceiptSaveFailureNeverRetypes/native.trx` | `/*/*/AgentTaskLandDeliveryE2ETests/C467_V30_ReceiptSaveFailureNeverRetypes` | 2: verdict passed, receipt failed before crash barrier; same outcomes at base |
+| Extra shared-fixture regression: `native-qualified-C467_V23_BusyCallerDoesNotBlockAnotherLand/native.trx` | `/*/*/AgentTaskLandDeliveryE2ETests/C467_V23_BusyCallerDoesNotBlockAnotherLand` | 1 passed; exact constructor path affected by owned-root admission |
 
 The final affected-class inventory combines the fresh runs above; it is not a claim
 that one invocation selected 118 rows: SR 6/6, BS 15/15, DG 40/40, DN 24/24,
 DelegationWorktreeTests 28/33. Total 113 passed of 118, with five baseline failures.
 The first focused run had two rollback rows; the final guard class has four.
+The native qualification totals 15 expanded rows: 13 passed, 2 baseline-confirmed
+failures (ten new dispatch rows, four planned R-5 rows, one extra shared-fixture row).
+The extra row was named before execution with estimated cost 3 min; actual 2m 50s.
 
 The 20-tip G3 census recorded **380 distinct ancestry calls**, **38,722.5 ms** in the
 guard and 45,706.5 ms for dispatch plus projection. Zero/one unique-tip rows made
@@ -104,7 +118,7 @@ DG = AgentTaskDispatchBaseGuardTests; DN = DispatchBaseNotificationTests.
 | R-2 | 43/48 passed, F1 BS + DelegationWorktreeTests; five failures reproduced at base. Seeded sibling refs and dirty/untracked sentinels remain unchanged in the new producer cases. |
 | R-3 | PASS, C2 DN `C508_ClaimCapturesWarningIntents`, `C508_IntentAttemptIdentity`, `C508_IntentUniqueKeys` |
 | R-4 | PASS, C2 all 24 DN rows |
-| R-5 | IN PROGRESS: V22 failed its deadline; base confirmation, V26 and both V30 rows remain. Extra V23 shared-fixture regression is also pending (one case, estimated 3 min). |
+| R-5 | 2/4 passed: V26 and V30(verdict). V22 receipt deadline and V30(receipt) pre-barrier deadline failed identically at base. Extra V23 shared-fixture regression passes (1/1). No receipt or crash assertion/deadline was loosened. |
 
 ## Reproduced baseline failures and corrections
 
@@ -135,6 +149,21 @@ DelegationWorktreeTests failures:
 
 The first four cannot find an expected landing row; the fifth sees the old remote
 tip. No timeout, assertion or retry was changed to hide these failures.
+
+Native land failures, at the exact original base SHA:
+
+- `base-native-V22/base.trx`: 1 failed, `TimeoutException: complete native Land receipt`.
+  The current retained snapshot eventually has a full receipt, but it was about
+  half a second beyond the unchanged 60 s deadline and is not counted as a pass.
+- `base-native-V30/base.trx`: 2 rows, receipt failed with
+  `TimeoutException: native prompt persisted before receipt/verdict save`, verdict
+  passed. The current run has the same variant outcomes. The receipt failure did
+  not reach the intended crash barrier, so it supplies no successful R-5 recovery
+  evidence; the new dispatch V19 independently passes its complete receipt cut.
+
+All 11 distinct ordinary failures still present in the final inventory have exact
+baseline reproduction: four Unit, five R-2 and two R-5. These runs executed 12
+baseline rows because the V30 method expands to receipt and verdict variants.
 
 Resolved ordinary failures are retained in raw evidence:
 
@@ -171,18 +200,27 @@ remain unmutated. Mutation owns every red/restore/green cycle and missing-contro
 Inspection found that PC-21's missing key would also remove its keyed-insert
 callback. V16 now asserts stored key presence before waiting for that callback;
 ordinary green is recorded, but deliberate red has not been claimed.
-Current qualification gaps are the inherited Unit/R-2 reds and unfinished R-5,
-plus all deliberate controls. Same-ref base movement after observation remains
+Current qualification gaps are the inherited Unit/R-2/R-5 reds and all deliberate
+controls. Same-ref base movement after observation remains
 the plan's explicit pre-lease limitation.
 
 ## Cleanup and handoff
 
 Alternate output inventories and binary hashes are in the raw evidence root.
 Automatic approval review rejected both recursive baseline-output removal and the
-bounded residual-file/empty-directory alternative with `blocked by policy`.
-MSBuild's scoped clean succeeded; baseline E2E confirmation subsequently requires
-rebuilding that output. Final inventory/cleanup is pending ordinary verification.
+bounded residual-file/empty-directory alternative, then rejected removal of the
+verified implementation-worktree outputs, each with `blocked by policy`.
+No rejected command executed. After all tests, scoped `dotnet clean` for E2E and
+Tests succeeded in each worktree. Final residue is 16 directories / 37 copied
+helper files / 975,473 bytes in the implementation worktree and 16 directories /
+34 copied helper files / 975,360 bytes in the detached baseline. Fourteen output
+directories in each tree are empty. The baseline worktree remains registered;
+retained native evidence is intentional. Do not infer cleanup from Git status.
 
-Next is ordinary read-only Review once R-5 qualification is complete. The caller
+Every owned command finished. `owned-processes-final.json` records zero matching
+owned runtime processes after the last test. All source changes are pushed;
+the final report supplies the final documentation commit SHA.
+
+Next is ordinary read-only Review. The caller
 records the companion verification obligation, lands the original Code task after
 Review, and explicitly commissions SourceLanding Mutation. This delegate does not land.
