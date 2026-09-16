@@ -12,7 +12,7 @@ internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
     public SessionRunnerSettings Settings { get; }
     public HerdrSettings HerdrSettings { get; }
     public FakeTimeProvider Clock { get; } = new(new DateTimeOffset(2026, 9, 16, 0, 0, 0, TimeSpan.Zero));
-    public HerdrPlacementCoordinator Coordinator { get; } = new();
+    public HerdrPlacementCoordinator Coordinator { get; private set; } = new();
     public FakeHerdrServer.WorkspaceState Workspace { get; }
     public FakeHerdrServer.TabState Tab { get; }
     public FakeHerdrServer.PaneState Pane => Tab.Panes[0];
@@ -32,6 +32,8 @@ internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
         var runtime = new SessionRunnerRuntime(Microsoft.Extensions.Options.Options.Create(Settings),
             NullLogger<SessionRunnerRuntime>.Instance, Client, new DenyProcesses(), timeProvider: Clock);
         await runtime.AdoptOrphanedHostsAsync(new DenyProcesses(), CancellationToken.None);
+        Child = runtime.LiveHerdrPanes().Single().Session.LabelChild!;
+        Coordinator = runtime.Placement;
         return runtime;
     }
 
