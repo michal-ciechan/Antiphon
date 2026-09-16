@@ -84,6 +84,7 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
             await next(context);
         });
         _app.MapSessionGetRoute(); _app.MapSessionLaunchRoute();
+        _app.MapGet("/sessions", () => Runtime.List());
         _app.MapGet("/capabilities", () => new RunnerCapabilitiesDto("ModernConPty", "test", "test", false,
             SessionRunnerRuntime.SupportedTranscriptFormats, SessionBackends: [SessionBackends.Herdr],
             Features: [RunnerCapabilityFeatures.HerdrNamedTabPlacement, RunnerCapabilityFeatures.SessionGenerationV1]));
