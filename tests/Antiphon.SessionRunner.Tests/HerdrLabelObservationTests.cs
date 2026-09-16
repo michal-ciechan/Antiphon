@@ -24,6 +24,23 @@ public class HerdrLabelObservationTests
     public async Task Binding_identity_components_must_match(string component)
     {
         await using var f = new HerdrLabelFollowFixture(); await f.StartAsync();
+        // Exercise the strict wire getter as well as the observer's independent identity fence.
+        // Otherwise the downstream fence could conceal a missing getter check.
+        if (component is "tab" or "workspace")
+        {
+            f.Fake.TransformResult = (method, json) =>
+            {
+                if (method != component + ".get") return json;
+                var node = JsonNode.Parse(json)!;
+                node[component]![component + "_id"] = "other";
+                return node.ToJsonString();
+            };
+            if (component == "tab")
+                await Should.ThrowAsync<HerdrProtocolException>(() => f.Client.TabGetAsync(f.Tab.TabId, CancellationToken.None));
+            else
+                await Should.ThrowAsync<HerdrProtocolException>(() => f.Client.WorkspaceGetAsync(f.Workspace.WorkspaceId, CancellationToken.None));
+            f.Fake.TransformResult = null;
+        }
         f.Reader.Pane = (p, _) => component switch { "pane" => p with { PaneId = "other" }, "pane-tab" => p with { TabId = "other" }, "pane-workspace" => p with { WorkspaceId = "other" }, _ => p };
         f.Reader.Tab = (t, _) => component switch { "tab" => t with { TabId = "other" }, "tab-workspace" => t with { WorkspaceId = "other" }, _ => t };
         f.Reader.Workspace = (w, _) => component == "workspace" ? w with { WorkspaceId = "other" } : w;
@@ -32,6 +49,7 @@ public class HerdrLabelObservationTests
 
     [Test]
     [Arguments("tab.get", "missing")][Arguments("workspace.get", "missing")]
+    [Arguments("tab.get", "missing-label")][Arguments("workspace.get", "missing-label")]
     [Arguments("tab.get", "id")][Arguments("workspace.get", "id")]
     [Arguments("tab.get", "failed")][Arguments("workspace.get", "failed")]
     [Arguments("tab.list", "failed")][Arguments("pane.list", "failed")][Arguments("workspace.list", "failed")]
@@ -44,10 +62,18 @@ public class HerdrLabelObservationTests
         {
             if (m != method) return json;
             var node = JsonNode.Parse(json)!; var name = method.Split('.')[0];
-            if (fault == "missing") node[name]!.AsObject().Remove("pane_count");
+            if (fault.StartsWith("missing", StringComparison.Ordinal))
+                node[name]!.AsObject().Remove(fault == "missing-label" ? "label" : "pane_count");
             else node[name]![name + "_id"] = "other";
             return node.ToJsonString();
         };
+        if (fault != "failed")
+        {
+            if (method == "tab.get")
+                await Should.ThrowAsync<HerdrProtocolException>(() => f.Client.TabGetAsync(f.Tab.TabId, CancellationToken.None));
+            else
+                await Should.ThrowAsync<HerdrProtocolException>(() => f.Client.WorkspaceGetAsync(f.Workspace.WorkspaceId, CancellationToken.None));
+        }
         var result = await f.CollectAsync(); result.ResultCode.ShouldBe("read_failed"); result.TabLabel.ShouldBeNull(); result.WorkspaceLabel.ShouldBeNull();
     }
 
