@@ -20,6 +20,8 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
     public void Configure(Dictionary<string, string?> settings)
     {
         settings["Agents:DefaultDefinition"] = "c467-grok";
+        // This definition always runs the staged native FakeGrok, which has no credential store.
+        settings["Agents:GrokCredentialProbeEnabled"] = "false";
         settings["Agents:Definitions:c467-grok:Kind"] = "Grok";
         settings["Agents:Definitions:c467-grok:Exe"] = Path.Combine(Path.GetDirectoryName(typeof(LandDeliveryOptions).Assembly.Location)!, "fakegrok", "fakegrok.exe");
         settings["Agents:Definitions:c467-grok:Env:GROK_HOME"] = Path.Combine(Root, "native");
