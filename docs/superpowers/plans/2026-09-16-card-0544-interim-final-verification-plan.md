@@ -497,3 +497,731 @@ coverage and measured/estimated verification floors still belong to that dispatc
 next: test-design
 handoff: Append executable verification to CARD-0544's explicit per-card/per-role Interim/Final plan: preserve initial/final full sweeps, baseline and approval guards, and qualify Windmill S4 before activation; include monitor freshness versus daily-run validity and independent outage receipt.
 artifact: docs/superpowers/plans/2026-09-16-card-0544-interim-final-verification-plan.md
+
+
+## Verification design
+
+TestDesign: 2026-09-16, task 1193e4ae; inspected base 3d45162e. This appendix
+leaves D-1 through D-8 and S1 through S6 unchanged. Names beginning C544 below
+are **tests to implement**, not tests claimed to exist or pass today. This card
+remains FullOnly. Code implements the tests and runs ordinary V/R; separate
+ordinary Review judges the evidence before land; sourced Mutation runs the PCs
+against the confirmed landed SHA. Neither dormant deployment nor offline monitor
+tests complete S5/S6.
+
+### Inspection
+
+The reads below include the stated method/helper bodies, not just filename or
+test-name searches. Existing suites listed for regression remain intact; prefer
+new C544 classes to weakening historical assertions.
+
+| Test/fixture bodies read | Boundaries -> verification |
+|---|---|
+| AgentTaskCardBindingTests explicit-GUID, board-scoped identifier, unresolved/ambiguous binding, CreateService/SeedProjectBoardAsync/SeedCardAsync; CardCorrectionIntegrationTests An_edit_supersedes_the_text_and_archives_what_it_replaced, concurrent writers and BuildHarness; ExternalTrackerSyncImportanceProvenanceTests and ExternalTrackerSyncLandingColumnTests NewSut/SeedTrackedBoardAsync/FakeIssueTracker | Card/role defaults, PATCH revision, stale token, board identity and import/update ownership -> V-1, R-1. Historical card harness uses the shared DB; new C544 fixtures must pass an isolated connection everywhere. |
+| DelegateScriptRepairSourceTests, DelegateScriptRunner.RunAsync, DelegateCreateStubApi pump/disposal | Real pwsh argv and POST serialization/refusal -> V-2. Stub proves CLI wire shape, not server admission. |
+| DelegateBundleLaunchTests TaskFor/CreateHarness; DelegationReportFormatterTests read-only/refocus/spill bodies; ScopedVerificationInstructionTests all bodies | Fresh versus warm composition, brief file/pointer and conflicting scope instructions -> V-3/V-8, R-6. C487_G142 contains obsolete Code -> Mutation text; update its expectation to the commissioned Code -> Review contract. |
+| AgentTaskReviewEvidenceTests all bodies; ReviewEvidenceParserTests all bodies; AgentTaskReplyIntegrationTests CreateService, SeedDispatchedTaskAsync, SeedTurnAsync, TestScopeFactory; production RecordDelegateStageOutcomeAsync | Parser is insufficient: C488_SubjectAuthorizationRequired only compares parsed IDs, and C488_SettlementEvidenceAtomic calls manual-finding tests. New settlement tests drive OnTurnEndAsync and observe a new DB context -> V-5, R-4. |
+| AgentTaskLandApprovalRequestTests admission/identity/replay bodies and helpers; AgentTaskLandApprovalPersistenceTests all bodies; AgentTaskLandApprovalRecoveryTests standing-child, checkpoint and published-cleanup bodies | Explicit-caller compatibility, approval coordinates, migration and restart -> V-6, R-5. |
+| LandingProtocolHarness initialization, real service graph, RequestAsync, RunQueuedAsync, restart, verifier, save/transaction fault interceptors; LandingSafetyHarness initialization/service/restart/crash worker; LandingGitFixture initialization, isolated remotes, observer and child invocation | Controlled Git establishes ordering, never actual Git publication. Retain a real-Git capstone with independent remote observation -> V-6/V-7. |
+| TestDbFixture isolation/lifetime; DelegationTestServices registration; BridgeQueueHarness options, actual queue/runtime graph, adapter OnSubmitted, transcript inserts; CheckNoteDeliveryHandoffTests Handoff, whole-prompt assertions, busy/eligible producer tests | Real producer -> real session queue -> independently read complete UserPrompt; fake adapter is an explicit terminal substitute -> V-4, R-3. |
+| AgentTaskLandDeliveryE2ETests C467_V22/V23/V25/V26 bodies | Native delivery examples inform crash cuts. Their OptIn fixture is not reused or credited by this card's offline tests; live/native transport remains the stated substitute limitation. |
+| scripts/test-nightly-health.ps1 all cases and New-HealthFx/Invoke-HealthFx; scripts/lib/c487-harness.ps1 root/seams/assertion/evidence helpers; scripts/lib/nightly-health.ps1 evaluator, production HTTP adapter, notification store/receipt/recovery; nightly-health.ps1; both checked-in Windmill script payloads and README | Clock boundaries, native/job correlation, receiver evidence and independence -> V-9/V-10/V-11. C487_G111 asserts true for SSH/missing-result; G122 busy/eligible labels do not create busy/eligible recipients. Neither is delivery or outage proof. |
+| CompletionNoteWorkHostedService ScanAsync/RecoverMissingSourcedCompletionNotesAsync, CompletionNoteWork queues and AgentTaskReplyService settlement/DeliverToParentAsync; AgentTaskLandNotificationRecoveryTests pre-operation and destination/hosted-handoff bodies | Existing queued-row recovery versus missing ordinary completion insertion -> TD-F1, V-4. The sourced-only scan cannot be credited for Code/Review. |
+| NightlyScriptsTests all bodies; scripts/test-client.ps1 actual argv/result handling; TaskDetailBody.test.tsx bodies, TaskDrawer.test.tsx detail/serve and land/receipt cases; client test/utils.ts and mocks/server.ts | Script process ownership/ASCII and UI evidence visibility -> V-2/V-8/V-9. New UI tests use the nearest provider/MSW fixtures. |
+| Testing/build fast lane, exact method PC execution and delivery contracts; orchestration stage/landing order; lifecycle card/task separation; session delivery invariants; project conventions; CARD-0487 S4 and delivery inventory | Full initial/final scope, separate PC owner and operational qualification -> all V/R, Cost. |
+
+Missing setup to implement in Code, with no production-policy relaxation:
+
+1. Add a C544 test fixture using TestDbFixture.CreateIsolatedSchemaAsync (a cloned
+   database despite its name), FakeTimeProvider and AddDelegationWorktreeGraph.
+   Register new settings/policy/reader in every affected hand-built graph. Use
+   production CreateAsync, dispatch TickAsync, reply OnTurnEndAsync, RequestAsync,
+   SweepAsync and RunRequestAsync. Do not seed StageOutcome as a substitute for the
+   settlement cases. Seed source/owner/card/project and full baseline reports through
+   their real boundaries; use a controlled readiness reader only in policy tests.
+2. Add real temp-file readiness tests against InterimVerificationReadinessReader,
+   including bounded/unreadable/torn input. Use full valid object IDs and distinct
+   task, outcome, run and job IDs; change one identity at a time. Old helpers' 'sha-1'
+   is not valid evidence for these tests.
+3. Extend fixture-local save/transaction interception to task+latch, settlement and
+   queue handoffs. Two independent contexts plus barriers test races; Task.Delay
+   races and passing exceptions from fixture setup are unacceptable. Dispose and
+   recreate the provider while retaining the owned database/files for restart tests.
+4. Add VerificationRoundDeliveryTests around BridgeQueueHarness. Keep the real
+   dispatcher, reply service, queue and recovery; replace only the terminal adapter.
+   Give both sessions an ended prior turn, produce the actual messages, and let
+   OnSubmitted record receipt. Never pre-insert the expected UserPrompt. Introduce
+   child-process crash barriers where abrupt loss differs from a caught exception.
+5. Add NightlyVerificationContractTests under tests/Antiphon.Tests/Scripts. Its exact
+   C544 methods invoke the matching Test-C544_* case in test-nightly-health.ps1;
+   extend default case discovery to include C544 cases and enforce each case's
+   nonzero named assertion inventory. Use real production HTTP adapters against an
+   owned loopback Windmill stub with a durable queue and separately readable receiver.
+   Execute the checked-in bash payload with the installed Git bash (not the Windows
+   WSL launcher), fixture-local SSH shim and dummy credentials. Await all children.
+   For the independent outage case the Windows shim always fails, Windows state is
+   inaccessible, and monitor/receiver state lives in a separate fixture root.
+   This tests the independent failure implementation required by D-6; a tag/string
+   assertion or directly calling a notification helper does not implement this case.
+6. Existing production health receipt input is a local file plus a test-only
+   RecipientView seam; the current bash wrapper just exits on SSH failure. Code
+   must provide a testable production failure/recipient-readback path for D-6, or
+   return next: plan with that seam unresolved. Do not mark these cases passed using
+   invented receiver rows. S5 must separately prove the selected deployed path.
+7. Add TaskVerificationProfile.test.tsx beside the inspected UI tests, using
+   renderWithProviders/MSW. New process-spawning test classes carry
+   ParallelLimiter<ProcessSpawnLimit>; queue tests also use the existing MessageQueue
+   serialization group. No real Program host may connect to runner port 17204.
+
+Case construction rule: start with one valid Final/Full, Clean, authorized fixture,
+then vary exactly the named field for negative cases. Compound negatives otherwise
+let a surviving unrelated guard hide the defect. A listed C544 method is one TUnit
+method (no parameter expansion); it loops the explicitly enumerated rows, includes
+the row identity in every assertion, and retains that checked inventory with its
+TRX. This makes the expected C544 execution count exact while preserving boundary
+coverage. Additional implementation cases must be added to the selection artifact.
+
+Class aliases used only to shorten the matrices (each denotes one exact type):
+
+| Alias | Exact class and file | Lane |
+|---|---|---|
+| P | `InterimVerificationPolicyTests` in `tests/Antiphon.Tests/Application/InterimVerificationPolicyTests.cs` | Integration |
+| C | `CardVerificationPolicyTests` in `tests/Antiphon.Tests/Application/CardVerificationPolicyTests.cs` | Integration |
+| CLI | `DelegateScriptVerificationRoundTests` in `tests/Antiphon.Tests/Application/DelegateScriptVerificationRoundTests.cs` | Integration |
+| D | `VerificationRoundDispatchTests` in `tests/Antiphon.Tests/Application/VerificationRoundDispatchTests.cs` | Integration |
+| H | `InterimVerificationReadinessTests` in `tests/Antiphon.Tests/Application/InterimVerificationReadinessTests.cs` | Integration |
+| L | `InterimVerificationLandGuardTests` in `tests/Antiphon.Tests/Application/InterimVerificationLandGuardTests.cs` | Integration |
+| RP | `ReviewEvidenceParserTests` in `tests/Antiphon.Tests/Application/ReviewEvidenceParserTests.cs` | Unit |
+| S | `VerificationRoundSettlementTests` in `tests/Antiphon.Tests/Application/VerificationRoundSettlementTests.cs` | Integration |
+| I | `VerificationRoundInstructionTests` in `tests/Antiphon.Tests/Application/VerificationRoundInstructionTests.cs` | Unit |
+| B | `VerificationRoundBriefTests` in `tests/Antiphon.Tests/Application/VerificationRoundBriefTests.cs` | Unit |
+| Q | `VerificationRoundDeliveryTests` in `tests/Antiphon.Tests/Application/VerificationRoundDeliveryTests.cs` | Integration |
+| N | `NightlyVerificationContractTests` in `tests/Antiphon.Tests/Scripts/NightlyVerificationContractTests.cs` | Integration |
+
+
+### Delivery inventory
+
+Acceptance is at the recipient. An accepted request, task success, queue insert,
+Sent flag, terminal land event, Windmill job success or transport ACK is insufficient.
+For session input retain the matching **complete UserPrompt**, session ID, sequence,
+timestamp, queue attempt floor and generation. A pointer prompt proves receipt of
+the pointer only: also check its exact file content/hash in the recipient workspace;
+it does not prove that an agent read or obeyed that file.
+
+| ID / producer -> destination / durable identity | Persistence and recovery cuts | Observable receipt and test |
+|---|---|---|
+| DL-1: AgentTaskService/dispatcher -> delegate session; task ID + admitted profile version + execution session/generation + ExecutionTaskId/queue ID | Task/profile/latch commit before launch; task commit -> queue insert; insert -> wakeup; Sent -> confirmation. Fail insert and lose process at each handoff; recreate services and run the real dispatcher/watchdog/queue recovery without editing task status by hand. | Q.C544_BriefHandoffRecovery: fresh, warm and follow-up paths, inline and spilled forms, each busy and eligible (12 rows). Confirm actual task marker/profile-bearing body once after the attempt floor. A busy session gets zero writes before TurnEnd. |
+| DL-2: AgentTaskReplyService settlement -> caller session; task ID + immutable Result digest + StageOutcome ID + ParentSessionId, joined to SourceTaskId/ContentDigest/queue ID | Task/result/scope commit -> completion enqueue -> flush wakeup -> typed attempt -> receipt persistence. Fail enqueue, crash before/after insert, lose wakeup, and crash after recipient observation but before acknowledgement. | Q.C544_CompletionReceipt and C544_CompletionRecovery: busy/eligible x Inline/Spill x Raw/Distilled (8 rows per cut); header must preserve Interim/Final, bound evidence and required next stage. Full matching caller UserPrompt is decisive. **TD-F1 below prevents approving the pre-insert recovery case.** |
+| DL-3: landing service/protocol -> original caller; LandRequestId + operation ID + terminal event + SourceLandNotificationId | New final-scope refusal during recovered land must use existing terminal transaction/outbox. Cover terminal commit -> note insert -> flush -> receipt with busy and eligible sessions; retain confirmed publication during cleanup-only retries. | L.C544_RecoveryRevalidates plus Q.C544_LandRefusalReceipt: one received refusal naming the saved request/evidence, no publication; Q.C544_LandRefusalRecovery covers before/after queue insert. Use the real LandNotification delivery service, not only a business-event assertion. |
+| DL-4: scheduled Windmill wrapper -> native bootstrap -> monitor/qualification reader; workspace + London due date + Windmill job ID + native run ID + SHA/ref + policy/script hashes | Await SSH/native execution and persist run summary. Missing start, host loss, missing/malformed result, lost result publication and monitor write failure must remain unready. Next poll may recover only the same correlated facts; a manual run cannot fill in a scheduled run. | N.C544_ProductionJobAdapter, C544_IndependentOutage and V-11. Job/run correspondence plus fresh full suite inventory is business evidence, not operator receipt. |
+| DL-5: nightly report/independent health failure and recovery producer -> notification facility -> authorized recipient; workspace + due date + job/run + SHA + policy hash + failure kind + stable notificationId | Persist intent before enqueue outside the failed host; recover enqueue failure, lost enqueue response, accepted-but-delayed recipient delivery, crash before receipt persistence and healthy transition after outage. Busy means the delivery consumer is held; an already eligible consumer delivers in the same run. No second logical notification on retry. | N.C544_NotificationIntent/Retry/Crash, C544_RecipientEvidence, C544_ReceiptNotificationIdentity/RunIdentity/Destination/WholeBody/AttemptFloor and C544_RecoveryNotification; V-11 repeats through the real facility. For a session destination require its complete UserPrompt. For a channel destination require authorized recipient-side message/readback and matching complete produced content/IDs, not a sender-written receipt file. **TD-F2 below blocks production acceptance.** |
+| DL-6: qualified deployment -> trusted readiness files -> queued Interim admission; qualification artifact commit + repository/project + accepted run/job/recipient IDs + monitor RecordedAt | Publish qualification only after V-11; atomically replace monitor file. Fail/truncate/read-deny either file, then recover a fresh matching pair. Queued admission rereads them; running commands retain ownership. | H.C544_* and D.C544_QueueReadinessLoss. A reader green authenticates the local attestation contract; only V-11 proves the attested operational receipt happened. |
+
+Substitutes: controlled Git cannot prove a rebase/push; BridgeQueueHarness's
+OnSubmitted transcript cannot prove a real provider/TUI; loopback Windmill queue and
+receiver cannot prove live registration, queue placement, credentials, Telegram
+delivery or failure-domain independence. File/prompt and instruction-text checks
+cannot prove agent obedience or execution of the listed tests. V-7, V-11 and V-12
+supply the respective real evidence. Do not replace these with more mock assertions.
+
+**Test-design findings requiring Plan before Code handoff**
+
+- **TD-F1, ordinary completion pre-insert recovery:** PersistDeliverThenReleaseAsync saves
+  task/outcome before DeliverToParentAsync. That method catches an enqueue failure;
+  CompletionNoteWorkHostedService.ScanAsync can flush existing queue rows, but
+  RecoverMissingSourcedCompletionNotesAsync only selects SourceLandingOperationId
+  != null. Ordinary Code/Review cannot use SourceLanding. D-8 changes the delivered
+  scope/handoff, but S2/S3 do not specify a durable owed-completion/recovery boundary
+  for this path. Stored Result is useful recovery material; it is not evidence that
+  a worker discovers and delivers it. Plan must name the durable obligation,
+  deduplication identity, recovery owner, and preservation of scope/evidence in the
+  rebuilt note, or commission a prerequisite repair. Do not silently expand generic
+  delivery machinery in a TestDesign appendix.
+- **TD-F2, independent Windmill receipt seam:** checked-in health bash only SSHs to
+  Windows; its schedule has on_failure=null. Production Get-NightlyRecipientView
+  reads local receipt files; its other input is the test-only RecipientView seam.
+  No independent deployed failure/recovery producer or recipient readback adapter
+  is identified in S4. Plan explicitly allows either an independent Windmill failure
+  path or moving evaluation; choose and name the actual component, its off-host
+  durable store, authorized receipt source, and crash/retry interface. The live
+  destination remains operator-authorized during S5 as D-6 already requires.
+  SourceLanding PCs must exercise a local inherited copy, never send snapshot code
+  to Windmill or an external executor. Therefore a callable local adapter contract
+  is needed before these controls can be commissioned.
+
+These are engineering seams, not a request to the human to choose reduced coverage.
+This appendix supplies the exact acceptance tests and failure cuts; it does not
+rewrite the fix to select a new delivery architecture. Test-design review rejects
+any version that stops DL-2/DL-5 at the producer or transport acknowledgement.
+
+### Proves it works now
+
+"Now" means ordinary verification of the implemented candidate, before land.
+All tests named in the PC table are ordinary regression tests first. Run full
+classes for this card; the exact-method PC command is reserved for Mutation.
+
+- V-1: local policy/defaults and persistence | isolated PostgreSQL + API/service |
+  full C and P classes | new and imported cards FullOnly; 2 roles x 4 policy pairs
+  x {omitted, Final, Interim} = 24 admission rows; omitted and explicit Final never
+  need nightly readiness. Same identifier on two boards stays isolated. PATCH
+  Code-only, Review-only, both and neither; stale token; revision contains prior
+  values; upgrade from immediately preceding CLI-generated migration and rerun
+  preserve old Unknown outcomes. Unknown enum/string/numeric values give 422;
+  eligibility refusals give stable 409 and create no task/launch.
+- V-2: actual CLI/API/UI contract | child pwsh + loopback API |
+  CLI.C544_RequestRoundTrip, C544_OmittedRound, C544_InvalidArguments,
+  C544_ServerRefusal, C544_CardPolicyPatch | exact camelCase body, full GUIDs,
+  JSON object content rather than local selection filename, both role policies,
+  omitted fields preserved; 409 survives to nonzero CLI exit. Invalid role,
+  unsupported workspace, short GUID, malformed JSON and bad enum produce no POST
+  or server-side admission. Use a loopback card stub supporting GET token + PATCH
+  for C544_CardPolicyPatch; do not point scripts/card.ps1 at the production board.
+- V-3: baseline/selection/source and queued lifecycle | production service/dispatcher |
+  full P, H, D and B classes | Found-Full and Clean-Full baselines admit repairs;
+  P.C544_ExplicitBaselineRequired rejects missing subject, missing baseline, both
+  missing and a first Code/Review without any full baseline; never infer the latest
+  same-card outcome. These are four separately named rows from an otherwise ready setup.
+  scope {Full,Interim,None,Unknown}, status {Succeeded,Failed,Canceled,Queued,Working},
+  source {Delegate,Orchestrator,Backfill}, and each owner/card/repo/project mismatch
+  tested independently. Superseded baseline, unrelated Git history, altered queued
+  policy/health/baseline hold before launch. Retry/Continue/reroute/escalation preserve
+  the full snapshot; fresh follow-up defaults Final. Null project matches null only.
+  Selection cases: existing committed docs path/anchor/rows; missing/short SHA,
+  empty anchor/table, dirty-only file, absolute/traversal/sibling/link escape.
+  No implicit HEAD fallback. Failed reads fail closed and Final remains available.
+- V-4: both session delivery legs and landing-refusal delivery | real producer/queue
+  with controlled terminal | full Q class (C544_BriefHandoffRecovery,
+  C544_CompletionReceipt, C544_CompletionRecovery, C544_LandRefusalReceipt,
+  C544_LandRefusalRecovery) | DL-1..3 cuts as enumerated above. StageOutcome/full
+  transcript correlation is retained. Before eligible delivery assert zero writes;
+  after recovery assert one whole intended prompt beyond the attempt floor. Exercise
+  enqueue failure, lost wakeup and fresh-provider restart separately. TD-F1 is a
+  failing acceptance seam, not an allowed exclusion.
+- V-5: parser-to-durable settlement | parser Unit + production reply graph |
+  RP.C544_ScopeGrammar/C544_DuplicateScope and full S class | Full/Interim/None
+  parse distinctly; missing, empty, malformed and duplicate (equal/conflicting)
+  become Unknown. Existing fenced/quoted grammar remains covered. Real marked
+  AssistantText + TurnEnd settles Clean and Found with authorized coordinates.
+  Failed/canceled/incomplete turns do not certify Full. A report or Continue cannot
+  promote Interim. Manual overrides/backfill retain Unknown. Inject before save,
+  after save before commit, after commit before completion enqueue; re-enter once
+  and observe exactly one committed outcome through a fresh context.
+- V-6: final-review approval and recovery | controlled landing protocol + actual DB |
+  full L class and existing approval request/persistence/recovery suites |
+  Code-Interim and Review-Interim each latch original owner. Race two contexts with
+  land-first and interim-first barriers; include pre-commit failure/rollback.
+  Latch survives cancel/disable/restart/repair integration. Latched no-evidence and
+  Interim approval refuse before a request; explicit-caller fallback remains for
+  unlatched full-only/legacy owners. Approval dimensions Final+Full, Clean, completed,
+  owner, SHA, ref, repo and supersession vary independently. For recovery cross
+  checkpoints {accepted request/no operation, Prepared, Verified, before target
+  advancement, before push} x {evidence removed, superseded, scope invalidated,
+  owner newly latched with no evidence}: 20 rows; assert no new target/push child,
+  not only a refusal string. If publication already happened but its acknowledgement
+  was lost, reconcile exact existing publication; never roll it back or repeat push.
+  Add L.C544_PublishedCleanupCompatibility: committed publication permits cleanup
+  retry with the original receipt and zero new verification/publication.
+- V-7: final promotion works through actual Git | isolated local bare remote +
+  LandingSafetyHarness | InterimVerificationLandGitTests.C544_FinalPromotionPublishesOnlyReviewedCandidate
+  and C544_EditAfterFinalRefuses | complete Found Full baseline -> Interim Code/
+  Review -> refused no-evidence/Interim land -> clean Final Full Review of unchanged
+  candidate -> normal RequestAsync/RunQueuedAsync publication, independently fetched
+  from remote. No no-change Code task. A subsequent real commit on the owner branch
+  refuses stale review. Assert unchanged LandVerifyFilter and ordinary rebase/
+  verifier invocation; track approved C versus verified L when rebase changes SHA.
+  Also run C544_AncestryUsesActualGit against ancestor and unrelated histories.
+- V-8: instructions, selection and visible status | composed bundles/brief + client |
+  full I/B and ScopedVerificationInstructionTests, InstructionBundleTests,
+  DelegationReportFormatterTests; TaskVerificationProfile.test.tsx exact cases
+  "C544 renders commissioned scope and final obligation", "C544 does not display
+  legacy Unknown as Full", "C544 exposes baseline and readiness refusal" |
+  initial/default Final Code and Final Review retain Unit + complete affected classes
+  + every ordinary V/R + required manual work. Review is independent; final promotion
+  includes every earlier deferred row. Interim contract is cumulative baseline delta
+  + unresolved findings + named adjacent smoke. Fresh/warm/spilled text agrees and
+  fits existing ASCII/2500 stage-bundle constraints. UI mirrors server facts without
+  issuing mutation calls. Static contract tests are not proof of actual selection;
+  V-12 supplies that evidence.
+- V-9: reader and clock separation | real file reader + offline scripts |
+  full H and N classes plus full scripts/test-nightly-health.ps1 |
+  RecordedAt ages {-1 tick,0,59m59s,60m,60m+1 tick}, missing/malformed timestamp,
+  missing/torn/denied/oversized files; wrong repo/project/artifact/hash/job/run one at
+  a time. Healthy/Ready false deny despite freshness. Fresh monitor + today's green
+  completed 8 hours ago admits. Yesterday's complete scheduled green bridges before
+  08:00 only while today's pending state remains otherwise healthy; newer completed
+  red/incomplete denies immediately; stalled/overdue denies independently.
+  Daily rows: 23:59:59, 00:00, 00:29:59, 00:30, 00:59:59, 01:00, 07:59:59, 08:00,
+  08:00:01 London, with valid/missing/yesterday-only/newer-red native state.
+  DST dates 2026-03-28/29/30 and 2026-10-24/25/26 require exact UTC instants, not only
+  round-trip local hour. Start-grace equality is overdue at 30 minutes.
+- V-10: actual adapter shapes and local delivery/recovery | checked-in entrypoints,
+  production HTTP serialization and a fixture-owned queue/receiver |
+  N.C544_ProductionJobAdapter and all N notification/outage methods |
+  HTTP jobs {queued,running,success,failed}, missing result and crossed due-day/
+  run/SHA fixtures, real bool/string fields as returned by the production adapter;
+  unknown shapes refuse. Run the failure producer through the owned queue, holding
+  then releasing its receiver and separately starting already eligible. Include
+  intent commit, enqueue rejection/lost ACK, delayed receipt, crash before receipt
+  persistence, duplicate poll and failure-to-recovery transition. Receiver evidence
+  must be produced by dequeue/consume; tests may not write expected receipt JSON.
+  For SSH 255/timeout/missing-result, invoke the checked-in wrapper with no Windows
+  storage access. TD-F2 must name the production seam before this is executable.
+- V-11: qualified real backstop | separately commissioned S5, operational/manual |
+  execute the deployed u/lndcobra/antiphon_nightly_tests once manually and observe
+  a subsequent real 00:30 Europe/London scheduled run; read back both script/schedule
+  definitions and antiphon_nightly_health job results | all seven unattended suite
+  inventories/counts green at recorded SHA/ref/policy/script hashes, current monitor
+  and no hidden required skips. Run real facility failure and recovery notifications
+  for an already eligible recipient and a temporarily held delivery consumer; retain
+  queue/job/event/recipient IDs and receiver content. Force only the authorized
+  qualification Windows hop unavailable (do not kill shared services), prove an
+  off-host alert and receipt while that hop remains down, then recovery receipt.
+  Include restart/enqueue-failure at each DL-5 handoff. Publish qualification artifact
+  and receipt only afterward. Missing credentials/recipient authorization leaves S5
+  pending, never green. Follow CARD-0487 ownership; do not commission it from this task.
+- V-12: actual selection and final sweep | S6 bounded pilot, plus review worksheet |
+  record the dated pilot artifact specified in S6 |
+  compare baseline B, repair R1 and repair R2: R1 adds one ordinary case; R2 changes
+  a different case. R2 selection still includes R1's case and all unresolved-finding
+  tests, with success/failure and persistence/delivery adjacent smoke. Record the
+  actual commands and expanded results, not just the table. Then commission fresh
+  Final Review on the unchanged candidate and prove every deferred ID/class ran.
+  One pilot field edit disables future Interim but leaves the latch. An isolated
+  repository demonstrates refusal then successful Final-backed land via V-7.
+  The production pilot must retain its own actual Final evidence before landing.
+
+Full scope commands (Code and independent Review), once tests exist:
+
+~~~powershell
+dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c544/ --nologo
+dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c544/ -- --treenode-filter '/*/*/*/*[Category=Unit]' --report-trx --report-trx-filename unit.trx --results-directory .antiphon/c544-unit
+~~~
+
+Run each named integration class with the same built output and
+--treenode-filter "/*/*/ClassName/*", a fresh result directory and a nonzero TRX.
+No unproved method OR expression is needed. Full affected inventory is P, C, CLI, D,
+H, L, S, Q, N, InterimVerificationLandGitTests, AgentTaskCardBindingTests,
+CardCorrectionIntegrationTests, ExternalTrackerSyncImportanceProvenanceTests,
+DelegateScriptRepairSourceTests, DelegateBundleLaunchTests, CodexDelegateDispatchTests,
+AgentTaskReuseEnqueueTests, AgentTaskReviewEvidenceTests, AgentTaskLandApprovalRequestTests,
+AgentTaskLandApprovalPersistenceTests, AgentTaskLandApprovalRecoveryTests,
+CheckNoteDeliveryHandoffTests and NightlyScriptsTests. B/I/RP and the existing
+instruction/formatter classes are already included by the Unit lane; run any newly
+integration-tagged fixture separately. Code must list changed helper consumers and
+add their full classes before running, rather than use a namespace as a shortcut.
+
+~~~powershell
+pwsh -NoProfile -File scripts/test-nightly-health.ps1
+pwsh -NoProfile -File scripts/test-client.ps1 TaskVerificationProfile TaskDetailBody TaskDrawer -JsonResultPath .antiphon/c544-client.json
+~~~
+
+Retain counts per class and per new method. There are 101 distinct G/PC C544 methods,
+plus 8 supplemental methods: CLI.C544_OmittedRound/InvalidArguments/ServerRefusal/
+CardPolicyPatch, L.C544_PublishedCleanupCompatibility, and the three V-7 methods.
+Thus the named new/extended backend floor is **109 executed C544 methods**; loop
+inventories above are additional assertions, never misreported as discovered tests.
+The new UI floor is three named cases. Existing-suite counts come from the fresh
+candidate execution inventory and must not be invented from this design.
+N wrappers and direct full script run overlap intentionally: wrappers give exact
+PC methods, while the direct run verifies case discovery/aggregation/exit behavior.
+
+For a later bounded Interim selection (not this card's implementation), the selection
+artifact must have D-3's exact columns and baseline/outcome/commit anchor. An example
+for a scope-parser-only repair retains every C544 method changed since B plus
+ReviewEvidenceParserTests.C488_DuplicateBlocksRefuse,
+AgentTaskLandApprovalRequestTests.C488_CallerShaWithoutReviewIsValid and the new
+S.C544_ProfileCapsScope as explicit success/refusal/settlement smoke. If the patch
+also touches queue or shared landing helpers, add the two inspected
+CheckNoteDeliveryHandoffTests busy/eligible methods and the V-7 real-Git capstone,
+or choose Final when that dependency cannot be bounded. These are reviewed examples,
+not a permanent minimal selection or a 5-minute cap. Keep a separate
+deferred-to-final table naming the whole Unit lane and every deferred affected class.
+
+### Guards the regression
+
+- R-1: global/title-derived or cross-role opt-in | C/P/CLI exact C544 methods |
+  otherwise-ready FullOnly requests still refuse, and omitted mode remains Final.
+- R-2: a convenient but foreign/stale baseline or selection silently narrows work |
+  P.C544_Baseline* / C544_SubjectLinks / C544_Selection*,
+  D.C544_AncestryAtPreparation / C544_Queue* | no launch and no substituted baseline.
+- R-3: metadata written but task/parent never receives its scope-bearing input |
+  Q exact methods and DL-1..3 cuts | whole matching UserPrompt beyond the attempt
+  floor, exactly one logical delivery; busy recipient was not typed into.
+- R-4: Clean or a prose "Full" claim becomes approval | RP/S full classes |
+  commissioned scope caps settlement; Found Full is a baseline only; manual and
+  legacy evidence remain Unknown; header and durable outcome agree.
+- R-5: explicit caller, replay, cancellation or restart bypasses final Review |
+  P.C544_*Latch*, D.C544_LatchSurvives, L full class and V-7 capstones |
+  zero request/publication on refusal; original owner latch survives; matching
+  Final Full Clean evidence admits actual publication.
+- R-6: selected-only work becomes the initial/final default or loses cumulative cases |
+  I/B, scoped instructions, V-12 worksheet and actual pilot results |
+  initial/final complete scope, R1 tests still run in R2, adjacent smoke is named,
+  deferred rows reappear in Final, PCs/manual acceptance are not credited nightly.
+- R-7: fresh daily green expires after one hour, or stale monitor stays trusted |
+  H.C544_MonitorAge/FutureMonitor/MonitorVerdict and N.C544_DailyValidity/
+  MorningBoundary/NewerFailure/LondonDates/ScheduleHealth | independent clock
+  predicates at exact equalities; no future, stale or wrong-due-date permission.
+- R-8: Windmill accepted an alert but nobody received it, or the monitor fails with
+  Windows | N exact adapter/outage/notification methods and V-11 |
+  correlated receiver evidence through real deployed queue; outage receipt exists
+  while the Windows hop is unavailable. Offline-only success is rejected.
+
+### Guard inventory
+
+Each line maps one guard to a distinct control. Existing unrelated CARD-0487
+lock/native-universe PCs are not reassigned here. No listed safety guard has
+"none" as its control; the seven seam-dependent controls below remain explicit
+handoff defects, not exclusions.
+
+| Guard | Plan reference and invariant | Positive control |
+|---|---|---|
+| G-1 | D-1: Omitted round stays Final even on opted-in cards or Goal text suggesting quick work | PC-1 |
+| G-2 | D-1: Code opt-in is checked on the resolved card, independently of Review permission | PC-2 |
+| G-3 | D-1: Review opt-in is independent of Code permission | PC-3 |
+| G-4 | D-1: An explicit round is invalid on other roles; Interim supports only the specified Worker/workspace pairs | PC-4 |
+| G-5 | D-1/S1: Policy edits preserve omitted fields and the prior policy in a content revision | PC-5 |
+| G-6 | D-1/S1: Stale content tokens cannot change verification policy | PC-6 |
+| G-7 | D-1: Same card identifier on another board confers no opt-in | PC-7 |
+| G-8 | D-1: Tracker import and synchronization cannot enable or overwrite local policy | PC-8 |
+| G-9 | D-2/S1: Migration preserves historical Unknown scope and defaults cards to FullOnly | PC-9 |
+| G-10 | D-1/S1: CLI preserves explicit round, full subject/baseline IDs and file-backed selection | PC-10 |
+| G-11 | D-2: A baseline must have Full completed scope | PC-11 |
+| G-12 | D-2: A baseline must be a completed successful delegate Review task; Found Full is eligible | PC-12 |
+| G-13 | D-2/D-5: Manual/overridden/backfilled evidence cannot establish the baseline | PC-13 |
+| G-14 | D-2: Baseline subject is the original landing owner | PC-14 |
+| G-15 | D-2: Baseline card matches the admitted card | PC-15 |
+| G-16 | D-2: Baseline repository matches the authorized prepared repository | PC-16 |
+| G-17 | D-2: Baseline project matches, including null project identity | PC-17 |
+| G-18 | D-2: Repair and follow-up resolve to the original owner | PC-18 |
+| G-19 | D-2: Source preparation requires baseline ancestry in the same history | PC-19 |
+| G-20 | D-3: Selection path cannot escape authorized repository docs | PC-20 |
+| G-21 | D-3: Selection commit and section bind a real nonempty committed selection | PC-21 |
+| G-22 | D-7: Deployment settings are disabled by default and caller data cannot enable them | PC-22 |
+| G-23 | D-7: Readiness applies only to the configured canonical repository | PC-23 |
+| G-24 | D-7: Readiness applies only to the configured project, with exact null handling | PC-24 |
+| G-25 | D-7: Missing, malformed, unreadable or oversized trusted state fails closed | PC-25 |
+| G-26 | D-7: Qualification requires accepted manual and scheduled runs plus recipient evidence | PC-26 |
+| G-27 | D-7: Qualification artifact full commit identity must be present and valid | PC-27 |
+| G-28 | D-7: Monitor and qualification policy hashes must match | PC-28 |
+| G-29 | D-7: Monitor and qualification script hashes must match | PC-29 |
+| G-30 | D-7: Monitor job/run and qualification identities must correlate | PC-30 |
+| G-31 | D-6/D-7: Monitor freshness uses RecordedAt; age over 60 minutes is invalid | PC-31 |
+| G-32 | D-6/D-7: A future RecordedAt is invalid | PC-32 |
+| G-33 | D-7: A fresh monitor must explicitly be healthy and ReadyForDeferral | PC-33 |
+| G-34 | D-7: Queued work rechecks policy before launch | PC-34 |
+| G-35 | D-7: Queued work rechecks readiness before launch | PC-35 |
+| G-36 | D-2/D-7: Queued work rechecks baseline eligibility before launch | PC-36 |
+| G-37 | D-4/D-7: Retry/Continue/reroute/escalation retain commissioned scope; fresh follow-up defaults Final | PC-37 |
+| G-38 | D-7: Admission snapshots persist through a fresh provider/context | PC-38 |
+| G-39 | D-5: Interim Code admission durably latches the original owner in the same transaction | PC-39 |
+| G-40 | D-5: Interim Review admission also durably latches the original owner | PC-40 |
+| G-41 | D-5: Opt-out, cancellation and repair integration cannot clear the latch | PC-41 |
+| G-42 | D-5: Interim admission serializes with owner land admission | PC-42 |
+| G-43 | D-5: Pending or published owners cannot admit new Interim tasks | PC-43 |
+| G-44 | D-5: Missing/malformed completed scope remains Unknown | PC-44 |
+| G-45 | D-5: Duplicate scope declarations are unusable | PC-45 |
+| G-46 | D-4/D-5: Interim reports cannot mint Full outcomes | PC-46 |
+| G-47 | D-2/D-5: Found Full settlement binds authenticated original-owner coordinates | PC-47 |
+| G-48 | D-5: Settlement cannot bind unauthorized review subjects | PC-48 |
+| G-49 | D-5: Outcome and scope are committed atomically and not duplicated after retry | PC-49 |
+| G-50 | D-5: Manual override/backfill cannot manufacture or copy Full scope | PC-50 |
+| G-51 | D-5: A latched owner cannot use explicit-caller/no-evidence approval | PC-51 |
+| G-52 | D-5: An Interim Review is ineligible approval even on an unlatched owner | PC-52 |
+| G-53 | D-5: Latched approval requires both commissioned Final and completed Full | PC-53 |
+| G-54 | D-5: Land approval must be a completed Clean Review | PC-54 |
+| G-55 | D-5: Land approval matches the original owner | PC-55 |
+| G-56 | D-5: Land approval matches the expected SHA | PC-56 |
+| G-57 | D-5: Land approval matches the source ref | PC-57 |
+| G-58 | D-5: Land approval matches the repository | PC-58 |
+| G-59 | D-5: Superseded approval is ineligible | PC-59 |
+| G-60 | D-5: Recovery revalidates the final requirement/evidence before publication | PC-60 |
+| G-61 | D-5: Pending-request replay cannot replace its approval identity | PC-61 |
+| G-62 | D-4/D-8: Full initial/default Code includes all ordinary obligations | PC-62 |
+| G-63 | D-4/D-8: Final Review independently reruns deferred ordinary coverage | PC-63 |
+| G-64 | D-3: Interim selection is cumulative since the full baseline | PC-64 |
+| G-65 | D-3: Interim includes named adjacent success/failure and persistence/delivery smoke | PC-65 |
+| G-66 | D-3/D-8: Unavailable manual acceptance and deferred PCs remain outstanding | PC-66 |
+| G-67 | D-4: Clean Interim handoff requests Final Review and cannot relabel itself | PC-67 |
+| G-68 | D-8: Warm/follow-up/spilled task briefs carry the current profile | PC-68 |
+| G-69 | D-8: Profile brief handoff survives failed enqueue and process recreation | PC-69 |
+| G-70 | D-8: Scope-bearing completion outcome reaches the actual caller | PC-70 |
+| G-71 | D-8: Outcome recovery does not lose or double-submit a committed completion | PC-71 |
+| G-72 | D-6: Daily validity is separate from the age of completedAt | PC-72 |
+| G-73 | D-6: The previous due day's green bridges only before 08:00 London | PC-73 |
+| G-74 | D-6: A newer completed red/incomplete attempt revokes the bridge immediately | PC-74 |
+| G-75 | D-6: Manual or partial runs cannot advance scheduled-green identity | PC-75 |
+| G-76 | D-6: London due date and DST calculations select the correct scheduled day | PC-76 |
+| G-77 | D-6: Registration/job adapters reject absent, wrong or incomplete operational facts | PC-77 |
+| G-78 | D-6: Windows/SSH outage must be detected outside that failure domain | PC-78 |
+| G-79 | D-6/D-7: Nightly failure intent persists before notification enqueue | PC-79 |
+| G-80 | D-6: Enqueue failure stays retryable with the original identity | PC-80 |
+| G-81 | D-6: Transport/job acceptance is not recipient receipt | PC-81 |
+| G-82 | D-6: Receipt matches notification identity | PC-82 |
+| G-83 | D-6: Receipt matches run identity | PC-83 |
+| G-84 | D-6: Crash after accepted enqueue or recipient observation recovers without duplicate notification | PC-84 |
+| G-85 | D-6: Recovery notification is produced and received after an outage clears | PC-85 |
+| G-86 | D-6: Unauthorized/missing destination cannot be silently replaced | PC-86 |
+| G-87 | D-6: Missing/stalled/overdue scheduled jobs remain unhealthy without killing workers | PC-87 |
+| G-88 | D-7: Loss of readiness does not kill already-owned running work or launch an automatic Final | PC-88 |
+| G-89 | D-3: Nonzero fresh executed case inventory is required | PC-89 |
+| G-90 | D-5: Task admission and owner latch cannot commit separately | PC-90 |
+| G-91 | D-4: A fresh follow-up never inherits Interim implicitly | PC-91 |
+| G-92 | D-6: Incomplete unattended coverage cannot qualify | PC-92 |
+| G-93 | D-6: Tests-red cannot qualify despite fresh complete coverage | PC-93 |
+| G-94 | D-6: Missing report receipt cannot qualify a scheduled green | PC-94 |
+| G-95 | D-6: Recipient evidence must come from the authorized destination readback | PC-95 |
+| G-96 | D-6: Recipient readback must contain the whole produced payload | PC-96 |
+| G-97 | D-6: Recipient evidence predating the current notification attempt cannot confirm it | PC-97 |
+| G-98 | D-6: Independent outage recovery state must survive Windows being inaccessible | PC-98 |
+| G-99 | D-5/D-8: Recovered final-scope refusal owes an atomic terminal outcome notification | PC-99 |
+| G-100 | D-5/D-8: Final-scope refusal notification recovers the same queue identity after failed enqueue | PC-100 |
+| G-101 | D-2: Interim requires explicitly supplied subject and full baseline IDs; the initial round cannot bypass a missing baseline | PC-101 |
+
+### Positive controls
+
+Each PC-n below belongs only to G-n. Apply the stated small production defect,
+keeping the project compilable (or the PowerShell/bash/embedded bundle syntactically
+valid), and run only the exact class/method shown. A source-text contract mutation
+changes a shipped bundle, never the test's expected text. A stronger unrelated
+early failure is not the intended red.
+
+~~~powershell
+dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c544-pc/ -- --treenode-filter '/*/*/InterimVerificationPolicyTests/C544_DefaultIsFinal' --report-trx --report-trx-filename run.trx --results-directory .antiphon/c544-pc-1-red
+~~~
+
+For each subsequent PC use its exact expanded class/method and a distinct red/green
+directory. Rebuild after each mutation and restoration; refresh restored timestamps.
+The exact method must execute once, and its named row/assertion must fail in red,
+then pass after restoration. Zero tests, parser/build errors, infrastructure failure
+and another assertion failing first do not count. N methods run only their matching
+script case; do not run the whole health harness for a PC. Retain method name, loop
+case, assertion, mutation diff, fresh result, landed L, restoration hash and green.
+
+The seven controls PC-71/78/85/95/96/97/98 have precise test/receipt requirements but
+their production recovery/receiver boundary is not defined by the landed fix design.
+They are **not yet executable PC specifications**. Plan must resolve TD-F1/TD-F2 and
+TestDesign must replace their boundary descriptions with the chosen concrete local
+entrypoint before Code handoff. Mapping them does not discharge that requirement.
+No PC has been run in this TestDesign dispatch.
+
+
+| Control | Compiling production defect | Exact method | Required intended red assertion |
+|---|---|---|---|
+| PC-1 | AgentTaskService: change omitted-round resolution to Interim | `InterimVerificationPolicyTests.C544_DefaultIsFinal` | Round == Final |
+| PC-2 | InterimVerificationPolicy: read ReviewVerificationPolicy in the Code branch | `InterimVerificationPolicyTests.C544_CodePermission` | FullOnly Code request throws verification_interim_disallowed; task count == 0 |
+| PC-3 | InterimVerificationPolicy: read CodeVerificationPolicy in the Review branch | `InterimVerificationPolicyTests.C544_ReviewPermission` | FullOnly Review request throws verification_interim_disallowed; task count == 0 |
+| PC-4 | InterimVerificationPolicy: replace the role/workspace eligibility predicate with true | `InterimVerificationPolicyTests.C544_RoleWorkspaceMatrix` | each invalid tuple throws verification_round_role before task or launch creation |
+| PC-5 | CardRevisionLog: store FullOnly instead of the previous opted-in policy | `CardVerificationPolicyTests.C544_PolicyRevision` | revision.CodeVerificationPolicy == AllowInterim after disabling Code; omitted Review remains AllowInterim |
+| PC-6 | CardService policy edit: skip the existing concurrency-token comparison | `CardVerificationPolicyTests.C544_StalePolicyEdit` | ConflictException and both policies/revision count unchanged |
+| PC-7 | AgentTaskService policy lookup: use the other same-identifier card's policy | `CardVerificationPolicyTests.C544_BoardIsolation` | scoped FullOnly card refuses Interim; other board remains untouched |
+| PC-8 | ExternalTrackerSyncService: assign FullOnly to both policies during an existing-card update | `CardVerificationPolicyTests.C544_TrackerPreservesPolicy` | existing AllowInterim remains AllowInterim; new imported card defaults FullOnly |
+| PC-9 | new migration: backfill historical outcome scope to Full | `CardVerificationPolicyTests.C544_MigrationKeepsUnknown` | legacy OrdinaryScopeCompleted is Unknown/null after upgrade and rerun |
+| PC-10 | delegate.ps1: omit verificationRound from the POST body | `DelegateScriptVerificationRoundTests.C544_RequestRoundTrip` | posted verificationRound == Interim with unchanged subject, baseline and selection object |
+| PC-11 | InterimVerificationPolicy: accept Interim/Unknown/None baseline scopes | `InterimVerificationPolicyTests.C544_BaselineScope` | each non-Full baseline throws verification_baseline_invalid |
+| PC-12 | InterimVerificationPolicy: skip baseline stage-task status/completion validation | `InterimVerificationPolicyTests.C544_BaselineCompletion` | failed, canceled, queued and incomplete rows refuse; Found Full admits |
+| PC-13 | InterimVerificationPolicy: remove the delegate-source requirement | `InterimVerificationPolicyTests.C544_BaselineProvenance` | manual, override and backfill rows refuse despite Full-shaped fields |
+| PC-14 | InterimVerificationPolicy: skip baseline.SubjectTaskId equality | `InterimVerificationPolicyTests.C544_BaselineOwner` | same-card foreign-owner baseline refuses |
+| PC-15 | InterimVerificationPolicy: skip CardId equality | `InterimVerificationPolicyTests.C544_BaselineCard` | foreign-card baseline refuses even in same repository/project |
+| PC-16 | InterimVerificationPolicy: skip canonical repository equality | `InterimVerificationPolicyTests.C544_BaselineRepository` | foreign repository refuses |
+| PC-17 | InterimVerificationPolicy: treat null project as a wildcard | `InterimVerificationPolicyTests.C544_BaselineProject` | null/non-null and foreign-project rows refuse |
+| PC-18 | AgentTaskService verification binding: accept the requested subject without resolving repair/follow-up owner | `InterimVerificationPolicyTests.C544_SubjectLinks` | mismatched RepairSourceTaskId or follow-up owner throws verification_baseline_invalid |
+| PC-19 | dispatcher verification preparation: skip the ancestry check | `VerificationRoundDispatchTests.C544_AncestryAtPreparation` | unrelated baseline produces no launch and requests a new Final |
+| PC-20 | selection validation: accept Path.GetFullPath of arbitrary supplied paths | `InterimVerificationPolicyTests.C544_SelectionPath` | absolute, traversal, sibling and link-escape rows refuse before reading external content |
+| PC-21 | selection validation: read current working tree instead of the requested object/section | `InterimVerificationPolicyTests.C544_SelectionRevision` | wrong object, dirty-only file, missing section and empty rows refuse |
+| PC-22 | InterimVerificationSettings: initialize Enabled to true | `InterimVerificationReadinessTests.C544_DisabledByDefault` | default settings deny readiness; request ready/stateRoot fields confer no authority |
+| PC-23 | readiness reader: skip configured repository comparison | `InterimVerificationReadinessTests.C544_QualifiedRepository` | wrong repository is unready |
+| PC-24 | readiness reader: skip configured project comparison | `InterimVerificationReadinessTests.C544_QualifiedProject` | wrong project or null wildcard is unready |
+| PC-25 | readiness reader: return ready from the IOException/JSON/size failure branch | `InterimVerificationReadinessTests.C544_ReadFailure` | every failed read returns unready without launching |
+| PC-26 | readiness reader: accept a receipt lacking qualifying recipient evidence IDs | `InterimVerificationReadinessTests.C544_QualificationReceipt` | receipt without recipient evidence is unready; a markdown filename alone is insufficient |
+| PC-27 | readiness reader: permit missing/short artifact commit IDs | `InterimVerificationReadinessTests.C544_QualificationRevision` | short or missing qualification commit is unready |
+| PC-28 | readiness reader: omit policyHash comparison | `InterimVerificationReadinessTests.C544_PolicyHash` | different policy hash is unready |
+| PC-29 | readiness reader: omit script-hash comparison | `InterimVerificationReadinessTests.C544_ScriptHash` | different script hash is unready |
+| PC-30 | readiness reader: omit scheduled run/job correlation | `InterimVerificationReadinessTests.C544_RunIdentity` | crossed run or job is unready |
+| PC-31 | readiness reader: allow a 61-minute-old monitor | `InterimVerificationReadinessTests.C544_MonitorAge` | age 60m+1 tick is unready; age exactly 60m remains ready |
+| PC-32 | readiness reader: remove the negative-age check | `InterimVerificationReadinessTests.C544_FutureMonitor` | RecordedAt one tick in the future is unready |
+| PC-33 | readiness reader: use timestamp alone as readiness | `InterimVerificationReadinessTests.C544_MonitorVerdict` | fresh Healthy=false or ReadyForDeferral=false is unready |
+| PC-34 | dispatcher: skip the queued card-policy recheck | `VerificationRoundDispatchTests.C544_QueuePolicyRevocation` | revoked role policy holds task; launch count == 0 |
+| PC-35 | dispatcher: reuse admission readiness without rereading | `VerificationRoundDispatchTests.C544_QueueReadinessLoss` | stale or failed readiness holds task; launch count == 0 |
+| PC-36 | dispatcher: skip baseline revalidation | `VerificationRoundDispatchTests.C544_QueueBaselineLoss` | superseded/ineligible baseline holds task; launch count == 0 |
+| PC-37 | AgentTaskService Continue: reset the persisted round to Final | `VerificationRoundDispatchTests.C544_ProfileContinuity` | continued Interim remains Interim and cannot mint Final evidence |
+| PC-38 | task persistence: omit the accepted selection commit snapshot | `VerificationRoundDispatchTests.C544_ProfileRoundTrip` | fresh-context selection commit, baseline, policy revision and readiness IDs equal accepted values |
+| PC-39 | AgentTaskService: skip RequiresFinalVerificationReview assignment for Code | `InterimVerificationPolicyTests.C544_CodeLatchAtomic` | admitted Code has a committed latched owner; failed transaction leaves no admitted task |
+| PC-40 | AgentTaskService: skip latch assignment for Review | `InterimVerificationPolicyTests.C544_ReviewLatchAtomic` | admitted Review has a committed latched owner |
+| PC-41 | cancellation path: assign RequiresFinalVerificationReview=false | `VerificationRoundDispatchTests.C544_LatchSurvives` | after cancellation/restart the original owner remains latched and no-evidence land refuses |
+| PC-42 | Interim admission: omit the owner lock while leaving the land lock intact | `InterimVerificationLandGuardTests.C544_AdmissionRace` | barrier-driven land-first interleaving never admits Interim; interim-first land refuses without Final |
+| PC-43 | InterimVerificationPolicy: skip the pending/publication exclusion | `InterimVerificationPolicyTests.C544_OwnerAlreadyLanding` | both pending land and confirmed publication refuse verification_owner_landing |
+| PC-44 | ReviewEvidence parser: default a missing scope to Full | `ReviewEvidenceParserTests.C544_ScopeGrammar` | missing, empty, misspelled and invalid scopes are Unknown |
+| PC-45 | ReviewEvidence parser: keep the last duplicate scope value | `ReviewEvidenceParserTests.C544_DuplicateScope` | duplicate equal and conflicting scope lines produce Unknown/unusable scope |
+| PC-46 | AgentTaskReplyService: persist reported Full without capping to commissioned Interim | `VerificationRoundSettlementTests.C544_ProfileCapsScope` | real settled Interim claiming Full has OrdinaryScopeCompleted != Full |
+| PC-47 | AgentTaskReplyService: restore the Clean-only branch for recording subject evidence | `VerificationRoundSettlementTests.C544_FoundFullSubject` | Found Full outcome has the exact original owner/SHA and is eligible as baseline but not approval |
+| PC-48 | AgentTaskReplyService: bypass ReviewSubjectAuthorized and requested-subject checks | `VerificationRoundSettlementTests.C544_SettlementSubject` | foreign-subject report yields no usable bound evidence |
+| PC-49 | AgentTaskReplyService: persist a Full outcome before the task settlement transaction | `VerificationRoundSettlementTests.C544_SettlementAtomic` | pre-commit fault leaves zero outcomes; recovery creates exactly one with the settled scope |
+| PC-50 | StageOutcomeService: copy prior OrdinaryScopeCompleted on manual override | `VerificationRoundSettlementTests.C544_ManualCannotCertify` | new manual/backfilled rows remain Unknown even after a Full delegate result |
+| PC-51 | AgentTaskLandService RequestAsync: skip the latched-owner evidence requirement | `InterimVerificationLandGuardTests.C544_NoEvidenceRefuses` | final_verification_review_required; zero new request and zero publication mutations |
+| PC-52 | LandApproval: skip Interim-scope exclusion | `InterimVerificationLandGuardTests.C544_InterimApprovalRefuses` | review_verification_scope_ineligible for latched and unlatched owners |
+| PC-53 | LandApproval: accept Final with Unknown/None scope | `InterimVerificationLandGuardTests.C544_FinalFullRequired` | Final Unknown/None/Interim evidence refuses; Final Full admits |
+| PC-54 | LandApproval: permit Found Full evidence | `InterimVerificationLandGuardTests.C544_CleanCompletedRequired` | Found Full throws review_evidence_ineligible; no request/publication |
+| PC-55 | LandApproval: remove subject.Id comparison | `InterimVerificationLandGuardTests.C544_LandOwnerIdentity` | review_evidence_subject_mismatch |
+| PC-56 | LandApproval: remove reviewed/expected SHA equality | `InterimVerificationLandGuardTests.C544_LandShaIdentity` | review_evidence_sha_mismatch |
+| PC-57 | LandApproval: remove source-ref equality | `InterimVerificationLandGuardTests.C544_LandRefIdentity` | review_evidence_ref_mismatch |
+| PC-58 | LandApproval: remove repository equality | `InterimVerificationLandGuardTests.C544_LandRepositoryIdentity` | review_evidence_repository_mismatch |
+| PC-59 | LandApproval: omit the SupersedesId query result check | `InterimVerificationLandGuardTests.C544_SupersededFinal` | review_evidence_superseded |
+| PC-60 | AgentTaskLandingProtocol recovery: bypass final-review revalidation | `InterimVerificationLandGuardTests.C544_RecoveryRevalidates` | changed/removed/superseded approval at every unpublished checkpoint gives zero new push/target advance |
+| PC-61 | AgentTaskLandService pending branch: overwrite ReviewEvidenceId from repost | `InterimVerificationLandGuardTests.C544_ReplayImmutable` | land_request_identity_conflict; persisted original evidence/SHA/filter unchanged |
+| PC-62 | stage-code.md: replace the initial/default full-sweep requirement with selected-only execution | `VerificationRoundInstructionTests.C544_InitialFullContract` | composed Code contract contains Unit, full affected classes and all ordinary V/R for initial/default Final |
+| PC-63 | stage-review.md: allow clean Interim results to discharge Final checks | `VerificationRoundInstructionTests.C544_FinalReviewContract` | composed Final Review requires independent full rerun including deferred rows |
+| PC-64 | stage-code.md: change cumulative-baseline delta to last-commit delta | `VerificationRoundInstructionTests.C544_CumulativeSelectionContract` | composed interim contract requires earlier repair cases and unresolved findings |
+| PC-65 | stage-code.md: replace adjacent smoke with changed tests only | `VerificationRoundInstructionTests.C544_AdjacentSmokeContract` | composed contract requires named adjacent smoke and Final for unbounded shared impact |
+| PC-66 | stage-review.md: allow nightly green to satisfy required manual/PC checks | `VerificationRoundInstructionTests.C544_ManualAndPcContract` | composed contract keeps required manual pending and PCs for SourceLanding Mutation |
+| PC-67 | completion routing: emit next=land for a clean Interim Review | `VerificationRoundSettlementTests.C544_InterimRouting` | completion header next=review with Final obligation; Found remains next=code |
+| PC-68 | DelegationReportFormatter.BuildBrief: omit verification profile for refocus/warm briefs | `VerificationRoundBriefTests.C544_ProfileInEveryBrief` | every inline/spilled brief has the exact current scope, baseline and deferred obligation |
+| PC-69 | dispatcher recovery: skip re-enqueue of a committed task whose brief queue insert failed | `VerificationRoundDeliveryTests.C544_BriefHandoffRecovery` | same task's complete correlated UserPrompt eventually exists once |
+| PC-70 | AgentTaskReplyService: suppress completion enqueue after settled scope | `VerificationRoundDeliveryTests.C544_CompletionReceipt` | busy and eligible callers each receive one complete matching outcome UserPrompt |
+| PC-71 | completion recovery: mark notification complete at enqueue instead of recipient confirmation | `VerificationRoundDeliveryTests.C544_CompletionRecovery` | post-enqueue crash recovers the same identity and exactly one complete caller UserPrompt |
+| PC-72 | Test-NightlyMonitorHealth: retain the completedAt <=60m readiness predicate | `NightlyVerificationContractTests.C544_DailyValidity` | today's scheduled green completed eight hours ago with a fresh monitor is ready |
+| PC-73 | daily eligibility: allow yesterday's green at or after 08:00 | `NightlyVerificationContractTests.C544_MorningBoundary` | 07:59:59 eligible; 08:00:00 ineligible without today's complete green |
+| PC-74 | daily eligibility: ignore a newer failed/incomplete completed attempt | `NightlyVerificationContractTests.C544_NewerFailure` | previous green plus newer red/incomplete yields ReadyForDeferral=false |
+| PC-75 | daily eligibility: use latest successful manual run as scheduled green | `NightlyVerificationContractTests.C544_ScheduledIdentity` | manual/partial latest attempt cannot satisfy today's required scheduled run |
+| PC-76 | Get-NightlyDueUtcForLondonDate: return local 00:30 as UTC without timezone conversion | `NightlyVerificationContractTests.C544_LondonDates` | exact expected UTC due instants match March/October transition and midnight rows |
+| PC-77 | production Windmill API adapter: treat running/unknown result as completed successful | `NightlyVerificationContractTests.C544_ProductionJobAdapter` | queued/running/failed/missing-result job fixtures never qualify as scheduled green |
+| PC-78 | checked-in monitor entrypoint: return success immediately when the SSH child exits 255 | `NightlyVerificationContractTests.C544_IndependentOutage` | independent failure event persists and reaches the controlled recipient; no Windows state access is needed |
+| PC-79 | nightly monitor notification producer: omit Add-NightlyNotificationEvent before enqueue | `NightlyVerificationContractTests.C544_NotificationIntent` | crash after intent resumes same notification identity and recipient receipt |
+| PC-80 | nightly monitor: set transportAccepted on an enqueue exception | `NightlyVerificationContractTests.C544_NotificationRetry` | failed first enqueue is retried and original notificationId is received |
+| PC-81 | Test-NightlyNotificationReceipt: return true for transportAccepted or empty recipient view | `NightlyVerificationContractTests.C544_RecipientEvidence` | 200/202/job completion without recipient readback leaves Receipt=false and cannot qualify |
+| PC-82 | Test-NightlyNotificationReceipt: omit notificationId equality | `NightlyVerificationContractTests.C544_ReceiptNotificationIdentity` | same run with wrong notificationId stays unreceived |
+| PC-83 | Test-NightlyNotificationReceipt: omit nativeRunId equality | `NightlyVerificationContractTests.C544_ReceiptRunIdentity` | same notificationId with wrong nativeRunId stays unreceived |
+| PC-84 | notification recovery: allocate a new ID for an existing accepted event | `NightlyVerificationContractTests.C544_NotificationCrash` | recreated monitor imports delayed receipt for original ID; controlled recipient sees one logical event |
+| PC-85 | nightly health transition producer: skip the unhealthy-to-healthy recovery notification | `NightlyVerificationContractTests.C544_RecoveryNotification` | one separate correlated recovery event reaches recipient after original failure |
+| PC-86 | Get-NightlyNotificationSink: substitute a default destination for empty authorization | `NightlyVerificationContractTests.C544_AuthorizedDestination` | no enqueue when destination is unset; monitor remains unqualified |
+| PC-87 | Test-NightlyMonitorHealth: ignore overdue-start while reusing yesterday's green | `NightlyVerificationContractTests.C544_ScheduleHealth` | at grace boundary missing/queued job is unhealthy and no termination is requested |
+| PC-88 | queued-readiness failure branch: create a Final replacement automatically | `VerificationRoundDispatchTests.C544_RunningHealthLoss` | running command finishes; replacement count == 0; next Interim refuses |
+| PC-89 | stage-review.md: accept exit 0 or list-tests as sufficient selection evidence | `VerificationRoundInstructionTests.C544_ExecutionEvidenceContract` | composed Review explicitly requires fresh executed identities/counts and rejects missing parameter rows |
+| PC-90 | AgentTaskService: commit the new Interim task before saving the owner latch | `InterimVerificationPolicyTests.C544_AdmissionTransaction` | injected latch-save failure leaves zero admitted Interim tasks in a fresh connection |
+| PC-91 | AgentTaskService follow-up creation: copy the predecessor's Interim round when omitted | `VerificationRoundDispatchTests.C544_FreshFollowUp` | new follow-up Round == Final; continued predecessor remains Interim |
+| PC-92 | Test-NightlyMonitorHealth: ignore coverageComplete=false in complete/readiness computation | `NightlyVerificationContractTests.C544_CoverageRequired` | otherwise-valid scheduled row with incomplete coverage is unready |
+| PC-93 | Test-NightlyMonitorHealth: ignore testsPassed=false in complete/readiness computation | `NightlyVerificationContractTests.C544_GreenRequired` | otherwise-valid scheduled row with testsPassed=false is unready |
+| PC-94 | Test-NightlyMonitorHealth: ignore reportDelivered=false in complete/readiness computation | `NightlyVerificationContractTests.C544_ReportReceiptRequired` | otherwise-valid scheduled row with reportDelivered=false is unready |
+| PC-95 | nightly recipient-view adapter: accept evidence for a different destination | `NightlyVerificationContractTests.C544_ReceiptDestination` | same notification/run read from a different destination does not set Receipt |
+| PC-96 | nightly recipient-view adapter: treat an ID-only or truncated body as complete receipt | `NightlyVerificationContractTests.C544_ReceiptWholeBody` | matching IDs in a partial body do not qualify receipt |
+| PC-97 | nightly recipient-view adapter: ignore receipt attempt floor | `NightlyVerificationContractTests.C544_ReceiptAttemptFloor` | old matching recipient observation leaves Receipt=false |
+| PC-98 | independent monitor entrypoint: store outage intent only through the failed Windows SSH hop | `NightlyVerificationContractTests.C544_IndependentState` | restart with Windows unavailable still finds the same intent and delivers it |
+| PC-99 | AgentTaskLandService CompleteTerminalLockedAsync: omit the notification for final-scope refusal | `VerificationRoundDeliveryTests.C544_LandRefusalReceipt` | fresh DB has a terminal refusal and its keyed notification; busy/eligible caller later has the matching complete UserPrompt |
+| PC-100 | land-notification recovery: skip final-scope refusal notifications whose queue insert is missing | `VerificationRoundDeliveryTests.C544_LandRefusalRecovery` | restarted worker delivers one complete refusal prompt using the original notification ID |
+| PC-101 | InterimVerificationPolicy: replace the missing-baseline refusal with admission using an inferred latest same-card outcome | `InterimVerificationPolicyTests.C544_ExplicitBaselineRequired` | missing subject/baseline and first-round cases throw verification_baseline_invalid with zero admitted tasks |
+
+Mutation reports break, intended red, restore and green after land. Code implements
+and runs the same tests unmutated as ordinary V/R. Ordinary Review judges their
+coverage/evidence before land. All 101 PCs remain pending; the original card and
+post-land companion must not claim PC-clean from an ordinary or nightly green.
+
+### Out of scope
+
+- No live deployment, Windmill registration, message send, schedule edit, pilot opt-in
+  or credential read in this TestDesign task. S5/S6 are required later acceptance,
+  not excluded requirements. Missing recipient authorization blocks that operation.
+- This appendix does not select a new general completion outbox or independent
+  notification architecture. TD-F1/TD-F2 return to Plan for those seams; replacing
+  them with seeded queue rows or sender-created receipt files is prohibited.
+- No global AST/TRX impact engine. Automated tests prove policy/scope declarations,
+  binding, delivery and guards; ordinary Review and V-12 assess actual cumulative
+  coverage and sufficient smoke. No test claims that English instructions guarantee
+  an agent obeyed them.
+- No repeat of CARD-0487's unrelated 143-PC inventory, scheduler replacement,
+  assertion timeout changes, retry-to-green, assembly split, blanket Slow exclusion,
+  new stage/status, automatic spend or automatic Mutation. Native project inventory,
+  watchdogs and SourceLanding custody stay under their existing plans.
+- No blanket Antiphon.Tests assembly rerun in the local floor: named full affected
+  classes plus Unit bound this change; broad unattended suites run twice in V-11.
+  If implementation changes a shared fixture beyond this bounded set, add its
+  consumers and cost before execution. Antiphon.Tests and Agents.Pty never overlap.
+- Exhaustive Cartesian products of every invalid identity/clock/state are excluded:
+  most refuse at the first gate and hide later guards. Instead run one-field-invalid
+  rows from an otherwise valid fixture, the 24 policy/role/mode rows, the 20 land
+  checkpoint/evidence rows, the explicit delivery busy/eligible cross-products and
+  all exact clock/DST boundaries. Test simultaneous stale-monitor + valid daily green
+  and fresh-monitor + invalid daily green explicitly. This isolates every independent
+  guard while preserving the meaningful intersections.
+- Historical inherited red must be reproduced at the base by exact failing methods.
+  Do not widen deadlines, weaken assertions or silently call it flaky. C487_G142's
+  observed stale text is a source-inspection finding, not a test run result.
+
+### Cost
+
+All numbers below are **estimates**, not measured test timings. No build, V/R or
+PC execution occurred during this document-only dispatch. Prices assume one
+foreground owner, owned PostgreSQL clone isolation, existing local Git/pwsh/Git-bash,
+one cold setup per stage, and no concurrent Agents.Pty. Exclude engineering/test
+authoring time; add that separately to commissioning. Reprice after TD-F1/TD-F2.
+
+| Ordinary V/R floor, per Code or independent Review | Minutes |
+|---|---:|
+| Setup: restore/build isolated bin-c544, DB fixture preflight, client dependencies | 15 |
+| Full Unit lane, including RP/I/B and old instruction/formatter contracts | 8 |
+| Named DB/admission/dispatch/settlement/landing/CLI integration classes, excluding delivery/native rows below | 38 |
+| Real-Git V-7 capstones | 6 |
+| Q plus existing CheckNoteDeliveryHandoffTests delivery/crash rows | 12 |
+| Full offline nightly harness, N wrappers, NightlyScriptsTests | 6 |
+| Three client files with structured execution report | 3 |
+| **Per-stage setup + ordinary V/R** | **88** |
+
+Ordinary execution excluding setup is 73 minutes. Code floor = 88 minutes.
+Independent ordinary Review floor = another 88 minutes. This is higher than the
+Plan's preliminary 15-35-minute ordinary range because it includes whole existing
+affected classes, receipt/restart cuts and real-Git capstones, not just new unit tests.
+
+| PC floor, sequential exact-method red/restore/rebuild/green | Controls | Minutes per cycle | Minutes |
+|---|---:|---:|---:|
+| Unit parser/instruction/brief (RP/I/B) | 9 | 2 | 18 |
+| Readiness file tests (H) | 12 | 2.5 | 30 |
+| DB policy/card/dispatch/settlement/landing (P/C/D/S/L) | 51 | 4 | 204 |
+| CLI request control | 1 | 3 | 3 |
+| Producer-to-session delivery controls (Q) | 5 | 6 | 30 |
+| Script/adapter/recipient controls (N) | 23 | 1.5 | 34.5 |
+| Mutation setup/build of exact L | - | - | 20 |
+| Missing-control discovery, restoration inventory and final evidence | - | - | 15 |
+| **Mutation floor, all controls including the seven blocked specifications** | **101** | - | **354.5** |
+
+PC cycles total 319.5 minutes; Mutation setup/discovery totals 35 minutes. Count
+every control separately even when one method has several internal cases.
+No batch/concurrency saving is assumed: SourceLanding has one managed snapshot;
+the seven unexecutable specifications must be resolved, not subtracted.
+
+**Total verification floor = Code setup 15 + ordinary V/R 73 + Mutation setup 20
++ every PC cycle 319.5 + discovery/restoration 15 = 442.5 minutes.**
+Adding independent ordinary Review (88) gives **530.5 minutes** for dormant
+implementation through post-land verification, before operational S5/S6.
+
+S5 additional estimate: two full unattended runs at 120-360 minutes each, 30 minutes
+deployment/readback/preflight, 60 minutes failure/recovery/recipient qualification,
+and 15 minutes artifact/receipt reconciliation = **345-825 active minutes**, plus
+up to 24 hours awaiting the real schedule boundary. S6 additional **60 minutes**
+for bounded pilot selection/run comparison, its actual Final Review and retained
+landing/rollback evidence. End-to-end estimated active floor is therefore
+**935.5-1415.5 minutes** including independent implementation Review, every PC,
+S5 and S6. Overnight wait is elapsed calendar time, not billable execution.
+
+Savings: this card saves **0 verification minutes** by Interim because it is
+FullOnly until its policy is qualified; skipping its own controls would be circular.
+PC saving assumed **0** because no control is deferred away. For a later measured
+pilot, an illustrative nine-repair-round comparison with full F=26 minutes,
+interim I=8 minutes (both including setup/smoke), and one extra full Final Review
+is 9F=234 versus 9I+F=98: **136 minutes (58.1%) estimated saving**, with common
+initial baseline cost canceled from both sides. This is a sensitivity example,
+not a claimed saving from the investigation's 233.90 observed minutes. Record
+actual same-SHA setup/execution/final amortization; claim no token/dollar saving
+without attributable usage.
+
+Code-handoff audit: test/fixture bodies read as inventoried; guards=101, mapped=101,
+missing mappings=0, duplicate PC mappings=0. Planned exact C544 methods=109 and
+new client cases=3. Executable control specifications=94; seam-dependent
+specifications=7 (PC-71/78/85/95/96/97/98). Therefore the required
+"all PCs executable" gate **fails** and this is **not a Code-ready verification
+design**. The complete guard list makes those gaps visible rather than excluding
+them. Plan must close TD-F1/TD-F2, then return to TestDesign to finish the seven
+controls and recalculate inventory/cost if the chosen fix adds guards.
+
+--- next stage ---
+next: plan
+handoff: Resolve TD-F1 ordinary Code/Review completion recovery before queue insertion and TD-F2 off-host Windmill failure/recovery plus recipient-readback ownership; retain the appended V/R and 101 guard mappings, then return to TestDesign for seven executable PC seams before Code.
+artifact: docs/superpowers/plans/2026-09-16-card-0544-interim-final-verification-plan.md
