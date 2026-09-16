@@ -939,30 +939,35 @@ public class GitWorkspaceService
         string repo, Guid taskId, Guid operationId, CancellationToken ct) =>
         FindGatedCommitsAsync(repo, taskId, "antiphon-operation", operationId.ToString("D"), ct);
 
+    // The shared identity resolver for immediate inspection, HTTP recovery and settlement
+    // recovery. The checkout is not the attempt identity: refs can move after Git commits
+    // but before the receipt is saved. Reflogs retain attempts no longer on any branch.
     private async Task<GitStrictList<string>> FindGatedCommitsAsync(
         string repo, Guid taskId, string identityKey, string identity, CancellationToken ct)
     {
         var head = await RunAsync(repo, ct, "rev-parse", "--verify", "--quiet", "HEAD");
         if (head.Code != 0)
         {
-            // An unborn branch has no settlement history. Prove the symbolic branch is
-            // absent; an unavailable/corrupt HEAD is still an inspection failure.
+            // An unborn checkout can still have attempts on other refs or in reflogs.
+            // Validate it, then search history; never interpret it as an empty repository.
+            var unborn = false;
             if (head.Code == 1)
             {
                 var branch = await RunAsync(repo, ct, "symbolic-ref", "--quiet", "HEAD");
                 if (branch.Code == 0 && branch.Stdout.Trim().StartsWith("refs/heads/", StringComparison.Ordinal))
                 {
                     var exists = await RunAsync(repo, ct, "show-ref", "--verify", "--quiet", branch.Stdout.Trim());
-                    if (exists.Code == 1) return new(true, [], 0);
+                    unborn = exists.Code == 1;
                 }
             }
-            return new(false, [], head.Code, head.Stderr);
+            if (!unborn) return new(false, [], head.Code, head.Stderr);
         }
-        var result = await RunAsync(repo, ct, "log", "--fixed-strings",
-            $"--grep={identityKey}: {identity}", "--format=%H");
+        var result = await RunAsync(repo, ct, "log", "--all", "--reflog", "--fixed-strings", "--all-match",
+            $"--grep=antiphon-task: {taskId:D}", $"--grep={identityKey}: {identity}", "--format=%H");
         if (result.Code != 0) return new(false, [], result.Code, result.Stderr);
         var matches = new List<string>();
-        foreach (var sha in result.Stdout.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        foreach (var sha in result.Stdout.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                     .Distinct(StringComparer.Ordinal))
         {
             var trailers = await RunAsync(repo, ct, "log", "-1", "--format=%(trailers:only,unfold)", sha);
             if (trailers.Code != 0) return new(false, [], trailers.Code, trailers.Stderr);
