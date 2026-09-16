@@ -783,7 +783,7 @@ public class GitWorkspaceService
     public async Task<GitStrictList<string>> StagedPathsAsync(string workingDirectory, CancellationToken ct)
     {
         var (code, stdout, stderr) = await RunAsync(
-            workingDirectory, ct, "diff", "--cached", "--name-only", "-z");
+            workingDirectory, ct, "diff", "--cached", "--name-only", "--no-renames", "-z");
         if (code != 0)
             return new(false, [], code, $"git staged-path inspection failed ({code}): {stderr}");
         return new(true, stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries)
@@ -863,7 +863,7 @@ public class GitWorkspaceService
         string workingDirectory, string sha, CancellationToken ct)
     {
         var (code, stdout, stderr) = await RunAsync(
-            workingDirectory, ct, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-z", sha);
+            workingDirectory, ct, "diff-tree", "--root", "--no-commit-id", "--name-only", "--no-renames", "-r", "-z", sha);
         if (code != 0)
             return new(false, [], code, "git diff-tree inspection failed: " + stderr);
         return new(true, stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries)

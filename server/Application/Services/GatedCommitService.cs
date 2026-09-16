@@ -146,6 +146,7 @@ public sealed class GatedCommitService
         if (!inspection.Succeeded)
             return await RefuseAfterStageAsync(inspection.Error);
         var stagedPaths = inspection.Items;
+        IReadOnlyList<string> expectedPaths = stagedPaths;
         if (pathspec is null)
         {
             var lateIgnored = await _git.CheckIgnoredAsync(repo, stagedPaths, ct);
@@ -169,8 +170,10 @@ public sealed class GatedCommitService
             var changed = await _git.ChangedIndexPathsAsync(repo, index.Stdout.Trim(), ct);
             if (!changed.Succeeded || changed.Items.Any(p => !candidates.Contains(p, StringComparer.Ordinal)))
                 return await RefuseAfterStageAsync("Scoped staging changed paths outside the approved selection: " + changed.Error);
-            var ours = stagedPaths.Where(p => candidates.Contains(p, StringComparer.Ordinal)).ToArray();
-            if (ours.Length == 0)
+            // Staging can remove a selected change that was reverted in the working tree.
+            // The manifest describes the actual staged footprint, not the earlier candidates.
+            expectedPaths = stagedPaths.Where(p => candidates.Contains(p, StringComparer.Ordinal)).ToArray();
+            if (expectedPaths.Count == 0)
             {
                 return new GatedCommitResult(GatedCommitOutcome.NothingToCommit, null, [], []);
             }
@@ -179,7 +182,7 @@ public sealed class GatedCommitService
         var commit = await _git.CommitOnlyAsync(
             repo, pathspec is null ? null : candidates, message,
             [.. trailers, ("antiphon-operation", operationId.ToString("D")),
-                ("antiphon-paths", JsonSerializer.Serialize(pathspec is null ? stagedPaths : candidates))], ct);
+                ("antiphon-paths", JsonSerializer.Serialize(expectedPaths))], ct);
         if (commit.Code != 0)
         {
             _logger.LogInformation("Gated commit failed in {Repo}: {Err}", repo, commit.Stderr);
