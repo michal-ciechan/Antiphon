@@ -98,13 +98,14 @@ public sealed record HerdrLastPane
     };
 
     /// <summary>Temp + rename, so a concurrent restore never observes a torn file.</summary>
-    public void SaveAtomic(string path)
+    public void SaveAtomic(string path, Action<string>? beforeReplace = null)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
             File.WriteAllText(tmp, JsonSerializer.Serialize(this, Options));
+            beforeReplace?.Invoke(tmp);
             HerdrSnapshotFile.Replace(tmp, path);
         }
         finally { if (File.Exists(tmp)) File.Delete(tmp); }

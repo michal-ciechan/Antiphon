@@ -13,6 +13,7 @@ internal sealed partial class HerdrPaneChild
     // Awaited boundary seam. Production leaves it null; tests abort/join before reconstruction.
     internal Func<string, CancellationToken, Task>? LabelFollowBoundary { get; set; }
     internal Action<string>? BeforeLabelFileReplace { get; set; }
+    internal Action<string>? BeforeLastPaneFileReplace { get; set; }
 
     internal void RetireLabelSnapshot(string reason)
     {
@@ -161,7 +162,7 @@ internal sealed partial class HerdrPaneChild
             var last = HerdrLastPane.TryLoad(path);
             if (last is null && File.Exists(path)) return; // Unreadable is not proof of replacement.
             if (last is not null && LastPaneMatches(current, last))
-                (last with { TabLabel = current.TabLabel, WorkspaceLabel = current.WorkspaceLabel }).SaveAtomic(path);
+                (last with { TabLabel = current.TabLabel, WorkspaceLabel = current.WorkspaceLabel }).SaveAtomic(path, BeforeLastPaneFileReplace);
         }
         await LabelBoundaryAsync("after-repair-file", ct);
         lock (_labelSnapshotGate)
