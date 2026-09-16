@@ -44,19 +44,87 @@ public class HerdrLabelSnapshotTests
     }
 
     [Test]
-    public async Task Observer_coordinates_with_existing_pane_actors()
+    [Arguments("retirement", false)][Arguments("retirement", true)]
+    [Arguments("stop", false)][Arguments("stop", true)]
+    [Arguments("detach", false)][Arguments("detach", true)]
+    [Arguments("adoption", false)][Arguments("adoption", true)]
+    [Arguments("replacement", false)][Arguments("replacement", true)]
+    [Arguments("disposal", false)][Arguments("disposal", true)]
+    public async Task Observer_coordinates_with_existing_pane_actors(string actor, bool observerFirst)
     {
         await using var f = new HerdrLabelFollowFixture(); await f.StartAsync();
-        var lease = await f.Coordinator.LockPaneAsync(f.Binding.PaneId, CancellationToken.None);
-        var run = f.FollowAsync();
+        await using var runtime = await f.AdoptRuntimeAsync();
+        await using var successor = new HerdrPaneChild(f.Client, f.Settings, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance,
+            () => [], new HerdrLabelFollowFixture.DenyProcesses(), f.Coordinator);
+        var owns = true;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task Observe() => f.Child.FollowLabelsAsync(f.Clock, () => owns, CancellationToken.None);
+        async Task Act()
+        {
+            if (actor == "stop") { await f.Child.KillAsync(CancellationToken.None); return; }
+            if (actor == "detach")
+            {
+                await successor.AttachExistingAsync(f.Saved with { Origin = HerdrPaneOrigins.Attached }, CancellationToken.None);
+                await successor.KillAsync(CancellationToken.None); return;
+            }
+            if (actor == "disposal")
+            {
+                var backend = new HerdrDisposalBackend(f.Client, runtime, new(f.Settings.SessionLogPath), new HerdrPaneDisposalFixture.TestProcesses());
+                var service = new HerdrPaneDisposalService(runtime, f.Settings.SessionLogPath, f.Clock, backend);
+                var preview = await service.PreviewAsync(new(f.Binding.PaneId, f.Binding.SessionId), CancellationToken.None);
+                preview.Eligible.ShouldBeFalse("an actively bound pane is never a disposal candidate");
+                (await service.ExecuteAsync(new(Guid.NewGuid(), preview.PreviewId, "owned fixture", "antiphon-best-effort"), CancellationToken.None)).Outcome.ShouldBe("Refused");
+                f.Methods.ShouldNotContain("pane.close"); return;
+            }
+            await using var lease = await f.Coordinator.LockPaneAsync(f.Binding.PaneId, CancellationToken.None);
+            entered.TrySetResult(); if (!observerFirst) await release.Task;
+            if (actor == "retirement") f.Child.RaiseVerifiedClosed();
+            else
+            {
+                owns = false;
+                if (actor == "replacement") (f.Binding with { AcceptedStartedAt = f.Binding.AcceptedStartedAt!.Value.AddSeconds(1), TabLabel = "replacement" }).SaveAtomic(f.Path);
+                await successor.AttachExistingAsync(f.Saved, CancellationToken.None);
+            }
+        }
+        var getterGate = observerFirst ? f.Fake.GateMethod("tab.get") : null;
+        var actorMethod = actor == "stop" ? "pane.close" : "pane.report_metadata";
+        var actorGate = !observerFirst && actor is "stop" or "detach" ? f.Fake.GateMethod(actorMethod) : null;
+        Task? observing = null, acting = null;
         try
         {
-            await HerdrLabelFollowFixture.WaitAsync(() => f.Saved.LabelFollow!.Sequence == 1);
-            f.GetterCount.ShouldBe(0); f.Saved.TabLabel.ShouldBe("Old"); run.IsCompleted.ShouldBeFalse();
+            if (observerFirst)
+            {
+                observing = Observe(); await HerdrLabelFollowFixture.WaitAsync(() => f.GetterCount == 1);
+                acting = Act();
+                if (actor == "disposal") await acting; else acting.IsCompleted.ShouldBeFalse("actor waits for observer publication");
+            }
+            else
+            {
+                acting = Act();
+                if (actor == "disposal") await acting;
+                else if (actorGate is not null) await HerdrLabelFollowFixture.WaitAsync(() => f.Methods.Contains(actorMethod));
+                else await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+                observing = Observe();
+                if (actor != "disposal")
+                {
+                    await HerdrLabelFollowFixture.WaitAsync(() => f.Saved.LabelFollow!.Sequence == 1);
+                    f.GetterCount.ShouldBe(0); observing.IsCompleted.ShouldBeFalse("observer waits for the pane actor");
+                }
+            }
             await using var unrelated = await f.Coordinator.LockPaneAsync("unrelated", CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
         }
-        finally { await lease.DisposeAsync(); await run; }
-        f.Saved.TabLabel.ShouldBe("New");
+        finally
+        {
+            release.TrySetResult(); getterGate?.Release(); actorGate?.Release();
+            if (observing is not null) await observing; if (acting is not null) await acting;
+        }
+        if (actor is "retirement" or "stop" or "detach") File.Exists(f.Path).ShouldBeFalse();
+        else if (actor == "replacement") { f.Saved.TabLabel.ShouldBe("replacement"); successor.Sidecar!.TabLabel.ShouldBe("replacement"); }
+        else if (actor == "adoption") { successor.Sidecar!.TabLabel.ShouldBe(observerFirst ? "New" : "Old"); f.Saved.TabLabel.ShouldBe(successor.Sidecar.TabLabel); }
+        else f.Saved.TabLabel.ShouldBe("New");
+        if (actor == "retirement") HerdrLastPane.TryLoad(f.Settings.SessionLogPath, f.Binding.SessionId)!.TabLabel.ShouldBe(observerFirst ? "New" : "Old");
+        if (actor != "disposal") (await f.Child.ReadLabelObservationAsync(f.Clock, () => owns, CancellationToken.None)).ShouldBeNull();
     }
 
     [Test]
