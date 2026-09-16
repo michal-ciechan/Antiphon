@@ -90,7 +90,10 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
         _http = new HttpClient { BaseAddress = new Uri(_address) };
         var settings = _app.Services.GetRequiredService<IOptions<DelegationSettings>>().Value;
         settings.ApiBaseUrl = _address;
-        settings.AllowedRoots.ShouldBe(new[] { Repository, Source });
+        if (_shared)
+            settings.AllowedRoots = [.. settings.AllowedRoots, Repository, Source];
+        else
+            settings.AllowedRoots.ShouldBe(new[] { Repository, Source });
         var verification = _app.Services.GetRequiredService<IOptions<SupervisionSettings>>().Value.DeliveryVerification;
         verification.Enabled.ShouldBeTrue(); verification.TranscriptConfirmEnabled.ShouldBeTrue();
         InterruptedAttemptAge = TimeSpan.FromSeconds(Math.Max(0, verification.TranscriptConfirmTimeoutSeconds)
