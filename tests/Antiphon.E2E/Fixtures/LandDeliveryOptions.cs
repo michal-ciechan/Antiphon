@@ -31,6 +31,8 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
         settings["Git:WorkspacePath"] = Path.Combine(Root, "repo");
         settings["Git:WorktreeBasePath"] = Path.Combine(Root, "trees");
         settings["GitHub:Enabled"] = "false";
+        // Delivery/dispatch use hosted services, not Hangfire's machine-wide maintenance jobs.
+        settings["Hangfire:ServerEnabled"] = "false";
         settings["ChannelBridge:Enabled"] = "false";
         settings["AntiphonMessaging:BootstrapServers"] = "127.0.0.1:1";
         settings["Delegation:CheckInterpreterEnabled"] = "false";
