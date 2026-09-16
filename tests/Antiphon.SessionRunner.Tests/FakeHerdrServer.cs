@@ -29,6 +29,8 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
     private TaskCompletionSource _listening = NewListeningTcs();
     private TaskCompletionSource _eventAvailable = NewListeningTcs();
     private Task? _loop;
+    private readonly ConcurrentBag<Task> _ownedHandlers = [];
+    public Func<string, string, string>? TransformResult { get; set; }
     private int _workspaceSeq;
     private int _tabSeq;
     private int _paneSeq;
@@ -201,6 +203,8 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
             catch (OperationCanceledException) { }
         }
 
+        await Task.WhenAll(_ownedHandlers);
+
         _cts.Dispose();
     }
 
@@ -238,7 +242,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
                     // while the subscription stream is open (CARD-0162 pump needs both).
                     var subPipe = pipe;
                     pipe = null; // ownership transferred — do not dispose in finally
-                    _ = Task.Run(async () =>
+                    _ownedHandlers.Add(Task.Run(async () =>
                     {
                         try
                         {
@@ -252,7 +256,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
                             try { reader.Dispose(); } catch (IOException) { }
                             await subPipe.DisposeAsync();
                         }
-                    }, ct);
+                    }));
                     continue;
                 }
 
@@ -260,7 +264,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
                 {
                     var gatedPipe = pipe;
                     pipe = null;
-                    _ = Task.Run(async () =>
+                    _ownedHandlers.Add(Task.Run(async () =>
                     {
                         try
                         {
@@ -277,7 +281,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
                             try { reader.Dispose(); } catch (IOException) { }
                             await gatedPipe.DisposeAsync();
                         }
-                    }, ct);
+                    }));
                     continue;
                 }
 
@@ -413,9 +417,11 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
             {
                 "ping" => JsonSerializer.Serialize(new { type = "pong", version = "0.8.2", protocol = PingProtocol }),
                 "workspace.list" => WorkspaceListJson(),
+                "workspace.get" => WorkspaceGetJson(parameters),
                 "workspace.create" => WorkspaceCreateJson(parameters),
                 "workspace.report_metadata" => ReportWorkspaceMetadata(parameters),
                 "tab.list" => TabListJson(parameters),
+                "tab.get" => TabGetJson(parameters),
                 "tab.create" => TabCreateJson(parameters),
                 "tab.rename" => TabRenameJson(parameters),
                 "tab.close" => TabCloseJson(parameters),
@@ -437,6 +443,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
                 "agent.rename" => AgentRenameJson(parameters),
                 _ => throw new InvalidOperationException($"FakeHerdrServer has no handler for '{method}'.")
             };
+            resultJson = TransformResult?.Invoke(method, resultJson) ?? resultJson;
             return $"{{\"id\":\"{id}\",\"result\":{resultJson}}}";
         }
         catch (FakeHerdrApiException ex)
@@ -449,6 +456,20 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
     {
         var items = Workspaces.Select(w => WorkspaceJson(w));
         return $"{{\"type\":\"workspace_list\",\"workspaces\":[{string.Join(",", items)}]}}";
+    }
+
+    private string WorkspaceGetJson(JsonElement parameters)
+    {
+        var workspace = RequireWorkspace(parameters.GetProperty("workspace_id").GetString()!);
+        return $"{{\"type\":\"workspace_info\",\"workspace\":{WorkspaceJson(workspace)}}}";
+    }
+
+    private string TabGetJson(JsonElement parameters)
+    {
+        var id = parameters.GetProperty("tab_id").GetString();
+        var tab = Workspaces.SelectMany(w => w.Tabs).SingleOrDefault(t => t.TabId == id)
+            ?? throw new FakeHerdrApiException("tab_not_found", "tab missing");
+        return $"{{\"type\":\"tab_info\",\"tab\":{TabJson(tab)}}}";
     }
 
     private string WorkspaceCreateJson(JsonElement parameters)

@@ -25,6 +25,7 @@ internal sealed class HerdrPaneChild : ISessionChild
     private Guid _sessionId;
     private string? _paneId;
     private HerdrPaneSidecar? _sidecar;
+    private string? _workspaceSelection;
     private bool _exited;
     // CARD-0383: detect timeout on an idle shell retires the pane to last-pane instead of close.
     private bool _keepPaneOnKill;
@@ -304,6 +305,8 @@ internal sealed class HerdrPaneChild : ISessionChild
         try
         {
             var ensured = await EnsureWorkspaceAsync(opts, request.Env, ct);
+            _workspaceSelection = ensured.RefreshesAntiphonWorkspaceToken
+                ? HerdrWorkspaceSelection.ManagedToken : HerdrWorkspaceSelection.UniqueUntaggedLabel;
             if (!string.IsNullOrWhiteSpace(opts.TabLabel))
                 return await LaunchNamedAsync(request, opts, expectedKind, ensured, keyLock, ct);
 
@@ -1016,6 +1019,8 @@ internal sealed class HerdrPaneChild : ISessionChild
             TabLabel = opts.TabLabel,
             GrokRulesReceipt = request.InstalledGrokRulesReceipt,
             AcceptedStartedAt = request.AcceptedStartedAt,
+            LabelFollow = opts.LabelFollowIntent is { Version: 1 } intent && _workspaceSelection is not null
+                ? new HerdrLabelFollowState(1, intent, _workspaceSelection) : null,
         };
         _sidecar.SaveAtomic(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, request.SessionId));
     }
