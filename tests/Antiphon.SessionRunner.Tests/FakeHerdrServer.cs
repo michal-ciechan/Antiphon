@@ -764,6 +764,24 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         throw new InvalidOperationException($"tab '{tabId}' not found");
     }
 
+    /// <summary>Move the pane coherently: getters, lists and counts all see the new containment.</summary>
+    public void MovePane(string paneId, string toTabId)
+    {
+        var (fromWorkspace, fromTab, pane) = RequirePane(paneId);
+        var toTab = Workspaces.SelectMany(w => w.Tabs).Single(t => t.TabId == toTabId);
+        fromTab.Panes.Remove(pane);
+        toTab.Panes.Add(pane);
+        pane.TabId = toTab.TabId;
+        pane.WorkspaceId = toTab.WorkspaceId;
+        // Herdr removes a tab when its final pane leaves.
+        if (fromTab.Panes.Count == 0)
+        {
+            fromWorkspace.Tabs.Remove(fromTab);
+            if (fromWorkspace.ActiveTabId == fromTab.TabId)
+                fromWorkspace.ActiveTabId = fromWorkspace.Tabs.FirstOrDefault()?.TabId ?? "";
+        }
+    }
+
     /// <summary>CARD-0384: move a tab into another workspace (membership TOCTOU).</summary>
     public void MoveTab(string tabId, string toWorkspaceId)
     {
