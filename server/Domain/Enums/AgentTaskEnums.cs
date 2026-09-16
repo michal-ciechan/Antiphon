@@ -247,6 +247,9 @@ public enum AgentTaskEventType
 
     /// <summary>Durable settlement identity saved before a gated commit can mutate Git.</summary>
     CommitRecoveryStarted = 34,
+
+    /// <summary>The gate proved no commit was made. Detail names the recovery-start event and gate outcome.</summary>
+    CommitRecoveryNotNeeded = 35,
 }
 
 /// <summary>
