@@ -1458,7 +1458,7 @@ internal sealed partial class HerdrPaneChild : ISessionChild
     private static bool HasNonEmptyAntiphonWorkspaceToken(HerdrWorkspaceInfo workspace) =>
         workspace.Tokens is not null
         && workspace.Tokens.TryGetValue("antiphon-ws", out var key)
-        && !string.IsNullOrEmpty(key);
+        && !string.IsNullOrWhiteSpace(key);
 
     private static bool TokenEquals(HerdrWorkspaceInfo workspace, string workspaceKey) =>
         workspace.Tokens is not null

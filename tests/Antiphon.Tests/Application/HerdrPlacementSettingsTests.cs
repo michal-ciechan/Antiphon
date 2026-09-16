@@ -72,7 +72,8 @@ public class HerdrPlacementSettingsTests
         var service = CreateService(db);
         var detail = await service.CreateAsync(new CreateAgentRequest(Unique("Context"), "D:/src/app",
             SessionBackend: SessionBackend.Herdr, HerdrTabLabel: "Tab"), CancellationToken.None);
-        var other = await service.CreateAsync(new CreateAgentRequest(Unique("Board"), "D:/src/app"), CancellationToken.None);
+        var other = await service.CreateAsync(new CreateAgentRequest(Unique("Board"), "D:/src/other-" + Guid.NewGuid().ToString("N")), CancellationToken.None);
+        other.BoardId.ShouldNotBe(detail.BoardId);
         var agent = await db.Agents.SingleAsync(a => a.Id == detail.Id);
         foreach (var patch in new[] { Patch(detail, sessionBackend: SessionBackend.PtyHost),
                      Patch(detail, sessionBackend: SessionBackend.Herdr), Patch(detail) with { BoardId = other.BoardId }, Patch(detail) })
