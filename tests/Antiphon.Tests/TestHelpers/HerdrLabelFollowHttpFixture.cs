@@ -165,8 +165,7 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
         OverrideGetJson = null; DropNextGet = false;
         if (Runtime is not null)
         {
-            foreach (var pane in Runtime.LiveHerdrPanes())
-            { Fake.SetPaneProcessInfo(pane.PaneId, 4242); Fake.ClearDetectedAgent(pane.PaneId); }
+            await Runtime.DisposeAsync();
             ResumeMonitor();
             foreach (var adapter in _adapters) await adapter.Exited.WaitAsync(TimeSpan.FromSeconds(2));
         }
