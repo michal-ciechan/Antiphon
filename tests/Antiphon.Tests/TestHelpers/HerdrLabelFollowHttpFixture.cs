@@ -32,6 +32,9 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
     private readonly List<AppDbContext> _contexts = [];
     private ServiceProvider _wire = null!;
     private WebApplication _app = null!;
+    private readonly SemaphoreSlim _monitorGate = new(1, 1);
+    private bool _monitorHeld;
+    private readonly List<IAgentProtocolAdapter> _adapters = [];
     public string Root { get; } = Path.Combine(Path.GetTempPath(), "antiphon-c462-flow-" + Guid.NewGuid().ToString("N"));
     public string Logs => Path.Combine(Root, "logs");
     public FakeHerdrServer Fake { get; } = new() { EchoSendTextToScreen = true };
@@ -66,6 +69,11 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
         _app = builder.Build();
         _app.Use(async (context, next) =>
         {
+            var monitor = context.Request.Method == "GET" && context.Request.Path.StartsWithSegments("/sessions")
+                && context.Request.Path.Value!.Count(c => c == '/') == 2 && !context.Request.Headers.ContainsKey("X-C462-Reader");
+            if (monitor) await _monitorGate.WaitAsync(context.RequestAborted);
+            try
+            {
             try { await next(context); }
             catch (Exception ex) { Console.Error.WriteLine(ex); throw; }
         });
@@ -82,6 +90,8 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
             if (OverrideGetJson is not null && context.Request.Method == "GET" && context.Request.Path == $"/sessions/{SessionId}")
             { context.Response.ContentType = "application/json"; await context.Response.WriteAsync(OverrideGetJson); return; }
             await next(context);
+            }
+            finally { if (monitor) _monitorGate.Release(); }
         });
         _app.MapSessionGetRoute(); _app.MapSessionLaunchRoute();
         _app.MapGet("/sessions", () => Runtime.List());
@@ -96,9 +106,12 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
         _app.MapPost("/herdr/placement/check", async (HerdrPlacementCheckRequest r, CancellationToken ct) => await Runtime.CheckHerdrPlacementAsync(r, ct));
         await _app.StartAsync();
         var services = new ServiceCollection(); services.AddLogging();
-        services.AddHttpClient<ISessionRunnerClient, SessionRunnerHttpClient>();
+        services.AddHttpClient<ISessionRunnerClient, SessionRunnerHttpClient>(http => http.DefaultRequestHeaders.Add("X-C462-Reader", "follow"));
         services.AddSingleton(Options.Create(new Antiphon.Server.Application.Settings.SessionRunnerSettings { BaseUrl = _app.Urls.Single() }));
         _wire = services.BuildServiceProvider(); Client = _wire.GetRequiredService<ISessionRunnerClient>();
+        var httpFactory = _wire.GetRequiredService<IHttpClientFactory>();
+        var adapterClient = new SessionRunnerHttpClient(httpFactory.CreateClient(), httpFactory,
+            Options.Create(new Antiphon.Server.Application.Settings.SessionRunnerSettings { BaseUrl = _app.Urls.Single() }));
         var registry = new AgentRegistrySettings { DefaultDefinition = "claude", ClaudeReadyQuietPeriodMs = 150,
             ClaudeReadyMaxWaitMs = 5000, ClaudeReadyMinTotalWaitMs = 0, ClaudeInputProbeTimeoutMs = 3000,
             ClaudeInputProbePollIntervalMs = 50, ClaudeInputProbeClearTimeoutMs = 1000, ClaudeInputProbeRetypeIntervalMs = 2000,
@@ -108,7 +121,7 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
                 s.AddSingleton<IOptions<AgentRegistrySettings>>(Options.Create(registry));
                 s.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new OptionsMonitorStub<AgentRegistrySettings>(registry));
                 s.AddSingleton(Client); s.AddSingleton(Options.Create(new SupervisionSettings()));
-                s.AddSingleton<IAgentProtocolAdapterFactory>(sp => new AgentProtocolAdapterFactory(sp.GetRequiredService<IOptions<AgentRegistrySettings>>(), Client, sp.GetRequiredService<IOptions<SupervisionSettings>>()));
+                s.AddSingleton<IAgentProtocolAdapterFactory>(sp => new RecordingFactory(new AgentProtocolAdapterFactory(sp.GetRequiredService<IOptions<AgentRegistrySettings>>(), adapterClient, sp.GetRequiredService<IOptions<SupervisionSettings>>()), _adapters));
             });
         var agent = await Harness.AgentService.CreateAsync(new("follow", Root, SessionBackend: SessionBackend.Herdr,
             HerdrTabLabel: "Old", HerdrWorkspaceLabel: workspacePin ? "Old workspace" : null, RemoteControlEnabled: false), CancellationToken.None);
@@ -125,6 +138,7 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
 
     public async Task LaunchAsync()
     {
+        ResumeMonitor();
         using var scope = Harness.Provider.CreateScope();
         await scope.ServiceProvider.GetRequiredService<AgentControlService>().StartAsync(AgentId, new StartAgentRequest(Fresh: true, RemoteControl: false), CancellationToken.None);
         await Harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
@@ -133,7 +147,13 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
         var session = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == SessionId);
         session.Status.ShouldBe(SessionStatus.Running, session.FailureReason ?? "real HTTP launch must complete");
         SessionGeneration.Equal(Saved.AcceptedStartedAt, session.StartedAt).ShouldBeTrue();
+        // Park only the already-running adapter exit monitor at its HTTP request boundary.
+        // Label tests then drive the same production GET route with deterministic request order.
+        await _monitorGate.WaitAsync().WaitAsync(TimeSpan.FromSeconds(2)); _monitorHeld = true;
+        await Client.GetAsync(SessionId, CancellationToken.None);
+        Clock.Advance(TimeSpan.FromHours(1));
     }
+    public void ResumeMonitor() { if (_monitorHeld) { _monitorHeld = false; _monitorGate.Release(); } }
     public AppDbContext Open() => new(TestDbFixture.CreateDbContextOptions(_store.ConnectionString));
     public HerdrLabelFollowService Service()
     {
@@ -146,6 +166,14 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
     { var allowed = new[] { "pane.get", "pane.process_info", "pane.read", "tab.get", "workspace.get", "tab.list", "pane.list", "workspace.list", "ping", "events.subscribe" }; Methods.Skip(start).ShouldAllBe(m => allowed.Contains(m)); }
     public async ValueTask DisposeAsync()
     {
+        OverrideGetJson = null; DropNextGet = false;
+        if (Runtime is not null)
+        {
+            foreach (var pane in Runtime.LiveHerdrPanes())
+            { Fake.SetPaneProcessInfo(pane.PaneId, 4242); Fake.ClearDetectedAgent(pane.PaneId); }
+            ResumeMonitor();
+            foreach (var adapter in _adapters) await adapter.Exited.WaitAsync(TimeSpan.FromSeconds(2));
+        }
         if (Harness is not null) await Harness.DisposeAsync();
         if (_app is not null) { await _app.StopAsync(); await _app.DisposeAsync(); }
         if (_wire is not null) await _wire.DisposeAsync();
@@ -156,4 +184,6 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
     }
     private sealed class DenyProcesses : IProcessLivenessProbe
     { public bool IsAlive(int pid, DateTime at) => false; public DateTime? TryGetStartTimeUtc(int pid) => null; public string? TryGetProcessName(int pid) => "pwsh"; }
+    private sealed class RecordingFactory(IAgentProtocolAdapterFactory inner, List<IAgentProtocolAdapter> created) : IAgentProtocolAdapterFactory
+    { public IAgentProtocolAdapter Create(AgentKind kind) { var adapter = inner.Create(kind); created.Add(adapter); return adapter; } }
 }

@@ -103,6 +103,7 @@ public sealed record HerdrPaneSidecar
     public static void TryDelete(string sessionLogPath, Guid sessionId)
     {
         var path = PathFor(sessionLogPath, sessionId);
+        using var lease = HerdrSnapshotFile.Acquire(path);
         try
         {
             if (File.Exists(path))
@@ -122,6 +123,7 @@ public sealed record HerdrPaneSidecar
     public static void Retire(string sessionLogPath, Guid sessionId, string exitReason)
     {
         var path = PathFor(sessionLogPath, sessionId);
+        using var lease = HerdrSnapshotFile.Acquire(path);
         var sidecar = TryLoad(path);
         if (sidecar is not null && !sidecar.LaunchPending
             && !string.Equals(sidecar.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase))

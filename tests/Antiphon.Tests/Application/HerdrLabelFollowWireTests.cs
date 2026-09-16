@@ -23,7 +23,7 @@ public class HerdrLabelFollowWireTests
         var dto = await f.Client.GetAsync(f.SessionId, CancellationToken.None);
         dto.AcceptedStartedAt.ShouldBe(launch.AcceptedStartedAt);
         var observation = dto.LabelObservation.ShouldNotBeNull(); observation.Intent.ShouldBe(intent);
-        observation.Sequence.ShouldBe(1); observation.SessionId.ShouldBe(f.SessionId); observation.AcceptedStartedAt.ShouldBe(launch.AcceptedStartedAt!.Value);
+        observation.Sequence.ShouldBe(2); observation.SessionId.ShouldBe(f.SessionId); observation.AcceptedStartedAt.ShouldBe(launch.AcceptedStartedAt!.Value);
         observation.TabId.ShouldBe(f.Saved.TabId); observation.PaneId.ShouldBe(f.Saved.PaneId); observation.WorkspaceId.ShouldBe(f.Saved.WorkspaceId);
         observation.TabLabel.ShouldBe("Renamed"); observation.WorkspaceLabel.ShouldBeNull(); observation.PositivelyVerified.ShouldBeTrue();
     }
