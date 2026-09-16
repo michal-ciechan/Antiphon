@@ -96,7 +96,15 @@ public sealed class HerdrLaunchContextResolver
         var tabLabel = string.IsNullOrWhiteSpace(agent.HerdrTabLabel)
             ? null
             : agent.HerdrTabLabel.Trim();
-        return options with { WorkspaceLabel = workspaceLabel, TabLabel = tabLabel };
+        var explicitWorkspace = string.IsNullOrWhiteSpace(agent.HerdrWorkspaceLabel)
+            ? null : agent.HerdrWorkspaceLabel.Trim();
+        var intent = session.StandingAgentId == agent.Id
+            && agent.SessionBackend == Domain.Enums.SessionBackend.Herdr
+            && session.SessionBackend == Domain.Enums.SessionBackend.Herdr
+            && (explicitWorkspace is not null || tabLabel is not null)
+                ? new HerdrLabelFollowIntent(1, agent.Id, agent.HerdrPlacementEditToken, explicitWorkspace, tabLabel)
+                : null;
+        return options with { WorkspaceLabel = workspaceLabel, TabLabel = tabLabel, LabelFollowIntent = intent };
     }
 
     private static HerdrLaunchOptions FromProject(Project project, string paneTitle) =>

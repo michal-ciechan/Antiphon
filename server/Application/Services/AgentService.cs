@@ -571,22 +571,17 @@ public sealed class AgentService
         await EnsureWorkflowTemplateExistsAsync(request.DefaultWorkflowTemplateId, ct);
         await EnsureBoardExistsAsync(request.BoardId, ct);
 
-        var agent = await _db.Agents
-            .FirstOrDefaultAsync(a => a.Id == id, ct)
+        await using var placementTransaction = await _db.Database.BeginTransactionAsync(ct);
+        var agent = await HerdrPlacementLock.LoadAsync(_db, id, ct)
             ?? throw new NotFoundException(nameof(Agent), id);
-        await using var specialistTransaction = StandingSpecialistSeatPolicy.IsCheck(agent)
-            ? await _db.Database.BeginTransactionAsync(ct) : null;
-        if (specialistTransaction is not null)
-        {
-            var ownerId = agent.StandingSpecialistOwnerId ?? agent.Id;
-            await _db.Agents.FromSqlInterpolated($"SELECT * FROM \"Agents\" WHERE \"Id\" = {ownerId} FOR UPDATE")
-                .AsNoTracking().SingleOrDefaultAsync(ct);
-            await _db.Entry(agent).ReloadAsync(ct);
-        }
 
         // CARD-0160 / CARD-0187: resolve the REQUEST's final SessionBackend / Kind BEFORE any field
         // is applied so a Kind change in the same PATCH is checked against Herdr.
         var finalBackend = request.SessionBackend ?? agent.SessionBackend;
+        if (request.HerdrTabLabel is not null || request.HerdrWorkspaceLabel is not null
+            || finalBackend != agent.SessionBackend
+            || (request.BoardId is { } placementBoardId && placementBoardId != agent.BoardId))
+            agent.HerdrPlacementEditToken = Guid.NewGuid();
         var finalKind = await ResolveFinalKindAsync(agent, request, ct);
         var specialistIdentityChanged = StandingSpecialistSeatPolicy.IsCheck(agent)
             && (request.Name.Trim() != agent.Name || request.WorkingDirectory.Trim() != agent.WorkingDirectory
@@ -686,7 +681,7 @@ public sealed class AgentService
                     .SetProperty(c => c.Status, c => c.Status == StandingSpecialistCandidateStatus.Quarantined
                         ? StandingSpecialistCandidateStatus.Quarantined : StandingSpecialistCandidateStatus.Unqualified), ct);
         await SaveChangesOrConflictAsync($"Agent '{agent.Name}' was modified by another operation.", ct);
-        if (specialistTransaction is not null) await specialistTransaction.CommitAsync(ct);
+        await placementTransaction.CommitAsync(ct);
         if (_pins is not null
             && !string.Equals(previousCwd, agent.WorkingDirectory, StringComparison.OrdinalIgnoreCase))
             await _pins.OnWorkingDirectoryChangedAsync(agent, previousCwd, ct);
