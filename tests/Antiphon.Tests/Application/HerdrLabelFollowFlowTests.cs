@@ -100,7 +100,7 @@ public class HerdrLabelFollowFlowTests
     [Test]
     public async Task Label_failure_does_not_change_session_lifecycle()
     {
-        await using var f = new HerdrLabelFollowHttpFixture(); await f.StartAsync(); f.Fake.FailMethod("tab.get");
+        await using var f = new HerdrLabelFollowHttpFixture(); await f.StartAsync(); f.Fake.FailMethod("tab.get", "unavailable");
         var before = Furniture(f); var start = f.Methods.Length;
         (await f.Service().FollowAsync(f.AgentId, CancellationToken.None)).ShouldBeFalse();
         (await f.Client.GetAsync(f.SessionId, CancellationToken.None)).Status.ShouldBe("Running");
