@@ -28,6 +28,7 @@ public partial class AgentTaskReplyIntegrationTests
         var committed = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
         committed.ShouldNotBe(baseline);
         await repo.GitAsync("switch", "-c", "other", baseline);
+        if (checkout == "branch") await repo.GitAsync("reflog", "expire", "--expire=now", "--all");
         if (checkout == "reflog") await repo.GitAsync("branch", "-D", "master");
         if (checkout == "unborn") await repo.GitAsync("symbolic-ref", "HEAD", "refs/heads/unborn");
         if (checkout == "reflog")

@@ -26,6 +26,7 @@ public sealed partial class GatedCommitServiceTests
         var operationId = Guid.Parse((await repo.GitReadAsync("log", "-1",
             "--format=%(trailers:key=antiphon-operation,valueonly)")).Trim());
         await repo.GitAsync("switch", "-c", "other", baseline);
+        if (checkout == "branch") await repo.GitAsync("reflog", "expire", "--expire=now", "--all");
         if (checkout == "reflog") await repo.GitAsync("branch", "-D", "master");
         if (checkout == "unborn") await repo.GitAsync("symbolic-ref", "HEAD", "refs/heads/unborn");
         if (checkout == "reflog")
