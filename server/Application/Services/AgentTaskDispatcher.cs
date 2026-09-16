@@ -3326,19 +3326,33 @@ public sealed class AgentTaskDispatcher
         _db.AgentTaskEvents.Add(finalDispatch);
 
         IReadOnlyList<Guid> capturedIntents = [];
-        if (claimed.Workspace == WorkspaceMode.Worktree && claimed.SourceLandingOperationId is null)
+        try
         {
-            var drafts = BuildDispatchWarningDrafts(claimed, siblingObservation, baseDecision);
-            if (_dispatchWarnings is null)
-                throw new InvalidOperationException("DispatchBaseWarningIntentService is required to persist dispatch-base warnings.");
-            capturedIntents = await _dispatchWarnings.CaptureAsync(claimed, finalDispatch, drafts, ct);
+            if (claimed.Workspace == WorkspaceMode.Worktree && claimed.SourceLandingOperationId is null)
+            {
+                var drafts = BuildDispatchWarningDrafts(claimed, siblingObservation, baseDecision);
+                if (_dispatchWarnings is null)
+                    throw new InvalidOperationException("DispatchBaseWarningIntentService is required to persist dispatch-base warnings.");
+                capturedIntents = await _dispatchWarnings.CaptureAsync(claimed, finalDispatch, drafts, ct);
+            }
+
+            if (_landBoundary is not null)
+                await _landBoundary.ReachedAsync("dispatch-warning-claim-before-commit", claimed.Id, finalDispatch.Id, ct);
+
+            await _db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
         }
-
-        if (_landBoundary is not null)
-            await _landBoundary.ReachedAsync("dispatch-warning-claim-before-commit", claimed.Id, finalDispatch.Id, ct);
-
-        await _db.SaveChangesAsync(ct);
-        await transaction.CommitAsync(ct);
+        catch when (claimed.Workspace == WorkspaceMode.Worktree && claimed.SourceLandingOperationId is null)
+        {
+            // Rollback alone leaves Added entries tracked. FailAndNotifyAsync saves through this
+            // same context and would publish an abandoned claim's session/event/intents. Dispose
+            // the transaction first, then reload committed facts (also safe after a lost commit
+            // acknowledgement). Already committed intents remain immutable delivery obligations.
+            await transaction.DisposeAsync();
+            _db.ChangeTracker.Clear();
+            await _db.Entry(claimed).ReloadAsync(CancellationToken.None);
+            throw;
+        }
 
         if (_landBoundary is not null)
             await _landBoundary.ReachedAsync("dispatch-warning-claim-committed", claimed.Id, finalDispatch.Id, ct);
