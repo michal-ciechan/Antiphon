@@ -19,6 +19,27 @@ namespace Antiphon.Tests.Application;
 public class HerdrPlacementSettingsTests
 {
     [Test]
+    public async Task Follow_migration_preserves_existing_labels()
+    {
+        await using var store = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(store.ConnectionString));
+        var migrations = db.Database.GetMigrations().ToArray();
+        var follow = Array.FindIndex(migrations, m => m.EndsWith("_AddHerdrLabelFollow", StringComparison.Ordinal));
+        follow.ShouldBeGreaterThan(0);
+        var migrator = Microsoft.EntityFrameworkCore.Infrastructure.AccessorExtensions.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>(db);
+        var id = Guid.NewGuid(); var now = DateTime.UtcNow;
+        db.Agents.Add(new Agent { Id = id, Name = "migration", Slug = id.ToString(), CreatedAt = now, UpdatedAt = now,
+            HerdrTabLabel = "Old", HerdrWorkspaceLabel = null });
+        await db.SaveChangesAsync(); db.ChangeTracker.Clear();
+        await migrator.MigrateAsync(migrations[follow - 1]);
+        await migrator.MigrateAsync();
+        var agent = await db.Agents.AsNoTracking().SingleAsync(a => a.Id == id);
+        agent.HerdrTabLabel.ShouldBe("Old"); agent.HerdrWorkspaceLabel.ShouldBeNull();
+        agent.HerdrPlacementEditToken.ShouldBe(Guid.Empty); agent.HerdrLabelFollowSessionId.ShouldBeNull();
+        agent.HerdrLabelFollowStartedAt.ShouldBeNull(); agent.HerdrLabelFollowSequence.ShouldBe(0);
+    }
+
+    [Test]
     public async Task Manual_placement_edit_rotates_only_the_internal_token()
     {
         await using var db = CreateContext();
