@@ -44,6 +44,10 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
     }
     public void ConfigureServices(IServiceCollection services)
     {
+        // Allowed roots are also scanned as repositories. The evidence parent is not a Git
+        // root: Git would walk upward from it into the checkout running this fixture.
+        services.PostConfigure<DelegationSettings>(settings => settings.AllowedRoots =
+            [Path.Combine(Root, "repo"), Path.Combine(Root, "trees", "source")]);
         services.AddSingleton<LandDeliveryBoundary>(p => new FileBoundary(this, p.GetRequiredService<IServiceScopeFactory>()));
         var clock = new LandClock(Root);
         services.AddScoped(p => ActivatorUtilities.CreateInstance<AgentTaskLandService>(p, clock));
