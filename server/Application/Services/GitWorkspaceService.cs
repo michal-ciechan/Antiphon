@@ -963,20 +963,26 @@ public class GitWorkspaceService
             if (!unborn) return new(false, [], head.Code, head.Stderr);
         }
         var result = await RunAsync(repo, ct, "log", "--all", "--reflog", "--fixed-strings", "--all-match",
-            $"--grep=antiphon-task: {taskId:D}", $"--grep={identityKey}: {identity}", "--format=%H");
+            $"--grep={taskId:D}", $"--grep={identity}", "--format=%H");
         if (result.Code != 0) return new(false, [], result.Code, result.Stderr);
         var matches = new List<string>();
         foreach (var sha in result.Stdout.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
                      .Distinct(StringComparer.Ordinal))
         {
-            var trailers = await RunAsync(repo, ct, "log", "-1", "--format=%(trailers:only,unfold)", sha);
+            // Let Git recognize its configured separators, then emit unambiguous key/value
+            // boundaries. The history grep is only a candidate filter, never identity proof.
+            var trailers = await RunAsync(repo, ct, "log", "-1",
+                "--format=%(trailers:only,unfold,key_value_separator=%x00,separator=%x00)", sha);
             if (trailers.Code != 0) return new(false, [], trailers.Code, trailers.Stderr);
-            var lines = trailers.Stdout.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            var fields = trailers.Stdout.TrimEnd('\r', '\n').Split('\0');
+            if (fields.Length == 1 && fields[0].Length == 0) continue;
+            if (fields.Length % 2 != 0) return new(false, [], -1, "Malformed parsed Git trailers.");
+            var pairs = fields.Chunk(2).ToArray();
             if (Exact("antiphon", "true") && Exact("antiphon-task", taskId.ToString("D"))
                 && Exact("antiphon-commit", "gated") && Exact(identityKey, identity))
                 matches.Add(sha);
-            bool Exact(string key, string value) => lines.Count(l => l.StartsWith(key + ":", StringComparison.Ordinal)) == 1
-                && lines.Contains(key + ": " + value, StringComparer.Ordinal);
+            bool Exact(string key, string value) => pairs.Count(p => p[0].Equals(key, StringComparison.OrdinalIgnoreCase)) == 1
+                && pairs.Any(p => p[0].Equals(key, StringComparison.OrdinalIgnoreCase) && p[1] == value);
         }
         return new(true, matches, 0);
     }

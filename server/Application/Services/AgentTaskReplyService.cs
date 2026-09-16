@@ -819,6 +819,7 @@ public sealed class AgentTaskReplyService
             warning: callerWarning,
             drift: drift,
             git: gitHeader,
+            commitOutcome: commitNote?.Durable == true,
             afterPersist: async token =>
             {
                 if (turn.FinalMessageMissing && task.AgentSessionId is Guid missingFrom)
@@ -1540,13 +1541,14 @@ public sealed class AgentTaskReplyService
         string? warning = null,
         string? drift = null,
         string? git = null,
+        bool commitOutcome = false,
         Func<CancellationToken, Task>? afterPersist = null)
     {
         // Reuse the durable outbox (also used by dispatch warnings). Its immutable body and
         // source event commit with settlement and any spawned child, before queue insertion.
         var durableCompletion = task.SourceLandingOperationId is null
             && task.Workspace == WorkspaceMode.Shared
-            && (task.Role == AgentTaskRole.Commit || git is not null
+            && (commitOutcome || task.Role == AgentTaskRole.Commit || git is not null
                 && (git.StartsWith("committed:", StringComparison.Ordinal)
                     || git.StartsWith("commit refused:", StringComparison.Ordinal)
                     || git.Contains("commit task", StringComparison.Ordinal)))
@@ -3011,7 +3013,7 @@ public sealed class AgentTaskReplyService
         _ => null,
     };
 
-    private sealed record CommitOnSettleNote(string Header, string? Warning);
+    private sealed record CommitOnSettleNote(string Header, string? Warning, bool Durable = false);
 
     private async Task<CommitOnSettleNote?> TryCommitOnSettleAsync(
         IServiceProvider services, AppDbContext db, AgentTask task, string report, DateTime now,
@@ -3030,9 +3032,17 @@ public sealed class AgentTaskReplyService
         // after a failed settlement save cannot turn a completed commit into "landed"/refused.
         var settlement = DelegationNoteDigest.Compute(
             $"{task.Id:D}|{task.AgentSessionId:D}|{task.DispatchedAt:O}|{report}");
-        var recoveryStarted = await db.AgentTaskEvents.AsNoTracking().AnyAsync(e =>
-            e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.CommitRecoveryStarted
-            && e.Detail == settlement, ct);
+        var recoveryEvents = await db.AgentTaskEvents.AsNoTracking().Where(e =>
+            e.AgentTaskId == task.Id && (e.Type == AgentTaskEventType.CommitRecoveryStarted
+                || e.Type == AgentTaskEventType.CommitRecoveryNotNeeded)).ToListAsync(ct);
+        var recoveryStarted = recoveryEvents.Any(e => e.Type == AgentTaskEventType.CommitRecoveryStarted
+            && e.Detail == settlement && !recoveryEvents.Any(resolved =>
+                resolved.Type == AgentTaskEventType.CommitRecoveryNotNeeded
+                && resolved.Detail.StartsWith($"{e.Id:D} ", StringComparison.Ordinal)));
+        var nothingToCommit = recoveryEvents.Any(e => e.Type == AgentTaskEventType.CommitRecoveryStarted
+            && e.Detail == settlement && recoveryEvents.Any(resolved =>
+                resolved.Type == AgentTaskEventType.CommitRecoveryNotNeeded
+                && resolved.Detail == $"{e.Id:D} {GatedCommitOutcome.NothingToCommit}"));
         var existing = await git.FindSettlementCommitsAsync(repo, task.Id, settlement, ct);
         var repository = await git.InspectRepositoryAsync(repo, ct);
         // Only a task with no prior mutation obligation can be classified as non-Git.
@@ -3040,7 +3050,9 @@ public sealed class AgentTaskReplyService
         if (!recoveryStarted && repository == GitWorkspaceService.RepositoryInspection.NotWorktree
             && existing.Items.Count == 0)
             return null;
-        if (!existing.Succeeded || existing.Items.Count > 1)
+        // A successful empty reachable-history search is not proof that an attempted
+        // mutation did nothing. Only a durable, explicitly known no-commit result clears it.
+        if (!existing.Succeeded || existing.Items.Count > 1 || recoveryStarted && existing.Items.Count == 0)
             throw new ServiceUnavailableException("Settlement recovery requires one exact identity; inspect git history.",
                 "settlement_recovery_unavailable");
 
@@ -3051,18 +3063,12 @@ public sealed class AgentTaskReplyService
         var dirty = await git.TryGetChangesAsync(repo, ct);
         if (!dirty.Succeeded)
         {
-            if (existing.Items.Count == 1)
+            if (existing.Items.Count == 1 || nothingToCommit)
                 throw new ServiceUnavailableException("The settlement commit exists; residual status is not yet available.",
                     "settlement_recovery_unavailable");
             return new("commit refused: status inspection unavailable", "Git status could not be inspected; no commit attempted.");
         }
-        var dirtyPaths = dirty.Items
-            .SelectMany(c => c.OldPath is null ? new[] { c.Path } : new[] { c.Path, c.OldPath })
-            .Select(p => p.Replace('\\', '/'))
-            .Where(p => !p.Equals(".antiphon", StringComparison.OrdinalIgnoreCase)
-                && !p.StartsWith(".antiphon/", StringComparison.OrdinalIgnoreCase))
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
+        var dirtyPaths = SettlementDirtyPaths(dirty.Items);
 
         if (existing.Items.Count == 1)
         {
@@ -3078,6 +3084,9 @@ public sealed class AgentTaskReplyService
             return new($"committed:{sha[..7]} ({existingFiles.Count} files)"
                 + (remaining is null ? "" : $"; {dirtyPaths.Length} dirty path(s) left as found"), remaining);
         }
+
+        if (nothingToCommit)
+            return NoCommitNeededNote(dirtyPaths);
 
         bool? projectValue = null;
         if (task.ProjectId is Guid pid)
@@ -3165,18 +3174,38 @@ public sealed class AgentTaskReplyService
             ("antiphon-settlement", settlement),
         };
 
+        var recoveryAttempt = NewEvent(task.Id, AgentTaskEventType.CommitRecoveryStarted, settlement, now);
         if (!recoveryStarted)
         {
             // An independent context saves ONLY the recovery obligation. The outer context
             // already tracks settlement; saving it here would publish completion before Git.
             await using var recoveryScope = services.CreateAsyncScope();
             var recoveryDb = recoveryScope.ServiceProvider.GetRequiredService<AppDbContext>();
-            recoveryDb.AgentTaskEvents.Add(NewEvent(
-                task.Id, AgentTaskEventType.CommitRecoveryStarted, settlement, now));
+            recoveryDb.AgentTaskEvents.Add(recoveryAttempt);
             await recoveryDb.SaveChangesAsync(ct);
         }
 
         var result = await gated.CommitAsync(repo, footprint, message, trailers, ct);
+        if (result.Outcome is GatedCommitOutcome.NothingToCommit or GatedCommitOutcome.IgnoreRulesChanged
+            or GatedCommitOutcome.IgnoredPathStaged or GatedCommitOutcome.RepositoryBusy)
+        {
+            // Persist this evidence independently too: a failed terminal save must not
+            // leave a known no-op looking like an interrupted mutation on the next sweep.
+            await using var recoveryScope = services.CreateAsyncScope();
+            var recoveryDb = recoveryScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            recoveryDb.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.CommitRecoveryNotNeeded,
+                $"{recoveryAttempt.Id:D} {result.Outcome}", now));
+            await recoveryDb.SaveChangesAsync(ct);
+        }
+        if (result.Outcome == GatedCommitOutcome.NothingToCommit)
+        {
+            var remaining = await git.TryGetChangesAsync(repo, ct);
+            if (!remaining.Succeeded)
+                throw new ServiceUnavailableException("No commit was needed; residual status is not yet available.",
+                    "settlement_recovery_unavailable");
+            var remainingPaths = SettlementDirtyPaths(remaining.Items);
+            return NoCommitNeededNote(remainingPaths);
+        }
         if (result.Outcome == GatedCommitOutcome.Committed && result.Sha is { } shaCommitted)
         {
             var sha7 = shaCommitted.Length >= 7 ? shaCommitted[..7] : shaCommitted;
@@ -3214,6 +3243,18 @@ public sealed class AgentTaskReplyService
             : result.Stderr;
         return new CommitOnSettleNote(refused, warning);
     }
+
+    private static CommitOnSettleNote NoCommitNeededNote(string[] remainingPaths) =>
+        remainingPaths.Length == 0 ? new("landed", null, Durable: true)
+            : new($"uncommitted:{remainingPaths.Length} (selected changes reverted)",
+                $"No selected changes remain to commit. Other dirty paths left as found: {string.Join(", ", remainingPaths)}.", Durable: true);
+
+    private static string[] SettlementDirtyPaths(IReadOnlyList<GitWorkspaceService.GitChange> changes) => changes
+        .SelectMany(c => c.OldPath is null ? new[] { c.Path } : new[] { c.Path, c.OldPath })
+        .Select(p => p.Replace('\\', '/'))
+        .Where(p => !p.Equals(".antiphon", StringComparison.OrdinalIgnoreCase)
+            && !p.StartsWith(".antiphon/", StringComparison.OrdinalIgnoreCase))
+        .Distinct(StringComparer.Ordinal).ToArray();
 
     private static void RecordCommitted(
         AppDbContext db, AgentTask task, string sha7, IReadOnlyList<string> files, DateTime now)
