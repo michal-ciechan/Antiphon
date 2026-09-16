@@ -18,6 +18,23 @@ public class HerdrLabelObservationTests
         (await f.CollectAsync()).TabLabel.ShouldBeNull();
     }
 
+    [Test][Arguments(false)][Arguments(true)]
+    public async Task Coherent_pane_move_with_optional_rename_preserves_snapshots(bool rename)
+    {
+        await using var f = new HerdrLabelFollowFixture(); await f.StartAsync();
+        var target = f.Fake.SeedTab(f.Workspace.WorkspaceId, rename ? "Renamed destination" : f.Tab.Label, paneCount: 0);
+        f.Fake.MovePane(f.Binding.PaneId, target.TabId);
+        (await f.Client.PaneGetAsync(f.Binding.PaneId, CancellationToken.None)).TabId.ShouldBe(target.TabId);
+        (await f.Client.TabGetAsync(target.TabId, CancellationToken.None)).PaneCount.ShouldBe(1);
+        (await f.Client.PaneListAsync(f.Workspace.WorkspaceId, CancellationToken.None)).Single(p => p.TabId == target.TabId).PaneId.ShouldBe(f.Binding.PaneId);
+        (await f.Client.TabListAsync(f.Workspace.WorkspaceId, CancellationToken.None)).ShouldNotContain(t => t.TabId == f.Binding.TabId);
+        var start = f.Methods.Length;
+        await f.FollowAsync(); (await f.ReadAsync()).ShouldBeNull(); f.AssertReadOnly(start);
+        f.Saved.TabLabel.ShouldBe("Old"); f.Saved.WorkspaceLabel.ShouldBe("Old workspace");
+        f.Child.Sidecar!.ShouldBe(f.Saved);
+        f.Saved.LabelFollow!.Observation!.ResultCode.ShouldBe("binding_changed");
+    }
+
     [Test]
     [Arguments("pane")][Arguments("pane-tab")][Arguments("pane-workspace")]
     [Arguments("tab")][Arguments("tab-workspace")][Arguments("workspace")]
@@ -194,8 +211,11 @@ public class HerdrLabelObservationTests
     {
         await using var f = new HerdrLabelFollowFixture(provenance: arm == "managed" ? HerdrWorkspaceSelection.ManagedToken : HerdrWorkspaceSelection.UniqueUntaggedLabel);
         await f.StartAsync(); if (arm == "foreign") f.Workspace.Tokens["antiphon-ws"] = "other";
-        var result = await f.CollectAsync(); result.TabLabel.ShouldBe("New"); result.WorkspaceLabel.ShouldBeNull();
-        HerdrPaneSidecar.TryLoad(f.Path)!.WorkspaceLabel.ShouldBe("Old workspace");
+        var start = f.Methods.Length;
+        await f.FollowAsync(); var result = await f.ReadAsync(); f.AssertReadOnly(start);
+        result!.TabLabel.ShouldBe("New"); result.WorkspaceLabel.ShouldBeNull();
+        f.Saved.TabLabel.ShouldBe("New"); f.Saved.WorkspaceLabel.ShouldBe("Old workspace");
+        f.Child.Sidecar!.ShouldBe(f.Saved);
     }
 
     [Test]

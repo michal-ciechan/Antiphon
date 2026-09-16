@@ -236,6 +236,33 @@ public class HerdrLabelSnapshotTests
     }
 
     [Test][Arguments(false)][Arguments(true)]
+    public async Task Crash_after_last_pane_replace_reconstructs_and_clears_only_owned_repair_debt(bool replace)
+    {
+        await using var f = new HerdrLabelFollowFixture(); await f.StartAsync();
+        var path = HerdrLastPane.PathFor(f.Settings.SessionLogPath, f.Binding.SessionId);
+        var last = HerdrLastPane.FromSidecar(f.Binding, "original exit") with { ExitedAtUtc = DateTime.UnixEpoch };
+        last.SaveAtomic(path);
+        f.Child.LabelFollowBoundary = (name, _) => name == "after-repair-file"
+            ? Task.FromException(new OperationCanceledException("crash after second file commit")) : Task.CompletedTask;
+        await f.FollowAsync();
+        f.Saved.LabelFollow!.LastPaneRepairPending.ShouldBeTrue();
+        var written = HerdrLastPane.TryLoad(path)!;
+        written.TabLabel.ShouldBe("New"); written.WorkspaceLabel.ShouldBe("New workspace");
+        (written with { TabLabel = last.TabLabel, WorkspaceLabel = last.WorkspaceLabel }).ShouldBe(last);
+        var state = f.Saved.LabelFollow; var getters = f.GetterCount;
+        if (replace)
+            (written with { AcceptedStartedAt = written.AcceptedStartedAt!.Value.AddSeconds(1), TabLabel = "replacement" }).SaveAtomic(path);
+        var bytes = await File.ReadAllBytesAsync(path);
+        await f.RecreateChildAsync();
+        f.Saved.LabelFollow.LastPaneRepairPending.ShouldBeTrue(); (await f.ReadAsync()).ShouldBeNull();
+        var start = f.Methods.Length;
+        await f.FollowAsync(); f.AssertReadOnly(start); f.GetterCount.ShouldBe(getters);
+        f.Saved.LabelFollow.ShouldBe(state with { LastPaneRepairPending = false });
+        f.Child.Sidecar!.ShouldBe(f.Saved); (await File.ReadAllBytesAsync(path)).ShouldBe(bytes);
+        (await f.ReadAsync()).ShouldBeNull("local repair does not reauthorize a pre-restart observation");
+    }
+
+    [Test][Arguments(false)][Arguments(true)]
     public async Task Repair_marker_survives_failure_and_respects_replacement(bool replace)
     {
         await using var f = new HerdrLabelFollowFixture(); await f.StartAsync();
