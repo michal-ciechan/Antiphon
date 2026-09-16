@@ -147,4 +147,24 @@ public sealed partial class LandDeliveryFixture
         foreach (var sibling in _dispatchSiblings)
             await db.AgentTasks.Where(t => t.Id == sibling.Id).ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Canceled));
     }
+
+    public async Task WaitForInterruptedDispatchEligibilityAsync()
+    {
+        await using var db = CreateContext();
+        var attempted = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.SourceTaskId == TaskId
+            && m.SourceLandNotificationId != null && m.Status == QueuedMessageStatus.Sent && m.DeliveryVerdict == null).ToListAsync();
+        attempted.ShouldNotBeEmpty();
+        var eligibleAt = attempted.Max(m => m.LastDeliveryStartedAt!.Value) + InterruptedAttemptAge;
+        var waitStarted = DateTime.UtcNow;
+        // Arrange the production recovery prerequisite with real time while the child is dead.
+        // Do not edit attempt timestamps, shorten the safety guard or extend ReceiptAsync's deadline.
+        while (DateTime.UtcNow < eligibleAt)
+        {
+            var remaining = eligibleAt - DateTime.UtcNow;
+            if (remaining > TimeSpan.Zero) await Task.Delay(remaining);
+        }
+        await File.WriteAllTextAsync(Path.Combine(Root, "interrupted-attempt-eligibility.json"), JsonSerializer.Serialize(new
+        { attempts = attempted.Select(m => new { m.Id, m.LastDeliveryStartedAt }), guardSeconds = InterruptedAttemptAge.TotalSeconds,
+            eligibleAt, waitStarted, observedAt = DateTime.UtcNow }));
+    }
 }

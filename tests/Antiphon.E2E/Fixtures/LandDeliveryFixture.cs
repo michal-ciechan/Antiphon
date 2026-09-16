@@ -42,6 +42,7 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
     public Guid TaskId { get; } = Guid.NewGuid();
     public Guid CallerId { get; private set; }
     public string SourceSha { get; private set; } = "";
+    public TimeSpan InterruptedAttemptAge { get; private set; }
     private string _token = "";
     private AntiphonAppFixture _app = null!;
     private HttpClient _http = null!;
@@ -89,9 +90,12 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
         _http = new HttpClient { BaseAddress = new Uri(_address) };
         var settings = _app.Services.GetRequiredService<IOptions<DelegationSettings>>().Value;
         settings.ApiBaseUrl = _address;
-        settings.AllowedRoots = [Root];
+        settings.AllowedRoots.ShouldBe(new[] { Repository, Source });
         var verification = _app.Services.GetRequiredService<IOptions<SupervisionSettings>>().Value.DeliveryVerification;
         verification.Enabled.ShouldBeTrue(); verification.TranscriptConfirmEnabled.ShouldBeTrue();
+        InterruptedAttemptAge = TimeSpan.FromSeconds(Math.Max(0, verification.TranscriptConfirmTimeoutSeconds)
+            + Math.Max(0, verification.PostFailureConfirmGraceSeconds)
+            + Math.Max(0, verification.UnobservableBaselineConfirmClockToleranceSeconds));
         using (var scope = _app.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -265,7 +269,8 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
         AssertNoMaintenanceServer(host.Services);
         var address = host.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
         var settings = host.Services.GetRequiredService<IOptions<DelegationSettings>>().Value;
-        settings.ApiBaseUrl = address; settings.AllowedRoots = [root];
+        settings.ApiBaseUrl = address;
+        settings.AllowedRoots.ShouldBe(new[] { Path.Combine(root, "repo"), Path.Combine(root, "trees", "source") });
         await File.WriteAllTextAsync(ready + ".tmp", JsonSerializer.Serialize(new { address, pid = Environment.ProcessId, mvid = typeof(Program).Assembly.ManifestModule.ModuleVersionId }));
         File.Move(ready + ".tmp", ready);
         await Task.Delay(Timeout.Infinite);
