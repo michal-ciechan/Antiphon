@@ -126,7 +126,7 @@ public class HerdrLabelFollowTests
         await using var f = new HerdrLabelFollowDbFixture(); await f.StartAsync();
         await using (var db = f.Open())
         {
-            var firstId = Guid.Empty; var firstSession = Guid.NewGuid(); var now = f.Clock.GetUtcNow().UtcDateTime;
+            var firstId = Guid.Parse("00000000-0000-0000-0000-000000000001"); var firstSession = Guid.NewGuid(); var now = f.Clock.GetUtcNow().UtcDateTime;
             db.Agents.Add(new Agent { Id = firstId, Name = "Unreachable", Slug = "unreachable", SessionBackend = SessionBackend.Herdr,
                 HerdrTabLabel = "Old", PersistentSessionId = firstSession.ToString(), CreatedAt = now, UpdatedAt = now });
             db.AgentSessions.Add(new AgentSession { Id = firstSession, StandingAgentId = firstId, SessionBackend = SessionBackend.Herdr,
