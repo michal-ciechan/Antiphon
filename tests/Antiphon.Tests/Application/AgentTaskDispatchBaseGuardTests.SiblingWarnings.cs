@@ -142,9 +142,11 @@ public partial class AgentTaskDispatchBaseGuardTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task C540_ClaimRollbackHasNoCollapsedIntent(bool afterSave)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task C540_ClaimRollbackHasNoCollapsedIntent(bool afterSave, bool cancellation)
     {
         await using var w = await SiblingWorld.CreateAsync();
         var a = await w.AddAsync(); await w.AddAsync(a, alias: true);
@@ -154,17 +156,17 @@ public partial class AgentTaskDispatchBaseGuardTests
         await using var provider = CreateProvider(w.Connection, w.Repo.WorktreeRoot,
             interceptor: afterSave ? interceptor : null, boundary: afterSave ? null : boundary);
         await using var scope = provider.CreateAsyncScope();
-        // Cancellation exits the real producer without its unrelated failure-notification writes.
         using var canceled = new CancellationTokenSource();
-        interceptor.Cancel = boundary.Cancel = canceled;
-        await Should.ThrowAsync<OperationCanceledException>(() =>
-            scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(canceled.Token));
+        if (cancellation) interceptor.Cancel = boundary.Cancel = canceled;
+        try { await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(canceled.Token); }
+        catch (OperationCanceledException) when (cancellation) { }
+        catch (DbUpdateException) when (!cancellation) { /* Inspect persisted custody after the failed claim. */ }
         (afterSave ? interceptor.Fired : boundary.Fired).ShouldBeTrue();
         await using var check = w.Fresh();
         (await check.AgentTaskDispatchWarningIntents.CountAsync(i => i.TaskId == w.Task.Id)).ShouldBe(0);
         (await check.AgentTaskEvents.CountAsync(e => e.AgentTaskId == w.Task.Id && e.Type == AgentTaskEventType.Dispatched)).ShouldBe(0);
         var task = await check.AgentTasks.SingleAsync(t => t.Id == w.Task.Id);
-        task.Status.ShouldBe(AgentTaskStatus.Queued); task.AgentSessionId.ShouldBeNull();
+        task.Status.ShouldBe(cancellation ? AgentTaskStatus.Queued : AgentTaskStatus.Failed); task.AgentSessionId.ShouldBeNull();
         (await check.AgentSessions.CountAsync()).ShouldBe(1, "only the original caller remains");
     }
 
@@ -272,7 +274,11 @@ public partial class AgentTaskDispatchBaseGuardTests
         public override Task ReachedAsync(string boundary, Guid task, Guid related, CancellationToken ct)
         {
             if (task == taskId && boundary == "dispatch-warning-claim-before-commit")
-            { Fired = true; Cancel!.Cancel(); ct.ThrowIfCancellationRequested(); }
+            {
+                Fired = true;
+                if (Cancel is not null) { Cancel.Cancel(); ct.ThrowIfCancellationRequested(); }
+                throw new IOException("owned claim failure before SaveChanges");
+            }
             return System.Threading.Tasks.Task.CompletedTask;
         }
     }
@@ -286,7 +292,11 @@ public partial class AgentTaskDispatchBaseGuardTests
         {
             if (!Fired && eventData.Context is AppDbContext db
                 && db.ChangeTracker.Entries<AgentTaskDispatchWarningIntent>().Any(e => e.Entity.TaskId == taskId))
-            { Fired = true; Cancel!.Cancel(); ct.ThrowIfCancellationRequested(); }
+            {
+                Fired = true;
+                if (Cancel is not null) { Cancel.Cancel(); ct.ThrowIfCancellationRequested(); }
+                throw new IOException("owned claim failure after SaveChanges");
+            }
             return ValueTask.FromResult(result);
         }
     }
