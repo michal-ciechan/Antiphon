@@ -11,6 +11,7 @@ using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.SessionRunner.Tests;
 using Antiphon.Tests.Application;
+using Antiphon.Tests.AgentTui;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -46,6 +47,7 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
     public Guid SessionId { get; private set; }
     public List<RunnerLaunchRequest> Launches { get; } = [];
     public bool DropNextGet { get; set; }
+    public string? OverrideGetJson { get; set; }
     public HerdrPaneSidecar Saved => HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(Logs, SessionId))!;
     public string[] Methods => Fake.Requests.Select(r => r.GetProperty("method").GetString()!).ToArray();
 
@@ -72,6 +74,8 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
             }
             if (DropNextGet && context.Request.Method == "GET" && context.Request.Path == $"/sessions/{SessionId}")
             { DropNextGet = false; await Runtime.GetAsync(SessionId, context.RequestAborted); context.Abort(); return; }
+            if (OverrideGetJson is not null && context.Request.Method == "GET" && context.Request.Path == $"/sessions/{SessionId}")
+            { context.Response.ContentType = "application/json"; await context.Response.WriteAsync(OverrideGetJson); return; }
             await next(context);
         });
         _app.MapSessionGetRoute(); _app.MapSessionLaunchRoute();
