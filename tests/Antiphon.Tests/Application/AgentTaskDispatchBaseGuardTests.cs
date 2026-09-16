@@ -26,6 +26,9 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public partial class AgentTaskDispatchBaseGuardTests
 {
+    [Before(Class)]
+    public static Task WarmSharedStoreAsync() => TestDbFixture.Lifecycle.EnsureReadyAsync();
+
     [Test]
     [Timeout(30_000)]
     public async Task a_sibling_land_in_flight_holds_until_the_base_contains_it(CancellationToken ct)
