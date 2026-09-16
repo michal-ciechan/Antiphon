@@ -48,13 +48,13 @@ public class HerdrLabelFollowLiveTests
                 tab.TabId.ShouldBe(tabId); tab.WorkspaceId.ShouldBe(ownedWorkspace); ws.WorkspaceId.ShouldBe(ownedWorkspace); tab.PaneCount.ShouldBe(1);
                 var pick = new HerdrNamedTabResolver(HerdrNamedTabResolver.HostLabelComparer).PickUniqueSinglePaneTab(
                     await client.TabListAsync(ownedWorkspace, CancellationToken.None), await client.PaneListAsync(ownedWorkspace, CancellationToken.None), ownedWorkspace, tab.Label);
-                pick!.Pane.PaneId.ShouldBe(created.Tab.InitialPaneId);
+                pick!.Pane.PaneId.ShouldBe(created.RootPane.PaneId);
                 if (stage == "after")
                 {
                     tab.Label.ShouldBe(label + "-tab"); ws.Label.ShouldBe(label + "-workspace");
                     await using var runtime = new SessionRunnerRuntime(Options.Create(new SessionRunnerSettings { SessionLogPath = root }), NullLogger<SessionRunnerRuntime>.Instance, client);
                     var result = await runtime.CheckHerdrPlacementAsync(new(Guid.NewGuid(), new("c462-unused", ws.Label, root, "fixture", TabLabel: tab.Label)), CancellationToken.None);
-                    result.TabId.ShouldBe(tabId); result.PaneId.ShouldBe(created.Tab.InitialPaneId);
+                    result.TabId.ShouldBe(tabId); result.PaneId.ShouldBe(created.RootPane.PaneId);
                 }
             }
         }

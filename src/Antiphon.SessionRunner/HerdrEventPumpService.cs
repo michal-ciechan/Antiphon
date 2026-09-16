@@ -209,7 +209,7 @@ public sealed class HerdrEventPumpService : BackgroundService
         _logger.LogDebug("Ignoring unhandled herdr event {Event}", evt.Name);
     }
 
-    private async Task BaselineSweepAsync(CancellationToken ct)
+    internal async Task BaselineSweepAsync(CancellationToken ct)
     {
         foreach (var pane in _runtime.LiveHerdrPanes())
         {
