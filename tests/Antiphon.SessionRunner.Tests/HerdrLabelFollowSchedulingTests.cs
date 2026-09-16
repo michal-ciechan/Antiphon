@@ -140,13 +140,16 @@ public class HerdrLabelFollowSchedulingTests
         await using var f = new HerdrLabelFollowFixture(); await f.StartAsync(); await f.FollowAsync();
         if (arm == "unreachable") f.Fake.FailMethod("pane.get", "unavailable");
         else f.Fake.SetPaneProcessInfo(f.Binding.PaneId, 4242, Array.Empty<(int, string)>());
-        (await f.ReadAsync()).ShouldBeNull(); f.GetterCount.ShouldBe(2);
+        // The coherence checks above issue their own tab.get; the cached GET must add none.
+        var getters = f.GetterCount;
+        (await f.ReadAsync()).ShouldBeNull(); f.GetterCount.ShouldBe(getters);
     }
 
     [Test][Arguments("pane")][Arguments("tab")][Arguments("workspace")]
     public async Task Cached_candidate_is_suppressed_after_move(string arm)
     {
         await using var f = new HerdrLabelFollowFixture(); await f.StartAsync(); await f.FollowAsync();
+        f.GetterCount.ShouldBe(2);
         if (arm == "tab")
         {
             var target = f.Fake.SeedTab(f.Workspace.WorkspaceId, "Moved and renamed", paneCount: 0);
@@ -159,7 +162,9 @@ public class HerdrLabelFollowSchedulingTests
             if (method != "pane.get") return json;
             var node = System.Text.Json.Nodes.JsonNode.Parse(json)!; node["pane"]![arm + "_id"] = "moved"; return node.ToJsonString();
         };
-        (await f.ReadAsync()).ShouldBeNull(); f.GetterCount.ShouldBe(2);
+        // The coherence checks above issue their own tab.get; the cached GET must add none.
+        var getters = f.GetterCount;
+        (await f.ReadAsync()).ShouldBeNull(); f.GetterCount.ShouldBe(getters);
     }
 
     [Test]
