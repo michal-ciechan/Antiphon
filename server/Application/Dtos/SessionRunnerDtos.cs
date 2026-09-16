@@ -32,7 +32,8 @@ public sealed record SessionRunnerSessionDto(
     // CARD-0213: HerdrPaneOrigins. Null for pty / older runners.
     string? HerdrOrigin = null,
     global::Antiphon.SessionRunner.Contracts.GrokRulesReceipt? GrokRulesReceipt = null,
-    DateTime? AcceptedStartedAt = null);
+    DateTime? AcceptedStartedAt = null,
+    global::Antiphon.SessionRunner.Contracts.HerdrLabelObservation? LabelObservation = null);
 
 public sealed record SessionRunnerBufferDto(
     Guid SessionId,

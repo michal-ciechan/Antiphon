@@ -19,6 +19,7 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
 
     public Func<ConflictException>? StartRefusal { get; set; }
     public Func<CancellationToken, Task<IReadOnlyList<SessionRunnerSessionDto>>>? ListOverride { get; set; }
+    public Func<Guid, CancellationToken, Task<SessionRunnerSessionDto>>? GetOverride { get; set; }
 
     public bool AdvertiseHerdr { get; set; } = true;
     public bool AdvertiseGrokRules { get; set; }
@@ -99,7 +100,7 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
         ListOverride?.Invoke(ct) ?? Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
 
     public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
-        Task.FromResult(new SessionRunnerSessionDto(
+        GetOverride?.Invoke(sessionId, ct) ?? Task.FromResult(new SessionRunnerSessionDto(
             sessionId, null, DateTime.UtcNow, "Exited", 0, AgentExitReason.KilledByRequest, 0, GrokRulesReceipt: RulesReceipt?.Invoke(sessionId)));
 
     public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) =>

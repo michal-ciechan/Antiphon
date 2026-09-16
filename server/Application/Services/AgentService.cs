@@ -571,7 +571,8 @@ public sealed class AgentService
         await EnsureWorkflowTemplateExistsAsync(request.DefaultWorkflowTemplateId, ct);
         await EnsureBoardExistsAsync(request.BoardId, ct);
 
-        await using var placementTransaction = await _db.Database.BeginTransactionAsync(ct);
+        await using var placementTransaction = _db.Database.CurrentTransaction is null
+            ? await _db.Database.BeginTransactionAsync(ct) : null;
         var agent = await HerdrPlacementLock.LoadAsync(_db, id, ct)
             ?? throw new NotFoundException(nameof(Agent), id);
 
@@ -681,7 +682,7 @@ public sealed class AgentService
                     .SetProperty(c => c.Status, c => c.Status == StandingSpecialistCandidateStatus.Quarantined
                         ? StandingSpecialistCandidateStatus.Quarantined : StandingSpecialistCandidateStatus.Unqualified), ct);
         await SaveChangesOrConflictAsync($"Agent '{agent.Name}' was modified by another operation.", ct);
-        await placementTransaction.CommitAsync(ct);
+        if (placementTransaction is not null) await placementTransaction.CommitAsync(ct);
         if (_pins is not null
             && !string.Equals(previousCwd, agent.WorkingDirectory, StringComparison.OrdinalIgnoreCase))
             await _pins.OnWorkingDirectoryChangedAsync(agent, previousCwd, ct);

@@ -315,10 +315,10 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
         return Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>(_runtime.List().Select(Map).ToList());
     }
 
-    public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct)
+    public async Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        return Task.FromResult(Map(_runtime.Get(sessionId)));
+        return Map(await _runtime.GetAsync(sessionId, ct));
     }
 
     public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct)
@@ -499,7 +499,8 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             dto.HerdrVerifiedAtUtc,
             dto.HerdrOrigin,
             dto.GrokRulesReceipt,
-            dto.AcceptedStartedAt);
+            dto.AcceptedStartedAt,
+            dto.LabelObservation is { Version: 1, Intent.Version: 1 } observation ? observation : null);
 
     private static AgentExitReason MapExitReason(string reason) =>
         Enum.TryParse<AgentExitReason>(reason, ignoreCase: true, out var parsed)
