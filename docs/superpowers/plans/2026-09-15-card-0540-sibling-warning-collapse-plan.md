@@ -461,7 +461,9 @@ then hand off ordinary Review; all deliberate PCs remain post-land work.
 
 [Code verification and exact evidence inventory](../../investigations/2026-09-16-card-0540-code-verification.md)
 records the implementation, every V/R ID and all pending PC variants. V-1..V-19
-pass. R-1/R-3/R-4 pass; R-2 has five exact-method baseline failures. R-5 is still
-being qualified. The stage brief selects Unit plus named affected integrations and
+pass. R-1/R-3/R-4 pass; R-2 has five exact-method baseline failures. R-5 has two
+passes and two exact-method baseline failures; the extra shared-fixture V23 case
+passes. Ordinary verification is complete. The stage brief selects Unit plus named affected integrations and
 native methods, superseding the full-assembly estimate above. No deliberate PC has
-run, and no feature-branch land or deployment has occurred.
+run, and no feature-branch land or deployment has occurred. The evidence artifact
+records the inherited reds and approval-review-blocked output-directory removal.
