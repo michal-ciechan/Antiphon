@@ -23,6 +23,7 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
     private readonly bool _codexTranscript;
     private readonly bool _claudeTranscript;
     private readonly bool _grokTranscript;
+    private readonly TimeProvider? _labelClock;
 
     /// <summary>
     /// CARD-0186 S4: production runner teardown detaches without killing. Tests that simulate a
@@ -101,11 +102,13 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
         bool claudeTranscript = false,
         HerdrClient? herdrClient = null,
         IProcessLivenessProbe? processLiveness = null,
-        bool grokTranscript = true)
+        bool grokTranscript = true,
+        TimeProvider? labelClock = null)
     {
         _codexTranscript = codexTranscript;
         _claudeTranscript = claudeTranscript;
         _grokTranscript = grokTranscript;
+        _labelClock = labelClock;
         _herdrClient = herdrClient;
         _processLiveness = processLiveness;
         _runnerSettings = new Antiphon.SessionRunner.SessionRunnerSettings
@@ -138,7 +141,7 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             Options.Create(_runnerSettings),
             NullLogger<SessionRunnerRuntime>.Instance,
             _herdrClient,
-            _processLiveness);
+            _processLiveness, timeProvider: _labelClock);
 
     public async Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
     {
