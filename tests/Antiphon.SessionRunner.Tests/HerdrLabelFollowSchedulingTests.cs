@@ -14,16 +14,27 @@ public class HerdrLabelFollowSchedulingTests
     public async Task Concurrent_triggers_share_one_persisted_attempt()
     {
         await using var f = new HerdrLabelFollowFixture(); await f.StartAsync();
-        var gate = f.Fake.GateMethod("tab.get"); var first = f.FollowAsync();
+        await using var runtime = await f.AdoptRuntimeAsync();
+        using var pump = new HerdrEventPumpService(runtime, f.Client, Options.Create(f.HerdrSettings), NullLogger<HerdrEventPumpService>.Instance, f.Clock);
+        await pump.StartAsync(CancellationToken.None);
+        await HerdrLabelFollowFixture.WaitAsync(() => f.Fake.SubscriptionRecords.Count == 1);
+        var gate = f.Fake.GateMethod("tab.get"); Task? baseline = null;
         try
         {
-            await HerdrLabelFollowFixture.WaitAsync(() => f.GetterCount == 1);
-            await Task.WhenAll(f.FollowAsync(), f.FollowAsync()).WaitAsync(TimeSpan.FromSeconds(2));
-            f.Saved.LabelFollow!.Sequence.ShouldBe(1);
+            f.Tab.Label = "Later"; f.Clock.Advance(TimeSpan.FromHours(1));
+            await HerdrLabelFollowFixture.WaitAsync(() => f.GetterCount == 3); // Timer owns this attempt.
+            baseline = pump.BaselineSweepAsync(CancellationToken.None);
+            (await runtime.GetAsync(f.Binding.SessionId, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2))).LabelObservation.ShouldBeNull();
+            f.Saved.LabelFollow!.Sequence.ShouldBe(2);
         }
-        finally { gate.Release(); await first; }
-        f.GetterCount.ShouldBe(2); // initial + final validation, exactly one batch
-        f.Saved.TabLabel.ShouldBe("New");
+        finally
+        {
+            gate.Release(); if (baseline is not null) await baseline;
+            await HerdrLabelFollowFixture.WaitAsync(() => f.Saved.TabLabel == "Later");
+            await pump.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        f.GetterCount.ShouldBe(4); // One baseline batch and one timer batch, despite all three callers.
+        f.Saved.TabLabel.ShouldBe("Later");
     }
 
     [Test]

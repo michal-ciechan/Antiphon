@@ -19,6 +19,36 @@ That is the whole benefit, and it is a real one. Everything else on this page is
 
 ## Source of truth
 
+### Following live placement labels (CARD-0462)
+
+A launched, cardless standing Herdr session can follow operator renames into its existing
+tab/workspace pins. The launch carries the physical owner, accepted generation, explicit nullable
+pins and an internal edit token. Attached, pooled and legacy sessions never infer this authority.
+Only the same positively verified pane/tab/workspace binding can supply labels. Tab matching uses
+the host comparer and requires exactly one reported and enumerated pane. Workspace following
+requires original unique-untagged selection and unique ordinal next-launch resolution; managed
+or foreign-tagged workspaces retain their workspace pin. A move never changes the destination.
+
+Single-session GET, event-pump baseline and an independent 60-second runner timer share one
+persisted attempt per generation. `SessionRunner:Herdr:LabelFollowCooldownMinutes` defaults to
+60 and `LabelFollowObservationTimeoutSeconds` to 10; both must be positive. Success, equality,
+refusal and failure consume the interval. A restart restores the interval and sequence but
+requires a new due validation before returning an actionable receipt. No provider turn is needed.
+
+The server's independent `HerdrLabelFollow` sweep defaults to `Enabled=true` and
+`SweepPeriodSeconds=60` (positive). It fetches outside the database lock, then reloads under the
+same owner-before-seat row lock as manual edits. Labels and the observation watermark commit
+together, conditional on current pointer, generation, physical owner and liveness. Explicit label
+edits, including same spelling and clear/repin, invalidate follow for that generation. Backend or
+board context changes also rotate the token. A lost response or database failure is recovered by
+polling the still-current snapshot; `AgentChanged` follows the commit only when a pin changed.
+
+Sidecar writes precede cached success. A path lock serializes ownership checks and publication
+with retirement/deletion; pane leases retain their workspace-key/workspace-ID/pane order.
+Existing exact-generation last-pane records are repaired using a durable marker without another
+Herdr collection. Following creates no furniture, sends no input and grants no exit authority.
+Activation requires both server and runner restart after the normal review/landing process.
+
 | Fact | Owner |
 |---|---|
 | The lane, its constraints, why `PtyHost` is `0` | `server/Domain/Enums/SessionBackend.cs` |
