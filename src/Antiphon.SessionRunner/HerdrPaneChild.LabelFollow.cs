@@ -19,6 +19,7 @@ internal sealed partial class HerdrPaneChild
     {
         lock (_labelSnapshotGate)
         {
+            using var fileLease = LockLabelFile();
             HerdrPaneSidecar.Retire(_settings.SessionLogPath, _sessionId, reason);
             _exited = true;
         }
@@ -28,10 +29,13 @@ internal sealed partial class HerdrPaneChild
     {
         lock (_labelSnapshotGate)
         {
+            using var fileLease = LockLabelFile();
             HerdrPaneSidecar.TryDelete(_settings.SessionLogPath, _sessionId);
             _freshLabelSequence = 0;
         }
     }
+
+    private IDisposable LockLabelFile() => HerdrSnapshotFile.Acquire(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, _sessionId));
 
     private Task LabelBoundaryAsync(string name, CancellationToken ct) =>
         LabelFollowBoundary?.Invoke(name, ct) ?? Task.CompletedTask;
@@ -79,6 +83,7 @@ internal sealed partial class HerdrPaneChild
                 // It is never the runtime's synchronous gate and is released before any await.
                 lock (_labelSnapshotGate)
                 {
+                    using var fileLease = LockLabelFile();
                     if (!OwnsLabelBinding(initial, stillOwned)) return;
                     claimed = initial with { LabelFollow = initial.LabelFollow with {
                         Sequence = checked(initial.LabelFollow.Sequence + 1), LastAttemptAtUtc = now,
@@ -93,7 +98,7 @@ internal sealed partial class HerdrPaneChild
             await using var workspaceLease = _coordinator is null ? null : await _coordinator.LockWorkspaceIdAsync(initial.WorkspaceId, token);
             await using var paneLease = _coordinator is null ? null : await _coordinator.LockPaneAsync(initial.PaneId, token);
             var current = _sidecar!;
-            lock (_labelSnapshotGate) { if (!OwnsLabelBinding(current, stillOwned)) return; }
+            lock (_labelSnapshotGate) { using var fileLease = LockLabelFile(); if (!OwnsLabelBinding(current, stillOwned)) return; }
             await RepairLastPaneAsync(current, stillOwned, token);
             if (!due) return;
             current = _sidecar!;
@@ -110,12 +115,14 @@ internal sealed partial class HerdrPaneChild
                 LabelFollow = current.LabelFollow with { Observation = observation, LastPaneRepairPending = candidate.ResultCode == "validated" } };
             lock (_labelSnapshotGate)
             {
+                using var fileLease = LockLabelFile();
                 if (!OwnsLabelBinding(current, stillOwned)) return;
                 result.SaveAtomic(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, result.SessionId), BeforeLabelFileReplace);
             }
             await LabelBoundaryAsync("after-result-file", token);
             lock (_labelSnapshotGate)
             {
+                using var fileLease = LockLabelFile();
                 if (!OwnsLabelBinding(result, stillOwned)) return;
                 _sidecar = result;
                 _freshLabelSequence = result.LabelFollow.Sequence;
@@ -129,6 +136,7 @@ internal sealed partial class HerdrPaneChild
             // No exit authority. The durable claim has already invalidated the previous candidate.
             lock (_labelSnapshotGate)
             {
+                using var fileLease = LockLabelFile();
                 var current = _sidecar;
                 var saved = HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, _sessionId));
                 if (claimed is not null && current?.LabelFollow?.Sequence == claimed.LabelFollow!.Sequence
@@ -157,6 +165,7 @@ internal sealed partial class HerdrPaneChild
         await LabelBoundaryAsync("before-repair", ct);
         lock (_labelSnapshotGate)
         {
+            using var fileLease = LockLabelFile();
             if (!OwnsLabelBinding(current, stillOwned)) return;
             var path = HerdrLastPane.PathFor(_settings.SessionLogPath, current.SessionId);
             var last = HerdrLastPane.TryLoad(path);
@@ -167,6 +176,7 @@ internal sealed partial class HerdrPaneChild
         await LabelBoundaryAsync("after-repair-file", ct);
         lock (_labelSnapshotGate)
         {
+            using var fileLease = LockLabelFile();
             if (OwnsLabelBinding(current, stillOwned))
                 SaveLabelState(current with { LabelFollow = current.LabelFollow with { LastPaneRepairPending = false } });
         }
@@ -193,6 +203,7 @@ internal sealed partial class HerdrPaneChild
             var process = await _client.PaneProcessInfoAsync(current.PaneId, linked.Token);
             lock (_labelSnapshotGate)
             {
+                using var fileLease = LockLabelFile();
                 if (!OwnsLabelBinding(current, stillOwned) || !HerdrLabelObserver.SamePane(current, pane)
                     || current.ChildPid is not > 0 || process.PaneId != current.PaneId
                     || process.ForegroundProcesses?.Any(p => p.Pid == current.ChildPid) != true) return null;
