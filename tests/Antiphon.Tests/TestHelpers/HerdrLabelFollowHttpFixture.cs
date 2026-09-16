@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -34,6 +35,7 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
     private WebApplication _app = null!;
     private readonly SemaphoreSlim _monitorGate = new(1, 1);
     private bool _monitorHeld;
+    private bool _abandonMonitors;
     private readonly List<IAgentProtocolAdapter> _adapters = [];
     public string Root { get; } = Path.Combine(Path.GetTempPath(), "antiphon-c462-flow-" + Guid.NewGuid().ToString("N"));
     public string Logs => Path.Combine(Root, "logs");
@@ -45,7 +47,8 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
     public ISessionRunnerClient Client { get; private set; } = null!;
     public AgentControlServiceIntegrationTests.Harness Harness { get; private set; } = null!;
     public FakeHerdrServer.WorkspaceState Workspace { get; private set; } = null!;
-    public FakeHerdrServer.TabState Tab => Workspace.Tabs[0];
+    public FakeHerdrServer.TabState Tab => SessionId == Guid.Empty ? Workspace.Tabs[0]
+        : Fake.Workspaces.SelectMany(w => w.Tabs).Single(t => t.TabId == Saved.TabId);
     public Guid AgentId { get; private set; }
     public Guid SessionId { get; private set; }
     public List<RunnerLaunchRequest> Launches { get; } = [];
@@ -53,16 +56,40 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
     public string? OverrideGetJson { get; set; }
     public HerdrPaneSidecar Saved => HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(Logs, SessionId))!;
     public string[] Methods => Fake.Requests.Select(r => r.GetProperty("method").GetString()!).ToArray();
+    public System.Collections.Concurrent.ConcurrentQueue<Guid> FollowGets { get; } = new();
+    public HerdrLabelFollowServerFactory? Server { get; private set; }
+    public HttpClient? DetailClient { get; private set; }
 
-    public async Task StartAsync(bool workspacePin = true)
+    public async Task StartAsync(bool workspacePin = true, bool tabPin = true, bool managedWorkspace = false)
     {
         Directory.CreateDirectory(Root);
         _store = await TestDbFixture.CreateIsolatedSchemaAsync();
         Workspace = Fake.SeedWorkspace("w1", "Old workspace"); Tab.Label = "Old";
         Fake.Start(); await Fake.WaitUntilListeningAsync();
         Herdr = new(new HerdrSettings { Enabled = true, Session = Fake.Session });
+        await StartRunnerAsync();
+        BuildHarness();
+        var agent = await Harness.AgentService.CreateAsync(new("follow", Root, SessionBackend: SessionBackend.Herdr,
+            HerdrTabLabel: tabPin ? "Old" : null, HerdrWorkspaceLabel: workspacePin ? "Old workspace" : null, RemoteControlEnabled: false), CancellationToken.None);
+        AgentId = agent.Id;
+        if (!workspacePin || managedWorkspace)
+        {
+            await using var db = Open(); var row = await db.Agents.SingleAsync(a => a.Id == AgentId);
+            var session = new Antiphon.Server.Domain.Entities.AgentSession { StandingAgentId = AgentId, SessionBackend = SessionBackend.Herdr, Cwd = Root };
+            var placement = await new HerdrLaunchContextResolver(db).ResolveAsync(session, row, "follow", CancellationToken.None);
+            Workspace.Label = placement.WorkspaceLabel;
+            Workspace.Tokens["antiphon-ws"] = placement.WorkspaceKey;
+        }
+        await LaunchAsync();
+        Saved.LabelFollow!.WorkspaceSelection.ShouldBe(!workspacePin || managedWorkspace
+            ? HerdrWorkspaceSelection.ManagedToken : HerdrWorkspaceSelection.UniqueUntaggedLabel);
+    }
+
+    private async Task StartRunnerAsync(bool adopt = false)
+    {
         Runtime = new(Options.Create(new Antiphon.SessionRunner.SessionRunnerSettings { SessionLogPath = Logs }),
             NullLogger<SessionRunnerRuntime>.Instance, Herdr, new DenyProcesses(), timeProvider: Clock);
+        if (adopt) await Runtime.AdoptOrphanedHostsAsync(new DenyProcesses(), CancellationToken.None);
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
         builder.Logging.ClearProviders(); builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, 0));
         builder.Services.AddSingleton(Runtime);
@@ -74,6 +101,9 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
             if (monitor) await _monitorGate.WaitAsync(context.RequestAborted);
             try
             {
+            if (monitor && _abandonMonitors) { context.Abort(); return; }
+            if (!monitor && context.Request.Method == "GET"
+                && Guid.TryParse(context.Request.Path.Value?.Split('/').Last(), out var readId)) FollowGets.Enqueue(readId);
             if (context.Request.Method == "POST" && context.Request.Path == "/sessions")
             {
                 context.Request.EnableBuffering();
@@ -105,6 +135,10 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
         services.AddHttpClient<ISessionRunnerClient, SessionRunnerHttpClient>(http => http.DefaultRequestHeaders.Add("X-C462-Reader", "follow"));
         services.AddSingleton(Options.Create(new Antiphon.Server.Application.Settings.SessionRunnerSettings { BaseUrl = _app.Urls.Single() }));
         _wire = services.BuildServiceProvider(); Client = _wire.GetRequiredService<ISessionRunnerClient>();
+    }
+
+    private void BuildHarness()
+    {
         var httpFactory = _wire.GetRequiredService<IHttpClientFactory>();
         var adapterClient = new SessionRunnerHttpClient(httpFactory.CreateClient(), httpFactory,
             Options.Create(new Antiphon.Server.Application.Settings.SessionRunnerSettings { BaseUrl = _app.Urls.Single() }));
@@ -119,17 +153,44 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
                 s.AddSingleton(Client); s.AddSingleton(Options.Create(new SupervisionSettings()));
                 s.AddSingleton<IAgentProtocolAdapterFactory>(sp => new RecordingFactory(new AgentProtocolAdapterFactory(sp.GetRequiredService<IOptions<AgentRegistrySettings>>(), adapterClient, sp.GetRequiredService<IOptions<SupervisionSettings>>()), _adapters));
             });
-        var agent = await Harness.AgentService.CreateAsync(new("follow", Root, SessionBackend: SessionBackend.Herdr,
-            HerdrTabLabel: "Old", HerdrWorkspaceLabel: workspacePin ? "Old workspace" : null, RemoteControlEnabled: false), CancellationToken.None);
-        AgentId = agent.Id;
-        if (!workspacePin)
+    }
+
+    public async Task RecreateAsync(bool runner = false)
+    {
+        await StopServerAsync();
+        foreach (var db in _contexts) await db.DisposeAsync(); _contexts.Clear();
+        // Disconnect and join the old server's parked HTTP monitors without reporting a child exit.
+        _abandonMonitors = true; ResumeMonitor();
+        foreach (var adapter in _adapters) await adapter.Exited.WaitAsync(TimeSpan.FromSeconds(2));
+        _adapters.Clear(); await Harness.DisposeAsync(); _abandonMonitors = false;
+        if (runner)
         {
-            // A tab-only pin uses the project's effective workspace label, not an explicit pin.
-            await using var db = Open(); var row = await db.Agents.SingleAsync(a => a.Id == AgentId);
-            var session = new Antiphon.Server.Domain.Entities.AgentSession { StandingAgentId = AgentId, SessionBackend = SessionBackend.Herdr, Cwd = Root };
-            Workspace.Label = (await new HerdrLaunchContextResolver(db).ResolveAsync(session, row, "follow", CancellationToken.None)).WorkspaceLabel;
+            await _app.StopAsync(); await _app.DisposeAsync(); await Runtime.DisposeAsync(); await _wire.DisposeAsync();
+            await StartRunnerAsync(adopt: true);
+            Runtime.List().Single(s => s.SessionId == SessionId).Status.ShouldBe("Running");
         }
-        await LaunchAsync();
+        BuildHarness();
+        await StartServerAsync(enabled: false);
+    }
+
+    public async Task StartServerAsync(bool enabled)
+    {
+        Server.ShouldBeNull();
+        Server = new(_store.ConnectionString, Client, Bus, Clock, enabled);
+        DetailClient = Server.CreateClient();
+    }
+
+    public async Task StopServerAsync()
+    {
+        DetailClient?.Dispose(); DetailClient = null;
+        if (Server is not null) { await Server.DisposeAsync(); Server = null; }
+    }
+
+    public async Task<string?> DetailLabelAsync(string name)
+    {
+        using var response = await DetailClient!.GetAsync($"/api/agents/{AgentId}"); response.EnsureSuccessStatusCode();
+        var json = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+        return json.GetProperty(name).GetString();
     }
 
     public async Task LaunchAsync()
@@ -162,6 +223,7 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
     { var allowed = new[] { "pane.get", "pane.process_info", "pane.read", "tab.get", "workspace.get", "tab.list", "pane.list", "workspace.list", "ping", "events.subscribe" }; Methods.Skip(start).ShouldAllBe(m => allowed.Contains(m)); }
     public async ValueTask DisposeAsync()
     {
+        await StopServerAsync();
         OverrideGetJson = null; DropNextGet = false;
         if (Runtime is not null)
         {
