@@ -66,7 +66,8 @@ public sealed record HerdrLaunchOptions(
     Guid? ReusePaneOfSessionId = null,
     // CARD-0384: optional dedicated tab label. Null/absent takes the last-pane → allocator path.
     // An old server in front of a new runner omits the field and gets unpinned placement.
-    string? TabLabel = null);
+    string? TabLabel = null,
+    HerdrLabelFollowIntent? LabelFollowIntent = null);
 
 /// <summary>CARD-0384: read-only named-tab placement probe. No exe/env; IDs are diagnostic only.</summary>
 public sealed record HerdrPlacementCheckRequest(
@@ -224,7 +225,8 @@ public sealed record RunnerSessionDto(
     string? HerdrOrigin = null,
     GrokRulesReceipt? GrokRulesReceipt = null,
     VerificationExecutionBinding? VerificationBinding = null,
-    DateTime? AcceptedStartedAt = null);
+    DateTime? AcceptedStartedAt = null,
+    HerdrLabelObservation? LabelObservation = null);
 
 public sealed record RunnerBufferDto(
     Guid SessionId,
