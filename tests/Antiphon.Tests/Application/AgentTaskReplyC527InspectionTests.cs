@@ -35,7 +35,10 @@ public partial class AgentTaskReplyIntegrationTests
         var recoveredBeforeFailure = false;
         spy.BeforeRun = args =>
         {
-            if (args.Any(a => a.StartsWith("--grep=antiphon-settlement:", StringComparison.Ordinal)))
+            // Recovery must inspect the original commit before consulting current state;
+            // the candidate grep no longer assumes a repository trailer separator.
+            if (args[0] == "log" && args.Contains(committed)
+                && args.Any(a => a.StartsWith("--format=%(trailers:", StringComparison.Ordinal)))
                 recoveredBeforeFailure = true;
             return Task.CompletedTask;
         };
