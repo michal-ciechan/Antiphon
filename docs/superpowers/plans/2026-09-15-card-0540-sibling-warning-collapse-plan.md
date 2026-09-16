@@ -456,3 +456,12 @@ Missing native dispatch setup is assigned to S3 with explicit receipt and fault
 boundaries. No test/build/PC was run during this Plan task. Document checks alone
 do not establish product behavior. Code must implement/run the V/R inventory,
 then hand off ordinary Review; all deliberate PCs remain post-land work.
+
+### Code execution checkpoint (2026-09-16)
+
+[Code verification and exact evidence inventory](../../investigations/2026-09-16-card-0540-code-verification.md)
+records the implementation, every V/R ID and all pending PC variants. V-1..V-19
+pass. R-1/R-3/R-4 pass; R-2 has five exact-method baseline failures. R-5 is still
+being qualified. The stage brief selects Unit plus named affected integrations and
+native methods, superseding the full-assembly estimate above. No deliberate PC has
+run, and no feature-branch land or deployment has occurred.
