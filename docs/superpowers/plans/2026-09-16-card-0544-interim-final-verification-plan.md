@@ -3,14 +3,22 @@
 Date: 2026-09-16. Stage: Plan. Source inspected: `2c1a7a08613dd25152dff9586d242ffbb214b56c`.
 Separate TestDesign follows this plan; this dispatch does not fold that stage.
 
+Current disposition (Plan task 39855344, 2026-09-16): TD-F1 reuses the existing
+CARD-0481 notification outbox/recovery owner, with a completion-specific payload
+contract. TD-F2 is explicitly deferred to **CARD-0545**, the same-board CARD-0487
+S4 follow-up. See [the resolution appendix](#plan-resolution-of-td-f1td-f2), which
+supersedes conflicting scope/handoff statements below. Return to TestDesign;
+the existing verification appendix is not yet a Code-ready specification.
+
 Introduce an explicitly requested, per-card/per-role interim verification mode for
 repair work. Preserve full ordinary verification for the initial baseline and final
 pre-land review. Complete and qualify the existing Windmill backstop before allowing
 interim dispatches. An interim pass means the selected checks passed; it never means
 the full regression obligation was discharged.
 
-This is a design artifact, not activation. No production policy, schedule, card,
-service, source code or test behavior is changed by this commit. The choices below
+This is a design artifact, not activation. No production policy, schedule,
+service, source code or test behavior is changed. The resolution dispatch created
+the required CARD-0545 tracking card without spawning work. The choices below
 are selected within the commissioned brief, including its authorization to choose
 the scheduling approach; no unresolved product decision blocks TestDesign.
 
@@ -304,6 +312,36 @@ rules, especially `RUN THE FULL SUITE ONCE, THEN TARGET`, to defer to the explic
 profile while preserving full-default behavior. Keep source files ASCII and stage
 bundles within the existing length limit. No new message-delivery channel is needed.
 
+### D-9: ordinary completion recovery reuses the CARD-0481 outbox
+
+For new version-1 Code/Review profiles, commit a `Completion` notification with
+the settlement event, raw result and stage outcome. Reuse
+`AgentTaskLandNotificationService` and its hosted scanner, unique queue key and
+recipient proof. Preserve the semantic completion snapshot separately from its
+authorized raw/distilled/pointer rendering; the resolution appendix specifies
+the transaction, identity and recovery contract.
+
+**Reason:** this machinery already survives the exact lost-insert/lost-ACK cuts
+and validates destination/digest even after the caller stops. **Rejected:** a
+second completion outbox/worker, broadening the SourceLanding-only Result scan,
+or treating `CompletionNoteQueuedAt`, polling or Sent as recipient receipt.
+
+### D-10: TD-F2 is deferred with an activation-blocking tracking card
+
+CARD-0545 owns the independent watchdog, production recipient reader and full
+CARD-0487 S4 qualification. CARD-0544 owns dormant policy/delivery/readiness code
+and retains S6; accepted CARD-0545 evidence is required before S6 can start.
+The detailed ownership and guard transfer below are required work, not exclusions
+from the overall operating policy.
+
+**Reason:** the checked-in health wrapper and receipt-file seam do not supply an
+independent Windmill outage path or a production recipient reader. Selecting and
+qualifying an external host/transport is a separate operational prerequisite.
+**Rejected:** self-monitoring through Windmill's own jobs/on_failure, a server2
+tag as proof of independence, a fabricated receipt file, or enabling Interim
+while qualification remains deferred. No new default is awaiting human choice;
+the brief explicitly permits this tracked deferral.
+
 ## Contract and lifecycle summary
 
 | Situation | Ordinary execution | Allowed continuation |
@@ -392,6 +430,10 @@ cannot prove settlement or landing enforcement.
 
 ### S4: author selection/reporting contracts and readiness fixes
 
+D-10 amendment: the independent watchdog/recipient-adapter portion below belongs
+to CARD-0545. CARD-0544 retains the clock, identity and readiness-consumer changes;
+the resolution appendix gives the exact split and keeps activation disabled.
+
 Files: `server/Bundles/{stage-code,stage-review,stage-test-design,delegate-basics,orchestrator}.md`,
 `stage-plan.md` only if needed for folded designs;
 `docs/{testing-and-build,orchestration-loop,agent-card-lifecycle,ops-http,antiphon-api}.md`;
@@ -413,6 +455,10 @@ Code -> Review). Verify behavior through dispatch/settlement tests, not solely p
 checks. Expand run/report harness selection only if shared nightly helpers change.
 
 ### S5: deploy and qualify the existing nightly backstop
+
+D-10 amendment: **CARD-0545** is the commissioned-work tracking owner for S5.
+It is Backlog, not an authorized running deployment. S5 remains an acceptance
+dependency of CARD-0544 S6 and operating-policy completion.
 
 Commissioned operational slice: deploy/read back the two Windmill definitions, execute
 CARD-0487 S4 acceptance, publish its qualification artifact and trusted readiness
@@ -508,6 +554,11 @@ remains FullOnly. Code implements the tests and runs ordinary V/R; separate
 ordinary Review judges the evidence before land; sourced Mutation runs the PCs
 against the confirmed landed SHA. Neither dormant deployment nor offline monitor
 tests complete S5/S6.
+
+This is the retained TestDesign inventory at 5d91dca2. The later D-9/D-10
+resolution assigns TD-F2 production work and 13 controls to CARD-0545 and adds
+ordinary-completion guards. Its scope/cost counts must be revised by the next
+TestDesign before Code; the historical rows below are not a qualification waiver.
 
 ### Inspection
 
@@ -1223,5 +1274,250 @@ controls and recalculate inventory/cost if the chosen fix adds guards.
 
 --- next stage ---
 next: plan
-handoff: Resolve TD-F1 ordinary Code/Review completion recovery before queue insertion and TD-F2 off-host Windmill failure/recovery plus recipient-readback ownership; retain the appended V/R and 101 guard mappings, then return to TestDesign for seven executable PC seams before Code.
+handoff: Historical TestDesign handoff at 5d91dca2; resolved in the following Plan appendix. Its seven seam-dependent controls must receive the dispositions below before Code.
+artifact: docs/superpowers/plans/2026-09-16-card-0544-interim-final-verification-plan.md
+
+## Plan resolution of TD-F1/TD-F2
+
+2026-09-16, Plan task **39855344**, inspected checkout **5d91dca2**. The worktree
+already had the full TestDesign appendix at its tip; no reset was necessary.
+This resolution changes the delivery design and assigns deferred scope. It does
+not claim that implementation, ordinary verification, PCs or qualification ran.
+The original V/R and G/PC IDs remain an audit inventory; the ownership table below
+overrides their earlier assumption that all 101 belong to one implementation.
+
+### Resolution ground truth
+
+| Assumption/question | Code or observed record | Decision/consequence |
+|---|---|---|
+| CARD-0481 centralized all task settlement recovery. | Its F2-F4 work covers watchdog `DeliveryFailure` obligations through `AgentTaskLandNotifications`. `AgentTaskReplyService.PersistDeliverThenReleaseAsync` still saves and then calls `DeliverToParentAsync`, whose enqueue exception is caught. | Reuse that outbox, but add the ordinary completion producer; this is a required implementation change, not an already-fixed gap. |
+| A missing ordinary completion can be found by the completion scanner. | `CompletionNoteWorkHostedService.RecoverMissingSourcedCompletionNotesAsync` requires `SourceLandingOperationId != null`; ordinary tasks do not qualify. Its other scan only sees existing queue rows. | The new producer commits an obligation; the existing notification scanner discovers it even when no queue row exists. Do not widen the sourced scan. |
+| A task/root stamp can identify the owed round. | `CompletionNoteStamp` is enqueue/check suppression. `AgentTaskCheckService.HasCompletionNoteAsync` accepts a root-level note or stamp, including an earlier task. | Use the exact settlement event and notification ID for delivery deduplication; root/stamp is never completion receipt. |
+| Adding one enum member is all that reuse requires. | `AgentTaskLandNotificationService.ReconcileAsync` matches the immutable `Body`. Queue distillation, polled shrinking and hold cleanup currently exclude every `SourceLandNotificationId`; spill changes queue Body before typing. | Add a kind-specific completion rendering contract. Do not silently disable existing distillation or relax receipt for land/failure notifications. |
+| Recovery can ignore callers that have stopped. | CARD-0481 F3/F4 rediscover the keyed row and validate destination/digest before gating new input on Stopped/Failed. | Preserve that order; existing receipt can confirm after the caller stops. No restart/replacement caller is authorized. |
+| Windmill's health task detects Windmill loss independently. | `antiphon-nightly-health.json` executes only a Windows SSH command; its schedule has `on_failure: null`. Production notification enqueue also calls Windmill. | A failure in Windmill cannot reliably launch its own detector or send through that queue. CARD-0545 must provide an independent watchdog and transport. |
+| Nightly receipt is a production recipient readback. | `Get-NightlyRecipientView` reads `notification-receipts.json` plus a test-only seam. `Test-NightlyNotificationReceipt` compares notification/run IDs only. `Invoke-AntiphonNightlyHealth` produces failures but no healthy-transition recovery event. | Receipt provenance, destination, whole content, attempt floor and recovery producer all belong to the deferred adapter work. |
+| CARD-0487 Done proves S4. | Live card read and thread on 2026-09-16 show Done; its close revision records shipped infrastructure and unfinished follow-up. Board title census found no open nightly qualification owner. | Created same-board **CARD-0545**, `b1c1ed0b-2608-40e7-99f5-f6587e9ed416`, Backlog. Preserve CARD-0487's historical closure; no duplicate reopen or task spawn. |
+
+Source anchors: `server/Application/Services/{AgentTaskReplyService,
+AgentTaskLandNotificationService,CompletionNoteStamp,AgentTaskCheckService,
+SessionMessageQueueService,OutputDistillationService,DataRetentionService}.cs`,
+`server/Infrastructure/Orchestration/{CompletionNoteWorkHostedService,
+AgentTaskLandNotificationHostedService}.cs`, `server/Domain/Entities/
+AgentTaskLandNotification.cs`, `server/Domain/Enums/LandingEnums.cs`, and
+`scripts/lib/nightly-health.ps1`. Existing unique indexes are on notification
+`SourceEventId` and queue `SourceLandNotificationId` in `AppDbContext`.
+
+### TD-F1: durable obligation and one recovery owner
+
+**Applicability.** New Code and Review tasks with the D-1/D-2 profile version 1
+use this path for each terminal reported settlement, whether Interim or Final,
+Succeeded or Failed (and a reported Canceled settlement where that path exists).
+Nonterminal question/Blocked notes keep their current handling. Session delivery
+requires `ReplyTo=Session` and the snapshotted parent. Non-session replies owe no
+session prompt. Do not backfill historical ordinary results or change SourceLanding,
+specialist, watchdog-failure or landing producers. If another producer already
+owns this exact settlement event, it cannot also mint a Completion obligation.
+
+**Atomic producer.** Append `Completion` to `LandNotificationKind`; keep the table
+and worker names for compatibility. A small concrete `TaskCompletionNotification`
+helper composes the typed snapshot and note; it is not a new transport or worker.
+Have reply settlement retain the exact `Completed`/`Failed` event object and its ID
+(not the latest event queried afterward: merge-back may add another Completed).
+Save the terminal task/result, that event, the StageOutcome where applicable, and
+one notification in the same database transaction. Resolve optional display facts
+before this write; do not hold a transaction over Git, native operations or model work.
+Audit earlier helper saves so a terminal task/outcome cannot escape before its
+obligation. The existing status-only `TaskAlreadyPersistedAsync` fallback must verify
+the exact committed settlement/event/obligation identity before continuing delivery.
+An intent-insert fault rolls back the settlement; notification failure after commit
+does not undo its result or strand release ownership.
+
+Add nullable, versioned `CompletionSnapshotJson` and `CompletionDeliveryJson` to
+`AgentTaskLandNotification`, with a CLI-generated migration/model snapshot. Other
+kinds leave both null and keep their existing immutable-Body rule.
+
+- `CompletionSnapshotJson` is immutable per settlement: task/root/event/outcome
+  IDs, parent/reply target, exact raw result plus its SHA-256, existing normalized
+  `DelegationNoteDigest`, profile version/round, completed scope, subject/baseline,
+  selected artifact revision, pending-final obligation, normalized next/handoff,
+  note header, raw fallback body, report-file identity and deliverable coordinates.
+  Include the already-computed warning/git/workspace bits; recovery does not infer
+  them from current card settings, new task Result, current HEAD or a later outcome.
+  Store exact raw bytes/text even if no durable report file was available. The
+  notification `Body` is the initial raw fallback; `ContentDigest` for this kind
+  is the existing normalized raw-result digest, distinct from a rendered-body hash.
+- `CompletionDeliveryJson` records the authorized rendering selected for the
+  queue attempt: rendering kind, logical note text, exact submitted wire text and
+  hash, queue ID(s) for an existing batch, and any spill path/content hash. It is
+  absent until the first attempt is committed. It then freezes the payload for
+  replay; the existing queue owns attempt floors/generation and late confirmation.
+  Rendered text and immutable raw-result identity are different facts.
+
+Identity is `(SourceEventId, notification.Id, task.Id, ParentSessionId,
+raw-result digest)`. The unique `SourceEventId` prevents two obligations for one
+settlement; unique `SourceLandNotificationId` prevents two queue rows for that
+obligation. A later explicit Continue/Retry and new settlement has a new event,
+even if the result text happens to be equal. Re-entry of the same settlement uses
+its existing event/obligation. Never use RootTaskId alone as deduplication authority.
+
+**Immediate and restart path.** After the transaction commits, request
+`AgentTaskLandNotificationService.ReconcileAsync(notificationId)` using a fresh
+scope, then publish/release under existing ownership rules. This is the same path
+used by `AgentTaskLandNotificationHostedService` on boot and every scan; optional
+checks and the output-distiller worker are not recovery prerequisites. It enqueues
+WhenIdle with `SourceLandNotificationId=notification.Id`, `SourceTaskId=task.Id`,
+the raw digest, snapshotted header and existing `task:<root>` conversation key.
+On insert/lost-ACK/DB-link failure the scanner reuses that same identity. It repairs
+the completion enqueue stamp just as DeliveryFailure does, but that stamp cannot
+stop reconciliation of an unresolved obligation. The sourced-only scan remains
+unchanged and cannot issue a second note for this producer.
+
+Keep CARD-0481's order: discover the existing keyed row; validate destination and
+digest; link it; then gate *new* insertion on destination availability. Catch up
+the original destination transcript even after Stopped/Failed. Wrong destination,
+wrong digest, missing previously linked row or missing destination remains unresolved
+with the existing retry/attention state. Do not invent a new caller or replacement
+attempted row. Preserve retry backoff, per-row scanner isolation and queue retention.
+
+**Raw, distilled, polled and spilled notes.** Kind-aware checks allow only
+`Completion` keyed notes through the existing output-distillation and polled-shrink
+paths; Outcome/Conflict/DispatchBase/DeliveryFailure remain excluded. Keep the
+finite original distillation deadline, header, canonical report storage, gates and
+raw fallback. Crash recovery must not restart the deadline or commission another
+model call: recover an existing accepted rendering, otherwise deliver raw after
+the original hold expires. A resumed task with a different result cannot lend its
+new report to the old notification's distiller.
+
+The queue remains the sole renderer/typer. Before its first typed attempt, validate
+the rendering against the immutable snapshot, and persist `CompletionDeliveryJson`
+with the queue attempt/floor in one transaction under the existing session/row
+locks. Distillation/poll shrinking can update a pending, never-attempted row only;
+neither changes immutable profile/evidence/header fields. After a delivery claim,
+reject late replacements. For existing size-aware batching, each member stores
+its logical note and the same composed wire body/membership; for a spill, preserve
+the whole composed content and hash behind the exact pointer. A file write can
+precede the DB attempt, but failed publication leaves zero typing. Retry uses the
+committed rendering and existing late-confirm brake, not fresh recomposition.
+
+Receipt requires the complete committed wire UserPrompt in the snapshotted caller
+after the queue attempt floor, with existing generation safeguards. For a pointer,
+also validate the exact referenced content/hash in the recipient workspace. For a
+distilled/polled note, receipt proves that exact summary/pointer and its mandatory
+header reached the caller; it does not prove the full report was read. A durable
+report reference must still resolve to the snapshot's raw result; if the original
+file is unavailable, regenerate it from that snapshot through the existing report
+store before making a new pointer, never point at a different current task Result.
+Unavailable required file evidence leaves delivery unresolved. `ReconcileAsync`
+checks this completion rendering; all other kinds still match immutable `Body`.
+
+Never mark Confirmed from queue insertion, Sent, a task API poll, a screen redraw,
+an ID-only prompt or a distiller ledger. Once confirmed, retain its receipt/event
+identity so retention cannot resurrect the obligation. Preserve unresolved queue,
+transcript, snapshot and referenced report/spill evidence until receipt or an
+explicit existing disposition; no new generic TTL or automatic cancellation.
+
+### TD-F2: deferred owner and qualification boundary
+
+**Tracking card:** Antiphon **CARD-0545**
+(`b1c1ed0b-2608-40e7-99f5-f6587e9ed416`), created and read back in this dispatch,
+links CARD-0487 S4 and this plan. It owns the following required work:
+
+| Responsibility | Accountable owner and acceptance |
+|---|---|
+| Detect Windmill/Windows outage | CARD-0545 Plan/Code supplies an independently supervised watchdog outside the Windows execution host and Windmill scheduler/worker/control-plane failure domain. It actively checks API reachability and expected job/schedule progress. Its timer, durable ledger and alert transport do not depend on the failing Windmill queue or Windows SSH hop. Its Plan selects concrete host/component paths from actual available infrastructure; none is claimed installed here. |
+| Persist/recover failure and recovery delivery | That watchdog owns off-host intent before enqueue, stable outage/notification IDs, retry after lost ACK and restart, and a distinct recovery event linked to the outage. An outage before a run uses due-date/outage identity; it never invents a successful native run. An on_failure hook may supplement but cannot be the independent detector. |
+| Confirm recipient readback | CARD-0545 Code supplies a production reader of the authorized recipient's own channel/message view or complete session UserPrompt. It validates destination, notification/run-or-outage identity, full content and attempt floor, then imports evidence. Local receipt JSON is a cache of this evidence, never its source. The sender or Windmill job cannot self-certify receipt. |
+| Qualify and own morning triage | Its explicitly commissioned Deploy owner records the actual independent host/supervisor/store/transport, authorized destination, reader, credential references and named morning operator. The authorized operator acknowledges the real qualification result. Machine readback establishes receipt; human understanding is not inferred. Missing host/reader/authorization leaves the card pending. |
+
+This is a deliberate **deferred-with-tracking-card** resolution, not a claim that
+TD-F2's production adapter is selected or executable in CARD-0544. CARD-0545 starts
+with Plan/TestDesign for those concrete components, then Code/Review/land and an
+authorized Deploy acceptance. This dispatch creates no schedule, launches no agent,
+reads no credential and sends no test notification.
+
+CARD-0545 inherits V-11/S5: manual full unattended green, subsequent real scheduled
+green, complete suite and source identities, independent Windows-hop **and Windmill**
+outage/recovery tests, busy/eligible recipients and each DL-5 persistence cut. It
+must add detection of a stopped independent watchdog (missing heartbeat/freshness)
+to its own guard inventory; a healthy last value cannot qualify forever. Deliberate
+controls remain local inherited SourceLanding execution. Qualification records
+`docs/investigations/<date>-card-0487-nightly-qualification.md`, its card ID, the
+CARD-0544 link and actual recipient evidence; only then may it publish D-7's receipt.
+
+CARD-0544 S1-S4 can ship dormant. Keep `InterimVerificationSettings.Enabled=false`,
+cards FullOnly, and all existing final-review obligations until CARD-0545 acceptance
+and the explicit S6 activation. The readiness reader's qualification contract must
+include accepted independent-Windmill outage/recovery and recipient evidence, not
+only run/job IDs. Offline fixture values test that contract; they are not a production
+receipt. S6 and CARD-0544 operating-policy completion remain pending behind CARD-0545.
+
+### Slice amendments: files and tests
+
+These amend S1-S5; do not add an automatic stage or a second delivery worker.
+
+| Slice | Files | Required ordinary coverage for TestDesign to finish |
+|---|---|---|
+| S1/S2 completion intent | `server/Domain/Entities/AgentTaskLandNotification.cs`, `server/Domain/Enums/LandingEnums.cs`, `server/Infrastructure/Data/AppDbContext.cs`, CLI-generated migration/snapshot; `AgentTaskReplyService.cs`, new `TaskCompletionNotification.cs` under Application/Services | `VerificationRoundSettlementTests`, `VerificationRoundDeliveryTests`, `AgentTaskReplyIntegrationTests`, `AgentTaskLandNotificationPersistenceTests`: true atomic rollback, exact event selection, profile/raw/outcome snapshot, repeated settlement/Continue identities, non-session and legacy non-replay. |
+| S2/S3 shared recovery | `AgentTaskLandNotificationService.cs`, `CompletionNoteStamp.cs`, `AgentTaskCheckService.cs`; existing hosted notification scanner/completion scanner only where needed for kind-aware behavior | Full `AgentTaskLandNotificationRecoveryTests`, `AgentTaskLandReceiptTests`, `ReceiptFailureDeliveryTests`, `DispatchBaseNotificationTests`, `CheckNoteDeliveryHandoffTests`, plus Q: before-insert loss, lost queue ACK, lost wakeup, busy/eligible, stopped/failed caller, wrong destination/digest, retention and repeated restart. Preserve CARD-0481 F2-F4 assertions. |
+| S2/S4 rendering/receipt | `SessionMessageQueueService.cs`, `OutputDistillationService.cs`, `DelegationReportFormatter.cs`, `DataRetentionService.cs`, existing report-store implementation if evidence retention needs it; `docs/session-runtime-invariants.md` and `docs/testing-and-build.md` | Full affected `OutputDistillationProducerTests`, `OutputDistillationDeliveryTests`, `OutputDistillationApplyRaceTests`, `OutputDistillationDeadlineTests`, `OutputDistillationCleanupTests`, `PolledCompletionNoteShrinkTests`, `DataRetentionServiceTests`; Q's raw/distilled/inline/spill matrix plus batch membership and immutable-header assertions. TestDesign reads these bodies before finalizing its expanded floor. |
+| S4 stays local | D-6/D-7 clock/identity/readiness fixes in `scripts/lib/nightly-health.ps1`, `scripts/test-nightly-health.ps1`, readiness reader/settings and docs | H, N's daily-validity/adapter/coverage/report-result cases, and D readiness loss remain on CARD-0544. Run the full existing offline health harness as regression; do not implement deferred adapter cases with faked receipt files. |
+| S4 independence subset + S5 deferred | CARD-0545 owns changes to `scripts/nightly-health.ps1`, `scripts/lib/nightly-health.ps1`, `scripts/windmill/` and the new independent watchdog/recipient adapter selected by its Plan | Inherited N notification/outage cases, new Windmill-down/heartbeat cases and V-11 operational evidence; CARD-0545 must name exact new files/methods before its Code. No guessed adapter implementation in CARD-0544. |
+
+### TestDesign return: preserve IDs and make the seven dispositions explicit
+
+| Existing seam-dependent PC | Resolution and next TestDesign work |
+|---|---|
+| PC-71 / Q.C544_CompletionRecovery | Now has a concrete producer/owner: atomic reply Completion obligation -> `AgentTaskLandNotificationHostedService` -> `ReconcileAsync` -> keyed queue/rendering -> caller transcript. Finish the method-scoped defect against confirmation-on-enqueue and its intended unconfirmed-before-UserPrompt assertion. Cover both pre-insert recovery and post-observation crash with the same notification ID; add separate controls for independent newly introduced guards. |
+| PC-78 / N.C544_IndependentOutage | Deferred required prerequisite on CARD-0545: independent watchdog must operate while Windows SSH fails and while Windmill itself is unavailable. Preserve exact ID/method; finalize the concrete local entrypoint in CARD-0545 TestDesign. |
+| PC-85 / N.C544_RecoveryNotification | Deferred on CARD-0545: separate correlated healthy-transition event and real recipient observation. |
+| PC-95/96/97 / N.C544_ReceiptDestination/WholeBody/AttemptFloor | Deferred on CARD-0545's production recipient adapter. These remain three distinct guards, with one-field-invalid negatives; no sender-created receipts. |
+| PC-98 / N.C544_IndependentState | Deferred on CARD-0545: restart the independent owner with Windows/Windmill unavailable; recover the original off-host obligation. |
+
+Transfer the **whole coupled notification family**, G/PC-78..86 and G/PC-95..98
+(13 IDs), plus DL-5, DL-4's independence cases and V-10's notification cases, to
+CARD-0545. Keeping seven currently specifiable notification controls in CARD-0544
+while their production adapters live elsewhere would divide one safety boundary.
+Preserve the original rows above and annotate their new owner; do not delete,
+renumber, mark none, or claim them passed. G/PC-77 and 87/92/93/94 stay on CARD-0544
+for production job parsing, clock/schedule validity and complete-green predicates.
+DL-6/H must continue to reject absent/unaccepted qualification.
+
+The prior 101 controls therefore partition into **88 CARD-0544 controls and 13
+deferred prerequisite controls**, before any new guards. Of the seven blocked
+specifications, one is resolved for immediate specification and six are explicitly
+deferred with their production work. This does **not** make all seven executable.
+TestDesign may hand off only the bounded dormant implementation once every
+in-scope guard has its executable PC; a handoff claiming qualification or S6 ready
+is invalid. Return the dependency and pending IDs in Code/Review reports.
+
+TestDesign must add distinct guard/control rows for atomic completion obligation,
+exact settlement identity across Retry/Continue, immutable profile/header through
+rendering, persisted wire/spill identity before typing, snapshot/queue destination
+and digest checks, distillation deadline across restart, and evidence retention.
+Reuse existing assertions where they prove the guard; do not collapse these into
+PC-71 or import CARD-0481's whole unrelated capacity suite. Keep existing land/failure
+notification regression coverage because the recovery/queue services are shared.
+
+Recalculate commands, expected method counts and numeric costs after reading the
+additional fixtures. The earlier 109 methods/101 PCs/88-minute ordinary floor and
+530.5-minute total are historical estimates, **not the revised executable budget**.
+The old PC allocation assigned 19.5 minutes to the 13 transferred controls
+(13 x 1.5); this is moved cost, not a saving. Additional completion rendering and
+crash guards add cost. CARD-0545 must separately price independent infrastructure
+and qualification; retain S5's two-run/calendar wait obligation. Claim no measured
+test-time or dollar saving from this Plan dispatch.
+
+### Resolution validation and handoff
+
+Source tracing and document/identity checks only; no build, ordinary test, PC,
+native delivery or live Windmill acceptance executed. CARD-0545 was created in
+Backlog and its ID, description and board were independently read back. No source
+or test files changed. D-1..D-8 stay authoritative except D-9's completion delivery
+extension and D-10's explicit S4/S5 ownership split. The caller's next action is
+TestDesign for the amended dormant scope; CARD-0545 is a separate future commission.
+
+--- next stage ---
+next: test-design
+handoff: Finish TD-F1 PCs using the shared CARD-0481 Completion outbox and rendering contract; retain all IDs, assign the 13 TD-F2 notification controls and S5 to CARD-0545, expand completion regression/guard coverage and recost. Hand off only dormant CARD-0544 Code; Interim activation remains blocked on CARD-0545 qualification and S6.
 artifact: docs/superpowers/plans/2026-09-16-card-0544-interim-final-verification-plan.md
