@@ -22,6 +22,24 @@ internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
     public string Path => HerdrPaneSidecar.PathFor(Settings.SessionLogPath, Binding.SessionId);
     public string[] Methods => Fake.Requests.Select(r => r.GetProperty("method").GetString()!).ToArray();
     public int GetterCount => Methods.Count(m => m == "tab.get");
+    public Task FollowAsync(CancellationToken ct = default) => Child.FollowLabelsAsync(Clock, () => true, ct);
+    public Task<HerdrLabelObservation?> ReadAsync() => Child.ReadLabelObservationAsync(Clock, () => true, CancellationToken.None);
+    public HerdrPaneSidecar Saved => HerdrPaneSidecar.TryLoad(Path)!;
+
+    public async Task<SessionRunnerRuntime> AdoptRuntimeAsync()
+    {
+        await Child.DisposeAsync();
+        var runtime = new SessionRunnerRuntime(Microsoft.Extensions.Options.Options.Create(Settings),
+            NullLogger<SessionRunnerRuntime>.Instance, Client, new DenyProcesses(), timeProvider: Clock);
+        await runtime.AdoptOrphanedHostsAsync(new DenyProcesses(), CancellationToken.None);
+        return runtime;
+    }
+
+    public static async Task WaitAsync(Func<bool> condition)
+    {
+        using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        while (!condition()) await Task.Delay(5, limit.Token);
+    }
 
     public HerdrLabelFollowFixture(string? tabPin = "Old", string? workspacePin = "Old workspace",
         string provenance = HerdrWorkspaceSelection.UniqueUntaggedLabel)

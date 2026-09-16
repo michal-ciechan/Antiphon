@@ -31,6 +31,7 @@ public sealed record HerdrLastPane
     /// <summary>CARD-0384: placement labels copied from the sidecar. Null on pre-field files.</summary>
     public string? WorkspaceLabel { get; init; }
     public string? TabLabel { get; init; }
+    public DateTime? AcceptedStartedAt { get; init; }
 
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
     {
@@ -61,6 +62,7 @@ public sealed record HerdrLastPane
         LaunchEnvNames = sidecar.LaunchEnvNames,
         WorkspaceLabel = sidecar.WorkspaceLabel,
         TabLabel = sidecar.TabLabel,
+        AcceptedStartedAt = sidecar.AcceptedStartedAt,
     };
 
     /// <summary>
@@ -92,15 +94,20 @@ public sealed record HerdrLastPane
             : null,
         WorkspaceLabel = opts.WorkspaceLabel,
         TabLabel = opts.TabLabel,
+        AcceptedStartedAt = request.AcceptedStartedAt,
     };
 
     /// <summary>Temp + rename, so a concurrent restore never observes a torn file.</summary>
     public void SaveAtomic(string path)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var tmp = path + ".tmp";
-        File.WriteAllText(tmp, JsonSerializer.Serialize(this, Options));
-        File.Move(tmp, path, overwrite: true);
+        var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(tmp, JsonSerializer.Serialize(this, Options));
+            File.Move(tmp, path, overwrite: true);
+        }
+        finally { if (File.Exists(tmp)) File.Delete(tmp); }
     }
 
     public static HerdrLastPane? TryLoad(string sessionLogPath, Guid sessionId) =>
