@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 using System.Data.Common;
+using Npgsql;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
@@ -19,12 +20,22 @@ public class HerdrLabelFollowConcurrencyTests
     public async Task Manual_edit_before_follow_wins()
     {
         await using var f = new HerdrLabelFollowDbFixture(); await f.StartAsync();
+        await using var manualDb = f.Open(); await using var followDb = f.Open();
+        await followDb.Database.OpenConnectionAsync();
+        await using var transaction = await manualDb.Database.BeginTransactionAsync();
+        var agent = await manualDb.Agents.SingleAsync(a => a.Id == f.AgentId);
+        await Manual(manualDb).UpdateAsync(f.AgentId, new(agent.Name, agent.WorkingDirectory, agent.Details, null, agent.AssignmentPolicy,
+            HerdrTabLabel: "Manual", HerdrWorkspaceLabel: "Manual workspace"), CancellationToken.None);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var service = f.Service(); service.Boundary = async (name, ct) => { if (name == "before-lock") { entered.TrySetResult(); await release.Task.WaitAsync(ct); } };
+        var service = f.Service(followDb); service.Boundary = (name, _) => { if (name == "before-lock") entered.TrySetResult(); return Task.CompletedTask; };
         var follow = service.FollowAsync(f.AgentId, CancellationToken.None);
-        try { await entered.Task.WaitAsync(TimeSpan.FromSeconds(2)); await f.ManualAsync("Manual", "Manual workspace"); }
-        finally { release.TrySetResult(); await follow; }
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await AssertBlockedAsync(f, followDb, manualDb);
+            service.ConditionalWrites.ShouldBe(0, "the common row lock must precede conditional writing");
+        }
+        finally { await transaction.CommitAsync(); await follow; }
         (await f.ReadAsync()).HerdrTabLabel.ShouldBe("Manual"); (await f.ReadAsync()).HerdrWorkspaceLabel.ShouldBe("Manual workspace");
         service.ConditionalWrites.ShouldBe(0);
     }
@@ -33,12 +44,17 @@ public class HerdrLabelFollowConcurrencyTests
     public async Task Manual_edit_after_follow_wins()
     {
         await using var f = new HerdrLabelFollowDbFixture(); await f.StartAsync(); await using var manualDb = f.Open();
+        await using var followDb = f.Open(); await followDb.Database.OpenConnectionAsync(); await manualDb.Database.OpenConnectionAsync();
         var stale = await manualDb.Agents.SingleAsync(a => a.Id == f.AgentId); stale.HerdrTabLabel.ShouldBe("Old");
-        (await f.ApplyAsync()).ShouldBeTrue();
-        var manual = new AgentService(manualDb, new CardWorkflowRunFactory(manualDb, TimeProvider.System), new MockEventBus(),
-            TimeProvider.System, new NoDirectories(), NullLogger<AgentService>.Instance);
-        await manual.UpdateAsync(f.AgentId, new(stale.Name, stale.WorkingDirectory, stale.Details, null, stale.AssignmentPolicy,
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var service = f.Service(followDb); service.Boundary = async (name, ct) => { if (name == "before-commit") { entered.TrySetResult(); await release.Task.WaitAsync(ct); } };
+        var follow = service.ApplyAsync(f.AgentId, f.Dto, CancellationToken.None);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var edit = Manual(manualDb).UpdateAsync(f.AgentId, new(stale.Name, stale.WorkingDirectory, stale.Details, null, stale.AssignmentPolicy,
             HerdrTabLabel: "Old", HerdrWorkspaceLabel: "Old workspace"), CancellationToken.None);
+        try { await AssertBlockedAsync(f, manualDb, followDb); }
+        finally { release.TrySetResult(); await follow; await edit; }
         var result = await f.ReadAsync(); result.HerdrTabLabel.ShouldBe("Old"); result.HerdrWorkspaceLabel.ShouldBe("Old workspace"); result.HerdrPlacementEditToken.ShouldNotBe(f.EditToken);
         (await f.ApplyAsync()).ShouldBeFalse();
     }
@@ -113,4 +129,15 @@ public class HerdrLabelFollowConcurrencyTests
         { if (command.CommandText.Contains("FOR UPDATE", StringComparison.Ordinal)) Ids.Add((Guid)command.Parameters[0].Value!); return ValueTask.FromResult(result); }
     }
     private sealed class NoDirectories : Antiphon.Server.Application.Interfaces.IDirectoryWriter { public void CreateDirectory(string path) { } }
+    private static AgentService Manual(AppDbContext db) => new(db, new CardWorkflowRunFactory(db, TimeProvider.System), new MockEventBus(),
+        TimeProvider.System, new NoDirectories(), NullLogger<AgentService>.Instance);
+    private static async Task AssertBlockedAsync(HerdrLabelFollowDbFixture f, AppDbContext waiting, AppDbContext holding)
+    {
+        await using var db = f.Open(); await db.Database.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand("SELECT @holder = ANY(pg_blocking_pids(@waiter))", (NpgsqlConnection)db.Database.GetDbConnection());
+        command.Parameters.AddWithValue("holder", ((NpgsqlConnection)holding.Database.GetDbConnection()).ProcessID);
+        command.Parameters.AddWithValue("waiter", ((NpgsqlConnection)waiting.Database.GetDbConnection()).ProcessID);
+        using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        while (!(bool)(await command.ExecuteScalarAsync(limit.Token))!) await Task.Delay(5, limit.Token);
+    }
 }

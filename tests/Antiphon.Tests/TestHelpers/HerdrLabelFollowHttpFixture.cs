@@ -74,11 +74,6 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
             if (monitor) await _monitorGate.WaitAsync(context.RequestAborted);
             try
             {
-            try { await next(context); }
-            catch (Exception ex) { Console.Error.WriteLine(ex); throw; }
-        });
-        _app.Use(async (context, next) =>
-        {
             if (context.Request.Method == "POST" && context.Request.Path == "/sessions")
             {
                 context.Request.EnableBuffering();
@@ -91,6 +86,7 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
             { context.Response.ContentType = "application/json"; await context.Response.WriteAsync(OverrideGetJson); return; }
             await next(context);
             }
+            catch (Exception ex) { Console.Error.WriteLine(ex); throw; }
             finally { if (monitor) _monitorGate.Release(); }
         });
         _app.MapSessionGetRoute(); _app.MapSessionLaunchRoute();
