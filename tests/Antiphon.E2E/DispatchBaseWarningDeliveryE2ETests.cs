@@ -83,7 +83,20 @@ public class DispatchBaseWarningDeliveryE2ETests
     {
         await using var f = new LandDeliveryFixture();
         await f.InitializeAsync(busy: busy, dispatch: true); await f.UseChildAsync(cut); await f.StartDispatchAsync();
-        await f.WaitForBoundaryAsync(boundary);
+        if (cut == "queue")
+        {
+            // A missing key also disables the production keyed-insert callback. Observe the
+            // stored key independently so PC-21 reaches an assertion instead of losing its cut.
+            await LandDeliveryFixture.UntilAsync(async () =>
+            {
+                await using var db = f.CreateContext();
+                (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == f.TaskId
+                    && m.Body.StartsWith("[dispatch-base ") && m.SourceLandNotificationId == null))
+                    .ShouldBe(0, "every dispatch warning must retain its notification key before the insert barrier");
+                return File.Exists(Path.Combine(f.Root, boundary + ".barrier.json"));
+            }, boundary);
+        }
+        else await f.WaitForBoundaryAsync(boundary);
         var intents = await f.WaitForDispatchIntentsAsync();
         var originalQueue = new Dictionary<Guid, Guid>();
         await using (var db = f.CreateContext())
@@ -123,6 +136,7 @@ public class DispatchBaseWarningDeliveryE2ETests
         }
         await f.SnapshotAsync(); await f.KillChildAsync();
         if (cut == "dispatch-claim") await f.MoveDispatchObservationsAsync();
+        if (cut == "attempt") await f.WaitForInterruptedDispatchEligibilityAsync();
         await f.UseChildAsync("none");
         if (busy) await f.ReleaseBusyAsync();
         await f.AssertDispatchReceiptsAsync(intents);
