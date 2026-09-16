@@ -55,6 +55,7 @@ public class HerdrLaunchContextTitleTests
 }
 
 [Category("Integration")]
+[Category("Slow")]
 public class HerdrLaunchContextResolverTests
 {
     [Test]

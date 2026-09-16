@@ -103,3 +103,9 @@ Antiphon.Tests.Application.HerdrLabelFollowTests
 Antiphon.Tests.Application.HerdrLabelFollowConcurrencyTests
 # CARD-0462: real launch queue, random-loopback HTTP, database and relaunch receipts; measured 24.00s cold case.
 Antiphon.Tests.Application.HerdrLabelFollowFlowTests
+# CARD-0462: named migration/manual-placement database cases; measured 17.52-26.96s cold cases.
+Antiphon.Tests.Application.HerdrPlacementSettingsTests
+# CARD-0462: named resolver database cases, including nullable intent; measured 23.89-24.94s cold cases.
+Antiphon.Tests.Application.HerdrLaunchContextResolverTests
+# CARD-0462: named before-queue refusal with real host/database startup; measured 26.81s cold case.
+Antiphon.Tests.Application.HerdrPlacementPreflightTests
