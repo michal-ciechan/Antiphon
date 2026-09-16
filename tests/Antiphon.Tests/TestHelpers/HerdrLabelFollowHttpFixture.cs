@@ -66,6 +66,11 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
         _app = builder.Build();
         _app.Use(async (context, next) =>
         {
+            try { await next(context); }
+            catch (Exception ex) { Console.Error.WriteLine(ex); throw; }
+        });
+        _app.Use(async (context, next) =>
+        {
             if (context.Request.Method == "POST" && context.Request.Path == "/sessions")
             {
                 context.Request.EnableBuffering();
