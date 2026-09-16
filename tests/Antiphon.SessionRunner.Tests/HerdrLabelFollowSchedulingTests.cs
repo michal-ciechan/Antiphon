@@ -183,6 +183,7 @@ public class HerdrLabelFollowSchedulingTests
         using var pump = new HerdrEventPumpService(runtime, f.Client, Options.Create(f.HerdrSettings), NullLogger<HerdrEventPumpService>.Instance, f.Clock)
         { TimerFinalizing = async () => { entered.TrySetResult(); await release.Task; } };
         await pump.StartAsync(CancellationToken.None);
+        await HerdrLabelFollowFixture.WaitAsync(() => f.Fake.SubscriptionRecords.Count == 1);
         var stopping = pump.StopAsync(CancellationToken.None);
         try { await entered.Task.WaitAsync(TimeSpan.FromSeconds(2)); stopping.IsCompleted.ShouldBeFalse(); }
         finally { release.TrySetResult(); await stopping.WaitAsync(TimeSpan.FromSeconds(2)); }
