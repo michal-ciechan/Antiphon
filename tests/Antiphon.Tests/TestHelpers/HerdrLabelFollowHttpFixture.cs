@@ -154,5 +154,5 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
         if (Directory.Exists(Root)) Directory.Delete(Root, true);
     }
     private sealed class DenyProcesses : IProcessLivenessProbe
-    { public bool IsAlive(int pid, DateTime at) => false; public DateTime? TryGetStartTimeUtc(int pid) => null; public string? TryGetProcessName(int pid) => "pwsh.exe"; }
+    { public bool IsAlive(int pid, DateTime at) => false; public DateTime? TryGetStartTimeUtc(int pid) => null; public string? TryGetProcessName(int pid) => "pwsh"; }
 }

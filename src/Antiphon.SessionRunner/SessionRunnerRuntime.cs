@@ -2954,6 +2954,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
             if (_tailer is not null)
                 await _tailer.DisposeAsync();
+            if (_herdrChild is { } herdr)
+                await herdr.DisposeAsync();
         }
 
         private void HandleOutput(long seq, string chunk)
