@@ -196,6 +196,9 @@ public sealed record HerdrPaneTargetParams(
 public sealed record HerdrTabTargetParams(
     [property: JsonPropertyName("tab_id")] string TabId);
 
+public sealed record HerdrWorkspaceTargetParams(
+    [property: JsonPropertyName("workspace_id")] string WorkspaceId);
+
 public sealed record HerdrPaneListParams(
     [property: JsonPropertyName("workspace_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? WorkspaceId = null);
 

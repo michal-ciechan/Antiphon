@@ -12,6 +12,18 @@ namespace Antiphon.SessionRunner.Tests;
 public class HerdrClientSurfaceTests
 {
     [Test]
+    public async Task Tab_and_workspace_get_use_schema_envelopes()
+    {
+        await using var f = new HerdrLabelFollowFixture(); await f.StartAsync();
+        (await f.Client.TabGetAsync(f.Tab.TabId, CancellationToken.None)).Label.ShouldBe("New");
+        (await f.Client.WorkspaceGetAsync(f.Workspace.WorkspaceId, CancellationToken.None)).Label.ShouldBe("New workspace");
+        var tab = f.Fake.Requests.Single(r => r.GetProperty("method").GetString() == "tab.get");
+        tab.GetProperty("params").GetProperty("tab_id").GetString().ShouldBe(f.Tab.TabId);
+        var workspace = f.Fake.Requests.Single(r => r.GetProperty("method").GetString() == "workspace.get");
+        workspace.GetProperty("params").GetProperty("workspace_id").GetString().ShouldBe("w1");
+    }
+
+    [Test]
     public void HerdrClient_public_surface_never_sends_agent_prompt()
     {
         var methods = typeof(HerdrClient).GetMethods()
