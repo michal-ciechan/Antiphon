@@ -105,7 +105,7 @@ public sealed record HerdrLastPane
         try
         {
             File.WriteAllText(tmp, JsonSerializer.Serialize(this, Options));
-            File.Move(tmp, path, overwrite: true);
+            HerdrSnapshotFile.Replace(tmp, path);
         }
         finally { if (File.Exists(tmp)) File.Delete(tmp); }
     }
