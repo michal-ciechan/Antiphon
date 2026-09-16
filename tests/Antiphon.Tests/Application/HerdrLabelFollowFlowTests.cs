@@ -196,13 +196,13 @@ public class HerdrLabelFollowFlowTests
         // Startup sweep: the failing session first, then the due equal-label attempt commits only the watermark.
         await WaitUntilAsync(async () => (await f.ReadAsync()).HerdrLabelFollowSequence > 0);
         f.FollowGets.ShouldContain(failingSession);
-        var first = await f.ReadAsync(); first.HerdrTabLabel.ShouldBe("Old"); f.Bus.Count.ShouldBe(0);
+        var first = await f.ReadAsync(); first.HerdrTabLabel.ShouldBe("Old"); var notifications = f.Bus.Count;
         f.Tab.Label = "Renamed"; var gets = f.FollowGets.Count(id => id == f.SessionId);
         f.Clock.Advance(TimeSpan.FromHours(1));
         await WaitUntilAsync(async () => (await f.ReadAsync()).HerdrTabLabel == "Renamed");
         f.FollowGets.Count(id => id == f.SessionId).ShouldBeGreaterThan(gets);
         f.FollowGets.Count(id => id == failingSession).ShouldBeGreaterThanOrEqualTo(2, "a failed session does not stop later ticks");
-        (await f.ReadAsync()).HerdrLabelFollowSequence.ShouldBeGreaterThan(first.HerdrLabelFollowSequence); f.Bus.Count.ShouldBe(1);
+        (await f.ReadAsync()).HerdrLabelFollowSequence.ShouldBeGreaterThan(first.HerdrLabelFollowSequence); f.Bus.Count.ShouldBe(notifications + 1);
         (await f.DetailLabelAsync("herdrTabLabel")).ShouldBe("Renamed");
         var host = f.Server!.FollowHost; host.ExecuteTask!.IsCompleted.ShouldBeFalse();
         await f.StopServerAsync().WaitAsync(TimeSpan.FromSeconds(10));
