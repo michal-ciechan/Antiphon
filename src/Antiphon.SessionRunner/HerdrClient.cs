@@ -15,7 +15,7 @@ namespace Antiphon.SessionRunner;
 /// per normal named-pipe connection; subscriptions are the deliberate exception and retain their
 /// connection for push events.
 /// </summary>
-public sealed class HerdrClient
+public sealed class HerdrClient : IHerdrLabelReader
 {
     private readonly HerdrSettings _settings;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
@@ -135,6 +135,39 @@ public sealed class HerdrClient
     private static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint serverProcessId);
 
     // --- typed wrappers (CARD-0160 B2 / plan §8). agent.prompt is deliberately not wrapped. ---
+
+    public async Task<HerdrTabInfo> TabGetAsync(string tabId, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tabId);
+        var result = await SendRequestAsync("tab.get", new HerdrTabTargetParams(tabId), cancellationToken);
+        var payload = RequireGetterPayload(result, "tab_info", "tab", ["tab_id", "workspace_id", "label"], ["number", "pane_count"]);
+        var tab = DeserializeRequired<HerdrTabInfo>(payload, "tab.get");
+        if (!string.Equals(tab.TabId, tabId, StringComparison.Ordinal))
+            throw new HerdrProtocolException("Herdr tab.get returned a different tab_id.");
+        return tab;
+    }
+
+    public async Task<HerdrWorkspaceInfo> WorkspaceGetAsync(string workspaceId, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(workspaceId);
+        var result = await SendRequestAsync("workspace.get", new HerdrWorkspaceTargetParams(workspaceId), cancellationToken);
+        var payload = RequireGetterPayload(result, "workspace_info", "workspace", ["workspace_id", "label", "active_tab_id"], ["number", "pane_count", "tab_count"]);
+        var workspace = DeserializeRequired<HerdrWorkspaceInfo>(payload, "workspace.get");
+        if (!string.Equals(workspace.WorkspaceId, workspaceId, StringComparison.Ordinal))
+            throw new HerdrProtocolException("Herdr workspace.get returned a different workspace_id.");
+        return workspace;
+    }
+
+    private static JsonElement RequireGetterPayload(JsonElement result, string type, string field, string[] strings, string[] integers)
+    {
+        if (result.ValueKind != JsonValueKind.Object
+            || !result.TryGetProperty("type", out var discriminator) || discriminator.ValueKind != JsonValueKind.String || discriminator.GetString() != type
+            || !result.TryGetProperty(field, out var value) || value.ValueKind != JsonValueKind.Object
+            || strings.Any(name => !value.TryGetProperty(name, out var item) || item.ValueKind != JsonValueKind.String)
+            || integers.Any(name => !value.TryGetProperty(name, out var item) || item.ValueKind != JsonValueKind.Number || !item.TryGetInt32(out _)))
+            throw new HerdrProtocolException($"Herdr {field}.get returned an incomplete {type} envelope.");
+        return value;
+    }
 
     public async Task<IReadOnlyList<HerdrWorkspaceInfo>> WorkspaceListAsync(CancellationToken cancellationToken)
     {

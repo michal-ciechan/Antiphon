@@ -50,6 +50,7 @@ public sealed record HerdrPaneSidecar
     /// <summary>CARD-0384: dedicated tab pin snapshot. Null on pre-field files / unpinned launches.</summary>
     public string? TabLabel { get; init; }
     public DateTime? AcceptedStartedAt { get; init; }
+    public HerdrLabelFollowState? LabelFollow { get; init; }
 
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
     {
