@@ -17,9 +17,7 @@ That is the whole benefit, and it is a real one. Everything else on this page is
 > An old sidecar without the field loads null; null is never replaced by the database's current
 > generation. Attach is idempotent on the same pane.
 
-## Source of truth
-
-### Following live placement labels (CARD-0462)
+## Following live placement labels (CARD-0462)
 
 A launched, cardless standing Herdr session can follow operator renames into its existing
 tab/workspace pins. The launch carries the physical owner, accepted generation, explicit nullable
@@ -48,6 +46,8 @@ with retirement/deletion; pane leases retain their workspace-key/workspace-ID/pa
 Existing exact-generation last-pane records are repaired using a durable marker without another
 Herdr collection. Following creates no furniture, sends no input and grants no exit authority.
 Activation requires both server and runner restart after the normal review/landing process.
+
+## Source of truth
 
 | Fact | Owner |
 |---|---|

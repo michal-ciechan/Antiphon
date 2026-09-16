@@ -97,3 +97,9 @@ Antiphon.Tests.Application.WorktreeCleanupJournalTests
 Antiphon.Tests.Infrastructure.WorktreeGuardedCleanupTests
 # CARD-0443: real producer plus standing notification/completion workers and recipient receipt; measured 62-85s.
 Antiphon.Tests.Application.AgentTaskWorktreeLockOutcomeTests
+# CARD-0462: isolated PostgreSQL guard receipts; measured 19.85s cold fixture case.
+Antiphon.Tests.Application.HerdrLabelFollowTests
+# CARD-0462: independent PostgreSQL connections and row-lock schedules; measured 19.13s cold case.
+Antiphon.Tests.Application.HerdrLabelFollowConcurrencyTests
+# CARD-0462: real launch queue, random-loopback HTTP, database and relaunch receipts; measured 24.00s cold case.
+Antiphon.Tests.Application.HerdrLabelFollowFlowTests
