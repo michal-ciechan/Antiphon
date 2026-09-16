@@ -847,6 +847,8 @@ public class AppDbContext : DbContext
             entity.HasIndex(a => a.StandingSpecialistOwnerId);
             entity.Property(a => a.HerdrWorkspaceLabel).HasMaxLength(Agent.HerdrLabelMaxLength);
             entity.Property(a => a.HerdrTabLabel).HasMaxLength(Agent.HerdrLabelMaxLength);
+            entity.Property(a => a.HerdrPlacementEditToken).HasDefaultValue(Guid.Empty);
+            entity.Property(a => a.HerdrLabelFollowSequence).HasDefaultValue(0L);
             // CARD-0334. Nullable: null means Auto. No HasDefaultValue — Auto is 0, and a
             // database default would make EF omit an explicit Auto from INSERT (same trap as
             // ReplyStyle / ModelLevel). Existing rows stay null, which IS Auto.

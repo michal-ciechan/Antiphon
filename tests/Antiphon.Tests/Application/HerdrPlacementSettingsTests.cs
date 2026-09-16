@@ -19,6 +19,51 @@ namespace Antiphon.Tests.Application;
 public class HerdrPlacementSettingsTests
 {
     [Test]
+    public async Task Manual_placement_edit_rotates_only_the_internal_token()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db);
+        var detail = await service.CreateAsync(new CreateAgentRequest(Unique("Token"), "D:/src/app",
+            SessionBackend: SessionBackend.Herdr, HerdrWorkspaceLabel: "Workspace", HerdrTabLabel: "Tab"), CancellationToken.None);
+        var agent = await db.Agents.SingleAsync(a => a.Id == detail.Id);
+        agent.HerdrPlacementEditToken.ShouldBe(Guid.Empty);
+        foreach (var patch in new[] { Patch(detail), Patch(detail) with { Details = "unrelated" } })
+        {
+            await service.UpdateAsync(detail.Id, patch, CancellationToken.None);
+            agent.HerdrPlacementEditToken.ShouldBe(Guid.Empty);
+        }
+        foreach (var patch in new[] { Patch(detail, herdrTabLabel: "Tab"), Patch(detail, herdrWorkspaceLabel: "Workspace"),
+                     Patch(detail, herdrTabLabel: ""), Patch(detail, herdrWorkspaceLabel: "") })
+        {
+            var previous = agent.HerdrPlacementEditToken;
+            await service.UpdateAsync(detail.Id, patch, CancellationToken.None);
+            agent.HerdrPlacementEditToken.ShouldNotBe(previous);
+            agent.HerdrLabelFollowSessionId.ShouldBeNull();
+            agent.HerdrLabelFollowStartedAt.ShouldBeNull();
+            agent.HerdrLabelFollowSequence.ShouldBe(0);
+        }
+    }
+
+    [Test]
+    public async Task Placement_context_changes_invalidate_follow_intent()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db);
+        var detail = await service.CreateAsync(new CreateAgentRequest(Unique("Context"), "D:/src/app",
+            SessionBackend: SessionBackend.Herdr, HerdrTabLabel: "Tab"), CancellationToken.None);
+        var other = await service.CreateAsync(new CreateAgentRequest(Unique("Board"), "D:/src/app"), CancellationToken.None);
+        var agent = await db.Agents.SingleAsync(a => a.Id == detail.Id);
+        foreach (var patch in new[] { Patch(detail, sessionBackend: SessionBackend.PtyHost),
+                     Patch(detail, sessionBackend: SessionBackend.Herdr), Patch(detail) with { BoardId = other.BoardId }, Patch(detail) })
+        {
+            var previous = agent.HerdrPlacementEditToken;
+            await service.UpdateAsync(detail.Id, patch, CancellationToken.None);
+            agent.HerdrPlacementEditToken.ShouldNotBe(previous);
+            agent.HerdrTabLabel.ShouldBe("Tab");
+        }
+    }
+
+    [Test]
     public async Task Create_persists_trimmed_labels_and_detail_returns_them()
     {
         await using var db = CreateContext();

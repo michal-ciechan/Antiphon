@@ -58,6 +58,38 @@ public class HerdrLaunchContextTitleTests
 public class HerdrLaunchContextResolverTests
 {
     [Test]
+    [Arguments(null, "Tab")]
+    [Arguments("Workspace", null)]
+    [Arguments("Workspace", "Tab")]
+    [Arguments(null, null)]
+    public async Task Follow_intent_preserves_nullable_pins_and_physical_owner(string? workspace, string? tab)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        var (_, agent) = await SeedStandingAsync(db, workspace, tab);
+        agent.SessionBackend = SessionBackend.Herdr;
+        agent.HerdrPlacementEditToken = Guid.NewGuid();
+        var session = new AgentSession { StandingAgentId = agent.Id, SessionBackend = SessionBackend.Herdr };
+        var resolver = new HerdrLaunchContextResolver(db);
+        var options = await resolver.ResolveAsync(session, agent, "title", CancellationToken.None);
+        if (workspace is null && tab is null) options.LabelFollowIntent.ShouldBeNull();
+        else
+        {
+            options.LabelFollowIntent.ShouldNotBeNull();
+            options.LabelFollowIntent.StandingAgentId.ShouldBe(agent.Id);
+            options.LabelFollowIntent.PlacementEditToken.ShouldBe(agent.HerdrPlacementEditToken);
+            options.LabelFollowIntent.TabLabel.ShouldBe(tab);
+            options.LabelFollowIntent.WorkspaceLabel.ShouldBe(workspace);
+        }
+        agent.IsPoolDelegate = true;
+        (await resolver.ResolveAsync(session, agent, "title", CancellationToken.None)).LabelFollowIntent.ShouldBeNull();
+        agent.IsPoolDelegate = false;
+        session.StandingAgentId = Guid.NewGuid();
+        (await resolver.ResolveAsync(session, agent, "title", CancellationToken.None)).LabelFollowIntent.ShouldBeNull();
+        session.CardId = Guid.NewGuid();
+        (await resolver.ResolveAsync(session, agent, "title", CancellationToken.None)).LabelFollowIntent.ShouldBeNull();
+    }
+
+    [Test]
     public async Task Standing_cardless_agent_overrides_workspace_label_and_carries_tab_label()
     {
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());

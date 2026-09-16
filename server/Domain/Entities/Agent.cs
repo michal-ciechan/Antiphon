@@ -81,6 +81,12 @@ public class Agent
 
     public const int HerdrLabelMaxLength = 256;
 
+    // Internal launch-intent fence. Explicit placement edits invalidate both pins until relaunch.
+    public Guid HerdrPlacementEditToken { get; set; }
+    public Guid? HerdrLabelFollowSessionId { get; set; }
+    public DateTime? HerdrLabelFollowStartedAt { get; set; }
+    public long HerdrLabelFollowSequence { get; set; }
+
     /// <summary>
     /// Per-agent override of the policy-refresh lane (CARD-0334). Null means
     /// <see cref="PolicyRefreshMode.Auto"/> (AlwaysOn ClaudeCode relaunches at idle; others
