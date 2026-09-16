@@ -1,5 +1,14 @@
 # Session runtime invariants
 
+- **Herdr label following is generation-bound metadata (CARD-0462).** The shared durable
+  admission consumes an hour even on refusal/failure; restart never resets it. File replacement
+  precedes publication, and retirement/deletion share the snapshot path lock. The observer holds
+  the pane lease through publication and never discovers a replacement pane. Current positive
+  process/binding verification is required for each actionable GET. The server commits pins and
+  watermark atomically under the manual writer's row lock, with pointer/generation/token fences.
+  Explicit manual placement intent wins until a new accepted launch. See
+  [Herdr label following](herdr-sessions.md#following-live-placement-labels-card-0462).
+
 - **Queue discovery must be a superset of queue action (CARD-0501 re-review R2).**
   Every query that asks "what needs recovery/discovery/reconciliation" reads
   `QueueAttention`, not its own filter. The attempts cap gates the `Pending` arms — a parked row

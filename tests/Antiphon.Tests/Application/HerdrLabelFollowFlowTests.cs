@@ -112,7 +112,7 @@ public class HerdrLabelFollowFlowTests
     private static async Task RetireAsync(HerdrLabelFollowHttpFixture f)
     {
         var sidecar = f.Saved;
-        f.Fake.SetPaneProcessInfo(sidecar.PaneId, sidecar.ShellPid ?? 1); f.Fake.ClearDetectedAgent(sidecar.PaneId);
+        f.Fake.ClearDetectedAgent(sidecar.PaneId);
         (await f.Runtime.GetAsync(f.SessionId, CancellationToken.None)).Status.ShouldBe("Exited");
         f.ResumeMonitor();
         await using var db = f.Open();

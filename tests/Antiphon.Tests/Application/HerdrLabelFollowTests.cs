@@ -32,18 +32,36 @@ public class HerdrLabelFollowTests
 
     [Test]
     [Arguments("attached")][Arguments("pool")][Arguments("agent-backend")][Arguments("session-backend")]
-    [Arguments("stopped")][Arguments("failed")][Arguments("ended")][Arguments("deleted")]
+    [Arguments("stopped")][Arguments("failed")][Arguments("ended")][Arguments("deleted")][Arguments("card")]
     public async Task Only_live_standing_herdr_agents_are_eligible(string arm)
     {
         await using var f = new HerdrLabelFollowDbFixture(); await f.StartAsync();
         if (arm == "attached") f.Dto = f.Dto with { HerdrOrigin = HerdrPaneOrigins.Attached, LabelObservation = f.Dto.LabelObservation! with { Origin = HerdrPaneOrigins.Attached } };
         else if (arm == "deleted") { await using var db = f.Open(); await db.Agents.Where(a => a.Id == f.AgentId).ExecuteDeleteAsync(); }
+        else if (arm == "card")
+        {
+            await using var db = f.Open(); var now = f.Clock.GetUtcNow().UtcDateTime;
+            var project = new Project { Id = Guid.NewGuid(), Name = "card", CreatedAt = now, UpdatedAt = now };
+            var board = new Board { Id = Guid.NewGuid(), ProjectId = project.Id, Name = "board", CreatedAt = now, UpdatedAt = now };
+            var column = new BoardColumn { Id = Guid.NewGuid(), BoardId = board.Id, Name = "todo" };
+            var card = new Card { Id = Guid.NewGuid(), BoardId = board.Id, BoardColumnId = column.Id, Identifier = "CARD-0001", Title = "card", CreatedAt = now, UpdatedAt = now };
+            db.AddRange(project, board, column, card); await db.SaveChangesAsync();
+            await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.CardId, card.Id));
+        }
         else await f.MutateAsync((a, s) => { switch (arm) {
             case "pool": a.IsPoolDelegate = true; break; case "agent-backend": a.SessionBackend = SessionBackend.PtyHost; break;
             case "session-backend": s.SessionBackend = SessionBackend.PtyHost; break; case "stopped": s.Status = SessionStatus.Stopped; break;
             case "failed": s.Status = SessionStatus.Failed; break; case "ended": s.EndedAt = f.Clock.GetUtcNow().UtcDateTime; break; } });
         var service = f.Service(); (await service.ApplyAsync(f.AgentId, f.Dto, CancellationToken.None)).ShouldBeFalse(); service.ConditionalWrites.ShouldBe(0);
         if (arm != "deleted") (await f.ReadAsync()).HerdrTabLabel.ShouldBe("Old");
+    }
+
+    [Test]
+    public async Task Unrelated_edit_preserves_follow_authority()
+    {
+        await using var f = new HerdrLabelFollowDbFixture(); await f.StartAsync();
+        await f.ManualAsync(); (await f.ReadAsync()).HerdrPlacementEditToken.ShouldBe(f.EditToken);
+        (await f.ApplyAsync()).ShouldBeTrue(); (await f.ReadAsync()).HerdrTabLabel.ShouldBe("New");
     }
 
     [Test][Arguments(false)][Arguments(true)]

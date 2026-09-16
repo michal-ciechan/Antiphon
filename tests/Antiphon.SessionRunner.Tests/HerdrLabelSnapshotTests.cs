@@ -59,6 +59,22 @@ public class HerdrLabelSnapshotTests
         f.Saved.TabLabel.ShouldBe("New");
     }
 
+    [Test]
+    public async Task Runtime_disposal_cancels_and_joins_its_observer()
+    {
+        await using var f = new HerdrLabelFollowFixture(); await f.StartAsync();
+        await using var runtime = await f.AdoptRuntimeAsync();
+        var gate = f.Fake.GateMethod("tab.get"); var reading = runtime.GetAsync(f.Binding.SessionId, CancellationToken.None);
+        try
+        {
+            await HerdrLabelFollowFixture.WaitAsync(() => f.GetterCount == 1);
+            await runtime.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            (await reading.WaitAsync(TimeSpan.FromSeconds(2))).LabelObservation.ShouldBeNull();
+            f.Saved.TabLabel.ShouldBe("Old"); runtime.List().ShouldBeEmpty();
+        }
+        finally { gate.Drop(); await reading; }
+    }
+
     [Test][Arguments("exit-first")][Arguments("follow-first")][Arguments("replacement")]
     public async Task Retirement_and_refresh_cannot_resurrect_or_revert_sidecar(string order)
     {
