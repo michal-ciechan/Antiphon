@@ -147,7 +147,14 @@ public class HerdrLabelFollowSchedulingTests
     public async Task Cached_candidate_is_suppressed_after_move(string arm)
     {
         await using var f = new HerdrLabelFollowFixture(); await f.StartAsync(); await f.FollowAsync();
-        f.Fake.TransformResult = (method, json) =>
+        if (arm == "tab")
+        {
+            var target = f.Fake.SeedTab(f.Workspace.WorkspaceId, "Moved and renamed", paneCount: 0);
+            f.Fake.MovePane(f.Binding.PaneId, target.TabId);
+            (await f.Client.PaneListAsync(f.Workspace.WorkspaceId, CancellationToken.None)).Single(p => p.TabId == target.TabId).PaneId.ShouldBe(f.Binding.PaneId);
+            (await f.Client.TabGetAsync(target.TabId, CancellationToken.None)).PaneCount.ShouldBe(1);
+        }
+        else f.Fake.TransformResult = (method, json) =>
         {
             if (method != "pane.get") return json;
             var node = System.Text.Json.Nodes.JsonNode.Parse(json)!; node["pane"]![arm + "_id"] = "moved"; return node.ToJsonString();
