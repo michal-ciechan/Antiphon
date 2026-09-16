@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Shouldly;
 
@@ -24,7 +25,14 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
     public string Root { get; } = Path.Combine(AntiphonAppFixture.FindRepositoryRoot(), ".antiphon", "acceptance", "card-0467", Guid.NewGuid().ToString("N"));
     private readonly string _suffix = "";
     private readonly bool _shared;
-    public LandDeliveryFixture() { }
+    private readonly string? _inheritedHangfire;
+    public LandDeliveryFixture()
+    {
+        // Program reads this while registering services, before WAF's late configuration.
+        // C467LandDelivery serializes these fixtures; children inherit the same owned setting.
+        _inheritedHangfire = Environment.GetEnvironmentVariable("Hangfire__ServerEnabled");
+        Environment.SetEnvironmentVariable("Hangfire__ServerEnabled", "false");
+    }
     internal LandDeliveryFixture(LandDeliveryFixture owner)
     { Root = owner.Root; _app = owner._app; _suffix = "-second"; _shared = true; }
     public string Repository => Path.Combine(Root, "repo" + _suffix);
@@ -74,6 +82,7 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
             await _app.InitializeAsync();
         }
         _app.EnsureSessionRunnerReachable();
+        AssertNoMaintenanceServer(_app.Services);
         new Uri(_app.OwnedRunnerUrl).Port.ShouldNotBe(17204);
         _connection = _app.OwnedDatabase;
         _address = _app.BaseAddress;
@@ -253,6 +262,7 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
             Path.Combine(root, "child-logs"), runner, land: new(root, cut));
         try { factory.CreateClient(); } catch when (factory.KestrelHost is not null) { }
         var host = factory.KestrelHost ?? throw new InvalidOperationException("No real child host");
+        AssertNoMaintenanceServer(host.Services);
         var address = host.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
         var settings = host.Services.GetRequiredService<IOptions<DelegationSettings>>().Value;
         settings.ApiBaseUrl = address; settings.AllowedRoots = [root];
@@ -338,11 +348,22 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
     }
     public async ValueTask DisposeAsync()
     {
-        try { if (!string.IsNullOrEmpty(_connection)) await SnapshotAsync(); }
-        catch (Exception ex) { await File.WriteAllTextAsync(Path.Combine(Root, "snapshot-failure.txt"), ex.GetType().Name + ": " + ex.Message); }
-        await KillChildAsync();
-        if (_app is not null && !_shared) await _app.DisposeAsync();
-        _http?.Dispose();
+        try
+        {
+            try { if (!string.IsNullOrEmpty(_connection)) await SnapshotAsync(); }
+            catch (Exception ex) { await File.WriteAllTextAsync(Path.Combine(Root, "snapshot-failure.txt"), ex.GetType().Name + ": " + ex.Message); }
+            await KillChildAsync();
+            if (_app is not null && !_shared) await _app.DisposeAsync();
+            _http?.Dispose();
+        }
+        finally
+        {
+            if (!_shared) Environment.SetEnvironmentVariable("Hangfire__ServerEnabled", _inheritedHangfire);
+        }
         // Evidence, owned repository and native input records are intentionally retained.
     }
+
+    private static void AssertNoMaintenanceServer(IServiceProvider services) =>
+        services.GetServices<IHostedService>().ShouldNotContain(s =>
+            (s.GetType().Namespace ?? "").StartsWith("Hangfire", StringComparison.Ordinal));
 }
