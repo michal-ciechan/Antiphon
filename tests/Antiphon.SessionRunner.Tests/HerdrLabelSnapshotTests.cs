@@ -144,7 +144,7 @@ public class HerdrLabelSnapshotTests
         await using var f = new HerdrLabelFollowFixture(); await f.StartAsync();
         var path = HerdrLastPane.PathFor(f.Settings.SessionLogPath, f.Binding.SessionId);
         HerdrLastPane.FromSidecar(f.Binding, "original").SaveAtomic(path);
-        f.Child.LabelFollowBoundary = (name, _) => name == "before-repair" ? Task.FromException(new IOException("last-pane fault")) : Task.CompletedTask;
+        f.Child.BeforeLastPaneFileReplace = _ => throw new IOException("last-pane replace fault");
         await f.FollowAsync(); f.Saved.LabelFollow!.LastPaneRepairPending.ShouldBeTrue(); f.Saved.TabLabel.ShouldBe("New");
         HerdrLastPane.TryLoad(path)!.TabLabel.ShouldBe("Old"); var reads = f.GetterCount;
         await f.RecreateChildAsync(); await f.FollowAsync(); f.GetterCount.ShouldBe(reads);
@@ -157,10 +157,10 @@ public class HerdrLabelSnapshotTests
         await using var f = new HerdrLabelFollowFixture(); await f.StartAsync();
         var path = HerdrLastPane.PathFor(f.Settings.SessionLogPath, f.Binding.SessionId);
         var last = HerdrLastPane.FromSidecar(f.Binding, "original"); last.SaveAtomic(path);
-        f.Child.LabelFollowBoundary = (name, _) => name == "before-repair" ? Task.FromException(new IOException("last-pane fault")) : Task.CompletedTask;
+        f.Child.BeforeLastPaneFileReplace = _ => throw new IOException("last-pane replace fault");
         await f.FollowAsync(); await f.FollowAsync(); f.Saved.LabelFollow!.LastPaneRepairPending.ShouldBeTrue();
         if (replace) (last with { AcceptedStartedAt = last.AcceptedStartedAt!.Value.AddSeconds(1), TabLabel = "replacement" }).SaveAtomic(path);
-        f.Child.LabelFollowBoundary = null; await f.FollowAsync();
+        f.Child.BeforeLastPaneFileReplace = null; await f.FollowAsync();
         HerdrLastPane.TryLoad(path)!.TabLabel.ShouldBe(replace ? "replacement" : "New");
         f.Saved.LabelFollow.LastPaneRepairPending.ShouldBeFalse(); f.GetterCount.ShouldBe(2);
     }

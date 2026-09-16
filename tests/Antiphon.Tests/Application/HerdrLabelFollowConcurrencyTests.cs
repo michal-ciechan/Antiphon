@@ -96,10 +96,13 @@ public class HerdrLabelFollowConcurrencyTests
         await using var observed = new AppDbContext(opts);
         await f.Service(observed).ApplyAsync(f.AgentId, f.Dto, CancellationToken.None);
         interceptor.Ids.ShouldBe(new[] { ownerId, f.AgentId }); interceptor.Ids.Clear();
-        // Alternate seats have a managed PtyHost-only update gate. Test the common lock itself
-        // independently, then the actual manual owner writer, whose seat is the owner.
-        await using (var tx = await observed.Database.BeginTransactionAsync())
-        { await HerdrPlacementLock.LoadAsync(observed, f.AgentId, CancellationToken.None); await tx.CommitAsync(); }
+        // The actual manual writer must acquire the same owner-before-seat pair. A managed
+        // alternate's permitted backend is PtyHost; this edit corrects the seeded old backend.
+        var agent = await observed.Agents.SingleAsync(a => a.Id == f.AgentId);
+        var manual = new AgentService(observed, new CardWorkflowRunFactory(observed, TimeProvider.System), new MockEventBus(),
+            TimeProvider.System, new NoDirectories(), NullLogger<AgentService>.Instance);
+        await manual.UpdateAsync(f.AgentId, new(agent.Name, agent.WorkingDirectory, agent.Details, null, agent.AssignmentPolicy,
+            SessionBackend: SessionBackend.PtyHost, HerdrTabLabel: "Manual"), CancellationToken.None);
         interceptor.Ids.ShouldBe(new[] { ownerId, f.AgentId });
     }
 
