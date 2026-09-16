@@ -11,7 +11,7 @@ namespace Antiphon.SessionRunner;
 /// <c>pane.send_keys</c>; everything else → <c>pane.send_text</c>. P3: never calls
 /// <c>tab.close</c> — herdr auto-removes empty tabs.
 /// </summary>
-internal sealed class HerdrPaneChild : ISessionChild
+internal sealed partial class HerdrPaneChild : ISessionChild
 {
     private readonly HerdrClient _client;
     private readonly SessionRunnerSettings _settings;
@@ -268,9 +268,12 @@ internal sealed class HerdrPaneChild : ISessionChild
     /// </summary>
     public void RaiseVerifiedClosed(string reason = HerdrExitReasons.PaneClosed)
     {
-        if (_exited) return;
-        HerdrPaneSidecar.Retire(_settings.SessionLogPath, _sessionId, reason);
-        RaiseExited(reason);
+        lock (_labelSnapshotGate)
+        {
+            if (_exited) return;
+            HerdrPaneSidecar.Retire(_settings.SessionLogPath, _sessionId, reason);
+            RaiseExited(reason);
+        }
     }
 
     public async Task<ChildStarted> LaunchAsync(RunnerLaunchRequest request, CancellationToken ct)
@@ -1144,7 +1147,7 @@ internal sealed class HerdrPaneChild : ISessionChild
                 _logger.LogWarning(
                     "Herdr pane {PaneId} has unexpected foreground process(es) {Pids} — killed our child by pid and leaving pane open.",
                     _paneId, foreign);
-                HerdrPaneSidecar.TryDelete(_settings.SessionLogPath, _sessionId);
+                DeleteLabelSnapshot();
                 RaiseExited(HerdrExitReasons.PaneLeftOpen);
                 return true;
             }
@@ -1159,7 +1162,7 @@ internal sealed class HerdrPaneChild : ISessionChild
             return false;
         }
 
-        HerdrPaneSidecar.TryDelete(_settings.SessionLogPath, _sessionId);
+        DeleteLabelSnapshot();
         RaiseExited(HerdrExitReasons.PaneClosed);
         return true;
     }
@@ -1185,7 +1188,7 @@ internal sealed class HerdrPaneChild : ISessionChild
             _logger.LogWarning(ex, "pane.report_metadata (detach) failed for {PaneId}", _paneId);
         }
 
-        HerdrPaneSidecar.TryDelete(_settings.SessionLogPath, _sessionId);
+        DeleteLabelSnapshot();
         RaiseExited(HerdrExitReasons.Detached, exitCode: 0);
         return true;
     }
@@ -1238,7 +1241,13 @@ internal sealed class HerdrPaneChild : ISessionChild
         }
     }
 
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    public async ValueTask DisposeAsync()
+    {
+        lock (_labelSnapshotGate) _labelDisposed = true;
+        await _labelLifetime.CancelAsync();
+        await _labelAdmission.WaitAsync();
+        _labelAdmission.Release();
+    }
 
     private async Task<int?> RequirePowerShellShellAsync(string paneId, CancellationToken ct)
     {

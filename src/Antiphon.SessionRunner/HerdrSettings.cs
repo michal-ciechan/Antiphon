@@ -29,6 +29,17 @@ public sealed class HerdrSettings
 
     /// <summary>CARD-0162: upper bound (seconds) for the event-pump reconnect backoff.</summary>
     public int EventsReconnectMaxSeconds { get; set; } = 30;
+    public int LabelFollowCooldownMinutes { get; set; } = 60;
+    public int LabelFollowObservationTimeoutSeconds { get; set; } = 10;
+
+    public void ValidateLabelFollow()
+    {
+        var failures = new List<string>();
+        if (LabelFollowCooldownMinutes <= 0) failures.Add("LabelFollowCooldownMinutes must be positive.");
+        if (LabelFollowObservationTimeoutSeconds <= 0) failures.Add("LabelFollowObservationTimeoutSeconds must be positive.");
+        if (failures.Count != 0)
+            throw new Microsoft.Extensions.Options.OptionsValidationException(nameof(HerdrSettings), typeof(HerdrSettings), failures);
+    }
 
     /// <summary>
     /// CARD-0187: bound on polling <c>pane.get.agent</c> after typing the launch script, until

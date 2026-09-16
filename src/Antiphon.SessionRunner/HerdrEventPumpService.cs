@@ -15,26 +15,56 @@ public sealed class HerdrEventPumpService : BackgroundService
     private readonly HerdrClient _client;
     private readonly HerdrSettings _settings;
     private readonly ILogger<HerdrEventPumpService> _logger;
+    private readonly TimeProvider _clock;
+    internal Func<Task>? TimerFinalizing { get; set; }
 
     public HerdrEventPumpService(
         SessionRunnerRuntime runtime,
         HerdrClient client,
         IOptions<HerdrSettings> settings,
-        ILogger<HerdrEventPumpService> logger)
+        ILogger<HerdrEventPumpService> logger,
+        TimeProvider? timeProvider = null)
     {
         _runtime = runtime;
         _client = client;
         _settings = settings.Value;
         _logger = logger;
+        _clock = timeProvider ?? TimeProvider.System;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _settings.ValidateLabelFollow();
         if (!_settings.Enabled)
         {
             _logger.LogInformation("Herdr event pump idle — SessionRunner:Herdr:Enabled is false");
             return;
         }
+
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        var stream = RunStreamLoopAsync(lifetime.Token);
+        var timer = RunLabelTimerAsync(lifetime.Token);
+        try { await await Task.WhenAny(stream, timer); }
+        finally
+        {
+            await lifetime.CancelAsync();
+            try { await Task.WhenAll(stream, timer); }
+            catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        }
+    }
+
+    private async Task RunLabelTimerAsync(CancellationToken ct)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(60), _clock);
+            while (await timer.WaitForNextTickAsync(ct)) await _runtime.SweepHerdrLabelsAsync(ct);
+        }
+        finally { if (TimerFinalizing is not null) await TimerFinalizing(); }
+    }
+
+    private async Task RunStreamLoopAsync(CancellationToken stoppingToken)
+    {
 
         var paneChanged = NewTcs();
         void OnPaneSetChanged() =>
@@ -190,6 +220,7 @@ public sealed class HerdrEventPumpService : BackgroundService
                 if (info.AgentStatus is { } status)
                     pane.Session.ApplyHerdrAgentStatus(status, DateTime.UtcNow);
                 await pane.Session.VerifyHerdrLivenessAsync(_client, ct);
+                await _runtime.ObserveHerdrLabelsAsync(pane.Session, ct);
             }
             catch (HerdrBackendUnavailableException)
             {
