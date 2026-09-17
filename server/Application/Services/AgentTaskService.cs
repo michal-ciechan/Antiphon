@@ -1851,7 +1851,7 @@ public sealed class AgentTaskService
     /// Run a task again, at the same tier. For a task that stalled, failed, or came back with an
     /// answer the caller rejected — the goal is unchanged, so what changes is the attempt.
     /// </summary>
-    public async Task<AgentTaskSummaryDto> RetryAsync(Guid id, CancellationToken ct)
+    public async Task<AgentTaskSummaryDto> RetryAsync(Guid id, CancellationToken ct, bool abandonCommitRecovery = false)
     {
         var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == id, ct)
             ?? throw new NotFoundException(nameof(AgentTask), id);
@@ -1878,7 +1878,7 @@ public sealed class AgentTaskService
 
         await RequeueAsync(
             task, AgentTaskEventType.Retried, task.ModelLevel,
-            $"Retried at {ModelLevelAliases.For(task.AgentKind, task.ModelLevel)}.", ct);
+            $"Retried at {ModelLevelAliases.For(task.AgentKind, task.ModelLevel)}.", ct, abandonCommitRecovery);
         return await SummaryOfAsync(task, ct);
     }
 
@@ -2284,8 +2284,30 @@ public sealed class AgentTaskService
     /// mechanics are identical — only the reason differs.
     /// </summary>
     private async Task RequeueAsync(
-        AgentTask task, AgentTaskEventType type, AgentModelLevel level, string detail, CancellationToken ct)
+        AgentTask task, AgentTaskEventType type, AgentModelLevel level, string detail, CancellationToken ct,
+        bool abandonCommitRecovery = false)
     {
+        // CARD-0547 D-4: every requeue nulls the session and dispatch time the settlement digest is
+        // built from, so an unresolved commit-recovery obligation could never be recovered after it.
+        // Refuse before stopping anything unless the caller discards the obligation explicitly.
+        var pending = await CommitRecoveryObligations.LoadUnresolvedAsync(_db, task.Id, ct);
+        if (pending.Count > 0 && !abandonCommitRecovery)
+        {
+            var oldest = pending[0];
+            var hold = TimeSpan.FromMinutes(_settings.CommitRecoveryHoldMinutes);
+            throw new ConflictException(
+                $"Task {DelegationReportFormatter.Short(task.Id)} has an unresolved commit-recovery obligation; "
+                + "retry with abandonCommitRecovery=true to discard it, or wait for settlement to recover the commit.",
+                "commit_recovery_pending",
+                new Dictionary<string, object?>
+                {
+                    ["obligationEventId"] = oldest.EventId,
+                    ["settlement"] = oldest.Settlement,
+                    ["startedAt"] = oldest.StartedAt,
+                    ["holdExpiresAt"] = hold > TimeSpan.Zero ? oldest.StartedAt + hold : null,
+                });
+        }
+
         await StopDelegateAsync(task, ct);
         if (_capacityRecovery is not null)
             await _capacityRecovery.SupersedeTaskWaitsOnAsync(
@@ -2337,6 +2359,8 @@ public sealed class AgentTaskService
         RawTokens[task.Id] = token;
 
         AddEvent(task.Id, type, level, detail, now);
+        foreach (var obligation in pending)
+            _db.AgentTaskEvents.Add(CommitRecoveryObligations.Abandon(obligation, $"requeue:{type}", detail, now));
         await _db.SaveChangesAsync(ct);
         await _eventBus.PublishToAllAsync(
             "AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);

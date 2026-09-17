@@ -544,6 +544,12 @@ public sealed record ReviewEvidenceDto(
 public sealed record EscalateAgentTaskRequest(AgentModelLevel? ModelLevel = null);
 
 /// <summary>
+/// CARD-0547 D-4. Optional retry body. <c>AbandonCommitRecovery</c> discards an unresolved
+/// commit-recovery obligation (recorded by name); without it such a retry is 409 <c>commit_recovery_pending</c>.
+/// </summary>
+public sealed record RetryAgentTaskRequest(bool AbandonCommitRecovery = false);
+
+/// <summary>
 /// One named area of a repo, as the areas endpoint reports it (CARD-0063 S2).
 /// </summary>
 /// <param name="Name">The name a task's <c>scope</c> may use.</param>

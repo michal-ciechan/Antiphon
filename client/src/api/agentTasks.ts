@@ -710,8 +710,15 @@ export function useCancelAgentTask() {
   return useTaskMutation((id: string) => apiPost<AgentTaskSummaryDto>(`/agent-tasks/${id}/cancel`, {}))
 }
 
+/**
+ * CARD-0547: `abandonCommitRecovery` discards an unresolved commit-recovery obligation by name;
+ * without it the server refuses such a retry with 409 `commit_recovery_pending`.
+ */
 export function useRetryAgentTask() {
-  return useTaskMutation((id: string) => apiPost<AgentTaskSummaryDto>(`/agent-tasks/${id}/retry`, {}))
+  return useTaskMutation((target: string | { id: string; abandonCommitRecovery?: boolean }) => {
+    const { id, abandonCommitRecovery } = typeof target === 'string' ? { id: target, abandonCommitRecovery: false } : target
+    return apiPost<AgentTaskSummaryDto>(`/agent-tasks/${id}/retry`, { abandonCommitRecovery: abandonCommitRecovery ?? false })
+  })
 }
 
 export function useEscalateAgentTask() {

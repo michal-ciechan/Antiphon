@@ -100,8 +100,10 @@ public static class AgentTaskEndpoints
 
         tasks.MapPost("/{id:guid}/retry", async (
             Guid id,
+            RetryAgentTaskRequest? request,
             AgentTaskService service,
-            CancellationToken ct) => Results.Ok(await service.RetryAsync(id, ct)));
+            CancellationToken ct) =>
+            Results.Ok(await service.RetryAsync(id, ct, request?.AbandonCommitRecovery ?? false)));
 
         tasks.MapPost("/{id:guid}/reroute", async (
             Guid id,

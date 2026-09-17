@@ -1612,11 +1612,24 @@ public sealed class AgentTaskDispatcher
 
             var classified = AgentTaskLiveness.ClassifyFailure(task.AgentSessionId, session, hasTranscript);
 
+            // CARD-0547 D-3: settlement may still owe a gated commit its record. Hold within the
+            // window, keeping the grace bookkeeping (the session is still dead); past it, fail
+            // and abandon the obligation by name.
+            var pending = await CommitRecoveryObligations.LoadUnresolvedAsync(_db, task.Id, ct);
+            if (CommitRecoveryObligations.ShouldHold(pending, CommitRecoveryHold, now))
+            {
+                _logger.LogDebug(
+                    "Task {ShortId}'s session is dead but it holds an unresolved commit-recovery obligation "
+                    + "{Event} (started {At}); leaving it to settlement",
+                    DelegationReportFormatter.Short(task.Id), pending[0].EventId, pending[0].StartedAt);
+                continue;
+            }
+
             // The FailNeverStartedAsync tail, minus its KillAsync. Nothing here may be destructive:
             // the whole justification for acting is that the session is already gone, so if that
             // evidence is ever wrong a kill would be the CARD-0056 disaster rather than tidiness.
             await FailAndNotifyAsync(
-                task, classified.Reason, "dead-session reconciler", ct, classified.FailureCode);
+                task, classified.Reason, "dead-session reconciler", ct, classified.FailureCode, orphaned: pending);
 
             _deadSessions.Forget(task.Id);
             failed++;
@@ -1727,6 +1740,18 @@ public sealed class AgentTaskDispatcher
             return false;
         }
 
+        // Gate 1b — CARD-0547 D-3. Settlement may still owe a gated commit its record. DB-only and
+        // before the transcript pull, so a held task costs no runner round-trip per tick.
+        var pending = await CommitRecoveryObligations.LoadUnresolvedAsync(_db, task.Id, ct);
+        if (CommitRecoveryObligations.ShouldHold(pending, CommitRecoveryHold, UtcNow()))
+        {
+            _logger.LogDebug(
+                "Task {ShortId} is past its deadline but holds an unresolved commit-recovery obligation "
+                + "{Event} (started {At}); leaving it to settlement",
+                DelegationReportFormatter.Short(task.Id), pending[0].EventId, pending[0].StartedAt);
+            return false;
+        }
+
         // Gate 2 — pull the runner's own view, then re-read the clocks against it.
         await CatchUpTranscriptAsync(sessionId, ct);
         var verdict = await TaskDeadlinePolicy.EvaluateAsync(_db, task, UtcNow(), _settings, ct);
@@ -1778,7 +1803,7 @@ public sealed class AgentTaskDispatcher
             + "task that never ends, and re-running it is your call. The session was NOT killed "
             + $"— read session {sessionId} for what it was actually doing before you decide.";
 
-        await FailAndNotifyAsync(task, reason, "overdue-task deadline", ct);
+        await FailAndNotifyAsync(task, reason, "overdue-task deadline", ct, orphaned: pending);
         return true;
     }
 
@@ -2254,9 +2279,28 @@ public sealed class AgentTaskDispatcher
 
     private async Task FailAndNotifyAsync(
         AgentTask task, string reason, string sweep, CancellationToken ct,
-        AgentTaskFailureCode? failureCode = null)
+        AgentTaskFailureCode? failureCode = null,
+        IReadOnlyList<CommitRecoveryObligations.Pending>? orphaned = null)
     {
+        // CARD-0547 D-3: an unresolved commit-recovery obligation is closed by name in the same
+        // transaction as the failure, and the reason, the parent's note and its git= bit carry it.
+        string? git = null;
+        string? warning = null;
+        if (orphaned is { Count: > 0 })
+        {
+            var ids = string.Join(", ", orphaned.Select(p => $"{p.EventId:D} (settlement {p.Settlement})"));
+            reason = $"{reason} The task held unresolved commit-recovery obligation(s) {ids}; "
+                + "they were abandoned and any gated commit is local and unpushed.";
+            git = "commit-recovery-abandoned:" + string.Join(",", orphaned.Select(p => p.EventId.ToString("N")[..8]));
+            warning = string.Join("\n\n", orphaned.Select(p => CommitRecoveryObligations.Describe(task.Id, p)));
+        }
         await FailAsync(task, reason, ct, failureCode);
+        if (orphaned is { Count: > 0 })
+        {
+            var abandonedAt = task.CompletedAt ?? UtcNow();
+            foreach (var p in orphaned)
+                _db.AgentTaskEvents.Add(CommitRecoveryObligations.Abandon(p, sweep, reason, abandonedAt));
+        }
         await _tasks.RemoveEphemeralAgentAsync(task, task.AgentId, ct);
         if (task.DispatchedAt is null)
             ArmFailureReminder(task, task.CompletedAt ?? UtcNow());
@@ -2264,7 +2308,8 @@ public sealed class AgentTaskDispatcher
 
         if (task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is Guid parentSession)
         {
-            var note = DelegationReportFormatter.BuildCompletionNote(task, _settings, reason, land: await LandCompletionFacts.LoadAsync(_db, task, ct));
+            var note = DelegationReportFormatter.BuildCompletionNote(task, _settings, reason, warning: warning, git: git,
+                land: await LandCompletionFacts.LoadAsync(_db, task, ct));
             try
             {
                 await _queue.EnqueueAsync(
@@ -5293,4 +5338,6 @@ public sealed class AgentTaskDispatcher
             StringComparison.OrdinalIgnoreCase);
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
+
+    private TimeSpan CommitRecoveryHold => TimeSpan.FromMinutes(_settings.CommitRecoveryHoldMinutes);
 }
