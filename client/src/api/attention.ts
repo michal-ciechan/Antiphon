@@ -20,6 +20,8 @@ export type AttentionKind =
   | 'LandOutcomeUnconfirmed'
   | 'LandLegacyUnverified'
   | 'DispatchWarningUnconfirmed'
+  /** CARD-0547: settlement committed under the gate but could not save its record; held for recovery. */
+  | 'CommitRecoveryPending'
   | 'StandingContinuityDecision'
   | 'HerdrSupervisionHeld'
   /** The delegate asked a question. Only a human answer moves this. */

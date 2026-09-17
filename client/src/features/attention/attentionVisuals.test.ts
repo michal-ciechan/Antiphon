@@ -24,6 +24,7 @@ const ALL_KINDS: AttentionKind[] = [
   'LandOutcomeUnconfirmed',
   'LandLegacyUnverified',
   'DispatchWarningUnconfirmed',
+  'CommitRecoveryPending',
   'HerdrSupervisionHeld',
   'StandingContinuityDecision',
   'BlockedQuestion',
@@ -117,6 +118,21 @@ describe('attentionVisuals', () => {
 
   it('collapses only the failures group by default', () => {
     expect(ATTENTION_GROUPS.filter((group) => group.collapsed).map((g) => g.key)).toEqual(['failures'])
+  })
+
+  it('draws CommitRecoveryPending as a held commit recovery', () => {
+    const visual = ATTENTION_VISUALS.CommitRecoveryPending
+    expect(visual.label).toBe('Commit recovery pending')
+    expect(visual.color).toBe('danger')
+    expect(visual.hint.toLowerCase()).toContain('commit')
+    const row = item({
+      kind: 'CommitRecoveryPending',
+      severity: 'Error',
+      taskId: 'task-547',
+    })
+    expect(groupOf(row)).toBe('broken')
+    expect(targetOf(row)).toBe('/orchestrator?tab=delegations&task=task-547')
+    expect(keyOf(row)).toContain('CommitRecoveryPending')
   })
 
   it('draws DispatchWarningUnconfirmed as a missing dispatch receipt', () => {
