@@ -202,7 +202,10 @@ public class HerdrLabelFollowFlowTests
         await WaitUntilAsync(async () => (await f.ReadAsync()).HerdrTabLabel == "Renamed");
         f.FollowGets.Count(id => id == f.SessionId).ShouldBeGreaterThan(gets);
         f.FollowGets.Count(id => id == failingSession).ShouldBeGreaterThanOrEqualTo(2, "a failed session does not stop later ticks");
-        (await f.ReadAsync()).HerdrLabelFollowSequence.ShouldBeGreaterThan(first.HerdrLabelFollowSequence); f.Bus.Count.ShouldBe(notifications + 1);
+        (await f.ReadAsync()).HerdrLabelFollowSequence.ShouldBeGreaterThan(first.HerdrLabelFollowSequence);
+        // AgentChanged is published one DB round trip after commit (D-9), so the Renamed label does not prove delivery yet.
+        await WaitUntilAsync(() => Task.FromResult(f.Bus.Count >= notifications + 1));
+        f.Bus.Count.ShouldBe(notifications + 1);
         (await f.DetailLabelAsync("herdrTabLabel")).ShouldBe("Renamed");
         var host = f.Server!.FollowHost; host.ExecuteTask!.IsCompleted.ShouldBeFalse();
         await f.StopServerAsync().WaitAsync(TimeSpan.FromSeconds(10));
