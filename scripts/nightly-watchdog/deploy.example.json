@@ -1,0 +1,12 @@
+{
+  "sshTarget": "<user>@<host>",
+  "sshIdentityFile": null,
+  "remoteRoot": "/home/<user>/antiphon-watchdog",
+  "serviceUser": "<user>",
+  "rid": "linux-x64",
+  "runtime": "native",
+  "snapshotBind": "<private-ip>:17290",
+  "snapshotUrl": "http://<private-ip>:17290/snapshot.json",
+  "qualSnapshotBind": "<private-ip>:17291",
+  "stubWindmillBind": "127.0.0.1:17292"
+}

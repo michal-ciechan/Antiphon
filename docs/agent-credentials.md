@@ -184,6 +184,15 @@ not.**
 - Wrapper-managed profiles still launch when the ring is missing. That is the fallback worth
   keeping.
 
+### Nightly watchdog (CARD-0545)
+
+The independent nightly watchdog's credentials never enter Antiphon's stores. The operator places the Windmill
+token (labelled, scoped, expiring), the Telegram bot token, the authorized destination chat id and the reader
+`api_id`/`api_hash` in `<remoteRoot>/env` on the watchdog host (mode 0600), and creates the reader session with the
+interactive `--reader-login`. The deploy profile that names the host is untracked. The ledger, snapshot and
+qualification artifact record the destination only as `sha256(chatId)[..16]`. Names and locations only:
+[nightly-watchdog.md § Custody](nightly-watchdog.md#custody).
+
 ## 6. Things that have gone wrong here before
 
 - **Setting only `GROK_XAI_API_BASE_URL` and believing the CLI is redirected.** It redirects the

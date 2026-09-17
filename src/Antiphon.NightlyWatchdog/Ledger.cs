@@ -98,7 +98,13 @@ public sealed class Ledger : IDisposable
         {
             var stored = reader.GetString(0);
             if (!string.Equals(stored, @namespace, StringComparison.Ordinal))
+            {
+                reader.Close();
+                read.Dispose();
+                _connection.Dispose();
+                SqliteConnection.ClearPool(new SqliteConnection(_connectionString));
                 throw new LedgerNamespaceMismatchException(stored, @namespace);
+            }
             InstanceId = reader.GetString(1);
         }
         else

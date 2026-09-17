@@ -11,15 +11,17 @@ namespace Antiphon.Tests.Scripts;
 /// CARD-0544 D-6 (V-9/V-10 subset owned by CARD-0544). Each method runs the matching
 /// <c>Test-C544_*</c> case of <c>scripts/test-nightly-health.ps1</c> in a fresh results directory and
 /// requires exit 0 plus its named assertion inventory: every expected PASS row is present and no row
-/// failed. The notification/outage/recipient cases (PC-78..86, 95..98) are deferred to CARD-0545.
+/// failed. The notification/outage/recipient controls (PC-78..86, 95..98) moved into the CARD-0545 watchdog and run
+/// in-process on <see cref="C545World"/> (see NightlyVerificationContractTests.C545.cs).
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-public sealed class NightlyVerificationContractTests
+public sealed partial class NightlyVerificationContractTests
 {
     [Test]
-    public Task C544_ProductionJobAdapter() => RunCaseAsync("C544_ProductionJobAdapter", 21,
+    public Task C544_ProductionJobAdapter() => RunCaseAsync("C544_ProductionJobAdapter", 22,
         "C544 ProductionJobAdapter real HTTP request shape",
+        "C544 ProductionJobAdapter get_result requests bounded to scheduled completed rows",
         "C544 ProductionJobAdapter status j-running",
         "C544 ProductionJobAdapter status j-missing-result",
         "C544 ProductionJobAdapter j-running never qualifies as scheduled green",
@@ -75,10 +77,14 @@ public sealed class NightlyVerificationContractTests
     public Task C544_ReportReceiptRequired() => RunCaseAsync("C544_ReportReceiptRequired", 4,
         "C544 ReportReceiptRequired reportDelivered=false is unready");
 
-    private static async Task RunCaseAsync(string caseName, int expectedRows, params string[] requiredRows)
+    private static Task RunCaseAsync(string caseName, int expectedRows, params string[] requiredRows) =>
+        RunHarnessCaseAsync("test-nightly-health.ps1", "C544", caseName, expectedRows, requiredRows);
+
+    /// <summary>Runs one named case of a C487-style harness and requires its exact PASS inventory for <paramref name="prefix"/>.</summary>
+    private static async Task RunHarnessCaseAsync(string harness, string prefix, string caseName, int expectedRows, params string[] requiredRows)
     {
-        var results = Path.Combine(Path.GetTempPath(), "c544-nightly-" + Guid.NewGuid().ToString("N"));
-        var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "test-nightly-health.ps1");
+        var results = Path.Combine(Path.GetTempPath(), prefix.ToLowerInvariant() + "-nightly-" + Guid.NewGuid().ToString("N"));
+        var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", harness);
         var startInfo = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", script, "-Case", caseName, "-ResultsDirectory", results })
             startInfo.ArgumentList.Add(arg);
@@ -95,7 +101,7 @@ public sealed class NightlyVerificationContractTests
             output.ShouldContain("C487 HARNESS EXIT CODE: 0", Case.Sensitive, output);
             var lines = output.ReplaceLineEndings("\n").Split('\n');
             lines.ShouldNotContain(l => l.StartsWith("FAIL ", StringComparison.Ordinal), output);
-            var passed = lines.Where(l => l.StartsWith("PASS C544 ", StringComparison.Ordinal)).Select(l => l[5..]).ToList();
+            var passed = lines.Where(l => l.StartsWith("PASS " + prefix + " ", StringComparison.Ordinal)).Select(l => l[5..]).ToList();
             passed.Count.ShouldBe(expectedRows, $"{caseName} named assertion inventory\n{output}");
             foreach (var row in requiredRows)
                 passed.ShouldContain(row, $"{caseName} must assert '{row}'\n{output}");
