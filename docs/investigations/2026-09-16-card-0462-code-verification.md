@@ -356,3 +356,21 @@ Landing owner remains `05a66230`. Branch `feat/card-task-76ab3424` continues the
 Class counts: Scheduling 25, Observation 71, Snapshot 36; Concurrency 9, Flow 19, HerdrLabelFollowTests 33, Wire 4; regression class counts identical to Review 51e26afb. Named integration total 409 passed. The four Unit failures (`Registry_matches_compiled_metadata`, `C487_G142`, `every_test_class_is_tagged_unit_xor_integration`, `C487_G068`) have TRX messages byte-identical to Review 51e26afb's base reruns. Slow tripwire: 0 unlisted tests ≥5 s for server-new and server-regression. An earlier runner-new attempt at `0a70e4a6` (131/132, the getter-count defect above) is retained as `attempt1-runner-new`.
 
 V mapping changes: V-16/V-26 now include runner/server reconstruction, detail HTTP and relaunch receipts; V-18/V-24 include the after-repair-file crash; V-20 adds the coherent pane-move, managed tab-only and workspace-only flows; V-30 is additionally satisfied by the two hosted-timer methods. All other V/R rows unchanged and re-run. All PCs remain pending post-land Mutation; none executed.
+
+## Code round 3 (task d2ef93ef) — review cc5ea49c D1/D2
+
+- D1: `E.Hosted_timer_delivers_follow_without_manual_calls` now waits (bounded 10 s `WaitUntilAsync`) for the recording bus to reach `notifications + 1` before asserting the exact count; the watermark and bus assertions are on separate lines. Test-only; no production change.
+- D2: PC-136 split per `Enabled` site: (a) service site → `A.Disabled_sweep_polls_nothing`; (b) hosted site → `E.Hosted_timer_disabled_polls_nothing_across_ticks`, whose GET/pin assertions are masked by the service check but whose `ExecuteTask` completion wait (5 s) is the killing assertion. Both pending for SourceLanding Mutation; no mutants executed.
+- Verified commit: `10b3e86f03e7f24aae1797f29981475279969ae6`, build output `bin-code-d2ef93ef/` (deleted after), evidence `C:\Antiphon\evidence\code-d2ef93ef` (`ledger.txt`, `run-one.ps1` with the review's filters, `compare-unit-failures.ps1/.txt`).
+
+| Selection | Total | Pass | Fail | Skip | Exit |
+|---|---:|---:|---:|---:|---:|
+| hosted-timer x5 (3 methods each) | 15 | 15 | 0 | 0 | 0 x5 |
+| runner-new | 132 | 132 | 0 | 0 | 0 |
+| runner-regression | 158 | 158 | 0 | 0 | 0 |
+| native (V-21) | 1 | 0 | 0 | 1 | 8 (prerequisites unset) |
+| server-new | 65 | 65 | 0 | 0 | 0 |
+| server-regression | 54 | 54 | 0 | 0 | 0 |
+| Unit | 2461 | 2456 | 4 | 1 | 2 |
+
+Class counts equal round 2 (Scheduling 25, Observation 71, Snapshot 36; Concurrency 9, Flow 19, HerdrLabelFollowTests 33, Wire 4; regression runner 22/23/3/16/5/23/7/5/27/13/7/7, server 16/13/9/7/9). The four Unit failures (Registry_matches_compiled_metadata, C487_G142, every_test_class_is_tagged_unit_xor_integration, C487_G068) have messages byte-identical to the round-1 base reruns and the round-2 review TRX; no extra failures.
