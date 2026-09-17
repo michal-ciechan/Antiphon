@@ -346,6 +346,8 @@ new methods, the implementation must keep the named seam testable as specified.
 | G-24 / PC-24: original destination | In MaterializeAsync, overwrite new note.ParentSessionId from the current task row instead of the intent. | DN `C508_IntentProjectionCustody`: original destination A survives later route edit to B. |
 | G-25 / PC-25: WhenIdle delivery | Change notification enqueue mode from WhenIdle to Now. | DE `C540_CollapsedWarningsWaitForBusyCaller`: queued mode remains WhenIdle and attempts remain zero before release. |
 | G-26 / PC-26: receipt timestamp fallback | Remove the timestamp-floor filtering when LastDeliveryBaselineSequence is null, retaining sequence filtering. | DN `C540_WarningRequiresAttemptFloor`: in the no-sequence row, a full prompt older than the attempt time minus configured tolerance does not confirm. |
+| G-27 / PC-27: rollback keeps tick custody (review F1) | In the claim-rollback handler, reload only `claimed` after `ChangeTracker.Clear()` instead of every loaded AgentTask. | DG `C540_ClaimRollbackKeepsLaterQueuedTaskCustody` (both `afterSave` variants): the second failed task persists Failed with one Failed event, not Queued. |
+| G-28 / PC-28: queue late-confirm before resubmission (review F2) | Primary: make `LateConfirmAttemptedMessagesAsync` return without confirming (both paths). Variant Sent: bypass it only in interrupted-Sent `RecoverDeliveryRunLockedAsync`. Variant Pending: bypass it only on the Pending delivery path reached after that recovery reverts the row. Each single-path variant may be rescued by the other path; Mutation records whether each alone reaches red (a green single variant is a control finding, not a pass). | DE `C540_PostPromptCrashDoesNotRetype`: after real eligibility the original row is Sent/LateConfirmed with its original attempt count, and each intent has exactly one complete UserPrompt/native input. |
 
 The absence of new cleanup/publication writes is a structural scope constraint,
 verified by diff review plus R-2's unchanged refs/files, not an invented runtime
@@ -355,7 +357,7 @@ and probe-count economy have ordinary functional tests; their individual sorting
 and formatting branches do not authorize data loss or discharge receipt custody.
 
 Code implements tests and runs ordinary V/R. Ordinary Review checks implementation,
-evidence and pending PCs before land. Mutation runs **all 26** controls after land,
+evidence and pending PCs before land. Mutation runs **all 28** controls after land,
 one precise method filter per red/restore/green cycle. PC-11..PC-14 share one
 parameterized method; run that exact method for each independent mutation, not the
 whole class. Source/build/fixture errors or zero tests are not red evidence.

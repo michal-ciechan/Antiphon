@@ -3348,9 +3348,16 @@ public sealed class AgentTaskDispatcher
             // same context and would publish an abandoned claim's session/event/intents. Dispose
             // the transaction first, then reload committed facts (also safe after a lost commit
             // acknowledgement). Already committed intents remain immutable delivery obligations.
+            // Clear also detaches the tick's other queued rows; reacquire every loaded task
+            // instance so later failure reporting and claims mutate tracked rows, not orphans.
+            var loadedTasks = _db.ChangeTracker.Entries<AgentTask>()
+                .Where(e => e.State != EntityState.Added)
+                .Select(e => e.Entity)
+                .ToList();
             await transaction.DisposeAsync();
             _db.ChangeTracker.Clear();
-            await _db.Entry(claimed).ReloadAsync(CancellationToken.None);
+            foreach (var loaded in loadedTasks)
+                await _db.Entry(loaded).ReloadAsync(CancellationToken.None);
             throw;
         }
 

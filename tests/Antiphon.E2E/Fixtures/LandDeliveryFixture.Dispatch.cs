@@ -167,4 +167,27 @@ public sealed partial class LandDeliveryFixture
         { attempts = attempted.Select(m => new { m.Id, m.LastDeliveryStartedAt }), guardSeconds = InterruptedAttemptAge.TotalSeconds,
             eligibleAt, waitStarted, observedAt = DateTime.UtcNow }));
     }
+
+    public async Task WaitForLateConfirmedInterruptedRowsAsync(IReadOnlyDictionary<Guid, int> attemptsByRow)
+    {
+        // Queue recovery runs from the restarted host's own flushes or stranded-queue sweep (60 s
+        // default period) once the row is eligible: two sweep periods plus host warm-up.
+        List<SessionQueuedMessage> rows = [];
+        await UntilAsync(async () =>
+        {
+            await using var db = CreateContext();
+            rows = await db.SessionQueuedMessages.AsNoTracking().Where(m => attemptsByRow.Keys.Contains(m.Id)).ToListAsync();
+            return rows.Count == attemptsByRow.Count && rows.All(m => m.DeliveryVerdict != null || m.Status != QueuedMessageStatus.Sent
+                || m.DeliveryAttempts != attemptsByRow[m.Id]);
+        }, "interrupted post-prompt queue rows recovered after eligibility", 150);
+        await File.WriteAllTextAsync(Path.Combine(Root, "interrupted-attempt-recovery.json"), JsonSerializer.Serialize(new
+        { rows = rows.Select(m => new { m.Id, m.Status, m.DeliveryVerdict, m.DeliveryVerdictAt, m.DeliveryAttempts,
+            originalAttempts = attemptsByRow[m.Id], m.LastDeliveryStartedAt }), observedAt = DateTime.UtcNow }));
+        foreach (var row in rows)
+        {
+            row.DeliveryAttempts.ShouldBe(attemptsByRow[row.Id], "transcript evidence must settle the attempt without another one");
+            row.Status.ShouldBe(QueuedMessageStatus.Sent);
+            row.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed, "the original row owes a transcript late-confirm, not a resubmission");
+        }
+    }
 }
