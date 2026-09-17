@@ -50,6 +50,9 @@ public sealed class AttentionService
     /// </summary>
     private static readonly TimeSpan NeverStartedGrace = TimeSpan.FromMinutes(2);
 
+    /// <summary>CARD-0547 D-5: an obligation younger than this is an ordinary settlement in flight.</summary>
+    private static readonly TimeSpan CommitRecoveryVisibleAfter = TimeSpan.FromMinutes(2);
+
     /// <summary>
     /// Boot and the <c>WhenIdle</c> launch queue need a moment to persist the UI-origin prompt
     /// row. Fixed, not a setting: CARD-0287 is a read-time Warning, not a tunable watchdog.
@@ -810,6 +813,11 @@ public sealed class AttentionService
             .GroupBy(e => e.AgentSessionId)
             .ToDictionary(g => g.Key, g => g.Select(x => x.Text!).ToList());
 
+        // CARD-0547 D-5: one events query for the whole open set.
+        var obligations = await CommitRecoveryObligations.LoadUnresolvedAsync(
+            _db, open.Select(t => t.Id).ToArray(), ct);
+        var commitRecoveryHold = TimeSpan.FromMinutes(_delegation.CommitRecoveryHoldMinutes);
+
         foreach (var task in open)
         {
             AgentTaskLiveness.SessionSnapshot? session =
@@ -817,6 +825,32 @@ public sealed class AttentionService
             var elapsed = task.DispatchedAt is { } dispatched ? now - dispatched : (TimeSpan?)null;
             var digest = checkDigests.GetValueOrDefault(task.Id);
             var cost = costs.GetValueOrDefault(task.Id);
+
+            // 0. CommitRecoveryPending (CARD-0547). First: it explains why every later arm is not
+            // being acted on — both sweeps hold this task while settlement can still record the
+            // commit. Fixed two-minute visibility so an ordinary seconds-long settlement never
+            // flashes. Evidence is passed whole: the recipe and the abandon request must survive.
+            if (obligations.TryGetValue(task.Id, out var pending)
+                && now - pending[0].StartedAt > CommitRecoveryVisibleAfter)
+            {
+                var oldest = pending[0];
+                var heldFor = now - oldest.StartedAt;
+                items.Add(new AttentionItemDto(
+                    AttentionKind.CommitRecoveryPending,
+                    AlertSeverity.Error,
+                    task.Id,
+                    task.AgentSessionId,
+                    task.AgentId,
+                    null,
+                    task.Title,
+                    "Settled and committed under the gate; the record could not be saved. "
+                    + $"Held for recovery {Duration(heldFor)} of {_delegation.CommitRecoveryHoldMinutes} min.",
+                    CommitRecoveryEvidence(task.Id, oldest, commitRecoveryHold),
+                    oldest.StartedAt,
+                    cost,
+                    [AttentionAction.OpenDrawer, AttentionAction.Cancel]));
+                continue;
+            }
 
             // 3. DeadSession. The predicate and its wording are BOTH shared with the dispatcher's
             // dead-session sweep (CARD-0021) — this projection surfaces the state and that sweep
@@ -2928,6 +2962,18 @@ public sealed class AttentionService
         var kept = all.Count <= lines ? all : all.Skip(all.Count - lines).ToList();
         return Excerpt(string.Join("\n", kept));
     }
+
+    /// <summary>
+    /// CARD-0547 D-5. One item per line, most important first, deliberately NOT excerpted to
+    /// <see cref="EvidenceChars"/>: the recipe and the abandon request are the actionable tail.
+    /// </summary>
+    private static string CommitRecoveryEvidence(Guid taskId, CommitRecoveryObligations.Pending p, TimeSpan hold) =>
+        string.Join("\n",
+            $"obligation {p.EventId:D}",
+            $"settlement {p.Settlement}",
+            CommitRecoveryObligations.Recipe(taskId, p.Settlement),
+            hold > TimeSpan.Zero ? $"hold expires {p.StartedAt + hold:O}" : "hold disabled",
+            $"to discard: POST /api/agent-tasks/{taskId:D}/retry {{\"abandonCommitRecovery\":true}}");
 
     private static string Duration(TimeSpan span)
     {

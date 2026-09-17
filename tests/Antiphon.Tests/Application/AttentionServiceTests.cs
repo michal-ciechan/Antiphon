@@ -41,7 +41,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [Category("Integration")]
 [Category("Slow")]
-public class AttentionServiceTests
+public partial class AttentionServiceTests
 {
     [Test]
     public async Task A_needs_decision_card_is_a_critical_row_whose_evidence_is_the_move_reason()
@@ -2430,8 +2430,9 @@ public class AttentionServiceTests
         ISessionRunnerClient runner,
         int staleAfterDays = 7,
         IWorkspaceProgressProbe? workspaceProgress = null,
-        TimeProvider? timeProvider = null) =>
-        new(CreateContext(), runner, Options.Create(new SupervisionSettings()),
+        TimeProvider? timeProvider = null,
+        AppDbContext? db = null) =>
+        new(db ?? CreateContext(), runner, Options.Create(new SupervisionSettings()),
             Options.Create(new DelegationSettings()), timeProvider ?? TimeProvider.System,
             NullLogger<AttentionService>.Instance,
             workspaceProgress: workspaceProgress,
@@ -2658,18 +2659,21 @@ public class AttentionServiceTests
             return id;
         }
 
-        public async Task AddTaskEventAsync(Guid taskId, AgentTaskEventType type, string detail, int minutesAgo)
+        public async Task<(Guid Id, DateTime At)> AddTaskEventAsync(
+            Guid taskId, AgentTaskEventType type, string detail, int minutesAgo, DateTime? at = null)
         {
-            await using var db = CreateContext();
-            db.AgentTaskEvents.Add(new AgentTaskEvent
+            var row = new AgentTaskEvent
             {
                 Id = Guid.NewGuid(),
                 AgentTaskId = taskId,
                 Type = type,
                 Detail = detail,
-                At = DateTime.UtcNow.AddMinutes(-minutesAgo),
-            });
+                At = at ?? DateTime.UtcNow.AddMinutes(-minutesAgo),
+            };
+            await using var db = CreateContext();
+            db.AgentTaskEvents.Add(row);
             await db.SaveChangesAsync();
+            return (row.Id, row.At);
         }
 
         public async Task AddStallLoopAsync(Guid sessionId)

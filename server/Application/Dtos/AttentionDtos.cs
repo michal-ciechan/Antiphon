@@ -276,6 +276,13 @@ public enum AttentionKind
     /// OpenAgent/OpenDrawer. Visible independently of incident pruning.
     /// </summary>
     RemoteControlModal = 39,
+
+    /// <summary>
+    /// CARD-0547: an open task holds an unresolved commit-recovery obligation older than two
+    /// minutes — settlement made a gated commit but could not save its record, and the sweeps are
+    /// holding the task for the re-hand. Appended after shipped 40; do not renumber.
+    /// </summary>
+    CommitRecoveryPending = 41,
 }
 
 /// <summary>
