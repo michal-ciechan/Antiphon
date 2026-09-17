@@ -36,7 +36,11 @@ internal sealed class C544World : IAsyncDisposable
     public const string Section = "Round selection";
 
     public IsolatedTestSchema Schema { get; private set; } = null!;
-    public ScratchGitRepo Repo { get; } = new("c544-world");
+    /// <summary>The world's own scratch repository; null when attached to another fixture's repository.</summary>
+    public ScratchGitRepo Repo { get; private set; } = null!;
+    public string RepositoryPath { get; private set; } = "";
+    private string _worktreeRoot = "";
+    private bool _ownsSchema = true;
     public C544Clock Clock { get; } = new();
     public ControlledInterimReadiness Readiness { get; } = new();
     public ServiceProvider Services { get; private set; } = null!;
@@ -62,13 +66,83 @@ internal sealed class C544World : IAsyncDisposable
     public static async Task<C544World> CreateAsync(IInterceptor? interceptor = null, bool cardAllowsInterim = true)
     {
         var world = new C544World { Interceptor = interceptor };
+        world.Repo = new ScratchGitRepo("c544-world");
+        world.RepositoryPath = world.Repo.Path;
+        world._worktreeRoot = world.Repo.WorktreeRoot;
         await world.InitializeAsync(cardAllowsInterim);
         return world;
     }
 
+    /// <summary>
+    /// Attach the CARD-0544 graph to another fixture's database and real repository (the V-7
+    /// real-Git landing capstones): the existing Code/Worktree owner joins a new opted-in card, and
+    /// the selection table is committed on a side branch with plumbing so no checkout moves.
+    /// </summary>
+    public static async Task<C544World> AttachAsync(IsolatedTestSchema schema, string repositoryPath, string worktreeRoot,
+        Guid ownerId, string ownerSha)
+    {
+        var world = new C544World
+        {
+            Schema = schema, RepositoryPath = repositoryPath, _worktreeRoot = worktreeRoot, _ownsSchema = false,
+            OwnerSha = ownerSha,
+        };
+        world.Delegation.AllowedRoots = [Path.GetDirectoryName(repositoryPath)!];
+        world.SelectionSha = await CommitSelectionWithPlumbingAsync(repositoryPath);
+        world.BaseSha = (await PlumbingAsync(repositoryPath, null, "rev-parse", "refs/heads/master")).Trim();
+        world.BuildServices();
+        await world.SeedBoardAsync(true);
+        await using var db = world.CreateContext();
+        var owner = await db.AgentTasks.SingleAsync(t => t.Id == ownerId);
+        owner.CardId = world.Card.Id;
+        owner.ProjectId = world.Project.Id;
+        owner.VerificationProfileVersion = 1;
+        owner.VerificationRound = VerificationRound.Final;
+        owner.ConcurrencyToken = Guid.NewGuid();
+        await db.SaveChangesAsync();
+        world.Owner = owner;
+        return world;
+    }
+
+    /// <summary>
+    /// docs/plans/c544-selection.md committed on refs/heads/c544-selection with a temporary index,
+    /// write-tree and commit-tree: no checkout, working tree or branch the landing uses moves.
+    /// </summary>
+    private static async Task<string> CommitSelectionWithPlumbingAsync(string repo)
+    {
+        var index = Path.Combine(Path.GetTempPath(), "c544-index-" + Guid.NewGuid().ToString("N"));
+        var file = Path.Combine(Path.GetTempPath(), "c544-selection-" + Guid.NewGuid().ToString("N") + ".md");
+        await File.WriteAllTextAsync(file, SelectionMarkdown);
+        var env = new Dictionary<string, string>
+        {
+            ["GIT_INDEX_FILE"] = index,
+            ["GIT_AUTHOR_NAME"] = "C544 Fixture", ["GIT_AUTHOR_EMAIL"] = "c544@antiphon.local",
+            ["GIT_COMMITTER_NAME"] = "C544 Fixture", ["GIT_COMMITTER_EMAIL"] = "c544@antiphon.local",
+        };
+        try
+        {
+            var blob = (await PlumbingAsync(repo, env, "hash-object", "-w", file)).Trim();
+            await PlumbingAsync(repo, env, "update-index", "--add", "--cacheinfo", $"100644,{blob},{SelectionPath}");
+            var tree = (await PlumbingAsync(repo, env, "write-tree")).Trim();
+            var commit = (await PlumbingAsync(repo, env, "commit-tree", tree, "-m", "c544 selection")).Trim();
+            await PlumbingAsync(repo, env, "update-ref", "refs/heads/c544-selection", commit);
+            return commit;
+        }
+        finally
+        {
+            try { File.Delete(index); File.Delete(file); } catch (IOException) { }
+        }
+    }
+
+    private static async Task<string> PlumbingAsync(string repo, IReadOnlyDictionary<string, string>? env, params string[] args)
+    {
+        var result = await ScratchGitRepo.GitInAsync(repo, env, args);
+        result.Ok.ShouldBeTrue($"git {string.Join(' ', args)}: {result.StdErr}");
+        return result.StdOut;
+    }
+
     private async Task InitializeAsync(bool cardAllowsInterim)
     {
-        Delegation.AllowedRoots = [Path.GetDirectoryName(Repo.Path)!];
+        Delegation.AllowedRoots = [Path.GetDirectoryName(RepositoryPath)!];
         await Repo.CommitFileAsync("README.md", "c544 base\n");
         BaseSha = (await Repo.GitReadAsync("rev-parse", "HEAD")).Trim();
         Directory.CreateDirectory(Path.Combine(Repo.Path, "docs", "plans"));
@@ -77,7 +151,14 @@ internal sealed class C544World : IAsyncDisposable
 
         Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         BuildServices();
+        await SeedBoardAsync(cardAllowsInterim);
 
+        await using var db = CreateContext();
+        await SeedOwnerAsync(db, Clock.GetUtcNow().UtcDateTime);
+    }
+
+    private async Task SeedBoardAsync(bool cardAllowsInterim)
+    {
         await using var db = CreateContext();
         var now = Clock.GetUtcNow().UtcDateTime;
         Project = new Project
@@ -106,7 +187,11 @@ internal sealed class C544World : IAsyncDisposable
         CallerSessionId = Guid.NewGuid();
         db.AddRange(Project, Board, column, Card);
         db.AgentSessions.Add(Session(CallerSessionId, "c544-caller", now));
+        await db.SaveChangesAsync();
+    }
 
+    private async Task SeedOwnerAsync(AppDbContext db, DateTime now)
+    {
         var ownerId = Guid.NewGuid();
         var branch = $"feat/card-task-{DelegationReportFormatter.Short(ownerId)}";
         await Repo.GitAsync("checkout", "-b", branch);
@@ -184,7 +269,7 @@ internal sealed class C544World : IAsyncDisposable
         services.AddSingleton<DelegationWorkspaceResolver>();
         services.AddDelegationWorktreeGraph(new GitSettings
         {
-            WorktreeBasePath = Repo.WorktreeRoot, WorktreeStaleAfterDays = 7, WorktreeJanitorIntervalHours = 24,
+            WorktreeBasePath = _worktreeRoot, WorktreeStaleAfterDays = 7, WorktreeJanitorIntervalHours = 24,
         });
         services.AddSingleton<CapacityRecoveryService>();
         services.AddSingleton<ApiErrorRecoveryService>();
@@ -218,7 +303,7 @@ internal sealed class C544World : IAsyncDisposable
     public AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
 
     public AgentTaskService.Caller Caller(Guid? projectId = null) =>
-        new(null, CallerSessionId, Repo.Path, ProjectId: projectId ?? Project.Id);
+        new(null, CallerSessionId, RepositoryPath, ProjectId: projectId ?? Project.Id);
 
     public async Task<AgentTaskCreatedDto> CreateTaskAsync(CreateAgentTaskRequest request, AgentTaskService.Caller? caller = null)
     {
@@ -231,18 +316,18 @@ internal sealed class C544World : IAsyncDisposable
 
     public CreateAgentTaskRequest FinalReview(string goal = "Review the owner.") => new(
         goal, Title: "CARD-0544 final review", Kind: AgentTaskKind.Worker, Role: AgentTaskRole.Review,
-        Workspace: WorkspaceMode.ReadOnly, WorkingDirectory: Repo.Path, Card: Card.Id.ToString());
+        Workspace: WorkspaceMode.ReadOnly, WorkingDirectory: RepositoryPath, Card: Card.Id.ToString());
 
     public CreateAgentTaskRequest InterimCode(Guid baselineId) => new(
         "Repair the owner.", Title: "CARD-0544 interim code", Kind: AgentTaskKind.Worker, Role: AgentTaskRole.Code,
-        Workspace: WorkspaceMode.Worktree, WorkingDirectory: Repo.Path, Card: Card.Id.ToString(),
+        Workspace: WorkspaceMode.Worktree, WorkingDirectory: RepositoryPath, Card: Card.Id.ToString(),
         RepairSourceTaskId: Owner.Id, VerificationRound: VerificationRound.Interim,
         VerificationSubjectTaskId: Owner.Id, VerificationBaselineOutcomeId: baselineId,
         VerificationSelection: Selection());
 
     public CreateAgentTaskRequest InterimReview(Guid baselineId) => new(
         "Review the repair.", Title: "CARD-0544 interim review", Kind: AgentTaskKind.Worker, Role: AgentTaskRole.Review,
-        Workspace: WorkspaceMode.ReadOnly, WorkingDirectory: Repo.Path, Card: Card.Id.ToString(),
+        Workspace: WorkspaceMode.ReadOnly, WorkingDirectory: RepositoryPath, Card: Card.Id.ToString(),
         VerificationRound: VerificationRound.Interim, VerificationSubjectTaskId: Owner.Id,
         VerificationBaselineOutcomeId: baselineId, VerificationSelection: Selection());
 
@@ -254,12 +339,19 @@ internal sealed class C544World : IAsyncDisposable
         bool found = false, string? reviewedSha = null, Guid? subject = null, string next = "land")
     {
         var created = await CreateTaskAsync(request ?? FinalReview());
-        var sessionId = await DispatchAsync(created.Id);
-        var report = ReviewReport(created.Id, subject ?? Owner.Id, reviewedSha ?? OwnerSha, scope, found, next);
-        await SeedTurnAsync(sessionId, created.Id, report);
+        return await SettleExistingReviewAsync(created.Id, scope, found, reviewedSha, subject, next);
+    }
+
+    /// <summary>Settle an already-created Review task through the real reply boundary.</summary>
+    public async Task<StageOutcome> SettleExistingReviewAsync(Guid taskId, string scope = "Full", bool found = false,
+        string? reviewedSha = null, Guid? subject = null, string next = "land")
+    {
+        var sessionId = await DispatchAsync(taskId);
+        var report = ReviewReport(taskId, subject ?? Owner.Id, reviewedSha ?? OwnerSha, scope, found, next);
+        await SeedTurnAsync(sessionId, taskId, report);
         await Services.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(sessionId, CancellationToken.None);
         await using var db = CreateContext();
-        return await db.StageOutcomes.AsNoTracking().SingleAsync(o => o.StageTaskId == created.Id);
+        return await db.StageOutcomes.AsNoTracking().SingleAsync(o => o.StageTaskId == taskId);
     }
 
     public static string ReviewReport(Guid taskId, Guid subject, string sha, string? scope, bool found, string next = "land",
@@ -333,8 +425,8 @@ internal sealed class C544World : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (Services is not null) await Services.DisposeAsync();
-        if (Schema is not null) await Schema.DisposeAsync();
-        Repo.Dispose();
+        if (Schema is not null && _ownsSchema) await Schema.DisposeAsync();
+        Repo?.Dispose();
     }
 }
 
