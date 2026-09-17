@@ -280,6 +280,22 @@ be an authorized Code/Worktree task in the same project and git common directory
 (`assessment`, `reason`, `sources[].origin` / `ownerTaskId` / `commit`). Land on a repair task
 returns 409 `repair_source_landing_owner_required`.
 
+CARD-0544 (dormant: `InterimVerification:Enabled=false`, every card `FullOnly`): `POST /api/agent-tasks`
+accepts optional `verificationRound` (`Final` | `Interim`), `verificationSubjectTaskId`,
+`verificationBaselineOutcomeId` and `verificationSelection` (`artifactPath`, `artifactCommitSha`,
+`section`); `delegate.ps1 -VerificationRound/-VerificationSubject/-VerificationBaselineOutcome/-VerificationSelectionFile`.
+New Code/Review tasks carry profile v1 (Final unless Interim is requested and admitted). Interim
+admission refuses 409 with `verification_round_role`, `verification_round_invalid`,
+`verification_interim_disallowed`, `verification_baseline_invalid`, `verification_selection_invalid`,
+`verification_owner_landing` or `verification_backstop_unready`; a queued Interim that loses
+eligibility is held, never relaunched differently. An admitted Interim latches the owner
+(`requiresFinalVerificationReview`); land of a latched owner then needs a Clean Final/Full profile-v1
+Review for the exact SHA (409 `final_verification_review_required` /
+`review_verification_scope_ineligible`, also rechecked by a recovered landing). Interim scope never
+approves a land. `GET /api/agent-tasks/{id}` exposes `verification` (version, round, subject,
+baseline and reviewed SHA, selection, final-review pending, owner latch, hold reason, readiness time);
+stage outcomes expose `verificationProfileVersion`, `commissionedRound` and `ordinaryScopeCompleted`.
+
 `POST /api/agent-tasks` accepts optional `sourceLandingOperationId` (full GUID), exposed by
 `delegate.ps1 -SourceLanding`. Only fresh Worker/Mutation/Worktree with a distinct same-board
 companion, same authorized repository/project and structured confirmed publication is accepted.

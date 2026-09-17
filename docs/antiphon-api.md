@@ -92,6 +92,10 @@ reject unknown JSON members, so a stale `priority` write is **400**, not a silen
 (the tri-state for the date; null `dueAt` means unchanged). `GET /api/cards/limits` includes
 `importanceValues` and `urgencyValues` from `Enum.GetNames`.
 
+CARD-0544: the same PATCH takes optional `codeVerificationPolicy` / `reviewVerificationPolicy`
+(`FullOnly` | `AllowInterim`, default `FullOnly`; unknown strings 422). `CardDto` and revisions
+expose both; a revision records the superseded values.
+
 **Position (CARD-0098).** `CardDto.position` is a nullable dense `1..n` inside the card's
 (column, rank cell). Null means never placed and sorts after every placed card in that cell.
 `PATCH /api/cards/{id}/position` is relative placement: exactly one of `before` / `after` (a card
