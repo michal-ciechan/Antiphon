@@ -7,8 +7,9 @@ Current disposition (Plan task 39855344, 2026-09-16): TD-F1 reuses the existing
 CARD-0481 notification outbox/recovery owner, with a completion-specific payload
 contract. TD-F2 is explicitly deferred to **CARD-0545**, the same-board CARD-0487
 S4 follow-up. See [the resolution appendix](#plan-resolution-of-td-f1td-f2), which
-supersedes conflicting scope/handoff statements below. Return to TestDesign;
-the existing verification appendix is not yet a Code-ready specification.
+supersedes conflicting scope/handoff statements below. The TestDesign revision (task baa1d84a, 2026-09-17) at the end of this file
+is the Code-ready specification for the dormant S1-S4 scope; interim activation
+stays blocked on CARD-0545 qualification and S6.
 
 Introduce an explicitly requested, per-card/per-role interim verification mode for
 repair work. Preserve full ordinary verification for the initial baseline and final
@@ -1879,3 +1880,105 @@ break/red/restore/green. Code implements the tests and runs the same methods
 unmutated as ordinary V/R. Ordinary Review judges them before land. All 107
 CARD-0544 PCs remain pending until sourced Mutation; the 13 CARD-0545 PCs are
 pending on that card and are not counted as CARD-0544 evidence.
+
+### Out of scope (revised)
+
+The 5d91dca2 exclusions stand. Additionally:
+
+- No second completion outbox, worker or table; no widening of the SourceLanding
+  scan; no change to Outcome/Conflict/DispatchBase/DeliveryFailure receipt rules
+  or their existing tests. A kind-aware seam that needs one of those is a Plan
+  return, not a Code decision.
+- No backfill or replay of historical ordinary completions; legacy null-profile
+  tasks keep today's direct note. No new retention TTL or automatic cancellation.
+- No live provider/TUI receipt proof: `FakeAgentProtocolAdapter` is the declared
+  terminal; the native OptIn E2E suite is neither reused nor credited.
+- CARD-0544 Code does not author, stub or run the 13 transferred N cases, the
+  independent watchdog, the recipient reader, Windmill registration, S5
+  qualification, or any credential/notification send. Their absence from the
+  CARD-0544 inventory is expected and must be reported as pending on CARD-0545.
+- No activation: `Enabled=false`, cards `FullOnly`, no pilot opt-in, no
+  readiness receipt file. S6 remains a separate explicit dispatch after
+  CARD-0545 acceptance.
+- Bodies of the V-14 classes were inventoried, not read line by line, in this
+  dispatch; Code reads the six named methods before touching the seams. Their
+  unchanged-assertion requirement is the guard against that residual risk.
+
+### Cost (revised)
+
+All numbers are **estimates**; nothing was built or run in this dispatch.
+Assumptions as at 5d91dca2 (one foreground owner, isolated PostgreSQL clone,
+local Git/pwsh/Git-bash, cold setup per stage, no concurrent Agents.Pty).
+Authoring time is excluded and must be added at commissioning.
+
+| Ordinary V/R floor, per Code or independent Review | Minutes |
+|---|---:|
+| Setup: restore/build isolated bin-c544, DB fixture preflight, client dependencies | 15 |
+| Full Unit lane (RP/I/B and existing instruction/formatter contracts) | 8 |
+| Named DB/admission/dispatch/settlement/landing/CLI classes, now including 4 new S methods | 42 |
+| Real-Git V-7 capstones | 6 |
+| Q (19 methods, including the 36-row recovery loop) plus CheckNoteDeliveryHandoffTests | 34 |
+| V-14 shared classes: notification/receipt/dispatch-base/persistence (42 tests), distillation (42), shrink (8), retention (30), reply integration (127) | 28 |
+| Offline nightly harness with the 10 retained C544 cases, N wrappers, NightlyScriptsTests | 5 |
+| Three client files with structured execution report | 3 |
+| **Per-stage setup + ordinary V/R** | **141** |
+
+Ordinary execution excluding setup is 126 minutes. Code floor = 141; independent
+ordinary Review floor = another 141. The rise from 88 is the shared recovery,
+queue, distillation and retention services entering the affected set (+28), the
+completion delivery matrix (+22) and the settlement controls (+4), less one
+minute of transferred harness cases.
+
+| PC floor, sequential exact-method red/restore/rebuild/green | Controls | Minutes per cycle | Minutes |
+|---|---:|---:|---:|
+| Unit parser/instruction/brief (RP/I/B) | 9 | 2 | 18 |
+| Readiness file tests (H) | 12 | 2.5 | 30 |
+| DB policy/card/dispatch/settlement/landing (P/C/D/S/L), including PC-102/103/104/119 | 55 | 4 | 220 |
+| CLI request control | 1 | 3 | 3 |
+| Producer-to-session delivery controls (Q), including PC-71 and PC-105..117/120 | 19 | 6 | 114 |
+| Script/adapter/clock controls retained on CARD-0544 (N) | 10 | 1.5 | 15 |
+| Retention control (RT, PC-118) | 1 | 4 | 4 |
+| Mutation setup/build of exact L | - | - | 20 |
+| Missing-control discovery, restoration inventory and final evidence | - | - | 20 |
+| **Mutation floor, all 107 CARD-0544 controls** | **107** | - | **444** |
+
+PC cycles total 404 minutes; Mutation setup/discovery totals 40. Every control
+is counted separately; no batching or concurrency saving is assumed (one managed
+SourceLanding snapshot). The 13 CARD-0545 controls (13 x 1.5 = 19.5 minutes at
+the earlier rate) are **moved cost**, priced again by CARD-0545 with its
+independent infrastructure; they are not subtracted as a saving.
+
+**Total verification floor = Code setup 15 + ordinary V/R 126 + Mutation setup 20
++ every PC cycle 404 + discovery/restoration 20 = 585 minutes.** Adding
+independent ordinary Review (141) gives **726 minutes** for dormant
+implementation through post-land verification. Versus 5d91dca2 (442.5 / 530.5)
+this is +142.5 / +195.5 minutes, of which the new completion-recovery guards
+and the V-14 regression set account for all but the 19.5 transferred minutes.
+
+S6 remains 60 minutes on CARD-0544 and is blocked behind CARD-0545. S5's
+345-825 active minutes plus the overnight boundary now belong to CARD-0545, with
+its watchdog/reader infrastructure unpriced here. End-to-end active floor for
+CARD-0544 alone is therefore **786 minutes**; including CARD-0545's inherited
+S5 estimate it is **1131-1611 minutes**.
+
+Savings: **0 verification minutes** on this card (FullOnly until qualified);
+**0 PC minutes** deferred away; the 19.5 transferred minutes are moved, not
+saved. The nine-round sensitivity example (136 minutes, 58.1%) is unchanged and
+remains illustrative, not a claim from the investigation's observed minutes.
+
+### Code-handoff audit
+
+Bodies read as inventoried above and at 5d91dca2. Guards = 120, mapped = 120,
+missing = 0, duplicate PC mappings = 0. CARD-0544 controls = 107, all with an
+executable method-scoped specification (PC-71 resolved by D-9). CARD-0545
+controls = 13, preserved by ID/method and pending that card's entrypoints; they
+are outside CARD-0544's executable gate by D-10, not unresolved within it.
+Planned exact C544 methods for CARD-0544 = 115; client cases = 3. Numeric floors
+are estimated. The "all PCs executable" gate **passes for the CARD-0544 dormant
+scope**. This is a Code-ready verification design for S1-S4 shipped disabled;
+it is not qualification, activation or S6.
+
+--- next stage ---
+next: code
+handoff: Implement CARD-0544 S1-S4 dormant (InterimVerificationSettings.Enabled=false, cards FullOnly): policy/round/latch/approval guards plus the D-9 Completion obligation on the CARD-0481 outbox; author the 115 named C544 methods and 3 client cases, run every full affected class incl. V-14; do not author the 13 CARD-0545 N cases or enable Interim.
+artifact: docs/superpowers/plans/2026-09-16-card-0544-interim-final-verification-plan.md
