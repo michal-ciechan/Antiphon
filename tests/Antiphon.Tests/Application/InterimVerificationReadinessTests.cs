@@ -242,6 +242,39 @@ public sealed class InterimVerificationReadinessTests
         }
     }
 
+    [Test]
+    public async Task C545_WatchdogInstance()
+    {
+        using var state = new StateFixture();
+        var match = await new InterimVerificationReadinessReader(Options.Create(state.Enabled()), new FakeTimeProvider(Now))
+            .ReadAsync(state.Repository, ProjectId, CancellationToken.None);
+        (match.Ready, match.Reason).ShouldBe((true, "ready"), "match");
+        match.Snapshot.ShouldNotBeNull();
+        match.Snapshot.WatchdogInstanceId.ShouldBe("wd-1", "match snapshot");
+
+        var rows = new (string Row, Action Change, string Expected)[]
+        {
+            ("receipt-missing", () => state.Receipt.Remove("watchdogInstanceId"), "qualification_watchdog_missing"),
+            ("receipt-blank", () => state.Receipt["watchdogInstanceId"] = " ", "qualification_watchdog_missing"),
+            ("monitor-missing", () => ((JsonObject)state.Monitor["Identity"]!).Remove("WatchdogInstanceId"), "monitor_watchdog_mismatch"),
+            ("monitor-blank", () => ((JsonObject)state.Monitor["Identity"]!)["WatchdogInstanceId"] = " ", "monitor_watchdog_mismatch"),
+            ("mismatch", () => ((JsonObject)state.Monitor["Identity"]!)["WatchdogInstanceId"] = "wd-2", "monitor_watchdog_mismatch"),
+            ("case-differs", () => ((JsonObject)state.Monitor["Identity"]!)["WatchdogInstanceId"] = "WD-1", "monitor_watchdog_mismatch"),
+            ("stale-and-mismatch", () =>
+            {
+                state.Monitor["RecordedAt"] = Now.AddMinutes(-61).ToString("o");
+                ((JsonObject)state.Monitor["Identity"]!)["WatchdogInstanceId"] = "wd-2";
+            }, "monitor_stale"),
+        };
+        foreach (var (row, change, expected) in rows)
+        {
+            state.Reset();
+            change();
+            state.Write();
+            (await Read(state, state.Enabled())).ShouldBe((false, expected), row);
+        }
+    }
+
     private static Task<(bool Ready, string Reason)> Read(StateFixture state, InterimVerificationSettings settings) =>
         ReadFor(state, settings, state.Repository, settings.ProjectId);
 
@@ -292,6 +325,7 @@ public sealed class InterimVerificationReadinessTests
                 ["scheduledJobId"] = "job-scheduled-1",
                 ["recipientEvidenceIds"] = new JsonArray("recipient-1", "recipient-2"),
                 ["outageRecoveryEvidenceIds"] = new JsonArray("outage-1"),
+                ["watchdogInstanceId"] = "wd-1",
                 ["acceptedAt"] = "2026-09-16T08:00:00Z",
             };
             Monitor = new JsonObject
@@ -309,6 +343,8 @@ public sealed class InterimVerificationReadinessTests
                     ["ScheduledRunId"] = "run-nightly-17",
                     ["JobNativeRunId"] = "run-nightly-17",
                     ["WindmillJobId"] = "job-nightly-17",
+                    ["WatchdogInstanceId"] = "wd-1",
+                    ["WatchdogHeartbeatAt"] = Now.AddMinutes(-6).ToString("o"),
                 },
             };
             Write();

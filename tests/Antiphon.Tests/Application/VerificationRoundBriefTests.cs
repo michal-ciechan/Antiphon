@@ -126,7 +126,7 @@ public sealed class VerificationRoundBriefTests
                 Guid.NewGuid(), 3, CardVerificationPolicy.AllowInterim,
                 new VerificationSelectionReference("docs/plans/c544.md", BaselineSha, "Round selection"),
                 new InterimReadinessSnapshot("docs/investigations/q.md", BaselineSha, "p", "s", "run", "job", ["r1"],
-                    new DateTime(2026, 9, 17, 8, 0, 0, DateTimeKind.Utc), new DateTime(2026, 9, 17, 8, 5, 0, DateTimeKind.Utc)),
+                    new DateTime(2026, 9, 17, 8, 0, 0, DateTimeKind.Utc), new DateTime(2026, 9, 17, 8, 5, 0, DateTimeKind.Utc), "wd-1"),
                 new DateTime(2026, 9, 17, 8, 5, 0, DateTimeKind.Utc)).Serialize();
         }
         return task;
