@@ -69,7 +69,8 @@ work itself: each one is here because ignoring it has already cost a real task.
   one 10-minute foreground window — chunk it by namespace (`--treenode-filter
   "/*/Antiphon.Tests.Application/*/*"`). After a fix, re-run only what you touched. When you verify
   that red is pre-existing, re-run the failing tests at the base commit, not the assembly —
-  confirming four known test names costs about one minute targeted and ~25.5 minutes full.
+  confirming four known test names costs about one minute targeted and ~25.5 minutes full. A
+  Code/Review brief's verification profile sets that task's ordinary scope and wins over this rule.
 
 - CLOSE THE REPORT WITH A VERDICT LINE. End your final message with one line, on its own:
   `[antiphon-report:<id> done]` if the work is complete, `[antiphon-report:<id> blocked]` if you

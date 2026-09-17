@@ -138,7 +138,9 @@ public sealed class ScopedVerificationInstructionTests
     [Test]
     public void C487_G142()
     {
-        Compose(AgentTaskRole.Code).ShouldContain("next: mutation when implementation and ordinary V/R are complete, even with zero PCs");
+        // CARD-0544 TestDesign: the commissioned contract is Code -> Review (CARD-0470 moved Mutation
+        // after land); the earlier Code -> Mutation wording was stale text, not a behavior.
+        Compose(AgentTaskRole.Code).ShouldContain("next: review when implementation and ordinary V/R are complete, even with zero PCs");
         Compose(AgentTaskRole.Review).ShouldContain("PC evidence read-only");
     }
 

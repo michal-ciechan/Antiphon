@@ -199,6 +199,21 @@ public sealed class AgentTaskService
         if (request.Goal.Length > 20_000)
             throw new ValidationException(nameof(request.Goal), "A goal must not exceed 20,000 characters.");
 
+        // CARD-0544 D-1: syntax first, before any other mode check, follow-up or pin can rewrite the
+        // shape. Omitted is Final on Code/Review; an explicit round anywhere else, or an Interim
+        // outside the supported Worker Code/Worktree and Review/ReadOnly shapes, never reaches admission.
+        var verificationRound = InterimVerificationPolicy.ResolveRound(request);
+        if (verificationRound == VerificationRound.Interim)
+        {
+            InterimVerificationPolicy.RequireInterimShape(request.Kind, request.Role,
+                request.Workspace ?? (request.Kind == AgentTaskKind.Worker ? WorkspaceMode.Shared : WorkspaceMode.Worktree));
+            if (request.AgentId is not null || request.Agent is not null)
+                throw new ValidationException(nameof(request.VerificationRound),
+                    "Interim cannot run on a pinned agent.", InterimVerificationPolicy.RoundRoleCode);
+            InterimVerificationPolicy.RequireExplicitIdentities(
+                request.VerificationSubjectTaskId, request.VerificationBaselineOutcomeId, request.VerificationSelection);
+        }
+
         if (request.RepairSourceTaskId is not null
             && (request.Kind != AgentTaskKind.Worker || request.Role != AgentTaskRole.Code
                 || request.Workspace is { } repairWorkspace && repairWorkspace != WorkspaceMode.Worktree
@@ -220,21 +235,6 @@ public sealed class AgentTaskService
         if (request.Role == AgentTaskRole.Mutation && request.Workspace == WorkspaceMode.ReadOnly)
             throw new ValidationException(nameof(request.Workspace),
                 "Mutation requires writable workspace access; ReadOnly is not supported.");
-
-        // CARD-0544 D-1: syntax first, before a follow-up or pin can rewrite the shape. Omitted is
-        // Final on Code/Review; an explicit round anywhere else, or an Interim outside the
-        // supported Worker Code/Worktree and Review/ReadOnly shapes, never reaches admission.
-        var verificationRound = InterimVerificationPolicy.ResolveRound(request);
-        if (verificationRound == VerificationRound.Interim)
-        {
-            InterimVerificationPolicy.RequireInterimShape(request.Kind, request.Role,
-                request.Workspace ?? (request.Kind == AgentTaskKind.Worker ? WorkspaceMode.Shared : WorkspaceMode.Worktree));
-            if (request.AgentId is not null || request.Agent is not null)
-                throw new ValidationException(nameof(request.VerificationRound),
-                    "Interim cannot run on a pinned agent.", InterimVerificationPolicy.RoundRoleCode);
-            InterimVerificationPolicy.RequireExplicitIdentities(
-                request.VerificationSubjectTaskId, request.VerificationBaselineOutcomeId, request.VerificationSelection);
-        }
 
         var standingAuthority = string.IsNullOrWhiteSpace(request.Authority)
             ? null
