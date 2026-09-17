@@ -572,6 +572,69 @@ public class AgentTaskDeadSessionReconciliationTests
         }
     }
 
+    // ---- CARD-0547: commit-recovery hold ---------------------------------------------------------
+
+    [Test]
+    public async Task a_dead_session_task_with_a_young_commit_recovery_obligation_is_held_and_its_grace_is_kept()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(
+            AgentTaskStatus.Dispatched, SessionStatus.Failed, failureReason: "the pty-host exited (code 1)");
+        await scenario.AddTranscriptNoiseAsync(task.SessionId);
+        await scenario.AddObligationAsync(task.Id, minutesAgo: 10);
+        var harness = scenario.Harness(task.SessionId);
+
+        await scenario.PastGraceAsync(harness);
+
+        await using (var verify = CreateContext())
+        {
+            (await scenario.ReadTaskAsync(task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+            (await verify.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Failed)).ShouldBeFalse();
+            (await verify.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.CommitRecoveryAbandoned)).ShouldBeFalse();
+        }
+        (await scenario.ParentNoteBodiesAsync()).ShouldBeEmpty();
+        harness.Stopper.Killed.ShouldBeEmpty();
+        harness.Runner.Killed.ShouldBeEmpty();
+
+        harness.Clock.Advance(TimeSpan.FromMinutes(720));
+        await harness.Dispatcher.FailDeadSessionTasksAsync(CancellationToken.None);
+
+        (await scenario.ReadTaskAsync(task.Id)).Status.ShouldBe(AgentTaskStatus.Failed,
+            "the hold kept the grace bookkeeping, so one sweep past the hold fails the task");
+        await using var after = CreateContext();
+        (await after.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.CommitRecoveryAbandoned))
+            .Detail.ShouldContain("dead-session reconciler");
+    }
+
+    [Test]
+    public async Task a_dead_session_task_whose_commit_recovery_hold_expired_is_failed_with_the_obligation_abandoned_by_name()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(
+            AgentTaskStatus.Dispatched, SessionStatus.Failed, failureReason: "the pty-host exited (code 1)");
+        await scenario.AddTranscriptNoiseAsync(task.SessionId);
+        var (eventId, digest) = await scenario.AddObligationAsync(task.Id, minutesAgo: 800);
+        var harness = scenario.Harness(task.SessionId);
+
+        await scenario.PastGraceAsync(harness);
+
+        var failed = await scenario.ReadTaskAsync(task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        await using var verify = CreateContext();
+        var abandoned = await verify.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.CommitRecoveryAbandoned);
+        abandoned.Detail.ShouldStartWith($"{eventId:D} ");
+        abandoned.Detail.ShouldContain("dead-session reconciler");
+        failed.FailureReason.ShouldNotBeNull();
+        failed.FailureReason.ShouldContain(eventId.ToString("D"));
+        failed.FailureReason.ShouldContain(digest);
+        failed.FailureReason.ShouldContain("the pty-host exited (code 1)");
+        (await scenario.ParentNoteBodiesAsync())
+            .ShouldContain(b => b.Contains("git=commit-recovery-abandoned:") && b.Contains(digest));
+        harness.Stopper.Killed.ShouldBeEmpty();
+        harness.Runner.Killed.ShouldBeEmpty();
+        (await verify.Agents.AnyAsync(a => a.Id == task.AgentId)).ShouldBeFalse();
+    }
+
     // ---- harness ---------------------------------------------------------------------------------
 
     private sealed record SeededTask(Guid Id, Guid SessionId, Guid AgentId);
@@ -818,6 +881,24 @@ public class AgentTaskDeadSessionReconciliationTests
                 CreatedAt = at,
             });
             await db.SaveChangesAsync();
+        }
+
+        /// <summary>CARD-0547: a hand-seeded type-34 row, production-shaped (64-hex digest, At = start).</summary>
+        public async Task<(Guid Id, string Digest)> AddObligationAsync(Guid taskId, int minutesAgo)
+        {
+            var id = Guid.NewGuid();
+            var digest = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+            await using var db = CreateContext();
+            db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = id,
+                AgentTaskId = taskId,
+                Type = AgentTaskEventType.CommitRecoveryStarted,
+                Detail = digest,
+                At = DateTime.UtcNow.AddMinutes(-minutesAgo),
+            });
+            await db.SaveChangesAsync();
+            return (id, digest);
         }
 
         public async Task DeleteSessionRowAsync(Guid sessionId)

@@ -449,59 +449,150 @@ public class AgentTaskOverdueDeadlineTests
         stopper.Killed.ShouldBeEmpty();
     }
 
+    // ---- CARD-0547: commit-recovery hold ---------------------------------------------------------
+
+    [Test]
+    public async Task an_overdue_task_with_a_young_commit_recovery_obligation_is_held_before_the_runner_is_asked()
+    {
+        var (harness, stopper) = CreateHarness();
+        await using var scenario = new Scenario();
+        var parent = await scenario.SeedSessionAsync();
+        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 150_000, replyToSession: parent);
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.UserPrompt, "the brief", 149_000),
+            (TranscriptKinds.TurnEnd, null, 148_000));
+        await scenario.SeedCommitRecoveryObligationAsync(task, minutesAgo: 10);
+        var pulled = 0;
+        harness.CatchUpOverride = (_, _) => { Interlocked.Increment(ref pulled); return Task.CompletedTask; };
+
+        await harness.FailOverdueTasksAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var held = await verify.AgentTasks.SingleAsync(t => t.Id == task);
+        held.Status.ShouldBe(AgentTaskStatus.Working);
+        held.FailureReason.ShouldBeNull();
+        (await verify.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == task && e.Type == AgentTaskEventType.Failed)).ShouldBeFalse();
+        (await verify.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == task && e.Type == AgentTaskEventType.CommitRecoveryAbandoned)).ShouldBeFalse();
+        stopper.Killed.ShouldBeEmpty();
+        (await verify.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == parent)).ShouldBeFalse();
+        pulled.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task an_overdue_task_whose_commit_recovery_hold_expired_is_failed_with_the_obligation_abandoned_by_name()
+    {
+        var (harness, stopper) = CreateHarness();
+        await using var scenario = new Scenario();
+        var parent = await scenario.SeedSessionAsync();
+        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 150_000, replyToSession: parent);
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.UserPrompt, "the brief", 149_000),
+            (TranscriptKinds.TurnEnd, null, 148_000));
+        var (eventId, digest) = await scenario.SeedCommitRecoveryObligationAsync(task, minutesAgo: 800);
+
+        await harness.FailOverdueTasksAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        var abandoned = await verify.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == task && e.Type == AgentTaskEventType.CommitRecoveryAbandoned);
+        abandoned.Detail.ShouldStartWith($"{eventId:D} ");
+        abandoned.Detail.ShouldContain("overdue-task deadline");
+        failed.FailureReason.ShouldNotBeNull();
+        failed.FailureReason.ShouldContain(eventId.ToString("D"));
+        failed.FailureReason.ShouldContain(digest);
+        (await verify.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == task && e.Type == AgentTaskEventType.Failed))
+            .Detail.ShouldBe(failed.FailureReason);
+        // Substitute for delivery: the composed, enqueued row. Recipient evidence is the C547 E2E.
+        var note = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parent && m.Origin == QueuedMessageOrigin.Delegation);
+        note.NoteHeader.ShouldNotBeNull();
+        note.NoteHeader.ShouldContain($"git=commit-recovery-abandoned:{eventId.ToString("N")[..8]}");
+        note.Body.ShouldContain(digest);
+        note.Body.ShouldContain($"git log --all --reflog --fixed-strings --all-match --grep={task:D} --grep={digest} --format=%H");
+        note.Body.ShouldContain("nothing was pushed", Case.Insensitive);
+        stopper.Killed.ShouldBeEmpty();
+        (await CommitRecoveryObligations.LoadUnresolvedAsync(verify, task, CancellationToken.None)).ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task an_expired_hold_whose_note_cannot_be_enqueued_still_records_the_abandonment()
+    {
+        var (harness, stopper) = CreateHarness();
+        await using var scenario = new Scenario();
+        var missingParent = Guid.NewGuid();
+        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 150_000, replyToSession: missingParent);
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.UserPrompt, "the brief", 149_000),
+            (TranscriptKinds.TurnEnd, null, 148_000));
+        var (eventId, _) = await scenario.SeedCommitRecoveryObligationAsync(task, minutesAgo: 800);
+
+        await harness.FailOverdueTasksAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        (await verify.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == task && e.Type == AgentTaskEventType.CommitRecoveryAbandoned))
+            .ShouldBeTrue();
+        failed.FailureReason!.ShouldContain(eventId.ToString("D"));
+        (await verify.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == missingParent)).ShouldBeFalse();
+        stopper.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task an_expired_hold_abandons_every_unresolved_obligation()
+    {
+        var (harness, _) = CreateHarness();
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 150_000);
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.UserPrompt, "the brief", 149_000),
+            (TranscriptKinds.TurnEnd, null, 148_000));
+        var young = await scenario.SeedCommitRecoveryObligationAsync(task, minutesAgo: 10);
+        var old = await scenario.SeedCommitRecoveryObligationAsync(task, minutesAgo: 800);
+
+        await harness.FailOverdueTasksAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task)).Status.ShouldBe(AgentTaskStatus.Failed);
+        var rows = await verify.AgentTaskEvents
+            .Where(e => e.AgentTaskId == task && e.Type == AgentTaskEventType.CommitRecoveryAbandoned).ToListAsync();
+        rows.Count.ShouldBe(2);
+        rows.ShouldContain(r => r.Detail.StartsWith($"{young.Id:D} "));
+        rows.ShouldContain(r => r.Detail.StartsWith($"{old.Id:D} "));
+        (await CommitRecoveryObligations.LoadUnresolvedAsync(verify, task, CancellationToken.None)).ShouldBeEmpty();
+    }
+
+    [Test]
+    [Arguments(0)]
+    [Arguments(-5)]
+    public async Task a_non_positive_commit_recovery_hold_fails_immediately_but_still_annotates(int hold)
+    {
+        var (harness, _) = CreateHarness(s => s.CommitRecoveryHoldMinutes = hold);
+        await using var scenario = new Scenario();
+        var parent = await scenario.SeedSessionAsync();
+        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 150_000, replyToSession: parent);
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.UserPrompt, "the brief", 149_000),
+            (TranscriptKinds.TurnEnd, null, 148_000));
+        await scenario.SeedCommitRecoveryObligationAsync(task, minutesAgo: 1);
+
+        await harness.FailOverdueTasksAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task)).Status.ShouldBe(AgentTaskStatus.Failed);
+        (await verify.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == task && e.Type == AgentTaskEventType.CommitRecoveryAbandoned))
+            .ShouldBeTrue();
+        (await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parent)).NoteHeader
+            .ShouldNotBeNull().ShouldContain("git=commit-recovery-abandoned:");
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
-    private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper) CreateHarness()
+    private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper) CreateHarness(
+        Action<DelegationSettings>? configure = null)
     {
-        var stopper = new RecordingSessionStopper();
-        var services = new ServiceCollection();
-        services.AddLogging();
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
-        services.AddSingleton<IEventBus, MockEventBus>();
-        services.AddSingleton(TimeProvider.System);
-        services.AddSingleton(Options.Create(new SupervisionSettings()));
-        services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
-        services.AddSingleton(Options.Create(new DelegationSettings
-        {
-            DefaultTimeoutMinutes = Ceiling,
-            ModelWaitDeadlineMinutes = ModelWait,
-            LocalExecutionDeadlineMinutes = LocalExecution,
-            BootModelWaitDeadlineMinutes = BootModelWait,
-            BootStallRepeatHoldMinutes = BootStallRepeatHold,
-            RolePolicy = new(StringComparer.OrdinalIgnoreCase)
-            {
-                ["Code"] = new DelegationSettings.RolePolicyEntry { TimeoutMinutes = Ceiling },
-            },
-        }));
-        services.AddOptions<AgentRegistrySettings>();
-        services.AddSingleton<AgentRegistry>();
-        services.AddSingleton<AgentSessionLaunchQueue>();
-        services.AddSingleton<AgentSessionRuntime>();
-        services.AddSingleton<SessionMessageQueueService>();
-        services.AddSingleton<IDelegateSessionStopper>(stopper);
-        services.AddSingleton<DelegationWorkspaceResolver>();
-        services.AddDelegationWorktreeGraph(new GitSettings
-        {
-            WorktreeBasePath = Path.Combine(Path.GetTempPath(), "antiphon-overdue-wt"),
-        });
-        services.AddScoped<AgentTaskService>();
-        services.AddSingleton<AgentTaskReplyService>();
-        // CARD-0085's recovery gate, armed exactly as the delivery watchdog's suite arms it: with
-        // no repo and no CARD-NNNN in the title it finds nothing and the Failed stands. Its
-        // GitWorkspaceService comes from AddDelegationWorktreeGraph above.
-        services.AddSingleton(Options.Create(new DelegateBindRefusalRecoverySettings()));
-        services.AddSingleton<DelegateBindRefusalRecovery>();
-        // CARD-0353 S2 step 5: the repeat hold. Scoped like production; absent, the hold arm is
-        // simply not armed and the rest of the boot tail behaves identically.
-        services.AddScoped<ModelAvailability>();
-        // CARD-0153 S2's workspace arm, which CARD-0353 S2 reuses as the boot arm's second,
-        // independent guard: files that moved mean the kill is off.
-        services.AddScoped<AgentReviewCheckpointService>();
-        services.AddScoped<AgentFilesService>();
-        services.AddScoped<AgentTaskDispatcher>();
-
-        var provider = services.BuildServiceProvider();
-        return (provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>(), stopper);
+        var built = OverdueSweepHarness.Create(configure);
+        return (built.Dispatcher, built.Stopper);
     }
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
@@ -614,6 +705,24 @@ public class AgentTaskOverdueDeadlineTests
             }
 
             await db.SaveChangesAsync();
+        }
+
+        /// <summary>CARD-0547: a hand-seeded type-34 row, production-shaped (64-hex digest, At = start).</summary>
+        public async Task<(Guid Id, string Digest)> SeedCommitRecoveryObligationAsync(Guid taskId, int minutesAgo)
+        {
+            var id = Guid.NewGuid();
+            var digest = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+            await using var db = CreateContext();
+            db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = id,
+                AgentTaskId = taskId,
+                Type = AgentTaskEventType.CommitRecoveryStarted,
+                Detail = digest,
+                At = DateTime.UtcNow.AddMinutes(-minutesAgo),
+            });
+            await db.SaveChangesAsync();
+            return (id, digest);
         }
 
         public async Task SeedPendingBriefAsync(Guid taskId)

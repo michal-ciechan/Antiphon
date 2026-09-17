@@ -1671,6 +1671,121 @@ public class AgentTaskServiceIntegrationTests
         await db.SaveChangesAsync();
     }
 
+    // ---- CARD-0547 D-4: the requeue guard ---------------------------------------------------------
+
+    private static async Task<(Guid Id, string Digest, DateTime At)> SeedObligationAsync(Guid taskId, int minutesAgo)
+    {
+        var id = Guid.NewGuid();
+        var digest = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        var at = DateTime.UtcNow.AddMinutes(-minutesAgo);
+        await using var db = CreateContext();
+        db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = id, AgentTaskId = taskId, Type = AgentTaskEventType.CommitRecoveryStarted, Detail = digest, At = at,
+        });
+        await db.SaveChangesAsync();
+        return (id, digest, at);
+    }
+
+    [Test]
+    public async Task retrying_a_task_with_a_pending_commit_recovery_obligation_is_refused_before_the_delegate_is_stopped()
+    {
+        using var workspace = new TempWorkspace();
+        var sessionId = Guid.NewGuid();
+        var task = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Dispatched, sessionId: sessionId);
+        try
+        {
+            var (eventId, digest, at) = await SeedObligationAsync(task.Id, minutesAgo: 5);
+            var stopper = new RecordingSessionStopper();
+
+            await using (var db = CreateContext())
+            {
+                var ex = await Should.ThrowAsync<ConflictException>(
+                    () => CreateService(db, stopper: stopper).RetryAsync(task.Id, CancellationToken.None));
+                ex.Code.ShouldBe("commit_recovery_pending");
+                ex.Message.ShouldContain("abandonCommitRecovery=true");
+                ex.Extensions!["obligationEventId"].ShouldBe(eventId);
+                ex.Extensions["settlement"].ShouldBe(digest);
+                ((DateTime)ex.Extensions["startedAt"]!).ShouldBe(at, TimeSpan.FromSeconds(1));
+                ((DateTime)ex.Extensions["holdExpiresAt"]!).ShouldBe(at.AddMinutes(720), TimeSpan.FromSeconds(1));
+            }
+
+            stopper.Killed.ShouldBeEmpty("the refusal precedes StopDelegateAsync");
+            await using var verify = CreateContext();
+            var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            stored.Status.ShouldBe(AgentTaskStatus.Dispatched);
+            stored.Attempt.ShouldBe(1);
+            stored.AgentSessionId.ShouldBe(sessionId);
+            (await verify.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.CommitRecoveryAbandoned))
+                .ShouldBeFalse();
+        }
+        finally
+        {
+            await DeleteTaskTreeAsync(task.Id);
+        }
+    }
+
+    [Test]
+    public async Task retrying_with_abandonCommitRecovery_requeues_and_records_the_abandonment()
+    {
+        using var workspace = new TempWorkspace();
+        var sessionId = Guid.NewGuid();
+        var task = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Dispatched, sessionId: sessionId);
+        try
+        {
+            var (eventId, _, _) = await SeedObligationAsync(task.Id, minutesAgo: 5);
+            var stopper = new RecordingSessionStopper();
+
+            await using (var db = CreateContext())
+                await CreateService(db, stopper: stopper).RetryAsync(task.Id, CancellationToken.None, abandonCommitRecovery: true);
+
+            await using var verify = CreateContext();
+            var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            stored.Status.ShouldBe(AgentTaskStatus.Queued);
+            stored.Attempt.ShouldBe(2);
+            stopper.Killed.ShouldBe([sessionId]);
+            var abandoned = await verify.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.CommitRecoveryAbandoned);
+            abandoned.Detail.ShouldStartWith($"{eventId:D} requeue:Retried: ");
+            abandoned.Detail.ShouldContain("Retried at");
+            (await verify.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Retried)).ShouldBeTrue();
+            (await CommitRecoveryObligations.LoadUnresolvedAsync(verify, task.Id, CancellationToken.None)).ShouldBeEmpty();
+        }
+        finally
+        {
+            await DeleteTaskTreeAsync(task.Id);
+        }
+    }
+
+    [Test]
+    public async Task escalating_a_task_with_a_pending_commit_recovery_obligation_is_refused_the_same_way()
+    {
+        using var workspace = new TempWorkspace();
+        var task = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Failed, level: AgentModelLevel.Medium);
+        try
+        {
+            await SeedObligationAsync(task.Id, minutesAgo: 5);
+
+            await using (var db = CreateContext())
+            {
+                var ex = await Should.ThrowAsync<ConflictException>(
+                    () => CreateService(db).EscalateAsync(task.Id, null, CancellationToken.None));
+                ex.Code.ShouldBe("commit_recovery_pending");
+            }
+
+            await using var verify = CreateContext();
+            var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            stored.ModelLevel.ShouldBe(AgentModelLevel.Medium);
+            stored.Attempt.ShouldBe(1);
+        }
+        finally
+        {
+            await DeleteTaskTreeAsync(task.Id);
+        }
+    }
+
     private static async Task DeleteTaskTreeAsync(params Guid[] ids)
     {
         var taskIds = ids.Where(id => id != Guid.Empty).Distinct().ToArray();
