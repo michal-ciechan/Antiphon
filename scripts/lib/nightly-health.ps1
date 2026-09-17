@@ -28,8 +28,8 @@ function ConvertTo-NightlyLondonLocal {
 function Get-NightlyDueUtcForLondonDate {
     param([datetime]$LondonDate)
     $tz = Get-NightlyLondonTimeZone
-    $local = Get-Date -Year $LondonDate.Year -Month $LondonDate.Month -Day $LondonDate.Day -Hour 0 -Minute 30 -Second 0
-    $local = [datetime]::SpecifyKind($local, [DateTimeKind]::Unspecified)
+    # Exact local 00:30:00.0000000: Get-Date -Hour/-Minute/-Second keeps the current sub-second ticks.
+    $local = New-Object DateTime ($LondonDate.Year, $LondonDate.Month, $LondonDate.Day, 0, 30, 0, [DateTimeKind]::Unspecified)
     return [TimeZoneInfo]::ConvertTimeToUtc($local, $tz)
 }
 
@@ -440,8 +440,7 @@ function Test-NightlyHasField {
 
 function Get-NightlyMorningDeadlineUtc {
     param([datetime]$LondonDate)
-    $local = Get-Date -Year $LondonDate.Year -Month $LondonDate.Month -Day $LondonDate.Day -Hour 8 -Minute 0 -Second 0 -Millisecond 0
-    $local = [datetime]::SpecifyKind($local, [DateTimeKind]::Unspecified)
+    $local = New-Object DateTime ($LondonDate.Year, $LondonDate.Month, $LondonDate.Day, 8, 0, 0, [DateTimeKind]::Unspecified)
     return [TimeZoneInfo]::ConvertTimeToUtc($local, (Get-NightlyLondonTimeZone))
 }
 
