@@ -45,6 +45,9 @@ internal sealed class C544World : IAsyncDisposable
     public ControlledInterimReadiness Readiness { get; } = new();
     public ServiceProvider Services { get; private set; } = null!;
     public IInterceptor? Interceptor { get; private set; }
+    /// <summary>Extra registrations applied on every (re)build, e.g. a LandDeliveryBoundary.</summary>
+    public Action<IServiceCollection>? ConfigureServices { get; set; }
+    public string CallerDirectory { get; private set; } = "";
     public Project Project { get; private set; } = null!;
     public Board Board { get; private set; } = null!;
     public Card Card { get; private set; } = null!;
@@ -63,9 +66,11 @@ internal sealed class C544World : IAsyncDisposable
         PtySingleChunkBytes = 43_200,
     };
 
-    public static async Task<C544World> CreateAsync(IInterceptor? interceptor = null, bool cardAllowsInterim = true)
+    public static async Task<C544World> CreateAsync(IInterceptor? interceptor = null, bool cardAllowsInterim = true,
+        Action<IServiceCollection>? configure = null, Action<DelegationSettings>? delegation = null)
     {
-        var world = new C544World { Interceptor = interceptor };
+        var world = new C544World { Interceptor = interceptor, ConfigureServices = configure };
+        delegation?.Invoke(world.Delegation);
         world.Repo = new ScratchGitRepo("c544-world");
         world.RepositoryPath = world.Repo.Path;
         world._worktreeRoot = world.Repo.WorktreeRoot;
@@ -186,7 +191,11 @@ internal sealed class C544World : IAsyncDisposable
         };
         CallerSessionId = Guid.NewGuid();
         db.AddRange(Project, Board, column, Card);
-        db.AgentSessions.Add(Session(CallerSessionId, "c544-caller", now));
+        var caller = Session(CallerSessionId, "c544-caller", now);
+        CallerDirectory = Path.Combine(_worktreeRoot, "caller-" + CallerSessionId.ToString("N")[..8]);
+        Directory.CreateDirectory(CallerDirectory);
+        caller.Cwd = CallerDirectory;
+        db.AgentSessions.Add(caller);
         await db.SaveChangesAsync();
     }
 
@@ -290,6 +299,7 @@ internal sealed class C544World : IAsyncDisposable
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentTaskDispatcher>();
         services.AddSingleton<AgentTaskReplyService>();
+        ConfigureServices?.Invoke(services);
         Services = services.BuildServiceProvider();
     }
 
