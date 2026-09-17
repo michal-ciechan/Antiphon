@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Antiphon.NightlyWatchdog</RootNamespace>
+    <AssemblyName>Antiphon.NightlyWatchdog</AssemblyName>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <Description>
+      CARD-0545 independent nightly watchdog. A long-lived host process (systemd on any qualifying
+      host outside the Windows execution host and Windmill's failure domain) that probes Windmill,
+      keeps a SQLite outage/notification ledger, sends through the Telegram Bot API and imports
+      recipient-side receipts through an MTProto user session. No Antiphon project references.
+      Host identity lives only in the untracked deploy profile and the host env file.
+    </Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Antiphon.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.*" />
+    <PackageReference Include="WTelegramClient" Version="4.4.8" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.0.*" />
+  </ItemGroup>
+
+</Project>
