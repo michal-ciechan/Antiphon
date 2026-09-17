@@ -17,6 +17,35 @@ all-green suite claim. Output-directory removal remains blocked by automatic
 approval review; scoped MSBuild cleaning succeeded in both worktrees.
 No deliberate mutant, feature-branch land or deployment has run. Restart: **server**.
 
+## Review 4cba9241 repair (Code task 4435b705, 2026-09-17)
+
+Branch `feat/card-task-4435b705` (worktree `C:\Antiphon\worktrees\card-task-4435b705`)
+carries the original 16 commits rebased cleanly onto master `f091e84d` plus the fixes.
+Landing owner remains `40927996`. Verified source: `9c1dafb64b2129f312bdd45e06fe2e0e3a5bd32d`.
+Evidence root: `C:\Antiphon\.antiphon\code-4435b705` (TRX/logs; baseline under `baseline-f091e84d`).
+
+- F1: the claim-rollback handler now reloads every loaded AgentTask instance after
+  `ChangeTracker.Clear()`, so later queued rows in the same tick stay tracked. New DG
+  `C540_ClaimRollbackKeepsLaterQueuedTaskCustody` (before/after save): both tasks
+  persist Failed with one Failed event, zero Dispatched events/intents, Tick.Failures=2.
+- F2: `C540_PostPromptCrashDoesNotRetype` captures the interrupted row before the kill,
+  waits real guard eligibility (80 s), requires that row Sent/LateConfirmed at its
+  original attempt count, then runs the receipt census. Fresh run: attempt started
+  09:00:03.14Z, eligible 09:01:23.14Z, LateConfirmed 09:01:31.89Z, attempts 1.
+- New pending controls PC-27 (F1) and PC-28 (F2; Sent and Pending variants).
+
+Results on `9c1dafb6`:
+- Unit `/*/*/*/*[Category=Unit]`: 2,509 expanded, 2,505 passed, 3 failed, 1 skipped.
+  The three are the untagged `HerdrPaneDisposalEndpointTests` classification reds
+  already recorded on master; `C487_G142` now passes on master. Skip: symlink privilege.
+- Affected classes, one per invocation: SR 6/6, BS 15/15, DN 24/24, DG 42/42
+  (includes both new rows), DelegationWorktreeTests 29/34 with the same five failures.
+- Native `DispatchBaseWarningDeliveryE2ETests` C540: 10/10 (V18 alone, then 5 + 4).
+- Named native land rows: V22, V23, V26, V30(receipt), V30(verdict) all time out
+  (5/5 failed). All five reproduce identically at master `f091e84d`, as do the five
+  DelegationWorktreeTests failures. V23/V26/V30(verdict) passing at the old base
+  does not hold on current master; this is inherited, not caused by the repair.
+
 ## Implementation
 
 - Snapshot full 40/64-character commit identities, retain patch-aware containment
@@ -189,7 +218,7 @@ Resolved ordinary failures are retained in raw evidence:
 
 **Pending, not executed:** PC-1, PC-2, PC-3, PC-4, PC-5, PC-6, PC-7, PC-8,
 PC-9, PC-10, PC-11, PC-12, PC-13, PC-14, PC-15, PC-16, PC-17, PC-18,
-PC-19, PC-20, PC-21, PC-22, PC-23, PC-24, PC-25, PC-26.
+PC-19, PC-20, PC-21, PC-22, PC-23, PC-24, PC-25, PC-26, PC-27, PC-28 (Sent and Pending variants).
 
 This includes PC-6's exit-1/128/I/O rows; PC-10's equality/ancestor rows;
 PC-11 wrong card; PC-12 Shared; PC-13 Queued/Dispatched/Working/Failed/Canceled;
