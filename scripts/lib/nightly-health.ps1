@@ -250,6 +250,7 @@ function Test-NightlyMonitorHealth {
         $Jobs,
         $NativeState,
         [datetime]$NowUtc,
+        $LastGreen = $null,
         [string]$ExpectedScriptHash,
         [string]$ExpectedPolicyHash,
         [string]$ExpectedTag = 'desktop',
@@ -312,22 +313,13 @@ function Test-NightlyMonitorHealth {
     }
 
     $londonNow = ConvertTo-NightlyLondonLocal -Utc $NowUtc
-    $dueUtc = Get-NightlyDueUtcForLondonDate -LondonDate $londonNow
+    $todayDate = $londonNow.Date
+    $dueUtc = Get-NightlyDueUtcForLondonDate -LondonDate $todayDate
     $graceEnd = $dueUtc.AddMinutes($StartGraceMinutes)
-    $morningDeadline = Get-Date -Year $londonNow.Year -Month $londonNow.Month -Day $londonNow.Day -Hour 8 -Minute 0 -Second 0
-    $morningDeadline = [datetime]::SpecifyKind($morningDeadline, [DateTimeKind]::Unspecified)
-    $morningUtc = [TimeZoneInfo]::ConvertTimeToUtc($morningDeadline, (Get-NightlyLondonTimeZone))
+    $morningUtc = Get-NightlyMorningDeadlineUtc -LondonDate $todayDate
 
-    $todayJob = $null
-    foreach ($j in @($Jobs)) {
-        if ([string]$j.localDueDate -eq $londonNow.ToString('yyyy-MM-dd')) { $todayJob = $j; break }
-        if ($j.scheduledFor) {
-            $sf = [datetime]$j.scheduledFor
-            if ($sf.ToUniversalTime() -ge $dueUtc.AddMinutes(-1) -and $sf.ToUniversalTime() -le $dueUtc.AddMinutes(1)) {
-                $todayJob = $j
-            }
-        }
-    }
+    # CARD-0544 D-6: only a scheduled job can be the due day's run; a manual run never stands in for it.
+    $todayJob = Find-NightlyScheduledJob -Jobs $Jobs -LondonDate $todayDate
 
     if ($NowUtc -ge $graceEnd -and ($null -eq $todayJob -or [string]$todayJob.status -eq 'queued')) {
         $result.Healthy = $false
@@ -336,14 +328,14 @@ function Test-NightlyMonitorHealth {
         $result.Pending = $true
     }
 
+    # Daily run validity is judged against the London due date, never against the age of
+    # completedAt: a green that finished at 02:00 stays today's green all day.
+    $states = @($NativeState, $LastGreen)
+    $todayGreen = Get-NightlyScheduledGreen -Job $todayJob -States $states
+    $green = $todayGreen
+    $greenJob = $todayJob
     if ($NowUtc -ge $morningUtc) {
-        $complete = $false
-        if ($NativeState -and [bool]$NativeState.coverageComplete -and [bool]$NativeState.testsPassed -and [bool]$NativeState.reportDelivered) {
-            if ($todayJob -and [string]$NativeState.runId -eq [string]$todayJob.nativeRunId) {
-                $complete = $true
-            }
-        }
-        if (-not $complete) {
+        if ($null -eq $todayGreen) {
             $yesterday = $false
             if ($NativeState -and $NativeState.completedAt) {
                 $c = [datetime]$NativeState.completedAt
@@ -354,8 +346,38 @@ function Test-NightlyMonitorHealth {
             else { $result.Reasons += 'missing-expected-run' }
         }
     } else {
-        if ($null -eq $todayJob -or -not ($NativeState -and [bool]$NativeState.coverageComplete)) {
+        if ($null -eq $todayGreen) {
             $result.Pending = $true
+            # Before today's 08:00 deadline the previous due day's complete scheduled green bridges.
+            $previousJob = Find-NightlyScheduledJob -Jobs $Jobs -LondonDate $todayDate.AddDays(-1)
+            $green = Get-NightlyScheduledGreen -Job $previousJob -States $states
+            $greenJob = $previousJob
+        }
+    }
+
+    if ($null -ne $green) {
+        # A known newer failed or incomplete completed attempt removes permission immediately.
+        $greenAt = ([datetime]$green.completedAt).ToUniversalTime()
+        if ($NativeState -and $NativeState.completedAt -and [string]$NativeState.runId -ne [string]$green.runId) {
+            $attemptAt = ([datetime]$NativeState.completedAt).ToUniversalTime()
+            if ($attemptAt -gt $greenAt -and -not (Test-NightlyGreenFlags -State $NativeState)) {
+                $result.Reasons += 'newer-failed-attempt'
+                $green = $null
+            }
+        }
+        if ($null -ne $green) {
+            foreach ($j in @($Jobs)) {
+                if ($null -eq $j -or [string]$j.status -ne 'failed') { continue }
+                if (-not (Test-NightlyJobScheduled -Job $j)) { continue }
+                if ([string]$j.id -and [string]$j.id -eq [string]$greenJob.id) { continue }
+                $failedFor = Get-NightlyJobDueUtc -Job $j
+                $greenFor = Get-NightlyJobDueUtc -Job $greenJob
+                if ($null -ne $failedFor -and $null -ne $greenFor -and $failedFor -gt $greenFor) {
+                    $result.Reasons += 'newer-failed-attempt'
+                    $green = $null
+                    break
+                }
+            }
         }
     }
 
@@ -372,39 +394,114 @@ function Test-NightlyMonitorHealth {
             $result.Healthy = $false
             $result.Reasons += 'sha-mismatch'
         }
-        if ($NativeState.PSObject.Properties['coverageComplete'] -and -not [bool]$NativeState.coverageComplete) {
-            $result.Healthy = $false
-            $result.Reasons += 'incomplete-coverage'
-        }
-        if ($NativeState.PSObject.Properties['testsPassed'] -and -not [bool]$NativeState.testsPassed) {
-            $result.Healthy = $false
-            $result.Reasons += 'tests-red'
-        }
-        if ($NativeState.PSObject.Properties['reportDelivered'] -and -not [bool]$NativeState.reportDelivered) {
-            $result.Healthy = $false
-            $result.Reasons += 'report-outage'
-        }
-        if ([string]$NativeState.phase -eq 'Started' -and -not $NativeState.completedAt) {
-            $stale = $false
+        $inProgress = ([string]$NativeState.phase -eq 'Started' -and -not $NativeState.completedAt)
+        if (-not $inProgress) {
+            if ((Test-NightlyHasField -Object $NativeState -Name 'coverageComplete') -and -not [bool]$NativeState.coverageComplete) {
+                $result.Healthy = $false
+                $result.Reasons += 'incomplete-coverage'
+            }
+            if ((Test-NightlyHasField -Object $NativeState -Name 'testsPassed') -and -not [bool]$NativeState.testsPassed) {
+                $result.Healthy = $false
+                $result.Reasons += 'tests-red'
+            }
+            if ((Test-NightlyHasField -Object $NativeState -Name 'reportDelivered') -and -not [bool]$NativeState.reportDelivered) {
+                $result.Healthy = $false
+                $result.Reasons += 'report-outage'
+            }
+        } else {
+            $fresh = $false
             if ($NativeState.lastActivityAt) {
                 $la = [datetime]$NativeState.lastActivityAt
-                if (($NowUtc - $la.ToUniversalTime()).TotalMinutes -gt 60) { $stale = $true }
+                if (($NowUtc - $la.ToUniversalTime()).TotalMinutes -le 60) { $fresh = $true }
             }
-            $result.Healthy = $false
-            if ($stale) { $result.Reasons += 'stale-progress' } else { $result.Reasons += 'started-incomplete' }
+            # A run still making progress is today's pending state; a stalled one is unhealthy.
+            if ($fresh) { $result.Pending = $true }
+            elseif ($NativeState.lastActivityAt) { $result.Healthy = $false; $result.Reasons += 'stale-progress' }
+            else { $result.Healthy = $false; $result.Reasons += 'started-incomplete' }
         }
     }
 
     if ($result.Reasons.Count -gt 0) { $result.Healthy = $false }
-    $ageOk = $true
-    if ($NativeState -and $NativeState.completedAt) {
-        $c = [datetime]$NativeState.completedAt
-        if (($NowUtc - $c.ToUniversalTime()).TotalMinutes -gt $MonitorStaleMinutes) { $ageOk = $false }
-    } else {
-        $ageOk = $false
-    }
-    $result.ReadyForDeferral = [bool]($result.Healthy -and $ageOk -and -not $result.Pending)
+    # Monitor freshness is the reader's RecordedAt check; readiness here is health plus a valid
+    # scheduled green for the due day (or the pre-08:00 bridge), never completedAt age.
+    $result.ReadyForDeferral = [bool]($result.Healthy -and $null -ne $green)
+    $result.GreenRunId = $(if ($green) { [string]$green.runId } else { '' })
+    $result.GreenJobId = $(if ($green -and $greenJob) { [string]$greenJob.id } else { '' })
+    $result.GreenJobNativeRunId = $(if ($green -and $greenJob) { [string]$greenJob.nativeRunId } else { '' })
     return [pscustomobject]$result
+}
+
+function Test-NightlyHasField {
+    param($Object, [string]$Name)
+    if ($null -eq $Object) { return $false }
+    if ($Object -is [System.Collections.IDictionary]) { return $Object.Contains($Name) }
+    return ($null -ne $Object.PSObject.Properties[$Name])
+}
+
+function Get-NightlyMorningDeadlineUtc {
+    param([datetime]$LondonDate)
+    $local = Get-Date -Year $LondonDate.Year -Month $LondonDate.Month -Day $LondonDate.Day -Hour 8 -Minute 0 -Second 0 -Millisecond 0
+    $local = [datetime]::SpecifyKind($local, [DateTimeKind]::Unspecified)
+    return [TimeZoneInfo]::ConvertTimeToUtc($local, (Get-NightlyLondonTimeZone))
+}
+
+function Test-NightlyJobScheduled {
+    param($Job)
+    if ($null -eq $Job) { return $false }
+    if ((Test-NightlyHasField -Object $Job -Name 'scheduled') -and -not [bool]$Job.scheduled) { return $false }
+    if ([string]$Job.trigger -and [string]$Job.trigger -ne 'scheduled') { return $false }
+    return $true
+}
+
+function Get-NightlyJobDueUtc {
+    param($Job)
+    if ($null -eq $Job) { return $null }
+    if ([string]$Job.localDueDate) {
+        return (Get-NightlyDueUtcForLondonDate -LondonDate ([datetime]::ParseExact([string]$Job.localDueDate, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)))
+    }
+    if ($Job.scheduledFor) { return ([datetime]$Job.scheduledFor).ToUniversalTime() }
+    return $null
+}
+
+function Find-NightlyScheduledJob {
+    param($Jobs, [datetime]$LondonDate)
+    $date = $LondonDate.ToString('yyyy-MM-dd')
+    $dueUtc = Get-NightlyDueUtcForLondonDate -LondonDate $LondonDate
+    $found = $null
+    foreach ($j in @($Jobs)) {
+        if ($null -eq $j -or -not (Test-NightlyJobScheduled -Job $j)) { continue }
+        if ([string]$j.localDueDate -eq $date) { return $j }
+        if ($j.scheduledFor) {
+            $sf = ([datetime]$j.scheduledFor).ToUniversalTime()
+            if ($sf -ge $dueUtc.AddMinutes(-1) -and $sf -le $dueUtc.AddMinutes(1)) { $found = $j }
+        }
+    }
+    return $found
+}
+
+function Test-NightlyGreenFlags {
+    param($State)
+    return [bool]($State -and [bool]$State.coverageComplete -and [bool]$State.testsPassed -and [bool]$State.reportDelivered)
+}
+
+function Get-NightlyScheduledGreen {
+    param($Job, $States)
+    # The due day's complete green: its scheduled job succeeded with a result naming the native run,
+    # and that native run completed scheduled, master, with full coverage, green tests and a delivered report.
+    if ($null -eq $Job -or [string]$Job.status -ne 'success') { return $null }
+    $runId = [string]$Job.nativeRunId
+    if ([string]::IsNullOrWhiteSpace($runId)) { return $null }
+    foreach ($s in @($States)) {
+        if ($null -eq $s -or [string]$s.runId -ne $runId) { continue }
+        if ([string]$s.trigger -ne 'scheduled') { continue }
+        if (-not (Test-NightlyGreenFlags -State $s)) { continue }
+        if (-not $s.completedAt) { continue }
+        $ref = [string]$s.ref
+        if ($ref -and $ref -ne 'master' -and $ref -ne 'origin/master') { continue }
+        if ([string]$Job.sha -and [string]$s.sha -and [string]$Job.sha -ne [string]$s.sha) { continue }
+        return $s
+    }
+    return $null
 }
 
 function Test-NightlyMonitorRouting {
@@ -476,6 +573,49 @@ function Invoke-NightlyWindmillHttp {
     return ($text | ConvertFrom-Json)
 }
 
+function ConvertFrom-NightlyWindmillJob {
+    # CARD-0544 D-6: map one Windmill jobs/list row. Only a completed job whose success is the real
+    # boolean true AND whose result names the native run is 'success'; queued/running rows keep that
+    # state; a completed failure is 'failed'; any other shape (missing result, string booleans,
+    # unknown type) is 'unknown' and can never qualify as a scheduled green.
+    param($Job)
+    $type = [string]$Job.type
+    $status = 'unknown'
+    $result = $null
+    if ($Job.PSObject.Properties['result']) { $result = $Job.result }
+    $nativeRunId = ''
+    $sha = ''
+    $localDue = ''
+    if ($result -and -not ($result -is [string])) {
+        if ($result.PSObject.Properties['nativeRunId']) { $nativeRunId = [string]$result.nativeRunId }
+        if ($result.PSObject.Properties['sha']) { $sha = [string]$result.sha }
+        if ($result.PSObject.Properties['localDueDate']) { $localDue = [string]$result.localDueDate }
+    }
+    if ($type -eq 'QueuedJob') {
+        $running = $Job.PSObject.Properties['running']
+        if ($running -and $running.Value -is [bool]) {
+            $status = $(if ($running.Value) { 'running' } else { 'queued' })
+        }
+    } elseif ($type -eq 'CompletedJob') {
+        $success = $Job.PSObject.Properties['success']
+        if ($success -and $success.Value -is [bool]) {
+            if (-not $success.Value) { $status = 'failed' }
+            elseif (-not [string]::IsNullOrWhiteSpace($nativeRunId) -and -not [string]::IsNullOrWhiteSpace($localDue)) { $status = 'success' }
+        }
+    }
+    $schedulePath = ''
+    if ($Job.PSObject.Properties['schedule_path']) { $schedulePath = [string]$Job.schedule_path }
+    return @{
+        id = [string]$Job.id
+        status = $status
+        scheduled = (-not [string]::IsNullOrWhiteSpace($schedulePath))
+        nativeRunId = $nativeRunId
+        sha = $sha
+        localDueDate = $localDue
+        scheduledFor = $Job.scheduled_for
+    }
+}
+
 function New-NightlyProductionWindmillApi {
     param($Config)
     if ($null -eq $Config -or -not [bool]$Config.HasCredentials) { return $null }
@@ -516,24 +656,8 @@ function New-NightlyProductionWindmillApi {
             $obj = Invoke-NightlyWindmillHttp -Method GET -Url $url -Token $token
             $rows = @()
             foreach ($j in @($obj)) {
-                $result = $j.result
-                $nativeRunId = ''
-                $sha = ''
-                $localDue = ''
-                if ($result) {
-                    if ($result.nativeRunId) { $nativeRunId = [string]$result.nativeRunId }
-                    elseif ($result.runId) { $nativeRunId = [string]$result.runId }
-                    if ($result.sha) { $sha = [string]$result.sha }
-                    if ($result.localDueDate) { $localDue = [string]$result.localDueDate }
-                }
-                $rows += @{
-                    id = [string]$j.id
-                    status = [string]$j.running
-                    nativeRunId = $nativeRunId
-                    sha = $sha
-                    localDueDate = $localDue
-                    scheduledFor = $j.scheduled_for
-                }
+                if ($null -eq $j) { continue }
+                $rows += ConvertFrom-NightlyWindmillJob -Job $j
             }
             return $rows
         }.GetNewClosure()
@@ -600,9 +724,13 @@ function Invoke-AntiphonNightlyHealth {
         [string]$ExpectedScriptHash = '',
         [string]$ExpectedPolicyHash = '',
         [string]$AuthorizedDestination = '',
+        [string]$RepositoryPath = '',
+        [string]$ProjectId = '',
         [switch]$PassThru
     )
     Import-NightlySeams -SeamsPath $SeamsPath
+    if ([string]::IsNullOrWhiteSpace($RepositoryPath)) { $RepositoryPath = [string]$env:ANTIPHON_NIGHTLY_REPOSITORY_PATH }
+    if ([string]::IsNullOrWhiteSpace($ProjectId)) { $ProjectId = [string]$env:ANTIPHON_NIGHTLY_PROJECT_ID }
     $now = Get-NightlyUtcNow
     $api = Get-NightlyWindmillApi
     $registration = $null
@@ -618,8 +746,13 @@ function Invoke-AntiphonNightlyHealth {
     if (Test-Path -LiteralPath $last) {
         $native = Get-Content -LiteralPath $last -Raw -Encoding UTF8 | ConvertFrom-Json
     }
+    $lastGreen = $null
+    $greenPath = Join-Path $StateRoot 'last-complete-green.json'
+    if (Test-Path -LiteralPath $greenPath) {
+        $lastGreen = Get-Content -LiteralPath $greenPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
     $health = Test-NightlyMonitorHealth -Registration $registration -Schedule $schedule -Jobs $jobs `
-        -NativeState $native -NowUtc $now -ExpectedScriptHash $ExpectedScriptHash -ExpectedPolicyHash $ExpectedPolicyHash
+        -NativeState $native -LastGreen $lastGreen -NowUtc $now -ExpectedScriptHash $ExpectedScriptHash -ExpectedPolicyHash $ExpectedPolicyHash
     $notify = $null
     $receiptOk = $false
     if (-not $health.Healthy) {
@@ -682,6 +815,16 @@ function Invoke-AntiphonNightlyHealth {
         Notification = $notify
         Receipt = $receiptOk
         RecordedAt = $now.ToString('o')
+        # CARD-0544 D-7: the identities the server's readiness reader matches against its receipt.
+        Identity = [ordered]@{
+            RepositoryPath = $RepositoryPath
+            ProjectId = $ProjectId
+            PolicyHash = $ExpectedPolicyHash
+            ScriptHash = $ExpectedScriptHash
+            ScheduledRunId = [string]$health.GreenRunId
+            JobNativeRunId = [string]$health.GreenJobNativeRunId
+            WindmillJobId = [string]$health.GreenJobId
+        }
     }
     Save-NightlyMonitorResult -StateRoot $StateRoot -Result $out
     if ($PassThru) { return $out }
