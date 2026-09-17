@@ -290,6 +290,14 @@ GET    /api/agent-tasks/{id}/commit/{operationId} read-only recovery, same task 
                                              even after HEAD advances or policy is disabled. 404 no match;
                                              503 inspection unavailable/ambiguous. Never commits or pushes.
 POST   /api/agent-tasks/{id}/cancel  |  /retry  |  /escalate
+                                             /retry takes an optional body `RetryAgentTaskRequest`
+                                             `{ abandonCommitRecovery: false }` (absent body = false).
+                                             Every requeue (retry, reroute, escalate) of a task holding an
+                                             unresolved commit-recovery obligation is 409
+                                             `commit_recovery_pending` with `obligationEventId`,
+                                             `settlement`, `startedAt`, `holdExpiresAt` (CARD-0547);
+                                             `abandonCommitRecovery: true` on /retry records a
+                                             `CommitRecoveryAbandoned` event and requeues.
 POST   /api/agent-tasks/{id}/reply           answer a Blocked delegate's question.
                                              Body `ReplyToAgentTaskRequest`:
                                              `message`, optional `round` (stale
@@ -662,6 +670,14 @@ is `CARD-nnnn — title`, `Headline` is `Raised on GitHub by <author> (not an op
 rated it.`, `Evidence` carries the issue key/URL, the first line of the body, and the ready-to-paste
 `delegate.ps1` triage command (see [workflow-tracker-block.md](workflow-tracker-block.md)), and
 `Actions` is `[OpenCard]`.
+
+`AttentionKind.CommitRecoveryPending = 41` (CARD-0547; appended after 40, not renumbered) is an
+`Error` row for a Dispatched/Working task whose oldest unresolved commit-recovery obligation is
+older than two minutes: settlement made a gated commit but could not save its record, and the
+overdue watchdog and dead-session reconciler hold the task for the re-hand. It is evaluated before
+`DeadSession`. `SinceUtc` is the obligation start; `Evidence` (not excerpted) lists the obligation
+id, the settlement digest, the `git log --all --reflog` recipe, the hold expiry and the
+`/retry {"abandonCommitRecovery":true}` request; `Actions` is `[OpenDrawer, Cancel]`.
 
 ## 3. Real-time (SignalR)
 

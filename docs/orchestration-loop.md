@@ -270,6 +270,20 @@ A Succeeded Shared task's own footprint is committed in-process at settle throug
 `Delegation:CommitOnSettle` turns it off. Unattributable dirty trees spawn a Commit-role child
 routed by the live pin. Worktree merge-back uses the same gate.
 
+A `CommitRecoveryStarted` event is the durable obligation saved before the gate mutates Git; it is
+resolved by a `CommitRecoveryNotNeeded` or `CommitRecoveryAbandoned` event naming it, or by a later
+`Committed` event (CARD-0547, `CommitRecoveryObligations`). `CommitFailed` resolves it only after
+the settlement history search proves no commit exists. While an obligation is unresolved the
+overdue watchdog and the dead-session reconciler hold the task for up to
+`Delegation:CommitRecoveryHoldMinutes` (default 720; `<= 0` disables the hold) so the report
+re-hand can record `committed:`; past the hold they fail it, write `CommitRecoveryAbandoned` by
+name, and the parent's note carries `git=commit-recovery-abandoned:<id8>` plus the `git log` recipe
+(the commit, if any, is local and unpushed). Retry/reroute/escalate refuse with 409
+`commit_recovery_pending` unless `/retry` is sent `{"abandonCommitRecovery":true}`. The attention
+feed shows the hold as `CommitRecoveryPending`. The Commit-child audit reads trailers through Git's
+parser (`GitWorkspaceService.ReadTrailersAsync`), so any `trailer.separators` spelling is accepted
+and body prose is not.
+
 ### Default stage shape by complexity (CARD-0352's `complexity:` label)
 
 | Label | Investigate | Plan | TestDesign | Code | Review | Mutation after land | Dispatches |
