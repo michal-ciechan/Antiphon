@@ -526,7 +526,8 @@ function Test-C487_G055 {
 function Test-C487_G056 {
     $pol = Get-Content -LiteralPath $policyPath -Raw | ConvertFrom-Json
     $census = @(Get-NightlyScriptCensus -PolicyObject $pol)
-    Assert-C487 -Cond ($census.Count -eq 13) -Name ('G056 13 census rows') -Detail ([string]$census.Count)
+    # CARD-0545 adds test-deploy-nightly-watchdog; the census stays an exact inventory.
+    Assert-C487 -Cond ($census.Count -eq 14) -Name ('G056 14 census rows') -Detail ([string]$census.Count)
 }
 
 function Test-C487_G057 {
