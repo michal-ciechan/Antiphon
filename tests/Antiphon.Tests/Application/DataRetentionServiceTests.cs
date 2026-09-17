@@ -898,6 +898,88 @@ public class DataRetentionServiceTests
         return id;
     }
 
+    /// <summary>
+    /// CARD-0544 PC-118 / R-11: a stale keyed row whose Completion obligation is unconfirmed is receipt
+    /// evidence still owed and survives the queue window; a confirmed obligation's row prunes while the
+    /// notification keeps ConfirmedAt/ConfirmingPromptSequence, and the next reconcile never re-enqueues.
+    /// </summary>
+    [Test]
+    public async Task C544_CompletionObligationRetention()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var caller = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var old = DaysAgo(40);
+        (Guid NoteId, Guid RowId) confirmed, owed;
+        await using (var db = new AppDbContext(options))
+        {
+            confirmed = SeedCompletionObligation(db, caller.SessionId, old, confirmed: true, sequence: 1);
+            owed = SeedCompletionObligation(db, caller.SessionId, old, confirmed: false, sequence: 2);
+            await db.SaveChangesAsync();
+        }
+
+        await using (var db = new AppDbContext(options))
+            await CreateService(db).PruneQueuedMessagesAsync(CancellationToken.None);
+
+        await using (var db = new AppDbContext(options))
+        {
+            (await db.SessionQueuedMessages.AnyAsync(m => m.Id == owed.RowId)).ShouldBeTrue("unconfirmed Completion evidence survives");
+            (await db.SessionQueuedMessages.AnyAsync(m => m.Id == confirmed.RowId)).ShouldBeFalse("confirmed obligation row prunes");
+            var kept = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == confirmed.NoteId);
+            kept.State.ShouldBe(LandNotificationState.Confirmed);
+            kept.ConfirmedAt.ShouldNotBeNull("receipt identity retained");
+            kept.ConfirmingPromptSequence.ShouldBe(41);
+
+            await new AgentTaskLandNotificationService(db, caller.Queue, new CompletionNoteFlushQueue(), caller.Runtime, TimeProvider.System)
+                .ReconcileAsync(confirmed.NoteId, CancellationToken.None);
+        }
+
+        await using (var verify = new AppDbContext(options))
+        {
+            (await verify.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId == confirmed.NoteId))
+                .ShouldBe(0, "a confirmed obligation is never re-enqueued");
+            var after = await verify.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == confirmed.NoteId);
+            after.State.ShouldBe(LandNotificationState.Confirmed);
+            after.ConfirmingPromptSequence.ShouldBe(41);
+            caller.Adapter.SubmittedBodies.ShouldBeEmpty();
+        }
+    }
+
+    private static (Guid NoteId, Guid RowId) SeedCompletionObligation(AppDbContext db, Guid session, DateTime at, bool confirmed, long sequence)
+    {
+        var taskId = Guid.NewGuid();
+        var eventId = Guid.NewGuid();
+        var noteId = Guid.NewGuid();
+        var rowId = Guid.NewGuid();
+        const string body = "[task retention] verification=Final; scope=Full; final-review=none\nreport";
+        var digest = DelegationNoteDigest.Compute(body);
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = taskId, RootTaskId = taskId, Title = "C544 retention", Goal = "retention", Role = AgentTaskRole.Review,
+            WorkingDirectory = Path.GetTempPath(), Status = AgentTaskStatus.Succeeded, ReplyTo = AgentTaskReplyTo.Session,
+            ParentSessionId = session, VerificationProfileVersion = 1, VerificationRound = VerificationRound.Final,
+            CreatedAt = at, CompletedAt = at,
+        });
+        db.AgentTaskEvents.Add(new AgentTaskEvent { Id = eventId, AgentTaskId = taskId, Type = AgentTaskEventType.Completed, Detail = "settled", At = at });
+        db.AgentTaskLandNotifications.Add(new AgentTaskLandNotification
+        {
+            Id = noteId, TaskId = taskId, SourceEventId = eventId, Kind = LandNotificationKind.Completion,
+            ReplyTo = AgentTaskReplyTo.Session, ParentSessionId = session, Body = body, ContentDigest = digest,
+            CreatedAt = at, NextAttemptAt = at, EnqueuedAt = at, QueueMessageId = rowId,
+            State = confirmed ? LandNotificationState.Confirmed : LandNotificationState.AwaitingReceipt,
+            ConfirmedAt = confirmed ? at : null, ConfirmingPromptSequence = confirmed ? 41 : null,
+        });
+        db.SessionQueuedMessages.Add(new SessionQueuedMessage
+        {
+            Id = rowId, AgentSessionId = session, Sequence = sequence, Body = body,
+            Status = QueuedMessageStatus.Sent, Origin = QueuedMessageOrigin.Delegation, SourceTaskId = taskId,
+            ContentDigest = digest, SourceLandNotificationId = noteId, ConversationKey = $"task:{taskId:N}",
+            DeliveryAttempts = 1, DeliveryVerdict = confirmed ? DeliveryVerdict.Delivered : null,
+            CreatedAt = at, SentAt = at,
+        });
+        return (noteId, rowId);
+    }
+
     private static async Task<Guid> SeedIntentAsync(
         Guid taskId, Guid? parentSessionId, AgentTaskReplyTo replyTo, DateTime createdAt, bool materialized)
     {
