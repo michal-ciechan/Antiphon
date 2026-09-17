@@ -725,7 +725,7 @@ public sealed class VerificationRoundDeliveryTests
     [Test]
     public async Task C544_ReportRegeneratedFromSnapshot()
     {
-        await using var rig = await C544DeliveryRig.CreateAsync(busy: false, spill: true, reportStore: true);
+        await using var rig = await C544DeliveryRig.CreateAsync(busy: false, spill: true, replyInlineMaxChars: 4_000, reportStore: true);
         rig.Fault.Cut = "settled-committed";
         var (taskId, _) = await rig.SettleReviewAsync(padding: 400);
         var snapshot = TaskCompletionNotification.TryReadSnapshot((await rig.NotificationAsync(taskId))!.CompletionSnapshotJson)!;
@@ -777,7 +777,7 @@ public sealed class VerificationRoundDeliveryTests
     [Test]
     public async Task C544_CompletionReceiptWholeWire()
     {
-        foreach (var row in new[] { "id-only", "header-only", "truncated" })
+        foreach (var row in new[] { "header-only", "truncated", "id-only" })
         {
             await using var rig = await C544DeliveryRig.CreateAsync(busy: false);
             var (taskId, _) = await rig.SettleReviewAsync();
@@ -790,12 +790,13 @@ public sealed class VerificationRoundDeliveryTests
                 _ => wire[..(wire.Length / 2)],
             };
             await rig.FlushAsync();
-            rig.Caller.SubmittedBodies.Count.ShouldBe(1, row + ": first attempt typed");
+            rig.Caller.SubmittedBodies.Count.ShouldBeGreaterThanOrEqualTo(1, row + ": typed (the queue may retry an unconfirmed attempt)");
+            var falseAttempts = rig.Caller.SubmittedBodies.Count;
             await rig.ScanAsync();
             var refused = (await rig.NotificationAsync(taskId))!;
             refused.State.ShouldNotBe(LandNotificationState.Confirmed, row);
             refused.ConfirmingPromptSequence.ShouldBeNull(row);
-            (await rig.CallerPromptsAsync()).Count(p => p.Text != "dispatch the review").ShouldBe(1, row + ": the false prompt exists");
+            (await rig.CallerPromptsAsync()).Count(p => p.Text != "dispatch the review").ShouldBe(falseAttempts, row + ": only false prompts exist");
 
             rig.SubmitTransform = null;
             await rig.RestartAsync();
@@ -805,6 +806,17 @@ public sealed class VerificationRoundDeliveryTests
             await rig.ScanAsync();
             var delivery = TaskCompletionNotification.TryReadDelivery((await rig.NotificationAsync(taskId))!.CompletionDeliveryJson)
                 .ShouldNotBeNull(row);
+            if (row != "id-only")
+            {
+                // A recorded prefix is the queue's Truncated verdict: the row parks for a human and is not retyped.
+                // Recovery must still refuse to confirm on the prefix evidence.
+                var parked = (await rig.NotificationAsync(taskId))!;
+                parked.State.ShouldNotBe(LandNotificationState.Confirmed, row + ": prefix evidence never confirms after recovery");
+                parked.ConfirmingPromptSequence.ShouldBeNull(row);
+                parked.LastErrorCode.ShouldBe("queue_truncated_unconfirmed", row);
+                (await rig.CallerPromptsAsync()).ShouldNotContain(p => p.Text == delivery.WireText, row);
+                continue;
+            }
             var whole = (await rig.CallerPromptsAsync()).Where(p => p.Text == delivery.WireText).ToList()
                 .ShouldHaveSingleItem(row + ": the whole wire prompt recorded once");
             var confirmed = (await rig.NotificationAsync(taskId))!;
