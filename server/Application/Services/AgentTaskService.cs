@@ -58,6 +58,9 @@ public sealed class AgentTaskService
     private readonly CapacityRecoveryService? _capacityRecovery;
     private readonly SourceLandingAdmission? _sourceLanding;
     private readonly ILandingGit? _landingGit;
+    // CARD-0544. Optional so predating harnesses keep constructing this; absent, an explicit
+    // Interim request is refused as unready and Final (the default) is unaffected.
+    private readonly InterimVerificationPolicy? _interimPolicy;
 
     public AgentTaskService(
         AppDbContext db,
@@ -79,8 +82,10 @@ public sealed class AgentTaskService
         DelegationOpenGate? openGate = null,
         CapacityRecoveryService? capacityRecovery = null,
         SourceLandingAdmission? sourceLanding = null,
-        ILandingGit? landingGit = null)
+        ILandingGit? landingGit = null,
+        InterimVerificationPolicy? interimPolicy = null)
     {
+        _interimPolicy = interimPolicy;
         _areas = areas;
         _db = db;
         _workspace = workspace;
@@ -215,6 +220,21 @@ public sealed class AgentTaskService
         if (request.Role == AgentTaskRole.Mutation && request.Workspace == WorkspaceMode.ReadOnly)
             throw new ValidationException(nameof(request.Workspace),
                 "Mutation requires writable workspace access; ReadOnly is not supported.");
+
+        // CARD-0544 D-1: syntax first, before a follow-up or pin can rewrite the shape. Omitted is
+        // Final on Code/Review; an explicit round anywhere else, or an Interim outside the
+        // supported Worker Code/Worktree and Review/ReadOnly shapes, never reaches admission.
+        var verificationRound = InterimVerificationPolicy.ResolveRound(request);
+        if (verificationRound == VerificationRound.Interim)
+        {
+            InterimVerificationPolicy.RequireInterimShape(request.Kind, request.Role,
+                request.Workspace ?? (request.Kind == AgentTaskKind.Worker ? WorkspaceMode.Shared : WorkspaceMode.Worktree));
+            if (request.AgentId is not null || request.Agent is not null)
+                throw new ValidationException(nameof(request.VerificationRound),
+                    "Interim cannot run on a pinned agent.", InterimVerificationPolicy.RoundRoleCode);
+            InterimVerificationPolicy.RequireExplicitIdentities(
+                request.VerificationSubjectTaskId, request.VerificationBaselineOutcomeId, request.VerificationSelection);
+        }
 
         var standingAuthority = string.IsNullOrWhiteSpace(request.Authority)
             ? null
@@ -857,6 +877,20 @@ public sealed class AgentTaskService
                 repairOwnerId, request, caller, resolved, projectId, ct);
         }
 
+        // CARD-0544 D-2/D-3/D-7: every Interim eligibility gate against resolved facts. A refusal
+        // creates no task and is never reinterpreted as a (more expensive) Final dispatch.
+        VerificationAdmission? verificationAdmission = null;
+        if (verificationRound == VerificationRound.Interim)
+        {
+            if (_interimPolicy is null)
+                throw new ConflictException("Interim verification is unavailable in this host; request Final instead.",
+                    InterimVerificationPolicy.BackstopUnreadyCode);
+            verificationAdmission = await _interimPolicy.AdmitAsync(new InterimVerificationPolicy.AdmissionInput(
+                request.Kind, request.Role, workspace, binding.CardId, projectId, resolved.RepoPath,
+                request.RepairSourceTaskId, followUpOfTaskId, request.VerificationSubjectTaskId,
+                request.VerificationBaselineOutcomeId, request.VerificationSelection), ct);
+        }
+
         var now = UtcNow();
         var (token, tokenHash) = NewToken();
 
@@ -950,6 +984,12 @@ public sealed class AgentTaskService
             ExpectedDurationMinutes = expectedMinutes,
             StandingAuthority = standingAuthority,
             AutoContinueOnWait = request.AutoContinue && standingAuthority is not null,
+            // CARD-0544: a snapshot, never a default computed later. Other roles stay null.
+            VerificationProfileVersion = verificationRound is null ? null : InterimVerificationPolicy.ProfileVersion,
+            VerificationRound = verificationRound,
+            VerificationSubjectTaskId = verificationAdmission?.SubjectTaskId,
+            VerificationBaselineOutcomeId = verificationAdmission?.BaselineOutcomeId,
+            VerificationAdmissionJson = verificationAdmission?.Serialize(),
         };
 
         if (storedPolicy is not null)
@@ -989,7 +1029,7 @@ public sealed class AgentTaskService
             && !liveFollowUp;
         IDbContextTransaction? gateTx = null;
         DelegationOpenGate.Snapshot? openSnapshot = null;
-        if (gateCreate || task.SourceLandingOperationId is not null)
+        if (gateCreate || task.SourceLandingOperationId is not null || verificationAdmission is not null)
         {
             gateTx = _db.Database.CurrentTransaction is null
                 ? await _db.Database.BeginTransactionAsync(ct)
@@ -1013,6 +1053,10 @@ public sealed class AgentTaskService
             if (gateCreate)
                 openSnapshot = await _openGate!.EnsureCanCreateAsync(
                     projectId, request.Role, request.IgnoreConcurrencyLimit, ct);
+            // CARD-0544 D-5: the owner latch commits in the same transaction as this task, under
+            // the owner row lock the land admission also takes, or neither exists.
+            if (verificationAdmission is not null)
+                await _interimPolicy!.LatchOwnerLockedAsync(verificationAdmission.SubjectTaskId, ct);
 
         _db.AgentTasks.Add(task);
         _db.AgentTaskEvents.Add(new AgentTaskEvent
@@ -1686,7 +1730,21 @@ public sealed class AgentTaskService
             task.InternalDecisionPolicyJson, task.InternalDecisionPolicyHash,
             task.RepairSourceTaskId, TaskProgressJson.ToDto(TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson)),
             task.WorktreeBaseRequestedRef, task.WorktreeBaseRef, task.WorktreeBaseSource, task.WorktreeBaseTaskId,
-            task.WorktreeBaseSha, Session: sessionDetail);
+            task.WorktreeBaseSha, Session: sessionDetail,
+            Verification: ToVerificationProfile(task));
+    }
+
+    /// <summary>CARD-0544. Null unless the task carries a versioned profile; legacy is never shown as Full.</summary>
+    internal static VerificationProfileDto? ToVerificationProfile(AgentTask task)
+    {
+        if (task.VerificationProfileVersion is not int version || task.VerificationRound is not { } round)
+            return null;
+        var admission = VerificationAdmission.TryRead(task.VerificationAdmissionJson);
+        var hold = task.Status == AgentTaskStatus.Blocked && task.FailureReason is { } reason
+            && reason.StartsWith("verification_", StringComparison.Ordinal) ? reason : null;
+        return new VerificationProfileDto(version, round, task.VerificationSubjectTaskId, task.VerificationBaselineOutcomeId,
+            admission?.BaselineReviewedSha, admission?.Selection, round == VerificationRound.Interim,
+            task.RequiresFinalVerificationReview, hold, admission?.Readiness.MonitorRecordedAt);
     }
 
     private static VerificationExecutionDetailDto ToExecutionDetail(VerificationExecution execution)

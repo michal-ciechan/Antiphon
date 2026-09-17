@@ -165,7 +165,46 @@ public sealed record CreateAgentTaskRequest(
     /// CARD-0499. Full GUID of the original Code/Worktree landing owner this repair is attributed
     /// against. Callers cannot supply an evidence directory, remote URL or baseline SHA.
     /// </summary>
-    Guid? RepairSourceTaskId = null);
+    Guid? RepairSourceTaskId = null,
+    /// <summary>
+    /// CARD-0544 D-1. Final or Interim, Code/Review only. Omitted on Code/Review is Final; any
+    /// explicit value on another role is refused. Interim needs the card's role policy, a full
+    /// baseline, a committed selection reference and a ready backstop.
+    /// </summary>
+    [property: System.Text.Json.Serialization.JsonConverter(typeof(VerificationRoundConverter))]
+    VerificationRound? VerificationRound = null,
+    /// <summary>CARD-0544 D-2. Full GUID of the original Code landing owner an Interim round verifies.</summary>
+    Guid? VerificationSubjectTaskId = null,
+    /// <summary>CARD-0544 D-2. Full GUID of the full-scope delegate Review outcome the Interim is baselined on.</summary>
+    Guid? VerificationBaselineOutcomeId = null,
+    /// <summary>CARD-0544 D-3. Committed selection-table reference; validated against the authorized repository.</summary>
+    VerificationSelectionReference? VerificationSelection = null);
+
+/// <summary>
+/// CARD-0544 D-3. A committed <c>docs/**/*.md</c> selection table: repository-relative path, full
+/// commit object ID and the section anchor. Only this object enters the API, never a host path.
+/// </summary>
+public sealed record VerificationSelectionReference(
+    string? ArtifactPath,
+    string? ArtifactCommitSha,
+    string? Section);
+
+/// <summary>
+/// CARD-0544. The commissioned ordinary-verification profile of a task, as the status surfaces
+/// show it. <see cref="FinalReviewPending"/> is true for every Interim round: its deferred ordinary
+/// work is owed by a later Final Review, never discharged by the Interim itself.
+/// </summary>
+public sealed record VerificationProfileDto(
+    int Version,
+    VerificationRound Round,
+    Guid? SubjectTaskId,
+    Guid? BaselineOutcomeId,
+    string? BaselineReviewedSha,
+    VerificationSelectionReference? Selection,
+    bool FinalReviewPending,
+    bool OwnerRequiresFinalReview,
+    string? HoldReason,
+    DateTime? ReadinessRecordedAt);
 
 public sealed record AgentTaskSummaryDto(
     Guid Id,
@@ -320,7 +359,9 @@ public sealed record AgentTaskDetailDto(
     WorktreeBaseSource WorktreeBaseSource = WorktreeBaseSource.Unset,
     Guid? WorktreeBaseTaskId = null,
     string? WorktreeBaseSha = null,
-    AgentTaskSessionDto? Session = null);
+    AgentTaskSessionDto? Session = null,
+    /// <summary>CARD-0544. Null for historical and non-Code/Review tasks (never shown as Full).</summary>
+    VerificationProfileDto? Verification = null);
 
 /// <summary>One accepted launch attempt for a sourced Mutation snapshot. Receipt bytes stay on the server.</summary>
 public sealed record VerificationExecutionDetailDto(

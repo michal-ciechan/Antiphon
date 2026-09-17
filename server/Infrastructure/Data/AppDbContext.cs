@@ -939,6 +939,9 @@ public class AppDbContext : DbContext
             // initializer keeps Normal for creators that don't set it.
             entity.Property(c => c.Importance).IsRequired();
             entity.Property(c => c.ImportanceProvenance).IsRequired().HasDefaultValue(CardImportanceProvenance.Auto);
+            // CARD-0544: FullOnly on every existing card; only an explicit content edit opts in.
+            entity.Property(c => c.CodeVerificationPolicy).IsRequired().HasDefaultValue(CardVerificationPolicy.FullOnly);
+            entity.Property(c => c.ReviewVerificationPolicy).IsRequired().HasDefaultValue(CardVerificationPolicy.FullOnly);
             entity.Property(c => c.Urgency).IsRequired().HasDefaultValue(CardUrgency.Normal);
             entity.Property(c => c.DueAt);
             entity.Property(c => c.UrgentSince);
@@ -1601,6 +1604,8 @@ public class AppDbContext : DbContext
             entity.HasKey(n => n.Id);
             entity.Property(n => n.ConcurrencyToken).IsConcurrencyToken();
             entity.Property(n => n.ContentDigest).HasMaxLength(128);
+            entity.Property(n => n.CompletionSnapshotJson).HasColumnType("text");
+            entity.Property(n => n.CompletionDeliveryJson).HasColumnType("text");
             entity.Property(n => n.RequestId).IsRequired(false);
             entity.HasIndex(n => n.SourceEventId).IsUnique();
             entity.HasIndex(n => new { n.State, n.NextAttemptAt, n.Id });
@@ -1788,6 +1793,9 @@ public class AppDbContext : DbContext
             entity.Property(t => t.InternalDecisionPolicyJson).HasColumnType("text");
             entity.Property(t => t.InternalDecisionPolicyHash).HasMaxLength(64);
             entity.Property(t => t.InternalDecisionAuditBaselineJson).HasColumnType("text");
+            // CARD-0544. Null profile/round on every pre-existing row; never backfilled.
+            entity.Property(t => t.VerificationAdmissionJson).HasColumnType("text");
+            entity.Property(t => t.RequiresFinalVerificationReview).IsRequired().HasDefaultValue(false);
             // CARD-0146 S2. Null on every pre-existing row: enrichment at settlement, never a gate.
             entity.Property(t => t.NextStage).IsRequired(false);
             entity.Property(t => t.NextHandoff).HasMaxLength(400);

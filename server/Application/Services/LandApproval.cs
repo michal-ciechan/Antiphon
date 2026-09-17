@@ -9,6 +9,33 @@ namespace Antiphon.Server.Application.Services;
 
 internal static class LandApproval
 {
+    public const string FinalReviewRequiredCode = "final_verification_review_required";
+    public const string ScopeIneligibleCode = "review_verification_scope_ineligible";
+
+    /// <summary>
+    /// CARD-0544 D-5 recovery gate. A pending or resumed land for a latched owner re-reads the
+    /// latch and its persisted approval before any further mutation. Returns a refusal code, or
+    /// null when publication may continue. Unlatched owners keep the CARD-0488 behavior.
+    /// </summary>
+    public static async Task<string?> RevalidateFinalVerificationAsync(AppDbContext db, Guid ownerId,
+        Guid? evidenceId, string? expectedSha, CancellationToken ct)
+    {
+        var owner = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == ownerId, ct);
+        if (owner is null || !owner.RequiresFinalVerificationReview)
+            return null;
+        if (evidenceId is not Guid id || !GitObjectId.IsFull(expectedSha))
+            return FinalReviewRequiredCode;
+        try
+        {
+            await LoadUsableEvidenceAsync(db, id, expectedSha!, owner, ct);
+            return null;
+        }
+        catch (ConflictException ex)
+        {
+            return ex.Code ?? ScopeIneligibleCode;
+        }
+    }
+
     public static string? NormalizeExpectedSha(string? value, bool required)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -33,6 +60,15 @@ internal static class LandApproval
         if (row.Stage != OrchestrationStage.Review || row.Outcome != StageOutcomeKind.Clean
             || string.IsNullOrWhiteSpace(row.ReviewedSourceSha))
             throw new ConflictException("Review evidence is not a usable clean Review approval.", "review_evidence_ineligible");
+        // CARD-0544 D-5: an Interim Review is never approval, for any owner. A latched owner needs
+        // a Review commissioned Final that completed Full scope.
+        if (row.CommissionedRound == VerificationRound.Interim || row.OrdinaryScopeCompleted == VerificationScope.Interim)
+            throw new ConflictException("An Interim Review cannot approve a land; commission a Final Review.",
+                ScopeIneligibleCode);
+        if (subject.RequiresFinalVerificationReview
+            && (row.CommissionedRound != VerificationRound.Final || row.OrdinaryScopeCompleted != VerificationScope.Full))
+            throw new ConflictException("This owner requires a Clean Final Review that completed Full scope.",
+                ScopeIneligibleCode);
         if (row.SubjectTaskId != subject.Id)
             throw new ConflictException("Review evidence subject is not this landing owner.", "review_evidence_subject_mismatch");
         if (!GitObjectId.IsFull(row.ReviewedSourceSha) || row.ReviewedSourceSha != expectedSha)
