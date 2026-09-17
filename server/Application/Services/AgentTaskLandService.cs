@@ -127,6 +127,12 @@ public sealed class AgentTaskLandService
                 throw new ConflictException("Cleanup retry expectedSourceSha does not match the published original.",
                     "land_request_identity_conflict");
             Guid? evidenceId = body.ReviewEvidenceId;
+            // CARD-0544 D-5: once any Interim work was admitted for this owner, no explicit-caller
+            // fallback remains. A cleanup-only retry after confirmed publication needs no new sweep.
+            if (!inherit && evidenceId is null && task.RequiresFinalVerificationReview)
+                throw new ConflictException(
+                    "This owner had Interim verification; land requires reviewEvidenceId for a Clean Final Review that completed Full scope.",
+                    LandApproval.FinalReviewRequiredCode);
             var kind = LandApprovalKind.ExplicitCaller;
             if (evidenceId is { } eid)
             {

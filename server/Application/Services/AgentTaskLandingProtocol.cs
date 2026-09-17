@@ -111,6 +111,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 Require(request is not null && GitObjectId.IsFull(request.ExpectedSourceSha),
                     "legacy_review_binding_required");
                 var approval = request!;
+                await RecheckFinalVerificationAsync(task.Id, approval.ReviewEvidenceId, approval.ExpectedSourceSha, ct);
                 Require(GitObjectId.IsFull(approval.RemoteSourceSha)
                     && approval.RemoteSourceFingerprint is { Length: 64 },
                     "source_resolution_required");
@@ -407,8 +408,21 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     private static string InputSha(AgentTaskLanding op) =>
         op.PreparationInputSha ?? op.OriginalSourceSha;
 
+    /// <summary>
+    /// CARD-0544 D-5. Every unpublished checkpoint re-reads the owner's final-review latch and its
+    /// persisted approval; a removed, superseded or scope-invalidated approval, or an owner newly
+    /// latched without one, refuses before the next target/push mutation.
+    /// </summary>
+    private async Task RecheckFinalVerificationAsync(Guid ownerId, Guid? evidenceId, string? expectedSha, CancellationToken ct)
+    {
+        var refusal = await LandApproval.RevalidateFinalVerificationAsync(db, ownerId, evidenceId, expectedSha, ct);
+        Require(refusal is null, refusal ?? "");
+    }
+
     private async Task RecheckRemoteSourceAsync(AgentTaskLanding op, AgentTaskLandRequest? request, CancellationToken ct)
     {
+        await RecheckFinalVerificationAsync(op.TaskId, request?.ReviewEvidenceId ?? op.ReviewEvidenceId,
+            op.OriginalSourceSha, ct);
         if (request is not null)
         {
             Require(request.TaskId == op.TaskId, "stale_land_request");

@@ -1,4 +1,5 @@
 using Antiphon.Server.Domain;
+using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -16,7 +17,11 @@ public static class ReviewEvidence
         bool Usable,
         Guid? SubjectTaskId,
         string? ReviewedSourceSha,
-        string? Warning);
+        string? Warning,
+        // CARD-0544 D-5. Missing, empty, malformed or duplicated declarations are Unknown.
+        VerificationScope Scope = VerificationScope.Unknown);
+
+    public const string ScopeKey = "ordinaryScopeCompleted";
 
     public static Result TryParse(string? report)
     {
@@ -39,6 +44,7 @@ public static class ReviewEvidence
         var afterHeading = searchable[(headingAt + Heading.Length)..].TrimStart('\n');
         string? subject = null;
         string? sha = null;
+        var scopeValues = new List<string>();
         foreach (var rawLine in afterHeading.Split('\n'))
         {
             var trimmed = rawLine.TrimEnd();
@@ -58,14 +64,38 @@ public static class ReviewEvidence
                 subject = value;
             else if (key.Equals("reviewedSourceSha", StringComparison.OrdinalIgnoreCase))
                 sha = value;
+            else if (key.Equals(ScopeKey, StringComparison.OrdinalIgnoreCase))
+                scopeValues.Add(value);
         }
 
+        var scope = ParseScope(scopeValues);
         if (string.IsNullOrWhiteSpace(subject) || !Guid.TryParse(subject, out var subjectId) || subjectId == Guid.Empty)
-            return new(true, false, null, null, "review_evidence_subject_invalid");
+            return new(true, false, null, null, "review_evidence_subject_invalid", scope);
         if (!GitObjectId.TryNormalize(sha, out var normalizedSha))
-            return new(true, false, subjectId, null, "review_evidence_sha_invalid");
-        return new(true, true, subjectId, normalizedSha, null);
+            return new(true, false, subjectId, null, "review_evidence_sha_invalid", scope);
+        return new(true, true, subjectId, normalizedSha, null, scope);
     }
+
+    /// <summary>
+    /// Exactly one declaration naming Full, Interim or None; anything else — absent, empty,
+    /// misspelled, numeric, or declared twice even with the same value — is Unknown.
+    /// </summary>
+    private static VerificationScope ParseScope(IReadOnlyList<string> values)
+    {
+        if (values.Count != 1)
+            return VerificationScope.Unknown;
+        return values[0] switch
+        {
+            var v when v.Equals("Full", StringComparison.OrdinalIgnoreCase) => VerificationScope.Full,
+            var v when v.Equals("Interim", StringComparison.OrdinalIgnoreCase) => VerificationScope.Interim,
+            var v when v.Equals("None", StringComparison.OrdinalIgnoreCase) => VerificationScope.None,
+            _ => VerificationScope.Unknown,
+        };
+    }
+
+    /// <summary>D-5: the commissioned round caps the declaration; an Interim report cannot mint Full.</summary>
+    public static VerificationScope CapToRound(VerificationScope declared, VerificationRound round) =>
+        round == VerificationRound.Interim && declared == VerificationScope.Full ? VerificationScope.Interim : declared;
 
     private static List<int> StandaloneHeadingIndexes(string text)
     {

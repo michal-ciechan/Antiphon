@@ -68,6 +68,8 @@ internal static class CardRevisionLog
             DueAt = card.DueAt,
             Position = card.Position,
             LabelsJson = card.LabelsJson,
+            CodeVerificationPolicy = card.CodeVerificationPolicy,
+            ReviewVerificationPolicy = card.ReviewVerificationPolicy,
             Reason = Trimmed(reason),
             EditedBy = Trimmed(editedBy),
             CreatedAt = utcNow

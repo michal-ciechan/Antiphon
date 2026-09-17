@@ -57,4 +57,16 @@ public class StageOutcome
     public Guid? SupersedesId { get; set; }
 
     public DateTime RecordedAt { get; set; }
+
+    /// <summary>CARD-0544 D-5. Profile version of the stage task at settlement; null on historical and manual rows.</summary>
+    public int? VerificationProfileVersion { get; set; }
+
+    /// <summary>CARD-0544 D-5. The round the stage task was commissioned under; null on historical and manual rows.</summary>
+    public VerificationRound? CommissionedRound { get; set; }
+
+    /// <summary>
+    /// CARD-0544 D-5. Declared ordinary scope capped by <see cref="CommissionedRound"/>. Null on
+    /// historical rows; manual override and backfill never copy or manufacture Full.
+    /// </summary>
+    public VerificationScope? OrdinaryScopeCompleted { get; set; }
 }

@@ -555,6 +555,33 @@ public class AgentTask
     public string? InternalDecisionPolicyHash { get; set; }
 
     /// <summary>
+    /// CARD-0544 D-1/S1. 1 for every Code/Review task created after the verification profile
+    /// shipped; null on historical rows and other roles. Only a versioned row carries a round.
+    /// </summary>
+    public int? VerificationProfileVersion { get; set; }
+
+    /// <summary>CARD-0544. Commissioned ordinary-verification round. Final when omitted; immutable after create.</summary>
+    public VerificationRound? VerificationRound { get; set; }
+
+    /// <summary>CARD-0544 D-2. The original Code landing owner an Interim round verifies. Null for Final.</summary>
+    public Guid? VerificationSubjectTaskId { get; set; }
+
+    /// <summary>CARD-0544 D-2. The full-scope Review outcome an Interim round is baselined against.</summary>
+    public Guid? VerificationBaselineOutcomeId { get; set; }
+
+    /// <summary>
+    /// CARD-0544 D-7. Immutable admission snapshot: card policy revision, baseline SHA, selection
+    /// reference and readiness identities. Null for Final and for historical rows.
+    /// </summary>
+    public string? VerificationAdmissionJson { get; set; }
+
+    /// <summary>
+    /// CARD-0544 D-5. Set on an original landing owner, atomically with the first admitted Interim
+    /// Code or Review for it. Never cleared: land then requires a Clean Final/Full Review.
+    /// </summary>
+    public bool RequiresFinalVerificationReview { get; set; }
+
+    /// <summary>
     /// CARD-0407. Server-owned Git observation baseline for settlement path audit. Null until
     /// a later slice captures it at dispatch; workers cannot supply or refresh it.
     /// </summary>

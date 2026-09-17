@@ -119,7 +119,8 @@ public sealed class StageOutcomeService
         o.Id, o.Stage, o.Outcome, o.Source, o.SubjectTaskId, o.StageTaskId, o.CardId,
         o.CostUsd, o.TokensIn, o.TokensOut, o.DurationSeconds, o.ResolutionTaskId,
         o.ResolutionCostUsd, o.Detail, o.Ref, o.SupersedesId, o.RecordedAt,
-        o.ReviewedSourceSha, o.ReviewedSourceRef, o.ReviewedRepositoryPath);
+        o.ReviewedSourceSha, o.ReviewedSourceRef, o.ReviewedRepositoryPath,
+        o.VerificationProfileVersion, o.CommissionedRound, o.OrdinaryScopeCompleted);
 
     /// <summary>
     /// CARD-0272 S3. An orchestrator override of a stage run. Appends a row with

@@ -29,4 +29,16 @@ public sealed class AgentTaskLandNotification
     public DateTime? WarningAt { get; set; }
     public DateTime? ErrorAt { get; set; }
     public Guid ConcurrencyToken { get; set; } = Guid.NewGuid();
+
+    /// <summary>
+    /// CARD-0544 D-9. Immutable per-settlement completion snapshot (raw result, profile, header).
+    /// Null on every kind other than <see cref="LandNotificationKind.Completion"/>.
+    /// </summary>
+    public string? CompletionSnapshotJson { get; set; }
+
+    /// <summary>
+    /// CARD-0544 D-9. The rendering frozen with the first typed attempt (wire text/hash, batch
+    /// membership, spill identity). Null until that attempt commits; null on other kinds.
+    /// </summary>
+    public string? CompletionDeliveryJson { get; set; }
 }

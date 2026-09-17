@@ -62,6 +62,12 @@ public class CardRevision
     /// </summary>
     public int? Position { get; set; }
 
+    /// <summary>CARD-0544. The SUPERSEDED Code verification policy. Null on rows written before it existed.</summary>
+    public CardVerificationPolicy? CodeVerificationPolicy { get; set; }
+
+    /// <summary>CARD-0544. The SUPERSEDED Review verification policy.</summary>
+    public CardVerificationPolicy? ReviewVerificationPolicy { get; set; }
+
     /// <summary>The SUPERSEDED labels, same jsonb shape as <see cref="Card.LabelsJson"/>.</summary>
     public string? LabelsJson { get; set; }
 

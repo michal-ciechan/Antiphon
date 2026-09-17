@@ -88,6 +88,8 @@ public sealed class AgentTaskDispatcher
     private readonly ITaskProgressGit? _progressGit;
     private readonly DispatchBaseWarningIntentService? _dispatchWarnings;
     private readonly LandDeliveryBoundary? _landBoundary;
+    // CARD-0544 D-7. Optional; absent, a queued Interim task is held rather than launched.
+    private readonly InterimVerificationPolicy? _interimPolicy;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -143,8 +145,10 @@ public sealed class AgentTaskDispatcher
         VerificationExecutionService? verification = null,
         ITaskProgressGit? progressGit = null,
         DispatchBaseWarningIntentService? dispatchWarnings = null,
-        LandDeliveryBoundary? landBoundary = null)
+        LandDeliveryBoundary? landBoundary = null,
+        InterimVerificationPolicy? interimPolicy = null)
     {
+        _interimPolicy = interimPolicy;
         _repositoryLeases = repositoryLeases;
         _verification = verification;
         _progressGit = progressGit;
@@ -3061,6 +3065,19 @@ public sealed class AgentTaskDispatcher
         }
         var now = UtcNow();
 
+        // CARD-0544 D-2/D-7: a queued Interim rechecks card policy, baseline, readiness and source
+        // ancestry before anything launches. A loss holds this task; it never launches a
+        // differently scoped replacement.
+        if (claimed.VerificationRound == VerificationRound.Interim
+            && await InterimHoldReasonAsync(claimed, ct) is { } interimHold)
+        {
+            await BlockAsync(claimed, interimHold, ct);
+            await transaction.CommitAsync(ct);
+            await _eventBus.PublishToAllAsync(
+                "AgentTaskChanged", new { taskId = claimed.Id, rootId = claimed.RootTaskId }, ct);
+            return false;
+        }
+
         // CARD-0136 / CARD-0336: a low reading warns on every dispatch path (reuse and spawn).
         if (claimed.SourceLandingOperationId is not null && (claimed.VerificationCleanupSealJson is not null
             || claimed.Workspace != WorkspaceMode.Worktree || claimed.AgentId is not null || _verification is null))
@@ -4153,6 +4170,30 @@ public sealed class AgentTaskDispatcher
             .Where(t => t.RootTaskId == rootId)
             .SumAsync(t => (decimal?)t.CostUsd, ct) ?? 0m;
         return spent >= _settings.MaxCostUsdPerRoot;
+    }
+
+    private async Task<string?> InterimHoldReasonAsync(AgentTask task, CancellationToken ct)
+    {
+        if (_interimPolicy is null)
+            return InterimVerificationPolicy.BackstopUnreadyCode + ": interim verification is unavailable in this host";
+        if (await _interimPolicy.RecheckQueuedAsync(task, ct) is { } refused)
+            return refused;
+        var admission = VerificationAdmission.TryRead(task.VerificationAdmissionJson);
+        var owner = task.VerificationSubjectTaskId is Guid ownerId
+            ? await _db.AgentTasks.AsNoTracking().FirstOrDefaultAsync(t => t.Id == ownerId, ct)
+            : null;
+        if (admission is null || owner?.WorktreeBranch is null || task.RepoPath is null || _progressGit is null)
+            return InterimVerificationPolicy.BaselineInvalidCode
+                + ": source ancestry cannot be established; commission a new Final review";
+        var head = await _progressGit.RevParseCommitAsync(task.RepoPath,
+            TaskCompletionProgressService.FullRef(owner.WorktreeBranch), ct);
+        var related = head is { Succeeded: true, Sha: { } ownerSha }
+            ? await _progressGit.IsAncestorAsync(task.RepoPath, admission.BaselineReviewedSha, ownerSha, ct)
+            : null;
+        return related == true
+            ? null
+            : InterimVerificationPolicy.BaselineInvalidCode
+                + $": baseline {admission.BaselineReviewedSha} is not in the owner's source history; commission a new Final review";
     }
 
     private async Task BlockAsync(AgentTask task, string reason, CancellationToken ct)
