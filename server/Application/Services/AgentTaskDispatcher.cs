@@ -1764,8 +1764,10 @@ public sealed class AgentTaskDispatcher
             return false;
         }
 
-        // Gate 3 — CARD-0085. Same call, same contract, as the two sweeps above.
-        if (await TryRecoverBindRefusalAsync(task, sessionId, ct))
+        // Gate 3 — CARD-0085. Same call, same contract, as the two sweeps above. Skipped when the
+        // task holds a commit-recovery obligation (CARD-0547): a settled session is not an unbound
+        // one, and that recovery would mark it Succeeded without ever closing the obligation.
+        if (pending.Count == 0 && await TryRecoverBindRefusalAsync(task, sessionId, ct))
             return false;
 
         // Gate 4 — CARD-0353 S2. The boot arm is the ONE deadline here that kills and retries, so
@@ -2294,13 +2296,14 @@ public sealed class AgentTaskDispatcher
             git = "commit-recovery-abandoned:" + string.Join(",", orphaned.Select(p => p.EventId.ToString("N")[..8]));
             warning = string.Join("\n\n", orphaned.Select(p => CommitRecoveryObligations.Describe(task.Id, p)));
         }
-        await FailAsync(task, reason, ct, failureCode);
         if (orphaned is { Count: > 0 })
         {
-            var abandonedAt = task.CompletedAt ?? UtcNow();
+            // Tracked before FailAsync so its SaveChangesAsync commits them with the Failed status.
+            var abandonedAt = UtcNow();
             foreach (var p in orphaned)
                 _db.AgentTaskEvents.Add(CommitRecoveryObligations.Abandon(p, sweep, reason, abandonedAt));
         }
+        await FailAsync(task, reason, ct, failureCode);
         await _tasks.RemoveEphemeralAgentAsync(task, task.AgentId, ct);
         if (task.DispatchedAt is null)
             ArmFailureReminder(task, task.CompletedAt ?? UtcNow());

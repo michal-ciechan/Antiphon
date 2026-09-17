@@ -52,14 +52,12 @@ public partial class AgentTaskReplyIntegrationTests
         }
         if (busy) await SeedEntryAsync(parent, TranscriptKinds.AssistantText, "still working", DateTime.UtcNow);
 
-        // The watchdog's CARD-0085 bind-refusal gate would otherwise find the gated commit by its
-        // "task <short>:" subject and settle it. An orphan only reaches the failure path when that
-        // recovery cannot ask git either, so its history probe is unavailable for this sweep.
-        spy.OverrideRun = args => args.Contains("--oneline") ? (128, "", "history unavailable") : null;
+        // Git is live: the CARD-0085 bind-refusal gate could find the gated commit by its
+        // "task <short>:" subject, so this proves the watchdog skips that recovery for a task
+        // holding an obligation and reaches the abandonment instead.
         var sweep = OverdueSweepHarness.Create(gitSpy: spy);
         await using (sweep.Provider)
             await sweep.Dispatcher.FailOverdueTasksAsync(CancellationToken.None);
-        spy.OverrideRun = null;
 
         Server.Domain.Entities.AgentTask stored;
         await using (var db = CreateContext())
