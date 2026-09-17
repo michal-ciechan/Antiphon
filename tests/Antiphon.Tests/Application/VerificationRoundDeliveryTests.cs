@@ -355,7 +355,7 @@ public sealed class VerificationRoundDeliveryTests
                 await db.AgentTasks.Where(t => t.Id == Land.Git.TaskId).ExecuteUpdateAsync(s => s
                     .SetProperty(t => t.RequiresFinalVerificationReview, true)
                     .SetProperty(t => t.VerificationProfileVersion, 1)
-                    .SetProperty(t => t.VerificationRound, VerificationRound.Final));
+                    .SetProperty(t => t.VerificationRound, VerificationRound.Final)
                     .SetProperty(t => t.ReplyTo, AgentTaskReplyTo.Session)
                     .SetProperty(t => t.ParentSessionId, Caller.SessionId)
                     .SetProperty(t => t.ConcurrencyToken, Guid.NewGuid()));
@@ -725,7 +725,7 @@ public sealed class VerificationRoundDeliveryTests
     [Test]
     public async Task C544_ReportRegeneratedFromSnapshot()
     {
-        await using var rig = await C544DeliveryRig.CreateAsync(busy: false, spill: true);
+        await using var rig = await C544DeliveryRig.CreateAsync(busy: false, spill: true, reportStore: true);
         rig.Fault.Cut = "settled-committed";
         var (taskId, _) = await rig.SettleReviewAsync(padding: 400);
         var snapshot = TaskCompletionNotification.TryReadSnapshot((await rig.NotificationAsync(taskId))!.CompletionSnapshotJson)!;
@@ -755,7 +755,8 @@ public sealed class VerificationRoundDeliveryTests
         var (taskId, _) = await rig.SettleReviewAsync();
         var hold = (await rig.RowAsync(taskId)).HoldUntil.ShouldNotBeNull();
         var snapshot = TaskCompletionNotification.TryReadSnapshot((await rig.NotificationAsync(taskId))!.CompletionSnapshotJson)!;
-        snapshot.DistillDeadlineAt.ShouldBe(hold);
+        // Postgres keeps microseconds; the snapshot JSON keeps ticks.
+        (snapshot.DistillDeadlineAt!.Value - hold).Duration().ShouldBeLessThan(TimeSpan.FromMilliseconds(1));
 
         await rig.RestartAsync();
         await rig.ScanAsync();
@@ -776,45 +777,40 @@ public sealed class VerificationRoundDeliveryTests
     [Test]
     public async Task C544_CompletionReceiptWholeWire()
     {
-        await using var rig = await C544DeliveryRig.CreateAsync(busy: false);
-        var (taskId, _) = await rig.SettleReviewAsync();
-        rig.Fault.TaskId = taskId;
-        rig.Fault.Cut = "render-committed";
-        try { await rig.FlushAsync(); }
-        catch (IOException e) when (e.Message.StartsWith("c544 completion persistence cut", StringComparison.Ordinal)) { }
-        rig.Fault.Throws.ShouldBe(1);
-        var note = (await rig.NotificationAsync(taskId))!;
-        var delivery = TaskCompletionNotification.TryReadDelivery(note.CompletionDeliveryJson).ShouldNotBeNull();
-        var snapshot = TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson)!;
-        var connection = rig.World.Schema.ConnectionString;
-        foreach (var (row, text) in new[]
-                 {
-                     ("id-only", $"notification {note.Id:N} task {taskId:N}"),
-                     ("header-only", snapshot.NoteHeader),
-                     ("truncated", delivery.WireText[..(delivery.WireText.Length / 2)]),
-                 })
+        foreach (var row in new[] { "id-only", "header-only", "truncated" })
         {
-            await BridgeQueueHarness.InsertEntryAsync(rig.World.CallerSessionId, TranscriptKinds.UserPrompt, text,
-                timestamp: DateTime.UtcNow, connectionString: connection);
-            await BridgeQueueHarness.InsertEntryAsync(rig.World.CallerSessionId, TranscriptKinds.TurnEnd,
-                stopReason: TranscriptKinds.StopReasons.EndTurn, connectionString: connection);
+            await using var rig = await C544DeliveryRig.CreateAsync(busy: false);
+            var (taskId, _) = await rig.SettleReviewAsync();
+            var note = (await rig.NotificationAsync(taskId))!;
+            // The caller's terminal records a false prompt for the first attempt; nothing is inserted by hand.
+            rig.SubmitTransform = wire => row switch
+            {
+                "id-only" => $"notification {note.Id:N} task {taskId:N}",
+                "header-only" => wire.ReplaceLineEndings("\n").Split('\n')[0],
+                _ => wire[..(wire.Length / 2)],
+            };
+            await rig.FlushAsync();
+            rig.Caller.SubmittedBodies.Count.ShouldBe(1, row + ": first attempt typed");
             await rig.ScanAsync();
-            var saved = (await rig.NotificationAsync(taskId))!;
-            saved.State.ShouldNotBe(LandNotificationState.Confirmed, row);
-            saved.ConfirmingPromptSequence.ShouldBeNull(row);
-        }
-        rig.Caller.SubmittedBodies.ShouldBeEmpty();
+            var refused = (await rig.NotificationAsync(taskId))!;
+            refused.State.ShouldNotBe(LandNotificationState.Confirmed, row);
+            refused.ConfirmingPromptSequence.ShouldBeNull(row);
+            (await rig.CallerPromptsAsync()).Count(p => p.Text != "dispatch the review").ShouldBe(1, row + ": the false prompt exists");
 
-        await rig.RestartAsync();
-        rig.World.Clock.Advance(TimeSpan.FromMinutes(10));
-        await rig.FlushAsync();
-        await rig.ScanAsync();
-        var whole = (await rig.CallerPromptsAsync()).Where(p => p.Text == rig.Caller.SubmittedBodies.ShouldHaveSingleItem()).ToList()
-            .ShouldHaveSingleItem("the whole prompt recorded once");
-        PromptSubmissionMatch.IsCompleteIn(delivery.WireText, whole.Text!).ShouldBeTrue();
-        var confirmed = (await rig.NotificationAsync(taskId))!;
-        confirmed.State.ShouldBe(LandNotificationState.Confirmed, confirmed.LastErrorCode);
-        confirmed.ConfirmingPromptSequence.ShouldBe(whole.Sequence, "confirmed by the whole wire prompt only");
+            rig.SubmitTransform = null;
+            await rig.RestartAsync();
+            rig.World.Clock.Advance(TimeSpan.FromMinutes(10));
+            await rig.ScanAsync();
+            await rig.FlushAsync();
+            await rig.ScanAsync();
+            var delivery = TaskCompletionNotification.TryReadDelivery((await rig.NotificationAsync(taskId))!.CompletionDeliveryJson)
+                .ShouldNotBeNull(row);
+            var whole = (await rig.CallerPromptsAsync()).Where(p => p.Text == delivery.WireText).ToList()
+                .ShouldHaveSingleItem(row + ": the whole wire prompt recorded once");
+            var confirmed = (await rig.NotificationAsync(taskId))!;
+            confirmed.State.ShouldBe(LandNotificationState.Confirmed, $"{row}: {confirmed.LastErrorCode}");
+            confirmed.ConfirmingPromptSequence.ShouldBe(whole.Sequence, row + ": confirmed by the whole wire prompt only");
+        }
     }
 
     /// <summary>PC-115: a sibling's root note and completion stamp are not a receipt for this obligation.</summary>

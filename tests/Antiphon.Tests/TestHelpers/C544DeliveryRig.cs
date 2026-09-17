@@ -34,11 +34,18 @@ internal sealed class C544DeliveryRig : IAsyncDisposable
     public const string Summary = "C544 distilled summary: the review found nothing; land after Final.";
 
     public static async Task<C544DeliveryRig> CreateAsync(bool busy, bool spill = false, bool distill = false,
-        int replyInlineMaxChars = 20_000)
+        int replyInlineMaxChars = 20_000, bool reportStore = false)
     {
-        var rig = new C544DeliveryRig { Busy = busy };
+        var rig = new C544DeliveryRig { Busy = busy, _reportStore = reportStore };
+        if (reportStore)
+        {
+            // The store refuses TEMP roots; the CARD-0419 fixture is a persistent, owned Git checkout.
+            rig.Reports = new ReportWorkspace();
+            await rig.Reports.InitializeAsync();
+        }
         rig.World = await C544World.CreateAsync(rig.Fault, configure: rig.Configure, delegation: d =>
         {
+            if (rig.Reports is not null) d.ReportStorageRoot = Path.Combine(rig.Reports.Main, ".antiphon", "reports");
             d.PtySingleChunkBytes = spill ? 400 : 43_200;
             d.ModernPtySingleWriteMaxBytes = spill ? 400 : 86_400;
             d.ReplyInlineMaxChars = replyInlineMaxChars;
@@ -52,8 +59,14 @@ internal sealed class C544DeliveryRig : IAsyncDisposable
         return rig;
     }
 
+    private bool _reportStore;
+    public ReportWorkspace? Reports { get; private set; }
+
     private void Configure(IServiceCollection services)
     {
+        // The production canonical report store (repo-local .antiphon/reports), for report regeneration rows.
+        if (_reportStore)
+            services.AddSingleton<Antiphon.Server.Application.Interfaces.IAgentReportStore, Antiphon.Server.Infrastructure.Files.AgentReportStore>();
         services.AddSingleton<LandDeliveryBoundary>(Boundary);
         services.AddSingleton(DistillQueue);
     }
@@ -207,6 +220,7 @@ internal sealed class C544DeliveryRig : IAsyncDisposable
     {
         await World.DisposeAsync();
         await Caller.DisposeAsync();
+        if (Reports is not null) await Reports.DisposeAsync();
     }
 }
 
