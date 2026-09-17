@@ -110,3 +110,10 @@ The landing outcome explicitly starts this continuation; do not synthesize a sta
 Read parsed next= elsewhere. Mutation next=decide is caller triage of the full finding report,
 not automatically a human question. Preserve the original Done verdict and keep the companion
 open until its explicit disposition; no automatic card creation, tick spend or alert message.
+
+Verification rounds (CARD-0544): omitted -VerificationRound is Final, the full ordinary sweep, and
+is what the first Code and first Review always run. Interim is explicit only: the card's role
+policy must allow it, it names -VerificationSubject (original owner), -VerificationBaselineOutcome
+(a full-scope Review outcome) and -VerificationSelectionFile, and a refusal is never resubmitted
+silently as a different round. A clean Interim Review routes to a fresh Final Review of the
+unchanged candidate, never to land; a latched owner lands only with a Clean Final/Full Review.
