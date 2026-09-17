@@ -97,3 +97,5 @@ Antiphon.Tests.Application.WorktreeCleanupJournalTests
 Antiphon.Tests.Infrastructure.WorktreeGuardedCleanupTests
 # CARD-0443: real producer plus standing notification/completion workers and recipient receipt; measured 62-85s.
 Antiphon.Tests.Application.AgentTaskWorktreeLockOutcomeTests
+# CARD-0544: V-4 real settlement/queue/scanner delivery matrix (restart and cut rows, ~4 min).
+Antiphon.Tests.Application.VerificationRoundDeliveryTests
