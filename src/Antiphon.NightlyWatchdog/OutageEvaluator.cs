@@ -242,7 +242,7 @@ public static class OutageEvaluator
             var evidence = JsonNode.Parse(outage.EvidenceJson) as JsonObject ?? new JsonObject();
             var recordedIds = (evidence["jobIds"] as JsonArray)?.Select(n => n?.GetValue<string>()).ToHashSet() ?? [];
             var lastCreated = evidence["lastJobCreatedAt"]?.GetValue<string>() is { } lc
-                ? DateTime.Parse(lc, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind | DateTimeStyles.AdjustToUniversal)
+                ? DateTime.Parse(lc, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind).ToUniversalTime()
                 : (DateTime?)null;
             var closer = attributed.FirstOrDefault(x => x.Day >= outageDay && IsMatchingSuccess(x.Job, x.Day)
                 && !recordedIds.Contains(x.Job.Id) && (lastCreated is null || LondonClock.AsUtc(x.Job.CreatedAtUtc) > lastCreated.Value));

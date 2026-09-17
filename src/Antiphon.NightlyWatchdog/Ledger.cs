@@ -490,7 +490,7 @@ public sealed class Ledger : IDisposable
 
     private static DateTime? Date(SqliteDataReader r, int i) => r.IsDBNull(i)
         ? null
-        : DateTime.Parse(r.GetString(i), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind | DateTimeStyles.AdjustToUniversal);
+        : DateTime.Parse(r.GetString(i), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind).ToUniversalTime();
 
     internal static string Iso(DateTime value) => LondonClock.AsUtc(value).ToString("O", CultureInfo.InvariantCulture);
 

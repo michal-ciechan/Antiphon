@@ -26,7 +26,7 @@ internal sealed class C545World : IAsyncDisposable
     public const string BotToken = "424242:c545-bot-token-never-print";
 
     public string StateDir { get; private set; } = "";
-    public FakeTimeProvider Clock { get; } = new(Start);
+    public FakeTimeProvider Clock { get; private set; } = new(Start);
     public WatchdogOptions Options { get; } = new();
     public FakeWindmillApi Windmill { get; private set; } = null!;
     public FakeRecipientChat Chat { get; private set; } = null!;
@@ -42,9 +42,11 @@ internal sealed class C545World : IAsyncDisposable
     private SnapshotServer? _server;
     private readonly List<string> _directories = [];
 
-    public static async Task<C545World> CreateAsync(Action<WatchdogOptions>? configure = null, FakeRecipientChat? sharedChat = null)
+    public static async Task<C545World> CreateAsync(Action<WatchdogOptions>? configure = null, FakeRecipientChat? sharedChat = null,
+        DateTimeOffset? start = null)
     {
         var world = new C545World();
+        if (start is { } at) world.Clock = new FakeTimeProvider(at);
         world.StateDir = world.NewDirectory();
         var o = world.Options;
         o.Namespace = "mc/test";
