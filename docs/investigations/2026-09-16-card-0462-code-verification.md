@@ -321,3 +321,38 @@ Automatic approval review rejected the cleanup command for the producer-owned bu
 next: review
 handoff: Review CARD-0462 S1-S5 for original landing owner 05a66230. 396 named cases pass; four Unit failures match base; V-21 native skipped. PC-28–146 remain pending for post-land SourceLanding Mutation; inspect PC-56 masking. Restart: server / runner. Automatic approval blocked output/base cleanup; paths in evidence.
 artifact: docs/investigations/2026-09-16-card-0462-code-verification.md
+
+## Round 2 — Review 51e26afb F1/F2/F3 (Code tasks 7dcb662f → 76ab3424)
+
+Landing owner remains `05a66230`. Branch `feat/card-task-76ab3424` continues the preserved 7dcb662f WIP (`f3b4f963`, `4cf8d0f0`). Evidence root: `C:\Antiphon\evidence\code-76ab3424` (`ledger.txt`, `run-one.ps1`, `final-*` TRX/logs, `tripwire-server-*.log`). All final runs verified source `bf82439b2f81c27305a360231249069f3c9e6c2d`; the following commit only changes docs.
+
+### What the added/changed tests actually assert
+
+- **F1 recovery** (`E` = `HerdrLabelFollowFlowTests`).
+  - `E.Missed_observation_is_recovered_after_server_restart`: lost GET reply; `RecreateAsync(runner: true)` disposes/joins the old server host, harness, runner runtime and runner HTTP host and adopts from files. Asserts persisted `NextDueAtUtc` unchanged, a sweep before due returns 0 with zero new `tab.get`, DB and production detail HTTP (`GET /api/agents/{id}` on a recreated `Program` host) still Old; at due a sweep freshly validates (new `tab.get`) the already-equal sidecar label and commits Renamed once (PC-135); detail HTTP shows Renamed; retire + real launch queue relaunch uses TabLabel Renamed in the original tab/pane.
+  - `E.Db_failure_retries_the_same_current_snapshot`: before-commit failure, server recreated, retry commits exact runner sequence with zero new getters, detail HTTP receipt, then relaunch into the original tab/pane (PC-134).
+  - `E.Committed_pin_is_visible_after_notification_failure`: throw-once publish, server recreated, production detail HTTP reads committed tab/workspace pins; retry does not republish.
+  - Runner `F.Crash_after_last_pane_replace_reconstructs_and_clears_only_owned_repair_debt(replace)`: crash at `after-repair-file` (second file committed, debt not cleared), child reconstructed from files; exit metadata unchanged, debt cleared without rewriting last-pane bytes (both owned and replaced arms), zero new getters, no pre-restart observation reauthorised.
+- **F2 moves/workspace matrix.**
+  - `E.Coherent_pane_move_to_another_tab_is_never_followed(rename, cached)`: FakeHerdrServer `MovePane` keeps getters, lists and counts coherent (asserted via pane.get/tab.get/tab.list); follow returns false with read-only RPCs, GET carries no observation, pins Old/Old workspace, zero notifications; cached arm first leaves a validated candidate cached by a dropped GET and asserts zero new `tab.get` during cooldown (PC-142 at flow level). Next real launch resolves the pinned "Old" destination (moved-into tab when it is labelled Old, else a separately seeded Old tab).
+  - `E.Renamed_pin_is_used_by_the_next_named_launch(busy, workspace)`: tab-only arms now launch into a token-managed workspace via the production launch (fixture asserts `WorkspaceSelection == ManagedToken`) and rename the workspace too: observation WorkspaceLabel null, sidecar workspace snapshot preserved, DB workspace pin stays null. Both-pin arms remain untagged.
+  - `E.Workspace_only_pin_follows_and_relaunches_without_a_tab_label(busy)`: workspace-only follow; DB/sidecar TabLabel stay null; relaunch sends WorkspaceLabel Renamed / TabLabel null into the same workspace with no new workspace.
+  - Runner `O.Coherent_pane_move_with_optional_rename_preserves_snapshots(rename)` and `O.Managed_workspace_keeps_snapshot_while_tab_follows` now drive `FollowLabelsAsync` (the production writer) and assert disk + cache agreement; `T.Cached_candidate_is_suppressed_after_move(tab)` uses a coherent move (its getter assertion now excludes the test's own coherence reads — the WIP's absolute count failed 131/132 before this fix).
+- **F3 hosted timer** (`HerdrLabelFollowServerFactory` boots production `Program`, asserts exactly one `AddHostedService<HerdrLabelFollowHostedService>` registration, removes other hosted services, and supplies the fixture runner client, bus and FakeTimeProvider).
+  - `E.Hosted_timer_delivers_follow_without_manual_calls(busy)`: no manual Follow/Sweep. An earlier-ordered agent with an unknown runner session fails every sweep. Startup sweep commits watermark only; rename + one hour clock advance delivers Renamed to DB, notification and detail HTTP; failing session polled ≥2 times; `StopServerAsync` joins `ExecuteTask`; later clock advance produces no follow GETs.
+  - `E.Hosted_timer_disabled_polls_nothing_across_ticks`: `HerdrLabelFollow:Enabled=false`; ExecuteTask completes, three hour ticks produce zero follow GETs, pins/watermark unchanged, clean shutdown. PC-136 remapped to this method in the plan.
+
+### Ordinary V/R results (fresh TRX, `--property:OutputPath=bin-c462r2/`, `--no-build`)
+
+| Run | Filter (plan) | Total | Pass | Fail | Skip/not run | Exit |
+|---|---|---:|---:|---:|---:|---:|
+| runner-new | O/T/F classes | 132 | 132 | 0 | 0 | 0 |
+| runner-regression | R-1/2/4/5 runner classes | 158 | 158 | 0 | 0 | 0 |
+| native (V-21) | exact live method | 1 | 0 | 0 | 1 not executed | 8 |
+| server-new | A/C/W/E classes | 65 | 65 | 0 | 0 | 0 |
+| server-regression | R-3/4/5 server classes | 54 | 54 | 0 | 0 | 0 |
+| Unit | `[Category=Unit]` | 2461 | 2456 | 4 | 1 | 2 |
+
+Class counts: Scheduling 25, Observation 71, Snapshot 36; Concurrency 9, Flow 19, HerdrLabelFollowTests 33, Wire 4; regression class counts identical to Review 51e26afb. Named integration total 409 passed. The four Unit failures (`Registry_matches_compiled_metadata`, `C487_G142`, `every_test_class_is_tagged_unit_xor_integration`, `C487_G068`) have TRX messages byte-identical to Review 51e26afb's base reruns. Slow tripwire: 0 unlisted tests ≥5 s for server-new and server-regression. An earlier runner-new attempt at `0a70e4a6` (131/132, the getter-count defect above) is retained as `attempt1-runner-new`.
+
+V mapping changes: V-16/V-26 now include runner/server reconstruction, detail HTTP and relaunch receipts; V-18/V-24 include the after-repair-file crash; V-20 adds the coherent pane-move, managed tab-only and workspace-only flows; V-30 is additionally satisfied by the two hosted-timer methods. All other V/R rows unchanged and re-run. All PCs remain pending post-land Mutation; none executed.
