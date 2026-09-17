@@ -64,6 +64,62 @@ public class ReviewEvidenceParserTests
         ReviewEvidence.TryParse(null).Found.ShouldBeFalse();
     }
 
+    // CARD-0544 V-5 / G-44: one well-formed declaration parses; anything else is Unknown, never Full.
+    [Test]
+    public void C544_ScopeGrammar()
+    {
+        var rows = new (string Row, string? ScopeLine, Antiphon.Server.Domain.Enums.VerificationScope Expected)[]
+        {
+            ("full", "ordinaryScopeCompleted: Full", Antiphon.Server.Domain.Enums.VerificationScope.Full),
+            ("interim", "ordinaryScopeCompleted: Interim", Antiphon.Server.Domain.Enums.VerificationScope.Interim),
+            ("none", "ordinaryScopeCompleted: None", Antiphon.Server.Domain.Enums.VerificationScope.None),
+            ("case-insensitive", "OrdinaryScopeCompleted: full", Antiphon.Server.Domain.Enums.VerificationScope.Full),
+            ("missing", null, Antiphon.Server.Domain.Enums.VerificationScope.Unknown),
+            ("empty", "ordinaryScopeCompleted:", Antiphon.Server.Domain.Enums.VerificationScope.Unknown),
+            ("misspelled", "ordinaryScopeCompleted: Fulll", Antiphon.Server.Domain.Enums.VerificationScope.Unknown),
+            ("numeric", "ordinaryScopeCompleted: 3", Antiphon.Server.Domain.Enums.VerificationScope.Unknown),
+            ("sentence", "ordinaryScopeCompleted: Full except client", Antiphon.Server.Domain.Enums.VerificationScope.Unknown),
+            ("indented", "  ordinaryScopeCompleted: Full", Antiphon.Server.Domain.Enums.VerificationScope.Unknown),
+        };
+        foreach (var (row, scopeLine, expected) in rows)
+        {
+            var block = Block(Subject, Sha40) + (scopeLine is null ? "" : "\n" + scopeLine);
+            var parsed = ReviewEvidence.TryParse(Report(block));
+            parsed.Found.ShouldBeTrue(row);
+            parsed.Usable.ShouldBeTrue(row);
+            parsed.Scope.ShouldBe(expected, row);
+        }
+
+        // Existing fenced/quoted grammar: a scope inside a non-evidence block never counts.
+        var fenced = "```\n" + Block(Subject, Sha40) + "\nordinaryScopeCompleted: Full\n```";
+        ReviewEvidence.TryParse(Report(fenced)).Scope.ShouldBe(Antiphon.Server.Domain.Enums.VerificationScope.Unknown, "fenced");
+        ReviewEvidence.CapToRound(Antiphon.Server.Domain.Enums.VerificationScope.Full, Antiphon.Server.Domain.Enums.VerificationRound.Interim)
+            .ShouldBe(Antiphon.Server.Domain.Enums.VerificationScope.Interim, "cap");
+    }
+
+    // CARD-0544 V-5 / G-45: a declaration repeated, equal or conflicting, is unusable Unknown.
+    [Test]
+    public void C544_DuplicateScope()
+    {
+        var rows = new (string Row, string Lines)[]
+        {
+            ("equal", "ordinaryScopeCompleted: Full\nordinaryScopeCompleted: Full"),
+            ("conflicting-full-last", "ordinaryScopeCompleted: Interim\nordinaryScopeCompleted: Full"),
+            ("conflicting-full-first", "ordinaryScopeCompleted: Full\nordinaryScopeCompleted: None"),
+        };
+        foreach (var (row, lines) in rows)
+        {
+            var parsed = ReviewEvidence.TryParse(Report(Block(Subject, Sha40) + "\n" + lines));
+            parsed.Found.ShouldBeTrue(row);
+            parsed.Scope.ShouldBe(Antiphon.Server.Domain.Enums.VerificationScope.Unknown, row);
+        }
+
+        var twoBlocks = Block(Subject, Sha40) + "\nordinaryScopeCompleted: Full\n" + Block(Subject, Sha40) + "\nordinaryScopeCompleted: Full";
+        var duplicated = ReviewEvidence.TryParse(Report(twoBlocks));
+        duplicated.Usable.ShouldBeFalse("duplicate-blocks");
+        duplicated.Scope.ShouldBe(Antiphon.Server.Domain.Enums.VerificationScope.Unknown, "duplicate-blocks");
+    }
+
     private static string Block(Guid subject, string sha) =>
         $"--- review evidence ---\nsubjectTaskId: {subject:D}\nreviewedSourceSha: {sha}";
 
