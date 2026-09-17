@@ -678,6 +678,71 @@ public sealed class AgentTaskLandService
             [$"Landing not confirmed; no cleanup authorized by this result. {warningDetail}"], null, ct);
     }
 
+    /// <summary>
+    /// CARD-0552 D-7. The idempotent backfill and recovery door: run the SAME writer the land
+    /// terminal runs, for a task whose publication is already confirmed. One code path means a
+    /// backfilled companion is indistinguishable from one the land created.
+    /// </summary>
+    public async Task<VerificationCompanionDto> EnsureVerificationCompanionAsync(Guid taskId, CancellationToken ct)
+    {
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        await LockTaskAsync(taskId, ct);
+        var task = await _db.AgentTasks.SingleOrDefaultAsync(t => t.Id == taskId, ct)
+            ?? throw new NotFoundException(nameof(AgentTask), taskId.ToString());
+
+        if (task.Role == AgentTaskRole.Mutation || task.SourceLandingOperationId is not null)
+        {
+            throw new ConflictException(
+                "A Mutation snapshot has no publication of its own to verify.",
+                "verification_publication_forbidden");
+        }
+
+        var state = new AgentTaskLandingState();
+        var op = task.ActiveLandingId is Guid activeId
+            ? await _db.AgentTaskLandings.SingleOrDefaultAsync(o => o.Id == activeId, ct)
+            : null;
+        if (op is null || !state.HasPublication(op))
+        {
+            op = (await _db.AgentTaskLandings
+                    .Where(o => o.TaskId == taskId && o.RemoteConfirmedAt != null)
+                    .OrderByDescending(o => o.RemoteConfirmedAt).ThenByDescending(o => o.Id)
+                    .ToListAsync(ct))
+                .FirstOrDefault(state.HasPublication);
+        }
+
+        if (op is null)
+        {
+            throw new ConflictException(
+                $"Task {DelegationReportFormatter.Short(taskId)} has no confirmed publication; "
+                + "there is nothing to verify.",
+                "verification_publication_unconfirmed");
+        }
+
+        if (task.CardId is null)
+        {
+            throw new ConflictException(
+                $"Task {DelegationReportFormatter.Short(taskId)} is bound to no card, so a companion "
+                + "has no original to name.",
+                "verification_companion_requires_card");
+        }
+
+        var now = _clock.GetUtcNow().UtcDateTime;
+        var result = await _companions.EnsureAsync(task, op, now, ct);
+        await _db.SaveChangesAsync(ct);
+        if (_db.Database.CurrentTransaction is { } open) await open.CommitAsync(ct);
+
+        if (result.Linked)
+        {
+            var boardId = await _db.Cards.AsNoTracking()
+                .Where(c => c.Id == result.CardId).Select(c => c.BoardId).SingleAsync(ct);
+            await _eventBus.PublishToAllAsync("CardChanged", new { boardId, cardId = result.CardId }, ct);
+            await _eventBus.PublishToAllAsync("CardChanged", new { boardId, cardId = task.CardId!.Value }, ct);
+        }
+
+        return new VerificationCompanionDto(
+            taskId, op.Id, result.CardId, result.Identifier, result.Created, result.Linked);
+    }
+
     private async Task CompleteTerminalLockedAsync(AgentTask task, AgentTaskLandRequest request,
         AgentTaskEventType type, string outcome, IReadOnlyList<string> warnings, IReadOnlyList<string>? unlandedSiblings,
         CancellationToken ct)
@@ -1017,6 +1082,10 @@ internal sealed record LandVerification(bool Ok, string Step, string Tail, strin
 }
 
 public sealed record LandRequestResult(Guid TaskId, string Status, Guid RequestId = default, string Notification = "tracked");
+
+/// <summary>CARD-0552 D-7: what the verification-companion endpoint returns, created or not.</summary>
+public sealed record VerificationCompanionDto(
+    Guid TaskId, Guid OperationId, Guid CardId, string Identifier, bool Created, bool Linked);
 public enum LandRunResult { Complete, Held }
 internal sealed record LandExecutionIdentity(Guid RequestId, int Attempt);
 public sealed record LandFailureHandleResult(Guid DiagnosticId, string Code, string? ExceptionType, Guid RequestId, int Attempt);

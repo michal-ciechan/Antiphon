@@ -4,6 +4,7 @@ import {
   TbClockExclamation,
   TbClockPause,
   TbEyeOff,
+  TbClipboardCheck,
   TbGitCommit,
   TbHelpCircle,
   TbHourglassHigh,
@@ -49,6 +50,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     color: 'danger',
     icon: TbGitCommit,
     hint: 'A gated commit exists but its settlement record was not saved; the task is held for the re-hand. The evidence has the git recipe and how to discard it.',
+  },
+  MutationDispositionPending: {
+    label: 'Mutation disposition pending',
+    color: 'warning',
+    icon: TbClipboardCheck,
+    hint: 'A post-land Mutation battery settled with nobody waiting for it. Record the counts on the companion card and close it.',
   },
   DispatchWarningUnconfirmed: { label: 'Dispatch receipt missing', color: 'danger', icon: TbMailExclamation, hint: 'The caller has no complete matching UserPrompt for a dispatch-base warning.' },
   StandingContinuityDecision: {

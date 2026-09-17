@@ -334,6 +334,20 @@ POST   /api/agent-tasks/{id}/finding         CARD-0272: orchestrator override of
                                              approved SHA. `delegate.ps1 -Finding <id>
                                              -Stage … -Found "…"` / `-Clean`
                                              [`-ReviewedSourceSha`].
+POST   /api/agent-tasks/{id}/verification-companion
+                                             CARD-0552 D-7. Create-or-link the post-land
+                                             verification companion card for a task whose
+                                             publication is already confirmed. No body.
+                                             Idempotent: 200 with
+                                             `{ taskId, operationId, cardId, identifier,
+                                             created, linked }` whether it created the card
+                                             or found it already linked. 409
+                                             `verification_publication_unconfirmed` when the
+                                             task has no confirmed operation, 409
+                                             `verification_publication_forbidden` for a
+                                             Mutation-role or sourced task, 409
+                                             `verification_companion_requires_card` when the
+                                             owner is bound to no card, 404 for an unknown id.
 POST   /api/agent-tasks/{id}/land            queue an explicit land of a Succeeded Worktree task
 POST   /api/agent-tasks/{id}/land/v2         same handler as `/land` (CARD-0495). New CLI
                                              callers POST only `/land/v2` after `GET /api/version`

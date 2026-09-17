@@ -219,6 +219,7 @@ public sealed class AttentionService
         items.AddRange(await BuildStandingSpecialistHealthItemsAsync(ct));
         items.AddRange(await BuildScheduleMisfireItemsAsync(now, ct));
         items.AddRange(await BuildDelegationCapabilityItemsAsync(since, ct));
+        items.AddRange(await BuildMutationDispositionPendingItemsAsync(ct));
         items.AddRange(BuildRecentFailureItems(failed, costs, checkDigests));
 
         // Asked unconditionally, because RunnerConsulted is a claim about whether anybody asked and a
@@ -556,6 +557,88 @@ public sealed class AttentionService
                 r.CardId,
                 r.Card.BoardId))
             .ToList();
+    }
+
+    // ---- CARD-0552 D-11: a settled sourced battery with nobody to report to --------------------
+
+    /// <summary>
+    /// A Succeeded SourceLanding Mutation task whose companion card is still open and carries no
+    /// newer Mutation-role task. The unattended sweep starts batteries nobody asked for, so
+    /// <c>ReplyTo</c> is None and the report only ever lands on the board; this row is how it
+    /// reaches whoever works the board. It never closes the companion (C478_G126: no implicit
+    /// clean) and it clears when the companion is closed, canceled, archived, or a newer battery
+    /// is bound.
+    /// </summary>
+    private async Task<List<AttentionItemDto>> BuildMutationDispositionPendingItemsAsync(CancellationToken ct)
+    {
+        var batteries = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.SourceLandingOperationId != null
+                && t.Role == AgentTaskRole.Mutation
+                && t.Status == AgentTaskStatus.Succeeded
+                && t.CardId != null)
+            .ToListAsync(ct);
+        if (batteries.Count == 0) return [];
+
+        var cardIds = batteries.Select(t => t.CardId!.Value).Distinct().ToList();
+        var cards = await _db.Cards.AsNoTracking()
+            .Where(c => cardIds.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, ct);
+        var operationIds = batteries.Select(t => t.SourceLandingOperationId!.Value).Distinct().ToList();
+        var operations = await _db.AgentTaskLandings.AsNoTracking()
+            .Where(o => operationIds.Contains(o.Id))
+            .ToDictionaryAsync(o => o.Id, ct);
+        var onCards = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.CardId != null && cardIds.Contains(t.CardId!.Value) && t.Role == AgentTaskRole.Mutation)
+            .Select(t => new { t.Id, t.CardId, t.CreatedAt })
+            .ToListAsync(ct);
+
+        var items = new List<AttentionItemDto>();
+        foreach (var battery in batteries)
+        {
+            if (!cards.TryGetValue(battery.CardId!.Value, out var companion)) continue;
+            if (companion.ArchivedAt is not null) continue;
+            if (companion.Status is CardStatus.Done or CardStatus.Canceled) continue;
+            if (onCards.Any(t => t.CardId == companion.Id
+                && t.Id != battery.Id
+                && t.CreatedAt > battery.CreatedAt))
+            {
+                continue;
+            }
+
+            var findings = battery.NextStage == PipelineHandoffKind.Decide;
+            var op = operations.GetValueOrDefault(battery.SourceLandingOperationId!.Value);
+            var originalIdentifier = op is null ? "the original" : await OriginalIdentifierAsync(op, ct);
+            items.Add(new AttentionItemDto(
+                AttentionKind.MutationDispositionPending,
+                findings ? AlertSeverity.Warning : AlertSeverity.Info,
+                battery.Id,
+                battery.AgentSessionId,
+                battery.AgentId,
+                null,
+                $"{companion.Identifier} — {companion.Title}",
+                $"Post-land Mutation battery settled; {companion.Identifier} needs a disposition.",
+                $"{originalIdentifier} verified on {companion.Identifier}; "
+                + $"O={battery.SourceLandingOperationId!.Value:D} L={op?.VerifiedSourceSha ?? "unknown"}; "
+                + $"task {DelegationReportFormatter.Short(battery.Id)} "
+                + $"verdict={(findings ? "findings" : "clean")}. "
+                + "Record the executed counts, evidence root and restoration verdict on the companion and close it.",
+                battery.CompletedAt,
+                null,
+                [AttentionAction.OpenCard, AttentionAction.OpenDrawer],
+                companion.Id,
+                companion.BoardId));
+        }
+
+        return items;
+    }
+
+    private async Task<string> OriginalIdentifierAsync(AgentTaskLanding op, CancellationToken ct)
+    {
+        var identifier = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.Id == op.TaskId && t.CardId != null)
+            .Join(_db.Cards.AsNoTracking(), t => t.CardId, c => (Guid?)c.Id, (_, c) => c.Identifier)
+            .FirstOrDefaultAsync(ct);
+        return identifier ?? "the original";
     }
 
     // ---- CARD-0327: an unrated import from a non-operator, still in Backlog ---------------------

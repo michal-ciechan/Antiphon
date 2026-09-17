@@ -374,6 +374,7 @@ try
     builder.Services.AddScoped<OutputDistillationService>();
     builder.Services.AddScoped<DiagnoseService>();
     builder.Services.AddScoped<CardDiagnosisSweep>();
+    builder.Services.AddScoped<MutationAutoDispatchSweep>();
     // The "what is stuck" projection (CARD-0035). Read-only — every verb it names is an endpoint
     // that already exists, and it is scoped because it is one query burst per request.
     builder.Services.AddScoped<AttentionService>();
@@ -670,6 +671,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddHostedService<AgentTaskCheckHostedService>();
     builder.Services.AddHostedService<DiagnoseHostedService>();
     builder.Services.AddHostedService<DiagnoseSweepHostedService>();
+    builder.Services.AddHostedService<MutationAutoDispatchHostedService>();
     builder.Services.AddHostedService<OutputDistillationHostedService>();
     builder.Services.AddHostedService<CompletionNoteWorkHostedService>();
     builder.Services.AddHostedService<ScheduleSweepHostedService>();

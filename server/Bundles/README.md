@@ -86,11 +86,9 @@ briefs, stage artifacts, specialists and terminal replies keep their own contrac
 Normal and both presets remain unchanged. See the [CARD-0417 plan](../../docs/superpowers/plans/2026-09-07-card-0417-channel-reply-conciseness-plan.md)
 for the support-only deployment boundary and mandatory reviewed real-reply trial.
 
-Default workflow: Code -> ordinary Review -> caller records same-board companion -> land
-the original Code task -> confirmed publication -> required deployment -> SourceLanding
-Mutation on the companion. Keep every PC/variant pending through Review; use a fresh
+Default workflow: Code -> ordinary Review -> land the original Code task -> the confirmed publication creates or links the companion -> required deployment -> SourceLanding Mutation on the companion; the Mutation sweep is the one tick that spends. Keep every PC/variant pending through Review; use a fresh
 Worktree at O.VerifiedSourceSha. Follow the full CARD-0478 recipe in docs/orchestration-loop.md.
 The landing outcome explicitly starts this continuation; do not synthesize a stage report.
 Read parsed next= elsewhere. Mutation next=decide is caller triage of the full finding report,
 not automatically a human question. Preserve the original Done verdict and keep the companion
-open until its explicit disposition; no automatic card creation, tick spend or alert message.
+open until its explicit disposition; the only tick that creates a task is the Mutation sweep.

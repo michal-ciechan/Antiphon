@@ -264,6 +264,14 @@ public static class AgentTaskEndpoints
             };
         });
 
+        // CARD-0552 D-7. Idempotent: 200 whether the companion was created or already linked.
+        // It is the backfill for the already-landed cards and the recovery door for any land
+        // whose terminal could not write the record.
+        tasks.MapPost("/{id}/verification-companion", async (
+            string id, AgentTaskService service, AgentTaskLandService land, CancellationToken ct) =>
+            Results.Ok(await land.EnsureVerificationCompanionAsync(
+                await service.ResolveTaskIdAsync(id, ct), ct)));
+
         // CARD-0495: /land/v2 is the same handler; an old process has no v2 route at all.
         tasks.MapPost("/{id}/land", QueueLandAsync);
         tasks.MapPost("/{id}/land/v2", QueueLandAsync);

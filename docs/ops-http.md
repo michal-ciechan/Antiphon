@@ -273,6 +273,20 @@ Use the explicit commissioning/resumption/triage recipe in [orchestration-loop.m
 Canceled/superseded verification records reason and successor, never Done/Clean. Decisions belong
 on existing move/reopen revisions and attention, never an alert sink.
 
+CARD-0552: the confirmed publication creates or links the companion and names it in the land
+outcome (`companion=CARD-nnnn (<guid>)` in the terminal detail and the Outcome notification body),
+and links it from `AgentTaskLandings.VerificationCardId`, exposed as `landing.verificationCardId`
+on `GET /api/agent-tasks/{id}`. `POST /api/agent-tasks/{id}/verification-companion` (no body) runs
+the same writer for an already-landed task: 200 `{ taskId, operationId, cardId, identifier,
+created, linked }` whether it created the card or found it linked, 409
+`verification_publication_unconfirmed` when the task has no confirmed operation, 409
+`verification_publication_forbidden` for a Mutation-role or sourced task, 409
+`verification_companion_requires_card` for a card-less owner, 404 for an unknown id. The Mutation
+stage of `GET /api/agent-tasks/pipeline` then carries one ready row per open companion with
+`sourceLandingOperationId`, `sourceLandingSha` (L) and `originalCard`; the Mutation sweep
+(`Delegation:MutationAutoDispatch`) creates one sourced Mutation task per tick from the oldest such
+row under its pause, fleet-wide WIP, window, UTC-day budget and routing-hold ceilings.
+
 `POST /api/agent-tasks` accepts optional `repairSourceTaskId` (full GUID), exposed by
 `delegate.ps1 -RepairSource`. Only a fresh Worker/Code/Worktree task may carry it. The owner must
 be an authorized Code/Worktree task in the same project and git common directory.

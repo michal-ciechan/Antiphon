@@ -22,6 +22,8 @@ export type AttentionKind =
   | 'DispatchWarningUnconfirmed'
   /** CARD-0547: settlement committed under the gate but could not save its record; held for recovery. */
   | 'CommitRecoveryPending'
+  /** CARD-0552: a settled post-land Mutation battery whose companion card still needs a disposition. */
+  | 'MutationDispositionPending'
   | 'StandingContinuityDecision'
   | 'HerdrSupervisionHeld'
   /** The delegate asked a question. Only a human answer moves this. */

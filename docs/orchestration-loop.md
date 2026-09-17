@@ -143,10 +143,11 @@ Code  -- ordinary V/R, commit/push, PCs pending (including zero PCs)
 Review -- separate ordinary read-only gate at every complexity
   | next: land | code (defects) | decide
   v
-record companion -> -Land <original-code-task> -> confirmed O/L -> required deploy
+-Land <original-code-task> -> confirmed O/L records the companion -> required deploy
   | original may close Done with verification pending
   v
-Mutation -- fresh SourceLanding Worktree on companion; every PC/variant and discovery
+Mutation -- fresh SourceLanding Worktree on companion, from the glance's Mutation ready row
+  (explicitly, or by the Mutation sweep); every PC/variant and discovery
   | next: none (clean) | decide (completed finding); incomplete is failed/blocked
   v
 explicit companion disposition and guarded CleanupVerification
@@ -1140,7 +1141,8 @@ Record the accepted task ID in a companion revision. Admission serializes same-O
 including Blocked; a 409 names the existing task or refusal. Preserve the pending obligation
 after quota/sign-in/capacity refusal; no silent provider fallback. A new explicit same-O attempt
 requires prior terminal evidence/restoration assessment. Normal task queues own running-state
-visibility; no tick creates cards or spends quota. Next-card Code may use its own Worktree.
+visibility; no tick creates cards; the Mutation sweep is the one tick that spends, under the D-12 ceilings (Delegation:MutationAutoDispatch). Next-card Code may use its own Worktree.
+The confirmed publication creates or links the companion and names it in the land outcome; Mutation is dispatched from the glance's Mutation ready row, explicitly or by the Mutation sweep.
 
 Before mutation check exact managed creation, HEAD=L and clean tracked source/index; inventory
 outputs. Await all commands, use exact-method green/compiling-defect/intended-red/restore/fresh-

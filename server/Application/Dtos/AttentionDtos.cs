@@ -283,6 +283,15 @@ public enum AttentionKind
     /// holding the task for the re-hand. Appended after shipped 40; do not renumber.
     /// </summary>
     CommitRecoveryPending = 41,
+
+    /// <summary>
+    /// CARD-0552 D-11: a Succeeded SourceLanding Mutation battery whose post-land verification
+    /// companion is still open and has no newer bound battery. Nobody was waiting for the report
+    /// when the sweep started it, so the feed is where the triage arrives. Warning when the
+    /// battery handed off <c>decide</c>, Info when it handed off <c>none</c>. Appended after
+    /// shipped 41; do not renumber.
+    /// </summary>
+    MutationDispositionPending = 42,
 }
 
 /// <summary>

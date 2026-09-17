@@ -994,6 +994,45 @@ public sealed class DelegationSettings
     /// Names are opaque passthrough; Antiphon does not interpret <c>X_LLM_*</c>.
     /// </summary>
     public LlmEnvInheritanceSettings LlmEnvInheritance { get; set; } = new();
+
+    /// <summary>
+    /// CARD-0552 D-12. The unattended Mutation creator's ceilings. Mutation debt is worked
+    /// without a per-battery trigger; the only throttles are spend, provider quota and the
+    /// existing WIP of 1.
+    /// </summary>
+    public MutationAutoDispatchSettings MutationAutoDispatch { get; set; } = new();
+}
+
+/// <summary>CARD-0552 D-12. Ceilings, not approvals: nothing here gates a RUNNING battery.</summary>
+public sealed class MutationAutoDispatchSettings
+{
+    /// <summary>The refinement's default: debt is worked without a per-battery trigger.</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Tick interval. A battery takes hours, so a short tick costs nothing.</summary>
+    public int SweepMinutes { get; set; } = 5;
+
+    /// <summary>
+    /// UTC-day ceiling on Mutation-role <c>CostUsd</c>. Gates STARTS only — a running battery
+    /// finishes, so a single 218-PC battery may overshoot the day's number and that is intended.
+    /// </summary>
+    public decimal DailyBudgetUsd { get; set; } = 75.00m;
+
+    /// <summary>
+    /// <c>ExpectedMinutes</c> on the created task, so a 200-PC battery is not failed at the
+    /// 240-minute default deadline. Stall detection (CARD-0153) still watches progress.
+    /// </summary>
+    public int ExpectedMinutes { get; set; } = 720;
+
+    /// <summary>
+    /// Optional <c>HH:mm-HH:mm</c> local window; start inclusive, end exclusive, <c>start &gt; end</c>
+    /// wraps midnight. Null (the default) is budget-only throttling. The one reason to set it is
+    /// CPU contention with the 01:00 London nightly run; observe first.
+    /// </summary>
+    public string? ActiveWindow { get; set; }
+
+    /// <summary>The zone <see cref="ActiveWindow"/> is read in. Null with a window set means UTC.</summary>
+    public string? TimeZoneId { get; set; }
 }
 
 /// <summary>Knobs for <c>TaskProgressPolicy</c> / the ninth dispatcher clock (CARD-0153).</summary>
@@ -1100,6 +1139,27 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
         if (options.MaxOpenTasks <= 0)
         {
             failures.Add("Delegation:MaxOpenTasks must be a positive integer.");
+        }
+
+        // CARD-0552 D-12. A ceiling that cannot be parsed is a ceiling that does not exist, so
+        // each of these refuses boot rather than quietly running unthrottled.
+        var sweep = options.MutationAutoDispatch;
+        if (sweep.DailyBudgetUsd < 0)
+            failures.Add("Delegation:MutationAutoDispatch:DailyBudgetUsd must not be negative.");
+        if (sweep.SweepMinutes <= 0)
+            failures.Add("Delegation:MutationAutoDispatch:SweepMinutes must be a positive integer.");
+        if (sweep.ExpectedMinutes <= 0)
+            failures.Add("Delegation:MutationAutoDispatch:ExpectedMinutes must be a positive integer.");
+        if (!string.IsNullOrWhiteSpace(sweep.ActiveWindow)
+            && !MutationAutoDispatchWindow.TryParse(sweep.ActiveWindow, out _, out _))
+        {
+            failures.Add("Delegation:MutationAutoDispatch:ActiveWindow must be HH:mm-HH:mm.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(sweep.TimeZoneId) && !string.IsNullOrWhiteSpace(sweep.ActiveWindow)
+            && !MutationAutoDispatchWindow.TryResolveZone(sweep.TimeZoneId, out _))
+        {
+            failures.Add("Delegation:MutationAutoDispatch:TimeZoneId must be a known time zone.");
         }
 
         foreach (var (role, entry) in options.RolePolicy)

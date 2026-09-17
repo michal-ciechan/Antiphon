@@ -140,6 +140,14 @@ Use the explicit commissioning/resumption/triage recipe in [orchestration-loop.m
 Canceled/superseded verification records reason and successor, never Done/Clean. Decisions belong
 on existing move/reopen revisions and attention, never an alert sink.
 
+CARD-0552: the confirmed publication creates or links the companion and names it in the land
+outcome, so the obligation is recorded by the publication rather than by orchestrator memory. A
+caller MAY still pre-create one; the stable key `post-land-verification:<original-code-task-guid>`
+is discovered and linked, and its description is preserved. The companion is then one Mutation
+`ready` row on `GET /api/agent-tasks/pipeline` until an open or Succeeded sourced task consumes
+it; the original card stays Done and never appears as a ready row.
+`POST /api/agent-tasks/{id}/verification-companion` backfills an already-landed task idempotently.
+
 `POST /api/agent-tasks` accepts optional `sourceLandingOperationId` (full GUID), exposed by
 `delegate.ps1 -SourceLanding`. Only fresh Worker/Mutation/Worktree with a distinct same-board
 companion, same authorized repository/project and structured confirmed publication is accepted.

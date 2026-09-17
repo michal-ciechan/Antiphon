@@ -497,6 +497,12 @@ export interface AgentTaskPipelineReadyDto {
   sourceRole?: AgentTaskRole
   /** CARD-0146 S4. The source task's handoff line. Null on the legacy Plan→Code bridge. */
   handoff?: string | null
+  /** CARD-0552 D-4. The confirmed landing operation a Mutation row owes a battery for. */
+  sourceLandingOperationId?: string | null
+  /** CARD-0552 D-4. L, the verified source SHA the battery must run at. */
+  sourceLandingSha?: string | null
+  /** CARD-0552 D-4. The original card; `card` is the post-land verification companion. */
+  originalCard?: AgentTaskPipelineCardRefDto | null
 }
 
 export interface AgentTaskPipelineStageDto {
