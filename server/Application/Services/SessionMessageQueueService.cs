@@ -1293,14 +1293,14 @@ public sealed partial class SessionMessageQueueService
                     $"SELECT * FROM \"SessionQueuedMessages\" WHERE \"Id\" = {noteId} FOR UPDATE")
                     .SingleOrDefaultAsync(token);
                 if (source is null || note is null) return "note-missing";
-                // CARD-0544 D-9: only a Completion obligation's keyed row may be distilled, and only
-                // while its rendering is unfrozen; every other keyed kind keeps its immutable Body.
-                var completionKind = note.SourceLandNotificationId is Guid keyedId
+                // CARD-0544 D-9: only a Completion obligation's keyed row may be distilled; every other
+                // keyed kind keeps its immutable Body. The rendering freezes with the first attempt, so
+                // the unclaimed-row check below is also what rejects a late replacement.
+                var keyedKind = note.SourceLandNotificationId is Guid keyedId
                     ? await db.AgentTaskLandNotifications.AsNoTracking().Where(n => n.Id == keyedId)
-                        .Select(n => new { n.Kind, Frozen = n.CompletionDeliveryJson != null }).SingleOrDefaultAsync(token)
+                        .Select(n => (LandNotificationKind?)n.Kind).SingleOrDefaultAsync(token)
                     : null;
-                if (completionKind is { Kind: LandNotificationKind.Completion, Frozen: true }) return "delivery-claimed";
-                if (note.SourceLandNotificationId != null && completionKind?.Kind != LandNotificationKind.Completion
+                if (note.SourceLandNotificationId != null && keyedKind != LandNotificationKind.Completion
                     || note.SourceTaskId != request.TaskId || note.ContentDigest != digest
                     || note.Origin != QueuedMessageOrigin.Delegation
                     || DelegationNoteDigest.Compute(source.Result ?? source.FailureReason ?? "") != digest)
