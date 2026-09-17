@@ -5,26 +5,6 @@
 if ($script:AntiphonNightlyHealthLoaded) { return }
 $script:AntiphonNightlyHealthLoaded = $true
 
-function Get-NightlyLondonTimeZone {
-    $tz = $null
-    try { $tz = [TimeZoneInfo]::FindSystemTimeZoneById('GMT Standard Time') } catch { }
-    if ($null -eq $tz) {
-        try { $tz = [TimeZoneInfo]::FindSystemTimeZoneById('Europe/London') } catch { }
-    }
-    if ($null -eq $tz) { throw 'Europe/London timezone not available' }
-    return $tz
-}
-
-function ConvertTo-NightlyLondonLocal {
-    param([datetime]$Utc)
-    if ($Utc.Kind -eq [DateTimeKind]::Unspecified) {
-        $Utc = [datetime]::SpecifyKind($Utc, [DateTimeKind]::Utc)
-    } else {
-        $Utc = $Utc.ToUniversalTime()
-    }
-    return [TimeZoneInfo]::ConvertTimeFromUtc($Utc, (Get-NightlyLondonTimeZone))
-}
-
 function Get-NightlyDueUtcForLondonDate {
     param([datetime]$LondonDate)
     $tz = Get-NightlyLondonTimeZone
@@ -534,15 +514,12 @@ function Get-NightlyWindmillConfig {
     if ([string]::IsNullOrWhiteSpace($workspace)) { $workspace = 'mc' }
     $scriptPath = [string]$env:ANTIPHON_NIGHTLY_WINDMILL_SCRIPT
     if ([string]::IsNullOrWhiteSpace($scriptPath)) { $scriptPath = 'u/lndcobra/antiphon_nightly_tests' }
-    $notifyPath = [string]$env:ANTIPHON_NIGHTLY_NOTIFY_SCRIPT
-    if ([string]::IsNullOrWhiteSpace($notifyPath)) { $notifyPath = 'u/lndcobra/telegram_notify' }
     $hasCreds = (-not [string]::IsNullOrWhiteSpace($base) -and -not [string]::IsNullOrWhiteSpace($token))
     return [pscustomobject]@{
         BaseUrl = $base
         Token = $token
         Workspace = $workspace
         ScriptPath = $scriptPath
-        NotifyPath = $notifyPath
         HasCredentials = $hasCreds
     }
 }
@@ -653,26 +630,37 @@ function New-NightlyProductionWindmillApi {
         GetJobs = {
             $url = '{0}/api/w/{1}/jobs/list?script_path_exact={2}&per_page=20' -f $base, $ws, [uri]::EscapeDataString($escaped)
             $obj = Invoke-NightlyWindmillHttp -Method GET -Url $url -Token $token
+            # CARD-0545 D-10: CompletedJob list rows carry no result and no scheduled_for. Fetch the
+            # result for at most the five newest completed scheduled rows; a row that is not fetched,
+            # whose fetch fails, or whose result lacks the native identity stays 'unknown'.
+            $fetched = 0
             $rows = @()
             foreach ($j in @($obj)) {
                 if ($null -eq $j) { continue }
-                $rows += ConvertFrom-NightlyWindmillJob -Job $j
+                $isScheduled = ($j.PSObject.Properties['schedule_path'] -and -not [string]::IsNullOrWhiteSpace([string]$j.schedule_path))
+                if ([string]$j.type -eq 'CompletedJob' -and $isScheduled -and $fetched -lt 5) {
+                    $fetched++
+                    $result = $null
+                    try {
+                        $result = Invoke-NightlyWindmillHttp -Method GET -Url ('{0}/api/w/{1}/jobs_u/completed/get_result/{2}' -f $base, $ws, [uri]::EscapeDataString([string]$j.id)) -Token $token
+                    } catch {
+                        $result = $null
+                    }
+                    $j | Add-Member -NotePropertyName result -NotePropertyValue $result -Force
+                } elseif ($j.PSObject.Properties['result']) {
+                    # Only a fetched result may name the native run.
+                    $j.PSObject.Properties.Remove('result')
+                }
+                $row = ConvertFrom-NightlyWindmillJob -Job $j
+                if ([string]$j.type -eq 'CompletedJob' -and -not [string]::IsNullOrWhiteSpace([string]$row.localDueDate)) {
+                    try {
+                        $dueDate = [datetime]::ParseExact([string]$row.localDueDate, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
+                        $row.scheduledFor = (Get-NightlyDueUtcForLondonDate -LondonDate $dueDate).ToString('o')
+                    } catch { }
+                }
+                $rows += $row
             }
             return $rows
-        }.GetNewClosure()
-        EnqueueNotification = {
-            param($Event, [string]$Destination)
-            $body = New-NightlyNotificationPayload -Event $Event -Destination $Destination
-            $job = Invoke-NightlyWindmillHttp -Method POST `
-                -Url ('{0}/api/w/{1}/jobs/run/p/{2}' -f $base, $ws, [string]$Config.NotifyPath) `
-                -Token $token -Body $body
-            return [pscustomobject]@{
-                Enqueued = $true
-                TransportStatus = 201
-                JobId = [string]$job
-                NotificationId = [string]$body.notificationId
-                Received = $false
-            }
         }.GetNewClosure()
     }
 }
@@ -698,16 +686,12 @@ function Get-NightlyRecipientView {
 
 function Get-NightlyNotificationSink {
     param($Api, [string]$AuthorizedDestination)
+    # CARD-0545 D-9: production notification moved to the independent watchdog. Only the harness seam
+    # remains so the CARD-0487 ledger guards keep exercising this evaluator's ledger logic.
     if ($script:NightlySeams -and $script:NightlySeams.NotificationSink) {
         return $script:NightlySeams.NotificationSink
     }
-    if ($null -eq $Api -or -not $Api.EnqueueNotification) { return $null }
-    if ([string]::IsNullOrWhiteSpace($AuthorizedDestination)) { return $null }
-    $dest = $AuthorizedDestination
-    return {
-        param($Event)
-        return $Api.EnqueueNotification.Invoke($Event, $dest)
-    }.GetNewClosure()
+    return $null
 }
 
 function Save-NightlyMonitorResult {

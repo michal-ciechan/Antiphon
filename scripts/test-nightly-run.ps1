@@ -308,6 +308,99 @@ function Test-C487_G025 {
     }
 }
 
+# ---- CARD-0545 D-10: the wrapper's last stdout line is the JSON completion record ----
+
+function Invoke-C545ResultLineRun {
+    param([string]$Row, [string]$UtcNow, [int]$TestExit = 0, [bool]$TestsPassed = $true, [switch]$NoReport, [string]$CheckoutRoot = '')
+    $fx = New-RunFx
+    $runId = ('c545-' + $Row + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    $summaryJson = ('{{"coverageComplete":true,"testsPassed":{0},"reportDelivered":true,"policyHash":"p"}}' -f $(if ($TestsPassed) { 'true' } else { 'false' }))
+    $extra = [scriptblock]::Create(@"
+`$NightlySeams.UtcNow = { return [datetime]::Parse('$UtcNow', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal) }
+`$NightlySeams.StartProcess = {
+    param(`$FilePath, `$ArgumentList, `$WorkingDirectory, `$TimeoutMilliseconds, `$Environment)
+    Add-Content -LiteralPath '$($fx.Trace)' -Value (('EXEC {0} {1}' -f `$FilePath, ((`$ArgumentList) -join ' '))) -Encoding ASCII
+    `$a = @(`$ArgumentList)
+    `$logIdx = [array]::IndexOf(`$a, '-LogRoot')
+    if ((`$a -join ' ') -match 'nightly-tests\.ps1' -and `$logIdx -ge 0) {
+        `$dir = [string]`$a[`$logIdx + 1]
+        New-Item -ItemType Directory -Path `$dir -Force | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path `$dir 'summary.json'), '$summaryJson')
+        return @{ ExitCode = $TestExit; TimedOut = `$false; Pid = 2 }
+    }
+    return @{ ExitCode = 0; TimedOut = `$false; Pid = 2 }
+}
+"@)
+    Write-C487Seams -Path $fx.Seams -TracePath $fx.Trace -Extra $extra
+    $checkout = $fx.Clone
+    if ($CheckoutRoot) { $checkout = $CheckoutRoot }
+    $argList = @('-NoProfile', '-NonInteractive', '-File', $runPs1, '-NoSync', '-CheckoutRoot', $checkout, '-StateRoot', $fx.State,
+        '-LogRoot', (Join-Path $fx.State 'logs'), '-SeamsPath', $fx.Seams, '-Trigger', 'scheduled', '-Ref', 'master', '-RunId', $runId)
+    if ($NoReport) { $argList += '-NoReport' }
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = 'pwsh'
+    foreach ($x in $argList) { [void]$psi.ArgumentList.Add($x) }
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.UseShellExecute = $false
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $errTask = $proc.StandardError.ReadToEndAsync()
+    $stdout = $proc.StandardOutput.ReadToEnd()
+    $proc.WaitForExit()
+    $lines = @($stdout.Replace("`r`n", "`n").TrimEnd("`n").Split("`n"))
+    $last = [string]$lines[$lines.Count - 1]
+    $record = $null
+    try { $record = $last | ConvertFrom-Json } catch { $record = $null }
+    $state = $null
+    $lastRun = Join-Path $fx.State 'last-run.json'
+    if (Test-Path -LiteralPath $lastRun) { $state = Get-Content -LiteralPath $lastRun -Raw | ConvertFrom-Json }
+    $greenPath = Join-Path $fx.State 'last-complete-green.json'
+    $green = $null
+    if (Test-Path -LiteralPath $greenPath) { $green = Get-Content -LiteralPath $greenPath -Raw | ConvertFrom-Json }
+    return [pscustomobject]@{ Row = $Row; ExitCode = $proc.ExitCode; Stdout = $stdout; Last = $last; Record = $record; State = $state; Green = $green; RunId = $runId; Stderr = $errTask.Result }
+}
+
+function Test-C545FlagsEqualState {
+    param($Run)
+    if ($null -eq $Run.Record -or $null -eq $Run.State) { return $false }
+    foreach ($f in @('coverageComplete', 'testsPassed', 'reportDelivered')) {
+        if ([bool]$Run.Record.$f -ne [bool]$Run.State.$f) { return $false }
+    }
+    return ([string]$Run.Record.localDueDate -eq [string]$Run.State.localDueDate -and [string]$Run.Record.nativeRunId -eq [string]$Run.State.runId)
+}
+
+function Test-C545_ResultLine {
+    $green = Invoke-C545ResultLineRun -Row 'green' -UtcNow '2026-09-17T23:35:00Z'
+    $r = $green.Record
+    $detail = ('exit={0} last={1} stderr={2}' -f $green.ExitCode, $green.Last, $green.Stderr)
+    Assert-C487 -Cond ($green.ExitCode -eq 0 -and $null -ne $r -and [int]$r.exitCode -eq 0) -Name 'C545 ResultLine green last line is the JSON record with exitCode 0' -Detail $detail
+    Assert-C487 -Cond ($null -ne $r -and [string]$r.nativeRunId -eq $green.RunId -and [string]$r.localDueDate -eq '2026-09-18' -and [string]$r.trigger -eq 'scheduled' -and -not [string]::IsNullOrWhiteSpace([string]$r.summaryPath)) -Name 'C545 ResultLine green identity nativeRunId localDueDate trigger summaryPath' -Detail $detail
+    Assert-C487 -Cond ($null -ne $r -and [bool]$r.testsPassed -and [bool]$r.coverageComplete -and [bool]$r.reportDelivered) -Name 'C545 ResultLine green flags true' -Detail $detail
+    Assert-C487 -Cond ($null -ne $green.State -and [string]$green.State.localDueDate -eq '2026-09-18' -and $null -ne $green.Green -and [string]$green.Green.localDueDate -eq '2026-09-18') -Name 'C545 ResultLine green localDueDate in last-run and last-complete-green' -Detail $detail
+    Assert-C487 -Cond (Test-C545FlagsEqualState -Run $green) -Name 'C545 ResultLine green flags equal last-run.json' -Detail $detail
+
+    $refusal = Invoke-C545ResultLineRun -Row 'refusal' -UtcNow '2026-09-17T23:35:00Z' -CheckoutRoot 'C:\src\Antiphon'
+    $expected = '{"nativeRunId":"","sha":"","ref":"","trigger":"","localDueDate":"","policyHash":"","coverageComplete":false,"testsPassed":false,"reportDelivered":false,"exitCode":3,"summaryPath":""}'
+    Assert-C487 -Cond ($refusal.ExitCode -eq 3 -and $refusal.Last -ceq $expected) -Name 'C545 ResultLine refusal last line is the JSON record' -Detail ('exit={0} last={1}' -f $refusal.ExitCode, $refusal.Last)
+
+    $red = Invoke-C545ResultLineRun -Row 'test-red' -UtcNow '2026-09-17T23:35:00Z' -TestExit 1 -TestsPassed $false
+    Assert-C487 -Cond ($red.ExitCode -eq 1 -and $null -ne $red.Record -and [int]$red.Record.exitCode -eq 1 -and -not [bool]$red.Record.testsPassed) -Name 'C545 ResultLine test-red exitCode 1 testsPassed false' -Detail ('exit={0} last={1}' -f $red.ExitCode, $red.Last)
+    Assert-C487 -Cond (Test-C545FlagsEqualState -Run $red) -Name 'C545 ResultLine test-red flags equal last-run.json' -Detail $red.Last
+
+    $noReport = Invoke-C545ResultLineRun -Row 'no-report' -UtcNow '2026-09-17T23:35:00Z' -NoReport
+    Assert-C487 -Cond ($null -ne $noReport.Record -and -not [bool]$noReport.Record.reportDelivered -and $null -eq $noReport.Green) -Name 'C545 ResultLine no-report reportDelivered false and no green file' -Detail $noReport.Last
+
+    foreach ($row in @(@('dst-summer', '2026-06-30T23:10:00Z', '2026-07-01'), @('dst-autumn', '2026-10-24T23:40:00Z', '2026-10-25'), @('dst-spring', '2026-03-29T00:40:00Z', '2026-03-29'))) {
+        $run = Invoke-C545ResultLineRun -Row $row[0] -UtcNow $row[1]
+        Assert-C487 -Cond ($null -ne $run.Record -and [string]$run.Record.localDueDate -eq $row[2] -and $null -ne $run.State -and [string]$run.State.localDueDate -eq $row[2]) -Name ('C545 ResultLine {0} localDueDate {1}' -f $row[0], $row[2]) -Detail $run.Last
+    }
+
+    foreach ($run in @($green, $refusal, $red, $noReport)) {
+        $raw = $run.Stdout.Replace("`r`n", "`n")
+        Assert-C487 -Cond ($raw.TrimEnd("`n").EndsWith($run.Last) -and $run.Last.StartsWith('{')) -Name ('C545 ResultLine {0} no line follows the record' -f $run.Row) -Detail $run.Last
+    }
+}
+
 $cases = Get-C487CaseFunctions -Prefix 'C487_G0'
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -CommandType Function -ErrorAction SilentlyContinue
@@ -315,6 +408,7 @@ if ($Case) {
     & $fn
 } else {
     foreach ($fn in $cases) { & $fn }
+    foreach ($fn in (Get-C487CaseFunctions -Prefix 'C545_')) { & $fn }
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'run-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }
-Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 56
+Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 72 })
