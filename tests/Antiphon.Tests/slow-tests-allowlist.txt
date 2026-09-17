@@ -109,3 +109,5 @@ Antiphon.Tests.Application.HerdrPlacementSettingsTests
 Antiphon.Tests.Application.HerdrLaunchContextResolverTests
 # CARD-0462: named before-queue refusal with real host/database startup; measured 26.81s cold case.
 Antiphon.Tests.Application.HerdrPlacementPreflightTests
+# CARD-0544: V-4 real settlement/queue/scanner delivery matrix (restart and cut rows, ~4 min).
+Antiphon.Tests.Application.VerificationRoundDeliveryTests
