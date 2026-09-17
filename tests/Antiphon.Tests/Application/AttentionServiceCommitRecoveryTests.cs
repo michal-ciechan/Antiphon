@@ -56,7 +56,9 @@ public partial class AttentionServiceTests
     [Test]
     public async Task a_commit_recovery_obligation_becomes_visible_only_after_two_full_minutes()
     {
+        // Postgres stores microseconds; a sub-microsecond `now` would make the stored 120 s row older.
         var now = DateTime.UtcNow;
+        now = now.AddTicks(-(now.Ticks % TimeSpan.TicksPerMillisecond));
         await using var scenario = new Scenario();
         var (_, atGate) = await AddRunningDispatchedTaskAsync(scenario);
         await scenario.AddTaskEventAsync(atGate, AgentTaskEventType.CommitRecoveryStarted, C547Digest(), 0, at: now.AddSeconds(-120));
