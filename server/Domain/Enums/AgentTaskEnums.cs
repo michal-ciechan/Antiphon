@@ -250,6 +250,12 @@ public enum AgentTaskEventType
 
     /// <summary>The gate proved no commit was made. Detail names the recovery-start event and gate outcome.</summary>
     CommitRecoveryNotNeeded = 35,
+
+    /// <summary>
+    /// CARD-0547. A terminal or requeue path proceeded without recovering the obligation.
+    /// Detail names the started event, the path and the reason.
+    /// </summary>
+    CommitRecoveryAbandoned = 36,
 }
 
 /// <summary>

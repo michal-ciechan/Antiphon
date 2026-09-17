@@ -45,6 +45,14 @@ public sealed class DelegationSettings
     public bool CommitOnSettle { get; set; } = true;
 
     /// <summary>
+    /// CARD-0547. How long the overdue watchdog and the dead-session reconciler hold a task whose
+    /// settlement left an unresolved commit-recovery obligation, so the report re-hand can record
+    /// the commit. Past the hold the task fails and the obligation is abandoned by name.
+    /// <c>&lt;= 0</c> disables the hold (the failure still carries the obligation).
+    /// </summary>
+    public int CommitRecoveryHoldMinutes { get; set; } = 720;
+
+    /// <summary>
     /// The real ceiling on a recursive tree: it can only run away by spending. Crossing it stops
     /// further dispatch for that root; work already in flight is left alone and still reports.
     ///

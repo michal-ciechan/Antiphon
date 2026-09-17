@@ -3154,12 +3154,13 @@ public sealed class AgentTaskReplyService
         var settlement = DelegationNoteDigest.Compute(
             $"{task.Id:D}|{task.AgentSessionId:D}|{task.DispatchedAt:O}|{report}");
         var recoveryEvents = await db.AgentTaskEvents.AsNoTracking().Where(e =>
-            e.AgentTaskId == task.Id && (e.Type == AgentTaskEventType.CommitRecoveryStarted
-                || e.Type == AgentTaskEventType.CommitRecoveryNotNeeded)).ToListAsync(ct);
-        var recoveryStarted = recoveryEvents.Any(e => e.Type == AgentTaskEventType.CommitRecoveryStarted
-            && e.Detail == settlement && !recoveryEvents.Any(resolved =>
-                resolved.Type == AgentTaskEventType.CommitRecoveryNotNeeded
-                && resolved.Detail.StartsWith($"{e.Id:D} ", StringComparison.Ordinal)));
+            e.AgentTaskId == task.Id && (e.Type == AgentTaskEventType.Committed
+                || e.Type == AgentTaskEventType.CommitRecoveryStarted
+                || e.Type == AgentTaskEventType.CommitRecoveryNotNeeded
+                || e.Type == AgentTaskEventType.CommitRecoveryAbandoned)).ToListAsync(ct);
+        // CARD-0547 D-1: one rule decides; an abandoned obligation is invisible to a later settle.
+        var recoveryStarted = CommitRecoveryObligations.Unresolved(recoveryEvents, task.Id)
+            .Any(p => p.Settlement == settlement);
         var nothingToCommit = recoveryEvents.Any(e => e.Type == AgentTaskEventType.CommitRecoveryStarted
             && e.Detail == settlement && recoveryEvents.Any(resolved =>
                 resolved.Type == AgentTaskEventType.CommitRecoveryNotNeeded
@@ -3317,6 +3318,21 @@ public sealed class AgentTaskReplyService
             recoveryDb.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.CommitRecoveryNotNeeded,
                 $"{recoveryAttempt.Id:D} {result.Outcome}", now));
             await recoveryDb.SaveChangesAsync(ct);
+        }
+        else if (result.Outcome == GatedCommitOutcome.CommitFailed)
+        {
+            // CARD-0547 D-2: CommitFailed can come back from a torn-down git process, so it
+            // resolves the obligation only after the history search proves no commit exists.
+            // A found commit or a failed search leaves it open for the re-hand to recover.
+            var absent = await git.FindSettlementCommitsAsync(repo, task.Id, settlement, ct);
+            if (absent.Succeeded && absent.Items.Count == 0)
+            {
+                await using var recoveryScope = services.CreateAsyncScope();
+                var recoveryDb = recoveryScope.ServiceProvider.GetRequiredService<AppDbContext>();
+                recoveryDb.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.CommitRecoveryNotNeeded,
+                    $"{recoveryAttempt.Id:D} {result.Outcome}", now));
+                await recoveryDb.SaveChangesAsync(ct);
+            }
         }
         if (result.Outcome == GatedCommitOutcome.NothingToCommit)
         {
