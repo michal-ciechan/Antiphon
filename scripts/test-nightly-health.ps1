@@ -518,62 +518,113 @@ function Test-C544_GreenRequired { Test-C544FlagRequired -Flag 'testsPassed' -La
 function Test-C544_ReportReceiptRequired { Test-C544FlagRequired -Flag 'reportDelivered' -Label 'ReportReceiptRequired' }
 
 # PC-77: the production jobs/list adapter over real HTTP against an owned loopback Windmill stub.
+# CARD-0545: the stub is a route table serving any number of requests until Stop-C544WindmillStub.
+# Routes map a URL-path suffix to a JSON body (string) or an HTTP status (int); the first matching
+# key in insertion order wins. Log holds the first request's request line and headers; Requests holds
+# every request line in order.
 function Start-C544WindmillStub {
-    param([string]$Body)
+    param([string]$Body = '', [System.Collections.IDictionary]$Routes = $null)
+    if ($null -eq $Routes) { $Routes = [ordered]@{ '*' = $Body } }
     $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
     $listener.Start()
     $port = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
-    $log = Join-Path $ResultsDirectory ('c544-stub-' + [guid]::NewGuid().ToString('N') + '.log')
+    $id = [guid]::NewGuid().ToString('N')
+    $log = Join-Path $ResultsDirectory ('c544-stub-' + $id + '.log')
+    $requests = Join-Path $ResultsDirectory ('c544-stub-' + $id + '.requests')
+    [System.IO.File]::WriteAllText($requests, '')
     $ps = [powershell]::Create()
     [void]$ps.AddScript({
-        param($listener, $body, $log)
-        $client = $listener.AcceptTcpClient()
-        try {
-            $stream = $client.GetStream()
-            $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::ASCII)
-            $lines = @()
-            while ($true) { $line = $reader.ReadLine(); if ([string]::IsNullOrEmpty($line)) { break }; $lines += $line }
-            [System.IO.File]::WriteAllLines($log, [string[]]$lines)
-            $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-            $head = "HTTP/1.1 200 OK`r`nContent-Type: application/json`r`nContent-Length: $($bytes.Length)`r`nConnection: close`r`n`r`n"
-            $h = [System.Text.Encoding]::ASCII.GetBytes($head)
-            $stream.Write($h, 0, $h.Length)
-            $stream.Write($bytes, 0, $bytes.Length)
-            $stream.Flush()
-        } finally { $client.Close(); $listener.Stop() }
-    }).AddArgument($listener).AddArgument($Body).AddArgument($log)
+        param($listener, $routes, $log, $requests)
+        $first = $true
+        while ($true) {
+            try { $client = $listener.AcceptTcpClient() } catch { break }
+            try {
+                $stream = $client.GetStream()
+                $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::ASCII)
+                $lines = @()
+                while ($true) { $line = $reader.ReadLine(); if ([string]::IsNullOrEmpty($line)) { break }; $lines += $line }
+                if ($lines.Count -eq 0) { continue }
+                [System.IO.File]::AppendAllText($requests, $lines[0] + "`n")
+                if ($first) { [System.IO.File]::WriteAllLines($log, [string[]]$lines); $first = $false }
+                $path = ($lines[0] -split ' ')[1]
+                $bare = ($path -split '\?')[0]
+                $status = 404
+                $body = '{}'
+                foreach ($key in $routes.Keys) {
+                    if ($key -eq '*' -or $bare.EndsWith([string]$key)) {
+                        $value = $routes[$key]
+                        if ($value -is [int]) { $status = $value; $body = '{}' } else { $status = 200; $body = [string]$value }
+                        break
+                    }
+                }
+                $reason = $(if ($status -eq 200) { 'OK' } elseif ($status -eq 404) { 'Not Found' } else { 'Error' })
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+                $head = "HTTP/1.1 $status $reason`r`nContent-Type: application/json`r`nContent-Length: $($bytes.Length)`r`nConnection: close`r`n`r`n"
+                $h = [System.Text.Encoding]::ASCII.GetBytes($head)
+                $stream.Write($h, 0, $h.Length)
+                $stream.Write($bytes, 0, $bytes.Length)
+                $stream.Flush()
+            } catch {
+            } finally { $client.Close() }
+        }
+    }).AddArgument($listener).AddArgument($Routes).AddArgument($log).AddArgument($requests)
     $handle = $ps.BeginInvoke()
-    return [pscustomobject]@{ Port = $port; Log = $log; Shell = $ps; Handle = $handle; Listener = $listener }
+    return [pscustomobject]@{ Port = $port; Log = $log; Requests = $requests; Shell = $ps; Handle = $handle; Listener = $listener }
+}
+
+function Stop-C544WindmillStub {
+    param($Stub)
+    $Stub.Listener.Stop()
+    try { [void]$Stub.Shell.EndInvoke($Stub.Handle) } catch { }
+    $Stub.Shell.Dispose()
+    return @(Get-Content -LiteralPath $Stub.Requests | Where-Object { $_ })
+}
+
+function New-C545ProductionApi {
+    param($Stub)
+    return New-NightlyProductionWindmillApi -Config ([pscustomobject]@{
+        BaseUrl = ('http://127.0.0.1:{0}' -f $Stub.Port); Token = 'c544-fixture-token'; Workspace = 'mc'
+        ScriptPath = 'u/lndcobra/antiphon_nightly_tests'; HasCredentials = $true })
 }
 
 function Test-C544_ProductionJobAdapter {
     $today = '2026-09-17'
-    $due = (Get-NightlyDueUtcForLondonDate -LondonDate ([datetime]'2026-09-17')).ToString('o')
     $sched = 'u/lndcobra/antiphon_nightly_tests'
+    $due = (Get-NightlyDueUtcForLondonDate -LondonDate ([datetime]'2026-09-17')).ToString('o')
     $rows = @(
         @{ id = 'j-queued'; type = 'QueuedJob'; running = $false; schedule_path = $sched; scheduled_for = $due },
         @{ id = 'j-running'; type = 'QueuedJob'; running = $true; schedule_path = $sched; scheduled_for = $due },
-        @{ id = 'j-success'; type = 'CompletedJob'; success = $true; schedule_path = $sched; scheduled_for = $due; result = @{ nativeRunId = 'r17'; sha = 'sha-r17'; localDueDate = $today } },
-        @{ id = 'j-failed'; type = 'CompletedJob'; success = $false; schedule_path = $sched; scheduled_for = $due; result = @{ error = 'exit 1' } },
-        @{ id = 'j-missing-result'; type = 'CompletedJob'; success = $true; schedule_path = $sched; scheduled_for = $due },
-        @{ id = 'j-string-bool'; type = 'CompletedJob'; success = 'true'; schedule_path = $sched; scheduled_for = $due; result = @{ nativeRunId = 'r17'; sha = 'sha-r17'; localDueDate = $today } },
-        @{ id = 'j-manual'; type = 'CompletedJob'; success = $true; schedule_path = $null; scheduled_for = $due; result = @{ nativeRunId = 'r17'; sha = 'sha-r17'; localDueDate = $today } },
-        @{ id = 'j-unknown'; type = 'SomethingElse'; success = $true; schedule_path = $sched; result = @{ nativeRunId = 'r17'; localDueDate = $today } }
+        @{ id = 'j-success'; type = 'CompletedJob'; success = $true; schedule_path = $sched },
+        @{ id = 'j-failed'; type = 'CompletedJob'; success = $false; schedule_path = $sched },
+        @{ id = 'j-missing-result'; type = 'CompletedJob'; success = $true; schedule_path = $sched },
+        @{ id = 'j-string-bool'; type = 'CompletedJob'; success = 'true'; schedule_path = $sched },
+        @{ id = 'j-manual'; type = 'CompletedJob'; success = $true; schedule_path = $null },
+        @{ id = 'j-unknown'; type = 'SomethingElse'; success = $true; schedule_path = $sched }
     )
-    $stub = Start-C544WindmillStub -Body (ConvertTo-Json -InputObject $rows -Depth 6 -Compress)
-    $api = New-NightlyProductionWindmillApi -Config ([pscustomobject]@{
-        BaseUrl = ('http://127.0.0.1:{0}' -f $stub.Port); Token = 'c544-fixture-token'; Workspace = 'mc'
-        ScriptPath = $sched; NotifyPath = 'u/none'; HasCredentials = $true })
+    $valid = (ConvertTo-Json -InputObject @{ nativeRunId = 'r17'; sha = 'sha-r17'; localDueDate = $today } -Compress)
+    $routes = [ordered]@{
+        'jobs/list' = (ConvertTo-Json -InputObject $rows -Depth 6 -Compress)
+        'get_result/j-success' = $valid
+        'get_result/j-failed' = '{"error":"exit 1"}'
+        'get_result/j-missing-result' = 'null'
+        'get_result/j-string-bool' = $valid
+        'get_result/j-manual' = $valid
+        'get_result/j-unknown' = $valid
+    }
+    $stub = Start-C544WindmillStub -Routes $routes
+    $api = New-C545ProductionApi -Stub $stub
     $jobs = @($api.GetJobs.Invoke())
-    [void]$stub.Shell.EndInvoke($stub.Handle)
-    $stub.Shell.Dispose()
+    $requestLines = Stop-C544WindmillStub -Stub $stub
     $request = @(Get-Content -LiteralPath $stub.Log)
     Assert-C487 -Cond (($request[0] -like 'GET /api/w/mc/jobs/list?script_path_exact=u%2Flndcobra%2Fantiphon_nightly_tests*') -and (@($request | Where-Object { $_ -eq 'Authorization: Bearer c544-fixture-token' }).Count -eq 1)) `
         -Name 'C544 ProductionJobAdapter real HTTP request shape' -Detail ($request -join ' | ')
+    $fetchedIds = @($requestLines | Select-Object -Skip 1 | ForEach-Object { ($_ -split ' ')[1].Split('/')[-1] })
+    Assert-C487 -Cond ((@($requestLines).Count -eq 5) -and (($fetchedIds -join ',') -eq 'j-success,j-failed,j-missing-result,j-string-bool')) `
+        -Name 'C544 ProductionJobAdapter get_result requests bounded to scheduled completed rows' -Detail ($requestLines -join ' | ')
     $byId = @{}
     foreach ($j in $jobs) { $byId[[string]$j.id] = $j }
     $expected = [ordered]@{ 'j-queued' = 'queued'; 'j-running' = 'running'; 'j-success' = 'success'; 'j-failed' = 'failed';
-        'j-missing-result' = 'unknown'; 'j-string-bool' = 'unknown'; 'j-manual' = 'success'; 'j-unknown' = 'unknown' }
+        'j-missing-result' = 'unknown'; 'j-string-bool' = 'unknown'; 'j-manual' = 'unknown'; 'j-unknown' = 'unknown' }
     foreach ($id in $expected.Keys) {
         Assert-C487 -Cond ($byId.ContainsKey($id) -and [string]$byId[$id].status -eq $expected[$id]) -Name ('C544 ProductionJobAdapter status {0}' -f $id) -Detail ([string]$byId[$id].status)
     }
@@ -595,7 +646,66 @@ function Test-C544_ProductionJobAdapter {
     Assert-C544Ready -Health $ok -Ready $true -Name 'C544 ProductionJobAdapter control success row with matching native run is ready'
 }
 
-$script:C544ExpectedRows = 83
+# ---- CARD-0545 D-10: per-row result fetch, bounded to five, never upgrading a missing result ----
+
+function Test-C545_JobResultFetch {
+    $sched = 'u/lndcobra/antiphon_nightly_tests'
+    $rows = @()
+    foreach ($n in 1..7) { $rows += @{ id = ('c{0}' -f $n); type = 'CompletedJob'; success = $true; schedule_path = $sched } }
+    $valid = '{"nativeRunId":"r18","sha":"s","localDueDate":"2026-09-18"}'
+    $routes = [ordered]@{
+        'jobs/list' = (ConvertTo-Json -InputObject $rows -Depth 6 -Compress)
+        'get_result/c1' = $valid; 'get_result/c2' = $valid; 'get_result/c3' = 500
+        'get_result/c4' = $valid; 'get_result/c5' = $valid; 'get_result/c6' = $valid; 'get_result/c7' = $valid
+    }
+    $stub = Start-C544WindmillStub -Routes $routes
+    $jobs = @((New-C545ProductionApi -Stub $stub).GetJobs.Invoke())
+    $requestLines = Stop-C544WindmillStub -Stub $stub
+    $paths = @($requestLines | ForEach-Object { (($_ -split ' ')[1] -split '\?')[0] })
+    $expectedPaths = @('/api/w/mc/jobs/list') + @(1..5 | ForEach-Object { '/api/w/mc/jobs_u/completed/get_result/c{0}' -f $_ })
+    Assert-C487 -Cond (($paths -join ',') -eq ($expectedPaths -join ',')) -Name 'C545 JobResultFetch requests are list then c1..c5 in order' -Detail ($requestLines -join ' | ')
+    $byId = @{}
+    foreach ($j in $jobs) { $byId[[string]$j.id] = $j }
+    foreach ($id in @('c1', 'c2', 'c4', 'c5')) {
+        Assert-C487 -Cond ([string]$byId[$id].status -eq 'success' -and [string]$byId[$id].nativeRunId -eq 'r18') -Name ('C545 JobResultFetch {0} fetched result is success' -f $id) -Detail ([string]$byId[$id].status)
+    }
+    Assert-C487 -Cond ([string]$byId['c3'].status -eq 'unknown') -Name 'C545 JobResultFetch c3 unfetchable is unknown' -Detail ([string]$byId['c3'].status)
+    Assert-C487 -Cond ([string]$byId['c6'].status -eq 'unknown') -Name 'C545 JobResultFetch c6 stays unknown beyond the cap' -Detail ([string]$byId['c6'].status)
+    Assert-C487 -Cond ([string]$byId['c7'].status -eq 'unknown') -Name 'C545 JobResultFetch c7 stays unknown beyond the cap' -Detail ([string]$byId['c7'].status)
+    $expectedDue = [datetime]::Parse('2026-09-17T23:30:00Z', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal)
+    $c1Due = $null
+    if ($byId['c1'].scheduledFor) { $c1Due = ([datetime]$byId['c1'].scheduledFor).ToUniversalTime() }
+    Assert-C487 -Cond ($c1Due -eq $expectedDue) -Name 'C545 JobResultFetch c1 scheduledFor is 00:30 London of localDueDate' -Detail ([string]$byId['c1'].scheduledFor)
+
+    $odd = @(
+        @{ id = 'n-null'; type = 'CompletedJob'; success = $true; schedule_path = $sched },
+        @{ id = 'n-nodue'; type = 'CompletedJob'; success = $true; schedule_path = $sched }
+    )
+    $stub2 = Start-C544WindmillStub -Routes ([ordered]@{
+        'jobs/list' = (ConvertTo-Json -InputObject $odd -Depth 6 -Compress)
+        'get_result/n-null' = 'null'
+        'get_result/n-nodue' = '{"nativeRunId":"r18","sha":"s"}'
+    })
+    $oddJobs = @((New-C545ProductionApi -Stub $stub2).GetJobs.Invoke())
+    [void](Stop-C544WindmillStub -Stub $stub2)
+    $oddById = @{}
+    foreach ($j in $oddJobs) { $oddById[[string]$j.id] = $j }
+    Assert-C487 -Cond ([string]$oddById['n-null'].status -eq 'unknown') -Name 'C545 JobResultFetch null result is unknown' -Detail ([string]$oddById['n-null'].status)
+    Assert-C487 -Cond ([string]$oddById['n-nodue'].status -eq 'unknown') -Name 'C545 JobResultFetch result without localDueDate is unknown' -Detail ([string]$oddById['n-nodue'].status)
+
+    $c3 = $byId['c3'].Clone()
+    $c3.localDueDate = '2026-09-18'
+    $native = New-C544Run -RunId 'r18' -CompletedLocal '2026-09-18 03:00:00'
+    $h = Invoke-C544Health -Jobs @($c3) -Native $native -NowLocal '2026-09-18 10:00:00'
+    Assert-C544Ready -Health $h -Ready $false -Name 'C545 JobResultFetch c3 alone is unready'
+
+    $api = New-NightlyProductionWindmillApi -Config ([pscustomobject]@{ BaseUrl = 'http://127.0.0.1:9'; Token = 't'; Workspace = 'mc'; ScriptPath = $sched; HasCredentials = $true })
+    $config = Get-NightlyWindmillConfig
+    Assert-C487 -Cond ((@($api.Keys) -notcontains 'EnqueueNotification') -and ($null -eq $config.PSObject.Properties['NotifyPath'])) -Name 'C545 JobResultFetch no production Windmill notification sink' -Detail (@($api.Keys) -join ',')
+}
+
+$script:C544ExpectedRows = 84
+$script:C545ExpectedRows = 0
 
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
@@ -604,6 +714,7 @@ if ($Case) {
 } else {
     foreach ($fn in (Get-C487CaseFunctions -Prefix 'C487_G')) { & $fn }
     foreach ($fn in (Get-C487CaseFunctions -Prefix 'C544_')) { & $fn }
+    foreach ($fn in (Get-C487CaseFunctions -Prefix 'C545_')) { & $fn }
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'health-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }
-Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 52 + $script:C544ExpectedRows })
+Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 52 + $script:C544ExpectedRows + $script:C545ExpectedRows })

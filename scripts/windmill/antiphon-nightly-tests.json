@@ -1,12 +1,12 @@
 {
   "path": "u/lndcobra/antiphon_nightly_tests",
   "summary": "Antiphon nightly tests (CARD-0487). Desktop tag. 00:30 Europe/London. No suite or ref override.",
-  "description": "SSH-bridge wrapper that runs scripts/nightly-run.ps1 against C:\\Antiphon\\nightly\\checkout. Do not add a Windows Scheduled Task. Reduced dispatch policy stays inactive until S4 qualification.",
+  "description": "SSH-bridge wrapper that runs scripts/nightly-run.ps1 against C:\\Antiphon\nightly\\checkout. Do not add a Windows Scheduled Task. The job exits with the SSH exit code; the wrapper's final stdout line is its compact JSON completion record (nativeRunId, sha, ref, trigger, localDueDate, policyHash, coverageComplete, testsPassed, reportDelivered, exitCode, summaryPath), which Windmill stores as the job result (CARD-0545 D-10). A failed SSH hop prints no record and fails the job.",
   "language": "bash",
   "tag": "desktop",
   "schema": {
     "properties": {},
     "required": []
   },
-  "content": "#!/bin/bash\nset -euo pipefail\nssh -i /tmp/windmill/worker_to_windows -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes lndco@host.docker.internal 'powershell -NoProfile -ExecutionPolicy Bypass -File C:\\src\\Antiphon\\scripts\\nightly-run.ps1'\n"
+  "content": "#!/bin/bash\nset -uo pipefail\nssh -i /tmp/windmill/worker_to_windows -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes lndco@host.docker.internal 'powershell -NoProfile -ExecutionPolicy Bypass -File C:\\src\\Antiphon\\scripts\nightly-run.ps1'\nexit $?\n"
 }

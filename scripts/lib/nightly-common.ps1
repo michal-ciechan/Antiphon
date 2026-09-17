@@ -18,6 +18,27 @@ function Get-NightlyUtcNow {
     return [datetime]::UtcNow
 }
 
+# CARD-0545 D-10: shared by the wrapper (localDueDate) and the health evaluator.
+function Get-NightlyLondonTimeZone {
+    $tz = $null
+    try { $tz = [TimeZoneInfo]::FindSystemTimeZoneById('GMT Standard Time') } catch { }
+    if ($null -eq $tz) {
+        try { $tz = [TimeZoneInfo]::FindSystemTimeZoneById('Europe/London') } catch { }
+    }
+    if ($null -eq $tz) { throw 'Europe/London timezone not available' }
+    return $tz
+}
+
+function ConvertTo-NightlyLondonLocal {
+    param([datetime]$Utc)
+    if ($Utc.Kind -eq [DateTimeKind]::Unspecified) {
+        $Utc = [datetime]::SpecifyKind($Utc, [DateTimeKind]::Utc)
+    } else {
+        $Utc = $Utc.ToUniversalTime()
+    }
+    return [TimeZoneInfo]::ConvertTimeFromUtc($Utc, (Get-NightlyLondonTimeZone))
+}
+
 function ConvertTo-NightlyCanonicalPath {
     param([Parameter(Mandatory = $true)][string]$Path)
     $normalised = $Path.Replace([System.IO.Path]::AltDirectorySeparatorChar, [System.IO.Path]::DirectorySeparatorChar)

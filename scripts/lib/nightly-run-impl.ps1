@@ -81,7 +81,7 @@ function Invoke-NightlyWatchedCommand {
     return [pscustomobject]@{ ExitCode = $code; TimedOut = $false; Pid = $(if ($proc) { $proc.Id } else { 0 }) }
 }
 
-function Invoke-AntiphonNightlyRun {
+function Invoke-AntiphonNightlyRunCore {
     param(
         [string[]]$Suites,
         [switch]$NoReport,
@@ -108,6 +108,8 @@ function Invoke-AntiphonNightlyRun {
     if ([string]::IsNullOrWhiteSpace($LogRoot)) { $LogRoot = $paths.Logs }
 
     $startedAt = Get-NightlyUtcNow
+    # CARD-0545 D-10: the London calendar date of the run start is the run's due-day identity.
+    $localDueDate = (ConvertTo-NightlyLondonLocal -Utc $startedAt).ToString('yyyy-MM-dd')
     $exitCode = 0
     $ownsLock = $false
     $recordAttempt = $false
@@ -134,6 +136,9 @@ function Invoke-AntiphonNightlyRun {
         StateRoot = $StateRoot
         LogDir = $null
         OwnsLock = $false
+        LocalDueDate = $localDueDate
+        PolicyHash = ''
+        SummaryPath = ''
     }
 
     try {
@@ -143,6 +148,7 @@ function Invoke-AntiphonNightlyRun {
             $exitCode = 3
             $result.Refusal = 'reparse'
             $result.Phase = 'ownership'
+            $result.ExitCode = $exitCode
             Write-Host ('REFUSED: reparse: {0}' -f $_.Exception.Message)
             return [pscustomobject]$result
         }
@@ -205,6 +211,7 @@ function Invoke-AntiphonNightlyRun {
             trigger = $Trigger
             phase = 'Started'
             startedAt = $startedAt.ToString('o')
+            localDueDate = $localDueDate
             lastActivityAt = $startedAt.ToString('o')
             coverageComplete = $false
             testsPassed = $false
@@ -407,7 +414,8 @@ function Invoke-AntiphonNightlyRun {
         } else {
             $reportDelivered = ($reportExit -eq 0)
         }
-        if ($summary -and $null -ne $summary.reportDelivered) {
+        # -NoReport never claims delivery, whatever summary.json says (CARD-0545 D-10 no-report row).
+        if (-not $NoReport -and $summary -and $null -ne $summary.reportDelivered) {
             $reportDelivered = [bool]$summary.reportDelivered -and ($reportExit -eq 0)
         }
 
@@ -458,7 +466,91 @@ function Invoke-AntiphonNightlyRun {
     $result.testsPassed = $testsPassed
     $result.reportDelivered = $reportDelivered
     $result.LogDir = $runDir
+    if ($stateObj -and $stateObj.policyHash) { $result.PolicyHash = [string]$stateObj.policyHash }
+    if ($stateObj -and $stateObj.summaryPath) { $result.SummaryPath = [string]$stateObj.summaryPath }
     $result.testExit = $testExit
     $result.reportExit = $reportExit
     return [pscustomobject]$result
+}
+
+
+function ConvertTo-NightlyResultRecord {
+    # CARD-0545 D-10: the compact completion record Windmill takes as the job result. Key order is
+    # fixed. A refusal before the run started carries exitCode and empty identity; otherwise the
+    # durable last-run.json (written by this run or, after the self-update hop, by the child) is the
+    # source so the line and the state file never disagree.
+    param($Result)
+    $record = [ordered]@{
+        nativeRunId = ''
+        sha = ''
+        ref = ''
+        trigger = ''
+        localDueDate = ''
+        policyHash = ''
+        coverageComplete = $false
+        testsPassed = $false
+        reportDelivered = $false
+        exitCode = 1
+        summaryPath = ''
+    }
+    if ($null -eq $Result) { return $record }
+    if ($null -ne $Result.ExitCode) { $record.exitCode = [int]$Result.ExitCode }
+    if (-not [string]::IsNullOrWhiteSpace([string]$Result.Refusal)) { return $record }
+    $state = $null
+    if (-not [string]::IsNullOrWhiteSpace([string]$Result.StateRoot)) {
+        $last = Join-Path ([string]$Result.StateRoot) 'last-run.json'
+        if (Test-Path -LiteralPath $last) {
+            try { $state = Get-Content -LiteralPath $last -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $state = $null }
+        }
+    }
+    if ($state -and [string]$state.runId -eq [string]$Result.RunId) {
+        $record.nativeRunId = [string]$state.runId
+        $record.sha = [string]$state.sha
+        $record.ref = [string]$state.ref
+        $record.trigger = [string]$state.trigger
+        $record.localDueDate = [string]$state.localDueDate
+        $record.policyHash = [string]$state.policyHash
+        $record.coverageComplete = [bool]$state.coverageComplete
+        $record.testsPassed = [bool]$state.testsPassed
+        $record.reportDelivered = [bool]$state.reportDelivered
+        $record.summaryPath = [string]$state.summaryPath
+        return $record
+    }
+    $record.nativeRunId = [string]$Result.RunId
+    $record.sha = [string]$Result.Sha
+    $record.ref = [string]$Result.ref
+    $record.trigger = [string]$Result.trigger
+    $record.localDueDate = [string]$Result.LocalDueDate
+    $record.policyHash = [string]$Result.PolicyHash
+    $record.coverageComplete = [bool]$Result.coverageComplete
+    $record.testsPassed = [bool]$Result.testsPassed
+    $record.reportDelivered = [bool]$Result.reportDelivered
+    $record.summaryPath = [string]$Result.SummaryPath
+    return $record
+}
+
+function Invoke-AntiphonNightlyRun {
+    # CARD-0545 D-10: every exit path, refusals included, ends stdout with the JSON result line.
+    param(
+        [string[]]$Suites,
+        [switch]$NoReport,
+        [switch]$NoSync,
+        [string]$CheckoutRoot = 'C:\Antiphon\nightly\checkout',
+        [string]$LogRoot = '',
+        [string]$Ref = 'master',
+        [string]$RemoteUrl = 'https://github.com/michal-ciechan/Antiphon',
+        [string]$StateRoot = '',
+        [string]$SeamsPath = '',
+        [string]$Trigger = 'scheduled',
+        [string]$RunId = '',
+        [string]$ContinueRunId = '',
+        [int]$ContinueParentPid = 0,
+        [string]$ContinueParentStartedAt = '',
+        [switch]$PassThru,
+        [switch]$WhatIf
+    )
+    $result = Invoke-AntiphonNightlyRunCore @PSBoundParameters
+    $record = ConvertTo-NightlyResultRecord -Result $result
+    Write-Host (ConvertTo-Json -InputObject $record -Compress)
+    return $result
 }
