@@ -262,7 +262,9 @@ public sealed class AgentTaskCheckService
             return true;
         if (await db.SessionQueuedMessages.AsNoTracking().AnyAsync(
                 m => m.AgentSessionId == parentSessionId
-                    && m.SourceLandNotificationId == null
+                    // CARD-0544 D-9: a Completion obligation's keyed row is the caller's completion note.
+                    && (m.SourceLandNotificationId == null || db.AgentTaskLandNotifications.Any(n =>
+                        n.Id == m.SourceLandNotificationId && n.Kind == LandNotificationKind.Completion))
                     && m.Origin == QueuedMessageOrigin.Delegation
                     && m.ConversationKey == $"task:{rootTaskId:N}"
                     && m.Status != QueuedMessageStatus.Canceled, ct))

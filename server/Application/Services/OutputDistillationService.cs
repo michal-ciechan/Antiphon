@@ -220,7 +220,10 @@ public sealed class OutputDistillationService
         try
         {
             await _db.SessionQueuedMessages
-                .Where(m => m.Id == id && m.HoldUntil != null && m.SourceLandNotificationId == null)
+                // CARD-0544 D-9: a Completion obligation's hold is released like a direct note's.
+                .Where(m => m.Id == id && m.HoldUntil != null && (m.SourceLandNotificationId == null
+                    || _db.AgentTaskLandNotifications.Any(n => n.Id == m.SourceLandNotificationId
+                        && n.Kind == LandNotificationKind.Completion)))
                 .ExecuteUpdateAsync(s => s.SetProperty(m => m.HoldUntil, (DateTime?)null), ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
