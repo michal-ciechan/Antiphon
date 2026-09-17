@@ -368,3 +368,20 @@ internal sealed class ControlledInterimReadiness : IInterimVerificationReadiness
         return Task.FromResult(Verdict);
     }
 }
+
+/// <summary>The production land admission service over a supplied context (mirrors CARD-0488 approval tests).</summary>
+internal static class C544Land
+{
+    public static AgentTaskLandService Create(AppDbContext db, TimeProvider clock, AgentTaskLandQueue? queue = null)
+    {
+        var manager = new WorktreeManager(Options.Create(new GitSettings { WorktreeBasePath = Path.GetTempPath() }),
+            clock, NullLogger<WorktreeManager>.Instance);
+        var worktrees = new DelegationWorktreeService(manager, new GitService(NullLogger<GitService>.Instance),
+            NullLogger<DelegationWorktreeService>.Instance, new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance));
+        var tasks = new AgentTaskService(db, new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+            Options.Create(new DelegationSettings { MaxTasksPerRoot = 40, MaxDepth = 5 }),
+            new MockEventBus(), new RecordingSessionStopper(), clock, NullLogger<AgentTaskService>.Instance);
+        return new AgentTaskLandService(db, worktrees, tasks, queue ?? new AgentTaskLandQueue(), null!, new MockEventBus(), clock,
+            Options.Create(new DelegationSettings()), NullLogger<AgentTaskLandService>.Instance);
+    }
+}
