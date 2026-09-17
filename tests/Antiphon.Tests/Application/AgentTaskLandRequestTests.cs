@@ -336,7 +336,8 @@ public class AgentTaskLandRequestTests
             new MockEventBus(),
             clock,
             Options.Create(new DelegationSettings()),
-            NullLogger<AgentTaskLandService>.Instance);
+            NullLogger<AgentTaskLandService>.Instance,
+            new PostLandVerificationCompanions(db, clock, NullLogger<PostLandVerificationCompanions>.Instance));
     }
 
     private static FakeTimeProvider Frozen(DateTime utc) =>

@@ -239,7 +239,8 @@ public class AgentTaskLandSweepTests
             new MockEventBus(),
             clock,
             Options.Create(settings ?? new DelegationSettings()),
-            NullLogger<AgentTaskLandService>.Instance);
+            NullLogger<AgentTaskLandService>.Instance,
+            new PostLandVerificationCompanions(db, clock, NullLogger<PostLandVerificationCompanions>.Instance));
     }
 
     private static AppDbContext CreateContext(IsolatedTestSchema schema) =>

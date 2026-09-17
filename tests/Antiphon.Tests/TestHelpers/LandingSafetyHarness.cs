@@ -28,6 +28,92 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     public SessionMessageQueueService? Messages { get; set; }
     public Microsoft.Extensions.Logging.ILogger<AgentTaskLandService> Logger { get; set; } = NullLogger<AgentTaskLandService>.Instance;
 
+    /// <summary>CARD-0552 M-2: the delivery boundary the land reports its commit through.</summary>
+    public LandDeliveryBoundary Boundary { get; set; } = new();
+
+    /// <summary>CARD-0552 M-1: set by <see cref="SeedOriginalCardAsync"/>.</summary>
+    public Guid ProjectId { get; private set; }
+    public Guid BoardId { get; private set; }
+    public Guid OriginalCardId { get; private set; }
+    public Guid FirstColumnId { get; private set; }
+    public Guid BacklogColumnId { get; private set; }
+    public Guid OriginalToken { get; private set; }
+
+    /// <summary>
+    /// CARD-0552 M-1. Binds the fixture task to a real board and a Done original card, which is
+    /// the ONLY shape in which the land's companion hook fires. Call after
+    /// <see cref="InitializeAsync"/> and before <see cref="RunAsync()"/>.
+    /// </summary>
+    public async Task<(Guid ProjectId, Guid BoardId, Guid CardId, Guid FirstColumnId)> SeedOriginalCardAsync(
+        CardStatus status = CardStatus.Done, bool backlogColumn = true)
+    {
+        var now = Clock.GetUtcNow().UtcDateTime;
+        await using var db = CreateContext();
+        var project = new Project
+        {
+            Id = Guid.NewGuid(), Name = $"c552-{Guid.NewGuid():N}",
+            GitRepositoryUrl = "https://example.test/c552.git", CreatedAt = now, UpdatedAt = now,
+        };
+        var board = new Board
+        {
+            Id = Guid.NewGuid(), ProjectId = project.Id, Name = "C552", MaxConcurrentSessions = 1,
+            CreatedAt = now, UpdatedAt = now,
+        };
+        var wanted = new (CardStatus Status, bool Include)[]
+        {
+            (CardStatus.Backlog, backlogColumn),
+            (CardStatus.InProgress, true),
+            (CardStatus.Review, true),
+            (CardStatus.Done, true),
+            (CardStatus.Canceled, true),
+        };
+        var columns = new List<BoardColumn>();
+        foreach (var (columnStatus, include) in wanted)
+        {
+            if (!include) continue;
+            columns.Add(new BoardColumn
+            {
+                Id = Guid.NewGuid(), BoardId = board.Id, StateKey = columnStatus.ToString().ToLowerInvariant(),
+                Name = columnStatus.ToString(), ColumnOrder = columns.Count, CardStatus = columnStatus,
+                CreatedAt = now, UpdatedAt = now,
+            });
+        }
+
+        var column = columns.First(c => c.CardStatus == status);
+        var card = new Card
+        {
+            Id = Guid.NewGuid(), BoardId = board.Id, BoardColumnId = column.Id, Identifier = "CARD-0001",
+            Title = "CARD-0001 title", Description = "The original.", Status = status,
+            CompletedAt = status is CardStatus.Done or CardStatus.Canceled ? now : null,
+            TerminalReason = status is CardStatus.Done or CardStatus.Canceled ? "closed by fixture" : null,
+            CreatedAt = now, UpdatedAt = now,
+        };
+        db.AddRange(project, board, card);
+        db.AddRange(columns);
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == Fixture.TaskId);
+        task.CardId = card.Id;
+        task.ProjectId = project.Id;
+        await db.SaveChangesAsync();
+
+        ProjectId = project.Id;
+        BoardId = board.Id;
+        OriginalCardId = card.Id;
+        FirstColumnId = columns[0].Id;
+        BacklogColumnId = columns.FirstOrDefault(c => c.CardStatus == CardStatus.Backlog)?.Id ?? columns[0].Id;
+        OriginalToken = card.ConcurrencyToken;
+        return (ProjectId, BoardId, OriginalCardId, FirstColumnId);
+    }
+
+    /// <summary>CARD-0552 M-2: the single labelled companion on the seeded board, or null.</summary>
+    public async Task<Card?> CompanionAsync()
+    {
+        if (BoardId == Guid.Empty) return null;
+        await using var db = CreateContext();
+        var cards = await db.Cards.AsNoTracking().Where(c => c.BoardId == BoardId).ToListAsync();
+        return cards.SingleOrDefault(c =>
+            BoardService.ParseLabels(c.LabelsJson).Contains(PostLandVerificationCompanions.Label));
+    }
+
     public async Task InitializeAsync()
     {
         await Fixture.InitializeAsync();
@@ -189,8 +275,9 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         return new AgentTaskLandService(db, services.GetRequiredService<DelegationWorktreeService>(),
             tasks, Queue, Messages!, Events, Clock,
             Options.Create(new DelegationSettings()), Logger,
+            new PostLandVerificationCompanions(db, Clock, NullLogger<PostLandVerificationCompanions>.Instance),
             services.GetRequiredService<AgentTaskLandingProtocol>(),
-            Services.GetRequiredService<IRepositoryMutationLease>(), Fixture.Git);
+            Services.GetRequiredService<IRepositoryMutationLease>(), Fixture.Git, Boundary);
     }
 
     public async Task<LandRequestResult> RequestAsync(string? filter = null, string? expectedSourceSha = null,

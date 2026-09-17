@@ -333,7 +333,8 @@ public class AgentTaskLandApprovalRequestTests
             Options.Create(new DelegationSettings { MaxTasksPerRoot = 40, MaxDepth = 5 }),
             new MockEventBus(), new RecordingSessionStopper(), clock, NullLogger<AgentTaskService>.Instance);
         return new AgentTaskLandService(db, worktrees, tasks, queue, null!, new MockEventBus(), clock,
-            Options.Create(new DelegationSettings()), NullLogger<AgentTaskLandService>.Instance);
+            Options.Create(new DelegationSettings()), NullLogger<AgentTaskLandService>.Instance,
+            new PostLandVerificationCompanions(db, clock, NullLogger<PostLandVerificationCompanions>.Instance));
     }
 
     [Test]

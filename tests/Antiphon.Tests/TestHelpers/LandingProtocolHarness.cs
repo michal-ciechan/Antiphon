@@ -135,6 +135,7 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
         return new AgentTaskLandService(db, services.GetRequiredService<DelegationWorktreeService>(),
             tasks, Queue, Messages!, Events, Clock,
             Options.Create(new DelegationSettings()), Logger,
+            new PostLandVerificationCompanions(db, Clock, NullLogger<PostLandVerificationCompanions>.Instance),
             services.GetRequiredService<AgentTaskLandingProtocol>(),
             Services.GetRequiredService<IRepositoryMutationLease>(), git);
     }

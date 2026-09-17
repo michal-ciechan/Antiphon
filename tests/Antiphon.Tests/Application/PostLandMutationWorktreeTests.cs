@@ -127,6 +127,7 @@ public sealed class PostLandMutationWorktreeTests
         var land = new AgentTaskLandService(db,
             scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>(), tasks, world.Host.Queue, bridge.Queue,
             world.Host.Events, TimeProvider.System, Options.Create(new DelegationSettings()), world.Host.Logger,
+            new PostLandVerificationCompanions(db, TimeProvider.System, NullLogger<PostLandVerificationCompanions>.Instance),
             scope.ServiceProvider.GetRequiredService<AgentTaskLandingProtocol>(),
             world.Host.Services.GetRequiredService<IRepositoryMutationLease>(), world.Host.Fixture.Git);
         var ex = await Should.ThrowAsync<ConflictException>(() => land.RequestAsync(world.TaskId, null, default));

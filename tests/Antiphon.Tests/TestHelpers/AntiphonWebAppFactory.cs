@@ -108,6 +108,8 @@ public class AntiphonWebAppFactory : WebApplicationFactory<ServerProgram>
                 ["Delegation:CheckInterpreterEnabled"] = "false",
                 ["Delegation:CheckInterpreterWorkingDirectory"] = Path.Combine(_workspacePath, "check-interpreter"),
                 ["Delegation:DiagnoseEnabled"] = "false",
+                // CARD-0552 S6: the Mutation sweep is the one tick that spends; never in a test host.
+                ["Delegation:MutationAutoDispatch:Enabled"] = "false",
                 ["Delegation:DiagnoseWorkingDirectory"] = Path.Combine(_workspacePath, "diagnose"),
                 ["Delegation:OutputDistillerEnabled"] = "false",
                 ["Delegation:OutputDistillerWorkingDirectory"] = Path.Combine(_workspacePath, "output-distiller"),

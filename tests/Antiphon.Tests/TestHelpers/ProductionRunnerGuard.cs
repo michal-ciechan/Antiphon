@@ -52,6 +52,12 @@ public class ProductionRunnerGuard
     public const string OutputDistillerEnvVar = "Delegation__OutputDistillerEnabled";
     public const string HangfireServerEnabledEnvVar = "Hangfire__ServerEnabled";
 
+    /// <summary>
+    /// CARD-0552 S6. The unattended Mutation creator spends model quota from a tick, so every
+    /// Program boot in this assembly gets it off for the same reason the Diagnose sweep is off.
+    /// </summary>
+    public const string MutationAutoDispatchEnvVar = "Delegation__MutationAutoDispatch__Enabled";
+
     /// <summary>What this process inherited, kept so the log can name it.</summary>
     public static string? InheritedBaseUrl { get; private set; }
 
@@ -64,6 +70,7 @@ public class ProductionRunnerGuard
         Environment.SetEnvironmentVariable(DiagnoseEnvVar, "false");
         Environment.SetEnvironmentVariable(OutputDistillerEnvVar, "false");
         Environment.SetEnvironmentVariable(HangfireServerEnabledEnvVar, "false");
+        Environment.SetEnvironmentVariable(MutationAutoDispatchEnvVar, "false");
         Console.WriteLine(
             $"[CARD-0204] {BaseUrlEnvVar}={DeadRunnerBaseUrl}, {CheckInterpreterEnvVar}=false, "
             + $"{DiagnoseEnvVar}=false and {OutputDistillerEnvVar}=false for every Program boot in "

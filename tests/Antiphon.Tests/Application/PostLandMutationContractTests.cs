@@ -216,6 +216,65 @@ public sealed class PostLandMutationContractTests
             .Text.ShouldContain("[bundle:stage-mutation v");
     }
 
+    // ---- CARD-0552 D-8: the active recipes name the publication as the companion's writer -------
+
+    [Test]
+    [Arguments("docs/orchestration-loop.md")]
+    [Arguments(".claude/skills/antiphon-delegate/SKILL.md")]
+    public void C552_D01_ActiveRecipeSaysPublicationRecordsCompanion(string path)
+    {
+        var text = File.ReadAllText(RepoFile(path));
+        foreach (var contract in new[]
+        {
+            "confirmed publication creates or links the companion",
+            "names it in the land outcome",
+            "the Mutation sweep is the one tick that spends",
+            "Mutation ready row",
+            "Delegation:MutationAutoDispatch",
+        })
+        {
+            text.ShouldContain(contract, Case.Insensitive);
+        }
+
+        text.ShouldNotContain("no tick creates cards or spends quota");
+    }
+
+    [Test]
+    public void C552_D02_OrchestratorBundleAndReadmeSayThePublicationRecordsTheCompanion()
+    {
+        var bundle = InstructionBundles.TextOf(InstructionBundles.Orchestrator);
+        var readme = File.ReadAllText(RepoFile("server/Bundles/README.md"));
+        foreach (var text in new[] { bundle, readme })
+        {
+            text.ShouldContain("the confirmed publication creates or links the companion", Case.Insensitive);
+            text.ShouldContain("the Mutation sweep is the one tick that spends", Case.Insensitive);
+            text.ShouldNotContain("caller records same-board companion");
+            text.ShouldNotContain("no tick creates cards or spends quota");
+        }
+
+        foreach (var ch in bundle) ((int)ch).ShouldBeLessThan(128);
+    }
+
+    [Test]
+    public void C552_D03_RouteMapNamesTheCompanionEndpoint()
+    {
+        File.ReadAllText(RepoFile("docs/antiphon-api.md"))
+            .ShouldContain("POST   /api/agent-tasks/{id}/verification-companion");
+        var ops = File.ReadAllText(RepoFile("docs/ops-http.md"));
+        ops.ShouldContain("verification-companion");
+        ops.ShouldContain("verification_publication_unconfirmed");
+    }
+
+    [Test]
+    public void C552_D04_ClientTypesCarryTheNewMembers()
+    {
+        var pipeline = File.ReadAllText(RepoFile("client/src/api/agentTasks.ts"));
+        pipeline.ShouldContain("sourceLandingSha?: string | null");
+        pipeline.ShouldContain("originalCard?: AgentTaskPipelineCardRefDto | null");
+        File.ReadAllText(RepoFile("client/src/api/attention.ts"))
+            .ShouldContain("| 'MutationDispositionPending'");
+    }
+
     private static string RepoFile(string relative)
     {
         var root = new DirectoryInfo(AppContext.BaseDirectory);
