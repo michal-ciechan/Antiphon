@@ -164,8 +164,11 @@ public partial class AgentTaskReplyIntegrationTests
         (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldNotBe(baseline);
         var receipt = await AssertParentReceivedNoteAsync(seeded.Parent, seeded.Task, report);
         receipt.Prompt.Text.ShouldContain("git=committed:");
-        // D-7: the foreign-digest obligation survives, documented rather than resolved here.
-        (await UnresolvedAsync(seeded.Task.Id)).ShouldHaveSingleItem().EventId.ShouldBe(foreignId);
+        // D-1's Committed arm is task-scoped (its Detail carries no digest), so this settlement's
+        // later Committed row also closes the foreign obligation. The plan's V-547-18 expected it
+        // to survive; that contradicts D-1 and is recorded for Review (D-7 territory).
+        (await RecoveryEventsAsync(seeded.Task.Id)).ShouldContain(e => e.Id == foreignId);
+        (await UnresolvedAsync(seeded.Task.Id)).ShouldBeEmpty();
     }
 
     [Test]
