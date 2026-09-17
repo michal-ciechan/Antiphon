@@ -356,6 +356,32 @@ export interface AgentTaskDetailDto {
     reviewedRepositoryPath?: string | null
     outcome: string
   } | null
+  /** CARD-0544. Null for historical and non-Code/Review tasks; never shown as Full. */
+  verification?: VerificationProfileDto | null
+}
+
+/** CARD-0544. Commissioned ordinary-verification round. */
+export type VerificationRound = 'Final' | 'Interim'
+
+/** CARD-0544. Committed selection-table reference an Interim round was admitted with. */
+export interface VerificationSelectionReference {
+  artifactPath: string | null
+  artifactCommitSha: string | null
+  section: string | null
+}
+
+/** CARD-0544. Read-only profile the server reports for a task. */
+export interface VerificationProfileDto {
+  version: number
+  round: VerificationRound
+  subjectTaskId: string | null
+  baselineOutcomeId: string | null
+  baselineReviewedSha: string | null
+  selection: VerificationSelectionReference | null
+  finalReviewPending: boolean
+  ownerRequiresFinalReview: boolean
+  holdReason: string | null
+  readinessRecordedAt: string | null
 }
 
 /** CARD-0146. The `next:` token a stage-role report declared. */

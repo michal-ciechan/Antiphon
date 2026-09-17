@@ -402,6 +402,31 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
         {landView && (landView.queue ? <LandQueueEvidence session={landView.session} message={landView.queue} /> : <SessionTranscriptPanel sessionId={landView.session} />)}
       </Modal>
 
+      {detail.verification && (
+        <Section title="Verification profile">
+          <Stack gap={2} data-testid="task-verification-profile">
+            <Text size="sm">Round: {detail.verification.round} (profile v{detail.verification.version})</Text>
+            <Text size="sm">
+              Final review: {detail.verification.finalReviewPending ? 'pending (deferred ordinary work owed)' : 'none pending'}
+              {detail.verification.ownerRequiresFinalReview && '; owner requires a Final/Full Review to land'}
+            </Text>
+            {detail.verification.subjectTaskId && <Text size="xs">Subject: <Code>{detail.verification.subjectTaskId}</Code></Text>}
+            {detail.verification.baselineOutcomeId && (
+              <Text size="xs">
+                Baseline: <Code>{detail.verification.baselineOutcomeId}</Code>
+                {detail.verification.baselineReviewedSha && <> at <Code>{detail.verification.baselineReviewedSha}</Code></>}
+              </Text>
+            )}
+            {detail.verification.selection && (
+              <Text size="xs">
+                Selection: <Code>{detail.verification.selection.artifactPath}@{detail.verification.selection.artifactCommitSha}</Code> {detail.verification.selection.section}
+              </Text>
+            )}
+            {detail.verification.holdReason && <Text size="xs" c="red">Held: {detail.verification.holdReason}</Text>}
+            {detail.verification.readinessRecordedAt && <Text size="xs">Readiness monitor: {detail.verification.readinessRecordedAt}</Text>}
+          </Stack>
+        </Section>
+      )}
       {detail.reviewEvidence && (
         <Section title="Review evidence">
           <Text size="xs">Evidence: <Code>{detail.reviewEvidence.id}</Code></Text>

@@ -59,6 +59,9 @@
 # A reopen never starts an agent, even into an active column. Spawn separately if you want one.
 # new/edit: -CardFileVisibility Inherit|Private|Public and -PrivateNotesFile <UTF-8 file>.
 # edit: -ClearPrivateNotes explicitly clears; it cannot accompany -PrivateNotesFile.
+# edit: -CodeVerificationPolicy / -ReviewVerificationPolicy FullOnly|AllowInterim (CARD-0544). Each
+#   role is independent and permits only an explicitly REQUESTED Interim round; omitted keeps the
+#   stored value. Interim stays unavailable while the deployment readiness gate is disabled.
 # Notes are never printed. Public title/description/outcome/archive fields may publish on sync.
 # Saving a card never syncs; new/edit report eligibility and cleanup from returned status.
 [CmdletBinding(DefaultParameterSetName = 'Verb')]
@@ -122,6 +125,14 @@ param(
     [Parameter(ParameterSetName = 'Verb')]
     [ValidateSet('Auto', 'Human')]
     [string]$ImportanceProvenance,
+
+    [Parameter(ParameterSetName = 'Verb')]
+    [ValidateSet('FullOnly', 'AllowInterim')]
+    [string]$CodeVerificationPolicy,
+
+    [Parameter(ParameterSetName = 'Verb')]
+    [ValidateSet('FullOnly', 'AllowInterim')]
+    [string]$ReviewVerificationPolicy,
 
     [Parameter(ParameterSetName = 'Verb')]
     [ValidateSet('Normal', 'Soon', 'Now')]
@@ -608,9 +619,11 @@ switch ($Verb) {
         elseif (-not [string]::IsNullOrWhiteSpace($DueAt)) { $body['dueAt'] = $DueAt }
         if ($Labels) { $body['labels'] = @($Labels) }
         if ($PSBoundParameters.ContainsKey('Alias')) { $body['alias'] = $Alias }
+        if ($PSBoundParameters.ContainsKey('CodeVerificationPolicy')) { $body['codeVerificationPolicy'] = $CodeVerificationPolicy }
+        if ($PSBoundParameters.ContainsKey('ReviewVerificationPolicy')) { $body['reviewVerificationPolicy'] = $ReviewVerificationPolicy }
         if (-not [string]::IsNullOrWhiteSpace($By)) { $body['editedBy'] = $By }
         if ($body.Count -le 2) {
-            Write-Error 'Nothing to change. Pass at least one of -Title, -Description/-DescriptionFile, -Alias, -Importance, -ImportanceProvenance, -Urgency, -DueAt, -ClearDueAt, -Labels.'
+            Write-Error 'Nothing to change. Pass at least one of -Title, -Description/-DescriptionFile, -Alias, -Importance, -ImportanceProvenance, -Urgency, -DueAt, -ClearDueAt, -Labels, -CodeVerificationPolicy, -ReviewVerificationPolicy.'
             exit 1
         }
 
