@@ -968,3 +968,538 @@ inspection of the running gateway; nothing on the host was changed.
 next: test-design
 handoff: TestDesign finalizes the 13 carried N.C544_* controls and G-545-1..14 against the D-1..D-13 component contract (host-agnostic deploy profile, tier-1/tier-2 evidence, reader on the operator's own account, no bus acknowledgement); S6 stays blocked only on the operator's deploy-time actions.
 artifact: docs/superpowers/plans/2026-09-17-card-0545-independent-nightly-watchdog-plan.md
+
+## Verification design (TestDesign, task 4a2497b2)
+
+TestDesign dispatch 2026-09-17 on checkout `cb0fee37` (master; plan revision `a61d4e56`
+is an ancestor). Nothing below changes the fix design (D-1..D-13); it finalizes the
+controls Code implements. Ten stage rules that every row below follows:
+
+1. The 13 carried controls keep their CARD-0544 IDs, guard text and method names
+   verbatim (`NightlyVerificationContractTests.C544_*`). Only the body, the mutation and
+   the decisive assertion are finalized here.
+2. New guards are `G-545-n` with a 1:1 `PC-545-n`. The plan's candidates G-545-1..14
+   keep their numbers; G-545-15..39 are splits of independently bypassable checks the
+   candidates bundled, or D-3..D-9 invariants the candidate list left untested.
+3. In-process C# tests run the real `Antiphon.NightlyWatchdog` components
+   (`WatchdogLoop`, `OutageEvaluator`, `Ledger` on a real temp SQLite file,
+   `NotificationBody`, `ReceiptImporter`, `RetryPolicy`, `SnapshotServer`) with fakes
+   only at the four external boundaries: Windmill HTTP, Telegram Bot API, the MTProto
+   reader, and the clock. No test fakes the ledger.
+4. Positive receipt evidence is produced only by the fake transport delivering into the
+   fake recipient chat; a test never writes an observation or a receipt row by hand.
+   Negative observations (an adversarial message that must not import) are produced by
+   the fake reader distorting exactly one field of a delivered message, or by a second
+   ledger sharing the same chat; each negative names the importer rejection reason it
+   expects, so a dropped rule is red even when a later rule would also reject.
+5. `state=received` is set only by `ReceiptImporter` from a reader observation.
+   `TransportResult.Accepted` (tier 1) and `readByRecipient` never set it.
+6. PowerShell harness cases are `Test-C545_*` functions in the existing harness files,
+   invoked by name through the C# wrappers (`-Case`), and every assertion row has a
+   unique `PASS C545 ...` name that the wrapper requires.
+7. Every time-dependent row states the exact London instant and its UTC value. The
+   fixture due day is `2026-09-18` (BST): due `2026-09-17T23:30:00Z`, grace end
+   `2026-09-18T00:00:00Z` (01:00 London), morning deadline `2026-09-18T07:00:00Z`.
+8. Row names inside multi-row methods are quoted strings passed as the Shouldly custom
+   message; a PC's expected red names the row.
+9. Live Telegram, live Windmill, systemd and the real MTProto session are S6 only.
+   Every substitute is declared with what it cannot prove.
+10. Method-scoped filters: `--treenode-filter "/*/*/<Class>/<Method>"`; PS cases:
+    `pwsh -NoProfile -File scripts/<harness>.ps1 -Case <Name> -ResultsDirectory <fresh>`.
+
+### Inspection
+
+Bodies read in full at `cb0fee37` (line counts as inspected):
+
+- `tests/Antiphon.Tests/Scripts/NightlyVerificationContractTests.cs` (109): ten C544
+  pwsh-wrapper methods; `RunCaseAsync` is hard-wired to `test-nightly-health.ps1` and
+  the `PASS C544 ` prefix and requires `C487 HARNESS EXIT CODE: 0`, zero `FAIL ` lines,
+  an exact `PASS` count and `C487: N passed, 0 failed, N rows`. Boundaries -> the class
+  becomes `partial`; wrapper helper gains script/prefix parameters (V-545-15..22);
+  `C544_ProductionJobAdapter` row count 21 -> 22 (R-545-2).
+- `tests/Antiphon.Tests/TestHelpers/C544World.cs` (489): the nearest fixture for a new
+  world (temp roots, `FakeTimeProvider`-style clock, `RestartAsync` rebuilding services
+  over the same state, `ControlledInterimReadiness.ReadySnapshot` constructs
+  `InterimReadinessSnapshot` positionally). Boundaries -> `C545World` shape below;
+  `ReadySnapshot` gains the ninth positional `WatchdogInstanceId` (R-545-4).
+- `tests/Antiphon.Tests/Application/InterimVerificationReadinessTests.cs` (328) and
+  `server/Infrastructure/Files/InterimVerificationReadinessReader.cs` (231): `StateFixture`
+  receipt/monitor JSON, exact age equalities (60m fresh, 60m+1 tick stale), reason codes.
+  Boundaries -> `C545_WatchdogInstance` rows; fixture `Reset()` gains
+  `watchdogInstanceId`/`Identity.WatchdogInstanceId` so the twelve C544 methods stay
+  green (R-545-3); `tests/Antiphon.Tests/Application/VerificationRoundBriefTests.cs:128`
+  constructs the snapshot positionally and must gain the ninth argument (R-545-4).
+- `scripts/test-nightly-health.ps1` (609) and `scripts/lib/nightly-health.ps1` (831):
+  `New-HealthFx` seams (`UtcNow`, `WindmillApi`, `NotificationSink`, `RecipientView`,
+  `AllowOfflineNotify`), `Start-C544WindmillStub` (one request, one body),
+  `Test-C544_ProductionJobAdapter` (8 list rows carrying inline `result`),
+  `Test-NightlyMonitorHealth`, `Invoke-AntiphonNightlyHealth` (production sink
+  `EnqueueNotification`/`NotifyPath`, `Identity` block), `$script:C544ExpectedRows = 83`,
+  full-run `ExpectedRows 52 + 83`. Boundaries -> stub becomes a route table
+  (`-Routes @{ '<url-suffix>' = <body|status> }`) serving 1 + N requests; adapter rows move
+  `result` to `get_result` responses; `j-manual` (no `schedule_path`) is never fetched and
+  becomes `unknown`; 20-minute heartbeat rows; `Identity.WatchdogInstanceId`.
+- `scripts/test-nightly-run.ps1` (320) and `scripts/lib/nightly-run-impl.ps1` (464):
+  `New-RunFx`/`Invoke-FxRun`; `Write-C487Seams` `StartProcess` seam receives the
+  `nightly-tests.ps1` argument list including `-LogRoot <runDir>` and `-RunId`; the
+  wrapper reads `<runDir>\summary.json` (`coverageComplete`, `testsPassed`,
+  `reportDelivered`, `policyHash`) and runs `nightly-report.ps1` unless `-NoReport`;
+  refusal returns exit 3 before any state write; the default case loop is prefix
+  `C487_G0` with `ExpectedRows 56`. Boundaries -> `Test-C545_ResultLine` rows (green,
+  refusal, test-red, no-report) and the `UtcNow` seam for DST dates; loop gains prefix
+  `C545_`.
+- `scripts/lib/c487-harness.ps1` (338): `Assert-C487`, `Write-C487Seams`,
+  `Complete-C487Harness` (`-ExpectedRows 0` under `-Case`), `Get-C487CaseFunctions`.
+  Reused unchanged by the new deploy harness.
+- `scripts/test-deploy-am-service.ps1` (212) and `scripts/deploy-am-service.ps1`
+  (389; dot-source guard at line 377: `if ($MyInvocation.InvocationName -eq '.') { return }`;
+  fixed target literals at line 285; seam-injected `SshRunner`/`ScpRunner`/`HttpRunner`).
+  Boundaries -> the watchdog deploy script keeps the dot-source guard and the injected
+  runner shape but takes its target only from the profile.
+- `scripts/windmill/*.json` (4 files) and `README.md` (15); `scripts/nightly-health.ps1`
+  (34); `scripts/nightly-run.ps1` (98); `tests/Antiphon.Tests/Scripts/NightlyScriptsTests.cs`
+  (96: ASCII list, `nightly-run.ps1` must still name `C:\Antiphon\nightly\checkout`).
+  Boundaries -> `Test-C545_ReadinessRouting` census rows; ASCII list extension (R-545-6).
+- `tests/test-execution-policy.json` (`scriptCensus`, `policyHash` verified by
+  `Get-NightlyPolicyHash`); `tests/Antiphon.Tests/Antiphon.Tests.csproj` (project
+  references, `Microsoft.Extensions.TimeProvider.Testing` 9.5.0 already present);
+  `Directory.Build.props`; `.gitignore`; `tests/Shared/TestClassificationMetadata.cs`
+  (categories `Unit`/`Integration`/`Slow`/`OptIn`); `tests/Antiphon.Tests/TestHelpers/ProcessSpawnLimit.cs`.
+- `docs/testing-and-build.md` "Mutation-stage positive-control execution" and "Nightly";
+  CARD-0544 plan `## D-10 transfer ledger`, `### Delivery inventory`, PC-78..86/95..98
+  rows and cost tables (for the carried wording and the moved-cost baseline).
+
+**Boundaries covered (row -> control):** start grace 00:59:59 vs 01:00:00 London
+(V-545-3 rows `start-overdue/before-grace`, `start-overdue/at-grace`; G-545-31);
+morning deadline 07:59:59 vs 08:00:00 (`deadline-missed/*`; G-545-31); D-1 in scope
+until 08:00 of D (`previous-day/*`); DST due instants 2026-03-28/29/30 and 10-24/25/26
+plus London midnight instants (V-545-1; G-545-32); DST x grace (`start-overdue/dst-bst`
+at 2026-03-30 01:00 BST = 2026-03-30T00:00:00Z); two-consecutive-tick thresholds
+(1 vs 2 ticks; G-545-2); desktop-worker ping age 59m vs 60m (G-545-4);
+`RunBudgetHours` 5:59:59 vs 6:00:00 (V-545-3 `run-stalled/*`, no PC); attempt floor
+-120 s vs -121 s (PC-97); receipt grace 29:59 vs 30:00 (V-545-10; G-545-5 rows);
+reader hold expiry 29:59 vs 30:00 (G-545-30 rows); retry backoff 2/5/10/30/60 (V-545-10,
+no PC); heartbeat age 20:00 vs 20:01 and future (G-545-3); snapshot cap 64 KB
+(V-545-13, no PC); body length < 4096 and ASCII (V-545-6, no PC); held reader x lost
+response (G-545-30 row `held-then-eligible`); crash x each persistence cut (PC-84
+rows); worker-missing x start-overdue (PC-545-4 row). **Excluded:** DST x morning
+deadline for `deadline-missed` (the same `LondonClock.MorningDeadlineUtc` value is
+asserted directly in V-545-1 for 2026-03-29 and 2026-10-25; the evaluator consumes it
+opaquely, so a second evaluator row would repeat V-545-1); DST x D-1 scope window
+(same reason); leap second/negative clock steps (`FakeTimeProvider` only advances; the
+production clock is NTP-disciplined and D-9 fails closed on a future heartbeat).
+
+**Missing setup Code must add (recorded here, not assumed):**
+
+- New project `src/Antiphon.NightlyWatchdog/Antiphon.NightlyWatchdog.csproj` (net9.0,
+  `OutputType=Exe`, `InternalsVisibleTo Include="Antiphon.Tests"`, packages
+  `Microsoft.Data.Sqlite` latest 9.x with its bundled `SQLitePCLRaw.bundle_e_sqlite3`,
+  `WTelegramClient` 4.4.8, `Microsoft.Extensions.Logging.Console` 9.*) added to
+  `Antiphon.sln`; `tests/Antiphon.Tests/Antiphon.Tests.csproj` gains
+  `<ProjectReference Include="..\..\src\Antiphon.NightlyWatchdog\Antiphon.NightlyWatchdog.csproj" />`.
+  The three seams the tests need are constructor-injected interfaces: `IWindmillApi`,
+  `INotificationTransport`, `IRecipientReader`, plus `TimeProvider` and an
+  `Action<CrashPoint>? crashHook` on `WatchdogLoop` (production passes the `CrashAfter`
+  fault hook only when `Validate()` allowed it).
+- `Ledger : IDisposable`; `Dispose()` closes the connection and calls
+  `SqliteConnection.ClearPool` so a restart test can move `ledger.db` alone (WAL is
+  checkpointed and removed on last close). Ledger read API used by tests:
+  `Outages()`, `Notifications()`, `Attempts(nid)`, `Receipts()`, `Heartbeat()` returning
+  the row records named in the fixture contract.
+- `WatchdogLoop.TickAsync(ct)` returns `TickReport { Transitions, Sends, Imports,
+  ReaderState }` (records below). Tests never scrape logs.
+- `ReceiptImporter.Import(observations)` returns one `ImportOutcome(Nid, Attempt,
+  Reason, Imported)` per observation; `Reason` is one of `imported`, `duplicate`,
+  `peer-unauthorized`, `unknown-notification`, `unknown-attempt`, `identity-mismatch`,
+  `run-mismatch`, `body-mismatch`, `predates-attempt`, `marker-missing`; rules are
+  evaluated in D-6 order 1..5 and the first failure is the reason.
+- Attempt rows carry the rendered `body` and its `bodySha256` (each attempt renders its
+  own text because the marker's `attempt=` changes); notification rows carry the
+  logical identity (`nid`, `kind`, `outageId`, `linkedNid`, `runId`, `state`).
+- Due-day assignment of job rows (the list row has no `scheduled_for`): a scheduled row
+  (`schedule_path` set) belongs to due day D when its `created_at` lies in
+  `[DueUtc(D) - 1 min, MorningDeadlineUtc(D))`; a completed row with a fetched result
+  that carries `localDueDate` uses that date instead. Rows outside both are ignored.
+  The fixture builders set `CreatedAtUtc = DueUtc(dueDay) + 1 min` unless told otherwise.
+- Windows side: `Import-NightlySeams` default map gains `WatchdogSnapshot = $null`;
+  `Get-NightlyWatchdogSnapshot -Url` uses the seam when set (raw JSON text, or throw),
+  else `Invoke-WebRequest -UseBasicParsing -TimeoutSec 10`; freshness reasons are
+  `watchdog-unreachable`, `watchdog-stale`, `watchdog-malformed`,
+  `watchdog-identity-mismatch` (new: namespace or instance id), `watchdog-outage-open`.
+- `tests/test-execution-policy.json` `scriptCensus` gains
+  `{ "id": "test-deploy-nightly-watchdog", "path": "scripts/test-deploy-nightly-watchdog.ps1", "disposition": "unattended", "wildcard": false }`
+  and `policyHash` is recomputed with `Get-NightlyPolicyHash` (`scripts/test-nightly-tests.ps1`
+  verifies it).
+- `NightlyScriptsTests.The_three_scripts_are_ascii_only` list gains
+  `deploy-nightly-watchdog.ps1` and `test-deploy-nightly-watchdog.ps1`.
+
+**Fixture contract: `tests/Antiphon.Tests/TestHelpers/C545World.cs`** (internal, one
+file, nearest precedent `C544World`):
+
+```
+C545World : IAsyncDisposable
+  static Task<C545World> CreateAsync(Action<WatchdogOptions>? configure = null, FakeRecipientChat? sharedChat = null)
+  string StateDir                        // Directory.CreateTempSubdirectory("antiphon-c545")
+  FakeTimeProvider Clock                 // Microsoft.Extensions.Time.Testing; starts 2026-09-18T00:40:00Z (01:40 London)
+  WatchdogOptions Options                // Namespace "mc/test"; DestinationChatId "123456789"; ReaderPeer "peer-bot";
+                                         // ExpectedScriptHash "h1"; WindmillWorkspace "mc"; SchedulePath/ScriptPath as D-3;
+                                         // TickSeconds 600; ReceiptGraceMinutes 30; ReaderHoldExpiryMinutes 30;
+                                         // RunBudgetHours 6; SnapshotBind "127.0.0.1:0" (port chosen at start); Runtime "native"
+  FakeWindmillApi Windmill               // Reachable (bool), Auth (Ok|Unauthorized), Script (hash|null), Schedule (enabled|disabled|null),
+                                         // WorkerLastPingUtc (DateTime?), Jobs (List<WindmillJob>), ThrowOnEverything (bool), Calls (List<string>)
+  FakeRecipientChat Chat                 // Messages: List<ChatMessage(PeerId, MessageId, DateUtc, Text)>; appended ONLY by FakeTransport
+  FakeTransport Transport                // Mode: Deliver | AcceptWithoutDelivery | LoseResponse | Throw | Reject(errorClass, retryAfterSeconds?)
+                                         // Sends: List<SendRecord>; OnSend: Action<SendRecord>; IntentVisibleAtSend: bool? (set by OnSend default:
+                                         // opens a second SqliteConnection on StateDir/ledger.db and checks a pending attempt row for the nid)
+  FakeRecipientReader Reader             // Mode: Eligible | Held(reason); DateOffset: TimeSpan; PeerOverride: string?;
+                                         // Transform: Func<string,string>?; ReadByRecipient: bool; Reads: int
+  Ledger Ledger; WatchdogLoop Loop
+  CrashPoint? CrashAt                    // Intent | SendBeforeResponse | TransportAccepted | ReaderObservation; the hook throws
+                                         // WatchdogCrashException, which TickAsync lets propagate
+  Task<TickReport> TickAsync()           // one WatchdogLoop.TickAsync at Clock.GetUtcNow()
+  Task<TickReport> AdvanceAndTickAsync(TimeSpan by)
+  Task RestartAsync(bool ledgerOnly = false)  // dispose Loop+Ledger; when ledgerOnly, move ONLY ledger.db to a fresh StateDir
+                                              // (the old directory is deleted); rebuild Ledger+Loop over the same fakes and Chat
+  Task<(int Status, string Body)> GetSnapshotAsync()   // real HttpClient GET http://<bind>/snapshot.json against the running SnapshotServer
+  RecordingHttpHandler UseTelegramTransport(params ScriptedResponse[] responses)  // swaps FakeTransport for the real TelegramBotTransport
+                                                                                   // over an HttpClient whose handler records requests
+WindmillJob(Id, Kind: Queued|Running|Completed, Success: bool?, SchedulePath: string?, CreatedAtUtc, StartedAtUtc, CompletedAtUtc, Logs: string, Result: JsonObject?)
+TickReport(Transitions: IReadOnlyList<OutageTransition(Kind, OutageId, Change: Opened|Closed|Amended, Nid)>,
+           Sends: IReadOnlyList<SendRecord(Nid, Attempt, Accepted, MessageId, ErrorClass, Note)>,
+           Imports: IReadOnlyList<ImportOutcome(Nid, Attempt, Reason, Imported)>, ReaderState: Eligible|Held)
+OutageRow(OutageId, Kind, DueDay, Epoch, OpenedAt, ClosedAt, JobId, RunId, FailureNid, RecoveryNid, EvidenceJson)
+NotificationRow(Nid, Kind, OutageId, LinkedNid, RunId, State, CreatedAt, ReceivedAt)
+AttemptRow(Nid, Attempt, StartedAt, Accepted, AcceptedAt, MessageId, ErrorClass, RetryAfterUtc, Body, BodySha256)
+ReceiptRow(Nid, Attempt, MessageId, DateUtc, PeerHash, TextSha256, ReadObservedAt, ImportedAt)
+```
+
+Helper builders on the world: `Jobs.HopFailed(dueDay, id, logs)`, `Jobs.Failed(...)`,
+`Jobs.Running(startedAt)`, `Jobs.Queued()`, `Jobs.Success(dueDay, runId, sha,
+reportDelivered = true, testsPassed = true, coverageComplete = true, scheduled = true)`,
+`Jobs.SuccessWithoutResult()`. `FakeTransport.Deliver` appends
+`ChatMessage(Options.ReaderPeer, ++messageId, Clock.GetUtcNow(), body)` then returns
+`Accepted`; `LoseResponse` appends the same message and then throws `HttpRequestException`
+(the message reached Telegram, the response was lost); `AcceptWithoutDelivery` returns
+`Accepted` and appends nothing; `Throw` appends nothing and throws; `Reject` returns
+`Accepted=false` with the error class. `FakeRecipientReader.ReadAsync(floorUtc)` returns
+`Held(reason)` in Held mode, else every chat message with `DateUtc >= floorUtc - 24h`
+mapped to `RecipientObservation(PeerOverride ?? PeerId, MessageId, DateUtc + DateOffset,
+Transform?.Invoke(Text) ?? Text, ReadByRecipient)`.
+
+`RecordingHttpHandler : HttpMessageHandler` records `(Method, Uri, BodyJson)` and returns
+the next `ScriptedResponse(status, bodyJson, delayMs)`; a `delayMs` above the client
+timeout produces the timeout class.
+
+### Delivery inventory
+
+Acceptance is at the recipient. Tier-1 acceptance (`sent`, `message_id`, `acceptedAt`)
+is recorded and shown but never satisfies delivery; `received` exists only when the
+importer matched a reader observation against the ledger under D-6 rules 1-5. There is
+no session destination in this card, so no UserPrompt evidence applies; the channel
+destination requires the recipient-side readback of the whole produced body.
+
+| ID / producer -> destination / durable identity | Persistence boundaries and recovery cuts | Observable receipt and tests |
+|---|---|---|
+| DL-545-A failure notification: `OutageEvaluator` transition -> `Ledger.OpenOutageWithIntent` (outage + nid + attempt 1 `pending`, one transaction) -> `INotificationTransport.SendAsync` -> `Ledger.RecordAttempt` (accepted, `message_id`) -> `IRecipientReader.ReadAsync` -> `ReceiptImporter` -> `Ledger.ImportReceipt` (`receipts` row, `state=received`). Identity `outageId = nw:{ns}:{dueDay}:{kind}:{epoch}` plus ULID `nid`, `attempt`, and the marker line in the body. | Cuts: (1) after intent commit before send; (2) after the message reached the chat before the response was recorded; (3) after `RecordAttempt` accepted before readback; (4) after the observation was returned before `ImportReceipt` committed. Enqueue failure: transport throws (nothing delivered) or rejects. Recovery: a restarted loop over the same ledger file resumes the same `nid`; reader-first (D-7) imports any attempt already in the chat before resending; never a second `nid` for the same open outage. | Busy recipient (held reader) and already-eligible recipient (answers in the same tick) both exercised. Tests: `C544_NotificationIntent` (intent durable before send; cut 1), `C544_NotificationRetry` (send throws; attempt 2 same nid), `C544_NotificationCrash` (cuts 1-4, one logical notification, one receipt), `C544_RecipientEvidence` (accepted, eligible-empty stays `sent`), `C545_ReaderFirstRetry` (cut 2 without crash), `C545_HeldReaderNoResend` (busy), `C544_IndependentOutage`/`C544_IndependentState` (Windows facts unreadable). Decisive evidence: `Chat.Messages` contains exactly the attempt body and `Receipts()` has one row `(nid, messageId)`. |
+| DL-545-B recovery notification: `Ledger.CloseOutageWithRecovery` (closure + recovery nid + attempt 1, one transaction) -> same transport/reader/importer path. Identity: own `nid`, `linkedNid` = failure nid, same `outageId`. | Same cuts as A on the recovery `nid`; the failure notification's lifecycle is untouched. Sent even if the failure was never received. | `C544_RecoveryNotification` (failure received, then recovery received, `failureReceived=true`), `C545_RecoveryLinksFailure` (failure never received; recovery still delivered with `failureReceived=false`; failure stays `sent`/`pending`). |
+| DL-545-C qualification notice: `Program --send-qualification-notice` -> `Ledger.OpenNoticeWithIntent` (`kind=qualification`, no outage row) -> same path. Identity: `nid`, marker `kind=qualification oid=none`. | Same cuts as A; the notice is the S6 production live proof and must be ledger-backed so the artifact can cite its `nid`, `message_id` and receipt row. | `C545_QualificationNoticePath` (one notification, one attempt, delivered, received; `Outages()` empty). |
+| DL-545-D detection (the DL-4 independence rows carried from CARD-0544): `IWindmillApi` probes and job rows (list, logs, `get_result`) -> `OutageEvaluator` -> `Ledger` outage rows. Identity `outageId`; job facts carried as `jobId`/`runId` from Windmill only. | Windmill unreachable, auth failure, missing worker, hop failure and stalled/failed/missing-result jobs each open the D-3 kind; closure only from a later scheduled success with a matching result; no run is ever invented; Windows-side files are never read. Restart over the moved ledger recovers the open outage and its pending intent. | `C545_OutageKinds`, `C545_DeadlineMissedSuppressedByOpenOutage`, `C545_ClosureNeverInventsRun`, `C545_OutageIdentityEpoch`, `C544_IndependentOutage`, `C544_IndependentState`, `C545_NoWindmillDependency`. |
+| DL-545-E readiness: `SnapshotServer` (`GET /snapshot.json` from the ledger) -> `Get-NightlyWatchdogSnapshot`/`Test-NightlyWatchdogFreshness` in `nightly-health.ps1` -> `last-monitor.json` (`Identity.WatchdogInstanceId`, `WatchdogHeartbeatAt`, `Health.Reasons`) -> `InterimVerificationReadinessReader` (`watchdogInstanceId` equality with the receipt). Identity `instanceId` + `heartbeatAt`. | Snapshot unreachable, stale (> 20 min), malformed, wrong namespace/instance, or with an open outage makes `Healthy=false`; the monitor file is written atomically; the reader fails closed on a missing or mismatching instance id. Recovery is the next 30-minute readiness tick. | `C545_SnapshotShape` (real HTTP GET), `Test-C545_WatchdogFresh`, `Test-C545_WatchdogStale`, `Test-C545_ReadinessRouting`, `InterimVerificationReadinessTests.C545_WatchdogInstance`. |
+
+**Substitutes and what each cannot prove.** `FakeWindmillApi` cannot prove the real
+`jobs/list`, `get_result`, `workers/list` shapes, timeouts or token scopes (the PS
+adapter rows in `Test-C545_JobResultFetch` and `Test-C544_ProductionJobAdapter` prove
+the production PowerShell adapter over real loopback HTTP; the watchdog's
+`WindmillHttpApi` request shapes are proven by `C545_WindmillHttpApiRequestShape`
+against `RecordingHttpHandler`; live registration and credentials are S6 steps 2-3).
+`FakeTransport` cannot prove Telegram acceptance, `message_id` semantics or the 4096
+limit (request/response mapping is proven by `C545_TelegramTransportRequestShape`; live
+acceptance is S6 step 7/8). `FakeRecipientReader` and `FakeRecipientChat` cannot prove
+MTProto history, peer resolution, the read marker or session revocation (mapping and
+fail-closed are proven by `C545_ReaderHeldWithoutSession`; live readback is S6 step 7).
+`FakeTimeProvider` cannot prove NTP or the host's zone data (`--self-check`, S6 step 1).
+`RecordingHttpHandler` cannot prove TLS or DNS. The loopback `SnapshotServer` cannot
+prove the tailnet bind (`-Deploy` verification, S6 step 1). The deploy harness's
+injected `SshRunner`/`ScpRunner` cannot prove ssh, sudo or systemd (S6 step 1). None of
+these substitutes is replaced by more mock assertions; S6 supplies the real evidence and
+stays blocked on the deploy-time actions, and CARD-0544 activation stays disabled until
+its receipt exists.
+
+### Proves it works now
+
+Layers: **W** = in-process C# against the real watchdog components (`NightlyWatchdogCoreTests`
+unless stated), **N** = `NightlyVerificationContractTests` (in-process C# or pwsh wrapper),
+**H** = `InterimVerificationReadinessTests`, **PS** = PowerShell harness case run directly.
+Every test class below is `[Category("Integration")]`; `NightlyVerificationContractTests`
+keeps `[ParallelLimiter<ProcessSpawnLimit>]`; `NightlyWatchdogCoreTests` spawns no process.
+
+- V-545-1: London due-day arithmetic | W | `NightlyWatchdogCoreTests.C545_LondonDueDays` | `LondonClock.DueDay(utc)`: `2026-06-30T23:00:00Z -> 2026-07-01`, `2026-06-30T22:59:59Z -> 2026-06-30`, `2026-12-31T23:59:59Z -> 2026-12-31`, `2027-01-01T00:00:00Z -> 2027-01-01`; `DueUtc(day)`: `2026-03-28 -> 2026-03-28T00:30:00Z`, `2026-03-29 -> 2026-03-29T00:30:00Z`, `2026-03-30 -> 2026-03-29T23:30:00Z`, `2026-10-24 -> 2026-10-23T23:30:00Z`, `2026-10-25 -> 2026-10-24T23:30:00Z`, `2026-10-26 -> 2026-10-26T00:30:00Z`; `GraceEndUtc(day) == DueUtc(day) + 30 min` for the same six days; `MorningDeadlineUtc`: `2026-03-29 -> 07:00:00Z`, `2026-10-25 -> 08:00:00Z`, `2026-09-17 -> 07:00:00Z`; `PreviousDayInScope(utc)`: true at `2026-09-18T06:59:59Z`, false at `2026-09-18T07:00:00Z`. Zone lookup accepts `Europe/London` and falls back to `GMT Standard Time`.
+- V-545-2: option validation | W | `NightlyWatchdogCoreTests.C545_OptionsRefuseWildcardBind` | rows: `0.0.0.0:17290`/native -> error `snapshot-bind-wildcard`; `[::]:17290`/native -> same; `0.0.0.0:17290`/container -> ok; `127.0.0.1:17290`/native -> ok; empty bind -> `snapshot-bind-missing`; empty namespace -> `namespace-missing`; unset `DestinationChatId` -> ok (send-time refusal, D-12); `Namespace=mc` with `AllowFaultInjection=true` -> `fault-injection-forbidden` (asserted again in V-545-11).
+- V-545-3: every D-3 outage kind opens and closes from the exact probe/job shapes | W | `NightlyWatchdogCoreTests.C545_OutageKinds` (one fresh world per row; rows are named strings) | `windmill-unreachable/first-tick`: `Reachable=false`, tick 1 -> no transition; `windmill-unreachable/second-tick`: tick 2 -> `Opened nw:mc/test:2026-09-18:windmill-unreachable:1` with `JobId==null`, `RunId==null`, `Nid` non-empty; `windmill-unreachable/steady`: tick 3 -> no transition; `windmill-unreachable/close`: `Reachable=true`, tick 4 -> none, tick 5 -> `Closed` with `RecoveryNid` set. `windmill-auth-failed/*`: same four rows with `Auth=Unauthorized`. `script-missing/open`: `Script=null` -> opened on tick 1; `script-hash-drift/open`: hash `h2` vs expected `h1` -> `script-hash-drift`; `schedule-missing/open`, `schedule-disabled/open` (`enabled=false`). `desktop-worker-missing/59m`: `WorkerLastPingUtc = now - 59 min` -> none; `desktop-worker-missing/60m`: `now - 60 min` -> opened, `JobId==null`; `desktop-worker-missing/after-grace`: same at 01:40 London with no job rows -> transitions are exactly {`desktop-worker-missing`, `start-overdue`} and every outage row has `JobId==null`; `desktop-worker-missing/close`: ping present on two consecutive ticks -> closed on the second. `start-overdue/before-grace`: clock `2026-09-17T23:59:59Z`, no jobs -> none; `start-overdue/at-grace`: `2026-09-18T00:00:00Z` -> opened `nw:mc/test:2026-09-18:start-overdue:1`; `start-overdue/queued`: a `Queued` job -> still opened; `start-overdue/running`: `Running` started `2026-09-17T23:31:00Z` -> none; `start-overdue/dst-bst`: clock `2026-03-30T00:00:00Z` (01:00 BST) with no job for `2026-03-30` -> opened for due day `2026-03-30`. `run-stalled/5h59m59s`: running since `now - 5h59m59s` -> none; `run-stalled/6h`: `now - 6h` -> opened with `JobId` = the running job. `windows-hop-failed/exit-255`, `/connection-refused`, `/timed-out`, `/permission-denied`, `/no-such-identity`: completed `Success=false` with logs containing that token -> opened `windows-hop-failed`, `JobId` set, `RunId==null`; `job-failed/assertion`: logs `Assertion failed: expected 1` -> `job-failed`; `job-failed/empty-logs`: `Logs=""` -> `job-failed`. `result-missing/null-result`, `/no-run-id`, `/no-due-date`, `/wrong-due-date` (`localDueDate=2026-09-17`): completed `Success=true` -> opened `result-missing`; `result-matching/control`: result `{nativeRunId:"r18", localDueDate:"2026-09-18", sha:"s18", reportDelivered:true, testsPassed:true, coverageComplete:true}` -> no transition and `Heartbeat().LastDueDay == ("2026-09-18","j-ok","success","r18","s18")`. `report-undelivered/open`: matching result with `reportDelivered=false` -> opened `report-undelivered`. `not-outage/tests-red`, `not-outage/coverage-incomplete`: matching result with `testsPassed=false` / `coverageComplete=false` -> no transition; probe row records the flag. `deadline-missed/before`: clock `2026-09-18T06:59:59Z`, a job running since 00:31 London, no success -> none; `deadline-missed/at`: `2026-09-18T07:00:00Z` -> opened `deadline-missed`. `previous-day/closes-before-0800`: `job-failed` open for `2026-09-17`, clock `2026-09-18T00:40:00Z`, a completed scheduled success with result `localDueDate=2026-09-17` -> `Closed`; `previous-day/ignored-after-0800`: clock `2026-09-18T07:00:00Z`, a new hop failure for `2026-09-17` -> no transition for `2026-09-17`.
+- V-545-4: an open due-day outage suppresses `deadline-missed` and is amended instead | W | `NightlyWatchdogCoreTests.C545_DeadlineMissedSuppressedByOpenOutage` | `windows-hop-failed` open for `2026-09-18`; clock to `2026-09-18T07:00:00Z`; tick -> `Transitions` contains `Amended` for that `outageId` and no `Opened` of kind `deadline-missed`; `Notifications().Count == 1`; `EvidenceJson` contains `"deadlineMissedAt":"2026-09-18T07:00:00Z"`; control world with no open outage -> `deadline-missed` opened with its own `nid`.
+- V-545-5: closure and identity rules | W | `NightlyWatchdogCoreTests.C545_ClosureNeverInventsRun`, `NightlyWatchdogCoreTests.C545_OutageIdentityEpoch` | Closure rows on an open `job-failed` (`2026-09-18`, job `j1`): `manual-success` (no `schedule_path`, matching result) -> still open; `earlier-day-success` (scheduled, result `localDueDate=2026-09-17`) -> still open; `missing-due-date` -> still open; `failed-again` (`Success=false`) -> still open, `EvidenceJson` amended with `j2`; `scheduled-matching` (`j3`, `r18`) -> `ClosedAt` set, `EvidenceJson` names `closedByJobId=j3`, `closedByRunId=r18`, the failure notification's `RunId` unchanged, `Outages().Count == 1`, `Heartbeat().LastDueDay.NativeRunId == "r18"`; `later-day-success` (`localDueDate=2026-09-19`) -> closed. Epoch rows: open hop -> `:1`; tick again while open -> no new row, same `FailureNid`; close via `scheduled-matching`; hop again the same day -> `Opened nw:mc/test:2026-09-18:windows-hop-failed:2` with a different `nid`; `:1` remains closed; `Outages().Count == 2`.
+- V-545-6: body render/parse round trip | W | `NightlyWatchdogCoreTests.C545_BodyHashRoundTrip` | `NotificationBody.RenderFailure` with fixed inputs (`kind=windows-hop-failed`, due `2026-09-18`, workspace `mc`, schedule `u/lndcobra/antiphon_nightly_tests`, job `01a0aaaa-0000-4000-8000-000000000001`, evidence `ssh exit 255 at 2026-09-18T00:31:07Z`, outage `nw:mc:2026-09-18:windows-hop-failed:1`, nid `01J8Z0000000000000000000A1`, attempt 1, sha `none`, run `none`, policy `3f9c0f2a`) equals the seven-line D-5 text exactly with `h=` = first 16 lowercase hex of SHA-256 over the six lines above joined by `\n`; `ParseMarker(text)` returns `nid/oid/kind/attempt/due/h` and the header fields `job/run/sha/policy`; `Sha256Hex(text)` equals the attempt's `BodySha256`; changing one character in line 3 changes both `BodySha256` and the recomputed `h` and `ParseMarker` reports `HashMismatch`; recovery body starts `Antiphon nightly watchdog: RECOVERED windows-hop-failed` and its marker carries `kind=recovery link=<failure nid> failureReceived=false`; qualification body marker carries `kind=qualification oid=none`; every body is ASCII, has no trailing whitespace or newline, and is under 4096 characters.
+- V-545-7: intent transaction atomicity and durability | W | `NightlyWatchdogCoreTests.C545_IntentBeforeNetwork` | `Ledger.OpenOutageWithIntent` with an injected `nidFactory` that throws -> `Outages()`, `Notifications()`, `Attempts()` all empty (rolled back); normal call -> exactly one outage, one notification `state=pending`, one attempt `Accepted=false`; a second `Ledger` opened over the same file (first still open) sees the pending attempt; `Ledger.PendingNotifications()` returns it.
+- V-545-8: receipt import idempotency | W | `NightlyWatchdogCoreTests.C545_ReceiptIdempotent` | `ImportReceipt(nid, 1, messageId 7, ...)` twice -> `Receipts().Count == 1`, second result `duplicate`, `ReceivedAt` unchanged; `ImportReceipt(nid, 2, messageId 9, ...)` -> second receipt row, state unchanged `received`.
+- V-545-9: ledger namespace binding | W | `NightlyWatchdogCoreTests.C545_LedgerNamespaceBound` | first open with `mc/test` stores it in `heartbeat.namespace`; reopening the same file with `mc/qual` throws `LedgerNamespaceMismatchException`; `Validate()` with `Namespace=mc/qual` and `StateDir` resolving to `<workingDirectory>/state` -> `state-dir-shared-with-production`; `Namespace=mc/qual`, `StateDir=./state-qual` -> ok.
+- V-545-10: reader-first retry, backoff, grace resend | N (in-process) | `NightlyVerificationContractTests.C545_ReaderFirstRetry` | row `lost-response/reader-sees-it`: `Transport.Mode=LoseResponse`, tick 1 -> attempt 1 `Accepted=false`, `Chat.Messages.Count == 1`; advance 2 min, `Reader.Mode=Eligible`, tick 2 -> `Imports` has `imported` for attempt 1, `Sends` empty, `Attempts(nid).Count == 1`, `Chat.Messages.Count == 1`, `State == received`. Row `lost-response/reader-empty`: `Transport.Mode=Throw`, tick 1; advance 1:59 -> tick: no send (backoff 2 min not reached); advance 0:01 -> tick: attempt 2 same `nid`, marker `attempt=2`, `Notifications().Count == 1`; `Transport.Mode=Deliver` before that tick so the recipient gets attempt 2 -> next tick imports attempt 2. Row `backoff-schedule`: `Transport.Mode=Throw` throughout; sends occur at +2, +7, +17, +47, +107 min and hourly after, never earlier. Row `retry-after`: `Reject("rate-limited", retryAfterSeconds 600)` -> next send not before +10 min. Row `accepted-unreceived/grace`: `AcceptWithoutDelivery`, tick 1 -> `sent`; advance 29:59 -> tick: no resend; advance 0:01 -> tick with eligible empty reader: attempt 2 sent, `ErrorClass` of attempt 1 unchanged, mismatch logged in `TickReport.Sends[0].Note == "accepted-but-unreceived"`.
+- V-545-11: production namespace refuses faults; qualification allows | N (in-process) | `NightlyVerificationContractTests.C545_ProductionRefusesFaultInjection` | `Namespace=mc, AllowFaultInjection=true` -> `Validate()` error `fault-injection-forbidden`; `Namespace=mc, CrashAfter="intent"` -> same; `Namespace=mc/qual, AllowFaultInjection=true, CrashAfter="intent"` -> ok and a loop built with that config throws `WatchdogCrashException` at the intent cut; `Namespace=mc` loop built with no fault hook completes a tick that opens an outage.
+- V-545-12: tier-1 fields recorded and shown separately; read marker recorded, never gating | N (in-process) | `NightlyVerificationContractTests.C545_AcceptanceRecordedSeparately` | row `accepted-shown`: `AcceptWithoutDelivery` -> attempt `Accepted=true`, `AcceptedAt == Clock.GetUtcNow()`, `MessageId == "1"`, snapshot `recentNotifications[0].state == "sent"`, `acceptedAt` and `messageId` present, `receivedAt == null`; row `received-then-read`: `Deliver`, `ReadByRecipient=false` -> received with `readObservedAt == null`; next tick `ReadByRecipient=true` -> `ReadObservedAt` set, state still `received`, `Receipts().Count == 1`; row `read-marker-without-body`: `Deliver` with `Reader.Transform = t => t[(t.LastIndexOf('\n') + 1)..]` (the marker line only) and `ReadByRecipient=true` -> `Imports[0].Reason == "body-mismatch"`, state `sent`, `Receipts()` empty.
+- V-545-13: snapshot endpoint | W | `NightlyWatchdogCoreTests.C545_SnapshotShape` | real HTTP GET -> 200, `application/json`, top-level keys exactly {`schemaVersion`, `instanceId`, `version`, `configHash`, `namespace`, `heartbeatAt`, `tickSeconds`, `windmill`, `desktopWorker`, `schedule`, `reader`, `destination`, `openOutages`, `recentNotifications`, `lastDueDay`, `truncated`} (the D-9 shape plus `destination` and `truncated`, added here); `schemaVersion == 1`; `namespace == "mc/test"`; `destination == { "qualified": true, "hash": sha256("123456789")[..16] }`; after one hop outage and one accepted attempt: `openOutages[0].outageId`, `failureNid`, `failureState == "sent"`; `recentNotifications[0]` carries `nid`, `kind`, `state`, `attempts`, `acceptedAt`, `messageId`, `receivedAt`, `readObservedAt`; the body text contains none of the bot token, the Windmill token, the raw chat id `123456789`, or the reader api hash; with 500 notifications inserted through `Ledger.OpenNoticeWithIntent` the response is `<= 65536` bytes and `truncated == true`; `GET /other` -> 404; `POST /snapshot.json` -> 405.
+- V-545-14: transport request shape and error classes | W | `NightlyWatchdogCoreTests.C545_TelegramTransportRequestShape` | `TelegramBotTransport` over `RecordingHttpHandler`: request `POST https://api.telegram.org/bot<token>/sendMessage`, JSON body exactly {`chat_id`: "123456789", `text`: body, `disable_web_page_preview`: true} (no `parse_mode`); responses: `200 {"ok":true,"result":{"message_id":42}}` -> `Accepted`, `MessageId=="42"`; `200 {"ok":false}` -> `api-error`; `401` -> `bad-token`; `400 {"description":"Bad Request: chat not found"}` -> `chat-not-found`; `403 {"description":"Forbidden: bot was blocked by the user"}` -> `blocked`; `429 {"parameters":{"retry_after":7}}` -> `rate-limited`, `RetryAfterSeconds==7`; `503` -> `transport`; handler delay beyond the 15 s client timeout (use a 200 ms timeout in the test) -> `transport`; for every error row `TransportResult.Error` and any thrown exception message do not contain the token.
+- V-545-15: Windmill HTTP client request shapes | W | `NightlyWatchdogCoreTests.C545_WindmillHttpApiRequestShape` | `WindmillHttpApi` over `RecordingHttpHandler`: `GET /api/version` (no auth header), `GET /api/users/whoami`, `GET /api/w/mc/scripts/get/p/u/lndcobra/antiphon_nightly_tests`, `GET /api/w/mc/schedules/get/u/lndcobra/antiphon_nightly_tests`, `GET /api/workers/list?ping_since=900`, `GET /api/w/mc/jobs/list?script_path_exact=u%2Flndcobra%2Fantiphon_nightly_tests&per_page=20`, `GET /api/w/mc/jobs_u/completed/get_result/<id>`, `GET /api/w/mc/jobs_u/get_logs/<id>`; every authenticated call carries exactly one `Authorization: Bearer <token>`; a `CompletedJob` list row without `result` maps to `Result==null` until `get_result` is fetched; connect failure, 5xx and timeout classify as `unreachable`; 401/403 as `unauthorized`.
+- V-545-16: reader fails closed without a session | W | `NightlyWatchdogCoreTests.C545_ReaderHeldWithoutSession` | `TelegramUserReader` with `SessionPath` absent -> `ReadAsync` returns `Held("session-missing")` without constructing a client; `ApiId=0` -> `Held("reader-unconfigured")`; `RecipientObservation.From(message)` mapping: `peer_id` -> `PeerId`, `id` -> `MessageId`, `date` -> UTC, `message` -> `Text`, `read_inbox_max_id >= id` -> `ReadByRecipient`.
+- V-545-17: wrapper result line | PS via N wrapper | `NightlyVerificationContractTests.C545_ResultLine` -> `scripts/test-nightly-run.ps1 -Case C545_ResultLine` | rows (each runs `nightly-run.ps1` as a child `pwsh -File` with stdout captured): `green`: seams write `<runDir>\summary.json` `{coverageComplete:true,testsPassed:true,reportDelivered:true,policyHash:"p"}` and return exit 0 for tests and report, `Trigger=scheduled`, `Ref=master` -> last stdout line parses as JSON with `exitCode=0`, `nativeRunId`=the run id, `localDueDate="2026-09-18"` (seam `UtcNow=2026-09-17T23:35:00Z`), `testsPassed=true`, `coverageComplete=true`, `reportDelivered=true`, `trigger="scheduled"`, `summaryPath` set; `last-run.json` and `last-complete-green.json` both contain `localDueDate=2026-09-18` and the flags equal the line; `refusal`: `-CheckoutRoot C:\src\Antiphon` -> exit 3 and the last line is `{"nativeRunId":"","sha":"","ref":"","trigger":"","localDueDate":"","policyHash":"","coverageComplete":false,"testsPassed":false,"reportDelivered":false,"exitCode":3,"summaryPath":""}` (key order fixed); `test-red`: tests seam exit 1 -> `exitCode=1`, `testsPassed=false`, line flags equal `last-run.json`; `no-report`: `-NoReport` -> `reportDelivered=false`, no green file; `dst-summer`: seam `UtcNow=2026-06-30T23:10:00Z` -> `localDueDate="2026-07-01"`; `dst-autumn`: `2026-10-24T23:40:00Z` -> `2026-10-25`; `dst-spring`: `2026-03-29T00:40:00Z` -> `2026-03-29`; in every row the line is the final stdout line and no line follows it. PASS row names the PCs reference: `C545 ResultLine refusal last line is the JSON record`, `C545 ResultLine dst-summer localDueDate 2026-07-01`.
+- V-545-18: job-result fetch in the production adapter | PS via N wrapper | `NightlyVerificationContractTests.C545_JobResultFetch` -> `scripts/test-nightly-health.ps1 -Case C545_JobResultFetch` | route-table stub; seven `CompletedJob` rows `c1..c7` with `schedule_path`, listed in that order, none carrying `result`; routes `get_result/c1,c2,c4,c5` -> `{nativeRunId:"r18",sha:"s",localDueDate:"2026-09-18"}`, `get_result/c3` -> HTTP 500, `get_result/c6`,`c7` -> would return a valid result but must never be requested -> stub log has exactly 6 requests in order (list, c1..c5); statuses `c1,c2,c4,c5 == success`, `c3 == unknown`, `c6,c7 == unknown`; `c1.scheduledFor == 2026-09-17T23:30:00Z`; a row whose result is JSON `null` -> `unknown`; a row whose result lacks `localDueDate` -> `unknown`; `Test-NightlyMonitorHealth` with `c3` alone is unready; row `no-sink`: `(New-NightlyProductionWindmillApi ...).Keys` does not contain `EnqueueNotification` and `Get-NightlyWindmillConfig` output has no `NotifyPath` property. PASS row names the PCs reference: `C545 JobResultFetch c6 stays unknown beyond the cap`, `C545 JobResultFetch c3 unfetchable is unknown`, `C545 JobResultFetch no production Windmill notification sink`.
+- V-545-19: watchdog freshness in the Windows evaluator | PS via N wrappers | `NightlyVerificationContractTests.C545_WatchdogFresh`, `C545_WatchdogStale` -> `scripts/test-nightly-health.ps1 -Case C545_WatchdogFresh` / `-Case C545_WatchdogStale` | Fresh rows (`Test-NightlyWatchdogFreshness -Snapshot -NowUtc -ExpectedNamespace mc -ExpectedInstanceId wd-1`): age 0, 19:59, 20:00 -> `Fresh=$true`, no reasons; real-HTTP row: `Get-NightlyWatchdogSnapshot -Url http://127.0.0.1:<stub>/snapshot.json` through `Start-C544WindmillStub` returns the parsed object and the stub log shows `GET /snapshot.json`; integration row: `Invoke-AntiphonNightlyHealth` with seam `WatchdogSnapshot` fresh and an otherwise-green fixture -> `Health.Healthy=$true`, `Identity.WatchdogInstanceId == 'wd-1'`, `Identity.WatchdogHeartbeatAt` equals the snapshot's `heartbeatAt`; `-ReadinessConfigPath` row: `readiness-config.json` `{expectedScriptHash,expectedPolicyHash,watchdogSnapshotUrl,watchdogInstanceId,repositoryPath,projectId}` supplies every value. Stale rows: age 20:01 -> reason `watchdog-stale`; age -1 s (future) -> `watchdog-malformed`; seam throws / closed port -> `watchdog-unreachable`; not JSON, missing `heartbeatAt`, `schemaVersion=2`, empty `instanceId` -> `watchdog-malformed`; `namespace=mc/qual` -> `watchdog-identity-mismatch`; `instanceId=wd-2` -> `watchdog-identity-mismatch`; `openOutages` non-empty -> `watchdog-outage-open`; no `watchdogSnapshotUrl` configured -> `watchdog-unreachable`; each stale row through `Invoke-AntiphonNightlyHealth` gives `Health.Healthy=$false` with that reason in `Health.Reasons` and the monitor file still written. PASS row names the PCs reference: `C545 WatchdogStale age 20:01 stale`, `C545 WatchdogStale unreachable`, `C545 WatchdogStale malformed not-json` (and `missing-heartbeat`, `schema-2`, `empty-instance`), `C545 WatchdogStale namespace mc/qual mismatch`, `C545 WatchdogStale instance wd-2 mismatch`, `C545 WatchdogStale open outage unhealthy`.
+- V-545-20: readiness definition routing and the retired health definition | PS via N wrapper | `NightlyVerificationContractTests.C545_ReadinessRouting` -> `scripts/test-nightly-health.ps1 -Case C545_ReadinessRouting` | `scripts/windmill/antiphon-nightly-readiness.json` exists with `tag == 'desktop'`, `language == 'bash'`, content invoking `scripts\nightly-health.ps1` with `-ReadinessConfigPath C:\Antiphon\nightly\readiness-config.json` and no host literal other than `host.docker.internal`; its schedule file has `schedule == '0 */30 * * * *'`, `timezone == 'Europe/London'`, `enabled == $true`, `args == @{}`; `antiphon-nightly-health.json` and `.schedule.json` are absent; `Test-NightlyMonitorRouting -Definition @{ tag = 'desktop' }` still throws (G-116 preserved); `README.md` names the readiness definition and not the health definition.
+- V-545-21: readiness reader binds the watchdog instance | H | `InterimVerificationReadinessTests.C545_WatchdogInstance` | rows on the fixture (receipt `watchdogInstanceId="wd-1"`, monitor `Identity.WatchdogInstanceId="wd-1"`): `match` -> `(true, "ready")` and `Snapshot.WatchdogInstanceId == "wd-1"`; `receipt-missing` (field removed) -> `qualification_watchdog_missing`; `receipt-blank` (`" "`) -> `qualification_watchdog_missing`; `monitor-missing` -> `monitor_watchdog_mismatch`; `monitor-blank` -> `monitor_watchdog_mismatch`; `mismatch` (`wd-2`) -> `monitor_watchdog_mismatch`; `case-differs` (`WD-1`) -> `monitor_watchdog_mismatch` (ordinal); `stale-and-mismatch` (`RecordedAt` 61 min old and `wd-2`) -> `monitor_stale` (age precedes identity, as for the existing identity checks).
+- V-545-22: deploy script refusal, rendering and asset hygiene | PS via N wrappers | `NightlyVerificationContractTests.C545_DeployRefusesWithoutProfile`, `C545_DeployRendersFromProfile`, `C545_HostAgnosticAssets` -> `scripts/test-deploy-nightly-watchdog.ps1 -Case <name>` (new harness; dot-sources `scripts/lib/nightly-common.ps1`, `scripts/lib/c487-harness.ps1` and `scripts/deploy-nightly-watchdog.ps1`; the deploy script keeps the `InvocationName -eq '.'` guard and exposes `Invoke-NightlyWatchdogDeployment -Profile -Deploy -SshRunner -ScpRunner -PublishRunner -HttpRunner -Now`) | `Test-C545_DeployRefusesWithoutProfile` rows: `no-profile/no-arg` (no `-Profile`, `ANTIPHON_WATCHDOG_DEPLOY_PROFILE` cleared, default path redirected to a missing temp file via `-DefaultProfilePath`) -> exit 3, message `no deploy profile`, zero runner calls; `no-profile/env-missing-file` -> exit 3; `placeholder/sshTarget` (`"<user>@<host>"`) -> exit 3, message names `sshTarget`; `placeholder/remoteRoot` -> exit 3; `loopback-bind` (`snapshotBind=127.0.0.1:17290`) -> exit 3 `snapshotBind must be a private non-loopback address`; `wildcard-bind` native -> exit 3; `control` (valid fictitious profile `ops@watchdog-host.example`, `/home/ops/antiphon-watchdog`, `10.0.0.5:17290`) -> preflight exit 0. `Test-C545_DeployRendersFromProfile` rows: rendered unit has no `@@` token, `User=ops`, `WorkingDirectory=/home/ops/antiphon-watchdog`, `EnvironmentFile=/home/ops/antiphon-watchdog/env`, `ReadWritePaths=/home/ops/antiphon-watchdog/state /home/ops/antiphon-watchdog/state-qual`; rendered `qual.json` has no `<`/`>`; `preflight-no-upload`: without `-Deploy` the fake `SshRunner`/`ScpRunner` recorded no `scp`, no `systemctl`, no `sudo`, and the only ssh command is the `--self-check` dry run; `deploy-env-keys`: with `-Deploy` and a fake remote env file containing `ANTIPHON_WATCHDOG_TELEGRAM_BOT_TOKEN=never-print-this` and `ANTIPHON_WATCHDOG_SNAPSHOT_BIND=10.0.0.5:17290`, the remote env fragment the script writes contains exactly `ANTIPHON_WATCHDOG_STATE_DIR` and `ANTIPHON_WATCHDOG_NAMESPACE` (bind already present, untouched), the existing lines survive byte-for-byte, and the harness stdout does not contain `never-print-this`; `deploy-verifies-snapshot`: `-Deploy` ends with a `GET <snapshotUrl>` through `HttpRunner`. `Test-C545_HostAgnosticAssets`: scans `scripts/nightly-watchdog/**`, `scripts/deploy-nightly-watchdog.ps1`, `scripts/test-deploy-nightly-watchdog.ps1`, `docs/nightly-watchdog.md`, `scripts/windmill/antiphon-nightly-readiness*.json` for IPv4 literals other than `127.0.0.1`/`0.0.0.0`, for `[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+` SSH-target tokens other than the `<user>@<host>` placeholder and `noreply@anthropic.com`, and for `/home/` paths other than `/home/<user>`; a separate harness case `Test-C545_DeployManifest` (full-harness run only, no wrapper) checks the five tracked assets exist and are ASCII-only. PASS row names the PCs reference: `C545 DeployRefusesWithoutProfile no-profile/no-arg exit 3 no runner call`, `C545 DeployRefusesWithoutProfile placeholder/sshTarget exit 3`, `C545 DeployRendersFromProfile preflight-no-upload`, `C545 DeployRendersFromProfile env fragment has exactly the absent non-secret keys`, `C545 HostAgnosticAssets no ssh-target token`.
+- V-545-23: the 13 carried controls (bodies in the guard inventory notes) | N (in-process) | `NightlyVerificationContractTests.C544_IndependentOutage`, `C544_NotificationIntent`, `C544_NotificationRetry`, `C544_RecipientEvidence`, `C544_ReceiptNotificationIdentity`, `C544_ReceiptRunIdentity`, `C544_NotificationCrash`, `C544_RecoveryNotification`, `C544_AuthorizedDestination`, `C544_ReceiptDestination`, `C544_ReceiptWholeBody`, `C544_ReceiptAttemptFloor`, `C544_IndependentState` | each green with its decisive assertion (PC table).
+- V-545-24: delivery survives Windmill loss | N (in-process) | `NightlyVerificationContractTests.C545_NoWindmillDependency` | tick 1 opens a hop outage with `Transport.Mode=Throw` (attempt 1 failed); then `Windmill.ThrowOnEverything=true`, `Transport.Mode=Deliver`, advance 2 min, tick 2 -> `Sends[0].Accepted`, `Chat.Messages.Count == 1`; tick 3 -> imported, `received`; the unit template text contains none of `docker`, `windmill`, `Requires=`, `BindsTo=`, `After=docker`.
+- V-545-25: held reader semantics | N (in-process) | `NightlyVerificationContractTests.C545_HeldReaderNoResend` | `Deliver` then `Reader.Mode=Held("session-locked")`: tick 1 -> `ReaderState==Held`, attempt 1 `sent`; advance 29:59, tick -> no resend, `Attempts(nid).Count == 1`, `TickReport.ReaderState==Held`; row `held-then-eligible`: `Reader.Mode=Eligible` -> next tick imports attempt 1, `Receipts().Count == 1`, `Chat.Messages.Count == 1`; row `hold-expiry`: reader held for 30:00 with `AcceptWithoutDelivery` -> the tick at 30:00 resends (rule 3 applies after expiry); row `held-lost-response`: `LoseResponse` + held -> no resend while held; eligible -> imported, one message.
+- V-545-26: recovery when the failure was never received | N (in-process) | `NightlyVerificationContractTests.C545_RecoveryLinksFailure` | hop outage, `AcceptWithoutDelivery` (failure `sent`, never received); scheduled matching success -> `Closed`; `Notifications()` has a `kind=recovery` row with `LinkedNid` = failure nid and `OutageId` equal; `Transport.Mode=Deliver` -> recovery attempt delivered; body marker `kind=recovery link=<failure nid> failureReceived=false`; next tick -> recovery `received`, failure still `sent`, `Receipts().Count == 1`.
+- V-545-27: qualification notice path | N (in-process) | `NightlyVerificationContractTests.C545_QualificationNoticePath` | `Loop.SendQualificationNoticeAsync()` -> `Notifications().Count == 1` with `kind=qualification`, `OutageId==null`, attempt 1 delivered, marker `kind=qualification oid=none nid=<nid>`; next tick imports -> `received`; `Outages()` empty; snapshot `recentNotifications[0].kind == "qualification"`.
+
+### Guards the regression
+
+- R-545-1: CARD-0544 harness cases stay green | `scripts/test-nightly-health.ps1` full run and the ten existing `NightlyVerificationContractTests.C544_*` wrappers; `C544_ProductionJobAdapter` expects 22 rows (new row `C544 ProductionJobAdapter get_result requests bounded to scheduled completed rows`: stub log = list + `j-success`, `j-failed`, `j-missing-result`, `j-string-bool`, nothing for `j-manual`/`j-unknown`) and `status j-manual` now expects `unknown`; `$script:C544ExpectedRows` and the full-run `ExpectedRows` recomputed and recorded in the Code report.
+- R-545-2: CARD-0487 harness G-099..G-126 unchanged | `scripts/test-nightly-health.ps1` full run; `Test-C487_G126` still records `unauthorized-destination` with `$null` notification now that the production sink is gone.
+- R-545-3: the twelve `InterimVerificationReadinessTests.C544_*` methods stay green after the reader gains the `watchdogInstanceId` requirement | full class run; decisive: `C544_QualificationReceipt` row `unsupported-schema` still `qualification_receipt_schema_unsupported` and `C544_DisabledByDefault` control still `ready`.
+- R-545-4: positional `InterimReadinessSnapshot` constructions compile and behave | `VerificationRoundBriefTests` full class; `C544World.ControlledInterimReadiness.ReadySnapshot` used by the classes CARD-0544 lists (run them by explicit class names from `grep -l "C544World" tests/Antiphon.Tests/**/*.cs`, combined with the CARD-0403 OR syntax; a bare `*C544*` class wildcard is not assumed to be accepted).
+- R-545-5: nightly wrapper harness stays green with the result line | `scripts/test-nightly-run.ps1` full run (`ExpectedRows` raised by the `C545_ResultLine` rows); decisive: `G001 refuse C:\src\Antiphon` still exit 3 and the sentinel untouched.
+- R-545-6: ASCII and no-mutation pins | `NightlyScriptsTests` full class with the two new scripts in the ASCII list; `Nightly_run_script_names_the_isolated_clone_and_origin_master` unchanged.
+- R-545-7: policy hash and census | `scripts/test-nightly-tests.ps1` full run after the census row is added and `policyHash` recomputed; decisive: the policy-hash mismatch case still refuses and the recomputed hash is accepted.
+- R-545-8: monitor routing guard | `Test-C487_G116` unchanged, asserted again inside `Test-C545_ReadinessRouting`.
+- R-545-9: readiness reader existing reason precedence | `C545_WatchdogInstance` row `stale-and-mismatch` (monitor stale and instance mismatch) -> `monitor_stale` (age checks precede identity checks, matching the existing order).
+
+### Guard inventory
+
+Carried (IDs, guard text and method names verbatim from CARD-0544; production entrypoint per the plan's carried table):
+
+| ID | Guard | Test method | PC |
+|---|---|---|---|
+| G-78 | D-6: Windows/SSH outage must be detected outside that failure domain | `NightlyVerificationContractTests.C544_IndependentOutage` | PC-78 |
+| G-79 | D-6/D-7: Nightly failure intent persists before notification enqueue | `NightlyVerificationContractTests.C544_NotificationIntent` | PC-79 |
+| G-80 | D-6: Enqueue failure stays retryable with the original identity | `NightlyVerificationContractTests.C544_NotificationRetry` | PC-80 |
+| G-81 | D-6: Transport/job acceptance is not recipient receipt | `NightlyVerificationContractTests.C544_RecipientEvidence` | PC-81 |
+| G-82 | D-6: Receipt matches notification identity | `NightlyVerificationContractTests.C544_ReceiptNotificationIdentity` | PC-82 |
+| G-83 | D-6: Receipt matches run identity | `NightlyVerificationContractTests.C544_ReceiptRunIdentity` | PC-83 |
+| G-84 | D-6: Crash after accepted enqueue or recipient observation recovers without duplicate notification | `NightlyVerificationContractTests.C544_NotificationCrash` | PC-84 |
+| G-85 | D-6: Recovery notification is produced and received after an outage clears | `NightlyVerificationContractTests.C544_RecoveryNotification` | PC-85 |
+| G-86 | D-6: Unauthorized/missing destination cannot be silently replaced | `NightlyVerificationContractTests.C544_AuthorizedDestination` | PC-86 |
+| G-95 | D-6: Recipient evidence must come from the authorized destination readback | `NightlyVerificationContractTests.C544_ReceiptDestination` | PC-95 |
+| G-96 | D-6: Recipient readback must contain the whole produced payload | `NightlyVerificationContractTests.C544_ReceiptWholeBody` | PC-96 |
+| G-97 | D-6: Recipient evidence predating the current notification attempt cannot confirm it | `NightlyVerificationContractTests.C544_ReceiptAttemptFloor` | PC-97 |
+| G-98 | D-6: Independent outage recovery state must survive Windows being inaccessible | `NightlyVerificationContractTests.C544_IndependentState` | PC-98 |
+
+Carried-method bodies (all in-process on `C545World`; each is one `[Test]`):
+
+- `C544_IndependentOutage`: `Windmill.WorkerLastPingUtc = now - 61 min` (the Windows host is unreachable to Windmill), jobs = one completed scheduled `Success=false` for `2026-09-18` with logs `ssh: connect to host ... port 22: Connection timed out\r\nexit 255`; `Transport.Mode=Deliver`, `Reader.Mode=Eligible`. Tick 1 -> `Transitions` contains `Opened windows-hop-failed` (and `desktop-worker-missing`), `Sends` has the hop failure attempt accepted, `Chat.Messages` contains a message whose text equals `Attempts(hopNid)[0].Body`. Tick 2 -> `Imports` has `imported` for `hopNid`; `Notifications(hopNid).State == received`. `Windmill.Calls` contains only `IWindmillApi` members, and `StateDir` contains only `ledger.db` (plus WAL/SHM): the watchdog touched no Windows-side file. Decisive: `Outages().Single(o => o.Kind == "windows-hop-failed").FailureNid` is `received`.
+- `C544_NotificationIntent`: `Transport.OnSend` (default) checks the ledger from a second connection at send time. Tick 1 with `Deliver` -> `Transport.IntentVisibleAtSend == true` (decisive). Row `crash-after-intent`: fresh world, `CrashAt=Intent`, tick 1 throws `WatchdogCrashException`; `Chat.Messages` empty; `Notifications().Single().State == pending`; `RestartAsync()`; tick -> the same `nid` is sent (`Sends[0].Nid == nid`), delivered, next tick received; `Notifications().Count == 1`.
+- `C544_NotificationRetry`: `Transport.Mode=Throw`; tick 1 -> attempt 1 `Accepted=false`, `ErrorClass=="transport"`, state `pending`, `Chat.Messages` empty; `Transport.Mode=Deliver`; advance 2 min; tick 2 -> `Sends[0]` is `(nid, attempt 2)`, `Attempts(nid).Count == 2`, `Notifications().Count == 1`, `Chat.Messages.Count == 1` with marker `attempt=2`; tick 3 -> `received` via attempt 2; `Receipts().Single().Attempt == 2`. Decisive: `Attempts(nid).Count == 2` at tick 2.
+- `C544_RecipientEvidence`: `Transport.Mode=AcceptWithoutDelivery`, `Reader.Mode=Eligible` (already eligible, view empty). Tick 1 -> attempt 1 `Accepted=true`, `MessageId=="1"`, `Notifications().Single().State == sent` (decisive), `Receipts()` empty; snapshot `recentNotifications[0].state == "sent"`, `receivedAt == null`; tick 2 (still empty view) -> still `sent`, `Imports` empty.
+- `C544_ReceiptNotificationIdentity`: world A delivers failure `N1` for outage `O` (`Deliver`, eligible) and receives it. World B = `CreateAsync(sharedChat: A.Chat)` over a fresh state dir with `Transport.Mode=Throw`: tick 1 opens the same outage identity `O` (`nw:mc/test:2026-09-18:windows-hop-failed:1`) with a new nid `N2`; the reader (eligible) returns `N1`'s message. Decisive: `B.TickReport.Imports.Single(i => i.Nid == "N1").Reason == "unknown-notification"` and `B.Notifications(N2).State == pending`, `B.Receipts()` empty. Second row: attempt mismatch: `Reader.Transform` rewrites `attempt=1` to `attempt=2` in the marker of a delivered message -> `unknown-attempt`.
+- `C544_ReceiptRunIdentity`: `report-undelivered` outage whose result names run `r18` (body line `run r18`); `Deliver`; `Reader.Transform = t => t.Replace("run r18", "run r99")` -> tick 2 `Imports[0].Reason == "run-mismatch"` (decisive), state `sent`; second row `Reader.Transform` rewriting `oid=` in the marker to the `:2` epoch -> `identity-mismatch`; third row rewriting `due=` -> `identity-mismatch`; control row without transform -> `imported`.
+- `C544_NotificationCrash`: four rows, fresh world each, `Deliver`, eligible: `CrashAt=Intent`, `SendBeforeResponse` (the message is in the chat, `RecordAttempt` not reached), `TransportAccepted` (attempt accepted, reader not called), `ReaderObservation` (observation returned, `ImportReceipt` not committed). Each: tick 1 throws; `RestartAsync()`; tick(s) until `received` (at most two, advancing 2 min between). Decisive per row: `Notifications().Count == 1`, `Receipts().Count == 1`, `Chat.Messages.Count == 1`, `Attempts(nid).Count == 1` (Intent row: the single attempt is sent after restart; SendBeforeResponse row: attempt 1 is imported without a resend).
+- `C544_RecoveryNotification`: failure delivered and received; then a scheduled matching success for `2026-09-18` -> `Closed`; `Notifications()` has `kind=recovery` with `LinkedNid == failureNid`, `OutageId` equal, own `nid`; recovery delivered (`Chat.Messages.Count == 2`), body starts `Antiphon nightly watchdog: RECOVERED windows-hop-failed` with `failureReceived=true`; next tick -> recovery `received`; failure's receipt row unchanged. Decisive: `Notifications().Single(n => n.Kind == "recovery").State == received`.
+- `C544_AuthorizedDestination`: `world.UseTelegramTransport()` (real `TelegramBotTransport` over `RecordingHttpHandler`). Rows: `unset` (`DestinationChatId=null`): tick opens the outage, `Sends[0].ErrorClass == "destination-unauthorized"`, `handler.Requests.Count == 0` (decisive), attempt row `Accepted=false`, state `pending`, snapshot `destination.qualified == false`; `non-numeric` (`"abc"`): same; `mismatch` (ledger `heartbeat.destinationHash` written for `123456789` on a previous run, then options `987654321`): same with `Error` mentioning `mismatch`; `control` (`123456789`, handler scripted `200 ok`): one request whose body has `chat_id == "123456789"`.
+- `C544_ReceiptDestination`: `Deliver`; `Reader.PeerOverride = "peer-other"` -> tick 2 `Imports[0].Reason == "peer-unauthorized"` (decisive), state `sent`, `Receipts()` empty; then `PeerOverride=null` -> imported.
+- `C544_ReceiptWholeBody`: `Deliver`; rows: `marker-only` (`Transform` keeps only the marker line) -> `body-mismatch` (decisive); `truncated` (drops the last 10 characters of the marker line, so `h=` is short) -> `marker-missing` or `body-mismatch` (either is not imported; assert `Imported == false` and `Reason != "imported"`); `header-edited` (one character changed in line 2, marker intact) -> `body-mismatch`; control -> `imported`.
+- `C544_ReceiptAttemptFloor`: `Deliver`; `Reader.DateOffset = -121 s` -> tick 2 `Imports[0].Reason == "predates-attempt"` (decisive); `DateOffset = -120 s` -> `imported` (boundary inclusive).
+- `C544_IndependentState`: as `C544_IndependentOutage` but `Transport.Mode=Throw` on tick 1 (intent persisted, nothing delivered); `RestartAsync(ledgerOnly: true)` (only `ledger.db` survives in a fresh directory; the Windows facts are still unreachable: worker missing, hop job listed); `Transport.Mode=Deliver`; advance 2 min; tick -> `Sends[0].Nid` equals the original `nid` (decisive), delivered; next tick -> `received`; `Notifications().Count == 1`.
+
+New guards:
+
+| ID | Plan reference and guard | Test / decisive row | PC |
+|---|---|---|---|
+| G-545-1 | D-1/D-5: notification delivery and readback proceed while Windmill is unreachable; the unit declares no Windmill or Docker dependency | `C545_NoWindmillDependency` | PC-545-1 |
+| G-545-2 | D-3: `windmill-unreachable`/`windmill-auth-failed` open only after the second consecutive failed tick, with London-date identity and no job/run | `C545_OutageKinds` rows `windmill-unreachable/second-tick`, `windmill-auth-failed/second-tick` | PC-545-2 |
+| G-545-3 | D-9: heartbeat age 20:00 is fresh, 20:01 is stale | `Test-C545_WatchdogStale` row `age 20:01 stale` | PC-545-3 |
+| G-545-4 | D-3: a missing desktop worker never changes due-day job facts (no job or run invented) | `C545_OutageKinds` row `desktop-worker-missing/after-grace` | PC-545-4 |
+| G-545-5 | D-7 rule 1: reader-first retry never resends an attempt the recipient already has | `C545_ReaderFirstRetry` row `lost-response/reader-sees-it` | PC-545-5 |
+| G-545-6 | D-9: monitor `Identity.WatchdogInstanceId` must equal the receipt's (ordinal) | `C545_WatchdogInstance` row `mismatch` | PC-545-6 |
+| G-545-7 | D-8: recovery is sent even when the failure was never received and says `failureReceived=false` | `C545_RecoveryLinksFailure` | PC-545-7 |
+| G-545-8 | D-11: namespace `mc` refuses `AllowFaultInjection`/`CrashAfter` | `C545_ProductionRefusesFaultInjection` | PC-545-8 |
+| G-545-9 | D-10: the wrapper's last stdout line is the JSON record on every exit path, flags equal to `last-run.json`; refusal carries `exitCode=3` and empty identity | `Test-C545_ResultLine` row `refusal` | PC-545-9 |
+| G-545-10 | D-10: a completed `success=true` row without a fetched result (missing, null, unfetchable, beyond the five-row cap) is never `success` | `Test-C545_JobResultFetch` rows `c6 unknown`, `c3 unknown` | PC-545-10 |
+| G-545-11 | D-3: only SSH-classified logs give `windows-hop-failed`; other failures are `job-failed` | `C545_OutageKinds` rows `job-failed/assertion`, `job-failed/empty-logs` | PC-545-11 |
+| G-545-12 | D-3: `deadline-missed` never duplicates an open due-day outage | `C545_DeadlineMissedSuppressedByOpenOutage` | PC-545-12 |
+| G-545-13 | Deploy profile: no profile means exit 3 and no runner call | `Test-C545_DeployRefusesWithoutProfile` row `no-profile/no-arg` | PC-545-13 |
+| G-545-14 | D-5/D-6: `readByRecipient` never gates or grants `received` | `C545_AcceptanceRecordedSeparately` row `read-marker-without-body` | PC-545-14 |
+| G-545-15 | D-4/D-11: a ledger is bound to one namespace and the qualification instance cannot use the production state dir | `C545_LedgerNamespaceBound` | PC-545-15 |
+| G-545-16 | D-9: an unreachable or malformed snapshot is unhealthy, never fresh | `Test-C545_WatchdogStale` rows `unreachable`, `malformed` | PC-545-16 |
+| G-545-17 | D-9: the observed `instanceId` must equal the configured expected id | `Test-C545_WatchdogStale` row `instance wd-2 mismatch` | PC-545-17 |
+| G-545-18 | D-9: an open outage in the snapshot makes readiness unhealthy | `Test-C545_WatchdogStale` row `open outage` | PC-545-18 |
+| G-545-19 | D-9: the receipt's `watchdogInstanceId` is required non-blank | `C545_WatchdogInstance` rows `receipt-missing`, `receipt-blank` | PC-545-19 |
+| G-545-20 | D-10: `localDueDate` is the Europe/London date of the run start | `Test-C545_ResultLine` row `dst-summer` | PC-545-20 |
+| G-545-21 | OQ-1/D-12: tracked watchdog assets name no host, address, user or absolute home path | `Test-C545_HostAgnosticAssets` | PC-545-21 |
+| G-545-22 | Deploy profile: placeholder values (`<`/`>`) refuse with exit 3 | `Test-C545_DeployRefusesWithoutProfile` row `placeholder/sshTarget` | PC-545-22 |
+| G-545-23 | Deploy: the env writer touches only the three non-secret keys and only when absent; never prints a secret | `Test-C545_DeployRendersFromProfile` row `deploy-env-keys` | PC-545-23 |
+| G-545-24 | D-4: receipt import is idempotent on `(nid, messageId)` | `C545_ReceiptIdempotent` | PC-545-24 |
+| G-545-25 | D-4: the outage epoch increments only when the same kind re-opens after closure | `C545_OutageIdentityEpoch` | PC-545-25 |
+| G-545-26 | D-3: a due-day outage closes only on a later scheduled `success=true` job with a matching result; never retroactively; no run invented | `C545_ClosureNeverInventsRun` rows `manual-success`, `earlier-day-success`, `missing-due-date` | PC-545-26 |
+| G-545-27 | D-4: outage, notification and attempt 1 are one transaction | `C545_IntentBeforeNetwork` | PC-545-27 |
+| G-545-28 | D-9: a wildcard snapshot bind is refused for the native runtime | `C545_OptionsRefuseWildcardBind` | PC-545-28 |
+| G-545-29 | D-5/D-9: the snapshot carries no secret and no raw chat id | `C545_SnapshotShape` | PC-545-29 |
+| G-545-30 | D-7 rule 4: a held reader never triggers a resend before the hold expiry | `C545_HeldReaderNoResend` | PC-545-30 |
+| G-545-31 | D-3: start grace is overdue at exactly 01:00 London and the deadline is missed at exactly 08:00 | `C545_OutageKinds` rows `start-overdue/at-grace`, `deadline-missed/at` | PC-545-31 |
+| G-545-32 | D-3: due day, due instant and deadline are London-local across DST | `C545_LondonDueDays` | PC-545-32 |
+| G-545-33 | D-3: a result matches a due day only with `nativeRunId` and `localDueDate` equal to that day | `C545_OutageKinds` rows `result-missing/no-due-date`, `result-missing/wrong-due-date` | PC-545-33 |
+| G-545-34 | D-11: the qualification notice is ledger-backed through the same transport/reader | `C545_QualificationNoticePath` | PC-545-34 |
+| G-545-35 | D-9: readiness requires snapshot `namespace == mc` | `Test-C545_WatchdogStale` row `namespace mc/qual` | PC-545-35 |
+| G-545-36 | D-9: no Windmill production notification sink remains in the local evaluator | `Test-C545_JobResultFetch` row `no-sink` | PC-545-36 |
+| G-545-37 | Deploy: preflight performs no upload, `systemctl` or `sudo` without `-Deploy` | `Test-C545_DeployRendersFromProfile` row `preflight-no-upload` | PC-545-37 |
+| G-545-38 | D-5: transport errors and exceptions never carry the bot token | `C545_TelegramTransportRequestShape` error rows | PC-545-38 |
+| G-545-39 | D-6/D-12: a reader without a session or api credentials is `Held`, never eligible-empty | `C545_ReaderHeldWithoutSession` | PC-545-39 |
+
+Inventory: guards = 52 (13 carried + 39 new), mapped = 52, missing = 0, duplicate PC
+mappings = 0. Untested safety-critical guards: none. Assertions deliberately without a
+PC (not safety-critical; ordinary V rows): `RunBudgetHours` timing (`run-stalled/*`),
+backoff schedule and `retry-after` (V-545-10), snapshot 64 KB cap and 404/405
+(V-545-13), body length/ASCII (V-545-6), `tests-red`/`coverage-incomplete` are not
+outages (V-545-3), Windmill request-shape rows (V-545-15), readiness definition census
+(V-545-20; its routing PC is CARD-0487's G-116), reader observation mapping (V-545-16),
+`--self-check` (S6). Test-only guards are none: every G row protects production code or a
+tracked asset.
+
+### Positive controls
+
+Mutation runs each PC method-scoped on a local inherited SourceLanding child:
+`dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-pc/ -- --treenode-filter "/*/*/<Class>/<Method>"`
+for C# rows; `pwsh -NoProfile -File scripts/<harness>.ps1 -Case <Name> -ResultsDirectory <fresh>`
+for PS rows (or the C# wrapper method). Each cycle: apply the mutation, run red at the
+named assertion, restore, refresh the restored file's timestamp, run green. Zero tests,
+build failures and fixture errors are not red.
+
+| PC | Break (compiling defect) | Exact method | Expected red |
+|---|---|---|---|
+| PC-78 | `OutageEvaluator`: for a completed `success=false` job whose logs match the SSH classifier, return no transition (treat the hop failure as transient) | `NightlyVerificationContractTests.C544_IndependentOutage` | `Outages().Single(o => o.Kind == "windows-hop-failed")` throws (no such outage); nothing delivered |
+| PC-79 | `WatchdogLoop`: invoke `transport.SendAsync` before `Ledger.OpenOutageWithIntent` commits (send inside the transaction, commit after) | `NightlyVerificationContractTests.C544_NotificationIntent` | `Transport.IntentVisibleAtSend.ShouldBe(true)` fails (second connection sees no pending attempt at send time) |
+| PC-80 | `WatchdogLoop`: on a transport exception, call `Ledger.RecordAttempt(accepted: true, messageId: null)` | `NightlyVerificationContractTests.C544_NotificationRetry` | at tick 2 (+2 min) `Attempts(nid).Count.ShouldBe(2)` fails (stays 1: an "accepted" attempt waits 30 min) |
+| PC-81 | `WatchdogLoop`/`Ledger.RecordAttempt`: set `notifications.state = received` when `TransportResult.Accepted` | `NightlyVerificationContractTests.C544_RecipientEvidence` | `State.ShouldBe("sent")` fails with `received`; snapshot `receivedAt` non-null |
+| PC-82 | `ReceiptImporter` rule 2: match the notification by `oid` + `kind` instead of `nid` | `NightlyVerificationContractTests.C544_ReceiptNotificationIdentity` | `Reason.ShouldBe("unknown-notification")` fails (`body-mismatch` or `imported`) |
+| PC-83 | `ReceiptImporter` rule 3: drop the `run` equality (keep `oid`/`due`/`kind`) | `NightlyVerificationContractTests.C544_ReceiptRunIdentity` | `Reason.ShouldBe("run-mismatch")` fails (`body-mismatch`) |
+| PC-84 | `WatchdogLoop` start-up reconciliation: for an open outage whose failure notification is not `received`, allocate a new `nid` and attempt 1 instead of resuming the pending one | `NightlyVerificationContractTests.C544_NotificationCrash` | row `TransportAccepted`: `Notifications().Count.ShouldBe(1)` fails (2) and `Chat.Messages.Count.ShouldBe(1)` fails (2) |
+| PC-85 | `Ledger.CloseOutageWithRecovery`: set `closedAt` without inserting the recovery notification/attempt | `NightlyVerificationContractTests.C544_RecoveryNotification` | `Notifications().Single(n => n.Kind == "recovery")` throws (none) |
+| PC-86 | `TelegramBotTransport`: `chatId = string.IsNullOrWhiteSpace(options.DestinationChatId) ? "0" : options.DestinationChatId` before the authorization check (substitute a default) | `NightlyVerificationContractTests.C544_AuthorizedDestination` | row `unset`: `handler.Requests.Count.ShouldBe(0)` fails (1) and `ErrorClass.ShouldBe("destination-unauthorized")` fails |
+| PC-95 | `ReceiptImporter` rule 1: accept any `peerId` | `NightlyVerificationContractTests.C544_ReceiptDestination` | `Reason.ShouldBe("peer-unauthorized")` fails (`imported`); `Receipts()` non-empty |
+| PC-96 | `ReceiptImporter` rule 4: compare `sha256(marker line)` to a marker-only hash instead of `sha256(text)` to `bodySha256` | `NightlyVerificationContractTests.C544_ReceiptWholeBody` | row `marker-only`: `Reason.ShouldBe("body-mismatch")` fails (`imported`) |
+| PC-97 | `ReceiptImporter` rule 5: remove the `date >= attempt.startedAt - 120 s` check | `NightlyVerificationContractTests.C544_ReceiptAttemptFloor` | row `-121 s`: `Reason.ShouldBe("predates-attempt")` fails (`imported`) |
+| PC-98 | `Ledger.OpenOutageWithIntent` also writes `<stateDir>/pending-intents.json`, and `WatchdogLoop` start-up reads pending intents from that file instead of `Ledger.PendingNotifications()` | `NightlyVerificationContractTests.C544_IndependentState` | after `RestartAsync(ledgerOnly: true)` `Sends[0].Nid.ShouldBe(originalNid)` fails (no send; `Sends` empty) |
+| PC-545-1 | `WatchdogLoop.TickAsync`: `return report;` after probing when the reachability probe failed (skip evaluation and delivery) | `NightlyVerificationContractTests.C545_NoWindmillDependency` | tick 2 `Sends[0].Accepted` fails (`Sends` empty); `Chat.Messages.Count.ShouldBe(1)` fails |
+| PC-545-2 | `OutageEvaluator`: treat a failed reachability probe as `reachable=true` with an empty job list | `NightlyWatchdogCoreTests.C545_OutageKinds` | row `windmill-unreachable/second-tick`: `Transitions.ShouldContain(Opened windmill-unreachable)` fails |
+| PC-545-3 | `Test-NightlyWatchdogFreshness`: stale threshold `-gt 30` minutes instead of `-gt 20` | `Test-C545_WatchdogStale` (`NightlyVerificationContractTests.C545_WatchdogStale`) | `PASS C545 WatchdogStale age 20:01 stale` becomes FAIL |
+| PC-545-4 | `OutageEvaluator`: when no desktop ping is seen, synthesize a `Running` job for the due day before due-day evaluation | `NightlyWatchdogCoreTests.C545_OutageKinds` | row `desktop-worker-missing/after-grace`: transitions set lacks `start-overdue` and/or an outage row has a non-null `JobId` |
+| PC-545-5 | `RetryPolicy`: skip the readback and resend whenever the last attempt has no acceptance | `NightlyVerificationContractTests.C545_ReaderFirstRetry` | row `lost-response/reader-sees-it`: `Sends.ShouldBeEmpty()` fails; `Attempts(nid).Count.ShouldBe(1)` fails (2) |
+| PC-545-6 | `InterimVerificationReadinessReader`: remove the `Identity.WatchdogInstanceId` equality (keep the presence check) | `InterimVerificationReadinessTests.C545_WatchdogInstance` | row `mismatch`: `ShouldBe((false, "monitor_watchdog_mismatch"))` fails with `(true, "ready")` |
+| PC-545-7 | `Ledger.CloseOutageWithRecovery`: insert the recovery notification only when the failure notification is `received` | `NightlyVerificationContractTests.C545_RecoveryLinksFailure` | `Notifications().Single(n => n.Kind == "recovery")` throws (none) |
+| PC-545-8 | `WatchdogOptions.Validate()`: delete the `Namespace == "mc" && (AllowFaultInjection || CrashAfter != null)` refusal | `NightlyVerificationContractTests.C545_ProductionRefusesFaultInjection` | `Errors.ShouldContain("fault-injection-forbidden")` fails (no error) |
+| PC-545-9 | `nightly-run-impl.ps1`: return from the shared-tree refusal before emitting the result line | `Test-C545_ResultLine` (`NightlyVerificationContractTests.C545_ResultLine`) | `PASS C545 ResultLine refusal last line is the JSON record` becomes FAIL (last line is `  CheckoutRoot: ...`) |
+| PC-545-10 | `ConvertFrom-NightlyWindmillJob`: map `CompletedJob` with real `success=$true` to `success` even when `nativeRunId`/`localDueDate` are empty | `Test-C545_JobResultFetch` (`NightlyVerificationContractTests.C545_JobResultFetch`) | `PASS C545 JobResultFetch c6 stays unknown beyond the cap` and `... c3 unfetchable is unknown` become FAIL |
+| PC-545-11 | `OutageEvaluator`: classify every completed `success=false` job as `windows-hop-failed` | `NightlyWatchdogCoreTests.C545_OutageKinds` | row `job-failed/assertion`: expected kind `job-failed`, got `windows-hop-failed` |
+| PC-545-12 | `OutageEvaluator`: open `deadline-missed` at/after 08:00 regardless of open due-day outages | `NightlyWatchdogCoreTests.C545_DeadlineMissedSuppressedByOpenOutage` | `Transitions.ShouldNotContain(Opened deadline-missed)` fails; `Notifications().Count.ShouldBe(1)` fails (2) |
+| PC-545-13 | `deploy-nightly-watchdog.ps1`: when no profile resolves, use a built-in `@{ sshTarget = 'ops@watchdog-host.example'; ... }` and continue | `Test-C545_DeployRefusesWithoutProfile` (`NightlyVerificationContractTests.C545_DeployRefusesWithoutProfile`) | `PASS C545 DeployRefusesWithoutProfile no-profile/no-arg exit 3 no runner call` becomes FAIL (exit 0, runner called) |
+| PC-545-14 | `ReceiptImporter`: when `observation.ReadByRecipient` is true, mark `received` before rule 4 | `NightlyVerificationContractTests.C545_AcceptanceRecordedSeparately` | row `read-marker-without-body`: `Reason.ShouldBe("body-mismatch")` fails (`imported`); state `received` |
+| PC-545-15 | `Ledger` open: skip the stored-namespace comparison (overwrite `heartbeat.namespace`) | `NightlyWatchdogCoreTests.C545_LedgerNamespaceBound` | `Should.Throw<LedgerNamespaceMismatchException>` fails (no exception) |
+| PC-545-16 | `Get-NightlyWatchdogSnapshot`: on exception return a synthetic fresh snapshot object (`heartbeatAt = now`) | `Test-C545_WatchdogStale` | `PASS C545 WatchdogStale unreachable` becomes FAIL (Healthy) |
+| PC-545-17 | `Test-NightlyWatchdogFreshness`: drop the `instanceId -eq ExpectedInstanceId` comparison (keep non-empty) | `Test-C545_WatchdogStale` | `PASS C545 WatchdogStale instance wd-2 mismatch` becomes FAIL |
+| PC-545-18 | `Test-NightlyWatchdogFreshness`: ignore `openOutages` | `Test-C545_WatchdogStale` | `PASS C545 WatchdogStale open outage unhealthy` becomes FAIL |
+| PC-545-19 | `InterimVerificationReadinessReader`: accept a missing or blank receipt `watchdogInstanceId` (treat as `""` and continue) | `InterimVerificationReadinessTests.C545_WatchdogInstance` | rows `receipt-missing`/`receipt-blank`: expected `qualification_watchdog_missing`, got `monitor_watchdog_mismatch` |
+| PC-545-20 | `nightly-run-impl.ps1`: `localDueDate = (Get-NightlyUtcNow).ToString('yyyy-MM-dd')` (UTC date) | `Test-C545_ResultLine` | `PASS C545 ResultLine dst-summer localDueDate 2026-07-01` becomes FAIL (`2026-06-30`) |
+| PC-545-21 | `docs/nightly-watchdog.md`: add the line `ssh ops@watchdog-host.example` (fictitious token; never a real host) | `Test-C545_HostAgnosticAssets` (`NightlyVerificationContractTests.C545_HostAgnosticAssets`) | `PASS C545 HostAgnosticAssets no ssh-target token` becomes FAIL naming the file and line |
+| PC-545-22 | `deploy-nightly-watchdog.ps1` profile validator: remove the `<`/`>` placeholder check | `Test-C545_DeployRefusesWithoutProfile` | `PASS C545 DeployRefusesWithoutProfile placeholder/sshTarget exit 3` becomes FAIL |
+| PC-545-23 | `deploy-nightly-watchdog.ps1` env writer: also append `ANTIPHON_WATCHDOG_TELEGRAM_BOT_TOKEN=` when absent and rewrite present keys | `Test-C545_DeployRendersFromProfile` (`NightlyVerificationContractTests.C545_DeployRendersFromProfile`) | `PASS C545 DeployRendersFromProfile env fragment has exactly the absent non-secret keys` becomes FAIL |
+| PC-545-24 | `Ledger.ImportReceipt`: plain `INSERT` without the `(nid, messageId)` unique index / `ON CONFLICT DO NOTHING` | `NightlyWatchdogCoreTests.C545_ReceiptIdempotent` | `Receipts().Count.ShouldBe(1)` fails (2) or the second import throws instead of returning `duplicate` |
+| PC-545-25 | `Ledger.OpenOutageWithIntent`: always use epoch 1 (`INSERT OR REPLACE`) | `NightlyWatchdogCoreTests.C545_OutageIdentityEpoch` | `OutageId.ShouldEndWith(":2")` fails; `Outages().Count.ShouldBe(2)` fails (1) |
+| PC-545-26 | `OutageEvaluator` closure: close a due-day outage on any completed job for that day (ignore `success` and result matching) | `NightlyWatchdogCoreTests.C545_ClosureNeverInventsRun` | rows `manual-success`/`missing-due-date`: `ClosedAt.ShouldBeNull()` fails |
+| PC-545-27 | `Ledger.OpenOutageWithIntent`: commit the outage row in its own transaction before inserting the notification and attempt | `NightlyWatchdogCoreTests.C545_IntentBeforeNetwork` | throwing-factory row: `Outages().ShouldBeEmpty()` fails (1 orphan outage) |
+| PC-545-28 | `WatchdogOptions.Validate()`: allow `0.0.0.0`/`::` for every runtime | `NightlyWatchdogCoreTests.C545_OptionsRefuseWildcardBind` | row `0.0.0.0/native`: `Errors.ShouldContain("snapshot-bind-wildcard")` fails |
+| PC-545-29 | `SnapshotServer`: emit `"destination": { "chatId": options.DestinationChatId, ... }` | `NightlyWatchdogCoreTests.C545_SnapshotShape` | `Body.ShouldNotContain("123456789")` fails |
+| PC-545-30 | `RetryPolicy`: treat `Held` as eligible-empty (resend under rules 2/3 while held) | `NightlyVerificationContractTests.C545_HeldReaderNoResend` | at 29:59 held: `Attempts(nid).Count.ShouldBe(1)` fails (2) |
+| PC-545-31 | `OutageEvaluator`: `now > graceEnd` instead of `now >= graceEnd` (and the same for the deadline) | `NightlyWatchdogCoreTests.C545_OutageKinds` | row `start-overdue/at-grace`: expected `Opened start-overdue`, got none (and `deadline-missed/at`) |
+| PC-545-32 | `LondonClock.DueDay`: return `utc.Date` (UTC calendar date) | `NightlyWatchdogCoreTests.C545_LondonDueDays` | row `2026-06-30T23:00:00Z -> 2026-07-01` fails (`2026-06-30`) |
+| PC-545-33 | `OutageEvaluator.ResultMatches`: accept a result whose `localDueDate` is missing when `nativeRunId` is present | `NightlyWatchdogCoreTests.C545_OutageKinds` | row `result-missing/no-due-date`: expected `Opened result-missing`, got none |
+| PC-545-34 | `Program --send-qualification-notice` / `WatchdogLoop.SendQualificationNoticeAsync`: call `transport.SendAsync` directly with a fresh ULID and no ledger row | `NightlyVerificationContractTests.C545_QualificationNoticePath` | `Notifications().Count.ShouldBe(1)` fails (0); the next tick's import is `unknown-notification` |
+| PC-545-35 | `Test-NightlyWatchdogFreshness`: drop the `namespace -eq 'mc'` check | `Test-C545_WatchdogStale` | `PASS C545 WatchdogStale namespace mc/qual mismatch` becomes FAIL |
+| PC-545-36 | `New-NightlyProductionWindmillApi`: re-add the `EnqueueNotification` member posting to `jobs/run/p/<NotifyPath>` | `Test-C545_JobResultFetch` | `PASS C545 JobResultFetch no production Windmill notification sink` becomes FAIL |
+| PC-545-37 | `deploy-nightly-watchdog.ps1`: run the upload and `systemctl enable --now` in preflight (ignore `-Deploy`) | `Test-C545_DeployRendersFromProfile` | `PASS C545 DeployRendersFromProfile preflight-no-upload` becomes FAIL (scp/systemctl recorded) |
+| PC-545-38 | `TelegramBotTransport`: include `request.RequestUri` in `TransportResult.Error` | `NightlyWatchdogCoreTests.C545_TelegramTransportRequestShape` | error rows: `Error.ShouldNotContain(token)` fails |
+| PC-545-39 | `TelegramUserReader.ReadAsync`: when the session file is missing return an empty eligible read | `NightlyWatchdogCoreTests.C545_ReaderHeldWithoutSession` | `Result.IsHeld.ShouldBeTrue()` fails |
+
+PC batching allowed (different files and methods, no shared assertion): {PC-545-3, 16,
+17, 18, 35} share `nightly-health.ps1` freshness functions and must run separately;
+{PC-545-2, 4, 11, 12, 26, 31, 33} all mutate `OutageEvaluator` and must run separately;
+{PC-82, 83, 95, 96, 97, 545-14} all mutate `ReceiptImporter` and must run separately.
+Everything else may batch by distinct file.
+
+### Out of scope
+
+- Live Telegram acceptance, MTProto readback, the read marker, session revocation,
+  systemd supervision, the tailnet bind, Windmill registration/readback and the real
+  00:30 scheduled run: S6 (operator-run; blocked on the deploy-time actions OQ-1/OQ-6
+  and the reader login). Neither this stage nor Code claims them. CARD-0544 activation
+  stays disabled until the receipt exists.
+- `--self-check`, `--reader-login`, `--stub-windmill` and `--export-evidence` command
+  behaviour beyond argument parsing (V rows would need the host runtime; the stub server
+  is exercised only in S6 F-3).
+- The F-1..F-6 injection matrix: qualification instance on the host (S6 step 7).
+- `scripts/deploy-am-service.ps1` retrofit (plan scope boundary).
+- Any change to `AgentTaskReplyService`, land delivery, session delivery, the gateway
+  (`channels.*`), the desktop worker container or Windows Scheduled Tasks.
+- Concurrency of two watchdog instances on one ledger file (D-11 gives each instance its
+  own state dir; the namespace binding in G-545-15 refuses the shared-dir case).
+- WTelegramClient network behaviour (TLS, DC migration, flood waits) and Windmill
+  token scopes (OQ-6).
+- `Test-NightlyMonitorHealth` clock/readiness rules (CARD-0544 G-72..77/87..94 stay
+  there; R-545-1 keeps them green).
+
+### Cost
+
+All figures are **estimated** (nothing was built or run in this dispatch); assumptions:
+one foreground owner, isolated `bin-<name>/` output, warm NuGet cache, local pwsh 7,
+no concurrent `Antiphon.Agents.Pty.Tests`. TestDesign's own active time is reported in
+the stage report.
+
+| Ordinary V/R floor, per Code or independent Review pass | Minutes |
+|---|---:|
+| Setup: restore + build `tests/Antiphon.Tests` graph with the new watchdog project into `bin-c545/` | 15 |
+| `NightlyWatchdogCoreTests` full class (14 tests; SQLite temp files, one loopback listener) | 1 |
+| `NightlyVerificationContractTests` full class (10 existing + 8 new pwsh wrappers at ~8 s, 20 in-process) | 4 |
+| `InterimVerificationReadinessTests` + `VerificationRoundBriefTests` + C544 attached classes (`/*/*/*C544*/*`) | 4 |
+| `NightlyScriptsTests` (4) | 1 |
+| Unit lane `[Category=Unit]` (readiness record and policy touched) | 2 |
+| PS harnesses direct: `test-nightly-health.ps1` full (1), `test-nightly-run.ps1` full (2), `test-nightly-tests.ps1` full (1), `test-deploy-nightly-watchdog.ps1` full (0.5) | 5 |
+| **Per-pass setup + ordinary V/R** | **32** |
+
+Code floor 32; independent ordinary Review floor another 32. Band per pass: 25-40.
+
+| PC floor (Mutation), method-scoped red/restore/green | Controls | Min per cycle | Minutes |
+|---|---:|---:|---:|
+| C# controls (13 carried + PC-545-1,2,4,5,6,7,8,11,12,14,15,19,24,25,26,27,28,29,30,31,32,33,34,38,39): edit, incremental build (~45 s watchdog + ~40 s test relink), two runs | 38 | 3.5 | 133 |
+| PS controls (PC-545-3,9,10,13,16,17,18,20,21,22,23,35,36,37): edit, two harness runs | 14 | 1.5 | 21 |
+| Mutation setup: snapshot build of `bin-pc/`, `--list-tests` sanity of the two classes | - | - | 20 |
+| Restoration inventory, timestamp refresh, evidence | - | - | 15 |
+| **Mutation floor, all 52 controls, unbatched** | **52** | - | **189** |
+
+Band 160-220. Batching the 24 batchable C# controls in groups of four saves about
+40 minutes (each group shares one build pair); the three must-run-separately sets
+(evaluator 7, importer 6, freshness 5) cannot batch. No concurrency saving is assumed
+(one managed snapshot).
+
+**Total verification floor** = setup/build 15 + ordinary V/R 17 + every PC red/restore/
+green 154 + Mutation setup/evidence 35 = **221 minutes, estimated**, unbatched.
+
+**Plan cost-band check.** The plan's TestDesign band (130-190) stands. S1 (90-150), S3
+(240-360), S4 (120-180), S5 (105-165) and Review (120-180) are consistent with the
+inventory above. Two bands change materially and the plan's Cost table should be read
+with these corrections: **Mutation 60-100 -> 160-220** (the plan priced 27 PCs; the
+finalized inventory has 52 because the bundled candidates split into independently
+bypassable checks and D-3/D-4/D-9 invariants gained controls) and **S2 150-240 ->
+180-270** (14 core tests and the fixture contract instead of 9). The moved-cost
+baseline from CARD-0544 (13 x 1.5 = 19.5 min) is superseded by the C# cycle rate above.
+
+--- next stage ---
+next: code
+handoff: Code implements S1-S5 against the finalized verification design (13 carried N.C544_* in-process on C545World, NightlyWatchdogCoreTests 14 methods, C545_WatchdogInstance, PS cases C545_ResultLine/JobResultFetch/WatchdogFresh/WatchdogStale/ReadinessRouting and the deploy harness) and runs the ordinary V/R floor; S6 stays blocked on the operator's deploy-time actions.
+artifact: docs/superpowers/plans/2026-09-17-card-0545-independent-nightly-watchdog-plan.md
