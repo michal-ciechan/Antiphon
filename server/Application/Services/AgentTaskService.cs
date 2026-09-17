@@ -1154,7 +1154,9 @@ public sealed class AgentTaskService
 
     private async Task<string?> CompletionHeaderAsync(Guid taskId, CancellationToken ct) =>
         await _db.SessionQueuedMessages.AsNoTracking()
-            .Where(message => message.SourceTaskId == taskId && message.SourceLandNotificationId == null && message.NoteHeader != null)
+            .Where(message => message.SourceTaskId == taskId && message.NoteHeader != null
+                && (message.SourceLandNotificationId == null || _db.AgentTaskLandNotifications.Any(n =>
+                    n.Id == message.SourceLandNotificationId && n.Kind == LandNotificationKind.Completion)))
             .OrderByDescending(message => message.CreatedAt)
             .Select(message => message.NoteHeader)
             .FirstOrDefaultAsync(ct);
@@ -1633,7 +1635,8 @@ public sealed class AgentTaskService
             // "the summary was not enough" signal.
             var noteSent = await _db.SessionQueuedMessages.AsNoTracking()
                 .Where(m => m.SourceTaskId == id
-                    && m.SourceLandNotificationId == null
+                    && (m.SourceLandNotificationId == null || _db.AgentTaskLandNotifications.Any(n =>
+                        n.Id == m.SourceLandNotificationId && n.Kind == LandNotificationKind.Completion))
                     && m.Origin == QueuedMessageOrigin.Delegation
                     && m.SentAt != null
                     && m.SentAt < now)

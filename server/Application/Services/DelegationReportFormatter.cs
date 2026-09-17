@@ -206,6 +206,9 @@ public static class DelegationReportFormatter
         if (BuildHandoff(task) is { } handoff)
             sb.AppendLine(handoff).AppendLine();
 
+        if (VerificationProfileBlock(task) is { } profile)
+            sb.AppendLine(profile).AppendLine();
+
         if (task.Workspace == WorkspaceMode.ReadOnly)
             sb.AppendLine("Do NOT modify any files. This is a read-only task — report findings only.").AppendLine();
 
@@ -227,6 +230,46 @@ public static class DelegationReportFormatter
             AgentTaskRole.Diagnose => DiagnoseReportingContract(task.Id, inlineMax),
             _ => ReportingContract(task.Id, task.Kind, inlineMax, task.Role, task.Stage),
         });
+        return sb.ToString();
+    }
+
+    public const string VerificationProfileHeading = "--- verification profile ---";
+
+    /// <summary>
+    /// CARD-0544 D-8. The commissioned ordinary-verification profile, rendered into every brief —
+    /// fresh, warm/refocus and spilled — because a warm agent keeps its launch-time bundle. It
+    /// defers to nothing in the bundles: the task profile is the authority for this task's scope.
+    /// Null for historical and non-Code/Review tasks.
+    /// </summary>
+    internal static string? VerificationProfileBlock(AgentTask task)
+    {
+        if (task.VerificationProfileVersion is not int version || task.VerificationRound is not { } round)
+            return null;
+        var sb = new StringBuilder();
+        sb.AppendLine(VerificationProfileHeading);
+        if (round == VerificationRound.Final)
+        {
+            sb.AppendLine($"round: Final (profile v{version})");
+            sb.AppendLine("ordinary scope: the whole Unit lane, every named full affected integration class, every ordinary V-n/R-n and required manual acceptance in the plan.");
+            if (task.Role == AgentTaskRole.Review)
+                sb.AppendLine("independence: rerun that complete scope yourself, including every row an earlier Interim round deferred; an Interim pass never discharges it.");
+            sb.AppendLine("final-review: none pending from this task");
+        }
+        else
+        {
+            var admission = VerificationAdmission.TryRead(task.VerificationAdmissionJson);
+            sb.AppendLine($"round: Interim (profile v{version}); this round can never approve a land");
+            sb.AppendLine($"subject (original landing owner): {task.VerificationSubjectTaskId:D}");
+            sb.AppendLine($"baseline outcome: {task.VerificationBaselineOutcomeId:D} at reviewed SHA {admission?.BaselineReviewedSha ?? "unknown"}");
+            if (admission?.Selection is { } selection)
+                sb.AppendLine($"selection: {selection.ArtifactPath}@{selection.ArtifactCommitSha} section \"{selection.Section}\"");
+            sb.AppendLine("ordinary scope: cumulative new/changed cases since the baseline (earlier repair cases included) + tests for every unresolved finding + the named adjacent smoke in the selection + required targeted manual checks. Build, fresh nonzero execution evidence and investigation of any new red still apply.");
+            sb.AppendLine("reporting: list executed IDs and counts separately from deferred-to-final IDs/classes; never mark deferred ordinary work passed.");
+            sb.AppendLine("final-review: PENDING - a Final Review of the original owner must rerun the full ordinary scope before land.");
+        }
+        if (task.Role == AgentTaskRole.Review)
+            sb.AppendLine($"review evidence: add `{ReviewEvidence.ScopeKey}: Full|Interim|None` once; Full only when the complete required selection actually executed. The commissioned round caps it.");
+        sb.Append("PCs: every PC stays pending for method-scoped SourceLanding Mutation; neither this round nor nightly green discharges one.");
         return sb.ToString();
     }
 
@@ -555,7 +598,7 @@ public static class DelegationReportFormatter
         int? replyInlineMaxChars = null, string? warning = null, string? overlappingRunning = null,
         string? drift = null, string? reportEvidence = null, string? git = null,
         DeliverableNote? deliverable = null, string? next = null, LandCompletionFacts? land = null,
-        ReviewEvidenceFacts? reviewEvidence = null, string? sessionLiveness = null)
+        ReviewEvidenceFacts? reviewEvidence = null, string? sessionLiveness = null, string? verification = null)
     {
         var header = new StringBuilder();
         header.Append('[').Append("task ").Append(Short(task.Id)).Append(' ')
@@ -596,6 +639,9 @@ public static class DelegationReportFormatter
             bits.Add($"deliverable={deliverable.HeaderBit}");
         if (!string.IsNullOrWhiteSpace(next))
             bits.Add($"next={next.Trim()}");
+        // CARD-0544: commissioned round, completed scope and the Final obligation ride every rendering.
+        if (!string.IsNullOrWhiteSpace(verification))
+            bits.Add(verification.Trim());
         if (reviewEvidence is not null)
             bits.Add($"review-evidence={reviewEvidence.Id:N}; subject={reviewEvidence.SubjectTaskId:N}; reviewed-sha={reviewEvidence.ReviewedSourceSha}");
         if (bits.Count > 0) header.Append(' ').Append(string.Join(" · ", bits));
@@ -742,6 +788,10 @@ public static class DelegationReportFormatter
           .Append(" workspace=").Append(task.Workspace);
         if (!string.IsNullOrWhiteSpace(task.Scope))
             sb.Append(" areas=").Append(task.Scope);
+        // CARD-0544: the pointer names the commissioned round; the full profile is in the spilled brief.
+        if (task.VerificationProfileVersion is not null && task.VerificationRound is { } pointerRound)
+            sb.Append(" verification=").Append(pointerRound)
+              .Append(pointerRound == VerificationRound.Interim ? $" baseline={task.VerificationBaselineOutcomeId:N} final-review=pending" : "");
         sb.AppendLine().AppendLine();
 
         sb.AppendLine($"""
