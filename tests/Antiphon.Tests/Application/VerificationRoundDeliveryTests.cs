@@ -355,7 +355,7 @@ public sealed class VerificationRoundDeliveryTests
                 await db.AgentTasks.Where(t => t.Id == Land.Git.TaskId).ExecuteUpdateAsync(s => s
                     .SetProperty(t => t.RequiresFinalVerificationReview, true)
                     .SetProperty(t => t.VerificationProfileVersion, 1)
-                    .SetProperty(t => t.VerificationRound, VerificationRound.Final)
+                    .SetProperty(t => t.VerificationRound, VerificationRound.Final));
                     .SetProperty(t => t.ReplyTo, AgentTaskReplyTo.Session)
                     .SetProperty(t => t.ParentSessionId, Caller.SessionId)
                     .SetProperty(t => t.ConcurrencyToken, Guid.NewGuid()));
@@ -481,6 +481,453 @@ public sealed class VerificationRoundDeliveryTests
         }
         await db.SaveChangesAsync();
         return session.Id;
+    }
+
+    private static readonly string[] InterimHeaderBits = ["verification=Interim", "scope=Interim", "final-review=pending", "next=review"];
+
+    /// <summary>PC-105: recovery renders the settlement snapshot, not the current task/card state.</summary>
+    [Test]
+    public async Task C544_SnapshotRendersRecovery()
+    {
+        await using var rig = await C544DeliveryRig.CreateAsync(busy: false);
+        var baseline = await rig.World.SettleReviewAsync();
+        await rig.FlushAsync();
+        await rig.ScanAsync();
+        rig.Fault.Cut = "settled-committed";
+        var (taskId, report) = await rig.SettleReviewAsync(rig.World.InterimReview(baseline.Id), scope: "Interim", next: "land");
+        rig.Fault.Throws.ShouldBe(1, "the immediate delivery path was lost");
+        var original = (await rig.NotificationAsync(taskId)).ShouldNotBeNull();
+        var snapshot = TaskCompletionNotification.TryReadSnapshot(original.CompletionSnapshotJson).ShouldNotBeNull();
+        (await rig.RowsAsync(taskId)).ShouldBeEmpty("no queue row before recovery");
+
+        // A foreign context rewrites everything recovery could be tempted to read instead.
+        await using (var db = rig.World.CreateContext())
+            await db.AgentTasks.Where(t => t.Id == taskId).ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.Result, "FOREIGN REWRITE of the result")
+                .SetProperty(t => t.VerificationRound, VerificationRound.Final));
+        await rig.World.SetCardPolicyAsync(CardVerificationPolicy.FullOnly, CardVerificationPolicy.FullOnly);
+
+        await rig.RestartAsync();
+        rig.World.Clock.Advance(TimeSpan.FromMinutes(10));
+        await rig.ScanAsync();
+        await rig.FlushAsync();
+        await rig.ScanAsync();
+        await AssertReceivedOnceAsync(rig, taskId, "snapshot", InterimHeaderBits, expectKind: "raw", expectSpill: false);
+        var delivered = TaskCompletionNotification.TryReadDelivery((await rig.NotificationAsync(taskId))!.CompletionDeliveryJson)!;
+        delivered.LogicalNote.ShouldStartWith(snapshot.NoteHeader, Case.Sensitive);
+        delivered.LogicalNote.ShouldContain("Reviewed the owner.", Case.Sensitive);
+        delivered.LogicalNote.ShouldNotContain("FOREIGN REWRITE", Case.Sensitive);
+        snapshot.RawSha256.ShouldBe(TaskCompletionNotification.Sha256(snapshot.RawResult));
+    }
+
+    /// <summary>PC-106: nothing is typed while the rendering is uncommitted; once committed the typed text is its wire text.</summary>
+    [Test]
+    public async Task C544_RenderingFrozenBeforeTyping()
+    {
+        foreach (var cut in new[] { "render-committed", "spill-written" })
+        foreach (var spill in new[] { false, true })
+        {
+            var row = $"{cut} spill={spill}";
+            await using var rig = await C544DeliveryRig.CreateAsync(busy: false, spill: spill);
+            var (taskId, _) = await rig.SettleReviewAsync();
+            rig.Fault.TaskId = taskId;
+            rig.Fault.Cut = cut;
+            try { await rig.FlushAsync(); }
+            catch (IOException e) when (e.Message.StartsWith("c544 completion persistence cut", StringComparison.Ordinal)) { }
+            rig.Fault.Throws.ShouldBe(1, row + ": cut reached");
+            var atCut = TaskCompletionNotification.TryReadDelivery((await rig.NotificationAsync(taskId))!.CompletionDeliveryJson);
+            if (cut == "spill-written") atCut.ShouldBeNull(row + ": the rendering transaction rolled back");
+            else atCut.ShouldNotBeNull(row + ": the rendering committed with the claim");
+            rig.Caller.SubmittedBodies.ShouldBeEmpty(row + ": nothing typed before the committed rendering is typed");
+
+            await rig.RestartAsync();
+            rig.World.Clock.Advance(TimeSpan.FromMinutes(10));
+            await rig.FlushAsync();
+            await rig.ScanAsync();
+            var final = TaskCompletionNotification.TryReadDelivery((await rig.NotificationAsync(taskId))!.CompletionDeliveryJson)
+                .ShouldNotBeNull(row);
+            if (atCut is not null) final.WireText.ShouldBe(atCut.WireText, row + ": replay types the frozen rendering");
+            rig.Caller.SubmittedBodies.ShouldHaveSingleItem(row).ShouldBe(final.WireText, row + ": typed text is the committed wire text");
+            await AssertReceivedOnceAsync(rig, taskId, row, FinalHeaderBits, expectKind: "raw", expectSpill: spill);
+        }
+    }
+
+    /// <summary>PC-107: a distillation result that arrives after the attempt claim cannot replace the typed rendering.</summary>
+    [Test]
+    public async Task C544_LateReplacementRejected()
+    {
+        await using var rig = await C544DeliveryRig.CreateAsync(busy: false, distill: true);
+        var (taskId, _) = await rig.SettleReviewAsync();
+        var note = (await rig.NotificationAsync(taskId))!;
+        var held = await rig.RowAsync(taskId);
+        held.HoldUntil.ShouldNotBeNull();
+        rig.DistillQueue.TryDequeue(out var request).ShouldBeTrue();
+        rig.World.Clock.Advance(held.HoldUntil!.Value - rig.World.Clock.GetUtcNow().UtcDateTime + TimeSpan.FromSeconds(5));
+
+        rig.Fault.TaskId = taskId;
+        rig.Fault.Cut = "attempt-committed";
+        try { await rig.FlushAsync(); }
+        catch (IOException e) when (e.Message.StartsWith("c544 completion persistence cut", StringComparison.Ordinal)) { }
+        rig.Fault.Throws.ShouldBe(1, "attempt verdict cut reached");
+        rig.Caller.SubmittedBodies.Count.ShouldBe(1, "the raw rendering was typed at the deadline");
+        var before = await rig.RowAsync(taskId);
+        var frozen = (await rig.NotificationAsync(taskId))!.CompletionDeliveryJson.ShouldNotBeNull();
+
+        await rig.Queue.TryApplyDistillationAsync(request, note.ContentDigest, C544DeliveryRig.Summary, CancellationToken.None);
+        var after = await rig.RowAsync(taskId);
+        after.Body.ShouldBe(before.Body, "late summary leaves the typed row body");
+        (await rig.NotificationAsync(taskId))!.CompletionDeliveryJson.ShouldBe(frozen, "late summary leaves the frozen rendering");
+
+        await rig.RestartAsync();
+        rig.World.Clock.Advance(TimeSpan.FromMinutes(10));
+        await rig.ScanAsync();
+        await rig.FlushAsync();
+        await rig.ScanAsync();
+        await AssertReceivedOnceAsync(rig, taskId, "late", FinalHeaderBits, expectKind: "raw", expectSpill: false);
+        TaskCompletionNotification.TryReadDelivery(frozen)!.LogicalNote.ShouldNotContain(C544DeliveryRig.Summary, Case.Sensitive);
+    }
+
+    /// <summary>PC-108: raw, distilled, polled-shrunk and spilled renderings all keep the snapshot header.</summary>
+    [Test]
+    public async Task C544_RenderingKeepsHeader()
+    {
+        foreach (var kind in new[] { "raw", "distilled", "polled-shrunk", "spilled" })
+        {
+            await using var rig = await C544DeliveryRig.CreateAsync(busy: false, spill: kind == "spilled", distill: kind == "distilled");
+            var (taskId, _) = await rig.SettleReviewAsync();
+            var note = (await rig.NotificationAsync(taskId))!;
+            if (kind == "distilled")
+            {
+                rig.DistillQueue.TryDequeue(out var request).ShouldBeTrue(kind);
+                (await rig.Queue.TryApplyDistillationAsync(request, note.ContentDigest, C544DeliveryRig.Summary, CancellationToken.None))
+                    .ShouldBeNull(kind);
+            }
+            if (kind == "polled-shrunk")
+            {
+                await using var scope = rig.World.Services.CreateAsyncScope();
+                await scope.ServiceProvider.GetRequiredService<AgentTaskService>()
+                    .GetAsync(taskId, CancellationToken.None, pollingSessionId: rig.World.CallerSessionId);
+            }
+            await rig.DeliverAsync(kind);
+            await rig.ScanAsync();
+            await AssertReceivedOnceAsync(rig, taskId, kind, FinalHeaderBits,
+                expectKind: kind is "distilled" ? "distilled" : null, expectSpill: kind == "spilled");
+            var delivery = TaskCompletionNotification.TryReadDelivery((await rig.NotificationAsync(taskId))!.CompletionDeliveryJson)!;
+            var snapshot = TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson)!;
+            if (kind == "polled-shrunk")
+            {
+                await using var db = rig.World.CreateContext();
+                (await db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.NoteShrunk))
+                    .ShouldBeTrue(kind + ": the poll shrink rendered this note");
+                delivery.LogicalNote.ShouldNotBe(snapshot.RawBody, kind);
+            }
+        }
+    }
+
+    /// <summary>PC-109: only a Completion keyed row may take a distilled replacement; Outcome and DeliveryFailure stay immutable.</summary>
+    [Test]
+    public async Task C544_KindAwareDistillation()
+    {
+        await using var rig = await C544DeliveryRig.CreateAsync(busy: true, distill: true);
+        var (taskId, _) = await rig.SettleReviewAsync();
+        var completion = (await rig.NotificationAsync(taskId))!;
+        rig.DistillQueue.TryDequeue(out var completionRequest).ShouldBeTrue();
+        (await rig.Queue.TryApplyDistillationAsync(completionRequest, completion.ContentDigest, C544DeliveryRig.Summary, CancellationToken.None))
+            .ShouldBeNull("the Completion obligation may take the summary");
+        (await rig.RowAsync(taskId)).Body.ShouldContain(C544DeliveryRig.Summary, Case.Sensitive);
+
+        foreach (var kind in new[] { LandNotificationKind.Outcome, LandNotificationKind.DeliveryFailure })
+        {
+            AgentTaskLandNotification note;
+            await using (var db = rig.World.CreateContext())
+            {
+                note = await AgentTaskLandReceiptTests.SeedAsync(db, rig.World.CallerSessionId);
+                if (kind != LandNotificationKind.Outcome)
+                {
+                    await db.AgentTaskLandNotifications.Where(n => n.Id == note.Id).ExecuteUpdateAsync(s => s.SetProperty(n => n.Kind, kind));
+                    note.Kind = kind;
+                }
+                await new AgentTaskLandNotificationService(db, rig.Queue, new CompletionNoteFlushQueue(),
+                    rig.World.Services.GetRequiredService<AgentSessionRuntime>(), rig.World.Clock).ReconcileAsync(note.Id, CancellationToken.None);
+            }
+            var keyed = await rig.RowAsync(note.TaskId);
+            keyed.SourceLandNotificationId.ShouldBe(note.Id, kind.ToString());
+            var now = rig.World.Clock.GetUtcNow();
+            await rig.Queue.TryApplyDistillationAsync(new DistillRequest(note.TaskId, keyed.Id, now, now.AddMinutes(2), OutputDistillerMode.Apply),
+                note.ContentDigest, C544DeliveryRig.Summary, CancellationToken.None);
+            (await rig.RowAsync(note.TaskId)).Body.ShouldBe(note.Body, kind + ": immutable body");
+            await using (var db = rig.World.CreateContext())
+            {
+                await new AgentTaskLandNotificationService(db, rig.Queue, new CompletionNoteFlushQueue(),
+                    rig.World.Services.GetRequiredService<AgentSessionRuntime>(), rig.World.Clock).ReconcileAsync(note.Id, CancellationToken.None);
+                var saved = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id);
+                saved.LastErrorCode.ShouldNotBe("queue_payload_changed_unconfirmed", kind.ToString());
+                saved.CompletionDeliveryJson.ShouldBeNull(kind + ": no rendering record for a non-Completion kind");
+            }
+        }
+    }
+
+    /// <summary>PC-110: two sibling completions for one root batch into one caller prompt with shared membership.</summary>
+    [Test]
+    public async Task C544_SameRootBatchMembership()
+    {
+        await using var rig = await C544DeliveryRig.CreateAsync(busy: true);
+        var root = await rig.RootOrchestratorAsync();
+        var (first, _) = await rig.SettleReviewAsync(root: root);
+        var (second, _) = await rig.SettleReviewAsync(root: root);
+        var rows = new[] { await rig.RowAsync(first), await rig.RowAsync(second) };
+        rows.ShouldAllBe(r => r.ConversationKey == TaskCompletionNotification.ConversationKey(root.Id));
+        await rig.DeliverAsync("batch");
+        await rig.ScanAsync();
+
+        var a = (await rig.NotificationAsync(first))!;
+        var b = (await rig.NotificationAsync(second))!;
+        a.State.ShouldBe(LandNotificationState.Confirmed, a.LastErrorCode);
+        b.State.ShouldBe(LandNotificationState.Confirmed, b.LastErrorCode);
+        a.ConfirmingPromptSequence.ShouldBe(b.ConfirmingPromptSequence, "one prompt confirms both");
+        var da = TaskCompletionNotification.TryReadDelivery(a.CompletionDeliveryJson)!;
+        var db2 = TaskCompletionNotification.TryReadDelivery(b.CompletionDeliveryJson)!;
+        da.WireSha256.ShouldBe(db2.WireSha256, "same wire text");
+        da.MemberQueueIds.OrderBy(x => x).ShouldBe(rows.Select(r => r.Id).OrderBy(x => x), "membership names both rows");
+        db2.MemberQueueIds.OrderBy(x => x).ShouldBe(rows.Select(r => r.Id).OrderBy(x => x));
+        var prompts = (await rig.CallerPromptsAsync()).Where(p => PromptSubmissionMatch.IsConfirmedBy(da.WireText, p.Text)).ToList();
+        prompts.ShouldHaveSingleItem("exactly one UserPrompt carries the batch");
+        prompts[0].Text!.ShouldContain(da.LogicalNote.Split('\n')[0], Case.Sensitive);
+        prompts[0].Text!.ShouldContain(db2.LogicalNote.Split('\n')[0], Case.Sensitive);
+        rig.Caller.SubmittedBodies.ShouldHaveSingleItem();
+    }
+
+    /// <summary>PC-111: a pointer prompt confirms only while the referenced file still hashes to the recorded content.</summary>
+    [Test]
+    public async Task C544_PointerReceiptRequiresContent()
+    {
+        await using var rig = await C544DeliveryRig.CreateAsync(busy: false, spill: true);
+        var (taskId, _) = await rig.SettleReviewAsync();
+        await rig.DeliverAsync("pointer");
+        var delivery = TaskCompletionNotification.TryReadDelivery((await rig.NotificationAsync(taskId))!.CompletionDeliveryJson)!;
+        var path = delivery.SpillPath.ShouldNotBeNull();
+        var content = await File.ReadAllTextAsync(path);
+        await File.WriteAllTextAsync(path, content + "\ntampered after typing\n");
+
+        await rig.ScanAsync();
+        var refused = (await rig.NotificationAsync(taskId))!;
+        refused.State.ShouldNotBe(LandNotificationState.Confirmed);
+        refused.ConfirmingPromptSequence.ShouldBeNull();
+        refused.LastErrorCode.ShouldBe("completion_pointer_content_mismatch");
+
+        await File.WriteAllTextAsync(path, content);
+        rig.World.Clock.Advance(TimeSpan.FromMinutes(10));
+        await rig.ScanAsync();
+        await AssertReceivedOnceAsync(rig, taskId, "restored", FinalHeaderBits, expectKind: "raw", expectSpill: true);
+    }
+
+    /// <summary>PC-112: a lost report file is regenerated from the snapshot raw result, not the current task.Result.</summary>
+    [Test]
+    public async Task C544_ReportRegeneratedFromSnapshot()
+    {
+        await using var rig = await C544DeliveryRig.CreateAsync(busy: false, spill: true);
+        rig.Fault.Cut = "settled-committed";
+        var (taskId, _) = await rig.SettleReviewAsync(padding: 400);
+        var snapshot = TaskCompletionNotification.TryReadSnapshot((await rig.NotificationAsync(taskId))!.CompletionSnapshotJson)!;
+        var report = snapshot.ReportFilePath.ShouldNotBeNull("the settled report has a file");
+        File.Delete(report);
+        await using (var db = rig.World.CreateContext())
+            await db.AgentTasks.Where(t => t.Id == taskId).ExecuteUpdateAsync(s => s.SetProperty(t => t.Result, "FOREIGN REWRITE"));
+
+        await rig.RestartAsync();
+        rig.World.Clock.Advance(TimeSpan.FromMinutes(10));
+        await rig.ScanAsync();
+        await rig.FlushAsync();
+        await rig.ScanAsync();
+        await AssertReceivedOnceAsync(rig, taskId, "regenerated", FinalHeaderBits, expectKind: null, expectSpill: null);
+        File.Exists(report).ShouldBeTrue("regenerated");
+        (await AgentTaskLandNotificationService.FileHasSha256Async(report, snapshot.RawSha256, CancellationToken.None))
+            .ShouldBeTrue("regenerated report hashes to the snapshot raw result");
+        var delivery = TaskCompletionNotification.TryReadDelivery((await rig.NotificationAsync(taskId))!.CompletionDeliveryJson)!;
+        delivery.LogicalNote.ShouldNotContain("FOREIGN REWRITE", Case.Sensitive);
+    }
+
+    /// <summary>PC-113: a restart keeps the settlement's distillation deadline and commissions no new distiller call.</summary>
+    [Test]
+    public async Task C544_DistillationDeadlineSurvivesRestart()
+    {
+        await using var rig = await C544DeliveryRig.CreateAsync(busy: false, distill: true);
+        var (taskId, _) = await rig.SettleReviewAsync();
+        var hold = (await rig.RowAsync(taskId)).HoldUntil.ShouldNotBeNull();
+        var snapshot = TaskCompletionNotification.TryReadSnapshot((await rig.NotificationAsync(taskId))!.CompletionSnapshotJson)!;
+        snapshot.DistillDeadlineAt.ShouldBe(hold);
+
+        await rig.RestartAsync();
+        await rig.ScanAsync();
+        rig.DistillQueue.TryDequeue(out _).ShouldBeFalse("no new distiller admission after restart");
+        (await rig.RowAsync(taskId)).HoldUntil.ShouldBe(hold, "deadline unchanged by recovery");
+        await rig.FlushAsync();
+        rig.Caller.SubmittedBodies.ShouldBeEmpty("still held before the original deadline");
+
+        rig.World.Clock.Advance(hold - rig.World.Clock.GetUtcNow().UtcDateTime + TimeSpan.FromSeconds(5));
+        await rig.FlushAsync();
+        rig.Caller.SubmittedBodies.Count.ShouldBe(1, "raw delivered at the first flush after the original deadline");
+        await rig.ScanAsync();
+        rig.DistillQueue.TryDequeue(out _).ShouldBeFalse();
+        await AssertReceivedOnceAsync(rig, taskId, "deadline", FinalHeaderBits, expectKind: "raw", expectSpill: false);
+    }
+
+    /// <summary>PC-114: an ID-only, header-only or truncated prompt never confirms; only the whole wire prompt does.</summary>
+    [Test]
+    public async Task C544_CompletionReceiptWholeWire()
+    {
+        await using var rig = await C544DeliveryRig.CreateAsync(busy: false);
+        var (taskId, _) = await rig.SettleReviewAsync();
+        rig.Fault.TaskId = taskId;
+        rig.Fault.Cut = "render-committed";
+        try { await rig.FlushAsync(); }
+        catch (IOException e) when (e.Message.StartsWith("c544 completion persistence cut", StringComparison.Ordinal)) { }
+        rig.Fault.Throws.ShouldBe(1);
+        var note = (await rig.NotificationAsync(taskId))!;
+        var delivery = TaskCompletionNotification.TryReadDelivery(note.CompletionDeliveryJson).ShouldNotBeNull();
+        var snapshot = TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson)!;
+        var connection = rig.World.Schema.ConnectionString;
+        foreach (var (row, text) in new[]
+                 {
+                     ("id-only", $"notification {note.Id:N} task {taskId:N}"),
+                     ("header-only", snapshot.NoteHeader),
+                     ("truncated", delivery.WireText[..(delivery.WireText.Length / 2)]),
+                 })
+        {
+            await BridgeQueueHarness.InsertEntryAsync(rig.World.CallerSessionId, TranscriptKinds.UserPrompt, text,
+                timestamp: DateTime.UtcNow, connectionString: connection);
+            await BridgeQueueHarness.InsertEntryAsync(rig.World.CallerSessionId, TranscriptKinds.TurnEnd,
+                stopReason: TranscriptKinds.StopReasons.EndTurn, connectionString: connection);
+            await rig.ScanAsync();
+            var saved = (await rig.NotificationAsync(taskId))!;
+            saved.State.ShouldNotBe(LandNotificationState.Confirmed, row);
+            saved.ConfirmingPromptSequence.ShouldBeNull(row);
+        }
+        rig.Caller.SubmittedBodies.ShouldBeEmpty();
+
+        await rig.RestartAsync();
+        rig.World.Clock.Advance(TimeSpan.FromMinutes(10));
+        await rig.FlushAsync();
+        await rig.ScanAsync();
+        var whole = (await rig.CallerPromptsAsync()).Where(p => p.Text == rig.Caller.SubmittedBodies.ShouldHaveSingleItem()).ToList()
+            .ShouldHaveSingleItem("the whole prompt recorded once");
+        PromptSubmissionMatch.IsCompleteIn(delivery.WireText, whole.Text!).ShouldBeTrue();
+        var confirmed = (await rig.NotificationAsync(taskId))!;
+        confirmed.State.ShouldBe(LandNotificationState.Confirmed, confirmed.LastErrorCode);
+        confirmed.ConfirmingPromptSequence.ShouldBe(whole.Sequence, "confirmed by the whole wire prompt only");
+    }
+
+    /// <summary>PC-115: a sibling's root note and completion stamp are not a receipt for this obligation.</summary>
+    [Test]
+    public async Task C544_StampIsNotReceipt()
+    {
+        await using var rig = await C544DeliveryRig.CreateAsync(busy: false);
+        var root = await rig.RootOrchestratorAsync();
+        var (earlier, _) = await rig.SettleReviewAsync(root: root);
+        await rig.DeliverAsync("earlier");
+        await rig.ScanAsync();
+        (await rig.NotificationAsync(earlier))!.State.ShouldBe(LandNotificationState.Confirmed);
+        await using (var db = rig.World.CreateContext())
+            (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == earlier)).CompletionNoteQueuedAt.ShouldNotBeNull("sibling stamp present");
+
+        rig.Fault.Cut = "note-insert";
+        var (later, _) = await rig.SettleReviewAsync(root: root);
+        rig.Fault.Throws.ShouldBe(1, "this obligation's insert was lost");
+        (await rig.RowsAsync(later)).ShouldBeEmpty();
+
+        await rig.RestartAsync();
+        rig.World.Clock.Advance(TimeSpan.FromMinutes(10));
+        await rig.ScanAsync();
+        await rig.FlushAsync();
+        await rig.ScanAsync();
+        await AssertReceivedOnceAsync(rig, later, "later", FinalHeaderBits, expectKind: "raw", expectSpill: false);
+        await AssertReceivedOnceAsync(rig, earlier, "earlier", FinalHeaderBits, expectKind: "raw", expectSpill: false);
+    }
+
+    /// <summary>PC-116: a profile-v1 settlement produces one logical note: one keyed row, one prompt.</summary>
+    [Test]
+    public async Task C544_SingleLogicalNote()
+    {
+        foreach (var busy in new[] { false, true })
+        {
+            var row = $"busy={busy}";
+            await using var rig = await C544DeliveryRig.CreateAsync(busy);
+            var (taskId, _) = await rig.SettleReviewAsync();
+            var note = (await rig.NotificationAsync(taskId))!;
+            await rig.DeliverAsync(row);
+            await rig.ScanAsync();
+            await using var db = rig.World.CreateContext();
+            (await db.SessionQueuedMessages.CountAsync(m => m.ContentDigest == note.ContentDigest)).ShouldBe(1, row + ": one queue row for the digest");
+            (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == taskId)).ShouldBe(1, row);
+            var header = TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson)!.NoteHeader;
+            (await rig.CallerPromptsAsync()).Count(p => p.Text!.Contains(header, StringComparison.Ordinal)).ShouldBe(1, row + ": one prompt");
+            rig.Caller.SubmittedBodies.Count.ShouldBe(1, row);
+            await AssertReceivedOnceAsync(rig, taskId, row, FinalHeaderBits, expectKind: "raw", expectSpill: false);
+        }
+    }
+
+    /// <summary>PC-117: an existing keyed row with a different destination or digest is never linked or confirmed.</summary>
+    [Test]
+    public async Task C544_CompletionLinkValidatesIdentity()
+    {
+        foreach (var wrong in new[] { "destination", "digest" })
+        {
+            await using var rig = await C544DeliveryRig.CreateAsync(busy: false);
+            rig.Fault.Cut = "settled-committed";
+            var (taskId, _) = await rig.SettleReviewAsync();
+            var note = (await rig.NotificationAsync(taskId))!;
+            var destination = rig.World.CallerSessionId;
+            if (wrong == "destination")
+            {
+                destination = Guid.NewGuid();
+                await using var db = rig.World.CreateContext();
+                db.AgentSessions.Add(C544World.Session(destination, "c544-foreign", DateTime.UtcNow));
+                await db.SaveChangesAsync();
+            }
+            var digest = wrong == "digest" ? DelegationNoteDigest.Compute("a different payload") : note.ContentDigest;
+            await rig.Queue.EnqueueAsync(destination, note.Body, MessageSendMode.WhenIdle, CancellationToken.None,
+                QueuedMessageOrigin.Delegation, sourceTaskId: taskId, contentDigest: digest, deliverIfIdle: false,
+                sourceLandNotificationId: note.Id);
+
+            await rig.RestartAsync();
+            rig.World.Clock.Advance(TimeSpan.FromMinutes(10));
+            await rig.ScanAsync();
+            var saved = (await rig.NotificationAsync(taskId))!;
+            saved.QueueMessageId.ShouldBeNull(wrong + ": never linked");
+            saved.State.ShouldNotBe(LandNotificationState.Confirmed, wrong);
+            saved.ConfirmingPromptSequence.ShouldBeNull(wrong);
+            saved.LastErrorCode.ShouldBe("notification_reconcile_failed:ConflictException", wrong);
+            rig.Caller.SubmittedBodies.ShouldBeEmpty(wrong);
+            await using var verify = rig.World.CreateContext();
+            (await verify.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId == note.Id)).ShouldBe(1, wrong + ": no replacement row");
+        }
+    }
+
+    /// <summary>PC-120: a caller that stops after the prompt landed still yields a receipt from the existing transcript.</summary>
+    [Test]
+    public async Task C544_StoppedCallerReceipt()
+    {
+        foreach (var status in new[] { SessionStatus.Stopped, SessionStatus.Failed })
+        {
+            var row = status.ToString();
+            await using var rig = await C544DeliveryRig.CreateAsync(busy: false);
+            var (taskId, _) = await rig.SettleReviewAsync();
+            await rig.FlushAsync();
+            rig.Caller.SubmittedBodies.Count.ShouldBe(1, row);
+            rig.Fault.TaskId = taskId;
+            rig.Fault.Cut = "prompt-accepted";
+            try { await rig.ScanAsync(); }
+            catch (IOException e) when (e.Message.StartsWith("c544 completion persistence cut", StringComparison.Ordinal)) { }
+            rig.Fault.Throws.ShouldBe(1, row + ": receipt save cut");
+            (await rig.NotificationAsync(taskId))!.State.ShouldNotBe(LandNotificationState.Confirmed, row);
+
+            await rig.SetCallerStatusAsync(status);
+            await rig.RestartAsync();
+            rig.World.Clock.Advance(TimeSpan.FromMinutes(10));
+            await rig.ScanAsync();
+            await AssertReceivedOnceAsync(rig, taskId, row, FinalHeaderBits, expectKind: "raw", expectSpill: false);
+            rig.Caller.SubmittedBodies.Count.ShouldBe(1, row + ": nothing retyped");
+        }
     }
 
     // ---- shared assertions ------------------------------------------------------------------------
