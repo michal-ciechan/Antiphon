@@ -996,7 +996,7 @@ handoff defects, not exclusions.
 | G-66 | D-3/D-8: Unavailable manual acceptance and deferred PCs remain outstanding | PC-66 |
 | G-67 | D-4: Clean Interim handoff requests Final Review and cannot relabel itself | PC-67 |
 | G-68 | D-8: Warm/follow-up/spilled task briefs carry the current profile | PC-68 |
-| G-69 | D-8: Profile brief handoff survives failed enqueue and process recreation | PC-69 |
+| G-69 | D-8: a Profile brief whose queue insert fails after the Dispatched commit is never re-enqueued; the delivery watchdog fails the task as never-started with a durable DeliveryFailure obligation keyed to the caller (restated after Review 5f4d2a5b; process recreation of a committed brief stays covered by `C544_BriefHandoffRecovery`) | PC-69 |
 | G-70 | D-8: Scope-bearing completion outcome reaches the actual caller | PC-70 |
 | G-71 | D-8: Outcome recovery does not lose or double-submit a committed completion | PC-71 |
 | G-72 | D-6: Daily validity is separate from the age of completedAt | PC-72 |
@@ -1128,7 +1128,7 @@ No PC has been run in this TestDesign dispatch.
 | PC-66 | stage-review.md: allow nightly green to satisfy required manual/PC checks | `VerificationRoundInstructionTests.C544_ManualAndPcContract` | composed contract keeps required manual pending and PCs for SourceLanding Mutation |
 | PC-67 | completion routing: emit next=land for a clean Interim Review | `VerificationRoundSettlementTests.C544_InterimRouting` | completion header next=review with Final obligation; Found remains next=code |
 | PC-68 | DelegationReportFormatter.BuildBrief: omit verification profile for refocus/warm briefs | `VerificationRoundBriefTests.C544_ProfileInEveryBrief` | every inline/spilled brief has the exact current scope, baseline and deferred obligation |
-| PC-69 | dispatcher recovery: skip re-enqueue of a committed task whose brief queue insert failed | `VerificationRoundDeliveryTests.C544_BriefHandoffRecovery` | same task's complete correlated UserPrompt eventually exists once |
+| PC-69 | `AgentTaskDispatcher.FailNeverStartedAsync`: skip the `deliveryFailureNotificationId` obligation on the Failed commit (or skip the never-started failure when no brief row exists) | `VerificationRoundDeliveryTests.C544_BriefHandoffNeverStartedFailure` | brief insert cut after Dispatched commits: brief rows stay 0 across a recreated provider and tick; after `DeliveryFailTimeoutMinutes` the task is Failed with "no brief was queued for this task after dispatch", exactly one `DeliveryFailure` notification sourced by the Failed event, and one caller queue row keyed to it (`task:<root>`, Body == notification Body) |
 | PC-70 | AgentTaskReplyService: suppress completion enqueue after settled scope | `VerificationRoundDeliveryTests.C544_CompletionReceipt` | busy and eligible callers each receive one complete matching outcome UserPrompt |
 | PC-71 | completion recovery: mark notification complete at enqueue instead of recipient confirmation | `VerificationRoundDeliveryTests.C544_CompletionRecovery` | post-enqueue crash recovers the same identity and exactly one complete caller UserPrompt |
 | PC-72 | Test-NightlyMonitorHealth: retain the completedAt <=60m readiness predicate | `NightlyVerificationContractTests.C544_DailyValidity` | today's scheduled green completed eight hours ago with a fresh monitor is ready |
@@ -1605,6 +1605,30 @@ If Code finds that any of these cannot be met without a second outbox worker, a
 new table, or relaxing an existing land/failure receipt rule, it returns
 `next: plan` naming the seam rather than widening the design silently.
 
+### Rebase unification with CARD-0527 TaskCompletion (Code task d2117ffc)
+
+Review 5f4d2a5b found that master's CARD-0527/CARD-0549 work had already appended
+`TaskCompletion` at ordinal 6 (a durable note for Shared settlements with a commit outcome)
+while this branch appended `Completion` at the same ordinal. Both mint in the settlement
+transaction keyed to the settlement event, so a Shared profile-v1 Code/Review task that commits
+on settle would add two rows with one `SourceEventId` and fail the unique index. Resolution:
+
+- One kind: `LandNotificationKind.TaskCompletion` (master's name and ordinal). Every
+  `Completion` reference in this plan's D-9 text means that kind.
+- Discriminator: a row carrying `CompletionSnapshotJson` is the D-9 obligation
+  (`TaskCompletionNotification.IsProfiled`); a snapshot-less row is CARD-0527's legacy note.
+  Snapshot rendering, frozen-wire receipt, report regeneration, distillation, shrink and the
+  rendering freeze are gated on the snapshot. Legacy rows keep the immutable-Body receipt.
+  Kind-level seams (task-root conversation key, `CompletionNoteStamp`, `HasCompletionNoteAsync`,
+  completion header / poll-after-note, Attention "Task completion notification") apply to both.
+- Producers are exclusive per event: `SettleAsync` adds the D-9 obligation when
+  `TaskCompletionNotification.Applies` holds and passes it to `PersistDeliverThenReleaseAsync`,
+  whose CARD-0527 mint runs only when no obligation was supplied. Paths that never mint a D-9
+  obligation (unreported failure, API error, bind-refusal recovery, Blocked/question and every
+  null-profile task) keep CARD-0527's rule unchanged.
+- The branch migration `20260917012003_AddVerificationProfile` adds no enum change; its
+  designer was regenerated from the merged model snapshot.
+
 ### Inspection (this dispatch)
 
 | Test/fixture/production bodies read | Boundaries -> V/R IDs or exclusion |
@@ -1618,7 +1642,7 @@ new table, or relaxing an existing land/failure receipt rule, it returns
 Missing setup, in addition to items 1-7 of the earlier appendix:
 
 8. Q gains a `CompletionFault` interceptor cloned from `CallerFailureFault` whose
-   predicate is `Kind == LandNotificationKind.Completion`, with cuts
+   predicate is `Kind == LandNotificationKind.TaskCompletion`, with cuts
    `obligation-insert`, `settled-committed` (crash after the settlement transaction,
    before the immediate reconcile), `note-insert`, `note-committed`,
    `wakeup-dropped` (`LandDeliveryBoundary.DropWakeup("completion")`),
@@ -1837,8 +1861,9 @@ are unchanged. PC-71 is now executable and is restated in the control table.
 | G-118 | D-9: unconfirmed Completion evidence survives retention; a confirmed obligation retains receipt identity and is never re-enqueued | PC-118 |
 | G-119 | D-9: obligations are minted only for profile-v1 `ReplyTo=Session` settlements; legacy tasks keep today's path unchanged | PC-119 |
 | G-120 | D-9/CARD-0481 order: an existing keyed row is discovered, validated, linked and confirmed even after the caller stops; only new insertion is gated on destination status | PC-120 |
+| G-121 | D-9 unified with CARD-0527: one `TaskCompletion` notification per settlement event; a profile-v1 Shared settlement that commits on settle mints only the snapshot-bearing obligation, a legacy one only the snapshot-less CARD-0527 row | PC-121, PC-122 |
 
-Guards = 120; mapped = 120; missing = 0; duplicate PC mappings = 0. Every
+Guards = 121; mapped = 121; missing = 0; duplicate PC mappings = 0. Every
 CARD-0544 guard (107) has an executable control below or at 5d91dca2; the 13
 CARD-0545 guards have controls whose production entrypoint CARD-0545 names.
 
@@ -1874,6 +1899,8 @@ dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c544-pc/ -- 
 | PC-118 | `DataRetentionService`: prune unconfirmed keyed Completion rows past the queued window | `DataRetentionServiceTests.C544_CompletionObligationRetention` | stale unconfirmed Completion row survives; confirmed one prunes with ConfirmedAt/ConfirmingPromptSequence retained and no re-enqueue on the next scan |
 | PC-119 | `TaskCompletionNotification`: mint for `ReplyTo != Session` and legacy null-profile tasks | `VerificationRoundSettlementTests.C544_ObligationApplicability` | rows {Session profile v1 -> 1; ReplyTo=None -> 0; legacy -> 0 and legacy direct note delivered} |
 | PC-120 | `ReconcileAsync` Completion branch: check destination Stopped/Failed before discovering the existing keyed row | `VerificationRoundDeliveryTests.C544_StoppedCallerReceipt` | caller Stopped/Failed after delivery, restart: State == Confirmed from the existing transcript; no new queue row |
+| PC-121 | `PersistDeliverThenReleaseAsync`: drop the `completion is null` term from `durableCompletion` (both producers mint) | `AgentTaskReplyIntegrationTests.C544_shared_commit_on_settle_mints_one_task_completion(True)` | settlement commits (Succeeded, gated commit present), exactly one TaskCompletion row, `IsProfiled`, snapshot SourceEventId == the Completed event, one parent receipt keyed to it |
+| PC-122 | `SessionMessageQueueService` shrink seam: drop `CompletionSnapshotJson != null` (legacy snapshot-less TaskCompletion rows shrink/distill) | `AgentTaskReplyIntegrationTests.C544_shared_commit_on_settle_mints_one_task_completion(False)` plus the existing CARD-0527 receipt classes | legacy row: one snapshot-less TaskCompletion, parent prompt byte-equal to the immutable Body. Code note: the short fixture report may never reach the shrink threshold, so this control may be missing; Mutation confirms red or reports the gap |
 
 Mutation runs each control method-scoped after land, restores, and reports
 break/red/restore/green. Code implements the tests and runs the same methods

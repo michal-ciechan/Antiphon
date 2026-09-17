@@ -223,7 +223,7 @@ public sealed class OutputDistillationService
                 // CARD-0544 D-9: a Completion obligation's hold is released like a direct note's.
                 .Where(m => m.Id == id && m.HoldUntil != null && (m.SourceLandNotificationId == null
                     || _db.AgentTaskLandNotifications.Any(n => n.Id == m.SourceLandNotificationId
-                        && n.Kind == LandNotificationKind.Completion)))
+                        && n.Kind == LandNotificationKind.TaskCompletion && n.CompletionSnapshotJson != null)))
                 .ExecuteUpdateAsync(s => s.SetProperty(m => m.HoldUntil, (DateTime?)null), ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

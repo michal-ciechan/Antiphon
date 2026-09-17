@@ -83,12 +83,21 @@ public static class TaskCompletionNotification
         string? SpillSha256,
         DateTime CommittedAt);
 
+    /// <summary>
+    /// CARD-0544 D-9 on the unified <see cref="LandNotificationKind.TaskCompletion"/> kind: a row
+    /// carrying a snapshot is this obligation (renderable, frozen wire receipt). A snapshot-less
+    /// TaskCompletion is CARD-0527's legacy commit-outcome note and keeps the immutable-Body rule.
+    /// Keep the EF query seams (<c>Kind == TaskCompletion &amp;&amp; CompletionSnapshotJson != null</c>) in step.
+    /// </summary>
+    public static bool IsProfiled(AgentTaskLandNotification notification) =>
+        notification.Kind == LandNotificationKind.TaskCompletion && notification.CompletionSnapshotJson is not null;
+
     public static AgentTaskLandNotification Create(AgentTask task, AgentTaskEvent settlementEvent, Snapshot snapshot, DateTime now) => new()
     {
         Id = Guid.NewGuid(),
         TaskId = task.Id,
         SourceEventId = settlementEvent.Id,
-        Kind = LandNotificationKind.Completion,
+        Kind = LandNotificationKind.TaskCompletion,
         ReplyTo = task.ReplyTo,
         ParentSessionId = task.ParentSessionId,
         Body = snapshot.RawBody,

@@ -32,7 +32,7 @@ public sealed class AgentTaskLandNotification
 
     /// <summary>
     /// CARD-0544 D-9. Immutable per-settlement completion snapshot (raw result, profile, header).
-    /// Null on every kind other than <see cref="LandNotificationKind.Completion"/>.
+    /// Null on every kind other than <see cref="LandNotificationKind.TaskCompletion"/>.
     /// </summary>
     public string? CompletionSnapshotJson { get; set; }
 

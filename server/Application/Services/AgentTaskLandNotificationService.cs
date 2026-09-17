@@ -20,10 +20,11 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
 {
     /// <summary>
     /// Kinds whose keyed row is also the caller's completion note: task-root conversation key,
-    /// completion-note stamp. <see cref="LandNotificationKind.Completion"/> is CARD-0544 D-9.
+    /// completion-note stamp. <see cref="LandNotificationKind.TaskCompletion"/> is CARD-0527's commit-outcome
+    /// note and, when it carries a snapshot, the CARD-0544 D-9 obligation (<see cref="TaskCompletionNotification.IsProfiled"/>).
     /// </summary>
     internal static bool IsCompletionNoteKind(LandNotificationKind kind) =>
-        kind is LandNotificationKind.DeliveryFailure or LandNotificationKind.Completion;
+        kind is LandNotificationKind.DeliveryFailure or LandNotificationKind.TaskCompletion;
 
     public async Task ReconcileAsync(Guid id, CancellationToken ct)
     {
@@ -100,7 +101,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 // hold deadline fixed at settlement — after making sure the report it points at is
                 // the snapshot's raw result, never whatever the task row holds now.
                 TaskCompletionNotification.Snapshot? completion = null;
-                if (note.Kind == LandNotificationKind.Completion)
+                if (TaskCompletionNotification.IsProfiled(note))
                 {
                     completion = TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson);
                     var unresolved = completion is null ? "completion_snapshot_invalid"
@@ -160,7 +161,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
             // Every other kind keeps the immutable-Body rule.
             var expected = note.Body;
             TaskCompletionNotification.Delivery? rendering = null;
-            if (note.Kind == LandNotificationKind.Completion)
+            if (TaskCompletionNotification.IsProfiled(note))
             {
                 rendering = TaskCompletionNotification.TryReadDelivery(note.CompletionDeliveryJson);
                 if (rendering is null)

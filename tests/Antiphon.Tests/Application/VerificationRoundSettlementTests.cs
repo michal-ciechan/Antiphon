@@ -240,7 +240,7 @@ public sealed class VerificationRoundSettlementTests
         await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(world.Schema.ConnectionString));
         (await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id)).Status.ShouldBe(AgentTaskStatus.Succeeded, "recovered");
         (await verify.StageOutcomes.CountAsync(o => o.StageTaskId == created.Id)).ShouldBe(1, "recovered");
-        (await verify.AgentTaskLandNotifications.CountAsync(n => n.TaskId == created.Id && n.Kind == LandNotificationKind.Completion)).ShouldBe(1, "recovered");
+        (await verify.AgentTaskLandNotifications.CountAsync(n => n.TaskId == created.Id && n.Kind == LandNotificationKind.TaskCompletion)).ShouldBe(1, "recovered");
     }
 
     [Test]
@@ -331,7 +331,7 @@ public sealed class VerificationRoundSettlementTests
 
         var profiled = await world.SettleReviewAsync();
         await using (var db = world.CreateContext())
-            (await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == profiled.StageTaskId && n.Kind == LandNotificationKind.Completion))
+            (await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == profiled.StageTaskId && n.Kind == LandNotificationKind.TaskCompletion))
                 .ShouldBe(1, "session-profile-v1");
 
         var noSession = await world.CreateTaskAsync(world.FinalReview(), new AgentTaskService.Caller(null, null, world.Repo.Path, ProjectId: world.Project.Id));
@@ -422,7 +422,7 @@ public sealed class VerificationRoundSettlementTests
         {
             var tracker = data.Context!.ChangeTracker;
             if (Throws == 0 && TaskId != Guid.Empty && tracker.Entries<AgentTaskLandNotification>().Any(e =>
-                    e.State == EntityState.Added && e.Entity.TaskId == TaskId && e.Entity.Kind == LandNotificationKind.Completion))
+                    e.State == EntityState.Added && e.Entity.TaskId == TaskId && e.Entity.Kind == LandNotificationKind.TaskCompletion))
             {
                 PairObserved = tracker.Entries<AgentTask>().Any(e => e.Entity.Id == TaskId && e.State == EntityState.Modified
                         && e.Entity.Status == AgentTaskStatus.Succeeded)

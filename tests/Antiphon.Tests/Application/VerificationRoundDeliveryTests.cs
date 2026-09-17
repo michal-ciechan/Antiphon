@@ -7,6 +7,7 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
@@ -248,6 +249,84 @@ public sealed class VerificationRoundDeliveryTests
             }
             durable.ShouldContain("--- verification profile ---", Case.Sensitive, row + ": profile block delivered");
             durable.ShouldContain("round: Final", Case.Sensitive, row);
+        }
+    }
+
+    /// <summary>
+    /// G-69 / PC-69 (restated after Review 5f4d2a5b). The dispatcher commits Dispatched and only then
+    /// inserts the brief, swallowing an insert failure; nothing re-enqueues it. The real recovery is
+    /// the delivery watchdog: the task fails as never-started ("no brief was queued") with a durable
+    /// DeliveryFailure obligation committed with the Failed event and keyed into the caller's queue.
+    /// A recreated process before the watchdog window adds no brief row.
+    /// </summary>
+    [Test]
+    public async Task C544_BriefHandoffNeverStartedFailure()
+    {
+        var fault = new BriefInsertFault();
+        await using var world = await C544World.CreateAsync(interceptor: fault);
+        var created = await world.CreateTaskAsync(world.FinalReview());
+        fault.TaskId = created.Id;
+
+        await using (var scope = world.Services.CreateAsyncScope())
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
+        fault.Throws.ShouldBe(1, "the brief insert failed once");
+        var dispatched = await world.TaskAsync(created.Id);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched, "Dispatched committed before the brief insert: " + dispatched.FailureReason);
+        dispatched.VerificationRound.ShouldBe(VerificationRound.Final);
+        var session = dispatched.AgentSessionId.ShouldNotBeNull();
+        async Task<int> BriefRowsAsync()
+        {
+            await using var db = world.CreateContext();
+            return await db.SessionQueuedMessages.CountAsync(m => m.ExecutionTaskId == created.Id);
+        }
+        (await BriefRowsAsync()).ShouldBe(0, "the swallowed insert left no brief row");
+
+        // Process recreation inside the watchdog window: nothing re-enqueues the lost brief.
+        await world.RestartAsync();
+        await using (var scope = world.Services.CreateAsyncScope())
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
+        (await BriefRowsAsync()).ShouldBe(0, "no re-enqueue path exists");
+        (await world.TaskAsync(created.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched, "not judged inside the window");
+
+        world.Clock.Advance(TimeSpan.FromMinutes(world.Delegation.DeliveryFailTimeoutMinutes + 1));
+        await using (var scope = world.Services.CreateAsyncScope())
+            (await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().FailNeverStartedAsync(CancellationToken.None))
+                .ShouldBeGreaterThanOrEqualTo(1);
+
+        var failed = await world.TaskAsync(created.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason.ShouldNotBeNull().ShouldContain("no brief was queued for this task after dispatch");
+        (await BriefRowsAsync()).ShouldBe(0, "failing the task does not re-enqueue the brief either");
+        await using var verify = world.CreateContext();
+        var notification = (await verify.AgentTaskLandNotifications.AsNoTracking()
+            .Where(n => n.TaskId == created.Id).ToListAsync()).ShouldHaveSingleItem();
+        notification.Kind.ShouldBe(LandNotificationKind.DeliveryFailure);
+        notification.ParentSessionId.ShouldBe(world.CallerSessionId);
+        var failedEvent = await verify.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.Id == notification.SourceEventId);
+        failedEvent.AgentTaskId.ShouldBe(created.Id);
+        failedEvent.Type.ShouldBe(AgentTaskEventType.Failed);
+        var keyed = await verify.SessionQueuedMessages.AsNoTracking()
+            .SingleAsync(m => m.AgentSessionId == world.CallerSessionId && m.SourceLandNotificationId == notification.Id);
+        keyed.ConversationKey.ShouldBe($"task:{failed.RootTaskId:N}");
+        keyed.Body.ShouldBe(notification.Body);
+        session.ShouldNotBe(world.CallerSessionId);
+    }
+
+    private sealed class BriefInsertFault : SaveChangesInterceptor
+    {
+        public Guid TaskId { get; set; }
+        public int Throws { get; private set; }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data,
+            InterceptionResult<int> result, CancellationToken ct = default)
+        {
+            if (Throws == 0 && TaskId != Guid.Empty && data.Context!.ChangeTracker.Entries<SessionQueuedMessage>()
+                    .Any(e => e.State == EntityState.Added && e.Entity.ExecutionTaskId == TaskId))
+            {
+                Throws++;
+                throw new IOException("c544 brief-insert cut");
+            }
+            return ValueTask.FromResult(result);
         }
     }
 
