@@ -1,11 +1,11 @@
 {
-  "path": "u/lndcobra/antiphon_nightly_health",
+  "path": "u/lndcobra/antiphon_nightly_readiness",
   "schedule": "0 */30 * * * *",
   "timezone": "Europe/London",
-  "script_path": "u/lndcobra/antiphon_nightly_health",
+  "script_path": "u/lndcobra/antiphon_nightly_readiness",
   "is_flow": false,
   "args": {},
   "enabled": true,
-  "tag": "default",
+  "tag": "desktop",
   "on_failure": null
 }

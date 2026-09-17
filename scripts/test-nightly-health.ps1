@@ -614,7 +614,7 @@ function Test-C544_ProductionJobAdapter {
     $stub = Start-C544WindmillStub -Routes $routes
     $api = New-C545ProductionApi -Stub $stub
     $jobs = @($api.GetJobs.Invoke())
-    $requestLines = Stop-C544WindmillStub -Stub $stub
+    $requestLines = @(Stop-C544WindmillStub -Stub $stub)
     $request = @(Get-Content -LiteralPath $stub.Log)
     Assert-C487 -Cond (($request[0] -like 'GET /api/w/mc/jobs/list?script_path_exact=u%2Flndcobra%2Fantiphon_nightly_tests*') -and (@($request | Where-Object { $_ -eq 'Authorization: Bearer c544-fixture-token' }).Count -eq 1)) `
         -Name 'C544 ProductionJobAdapter real HTTP request shape' -Detail ($request -join ' | ')
@@ -660,7 +660,7 @@ function Test-C545_JobResultFetch {
     }
     $stub = Start-C544WindmillStub -Routes $routes
     $jobs = @((New-C545ProductionApi -Stub $stub).GetJobs.Invoke())
-    $requestLines = Stop-C544WindmillStub -Stub $stub
+    $requestLines = @(Stop-C544WindmillStub -Stub $stub)
     $paths = @($requestLines | ForEach-Object { (($_ -split ' ')[1] -split '\?')[0] })
     $expectedPaths = @('/api/w/mc/jobs/list') + @(1..5 | ForEach-Object { '/api/w/mc/jobs_u/completed/get_result/c{0}' -f $_ })
     Assert-C487 -Cond (($paths -join ',') -eq ($expectedPaths -join ',')) -Name 'C545 JobResultFetch requests are list then c1..c5 in order' -Detail ($requestLines -join ' | ')
@@ -704,8 +704,166 @@ function Test-C545_JobResultFetch {
     Assert-C487 -Cond ((@($api.Keys) -notcontains 'EnqueueNotification') -and ($null -eq $config.PSObject.Properties['NotifyPath'])) -Name 'C545 JobResultFetch no production Windmill notification sink' -Detail (@($api.Keys) -join ',')
 }
 
+# ---- CARD-0545 D-9: the watchdog snapshot folds into the local evaluator ----
+
+$script:C545Now = [datetime]::Parse('2026-09-17T09:00:00Z', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal)
+
+function New-C545SnapshotText {
+    param([TimeSpan]$Age = [TimeSpan]::Zero, [string]$Namespace = 'mc', [string]$InstanceId = 'wd-1', $SchemaVersion = 1, [object[]]$OpenOutages = @(), [switch]$NoHeartbeat)
+    $snap = [ordered]@{ schemaVersion = $SchemaVersion; instanceId = $InstanceId; version = '1.0.0'; configHash = 'cfg'; namespace = $Namespace }
+    if (-not $NoHeartbeat) { $snap.heartbeatAt = ($script:C545Now - $Age).ToString('yyyy-MM-ddTHH:mm:ss.fffZ') }
+    $snap.tickSeconds = 600
+    $snap.openOutages = @($OpenOutages)
+    $snap.recentNotifications = @()
+    return (ConvertTo-Json -InputObject $snap -Depth 6 -Compress)
+}
+
+function New-C545WatchdogFx {
+    # An otherwise-green evaluator fixture (scheduled green for 2026-09-17 at 10:00 London) whose only
+    # variable input is the watchdog snapshot seam: raw text, a throw, or no seam at all.
+    param([string]$SnapshotText = '', [switch]$Throw, [switch]$NoSeam)
+    $root = Join-Path $ResultsDirectory ('c545-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $root -Force | Out-Null
+    $native = New-C544Run -RunId 'r17' -CompletedLocal '2026-09-17 03:00:00'
+    Write-NightlyAtomicJson -Path (Join-Path $root 'last-run.json') -Object $native
+    $job = New-C544Job -Date '2026-09-17' -RunId 'r17'
+    $jobLiteral = ('@{{ id = ''{0}''; status = ''success''; scheduled = $true; nativeRunId = ''r17''; sha = ''sha-r17''; localDueDate = ''2026-09-17''; scheduledFor = ''{1}'' }}' -f $job.id, $job.scheduledFor)
+    $snapshotFile = Join-Path $root 'snapshot.txt'
+    [System.IO.File]::WriteAllText($snapshotFile, $SnapshotText)
+    $seamLine = ''
+    if ($Throw) {
+        $seamLine = '$NightlySeams.WatchdogSnapshot = { param($Url) throw ''connection refused'' }'
+    } elseif (-not $NoSeam) {
+        $seamLine = ('$NightlySeams.WatchdogSnapshot = {{ param($Url) return [System.IO.File]::ReadAllText(''{0}'') }}' -f $snapshotFile)
+    }
+    $text = @"
+`$NightlySeams = @{
+    UtcNow = { return [datetime]::Parse('2026-09-17T09:00:00Z', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal) }
+    WindmillApi = @{
+        GetRegistration = { return @{ script = `$true; tag = 'desktop'; hash = 'a' } }
+        GetSchedule = { return @{ enabled = `$true; paused = `$false; tag = 'desktop' } }
+        GetJobs = { return @($jobLiteral) }
+    }
+}
+$seamLine
+"@
+    $seams = Join-Path $root 'seams.ps1'
+    Set-Content -LiteralPath $seams -Value $text -Encoding ASCII
+    return [pscustomobject]@{ Root = $root; Seams = $seams }
+}
+
+function Invoke-C545WatchdogHealth {
+    param($Fx, [string]$Url = 'http://127.0.0.1:17290/snapshot.json', [string]$InstanceId = 'wd-1', [string]$ReadinessConfigPath = '')
+    $params = @{ StateRoot = $Fx.Root; SeamsPath = $Fx.Seams; RepositoryPath = 'C:\src\Antiphon'; PassThru = $true }
+    if ($ReadinessConfigPath) {
+        $params.ReadinessConfigPath = $ReadinessConfigPath
+    } else {
+        $params.ExpectedScriptHash = 'a'; $params.ExpectedPolicyHash = 'p'; $params.WatchdogSnapshotUrl = $Url; $params.ExpectedWatchdogInstanceId = $InstanceId
+    }
+    return Invoke-AntiphonNightlyHealth @params
+}
+
+function Test-C545_WatchdogFresh {
+    foreach ($row in @(@('0:00', [TimeSpan]::Zero), @('19:59', [TimeSpan]::FromSeconds(1199)), @('20:00', [TimeSpan]::FromMinutes(20)))) {
+        $fetch = [pscustomobject]@{ Reachable = $true; Raw = ''; Snapshot = ((New-C545SnapshotText -Age $row[1]) | ConvertFrom-Json); Error = '' }
+        $f = Test-NightlyWatchdogFreshness -Snapshot $fetch -NowUtc $script:C545Now -ExpectedNamespace 'mc' -ExpectedInstanceId 'wd-1'
+        Assert-C487 -Cond ([bool]$f.Fresh -and @($f.Reasons).Count -eq 0) -Name ('C545 WatchdogFresh age {0} fresh' -f $row[0]) -Detail ($f.Reasons -join ',')
+    }
+
+    $stub = Start-C544WindmillStub -Routes ([ordered]@{ 'snapshot.json' = (New-C545SnapshotText) })
+    $fetched = Get-NightlyWatchdogSnapshot -Url ('http://127.0.0.1:{0}/snapshot.json' -f $stub.Port)
+    $lines = @(Stop-C544WindmillStub -Stub $stub)
+    Assert-C487 -Cond ([bool]$fetched.Reachable -and [string]$fetched.Snapshot.instanceId -eq 'wd-1' -and @($lines).Count -eq 1 -and ([string]$lines[0]).StartsWith('GET /snapshot.json')) `
+        -Name 'C545 WatchdogFresh real HTTP snapshot read' -Detail (($lines -join ' | ') + ' ' + ($fetched | ConvertTo-Json -Compress -Depth 4))
+
+    $fx = New-C545WatchdogFx -SnapshotText (New-C545SnapshotText -Age ([TimeSpan]::FromMinutes(5)))
+    $h = Invoke-C545WatchdogHealth -Fx $fx
+    $expectedBeat = ($script:C545Now - [TimeSpan]::FromMinutes(5))
+    $beat = $null
+    if ([string]$h.Identity.WatchdogHeartbeatAt) { $beat = ([datetime]::Parse([string]$h.Identity.WatchdogHeartbeatAt, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal)) }
+    Assert-C487 -Cond ([bool]$h.Health.Healthy -and [bool]$h.Health.ReadyForDeferral) -Name 'C545 WatchdogFresh evaluator healthy with a fresh watchdog' -Detail ($h.Health.Reasons -join ',')
+    Assert-C487 -Cond ([string]$h.Identity.WatchdogInstanceId -eq 'wd-1' -and $beat -eq $expectedBeat) -Name 'C545 WatchdogFresh monitor identity carries instance and heartbeat' -Detail ([string]$h.Identity.WatchdogInstanceId + ' ' + [string]$h.Identity.WatchdogHeartbeatAt)
+    $saved = Get-Content -LiteralPath (Get-NightlyMonitorResultPath -StateRoot $fx.Root) -Raw | ConvertFrom-Json
+    Assert-C487 -Cond ([string]$saved.Identity.WatchdogInstanceId -eq 'wd-1' -and [bool]$saved.Health.Healthy) -Name 'C545 WatchdogFresh last-monitor.json records the watchdog identity'
+
+    $fx2 = New-C545WatchdogFx -SnapshotText (New-C545SnapshotText -Age ([TimeSpan]::FromMinutes(1)))
+    $config = Join-Path $fx2.Root 'readiness-config.json'
+    Write-NightlyAtomicJson -Path $config -Object ([ordered]@{
+        expectedScriptHash = 'a'; expectedPolicyHash = 'p'; watchdogSnapshotUrl = 'http://127.0.0.1:17290/snapshot.json'
+        watchdogInstanceId = 'wd-1'; repositoryPath = 'C:\Antiphon\qualified-repo'; projectId = 'c5450000-0000-4000-8000-000000000001' })
+    $viaConfig = Invoke-AntiphonNightlyHealth -StateRoot $fx2.Root -SeamsPath $fx2.Seams -ReadinessConfigPath $config -PassThru
+    $id = $viaConfig.Identity
+    Assert-C487 -Cond ([bool]$viaConfig.Health.Healthy -and [string]$id.ScriptHash -eq 'a' -and [string]$id.PolicyHash -eq 'p' -and [string]$id.WatchdogInstanceId -eq 'wd-1' -and [string]$id.RepositoryPath -eq 'C:\Antiphon\qualified-repo' -and [string]$id.ProjectId -eq 'c5450000-0000-4000-8000-000000000001') `
+        -Name 'C545 WatchdogFresh readiness-config supplies every value' -Detail (($viaConfig.Health.Reasons -join ',') + ' ' + ($id | ConvertTo-Json -Compress))
+}
+
+function Assert-C545WatchdogUnhealthy {
+    param($Health, [string]$Fx, [string]$Reason, [string]$Name)
+    $monitor = Test-Path -LiteralPath (Get-NightlyMonitorResultPath -StateRoot $Fx)
+    $reasons = @($Health.Health.Reasons)
+    Assert-C487 -Cond ((-not [bool]$Health.Health.Healthy) -and (-not [bool]$Health.Health.ReadyForDeferral) -and ($reasons -contains $Reason) -and $monitor) -Name $Name -Detail ('healthy={0} reasons={1} monitor={2}' -f $Health.Health.Healthy, ($reasons -join ','), $monitor)
+}
+
+function Test-C545_WatchdogStale {
+    $rows = @(
+        @('C545 WatchdogStale age 20:01 stale', 'watchdog-stale', (New-C545SnapshotText -Age ([TimeSpan]::FromSeconds(1201))), ''),
+        @('C545 WatchdogStale future heartbeat malformed', 'watchdog-malformed', (New-C545SnapshotText -Age ([TimeSpan]::FromSeconds(-1))), ''),
+        @('C545 WatchdogStale malformed not-json', 'watchdog-malformed', 'this is not json', ''),
+        @('C545 WatchdogStale malformed missing-heartbeat', 'watchdog-malformed', (New-C545SnapshotText -NoHeartbeat), ''),
+        @('C545 WatchdogStale malformed schema-2', 'watchdog-malformed', (New-C545SnapshotText -SchemaVersion 2), ''),
+        @('C545 WatchdogStale malformed empty-instance', 'watchdog-malformed', (New-C545SnapshotText -InstanceId ''), ''),
+        @('C545 WatchdogStale namespace mc/qual mismatch', 'watchdog-identity-mismatch', (New-C545SnapshotText -Namespace 'mc/qual'), ''),
+        @('C545 WatchdogStale instance wd-2 mismatch', 'watchdog-identity-mismatch', (New-C545SnapshotText -InstanceId 'wd-2'), ''),
+        @('C545 WatchdogStale open outage unhealthy', 'watchdog-outage-open', (New-C545SnapshotText -OpenOutages @(@{ outageId = 'nw:mc:2026-09-17:windows-hop-failed:1'; kind = 'windows-hop-failed' })), '')
+    )
+    foreach ($row in $rows) {
+        $fx = New-C545WatchdogFx -SnapshotText $row[2]
+        $h = Invoke-C545WatchdogHealth -Fx $fx
+        Assert-C545WatchdogUnhealthy -Health $h -Fx $fx.Root -Reason $row[1] -Name $row[0]
+    }
+
+    $thrown = New-C545WatchdogFx -Throw
+    Assert-C545WatchdogUnhealthy -Health (Invoke-C545WatchdogHealth -Fx $thrown) -Fx $thrown.Root -Reason 'watchdog-unreachable' -Name 'C545 WatchdogStale unreachable'
+
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $listener.Start()
+    $closedPort = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+    $listener.Stop()
+    $closed = New-C545WatchdogFx -NoSeam
+    Assert-C545WatchdogUnhealthy -Health (Invoke-C545WatchdogHealth -Fx $closed -Url ('http://127.0.0.1:{0}/snapshot.json' -f $closedPort)) -Fx $closed.Root -Reason 'watchdog-unreachable' -Name 'C545 WatchdogStale unreachable closed-port'
+
+    $noUrl = New-C545WatchdogFx -SnapshotText (New-C545SnapshotText)
+    Assert-C545WatchdogUnhealthy -Health (Invoke-C545WatchdogHealth -Fx $noUrl -Url '') -Fx $noUrl.Root -Reason 'watchdog-unreachable' -Name 'C545 WatchdogStale no snapshot url unreachable'
+
+    $control = New-C545WatchdogFx -SnapshotText (New-C545SnapshotText -Age ([TimeSpan]::FromMinutes(20)))
+    $ok = Invoke-C545WatchdogHealth -Fx $control
+    Assert-C487 -Cond ([bool]$ok.Health.Healthy -and [bool]$ok.Health.ReadyForDeferral) -Name 'C545 WatchdogStale control age 20:00 healthy' -Detail ($ok.Health.Reasons -join ',')
+}
+
+function Test-C545_ReadinessRouting {
+    $windmill = Join-Path $here 'windmill'
+    $defPath = Join-Path $windmill 'antiphon-nightly-readiness.json'
+    $schedPath = Join-Path $windmill 'antiphon-nightly-readiness.schedule.json'
+    $def = $null
+    if (Test-Path -LiteralPath $defPath) { $def = Get-Content -LiteralPath $defPath -Raw | ConvertFrom-Json }
+    $content = [string]$def.content
+    Assert-C487 -Cond ($null -ne $def -and [string]$def.tag -eq 'desktop' -and [string]$def.language -eq 'bash') -Name 'C545 ReadinessRouting readiness definition is desktop bash' -Detail ([string]$def.tag)
+    $hosts = @([regex]::Matches($content, '@([A-Za-z0-9_.-]+)') | ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -ne 'host.docker.internal' })
+    Assert-C487 -Cond ($content -match 'scripts\\nightly-health\.ps1' -and $content -match '-ReadinessConfigPath C:\\Antiphon\\nightly\\readiness-config\.json' -and $hosts.Count -eq 0) -Name 'C545 ReadinessRouting content runs the evaluator with the readiness config and no host literal' -Detail $content
+    $sched = $null
+    if (Test-Path -LiteralPath $schedPath) { $sched = Get-Content -LiteralPath $schedPath -Raw | ConvertFrom-Json }
+    $argsEmpty = ($null -ne $sched -and $null -ne $sched.args -and @($sched.args.PSObject.Properties).Count -eq 0)
+    Assert-C487 -Cond ($null -ne $sched -and [string]$sched.schedule -eq '0 */30 * * * *' -and [string]$sched.timezone -eq 'Europe/London' -and $sched.enabled -eq $true -and $argsEmpty) -Name 'C545 ReadinessRouting schedule every 30 minutes Europe/London enabled no args' -Detail ($sched | ConvertTo-Json -Compress)
+    Assert-C487 -Cond (-not (Test-Path -LiteralPath (Join-Path $windmill 'antiphon-nightly-health.json')) -and -not (Test-Path -LiteralPath (Join-Path $windmill 'antiphon-nightly-health.schedule.json'))) -Name 'C545 ReadinessRouting retired health definition is absent'
+    $threw = $false
+    try { Test-NightlyMonitorRouting -Definition @{ tag = 'desktop' } | Out-Null } catch { $threw = $true }
+    Assert-C487 -Cond $threw -Name 'C545 ReadinessRouting G116 monitor routing still rejects desktop'
+    $readme = Get-Content -LiteralPath (Join-Path $windmill 'README.md') -Raw
+    Assert-C487 -Cond ($readme -match 'antiphon_nightly_readiness' -and $readme -notmatch 'u/lndcobra/antiphon_nightly_health') -Name 'C545 ReadinessRouting README names readiness not health'
+}
+
 $script:C544ExpectedRows = 84
-$script:C545ExpectedRows = 0
+$script:C545ExpectedRows = 40
 
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue

@@ -1,0 +1,12 @@
+{
+  "path": "u/lndcobra/antiphon_nightly_readiness",
+  "summary": "Antiphon nightly local readiness evaluator (CARD-0545 D-9). Desktop tag, every 30 minutes.",
+  "description": "SSH-bridge wrapper that runs scripts/nightly-health.ps1 on the Windows host. It evaluates the local nightly state, the Windmill registration and the independent watchdog's snapshot, then writes C:\\Antiphon\\nightly\\last-monitor.json for the server's readiness reader. It is not the independent monitor and sends no notification. Expected hashes, the watchdog snapshot URL and instance id come from C:\\Antiphon\\nightly\\readiness-config.json (written at qualification); WINDMILL_TOKEN_FILE names an operator-placed token file. No watchdog host is named here.",
+  "language": "bash",
+  "tag": "desktop",
+  "schema": {
+    "properties": {},
+    "required": []
+  },
+  "content": "#!/bin/bash\nset -uo pipefail\nssh -i /tmp/windmill/worker_to_windows -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes lndco@host.docker.internal 'powershell -NoProfile -ExecutionPolicy Bypass -File C:\\src\\Antiphon\\scripts\\nightly-health.ps1 -RepositoryPath C:\\src\\Antiphon -ReadinessConfigPath C:\\Antiphon\\nightly\\readiness-config.json'\nexit $?\n"
+}

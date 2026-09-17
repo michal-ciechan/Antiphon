@@ -398,6 +398,7 @@ function Import-NightlySeams {
         DockerInfo = $null
         DiskFree = $null
         TracePath = $null
+        WatchdogSnapshot = $null
     }
     if ([string]::IsNullOrWhiteSpace($SeamsPath)) { return }
     if (-not (Test-Path -LiteralPath $SeamsPath)) {

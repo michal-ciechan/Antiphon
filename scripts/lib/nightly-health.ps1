@@ -700,6 +700,116 @@ function Save-NightlyMonitorResult {
     Write-NightlyAtomicJson -Path $path -Object $Result
 }
 
+# ---- CARD-0545 D-9: the independent watchdog's heartbeat folds into the local evaluator ----
+
+$script:NightlyWatchdogFreshMinutes = 20
+
+function Get-NightlyWatchdogSnapshot {
+    # Bounded read of the watchdog's private-network snapshot. Returns Reachable/Raw/Snapshot/Error;
+    # never invents a snapshot. The harness seam supplies raw JSON text or throws.
+    param([string]$Url)
+    $out = [ordered]@{ Reachable = $false; Raw = ''; Snapshot = $null; Error = '' }
+    if ([string]::IsNullOrWhiteSpace($Url)) {
+        $out.Error = 'watchdog snapshot url not configured'
+        return [pscustomobject]$out
+    }
+    try {
+        if ($script:NightlySeams -and $script:NightlySeams.WatchdogSnapshot) {
+            $raw = [string](@($script:NightlySeams.WatchdogSnapshot.Invoke($Url)) -join "`n")
+        } else {
+            $resp = Invoke-WebRequest -Uri $Url -Method GET -UseBasicParsing -TimeoutSec 10
+            $raw = [string]$resp.Content
+        }
+    } catch {
+        $out.Error = $_.Exception.Message
+        return [pscustomobject]$out
+    }
+    $out.Reachable = $true
+    $out.Raw = $raw
+    try { $out.Snapshot = $raw | ConvertFrom-Json -ErrorAction Stop } catch { $out.Snapshot = $null }
+    return [pscustomobject]$out
+}
+
+function Test-NightlyWatchdogFreshness {
+    # Fresh only when reachable, well-formed (schemaVersion 1, instanceId, parseable heartbeatAt not in
+    # the future), at most 20:00 old, in the expected namespace with the expected instance id, and with no
+    # open outage. Each failure is one stable reason.
+    param(
+        $Snapshot,
+        [datetime]$NowUtc,
+        [string]$ExpectedNamespace = 'mc',
+        [string]$ExpectedInstanceId = ''
+    )
+    $result = [ordered]@{ Fresh = $false; Reasons = @(); InstanceId = ''; HeartbeatAt = '' }
+    if ($null -eq $Snapshot -or -not [bool]$Snapshot.Reachable) {
+        $result.Reasons += 'watchdog-unreachable'
+        return [pscustomobject]$result
+    }
+    $snap = $Snapshot.Snapshot
+    if ($null -eq $snap -or $snap -is [string] -or $snap -is [System.Array]) {
+        $result.Reasons += 'watchdog-malformed'
+        return [pscustomobject]$result
+    }
+    $result.InstanceId = [string]$snap.instanceId
+    $schema = $snap.PSObject.Properties['schemaVersion']
+    if ($null -eq $schema -or -not ($schema.Value -is [int] -or $schema.Value -is [long]) -or [int]$schema.Value -ne 1) {
+        $result.Reasons += 'watchdog-malformed'
+        return [pscustomobject]$result
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$snap.instanceId)) {
+        $result.Reasons += 'watchdog-malformed'
+        return [pscustomobject]$result
+    }
+    $beat = $null
+    $beatProp = $snap.PSObject.Properties['heartbeatAt']
+    if ($beatProp -and $null -ne $beatProp.Value) {
+        if ($beatProp.Value -is [datetime]) {
+            $beat = ([datetime]$beatProp.Value).ToUniversalTime()
+        } else {
+            $parsed = [datetime]::MinValue
+            if ([datetime]::TryParse([string]$beatProp.Value, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal, [ref]$parsed)) {
+                $beat = $parsed
+            }
+        }
+    }
+    if ($null -eq $beat) {
+        $result.Reasons += 'watchdog-malformed'
+        return [pscustomobject]$result
+    }
+    $result.HeartbeatAt = ([datetime]::SpecifyKind($beat, [DateTimeKind]::Utc)).ToString('o')
+    $now = $NowUtc
+    if ($now.Kind -ne [DateTimeKind]::Utc) { $now = [datetime]::SpecifyKind($now.ToUniversalTime(), [DateTimeKind]::Utc) }
+    $age = $now - [datetime]::SpecifyKind($beat, [DateTimeKind]::Utc)
+    if ($age -lt [TimeSpan]::Zero) {
+        $result.Reasons += 'watchdog-malformed'
+        return [pscustomobject]$result
+    }
+    if ($age -gt [TimeSpan]::FromMinutes($script:NightlyWatchdogFreshMinutes)) {
+        $result.Reasons += 'watchdog-stale'
+        return [pscustomobject]$result
+    }
+    if (-not [string]::Equals([string]$snap.namespace, $ExpectedNamespace, [StringComparison]::Ordinal)) {
+        $result.Reasons += 'watchdog-identity-mismatch'
+        return [pscustomobject]$result
+    }
+    if ([string]::IsNullOrWhiteSpace($ExpectedInstanceId) -or -not [string]::Equals([string]$snap.instanceId, $ExpectedInstanceId, [StringComparison]::Ordinal)) {
+        $result.Reasons += 'watchdog-identity-mismatch'
+        return [pscustomobject]$result
+    }
+    if (@($snap.openOutages | Where-Object { $null -ne $_ }).Count -gt 0) {
+        $result.Reasons += 'watchdog-outage-open'
+        return [pscustomobject]$result
+    }
+    $result.Fresh = $true
+    return [pscustomobject]$result
+}
+
+function Read-NightlyReadinessConfig {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) { return $null }
+    try { return (Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json) } catch { return $null }
+}
+
 function Invoke-AntiphonNightlyHealth {
     param(
         [string]$StateRoot,
@@ -709,9 +819,22 @@ function Invoke-AntiphonNightlyHealth {
         [string]$AuthorizedDestination = '',
         [string]$RepositoryPath = '',
         [string]$ProjectId = '',
+        [string]$WatchdogSnapshotUrl = '',
+        [string]$ExpectedWatchdogInstanceId = '',
+        [string]$ReadinessConfigPath = '',
         [switch]$PassThru
     )
     Import-NightlySeams -SeamsPath $SeamsPath
+    # CARD-0545 D-9: readiness-config.json (written at qualification) supplies any value not passed.
+    $readinessConfig = Read-NightlyReadinessConfig -Path $ReadinessConfigPath
+    if ($readinessConfig) {
+        if ([string]::IsNullOrWhiteSpace($ExpectedScriptHash)) { $ExpectedScriptHash = [string]$readinessConfig.expectedScriptHash }
+        if ([string]::IsNullOrWhiteSpace($ExpectedPolicyHash)) { $ExpectedPolicyHash = [string]$readinessConfig.expectedPolicyHash }
+        if ([string]::IsNullOrWhiteSpace($WatchdogSnapshotUrl)) { $WatchdogSnapshotUrl = [string]$readinessConfig.watchdogSnapshotUrl }
+        if ([string]::IsNullOrWhiteSpace($ExpectedWatchdogInstanceId)) { $ExpectedWatchdogInstanceId = [string]$readinessConfig.watchdogInstanceId }
+        if ([string]::IsNullOrWhiteSpace($RepositoryPath)) { $RepositoryPath = [string]$readinessConfig.repositoryPath }
+        if ([string]::IsNullOrWhiteSpace($ProjectId)) { $ProjectId = [string]$readinessConfig.projectId }
+    }
     if ([string]::IsNullOrWhiteSpace($RepositoryPath)) { $RepositoryPath = [string]$env:ANTIPHON_NIGHTLY_REPOSITORY_PATH }
     if ([string]::IsNullOrWhiteSpace($ProjectId)) { $ProjectId = [string]$env:ANTIPHON_NIGHTLY_PROJECT_ID }
     $now = Get-NightlyUtcNow
@@ -792,6 +915,15 @@ function Invoke-AntiphonNightlyHealth {
             }
         }
     }
+    # CARD-0545 D-9: a missing, stale, malformed, foreign or outage-reporting watchdog fails readiness closed.
+    # Evaluated after the local ledger so the watchdog, not this evaluator, owns outage notification.
+    $watchdogFetch = Get-NightlyWatchdogSnapshot -Url $WatchdogSnapshotUrl
+    $watchdog = Test-NightlyWatchdogFreshness -Snapshot $watchdogFetch -NowUtc $now -ExpectedNamespace 'mc' -ExpectedInstanceId $ExpectedWatchdogInstanceId
+    if (-not $watchdog.Fresh) {
+        foreach ($reason in @($watchdog.Reasons)) { $health.Reasons += $reason }
+        $health.Healthy = $false
+        $health.ReadyForDeferral = $false
+    }
     $out = [pscustomobject]@{
         ExitCode = $(if ($health.Healthy) { 0 } else { 1 })
         Health = $health
@@ -807,6 +939,8 @@ function Invoke-AntiphonNightlyHealth {
             ScheduledRunId = [string]$health.GreenRunId
             JobNativeRunId = [string]$health.GreenJobNativeRunId
             WindmillJobId = [string]$health.GreenJobId
+            WatchdogInstanceId = [string]$watchdog.InstanceId
+            WatchdogHeartbeatAt = [string]$watchdog.HeartbeatAt
         }
     }
     Save-NightlyMonitorResult -StateRoot $StateRoot -Result $out
