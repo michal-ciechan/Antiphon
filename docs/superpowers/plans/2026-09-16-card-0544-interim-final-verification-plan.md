@@ -1521,3 +1521,165 @@ TestDesign for the amended dormant scope; CARD-0545 is a separate future commiss
 next: test-design
 handoff: Finish TD-F1 PCs using the shared CARD-0481 Completion outbox and rendering contract; retain all IDs, assign the 13 TD-F2 notification controls and S5 to CARD-0545, expand completion regression/guard coverage and recost. Hand off only dormant CARD-0544 Code; Interim activation remains blocked on CARD-0545 qualification and S6.
 artifact: docs/superpowers/plans/2026-09-16-card-0544-interim-final-verification-plan.md
+
+## Verification design revision (TestDesign, task baa1d84a)
+
+2026-09-17, TestDesign task **baa1d84a**, inspected base **0c99f7e6**. This
+revision completes the D-9 completion-recovery controls, keeps every G/PC ID
+from the 5d91dca2 appendix, records the 13 D-10 transfers by ID, adds the
+completion-recovery guards the resolution appendix demanded, and reprices the
+floors. It supersedes the earlier appendix's counts, costs and its "seven
+seam-dependent controls" audit; that appendix remains the audit inventory for
+G/PC-1..101 and its V/R text stays in force except where restated here. No
+build, test, PC, migration, deployment or message send ran in this dispatch.
+
+The handoff is a **dormant Code handoff**: S1-S4 ship with
+`InterimVerificationSettings.Enabled=false`, every card `FullOnly`, and no
+schedule/pilot activation. Activation still requires accepted CARD-0545
+qualification and this card's own S6. Code must not enable the interim policy
+by default, and a Code/Review report claiming qualification or S6 readiness is
+invalid.
+
+### D-9 concretization: the reused primitive and its seams
+
+The prior TestDesign attempt (task ab100145) stalled searching for a ready-made
+completion receipt mechanism. There is none named `Completion` today; the
+reusable primitive is the CARD-0481 **DeliveryFailure obligation** and its
+harness. Everything below was read at 0c99f7e6 (file:line anchors are for Code;
+verify them at the implementation SHA):
+
+| Piece | Where and what it does today | D-9 reuse |
+|---|---|---|
+| Producer to mirror | `server/Application/Services/AgentTaskDispatcher.cs:4361` inserts `AgentTaskLandNotification { Kind = DeliveryFailure, ReplyTo, ParentSessionId, SourceEventId, Body, ContentDigest }` in the watchdog's failure transaction together with the task status change and the `Failed` event. | New `TaskCompletionNotification` helper composes the same entity with `Kind = Completion` inside the reply settlement transaction. |
+| Durable identity | `AppDbContext.cs:1605` unique index on `SourceEventId` (FK to `AgentTaskEvent`, Restrict); `:1627` filtered unique index on `SessionQueuedMessage.SourceLandNotificationId`. | Unchanged. One obligation per settlement event; one queue row per obligation. |
+| Recovery owner | `AgentTaskLandNotificationHostedService.ScanAsync` pages every row whose `State` is not Confirmed/NotRequired/LegacyUnverified (128 per page) and calls `ReconcileAsync(id)` per row in its own scope, on boot and every scan. | Unchanged scanner; the new kind is discovered by the same query with no queue row present. |
+| Reconcile order | `AgentTaskLandNotificationService.ReconcileAsync`: terminal-state exit; destination session existence; discover an existing keyed row by `SourceLandNotificationId`, validate `AgentSessionId` and `ContentDigest`, link as `AwaitingReceipt`; only then gate a **new** insert on destination Stopped/Failed; enqueue WhenIdle with `sourceLandNotificationId`, key `task:<root>` for DeliveryFailure else `land:<id>`, `CompletionNoteStamp.ApplyAsync` for DeliveryFailure; boundary hooks `before-enqueue`, `queue-inserted`, `DropWakeup("completion")`; receipt: `row.Body != note.Body` gives `queue_payload_changed_unconfirmed`, and only a UserPrompt above `LastDeliveryBaselineSequence` (or the time floor) after `CatchUpTranscriptAsync` confirms. | Kind-aware branches for `Completion`: `task:<root>` key, stamp applied, receipt compares the committed wire rendering in `CompletionDeliveryJson` instead of `Body`, pointer receipt also validates the referenced file hash. All other kinds keep the immutable-Body rule. |
+| Today's ordinary path | `AgentTaskReplyService.PersistDeliverThenReleaseAsync` (`:1510`) saves, then `DeliverToParentAsync` (`:1714`) enqueues directly with `DelegationNoteDigest.Compute(report)`, key `task:<root>`, optional `holdUntil` for distillation, and catches every exception. `TaskAlreadyPersistedAsync` (`:1570`) compares status and `CompletedAt` only. | For profile-v1 Session-reply tasks the direct enqueue is replaced by a fresh-scope `ReconcileAsync(notification.Id)` after the settlement commit; the scanner covers a failed or lost immediate call. Legacy/non-profile tasks keep the direct path. |
+| Kind-exclusion seams | Queue rows with `SourceLandNotificationId != null` are excluded from: distillation apply `OutputDistillationService.cs:223`; queue typing/batching/shrink `SessionMessageQueueService.cs:381,1296,1700,1855,1894`; completion-note detection `AgentTaskCheckService.cs:261` and `CompletionNoteStamp.cs:39`; retention keeps unconfirmed keyed rows `DataRetentionService.cs:197`. | Each seam joins the notification kind: `Completion` rows are allowed into distillation/shrink/batching and count as the caller's completion note; Outcome/Conflict/DispatchBase/DeliveryFailure keep today's exclusions; retention rule already fits. |
+| Test harness to clone | `ReceiptFailureDeliveryTests.VerifyCallerFailureAsync`: isolated schema, `TempWorkspace`, `ModelAvailabilityDispatcherTests.SeedWarmAgentAsync/SeedQueuedTaskAsync`, `OffsetClock`, `CreateProvider(schema, fault, clock)` with a fixture-local `SaveChangesInterceptor` (`CallerFailureFault`) cutting at `obligation-insert`, `failed-committed`, `note-insert`, `note-committed`, `attempt-committed`, `prompt-accepted`; `FakeAgentProtocolAdapter.OnSubmitted` inserting the UserPrompt/TurnEnd through `BridgeQueueHarness.InsertEntryAsync`; busy caller via a prior `AssistantText`; Stopped/Failed terminal caller rows. | Q's completion methods use the same shape with the reply service (`OnTurnEndAsync` on a marked delegate turn) as producer and `Kind == Completion` in the interceptor predicate. |
+
+Code contract derived from D-9 (concrete, minimal; no second worker or table):
+
+1. Append `Completion` to `LandNotificationKind`. Add nullable `CompletionSnapshotJson`
+   and `CompletionDeliveryJson` to `AgentTaskLandNotification` with a CLI-generated
+   migration and model snapshot. Other kinds leave both null.
+2. New `server/Application/Services/TaskCompletionNotification.cs` (static helper):
+   compose the snapshot (task/root/event/outcome IDs, parent/reply target, exact raw
+   result and SHA-256, `DelegationNoteDigest`, profile version/round, completed scope,
+   subject/baseline, selection revision, pending-final obligation, normalized
+   next/handoff, note header, raw fallback body, report-file identity, deliverable
+   coordinates, precomputed warning/git/workspace bits, and the distillation deadline
+   computed at settlement) and the entity (`Body` = raw fallback, `ContentDigest` =
+   `DelegationNoteDigest.Compute(report)`, `SourceEventId` = the retained event).
+3. In `SettleAsync`/`PersistDeliverThenReleaseAsync`, for profile-v1 tasks with
+   `ReplyTo == Session`, add the entity to the same context before the single
+   settlement `SaveChangesAsync`; retain the exact `Completed`/`Failed` event object.
+   `TaskAlreadyPersistedAsync` must additionally find the notification whose
+   `SourceEventId` equals the retained event before continuing delivery.
+4. `DeliverToParentAsync` for those tasks: fresh scope, `ReconcileAsync(notification.Id)`,
+   log-and-continue on failure. No direct `queue.EnqueueAsync`, no second logical note.
+5. `ReconcileAsync` and the queue typing path: persist `CompletionDeliveryJson`
+   (rendering kind, logical note, exact wire text and hash, batch member IDs, spill
+   path and content hash) in the same transaction as the first typed attempt under
+   the existing session/row locks; validate the rendering against the snapshot first;
+   reject replacement after any delivery claim; replay from the committed rendering.
+6. Kind-aware seams as in the table. `RecoverMissingSourcedCompletionNotesAsync`
+   stays SourceLanding-only.
+
+Open design questions for Code to resolve within the contract above (they change
+implementation placement, not the observable guards, which G-102..G-120 fix):
+
+- OQ-1: which `SessionMessageQueueService` method owns the "validate rendering,
+  persist `CompletionDeliveryJson`, mark attempt" transaction (the typing path near
+  `:1296`/`:1700` or the batching path near `:1855`). G-106/G-110 fix the outcome.
+- OQ-2: whether pointer-file hash validation lives in `ReconcileAsync` or in the
+  queue's delivery verdict. G-111 fixes the outcome.
+- OQ-3: the JSON shape of batch membership and the snapshot version field. G-105/G-110.
+- OQ-4: how the settlement-computed distillation deadline reaches the reconcile
+  enqueue (`holdUntil` from the snapshot, never recomputed). G-113.
+- OQ-5: whether `AgentTaskCheckService.HasCompletionNoteAsync` joins the notification
+  kind or the queue row gains a denormalized kind column. G-115/G-116.
+
+If Code finds that any of these cannot be met without a second outbox worker, a
+new table, or relaxing an existing land/failure receipt rule, it returns
+`next: plan` naming the seam rather than widening the design silently.
+
+### Inspection (this dispatch)
+
+| Test/fixture/production bodies read | Boundaries -> V/R IDs or exclusion |
+|---|---|
+| `AgentTaskLandNotification` entity; `LandNotificationKind`/`LandNotificationState`; `AgentTaskLandNotificationService.ReconcileAsync` through the receipt floor; `AgentTaskLandNotificationHostedService.ScanAsync` paging/per-row scope; `AgentTaskReplyService.PersistDeliverThenReleaseAsync`, `TaskAlreadyPersistedAsync`, `DeliverToParentAsync`; `AgentTaskDispatcher.cs:4361` producer (located, entity shape read); `AppDbContext` unique indexes | Atomic obligation, exact event identity, link-before-gate order, receipt floor -> V-4, V-13, R-3, R-9; G-102..G-104, G-114, G-117, G-120 |
+| Kind-exclusion predicates in `SessionMessageQueueService` (355, 381, 429, 452, 1296, 1700, 1855, 1894), `OutputDistillationService:223`, `AgentTaskCheckService:261`, `CompletionNoteStamp:39`, `DataRetentionService:197` | Kind-aware rendering/shrink/batching/stamp/retention -> V-14, R-10, R-11; G-107..G-110, G-115, G-116, G-118 |
+| `ReceiptFailureDeliveryTests` all five methods, `VerifyCallerFailureAsync` setup/assertions and the `CallerFailureFault` interceptor cut predicates; `CheckNoteDeliveryHandoffTests` class attributes (`Integration`, `Slow`, `NotInParallel("MessageQueue")`) | Persistence-cut vocabulary and busy/eligible/Stopped/Failed recipient shapes for Q -> V-4, DL-2; the clone template for `C544_CompletionRecovery` |
+| Method inventories (names, counts, line anchors) of `AgentTaskLandNotificationRecoveryTests` (11), `AgentTaskLandReceiptTests` (9), `DispatchBaseNotificationTests` (11), `AgentTaskLandNotificationPersistenceTests` (6), `OutputDistillationProducerTests` (2), `OutputDistillationDeliveryTests` (20), `OutputDistillationApplyRaceTests` (12), `OutputDistillationDeadlineTests` (3), `OutputDistillationCleanupTests` (5), `PolledCompletionNoteShrinkTests` (8), `DataRetentionServiceTests` (29), `AgentTaskReplyIntegrationTests` (127) | Full affected regression classes for the shared recovery/queue/distillation/retention services -> V-14. Bodies of these classes were **not** read line by line in this dispatch (10-minute research box); Code reads `OutputDistillationApplyRaceTests.Apply_eligibility_matrix`, `Apply_and_SendNow_preserve_one_complete_body`, `OutputDistillationDeliveryTests.Same_root_applied_notes_batch_into_one_intact_spill_file`, `PolledCompletionNoteShrinkTests.a_check_origin_row_is_untouched_by_the_delegation_guard`, `AgentTaskLandReceiptTests.C467_V11_RejectFalseReceipts` and `AgentTaskLandNotificationRecoveryTests.C481_Recovery_rejects_a_keyed_row_with_a_different_*` before implementing the kind-aware seams, and reuses their assertions where they already prove a G-1xx guard. |
+| Everything inventoried by the 5d91dca2 Inspection table | Unchanged; the earlier V-1..V-12 bodies-read record stands. |
+
+Missing setup, in addition to items 1-7 of the earlier appendix:
+
+8. Q gains a `CompletionFault` interceptor cloned from `CallerFailureFault` whose
+   predicate is `Kind == LandNotificationKind.Completion`, with cuts
+   `obligation-insert`, `settled-committed` (crash after the settlement transaction,
+   before the immediate reconcile), `note-insert`, `note-committed`,
+   `wakeup-dropped` (`LandDeliveryBoundary.DropWakeup("completion")`),
+   `render-committed` (`CompletionDeliveryJson` saved, crash before typing),
+   `spill-written` (pointer file exists, attempt transaction not committed),
+   `attempt-committed`, `prompt-accepted`. The producer is a real
+   `AgentTaskReplyService.OnTurnEndAsync` over a marked delegate turn seeded with
+   `AgentTaskReplyIntegrationTests.SeedDispatchedTaskAsync/SeedTurnAsync`; the
+   task carries profile version 1 and `ReplyTo=Session`.
+9. A fixture-owned `IOutputDistiller`/worker stub that counts requests and returns a
+   deterministic summary, for G-108/G-113; it never calls a model.
+10. A fixture-local report store root for G-112 so the original report file can be
+    deleted and the snapshot regeneration observed by hash.
+11. `DataRetentionServiceTests` gets one C544 method using its existing seeded
+    tree/queue helpers with a `Completion` keyed row.
+12. For false-receipt rows (G-114, G-111) the test may insert **non-matching**
+    prompts to prove rejection; it must never insert the expected complete prompt.
+    Receipt is proved only through `OnSubmitted`.
+
+### Delivery inventory (revised)
+
+DL-1, DL-3 and DL-6 stand as written at 5d91dca2. DL-2 is replaced below. DL-4's
+independence rows and all of DL-5 transfer to CARD-0545 (see the D-10 ledger);
+DL-4's job/run correlation rows stay on CARD-0544 under N.C544_ProductionJobAdapter.
+
+| ID / producer -> destination / durable identity | Persistence and recovery cuts | Observable receipt and test |
+|---|---|---|
+| DL-2 (revised): `AgentTaskReplyService` settlement -> `AgentTaskLandNotification{Completion}` -> `AgentTaskLandNotificationHostedService`/`ReconcileAsync` -> keyed `SessionQueuedMessage` -> caller session. Identity: `(SourceEventId, notification.Id, task.Id, ParentSessionId, raw-result digest)`; queue row `SourceLandNotificationId`; receipt `ConfirmingPromptSequence` above the row's `LastDeliveryBaselineSequence`. | One settlement transaction: terminal task + result + retained event + StageOutcome + obligation. Cuts: `obligation-insert` (rollback, no terminal task), `settled-committed` (obligation exists, no queue row, immediate reconcile lost), `note-insert`, `note-committed`, `wakeup-dropped`, `render-committed`, `spill-written`, `attempt-committed`, `prompt-accepted`; each with busy and eligible caller; Stopped/Failed caller after delivery. Recovery is the real scanner on a recreated provider; nothing edits task/notification/queue rows by hand. | `Q.C544_CompletionReceipt` (no cut; busy/eligible x inline/spill x raw/distilled = 8 rows) and `Q.C544_CompletionRecovery` (9 cuts x busy/eligible x {raw inline, distilled spill} = 36 rows). Decisive evidence: exactly one complete caller UserPrompt equal to the committed wire text in `CompletionDeliveryJson`, sequence above the floor, notification `Confirmed` with `ConfirmingPromptSequence`; zero writes to a busy caller before its TurnEnd; header preserves round/scope/next/pending-Final; for a pointer, the referenced file hash equals the snapshot's. Queue insert, `EnqueuedAt`, `Sent`, a task API poll or the distiller ledger never satisfy this. |
+| DL-2 rendering sub-path: settlement snapshot -> distillation/poll shrink/batch/spill -> `CompletionDeliveryJson` -> typed wire text. Identity: notification.Id + wire hash + batch member IDs + spill path/hash. | Cuts: replacement after attempt claim (rejected), distiller restart mid-hold (no new deadline, no new model call), original report file lost (regenerated from snapshot), batch member loss between members' commits. | `Q.C544_RenderingFrozenBeforeTyping`, `C544_LateReplacementRejected`, `C544_RenderingKeepsHeader`, `C544_SameRootBatchMembership`, `C544_PointerReceiptRequiresContent`, `C544_ReportRegeneratedFromSnapshot`, `C544_DistillationDeadlineSurvivesRestart`. |
+
+Substitutes and what they cannot prove: `FakeAgentProtocolAdapter.OnSubmitted` is
+the terminal; it proves the queue typed the complete wire text into the recipient's
+transcript through the real runtime adapter, not that a provider TUI accepted it
+(the native AgentTaskLandDeliveryE2ETests remain the live-transport evidence and
+are not credited here). A fixture distiller stub proves deadline/identity handling,
+not summary quality. Controlled Git in L/V-6 proves ordering, not publication (V-7).
+
+### D-10 transfer ledger: the 13 CARD-0545 controls
+
+IDs, methods and guard text are preserved verbatim from the 5d91dca2 tables; only
+the owner changes. CARD-0545 (`b1c1ed0b-2608-40e7-99f5-f6587e9ed416`) must name
+the concrete production entrypoint for each before its own Code; CARD-0544 Code
+does not implement, stub, or mark any of them passed, and Mutation for CARD-0544
+does not run them.
+
+| ID | Guard (unchanged) | Exact method (unchanged) | CARD-0545 must supply |
+|---|---|---|---|
+| G/PC-78 | Windows/SSH outage detected outside that failure domain | `NightlyVerificationContractTests.C544_IndependentOutage` | independent watchdog entrypoint off the Windows host and off Windmill's queue |
+| G/PC-79 | Failure intent persists before enqueue | `NightlyVerificationContractTests.C544_NotificationIntent` | off-host durable intent ledger |
+| G/PC-80 | Enqueue failure retryable with original identity | `NightlyVerificationContractTests.C544_NotificationRetry` | watchdog retry/backoff owner |
+| G/PC-81 | Transport/job acceptance is not receipt | `NightlyVerificationContractTests.C544_RecipientEvidence` | production recipient reader |
+| G/PC-82 | Receipt matches notification identity | `NightlyVerificationContractTests.C544_ReceiptNotificationIdentity` | reader identity comparison |
+| G/PC-83 | Receipt matches run identity | `NightlyVerificationContractTests.C544_ReceiptRunIdentity` | reader run/outage identity comparison |
+| G/PC-84 | Crash after enqueue/observation recovers without duplicate | `NightlyVerificationContractTests.C544_NotificationCrash` | watchdog restart path |
+| G/PC-85 | Recovery notification after outage clears | `NightlyVerificationContractTests.C544_RecoveryNotification` | healthy-transition producer |
+| G/PC-86 | Unauthorized/missing destination not silently replaced | `NightlyVerificationContractTests.C544_AuthorizedDestination` | destination authorization in the watchdog transport |
+| G/PC-95 | Recipient evidence from authorized destination readback | `NightlyVerificationContractTests.C544_ReceiptDestination` | reader destination binding |
+| G/PC-96 | Readback contains whole produced payload | `NightlyVerificationContractTests.C544_ReceiptWholeBody` | reader whole-body comparison |
+| G/PC-97 | Evidence predating the attempt cannot confirm | `NightlyVerificationContractTests.C544_ReceiptAttemptFloor` | reader attempt floor |
+| G/PC-98 | Independent outage state survives Windows inaccessible | `NightlyVerificationContractTests.C544_IndependentState` | off-host state store and restart |
+
+Also transferred: DL-5 entirely, DL-4's Windows-host-loss/independence rows, V-10's
+notification/outage methods, V-11 (S5) execution, and the `scripts/nightly-health.ps1`
+/ `scripts/windmill/` independence changes. CARD-0545 adds its own guard for a
+stopped watchdog (missing heartbeat) and reprices independent infrastructure.
