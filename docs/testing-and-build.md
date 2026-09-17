@@ -231,9 +231,21 @@ Producer-owned `StateRoot` defaults to `C:\Antiphon\nightly` (Windows backslash
 paths). Lock acquisition is atomic (`FileMode.CreateNew`); a live owner is never
 replaced by age. `last-run.json` is the last attempt; `last-complete-green.json`
 advances only for scheduled master runs with `coverageComplete`, `testsPassed`
-and `reportDelivered`. Unchanged-SHA skipping is removed. Independent health
-evaluation is `scripts/nightly-health.ps1` / `u/lndcobra/antiphon_nightly_health`
-on a server2 worker every 30 minutes (not the desktop tag).
+and `reportDelivered`. Unchanged-SHA skipping is removed.
+
+CARD-0545: independent outage detection and notification belong to the **nightly
+watchdog** ([owner doc](nightly-watchdog.md)), a systemd-supervised process on an
+operator-chosen host outside both the Windows host and Windmill's failure domain,
+named only in an untracked deploy profile. The former Windmill health-monitor
+definition is deleted. `scripts/nightly-health.ps1` is now the Windows-side local
+readiness evaluator, `u/lndcobra/antiphon_nightly_readiness` (desktop tag, every 30
+minutes, `-ReadinessConfigPath C:\Antiphon\nightly\readiness-config.json`); it folds
+the watchdog snapshot into `Health` (`watchdog-unreachable`, `watchdog-stale` beyond
+20:00, `watchdog-malformed`, `watchdog-identity-mismatch`, `watchdog-outage-open`) and
+records `Identity.WatchdogInstanceId`/`WatchdogHeartbeatAt`; the server reader requires
+the receipt's `watchdogInstanceId` to equal it. Its PowerShell notification ledger
+remains only as harness-guarded logic: the production Windmill notification sink is
+removed.
 
 CARD-0544 D-6 readiness (`Test-NightlyMonitorHealth`): `ReadyForDeferral` is
 health plus a valid **scheduled** green for the London due date, never the age of
@@ -251,10 +263,17 @@ Monitor freshness is the server reader's check on `last-monitor.json` `RecordedA
 (0-60 minutes); the monitor also records `Identity` (repository, project, policy
 and script hashes, scheduled run ID, job native run ID, Windmill job ID) from
 `-RepositoryPath`/`-ProjectId` or `ANTIPHON_NIGHTLY_REPOSITORY_PATH`/
-`ANTIPHON_NIGHTLY_PROJECT_ID`. The checked-in `antiphon_nightly_tests` bash wrapper
-does not yet emit a JSON result naming `nativeRunId`/`localDueDate`, so production
-jobs map to `unknown` until the S4 qualification task adds it; interim verification
-stays disabled (`InterimVerification:Enabled=false`) regardless.
+`ANTIPHON_NIGHTLY_PROJECT_ID`. CARD-0545 D-10: `nightly-run.ps1` prints, as its last
+stdout line on every exit path (refusals included), one compact JSON record
+`{nativeRunId, sha, ref, trigger, localDueDate, policyHash, coverageComplete,
+testsPassed, reportDelivered, exitCode, summaryPath}`, which Windmill stores as the job
+result; `last-run.json` and `last-complete-green.json` carry `localDueDate` (the London
+date of the run start). `jobs/list` rows carry no result, so the production adapter
+fetches `jobs_u/completed/get_result/{id}` for at most the five newest completed
+scheduled rows and derives `scheduledFor` from `localDueDate`; an unfetched,
+unfetchable or incomplete result stays `unknown`. `-NoReport` never claims delivery.
+Interim verification stays disabled (`InterimVerification:Enabled=false`) until the
+operator-run qualification publishes its receipt.
 
 It syncs an **isolated** clone at `C:\Antiphon\nightly\checkout` to
 `origin/master` (never `C:\src\Antiphon`, never a worktree), builds (`npm ci`,
@@ -285,7 +304,10 @@ schedule (`-Suites e2e` is a manual opt-in). Per-project Slow registries are
 `tests/<Project>/slow-tests-allowlist.txt` (FQN plus adjacent reason). Slow is
 a cost marker, never Skip. Offline harnesses: `scripts/test-nightly-run.ps1`,
 `scripts/test-nightly-tests.ps1`, `scripts/test-nightly-report.ps1`,
-`scripts/test-nightly-health.ps1` (`-Case C487_GNNN` or `-Case C544_<Name>`, `-ResultsDirectory <fresh>`; `NightlyVerificationContractTests` runs each C544 case).
+`scripts/test-nightly-health.ps1` (`-Case C487_GNNN`, `-Case C544_<Name>` or `-Case C545_<Name>`, `-ResultsDirectory <fresh>`),
+`scripts/test-deploy-nightly-watchdog.ps1` (`-Case C545_<Name>`). `NightlyVerificationContractTests` runs each C544/C545
+harness case and, in-process on `C545World`, the watchdog's carried CARD-0544 notification controls;
+`NightlyWatchdogCoreTests` covers the watchdog core (clock, evaluator, ledger, body, snapshot, transport, reader).
 
 ## Asynchronous outcome delivery verification (CARD-0467)
 

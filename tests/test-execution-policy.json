@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "policyHash": "49432b151c949a66aa012c15f75e1a15b46831d27408d4b8d9d30fbf10323e24",
+  "policyHash": "bc2965a40854d743f4640be79a5408811caec13073c84be0e2dfc2066748a401",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -102,6 +102,7 @@
     { "id": "test-client", "path": "scripts/test-client.ps1", "disposition": "wrapper", "wildcard": false },
     { "id": "test-client-mode", "path": "scripts/test-client-mode.ps1", "disposition": "unattended", "wildcard": false },
     { "id": "test-deploy-am-service", "path": "scripts/test-deploy-am-service.ps1", "disposition": "unattended", "wildcard": false },
+    { "id": "test-deploy-nightly-watchdog", "path": "scripts/test-deploy-nightly-watchdog.ps1", "disposition": "unattended", "wildcard": false },
     { "id": "test-duration-tripwire", "path": "scripts/test-duration-tripwire.ps1", "disposition": "argument-consumer", "wildcard": false },
     { "id": "test-hooks", "path": "scripts/test-hooks.ps1", "disposition": "unattended", "wildcard": false },
     { "id": "test-nightly-report", "path": "scripts/test-nightly-report.ps1", "disposition": "unattended", "wildcard": false },

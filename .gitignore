@@ -62,3 +62,6 @@ bin-*/
 # BEGIN ANTIPHON CARD FILES
 /docs/cards/
 # END ANTIPHON CARD FILES
+
+# CARD-0545: untracked nightly watchdog deploy profiles (host details never tracked)
+scripts/nightly-watchdog/*.local.json

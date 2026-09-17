@@ -1,0 +1,17 @@
+[Unit]
+Description=Antiphon nightly watchdog
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=@@SERVICE_USER@@
+WorkingDirectory=@@REMOTE_ROOT@@
+EnvironmentFile=@@REMOTE_ROOT@@/env
+ExecStart=@@REMOTE_ROOT@@/Antiphon.NightlyWatchdog run
+Restart=always
+RestartSec=30
+ProtectSystem=strict
+ReadWritePaths=@@REMOTE_ROOT@@/state @@REMOTE_ROOT@@/state-qual
+
+[Install]
+WantedBy=multi-user.target

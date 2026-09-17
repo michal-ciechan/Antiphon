@@ -1,0 +1,10 @@
+{
+  "namespace": "mc/qual",
+  "stateDir": "./state-qual",
+  "snapshotBind": "<qualSnapshotBind>",
+  "windmillBaseUrl": "http://<stubWindmillBind>",
+  "runtime": "<runtime>",
+  "allowFaultInjection": true,
+  "holdControlPath": "./state-qual/hold",
+  "tickSeconds": 60
+}

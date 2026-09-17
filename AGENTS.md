@@ -19,6 +19,7 @@ AGENTS.md is the universal index and mandatory safety core for this repository. 
 | Pty backend architecture and evidence | [docs/adr/0002-modern-conpty-backend.md](docs/adr/0002-modern-conpty-backend.md) |
 | Bootstrap, AppHost, Docker, ports, logging, scheduled tasks, and recovery | [docs/bootstrap.md](docs/bootstrap.md) |
 | Tests, builds, E2E diagnostics, and test-time process safety | [docs/testing-and-build.md](docs/testing-and-build.md) |
+| Nightly backstop, watchdog and qualification | [docs/nightly-watchdog.md](docs/nightly-watchdog.md), [docs/testing-and-build.md](docs/testing-and-build.md) (Nightly) |
 | Real browser, vault relay, per-site notes, and Outlook work | [docs/external-site-operations.md](docs/external-site-operations.md) |
 
 ## Essential front doors
