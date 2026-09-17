@@ -414,3 +414,21 @@ optional checks disabled; the notification boot/periodic scan is also a backstop
 Immediate and recovered enqueue use the same unique notification key. Only a complete
 caller UserPrompt after the queue attempt floor confirms receipt; Sent or task failure
 does not. Pinned by ReceiptFailureDeliveryTests busy/eligible persistence cuts.
+
+### Profile-v1 completion obligation (CARD-0544 D-9)
+
+A Code/Review task created with verification profile v1 that replies to a Session commits a
+`Completion` notification (`AgentTaskLandNotification.Kind`) in the same settlement transaction
+as its terminal status, result, retained event and StageOutcome, with an immutable
+`CompletionSnapshotJson` (raw result and SHA-256, round/scope/pending-Final header, next stage,
+report path, distillation request and deadline). The immediate path and the notification scanner
+reconcile it through the CARD-0481 outbox under the `task:<root>` key; recovery renders only the
+snapshot, regenerates a lost report from the snapshot raw result, keeps the settlement's
+distillation deadline and never commissions a second distiller call. The queue freezes the
+typed rendering (`CompletionDeliveryJson`: logical note, wire text and hash, batch member row IDs,
+spill path and hash) in the same transaction as the first attempt claim; retries replay that wire
+text and a late distillation cannot replace it. Receipt is the complete wire text (or pointer plus
+matching spill-file hash) in one caller UserPrompt above the attempt floor; enqueue, Sent, a
+sibling's completion stamp or an ID/header-only prompt is not receipt. Non-Completion keyed kinds
+keep the immutable-Body rule. Pinned by VerificationRoundDeliveryTests and
+DataRetentionServiceTests.C544_CompletionObligationRetention.

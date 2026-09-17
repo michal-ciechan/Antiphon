@@ -1171,3 +1171,18 @@ fallback. Preserve active PC commands: await and restore through their owner bef
 the new order, keep evidence at its tested SHA and rerun affected controls at the actual L.
 No pins/holds/quotas, historical reports, role ordinals or parser tokens change; `verify` still
 aliases Review and optional `-Stage Verify` remains outcome accounting.
+
+## Interim and Final verification rounds (CARD-0544, dormant)
+
+Every new Code/Review task carries verification profile v1. `Final` is the default and the only
+round that can approve a land: Review reports `ordinaryScopeCompleted: Full`, a Clean Final/Full
+outcome binds the exact reviewed SHA, and the completion header shows
+`verification=Final; scope=Full; final-review=none`. `Interim` is opt-in per card
+(`codeVerificationPolicy`/`reviewVerificationPolicy = AllowInterim`) and only while
+`InterimVerification:Enabled` and the nightly backstop readiness receipt/monitor are current; it
+runs the selection recorded in a committed plan section against a Clean Final baseline, caps its
+handoff at `next=review`, and latches the owner so land requires a later Final/Full Review. The
+feature ships disabled with every card `FullOnly` and no enablement path; do not request Interim.
+Completion notes of profile-v1 tasks are durable obligations (see
+[session-runtime-invariants.md](session-runtime-invariants.md)); dispatch from the header's
+`next=`, never re-read the body.

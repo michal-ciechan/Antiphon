@@ -235,6 +235,27 @@ and `reportDelivered`. Unchanged-SHA skipping is removed. Independent health
 evaluation is `scripts/nightly-health.ps1` / `u/lndcobra/antiphon_nightly_health`
 on a server2 worker every 30 minutes (not the desktop tag).
 
+CARD-0544 D-6 readiness (`Test-NightlyMonitorHealth`): `ReadyForDeferral` is
+health plus a valid **scheduled** green for the London due date, never the age of
+`completedAt`. A green is a scheduled Windmill job whose result names the native
+run and due date (jobs/list rows map through `ConvertFrom-NightlyWindmillJob`:
+queued/running/success/failed/unknown; string booleans or a missing result are
+unknown) and whose native state (`last-run.json` or `last-complete-green.json`) is
+that run, `trigger=scheduled`, master, coverage complete, tests passed and report
+delivered. Before 08:00 London the previous due day's green bridges while today's
+run is pending (a run with activity in the last 60 minutes is pending; older is
+`stale-progress`); a newer failed/incomplete completed attempt or failed scheduled
+job revokes it at once; at/after 08:00 only today's green counts. Start grace is
+overdue at exactly 30 minutes. Manual runs never stand in for the scheduled run.
+Monitor freshness is the server reader's check on `last-monitor.json` `RecordedAt`
+(0-60 minutes); the monitor also records `Identity` (repository, project, policy
+and script hashes, scheduled run ID, job native run ID, Windmill job ID) from
+`-RepositoryPath`/`-ProjectId` or `ANTIPHON_NIGHTLY_REPOSITORY_PATH`/
+`ANTIPHON_NIGHTLY_PROJECT_ID`. The checked-in `antiphon_nightly_tests` bash wrapper
+does not yet emit a JSON result naming `nativeRunId`/`localDueDate`, so production
+jobs map to `unknown` until the S4 qualification task adds it; interim verification
+stays disabled (`InterimVerification:Enabled=false`) regardless.
+
 It syncs an **isolated** clone at `C:\Antiphon\nightly\checkout` to
 `origin/master` (never `C:\src\Antiphon`, never a worktree), builds (`npm ci`,
 `npm run build`, client lint, `dotnet build Antiphon.sln`), then runs the
@@ -264,7 +285,7 @@ schedule (`-Suites e2e` is a manual opt-in). Per-project Slow registries are
 `tests/<Project>/slow-tests-allowlist.txt` (FQN plus adjacent reason). Slow is
 a cost marker, never Skip. Offline harnesses: `scripts/test-nightly-run.ps1`,
 `scripts/test-nightly-tests.ps1`, `scripts/test-nightly-report.ps1`,
-`scripts/test-nightly-health.ps1` (`-Case C487_GNNN -ResultsDirectory <fresh>`).
+`scripts/test-nightly-health.ps1` (`-Case C487_GNNN` or `-Case C544_<Name>`, `-ResultsDirectory <fresh>`; `NightlyVerificationContractTests` runs each C544 case).
 
 ## Asynchronous outcome delivery verification (CARD-0467)
 
