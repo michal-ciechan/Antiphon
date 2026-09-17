@@ -690,7 +690,10 @@ public sealed class AgentTaskReplyService
             : task.Status == AgentTaskStatus.Blocked && evidence == AgentTaskReportEvidence.QuestionHeuristic
                 ? BlockedQuestion.BlockedEventDetail(settledBody)
                 : reported;
-        db.AgentTaskEvents.Add(NewEvent(task.Id, eventType, eventDetail, now));
+        // CARD-0544 D-9: retain this exact event object; a later merge-back may append another
+        // Completed event, and the completion obligation is keyed to this settlement's event only.
+        var settlementEvent = NewEvent(task.Id, eventType, eventDetail, now);
+        db.AgentTaskEvents.Add(settlementEvent);
 
         // A settlement that could not get the final message is LOUD (CARD-0046 slice 3). Succeeded
         // is still the right status — the work happened and the text is real — but "Succeeded" on
@@ -792,6 +795,20 @@ public sealed class AgentTaskReplyService
         // uncommitted settlement); the pool sweeper then deleted the agent; the later save
         // threw; OnTurnEndAsync swallowed it and skipped delivery.
         if (task.FailureCode == AgentTaskFailureCode.CompletedWithoutProgress
+            && failureReason is not null)
+        {
+            callerWarning = callerWarning is null ? failureReason : $"{failureReason}\n\n{callerWarning}";
+        }
+
+        // CARD-0544 D-9: the caller's completion is an obligation committed WITH the settlement.
+        // Added before any helper below can flush this tracker (the zero-progress incident saves),
+        // so a terminal task/outcome can never commit without it.
+        var completion = TaskCompletionNotification.Applies(task)
+            ? await AddCompletionObligationAsync(services, db, task, settlementEvent, settledBody, now,
+                workspaceNote, callerWarning, drift, gitHeader, ct)
+            : null;
+
+        if (task.FailureCode == AgentTaskFailureCode.CompletedWithoutProgress
             && task.AgentSessionId is Guid noProgressFrom)
         {
             await RecordIncidentOnceAsync(
@@ -800,12 +817,6 @@ public sealed class AgentTaskReplyService
                 $"Delegate task {DelegationReportFormatter.Short(task.Id)} reported completion without worktree progress",
                 failureReason ?? "The delegate reported completion but Antiphon observed no post-dispatch worktree progress.",
                 ct, AlertSeverity.Error);
-        }
-
-        if (task.FailureCode == AgentTaskFailureCode.CompletedWithoutProgress
-            && failureReason is not null)
-        {
-            callerWarning = callerWarning is null ? failureReason : $"{failureReason}\n\n{callerWarning}";
         }
 
         var shouldRelease = task.FailureCode == AgentTaskFailureCode.CompletedWithoutProgress
@@ -821,6 +832,7 @@ public sealed class AgentTaskReplyService
             drift: drift,
             git: gitHeader,
             commitOutcome: commitNote?.Durable == true,
+            completion: completion,
             afterPersist: async token =>
             {
                 if (turn.FinalMessageMissing && task.AgentSessionId is Guid missingFrom)
@@ -1543,11 +1555,15 @@ public sealed class AgentTaskReplyService
         string? drift = null,
         string? git = null,
         bool commitOutcome = false,
-        Func<CancellationToken, Task>? afterPersist = null)
+        Func<CancellationToken, Task>? afterPersist = null,
+        AgentTaskLandNotification? completion = null)
     {
         // Reuse the durable outbox (also used by dispatch warnings). Its immutable body and
         // source event commit with settlement and any spawned child, before queue insertion.
-        var durableCompletion = task.SourceLandingOperationId is null
+        // CARD-0544 D-9: one producer per settlement event. A profile-v1 obligation already added
+        // to this tracker (TaskCompletionNotification.Applies) supersedes this legacy mint.
+        var durableCompletion = completion is null
+            && task.SourceLandingOperationId is null
             && task.Workspace == WorkspaceMode.Shared
             && (commitOutcome || task.Role == AgentTaskRole.Commit || git is not null
                 && (git.StartsWith("committed:", StringComparison.Ordinal)
@@ -1583,7 +1599,7 @@ public sealed class AgentTaskReplyService
         }
         catch (DbUpdateConcurrencyException ex)
         {
-            if (!await TaskAlreadyPersistedAsync(task, ct))
+            if (!await TaskAlreadyPersistedAsync(task, ct, completion))
                 throw;
             _logger.LogWarning(
                 ex,
@@ -1596,7 +1612,9 @@ public sealed class AgentTaskReplyService
         if (afterPersist is not null)
             await afterPersist(ct);
 
-        if (durableCompletion)
+        if (completion is not null)
+            await DeliverCompletionObligationAsync(completion, ct);
+        else if (durableCompletion)
         {
             await using var deliveryScope = _scopeFactory.CreateAsyncScope();
             var store = deliveryScope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -1637,7 +1655,8 @@ public sealed class AgentTaskReplyService
     /// assigned, with a CompletedAt. Used to keep delivering after an unrelated row (the
     /// agent) caused the settlement SaveChanges to throw.
     /// </summary>
-    private async Task<bool> TaskAlreadyPersistedAsync(AgentTask task, CancellationToken ct)
+    private async Task<bool> TaskAlreadyPersistedAsync(AgentTask task, CancellationToken ct,
+        AgentTaskLandNotification? completion = null)
     {
         try
         {
@@ -1647,9 +1666,13 @@ public sealed class AgentTaskReplyService
                 .Where(t => t.Id == task.Id)
                 .Select(t => new { t.Status, t.CompletedAt })
                 .FirstOrDefaultAsync(ct);
-            return stored is not null
-                && stored.Status == task.Status
-                && stored.CompletedAt is not null;
+            if (stored is null || stored.Status != task.Status || stored.CompletedAt is null)
+                return false;
+            // CARD-0544 D-9: status alone is not this settlement. Continue delivery only when the
+            // exact committed settlement event owns the exact committed obligation.
+            return completion is null || await store.AgentTaskLandNotifications.AsNoTracking().AnyAsync(
+                n => n.Id == completion.Id && n.SourceEventId == completion.SourceEventId
+                    && n.Kind == LandNotificationKind.Completion, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -1792,9 +1815,14 @@ public sealed class AgentTaskReplyService
         await EnqueueParentNoteAsync(task, report, parentSession, note, ct);
     }
 
+    /// <summary>
+    /// The caller completion note. <paramref name="settlementDb"/> is the settlement's own context
+    /// when the note is composed BEFORE its commit (CARD-0544 D-9): the stage outcome then comes
+    /// from that tracker, not from a fresh read that cannot see it yet.
+    /// </summary>
     private async Task<DelegationReportFormatter.Note> BuildParentNoteAsync(
         AgentTask task, string report, CancellationToken ct, string? workspaceNote = null,
-        string? warning = null, string? drift = null, string? git = null)
+        string? warning = null, string? drift = null, string? git = null, AppDbContext? settlementDb = null)
     {
         if (BlockedNote.IsQuestionBlock(task))
         {
@@ -1808,14 +1836,24 @@ public sealed class AgentTaskReplyService
             && task.AgentSessionId is Guid sessionId
             ? await SessionLivenessAsync(factsDb, sessionId, ct)
             : null;
+        var localOutcome = settlementDb is null ? null : SettlementOutcome(settlementDb, task);
+        var review = settlementDb is null
+            ? await LandCompletionFacts.LoadReviewAsync(factsDb, task, ct)
+            : localOutcome is { Outcome: StageOutcomeKind.Clean, SubjectTaskId: { } subject, ReviewedSourceSha: { } sha }
+                ? new ReviewEvidenceFacts(localOutcome.Id, subject, sha) : null;
+        var scopeOutcome = localOutcome ?? (task.VerificationProfileVersion is null ? null
+            : await factsDb.StageOutcomes.AsNoTracking()
+                .Where(o => o.StageTaskId == task.Id && o.Stage == OrchestrationStage.Review)
+                .OrderByDescending(o => o.RecordedAt).FirstOrDefaultAsync(ct));
         return DelegationReportFormatter.BuildCompletionNote(
             task, _settings, report, workspaceNote, ReplyInlineMaxChars, warning,
             await DescribeOverlappingRunningAsync(task, ct), drift,
             ReportEvidenceHeader(task.ReportEvidence), git,
             DescribeDeliverable(task),
             PipelineHandoff.HeaderBit(task.Role, InterimVerificationPolicy.CapHandoff(task, PipelineHandoff.TryParse(report))),
-            await LandCompletionFacts.LoadAsync(factsScope.ServiceProvider.GetRequiredService<AppDbContext>(), task, ct),
-            await LandCompletionFacts.LoadReviewAsync(factsDb, task, ct), sessionLiveness);
+            await LandCompletionFacts.LoadAsync(factsDb, task, ct),
+            review, sessionLiveness,
+            TaskCompletionNotification.HeaderBit(task, scopeOutcome?.OrdinaryScopeCompleted));
     }
 
     private async Task EnqueueParentNoteAsync(AgentTask task, string report, Guid parentSession,
@@ -1869,6 +1907,88 @@ public sealed class AgentTaskReplyService
             _logger.LogWarning(
                 ex, "Could not deliver task {ShortId} report to parent session {SessionId}",
                 DelegationReportFormatter.Short(task.Id), parentSession);
+        }
+    }
+
+    private static StageOutcome? SettlementOutcome(AppDbContext db, AgentTask task) =>
+        db.StageOutcomes.Local.LastOrDefault(o => o.StageTaskId == task.Id && o.Stage == OrchestrationStage.Review);
+
+    /// <summary>
+    /// CARD-0544 D-9. Compose the immutable snapshot and add the Completion obligation to the
+    /// settlement's tracker. Display facts are resolved here, before the write; no transaction is
+    /// held across git, native work or model calls. The caller's single SaveChanges commits it
+    /// together with the terminal task, result, retained event and stage outcome.
+    /// </summary>
+    private async Task<AgentTaskLandNotification> AddCompletionObligationAsync(
+        IServiceProvider services, AppDbContext db, AgentTask task, AgentTaskEvent settlementEvent, string report,
+        DateTime now, string? workspaceNote, string? warning, string? drift, string? git, CancellationToken ct)
+    {
+        var note = await BuildParentNoteAsync(task, report, ct, workspaceNote, warning, drift, git, db);
+        var outcome = SettlementOutcome(db, task);
+        var handoff = InterimVerificationPolicy.CapHandoff(task, PipelineHandoff.TryParse(report));
+        var admission = VerificationAdmission.TryRead(task.VerificationAdmissionJson);
+        var distill = OutputDistillationService.ShouldRequest(task, _settings);
+        var requestedAt = _timeProvider.GetUtcNow();
+        var deadlineAt = requestedAt.AddSeconds(Math.Max(1, _settings.OutputDistillerWaitSeconds));
+        var snapshot = new TaskCompletionNotification.Snapshot(
+            TaskCompletionNotification.SnapshotVersion, task.Id, task.RootTaskId, settlementEvent.Id, outcome?.Id,
+            task.ParentSessionId!.Value, task.Status, report, TaskCompletionNotification.Sha256(report),
+            DelegationNoteDigest.Compute(report), task.VerificationProfileVersion!.Value, task.VerificationRound!.Value,
+            outcome?.OrdinaryScopeCompleted, task.VerificationSubjectTaskId, task.VerificationBaselineOutcomeId,
+            admission?.Selection, task.VerificationRound == VerificationRound.Interim,
+            handoff.Kind is { } kind ? PipelineHandoff.Token(kind) : null, handoff.Handoff,
+            note.Header, note.Body, task.ResultFilePath, task.DeliverablePath, task.DeliverableRef,
+            task.RepoPath, task.WorkingDirectory, task.WorktreePath,
+            distill, _settings.OutputDistillerMode,
+            distill ? requestedAt.UtcDateTime : null, distill ? deadlineAt.UtcDateTime : null);
+        var notification = TaskCompletionNotification.Create(task, settlementEvent, snapshot, now);
+        db.AgentTaskLandNotifications.Add(notification);
+        return notification;
+    }
+
+    /// <summary>
+    /// CARD-0544 D-9 immediate path, after the settlement commit: the same reconcile the hosted
+    /// scanner runs on boot and every scan, from a fresh scope. A failure here is only logged —
+    /// the committed obligation is what the scanner recovers. Distillation is commissioned only
+    /// here, only once, and only inside the deadline fixed at settlement.
+    /// </summary>
+    private async Task DeliverCompletionObligationAsync(AgentTaskLandNotification completion, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var notifications = scope.ServiceProvider.GetService<AgentTaskLandNotificationService>();
+            if (notifications is null)
+                return;
+            await notifications.ReconcileAsync(completion.Id, ct);
+
+            var snapshot = TaskCompletionNotification.TryReadSnapshot(completion.CompletionSnapshotJson);
+            if (snapshot is not { DistillRequested: true, DistillRequestedAt: { } requested, DistillDeadlineAt: { } deadline })
+                return;
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var queued = await db.AgentTaskLandNotifications.AsNoTracking()
+                .Where(n => n.Id == completion.Id).Select(n => n.QueueMessageId).SingleOrDefaultAsync(ct);
+            if (queued is not Guid queueId || _timeProvider.GetUtcNow().UtcDateTime >= deadline)
+                return;
+            var request = new DistillRequest(snapshot.TaskId, queueId,
+                new DateTimeOffset(requested, TimeSpan.Zero), new DateTimeOffset(deadline, TimeSpan.Zero), snapshot.DistillMode);
+            var distillQueue = scope.ServiceProvider.GetService<OutputDistillationQueue>();
+            if (distillQueue?.TryEnqueue(request) != true)
+            {
+                var distiller = scope.ServiceProvider.GetService<OutputDistillationService>();
+                if (distiller is not null)
+                    await distiller.RejectAdmissionAsync(request,
+                        distillQueue is null || distillQueue.IsClosed ? "worker-unavailable" : "queue-full", ct);
+                else
+                    await db.SessionQueuedMessages.Where(m => m.Id == queueId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(m => m.HoldUntil, (DateTime?)null), ct);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "Completion obligation {NotificationId} for task {ShortId} was committed but its immediate delivery failed; the notification scanner owns recovery",
+                completion.Id, DelegationReportFormatter.Short(completion.TaskId));
         }
     }
 

@@ -1293,7 +1293,15 @@ public sealed partial class SessionMessageQueueService
                     $"SELECT * FROM \"SessionQueuedMessages\" WHERE \"Id\" = {noteId} FOR UPDATE")
                     .SingleOrDefaultAsync(token);
                 if (source is null || note is null) return "note-missing";
-                if (note.SourceLandNotificationId != null || note.SourceTaskId != request.TaskId || note.ContentDigest != digest
+                // CARD-0544 D-9: only a Completion obligation's keyed row may be distilled, and only
+                // while its rendering is unfrozen; every other keyed kind keeps its immutable Body.
+                var completionKind = note.SourceLandNotificationId is Guid keyedId
+                    ? await db.AgentTaskLandNotifications.AsNoTracking().Where(n => n.Id == keyedId)
+                        .Select(n => new { n.Kind, Frozen = n.CompletionDeliveryJson != null }).SingleOrDefaultAsync(token)
+                    : null;
+                if (completionKind is { Kind: LandNotificationKind.Completion, Frozen: true }) return "delivery-claimed";
+                if (note.SourceLandNotificationId != null && completionKind?.Kind != LandNotificationKind.Completion
+                    || note.SourceTaskId != request.TaskId || note.ContentDigest != digest
                     || note.Origin != QueuedMessageOrigin.Delegation
                     || DelegationNoteDigest.Compute(source.Result ?? source.FailureReason ?? "") != digest)
                     return "identity";
@@ -1697,9 +1705,14 @@ public sealed partial class SessionMessageQueueService
             foreach (var message in pending.Where(m =>
                          m.Origin == QueuedMessageOrigin.Delegation
                          && m.DeliveryAttempts == 0
-                         && m.SourceTaskId is not null && m.SourceLandNotificationId is null
+                         && m.SourceTaskId is not null
                          && m.ContentDigest is not null).ToList())
             {
+                // CARD-0544 D-9: a keyed row shrinks only when it is an unfrozen Completion obligation.
+                if (message.SourceLandNotificationId is Guid keyed
+                    && !await db.AgentTaskLandNotifications.AsNoTracking().AnyAsync(n => n.Id == keyed
+                        && n.Kind == LandNotificationKind.Completion && n.CompletionDeliveryJson == null, ct))
+                    continue;
                 var contentDigest = message.ContentDigest;
                 var noteHeader = message.NoteHeader;
                 if (contentDigest is null || noteHeader is null)
@@ -1797,10 +1810,25 @@ public sealed partial class SessionMessageQueueService
         var channelEnvelope = head.Origin == QueuedMessageOrigin.Channel
             ? TypedBodySpill.TryReadChannelEnvelope(run[^1].Body)
             : null;
-        var body = await SpillQueueBodyAsync(
+        // CARD-0544 D-9: Completion obligations freeze their rendering with the first typed
+        // attempt. A retry replays that committed wire text instead of recomposing it.
+        var completionRows = await CompletionNotificationsForRunAsync(db, run, ct);
+        if (ResetUnauthorizedCompletionRenderings(run, completionRows))
+        {
+            // A rendering lost its snapshot header: restore the raw fallback, type nothing now.
+            await db.SaveChangesAsync(ct);
+            return FlushResult.Nothing;
+        }
+        var committedWire = completionRows.Count > 0
+            && completionRows.All(n => TaskCompletionNotification.TryReadDelivery(n.CompletionDeliveryJson) is { } d
+                && d.MemberQueueIds.Count == run.Count && run.All(m => d.MemberQueueIds.Contains(m.Id)))
+            ? TaskCompletionNotification.TryReadDelivery(completionRows[0].CompletionDeliveryJson)!.WireText
+            : null;
+        var logicalBodies = run.ToDictionary(m => m.Id, m => m.Body);
+        var body = committedWire ?? await SpillQueueBodyAsync(
             sessionId, composed, head.Id.ToString("D"), channelEnvelope, db, ct, ceilings,
             head.SpecialistInputPolicyJson);
-        var spilled = !ReferenceEquals(body, composed) && body != composed;
+        var spilled = committedWire is null && !ReferenceEquals(body, composed) && body != composed;
 
         // CARD-0340 S3 / CARD-0342: a previously typed body still standing in the composer gets
         // Enter only in the process that took the typing, with the whole head visible (CARD-0501).
@@ -1846,7 +1874,20 @@ public sealed partial class SessionMessageQueueService
             if (spilled)
                 m.Body = body;
         }
-        await db.SaveChangesAsync(ct);
+        if (committedWire is null && completionRows.Count > 0)
+        {
+            // One transaction: the attempt/floor claim and the frozen rendering commit together,
+            // before the first byte is typed, or neither does.
+            await using var renderTx = db.Database.CurrentTransaction is null
+                ? await db.Database.BeginTransactionAsync(ct) : null;
+            await db.SaveChangesAsync(ct);
+            await FreezeCompletionRenderingAsync(db, sessionId, run, completionRows, logicalBodies, composed, body,
+                spilled, now, ct);
+            if (renderTx is not null)
+                await renderTx.CommitAsync(ct);
+        }
+        else
+            await db.SaveChangesAsync(ct);
 
         DeliveryOutcome outcome;
         DateTime? capturedGeneration = null;
@@ -2042,6 +2083,85 @@ public sealed partial class SessionMessageQueueService
             await db.SaveChangesAsync(ct);
 
         return new LateConfirmCounts(confirmed, truncated, confirmedMessageIds, confirmedChannelMessageIds);
+    }
+
+    /// <summary>CARD-0544 D-9. The Completion obligations (untracked) whose keyed rows are in this run.</summary>
+    private static async Task<List<AgentTaskLandNotification>> CompletionNotificationsForRunAsync(
+        AppDbContext db, IReadOnlyList<SessionQueuedMessage> run, CancellationToken ct)
+    {
+        var keyed = run.Where(m => m.SourceLandNotificationId != null)
+            .Select(m => m.SourceLandNotificationId!.Value).ToList();
+        if (keyed.Count == 0)
+            return [];
+        return await db.AgentTaskLandNotifications.AsNoTracking()
+            .Where(n => keyed.Contains(n.Id) && n.Kind == LandNotificationKind.Completion)
+            .ToListAsync(ct);
+    }
+
+    /// <summary>
+    /// CARD-0544 G-108. Before a first attempt, every Completion rendering (distilled, polled,
+    /// raw) must still start with its snapshot's exact header; one that does not is replaced by
+    /// the raw fallback. Frozen renderings are replayed, never re-judged.
+    /// </summary>
+    private static bool ResetUnauthorizedCompletionRenderings(
+        IReadOnlyList<SessionQueuedMessage> run, IReadOnlyList<AgentTaskLandNotification> completions)
+    {
+        var changed = false;
+        foreach (var notification in completions)
+        {
+            if (notification.CompletionDeliveryJson is not null)
+                continue;
+            var snapshot = TaskCompletionNotification.TryReadSnapshot(notification.CompletionSnapshotJson);
+            var row = run.First(m => m.SourceLandNotificationId == notification.Id);
+            if (snapshot is null || row.DeliveryAttempts > 0 || TaskCompletionNotification.RenderingKeepsHeader(snapshot, row.Body))
+                continue;
+            row.Body = notification.Body;
+            changed = true;
+        }
+        return changed;
+    }
+
+    /// <summary>
+    /// CARD-0544 G-106/G-110. Freeze each Completion member's logical note, the exact composed wire
+    /// text, batch membership and any spill identity. Only a still-unfrozen row is written, so a
+    /// concurrent replay cannot replace a committed rendering.
+    /// </summary>
+    private static async Task FreezeCompletionRenderingAsync(
+        AppDbContext db, Guid sessionId, IReadOnlyList<SessionQueuedMessage> run,
+        IReadOnlyList<AgentTaskLandNotification> completions, IReadOnlyDictionary<Guid, string> logicalBodies,
+        string composed, string wire, bool spilled, DateTime now, CancellationToken ct)
+    {
+        string? spillPath = null;
+        string? spillSha = null;
+        if (spilled)
+        {
+            var cwd = await db.AgentSessions.AsNoTracking().Where(s => s.Id == sessionId)
+                .Select(s => s.Cwd).FirstOrDefaultAsync(ct);
+            if (!string.IsNullOrWhiteSpace(cwd))
+            {
+                spillPath = TypedBodySpill.InboxAbsolutePath(cwd, run[0].Id.ToString("D"));
+                spillSha = TaskCompletionNotification.Sha256(composed);
+            }
+        }
+        var members = run.Select(m => m.Id).ToList();
+        foreach (var notification in completions)
+        {
+            if (notification.CompletionDeliveryJson is not null)
+                continue;
+            var row = run.First(m => m.SourceLandNotificationId == notification.Id);
+            var logical = logicalBodies[row.Id];
+            var kind = logical == notification.Body ? "raw"
+                : logical.Contains("Report withheld", StringComparison.Ordinal) ? "polled" : "distilled";
+            if (run.Count > 1) kind += "+batch";
+            if (spilled) kind += "+spill";
+            var json = TaskCompletionNotification.SerializeDelivery(new TaskCompletionNotification.Delivery(
+                TaskCompletionNotification.SnapshotVersion, kind, logical, wire, TaskCompletionNotification.Sha256(wire),
+                members, spillPath, spillSha, now));
+            var id = notification.Id;
+            await db.AgentTaskLandNotifications
+                .Where(n => n.Id == id && n.CompletionDeliveryJson == null)
+                .ExecuteUpdateAsync(s => s.SetProperty(n => n.CompletionDeliveryJson, json), ct);
+        }
     }
 
     private static async Task RevertRunAsync(AppDbContext db, IReadOnlyList<SessionQueuedMessage> run)
