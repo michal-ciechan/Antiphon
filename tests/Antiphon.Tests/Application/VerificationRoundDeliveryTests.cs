@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -98,9 +99,15 @@ public sealed class VerificationRoundDeliveryTests
             {
                 rig.Fault.TaskId = taskId;
                 rig.Fault.Cut = cut;
-                if (busy) await rig.EndCallerTurnAsync().ContinueWith(_ => { });
-                else await Should.ThrowAsync<IOException>(rig.FlushAsync).ContinueWith(_ => { });
-                if (cut == "prompt-accepted") await rig.ScanAsync();
+                // The cut may surface to the flusher or be absorbed by a producer that logs and retries later;
+                // either way only the armed cut may escape, and Throws proves it was reached.
+                try
+                {
+                    if (busy) await rig.EndCallerTurnAsync();
+                    else await rig.FlushAsync();
+                    if (cut == "prompt-accepted") await rig.ScanAsync();
+                }
+                catch (IOException e) when (e.Message.StartsWith("c544 completion persistence cut", StringComparison.Ordinal)) { }
                 rig.Fault.Throws.ShouldBe(1, row + ": cut reached");
             }
 
@@ -126,6 +133,166 @@ public sealed class VerificationRoundDeliveryTests
             await AssertReceivedOnceAsync(rig, taskId, row, FinalHeaderBits, expectKind: null, expectSpill: distilledSpill ? null : false);
             (await rig.NotificationAsync(taskId))!.Id.ShouldBe(note.Id, row + ": same notification identity");
         }
+    }
+
+    /// <summary>
+    /// DL-1: task/profile commit -> brief queue insert -> wakeup -> Sent -> confirmation, on the fresh
+    /// spawn, warm-pool and pinned follow-up paths, inline and spilled, busy and eligible (12 rows).
+    /// The delegate process is lost after the brief row commits (no live adapter, so nothing can be
+    /// typed); recovery is a recreated provider, the real dispatcher tick and the queue's stranded
+    /// sweep once the session is live again. Receipt is exactly one complete UserPrompt carrying the
+    /// task marker and the profile block above the attempt floor.
+    /// </summary>
+    [Test]
+    public async Task C544_BriefHandoffRecovery()
+    {
+        foreach (var path in new[] { "fresh", "warm", "follow-up" })
+        foreach (var spilled in new[] { false, true })
+        foreach (var busy in new[] { false, true })
+        {
+            var row = $"{path} {(spilled ? "spilled" : "inline")} busy={busy}";
+            await using var world = await C544World.CreateAsync(delegation: d =>
+            {
+                d.PoolEnabled = path != "fresh"; // a disabled pool retires idle delegates before dispatch
+                d.PoolReservedForCallerMinutes = 0;
+                d.BriefInlineMaxBytes = spilled ? 900 : 43_200;
+                d.ModernPtyBriefInlineMaxBytes = spilled ? 900 : 43_200;
+            });
+            var request = path == "fresh" ? world.FinalReview() : world.FinalReview() with { Workspace = WorkspaceMode.Shared };
+            var created = await world.CreateTaskAsync(request);
+            Guid? warmSession = path == "fresh" ? null : await SeedWarmAgentAsync(world, created.Id, pinned: path == "follow-up");
+
+            await using (var scope = world.Services.CreateAsyncScope())
+                await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
+
+            var task = await world.TaskAsync(created.Id);
+            task.Status.ShouldBe(AgentTaskStatus.Dispatched, $"{row}: {task.FailureReason}");
+            var session = task.AgentSessionId.ShouldNotBeNull(row);
+            if (warmSession is Guid expected)
+                session.ShouldBe(expected, $"{row}: reused the warm session (workspace={task.Workspace} dir={task.WorkingDirectory} "
+                    + $"level={task.ModelLevel} kind={task.AgentKind} project={task.ProjectId} env={task.InheritedLaunchEnvJson} repo={world.RepositoryPath})");
+            var marker = DelegationReportFormatter.TaskMarker(created.Id);
+            async Task<List<SessionQueuedMessage>> BriefRowsAsync()
+            {
+                await using var db = world.CreateContext();
+                return await db.SessionQueuedMessages.AsNoTracking()
+                    .Where(m => m.AgentSessionId == session && m.ExecutionTaskId == created.Id && m.Body.Contains(marker))
+                    .ToListAsync();
+            }
+            (await BriefRowsAsync()).Count.ShouldBe(1, row + ": the brief row committed with the task");
+            (await PromptsAsync(world, session)).ShouldNotContain(p => p.Text!.Contains(marker), row + ": nothing typed before recovery");
+
+            // Process lost: recreate every provider; the session's process comes back (reconciler resume).
+            await world.RestartAsync();
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var _ = adapter;
+            var connection = world.Schema.ConnectionString;
+            await BridgeQueueHarness.InsertEntryAsync(session, TranscriptKinds.UserPrompt, "prior turn", connectionString: connection);
+            await BridgeQueueHarness.InsertEntryAsync(session, TranscriptKinds.TurnEnd, stopReason: TranscriptKinds.StopReasons.EndTurn,
+                connectionString: connection);
+            if (busy)
+                await BridgeQueueHarness.InsertEntryAsync(session, TranscriptKinds.AssistantText, "delegate is mid-turn", connectionString: connection);
+            adapter.OnSubmitted = async submitted =>
+            {
+                await BridgeQueueHarness.InsertEntryAsync(session, TranscriptKinds.UserPrompt, submitted, timestamp: DateTime.UtcNow,
+                    connectionString: connection);
+                await BridgeQueueHarness.InsertEntryAsync(session, TranscriptKinds.TurnEnd, stopReason: TranscriptKinds.StopReasons.EndTurn,
+                    connectionString: connection);
+            };
+            world.Services.GetRequiredService<AgentSessionRuntime>().Register(session, adapter);
+            // The substitute for the runner's launch/resume: the process is up. Only the session row moves;
+            // task and queue rows are never edited.
+            await using (var up = world.CreateContext())
+                await up.AgentSessions.Where(s => s.Id == session && s.Status == SessionStatus.Starting)
+                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, SessionStatus.Running));
+
+            await using (var scope = world.Services.CreateAsyncScope())
+                await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
+            var queue = world.Services.GetRequiredService<SessionMessageQueueService>();
+            await queue.FlushStrandedQueuesAsync(CancellationToken.None);
+            await queue.FlushIfIdleAsync(session, CancellationToken.None);
+            if (busy)
+            {
+                adapter.SubmittedBodies.ShouldBeEmpty(row + ": a busy delegate gets zero writes before TurnEnd");
+                await BridgeQueueHarness.InsertEntryAsync(session, TranscriptKinds.TurnEnd, stopReason: TranscriptKinds.StopReasons.EndTurn,
+                    connectionString: connection);
+                await queue.OnTurnEndAsync(session, CancellationToken.None);
+                // A warm unrelated reuse types the refocus /compact first; its own TurnEnd releases the brief.
+                await queue.OnTurnEndAsync(session, CancellationToken.None);
+            }
+
+            var rows = await BriefRowsAsync();
+            rows.Count.ShouldBe(1, row + ": recovery never re-enqueues a committed brief");
+            var carrying = (await PromptsAsync(world, session)).Where(p => p.Text!.Contains(marker)).ToList();
+            if (carrying.Count != 1)
+            {
+                await using var diag = world.CreateContext();
+                var s = await diag.AgentSessions.AsNoTracking().SingleAsync(x => x.Id == session);
+                carrying.Count.ShouldBe(1, $"{row}: exactly one UserPrompt carries the task marker; session={s.Status} "
+                    + $"row={rows[0].Status}/{rows[0].DeliveryAttempts}/{rows[0].DeliveryVerdict}/{rows[0].HoldUntil} typed={adapter.SubmittedBodies.Count}");
+            }
+            carrying[0].Sequence.ShouldBeGreaterThan(rows[0].LastDeliveryBaselineSequence ?? 0, row + ": above the attempt floor");
+            PromptSubmissionMatch.IsCompleteIn(rows[0].Body, carrying[0].Text!).ShouldBeTrue(row + ": complete brief prompt");
+            var durable = carrying[0].Text!;
+            if (spilled)
+            {
+                durable.ShouldContain("YOUR BRIEF IS NOT IN THIS MESSAGE", Case.Sensitive, row);
+                var spill = Path.Combine(task.WorkingDirectory!, ".antiphon", $"task-{DelegationReportFormatter.Short(created.Id)}-brief.md");
+                File.Exists(spill).ShouldBeTrue(row + ": spilled brief file");
+                durable = await File.ReadAllTextAsync(spill);
+            }
+            else
+            {
+                durable.ShouldNotContain("YOUR BRIEF IS NOT IN THIS MESSAGE", Case.Sensitive, row);
+            }
+            durable.ShouldContain("--- verification profile ---", Case.Sensitive, row + ": profile block delivered");
+            durable.ShouldContain("round: Final", Case.Sensitive, row);
+        }
+    }
+
+    private static async Task<List<TranscriptEntry>> PromptsAsync(C544World world, Guid session)
+    {
+        await using var db = world.CreateContext();
+        return await db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == session && t.Kind == TranscriptKinds.UserPrompt && t.Text != null)
+            .OrderBy(t => t.Sequence).ToListAsync();
+    }
+
+    /// <summary>An idle pool delegate whose process is not live; pinned makes the task a same-root follow-up.</summary>
+    private static async Task<Guid> SeedWarmAgentAsync(C544World world, Guid taskId, bool pinned)
+    {
+        await using var db = world.CreateContext();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+        var now = DateTime.UtcNow;
+        var session = C544World.Session(Guid.NewGuid(), "c544-warm", now.AddHours(-1));
+        session.Cwd = world.RepositoryPath;
+        db.AgentSessions.Add(session);
+        var name = $"c544-warm-{Guid.NewGuid():N}"[..20];
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(), Name = name, Slug = name, WorkingDirectory = world.RepositoryPath,
+            Details = "CARD-0544 warm delegate.", Status = AgentStatus.Idle, PoolIdleSince = now.AddMinutes(-1),
+            Kind = task.AgentKind, ModelLevel = task.ModelLevel, IsPoolDelegate = true, PoolProjectId = task.ProjectId,
+            PersistentSessionId = session.Id.ToString("D"), CreatedAt = now.AddHours(-2), UpdatedAt = now,
+        };
+        db.Agents.Add(agent);
+        var priorId = Guid.NewGuid();
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = priorId, RootTaskId = pinned ? task.RootTaskId : priorId, Title = "prior work", Goal = "prior work",
+            Role = AgentTaskRole.Review, ModelLevel = task.ModelLevel, Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = world.RepositoryPath, AgentId = agent.Id, AgentSessionId = session.Id,
+            Status = AgentTaskStatus.Succeeded, CreatedAt = now.AddMinutes(-90), DispatchedAt = now.AddMinutes(-89),
+            CompletedAt = now.AddMinutes(-61),
+        });
+        if (pinned)
+        {
+            task.AgentId = agent.Id;
+            task.AgentName = name;
+            task.ConcurrencyToken = Guid.NewGuid();
+        }
+        await db.SaveChangesAsync();
+        return session.Id;
     }
 
     // ---- shared assertions ------------------------------------------------------------------------

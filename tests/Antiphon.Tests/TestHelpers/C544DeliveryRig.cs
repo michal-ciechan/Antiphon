@@ -39,7 +39,8 @@ internal sealed class C544DeliveryRig : IAsyncDisposable
         var rig = new C544DeliveryRig { Busy = busy };
         rig.World = await C544World.CreateAsync(rig.Fault, configure: rig.Configure, delegation: d =>
         {
-            d.PtySingleChunkBytes = spill ? 1024 : 43_200;
+            d.PtySingleChunkBytes = spill ? 400 : 43_200;
+            d.ModernPtySingleWriteMaxBytes = spill ? 400 : 86_400;
             d.ReplyInlineMaxChars = replyInlineMaxChars;
             d.OutputDistillerEnabled = distill;
             d.OutputDistillerMode = OutputDistillerMode.Apply;
