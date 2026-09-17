@@ -969,22 +969,40 @@ public class GitWorkspaceService
         foreach (var sha in result.Stdout.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
                      .Distinct(StringComparer.Ordinal))
         {
-            // Let Git recognize its configured separators, then emit unambiguous key/value
-            // boundaries. The history grep is only a candidate filter, never identity proof.
-            var trailers = await RunAsync(repo, ct, "log", "-1",
-                "--format=%(trailers:only,unfold,key_value_separator=%x00,separator=%x00)", sha);
-            if (trailers.Code != 0) return new(false, [], trailers.Code, trailers.Stderr);
-            var fields = trailers.Stdout.TrimEnd('\r', '\n').Split('\0');
-            if (fields.Length == 1 && fields[0].Length == 0) continue;
-            if (fields.Length % 2 != 0) return new(false, [], -1, "Malformed parsed Git trailers.");
-            var pairs = fields.Chunk(2).ToArray();
-            if (Exact("antiphon", "true") && Exact("antiphon-task", taskId.ToString("D"))
-                && Exact("antiphon-commit", "gated") && Exact(identityKey, identity))
+            // The history grep is only a candidate filter, never identity proof.
+            var trailers = await ReadTrailersAsync(repo, sha, ct);
+            if (!trailers.Succeeded) return new(false, [], trailers.ExitCode, trailers.Error);
+            var pairs = trailers.Items;
+            if (HasExactTrailer(pairs, "antiphon", "true") && HasExactTrailer(pairs, "antiphon-task", taskId.ToString("D"))
+                && HasExactTrailer(pairs, "antiphon-commit", "gated") && HasExactTrailer(pairs, identityKey, identity))
                 matches.Add(sha);
-            bool Exact(string key, string value) => pairs.Count(p => p[0].Equals(key, StringComparison.OrdinalIgnoreCase)) == 1
-                && pairs.Any(p => p[0].Equals(key, StringComparison.OrdinalIgnoreCase) && p[1] == value);
         }
         return new(true, matches, 0);
+    }
+
+    public sealed record GitTrailer(string Key, string Value);
+
+    /// <summary>
+    /// Reads one commit's trailer block through Git's own parser, so every configured
+    /// <c>trailer.separators</c> spelling yields the same pairs. Body prose is never a trailer.
+    /// </summary>
+    public async Task<GitStrictList<GitTrailer>> ReadTrailersAsync(string repo, string sha, CancellationToken ct)
+    {
+        // Let Git recognize its configured separators, then emit unambiguous key/value boundaries.
+        var trailers = await RunAsync(repo, ct, "log", "-1",
+            "--format=%(trailers:only,unfold,key_value_separator=%x00,separator=%x00)", sha);
+        if (trailers.Code != 0) return new(false, [], trailers.Code, trailers.Stderr);
+        var fields = trailers.Stdout.TrimEnd('\r', '\n').Split('\0');
+        if (fields.Length == 1 && fields[0].Length == 0) return new(true, [], 0);
+        if (fields.Length % 2 != 0) return new(false, [], -1, "Malformed parsed Git trailers.");
+        return new(true, fields.Chunk(2).Select(p => new GitTrailer(p[0], p[1])).ToArray(), 0);
+    }
+
+    /// <summary>Exactly one occurrence of the key (case-insensitive), and its value ordinal-equal.</summary>
+    public static bool HasExactTrailer(IReadOnlyList<GitTrailer> trailers, string key, string value)
+    {
+        var matches = trailers.Where(t => t.Key.Equals(key, StringComparison.OrdinalIgnoreCase)).ToArray();
+        return matches.Length == 1 && matches[0].Value == value;
     }
 
     protected internal virtual Task<(int Code, string Stdout, string Stderr)> RunAsync(

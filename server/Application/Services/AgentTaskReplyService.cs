@@ -3462,9 +3462,16 @@ public sealed class AgentTaskReplyService
                 lines.Add(revert);
             }
 
-            var message = await git.CommitMessageAsync(task.RepoPath, sha, ct) ?? "";
-            if (!message.Contains("antiphon-commit: gated", StringComparison.OrdinalIgnoreCase)
-                && !message.Contains("antiphon-commit=gated", StringComparison.OrdinalIgnoreCase))
+            // Git's trailer parser decides, so every configured separator spelling is accepted
+            // and body prose mentioning the trailer is not.
+            var trailers = await git.ReadTrailersAsync(task.RepoPath, sha, ct);
+            if (!trailers.Succeeded)
+            {
+                var unavailable = $"commit {sha7} audit unavailable: {trailers.Error?.Trim()}";
+                db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, unavailable, now));
+                lines.Add(unavailable);
+            }
+            else if (!GitWorkspaceService.HasExactTrailer(trailers.Items, "antiphon-commit", "gated"))
             {
                 var outside = $"commit {sha7} was made outside the gate";
                 db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, outside, now));
