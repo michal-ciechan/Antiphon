@@ -14,6 +14,8 @@ param(
     [string]$ExpectedScriptHash = '',
     [string]$ExpectedPolicyHash = '',
     [string]$AuthorizedDestination = '',
+    [string]$RepositoryPath = '',
+    [string]$ProjectId = '',
     [switch]$PassThru
 )
 
@@ -25,7 +27,7 @@ $lib = Join-Path $PSScriptRoot 'lib'
 
 $result = Invoke-AntiphonNightlyHealth -StateRoot $StateRoot -SeamsPath $SeamsPath `
     -ExpectedScriptHash $ExpectedScriptHash -ExpectedPolicyHash $ExpectedPolicyHash `
-    -AuthorizedDestination $AuthorizedDestination -PassThru
+    -AuthorizedDestination $AuthorizedDestination -RepositoryPath $RepositoryPath -ProjectId $ProjectId -PassThru
 if ($PassThru) { return $result }
 $code = 1
 if ($null -ne $result -and $null -ne $result.ExitCode) { $code = [int]$result.ExitCode }
