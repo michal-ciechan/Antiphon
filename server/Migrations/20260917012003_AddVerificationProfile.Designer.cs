@@ -939,6 +939,16 @@ namespace Antiphon.Server.Migrations
                         .HasColumnType("integer")
                         .HasDefaultValue(0);
 
+                    b.Property<string>("CommitBaselineSha")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("CommitOnSettle")
+                        .HasColumnType("text");
+
+                    b.Property<string>("CommitUpstreamBaselineJson")
+                        .HasColumnType("text");
+
                     b.Property<DateTime?>("CompletedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -4295,6 +4305,9 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)")
                         .HasDefaultValue("master");
+
+                    b.Property<bool?>("CommitOnSettle")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("ConstitutionPath")
                         .IsRequired()

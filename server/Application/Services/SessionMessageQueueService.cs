@@ -1296,11 +1296,10 @@ public sealed partial class SessionMessageQueueService
                 // CARD-0544 D-9: only a Completion obligation's keyed row may be distilled; every other
                 // keyed kind keeps its immutable Body. The rendering freezes with the first attempt, so
                 // the unclaimed-row check below is also what rejects a late replacement.
-                var keyedKind = note.SourceLandNotificationId is Guid keyedId
-                    ? await db.AgentTaskLandNotifications.AsNoTracking().Where(n => n.Id == keyedId)
-                        .Select(n => (LandNotificationKind?)n.Kind).SingleOrDefaultAsync(token)
-                    : null;
-                if (note.SourceLandNotificationId != null && keyedKind != LandNotificationKind.Completion
+                var keyedProfiled = note.SourceLandNotificationId is Guid keyedId
+                    && await db.AgentTaskLandNotifications.AsNoTracking().AnyAsync(n => n.Id == keyedId
+                        && n.Kind == LandNotificationKind.TaskCompletion && n.CompletionSnapshotJson != null, token);
+                if (note.SourceLandNotificationId != null && !keyedProfiled
                     || note.SourceTaskId != request.TaskId || note.ContentDigest != digest
                     || note.Origin != QueuedMessageOrigin.Delegation
                     || DelegationNoteDigest.Compute(source.Result ?? source.FailureReason ?? "") != digest)
@@ -1711,7 +1710,8 @@ public sealed partial class SessionMessageQueueService
                 // CARD-0544 D-9: a keyed row shrinks only when it is an unfrozen Completion obligation.
                 if (message.SourceLandNotificationId is Guid keyed
                     && !await db.AgentTaskLandNotifications.AsNoTracking().AnyAsync(n => n.Id == keyed
-                        && n.Kind == LandNotificationKind.Completion && n.CompletionDeliveryJson == null, ct))
+                        && n.Kind == LandNotificationKind.TaskCompletion && n.CompletionSnapshotJson != null
+                        && n.CompletionDeliveryJson == null, ct))
                     continue;
                 var contentDigest = message.ContentDigest;
                 var noteHeader = message.NoteHeader;
@@ -2094,7 +2094,7 @@ public sealed partial class SessionMessageQueueService
         if (keyed.Count == 0)
             return [];
         return await db.AgentTaskLandNotifications.AsNoTracking()
-            .Where(n => keyed.Contains(n.Id) && n.Kind == LandNotificationKind.Completion)
+            .Where(n => keyed.Contains(n.Id) && n.Kind == LandNotificationKind.TaskCompletion && n.CompletionSnapshotJson != null)
             .ToListAsync(ct);
     }
 

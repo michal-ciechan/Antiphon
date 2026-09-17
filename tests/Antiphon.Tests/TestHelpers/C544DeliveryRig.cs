@@ -155,7 +155,7 @@ internal sealed class C544DeliveryRig : IAsyncDisposable
     public async Task<AgentTaskLandNotification?> NotificationAsync(Guid taskId)
     {
         await using var db = World.CreateContext();
-        return await db.AgentTaskLandNotifications.AsNoTracking().SingleOrDefaultAsync(n => n.TaskId == taskId && n.Kind == LandNotificationKind.Completion);
+        return await db.AgentTaskLandNotifications.AsNoTracking().SingleOrDefaultAsync(n => n.TaskId == taskId && n.Kind == LandNotificationKind.TaskCompletion);
     }
 
     public async Task<List<SessionQueuedMessage>> RowsAsync(Guid taskId)
@@ -274,7 +274,7 @@ internal sealed class C544DeliveryFault : SaveChangesInterceptor, IDbTransaction
         if (Cut is null || Throws > 0) return ValueTask.FromResult(result);
         var tracker = data.Context!.ChangeTracker;
         var obligation = tracker.Entries<AgentTaskLandNotification>().Any(e => e.State == EntityState.Added
-            && e.Entity.Kind == LandNotificationKind.Completion && Matches(TaskId, e.Entity.TaskId));
+            && e.Entity.Kind == LandNotificationKind.TaskCompletion && Matches(TaskId, e.Entity.TaskId));
         if (obligation && Cut == "obligation-insert") Fire();
         if (obligation && Cut == "settled-committed") _afterSave = true;
         var keyedInsert = tracker.Entries<SessionQueuedMessage>().Any(e => e.State == EntityState.Added
@@ -292,7 +292,7 @@ internal sealed class C544DeliveryFault : SaveChangesInterceptor, IDbTransaction
             && e.Entity.SourceTaskId is Guid v && Matches(TaskId, v));
         if (verdict && Cut == "attempt-committed") Fire();
         var receipt = tracker.Entries<AgentTaskLandNotification>().Any(e => e.State == EntityState.Modified
-            && e.Entity.Kind == LandNotificationKind.Completion && e.Entity.State == LandNotificationState.Confirmed
+            && e.Entity.Kind == LandNotificationKind.TaskCompletion && e.Entity.State == LandNotificationState.Confirmed
             && Matches(TaskId, e.Entity.TaskId));
         if (receipt && Cut == "prompt-accepted") Fire();
         return ValueTask.FromResult(result);

@@ -418,7 +418,7 @@ does not. Pinned by ReceiptFailureDeliveryTests busy/eligible persistence cuts.
 ### Profile-v1 completion obligation (CARD-0544 D-9)
 
 A Code/Review task created with verification profile v1 that replies to a Session commits a
-`Completion` notification (`AgentTaskLandNotification.Kind`) in the same settlement transaction
+`TaskCompletion` notification (`AgentTaskLandNotification.Kind`) in the same settlement transaction
 as its terminal status, result, retained event and StageOutcome, with an immutable
 `CompletionSnapshotJson` (raw result and SHA-256, round/scope/pending-Final header, next stage,
 report path, distillation request and deadline). The immediate path and the notification scanner
@@ -429,6 +429,9 @@ typed rendering (`CompletionDeliveryJson`: logical note, wire text and hash, bat
 spill path and hash) in the same transaction as the first attempt claim; retries replay that wire
 text and a late distillation cannot replace it. Receipt is the complete wire text (or pointer plus
 matching spill-file hash) in one caller UserPrompt above the attempt floor; enqueue, Sent, a
-sibling's completion stamp or an ID/header-only prompt is not receipt. Non-Completion keyed kinds
-keep the immutable-Body rule. Pinned by VerificationRoundDeliveryTests and
-DataRetentionServiceTests.C544_CompletionObligationRetention.
+sibling's completion stamp or an ID/header-only prompt is not receipt. Every other keyed row keeps
+the immutable-Body rule, including a snapshot-less `TaskCompletion` (CARD-0527's Shared commit-outcome
+note). One settlement event owns one `TaskCompletion`: when the profile-v1 obligation applies,
+CARD-0527's mint stands down; otherwise CARD-0527's rule is unchanged. Pinned by
+VerificationRoundDeliveryTests, AgentTaskReplyIntegrationTests.C544_shared_commit_on_settle_mints_one_task_completion
+and DataRetentionServiceTests.C544_CompletionObligationRetention.

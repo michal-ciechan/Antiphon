@@ -1672,7 +1672,7 @@ public sealed class AgentTaskReplyService
             // exact committed settlement event owns the exact committed obligation.
             return completion is null || await store.AgentTaskLandNotifications.AsNoTracking().AnyAsync(
                 n => n.Id == completion.Id && n.SourceEventId == completion.SourceEventId
-                    && n.Kind == LandNotificationKind.Completion, ct);
+                    && n.Kind == LandNotificationKind.TaskCompletion, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

@@ -1185,7 +1185,7 @@ public sealed class AgentTaskService
         await _db.SessionQueuedMessages.AsNoTracking()
             .Where(message => message.SourceTaskId == taskId && message.NoteHeader != null
                 && (message.SourceLandNotificationId == null || _db.AgentTaskLandNotifications.Any(n =>
-                    n.Id == message.SourceLandNotificationId && n.Kind == LandNotificationKind.Completion)))
+                    n.Id == message.SourceLandNotificationId && n.Kind == LandNotificationKind.TaskCompletion)))
             .OrderByDescending(message => message.CreatedAt)
             .Select(message => message.NoteHeader)
             .FirstOrDefaultAsync(ct);
@@ -1665,7 +1665,7 @@ public sealed class AgentTaskService
             var noteSent = await _db.SessionQueuedMessages.AsNoTracking()
                 .Where(m => m.SourceTaskId == id
                     && (m.SourceLandNotificationId == null || _db.AgentTaskLandNotifications.Any(n =>
-                        n.Id == m.SourceLandNotificationId && n.Kind == LandNotificationKind.Completion))
+                        n.Id == m.SourceLandNotificationId && n.Kind == LandNotificationKind.TaskCompletion))
                     && m.Origin == QueuedMessageOrigin.Delegation
                     && m.SentAt != null
                     && m.SentAt < now)

@@ -264,7 +264,7 @@ public sealed class AgentTaskCheckService
                 m => m.AgentSessionId == parentSessionId
                     // CARD-0544 D-9: a Completion obligation's keyed row is the caller's completion note.
                     && (m.SourceLandNotificationId == null || db.AgentTaskLandNotifications.Any(n =>
-                        n.Id == m.SourceLandNotificationId && n.Kind == LandNotificationKind.Completion))
+                        n.Id == m.SourceLandNotificationId && n.Kind == LandNotificationKind.TaskCompletion))
                     && m.Origin == QueuedMessageOrigin.Delegation
                     && m.ConversationKey == $"task:{rootTaskId:N}"
                     && m.Status != QueuedMessageStatus.Canceled, ct))

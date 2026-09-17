@@ -963,7 +963,7 @@ public class DataRetentionServiceTests
         db.AgentTaskEvents.Add(new AgentTaskEvent { Id = eventId, AgentTaskId = taskId, Type = AgentTaskEventType.Completed, Detail = "settled", At = at });
         db.AgentTaskLandNotifications.Add(new AgentTaskLandNotification
         {
-            Id = noteId, TaskId = taskId, SourceEventId = eventId, Kind = LandNotificationKind.Completion,
+            Id = noteId, TaskId = taskId, SourceEventId = eventId, Kind = LandNotificationKind.TaskCompletion,
             ReplyTo = AgentTaskReplyTo.Session, ParentSessionId = session, Body = body, ContentDigest = digest,
             CreatedAt = at, NextAttemptAt = at, EnqueuedAt = at, QueueMessageId = rowId,
             State = confirmed ? LandNotificationState.Confirmed : LandNotificationState.AwaitingReceipt,
