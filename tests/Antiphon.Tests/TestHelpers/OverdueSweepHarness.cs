@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -25,10 +26,15 @@ public static class OverdueSweepHarness
 
     public sealed record Built(AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper, ServiceProvider Provider);
 
+    /// <param name="saveInterceptor">
+    /// CARD-0547 G-547-11d: wired exactly as <c>AgentTaskReplyIntegrationTests.C527Factory</c>
+    /// wires its own, so a sweep test can see WHICH rows shared a <c>SaveChangesAsync</c>.
+    /// </param>
     public static Built Create(
         Action<DelegationSettings>? configure = null,
         RecordingGitWorkspaceService? gitSpy = null,
-        string? claudeProjectsRoot = null)
+        string? claudeProjectsRoot = null,
+        SaveChangesInterceptor? saveInterceptor = null)
     {
         var stopper = new RecordingSessionStopper();
         var settings = new DelegationSettings
@@ -47,7 +53,12 @@ public static class OverdueSweepHarness
 
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
+        services.AddDbContext<AppDbContext>(o =>
+        {
+            o.UseNpgsql(TestDbFixture.ConnectionString);
+            if (saveInterceptor is not null)
+                o.AddInterceptors(saveInterceptor);
+        });
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton(Options.Create(new SupervisionSettings()));

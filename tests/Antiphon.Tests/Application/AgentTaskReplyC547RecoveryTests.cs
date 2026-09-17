@@ -165,8 +165,10 @@ public partial class AgentTaskReplyIntegrationTests
         var receipt = await AssertParentReceivedNoteAsync(seeded.Parent, seeded.Task, report);
         receipt.Prompt.Text.ShouldContain("git=committed:");
         // D-1's Committed arm is task-scoped (its Detail carries no digest), so this settlement's
-        // later Committed row also closes the foreign obligation. The plan's V-547-18 expected it
-        // to survive; that contradicts D-1 and is recorded for Review (D-7 territory).
+        // later Committed row also closes the foreign obligation. That is D-1-correct, not a gap:
+        // a surviving row would have no consumer and would only make Retry 409 on a Succeeded task.
+        // The plan's V-547-18 is amended to say so; naming which commit the note describes is the
+        // deferred D-7 identity change, out of this card.
         (await RecoveryEventsAsync(seeded.Task.Id)).ShouldContain(e => e.Id == foreignId);
         (await UnresolvedAsync(seeded.Task.Id)).ShouldBeEmpty();
     }

@@ -690,6 +690,7 @@ repo, parent terminal), **W** = `AgentTaskOverdueDeadlineTests`, **D** =
 | G-547-11a | D-3: past the window the watchdog abandons by name (type-36 names the sweep) | W `an_overdue_task_whose_commit_recovery_hold_expired_is_failed_with_the_obligation_abandoned_by_name` | PC-547-11a |
 | G-547-11b | D-3: the note header carries `git=commit-recovery-abandoned:{id8}` | same method; E2E V-547-19 | PC-547-11b |
 | G-547-11c | D-3: past the window the watchdog skips CARD-0085 bind-refusal recovery for a task holding an obligation, so the abandonment is reached with git live | E2E V-547-19 `C547_overdue_sweep_past_the_hold_abandons_the_obligation_and_the_parent_hears_it` | PC-547-49 |
+| G-547-11d | D-3: the type-36 rows share `FailAsync`'s single `SaveChangesAsync` with the Failed status (DL-547-A cut 1), not a later save | W `an_expired_hold_writes_the_abandonment_in_the_same_save_as_the_failed_status` | PC-547-50 |
 | G-547-12 | D-3: the reconciler holds within the window | D `a_dead_session_task_with_a_young_commit_recovery_obligation_is_held_and_its_grace_is_kept` | PC-547-12 |
 | G-547-13 | D-3: the reconciler past the window annotates identically | D `a_dead_session_task_whose_commit_recovery_hold_expired_is_failed_with_the_obligation_abandoned_by_name` | PC-547-13 |
 | G-547-14 | D-3: `CommitRecoveryHoldMinutes <= 0` disables the hold, not the annotation | U `ShouldHold_rules` (`hold 0`, `hold -5`); W `a_non_positive_commit_recovery_hold_fails_immediately_but_still_annotates` | PC-547-14 |
@@ -731,7 +732,7 @@ repo, parent terminal), **W** = `AgentTaskOverdueDeadlineTests`, **D** =
 | G-547-47 | D-1: the set loader is one query and omits tasks with nothing pending | Loader `LoadUnresolvedAsync_for_a_set_runs_one_query_and_omits_tasks_with_nothing_pending` | PC-547-47 |
 | G-547-48 | D-3: abandonment provenance is written in the Failed transaction, before the note is enqueued | W `an_expired_hold_whose_note_cannot_be_enqueued_still_records_the_abandonment` | PC-547-48 |
 
-Guards = 54 rows (48 ids, six split), mapped = 54, missing = 0, duplicate PC mappings = 0.
+Guards = 56 rows (48 ids, eight split), mapped = 56, missing = 0, duplicate PC mappings = 0.
 Justified without a PC: none. V-547-34's Failed-task case has no guard row: the arm iterates
 the `open` set (Dispatched/Working) by construction, so a Failed task cannot enter it without
 changing an unrelated query; the case is kept as cheap documentation.
@@ -807,6 +808,7 @@ rows from different files may batch.
 | PC-547-47 | set loader: loop the single-task loader per id | `LoadUnresolvedAsync_for_a_set_runs_one_query_and_omits_tasks_with_nothing_pending` | `commands.ShouldBe(1)` fails (3) |
 | PC-547-48 | `FailAndNotifyAsync`: add the `Abandon` rows after `EnqueueAsync` (inside the try) | `an_expired_hold_whose_note_cannot_be_enqueued_still_records_the_abandonment` | type-36 `AnyAsync(...).ShouldBeTrue()` fails |
 | PC-547-49 | `TryFailOverdueAsync` Gate 3: drop the `pending.Count == 0 &&` condition | `AgentTaskReplyIntegrationTests.C547_overdue_sweep_past_the_hold_abandons_the_obligation_and_the_parent_hears_it(false)` | `Status.ShouldBe(Failed)` fails (Succeeded via `RecoverFromBindRefusalAsync`) |
+| PC-547-50 | `FailAndNotifyAsync`: move the three `Abandon` add lines back to AFTER the `await FailAsync(...)` call (the round-1 defect) | `AgentTaskOverdueDeadlineTests.an_expired_hold_writes_the_abandonment_in_the_same_save_as_the_failed_status` | the save carrying `Status == Failed` holds no Added type-36 entry: the `ShouldContain` on `failing` fails (the rows land in `FailAndNotifyAsync`'s later save) |
 
 ### Out of scope
 
@@ -847,23 +849,23 @@ Code floor 47; independent ordinary Review floor another 47. Band per pass: 40-6
 
 | PC floor (Mutation), method-scoped red/restore/green | Controls | Min per cycle | Minutes |
 |---|---:|---:|---:|
-| C# controls, in-process or single-repo (all but the endpoint and Vitest rows) | 52 | 3.5 | 182 |
+| C# controls, in-process or single-repo (all but the endpoint and Vitest rows) | 53 | 3.5 | 186 |
 | Endpoint controls (PC-547-18a, 18b; each run boots the factory) | 2 | 5 | 10 |
 | Vitest control (PC-547-42) | 1 | 1.5 | 2 |
 | Mutation setup: snapshot build of `bin-pc/`, one green run of the touched classes | - | - | 20 |
 | Restoration inventory, timestamp refresh, evidence | - | - | 15 |
-| **Mutation floor, all 55 controls, unbatched** | **55** | - | **229** |
+| **Mutation floor, all 56 controls, unbatched** | **56** | - | **233** |
 
 Band 190-260. The six single-file groups above cannot batch within themselves; batching across
 files in groups of three (for example one obligations-rule row, one dispatcher row, one attention
 row per cycle) shares one build pair per group and saves about 60 minutes. No concurrency saving
 is assumed (one managed snapshot).
 
-**Total verification floor** = setup/build 12 + ordinary V/R 35 + every PC red/restore/green 191
-+ Mutation setup/evidence 35 = **273 minutes, estimated**, unbatched.
+**Total verification floor** = setup/build 12 + ordinary V/R 35 + every PC red/restore/green 198
++ Mutation setup/evidence 35 = **280 minutes, estimated**, unbatched.
 
 **Plan cost-band check.** The plan priced Mutation at "roughly 24 PCs"; the finalized inventory
-has 54 because the bundled candidates split into independently bypassable checks and the D-1/D-3/
+has 56 because the bundled candidates split into independently bypassable checks and the D-1/D-3/
 D-5 invariants the candidate list left untested (loader scoping, `ShouldHold` arithmetic,
 abandonment durability, evidence truncation, arm order) gained controls. Code's per-slice
 estimates (S1 0.5 d, S2 0.5 d, S3 1 d, S4 0.5 d) stand; the new fixtures (`OverdueSweepHarness`,
