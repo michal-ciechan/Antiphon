@@ -1629,6 +1629,21 @@ on settle would add two rows with one `SourceEventId` and fail the unique index.
 - The branch migration `20260917012003_AddVerificationProfile` adds no enum change; its
   designer was regenerated from the merged model snapshot.
 
+Ordinary verification at c3dcdb30 (one build, `bin-c544u/`, fresh TRX per invocation):
+Unit 2503 = 2499 pass, 1 skip, 3 fail (`Registry_matches_compiled_metadata`,
+`every_test_class_is_tagged_unit_xor_integration`, `C487_G068`: master's untagged
+`HerdrPaneDisposalEndpointTests`; the same 3 fail at master e2a49f3a). S 10/10; Q 20/20 in
+method groups (one earlier whole-class run failed `C544_ReportRegeneratedFromSnapshot` once on
+`CompletionDeliveryJson` null while another agent's suite shared the host; it passed alone and in
+its group, unchanged assertion); V-14 all green (NotificationRecovery 27, Receipt 30,
+DispatchBase 20, Persistence 9, ReceiptFailure 21, Distillation Producer 6 / Delivery 78 /
+ApplyRace 28 / Deadline 6 / Cleanup 7, PolledShrink 8, CheckNoteHandoff 7, DataRetention 32,
+AgentTaskReplyIntegrationTests 243 over all 173 methods incl. 102 C527); C544 classes
+CardVerificationPolicy 5, InterimVerificationPolicy 19, Readiness 12, ReviewEvidenceParser 14,
+Brief 1, Instruction 6, Dispatch 9, LandGuard 13, LandGit 3, DelegateScriptVerificationRound 5,
+NightlyVerificationContract 10; CARD-0527 AgentTaskCommitEndpointTests 35,
+CommitOnSettleMigrationTests 3. PC-69 (restated), PC-121 and PC-122 are pending Mutation.
+
 ### Inspection (this dispatch)
 
 | Test/fixture/production bodies read | Boundaries -> V/R IDs or exclusion |
