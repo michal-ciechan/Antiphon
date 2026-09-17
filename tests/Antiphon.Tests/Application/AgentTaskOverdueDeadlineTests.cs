@@ -614,29 +614,27 @@ public class AgentTaskOverdueDeadlineTests
         await using var verify = CreateContext();
         (await verify.AgentTasks.SingleAsync(t => t.Id == task)).Status.ShouldBe(AgentTaskStatus.Failed);
 
-        // The FIRST save that writes Failed for this task. Under the contract that is FailAsync's
-        // own SaveChangesAsync, and the abandonment rows are already tracked when it runs.
-        var failing = saves.Saves
-            .FirstOrDefault(s => s.Any(e =>
-                e.State == EntityState.Modified
-                && e.Entity is AgentTask t && t.Id == task && t.Status == AgentTaskStatus.Failed))
-            .ShouldNotBeNull(customMessage:
-                "no save carried this task's Failed status; the sweep did not fail it through FailAsync");
-        failing.ShouldContain(
-            e => e.State == EntityState.Added
-                && e.Entity is AgentTaskEvent ev
-                && ev.AgentTaskId == task
-                && ev.Type == AgentTaskEventType.CommitRecoveryAbandoned
-                && ev.Detail.StartsWith($"{eventId:D} ", StringComparison.Ordinal),
-            customMessage:
-                "the save carrying Status=Failed did not also carry the Added CommitRecoveryAbandoned row: "
-                + "the abandonment is in a LATER save, so a crash in between orphans the obligation");
-        // And exactly one save wrote it — not once tracked, once retried.
-        saves.Saves.Count(s => s.Any(e =>
+        bool FailedHere(SaveSnapshotInterceptor.Entry e) =>
+            e.State == EntityState.Modified
+            && e.Entity is AgentTask t && t.Id == task && t.Status == AgentTaskStatus.Failed;
+        bool AbandonedHere(SaveSnapshotInterceptor.Entry e) =>
             e.State == EntityState.Added
             && e.Entity is AgentTaskEvent ev
             && ev.AgentTaskId == task
-            && ev.Type == AgentTaskEventType.CommitRecoveryAbandoned)).ShouldBe(1);
+            && ev.Type == AgentTaskEventType.CommitRecoveryAbandoned
+            && ev.Detail.StartsWith($"{eventId:D} ", StringComparison.Ordinal);
+
+        // The FIRST save that writes Failed for this task. Under the contract that is FailAsync's
+        // own SaveChangesAsync, and the abandonment rows are already tracked when it runs.
+        var failing = saves.Saves
+            .FirstOrDefault(s => s.Any(FailedHere))
+            .ShouldNotBeNull(customMessage:
+                "no save carried this task's Failed status; the sweep did not fail it through FailAsync");
+        failing.Any(AbandonedHere).ShouldBeTrue(
+            "the save carrying Status=Failed did not also carry the Added CommitRecoveryAbandoned row: "
+            + "the abandonment is in a LATER save, so a crash in between orphans the obligation");
+        // And exactly one save wrote it — not once tracked, once retried.
+        saves.Saves.Count(s => s.Any(AbandonedHere)).ShouldBe(1);
     }
 
     // ---- helpers ---------------------------------------------------------------------------------
