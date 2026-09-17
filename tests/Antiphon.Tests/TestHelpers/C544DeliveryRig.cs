@@ -97,9 +97,10 @@ internal sealed class C544DeliveryRig : IAsyncDisposable
 
     /// <summary>A settled profile-v1 Review whose completion obligation targets the caller.</summary>
     public async Task<(Guid TaskId, string Report)> SettleReviewAsync(Antiphon.Server.Application.Dtos.CreateAgentTaskRequest? request = null,
-        string scope = "Full", string next = "land", int padding = 0)
+        string scope = "Full", string next = "land", int padding = 0, AgentTask? root = null)
     {
-        var created = await World.CreateTaskAsync(request ?? World.FinalReview());
+        var caller = root is null ? null : World.Caller() with { Task = root };
+        var created = await World.CreateTaskAsync(request ?? World.FinalReview(), caller);
         var sessionId = await World.DispatchAsync(created.Id);
         // Padding goes into the body; the evidence, finding and next-stage markers stay in the tail.
         var report = C544World.ReviewReport(created.Id, World.Owner.Id, World.OwnerSha, scope, found: false, next);
@@ -110,6 +111,33 @@ internal sealed class C544DeliveryRig : IAsyncDisposable
         await World.Services.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(sessionId, CancellationToken.None);
         return (created.Id, report);
     }
+
+    /// <summary>A running orchestrator whose session is the caller: its children share one root and one destination.</summary>
+    public async Task<AgentTask> RootOrchestratorAsync()
+    {
+        await using var db = World.CreateContext();
+        var id = Guid.NewGuid();
+        var now = World.Clock.GetUtcNow().UtcDateTime;
+        var root = new AgentTask
+        {
+            Id = id, RootTaskId = id, Title = "CARD-0544 root", Goal = "Orchestrate the reviews.", Kind = AgentTaskKind.Orchestrator,
+            Role = AgentTaskRole.Custom, AgentKind = AgentKind.ClaudeCode, ModelLevel = AgentModelLevel.High,
+            Workspace = WorkspaceMode.ReadOnly, WorkingDirectory = World.RepositoryPath, Status = AgentTaskStatus.Dispatched,
+            AgentSessionId = World.CallerSessionId, ReplyTo = AgentTaskReplyTo.None, CardId = World.Card.Id, ProjectId = World.Project.Id,
+            CreatedAt = now, DispatchedAt = now,
+        };
+        db.AgentTasks.Add(root);
+        await db.SaveChangesAsync();
+        return root;
+    }
+
+    public async Task SetCallerStatusAsync(SessionStatus status)
+    {
+        await using var db = World.CreateContext();
+        await db.AgentSessions.Where(s => s.Id == World.CallerSessionId).ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, status));
+    }
+
+    public async Task<SessionQueuedMessage> RowAsync(Guid taskId) => (await RowsAsync(taskId)).ShouldHaveSingleItem();
 
     public async Task<AgentTaskLandNotification?> NotificationAsync(Guid taskId)
     {
