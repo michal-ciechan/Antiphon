@@ -73,8 +73,7 @@ public sealed class NightlyWatchdogCoreTests
 
     private static async Task<(C545World World, TickReport Report)> Row(Action<C545World> setup, string? clock = null, int ticks = 1)
     {
-        var world = await C545World.CreateAsync();
-        if (clock is not null) world.Clock.SetUtcNow(new DateTimeOffset(Utc(clock)));
+        var world = await C545World.CreateAsync(start: clock is null ? null : new DateTimeOffset(Utc(clock)));
         setup(world);
         TickReport report = null!;
         for (var i = 0; i < ticks; i++)
@@ -152,7 +151,7 @@ public sealed class NightlyWatchdogCoreTests
             var (world, report) = await Row(w => w.Windmill.WorkerLastPingUtc = C545World.Start.UtcDateTime.AddMinutes(-75));
             await using (world)
             {
-                Opened(report).OrderBy(k => k).ShouldBe(["desktop-worker-missing", "start-overdue"], "desktop-worker-missing/after-grace");
+                Opened(report).OrderBy(k => k).ToArray().ShouldBe(new[] {"desktop-worker-missing", "start-overdue" }, "desktop-worker-missing/after-grace");
                 world.Outages().ShouldAllBe(o => o.JobId == null, "desktop-worker-missing/after-grace no job invented");
                 world.Outages().ShouldAllBe(o => o.RunId == null, "desktop-worker-missing/after-grace no run invented");
             }
@@ -404,7 +403,7 @@ public sealed class NightlyWatchdogCoreTests
         {
             world.Windmill.Jobs.Add(world.Jobs.HopFailed(Due, "j1"));
             var first = (await world.TickAsync()).Transitions.Single(t => t.Change == OutageChange.Opened);
-            first.OutageId.ShouldEndWith(":1", "first epoch");
+            first.OutageId.ShouldEndWith(":1", Case.Sensitive, "first epoch");
             (await world.AdvanceAndTickAsync(TimeSpan.FromMinutes(10))).Transitions.ShouldNotContain(t => t.Change == OutageChange.Opened, "no reopen while open");
             world.Outages().Single().FailureNid.ShouldBe(first.Nid, "same failure nid");
 
@@ -609,7 +608,7 @@ public sealed class NightlyWatchdogCoreTests
         request.Method.ShouldBe(HttpMethod.Post, "method");
         request.Uri.ToString().ShouldBe($"https://api.telegram.org/bot{C545World.BotToken}/sendMessage", "uri");
         var json = (JsonNode.Parse(request.BodyJson!) as JsonObject)!;
-        json.Select(p => p.Key).OrderBy(k => k).ShouldBe(["chat_id", "disable_web_page_preview", "text"], "body keys");
+        json.Select(p => p.Key).OrderBy(k => k).ToArray().ShouldBe(new[] { "chat_id", "disable_web_page_preview", "text" }, "body keys");
         json["chat_id"]!.GetValue<string>().ShouldBe(C545World.ChatId, "chat_id");
         json["text"]!.GetValue<string>().ShouldBe("hello body", "text");
         json["disable_web_page_preview"]!.GetValue<bool>().ShouldBeTrue("preview disabled");

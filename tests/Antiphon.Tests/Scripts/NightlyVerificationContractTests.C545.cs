@@ -337,7 +337,9 @@ public sealed partial class NightlyVerificationContractTests
         var hopNid = HopNid(world);
         world.Chat.Messages.ShouldBeEmpty("nothing delivered");
         await world.RestartAsync(ledgerOnly: true);
-        Directory.GetFiles(world.StateDir).Select(Path.GetFileName).ShouldBe(["ledger.db"], "only the ledger survived");
+        // Only ledger.db moved; the reopened ledger adds its own WAL/SHM files and nothing else.
+        Directory.GetFiles(world.StateDir).Select(Path.GetFileName)
+            .ShouldAllBe(f => f == "ledger.db" || f == "ledger.db-wal" || f == "ledger.db-shm", "only the ledger survived");
         world.Transport.Mode = TransportMode.Deliver;
         var tick = await world.AdvanceAndTickAsync(TimeSpan.FromMinutes(2));
         tick.Sends.Select(s => s.Nid).ShouldContain(hopNid, "decisive: original nid resumed");
