@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
@@ -247,6 +248,193 @@ public sealed class VerificationRoundDeliveryTests
             }
             durable.ShouldContain("--- verification profile ---", Case.Sensitive, row + ": profile block delivered");
             durable.ShouldContain("round: Final", Case.Sensitive, row);
+        }
+    }
+
+    /// <summary>
+    /// DL-3 / PC-99: a Final/Full approval that loses its scope while the land is queued is refused by the
+    /// recovered protocol; the terminal refusal and its keyed notification commit together, and the
+    /// real notification service delivers it to a busy or eligible caller as one complete prompt.
+    /// </summary>
+    [Test]
+    public async Task C544_LandRefusalReceipt()
+    {
+        foreach (var busy in new[] { false, true })
+        {
+            var row = $"busy={busy}";
+            await using var rig = await RefusalRig.CreateAsync(busy);
+            var note = await rig.RefuseAsync(row);
+            await using var db = rig.CreateContext();
+            var service = new AgentTaskLandNotificationService(db, rig.Caller.Queue, new CompletionNoteFlushQueue(), rig.Caller.Runtime,
+                TimeProvider.System);
+            await service.ReconcileAsync(note.Id, CancellationToken.None);
+            await rig.DeliverAsync(service, note, row);
+            await rig.AssertRefusalReceivedOnceAsync(note, row);
+        }
+    }
+
+    /// <summary>
+    /// DL-3 / PC-100: the process is lost before and after the refusal's queue insert (busy and eligible);
+    /// a recreated notification service recovers the same notification ID and delivers exactly once.
+    /// </summary>
+    [Test]
+    public async Task C544_LandRefusalRecovery()
+    {
+        foreach (var cut in new[] { "before-enqueue", "queue-inserted" })
+        foreach (var busy in new[] { false, true })
+        {
+            var row = $"{cut} busy={busy}";
+            await using var rig = await RefusalRig.CreateAsync(busy);
+            var note = await rig.RefuseAsync(row);
+            var boundary = new C544Boundary();
+            boundary.Throw.Add(cut);
+            // ReconcileAsync records the failure as retry-pending (backoff) or lets it escape; either way the cut is reached.
+            await using (var crashed = rig.CreateContext())
+            {
+                try
+                {
+                    await new AgentTaskLandNotificationService(crashed, rig.Caller.Queue, new CompletionNoteFlushQueue(), rig.Caller.Runtime,
+                        TimeProvider.System, boundary).ReconcileAsync(note.Id, CancellationToken.None);
+                }
+                catch (IOException e) when (e.Message.StartsWith("c544 boundary cut", StringComparison.Ordinal)) { }
+            }
+            boundary.Reached.ShouldContain(cut, row + ": cut reached");
+            boundary.Throw.ShouldBeEmpty(row + ": the armed cut fired");
+            await using (var observe = rig.CreateContext())
+            {
+                var rows = await observe.SessionQueuedMessages.AsNoTracking().CountAsync(m => m.SourceLandNotificationId == note.Id);
+                rows.ShouldBe(cut == "before-enqueue" ? 0 : 1, row + ": queue insert state at the cut");
+                (await observe.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id)).State
+                    .ShouldNotBe(LandNotificationState.Confirmed, row);
+            }
+            rig.Caller.Adapter.Inputs.ShouldBeEmpty(row + ": nothing typed before recovery");
+
+            await using var db = rig.CreateContext();
+            var restartClock = new C544Clock();
+            restartClock.Advance(TimeSpan.FromMinutes(30)); // past any retry backoff the cut recorded
+            var recovered = new AgentTaskLandNotificationService(db, rig.Caller.Queue, new CompletionNoteFlushQueue(), rig.Caller.Runtime,
+                restartClock);
+            await recovered.ReconcileAsync(note.Id, CancellationToken.None);
+            await rig.DeliverAsync(recovered, note, row);
+            await rig.AssertRefusalReceivedOnceAsync(note, row);
+        }
+    }
+
+    private sealed class RefusalRig : IAsyncDisposable
+    {
+        public LandingProtocolHarness Land { get; private set; } = null!;
+        public BridgeQueueHarness Caller { get; private set; } = null!;
+        public bool Busy { get; private set; }
+        public string Sha { get; private set; } = "";
+        public Guid EvidenceId { get; private set; }
+
+        public static async Task<RefusalRig> CreateAsync(bool busy)
+        {
+            var rig = new RefusalRig { Busy = busy, Land = new LandingProtocolHarness() };
+            await rig.Land.InitializeAsync();
+            rig.Caller = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = rig.Land.Schema.ConnectionString });
+            rig.Land.Messages = rig.Caller.Queue;
+            var connection = rig.Land.Schema.ConnectionString;
+            await BridgeQueueHarness.InsertEntryAsync(rig.Caller.SessionId, TranscriptKinds.UserPrompt, "land the owner", connectionString: connection);
+            await BridgeQueueHarness.InsertEntryAsync(rig.Caller.SessionId, TranscriptKinds.TurnEnd,
+                stopReason: TranscriptKinds.StopReasons.EndTurn, connectionString: connection);
+            if (busy)
+                await BridgeQueueHarness.InsertEntryAsync(rig.Caller.SessionId, TranscriptKinds.AssistantText, "caller is mid-turn",
+                    connectionString: connection);
+            return rig;
+        }
+
+        public AppDbContext CreateContext() => Land.CreateContext();
+
+        /// <summary>Latched owner, Final/Full approval admitted, scope invalidated, recovered land refuses.</summary>
+        public async Task<AgentTaskLandNotification> RefuseAsync(string row)
+        {
+            Sha = await Land.AddSourceAsync();
+            await using (var db = CreateContext())
+            {
+                await db.AgentTasks.Where(t => t.Id == Land.Git.TaskId).ExecuteUpdateAsync(s => s
+                    .SetProperty(t => t.RequiresFinalVerificationReview, true)
+                    .SetProperty(t => t.VerificationProfileVersion, 1)
+                    .SetProperty(t => t.VerificationRound, VerificationRound.Final)
+                    .SetProperty(t => t.ReplyTo, AgentTaskReplyTo.Session)
+                    .SetProperty(t => t.ParentSessionId, Caller.SessionId)
+                    .SetProperty(t => t.ConcurrencyToken, Guid.NewGuid()));
+                var evidence = new StageOutcome
+                {
+                    Id = Guid.NewGuid(), Stage = OrchestrationStage.Review, Outcome = StageOutcomeKind.Clean,
+                    Source = StageOutcomeSource.Delegate, SubjectTaskId = Land.Git.TaskId, StageTaskId = Guid.NewGuid(),
+                    ReviewedSourceSha = Sha, ReviewedSourceRef = Land.Git.SourceRef, ReviewedRepositoryPath = Land.Git.Repository,
+                    VerificationProfileVersion = 1, CommissionedRound = VerificationRound.Final,
+                    OrdinaryScopeCompleted = VerificationScope.Full, Detail = "c544 final full review", RecordedAt = DateTime.UtcNow,
+                };
+                db.StageOutcomes.Add(evidence);
+                await db.SaveChangesAsync();
+                EvidenceId = evidence.Id;
+            }
+            (await Land.RequestAsync(expectedSourceSha: Sha, reviewEvidenceId: EvidenceId)).Status.ShouldBe("queued", row);
+            await using (var db = CreateContext())
+                await db.StageOutcomes.Where(o => o.Id == EvidenceId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(o => o.OrdinaryScopeCompleted, VerificationScope.Interim));
+            await Land.RestartServicesAsync();
+            await Land.RunAsync();
+
+            Land.Git.Trace.ShouldNotContain(a => a[0] == "push", row + ": no publication");
+            await using var verify = CreateContext();
+            var refusal = await verify.AgentTaskEvents.AsNoTracking()
+                .SingleAsync(e => e.AgentTaskId == Land.Git.TaskId && e.Type == AgentTaskEventType.LandRefused);
+            refusal.Detail.ShouldContain(LandApproval.ScopeIneligibleCode, Case.Sensitive, row);
+            var note = await verify.AgentTaskLandNotifications.AsNoTracking()
+                .SingleAsync(n => n.TaskId == Land.Git.TaskId && n.SourceEventId == refusal.Id);
+            note.Kind.ShouldBe(LandNotificationKind.Outcome, row);
+            note.ParentSessionId.ShouldBe(Caller.SessionId, row + ": snapshotted destination");
+            note.State.ShouldBe(LandNotificationState.Queued, row + ": the outbox committed with the terminal refusal");
+            (await verify.SessionQueuedMessages.AsNoTracking().CountAsync(m => m.SourceLandNotificationId == note.Id))
+                .ShouldBe(0, row + ": nothing enqueued yet");
+            return note;
+        }
+
+        public async Task DeliverAsync(AgentTaskLandNotificationService service, AgentTaskLandNotification note, string row)
+        {
+            var typed = Caller.Adapter.SubmittedBodies.Count;
+            await Caller.Queue.FlushIfIdleAsync(Caller.SessionId, CancellationToken.None);
+            if (Busy)
+            {
+                Caller.Adapter.SubmittedBodies.Count.ShouldBe(typed, row + ": a busy caller gets zero writes before TurnEnd");
+                await BridgeQueueHarness.InsertEntryAsync(Caller.SessionId, TranscriptKinds.TurnEnd,
+                    stopReason: TranscriptKinds.StopReasons.EndTurn, connectionString: Land.Schema.ConnectionString);
+                await Caller.Queue.OnTurnEndAsync(Caller.SessionId, CancellationToken.None);
+            }
+            await service.ReconcileAsync(note.Id, CancellationToken.None);
+        }
+
+        public async Task AssertRefusalReceivedOnceAsync(AgentTaskLandNotification original, string row)
+        {
+            await using var db = CreateContext();
+            var note = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == original.Id);
+            var queued = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.SourceLandNotificationId == note.Id).ToListAsync();
+            queued.Count.ShouldBe(1, row + ": exactly one keyed queue row");
+            var prompts = await db.TranscriptEntries.AsNoTracking()
+                .Where(t => t.AgentSessionId == Caller.SessionId && t.Kind == TranscriptKinds.UserPrompt && t.Text != null)
+                .ToListAsync();
+            var carrying = prompts.Where(p => PromptSubmissionMatch.IsConfirmedBy(note.Body, p.Text)).ToList();
+            carrying.Count.ShouldBe(1, row + ": exactly one caller UserPrompt carries the refusal");
+            PromptSubmissionMatch.IsCompleteIn(note.Body, carrying[0].Text!).ShouldBeTrue(row + ": complete prompt");
+            carrying[0].Sequence.ShouldBeGreaterThan(queued[0].LastDeliveryBaselineSequence ?? 0, row + ": above the attempt floor");
+            note.State.ShouldBe(LandNotificationState.Confirmed, $"{row}: {note.LastErrorCode}");
+            note.ConfirmingPromptSequence.ShouldBe(carrying[0].Sequence, row);
+            note.Body.ShouldContain($"request={(await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.TaskId == Land.Git.TaskId)).Id:N}",
+                Case.Sensitive, row + ": names the saved request");
+            note.Body.ShouldContain($"expected={Sha}", Case.Sensitive, row + ": names the approved SHA");
+            note.Body.ShouldContain(LandApproval.ScopeIneligibleCode, Case.Sensitive, row + ": names the final-scope refusal");
+            note.Body.ShouldContain("outcome=LandRefused", Case.Sensitive, row);
+            (await db.AgentTaskLandings.AsNoTracking().Where(o => o.TaskId == Land.Git.TaskId).ToListAsync())
+                .ShouldAllBe(o => !new AgentTaskLandingState().HasPublication(o), row + ": never published");
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await Caller.DisposeAsync();
+            await Land.DisposeAsync();
         }
     }
 
