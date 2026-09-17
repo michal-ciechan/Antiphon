@@ -1,10 +1,12 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-    Independent nightly health monitor (CARD-0487 S3).
+    Windows-side local readiness evaluator (CARD-0487 S3, CARD-0545 D-9).
 
-    Intended Windmill path: u/lndcobra/antiphon_nightly_health on a server2
-    worker every 30 minutes. Must not use the desktop tag.
+    Windmill path: u/lndcobra/antiphon_nightly_readiness on the desktop tag every
+    30 minutes. It is not the independent monitor: outage detection and notification
+    belong to the nightly watchdog (docs/nightly-watchdog.md), whose snapshot this
+    evaluator folds into Health and last-monitor.json.
 
     ASCII-only. Credentials stay in managed stores; this script never logs a token.
 #>
@@ -16,6 +18,9 @@ param(
     [string]$AuthorizedDestination = '',
     [string]$RepositoryPath = '',
     [string]$ProjectId = '',
+    [string]$WatchdogSnapshotUrl = '',
+    [string]$ExpectedWatchdogInstanceId = '',
+    [string]$ReadinessConfigPath = '',
     [switch]$PassThru
 )
 
@@ -27,7 +32,9 @@ $lib = Join-Path $PSScriptRoot 'lib'
 
 $result = Invoke-AntiphonNightlyHealth -StateRoot $StateRoot -SeamsPath $SeamsPath `
     -ExpectedScriptHash $ExpectedScriptHash -ExpectedPolicyHash $ExpectedPolicyHash `
-    -AuthorizedDestination $AuthorizedDestination -RepositoryPath $RepositoryPath -ProjectId $ProjectId -PassThru
+    -AuthorizedDestination $AuthorizedDestination -RepositoryPath $RepositoryPath -ProjectId $ProjectId `
+    -WatchdogSnapshotUrl $WatchdogSnapshotUrl -ExpectedWatchdogInstanceId $ExpectedWatchdogInstanceId `
+    -ReadinessConfigPath $ReadinessConfigPath -PassThru
 if ($PassThru) { return $result }
 $code = 1
 if ($null -ne $result -and $null -ne $result.ExitCode) { $code = [int]$result.ExitCode }
