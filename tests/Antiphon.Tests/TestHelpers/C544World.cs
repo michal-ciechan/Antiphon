@@ -457,7 +457,7 @@ internal sealed class ControlledInterimReadiness : IInterimVerificationReadiness
     public static readonly InterimReadinessSnapshot ReadySnapshot = new(
         "docs/investigations/2026-09-20-card-0487-nightly-qualification.md",
         "1111111111111111111111111111111111111111", "policy-hash", "script-hash", "run-1", "job-1", ["recipient-1"],
-        new DateTime(2026, 9, 17, 8, 0, 0, DateTimeKind.Utc), new DateTime(2026, 9, 17, 8, 1, 0, DateTimeKind.Utc));
+        new DateTime(2026, 9, 17, 8, 0, 0, DateTimeKind.Utc), new DateTime(2026, 9, 17, 8, 1, 0, DateTimeKind.Utc), "wd-1");
 
     public InterimReadiness Verdict { get; set; } = new(true, "ready", ReadySnapshot);
     public int Reads { get; private set; }

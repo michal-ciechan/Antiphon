@@ -25,4 +25,5 @@ public sealed record InterimReadinessSnapshot(
     string WindmillJobId,
     IReadOnlyList<string> RecipientEvidenceIds,
     DateTime MonitorRecordedAt,
-    DateTime ReadAt);
+    DateTime ReadAt,
+    string WatchdogInstanceId);

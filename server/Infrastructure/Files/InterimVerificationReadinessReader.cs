@@ -14,10 +14,12 @@ namespace Antiphon.Server.Infrastructure.Files;
 /// <item><c>interim-qualification-receipt.json</c> — the operator attestation S5 (CARD-0545)
 /// publishes after acceptance. It cites the committed qualification artifact, the qualified
 /// repository/project, policy/script hashes, the accepted manual and scheduled runs, and the
-/// recipient plus outage-recovery evidence identities. A filename alone is never evidence.</item>
+/// recipient plus outage-recovery evidence identities and the qualified watchdog instance id
+/// (CARD-0545 D-9). A filename alone is never evidence.</item>
 /// <item><c>last-monitor.json</c> — the nightly health monitor's saved verdict. Fresh only when its
 /// <c>RecordedAt</c> is 0..<see cref="InterimVerificationSettings.MonitorFreshMinutes"/> old; it must
-/// report Healthy and ReadyForDeferral as real booleans and carry identities matching the receipt.</item>
+/// report Healthy and ReadyForDeferral as real booleans and carry identities matching the receipt,
+/// including <c>Identity.WatchdogInstanceId</c> (ordinal).</item>
 /// </list>
 /// No network call, no Windmill access and no caller-supplied value participates.
 /// </summary>
@@ -84,6 +86,11 @@ public sealed class InterimVerificationReadinessReader(
                 return InterimReadiness.Unready("qualification_recipient_evidence_missing");
             if (outage is not { Count: > 0 })
                 return InterimReadiness.Unready("qualification_outage_evidence_missing");
+            // CARD-0545 D-9: the qualified independent watchdog instance; a replaced or unqualified
+            // watchdog cannot inherit readiness.
+            var watchdogInstanceId = Text(receipt, "watchdogInstanceId");
+            if (string.IsNullOrWhiteSpace(watchdogInstanceId))
+                return InterimReadiness.Unready("qualification_watchdog_missing");
 
             // Monitor verdict: real booleans only, never a string or number that merely looks true.
             if (!Object(monitor, "Health", out var health)
@@ -121,10 +128,12 @@ public sealed class InterimVerificationReadinessReader(
             if (string.IsNullOrWhiteSpace(runId) || string.IsNullOrWhiteSpace(jobId)
                 || !string.Equals(runId, jobRunId, StringComparison.Ordinal))
                 return InterimReadiness.Unready("monitor_run_identity_mismatch");
+            if (!string.Equals(Text(identity, "WatchdogInstanceId"), watchdogInstanceId, StringComparison.Ordinal))
+                return InterimReadiness.Unready("monitor_watchdog_mismatch");
 
             return new InterimReadiness(true, "ready", new InterimReadinessSnapshot(
                 artifactPath!, artifactCommit!, policyHash!, scriptHash!, runId!, jobId!, recipients!,
-                recorded.UtcDateTime, now.UtcDateTime));
+                recorded.UtcDateTime, now.UtcDateTime, watchdogInstanceId!));
         }
     }
 
