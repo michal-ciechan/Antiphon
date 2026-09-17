@@ -170,6 +170,39 @@ public partial class AgentTaskDispatchBaseGuardTests
         (await check.AgentSessions.CountAsync()).ShouldBe(1, "only the original caller remains");
     }
 
+    // Review F1: rollback cleanup detached the tick's other queued rows, so a second claim failure
+    // recorded its Failed event while the stale row stayed Queued and eligible for redispatch.
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C540_ClaimRollbackKeepsLaterQueuedTaskCustody(bool afterSave)
+    {
+        await using var w = await SiblingWorld.CreateAsync();
+        var a = await w.AddAsync(); await w.AddAsync(a, alias: true);
+        var second = await SeedQueuedWorktreeTaskAsync(w.Db, w.Repo.Path, w.Card.Id, w.Task.ParentSessionId);
+        second.CreatedAt = w.Task.CreatedAt.AddMinutes(1);
+        await w.Db.SaveChangesAsync();
+        var interceptor = new ClaimCommitFailure(w.Task.Id, second.Id);
+        var boundary = new ClaimFailure(w.Task.Id, second.Id);
+        await using var provider = CreateProvider(w.Connection, w.Repo.WorktreeRoot,
+            interceptor: afterSave ? interceptor : null, boundary: afterSave ? null : boundary);
+        await using var scope = provider.CreateAsyncScope();
+        var tick = await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+        (afterSave ? interceptor.FiredFor : boundary.FiredFor).ShouldBe(new[] { w.Task.Id, second.Id }, ignoreOrder: true);
+        tick.Failures.ShouldBe(2); tick.Dispatched.ShouldBe(0);
+        await using var check = w.Fresh();
+        foreach (var id in new[] { w.Task.Id, second.Id })
+        {
+            var task = await check.AgentTasks.SingleAsync(t => t.Id == id);
+            task.Status.ShouldBe(AgentTaskStatus.Failed, $"task {id} reported Failed must not stay eligible");
+            task.AgentSessionId.ShouldBeNull(); task.CompletedAt.ShouldNotBeNull();
+            (await check.AgentTaskEvents.CountAsync(e => e.AgentTaskId == id && e.Type == AgentTaskEventType.Failed)).ShouldBe(1);
+            (await check.AgentTaskEvents.CountAsync(e => e.AgentTaskId == id && e.Type == AgentTaskEventType.Dispatched)).ShouldBe(0);
+            (await check.AgentTaskDispatchWarningIntents.CountAsync(i => i.TaskId == id)).ShouldBe(0);
+        }
+        (await check.AgentSessions.CountAsync()).ShouldBe(1, "only the original caller remains");
+    }
+
     [Test]
     public async Task C540_ClaimLoserOwesNoIntent()
     {
@@ -267,15 +300,16 @@ public partial class AgentTaskDispatchBaseGuardTests
         }
     }
 
-    private sealed class ClaimFailure(Guid taskId) : LandDeliveryBoundary
+    private sealed class ClaimFailure(params Guid[] taskIds) : LandDeliveryBoundary
     {
         public CancellationTokenSource? Cancel { get; set; }
-        public bool Fired { get; private set; }
+        public HashSet<Guid> FiredFor { get; } = [];
+        public bool Fired => FiredFor.Count > 0;
         public override Task ReachedAsync(string boundary, Guid task, Guid related, CancellationToken ct)
         {
-            if (task == taskId && boundary == "dispatch-warning-claim-before-commit")
+            if (taskIds.Contains(task) && boundary == "dispatch-warning-claim-before-commit")
             {
-                Fired = true;
+                FiredFor.Add(task);
                 if (Cancel is not null) { Cancel.Cancel(); ct.ThrowIfCancellationRequested(); }
                 throw new IOException("owned claim failure before SaveChanges");
             }
@@ -283,17 +317,21 @@ public partial class AgentTaskDispatchBaseGuardTests
         }
     }
 
-    private sealed class ClaimCommitFailure(Guid taskId) : DbTransactionInterceptor
+    private sealed class ClaimCommitFailure(params Guid[] taskIds) : DbTransactionInterceptor
     {
         public CancellationTokenSource? Cancel { get; set; }
-        public bool Fired { get; private set; }
+        public HashSet<Guid> FiredFor { get; } = [];
+        public bool Fired => FiredFor.Count > 0;
         public override ValueTask<InterceptionResult> TransactionCommittingAsync(DbTransaction transaction,
             TransactionEventData eventData, InterceptionResult result, CancellationToken ct = default)
         {
-            if (!Fired && eventData.Context is AppDbContext db
-                && db.ChangeTracker.Entries<AgentTaskDispatchWarningIntent>().Any(e => e.Entity.TaskId == taskId))
+            var taskId = eventData.Context is AppDbContext db
+                ? db.ChangeTracker.Entries<AgentTaskDispatchWarningIntent>().Select(e => e.Entity.TaskId)
+                    .FirstOrDefault(t => taskIds.Contains(t) && !FiredFor.Contains(t))
+                : Guid.Empty;
+            if (taskId != Guid.Empty)
             {
-                Fired = true;
+                FiredFor.Add(taskId);
                 if (Cancel is not null) { Cancel.Cancel(); ct.ThrowIfCancellationRequested(); }
                 throw new IOException("owned claim failure after SaveChanges");
             }

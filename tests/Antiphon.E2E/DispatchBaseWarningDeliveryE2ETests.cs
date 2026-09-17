@@ -99,6 +99,7 @@ public class DispatchBaseWarningDeliveryE2ETests
         else await f.WaitForBoundaryAsync(boundary);
         var intents = await f.WaitForDispatchIntentsAsync();
         var originalQueue = new Dictionary<Guid, Guid>();
+        var interruptedAttempts = new Dictionary<Guid, int>();
         await using (var db = f.CreateContext())
         {
             if (cut is "dispatch-claim" or "dispatch-projection")
@@ -126,6 +127,14 @@ public class DispatchBaseWarningDeliveryE2ETests
             {
                 var prompts = await db.TranscriptEntries.Where(p => p.AgentSessionId == f.CallerId && p.Kind == TranscriptKinds.UserPrompt).ToListAsync();
                 prompts.ShouldContain(p => intents.Any(i => PromptSubmissionMatch.IsCompleteIn(i.Body, p.Text ?? "")));
+                if (cut == "verdict")
+                {
+                    // The crashed attempt's own row: prompt already confirmed, verdict never saved.
+                    var rows = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.SourceTaskId == f.TaskId
+                        && m.SourceLandNotificationId != null && m.Status == QueuedMessageStatus.Sent && m.DeliveryVerdict == null).ToListAsync();
+                    rows.ShouldNotBeEmpty(); rows.ShouldAllBe(m => m.DeliveryAttempts > 0);
+                    foreach (var row in rows) interruptedAttempts.Add(row.Id, row.DeliveryAttempts);
+                }
             }
             else if (cut == "attempt")
             {
@@ -136,11 +145,19 @@ public class DispatchBaseWarningDeliveryE2ETests
         }
         await f.SnapshotAsync(); await f.KillChildAsync();
         if (cut == "dispatch-claim") await f.MoveDispatchObservationsAsync();
-        if (cut == "attempt") await f.WaitForInterruptedDispatchEligibilityAsync();
+        if (cut is "attempt" or "verdict") await f.WaitForInterruptedDispatchEligibilityAsync();
         await f.UseChildAsync("none");
         if (busy) await f.ReleaseBusyAsync();
+        // Review F2: receipt confirmation alone does not exercise queue recovery. Only after the
+        // interrupted row is eligible must transcript evidence settle that same row, uncharged.
+        if (interruptedAttempts.Count > 0) await f.WaitForLateConfirmedInterruptedRowsAsync(interruptedAttempts);
         await f.AssertDispatchReceiptsAsync(intents);
         await using var final = f.CreateContext();
+        foreach (var (rowId, attempts) in interruptedAttempts)
+        {
+            var row = await final.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == rowId);
+            row.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed); row.DeliveryAttempts.ShouldBe(attempts);
+        }
         foreach (var (noteId, queueId) in originalQueue)
         {
             (await final.SessionQueuedMessages.SingleAsync(m => m.SourceLandNotificationId == noteId)).Id.ShouldBe(queueId);
