@@ -1683,3 +1683,199 @@ Also transferred: DL-5 entirely, DL-4's Windows-host-loss/independence rows, V-1
 notification/outage methods, V-11 (S5) execution, and the `scripts/nightly-health.ps1`
 / `scripts/windmill/` independence changes. CARD-0545 adds its own guard for a
 stopped watchdog (missing heartbeat) and reprices independent infrastructure.
+
+### Proves it works now (revised rows)
+
+V-1..V-3, V-5..V-9 and V-12 stand as written at 5d91dca2. V-4 and V-10 are
+restated; V-11 executes under CARD-0545; V-13 and V-14 are new. Class aliases
+are the earlier table's; `RT` denotes `DataRetentionServiceTests` in
+`tests/Antiphon.Tests/Application/DataRetentionServiceTests.cs`.
+
+- V-4 (revised): both session delivery legs and landing-refusal delivery | real
+  reply service/dispatcher, real queue, real notification scanner, controlled
+  terminal | full Q class: `C544_BriefHandoffRecovery`, `C544_CompletionReceipt`,
+  `C544_CompletionRecovery`, `C544_LandRefusalReceipt`, `C544_LandRefusalRecovery`,
+  `C544_SnapshotRendersRecovery`, `C544_RenderingFrozenBeforeTyping`,
+  `C544_LateReplacementRejected`, `C544_RenderingKeepsHeader`,
+  `C544_KindAwareDistillation`, `C544_SameRootBatchMembership`,
+  `C544_PointerReceiptRequiresContent`, `C544_ReportRegeneratedFromSnapshot`,
+  `C544_DistillationDeadlineSurvivesRestart`, `C544_CompletionReceiptWholeWire`,
+  `C544_StampIsNotReceipt`, `C544_SingleLogicalNote`,
+  `C544_CompletionLinkValidatesIdentity`, `C544_StoppedCallerReceipt` | DL-1..DL-3
+  cuts as enumerated; each method loops its named rows with the row identity in
+  every assertion. Expected: one complete matching UserPrompt per logical
+  completion, above the attempt floor; notification Confirmed only from that
+  prompt; zero writes to a busy caller before TurnEnd; header/scope/pending-Final
+  preserved through raw, distilled, polled-shrunk and spilled renderings.
+- V-10 (revised, CARD-0544 portion): production job adapter and clock/coverage
+  predicates | checked-in entrypoints + offline harness | `N.C544_ProductionJobAdapter`,
+  `C544_DailyValidity`, `C544_MorningBoundary`, `C544_NewerFailure`,
+  `C544_ScheduledIdentity`, `C544_LondonDates`, `C544_ScheduleHealth`,
+  `C544_CoverageRequired`, `C544_GreenRequired`, `C544_ReportReceiptRequired` |
+  as specified at 5d91dca2. The notification/outage/recipient methods run on
+  CARD-0545 only.
+- V-13: atomic completion obligation and settlement identity | production reply
+  graph over an isolated schema with fixture interceptors | `S.C544_CompletionObligationAtomic`,
+  `C544_CompletionEventIdentity`, `C544_CompletionIdentityAcrossContinue`,
+  `C544_ObligationApplicability` | obligation-insert fault leaves no terminal
+  task, no outcome and no notification in a fresh context; a retained
+  Completed event is the `SourceEventId` even when merge-back appends a later
+  Completed event; the same settlement re-entered yields one notification;
+  Continue then a second settlement with identical text yields a second event
+  and notification; `ReplyTo != Session` and legacy null-profile tasks mint
+  none and legacy tasks still receive today's direct note.
+- V-14: shared recovery/queue/distillation/retention regression | existing full
+  classes, unchanged assertions | `AgentTaskLandNotificationRecoveryTests`,
+  `AgentTaskLandReceiptTests`, `ReceiptFailureDeliveryTests`,
+  `DispatchBaseNotificationTests`, `AgentTaskLandNotificationPersistenceTests`,
+  `OutputDistillationProducerTests`, `OutputDistillationDeliveryTests`,
+  `OutputDistillationApplyRaceTests`, `OutputDistillationDeadlineTests`,
+  `OutputDistillationCleanupTests`, `PolledCompletionNoteShrinkTests`,
+  `DataRetentionServiceTests` (plus `RT.C544_CompletionObligationRetention`),
+  `AgentTaskReplyIntegrationTests`, `CheckNoteDeliveryHandoffTests` | every
+  existing method green with unchanged expectations; CARD-0481 F2-F4, C467,
+  C488 and C508 assertions untouched. A kind-aware change that requires editing
+  one of these expectations is a design regression and returns `next: plan`.
+
+Full scope commands (Code and independent Review), once tests exist:
+
+~~~powershell
+dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c544/ --nologo
+dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c544/ -- --treenode-filter '/*/*/*/*[Category=Unit]' --report-trx --report-trx-filename unit.trx --results-directory .antiphon/c544-unit
+~~~
+
+Then each class below with `--treenode-filter "/*/*/<Class>/*"`, its own results
+directory and a nonzero TRX. Full affected inventory for CARD-0544 Code/Review:
+P, C, CLI, D, H, L, S, Q, N, `InterimVerificationLandGitTests`,
+`AgentTaskCardBindingTests`, `CardCorrectionIntegrationTests`,
+`ExternalTrackerSyncImportanceProvenanceTests`, `DelegateScriptRepairSourceTests`,
+`DelegateBundleLaunchTests`, `CodexDelegateDispatchTests`, `AgentTaskReuseEnqueueTests`,
+`AgentTaskReviewEvidenceTests`, `AgentTaskLandApprovalRequestTests`,
+`AgentTaskLandApprovalPersistenceTests`, `AgentTaskLandApprovalRecoveryTests`,
+`CheckNoteDeliveryHandoffTests`, `NightlyScriptsTests`, and the V-14 classes:
+`AgentTaskLandNotificationRecoveryTests`, `AgentTaskLandReceiptTests`,
+`ReceiptFailureDeliveryTests`, `DispatchBaseNotificationTests`,
+`AgentTaskLandNotificationPersistenceTests`, `OutputDistillationProducerTests`,
+`OutputDistillationDeliveryTests`, `OutputDistillationApplyRaceTests`,
+`OutputDistillationDeadlineTests`, `OutputDistillationCleanupTests`,
+`PolledCompletionNoteShrinkTests`, `DataRetentionServiceTests`,
+`AgentTaskReplyIntegrationTests`. Q, `CheckNoteDeliveryHandoffTests`,
+`ReceiptFailureDeliveryTests` and the distillation classes share the
+`MessageQueue` serialization group; run them in one sequential batch.
+
+~~~powershell
+pwsh -NoProfile -File scripts/test-nightly-health.ps1
+pwsh -NoProfile -File scripts/test-client.ps1 TaskVerificationProfile TaskDetailBody TaskDrawer -JsonResultPath .antiphon/c544-client.json
+~~~
+
+The direct health-harness run remains a regression of the existing cases and the
+ten retained C544 cases; the 13 transferred `Test-C544_*` cases are not authored
+by CARD-0544 Code and their absence is expected in its inventory.
+
+Executed-method floor for CARD-0544: 96 retained C544 methods (109 at 5d91dca2
+minus the 13 transferred) plus 19 new methods below = **115 executed C544
+methods**, plus 3 client cases. Loop rows are assertions, never reported as
+discovered tests.
+
+### Guards the regression (additional rows)
+
+R-1..R-8 stand; R-8 now executes under CARD-0545 except its job-adapter part.
+
+- R-9: a settled profile-v1 task whose completion note never reaches the caller,
+  or reaches it twice | S.C544_CompletionObligationAtomic, Q.C544_CompletionReceipt,
+  C544_CompletionRecovery, C544_SingleLogicalNote, C544_StampIsNotReceipt,
+  C544_StoppedCallerReceipt | exactly one complete UserPrompt beyond the floor
+  across every cut and caller state; obligation and terminal task commit together.
+- R-10: a rendering (distilled, shrunk, batched, spilled) drops the round/scope/
+  pending-Final header, points at a different result, or is swapped after typing |
+  Q.C544_RenderingKeepsHeader, C544_RenderingFrozenBeforeTyping,
+  C544_LateReplacementRejected, C544_SnapshotRendersRecovery,
+  C544_ReportRegeneratedFromSnapshot, C544_PointerReceiptRequiresContent |
+  delivered wire text equals the committed rendering and carries the snapshot's
+  header; pointer content hash equals the snapshot raw SHA-256.
+- R-11: the kind-aware change leaks into land/failure/dispatch-base notifications
+  or retention | Q.C544_KindAwareDistillation, RT.C544_CompletionObligationRetention
+  and the V-14 full classes | non-Completion keyed rows stay unrendered and
+  immutable-Body; unconfirmed keyed rows survive retention.
+
+### Guard inventory (revised: ownership ledger and new guards)
+
+Guards G-1..G-101 keep their text, IDs and PC mappings from the 5d91dca2 table.
+Ownership after D-10:
+
+| Range | Owner | Count |
+|---|---:|---:|
+| G-1..G-77, G-87..G-94, G-99..G-101 | CARD-0544 | 88 |
+| G-78..G-86, G-95..G-98 | CARD-0545 (ledger above) | 13 |
+| G-102..G-120 (new, below) | CARD-0544 | 19 |
+| **Total** | | **120** (CARD-0544: 107; CARD-0545: 13) |
+
+PC-70's defect is restated for D-9: "`TaskCompletionNotification`/reply
+settlement: omit the Completion obligation for Succeeded settlements" (the
+direct enqueue no longer exists for these tasks). Its method and red assertion
+are unchanged. PC-71 is now executable and is restated in the control table.
+
+| Guard | Plan reference and invariant | Positive control |
+|---|---|---|
+| G-102 | D-9: terminal task, result, retained event, StageOutcome and Completion obligation commit in one transaction; an obligation-insert fault rolls back the settlement | PC-102 |
+| G-103 | D-9: `SourceEventId` is the exact retained settlement event, not the latest event queried afterward | PC-103 |
+| G-104 | D-9: one obligation per settlement event; re-entry reuses it; Continue/Retry settlements mint a new event and obligation; RootTaskId is never deduplication authority | PC-104 |
+| G-105 | D-9: recovery renders from the immutable `CompletionSnapshotJson`, never from current task Result, card policy, HEAD or a later outcome | PC-105 |
+| G-106 | D-9: the validated rendering is persisted in `CompletionDeliveryJson` with the attempt/floor in one transaction before the first typed byte | PC-106 |
+| G-107 | D-9: distillation/poll shrink may replace only a pending, never-attempted Completion row | PC-107 |
+| G-108 | D-9: every rendering kind retains the exact mandatory header (round, completed scope, pending Final, next stage) | PC-108 |
+| G-109 | D-9: only Completion keyed rows enter distillation/shrink/batching; Outcome/Conflict/DispatchBase/DeliveryFailure keep immutable Body | PC-109 |
+| G-110 | D-9: same-root completions batch under `task:<root>` into one wire delivery; each member records the same composed wire hash and membership; a spill preserves the whole composed content behind the pointer | PC-110 |
+| G-111 | D-9: pointer receipt requires the exact referenced file content/hash in the recipient workspace | PC-111 |
+| G-112 | D-9: an unavailable report file is regenerated from the snapshot's raw result, never pointed at a different current Result | PC-112 |
+| G-113 | D-9: restart neither restarts the distillation deadline nor commissions another model call; raw is delivered after the original hold | PC-113 |
+| G-114 | D-9: Completion receipt compares the committed wire rendering and rejects ID-only, header-only or truncated prompts | PC-114 |
+| G-115 | D-9: a completion stamp or an earlier root-level note does not stop reconciliation of an unresolved obligation | PC-115 |
+| G-116 | D-9: a profile-v1 settlement produces exactly one logical note: no legacy direct enqueue and no sourced-scan duplicate | PC-116 |
+| G-117 | D-9: linking an existing keyed row validates destination and raw digest for the Completion kind | PC-117 |
+| G-118 | D-9: unconfirmed Completion evidence survives retention; a confirmed obligation retains receipt identity and is never re-enqueued | PC-118 |
+| G-119 | D-9: obligations are minted only for profile-v1 `ReplyTo=Session` settlements; legacy tasks keep today's path unchanged | PC-119 |
+| G-120 | D-9/CARD-0481 order: an existing keyed row is discovered, validated, linked and confirmed even after the caller stops; only new insertion is gated on destination status | PC-120 |
+
+Guards = 120; mapped = 120; missing = 0; duplicate PC mappings = 0. Every
+CARD-0544 guard (107) has an executable control below or at 5d91dca2; the 13
+CARD-0545 guards have controls whose production entrypoint CARD-0545 names.
+
+### Positive controls (new and restated)
+
+Same execution rules as 5d91dca2: one compiling defect, exact expanded
+class/method, distinct red/green directories, rebuild after mutation and
+restoration, the named row/assertion must be the red. Example for a Q control:
+
+~~~powershell
+dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c544-pc/ -- --treenode-filter '/*/*/VerificationRoundDeliveryTests/C544_CompletionRecovery' --report-trx --report-trx-filename run.trx --results-directory .antiphon/c544-pc-71-red
+~~~
+
+| Control | Compiling production defect | Exact method | Required intended red assertion |
+|---|---|---|---|
+| PC-71 (restated, executable) | `ReconcileAsync` Completion branch: set `State = Confirmed` and `ConfirmedAt` immediately after `EnqueueAsync` succeeds | `VerificationRoundDeliveryTests.C544_CompletionRecovery` | rows `note-committed`, `wakeup-dropped` and `attempt-committed` (busy): notification State == AwaitingReceipt and ConfirmingPromptSequence == null while no complete UserPrompt exists; after recovery the same notification.Id is Confirmed with exactly one prompt |
+| PC-102 | `AgentTaskReplyService` settlement: call `SaveChangesAsync` for the task/outcome, then add the Completion notification and save again | `VerificationRoundSettlementTests.C544_CompletionObligationAtomic` | row `obligation-insert`: fresh-context task Status is not terminal, StageOutcome count == 0, notification count == 0 |
+| PC-103 | `TaskCompletionNotification`: select `SourceEventId` from the newest `Completed` event by CreatedAt instead of the retained event | `VerificationRoundSettlementTests.C544_CompletionEventIdentity` | with a merge-back-appended later Completed event, notification.SourceEventId == retained event ID |
+| PC-104 | `TaskCompletionNotification`: skip minting when any Completion notification exists for `RootTaskId` | `VerificationRoundSettlementTests.C544_CompletionIdentityAcrossContinue` | after Continue and a second identical-text settlement, notification count == 2 with distinct SourceEventIds; re-entered same settlement still 1 for that event |
+| PC-105 | recovery rendering: read round/scope/next from the current task and latest outcome instead of `CompletionSnapshotJson` | `VerificationRoundDeliveryTests.C544_SnapshotRendersRecovery` | after a foreign-context change to task Result/round and card policy, the delivered prompt header equals the snapshot's original Interim/pending-Final header and raw digest |
+| PC-106 | queue typing: submit the Completion wire text, then persist `CompletionDeliveryJson` in a later transaction | `VerificationRoundDeliveryTests.C544_RenderingFrozenBeforeTyping` | row `render-committed`/`spill-written`: `caller.SubmittedBodies.Count == 0` whenever `CompletionDeliveryJson` is null; once non-null the typed text equals its WireText |
+| PC-107 | distillation apply: drop the `Pending && DeliveryAttempts == 0` predicate for Completion keyed rows | `VerificationRoundDeliveryTests.C544_LateReplacementRejected` | after `attempt-committed`, an applied summary leaves row Body and `CompletionDeliveryJson` unchanged and the delivered prompt equals the original wire text |
+| PC-108 | distilled/pointer composition: omit the verification-profile header bits | `VerificationRoundDeliveryTests.C544_RenderingKeepsHeader` | rows {raw, distilled, polled-shrunk, spilled}: delivered prompt contains the exact round/scope/pending-Final/next header lines |
+| PC-109 | `OutputDistillationService` eligibility: replace `SourceLandNotificationId == null` with unconditional (all keyed kinds) | `VerificationRoundDeliveryTests.C544_KindAwareDistillation` | a keyed Outcome row and a DeliveryFailure row keep Body == note.Body after apply and ReconcileAsync records no `queue_payload_changed_unconfirmed`; the Completion row alone may be replaced |
+| PC-110 | `ReconcileAsync` Completion branch: use `land:<id>` conversation key | `VerificationRoundDeliveryTests.C544_SameRootBatchMembership` | two sibling completions for one root, busy caller: exactly one UserPrompt containing both logical notes; both notifications Confirmed at the same ConfirmingPromptSequence with equal wire hash and membership |
+| PC-111 | pointer receipt: confirm on pointer prompt match without validating the referenced file hash | `VerificationRoundDeliveryTests.C544_PointerReceiptRequiresContent` | spill file altered before the confirmation scan: State != Confirmed and LastErrorCode names the pointer mismatch; restored file then Confirmed |
+| PC-112 | recovery: resolve the report file from `task.Result` at recovery time instead of the snapshot | `VerificationRoundDeliveryTests.C544_ReportRegeneratedFromSnapshot` | with the original file deleted and `task.Result` changed by a foreign context, the delivered pointer file SHA-256 == snapshot raw SHA-256 |
+| PC-113 | recovery: on restart set a new `HoldUntil = now + wait` and enqueue a fresh `DistillRequest` | `VerificationRoundDeliveryTests.C544_DistillationDeadlineSurvivesRestart` | restart after the original hold: distiller request count == 0 after restart, HoldUntil unchanged, raw delivered at the first flush |
+| PC-114 | Completion receipt: accept a prompt that contains the notification ID or header line only | `VerificationRoundDeliveryTests.C544_CompletionReceiptWholeWire` | rows {ID-only, header-only, truncated} inserted as false prompts leave State != Confirmed; only the OnSubmitted whole prompt confirms |
+| PC-115 | `ReconcileAsync`: return early when `CompletionNoteStamp`/root-level note exists for the task | `VerificationRoundDeliveryTests.C544_StampIsNotReceipt` | with an earlier sibling's root note and stamp present and this obligation's insert lost, restart delivers this task's complete prompt exactly once |
+| PC-116 | `DeliverToParentAsync`: keep the legacy direct `queue.EnqueueAsync` for profile-v1 tasks in addition to the obligation | `VerificationRoundDeliveryTests.C544_SingleLogicalNote` | busy and eligible: queue rows with this task's digest == 1 and UserPrompt count == 1 |
+| PC-117 | `ReconcileAsync`: skip the destination/digest equality when linking a keyed row of Kind == Completion | `VerificationRoundDeliveryTests.C544_CompletionLinkValidatesIdentity` | rows {wrong destination, wrong digest}: ConflictException or unresolved state; QueueMessageId stays null and nothing is Confirmed |
+| PC-118 | `DataRetentionService`: prune unconfirmed keyed Completion rows past the queued window | `DataRetentionServiceTests.C544_CompletionObligationRetention` | stale unconfirmed Completion row survives; confirmed one prunes with ConfirmedAt/ConfirmingPromptSequence retained and no re-enqueue on the next scan |
+| PC-119 | `TaskCompletionNotification`: mint for `ReplyTo != Session` and legacy null-profile tasks | `VerificationRoundSettlementTests.C544_ObligationApplicability` | rows {Session profile v1 -> 1; ReplyTo=None -> 0; legacy -> 0 and legacy direct note delivered} |
+| PC-120 | `ReconcileAsync` Completion branch: check destination Stopped/Failed before discovering the existing keyed row | `VerificationRoundDeliveryTests.C544_StoppedCallerReceipt` | caller Stopped/Failed after delivery, restart: State == Confirmed from the existing transcript; no new queue row |
+
+Mutation runs each control method-scoped after land, restores, and reports
+break/red/restore/green. Code implements the tests and runs the same methods
+unmutated as ordinary V/R. Ordinary Review judges them before land. All 107
+CARD-0544 PCs remain pending until sourced Mutation; the 13 CARD-0545 PCs are
+pending on that card and are not counted as CARD-0544 evidence.
