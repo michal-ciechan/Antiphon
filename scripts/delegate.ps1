@@ -71,6 +71,27 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [guid]$RepairSource,
 
+    # CARD-0544. Ordinary-verification round for Code/Review only. Omitted means Final, the full
+    # affected sweep. Interim is an explicit repair round: the card's role policy must permit it,
+    # and it needs -VerificationSubject (original landing owner), -VerificationBaselineOutcome (a
+    # full-scope Review outcome) and -VerificationSelectionFile. Interim never approves a land.
+    [Parameter(ParameterSetName = 'Create')]
+    [ValidateSet('Final', 'Interim')]
+    [string]$VerificationRound,
+
+    # CARD-0544. Full GUID (never a short id) of the original Code landing owner.
+    [Parameter(ParameterSetName = 'Create')]
+    [string]$VerificationSubject,
+
+    # CARD-0544. Full GUID of the full-scope Review StageOutcome this Interim is baselined on.
+    [Parameter(ParameterSetName = 'Create')]
+    [string]$VerificationBaselineOutcome,
+
+    # CARD-0544. Caller-owned JSON file holding {artifactPath, artifactCommitSha, section}. Only the
+    # object's contents are sent; the file path itself never reaches the server.
+    [Parameter(ParameterSetName = 'Create')]
+    [string]$VerificationSelectionFile,
+
     [Parameter(ParameterSetName = 'CleanupVerification', Mandatory = $true)]
     [string]$CleanupVerification,
 
@@ -769,6 +790,57 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($OnAgent) { $body['followUpOnTask'] = $OnAgent }
         if ($PSBoundParameters.ContainsKey('SourceLanding')) { $body['sourceLandingOperationId'] = $SourceLanding.ToString('D') }
         if ($PSBoundParameters.ContainsKey('RepairSource')) { $body['repairSourceTaskId'] = $RepairSource.ToString('D') }
+        # CARD-0544: refused locally, before any POST, when the shape can never be admitted.
+        $verificationFields = @('VerificationSubject', 'VerificationBaselineOutcome', 'VerificationSelectionFile') |
+            Where-Object { $PSBoundParameters.ContainsKey($_) }
+        if ($PSBoundParameters.ContainsKey('VerificationRound') -or $verificationFields) {
+            if ($Orchestrator -or $Role -notin @('Code', 'Review')) {
+                Write-Error 'verification_round_role: -VerificationRound applies only to a Worker -Role Code or Review.'
+                exit 1
+            }
+            if ($VerificationRound -ne 'Interim' -and $verificationFields) {
+                Write-Error 'verification_round_role: -VerificationSubject, -VerificationBaselineOutcome and -VerificationSelectionFile require -VerificationRound Interim.'
+                exit 1
+            }
+            if ($VerificationRound -eq 'Interim') {
+                if (($Role -eq 'Code' -and -not $Worktree) -or ($Role -eq 'Review' -and -not $ReadOnly)) {
+                    Write-Error 'verification_round_role: Interim is supported only for -Role Code -Worktree and -Role Review -ReadOnly.'
+                    exit 1
+                }
+                $fullGuid = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                foreach ($name in @('VerificationSubject', 'VerificationBaselineOutcome')) {
+                    $value = [string]$PSBoundParameters[$name]
+                    if ($value -notmatch $fullGuid) {
+                        Write-Error ("verification_baseline_invalid: -{0} must be a full GUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx), never a short id." -f $name)
+                        exit 1
+                    }
+                }
+                if ([string]::IsNullOrWhiteSpace($VerificationSelectionFile) -or -not (Test-Path -LiteralPath $VerificationSelectionFile)) {
+                    Write-Error 'verification_selection_invalid: -VerificationSelectionFile must name an existing JSON file.'
+                    exit 1
+                }
+                try {
+                    $selection = [IO.File]::ReadAllText($VerificationSelectionFile, [Text.Encoding]::UTF8) | ConvertFrom-Json -ErrorAction Stop
+                } catch {
+                    Write-Error 'verification_selection_invalid: -VerificationSelectionFile is not valid JSON.'
+                    exit 1
+                }
+                $allowed = @('artifactPath', 'artifactCommitSha', 'section')
+                if ($null -eq $selection -or $selection -isnot [System.Management.Automation.PSCustomObject] -or
+                    @($selection.PSObject.Properties | Where-Object { $_.Name -notin $allowed -or $_.Value -isnot [string] }).Count -gt 0) {
+                    Write-Error 'verification_selection_invalid: the selection file must be one object of string artifactPath, artifactCommitSha and section.'
+                    exit 1
+                }
+                $body['verificationSubjectTaskId'] = ([guid]$VerificationSubject).ToString('D')
+                $body['verificationBaselineOutcomeId'] = ([guid]$VerificationBaselineOutcome).ToString('D')
+                $body['verificationSelection'] = [ordered]@{
+                    artifactPath      = $selection.artifactPath
+                    artifactCommitSha = $selection.artifactCommitSha
+                    section           = $selection.section
+                }
+            }
+            if ($PSBoundParameters.ContainsKey('VerificationRound')) { $body['verificationRound'] = $VerificationRound }
+        }
         if ($Agent) { $body['agent'] = $Agent }
         if ($Stage) { $body['stage'] = $Stage }
         if ($titleText) { $body['title'] = $titleText }

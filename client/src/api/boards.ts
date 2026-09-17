@@ -51,8 +51,13 @@ export interface BoardColumnDto {
   cards: CardDto[]
 }
 
+/** CARD-0544. Per-role permission to request an Interim round; FullOnly by default. */
+export type CardVerificationPolicy = 'FullOnly' | 'AllowInterim'
+
 export interface CardDto {
   cardFileVisibility?: CardFileVisibility
+  codeVerificationPolicy?: CardVerificationPolicy
+  reviewVerificationPolicy?: CardVerificationPolicy
   hasPrivateNotes?: boolean
   cardFileStatus?: CardFileStatus | null
   id: string
@@ -334,6 +339,9 @@ export interface UpdateCardContentRequest {
   clearDueAt?: boolean
   labels?: string[] | null
   editedBy?: string | null
+  /** CARD-0544. Omitted = unchanged. */
+  codeVerificationPolicy?: CardVerificationPolicy | null
+  reviewVerificationPolicy?: CardVerificationPolicy | null
 }
 
 /** Archive is what "delete" means for a card: the row stays, so no identifier ever dangles. */
