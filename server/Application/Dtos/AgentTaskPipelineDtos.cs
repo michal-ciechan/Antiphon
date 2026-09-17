@@ -94,4 +94,16 @@ public sealed record AgentTaskPipelineReadyDto(
     /// card's own pin for that role when it has one, else the stage-wide pin. Null when
     /// neither exists.
     /// </summary>
-    RoutingPinRefDto? RoutingPin = null);
+    RoutingPinRefDto? RoutingPin = null,
+    /// <summary>
+    /// CARD-0552 D-4: the confirmed landing operation this Mutation row owes a battery for.
+    /// Null on every legacy handoff-sourced row.
+    /// </summary>
+    Guid? SourceLandingOperationId = null,
+    /// <summary>CARD-0552 D-4: L, the verified source SHA the battery must run at.</summary>
+    string? SourceLandingSha = null,
+    /// <summary>
+    /// CARD-0552 D-4: the ORIGINAL card the landing owner closed. <see cref="Card"/> is the
+    /// post-land verification companion the dispatch binds; this is the card it verifies.
+    /// </summary>
+    AgentTaskPipelineCardRefDto? OriginalCard = null);

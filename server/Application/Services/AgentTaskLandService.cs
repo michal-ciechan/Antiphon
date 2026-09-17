@@ -33,6 +33,7 @@ public sealed class AgentTaskLandService
     private readonly DelegationSettings _settings;
     private readonly ILogger<AgentTaskLandService> _logger;
     private readonly LandDeliveryBoundary _boundary;
+    private readonly PostLandVerificationCompanions _companions;
     private LandExecutionIdentity? _execution;
 
     public AgentTaskLandService(
@@ -45,9 +46,11 @@ public sealed class AgentTaskLandService
         TimeProvider clock,
         IOptions<DelegationSettings> settings,
         ILogger<AgentTaskLandService> logger,
+        PostLandVerificationCompanions companions,
         AgentTaskLandingProtocol? protocol = null, IRepositoryMutationLease? leases = null, ILandingGit? landingGit = null,
         LandDeliveryBoundary? boundary = null)
     {
+        _companions = companions;
         _protocol = protocol;
         _boundary = boundary ?? new LandDeliveryBoundary();
         _leases = leases;
@@ -727,6 +730,17 @@ public sealed class AgentTaskLandService
                 else stage.Detail = detail;
             }
         }
+        // CARD-0552 D-1. The confirmed publication and the obligation it creates commit in ONE
+        // transaction under the owner's row lock, so no caller interruption between Review and
+        // land can lose the record. Idempotent on op.VerificationCardId, so a cleanup retry or a
+        // LandingCleanup terminal writes nothing a second time.
+        PostLandVerificationCompanions.Result? companion = null;
+        if (op is not null && task.CardId is not null && new AgentTaskLandingState().HasPublication(op))
+        {
+            companion = await _companions.EnsureAsync(task, op, now, ct);
+            outcome += $"; companion={companion.Identifier} ({companion.CardId:D})";
+        }
+
         var terminal = Event(task.Id, type, outcome, now);
         if (cleanupAttempt is not null && op is not null)
         {
@@ -746,6 +760,14 @@ public sealed class AgentTaskLandService
         await _db.SaveChangesAsync(ct);
         if (_db.Database.CurrentTransaction is { } open) await open.CommitAsync(ct);
         await _boundary.ReachedAsync("terminal-committed", task.Id, terminal.Id, ct);
+        if (companion is { Linked: true } recorded)
+        {
+            var boardId = await _db.Cards.AsNoTracking()
+                .Where(c => c.Id == recorded.CardId).Select(c => c.BoardId).SingleAsync(ct);
+            await _eventBus.PublishToAllAsync("CardChanged", new { boardId, cardId = recorded.CardId }, ct);
+            await _eventBus.PublishToAllAsync("CardChanged", new { boardId, cardId = task.CardId!.Value }, ct);
+        }
+
         await PublishAsync(task, ct);
     }
 

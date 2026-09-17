@@ -1656,6 +1656,11 @@ public class AppDbContext : DbContext
             entity.HasIndex(l => l.TaskId).IsUnique().HasFilter("\"Active\" = TRUE");
             entity.HasOne<AgentTask>().WithMany().HasForeignKey(l => l.TaskId)
                 .OnDelete(DeleteBehavior.Restrict);
+            // CARD-0552 D-3: many operations per companion; Restrict so a linked companion card
+            // cannot be deleted out from under the obligation it records.
+            entity.HasOne<Card>().WithMany().HasForeignKey(l => l.VerificationCardId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(l => l.VerificationCardId);
             entity.Property(l => l.LastReason).HasMaxLength(400);
             entity.Property(l => l.VerificationFilter).HasMaxLength(400);
             entity.Property(l => l.ReviewedSourceSha).HasMaxLength(64);

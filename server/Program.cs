@@ -337,6 +337,7 @@ try
     builder.Services.AddSingleton<GuardedWorktreeRemoval>();
     builder.Services.AddSingleton<IRepositoryMutationLease, RepositoryMutationLease>();
     builder.Services.AddScoped<AgentTaskLandingState>();
+    builder.Services.AddScoped<PostLandVerificationCompanions>();
     builder.Services.AddScoped<AgentTaskLandService>();
     builder.Services.AddScoped<AgentTaskLandNotificationService>();
     builder.Services.AddScoped<AgentTaskLandMonitorService>();

@@ -72,4 +72,12 @@ public sealed class AgentTaskLanding
     public DateTime? SourceRemoteObservedAt { get; set; }
     public DateTime? ApprovedAt { get; set; }
     public LandApprovalKind ApprovalKind { get; set; }
+
+    /// <summary>
+    /// CARD-0552 D-3: the post-land verification companion card this confirmed publication
+    /// recorded its Mutation obligation on. Null until the publication is confirmed (and on
+    /// every landing whose owner task is bound to no card). Many operations may point at one
+    /// companion - a repair's O2 reuses it - so the link lives on the landing side.
+    /// </summary>
+    public Guid? VerificationCardId { get; set; }
 }

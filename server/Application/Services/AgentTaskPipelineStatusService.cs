@@ -5,6 +5,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using CardRow = Antiphon.Server.Application.Services.MutationDebtProjection.CardRow;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -109,7 +110,53 @@ public sealed class AgentTaskPipelineStatusService
             .Where(p => p.CardId != null)
             .ToDictionary(p => (p.CardId!.Value, p.Role));
 
+        // CARD-0552 D-4: the Mutation stage's second ready source. One row per landed card, so the
+        // load is bounded by the number of confirmed publications that recorded a companion.
+        var landingRows = await _db.AgentTaskLandings.AsNoTracking()
+            .Where(o => o.VerificationCardId != null
+                && (o.Publication == LandPublicationOutcome.Landed
+                    || o.Publication == LandPublicationOutcome.AlreadyPresent)
+                && o.RemoteConfirmedAt != null)
+            .ToListAsync(ct);
+        var landingState = new AgentTaskLandingState();
+        var landings = landingRows
+            .Where(landingState.HasPublication)
+            .Select(o => new MutationDebtProjection.LandingRow(
+                o.Id, o.TaskId, o.VerificationCardId!.Value, o.RemoteConfirmedAt!.Value,
+                o.OriginalSourceSha, o.VerifiedSourceSha ?? "", o.ObservedRemoteTargetSha ?? "", o.Publication))
+            .ToList();
+
+        var sourced = landings.Count == 0
+            ? []
+            : await _db.AgentTasks.AsNoTracking()
+                .Where(t => t.SourceLandingOperationId != null)
+                .Select(t => new MutationDebtProjection.SourcedRow(
+                    t.Id, t.SourceLandingOperationId!.Value, t.CardId, t.Role, t.Status,
+                    t.CreatedAt, t.DispatchedAt, t.CompletedAt))
+                .ToListAsync(ct);
+
+        var ownerIds = landings.Select(l => l.TaskId).Distinct().ToList();
+        var owners = ownerIds.Count == 0
+            ? new Dictionary<Guid, LandingOwnerRow>()
+            : await _db.AgentTasks.AsNoTracking()
+                .Where(t => ownerIds.Contains(t.Id))
+                .Select(t => new LandingOwnerRow(t.Id, t.Role, t.CardId))
+                .ToDictionaryAsync(t => t.Id, ct);
+
+        var missingCards = landings.Select(l => l.VerificationCardId)
+            .Concat(owners.Values.Where(o => o.CardId is not null).Select(o => o.CardId!.Value))
+            .Where(id => !cards.ContainsKey(id)).Distinct().ToList();
+        if (missingCards.Count > 0)
+        {
+            var extra = await _db.Cards.AsNoTracking()
+                .Where(c => missingCards.Contains(c.Id))
+                .Select(c => new CardRow(c.Id, c.Identifier, c.Title, c.Status, c.ArchivedAt))
+                .ToListAsync(ct);
+            foreach (var row in extra) cards[row.Id] = row;
+        }
+
         var ready = BuildReady(boundStages, cards, stagePins, cardPins);
+        MergeMutationReady(ready, landings, sourced, boundStages, cards, owners, stagePins, cardPins);
 
         var inFlightRows = open
             .Where(t => t.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
@@ -278,6 +325,77 @@ public sealed class AgentTaskPipelineStatusService
                     .OrderBy(r => r.ReadySince)
                     .ThenBy(r => r.Card.Identifier, StringComparer.OrdinalIgnoreCase)
                     .ToList());
+    }
+
+    /// <summary>
+    /// CARD-0552 D-4. Turns each <see cref="MutationDebtProjection.Debt"/> into a Mutation ready
+    /// row keyed on the COMPANION card. The companion is what a dispatch binds and what the
+    /// card-transition sweep then moves, so the row's life cycle matches every other stage's
+    /// without lifting <see cref="BuildReady"/>'s Done exclusion on the original.
+    /// </summary>
+    private static void MergeMutationReady(
+        Dictionary<AgentTaskRole, List<AgentTaskPipelineReadyDto>> ready,
+        IReadOnlyList<MutationDebtProjection.LandingRow> landings,
+        IReadOnlyList<MutationDebtProjection.SourcedRow> sourced,
+        List<TaskRow> boundStages,
+        Dictionary<Guid, CardRow> cards,
+        Dictionary<Guid, LandingOwnerRow> owners,
+        Dictionary<AgentTaskRole, RoutingPin> stagePins,
+        Dictionary<(Guid CardId, AgentTaskRole Role), RoutingPin> cardPins)
+    {
+        var debts = MutationDebtProjection.Build(landings, sourced, boundStages, cards);
+        if (debts.Count == 0) return;
+
+        var rows = new List<AgentTaskPipelineReadyDto>(debts.Count);
+        foreach (var debt in debts)
+        {
+            var owner = owners.GetValueOrDefault(debt.Source.TaskId);
+            var originalId = owner?.CardId;
+            var original = originalId is Guid oid ? cards.GetValueOrDefault(oid) : null;
+
+            TaskRow? plan = null;
+            TaskRow? review = null;
+            if (originalId is Guid cardId)
+            {
+                var onOriginal = boundStages.Where(t => t.CardId == cardId
+                    && t.Status == AgentTaskStatus.Succeeded).ToList();
+                plan = onOriginal
+                    .Where(t => t.Role == AgentTaskRole.Plan && IsVerifiedPlanDeliverable(t.DeliverablePath))
+                    .OrderByDescending(t => t.CompletedAt).ThenByDescending(t => t.Id)
+                    .FirstOrDefault();
+                review = onOriginal
+                    .Where(t => t.Role == AgentTaskRole.Review && t.NextStage == PipelineHandoffKind.Land)
+                    .OrderByDescending(t => t.CompletedAt).ThenByDescending(t => t.Id)
+                    .FirstOrDefault();
+            }
+
+            var pin = EffectivePin(debt.Companion.Id, AgentTaskRole.Mutation, stagePins, cardPins);
+            rows.Add(new AgentTaskPipelineReadyDto(
+                new AgentTaskPipelineCardRefDto(debt.Companion.Id, debt.Companion.Identifier, debt.Companion.Title),
+                debt.Source.TaskId,
+                DelegationReportFormatter.Short(debt.Source.TaskId),
+                debt.Source.RemoteConfirmedAt,
+                plan?.DeliverablePath ?? "",
+                plan?.DeliverableRef,
+                owner?.Role ?? AgentTaskRole.Code,
+                review?.NextHandoff,
+                pin is null ? null : RoutingPinService.ToRef(pin, debt.Companion.Identifier),
+                debt.Source.Id,
+                debt.Source.VerifiedSourceSha,
+                original is null ? null
+                    : new AgentTaskPipelineCardRefDto(original.Id, original.Identifier, original.Title)));
+        }
+
+        // A landing-sourced row WINS over a legacy `next: mutation` row on the same card: the
+        // landing row carries the operation and L the dispatch needs.
+        var claimed = rows.Select(r => r.Card.Id).ToHashSet();
+        var existing = ready.TryGetValue(AgentTaskRole.Mutation, out var current) ? current : [];
+        ready[AgentTaskRole.Mutation] = existing
+            .Where(r => !claimed.Contains(r.Card.Id))
+            .Concat(rows)
+            .OrderBy(r => r.ReadySince)
+            .ThenBy(r => r.Card.Identifier, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     /// <summary>
@@ -524,6 +642,7 @@ public sealed class AgentTaskPipelineStatusService
 
     private sealed record SiblingLandRow(Guid Id, string Title, Guid CardId, DateTime LandRequestedAt);
 
-    private sealed record CardRow(
-        Guid Id, string Identifier, string Title, CardStatus Status, DateTime? ArchivedAt);
+    /// <summary>CARD-0552: the landing owner a Mutation debt row names as its source task.</summary>
+    private sealed record LandingOwnerRow(Guid Id, AgentTaskRole Role, Guid? CardId);
+
 }
