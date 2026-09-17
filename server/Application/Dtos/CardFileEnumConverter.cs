@@ -23,3 +23,7 @@ public abstract class CardFileEnumConverter<T> : JsonConverter<T?> where T : str
 }
 public sealed class CardFileVisibilityConverter : CardFileEnumConverter<CardFileVisibility>;
 public sealed class RepositoryVisibilityConverter : CardFileEnumConverter<RepositoryVisibility>;
+/// <summary>CARD-0544: unknown policy strings/numbers reach 422 validation instead of a bind 400.</summary>
+public sealed class CardVerificationPolicyConverter : CardFileEnumConverter<CardVerificationPolicy>;
+/// <summary>CARD-0544: unknown round strings/numbers reach 422 validation instead of a bind 400.</summary>
+public sealed class VerificationRoundConverter : CardFileEnumConverter<VerificationRound>;

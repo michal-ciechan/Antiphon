@@ -514,6 +514,8 @@ public sealed class CardService : IScheduledCardActions
 
         if (request.PrivateNotes is not null) card.PrivateNotes = request.PrivateNotes;
         if (request.CardFileVisibility is { } visibility) card.CardFileVisibility = visibility;
+        if (request.CodeVerificationPolicy is { } codePolicy) card.CodeVerificationPolicy = codePolicy;
+        if (request.ReviewVerificationPolicy is { } reviewPolicy) card.ReviewVerificationPolicy = reviewPolicy;
         if (request.Title is not null)
             card.Title = request.Title.Trim();
         if (request.Description is not null)
@@ -1655,6 +1657,10 @@ public sealed class CardService : IScheduledCardActions
         RequireWithinLimit(errors, "privateNotes", request.PrivateNotes, MaxPrivateNotesLength);
         if (request.CardFileVisibility is { } visibility && !Enum.IsDefined(visibility))
             errors["cardFileVisibility"] = ["cardFileVisibility must be Inherit, Private or Public."];
+        if (request.CodeVerificationPolicy is { } codePolicy && !Enum.IsDefined(codePolicy))
+            errors["codeVerificationPolicy"] = ["codeVerificationPolicy must be FullOnly or AllowInterim."];
+        if (request.ReviewVerificationPolicy is { } reviewPolicy && !Enum.IsDefined(reviewPolicy))
+            errors["reviewVerificationPolicy"] = ["reviewVerificationPolicy must be FullOnly or AllowInterim."];
         if (string.IsNullOrWhiteSpace(request.Reason))
             errors[nameof(request.Reason)] = ["A reason is required for a card correction."];
         RequireWithinLimit(errors, nameof(request.Reason), request.Reason?.Trim(), MaxReasonLength);
@@ -1668,7 +1674,9 @@ public sealed class CardService : IScheduledCardActions
             || request.ClearDueAt
             || request.Labels is not null
             || request.ImportanceProvenance is not null
-            || request.Alias is not null;
+            || request.Alias is not null
+            || request.CodeVerificationPolicy is not null
+            || request.ReviewVerificationPolicy is not null;
         if (!hasContent)
         {
             errors[nameof(request.Title)] =

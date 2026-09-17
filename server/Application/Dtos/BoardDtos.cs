@@ -101,6 +101,10 @@ public sealed record CardDto(
     public bool HasPrivateNotes { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public CardFileCardStatusDto? CardFileStatus { get; init; }
+
+    /// <summary>CARD-0544 D-1. Per-role permission to request Interim; FullOnly unless explicitly edited.</summary>
+    public CardVerificationPolicy CodeVerificationPolicy { get; init; }
+    public CardVerificationPolicy ReviewVerificationPolicy { get; init; }
 }
 
 public sealed record CardListDto(IReadOnlyList<CardDto> Cards, bool Truncated);
@@ -254,7 +258,10 @@ public sealed record UpdateCardContentRequest(
     CardImportanceProvenance? ImportanceProvenance = null,
     string? Alias = null,
     string? PrivateNotes = null,
-    [property: JsonConverter(typeof(CardFileVisibilityConverter))] CardFileVisibility? CardFileVisibility = null);
+    [property: JsonConverter(typeof(CardFileVisibilityConverter))] CardFileVisibility? CardFileVisibility = null,
+    // CARD-0544 D-1. Omitted preserves the stored value; unknown values are 422.
+    [property: JsonConverter(typeof(CardVerificationPolicyConverter))] CardVerificationPolicy? CodeVerificationPolicy = null,
+    [property: JsonConverter(typeof(CardVerificationPolicyConverter))] CardVerificationPolicy? ReviewVerificationPolicy = null);
 
 /// <summary>
 /// Relative placement of one card inside its board column (CARD-0098). Absolute positions never
@@ -349,6 +356,9 @@ public sealed record CardRevisionDto(
     public CardFileVisibility? CardFileVisibility { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
     public bool? HasPrivateNotes { get; init; }
+    /// <summary>CARD-0544. Superseded policies on a content edit; null on other kinds and older rows.</summary>
+    public CardVerificationPolicy? CodeVerificationPolicy { get; init; }
+    public CardVerificationPolicy? ReviewVerificationPolicy { get; init; }
 }
 
 /// <summary>

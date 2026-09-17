@@ -140,6 +140,11 @@ try
     builder.Services.AddOptions<DelegationSettings>()
         .Bind(builder.Configuration.GetSection("Delegation"))
         .ValidateOnStart();
+    // CARD-0544 D-7: Interim readiness gate. Ships Enabled=false; only S6 may turn it on.
+    builder.Services.AddOptions<InterimVerificationSettings>()
+        .Bind(builder.Configuration.GetSection(InterimVerificationSettings.SectionName));
+    builder.Services.AddSingleton<IInterimVerificationReadinessReader,
+        Antiphon.Server.Infrastructure.Files.InterimVerificationReadinessReader>();
 
     // The pty backend switch (CARD-0037), read from the SAME config key the session runner uses and
     // exported into this process's environment — the server spawns in-proc ptys of its own
@@ -310,6 +315,7 @@ try
     builder.Services.AddScoped<DispatchBaseWarningIntentService>();
     builder.Services.AddScoped<DelegationOpenGate>();
     builder.Services.AddScoped<WorktreeHealthService>();
+    builder.Services.AddScoped<InterimVerificationPolicy>();
     builder.Services.AddScoped<AgentTaskService>();
     builder.Services.AddScoped<SourceLandingAdmission>();
     builder.Services.AddScoped<VerificationExecutionService>();

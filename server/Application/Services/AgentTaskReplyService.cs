@@ -663,6 +663,7 @@ public sealed class AgentTaskReplyService
         // ignored the instruction, write the file ourselves so the excerpt has somewhere to point.
         task.ResultFilePath = await ResolveReportFileAsync(services, task, settledBody, ct);
         var handoff = PipelineHandoff.TryParse(settledBody);
+        handoff = InterimVerificationPolicy.CapHandoff(task, handoff);
         task.NextStage = handoff.Kind;
         task.NextHandoff = handoff.Handoff;
         (task.DeliverablePath, task.DeliverableRef) = await ResolveDeliverableAsync(
@@ -1812,7 +1813,7 @@ public sealed class AgentTaskReplyService
             await DescribeOverlappingRunningAsync(task, ct), drift,
             ReportEvidenceHeader(task.ReportEvidence), git,
             DescribeDeliverable(task),
-            PipelineHandoff.HeaderBit(task.Role, PipelineHandoff.TryParse(report)),
+            PipelineHandoff.HeaderBit(task.Role, InterimVerificationPolicy.CapHandoff(task, PipelineHandoff.TryParse(report))),
             await LandCompletionFacts.LoadAsync(factsScope.ServiceProvider.GetRequiredService<AppDbContext>(), task, ct),
             await LandCompletionFacts.LoadReviewAsync(factsDb, task, ct), sessionLiveness);
     }
@@ -3581,8 +3582,15 @@ public sealed class AgentTaskReplyService
         string? reviewedSha = null;
         string? reviewedRef = null;
         string? reviewedRepo = null;
+        // CARD-0544 D-5: a profiled Review records its commissioned round and the scope it declared,
+        // capped by that round; anything short of a completed Clean/Found turn with a usable block is
+        // Unknown. A Found Full review binds subject coordinates too (a baseline, never approval).
+        var profiled = task.VerificationProfileVersion is not null && task.VerificationRound is not null;
+        var completedScope = profiled ? VerificationScope.Unknown : (VerificationScope?)null;
+        var bindsEvidence = outcome == StageOutcomeKind.Clean
+            || profiled && outcome == StageOutcomeKind.Found;
         if (task.Role == AgentTaskRole.Review && task.Status == AgentTaskStatus.Succeeded
-            && stage == OrchestrationStage.Review && outcome == StageOutcomeKind.Clean)
+            && stage == OrchestrationStage.Review && bindsEvidence)
         {
             var evidence = ReviewEvidence.TryParse(report);
             if (evidence.Usable && evidence.SubjectTaskId is { } named)
@@ -3609,6 +3617,8 @@ public sealed class AgentTaskReplyService
                             : subject.WorktreeBranch.StartsWith("refs/", StringComparison.Ordinal)
                                 ? subject.WorktreeBranch : "refs/heads/" + subject.WorktreeBranch;
                         reviewedRepo = subject.RepoPath;
+                        if (profiled)
+                            completedScope = ReviewEvidence.CapToRound(evidence.Scope, task.VerificationRound!.Value);
                     }
                 }
             }
@@ -3637,6 +3647,9 @@ public sealed class AgentTaskReplyService
             ReviewedSourceSha = reviewedSha,
             ReviewedSourceRef = reviewedRef,
             ReviewedRepositoryPath = reviewedRepo,
+            VerificationProfileVersion = profiled ? task.VerificationProfileVersion : null,
+            CommissionedRound = profiled ? task.VerificationRound : null,
+            OrdinaryScopeCompleted = completedScope,
         });
     }
 

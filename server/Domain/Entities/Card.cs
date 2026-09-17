@@ -87,6 +87,15 @@ public class Card
     public DateTime? AutoDispatchHeldAt { get; set; }
 
     /// <summary>
+    /// CARD-0544 D-1. Whether an Interim Code round may be REQUESTED on this card. FullOnly by
+    /// default; never inferred from title, labels or tracker data and never written by the sync.
+    /// </summary>
+    public CardVerificationPolicy CodeVerificationPolicy { get; set; } = CardVerificationPolicy.FullOnly;
+
+    /// <summary>CARD-0544 D-1. Independent Review-role counterpart of <see cref="CodeVerificationPolicy"/>.</summary>
+    public CardVerificationPolicy ReviewVerificationPolicy { get; set; } = CardVerificationPolicy.FullOnly;
+
+    /// <summary>
     /// How many revisions this card has, and the allocator for the next
     /// <see cref="CardRevision.RevisionNumber"/>. Stored on the card rather than counted so that
     /// (a) the board GET can surface an "edited" affordance without a second query or a windowed

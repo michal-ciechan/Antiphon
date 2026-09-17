@@ -27,7 +27,10 @@ public sealed record StageOutcomeDto(
     DateTime RecordedAt,
     string? ReviewedSourceSha = null,
     string? ReviewedSourceRef = null,
-    string? ReviewedRepositoryPath = null);
+    string? ReviewedRepositoryPath = null,
+    int? VerificationProfileVersion = null,
+    VerificationRound? CommissionedRound = null,
+    VerificationScope? OrdinaryScopeCompleted = null);
 
 /// <summary>
 /// One stage's counts over the filtered (and optionally latest-per-task) rows.

@@ -3,6 +3,7 @@ using System;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260917012003_AddVerificationProfile")]
+    partial class AddVerificationProfile
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -59,22 +62,6 @@ namespace Antiphon.Server.Migrations
                         .IsRequired()
                         .HasMaxLength(4000)
                         .HasColumnType("character varying(4000)");
-
-                    b.Property<long>("HerdrLabelFollowSequence")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint")
-                        .HasDefaultValue(0L);
-
-                    b.Property<Guid?>("HerdrLabelFollowSessionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("HerdrLabelFollowStartedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("HerdrPlacementEditToken")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid")
-                        .HasDefaultValue(new Guid("00000000-0000-0000-0000-000000000000"));
 
                     b.Property<string>("HerdrTabLabel")
                         .HasMaxLength(256)
@@ -951,16 +938,6 @@ namespace Antiphon.Server.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("integer")
                         .HasDefaultValue(0);
-
-                    b.Property<string>("CommitBaselineSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("CommitOnSettle")
-                        .HasColumnType("text");
-
-                    b.Property<string>("CommitUpstreamBaselineJson")
-                        .HasColumnType("text");
 
                     b.Property<DateTime?>("CompletedAt")
                         .HasColumnType("timestamp with time zone");
@@ -4318,9 +4295,6 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)")
                         .HasDefaultValue("master");
-
-                    b.Property<bool?>("CommitOnSettle")
-                        .HasColumnType("boolean");
 
                     b.Property<string>("ConstitutionPath")
                         .IsRequired()
