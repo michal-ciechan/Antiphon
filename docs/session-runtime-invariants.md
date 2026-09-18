@@ -356,6 +356,7 @@ startup/periodic scan revisit persisted boundaries. Compaction remains a mid-tur
 queued refresh waits for ordinary idle eligibility. Confirmed prompts are not retyped while
 waiting for an answer, and delivery deadlines survive service recreation. One unresolved
 follow-on read is allowed per refresh-caused compaction chain; another fails `refresh_loop`.
+The `ANTIPHON_RULES_ACK` / `ANTIPHON_RULES_FAILED` lines are matched with `OrdinalIgnoreCase` because the id, generation and sha256 tokens are hex and the provider may render either case (CARD-0562); the receipt hash comparisons stay ordinal because both sides are `GrokRulesTransport.Hash` output.
 Established-session refresh failure holds queued work and records an error incident for attention.
 
 The initial implementation still needs the full crash/ownership, native-wire and live endurance

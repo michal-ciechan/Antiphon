@@ -342,12 +342,13 @@ public sealed class GrokRulesRefreshService(
                 var end = turn.FirstOrDefault(e => e.Kind == TranscriptKinds.TurnEnd);
                 if (turn.Any(e => e.IsApiError == true)) { Fail(session, row, "provider_error"); return; }
                 var answer = string.Join("\n", turn.Where(e => e.Kind == TranscriptKinds.AssistantText).Select(e => e.Text));
+                // The id, generation and sha256 tokens are hex, hex is case-insensitive by definition, and the provider renders them (CARD-0562: 037A46c7 for 037a46c7).
                 var failure = $"ANTIPHON_RULES_FAILED id={row.Id:N} generation={receipt.Generation:N} reason=";
                 var lines = StandaloneLines(answer).ToList();
-                var reason = lines.FirstOrDefault(l => l.StartsWith(failure, StringComparison.Ordinal))?[failure.Length..];
+                var reason = lines.FirstOrDefault(l => l.StartsWith(failure, StringComparison.OrdinalIgnoreCase))?[failure.Length..];
                 if (reason is "unreadable" or "incomplete" or "revision_mismatch") { Fail(session, row, reason); return; }
                 var ack = $"ANTIPHON_RULES_ACK id={row.Id:N} generation={receipt.Generation:N} sha256={receipt.Sha256}";
-                if (end is not null && TranscriptKinds.IsReportBoundary(end.Kind, end.StopReason) && lines.Contains(ack, StringComparer.Ordinal))
+                if (end is not null && TranscriptKinds.IsReportBoundary(end.Kind, end.StopReason) && lines.Contains(ack, StringComparer.OrdinalIgnoreCase))
                 {
                     row.RulesAcknowledgedAt = now;
                     row.RulesTurnEndSequence = end.Sequence;
