@@ -1062,13 +1062,19 @@ public sealed class AgentControlService
     {
         var state = await _db.AgentSupervisionStates.FirstOrDefaultAsync(s => s.AgentId == agent.Id, ct);
         if (state is null
-            || (!state.Suspended && state.NextRestartAt is null && state.LivenessLatchedAt is null))
+            || (!state.Suspended && state.NextRestartAt is null && state.LivenessLatchedAt is null
+                && state.RunnerBuildHeldAt is null))
             return;
 
         var wasSuspended = state.Suspended;
         state.Suspended = false;
         state.NextRestartAt = null;
         state.LivenessLatchedAt = null;
+        // CARD-0511 D-3 v: a manual Start is the operator asserting the runner is fixed. Never a
+        // HeldCode refusal for this hold — the queued launch re-probes fresh (D-1) and re-holds by
+        // itself if the runner is still stale, so an unfounded assertion costs one attempt, not a
+        // wrong launch.
+        new RunnerBuildHoldState(_db, _timeProvider).Clear(state);
         state.UpdatedAt = UtcNow();
         if (wasSuspended)
         {

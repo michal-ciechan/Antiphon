@@ -1,4 +1,4 @@
-﻿using System.Data;
+using System.Data;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -231,7 +231,8 @@ public sealed class AgentService
                 s => new AgentSupervisionDto(
                     s.Suspended, s.ConsecutiveFailures, s.NextRestartAt, s.LastEscalationTier,
                     s.HerdrConsecutiveFailures, s.HerdrFailureHeldAt, s.LastHerdrFailureKind,
-                    s.RestartBackoffFailures, s.ContinuityHeldAt, s.ContinuitySessionId, s.ContinuityReason, s.ContinuityEvidence),
+                    s.RestartBackoffFailures, s.ContinuityHeldAt, s.ContinuitySessionId, s.ContinuityReason, s.ContinuityEvidence,
+                    s.RunnerBuildHeldAt, s.RunnerBuildHoldEvidence),
                 ct);
     }
 

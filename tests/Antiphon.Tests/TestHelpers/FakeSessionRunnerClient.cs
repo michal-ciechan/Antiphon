@@ -31,6 +31,21 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
     public bool AdvertiseHerdrNamedTabPlacement { get; set; } = true;
 
     public bool AdvertiseSessionGeneration { get; set; } = true;
+
+    /// <summary>
+    /// CARD-0511: the runner identity the supervisor compares while an agent is held. Null keeps
+    /// the pre-CARD-0511 shape (a runner that cannot say, i.e. identity "unknown").
+    /// </summary>
+    public RunnerBuildDto? Build { get; set; }
+
+    /// <summary>
+    /// CARD-0511: takes over <see cref="GetCapabilitiesAsync"/> entirely. Returning null models an
+    /// unreachable runner, which must keep every runner-build hold.
+    /// </summary>
+    public Func<CancellationToken, Task<RunnerCapabilitiesDto?>>? CapabilitiesOverride { get; set; }
+
+    /// <summary>CARD-0511: proves the identity probe is taken once per tick, and only while held.</summary>
+    public int CapabilitiesCalls { get; private set; }
     public bool AdvertiseConditionalInput { get; set; } = true;
     public List<(Guid SessionId, DateTime Expected)> KillGenerationCalls { get; } = [];
     public List<(Guid SessionId, RunnerConditionalInputRequest Request)> ConditionalInputCalls { get; } = [];
@@ -44,6 +59,9 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
     public Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
+        CapabilitiesCalls++;
+        if (CapabilitiesOverride is { } capabilities)
+            return capabilities(ct);
         IReadOnlyList<string> backends = AdvertiseHerdr
             ? [SessionBackends.PtyHost, SessionBackends.Herdr]
             : [SessionBackends.PtyHost];
@@ -64,7 +82,8 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
             "harness fake runner",
             false,
             SessionRunnerRuntime.SupportedTranscriptFormats,
-            SessionBackends: backends,
+            Build,
+            backends,
             Features: features.Count == 0 ? null : features,
             VerificationCustodyBackend: VerificationStoreId is null ? null : "windows-job-v1",
             RunnerStoreId: VerificationStoreId));

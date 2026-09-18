@@ -259,6 +259,10 @@ export interface AgentSupervisionDto {
   continuitySessionId?: string | null
   continuityReason?: 'NativeSessionMissing' | 'TargetMissing' | 'TargetIncompatible' | 'OwnershipUnproven' | null
   continuityEvidence?: string | null
+  // CARD-0511: the agent is waiting for a rebuilt session runner. Unlike the continuity hold this
+  // needs no decision, so it never gates Start.
+  runnerBuildHeldAt?: string | null
+  runnerBuildHoldEvidence?: string | null
   herdrConsecutiveFailures?: number
   herdrFailureHeldAt?: string | null
   lastHerdrFailureKind?: 'NonQualifying' | 'PaneClosed' | 'ChildGone' | 'DetectTimeout' | null

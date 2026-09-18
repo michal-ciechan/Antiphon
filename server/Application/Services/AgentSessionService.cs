@@ -1,4 +1,4 @@
-﻿using Antiphon.Agents.Pty;
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -409,10 +409,24 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 && agent?.PersistentSessionId == sessionId.ToString("D"))
                 await new StandingContinuityState(_db, _timeProvider).HoldAsync(agentId, sessionId,
                     StandingContinuityReason.NativeSessionMissing, CancellationToken.None);
+            // CARD-0511 D-3 i. The runner is an older build than this launch needs: hold in the
+            // SAME commit as the Failed outcome, so a process death between the two cannot leave a
+            // stale outcome the ladder would then pace (the schedule branch's D-3 ii is the
+            // backstop for exactly that). Nothing is charged.
+            if (!stoppedCheck && ex is RunnerCapabilityMismatchException stale
+                && agent?.PersistentSessionId == sessionId.ToString("D"))
+                await new RunnerBuildHoldState(_db, _timeProvider).HoldAsync(agentId, sessionId,
+                    stale.RunnerIdentity, stale.Message, CancellationToken.None);
             await _db.SaveChangesAsync(CancellationToken.None);
             // Let the UI refetch: the now-Failed session is no longer "live", so the agent card returns
             if (evidenceTransaction is not null)
                 await evidenceTransaction.CommitAsync(CancellationToken.None);
+            // CARD-0511 D-5: the Kind-29 incident is written AFTER this commit, never inside it.
+            // The catch holds the Agents row FOR UPDATE, AgentIncidents.AgentId is a real FK, and
+            // the helper inserts from another scope/connection — which would need FOR KEY SHARE on
+            // that same row and deadlock the launch worker against itself until the 15 s timeout.
+            if (ex is RunnerCapabilityMismatchException)
+                await RecordRunnerBuildStaleAsync(sessionId, ex.Message, CancellationToken.None, agentId);
             // to offering recovery controls instead of a dead terminal.
             await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), CancellationToken.None);
 
@@ -839,11 +853,14 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     /// launch. Resolve that ownership here and make the refusal a Critical supervisor incident.
     /// This runs in a separate scope because the supervisor reaches the session-control graph.
     /// </summary>
-    private async Task RecordRunnerBuildStaleAsync(Guid sessionId, string message, CancellationToken ct)
+    private async Task RecordRunnerBuildStaleAsync(
+        Guid sessionId, string message, CancellationToken ct, Guid? knownAgentId = null)
     {
         try
         {
-            var agentId = await _db.AgentTasks
+            // CARD-0511 D-5: a standing/interactive session has no AgentTask to resolve ownership
+            // through, which is why the interactive path passes the id it already holds.
+            var agentId = knownAgentId ?? await _db.AgentTasks
                 .Where(t => t.AgentSessionId == sessionId && t.AgentId != null)
                 .OrderByDescending(t => t.DispatchedAt)
                 .Select(t => t.AgentId)
@@ -857,8 +874,16 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            if (await db.AgentIncidents.AnyAsync(
-                    i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.RunnerBuildStale, ct))
+            // The message embeds the refused build and its start time, so a SECOND stale build on
+            // the same standing session is a second row, while a manual retry against the same
+            // build is not. The card path keeps its coarser one-row-per-session dedup.
+            var duplicate = knownAgentId is null
+                ? await db.AgentIncidents.AnyAsync(
+                    i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.RunnerBuildStale, ct)
+                : await db.AgentIncidents.AnyAsync(
+                    i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.RunnerBuildStale
+                        && i.FailureReason == message, ct);
+            if (duplicate)
                 return;
 
             var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();

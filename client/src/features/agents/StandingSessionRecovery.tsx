@@ -13,6 +13,9 @@ export function StandingSessionRecovery({ agent }: { agent: AgentSummaryDto }) {
   const start = useStartAgent(agent.id)
   const held = agent.supervision?.continuityHeldAt
   const reason = agent.supervision?.continuityReason
+  // CARD-0511: a runner-build hold is not a decision to make. Say what is wrong and what fixes
+  // it; supervision resumes on its own the moment a different runner build answers.
+  const runnerHeld = agent.supervision?.runnerBuildHeldAt
   const decide = () => {
     if (!decision || start.isPending) return
     setError(undefined)
@@ -22,6 +25,10 @@ export function StandingSessionRecovery({ agent }: { agent: AgentSummaryDto }) {
     })
   }
   return <Stack gap="xs">
+    {runnerHeld && <Alert color="yellow" title="Waiting for a rebuilt session runner">
+      <Text size="sm">{agent.supervision?.runnerBuildHoldEvidence}</Text>
+      <Text size="sm">Rebuild the runner: pwsh -File scripts/restart-session-runner.ps1</Text>
+    </Alert>}
     {held && <Alert color="orange" title="Conversation recovery needs a decision">
       <Text size="sm">{reason === 'NativeSessionMissing'
         ? 'The provider could not find this conversation.'

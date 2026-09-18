@@ -29,6 +29,24 @@ public class AgentSupervisionState
     public Guid? LastHerdrObservedSessionId { get; set; }
     public DateTime? LastHerdrObservedStartedAt { get; set; }
     public DateTime? HerdrHealthySince { get; set; }
+    /// <summary>
+    /// CARD-0511. When this agent stopped being restarted because the connected session runner is
+    /// an older build than the launch needs. Distinct from the continuity hold: it needs no
+    /// operator decision, only a different runner. The supervisor releases it the moment
+    /// <c>GET /capabilities</c> reports an identity other than
+    /// <see cref="RunnerBuildHeldIdentity"/>, and a manual Start clears it outright. Nothing is
+    /// charged to the backoff ladder while held, and no RestartScheduled/Crash rows are written:
+    /// the ladder paces crash loops, and pacing a stale binary no retry can fix is pure loss.
+    /// </summary>
+    public DateTime? RunnerBuildHeldAt { get; set; }
+
+    /// <summary>The runner identity the refusal was decided against; <c>"unknown"</c> releases on
+    /// any answered probe.</summary>
+    public string? RunnerBuildHeldIdentity { get; set; }
+
+    /// <summary>The runner's own refusal sentence, as shown to the operator.</summary>
+    public string? RunnerBuildHoldEvidence { get; set; }
+
     public DateTime? NextRestartAt { get; set; }
     public DateTime? LastAttemptAt { get; set; }
 

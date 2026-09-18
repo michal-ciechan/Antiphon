@@ -1,4 +1,4 @@
-﻿using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Dtos;
 
@@ -256,7 +256,11 @@ public sealed record AgentSupervisionDto(
     DateTime? ContinuityHeldAt = null,
     Guid? ContinuitySessionId = null,
     StandingContinuityReason? ContinuityReason = null,
-    string? ContinuityEvidence = null);
+    string? ContinuityEvidence = null,
+    // CARD-0511: the runner-build hold. Visible so an operator knows the agent is waiting on a
+    // rebuild rather than silently stopped; it never asks for a decision.
+    DateTime? RunnerBuildHeldAt = null,
+    string? RunnerBuildHoldEvidence = null);
 
 public sealed record StandingSessionHistoryDto(IReadOnlyList<StandingSessionHistoryItemDto> Items, Guid? NextBefore);
 

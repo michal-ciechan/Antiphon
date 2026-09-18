@@ -579,4 +579,12 @@ public enum AgentIncidentKind
     /// Warning; no automatic revert.
     /// </summary>
     DelegateCommitAudit = 67,
+
+    /// <summary>
+    /// CARD-0511. The session runner answered with a DIFFERENT build identity than the one a
+    /// runner-build hold was taken against, so the hold was released and the standing session is
+    /// being retried immediately. Info: the actionable row is the Critical
+    /// <see cref="RunnerBuildStale"/> that opened the hold; this one closes the trail.
+    /// </summary>
+    RunnerBuildReplaced = 68,
 }

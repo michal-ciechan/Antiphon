@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
@@ -101,6 +102,10 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         if (agents.Count == 0)
             return 0;
 
+        // Release BEFORE the sweep: ReleaseAsync arms NextRestartAt = now, so the sweep in this
+        // same tick finds the attempt due and retries at once rather than a tick later.
+        await ReleaseRunnerBuildHoldsAsync(agents.Select(a => a.Id).ToList(), ct);
+
         var actions = 0;
         foreach (var agent in agents)
         {
@@ -151,6 +156,10 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         var liveSession = await FindPersistentSessionAsync(agent, LiveSessionStatuses, ct);
         if (liveSession is not null)
         {
+            // CARD-0511 D-3 vi: a live session outranks a leftover hold. Silent hygiene — the
+            // release trail belongs to an actual runner replacement, not to this.
+            if (state.RunnerBuildHeldAt is not null)
+                new RunnerBuildHoldState(_db, _timeProvider).Clear(state);
             // Healthy long enough? Reset the ladder so the next incident starts from 5s again.
             if ((state.RestartBackoffFailures > 0 || state.ConsecutiveFailures > 0 || state.NextRestartAt is not null || state.LastEscalationTier > 0)
                 && liveSession.Status == SessionStatus.Running
@@ -187,6 +196,13 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             return await CompleteAsync(false);
         }
 
+        // CARD-0511 D-3 iv. Held on a stale runner build: never schedule, never attempt, not even
+        // with a due NextRestartAt. The release signal is a different runner identity (TickAsync),
+        // or a manual Start. Deliberately AFTER the live-session branch so its hygiene above stays
+        // reachable.
+        if (state.RunnerBuildHeldAt is not null)
+            return await CompleteAsync(false);
+
         // A provider redemption takes the global/provider locks. Release the consumer lock
         // before entering that lane, and before any launch I/O. The redemption and Start each
         // recheck ownership; this observation itself grants no authority.
@@ -211,6 +227,22 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             {
                 await new StandingContinuityState(_db, _timeProvider).HoldAsync(agent.Id, dead.Id,
                     StandingContinuityReason.NativeSessionMissing, ct);
+                return await CompleteAsync(false);
+            }
+            // CARD-0511 D-3 ii. The outcome says the runner was stale but no hold was placed (the
+            // process died between the outcome commit and the hold, or an older server wrote it).
+            // Consume the generation so this row is handled once — Charge is a no-op for this kind
+            // — and hold on "unknown", which releases on the next answered probe.
+            if (dead?.RestartFailureKind == RestartFailureKind.RunnerBuildStale)
+            {
+                new RestartFailurePolicy().Observe(state, dead);
+                if (state.RunnerBuildHeldAt is null)
+                {
+                    await new RunnerBuildHoldState(_db, _timeProvider).HoldAsync(
+                        agent.Id, dead.Id, RunnerIdentity.Unknown,
+                        dead.FailureReason ?? "Runner build stale (no failure reason recorded).", ct);
+                }
+
                 return await CompleteAsync(false);
             }
             if (dead is not null)
@@ -317,6 +349,15 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         var refreshed = await GetOrCreateStateAsync(agent.Id, ct);
         if (refreshed.ContinuityHeldAt is not null || refreshed.Suspended) return false;
         if (Guid.TryParse(agent.PersistentSessionId, out var owned) && _launchQueue.Owns(owned)) return true;
+        // CARD-0511 D-3 iii. Defensive: a standing launch is queued, so a runner refusal normally
+        // reaches supervision through the session's RestartFailureKind rather than a synchronous
+        // throw here. If it ever does, hold instead of charging the ladder.
+        if (ex is RunnerCapabilityMismatchException stale)
+        {
+            await new RunnerBuildHoldState(_db, _timeProvider).HoldAsync(
+                agent.Id, null, stale.RunnerIdentity, stale.Message, ct);
+            return true;
+        }
         if (ex is ModelDisabledException held)
         {
             if (_capacityRecovery is not null)
@@ -387,6 +428,48 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         await _db.SaveChangesAsync(ct);
         await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
         return true;
+    }
+
+    /// <summary>
+    /// CARD-0511 D-4. One bounded identity probe per tick, and only while something is held: zero
+    /// extra runner traffic otherwise. A rebuild always moves ProcessStartUtc and a real fix also
+    /// moves the SHA, so either is enough to justify exactly one fresh attempt. A probe that does
+    /// not answer keeps EVERY hold — "I could not find out" is never evidence of a replacement.
+    /// </summary>
+    private async Task ReleaseRunnerBuildHoldsAsync(IReadOnlyList<Guid> agentIds, CancellationToken ct)
+    {
+        var held = await _db.AgentSupervisionStates
+            .Where(s => agentIds.Contains(s.AgentId) && s.RunnerBuildHeldAt != null)
+            .ToListAsync(ct);
+        if (held.Count == 0)
+            return;
+
+        RunnerCapabilitiesDto? observed;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(5));
+        try
+        {
+            observed = await _runnerClient.GetCapabilitiesAsync(deadline.Token);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogDebug(ex, "Runner identity probe failed; every runner-build hold is retained");
+            return;
+        }
+
+        if (observed is null)
+            return;
+
+        var identity = RunnerIdentity.Describe(observed.Build);
+        var holds = new RunnerBuildHoldState(_db, _timeProvider);
+        foreach (var state in held)
+        {
+            if (state.RunnerBuildHeldIdentity == identity)
+                continue;
+            await holds.ReleaseAsync(state, observed.Build, ct);
+            _logger.LogInformation(
+                "Agent {AgentId}: runner-build hold released; runner is now {Identity}", state.AgentId, identity);
+        }
     }
 
     /// <summary>
