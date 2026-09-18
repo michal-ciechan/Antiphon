@@ -104,6 +104,28 @@ describe('standing conversation recovery', () => {
     expect(screen.getByText('Conversation recovery needs a decision')).toBeInTheDocument()
   })
 
+  // CARD-0511 V-511-16 / G-511-24. The runner-build hold is not a decision: it names the stale
+  // build and the command that fixes it, and offers no recovery button.
+  it('runner build hold names the stale build and the rebuild command', () => {
+    renderWithProviders(<StandingSessionRecovery agent={{
+      ...agent, supervision: {
+        runnerBuildHeldAt: '2026-09-13T15:55:00Z',
+        runnerBuildHoldEvidence: 'The session runner does not advertise sessionGenerationV1 and was built from 9ebbba7 on 2026-09-13 09:00 (running since 09:00). Rebuild and restart it: pwsh -File scripts/restart-session-runner.ps1.',
+      },
+    } as AgentSummaryDto} />)
+    expect(screen.getByText('Waiting for a rebuilt session runner')).toBeInTheDocument()
+    expect(screen.getByText(/built from 9ebbba7/)).toBeInTheDocument()
+    expect(screen.getByText('Rebuild the runner: pwsh -File scripts/restart-session-runner.ps1'))
+      .toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry after repair' })).not.toBeInTheDocument()
+  })
+
+  // V-511-16c: the continuity hold must not render the runner notice.
+  it('no runner build hold renders no runner notice', () => {
+    renderWithProviders(<StandingSessionRecovery agent={agent} />)
+    expect(screen.queryByText('Waiting for a rebuilt session runner')).not.toBeInTheDocument()
+  })
+
   it('unproven ownership does not claim history was deleted', () => {
     renderWithProviders(<StandingSessionRecovery agent={{ ...agent, supervision: {
       ...agent.supervision!, continuityReason: 'OwnershipUnproven',

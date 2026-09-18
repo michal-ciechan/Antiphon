@@ -328,7 +328,10 @@ public class StandingRunnerBuildHoldTests
             var (h, agent, id, _) = await HeldOnAAsync(root, next);
             await using var harness = h;
 
-            await h.Control.StartAsync(agent.Id, new(), default);
+            // No ConflictException: this hold has no HeldCode. (A fresh scope, as every real HTTP
+            // request gets: the harness's long-lived Control scope still tracks the session as
+            // Starting after the launch worker's own scope failed it.)
+            await ManualStartAsync(h, agent.Id);
 
             await using (var immediate = AgentSupervisionTests.CreateContext())
                 (await immediate.AgentSupervisionStates.FindAsync(agent.Id))!.RunnerBuildHeldAt.ShouldBeNull();
@@ -379,7 +382,7 @@ public class StandingRunnerBuildHoldTests
             var agent = await h.Scope.ServiceProvider.GetRequiredService<AgentService>()
                 .CreateAsync(new CreateAgentRequest("Interactive", workspace), default);
 
-            var accepted = await h.Control.StartAsync(agent.Id, new(), default);
+            var accepted = await ManualStartAsync(h, agent.Id);
             var id = Guid.Parse(accepted.PersistentSessionId!);
             await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
 
@@ -400,7 +403,7 @@ public class StandingRunnerBuildHoldTests
             }
 
             // Same build, same message, same session: a retry is not a new incident.
-            await h.Control.StartAsync(agent.Id, new(), default);
+            await ManualStartAsync(h, agent.Id);
             await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
 
             await using var settled = AgentSupervisionTests.CreateContext();
@@ -496,6 +499,20 @@ public class StandingRunnerBuildHoldTests
 
     private static RunnerCapabilityMismatchException Refusal(RunnerBuildDto build) =>
         new(Message(build), build);
+
+    /// <summary>
+    /// A manual Start the way a real HTTP request makes one: through a FRESH scope. The harness's
+    /// own <c>Harness.Control</c> is long-lived, so after a launch worker (another scope) failed the
+    /// session its DbContext still identity-resolves the row as Starting and Start refuses with
+    /// <c>standing_resume_target_active</c> — a harness artifact, not the behaviour under test.
+    /// </summary>
+    private static async Task<AgentDetailDto> ManualStartAsync(
+        AgentSupervisionTests.Harness h, Guid agentId)
+    {
+        await using var scope = h.Provider.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<AgentControlService>()
+            .StartAsync(agentId, new(), default);
+    }
 
     private static Task<int> CountAsync(
         Antiphon.Server.Infrastructure.Data.AppDbContext db, Guid agentId, AgentIncidentKind kind) =>
