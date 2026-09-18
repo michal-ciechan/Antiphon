@@ -25,8 +25,9 @@ namespace Antiphon.Tests.Application;
 /// Claude transcript root, which is the CARD-0006 hazard removed by construction), and the contract
 /// being reconciled from the constant rather than trusted from the row.</para>
 ///
-/// <para>Every test uses its own slug and its own scratch directory: the fixture database is shared
-/// across the whole assembly and <see cref="Agent.Slug"/> is uniquely indexed.</para>
+/// <para>Every test uses its own slug, its own scratch directory, and its own cloned database:
+/// the standing-seat fallback cannot adopt another Check owner, and <see cref="Agent.Slug"/>
+/// remains uniquely indexed.</para>
 /// </summary>
 [Category("Integration")]
 public class CheckInterpreterProvisionerTests
@@ -34,13 +35,13 @@ public class CheckInterpreterProvisionerTests
     [Test]
     public async Task the_first_call_creates_the_specialist_with_the_shape_the_design_depends_on()
     {
-        using var scratch = new TempWorkspace();
+        await using var scratch = await TempWorkspace.CreateAsync();
         var settings = SettingsFor(scratch.Path);
 
         var created = await EnsureAsync(settings, scratch);
 
         created.ShouldNotBeNull();
-        var agent = await ReloadAsync(created.Id);
+        var agent = await ReloadAsync(scratch, created.Id);
         agent.Slug.ShouldBe(settings.CheckInterpreterAgentSlug);
         agent.Name.ShouldBe(settings.CheckInterpreterAgentSlug);
         agent.AlwaysOn.ShouldBeTrue(
@@ -60,7 +61,7 @@ public class CheckInterpreterProvisionerTests
     {
         // The contract SAYS use no tools; this is what refuses one. Wider than the orchestrator's
         // edit-only hook on purpose — the specialist reads a bundle it was handed and needs nothing.
-        using var scratch = new TempWorkspace();
+        await using var scratch = await TempWorkspace.CreateAsync();
 
         await EnsureAsync(SettingsFor(scratch.Path), scratch);
 
@@ -78,19 +79,19 @@ public class CheckInterpreterProvisionerTests
     [Test]
     public async Task a_second_call_changes_nothing()
     {
-        using var scratch = new TempWorkspace();
+        await using var scratch = await TempWorkspace.CreateAsync();
         var settings = SettingsFor(scratch.Path);
 
         var first = await EnsureAsync(settings, scratch);
         first.ShouldNotBeNull();
-        var stampAfterCreate = (await ReloadAsync(first.Id)).UpdatedAt;
+        var stampAfterCreate = (await ReloadAsync(scratch, first.Id)).UpdatedAt;
 
         var second = await EnsureAsync(settings, scratch);
 
         second.ShouldNotBeNull();
         second.Id.ShouldBe(first.Id, "found by slug, not created again");
-        (await ReloadAsync(first.Id)).UpdatedAt.ShouldBe(stampAfterCreate, "and not written to either");
-        await using var verify = CreateContext();
+        (await ReloadAsync(scratch, first.Id)).UpdatedAt.ShouldBe(stampAfterCreate, "and not written to either");
+        await using var verify = CreateContext(scratch);
         (await verify.Agents.CountAsync(a => a.Slug == settings.CheckInterpreterAgentSlug)).ShouldBe(1);
     }
 
@@ -99,12 +100,12 @@ public class CheckInterpreterProvisionerTests
     {
         // Deleting the specialist must not be a permanent loss of the feature: the check that finds
         // it gone degrades to a digest, and the one after that has a warm agent again.
-        using var scratch = new TempWorkspace();
+        await using var scratch = await TempWorkspace.CreateAsync();
         var settings = SettingsFor(scratch.Path);
         var first = await EnsureAsync(settings, scratch);
         first.ShouldNotBeNull();
 
-        await using (var db = CreateContext())
+        await using (var db = CreateContext(scratch))
         {
             db.Agents.Remove(await db.Agents.SingleAsync(a => a.Id == first.Id));
             await db.SaveChangesAsync();
@@ -123,12 +124,12 @@ public class CheckInterpreterProvisionerTests
     {
         // The code is the source of truth and the row is its projection: edit the constant in a PR
         // and the live agent updates itself; edit the row in the UI and it does not stick.
-        using var scratch = new TempWorkspace();
+        await using var scratch = await TempWorkspace.CreateAsync();
         var settings = SettingsFor(scratch.Path);
         var agent = await EnsureAsync(settings, scratch);
         agent.ShouldNotBeNull();
 
-        await using (var db = CreateContext())
+        await using (var db = CreateContext(scratch))
         {
             var row = await db.Agents.SingleAsync(a => a.Id == agent.Id);
             row.SystemPromptAppend = "You are a helpful assistant. Feel free to investigate.";
@@ -137,7 +138,7 @@ public class CheckInterpreterProvisionerTests
 
         await EnsureAsync(settings, scratch);
 
-        var reconciled = await ReloadAsync(agent.Id);
+        var reconciled = await ReloadAsync(scratch, agent.Id);
         reconciled.SystemPromptAppend.ShouldBe(CheckInterpretation.Contract);
         reconciled.SystemPromptAppend!.ShouldContain("NEVER say the **checked** task is complete");
         reconciled.SystemPromptAppend!.ShouldContain($"contract v{CheckInterpretation.ContractVersion}");
@@ -151,7 +152,7 @@ public class CheckInterpreterProvisionerTests
     {
         // Temp paths get swept and directories get deleted by hand. A specialist that silently
         // regained tool access because its hook file vanished is the one failure prose cannot cover.
-        using var scratch = new TempWorkspace();
+        await using var scratch = await TempWorkspace.CreateAsync();
         var settings = SettingsFor(scratch.Path);
         await EnsureAsync(settings, scratch);
         Directory.Delete(Path.Combine(scratch.Path, ".claude"), recursive: true);
@@ -164,13 +165,13 @@ public class CheckInterpreterProvisionerTests
     [Test]
     public async Task the_feature_switch_provisions_nothing_at_all()
     {
-        using var scratch = new TempWorkspace();
+        await using var scratch = await TempWorkspace.CreateAsync();
         var settings = SettingsFor(scratch.Path);
         settings.CheckInterpreterEnabled = false;
 
         (await EnsureAsync(settings, scratch)).ShouldBeNull();
 
-        await using var verify = CreateContext();
+        await using var verify = CreateContext(scratch);
         (await verify.Agents.AnyAsync(a => a.Slug == settings.CheckInterpreterAgentSlug)).ShouldBeFalse();
         Directory.Exists(Path.Combine(scratch.Path, ".claude")).ShouldBeFalse("not even the hook file");
     }
@@ -178,7 +179,7 @@ public class CheckInterpreterProvisionerTests
     [Test]
     public async Task the_specialists_working_directory_is_seeded_as_trusted_in_claude_json()
     {
-        using var scratch = new TempWorkspace();
+        await using var scratch = await TempWorkspace.CreateAsync();
         var settings = SettingsFor(scratch.Path);
 
         var created = await EnsureAsync(settings, scratch);
@@ -194,7 +195,7 @@ public class CheckInterpreterProvisionerTests
     [Test]
     public async Task a_missing_claude_json_is_tolerated_and_logged()
     {
-        using var scratch = new TempWorkspace(writeClaudeConfig: false);
+        await using var scratch = await TempWorkspace.CreateAsync(writeClaudeConfig: false);
         var settings = SettingsFor(scratch.Path);
         File.Exists(scratch.ClaudeConfigPath).ShouldBeFalse();
         var logs = new List<string>();
@@ -260,7 +261,7 @@ public class CheckInterpreterProvisionerTests
 
     private static DelegationSettings SettingsFor(string directory) => new()
     {
-        // Unique per test: the fixture database is shared and Agent.Slug is uniquely indexed.
+        // Unique per test: the database is now per test; unique slug still documents the unique index.
         CheckInterpreterAgentSlug = $"check-interp-{Guid.NewGuid():N}"[..24],
         CheckInterpreterWorkingDirectory = directory,
     };
@@ -270,7 +271,7 @@ public class CheckInterpreterProvisionerTests
         TempWorkspace scratch,
         ILogger<CheckInterpreterProvisioner>? logger = null)
     {
-        await using var db = CreateContext();
+        await using var db = CreateContext(scratch);
         var provisioner = new CheckInterpreterProvisioner(
             db, Options.Create(settings), TimeProvider.System,
             logger ?? NullLogger<CheckInterpreterProvisioner>.Instance,
@@ -278,13 +279,14 @@ public class CheckInterpreterProvisionerTests
         return await provisioner.EnsureAsync(CancellationToken.None);
     }
 
-    private static async Task<Agent> ReloadAsync(Guid agentId)
+    private static async Task<Agent> ReloadAsync(TempWorkspace scratch, Guid agentId)
     {
-        await using var db = CreateContext();
+        await using var db = CreateContext(scratch);
         return await db.Agents.AsNoTracking().SingleAsync(a => a.Id == agentId);
     }
 
-    private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+    private static AppDbContext CreateContext(TempWorkspace scratch) =>
+        new(TestDbFixture.CreateDbContextOptions(scratch.Schema.ConnectionString));
 
     private sealed class ListLogger<T>(List<string> sink) : ILogger<T>
     {
@@ -300,15 +302,31 @@ public class CheckInterpreterProvisionerTests
         }
     }
 
-    private sealed class TempWorkspace : IDisposable
+    private sealed class TempWorkspace : IAsyncDisposable
     {
         private readonly string _configDir;
 
+        public IsolatedTestSchema Schema { get; }
         public string Path { get; }
         public string ClaudeConfigPath { get; }
 
-        public TempWorkspace(bool writeClaudeConfig = true)
+        public static async Task<TempWorkspace> CreateAsync(bool writeClaudeConfig = true)
         {
+            var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            try
+            {
+                return new TempWorkspace(schema, writeClaudeConfig);
+            }
+            catch
+            {
+                await schema.DisposeAsync();
+                throw;
+            }
+        }
+
+        private TempWorkspace(IsolatedTestSchema schema, bool writeClaudeConfig)
+        {
+            Schema = schema;
             Path = Directory.CreateTempSubdirectory("antiphon-interp-test").FullName;
             _configDir = Directory.CreateTempSubdirectory("antiphon-claude-cfg").FullName;
             ClaudeConfigPath = System.IO.Path.Combine(_configDir, ".claude.json");
@@ -316,8 +334,9 @@ public class CheckInterpreterProvisionerTests
                 File.WriteAllText(ClaudeConfigPath, """{"projects":{}}""");
         }
 
-        public void Dispose()
+        public async ValueTask DisposeAsync()
         {
+            await Schema.DisposeAsync();
             try { Directory.Delete(Path, recursive: true); }
             catch (IOException) { }
             try { Directory.Delete(_configDir, recursive: true); }
