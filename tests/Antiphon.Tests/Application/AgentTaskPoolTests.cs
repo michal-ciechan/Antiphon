@@ -467,8 +467,79 @@ public class AgentTaskPoolTests
         (await verify.AgentIncidents.AnyAsync(
             i => i.AgentId == agentId && i.Kind == AgentIncidentKind.DelegateBindRefusalRecovered))
             .ShouldBeTrue();
+        var warning = await verify.AgentTaskEvents.SingleAsync(
+            e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Warning);
+        warning.Detail.ShouldContain("zero ingested transcript rows");
+        (await verify.AgentTasks.SingleAsync(t => t.Id == taskId)).Result
+            .ShouldContain("unbound session");
         stopper.Killed.ShouldNotContain(sessionId);
         _ = dispatcher;
+    }
+
+    [Test]
+    public async Task a_direct_recovery_with_ingested_rows_states_the_real_count()
+    {
+        // R-1 / CARD-0551 D-3: RecoverFromBindRefusalAsync is the public contract; when the
+        // session already has rows the warning must not claim "zero ingested".
+        using var workspace = new TempWorkspace();
+        var (_, stopper, provider) = CreateHarness();
+        var shortId = Guid.NewGuid().ToString("N")[..8];
+        var worktreePath = Path.Combine(workspace.Path, "worktrees", $"card-task-{shortId}");
+        Directory.CreateDirectory(worktreePath);
+        var (agentId, sessionId, taskId) = await SeedDispatchedPoolTaskAsync(
+            workspace.Path,
+            WorkspaceMode.Worktree,
+            worktreePath);
+
+        await using (var db = CreateContext())
+        {
+            var at = DateTime.UtcNow.AddMinutes(-3);
+            db.TranscriptEntries.AddRange(
+                new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(),
+                    AgentSessionId = sessionId,
+                    Sequence = 1,
+                    Kind = TranscriptKinds.UserPrompt,
+                    Uuid = $"c551-{Guid.NewGuid():N}",
+                    Role = "user",
+                    Text = "the brief",
+                    Timestamp = at,
+                    CreatedAt = at,
+                },
+                new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(),
+                    AgentSessionId = sessionId,
+                    Sequence = 2,
+                    Kind = TranscriptKinds.AssistantText,
+                    Uuid = $"c551-{Guid.NewGuid():N}",
+                    Role = "assistant",
+                    Text = "working",
+                    Timestamp = at.AddMinutes(1),
+                    CreatedAt = at.AddMinutes(1),
+                });
+            await db.SaveChangesAsync();
+        }
+
+        var replies = provider.GetRequiredService<AgentTaskReplyService>();
+        await replies.RecoverFromBindRefusalAsync(
+            taskId,
+            new DelegateBindRefusalEvidence(["abc1234"], null),
+            CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var recovered = await verify.AgentTasks.SingleAsync(t => t.Id == taskId);
+        recovered.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        recovered.Result.ShouldNotBeNull();
+        recovered.Result.ShouldContain("2 ingested transcript row(s)");
+        recovered.Result.ShouldNotContain("zero ingested");
+        var warning = await verify.AgentTaskEvents.SingleAsync(
+            e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Warning);
+        warning.Detail.ShouldContain("2 ingested transcript row(s)");
+        warning.Detail.ShouldNotContain("zero ingested");
+        stopper.Killed.ShouldNotContain(sessionId);
+        _ = agentId;
     }
 
     [Test]

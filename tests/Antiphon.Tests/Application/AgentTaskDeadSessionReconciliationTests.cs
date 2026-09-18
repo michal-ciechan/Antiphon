@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -514,6 +515,68 @@ public class AgentTaskDeadSessionReconciliationTests
             .ShouldBe(0);
     }
 
+    [Test]
+    public async Task a_dead_session_with_jsonl_brief_and_no_report_fails_with_the_file_pointer()
+    {
+        // R-2 / CARD-0551: zero rows, JSONL brief only, past grace. Not recovered; the classified
+        // reason names the file so a human can read the unbound worker.
+        var projectsRoot = Directory.CreateTempSubdirectory("card0551-r2-projects").FullName;
+        var cwd = Directory.CreateTempSubdirectory("card0551-r2-cwd").FullName;
+        try
+        {
+            await using var scenario = new Scenario();
+            var task = await scenario.AddTaskAsync(
+                AgentTaskStatus.Dispatched, SessionStatus.Failed,
+                failureReason: "the pty-host exited (code 1)",
+                workingDirectory: cwd,
+                sessionCwd: cwd);
+            var encoded = DelegateBindRefusalRecovery.EncodeClaudeProjectDir(cwd);
+            var projectDir = Path.Combine(projectsRoot, encoded);
+            Directory.CreateDirectory(projectDir);
+            var jsonl = Path.Combine(projectDir, task.SessionId.ToString("D") + ".jsonl");
+            await File.WriteAllTextAsync(jsonl,
+                JsonSerializer.Serialize(new
+                {
+                    type = "user",
+                    uuid = Guid.NewGuid().ToString("D"),
+                    cwd,
+                    timestamp = DateTime.UtcNow.ToString("o"),
+                    message = new
+                    {
+                        role = "user",
+                        content = DelegationReportFormatter.TaskMarker(task.Id) + " the brief",
+                    },
+                }) + "\n");
+
+            var harness = scenario.HarnessWithProjectsRoot(projectsRoot, task.SessionId);
+            await scenario.PastGraceAsync(harness);
+
+            var failed = await scenario.ReadTaskAsync(task.Id);
+            failed.Status.ShouldBe(AgentTaskStatus.Failed);
+            failed.RecoveredAt.ShouldBeNull();
+            failed.FailureReason.ShouldNotBeNull();
+            failed.FailureReason.ShouldContain("the pty-host exited (code 1)");
+            failed.FailureReason.ShouldContain(jsonl);
+            failed.FailureReason.ShouldContain("carries the brief and no report");
+            harness.Stopper.Killed.ShouldBeEmpty();
+            harness.Runner.Killed.ShouldBeEmpty();
+
+            await using var verify = CreateContext();
+            (await verify.AgentIncidents.AnyAsync(
+                i => i.AgentId == task.AgentId && i.Kind == AgentIncidentKind.DelegateBindRefusalRecovered))
+                .ShouldBeFalse();
+        }
+        finally
+        {
+            try { if (Directory.Exists(projectsRoot)) Directory.Delete(projectsRoot, true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            try { if (Directory.Exists(cwd)) Directory.Delete(cwd, true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
     // ---- 11: the lockstep ------------------------------------------------------------------------
 
     /// <summary>
@@ -662,7 +725,11 @@ public class AgentTaskDeadSessionReconciliationTests
 
         private bool _parentSeeded;
 
-        public Harness Harness(params Guid[] gone)
+        public Harness Harness(params Guid[] gone) =>
+            HarnessWithProjectsRoot(
+                Path.Combine(Path.GetTempPath(), "antiphon-deadsession-no-jsonl"), gone);
+
+        public Harness HarnessWithProjectsRoot(string claudeProjectsRoot, params Guid[] gone)
         {
             var stopper = new RecordingSessionStopper();
             var runner = new FakeRunnerClient();
@@ -697,11 +764,12 @@ public class AgentTaskDeadSessionReconciliationTests
             services.AddSingleton(firstSeen);
             services.AddSingleton(bootWedge);
             // CARD-0085: same recovery gate as the delivery watchdog. Empty projects root so Arm B
-            // cannot scan the machine's real ~/.claude/projects during these fleet-global sweeps.
+            // cannot scan the machine's real ~/.claude/projects during these fleet-global sweeps
+            // unless a test points it at a fixture (CARD-0551 R-2).
             services.AddSingleton<AgentTaskReplyService>();
             services.AddSingleton(Options.Create(new DelegateBindRefusalRecoverySettings
             {
-                ClaudeProjectsRoot = Path.Combine(Path.GetTempPath(), "antiphon-deadsession-no-jsonl"),
+                ClaudeProjectsRoot = claudeProjectsRoot,
             }));
             services.AddSingleton<DelegateBindRefusalRecovery>();
             services.AddScoped<AgentTaskDispatcher>();
