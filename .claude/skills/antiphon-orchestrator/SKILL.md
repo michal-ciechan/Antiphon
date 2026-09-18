@@ -83,10 +83,18 @@ process-bug card if it recurs in a fresh session (see CARD-0551 in this project'
 
 ## 5. API quirks to route around, not fight
 
-- `GET /api/agent-tasks?status=X` and `?boardId=Y` list-filter queries are unreliable (known bugs,
-  CARD-0541/CARD-0546) — they can silently return zero rows for a genuinely running task, or leak
-  rows from unrelated boards. Query known task IDs directly with `GET /api/agent-tasks/{id}`
-  instead of trusting a filtered list.
+- `GET /api/agent-tasks?boardId=Y` is NOT a filter: `boardId` is not a bound parameter on the
+  route, so minimal-API binding drops the key silently and every board's rows come back
+  (CARD-0541, being fixed under CARD-0515). Query known task IDs directly with
+  `GET /api/agent-tasks/{id}` instead of trusting a board-filtered list.
+- `?status=X` works: case-insensitive, comma list unions, an unrecognised value is
+  `422 validation_failed` (pinned by CARD-0546). What looked like "zero rows for a genuinely
+  running task" was PowerShell, not the server: a bare `Invoke-RestMethod ... | Select-Object`
+  emits the JSON array as one `Object[]` and prints a header plus one blank row for ANY array.
+  Always wrap the call — `@(Invoke-RestMethod ...) | Select-Object ...` or
+  `(Invoke-RestMethod ...).cards | ...` for an envelope — before piping. For occupancy prefer
+  `GET /api/agent-tasks/pipeline` (in-flight / queued / blocked / ready per stage) over a
+  hand-filtered list.
 - The response nests fields under a top-level `"summary"` key — `$response.summary.status`, not
   `$response.status`.
 - Cancel needs the **full GUID**, not the short id the chat notifications use — `GET

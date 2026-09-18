@@ -96,13 +96,26 @@ $api = if ($env:ANTIPHON_API) { $env:ANTIPHON_API } else { 'http://localhost:172
 $h = @{}
 if ($env:ANTIPHON_TASK_TOKEN) { $h['X-Antiphon-Task-Token'] = $env:ANTIPHON_TASK_TOKEN }
 
+# PITFALL (CARD-0546): wrap Invoke-RestMethod in @() or parentheses before piping. On PowerShell
+# 7.6.6 the bare `Invoke-RestMethod ... | Select-Object` form emits a JSON array as ONE Object[],
+# and Format-Table then prints a header plus one blank row for ANY array, empty or not -- a real
+# list looks empty. Invoke-RestMethod has no -NoEnumerate switch; the wrapper is the fix.
+
 # who is running what -- liveSession is null when the agent is not up
-Invoke-RestMethod "$api/api/agents" -Headers $h |
+@(Invoke-RestMethod "$api/api/agents" -Headers $h) |
     Select-Object name, status, @{n='session';e={$_.liveSession.id}}
 
-# a board's id from its name, then its cards
-$board = (Invoke-RestMethod "$api/api/boards" -Headers $h | Where-Object name -eq 'Antiphon')
-Invoke-RestMethod "$api/api/cards?boardId=$($board.id)" -Headers $h | Select-Object identifier, title, status
+# a board's id from its name, then its cards (the cards read is a { cards, truncated } envelope)
+$board = @(Invoke-RestMethod "$api/api/boards" -Headers $h) | Where-Object name -eq 'Antiphon'
+(Invoke-RestMethod "$api/api/cards?boardId=$($board.id)" -Headers $h).cards | Select-Object identifier, title, status
+
+# delegated work in flight (occupancy) -- status names are case-insensitive, a comma list unions,
+# an unrecognised value is 422 validation_failed
+@(Invoke-RestMethod "$api/api/agent-tasks?status=Dispatched,Working,Blocked" -Headers $h) |
+    Select-Object id, role, status, cardIdentifier
+# the purpose-built occupancy read: in-flight / queued / blocked / ready rows per stage (CARD-0304);
+# GET /api/agent-tasks/summary `byStatus` is the fleet-wide cross-check on the same column
+Invoke-RestMethod "$api/api/agent-tasks/pipeline" -Headers $h
 
 # column name -> column id, without pulling the whole board
 Invoke-RestMethod "$api/api/boards/$($board.id)/columns" -Headers $h
@@ -127,6 +140,15 @@ Invoke-RestMethod "$api/api/agents/$agentId/start" -Method Post -Headers $h `
 - **THERE IS NO `GET /api/sessions`.** The server exposes sessions only by id. To find one, read
   `liveSession` off `GET /api/agents`, or ask the runner: `GET http://localhost:17204/sessions`
   lists every session the runner still knows about, live and exited.
+
+- **AN `Invoke-RestMethod` ARRAY PIPES AS ONE OBJECT (CARD-0546).** On PowerShell 7.6.6 the bare
+  `Invoke-RestMethod ... | Select-Object ... | Format-Table` form emits the JSON array as a single
+  `Object[]`, and the table prints a header plus one blank row for ANY array, empty or not. Every
+  "`?status=Working` returned nothing" observation on CARD-0546 was this idiom; curl and the
+  parenthesised form showed the rows on the same server. Wrap the call in `@()` or parentheses
+  before piping (`scripts/checkpoint-task.ps1` does), and read occupancy from
+  `GET /api/agent-tasks/pipeline` rather than a hand-filtered list. The status filter itself is
+  correct and pinned (`AgentTaskListStatusFilterTests`, `AgentTaskListEndpointTests`).
 
 - **`GET /api/cards` REFUSES AN UNFILTERED READ.** At least one of `boardId`, `status` or
   `updatedSince` is required; without one it is a **400** whose detail says exactly that. There is
