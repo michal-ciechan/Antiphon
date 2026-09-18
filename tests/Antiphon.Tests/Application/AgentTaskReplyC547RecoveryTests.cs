@@ -60,7 +60,11 @@ public partial class AgentTaskReplyIntegrationTests
         events.ShouldNotContain(e => e.Type == AgentTaskEventType.Committed);
         var commitCall = calls.FindIndex(c => c.StartsWith("commit", StringComparison.Ordinal));
         commitCall.ShouldBeGreaterThanOrEqualTo(0);
-        calls.FindLastIndex(c => c.StartsWith("log --all --reflog", StringComparison.Ordinal)).ShouldBeGreaterThan(commitCall);
+        // CARD-0527 D-1: the resolver is two legs and never --reflog. Both must run after the
+        // commit — that post-CommitFailed search is what proves no commit exists.
+        calls.FindLastIndex(c => c.StartsWith("log --all --fixed-strings", StringComparison.Ordinal)).ShouldBeGreaterThan(commitCall);
+        calls.FindLastIndex(c => c.StartsWith("log --walk-reflogs HEAD", StringComparison.Ordinal)).ShouldBeGreaterThan(commitCall);
+        calls.ShouldNotContain(c => c.Contains("--reflog ", StringComparison.Ordinal));
         (await UnresolvedAsync(seeded.Task.Id)).ShouldBeEmpty();
 
         if (second == "fixed")
