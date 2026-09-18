@@ -91,8 +91,9 @@ process-bug card if it recurs in a fresh session (see CARD-0551 in this project'
   `422 validation_failed` (pinned by CARD-0546). What looked like "zero rows for a genuinely
   running task" was PowerShell, not the server: a bare `Invoke-RestMethod ... | Select-Object`
   emits the JSON array as one `Object[]` and prints a header plus one blank row for ANY array.
-  Always wrap the call — `@(Invoke-RestMethod ...) | Select-Object ...` or
-  `(Invoke-RestMethod ...).cards | ...` for an envelope — before piping. For occupancy prefer
+  Always parenthesise the call — `(Invoke-RestMethod ...) | Select-Object ...`, or
+  `(Invoke-RestMethod ...).cards | ...` for an envelope — or assign it to a variable and pipe
+  that. Inline `@(Invoke-RestMethod ...)` does NOT enumerate (verified live). For occupancy prefer
   `GET /api/agent-tasks/pipeline` (in-flight / queued / blocked / ready per stage) over a
   hand-filtered list.
 - The response nests fields under a top-level `"summary"` key — `$response.summary.status`, not

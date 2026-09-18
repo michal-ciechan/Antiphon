@@ -264,9 +264,10 @@ GET    /api/agent-tasks                      list. Query: rootId, status (comma 
                                              bad entry is refused whole (CARD-0546). `boardId` /
                                              `projectId` are NOT bound on this route until
                                              CARD-0515 lands: the key is silently dropped today
-                                             (CARD-0541). A PowerShell caller must wrap
-                                             `Invoke-RestMethod` in `@()` or parentheses before
-                                             piping, or the array prints as one blank row.
+                                             (CARD-0541). A PowerShell caller must put
+                                             parentheses around `Invoke-RestMethod` (or assign it
+                                             to a variable) before piping, or the array prints as
+                                             one blank row; inline `@(...)` does not help.
 GET    /api/agent-tasks/{id}                 {id} accepts the 8-char short id.
                                              `session` is read-time liveness: sessionId,
                                              status, working, lastSeenAt, endedAt,
