@@ -175,6 +175,8 @@
   (dry-run; `-Execute -Class PoolExpired` acts on the pool's own contract); the Failed/Stopped
   runner-claimed shapes belong to `SessionReconciliationService`, not the script.
 
+- **A bind-refusal recovery needs zero ingested rows and a `done` report** (CARD-0551): all three sweeps (delivery watchdog, dead-session reconciler, overdue Gate 3) attempt `RecoverFromBindRefusalAsync` only for a session with no ingested transcript row; the JSONL arm accepts a file only when a later assistant record ends with the task's `[antiphon-report:<id> done]` line; a file with the brief and no report withholds the watchdog's kill and fails the task with the file path. Live miss 2026-09-18: two mid-turn Reviews with 46 and 59 rows were written Succeeded at exactly the phase-clock boundary.
+
 ### Preserved Gotcha #27
 
 - **Never report a DB failure without the DB's own message.** `AgentService` used to catch `DbUpdateException` and rethrow "another operation changed agent data" with the exception discarded, so a duplicate-key error was indistinguishable from a real concurrency conflict — an intermittent test failure looked like a race on a row it had just created. `ConflictException` now takes an inner exception and `AgentService.DescribeDbFailure` names the constraint (`duplicate value on IX_Agents_Slug`). `ExceptionMiddleware.BuildStackTrace` already walks inner exceptions, so attaching one surfaces it in both the log and the problem-details response.

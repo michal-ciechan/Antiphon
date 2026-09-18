@@ -565,6 +565,8 @@ For a Grok session, `~/.grok/sessions/<id>/events.jsonl` (`phase_changed: waitin
 no `first_token`) and `~/.grok/logs/unified.jsonl` (`shell.turn.inference_start` with no
 `inference_done`) are the diagnostics; see `docs/agent-kinds.md`.
 
+**A session past the general deadline is Failed, not recovered, when it has ingested rows.** The model-wait (20) and local-execution (90) clocks and the 240-minute ceiling fail the task without killing or retrying; the reason names the clock and the session. Bind-refusal recovery is not attempted on a session that has ingested rows — an overdue mid-turn worker is still working, not an unbound success (CARD-0551). The session was NOT killed; read it before you decide.
+
 **A Check-role task settles Succeeded when it has produced a reading (CARD-0302).** `LOOKS STUCK` /
 `BLOCKED` in that reading is evidence on the **checked** task (its Check event / parent `[check …]`
 note), never the Check row's own `Status`. The interpreter's job is the reading; finishing it is
