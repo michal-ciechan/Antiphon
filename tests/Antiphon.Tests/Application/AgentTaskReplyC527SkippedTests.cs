@@ -81,6 +81,7 @@ public partial class AgentTaskReplyIntegrationTests
         var spy = new RecordingGitWorkspaceService();
         spy.OverrideRun = args => args.Contains("--all") ? (-1, "", "timeout") : null;
         var factory = C527Factory(repo.WorktreeRoot, gitSpy: spy);
+        AttachTerminal(factory, seeded.Parent);
         await SeedTurnAsync(seeded.SessionId, DelegationReportFormatter.TaskMarker(seeded.Task.Id), report);
 
         await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
