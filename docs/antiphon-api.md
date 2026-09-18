@@ -257,6 +257,16 @@ GET    /api/agent-tasks                      list. Query: rootId, status (comma 
                                              row regardless of age and trims only settled rows by
                                              CompletedAt. Omitting every filter returns the full
                                              table — scripts and `delegate.ps1` depend on that.
+                                             Status names are case-insensitive (`working` ==
+                                             `Working`); an unrecognised value, including an
+                                             undefined number, is `422 validation_failed` with
+                                             `errors.status` naming it, and a comma list with one
+                                             bad entry is refused whole (CARD-0546). `boardId` /
+                                             `projectId` are NOT bound on this route until
+                                             CARD-0515 lands: the key is silently dropped today
+                                             (CARD-0541). A PowerShell caller must wrap
+                                             `Invoke-RestMethod` in `@()` or parentheses before
+                                             piping, or the array prints as one blank row.
 GET    /api/agent-tasks/{id}                 {id} accepts the 8-char short id.
                                              `session` is read-time liveness: sessionId,
                                              status, working, lastSeenAt, endedAt,
