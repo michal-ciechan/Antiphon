@@ -318,3 +318,382 @@ named test files; Review once.
 - `PtyDeliveryProfile` / `SessionDeliveryProfile`: same TTL pattern; a stale positive there only
   keeps raised delivery ceilings on a downgraded runner, which the delivery watchdog already
   detects.
+
+## Verification design (TestDesign, task 4e9f5c29)
+
+TestDesign dispatch 2026-09-18 on branch tip `5eb6e033` (plan) over master `3a62074e`. Nothing
+below changes D-1..D-7; it fixes the exact classes, methods, fixtures and assertions Code
+implements for S1-S4, and the controls Mutation runs after land. Rules every row follows:
+
+1. IDs are `V-511-n` (proves it works now), `R-511-n` (carried regression), `G-511-n` (guard)
+   and `PC-511-n` (positive control), mapped 1:1 G→PC. The plan's `C511_V1..V16` intents keep
+   their numbers as test method names; `V3b/V3c/V5b/V8b/V17/V18` are new methods this stage adds.
+2. S1/S2 tests are wire tests over the real `SessionRunnerHttpClient` with the file-local
+   `StubHandler` (records every request, answers from a delegate) and `StubFactory`, exactly as
+   the existing tests in both files. No new fake; the handler's delegate reads a captured
+   variable so the "runner" behind `/capabilities` can be switched between calls on ONE client.
+3. S3 tests run the real `AgentSupervisorService`, `AgentControlService`, `AgentSessionService`
+   and `AgentSessionLaunchQueue` over the shared test Postgres through
+   `AgentSupervisionTests.BuildHarness(root, adapters, definitionKind: "ClaudeCode")`, with
+   `FakeAgentProtocolAdapter` as the process (`ThrowOnStart` injects the refusal) and the
+   harness's own `FakeSessionRunnerClient` (`h.Runner`) as the runner the supervisor probes.
+   The new class is globally `[NotInParallel]` like `StandingRestartAccountingTests` (the
+   supervisor sweeps every always-on agent in the shared database) and cleans up through
+   `AgentSupervisionTests.CleanupAsync(root)`.
+4. Time never waits on a wall clock: the harness's `MutableTimeProvider.Advance` drives the
+   ladder; S2 uses `Microsoft.Extensions.Time.Testing.FakeTimeProvider` (already referenced,
+   `Microsoft.Extensions.TimeProvider.Testing` 9.5.0) through the new optional constructor seam.
+5. Method-scoped filters: `dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c511/ -- --treenode-filter "/*/*/<Class>/<Method>"`;
+   Vitest: `pwsh -File scripts/test-client.ps1 StandingSessionRecovery`.
+
+### Settled here (the plan left these open or would trip Code)
+
+- **Kind-29 on the interactive path must not be written from a second scope while the catch
+  holds its `FOR UPDATE` locks.** `LaunchInteractiveAsync`'s catch opens `evidenceTransaction`
+  and selects the `Agents` and `AgentSessions` rows `FOR UPDATE` before any bookkeeping.
+  `AgentIncidents.AgentId` is a real FK (`AppDbContext` `HasOne(i => i.Agent)`), so an insert
+  from another connection needs `FOR KEY SHARE` on that agent row and blocks behind `FOR UPDATE`
+  until the catch commits, which it never does while awaiting the insert. The existing helper
+  `RecordRunnerBuildStaleAsync` writes through `_scopeFactory.CreateAsyncScope()`, i.e. another
+  connection. Settlement: the interactive call site calls the helper (with the known `agentId`)
+  **after** `evidenceTransaction.CommitAsync` and before the `AgentChanged` publish; the hold
+  (`RunnerBuildHoldState.HoldAsync` on the catch's own `_db`, like `StandingContinuityState`)
+  stays inside the transaction, in the same commit as the Failed outcome. D-5's "before the
+  hold" is relaxed to "in the same catch". A Code slip here shows up as V-511-8/V-511-15 failing
+  with the 15 s `WaitForIdleAsync` timeout, not as a wrong assertion; that is the signature.
+- **Hold gate placement (D-3 iv vs vi).** "After the herdr-hold block" read literally puts the
+  gate before the live-session branch, which makes the (vi) hygiene unreachable. Settled: the
+  gate is the first statement after the live-session branch returns (before the capacity-wait
+  block). For a held agent without a live session the behaviour is identical; V-511-18 pins
+  the hygiene.
+- **Release and retry happen in the same tick.** `TickAsync` releases (D-4) after `ListAsync`
+  and before the per-agent sweep, and `ReleaseAsync` sets `NextRestartAt = now`; the sweep in
+  that same tick therefore finds the attempt due and enqueues it. `NextRestartAt == now` is not
+  observable afterwards (the successful enqueue nulls it), so V-511-10 pins the release incident,
+  the cleared hold and the enqueued `--resume` after one tick plus `WaitForIdleAsync`.
+- **`FakeSessionRunnerClient` gains three members** (`tests/Antiphon.Tests/TestHelpers`):
+  `RunnerBuildDto? Build { get; set; }` (passed as the DTO's `Build:`; null keeps today's
+  shape), `Func<CancellationToken, Task<RunnerCapabilitiesDto?>>? CapabilitiesOverride`
+  (consulted first by `GetCapabilitiesAsync`; returning null models an unreachable runner),
+  and `int CapabilitiesCalls` (incremented on every `GetCapabilitiesAsync` call, override or not).
+  `BuildHarness(..., runner:)` is NOT used: `Harness.Runner` is always the harness's own fake.
+- **`RunnerCapabilityMismatchException(string message, RunnerBuildDto? build = null)`** with
+  `Build` and `RunnerIdentity` properties; `RunnerIdentity` is initialised from the static
+  helper, which must be referenced by its qualified name inside the exception (the property and
+  the class share the name, and the Color-Color rule does not apply because the property is a
+  string). The one-argument form keeps every existing throw site and test compiling.
+- **`SessionRunnerHttpClient` takes `TimeProvider? clock = null` as its last constructor
+  parameter** (default `TimeProvider.System`); every `DateTimeOffset.UtcNow` in the TTL logic
+  reads `clock.GetUtcNow()`. `SessionRunnerCapabilityGateTests` gains
+  `Client(StubHandler handler, TimeProvider? clock = null)`. DI needs no change.
+- **Schedule-branch hold (D-3 ii) evidence** is `dead.FailureReason ?? "Runner build stale (no
+  failure reason recorded)."`, identity `"unknown"`; V-511-8b pins `RunnerBuildHoldEvidence ==
+  dead.FailureReason`.
+- **`RunnerBuildReplaced` (Info, 68) message**: `Runner replaced: built from {sha7} (running
+  since {ProcessStartUtc:u}); retrying the standing session now.` Tests pin the sha7 substring
+  and the word `retrying`; Code may reword the rest.
+- **One probe per `StartAsync`, even when no positive-evidence gate applies.** V-511-4 pins the
+  request list `["/capabilities", "/sessions"]` for an ungated Claude launch and for a Codex
+  launch whose only gate is the transcript gate. That is D-1's sentence taken literally; the
+  test exists so a later "skip the probe when ungated" optimisation is a visible decision.
+- **Manual Start under a runner-build hold is not refused.** No `HeldCode` for this hold
+  (D-3 v); V-511-13 fails on a `ConflictException` if Code models it on the continuity hold.
+- **Client notice** (`StandingSessionRecovery.tsx`): a Mantine `Alert` titled
+  `Waiting for a rebuilt session runner` rendered when `supervision.runnerBuildHeldAt` is set,
+  body = `runnerBuildHoldEvidence` followed by the line `Rebuild the runner: pwsh -File
+  scripts/restart-session-runner.ps1`. It never disables Start (the AgentsPage Start button is
+  gated on `continuityHeldAt` only and stays so).
+
+### Inspection
+
+Bodies read in full at `5eb6e033`:
+
+- `tests/Antiphon.Tests/Agents/SessionRunnerGenerationWireTests.cs` (201): `[Category("Integration")]`,
+  every test builds a fresh client via `Client(handler)`; `Spec(generation)` is Claude + generation;
+  `Capabilities(features)` has no build; `StubHandler(Func<HttpRequestMessage,HttpResponseMessage>)`
+  records `Requests`; a delegate that throws propagates as the transport exception
+  (`C514_Lost_conditional_reply_is_unknown` relies on it). Boundaries -> V-511-1..5b add
+  `Build`, `OldRunner`, `NewRunner`, a `Capabilities` overload with build/backends/transcripts,
+  and a switchable handler; nothing existing changes.
+- `tests/Antiphon.Tests/Agents/SessionRunnerCapabilityGateTests.cs` (87): the two existing
+  tests pin `Requests.Count == 1` on a refusal and `["/capabilities","/sessions"]` on a launch
+  with no evidence; the file has its own identical `StubHandler`/`StubFactory`/`Json`. Boundaries
+  -> V-511-6/7 add the `Client(handler, clock)` helper; R-511-2/3 carry the existing pair.
+- `tests/Antiphon.Tests/Application/RestartFailureClassificationTests.cs` (57): `[Category("Unit")]`;
+  the wrapper table (Postgres 57P03, DbUpdateException, AggregateException, HttpRequestException
+  with SocketException inner, Timeout, TaskCanceled, OperationCanceled) -> Infrastructure;
+  `ResumeTargetMissingException` -> ContinuityUnavailable; the Observe test pins Charge
+  (Infrastructure bumps `RestartBackoffFailures` only). Boundaries -> V-511-3c/14 append two
+  methods; R-511-7 carries both existing ones.
+- `tests/Antiphon.Tests/Application/AgentSupervisionTests.cs` (843, harness 540-843):
+  `BuildHarness` registers `AgentSessionService`, `AgentSessionLaunchQueue`, `AgentControlService`,
+  `AgentSupervisorService`, `AgentService`, `IAlertService`/`NullAlertRouter`, `TimeProvider`
+  = `MutableTimeProvider` (offset over the real clock), `ISessionRunnerClient` = the harness's
+  `FakeSessionRunnerClient` (`Harness.Runner`), adapters through `QueueAdapterFactory` (FIFO;
+  an unqueued dispatch throws). `Harness.Supervisor()` is a fresh scope per call.
+  `CreateAlwaysOnAgentAsync` flips `AlwaysOn` through the harness scope; `CleanupAsync` deletes
+  incidents, alerts, supervision state, sessions and agents under the root.
+- `tests/Antiphon.Tests/Application/StandingRestartAccountingTests.cs` (363): the resume-after-exit
+  shape (manual boot, `SessionExitObservation.ObserveMatchingAsync(runtime, id, 1, ProcessExited,
+  CreateContext)`, tick schedules `5*2^n` s, `Clock.Advance(+1)`, tick attempts, `WaitForIdleAsync(15 s)`,
+  `resumed.StartedArgs` contains `--resume` and not `--session-id`); `ThrowOnStart` as the launch
+  failure; `Async_infrastructure_failure_is_consumed_once_across_recreation` (a queued failure is
+  observed by the next tick's dead-row branch, `RestartBackoffFailures == 1`). Boundaries -> the
+  new class copies this shape verbatim for the held scenario.
+- `tests/Antiphon.Tests/Application/StandingContinuityRecoveryTests.cs` (160) and
+  `StandingRecoveryFixture.cs` (58): the continuity-hold precedent (`HeldCode` refusal on a
+  default start, `ContinuityHeldAt` cleared by an explicit decision, `RestartFailureKind ==
+  ContinuityUnavailable` on the session). Boundaries -> R-511-6 carries them; the runner-build hold
+  deliberately differs (no `HeldCode`), V-511-13.
+- `tests/Antiphon.Tests/TestHelpers/FakeSessionRunnerClient.cs` (177): `GetCapabilitiesAsync`
+  builds the DTO from `Advertise*` flags with `Build` = null; `StartAsync` throws
+  `NotSupportedException` unless `StartRefusal`; `ListOverride` is the reachability hook the
+  accounting tests use. Boundaries -> the three members above.
+- `tests/Antiphon.Tests/Agents/FakeAgentProtocolAdapter.cs` (503): `ThrowOnStart` throws before
+  `Started`; `StartedArgs`, `StartedSessionId`, `Started`, `Killed`, `Disposed` are the receipts.
+- `tests/Antiphon.Tests/TestHelpers/SessionExitObservation.cs` (33): captures the row's
+  `StartedAt` as the generation of the synthetic exit.
+- `client/src/features/agents/StandingSessionRecovery.test.tsx` (114): `renderWithProviders`,
+  MSW `server.use`, the `agent` literal carries `supervision.continuityHeldAt`; five cases pin
+  the confirm/dedup/refusal flow. Boundaries -> two new `it` blocks with a `runnerBuildHeldAt`
+  agent; none of the five change.
+- Production read for the assertions: `SessionRunnerHttpClient.cs` (StartAsync 51-118,
+  backend/named-tab/generation gates 148-196, `EnsureCapabilitiesProbedAsync` 198-216,
+  `GetCapabilitiesAsync` 242-253, transcript check 275-316, `ProbeCapabilitiesAsync` 319-336,
+  `DescribeBuild` 338-345: ` and was built from {sha7} on {AssemblyWriteTimeUtc:yyyy-MM-dd HH:mm}
+  (running since {ProcessStartUtc:HH:mm})`), `RestartFailurePolicy.cs`, `StandingContinuityState.cs`,
+  `AgentSupervisorService.cs` (tick, `SuperviseAsync` order, `RecordStartFailureAsync`),
+  `AgentSessionService.cs` (card catch 283-330, `LaunchInteractiveAsync` 343-420, helper 842-875),
+  `AgentControlService.cs` (`StartAsync` 139-193, preflight 452-460, `ClearSupervisionLatchAsync`
+  1061-1087: early return when nothing is latched), `AgentSupervisionState.cs`,
+  `RestartFailureKind.cs`, `AgentIncidentKind.cs` (last value 67), `AgentDtos.cs`
+  (`AgentSupervisionDto`), `AgentService.cs` (supervision projection 220-235, `GetByIdAsync`),
+  `SessionRunnerContracts.cs` (`RunnerCapabilitiesDto`, `RunnerBuildDto`), `RunnerBuildIdentity.cs`.
+
+### Delivery inventory
+
+No new asynchronous outcome-delivery path to a session or a person is introduced; no session
+input is written by this card, so no `UserPrompt` transcript evidence applies. The two changed
+handoffs are supervision state, listed so their persistence boundaries and recovery are pinned:
+
+- **DL-511-A hold placement.** Producer: `LaunchInteractiveAsync` catch (queued launch worker).
+  Destination: `AgentSupervisionState.RunnerBuildHeldAt/HeldIdentity/HoldEvidence` plus the
+  session's `RestartFailureKind = RunnerBuildStale`. Persistence boundary: one commit
+  (`evidenceTransaction`) carrying the Failed outcome and the hold; the Kind-29 incident commits
+  separately after it (settled above). Durable identity: the agent id + the session id + the
+  runner identity string. Recovery: if the process dies between the outcome commit and the next
+  tick, or an older server wrote the outcome without a hold, the schedule branch (D-3 ii) holds
+  from the dead row alone (V-511-8b). Observable receipt: the state row (V-511-8), the DTO
+  (V-511-16) and the Critical Kind-29 row (V-511-8/15). Substitute declared: the incident and
+  DTO prove the hold is recorded and visible, not that an operator read it.
+- **DL-511-B release and retry.** Producer: `TickAsync` release step. Destination: cleared hold,
+  `NextRestartAt = now`, one `RunnerBuildReplaced` row, then the ordinary supervised attempt
+  through `AgentSessionLaunchQueue` (existing path, R-511-6). Persistence boundary: the release
+  commits in the tick's own scope before the sweep enqueues. Recovery: a crash after the release
+  commit leaves a due `NextRestartAt`, which the next tick attempts (existing ladder behaviour);
+  a crash before it leaves the hold, which the next tick re-evaluates against the runner
+  identity (V-511-9/10). Observable receipt: `FakeAgentProtocolAdapter.Started` with
+  `--resume` and the held session id (V-511-10), the strongest evidence this fixture can give
+  (no runner process exists; the real runner POST is covered by the S1 wire tests).
+
+### Proves it works now
+
+| ID | Behaviour | Layer | Test | Expected |
+|---|---|---|---|---|
+| V-511-1 | D-1: a launch refused by runner A is re-decided on a fresh probe; runner B launches on the same client | wire | `SessionRunnerGenerationWireTests.C511_V1_Launch_after_runner_replacement_reprobes_and_launches` | runner=`OldRunner()`: `StartAsync(Spec(generation))` throws `RunnerCapabilityMismatchException`, `Message` contains `built from aaaaaaa`, `RunnerIdentity == RunnerIdentity.Describe(BuildA)`, `Requests` paths `["/capabilities"]`; switch runner=`NewRunner()`; second `StartAsync` on the same client returns `AcceptedStartedAt == generation`; paths `["/capabilities","/capabilities","/sessions"]` |
+| V-511-2 | D-1 mirror: a positive snapshot never launches onto a downgraded runner | wire | `...C511_V2_Stale_positive_never_launches_onto_a_downgraded_runner` | runner=`NewRunner()`: first `StartAsync` launches, paths `["/capabilities","/sessions"]`; switch to `OldRunner()`; second `StartAsync` throws `RunnerCapabilityMismatchException`, `Message` contains `sessionGenerationV1` and `built from aaaaaaa` and not `bbbbbbb`, `RunnerIdentity == Describe(BuildA)`; paths `["/capabilities","/sessions","/capabilities"]` |
+| V-511-3 | D-2: unreachable probe + generation gate refuses as `RunnerUnreachableException`, inner preserved, no POST, Infrastructure | wire + unit | `...C511_V3_Unreachable_probe_on_a_gated_launch_is_RunnerUnreachable(string shape)` arms `refused` (`throw new HttpRequestException("refused", new SocketException((int)SocketError.ConnectionRefused))`), `timeout` (`throw new TaskCanceledException()`), `500` (`new HttpResponseMessage(InternalServerError)`), `malformed` (200 with body `not json`) | `Should.ThrowAsync<RunnerUnreachableException>` on `StartAsync(Spec(generation))`; `error.InnerException.ShouldNotBeNull()`; `Requests` contains no `/sessions`; `new RestartFailurePolicy().Classify(error) == Infrastructure`; then `AttachHerdrAsync(new HerdrAttachRequest(sessionId,"pane","claude","claude",1,"none", AcceptedStartedAt: generation))` on the same client throws the same type and posts nothing to `/sessions/attach` |
+| V-511-3b | D-1: 404 on `/capabilities` keeps the older-runner refusal (mismatch, not unreachable) | wire | `...C511_V3b_Older_runner_without_a_capabilities_endpoint_is_a_mismatch_not_unreachable` | handler `/capabilities` -> 404; `StartAsync(Spec(generation))` throws `RunnerCapabilityMismatchException`, `Message` contains `does not advertise sessionGenerationV1`, not `built from`; `RunnerIdentity == "unknown"`; no `/sessions` |
+| V-511-3c | D-2: `RunnerUnreachableException` classifies Infrastructure with and without an inner | unit | `RestartFailureClassificationTests.C511_V3c_RunnerUnreachable_is_infrastructure_with_or_without_an_inner` | `Classify(new RunnerUnreachableException("no answer", null)) == Infrastructure`; `Classify(new RunnerUnreachableException("no answer", new TaskCanceledException())) == Infrastructure`; `Classify(new AggregateException(new Exception("x"), new RunnerUnreachableException("y", null))) == Infrastructure` |
+| V-511-4 | D-2: unreachable probe on an ungated launch proceeds to the POST | wire | `...C511_V4_Unreachable_probe_on_an_ungated_launch_proceeds(string kind)` arms `claude` (`new AgentLaunchSpec("fake", ClaudeCode, "cmd", [], env, tmp, 120, 30)`), `codex` (Kind `Codex`, exe `codex`) | handler `/capabilities` throws `HttpRequestException`, `/sessions` -> `RunnerSessionDto(sessionId, null, ...)`; `launched.SessionId == sessionId`; paths `["/capabilities","/sessions"]` |
+| V-511-5 | D-1: attach and the backend gate each take their own probe and answer from the runner of the moment | wire | `...C511_V5_Attach_and_backend_gate_use_the_fresh_probe` | runner=`NewRunner()`: `StartAsync` ok (2 requests); switch to `OldRunner()`: `GetSessionBackendCapabilityMismatchAsync` returns a message containing `SessionBackends=pty-host` and `built from aaaaaaa` (3 requests); `AttachHerdrAsync(..., AcceptedStartedAt: generation)` throws `RunnerCapabilityMismatchException` naming `aaaaaaa` (4 requests, no `/sessions/attach`); switch to `NewRunner()`: backend check returns null (5); `AttachHerdrAsync` returns (paths end `["/capabilities","/sessions/attach"]`, 7 total) |
+| V-511-5b | D-1: a decision probe refreshes the watchdog snapshot | wire | `...C511_V5b_A_decision_probe_refreshes_the_watchdog_snapshot` | runner=`OldRunner()` (transcripts `[claude]`): `GetTranscriptCapabilityMismatchAsync(Codex)` non-null naming `aaaaaaa`; switch to `NewRunner()`; `StartAsync(Spec(generation))` ok; `GetTranscriptCapabilityMismatchAsync(Codex)` returns null (request count not asserted on the last call) |
+| V-511-6 | D-6: a failed background probe keeps the last good snapshot and marks it stale | wire | `SessionRunnerCapabilityGateTests.C511_V6_Failed_probe_keeps_the_last_good_snapshot` | `FakeTimeProvider` at `2026-09-13T15:00Z`; handler answers `OldRunner`-shaped caps (transcripts `[claude]`, BuildA); call 1 `GetTranscriptCapabilityMismatchAsync(Codex)` non-null with `built from aaaaaaa`; handler now throws `HttpRequestException`; `clock.Advance(6 min)`; call 2: `Requests.Count == 2` and result non-null with `built from aaaaaaa`; call 3 with no advance: `Requests.Count == 3`, result non-null |
+| V-511-7 | D-6: a failed first probe re-probes on the next call instead of pinning null for the TTL | wire | `...C511_V7_Failed_first_probe_reprobes_on_the_next_call` | handler throws once then answers `OldRunner`-shaped caps; call 1 returns null; call 2: `Requests.Count == 2`, result non-null naming `aaaaaaa` (deterministic: call 2 starts with a null snapshot and awaits its probe) |
+| V-511-8 | D-3 i/D-5: a supervised resume refused by the runner holds on the refused identity, charges nothing, schedules nothing, records one Critical Kind-29 | integration | `StandingRunnerBuildHoldTests.C511_V8_Refused_resume_holds_without_charging` | scenario `HeldOnAAsync`: `h.Runner.Build = A`; manual boot (adapter 1 healthy), `ObserveMatchingAsync(id, 1, ProcessExited)`, tick (schedules: counters 1/1, `RestartScheduled` 1), `Advance(11 s)`, record `crashes` = `Crash` count for the agent, tick (attempts; adapter 2 `ThrowOnStart = Refusal(A)`), `WaitForIdleAsync`. Assert state: `RunnerBuildHeldAt != null`, `RunnerBuildHeldIdentity == RunnerIdentity.Describe(A)`, `RunnerBuildHoldEvidence == Message(A)`, `NextRestartAt == null`, `RestartBackoffFailures == 1`, `ConsecutiveFailures == 1`; session `Status == Failed`, `RestartFailureKind == RunnerBuildStale`, `FailureReason == Message(A)`; incidents for the session: `RunnerBuildStale` count 1 with `Severity == Critical`, `AgentId == agent.Id`, `FailureReason == Message(A)`; `RestartScheduled` count for the agent still 1, `Crash` count == `crashes` |
+| V-511-8b | D-3 ii/D-4: a dead `RunnerBuildStale` row without a hold is held by the schedule branch (identity `unknown`, no schedule, no charge) and an `unknown` hold releases on the next answered probe | integration | `...C511_V8b_Dead_stale_row_without_a_hold_is_held_by_the_schedule_branch_and_released_by_any_answer` | manual boot (adapter 1), idle; by hand: session `Status = Failed`, `RestartFailureKind = RunnerBuildStale`, `FailureReason = Message(A)`, `EndedAt = now`; `h.Runner.CapabilitiesOverride = _ => Task.FromResult<RunnerCapabilitiesDto?>(null)`; tick: `RunnerBuildHeldAt != null`, `RunnerBuildHeldIdentity == "unknown"`, `RunnerBuildHoldEvidence == Message(A)`, `NextRestartAt == null`, counters 0/0, `LastObservedRestartSessionId == id`, `RestartScheduled` count 0, `Crash` count 0; then `CapabilitiesOverride = null`, `h.Runner.Build = A`, tick, idle: hold null, `RunnerBuildReplaced` count 1, adapter 2 `Started` with `--resume`, `StartedSessionId == id` |
+| V-511-9 | D-3 iv/D-4: a held agent is neither scheduled nor attempted while the runner identity is unchanged, even when a `NextRestartAt` is due; one identity probe per tick | integration | `...C511_V9_Held_agent_is_not_scheduled_or_attempted(string shape)` arms `idle`, `due` | from `HeldOnAAsync` (adapter 3 healthy, queued but must stay unused); arm `due` first sets `NextRestartAt = now - 1 s` by hand; record `calls = h.Runner.CapabilitiesCalls`, incident count; tick, `Advance(2 min)`, tick, `Advance(30 min)`, tick; assert `adapter3.Started == false`, hold fields unchanged (identity A), incident count unchanged, `RestartScheduled` still 1, `h.Runner.CapabilitiesCalls == calls + 3`, arm `due`: `NextRestartAt` unchanged |
+| V-511-10 | D-4: a changed runner identity releases the hold, writes `RunnerBuildReplaced`, and the same tick retries the resume without charging | integration | `...C511_V10_Runner_replacement_releases_and_retries_at_once` | from `HeldOnAAsync` (adapter 3 healthy); `h.Runner.Build = B`; one tick; `WaitForIdleAsync`; assert `RunnerBuildHeldAt == null`, `RunnerBuildHeldIdentity == null`, `RunnerBuildHoldEvidence == null`; `RunnerBuildReplaced` count 1, `Severity == Info`, `Message` contains `bbbbbbb` and `retrying`; `adapter3.Started`, `StartedArgs` contains `--resume`, not `--session-id`, `StartedSessionId == id`; counters still 1/1; `RestartScheduled` still 1; session `Status == Running` |
+| V-511-11 | D-4: an unreachable identity probe keeps the hold and writes nothing | integration | `...C511_V11_Unreachable_identity_probe_keeps_the_hold` | from `HeldOnAAsync`; `h.Runner.CapabilitiesOverride = _ => Task.FromResult<RunnerCapabilitiesDto?>(null)`; tick, tick, idle; hold fields unchanged (identity A); `RunnerBuildReplaced` count 0; incident count unchanged; `adapter3.Started == false` |
+| V-511-12 | D-3/D-5: after a release the retry refused by a second stale build re-holds on it with a second Kind-29 row, counters still unchanged | integration | `...C511_V12_Second_stale_build_reholds_with_a_second_incident` | from `HeldOnAAsync` with adapter 3 `ThrowOnStart = Refusal(C)`; `h.Runner.Build = C`; tick; idle; assert `RunnerBuildHeldIdentity == Describe(C)`, `RunnerBuildHoldEvidence == Message(C)`; `RunnerBuildStale` rows for the session == 2 with distinct `FailureReason` (`Message(A)`, `Message(C)`); `RunnerBuildReplaced` count 1; counters 1/1; `RestartScheduled` still 1; one more tick: nothing changes, adapter 4 (healthy, queued) not started |
+| V-511-13 | D-3 v: a manual Start clears the hold before the launch is queued and is never refused with `HeldCode`; the queued launch re-decides | integration | `...C511_V13_Manual_start_clears_the_hold(string outcome)` arms `runs` (adapter 3 healthy), `reholds` (adapter 3 `Refusal(C)`) | from `HeldOnAAsync`; `await h.Control.StartAsync(agent.Id, new(), default)` returns (no `ConflictException`); immediately `RunnerBuildHeldAt == null`; `WaitForIdleAsync`; arm `runs`: `adapter3.Started`, `--resume`, `StartedSessionId == id`, hold still null, session Running; arm `reholds`: `RunnerBuildHeldIdentity == Describe(C)`, `RunnerBuildHoldEvidence == Message(C)`, `RunnerBuildStale` rows == 2, counters 1/1 |
+| V-511-14 | D-3: classification and the non-charging rule | unit | `RestartFailureClassificationTests.C511_V14_RunnerBuildStale_is_classified_and_never_charged` | `Classify(new RunnerCapabilityMismatchException("x")) == RunnerBuildStale`; `Classify(new AggregateException(new Exception("other"), new RunnerCapabilityMismatchException("x"))) == RunnerBuildStale`; `state{ConsecutiveFailures=7, RestartBackoffFailures=3}`: `Charge(state, RunnerBuildStale)` leaves 7/3; `Observe(state, session{Failed, RestartFailureKind=RunnerBuildStale})` returns true, stamps `LastObservedRestartSessionId/StartedAt`, leaves 7/3; second `Observe` returns false |
+| V-511-15 | D-5: an interactive refusal on any agent records one Kind-29 with the agent id, deduped per session + message | integration | `StandingRunnerBuildHoldTests.C511_V15_Interactive_mismatch_records_kind_29_once_per_message_for_any_agent` | agent created via `AgentService.CreateAsync(new CreateAgentRequest("Interactive", workspace))` (not always-on); adapters `[Refusal(A), Refusal(A)]`; `h.Control.StartAsync(agent.Id, new(), default)`, idle: session `Failed`, `RestartFailureKind == RunnerBuildStale`, `FailureReason == Message(A)`; incidents `Kind == RunnerBuildStale && SessionId == id`: exactly 1, `AgentId == agent.Id`, `Severity == Critical`, `FailureReason == Message(A)`; second manual `StartAsync` (resumes the same row), idle: still exactly 1 |
+| V-511-16 | D-3 vi: the hold is visible on the agent DTO and the client renders the notice | service + client | `...C511_V16_Hold_is_visible_on_the_agent_dto`; Vitest `StandingSessionRecovery.test.tsx` `it('runner build hold names the stale build and the rebuild command')` | server: from `HeldOnAAsync`, `AgentService.GetByIdAsync(agent.Id)` (fresh scope) -> `Supervision.RunnerBuildHeldAt != null`, `Supervision.RunnerBuildHoldEvidence == Message(A)`, `Supervision.ContinuityHeldAt == null`; client: render with `supervision: { runnerBuildHeldAt: '2026-09-13T15:55:00Z', runnerBuildHoldEvidence: 'The session runner does not advertise sessionGenerationV1 and was built from 9ebbba7 ...' }` -> `getByText('Waiting for a rebuilt session runner')`, `getByText(/built from 9ebbba7/)`, `getByText(/restart-session-runner\.ps1/)`, and `queryByRole('button', { name: 'Retry after repair' })` is null |
+| V-511-16c | client: no notice without the hold | client | `it('no runner build hold renders no runner notice')` | render the existing `agent` literal (continuity hold only): `queryByText('Waiting for a rebuilt session runner')` is null |
+| V-511-17 | D-4: `RunnerIdentity.Describe` | unit | `RunnerIdentityTests.C511_V17_Describe_formats_sha_or_version_at_process_start_and_unknown_for_null` | `Describe(null) == "unknown"`; `Describe(new RunnerBuildDto("1.0.0+<40 a>", "<40 a>", UnixEpoch, 2026-09-13T15:50:00Z)) == "<40 a>@2026-09-13T15:50:00.0000000Z"`; `Describe(new RunnerBuildDto("1.2.3-dev", null, UnixEpoch, same)) == "1.2.3-dev@2026-09-13T15:50:00.0000000Z"` |
+| V-511-18 | D-3 vi/D-4: a live session clears a leftover hold silently; unheld ticks never probe identity | integration | `StandingRunnerBuildHoldTests.C511_V18_Live_session_clears_a_leftover_hold_and_unheld_ticks_never_probe_identity` | manual boot (adapter 1), idle, session Running; record `calls = h.Runner.CapabilitiesCalls`; tick, tick: `CapabilitiesCalls == calls` (an unheld sweep never probes identity); by hand set the three hold columns (identity `Describe(A)`); tick: hold null, `RunnerBuildReplaced` count 0, `CapabilitiesCalls == calls + 1`, session still Running |
+
+Scenario helpers in `StandingRunnerBuildHoldTests` (private static): `Build(char fill, int hour, int minute)` ->
+`new RunnerBuildDto($"1.0.0+{new string(fill, 40)}", new string(fill, 40), DateTime.UnixEpoch, new DateTime(2026, 9, 13, hour, minute, 0, DateTimeKind.Utc))`;
+`A = Build('a', 9, 0)`, `B = Build('b', 15, 50)`, `C = Build('c', 16, 30)`;
+`Message(b)` = `$"The session runner does not advertise sessionGenerationV1 and was built from {b.CommitSha![..7]} on 1970-01-01 00:00 (running since {b.ProcessStartUtc:HH:mm}). Rebuild and restart it: pwsh -File scripts/restart-session-runner.ps1."`;
+`Refusal(b)` = `new RunnerCapabilityMismatchException(Message(b), b)`;
+`HeldOnAAsync(string root, params FakeAgentProtocolAdapter[] afterRefusal)` builds the harness with
+`[healthyBoot, new FakeAgentProtocolAdapter { ThrowOnStart = Refusal(A) }, ..afterRefusal]`,
+`definitionKind: "ClaudeCode"`, sets `h.Runner.Build = A`, runs the V-511-8 sequence and returns
+`(Harness h, AgentDetailDto agent, Guid id)`; every test wraps in `try/finally
+AgentSupervisionTests.CleanupAsync(root)`. Wire helpers in `SessionRunnerGenerationWireTests`:
+`BuildA`/`BuildB` (same shape, process start 09:00 / 15:50 UTC), `OldRunner()` =
+`Capabilities(["herdr-attach"], BuildA, backends: ["pty-host"], transcripts: [Claude])`,
+`NewRunner()` = `Capabilities(["herdr-attach", SessionGenerationV1, HerdrNamedTabPlacement], BuildB,
+backends: ["pty-host","herdr"], transcripts: [Claude, Codex, Grok])`, and
+`Switchable(Guid sessionId, DateTime generation, Func<RunnerCapabilitiesDto> runner)` returning a
+`StubHandler` that answers `/capabilities` from `runner()`, `/sessions` and `/sessions/attach`
+with a `RunnerSessionDto` echoing the generation, else 404.
+
+### Guards the regression
+
+| ID | Regression | Test and decisive assertion |
+|---|---|---|
+| R-511-1 | one probe per decision, refusal before any POST | `SessionRunnerGenerationWireTests.A_runner_without_sessionGenerationV1_refuses_a_generation_bearing_launch_and_attach_before_any_POST` (both arms): paths `["/capabilities"]` for start and for attach |
+| R-511-2 | transcript refusal still costs one GET and no POST | `SessionRunnerCapabilityGateTests.Explicitly_missing_transcript_format_refuses_launch_with_restart_fix`: `Requests.Count == 1`, message names `codex` and the restart script |
+| R-511-3 | null capability fields stay no-evidence for the transcript gate | `...Absent_capability_field_is_no_evidence_and_launches_as_before`: `["/capabilities","/sessions"]` |
+| R-511-4 | generation echo contract | `A_generation_bearing_launch_posts_acceptedStartedAt_and_maps_the_echo`, `A_launch_response_without_the_echoed_generation_is_refused` (`Code == NotEchoed`, one POST) |
+| R-511-5 | the watchdog consumer of the S2 cache | `AgentTaskDeliveryWatchdogTests.Explicit_runner_transcript_mismatch_fails_the_task_but_does_not_kill_the_session` |
+| R-511-6 | supervisor ladder, continuity hold, herdr hold untouched by the new gate and branches | `StandingRestartAccountingTests` (all, incl. `Async_infrastructure_failure_is_consumed_once_across_recreation`: Infrastructure still charges `RestartBackoffFailures == 1`), `StandingContinuityRecoveryTests` (all: `HeldCode` still refuses a default start, `ContinuityUnavailable` still holds), `AgentSupervisionTests` (all) |
+| R-511-7 | transport and unknown classification | `RestartFailureClassificationTests.Infrastructure_wrappers_and_cancellation_are_classified_by_evidence` (HttpRequestException stays Infrastructure; `57P03` text alone stays Unknown), `Terminal_generation_is_charged_once_and_healthy_completion_defines_a_process_failure` |
+| R-511-8 | client recovery flow | the five existing `StandingSessionRecovery.test.tsx` cases |
+
+### Guard inventory
+
+| ID | Guard (plan reference) | Test method | PC |
+|---|---|---|---|
+| G-511-1 | D-1: a launch decision probes fresh even when a snapshot exists | V-511-1 | PC-511-1 |
+| G-511-2 | D-1 (rejected alternative a): a positive snapshot is not trusted for a later decision | V-511-2 | PC-511-2 |
+| G-511-3 | D-2: unreachable + positive-evidence gate refuses as `RunnerUnreachableException`, never as a mismatch, never a POST | V-511-3 | PC-511-3 |
+| G-511-4 | D-2: unreachable with only the transcript gate (or no gate) proceeds to the POST | V-511-4 | PC-511-4 |
+| G-511-5 | D-2: `RunnerUnreachableException` classifies Infrastructure by type, not only by inner | V-511-3c (null-inner row) | PC-511-5 |
+| G-511-6 | D-1: `AttachHerdrAsync` decides on its own probe | V-511-5 (attach half) | PC-511-6 |
+| G-511-7 | D-1: `GetSessionBackendCapabilityMismatchAsync` decides on its own probe | V-511-5 (backend half) | PC-511-7 |
+| G-511-8 | D-1: a successful decision probe replaces the watchdog snapshot | V-511-5b | PC-511-8 |
+| G-511-9 | D-6: a failed background probe keeps the last good snapshot | V-511-6 (call 2 non-null) | PC-511-9 |
+| G-511-10 | D-6: a failed probe marks the cache stale so the next call re-probes | V-511-6 (call 3 count), V-511-7 | PC-511-10 |
+| G-511-11 | D-3: `RunnerCapabilityMismatchException` classifies `RunnerBuildStale` | V-511-14, V-511-8 | PC-511-11 |
+| G-511-12 | D-3: `Charge` is a no-op for `RunnerBuildStale` | V-511-14, V-511-8b (counters 0/0) | PC-511-12 |
+| G-511-13 | D-3 i: the interactive catch holds on the exception's identity and message | V-511-8 (identity == `Describe(A)` right after idle) | PC-511-13 |
+| G-511-14 | D-3 ii: the schedule branch holds a dead stale row instead of scheduling | V-511-8b | PC-511-14 |
+| G-511-15 | D-3 iv: a held agent is never attempted, even with a due `NextRestartAt` | V-511-9 arm `due` | PC-511-15 |
+| G-511-16 | D-3 v: a manual Start clears the hold | V-511-13 arm `runs` | PC-511-16 |
+| G-511-17 | D-4: a changed identity releases the hold and the same tick retries | V-511-10 | PC-511-17 |
+| G-511-18 | D-4: a failed identity probe keeps every hold | V-511-11 | PC-511-18 |
+| G-511-19 | D-4: an unchanged identity keeps the hold (no release on equality) | V-511-9 arm `idle` | PC-511-19 |
+| G-511-20 | D-3/D-4: the release writes the `RunnerBuildReplaced` trail | V-511-10 | PC-511-20 |
+| G-511-21 | D-5: the interactive catch records Kind-29 with the known agent id | V-511-15 (count 1 after the first start) | PC-511-21 |
+| G-511-22a | D-5: a different message on the same session is a new Kind-29 row | V-511-12 (rows == 2) | PC-511-22a |
+| G-511-22b | D-5: the same message on the same session is deduped | V-511-15 (still 1 after the second start) | PC-511-22b |
+| G-511-23 | D-3 vi: the DTO carries the hold | V-511-16 (server half) | PC-511-23 |
+| G-511-24 | D-3 vi: the client renders the notice from `runnerBuildHeldAt` | V-511-16 (client half) | PC-511-24 |
+
+Guards = 25, mapped = 25, missing = 0, duplicate PC mappings = 0. V-511-3b, 17 and 18 are
+pinned without a guard entry: 3b refuses before the POST under either classification, 17 is a
+pure formatter whose consumers are G-511-13/17/19, and 18 is hygiene plus a traffic bound.
+
+### Positive controls
+
+Mutation runs each PC method-scoped on a local inherited SourceLanding child:
+`dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-pc/ -- --treenode-filter "/*/*/<Class>/<Method>"`
+(parameterised methods run every arm; the expected red names the arm) and
+`pwsh -File scripts/test-client.ps1 StandingSessionRecovery` for PC-511-24. Each cycle: apply
+the mutation, run red at the named assertion, restore, refresh the restored file's timestamp,
+run green. Zero tests, build failures and fixture errors are not red. Rows in the same file run
+separately (`SessionRunnerHttpClient.cs`: 1, 2, 3, 4, 6, 7, 8, 9, 10; `RestartFailurePolicy.cs`:
+5, 11, 12; `AgentSessionService.cs`: 13, 21, 22a, 22b; `AgentSupervisorService.cs`: 14, 15, 17,
+18, 19; `RunnerBuildHoldState.cs`: 20; `AgentControlService.cs`: 16; `AgentService.cs`: 23;
+`StandingSessionRecovery.tsx`: 24); rows from different files may batch.
+
+| PC | Break (compiling defect) | Exact method | Expected red |
+|---|---|---|---|
+| PC-511-1 | `ProbeForDecisionAsync`: under the gate, `if (_cachedCapabilities is { } snap) return Answered(snap);` before the GET | `SessionRunnerGenerationWireTests.C511_V1_Launch_after_runner_replacement_reprobes_and_launches` | the second `StartAsync` throws `RunnerCapabilityMismatchException` naming `aaaaaaa` (expected a launch); paths would be `["/capabilities"]` |
+| PC-511-2 | `ProbeForDecisionAsync`: return the snapshot when it advertises `sessionGenerationV1` (trust a positive) | `...C511_V2_Stale_positive_never_launches_onto_a_downgraded_runner` | `Should.ThrowAsync<RunnerCapabilityMismatchException>` fails: the second `StartAsync` launches and `/sessions` is posted twice; V-511-1 stays green |
+| PC-511-3 | `ProbeForDecisionAsync` catch: map transport/5xx/malformed to `Capabilities = null, Unreachable = null` (older-runner semantics) | `...C511_V3_Unreachable_probe_on_a_gated_launch_is_RunnerUnreachable` | every arm: `Should.ThrowAsync<RunnerUnreachableException>` fails with `RunnerCapabilityMismatchException` thrown instead |
+| PC-511-4 | `StartAsync`: `if (probe.Unreachable is not null) throw new RunnerUnreachableException(...)` unconditionally, before checking whether a positive-evidence gate applies | `...C511_V4_Unreachable_probe_on_an_ungated_launch_proceeds` | both arms: `StartAsync` throws `RunnerUnreachableException` (expected `launched.SessionId == sessionId`) |
+| PC-511-5 | `RestartFailurePolicy.Classify`: remove `RunnerUnreachableException` from the Infrastructure type list | `RestartFailureClassificationTests.C511_V3c_RunnerUnreachable_is_infrastructure_with_or_without_an_inner` | null-inner row: `ShouldBe(Infrastructure)` fails with `Unknown`; the inner-bearing rows stay green |
+| PC-511-6 | `AttachHerdrAsync`: read `_cachedCapabilities` (via `EnsureCapabilitiesProbedAsync`) instead of `ProbeForDecisionAsync` | `...C511_V5_Attach_and_backend_gate_use_the_fresh_probe` | after the switch to `OldRunner()`, `Should.ThrowAsync<RunnerCapabilityMismatchException>` on attach fails (attach succeeds on the cached B) |
+| PC-511-7 | `GetSessionBackendCapabilityMismatchAsync`: keep `EnsureCapabilitiesProbedAsync` + `_cachedCapabilities` | same method | after the switch to `OldRunner()`, `backendMismatch.ShouldNotBeNull()` fails (null from the cached B); request count 3 fails (2) |
+| PC-511-8 | `ProbeForDecisionAsync`: do not write `_cachedCapabilities` on success | `...C511_V5b_A_decision_probe_refreshes_the_watchdog_snapshot` | final `ShouldBeNull()` fails: the transcript check still answers from A |
+| PC-511-9 | `ProbeCapabilitiesAsync`: write `result` unconditionally (today's line) | `SessionRunnerCapabilityGateTests.C511_V6_Failed_probe_keeps_the_last_good_snapshot` | call 2 `ShouldNotBeNull()` fails (null served) |
+| PC-511-10 | `ProbeCapabilitiesAsync`: on null result leave `_capabilitiesProbedAt` stamped (drop the `MinValue` reset) | same method; `...C511_V7_Failed_first_probe_reprobes_on_the_next_call` | V6 call 3 `Requests.Count.ShouldBe(3)` fails (2); V7 `Requests.Count.ShouldBe(2)` fails (1) and `second.ShouldNotBeNull()` fails |
+| PC-511-11 | `Classify`: remove the `RunnerCapabilityMismatchException` arm | `RestartFailureClassificationTests.C511_V14_RunnerBuildStale_is_classified_and_never_charged` | first `ShouldBe(RunnerBuildStale)` fails with `Unknown` |
+| PC-511-12 | `Charge`: drop `RunnerBuildStale` from the early return | same method; `StandingRunnerBuildHoldTests.C511_V8b_...` | V14 `RestartBackoffFailures.ShouldBe(3)` fails (4); V8b `RestartBackoffFailures.ShouldBe(0)` fails (1) |
+| PC-511-13 | `LaunchInteractiveAsync` catch: delete the `RunnerBuildHoldState.HoldAsync` call (Kind-29 still written) | `StandingRunnerBuildHoldTests.C511_V8_Refused_resume_holds_without_charging` | `RunnerBuildHeldAt.ShouldNotBeNull()` fails right after idle (null; the schedule branch has not run yet) |
+| PC-511-14 | `SuperviseAsync` schedule branch: remove the `dead?.RestartFailureKind == RunnerBuildStale` branch | `...C511_V8b_Dead_stale_row_without_a_hold_is_held_by_the_schedule_branch_and_released_by_any_answer` | `RestartScheduled` count `ShouldBe(0)` fails (1) and `RunnerBuildHeldAt.ShouldNotBeNull()` fails |
+| PC-511-15 | `SuperviseAsync`: remove the `RunnerBuildHeldAt is not null` early return | `...C511_V9_Held_agent_is_not_scheduled_or_attempted` | arm `due`: `adapter3.Started.ShouldBeFalse()` fails (the due attempt enqueued the resume); arm `idle` stays green (the schedule branch still holds) |
+| PC-511-16 | `ClearSupervisionLatchAsync`: leave the early-return condition and the field clears as today (no hold handling) | `...C511_V13_Manual_start_clears_the_hold` | arm `runs`: `RunnerBuildHeldAt.ShouldBeNull()` right after `Control.StartAsync` fails |
+| PC-511-17 | `TickAsync`: delete the release step | `...C511_V10_Runner_replacement_releases_and_retries_at_once` | `RunnerBuildHeldAt.ShouldBeNull()` fails; `adapter3.Started.ShouldBeTrue()` fails |
+| PC-511-18 | `TickAsync` release: on a null probe result release every held agent | `...C511_V11_Unreachable_identity_probe_keeps_the_hold` | `RunnerBuildHeldAt.ShouldNotBeNull()` fails; `adapter3.Started.ShouldBeFalse()` fails |
+| PC-511-19 | `TickAsync` release: release whenever the probe answered (drop the identity comparison) | `...C511_V9_Held_agent_is_not_scheduled_or_attempted` | arm `idle`: `adapter3.Started.ShouldBeFalse()` fails and `RunnerBuildHeldIdentity.ShouldBe(Describe(A))` fails (null) |
+| PC-511-20 | `RunnerBuildHoldState.ReleaseAsync`: drop the `RunnerBuildReplaced` incident | `...C511_V10_Runner_replacement_releases_and_retries_at_once` | `RunnerBuildReplaced` count `ShouldBe(1)` fails (0); the hold clear and the retry stay green |
+| PC-511-21 | `LaunchInteractiveAsync` catch: do not call `RecordRunnerBuildStaleAsync` (today's catch) | `...C511_V15_Interactive_mismatch_records_kind_29_once_per_message_for_any_agent` | Kind-29 count `ShouldBe(1)` after the first start fails (0) |
+| PC-511-22a | `RecordRunnerBuildStaleAsync` known-id path: dedup on `SessionId && Kind` only (today's predicate) | `...C511_V12_Second_stale_build_reholds_with_a_second_incident` | `RunnerBuildStale` rows `ShouldBe(2)` fails (1) |
+| PC-511-22b | `RecordRunnerBuildStaleAsync` known-id path: skip the dedup query | `...C511_V15_...` | count after the second manual start `ShouldBe(1)` fails (2) |
+| PC-511-23 | `AgentService` supervision projection: pass `null` for `RunnerBuildHeldAt`/`RunnerBuildHoldEvidence` | `...C511_V16_Hold_is_visible_on_the_agent_dto` | `Supervision.RunnerBuildHeldAt.ShouldNotBeNull()` fails |
+| PC-511-24 | `StandingSessionRecovery.tsx`: render the notice on `continuityHeldAt` instead of `runnerBuildHeldAt` | Vitest `runner build hold names the stale build and the rebuild command` | `getByText('Waiting for a rebuilt session runner')` throws (not rendered); the sibling `no runner build hold renders no runner notice` also fails (rendered for the continuity agent) |
+
+### Out of scope
+
+- A `RunnerCapabilityMismatchException` wrapped in an `AggregateException` at the interactive
+  catch: V-511-14 pins the classification of the wrapped shape; the hold identity for it is not
+  pinned because every real throw site (`SessionRunnerHttpClient.StartAsync`/`AttachHerdrAsync`
+  through the adapter) throws it unwrapped.
+- A runner that answers `/capabilities` with `Build == null` against an identity-bearing hold
+  (`"unknown" != A` releases by plain inequality): pre-CARD-0112 runners are not a supported
+  target, and the outcome (one uncharged attempt that re-holds) is the same convergence D-4
+  already accepts.
+- Two held agents on one tick sharing one identity probe: the count bound is pinned for one
+  agent (V-511-9/18); the two-agent case adds a second always-on agent to a `[NotInParallel]`
+  suite for a cost guard, not a safety one.
+- `AgentChanged` events on hold/release: the interactive catch already publishes after its
+  commit and `Control.StartAsync` publishes on the retry; not asserted.
+- The 5 s probe deadline (`CapabilityProbeTimeout`) and the release step's 5 s linked token:
+  proving them needs a wall-clock wait; the `timeout` arm of V-511-3 pins the classification of
+  a cancelled probe instead.
+- `PtyDeliveryProfile`/`SessionDeliveryProfile`, `restart-apphost.ps1`, ladder constants,
+  CARD-0510, the dispatcher watchdog's own Kind-29 writer (D-7) and the migration itself
+  (applied by the shared test Postgres on the first run; its shape is pinned by every S3 test
+  reading the three columns).
+- HTTP-level JSON casing of the two new DTO fields: System.Text.Json web defaults camel-case
+  every other `AgentSupervisionDto` field the client already reads; V-511-16 pins the server
+  projection and the client contract separately.
+
+### Cost
+
+All figures are **estimated** (nothing was built or run in this dispatch); assumptions: one
+foreground owner, isolated `bin-c511/` output, warm NuGet cache, no concurrent
+`Antiphon.Agents.Pty.Tests`, shared test Postgres reachable.
+
+| Ordinary V/R floor, per Code or independent Review pass | Minutes |
+|---|---:|
+| Setup: restore + build `tests/Antiphon.Tests` into `bin-c511/` (+ `dotnet ef migrations add AddRunnerBuildHold` once, in S3) | 13 |
+| `SessionRunnerGenerationWireTests` full class (6 existing methods + 7 new, 19 arms, in-process) | 1 |
+| `SessionRunnerCapabilityGateTests` full class (2 + 2) | 1 |
+| `RestartFailureClassificationTests` + `RunnerIdentityTests` (unit) | 1 |
+| `StandingRunnerBuildHoldTests` full class (10 methods, 12 arms, each a Postgres harness with 2-4 ticks and idle waits) | 4 |
+| Regression set: `StandingRestartAccountingTests` (both partials), `StandingContinuityRecoveryTests`, `AgentSupervisionTests`, `AgentTaskDeliveryWatchdogTests` | 11 |
+| Vitest `StandingSessionRecovery` (2 new + 5 existing) + client rebuild | 4 |
+| **Per-pass setup + ordinary V/R** | **35** |
+
+Code floor 35 (plus 13 more if the migration is generated in a separate build); independent
+ordinary Review floor another 35. Band per pass: 30-45.
+
+| PC floor (Mutation), method-scoped red/restore/green | Controls | Min per cycle | Minutes |
+|---|---:|---:|---:|
+| Wire/unit controls, in-process (PC-511-1..12) | 12 | 3 | 36 |
+| Supervision controls over Postgres (PC-511-13..23, 22a/22b counted separately) | 12 | 4 | 48 |
+| Vitest control (PC-511-24) | 1 | 2 | 2 |
+| Mutation setup: snapshot build of `bin-pc/`, one green run of the six touched classes | - | - | 18 |
+| Restoration inventory, timestamp refresh, evidence | - | - | 10 |
+| **Mutation floor, all 25 controls, unbatched** | **25** | - | **114** |
+
+Band 95-130. Batching across files in triples (one `SessionRunnerHttpClient` row, one
+supervisor row, one policy/service row per cycle) shares a build pair per group and saves about
+30 minutes; the nine `SessionRunnerHttpClient.cs` rows cannot batch among themselves. No
+concurrency saving is assumed (one managed snapshot; the plan is under the sharding threshold).
+
+**Total verification floor** = setup/build 13 + ordinary V/R 22 + every PC red/restore/green 86
++ Mutation setup/evidence 28 = **149 minutes, estimated**, unbatched.
+
+--- next stage ---
+next: code
+handoff: Code implements S1-S4 against the finalized verification design (25 guards, 20 V rows across SessionRunnerGenerationWireTests, SessionRunnerCapabilityGateTests, RestartFailureClassificationTests, new RunnerIdentityTests and StandingRunnerBuildHoldTests, two Vitest cases; FakeSessionRunnerClient gains Build/CapabilitiesOverride/CapabilitiesCalls; Kind-29 written after the evidence commit) and runs the ordinary V/R floor; Mutation runs the 25 PCs after land.
+artifact: docs/superpowers/plans/2026-09-18-card-0511-runner-build-hold-plan.md
