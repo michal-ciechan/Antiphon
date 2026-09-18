@@ -84,10 +84,10 @@ Surface, do not heal, for foreign locks. The land is a background service; the c
 
 Rejected: auto-remove `stale` in the land (deletes a file owned by an unknown process from a service that cannot see that process's intent); auto-remove in `restart-apphost.ps1` after its own kill (an IDE or delegate can create a lock in the same window; the script cannot tell).
 
-### D-3. Remove the identified source in `GitWorkspaceService`, and reclaim only its own orphan
+### D-3. Remove the identified source in `GitWorkspaceService`; do not reclaim
 
 1. `RunCoreAsync` sets `GIT_OPTIONAL_LOCKS=0` on every child, matching `LandingGit`. Mandatory locks (`add`, `commit`, `reset`, `read-tree`, `write-tree`) are unaffected; `status` and other reads stop creating `index.lock` at all, so a timeout kill of a read can no longer orphan one. Results are unchanged (git still hashes stale entries; it only skips writing the refreshed index back).
-2. On the timeout path, after `TryKill`, wait for the child to exit (bounded 2 s), and if the command's first verb is in the index-lock set `{add, commit, reset, read-tree, checkout, restore, merge, rebase, stash, rm, mv, update-index, apply}` and `<git-path index.lock>` exists with `LastWriteTimeUtc >= childStart - 2 s`, delete it and log a warning naming the path. A lock older than the child is foreign and is left alone. This is "our own killed child's lock", which is the one case where ownership is provable: git creates the lock exclusively, so a file our lock-taking child was alive under for 15 s cannot be someone else's.
+2. **Review repair (task 112287d8):** do not delete `index.lock` on the timeout path. A lock-taking child can be alive for seconds before `hold_locked_index` (git commit --only runs `core.fsmonitor` first). A foreign lock written in that window has mtime after child start, so the old reclaim deleted it. `GIT_OPTIONAL_LOCKS=0` already removes the incident's mechanism; S3 surfaces any leftover lock on the next land. After `TryKill`, wait for the child to exit (bounded 2 s) and return `timeout`.
 
 Scope stays on `GitWorkspaceService`. `CardFileRepository` (sync disabled for these boards), `WorktreeManager` (`worktree add/remove/checkout-index`, worktree-local) and `LandingGit` (its kills are already fenced by `RepositoryChildJournal` and `interrupted_process_requires_inspection`) are not changed; S3 makes any lock they leave visible on the next attempt.
 
@@ -95,7 +95,7 @@ Scope stays on `GitWorkspaceService`. `CardFileRepository` (sync disabled for th
 
 - Before admission (`AgentTaskLandService.RunRequestAsync`, after the writer check at `:221-229`): probe `task.RepoPath` and `task.WorktreePath`. `stale` -> `HoldAsync(task, request, "git_index_lock_stale", null, detail)`; `held` -> `HoldAsync(... "git_index_lock_held" ...)`; return `LandRunResult.Held`. The sweep re-picks the request every 5 s, so removing the file resumes the land without a re-POST, and a `held` lock that ages past the threshold flips to `stale` on a later pass (new hold episode, new notification).
 - Inside `AgentTaskLandingProtocol`: `RequireNoIndexLockAsync(checkout)` immediately before `rebase`, `rebase --abort` (source worktree) and `merge --ff-only` (target checkout) -> `LandingRefusal("git_index_lock_stale")` / `("git_index_lock_held")` with the detail carried on the result. After a failed `merge --ff-only` or `rebase`, re-probe once; a lock now present makes the reason `git_index_lock_held` instead of `target_advance_failed` / `rebase_failed` (the abort path still runs for a rebase). The resolver's source fast-forward gets the same pre-check and reports through its existing `RefuseAsync` with the code and detail.
-- Phase behaviour is unchanged: a refusal at `TargetAdvanceStarted` leaves the operation at phase 5 and the same-SHA re-POST resumes it (verified by V-7).
+- Phase behaviour at `TargetAdvanceStarted` is unchanged: a lock refusal leaves the operation at phase 5 and the same-SHA re-POST resumes it (V-9). **Review repair:** a lock refusal at `RebaseStarted` (after `rebase --abort`, including a rebase that never started because the lock appeared when rebase was first seen) transitions to `Refused`, so a same-SHA re-POST replaces the operation instead of hitting `interrupted_rebase_requires_inspection`. `RecoveryPinned` / `Inspected` / `Prepared` still exclude lock codes from the Refused transition (V-8).
 
 Rejected: holding from inside the protocol (would put a hold after `Attempt++`, contradicting the documented hold contract); converting these to `LandFailureDiagnostic` terminal failure codes (they are refusals of a known condition, not unexpected exceptions).
 
@@ -109,7 +109,7 @@ Hold detail and refusal detail use one formatter in the pure helper:
 
 ### D-6. One pure helper, one I/O seam
 
-`server/Application/Services/GitIndexLock.cs` (static): `Observe(path, now, census)`, `Classify(observation, staleAfter)`, `FormatDetail(...)`, `TryReclaimAfterKill(path, childStartUtc, verb)`. `ILandingGit.InspectIndexLockAsync(string checkout, CancellationToken)` returns `LandingIndexLockObservation(string Path, bool Present, DateTime? LastWriteUtc, long? Length, IReadOnlyList<(int Pid, DateTime? StartUtc)> CandidateHolders, string? Reason)`; `LandingGit` implements it with `rev-parse --path-format=absolute --git-path index.lock` plus `FileInfo` plus the census. `FixtureGit` inherits it, so land tests exercise the real implementation on scratch repositories. A probe failure returns `Reason` (`index_lock_path_error`) and the caller treats it as `held` (safe direction) rather than proceeding blind.
+`server/Application/Services/GitIndexLock.cs` (static): `Observe(path, now, census)`, `Classify(observation, staleAfter)`, `FormatDetail(...)`. There is no reclaim helper. `ILandingGit.InspectIndexLockAsync(string checkout, CancellationToken)` returns `LandingIndexLockObservation(string Path, bool Present, DateTime? LastWriteUtc, long? Length, IReadOnlyList<(int Pid, DateTime? StartUtc)> CandidateHolders, string? Reason)`; `LandingGit` implements it with `rev-parse --path-format=absolute --git-path index.lock` plus `FileInfo` plus the census. `FixtureGit` inherits it, so land tests exercise the real implementation on scratch repositories. A probe failure returns `Reason` (`index_lock_path_error`) and the caller treats it as `held` (safe direction) rather than proceeding blind.
 
 ### D-7. Scripts: helper, NOTE, row, WARN; never refuse, never delete
 
@@ -123,9 +123,9 @@ Rejected: a new server-side periodic sweep or alert (the admission check is the 
 
 ## Slices
 
-### S1. Remove the source and reclaim own orphans (`GitWorkspaceService`)
+### S1. Remove the source (`GitWorkspaceService`)
 
-Files: `server/Application/Services/GitWorkspaceService.cs` (`RunCoreAsync`: env var; timeout catch: bounded wait, reclaim call, warning log), `server/Application/Services/GitIndexLock.cs` (new), `server/Application/Settings/GitSettings.cs` (+ validation where `GitSettings` is validated, or in `Program.cs` `Configure<GitSettings>`), tests `tests/Antiphon.Tests/Application/GitIndexLockTests.cs` (new), `tests/Antiphon.Tests/Application/GitWorkspaceServiceIndexLockTests.cs` (new, real git on `ScratchGitRepo`).
+Files: `server/Application/Services/GitWorkspaceService.cs` (`RunCoreAsync`: env var; timeout catch: bounded wait, no delete), `server/Application/Services/GitIndexLock.cs` (new), `server/Application/Settings/GitSettings.cs` (+ validation where `GitSettings` is validated, or in `Program.cs` `Configure<GitSettings>`), tests `tests/Antiphon.Tests/Application/GitIndexLockTests.cs` (new), `tests/Antiphon.Tests/Application/GitWorkspaceServiceIndexLockTests.cs` (new, real git on `ScratchGitRepo`).
 
 ### S2. Landing git seam
 
@@ -156,7 +156,7 @@ Simulating a stale lock safely (every test below): only inside `ScratchGitRepo`,
 | Id | Guard |
 |---|---|
 | A-1 | A `git status` issued by `GitWorkspaceService` never creates `index.lock` (index mtime unchanged after a stat-stale status). |
-| A-2 | After `GitWorkspaceService` kills its own lock-taking child on timeout, no `index.lock` younger than that child remains; a lock older than the child is untouched. |
+| A-2 | After `GitWorkspaceService` kills a child on timeout, it does not delete `index.lock` (own leftover or foreign). S3 surfaces any leftover on the next land. |
 | A-3 | A pre-existing `index.lock` in the repository or source worktree holds a land before admission with `git_index_lock_stale` (old, no candidate holder) or `git_index_lock_held` (young, or a candidate holder alive); `Attempt` stays 0, no operation row is created, the verifier is not called. |
 | A-4 | Removing the file makes the next sweep run the land to its normal outcome with no new POST; a `HeldReleased` event precedes it. |
 | A-5 | A lock that appears after admission in the checkout about to be mutated refuses with the specific code before the mutation runs; a lock that appears during the mutation turns the failure into `git_index_lock_held`; the operation phase and resumability are as today. |
@@ -172,8 +172,10 @@ Simulating a stale lock safely (every test below): only inside `ScratchGitRepo`,
 | V-1 | `GitIndexLockTests.Classify_matrix` (`[Arguments]`: absent; age 10 s; age 600 s with census `[(pid, mtime-5s)]`; age 600 s with census `[(pid, mtime+5s)]`; age 600 s with an unreadable start time; age exactly `staleAfter`; age `staleAfter - 1 s`) | `None`, `Held`, `Held`, `Stale`, `Held`, `Stale`, `Held`. |
 | V-2 | `GitIndexLockTests.Path_resolves_main_and_linked_worktree` on `LandingGitFixture` | `InspectIndexLockAsync(Repository).Path` ends with `\.git\index.lock`; `InspectIndexLockAsync(Source).Path` contains `\worktrees\` and ends with `\index.lock`; both `Present == false` before creation and `true` after. |
 | V-3 | `GitWorkspaceServiceIndexLockTests.Status_never_takes_the_optional_index_lock` on `ScratchGitRepo`: commit, sleep 1.1 s, touch a tracked file, record `.git/index` mtime, `TryGetChangesAsync` | Result succeeded; index mtime unchanged. Control in the same test: raw `git status` via `ScratchGitRepo.GitInAsync` after another touch changes it. |
-| V-4 | `GitWorkspaceServiceIndexLockTests.Timeout_kill_reclaims_only_its_own_lock`: service with `TimeoutSeconds = 1`; sleeping pre-commit hook (8 s); `CommitOnlyAsync(repo, ["b.txt"], ...)` | Code `-1`, stderr `timeout`; `hook-started` exists; lock absent afterwards; a warning log entry names the path; `rev-parse HEAD` unchanged; a following `CommitOnlyAsync` without the hook succeeds. |
-| V-4b | `GitIndexLockTests.TryReclaimAfterKill_respects_child_start` (pure): lock mtime = childStart - 60 s; lock mtime = childStart + 1 s; verb `log` with a young lock | not deleted; deleted; not deleted. |
+| V-4 | `GitWorkspaceServiceIndexLockTests.Timeout_kill_does_not_delete_index_lock`: service with `TimeoutSeconds = 1`; sleeping pre-commit hook (8 s); `CommitOnlyAsync(repo, ["b.txt"], ...)` | Code `-1`, stderr `timeout`; `hook-started` exists; no `Reclaimed orphaned git index lock` log; `rev-parse HEAD` unchanged; after deleting any leftover lock and the hook, a following `CommitOnlyAsync` succeeds. |
+| V-4b | `GitIndexLockTests.TryReclaimAfterKill_is_gone` | `TryReclaimAfterKill` / `IsLockTakingVerb` / `FirstVerb` are not on the type. |
+| V-13 | `GitWorkspaceServiceIndexLockTests.Timeout_kill_does_not_delete_a_foreign_lock_created_during_fsmonitor_stall`: `core.fsmonitor` writes a marker then `ping -n 6`; `TimeoutSeconds = 2`; `CommitOnlyAsync(["b.txt"])`; after the marker and before our lock, write a foreign `index.lock` | timeout; foreign bytes still present; no reclaim log. |
+| V-14 | `AgentTaskLandIndexLockTests.Lock_created_during_rebase_is_reported_held_and_same_sha_repost_lands`: move master so a rebase is required; `BeforeCommand` creates a fresh lock when `rebase` is first seen (not `--abort`); delete lock; re-POST same SHA | first: `git_index_lock_held`, `op.Phase == Refused`, no `interrupted_rebase_requires_inspection`; second: `Landed`, new operation id. |
 | V-5 | `AgentTaskLandIndexLockTests.Stale_lock_holds_before_admission`: harness `InitializeAsync`, `AddSourceAsync`, stale lock in `Fixture.Repository`; `RunAsync()` | `LandRunResult.Held`; `request.State == Held`, `HoldReasonCode == "git_index_lock_stale"`, `HoldDetail` contains the path and `Remove-Item`; `Attempt == 0`; `OperationAsync() == null`; `Verifier.Calls == 0`; one `Held` notification. |
 | V-6 | `..._Fresh_lock_holds_as_held_then_ages_to_stale`: lock with current mtime; `RunAsync()`; then age it; `RunAsync()` | first `git_index_lock_held`, second `git_index_lock_stale` with `HoldEpisode` incremented by one and a second `Held` event. |
 | V-7 | `..._Removing_the_lock_resumes_the_land`: after V-5, `File.Delete(lock)`; `RunAsync()` | `HeldReleased` event; outcome `Landed`; `AssertRemoteSourceAsync` passes. |
@@ -193,12 +195,13 @@ Simulating a stale lock safely (every test below): only inside `ScratchGitRepo`,
 | PC | Mutation | Expected red |
 |---|---|---|
 | PC-1 | Remove `GIT_OPTIONAL_LOCKS` from `RunCoreAsync` | V-3 |
-| PC-2 | In `TryReclaimAfterKill`, drop the `LastWriteTimeUtc >= childStart` guard | V-4b (foreign lock deleted) |
+| PC-2 | Restore `TryReclaimAfterKill` (delete a young lock after a timeout kill) | V-4b (API present) and V-13 (foreign lock deleted) |
 | PC-3 | In `Classify`, treat a census entry with `StartUtc <= mtime` as not a holder | V-1 (third arm) |
 | PC-4 | Skip the pre-admission probe | V-5, V-6 |
 | PC-5 | Remove the post-failure re-probe after `merge --ff-only` | V-10 (`target_advance_failed` returns) |
 | PC-6 | Probe before `update-ref` too | V-11 |
 | PC-7 | Return `held` for a stale lock in `Get-AppHostGitIndexLock` | V-12 T3 |
+| PC-8 | Exclude lock codes from the Refused transition at `RebaseStarted` | V-14 re-POST hits `interrupted_rebase_requires_inspection` |
 
 ## Risks and notes for Code
 

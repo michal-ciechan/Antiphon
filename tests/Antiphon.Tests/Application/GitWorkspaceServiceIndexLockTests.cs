@@ -33,7 +33,7 @@ public sealed class GitWorkspaceServiceIndexLockTests
     }
 
     [Test]
-    public async Task Timeout_kill_reclaims_only_its_own_lock()
+    public async Task Timeout_kill_does_not_delete_index_lock()
     {
         using var repo = new ScratchGitRepo("c543-timeout");
         await repo.CommitFileAsync("a.txt", "a\n");
@@ -57,13 +57,48 @@ public sealed class GitWorkspaceServiceIndexLockTests
         code.ShouldBe(-1);
         stderr.ShouldBe("timeout");
         File.Exists(Path.Combine(repo.Path, "hook-started")).ShouldBeTrue();
-        File.Exists(lockPath).ShouldBeFalse();
-        logs.ShouldContain(l => l.Contains(lockPath, StringComparison.OrdinalIgnoreCase)
-            || l.Contains("index.lock", StringComparison.OrdinalIgnoreCase));
+        logs.ShouldNotContain(l => l.Contains("Reclaimed orphaned git index lock", StringComparison.Ordinal));
+        logs.ShouldContain(l => l.Contains("timed out", StringComparison.OrdinalIgnoreCase));
         (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldBe(head);
+        if (File.Exists(lockPath))
+            File.Delete(lockPath);
         File.Delete(hook);
         (await git.CommitOnlyAsync(repo.Path, ["b.txt"], "after hook removed", [], CancellationToken.None))
             .Code.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Timeout_kill_does_not_delete_a_foreign_lock_created_during_fsmonitor_stall()
+    {
+        using var repo = new ScratchGitRepo("c543-fsmonitor");
+        await repo.CommitFileAsync("a.txt", "a\n");
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "b.txt"), "b\n");
+        await repo.GitAsync("add", "--", "b.txt");
+        var hook = Path.Combine(repo.Path, "fsmonitor.cmd");
+        await File.WriteAllTextAsync(hook,
+            "@echo off\r\necho started>fsmonitor-started\r\nping -n 6 127.0.0.1 >nul\r\necho 1\r\n");
+        await repo.GitAsync("config", "core.useBuiltinFSMonitor", "false");
+        await repo.GitAsync("config", "core.fsmonitor", hook.Replace('\\', '/'));
+        var lockPath = (await ScratchGitRepo.GitInAsync(repo.Path, "rev-parse", "--path-format=absolute", "--git-path", "index.lock"))
+            .StdOut.Trim();
+        var marker = Path.Combine(repo.Path, "fsmonitor-started");
+        var logs = new List<string>();
+        var git = new GitWorkspaceService(new ListLogger<GitWorkspaceService>(logs), new GitProcessGate(),
+            Options.Create(new GitSettings { TimeoutSeconds = 2 }));
+        var commit = git.CommitOnlyAsync(repo.Path, ["b.txt"], "fsmonitor stall", [], CancellationToken.None);
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(8);
+        while (!File.Exists(marker) && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+        File.Exists(marker).ShouldBeTrue("core.fsmonitor must run before git takes index.lock");
+        File.Exists(lockPath).ShouldBeFalse();
+        var foreign = "foreign-lock"u8.ToArray();
+        await File.WriteAllBytesAsync(lockPath, foreign);
+        var (code, stderr) = await commit;
+        code.ShouldBe(-1);
+        stderr.ShouldBe("timeout");
+        File.Exists(lockPath).ShouldBeTrue();
+        (await File.ReadAllBytesAsync(lockPath)).ShouldBe(foreign);
+        logs.ShouldNotContain(l => l.Contains("Reclaimed orphaned git index lock", StringComparison.Ordinal));
     }
 
     private sealed class ListLogger<T>(List<string> sink) : ILogger<T>

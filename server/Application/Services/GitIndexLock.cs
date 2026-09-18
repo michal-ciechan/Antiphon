@@ -7,8 +7,8 @@ namespace Antiphon.Server.Application.Services;
 
 /// <summary>
 /// Pure classifier for <c>.git/index.lock</c>. I/O lives on <see cref="Interfaces.ILandingGit.InspectIndexLockAsync"/>.
-/// The land pipeline and scripts never delete a lock they did not create; reclaim is only
-/// GitWorkspaceService's own killed lock-taking child.
+/// No code path here deletes an index.lock. A timeout kill of a GitWorkspaceService child
+/// can race a foreign lock in the pre-lock window, so reclaim was removed (CARD-0543 Review).
 /// </summary>
 public static class GitIndexLock
 {
@@ -18,12 +18,6 @@ public static class GitIndexLock
     public const int DefaultStaleAfterSeconds = 300;
     public const int MinimumStaleAfterSeconds = 30;
     public static readonly TimeSpan CensusSkew = TimeSpan.FromSeconds(2);
-
-    private static readonly HashSet<string> LockTakingVerbs = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "add", "commit", "reset", "read-tree", "checkout", "restore", "merge", "rebase",
-        "stash", "rm", "mv", "update-index", "apply",
-    };
 
     public enum Kind { None, Held, Stale }
 
@@ -117,55 +111,6 @@ public static class GitIndexLock
         return $"Git index lock present at {path} (age {age}, {bytes} bytes). {liveness}. "
             + $"Remove it and the land resumes on the next sweep: Remove-Item '{path}'. "
             + "Never remove a lock while a git process older than it is running.";
-    }
-
-    public static bool TryReclaimAfterKill(string path, DateTime childStartUtc, string verb)
-    {
-        if (!IsLockTakingVerb(verb))
-            return false;
-        FileInfo info;
-        try
-        {
-            info = new FileInfo(path);
-            if (!info.Exists)
-                return false;
-            info.Refresh();
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
-        {
-            return false;
-        }
-
-        if (info.LastWriteTimeUtc < childStartUtc - CensusSkew)
-            return false;
-        try
-        {
-            File.Delete(path);
-            return true;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return false;
-        }
-    }
-
-    public static bool IsLockTakingVerb(string? verb) =>
-        verb is not null && LockTakingVerbs.Contains(verb);
-
-    public static string? FirstVerb(IReadOnlyList<string> args)
-    {
-        for (var i = 0; i < args.Count; i++)
-        {
-            if (args[i] is "-c" or "-C")
-            {
-                i++;
-                continue;
-            }
-            if (args[i].StartsWith('-'))
-                continue;
-            return args[i];
-        }
-        return null;
     }
 
     public static IReadOnlyList<(int Pid, DateTime? StartUtc)> CensusGitProcesses()

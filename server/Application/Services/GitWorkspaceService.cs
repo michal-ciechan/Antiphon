@@ -1035,7 +1035,6 @@ public class GitWorkspaceService
         string workingDirectory, string? stdin, CancellationToken ct, params string[] args)
     {
         Process? process = null;
-        var childStartUtc = DateTime.UtcNow;
         try
         {
             var psi = new ProcessStartInfo
@@ -1063,8 +1062,6 @@ public class GitWorkspaceService
             process = Process.Start(psi);
             if (process is null)
                 return (-1, "", $"{_settings.ExecutableName} failed to start");
-            try { childStartUtc = process.StartTime.ToUniversalTime(); }
-            catch (Exception) { childStartUtc = DateTime.UtcNow; }
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             var timeout = TimeSpan.FromSeconds(Math.Max(1, _settings.TimeoutSeconds));
@@ -1090,7 +1087,6 @@ public class GitWorkspaceService
                 "git {Args} timed out after {Timeout} in {Dir}; child killed",
                 string.Join(' ', args), TimeSpan.FromSeconds(Math.Max(1, _settings.TimeoutSeconds)), workingDirectory);
             WaitForExitBounded(process, 2000);
-            TryReclaimOwnIndexLock(workingDirectory, args, childStartUtc);
             return (-1, "", "timeout");
         }
         catch (Exception ex)
@@ -1135,57 +1131,6 @@ public class GitWorkspaceService
         }
     }
 
-    private void TryReclaimOwnIndexLock(string workingDirectory, string[] args, DateTime childStartUtc)
-    {
-        var verb = GitIndexLock.FirstVerb(args);
-        if (verb is null || !GitIndexLock.IsLockTakingVerb(verb))
-            return;
-        var path = TryResolveIndexLockPath(workingDirectory);
-        if (path is null)
-            return;
-        if (!GitIndexLock.TryReclaimAfterKill(path, childStartUtc, verb))
-            return;
-        _logger.LogWarning(
-            "Reclaimed orphaned git index lock {Path} after timeout kill of {Verb} in {Dir}",
-            path, verb, workingDirectory);
-    }
-
-    private string? TryResolveIndexLockPath(string workingDirectory)
-    {
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = _settings.ExecutableName,
-                WorkingDirectory = workingDirectory,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8,
-            };
-            psi.Environment["GIT_OPTIONAL_LOCKS"] = "0";
-            psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-            psi.ArgumentList.Add("rev-parse");
-            psi.ArgumentList.Add("--path-format=absolute");
-            psi.ArgumentList.Add("--git-path");
-            psi.ArgumentList.Add("index.lock");
-            using var resolve = Process.Start(psi);
-            if (resolve is null)
-                return null;
-            if (!resolve.WaitForExit(2000))
-            {
-                TryKill(resolve);
-                return null;
-            }
-            var path = resolve.StandardOutput.ReadToEnd().Trim();
-            return resolve.ExitCode == 0 && path.Length > 0 ? path : null;
-        }
-        catch (Exception)
-        {
-            return null;
-        }
-    }
 }
 
 public enum GitFileStatus
