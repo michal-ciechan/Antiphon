@@ -48,6 +48,7 @@ public class ProcessSpawnLimitTests
             typeof(DelegationWorktreeTests),
             typeof(Antiphon.Tests.Infrastructure.WorktreeRemovalAuthorityTests),
             typeof(Antiphon.Tests.Infrastructure.LandingGitTests),
+            typeof(Antiphon.Tests.Infrastructure.GitDiffSpikeTests),
             typeof(Antiphon.Tests.Infrastructure.RepositoryMutationLeaseTests),
             typeof(SessionRunnerRuntimeTests),
             typeof(RawPtyAdapterTests),

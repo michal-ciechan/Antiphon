@@ -1,4 +1,5 @@
 using Antiphon.Server.Infrastructure.Git;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Core;
@@ -18,6 +19,7 @@ namespace Antiphon.Tests.Infrastructure;
 /// </summary>
 [Category("Integration")]
 [Category("Slow")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class GitDiffSpikeTests
 {
     private static readonly Guid TestWorkflowId = Guid.Parse("11111111-2222-3333-4444-555555555555");
