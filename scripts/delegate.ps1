@@ -490,10 +490,10 @@ switch ($PSCmdlet.ParameterSetName) {
             return
         }
         Write-Output ("{0} stuck feat/card-task-* finding(s) (detection only; nothing pruned):" -f $count)
-        foreach ($finding in $report.findings) {
-            $severity = if ($finding.severity) { $finding.severity } else { 'Error' }
-            $short = if ($finding.shortId) { $finding.shortId } else { '-' }
-            Write-Output ("  [{0}] {1}  task {2}  {3}" -f $severity, $finding.branch, $short, $finding.detail)
+        foreach ($row in $report.findings) {
+            $severity = if ($row.severity) { $row.severity } else { 'Error' }
+            $short = if ($row.shortId) { $row.shortId } else { '-' }
+            Write-Output ("  [{0}] {1}  task {2}  {3}" -f $severity, $row.branch, $short, $row.detail)
         }
         return
     }
