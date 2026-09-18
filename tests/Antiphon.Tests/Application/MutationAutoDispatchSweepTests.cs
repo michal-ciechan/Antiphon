@@ -101,7 +101,7 @@ public sealed class MutationAutoDispatchSweepTests
     {
         await using var world = await MutationSweepWorld.CreateAsync();
         await world.SeedTaskAsync(AgentTaskRole.Mutation, status,
-            projectId: sameProject ? world.ProjectId : Guid.NewGuid());
+            projectId: sameProject ? world.ProjectId : await world.OtherProjectAsync());
 
         var tick = await world.TickAsync();
 
@@ -247,7 +247,7 @@ public sealed class MutationAutoDispatchSweepTests
     public async Task C552_S14_AbsoluteConcurrencyCapEndsTheTickAndKeepsTheRow()
     {
         await using var world = await MutationSweepWorld.CreateAsync(s => s.MaxOpenTasks = 1);
-        await world.SeedTaskAsync(AgentTaskRole.Code, AgentTaskStatus.Queued);
+        await world.SeedTaskAsync(AgentTaskRole.Code, AgentTaskStatus.Queued, projectId: world.ProjectId);
 
         var tick = await world.TickAsync();
 
@@ -425,7 +425,7 @@ public sealed class MutationAutoDispatchSweepTests
     {
         public LandingSafetyHarness Host { get; } = new()
         {
-            Clock = new FakeTimeProvider(new DateTimeOffset(2100, 6, 1, 12, 0, 0, TimeSpan.Zero)),
+            Clock = new FakeTimeProvider(new DateTimeOffset(2100, 6, 1, 0, 0, 0, TimeSpan.Zero)),
         };
 
         public FakeSessionRunnerClient Runner { get; } = new() { VerificationStoreId = Guid.NewGuid() };
@@ -509,6 +509,7 @@ public sealed class MutationAutoDispatchSweepTests
                     ? new ModelAvailability(db, Host.Clock, NullLogger<ModelAvailability>.Instance)
                     : null,
                 routingPins: new RoutingPinService(db, Host.Clock, NullLogger<RoutingPinService>.Instance),
+                complexityRouting: new ComplexityRoutingService(db, options, Host.Clock),
                 openGate: new DelegationOpenGate(db, options),
                 sourceLanding: services.GetRequiredService<SourceLandingAdmission>());
         }
@@ -579,6 +580,20 @@ public sealed class MutationAutoDispatchSweepTests
             return task;
         }
 
+        /// <summary>A real second project, so the fleet-wide WIP gate is tested across buckets.</summary>
+        public async Task<Guid> OtherProjectAsync()
+        {
+            await using var db = Host.CreateContext();
+            var project = new Project
+            {
+                Id = Guid.NewGuid(), Name = "c552-other",
+                GitRepositoryUrl = "https://example.test/other.git", CreatedAt = Now, UpdatedAt = Now,
+            };
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            return project.Id;
+        }
+
         public async Task<Guid> PinAsync(AgentKind kind, AgentModelLevel level)
         {
             await using var db = Host.CreateContext();
@@ -641,6 +656,7 @@ public sealed class MutationAutoDispatchSweepTests
             DateTime remoteConfirmedAt)
         {
             await using var db = Host.CreateContext();
+            var first = await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.Id == Operation);
             var doneColumn = await db.BoardColumns.FirstAsync(c => c.BoardId == BoardId && c.CardStatus == CardStatus.Done);
             var backlogColumn = await db.BoardColumns.FirstAsync(c => c.BoardId == BoardId && c.CardStatus == CardStatus.Backlog);
             var original = new Card
@@ -676,9 +692,12 @@ public sealed class MutationAutoDispatchSweepTests
                 OriginalSourceSha = Host.Fixture.SeedSha, VerifiedSourceSha = Host.Fixture.SeedSha,
                 ObservedRemoteTargetSha = Host.Fixture.SeedSha, TargetBeforeSha = Host.Fixture.SeedSha,
                 TargetFullRef = Host.Fixture.TargetRef, DestinationFullRef = Host.Fixture.TargetRef,
-                SourceFullRef = "refs/heads/feat/second", RepositoryPath = Host.Fixture.Repository,
-                CommonDirectory = Host.Fixture.Repository, WorktreePath = Host.Fixture.Repository,
-                GitDirectory = Host.Fixture.Repository, SourcePinned = true, TargetPinned = true,
+                SourceFullRef = "refs/heads/feat/second",
+                // Admission resolves the git common directory from disk and compares it to the
+                // operation's, so the synthetic op must name what the real land recorded.
+                RepositoryPath = first.RepositoryPath, CommonDirectory = first.CommonDirectory,
+                WorktreePath = first.WorktreePath, GitDirectory = first.GitDirectory,
+                SourcePinned = true, TargetPinned = true,
                 VerificationSkipReason = "exact_remote_containment", VerifiedAt = Now,
                 RemoteFingerprint = new string('a', 64), RemoteConfirmedAt = remoteConfirmedAt,
                 ConfirmationMethod = "push-endpoint-read-fetch-ancestry",

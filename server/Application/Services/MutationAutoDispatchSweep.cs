@@ -291,7 +291,9 @@ public sealed class MutationAutoDispatchSweep
         goal.Append("the completion note names.\n\n");
         goal.Append("Recording the executed counts, evidence root and restoration verdict on ")
             .Append(companion.Identifier).Append(" at close is the caller's; you only report.\n");
-        goal.Append("Code handoff: ").Append(Field(owner.NextHandoff) ?? "none recorded").Append('\n');
+        // No trailing newline: the create door trims the goal, and a composer whose output does
+        // not survive storage byte for byte cannot be compared to what the task actually carries.
+        goal.Append("Code handoff: ").Append(Field(owner.NextHandoff) ?? "none recorded");
         var text = PostLandVerificationCompanions.Ascii(goal.ToString());
         return text.Length < GoalCap ? text : text[..(GoalCap - 1)];
     }
