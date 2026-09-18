@@ -41,7 +41,10 @@ public partial class AgentTaskReplyIntegrationTests
         var terminal = AttachTerminal(factory, seeded.Parent);
         await SeedTurnAsync(seeded.SessionId, DelegationReportFormatter.TaskMarker(seeded.Task.Id), report);
         await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
-        if (interruption != "immediate")
+        // CARD-0527 A-12: a fresh settle whose gate found nothing has NO obligation left open
+        // (CommitRecoveryNotNeeded is already written), so a failed residual status no longer
+        // holds the task — it settles once, saying the residual could not be inspected.
+        if (interruption == "save")
         {
             await Queue(factory).FlushSessionAsync(seeded.Parent, CancellationToken.None);
             await AssertC527RecoveryPendingAsync(seeded.Task.Id);
@@ -53,7 +56,9 @@ public partial class AgentTaskReplyIntegrationTests
         }
         await Queue(factory).FlushSessionAsync(seeded.Parent, CancellationToken.None);
         var receipt = await AssertParentReceivedNoteAsync(seeded.Parent, seeded.Task, report);
-        receipt.Prompt.Text.ShouldContain(foreign ? "git=uncommitted:1 (selected changes reverted)" : "git=landed");
+        receipt.Prompt.Text.ShouldContain(interruption == "status"
+            ? "git=no commit needed (status inspection unavailable)"
+            : foreign ? "git=uncommitted:1 (selected changes reverted)" : "git=landed");
         receipt.Prompt.Text.ShouldNotContain("commit task ");
         receipt.Prompt.Text.ShouldNotContain("commit refused");
         receipt.Prompt.Text.ShouldNotContain("git=committed:");
@@ -68,9 +73,18 @@ public partial class AgentTaskReplyIntegrationTests
             var resolved = await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == seeded.Task.Id
                 && e.Type == AgentTaskEventType.CommitRecoveryNotNeeded);
             resolved.Detail.ShouldBe($"{started.Id:D} NothingToCommit");
-            var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == seeded.Task.Id);
-            receipt.Prompt.Text.ShouldBe(note.Body);
-            receipt.Note.SourceLandNotificationId.ShouldBe(note.Id);
+            if (interruption == "status")
+            {
+                // Parity with the commit-on-settle Off arm: an unavailable-inspection header is
+                // not Durable, so it mints no durable completion outbox row.
+                (await db.AgentTaskLandNotifications.AnyAsync(n => n.TaskId == seeded.Task.Id)).ShouldBeFalse();
+            }
+            else
+            {
+                var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == seeded.Task.Id);
+                receipt.Prompt.Text.ShouldBe(note.Body);
+                receipt.Note.SourceLandNotificationId.ShouldBe(note.Id);
+            }
         }
         (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldBe(baseline);
         (await repo.GitReadAsync("show", "HEAD:a.md")).ShouldBe("base");
@@ -80,7 +94,8 @@ public partial class AgentTaskReplyIntegrationTests
             (await repo.GitReadAsync("show", ":foreign.md")).ShouldBe("foreign staged");
             (await File.ReadAllTextAsync(Path.Combine(repo.Path, "foreign.md"))).ShouldBe("foreign work");
             (await repo.GitReadAsync("diff", "--cached", "--name-only")).Trim().ShouldBe("foreign.md");
-            receipt.Prompt.Text.ShouldContain("Other dirty paths left as found: foreign.md.");
+            if (interruption != "status")
+                receipt.Prompt.Text.ShouldContain("Other dirty paths left as found: foreign.md.");
         }
         else (await repo.GitReadAsync("status", "--porcelain")).ShouldBeEmpty();
         await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);

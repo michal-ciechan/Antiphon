@@ -26,7 +26,7 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 [Category("Slow")]
-public class DelegationWorktreeTests
+public partial class DelegationWorktreeTests
 {
     // ---- creation --------------------------------------------------------------------------
 
