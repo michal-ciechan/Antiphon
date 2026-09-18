@@ -22,7 +22,7 @@ namespace Antiphon.Tests.Application;
 /// not collide with other suites writing the shared Postgres container.
 /// </summary>
 [Category("Integration")]
-public class AgentTaskPipelineStatusTests
+public partial class AgentTaskPipelineStatusTests
 {
     [Test]
     [Arguments(LandPublicationOutcome.Landed, false)]
@@ -935,7 +935,7 @@ public class AgentTaskPipelineStatusTests
 [Category("Integration")]
 [NotInParallel]
 [ClassDataSource<AntiphonWebAppFactory>(Shared = SharedType.PerTestSession)]
-public class AgentTaskPipelineEndpointTests
+public partial class AgentTaskPipelineEndpointTests
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
