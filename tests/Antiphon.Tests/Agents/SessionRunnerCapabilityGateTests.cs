@@ -8,6 +8,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -63,6 +64,71 @@ public class SessionRunnerCapabilityGateTests
         launched.SessionId.ShouldBe(sessionId);
         handler.Requests.Select(request => request.RequestUri!.AbsolutePath).ShouldBe(["/capabilities", "/sessions"]);
     }
+
+    // ---- CARD-0511 S2: the watchdog cache keeps its last good answer ---------------------------
+
+    /// <summary>
+    /// V-511-6 / G-511-9, G-511-10. A failed probe is "I could not find out", not "no
+    /// capabilities": it must never overwrite a good snapshot, and it must not pin that miss for
+    /// the whole TTL (_capabilitiesProbedAt is stamped BEFORE the probe runs).
+    /// </summary>
+    [Test]
+    public async Task C511_V6_Failed_probe_keeps_the_last_good_snapshot()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 13, 15, 0, 0, TimeSpan.Zero));
+        var answer = true;
+        var handler = new StubHandler(_ => answer
+            ? Json(OldRunner())
+            : throw new HttpRequestException("runner restarting"));
+        var client = Client(handler, clock);
+
+        var first = await client.GetTranscriptCapabilityMismatchAsync(AgentKind.Codex, CancellationToken.None);
+        first.ShouldNotBeNull();
+        first!.Message.ShouldContain("built from aaaaaaa");
+        handler.Requests.Count.ShouldBe(1);
+
+        answer = false;
+        clock.Advance(TimeSpan.FromMinutes(6));
+        var second = await client.GetTranscriptCapabilityMismatchAsync(AgentKind.Codex, CancellationToken.None);
+        handler.Requests.Count.ShouldBe(2, "a stale snapshot starts a refresh probe");
+        second.ShouldNotBeNull("the failed probe must keep the last good answer, not serve null");
+        second!.Message.ShouldContain("built from aaaaaaa");
+
+        // No clock advance: the failed probe marked the cache stale, so this call probes again
+        // rather than serving the miss for the rest of the TTL.
+        var third = await client.GetTranscriptCapabilityMismatchAsync(AgentKind.Codex, CancellationToken.None);
+        handler.Requests.Count.ShouldBe(3);
+        third.ShouldNotBeNull();
+    }
+
+    /// <summary>V-511-7 / G-511-10. A failed FIRST probe re-probes on the next call.</summary>
+    [Test]
+    public async Task C511_V7_Failed_first_probe_reprobes_on_the_next_call()
+    {
+        var calls = 0;
+        var handler = new StubHandler(_ => ++calls == 1
+            ? throw new HttpRequestException("runner restarting")
+            : Json(OldRunner()));
+        var client = Client(handler);
+
+        (await client.GetTranscriptCapabilityMismatchAsync(AgentKind.Codex, CancellationToken.None)).ShouldBeNull();
+
+        var second = await client.GetTranscriptCapabilityMismatchAsync(AgentKind.Codex, CancellationToken.None);
+        handler.Requests.Count.ShouldBe(2);
+        second.ShouldNotBeNull();
+        second!.Message.ShouldContain("aaaaaaa");
+    }
+
+    private static RunnerCapabilitiesDto OldRunner() => new(
+        "InboxConhost", "inbox", "test", false,
+        [TranscriptFormats.Claude],
+        new RunnerBuildDto($"1.0.0+{new string('a', 40)}", new string('a', 40), DateTime.UnixEpoch,
+            new DateTime(2026, 9, 13, 9, 0, 0, DateTimeKind.Utc)),
+        [SessionBackends.PtyHost]);
+
+    private static SessionRunnerHttpClient Client(StubHandler handler, TimeProvider? clock = null) =>
+        new(new HttpClient(handler), new StubFactory(),
+            Options.Create(new SessionRunnerSettings { BaseUrl = "http://runner.test" }), null, clock);
 
     private static HttpResponseMessage Json<T>(T value) => new(HttpStatusCode.OK)
     {

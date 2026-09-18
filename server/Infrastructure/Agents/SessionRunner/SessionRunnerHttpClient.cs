@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -30,6 +31,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly SessionRunnerSettings _settings;
     private readonly GrokRulesSettings _rulesSettings;
+    private readonly TimeProvider _clock;
     private readonly object _capabilityGate = new();
     private RunnerCapabilitiesDto? _cachedCapabilities;
     private DateTimeOffset _capabilitiesProbedAt = DateTimeOffset.MinValue;
@@ -39,44 +41,119 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         HttpClient httpClient,
         IHttpClientFactory httpClientFactory,
         IOptions<SessionRunnerSettings> settings,
-        IOptions<GrokRulesSettings>? rulesSettings = null)
+        IOptions<GrokRulesSettings>? rulesSettings = null,
+        TimeProvider? clock = null)
     {
         _httpClient = httpClient;
         _httpClientFactory = httpClientFactory;
         _settings = settings.Value;
         _rulesSettings = rulesSettings?.Value ?? new();
+        _clock = clock ?? TimeProvider.System;
         _httpClient.BaseAddress = new Uri(_settings.BaseUrl.TrimEnd('/') + "/");
     }
+
+    /// <summary>
+    /// CARD-0511 D-1. One launch decision, one probe. <c>Capabilities</c> null with
+    /// <c>Unreachable</c> null is the older-runner "no evidence" answer (no endpoint);
+    /// <c>Unreachable</c> set means nobody answered, which is a different refusal (D-2).
+    /// </summary>
+    private sealed record RunnerCapabilityProbe(
+        RunnerCapabilitiesDto? Capabilities, string Identity, Exception? Unreachable);
+
+    private const string UnreachableMessage =
+        "The session runner at :17204 did not answer GET /capabilities, so this launch cannot be "
+        + "decided on evidence. That is a transport failure (the runner may be restarting), not a "
+        + "stale build; the ordinary retry ladder paces it.";
+
+    /// <summary>
+    /// Takes ONE bounded, uncached <c>GET /capabilities</c> for a single launch decision and
+    /// refreshes the watchdog snapshot with the answer. The gate exists for exactly one event -- a
+    /// runner being replaced -- and that is the one event a TTL cache cannot see: the 5-minute
+    /// stale-while-revalidate snapshot both wasted a doomed attempt against a runner that had
+    /// already been rebuilt and (the mirror hole) let a stale positive launch onto a downgraded
+    /// runner (CARD-0511 / CARD-0160).
+    /// </summary>
+    private async Task<RunnerCapabilityProbe> ProbeForDecisionAsync(CancellationToken ct)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(CapabilityProbeTimeout);
+        try
+        {
+            using var response = await _httpClient.GetAsync("capabilities", deadline.Token);
+            // A runner that predates the endpoint answers 404. That is "this runner cannot say",
+            // which every gate already has a defined answer for -- not a failure to reach it.
+            if (response.StatusCode == HttpStatusCode.NotFound)
+                return new RunnerCapabilityProbe(null, RunnerIdentity.Unknown, null);
+            response.EnsureSuccessStatusCode();
+            var capabilities = await response.Content
+                .ReadFromJsonAsync<RunnerCapabilitiesDto>(JsonOptions, deadline.Token);
+            if (capabilities is null)
+            {
+                return new RunnerCapabilityProbe(null, RunnerIdentity.Unknown,
+                    new InvalidOperationException("The session runner returned an empty capabilities body."));
+            }
+
+            lock (_capabilityGate)
+            {
+                _cachedCapabilities = capabilities;
+                _capabilitiesProbedAt = _clock.GetUtcNow();
+            }
+
+            return new RunnerCapabilityProbe(capabilities, RunnerIdentity.Describe(capabilities.Build), null);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or NotSupportedException or JsonException
+                                       or TaskCanceledException or OperationCanceledException
+                                       && !ct.IsCancellationRequested)
+        {
+            return new RunnerCapabilityProbe(null, RunnerIdentity.Unknown, ex);
+        }
+    }
+
+    /// <summary>Does this spec need POSITIVE capability evidence to be decided at all?</summary>
+    private static bool NeedsPositiveEvidence(AgentLaunchSpec spec) =>
+        spec.GrokRulesPayload is not null
+        || BackendWire(spec.Backend) == SessionBackends.Herdr
+        || !string.IsNullOrWhiteSpace(spec.Herdr?.TabLabel)
+        || spec.AcceptedStartedAt is not null;
 
     public async Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
     {
         GrokRulesLaunchValidation.Validate(spec, _rulesSettings);
+        // CARD-0511 D-1: exactly one probe per StartAsync, even when no gate needs its answer.
+        // Every gate below is a pure function of THIS answer, never of a snapshot taken for some
+        // earlier decision.
+        var probe = await ProbeForDecisionAsync(ct);
+        var capabilities = probe.Capabilities;
+        var decidedBuild = capabilities?.Build;
+        if (probe.Unreachable is { } unreachable && NeedsPositiveEvidence(spec))
+            throw new RunnerUnreachableException(UnreachableMessage, unreachable);
+
         if (spec.GrokRulesPayload is not null
-            && (await GetCapabilitiesAsync(ct))?.Features?.Contains(GrokRulesTransport.Capability, StringComparer.Ordinal) != true)
+            && capabilities?.Features?.Contains(GrokRulesTransport.Capability, StringComparer.Ordinal) != true)
             throw new ConflictException("Selected runner does not advertise grokRulesFileV1.", "grok_rules_transport_unsupported");
-        if (await GetTranscriptCapabilityMismatchAsync(spec.Kind, ct) is { } mismatch)
-            throw new RunnerCapabilityMismatchException(mismatch.Message);
+        if (TranscriptMismatch(capabilities, spec.Kind) is { } mismatch)
+            throw new RunnerCapabilityMismatchException(mismatch.Message, decidedBuild);
 
         // CARD-0160: refuse a herdr launch before POSTing unless the runner advertises "herdr".
         // An old runner would ignore the unknown Backend field and silently launch a pty-host —
         // never silently remap (CARD-0111 §6). Null capabilities = no evidence = refuse.
         var backendWire = BackendWire(spec.Backend);
         if (backendWire == SessionBackends.Herdr
-            && await GetSessionBackendCapabilityMismatchAsync(ct) is { } herdrMismatch)
+            && HerdrBackendMismatch(capabilities) is { } herdrMismatch)
         {
-            throw new RunnerCapabilityMismatchException(herdrMismatch);
+            throw new RunnerCapabilityMismatchException(herdrMismatch, decidedBuild);
         }
 
         if (!string.IsNullOrWhiteSpace(spec.Herdr?.TabLabel)
-            && await GetNamedTabPlacementCapabilityMismatchAsync(ct) is { } namedMismatch)
+            && NamedTabMismatch(capabilities) is { } namedMismatch)
         {
-            throw new RunnerCapabilityMismatchException(namedMismatch);
+            throw new RunnerCapabilityMismatchException(namedMismatch, decidedBuild);
         }
 
         if (spec.AcceptedStartedAt is not null
-            && await GetSessionGenerationCapabilityMismatchAsync(ct) is { } generationMismatch)
+            && GenerationMismatch(capabilities) is { } generationMismatch)
         {
-            throw new RunnerCapabilityMismatchException(generationMismatch);
+            throw new RunnerCapabilityMismatchException(generationMismatch, decidedBuild);
         }
 
         var request = new RunnerLaunchRequest(
@@ -142,78 +219,74 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         backend == SessionBackend.Herdr ? SessionBackends.Herdr : null;
 
     /// <summary>
-    /// Returns an error message when the runner cannot host herdr. Null capabilities or a list
-    /// lacking "herdr" both refuse — never fall back to pty-host.
+    /// Returns an error message when the runner cannot host herdr. CARD-0511 D-1: decided on its
+    /// own fresh probe, never on a snapshot taken for an earlier decision.
     /// </summary>
-    public async Task<string?> GetSessionBackendCapabilityMismatchAsync(CancellationToken ct)
-    {
-        await EnsureCapabilitiesProbedAsync(ct);
-        RunnerCapabilitiesDto? cached;
-        lock (_capabilityGate)
-            cached = _cachedCapabilities;
+    public async Task<string?> GetSessionBackendCapabilityMismatchAsync(CancellationToken ct) =>
+        HerdrBackendMismatch((await ProbeForDecisionAsync(ct)).Capabilities);
 
-        if (cached?.SessionBackends is { } backends
+    /// <summary>
+    /// Null capabilities or a list lacking "herdr" both refuse — never fall back to pty-host.
+    /// </summary>
+    private static string? HerdrBackendMismatch(RunnerCapabilitiesDto? capabilities)
+    {
+        if (capabilities?.SessionBackends is { } backends
             && backends.Contains(SessionBackends.Herdr, StringComparer.OrdinalIgnoreCase))
             return null;
 
-        var supported = cached?.SessionBackends is { Count: > 0 } listed
+        var supported = capabilities?.SessionBackends is { Count: > 0 } listed
             ? string.Join(", ", listed)
             : "none (older runner or probe failed)";
-        var build = DescribeBuild(cached?.Build);
+        var build = DescribeBuild(capabilities?.Build);
         return $"The session runner at :17204 cannot host a herdr session — it reports SessionBackends={supported}{build}. "
             + "Launching anyway would silently open a pty-host (CARD-0160 / CARD-0112). Rebuild and restart it: "
             + "pwsh -File scripts/restart-session-runner.ps1.";
     }
 
-    private async Task<string?> GetNamedTabPlacementCapabilityMismatchAsync(CancellationToken ct)
+    private static string? NamedTabMismatch(RunnerCapabilitiesDto? capabilities)
     {
-        await EnsureCapabilitiesProbedAsync(ct);
-        RunnerCapabilitiesDto? cached;
-        lock (_capabilityGate)
-            cached = _cachedCapabilities;
-        if (cached?.Features is { } features
+        if (capabilities?.Features is { } features
             && features.Contains(RunnerCapabilityFeatures.HerdrNamedTabPlacement, StringComparer.OrdinalIgnoreCase))
             return null;
 
-        var build = DescribeBuild(cached?.Build);
+        var build = DescribeBuild(capabilities?.Build);
         return $"The session runner does not advertise {RunnerCapabilityFeatures.HerdrNamedTabPlacement}{build}. "
             + "Rebuild and restart it: pwsh -File scripts/restart-session-runner.ps1.";
     }
 
-    private async Task<string?> GetSessionGenerationCapabilityMismatchAsync(CancellationToken ct)
+    private static string? GenerationMismatch(RunnerCapabilitiesDto? capabilities)
     {
-        await EnsureCapabilitiesProbedAsync(ct);
-        RunnerCapabilitiesDto? cached;
-        lock (_capabilityGate)
-            cached = _cachedCapabilities;
-        if (cached?.Features is { } features
+        if (capabilities?.Features is { } features
             && features.Contains(RunnerCapabilityFeatures.SessionGenerationV1, StringComparer.OrdinalIgnoreCase))
             return null;
 
-        var build = DescribeBuild(cached?.Build);
+        var build = DescribeBuild(capabilities?.Build);
         return $"The session runner does not advertise {RunnerCapabilityFeatures.SessionGenerationV1}{build}. "
             + "Rebuild and restart it: pwsh -File scripts/restart-session-runner.ps1.";
     }
 
-    private async Task EnsureCapabilitiesProbedAsync(CancellationToken ct)
+    /// <summary>
+    /// The transcript gate's null semantics are the opposite of the others: "this runner cannot
+    /// say" launches (CARD-0112/CARD-0160), only an EXPLICIT list without the format refuses.
+    /// </summary>
+    private static RunnerCapabilityMismatch? TranscriptMismatch(RunnerCapabilitiesDto? capabilities, AgentKind kind)
     {
-        Task? probe;
-        RunnerCapabilitiesDto? cached;
-        lock (_capabilityGate)
-        {
-            var stale = DateTimeOffset.UtcNow - _capabilitiesProbedAt >= CapabilityProbeTtl;
-            if (stale && (_capabilityProbe is null || _capabilityProbe.IsCompleted))
-            {
-                _capabilitiesProbedAt = DateTimeOffset.UtcNow;
-                _capabilityProbe = ProbeCapabilitiesAsync();
-            }
+        var format = TranscriptFormatFor(kind);
+        if (format is null)
+            return null;
+        if (capabilities?.TranscriptFormats is not { } formats
+            || formats.Contains(format, StringComparer.OrdinalIgnoreCase))
+            return null;
 
-            probe = _capabilityProbe;
-            cached = _cachedCapabilities;
-        }
-
-        if (cached is null && probe is not null)
-            await probe.WaitAsync(ct);
+        var supported = formats.Count == 0 ? "none" : string.Join(", ", formats);
+        var build = DescribeBuild(capabilities.Build);
+        return new RunnerCapabilityMismatch(
+            format,
+            capabilities,
+            $"The session runner at :17204 cannot tail a '{format}' transcript — it reports support for {supported}{build}. "
+            + "Launching anyway would bind no transcript, and the delivery watchdog would read that as \"never started\" "
+            + "and kill a working session 10 minutes later (CARD-0112). Rebuild and restart it: "
+            + "pwsh -File scripts/restart-session-runner.ps1.");
     }
 
     /// <summary>Which agent kinds get a runner-side transcript tailer (see StartAsync's mapping).</summary>
@@ -268,8 +341,9 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     }
 
     /// <summary>
-    /// Uses one cached capability snapshot per TTL. The first launch waits for its bounded probe so
-    /// an explicit refusal is caught before a process starts; later stale snapshots refresh in the
+    /// The dispatcher's transcript watchdog (NOT a launch decision - those take a fresh probe per
+    /// CARD-0511 D-1) keeps one cached snapshot per TTL. The first caller waits for its bounded
+    /// probe so an explicit refusal is seen before it decides; later stale snapshots refresh in the
     /// background, mirroring PtyDeliveryProfile. A missing/failed answer remains no evidence.
     /// </summary>
     public async Task<RunnerCapabilityMismatch?> GetTranscriptCapabilityMismatchAsync(AgentKind kind, CancellationToken ct)
@@ -282,10 +356,10 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         RunnerCapabilitiesDto? cached;
         lock (_capabilityGate)
         {
-            var stale = DateTimeOffset.UtcNow - _capabilitiesProbedAt >= CapabilityProbeTtl;
+            var stale = _clock.GetUtcNow() - _capabilitiesProbedAt >= CapabilityProbeTtl;
             if (stale && (_capabilityProbe is null || _capabilityProbe.IsCompleted))
             {
-                _capabilitiesProbedAt = DateTimeOffset.UtcNow;
+                _capabilitiesProbedAt = _clock.GetUtcNow();
                 _capabilityProbe = ProbeCapabilitiesAsync();
             }
 
@@ -301,19 +375,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         lock (_capabilityGate)
             cached = _cachedCapabilities;
 
-        if (cached?.TranscriptFormats is not { } formats
-            || formats.Contains(format, StringComparer.OrdinalIgnoreCase))
-            return null;
-
-        var supported = formats.Count == 0 ? "none" : string.Join(", ", formats);
-        var build = DescribeBuild(cached.Build);
-        return new RunnerCapabilityMismatch(
-            format,
-            cached,
-            $"The session runner at :17204 cannot tail a '{format}' transcript — it reports support for {supported}{build}. "
-            + "Launching anyway would bind no transcript, and the delivery watchdog would read that as \"never started\" "
-            + "and kill a working session 10 minutes later (CARD-0112). Rebuild and restart it: "
-            + "pwsh -File scripts/restart-session-runner.ps1.");
+        return TranscriptMismatch(cached, kind);
     }
 
     private async Task ProbeCapabilitiesAsync()
@@ -332,7 +394,17 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         }
 
         lock (_capabilityGate)
-            _cachedCapabilities = result;
+        {
+            // CARD-0511 D-6: a failed probe means "I could not find out", never "no capabilities".
+            // Overwriting a good snapshot with null used to serve that false verdict to the
+            // dispatcher's watchdog for the whole 5-minute TTL, because _capabilitiesProbedAt is
+            // stamped BEFORE the probe. Keep the last good answer and mark the cache stale so the
+            // next call probes again.
+            if (result is not null)
+                _cachedCapabilities = result;
+            else
+                _capabilitiesProbedAt = DateTimeOffset.MinValue;
+        }
     }
 
     private static string DescribeBuild(RunnerBuildDto? build)
@@ -733,10 +805,14 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     public async Task<SessionRunnerSessionDto> AttachHerdrAsync(HerdrAttachRequest request, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
-        if (request.AcceptedStartedAt is not null
-            && await GetSessionGenerationCapabilityMismatchAsync(ct) is { } generationMismatch)
+        if (request.AcceptedStartedAt is not null)
         {
-            throw new RunnerCapabilityMismatchException(generationMismatch);
+            // CARD-0511 D-1: attach is a launch decision too, and takes its own probe.
+            var probe = await ProbeForDecisionAsync(ct);
+            if (probe.Unreachable is { } unreachable)
+                throw new RunnerUnreachableException(UnreachableMessage, unreachable);
+            if (GenerationMismatch(probe.Capabilities) is { } generationMismatch)
+                throw new RunnerCapabilityMismatchException(generationMismatch, probe.Capabilities?.Build);
         }
 
         var response = await _httpClient.PostAsJsonAsync("sessions/attach", request, JsonOptions, ct);

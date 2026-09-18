@@ -12,9 +12,16 @@ public sealed class RestartFailurePolicy
     public RestartFailureKind Classify(Exception exception)
     {
         var chain = Flatten(exception).ToArray();
+        // CARD-0511 D-2: name the type, not only its inner. A RunnerUnreachableException may carry
+        // no inner at all (a 404-shaped no-answer), and "nobody answered" is transport pacing.
         if (chain.Any(e => e is DbException { IsTransient: true }
-            or HttpRequestException or SocketException or IOException or UnauthorizedAccessException or TimeoutException or OperationCanceledException))
+            or HttpRequestException or SocketException or IOException or UnauthorizedAccessException or TimeoutException or OperationCanceledException
+            or RunnerUnreachableException))
             return RestartFailureKind.Infrastructure;
+        // CARD-0511 D-3: a stale runner binary is an external prerequisite no retry can change.
+        // It holds (see RunnerBuildHoldState) instead of climbing the backoff ladder.
+        if (chain.Any(e => e is RunnerCapabilityMismatchException))
+            return RestartFailureKind.RunnerBuildStale;
         if (chain.Any(e => e is AgentSessionService.ResumeTargetMissingException))
             return RestartFailureKind.ContinuityUnavailable;
         if (chain.Any(e => e is AgentLaunchBlockedException or ArgumentException
@@ -48,7 +55,9 @@ public sealed class RestartFailurePolicy
 
     public void Charge(AgentSupervisionState state, RestartFailureKind kind)
     {
-        if (kind == RestartFailureKind.ContinuityUnavailable) return;
+        // Neither hold is a crash: the ladder paces crash loops, and pacing an external
+        // prerequisite is pure loss (CARD-0466 continuity, CARD-0511 runner build).
+        if (kind is RestartFailureKind.ContinuityUnavailable or RestartFailureKind.RunnerBuildStale) return;
         state.RestartBackoffFailures = Math.Min(state.RestartBackoffFailures, int.MaxValue - 1) + 1;
         if (kind == RestartFailureKind.LaunchOrProcessFailure)
             state.ConsecutiveFailures = Math.Min(state.ConsecutiveFailures, int.MaxValue - 1) + 1;
