@@ -334,9 +334,14 @@ public sealed class PostLandCompanionLandHookTests
         companion.Status.ShouldBe(CardStatus.InProgress);
     }
 
+    // The payload is an anonymous object with camelCase members, so the round-trip has to be
+    // case-insensitive or every id reads back as Guid.Empty and the count is silently zero.
+    private static readonly JsonSerializerOptions PayloadJson = new() { PropertyNameCaseInsensitive = true };
+
     private static int CardChangedCount(MockEventBus events, Guid cardId) => events.PublishedEvents
         .Count(e => e.EventName == "CardChanged"
-            && JsonSerializer.Deserialize<CardChangedPayload>(JsonSerializer.Serialize(e.Payload))?.CardId == cardId);
+            && JsonSerializer.Deserialize<CardChangedPayload>(
+                JsonSerializer.Serialize(e.Payload), PayloadJson)?.CardId == cardId);
 
     private sealed record CardChangedPayload(Guid BoardId, Guid CardId);
 

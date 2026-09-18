@@ -256,7 +256,17 @@ public sealed class PostLandVerificationCompanions
     private static string OperationLines(AgentTaskLanding op) =>
         $"O: {op.Id:D}  L={op.VerifiedSourceSha}  R={op.ObservedRemoteTargetSha}\n"
         + $"Publication: {op.Publication} confirmed at "
-        + $"{op.RemoteConfirmedAt?.ToString("O", CultureInfo.InvariantCulture)}; cleanup={op.Cleanup}\n";
+        + $"{Stored(op.RemoteConfirmedAt)?.ToString("O", CultureInfo.InvariantCulture)}; cleanup={op.Cleanup}\n";
+
+    /// <summary>
+    /// The timestamp as the DATABASE holds it. Postgres stores microseconds, so the in-memory
+    /// value this writer sees inside the land transaction carries up to 9 sub-microsecond ticks
+    /// the row will not keep. Printing the untruncated value would put a timestamp on the card
+    /// that appears nowhere in the database and matches nothing a later reader compares it to.
+    /// </summary>
+    private static DateTime? Stored(DateTime? value) => value is null
+        ? null
+        : new DateTime(value.Value.Ticks - value.Value.Ticks % 10, value.Value.Kind);
 
     /// <summary>
     /// Handoff and plan text arrives from reports; it is clipped here so no caller-supplied
