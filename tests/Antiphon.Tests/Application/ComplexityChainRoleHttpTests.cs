@@ -59,7 +59,8 @@ public sealed class ComplexityChainRoleHttpTests
             list.StatusCode.ShouldBe(HttpStatusCode.OK);
             var listJson = await list.Content.ReadFromJsonAsync<JsonElement>();
             var roles = listJson.GetProperty("roles").EnumerateArray().Select(e => e.GetString()).ToList();
-            roles[0].ShouldBe("Plan");
+            // first of ComplexityRoutingService.RoutableRoles (CARD-0146 S1)
+            roles[0].ShouldBe("Investigate");
             roles.ShouldContain("Custom");
             roles.ShouldNotContain("Check");
             listJson.GetProperty("complexities").EnumerateArray().Select(e => e.GetString())
