@@ -38,10 +38,15 @@ public sealed class GitWorkspaceServiceIndexLockTests
         using var repo = new ScratchGitRepo("c543-timeout");
         await repo.CommitFileAsync("a.txt", "a\n");
         await File.WriteAllTextAsync(Path.Combine(repo.Path, "b.txt"), "b\n");
-        var hooks = Path.Combine(repo.Path, ".git", "hooks");
+        await repo.GitAsync("add", "--", "b.txt");
+        var hooks = Path.Combine(repo.Path, "c543-hooks");
         Directory.CreateDirectory(hooks);
         var hook = Path.Combine(hooks, "pre-commit");
-        await File.WriteAllTextAsync(hook, "#!/bin/sh\necho started > hook-started\nsleep 8\necho ended > hook-ended\n");
+        // Git-for-Windows sh has no sleep on PATH; ping -n 9 is ~8 s and is the delay that
+        // actually holds the lock-taking child so TimeoutSeconds=1 can kill it.
+        await File.WriteAllTextAsync(hook,
+            "#!/bin/sh\necho started > hook-started\nping -n 9 127.0.0.1 >/dev/null 2>&1\necho ended > hook-ended\n".Replace("\r\n", "\n"));
+        await repo.GitAsync("config", "core.hooksPath", hooks);
         var lockPath = (await ScratchGitRepo.GitInAsync(repo.Path, "rev-parse", "--path-format=absolute", "--git-path", "index.lock"))
             .StdOut.Trim();
         var head = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
