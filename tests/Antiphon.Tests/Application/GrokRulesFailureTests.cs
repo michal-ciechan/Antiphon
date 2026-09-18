@@ -54,6 +54,43 @@ public sealed class GrokRulesFailureTests
     }
 
     [Test]
+    public async Task Uppercased_failure_line_is_read_as_its_reason_not_missing_ack()
+    {
+        await using var f = await GrokRulesInitializationTests.Fixture.CreateAsync();
+        await f.Rules.ReconcileAsync(f.Id, CancellationToken.None);
+        await using var db = f.Db();
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == f.Id);
+        row.DeliveryAttempts = 1;
+        row.Status = QueuedMessageStatus.Sent;
+        row.RulesDeadlineAt = DateTime.UtcNow.AddMinutes(1);
+        var goal = new SessionQueuedMessage { Id = Guid.NewGuid(), AgentSessionId = f.Id, Sequence = 2,
+            Body = "unaltered original goal\r\ntail", Origin = QueuedMessageOrigin.Delegation, CreatedAt = DateTime.UtcNow };
+        db.SessionQueuedMessages.Add(goal);
+        var original = $"ANTIPHON_RULES_FAILED id={row.Id:N} generation={f.Receipt.Generation:N} reason=unreadable";
+        var mutated = $"ANTIPHON_RULES_FAILED id={row.Id.ToString("N").ToUpperInvariant()} generation={f.Receipt.Generation.ToString("N").ToUpperInvariant()} reason=unreadable";
+        mutated.ShouldNotBe(original);
+        Add(1, TranscriptKinds.UserPrompt, row.Body);
+        Add(2, TranscriptKinds.AssistantText, mutated);
+        Add(3, TranscriptKinds.TurnEnd, null);
+        await db.SaveChangesAsync();
+        await f.Rules.ReconcileAsync(f.Id, CancellationToken.None);
+        await f.Rules.ReconcileAsync(f.Id, CancellationToken.None);
+        var session = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == f.Id);
+        session.GrokRulesState.ShouldBe(GrokRulesState.Failed);
+        session.GrokRulesFailure.ShouldBe("grok_rules_initialization_failed: unreadable");
+        var retained = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == goal.Id);
+        retained.Body.ShouldBe(goal.Body);
+        retained.Status.ShouldBe(QueuedMessageStatus.Pending);
+        retained.DeliveryAttempts.ShouldBe(0);
+        (await db.AgentIncidents.CountAsync(i => i.SessionId == f.Id)).ShouldBe(1);
+        (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == f.Id)).ShouldBe(2);
+        void Add(long sequence, string kind, string? text) => db.TranscriptEntries.Add(new() {
+            Id = Guid.NewGuid(), AgentSessionId = f.Id, Sequence = sequence, Kind = kind, Text = text,
+            CreatedAt = DateTime.UtcNow.AddMinutes(-3), Timestamp = DateTime.UtcNow.AddMinutes(-3),
+            StopReason = kind == TranscriptKinds.TurnEnd ? "end_turn" : null });
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task Persisted_deadline_is_inclusive_at_the_exact_instant(bool atDeadline)
