@@ -516,7 +516,7 @@ public class CardCorrectionIntegrationTests
             await using var harness = BuildHarness(tempRoot);
             var board = await harness.BoardService.CreateAsync(
                 new CreateBoardRequest(project.Id, "Axes board"), CancellationToken.None);
-            var due = DateTime.UtcNow.AddDays(60);
+            var due = AtDbPrecision(DateTime.UtcNow.AddDays(60));
             var card = await harness.CardService.CreateAsync(
                 board.Id,
                 new CreateCardRequest(null, "Axes", "body", CardImportance.Normal, CardUrgency.Normal, due),
@@ -1570,8 +1570,7 @@ public class CardCorrectionIntegrationTests
                 board.Id, new CreateCardRequest(null, "Closed before CARD-0019"), CancellationToken.None);
             var doneColumn = board.Columns.Single(c => c.StateKey == "done");
             // Postgres timestamptz stores microseconds; DateTime.UtcNow has 100ns ticks.
-            var utc = DateTime.UtcNow.AddDays(-40);
-            var completedAt = new DateTime(utc.Ticks - (utc.Ticks % 10), DateTimeKind.Utc);
+            var completedAt = AtDbPrecision(DateTime.UtcNow.AddDays(-40));
 
             await using (var seed = CreateContext())
             {
@@ -1987,6 +1986,9 @@ public class CardCorrectionIntegrationTests
     }
 
     private sealed record MoveOutcome(MoveCardResult? Move, Exception? Error);
+
+    private static DateTime AtDbPrecision(DateTime utc) =>
+        new(utc.Ticks - (utc.Ticks % 10), DateTimeKind.Utc);
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
