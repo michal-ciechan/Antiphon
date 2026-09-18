@@ -1,10 +1,11 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
-using static Antiphon.Tests.Application.HerdrSupervisionBackoffTests;
 
 namespace Antiphon.Tests.Application;
 
@@ -37,7 +38,7 @@ public class HerdrSupervisionAttentionTests
         await using var scenario = new AttentionServiceTests.Scenario();
         var agent = await scenario.AddAgentAsync(alwaysOn: true);
         await scenario.HoldHerdrAsync(agent, DateTime.UtcNow.AddHours(-48), 3, HerdrSupervisionFailureKind.PaneClosed, null);
-        await using var db = Db();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
         await db.AgentIncidents.Where(i => i.AgentId == agent).ExecuteDeleteAsync();
         await db.Agents.Where(a => a.Id == agent).ExecuteUpdateAsync(u => u.SetProperty(a => a.AlwaysOn, false));
         var result = await AttentionServiceTests.BuildService(new AttentionServiceTests.FakeRunnerClient()).GetAsync(CancellationToken.None);
@@ -51,7 +52,7 @@ public class HerdrSupervisionAttentionTests
         var agent = await scenario.AddAgentAsync();
         var heldAt = DateTime.UtcNow.AddSeconds(-1);
         await scenario.HoldHerdrAsync(agent, heldAt, 3, HerdrSupervisionFailureKind.ChildGone, null);
-        await using var db = Db();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
         db.AgentIncidents.Add(new AgentIncident { Id = Guid.NewGuid(), AgentId = agent, Kind = AgentIncidentKind.HerdrSupervisionHeld,
             Severity = AlertSeverity.Error, Message = "typed hold evidence", CreatedAt = heldAt });
         await db.SaveChangesAsync();
