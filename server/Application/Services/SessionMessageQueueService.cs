@@ -3786,6 +3786,8 @@ public sealed partial class SessionMessageQueueService
             var allSupervision = false;
             var refunded = 0;
             var preFirstTurn = false;
+            var persistBlind = false;
+            AgentSessionRuntime.TranscriptPersistFailure? persistFailure = null;
             DateTime? refundOldestCreatedAt = null;
             if (messageIds is { Count: > 0 })
             {
@@ -3804,6 +3806,9 @@ public sealed partial class SessionMessageQueueService
                 }
 
                 var reverting = messages.Where(m => m.Status == QueuedMessageStatus.Sent).ToList();
+                // CARD-0561: capture SentAt before the revert nulls it — persistBlind compares
+                // the mark against the attempt, not the reverted row.
+                var sentAtById = reverting.ToDictionary(m => m.Id, m => m.SentAt);
                 var verdictAt = UtcNow();
                 foreach (var message in messages)
                 {
@@ -3855,6 +3860,33 @@ public sealed partial class SessionMessageQueueService
                     preFirstTurn = reverting.Count > 0 && refunded == reverting.Count;
                 }
 
+                // CARD-0561: NoTranscriptRecord means "no UserPrompt row", and a UserPrompt row
+                // cannot exist when this session's transcript store has been refusing rows. That is
+                // a blind matcher, not a dead session: withhold the kill, refund the attempt, and
+                // let the stranded sweep retry once persistence recovers. Same refund shape as
+                // CARD-0103; same all-or-nothing rule for the kill.
+                var clockTolerance = TimeSpan.FromSeconds(30);
+                if (verdict == DeliveryVerdict.NoTranscriptRecord
+                    && reverting.Count > 0
+                    && _runtime.TryGetTranscriptPersistFailure(sessionId, out var failure)
+                    && reverting.All(m =>
+                        sentAtById.TryGetValue(m.Id, out var sent)
+                        && sent is { } sentAt
+                        && failure.LastFailedAtUtc >= sentAt - clockTolerance))
+                {
+                    persistBlind = true;
+                    persistFailure = failure;
+                    foreach (var message in reverting)
+                    {
+                        if (message.DeliveryAttempts > 0)
+                            message.DeliveryAttempts--;
+                        refunded++;
+                        refundOldestCreatedAt = refundOldestCreatedAt is { } oldest && oldest < message.CreatedAt
+                            ? oldest
+                            : message.CreatedAt;
+                    }
+                }
+
                 allSupervision = messages.Count > 0
                     && messages.All(m => m.Origin == QueuedMessageOrigin.Supervision);
                 foreach (var message in messages.Where(m =>
@@ -3880,7 +3912,7 @@ public sealed partial class SessionMessageQueueService
             // a kill buys is worthless against a TUI that has not started reading, and killing and
             // relaunching straight back into the same race is CARD-0047's restart loop by another
             // route. The message stays Pending and the 60s stranded sweep retries it.
-            var kill = agent is { AlwaysOn: true } && !working && !allSupervision && !preFirstTurn
+            var kill = agent is { AlwaysOn: true } && !working && !allSupervision && !preFirstTurn && !persistBlind
                 && verdict is not (DeliveryVerdict.ForbiddenBody
                     or DeliveryVerdict.LocalCommandNotAccepted
                     or DeliveryVerdict.BackendUnreachable);
@@ -3916,6 +3948,28 @@ public sealed partial class SessionMessageQueueService
                                 SessionId: sessionId),
                             ct);
                     }
+                }
+            }
+            else if (persistBlind && agent is not null && persistFailure is not null)
+            {
+                var since = refundOldestCreatedAt ?? UtcNow();
+                var alreadyReported = await db.AgentIncidents.AnyAsync(
+                    i => i.SessionId == sessionId
+                        && i.Kind == AgentIncidentKind.DeliveryVerificationFailed
+                        && i.CreatedAt >= since,
+                    ct);
+                if (!alreadyReported)
+                {
+                    var channelBound = await db.ChatChannels.AnyAsync(c => c.AgentId == agent.Id, ct);
+                    var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
+                    await supervisor.RecordIncidentAsync(
+                        agent.Id, sessionId, AgentIncidentKind.DeliveryVerificationFailed,
+                        channelBound ? AlertSeverity.Error : AlertSeverity.Warning,
+                        $"Message delivery could not be verified: {Describe(verdict)}. Transcript "
+                        + $"persistence for this session failed {persistFailure.Failures} time(s), last at "
+                        + $"{persistFailure.LastFailedAtUtc:u} ({persistFailure.Detail}); the matcher was blind, "
+                        + "so the session was NOT restarted and the attempt was refunded.",
+                        ct: ct);
                 }
             }
             else if (preFirstTurn && agent is not null)

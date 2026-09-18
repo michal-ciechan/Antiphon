@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Data.Common;
 using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -27,6 +28,7 @@ public sealed class AgentSessionRuntime
     private static readonly TimeSpan ManualTurnPollInterval = TimeSpan.FromMilliseconds(100);
 
     private readonly ConcurrentDictionary<Guid, long> _lastSequences = new();
+    private readonly ConcurrentDictionary<Guid, TranscriptPersistFailure> _persistFailures = new();
     private readonly ConcurrentDictionary<Guid, TaskCompletionSource> _firstDeltas = new();
     private readonly ConcurrentDictionary<Guid, PendingTerminalInput> _pendingInputs = new();
     private readonly ConcurrentDictionary<Guid, byte> _manualTurns = new();
@@ -788,17 +790,35 @@ public sealed class AgentSessionRuntime
     // What one persist call actually changed — LastStoredSeq is the stored (session-monotonic)
     // sequence of the last NEWLY persisted entry, or null when everything deduped away or
     // persistence failed.
-    private sealed record PersistResult(
+    internal sealed record PersistResult(
         long? LastStoredSeq, bool AddedTurnBoundary, bool AddedAssistantText, bool AddedManualCompactBoundary)
     {
         public static PersistResult Empty { get; } = new(null, false, false, false);
     }
 
-    private async Task<PersistResult> PersistTranscriptAsync(Guid sessionId, IReadOnlyList<SessionRunnerTranscriptEvent> entries)
+    internal const string TranscriptStubPrefix = "[transcript text not persistable:";
+
+    internal sealed record TranscriptPersistFailure(DateTime LastFailedAtUtc, int Failures, string Detail);
+
+    internal bool TryGetTranscriptPersistFailure(Guid sessionId, out TranscriptPersistFailure failure) =>
+        _persistFailures.TryGetValue(sessionId, out failure!);
+
+    private void RecordTranscriptPersistFailure(Guid sessionId, string detail)
+    {
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        _persistFailures.AddOrUpdate(
+            sessionId,
+            _ => new TranscriptPersistFailure(now, 1, detail),
+            (_, existing) => existing with { LastFailedAtUtc = now, Failures = existing.Failures + 1, Detail = detail });
+    }
+
+    internal async Task<PersistResult> PersistTranscriptAsync(Guid sessionId, IReadOnlyList<SessionRunnerTranscriptEvent> entries)
     {
         using var observation = new RuntimePhase(_logger, _timeProvider, sessionId, "transcript.persist");
         if (entries.Count == 0)
             return PersistResult.Empty;
+
+        entries = SanitizeEntries(entries);
 
         try
         {
@@ -841,10 +861,7 @@ public sealed class AgentSessionRuntime
                 .MaxAsync(t => (long?)t.Sequence) ?? 0;
 
             var now = _timeProvider.GetUtcNow().UtcDateTime;
-            var added = false;
-            var addedTurnBoundary = false;
-            var addedAssistantText = false;
-            var addedManualCompactBoundary = false;
+            var pending = new List<(TranscriptEntry Row, SessionRunnerTranscriptEvent Source)>();
             foreach (var e in entries)
             {
                 if (e.Uuid is not null)
@@ -857,16 +874,10 @@ public sealed class AgentSessionRuntime
                     continue;
                 }
 
-                addedTurnBoundary |= IsTurnBoundary(e);
-                addedAssistantText |= e.Kind == TranscriptKinds.AssistantText;
-                // Tracked SEPARATELY from IsTurnBoundary on purpose: it must reach the narrow
-                // flush only, never actOnTurnBoundary / the finished toast / settlement.
-                addedManualCompactBoundary |= TranscriptKinds.IsManualCompactBoundary(e.Kind, e.Text);
-
                 var storedSeq = e.Sequence > maxSeq ? e.Sequence : maxSeq + 1;
                 maxSeq = storedSeq;
 
-                db.TranscriptEntries.Add(new TranscriptEntry
+                var row = new TranscriptEntry
                 {
                     Id = Guid.NewGuid(),
                     AgentSessionId = sessionId,
@@ -893,26 +904,213 @@ public sealed class AgentSessionRuntime
                     Model = e.Model,
                     ModelCalls = e.ModelCalls,
                     CreatedAt = now,
-                });
-                added = true;
+                };
+                db.TranscriptEntries.Add(row);
+                pending.Add((row, e));
             }
 
-            if (added)
+            if (pending.Count == 0)
+                return PersistResult.Empty;
+
+            try
             {
                 using var save = new RuntimePhase(_logger, _timeProvider, sessionId, "transcript.save", storedSequence: maxSeq);
                 await db.SaveChangesAsync();
                 save.Completed();
             }
+            catch (DbUpdateException batchFailure)
+            {
+                db.ChangeTracker.Clear();
+                return await PersistRowsIndividuallyAsync(db, sessionId, pending, batchFailure);
+            }
 
-            return added
-                ? new PersistResult(maxSeq, addedTurnBoundary, addedAssistantText, addedManualCompactBoundary)
-                : PersistResult.Empty;
+            _persistFailures.TryRemove(sessionId, out _);
+            return ResultFrom(pending.Select(p => p.Source), pending.Max(p => p.Row.Sequence));
         }
         catch (Exception ex)
         {
+            RecordTranscriptPersistFailure(sessionId, PersistFailureDetail(ex));
             _logger.LogWarning(ex, "Failed to persist transcript entries for session {SessionId}", sessionId);
             return PersistResult.Empty;
         }
+    }
+
+    private async Task<PersistResult> PersistRowsIndividuallyAsync(
+        AppDbContext db,
+        Guid sessionId,
+        List<(TranscriptEntry Row, SessionRunnerTranscriptEvent Source)> rows,
+        DbUpdateException batchFailure)
+    {
+        var landed = new List<SessionRunnerTranscriptEvent>();
+        long? lastStoredSeq = null;
+        var anyStubOrSkip = false;
+        foreach (var (row, source) in rows)
+        {
+            db.TranscriptEntries.Add(row);
+            try
+            {
+                await db.SaveChangesAsync();
+                landed.Add(source);
+                lastStoredSeq = lastStoredSeq is { } seq && seq > row.Sequence ? seq : row.Sequence;
+                continue;
+            }
+            catch (DbUpdateException rowFailure)
+            {
+                db.ChangeTracker.Clear();
+                if (SqlStateOf(rowFailure) == "23505")
+                {
+                    _logger.LogDebug(
+                        rowFailure,
+                        "Transcript row uuid {Uuid} already stored for session {SessionId} (23505); skipped",
+                        row.Uuid, sessionId);
+                    landed.Add(source);
+                    lastStoredSeq = lastStoredSeq is { } seq && seq > row.Sequence ? seq : row.Sequence;
+                    continue;
+                }
+
+                anyStubOrSkip = true;
+                var detail = PersistFailureDetail(rowFailure);
+                ApplyPersistStub(row, detail);
+                db.TranscriptEntries.Add(row);
+                try
+                {
+                    await db.SaveChangesAsync();
+                    landed.Add(source);
+                    lastStoredSeq = lastStoredSeq is { } seq && seq > row.Sequence ? seq : row.Sequence;
+                    RecordTranscriptPersistFailure(sessionId, detail);
+                    _logger.LogWarning(
+                        "Transcript row for session {SessionId} sequence {Sequence} uuid {Uuid} kind {Kind} sqlState {SqlState} ({ExceptionType}) stored as a persist stub",
+                        sessionId, row.Sequence, row.Uuid, row.Kind, SqlStateOf(rowFailure), rowFailure.GetType().Name);
+                }
+                catch (DbUpdateException stubFailure)
+                {
+                    db.ChangeTracker.Clear();
+                    if (IsTransientDbFailure(stubFailure))
+                    {
+                        RecordTranscriptPersistFailure(sessionId, PersistFailureDetail(stubFailure));
+                        return ResultFrom(landed, lastStoredSeq);
+                    }
+
+                    RecordTranscriptPersistFailure(sessionId, PersistFailureDetail(stubFailure));
+                    _logger.LogWarning(
+                        "Transcript row not persistable for session {SessionId} sequence {Sequence} uuid {Uuid} kind {Kind} sqlState {SqlState} ({ExceptionType}); skipped",
+                        sessionId, row.Sequence, row.Uuid, row.Kind, SqlStateOf(stubFailure), stubFailure.GetType().Name);
+                }
+            }
+        }
+
+        if (!anyStubOrSkip)
+            _persistFailures.TryRemove(sessionId, out _);
+        return ResultFrom(landed, lastStoredSeq);
+    }
+
+    private static PersistResult ResultFrom(IEnumerable<SessionRunnerTranscriptEvent> landed, long? lastStoredSeq)
+    {
+        var addedTurnBoundary = false;
+        var addedAssistantText = false;
+        var addedManualCompactBoundary = false;
+        var any = false;
+        foreach (var e in landed)
+        {
+            any = true;
+            addedTurnBoundary |= IsTurnBoundary(e);
+            addedAssistantText |= e.Kind == TranscriptKinds.AssistantText;
+            addedManualCompactBoundary |= TranscriptKinds.IsManualCompactBoundary(e.Kind, e.Text);
+        }
+
+        return any
+            ? new PersistResult(lastStoredSeq, addedTurnBoundary, addedAssistantText, addedManualCompactBoundary)
+            : PersistResult.Empty;
+    }
+
+    private static void ApplyPersistStub(TranscriptEntry row, string detail)
+    {
+        row.Text = $"{TranscriptStubPrefix} {detail}]";
+        row.ToolInput = null;
+        row.Kind = ColumnText.Clip(row.Kind, 40);
+        row.Uuid = ColumnText.ClipOrNull(row.Uuid, 64);
+        row.ParentUuid = ColumnText.ClipOrNull(row.ParentUuid, 64);
+        row.Role = ColumnText.ClipOrNull(row.Role, 40);
+        row.ToolName = ColumnText.ClipOrNull(row.ToolName, 200);
+        row.ToolUseId = ColumnText.ClipOrNull(row.ToolUseId, 120);
+        row.StopReason = ColumnText.ClipOrNull(row.StopReason, 60);
+    }
+
+    private static IReadOnlyList<SessionRunnerTranscriptEvent> SanitizeEntries(
+        IReadOnlyList<SessionRunnerTranscriptEvent> entries)
+    {
+        List<SessionRunnerTranscriptEvent>? copy = null;
+        for (var i = 0; i < entries.Count; i++)
+        {
+            var sanitized = Sanitize(entries[i]);
+            if (ReferenceEquals(sanitized, entries[i]))
+                continue;
+            copy ??= entries.ToList();
+            copy[i] = sanitized;
+        }
+
+        return copy ?? entries;
+    }
+
+    private static SessionRunnerTranscriptEvent Sanitize(SessionRunnerTranscriptEvent e)
+    {
+        if (!ContainsNul(e))
+            return e;
+        return e with
+        {
+            Kind = ColumnText.WithoutNul(e.Kind)!,
+            Uuid = ColumnText.WithoutNul(e.Uuid),
+            ParentUuid = ColumnText.WithoutNul(e.ParentUuid),
+            Role = ColumnText.WithoutNul(e.Role),
+            Text = ColumnText.WithoutNul(e.Text),
+            ToolName = ColumnText.WithoutNul(e.ToolName),
+            ToolInput = ColumnText.WithoutNul(e.ToolInput),
+            ToolUseId = ColumnText.WithoutNul(e.ToolUseId),
+            StopReason = ColumnText.WithoutNul(e.StopReason),
+            ApiCallId = ColumnText.WithoutNul(e.ApiCallId),
+            ApiErrorClass = ColumnText.WithoutNul(e.ApiErrorClass),
+            Model = ColumnText.WithoutNul(e.Model),
+        };
+    }
+
+    private static bool ContainsNul(SessionRunnerTranscriptEvent e) =>
+        HasNul(e.Kind) || HasNul(e.Uuid) || HasNul(e.ParentUuid) || HasNul(e.Role) || HasNul(e.Text)
+        || HasNul(e.ToolName) || HasNul(e.ToolInput) || HasNul(e.ToolUseId) || HasNul(e.StopReason)
+        || HasNul(e.ApiCallId) || HasNul(e.ApiErrorClass) || HasNul(e.Model);
+
+    private static bool HasNul(string? value) => value is not null && value.IndexOf('\0') >= 0;
+
+    private static string? SqlStateOf(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is DbException { SqlState: { Length: > 0 } sqlState })
+                return sqlState;
+        }
+
+        return null;
+    }
+
+    private static bool IsTransientDbFailure(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is DbException { IsTransient: true })
+                return true;
+        }
+
+        return false;
+    }
+
+    private static string PersistFailureDetail(Exception exception)
+    {
+        var sqlState = SqlStateOf(exception);
+        if (sqlState is not null)
+            return sqlState;
+        var innermost = exception;
+        while (innermost.InnerException is not null)
+            innermost = innermost.InnerException;
+        return innermost.GetType().Name;
     }
 
     private static object ToTranscriptPayload(SessionRunnerTranscriptEvent e) => new
@@ -1171,6 +1369,7 @@ public sealed class AgentSessionRuntime
         _pendingInputs.TryRemove(sessionId, out _);
         _manualTurns.TryRemove(sessionId, out _);
         _lastSequences.TryRemove(sessionId, out _);
+        _persistFailures.TryRemove(sessionId, out _);
         _firstDeltas.TryRemove(sessionId, out _);
         _testBuffers.TryRemove(sessionId, out _);
         _testAgentStatuses.TryRemove(sessionId, out _);

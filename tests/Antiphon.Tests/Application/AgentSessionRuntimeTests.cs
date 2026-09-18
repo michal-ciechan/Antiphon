@@ -19,7 +19,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [Category("Slow")]
-public class AgentSessionRuntimeTests
+public partial class AgentSessionRuntimeTests
 {
     [Test]
     public async Task SignalR_AgentTextDelta_routes_to_session_group_only_and_chunks_output()

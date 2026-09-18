@@ -343,6 +343,10 @@ cleanup authority. The observation remains before the repository lease.
 
 - **A terminal that consumes ConPTY output MUST implement deferred (last-column) wrap, and a clean hint bar is not a clean screen** (CARD-0449, live miss 2026-09-09). `TerminalScreen` wrapped as soon as a printable filled the last column. xterm, Windows Terminal and ConPTY's own VT renderer all **delay** it: the cursor stays on that row with the wrap owed, and only the NEXT printable moves down. The renderer relies on that — after a full-width row it emits `\r` then a relative move (`\x1b[1B`) and expects the next text one row BELOW the row it just filled. Claude's 120-column rules are exactly full width, so our cursor sat one row low from the first paint, every row-relative move after a rule landed one row off, and the effort dialog's erase-and-repaint (`\x1b[2K\x1b[1A` ×5, then `\x1b[2K\x1b[G\x1b[1A\x1b[5A`) cleared rows the CLI never meant to clear and spared the ones it meant to erase. The dismissed dialog's title survived as a ghost row, `HasRemnant` stayed true on a **static** screen for ~13 s, and the launch failed with `settle deadline exhausted` — above a perfectly normal-looking hint bar, which is why the first investigation read the wrong signal. **Full-width rows are the tell, and the diagnosis is in the ROWS, never the hint bar: read them.** The owed wrap is cancelled by CR, LF, BS, TAB and every cursor-positioning CSI (`A B C D E F G H f d r`) and left armed by erase (`J K X`), insert/delete (`L M P @`), scroll (`S T`) and SGR; paying it goes through `LineFeed` so the scroll region still holds; and the tab loop must be bounded at `Cols - 1` or it never terminates once `WriteChar` stops advancing there. DECAWM off (`\x1b[?7l`) stays unmodelled — private modes are skipped and ConPTY has not been observed emitting it. This is a shared surface: every rendered-screen consumer (runner snapshots, the trust/effort/permission detectors, the composer probe, the Codex and Grok adapters) was reading a grid that was off by one row after any full-width line, so no consumer indexed rows and none could have. The usage-limit banner was incidental — a replay with its bytes excised ghosts identically, so the fix does not special-case it. Pinned by `TerminalScreenTests` and by `ClaudeEffortDismissalReplayTests`, which replays the real failing PTY stream and three real dialog-only paints from `tests/Antiphon.Agents.Pty.Tests/golden/card-0449/` in three chunkings (one write, per Ink frame, escape-safe 256-char pieces) and asserts chunk invariance. The live dismissal path's record before this fix was 0 successes / 1 failure; the next Frontier launch whose `Claude startup:` line reads `two settled clear observations` with `clear=2` is its first success.
 
+### Gotcha #91
+
+- **A poisoned transcript line must not blank the flush or authorize a delivery kill (CARD-0561).** Postgres `text` rejects U+0000 (SQLSTATE 22021). `PersistTranscriptAsync` maps every string member through `ColumnText.WithoutNul` (U+0000 → U+FFFD) before dedup and insert; the SignalR relay and runner JSONL stay verbatim. A batch `DbUpdateException` falls back to per-row saves: a unique violation (23505) is skipped as already present, any other row is retried once as a clipped metadata stub, and only then skipped with a Warning that names sequence/uuid/kind/SqlState, never the text. `PersistResult` reflects landed rows only. An in-memory per-session persist-failure mark withholds the AlwaysOn `NoTranscriptRecord` kill and refunds the attempt when the mark is at or after `SentAt − 30s`; capture `SentAt` before the revert nulls it. A later clean save, or `DisposeSessionAsync`, drops the mark.
+
 ### Grok rules refresh state (CARD-0395)
 
 The runner owns `SessionLogPath/instructions/grok/{sessionId:N}/rules.md` independently of the
@@ -367,13 +371,19 @@ verification specified by the plan. Do not infer acceptance from the FakeGrok E2
 
 Infrastructure failures and unknown launch outcomes only pace retries. Neither failure
 counter authorizes Fresh. `RestartBackoffFailures` drives the capped ladder;
-`ConsecutiveFailures` counts confirmed launch/process failures. Terminal evidence is
+`ConsecutiveFailures` counts confirmed launch/process failures. `ContinuityResumeFailures`
+counts `Unknown` and `LaunchOrProcessFailure` only (never `Infrastructure` or
+`ContinuityUnavailable`). At `Supervision:ResumeFailureHoldAttempts` (default 5; 0 disables)
+the supervisor places the existing continuity hold with reason `RepeatedResumeFailure` —
+an Error Attention row with Retry / Select / Fresh, not an automatic Fresh. Terminal evidence is
 consumed once per persisted session/StartedAt generation. Completed interactive boot,
-followed by healthy uptime, resets both counts. `FreshAfterResumeFailures` is deprecated
+followed by healthy uptime, resets all three counts. A human-accepted Start (`!automatic`)
+resets `ContinuityResumeFailures`; a supervised resume runs `Clear` but leaves the counter.
+`FreshAfterResumeFailures` is deprecated
 and ignored, with a startup warning when configured.
 
 Standing Claude/Grok Start resumes the current conversation strictly. Missing native
-history, an incompatible target or unproven ownership preserves history and requires a
+history, an incompatible target, unproven ownership, or repeated resume failure preserves history and requires a
 durable continuity decision. Attention survives incident pruning and AlwaysOn off.
 A failed resume never creates a replacement under the same ID. Grok storage I/O failure
 is unavailable infrastructure, not positive evidence of missing history. Card-only

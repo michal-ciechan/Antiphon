@@ -40,4 +40,11 @@ internal static class ColumnText
     /// <summary>Null in, null out — an absent detail is not the same as an empty one.</summary>
     public static string? ClipOrNull(string? text, int max) =>
         text is null ? null : Clip(text, max);
+
+    /// <summary>
+    /// Postgres text cannot hold U+0000 (SQLSTATE 22021); the only choices are to drop the row or
+    /// mark the byte. Same instance back when there is nothing to do.
+    /// </summary>
+    public static string? WithoutNul(string? text) =>
+        text is null || text.IndexOf('\0') < 0 ? text : text.Replace('\0', '\uFFFD');
 }

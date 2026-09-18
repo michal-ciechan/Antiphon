@@ -31,14 +31,15 @@ public partial class StandingRestartAccountingTests
                     Cwd = root, DefinitionName = "fake", Status = status, CreatedAt = old, StartedAt = old, LastSeenAt = old });
                 (await db.Agents.FindAsync(agent.Id))!.PersistentSessionId = id.ToString("D");
                 db.AgentSupervisionStates.Add(new AgentSupervisionState { AgentId = agent.Id, ConsecutiveFailures = 7,
-                    RestartBackoffFailures = 9, LastEscalationTier = 2, UpdatedAt = old });
+                    RestartBackoffFailures = 9, ContinuityResumeFailures = 4, LastEscalationTier = 2, UpdatedAt = old });
                 await db.SaveChangesAsync();
             }
             await h.Supervisor().TickAsync(default);
             await using (var db = AgentSupervisionTests.CreateContext())
             {
                 var state = (await db.AgentSupervisionStates.FindAsync(agent.Id))!;
-                state.ConsecutiveFailures.ShouldBe(7); state.RestartBackoffFailures.ShouldBe(9); state.LastEscalationTier.ShouldBe(2);
+                state.ConsecutiveFailures.ShouldBe(7); state.RestartBackoffFailures.ShouldBe(9);
+                state.ContinuityResumeFailures.ShouldBe(4); state.LastEscalationTier.ShouldBe(2);
                 var row = (await db.AgentSessions.FindAsync(id))!; row.Status = SessionStatus.Running;
                 row.InteractiveLaunchCompletedAt = h.Clock.GetUtcNow().UtcDateTime.AddMinutes(-10); await db.SaveChangesAsync();
             }
@@ -46,6 +47,7 @@ public partial class StandingRestartAccountingTests
             await using var verify = AgentSupervisionTests.CreateContext();
             (await verify.AgentSupervisionStates.FindAsync(agent.Id))!.RestartBackoffFailures.ShouldBe(0);
             (await verify.AgentSupervisionStates.FindAsync(agent.Id))!.ConsecutiveFailures.ShouldBe(0);
+            (await verify.AgentSupervisionStates.FindAsync(agent.Id))!.ContinuityResumeFailures.ShouldBe(0);
         }
         finally { await AgentSupervisionTests.CleanupAsync(root); }
     }

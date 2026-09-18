@@ -178,6 +178,7 @@ public class AppDbContext : DbContext
         {
             entity.ToTable("AgentSupervisionStates");
             entity.Property(s => s.HerdrConsecutiveFailures).HasDefaultValue(0);
+            entity.Property(s => s.ContinuityResumeFailures).HasDefaultValue(0);
             entity.Property(s => s.ContinuityEvidence).HasMaxLength(1000);
             entity.HasKey(s => s.AgentId);
             entity.Property(s => s.UpdatedAt).IsRequired();

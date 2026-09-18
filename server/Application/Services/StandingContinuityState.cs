@@ -9,7 +9,11 @@ public sealed class StandingContinuityState(AppDbContext db, TimeProvider clock)
 {
     public const string HeldCode = "standing_continuity_held";
 
-    public async Task HoldAsync(Guid agentId, Guid? sessionId, StandingContinuityReason reason, CancellationToken ct)
+    public Task HoldAsync(Guid agentId, Guid? sessionId, StandingContinuityReason reason, CancellationToken ct) =>
+        HoldAsync(agentId, sessionId, reason, detail: null, ct);
+
+    public async Task HoldAsync(
+        Guid agentId, Guid? sessionId, StandingContinuityReason reason, string? detail, CancellationToken ct)
     {
         var state = await db.AgentSupervisionStates.SingleOrDefaultAsync(s => s.AgentId == agentId, ct);
         if (state is null)
@@ -23,7 +27,11 @@ public sealed class StandingContinuityState(AppDbContext db, TimeProvider clock)
         state.ContinuitySessionId = sessionId;
         state.ContinuityReason = reason;
         // Metadata only: exception text can contain credentials or provider transcript output.
-        state.ContinuityEvidence = $"Standing conversation {sessionId?.ToString("D") ?? "unknown"}: {reason}. Inspect and repair, select an owned conversation, or explicitly start fresh.";
+        var evidence =
+            $"Standing conversation {sessionId?.ToString("D") ?? "unknown"}: {reason}. Inspect and repair, select an owned conversation, or explicitly start fresh.";
+        state.ContinuityEvidence = string.IsNullOrEmpty(detail)
+            ? evidence
+            : ColumnText.Clip(evidence + " " + detail, 1000);
         state.NextRestartAt = null;
         state.UpdatedAt = now;
         if (changed) db.AgentIncidents.Add(new AgentIncident

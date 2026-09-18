@@ -19,6 +19,7 @@ public class StandingContinuityAttentionTests
     [Test]
     [Arguments(StandingContinuityReason.NativeSessionMissing)] [Arguments(StandingContinuityReason.TargetMissing)]
     [Arguments(StandingContinuityReason.TargetIncompatible)] [Arguments(StandingContinuityReason.OwnershipUnproven)]
+    [Arguments(StandingContinuityReason.RepeatedResumeFailure)]
     public async Task Hold_survives_pruning_recreation_and_always_on_off_without_duplicate_alerts(StandingContinuityReason reason)
     {
         await using var f = new StandingRecoveryFixture(new FakeAgentProtocolAdapter());
@@ -43,6 +44,9 @@ public class StandingContinuityAttentionTests
             var row = (await service.GetAsync(default)).Items.Where(x => x.AgentId == f.Agent.Id
                 && x.Kind == AttentionKind.StandingContinuityDecision).ShouldHaveSingleItem();
             row.SessionId.ShouldBe(f.B.Id); row.Actions.ShouldContain(AttentionAction.OpenAgent);
+            row.Actions.ShouldContain(AttentionAction.OpenDrawer);
+            row.Severity.ShouldBe(AlertSeverity.Error);
+            row.Title.ShouldContain(reason.ToString());
             (await db.Alerts.CountAsync(a => a.AgentId == f.Agent.Id)).ShouldBe(1);
             (await db.Alerts.FindAsync(alertId))!.Detail.ShouldBe("Synthetic metadata");
             var state = (await db.AgentSupervisionStates.FindAsync(f.Agent.Id))!;
@@ -53,5 +57,36 @@ public class StandingContinuityAttentionTests
         (await verify.AgentSupervisionStates.FindAsync(f.Agent.Id))!.ContinuityHeldAt.ShouldBeNull();
         (await verify.Alerts.CountAsync(a => a.AgentId == f.Agent.Id)).ShouldBe(1);
         (await verify.Alerts.FindAsync(alertId))!.Title.ShouldBe("Synthetic infrastructure outage");
+    }
+
+    [Test]
+    public async Task C561_hold_detail_is_clipped_to_the_evidence_column()
+    {
+        await using var f = new StandingRecoveryFixture(new FakeAgentProtocolAdapter());
+        await f.SeedAsync(held: false);
+        await Should.NotThrowAsync(async () =>
+        {
+            await using var db = f.Db();
+            await new StandingContinuityState(db, TimeProvider.System).HoldAsync(
+                f.Agent.Id, f.B.Id, StandingContinuityReason.RepeatedResumeFailure, new string('d', 2000), default);
+        });
+        await using (var db = f.Db())
+        {
+            var state = (await db.AgentSupervisionStates.FindAsync(f.Agent.Id))!;
+            state.ContinuityEvidence!.Length.ShouldBe(1000);
+            state.ContinuityEvidence.ShouldEndWith("…");
+            state.ContinuityEvidence.ShouldStartWith("Standing conversation");
+            state.ContinuityEvidence.ShouldContain("RepeatedResumeFailure");
+            var held = await db.AgentIncidents.SingleAsync(i =>
+                i.AgentId == f.Agent.Id && i.Kind == AgentIncidentKind.StandingContinuityHeld);
+            held.Message.ShouldBe(state.ContinuityEvidence);
+            var heldAt = state.ContinuityHeldAt;
+            await new StandingContinuityState(db, TimeProvider.System).HoldAsync(
+                f.Agent.Id, f.B.Id, StandingContinuityReason.RepeatedResumeFailure, "short-detail", default);
+            var again = (await db.AgentSupervisionStates.FindAsync(f.Agent.Id))!;
+            again.ContinuityHeldAt.ShouldBe(heldAt);
+            (await db.AgentIncidents.CountAsync(i =>
+                i.AgentId == f.Agent.Id && i.Kind == AgentIncidentKind.StandingContinuityHeld)).ShouldBe(1);
+        }
     }
 }

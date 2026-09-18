@@ -154,6 +154,15 @@ Invoke-RestMethod "$api/api/agents/$agentId/start" -Method Post -Headers $h `
   the persisted flag for this launch only. A start can refuse **409** `subscription_quota_low` or
   `model_disabled`; both are refusals, not warnings on a launch that happened.
 
+- **STANDING CONTINUITY HOLD IS A DECISION, NOT A FRESH (CARD-0466 / CARD-0561).** Start
+  returns 409 `standing_continuity_held` while `supervision.continuityHeldAt` is set. Reasons:
+  `NativeSessionMissing`, `TargetMissing`, `TargetIncompatible`, `OwnershipUnproven`,
+  `RepeatedResumeFailure`. Read `supervision.continuityResumeFailures` (non-infrastructure
+  supervised resume failures) and `continuityReason` / `continuityEvidence`. Acknowledge with
+  exactly one of `retryContinuity:true`, `resumeSessionId`, or `fresh:true`.
+  `Supervision:ResumeFailureHoldAttempts` (default 5, 0 disables) trips `RepeatedResumeFailure`;
+  it never auto-Freshes.
+
 - **HERDR RETRY HOLD REQUIRES AN EXPLICIT ACKNOWLEDGEMENT (CARD-0388).** A held dead-agent
   Start returns 409 `herdr_supervision_held` before other launch guards or named-placement
   preflight. Read `supervision.herdrConsecutiveFailures`, `herdrFailureHeldAt` and

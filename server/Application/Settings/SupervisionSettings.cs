@@ -2,7 +2,7 @@ namespace Antiphon.Server.Application.Settings;
 
 /// <summary>
 /// Always-on agent supervision (spec: 2026-07-20-always-on-agents-and-alerting.md).
-/// The backoff ladder never gives up: min(BaseSeconds · 2ⁿ, BackoffMaxSeconds) — with the
+/// The backoff ladder never gives up below <see cref="ResumeFailureHoldAttempts"/>: min(BaseSeconds · 2ⁿ, BackoffMaxSeconds) — with the
 /// defaults that is 5s, 10s, … ~15 min, ~2 h, ~15 h, days, capped at 30 days forever.
 /// Qualifying Herdr failures have a separate durable hold after HerdrFailureLimit attempts.
 /// </summary>
@@ -24,6 +24,13 @@ public sealed class SupervisionSettings
 
     /// <summary>Deprecated compatibility setting, ignored. Only an explicit Fresh request replaces continuity.</summary>
     public int FreshAfterResumeFailures { get; set; } = 2;
+
+    /// <summary>
+    /// Consecutive non-infrastructure supervised resume failures that trip the CARD-0466 continuity
+    /// hold with reason <c>RepeatedResumeFailure</c>. 0 disables the trip and restores the
+    /// never-give-up ladder. Default 5.
+    /// </summary>
+    public int ResumeFailureHoldAttempts { get; set; } = 5;
 
     public int IncidentRetentionDays { get; set; } = 30;
     public int IncidentCapPerAgent { get; set; } = 500;

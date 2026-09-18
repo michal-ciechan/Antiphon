@@ -46,6 +46,7 @@ public class RestartFailureClassificationTests
         new RestartFailurePolicy().Observe(state, session).ShouldBeFalse();
         state.ConsecutiveFailures.ShouldBe(7);
         state.RestartBackoffFailures.ShouldBe(1);
+        state.ContinuityResumeFailures.ShouldBe(0);
         session.StartedAt = session.StartedAt.AddSeconds(1);
         session.RestartFailureKind = null;
         session.InteractiveLaunchCompletedAt = session.StartedAt;
@@ -53,5 +54,29 @@ public class RestartFailureClassificationTests
         policy.Observe(state, session).ShouldBeTrue();
         state.ConsecutiveFailures.ShouldBe(8);
         state.RestartBackoffFailures.ShouldBe(2);
+        state.ContinuityResumeFailures.ShouldBe(1);
+    }
+
+    [Test]
+    public void C561_only_non_infrastructure_outcomes_charge_the_resume_failure_counter()
+    {
+        var policy = new RestartFailurePolicy();
+        var state = new AgentSupervisionState();
+        policy.Charge(state, RestartFailureKind.Unknown);
+        state.ContinuityResumeFailures.ShouldBe(1);
+        state.RestartBackoffFailures.ShouldBe(1);
+        policy.Charge(state, RestartFailureKind.LaunchOrProcessFailure);
+        state.ContinuityResumeFailures.ShouldBe(2);
+        state.RestartBackoffFailures.ShouldBe(2);
+        state.ConsecutiveFailures.ShouldBe(1);
+        policy.Charge(state, RestartFailureKind.Infrastructure);
+        state.ContinuityResumeFailures.ShouldBe(2);
+        state.RestartBackoffFailures.ShouldBe(3);
+        policy.Charge(state, RestartFailureKind.ContinuityUnavailable);
+        state.ContinuityResumeFailures.ShouldBe(2);
+        state.RestartBackoffFailures.ShouldBe(3);
+        state.ContinuityResumeFailures = int.MaxValue;
+        policy.Charge(state, RestartFailureKind.Unknown);
+        state.ContinuityResumeFailures.ShouldBe(int.MaxValue);
     }
 }

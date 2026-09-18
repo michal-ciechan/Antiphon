@@ -28,7 +28,7 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 [NotInParallel("MessageQueue")]
 [Category("Slow")]
-public class SessionMessageQueueDeliveryVerificationTests
+public partial class SessionMessageQueueDeliveryVerificationTests
 {
     private static AppDbContext CreateContext() => BridgeQueueHarness.CreateContext();
 

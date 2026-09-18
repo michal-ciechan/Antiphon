@@ -152,7 +152,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         if (liveSession is not null)
         {
             // Healthy long enough? Reset the ladder so the next incident starts from 5s again.
-            if ((state.RestartBackoffFailures > 0 || state.ConsecutiveFailures > 0 || state.NextRestartAt is not null || state.LastEscalationTier > 0)
+            if ((state.RestartBackoffFailures > 0 || state.ConsecutiveFailures > 0 || state.ContinuityResumeFailures > 0 || state.NextRestartAt is not null || state.LastEscalationTier > 0)
                 && liveSession.Status == SessionStatus.Running
                 && liveSession.InteractiveLaunchCompletedAt is { } completedAt
                 && now - completedAt >= TimeSpan.FromMinutes(_settings.HealthyUptimeResetMinutes))
@@ -160,6 +160,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                 var failures = state.ConsecutiveFailures;
                 state.ConsecutiveFailures = 0;
                 state.RestartBackoffFailures = 0;
+                state.ContinuityResumeFailures = 0;
                 state.NextRestartAt = null;
                 state.LastEscalationTier = 0;
                 state.LastHealthyAt = now;
@@ -216,11 +217,6 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             if (dead is not null)
                 new RestartFailurePolicy().Observe(state, dead);
 
-            var attempt = Math.Min(state.RestartBackoffFailures, int.MaxValue - 1) + 1;
-            var delay = Backoff(state.RestartBackoffFailures);
-            state.NextRestartAt = now + delay;
-            state.UpdatedAt = now;
-
             if (dead is not null && dead.Status == SessionStatus.Failed)
             {
                 await RecordIncidentAsync(
@@ -228,6 +224,18 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                     $"Session died (exit {dead.ExitCode?.ToString() ?? "unknown"}: {dead.FailureReason ?? "no reason recorded"}).",
                     dead.ExitCode, dead.FailureReason, ct: ct);
             }
+
+            if (await TryHoldRepeatedResumeFailureAsync(
+                    agent, state, dead?.Id, dead?.Status, dead?.RestartFailureKind, ct))
+            {
+                await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
+                return await CompleteAsync(false);
+            }
+
+            var attempt = Math.Min(state.RestartBackoffFailures, int.MaxValue - 1) + 1;
+            var delay = Backoff(state.RestartBackoffFailures);
+            state.NextRestartAt = now + delay;
+            state.UpdatedAt = now;
 
             await RecordIncidentAsync(
                 agent.Id, dead?.Id, AgentIncidentKind.RestartScheduled, AlertSeverity.Warning,
@@ -357,11 +365,14 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                     ct: ct);
             }
 
-            await EscalateIfTierCrossedAsync(agent, refreshed, heldDelay, ct);
+            if (!await TryHoldRepeatedResumeFailureAsync(
+                    agent, refreshed, null, SessionStatus.Failed, RestartFailureKind.Unknown, ct))
+                await EscalateIfTierCrossedAsync(agent, refreshed, heldDelay, ct);
         }
         else
         {
-            new RestartFailurePolicy().Charge(refreshed, new RestartFailurePolicy().Classify(ex));
+            var kind = new RestartFailurePolicy().Classify(ex);
+            new RestartFailurePolicy().Charge(refreshed, kind);
             var incarnation = await FindPersistentSessionAsync(agent, statuses: null, ct);
             if (incarnation is not null && (incarnation.Id != beforeId || incarnation.StartedAt != beforeStartedAt))
             {
@@ -376,7 +387,9 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                 agent.Id, null, AgentIncidentKind.StartFailure, AlertSeverity.Error,
                 $"Start attempt {attemptNumber} failed: {ex.Message} — next retry {refreshed.NextRestartAt:u} (backing off {Describe(delay)}).",
                 ct: ct);
-            await EscalateIfTierCrossedAsync(agent, refreshed, delay, ct);
+            if (!await TryHoldRepeatedResumeFailureAsync(
+                    agent, refreshed, incarnation?.Id ?? beforeId, incarnation?.Status, incarnation?.RestartFailureKind ?? kind, ct))
+                await EscalateIfTierCrossedAsync(agent, refreshed, delay, ct);
         }
 
         _logger.LogWarning(ex,
@@ -453,6 +466,25 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             agent.Id,
             new StartAgentRequest(Fresh: false, IgnoreSubscriptionQuota: !StandingSpecialistSeatPolicy.IsAlternate(agent), CapacityRecovery: true),
             ct, automatic: true);
+        return true;
+    }
+
+    private async Task<bool> TryHoldRepeatedResumeFailureAsync(
+        Agent agent,
+        AgentSupervisionState state,
+        Guid? sessionId,
+        SessionStatus? lastStatus,
+        RestartFailureKind? lastKind,
+        CancellationToken ct)
+    {
+        var threshold = _settings.ResumeFailureHoldAttempts;
+        if (threshold <= 0 || state.ContinuityResumeFailures < threshold || state.ContinuityHeldAt is not null)
+            return false;
+
+        var detail =
+            $"{state.ContinuityResumeFailures} consecutive supervised resumes ended before healthy uptime; last outcome {lastStatus}/{lastKind}; see the Crash incidents on this agent.";
+        await new StandingContinuityState(_db, _timeProvider).HoldAsync(
+            agent.Id, sessionId, StandingContinuityReason.RepeatedResumeFailure, detail, ct);
         return true;
     }
 
