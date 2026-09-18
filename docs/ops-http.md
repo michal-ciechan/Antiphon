@@ -96,22 +96,25 @@ $api = if ($env:ANTIPHON_API) { $env:ANTIPHON_API } else { 'http://localhost:172
 $h = @{}
 if ($env:ANTIPHON_TASK_TOKEN) { $h['X-Antiphon-Task-Token'] = $env:ANTIPHON_TASK_TOKEN }
 
-# PITFALL (CARD-0546): wrap Invoke-RestMethod in @() or parentheses before piping. On PowerShell
-# 7.6.6 the bare `Invoke-RestMethod ... | Select-Object` form emits a JSON array as ONE Object[],
-# and Format-Table then prints a header plus one blank row for ANY array, empty or not -- a real
-# list looks empty. Invoke-RestMethod has no -NoEnumerate switch; the wrapper is the fix.
+# PITFALL (CARD-0546): put PARENTHESES around Invoke-RestMethod before piping, or assign it to a
+# variable first. On PowerShell 7.6.6 the bare `Invoke-RestMethod ... | Select-Object` form emits
+# a JSON array as ONE Object[], and Format-Table then prints a header plus one blank row for ANY
+# array, empty or not -- a real list looks empty. `(Invoke-RestMethod ...) | ...` and
+# `$r = Invoke-RestMethod ...; $r | ...` enumerate the rows; `@(Invoke-RestMethod ...) | ...` does
+# NOT (it wraps the one Object[] it received and prints the same blank row). Verified live
+# 2026-09-18 against 7 rows. Invoke-RestMethod has no -NoEnumerate switch.
 
 # who is running what -- liveSession is null when the agent is not up
-@(Invoke-RestMethod "$api/api/agents" -Headers $h) |
+(Invoke-RestMethod "$api/api/agents" -Headers $h) |
     Select-Object name, status, @{n='session';e={$_.liveSession.id}}
 
 # a board's id from its name, then its cards (the cards read is a { cards, truncated } envelope)
-$board = @(Invoke-RestMethod "$api/api/boards" -Headers $h) | Where-Object name -eq 'Antiphon'
+$board = (Invoke-RestMethod "$api/api/boards" -Headers $h) | Where-Object name -eq 'Antiphon'
 (Invoke-RestMethod "$api/api/cards?boardId=$($board.id)" -Headers $h).cards | Select-Object identifier, title, status
 
 # delegated work in flight (occupancy) -- status names are case-insensitive, a comma list unions,
 # an unrecognised value is 422 validation_failed
-@(Invoke-RestMethod "$api/api/agent-tasks?status=Dispatched,Working,Blocked" -Headers $h) |
+(Invoke-RestMethod "$api/api/agent-tasks?status=Dispatched,Working,Blocked" -Headers $h) |
     Select-Object id, role, status, cardIdentifier
 # the purpose-built occupancy read: in-flight / queued / blocked / ready rows per stage (CARD-0304);
 # GET /api/agent-tasks/summary `byStatus` is the fleet-wide cross-check on the same column
@@ -145,8 +148,10 @@ Invoke-RestMethod "$api/api/agents/$agentId/start" -Method Post -Headers $h `
   `Invoke-RestMethod ... | Select-Object ... | Format-Table` form emits the JSON array as a single
   `Object[]`, and the table prints a header plus one blank row for ANY array, empty or not. Every
   "`?status=Working` returned nothing" observation on CARD-0546 was this idiom; curl and the
-  parenthesised form showed the rows on the same server. Wrap the call in `@()` or parentheses
-  before piping (`scripts/checkpoint-task.ps1` does), and read occupancy from
+  parenthesised form showed the rows on the same server. Put parentheses around the call before
+  piping, or assign it to a variable first (`scripts/checkpoint-task.ps1` assigns, then wraps the
+  variable in `@()`). Inline `@(Invoke-RestMethod ...)` does NOT fix it: it wraps the single
+  `Object[]` it received and prints the same blank row. Read occupancy from
   `GET /api/agent-tasks/pipeline` rather than a hand-filtered list. The status filter itself is
   correct and pinned (`AgentTaskListStatusFilterTests`, `AgentTaskListEndpointTests`).
 
