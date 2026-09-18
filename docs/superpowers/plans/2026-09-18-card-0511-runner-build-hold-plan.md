@@ -695,5 +695,5 @@ concurrency saving is assumed (one managed snapshot; the plan is under the shard
 
 --- next stage ---
 next: code
-handoff: Code implements S1-S4 against the finalized verification design (25 guards, 20 V rows across SessionRunnerGenerationWireTests, SessionRunnerCapabilityGateTests, RestartFailureClassificationTests, new RunnerIdentityTests and StandingRunnerBuildHoldTests, two Vitest cases; FakeSessionRunnerClient gains Build/CapabilitiesOverride/CapabilitiesCalls; Kind-29 written after the evidence commit) and runs the ordinary V/R floor; Mutation runs the 25 PCs after land.
+handoff: Code implements S1-S4 against the finalized verification design (25 guards, 23 V rows across SessionRunnerGenerationWireTests, SessionRunnerCapabilityGateTests, RestartFailureClassificationTests, new RunnerIdentityTests and StandingRunnerBuildHoldTests, two Vitest cases; FakeSessionRunnerClient gains Build/CapabilitiesOverride/CapabilitiesCalls; Kind-29 written after the evidence commit) and runs the ordinary V/R floor; Mutation runs the 25 PCs after land.
 artifact: docs/superpowers/plans/2026-09-18-card-0511-runner-build-hold-plan.md
