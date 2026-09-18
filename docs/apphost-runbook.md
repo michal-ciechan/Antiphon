@@ -104,6 +104,15 @@ CARD-0360 demonstrated this: the merge and new AppHost were present, but channel
 transport-error reporting needed both server and runner updated. Health alone
 does not prove that feature is live.
 
+Since CARD-0511 a standing agent no longer burns its backoff ladder on this. The refused
+resume records one Critical `RunnerBuildStale` incident naming the build it was refused
+against, and the agent enters a runner-build hold: no further attempts, no restart-schedule
+rows, no ladder growth, and the agent detail shows "Waiting for a rebuilt session runner"
+with that evidence. Run `pwsh -File scripts/restart-session-runner.ps1`; the next supervision
+tick sees a different runner identity, writes one Info `RunnerBuildReplaced` and resumes the
+standing conversation immediately. A manual Start also clears the hold (it re-probes, and
+re-holds by itself if the runner is still stale).
+
 Restart builds the main checkout's files; it does not fetch or pull. After an
 out-of-band push to `origin/master`, update the main checkout with
 `git pull --rebase` before restarting, and verify the intended server code loaded

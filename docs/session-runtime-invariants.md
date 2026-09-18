@@ -393,6 +393,39 @@ contradictory evidence refuses `standing_resume_owner_unproven`; a different sta
 owner refuses `standing_resume_not_owned`. Deleting/recreating a name does not transfer
 ownership. This cannot reconstruct native history overwritten by the former same-ID fallback.
 
+### Runner build hold (CARD-0511)
+
+Every launch decision is made on evidence gathered for that decision. `SessionRunnerHttpClient`
+takes exactly one bounded `GET /capabilities` per `StartAsync` / `AttachHerdrAsync` /
+`GetSessionBackendCapabilityMismatchAsync` and evaluates every gate (grok rules, transcript, herdr
+backend, named tab, generation) as a pure function of that answer. No launch permission or refusal
+reads the 5-minute snapshot: the gate exists for one event, a runner being replaced, and that is
+the one event a TTL cache cannot see. A stale negative wasted a doomed attempt against a runner
+that had already been rebuilt; a stale positive would launch onto a downgraded runner.
+
+A probe nobody answers (connection refused, timeout, 5xx, malformed body) refuses a launch that
+needs positive evidence as `RunnerUnreachableException`, which classifies `Infrastructure` and is
+paced by the ordinary ladder. A 404 stays the older-runner "no evidence" mismatch. An ungated
+launch (or one gated only by the transcript check, whose null answer means launch) still reaches
+the POST.
+
+`RunnerCapabilityMismatchException` classifies `RestartFailureKind.RunnerBuildStale` and is never
+charged. The standing agent enters a durable runner-build hold
+(`AgentSupervisionState.RunnerBuildHeldAt/RunnerBuildHeldIdentity/RunnerBuildHoldEvidence`): no
+attempt, no schedule, no `RestartScheduled`/`Crash` row while held. Unlike the continuity hold it
+asks for no decision, because it has a precise release signal — the runner identity
+`{CommitSha ?? InformationalVersion}@{ProcessStartUtc:O}`. While anything is held the supervision
+tick takes one bounded `GetCapabilitiesAsync` and releases every hold whose identity differs,
+arming the retry in the same tick; a failed probe keeps every hold, and an unheld sweep issues no
+probe at all. Release writes one Info `RunnerBuildReplaced`. A manual Start clears the hold and is
+never refused with `HeldCode`: the queued launch re-probes and re-holds if the runner is still
+stale. A live session clears a leftover hold silently.
+
+The interactive/standing launch path records the Critical Kind-29 `RunnerBuildStale` incident that
+previously only the card path wrote, after the evidence commit (the catch holds the `Agents` row
+`FOR UPDATE`, and the incident writes from another connection), deduplicated per session plus
+message so a second stale build is a second row and a retry against the same build is not.
+
 Selecting older history refuses live/queued sessions, pending card work and open execution
 assignments. Only never-attempted pending non-rules input moves, appended in source order
 after the target queue. Any delivery baseline, timestamp, verdict or settlement evidence
