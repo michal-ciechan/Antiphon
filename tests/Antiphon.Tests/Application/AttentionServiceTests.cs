@@ -2455,6 +2455,7 @@ public partial class AttentionServiceTests
         private readonly List<Guid> _boards = [];
         private readonly List<Guid> _projects = [];
         private readonly List<Guid> _holds = [];
+        private readonly List<Guid> _landings = [];
         private readonly HashSet<string> _holdKeys = [];
 
         public async Task HoldHerdrAsync(Guid agentId, DateTime heldAt, int count,
@@ -2621,13 +2622,21 @@ public partial class AttentionServiceTests
             Guid? agentId = null,
             DateTime? reportNudgedAt = null,
             AgentTaskRole role = AgentTaskRole.Code,
-            string? standingAuthority = null)
+            string? standingAuthority = null,
+            // CARD-0552 M-7: the sourced-battery shape this suite could not express before.
+            Guid? cardId = null,
+            Guid? sourceLandingOperationId = null,
+            PipelineHandoffKind? nextStage = null)
         {
             var id = Guid.NewGuid();
             var dispatched = DateTime.UtcNow.AddMinutes(-dispatchedMinutesAgo);
             await using var db = CreateContext();
             db.AgentTasks.Add(new AgentTask
             {
+                CardId = cardId,
+                SourceLandingOperationId = sourceLandingOperationId,
+                SourceLandingSha = sourceLandingOperationId is null ? null : new string('b', 40),
+                NextStage = nextStage,
                 Id = id,
                 RootTaskId = id,
                 Title = $"attention test {id:N}"[..24],
@@ -2852,7 +2861,12 @@ public partial class AttentionServiceTests
             return (projectId, boardId, backlogId);
         }
 
-        public async Task<Guid> AddCardOnBoardAsync(Guid boardId, Guid columnId)
+        public async Task<Guid> AddCardOnBoardAsync(
+            Guid boardId,
+            Guid columnId,
+            CardStatus status = CardStatus.Backlog,
+            bool archived = false,
+            string? identifier = null)
         {
             var now = DateTime.UtcNow;
             var cardId = Guid.NewGuid();
@@ -2862,15 +2876,49 @@ public partial class AttentionServiceTests
                 Id = cardId,
                 BoardId = boardId,
                 BoardColumnId = columnId,
-                Identifier = $"OUTL-{cardId:N}"[..16],
+                Identifier = identifier ?? $"OUTL-{cardId:N}"[..16],
                 Title = "A live card on this board",
-                Status = CardStatus.Backlog,
+                Status = status,
+                ArchivedAt = archived ? now : null,
+                CompletedAt = status is CardStatus.Done or CardStatus.Canceled ? now : null,
                 CreatedAt = now,
                 UpdatedAt = now,
             });
             await db.SaveChangesAsync();
             _cards.Add(cardId);
             return cardId;
+        }
+
+        /// <summary>
+        /// CARD-0552 M-7. A confirmed publication for <paramref name="ownerTaskId"/> linked to
+        /// <paramref name="companionCardId"/>: the row a settled sourced battery is judged against.
+        /// </summary>
+        public async Task<AgentTaskLanding> AddLandingAsync(Guid ownerTaskId, Guid companionCardId)
+        {
+            var now = DateTime.UtcNow;
+            var sha = new string('b', 40);
+            await using var db = CreateContext();
+            var repo = Path.GetTempPath();
+            var op = new AgentTaskLanding
+            {
+                Id = Guid.NewGuid(), TaskId = ownerTaskId, Active = true,
+                Phase = LandPhase.PublicationConfirmed, Publication = LandPublicationOutcome.Landed,
+                Cleanup = LandCleanupStatus.Complete, Mode = LandOperationMode.Fresh,
+                OriginalSourceSha = new string('c', 40), RebasedSourceSha = sha, VerifiedSourceSha = sha,
+                ObservedRemoteTargetSha = sha, TargetBeforeSha = new string('a', 40),
+                TargetFullRef = "refs/heads/master", DestinationFullRef = "refs/heads/master",
+                SourceFullRef = "refs/heads/source", RepositoryPath = repo, CommonDirectory = repo,
+                WorktreePath = repo, GitDirectory = repo, SourcePinned = true, TargetPinned = true,
+                PreparedPinned = true, VerificationPassed = true, VerifiedAt = now,
+                RemoteFingerprint = new string('a', 64), RemoteConfirmedAt = now.AddHours(-1),
+                ConfirmationMethod = "push-endpoint-read-fetch-ancestry",
+                VerificationCardId = companionCardId, CreatedAt = now, UpdatedAt = now,
+            };
+            op.RecoveryRefPrefix = $"refs/antiphon/land/{ownerTaskId:N}/{op.Id:N}";
+            db.AgentTaskLandings.Add(op);
+            await db.SaveChangesAsync();
+            _landings.Add(op.Id);
+            return op;
         }
 
         public async Task AddDelegationBriefAsync(Guid sessionId, Guid taskId, QueuedMessageStatus status)
@@ -3306,6 +3354,12 @@ public partial class AttentionServiceTests
             await db.SessionQueuedMessages.Where(m => _sessions.Contains(m.AgentSessionId)).ExecuteDeleteAsync();
             await db.AgentTaskEvents.Where(e => _tasks.Contains(e.AgentTaskId)).ExecuteDeleteAsync();
             await db.AgentIncidents.Where(i => i.AgentId != null && _agents.Contains(i.AgentId.Value)).ExecuteDeleteAsync();
+            // CARD-0552 M-7: a sourced task holds an FK to a landing and a landing holds one to a
+            // card, so the order is sourced tasks, then landings, then the remaining tasks, then
+            // the cards. Getting it wrong is a Restrict violation, not a leaked row.
+            await db.AgentTasks.Where(t => _tasks.Contains(t.Id) && t.SourceLandingOperationId != null)
+                .ExecuteDeleteAsync();
+            await db.AgentTaskLandings.Where(o => _landings.Contains(o.Id)).ExecuteDeleteAsync();
             await db.AgentTasks.Where(t => _tasks.Contains(t.Id)).ExecuteDeleteAsync();
             // A session pointed at one of our cards would block the card delete (CARD-0040 tests).
             await db.AgentSessions.Where(s => s.CardId != null && _cards.Contains(s.CardId!.Value))
