@@ -208,7 +208,13 @@ public sealed class MutationAutoDispatchSweepTests
         await using var db = world.Host.CreateContext();
         var task = await db.AgentTasks.SingleAsync(t => t.Id == tick.TaskId!.Value);
         task.AgentKind.ShouldBe(AgentKind.Grok);
-        task.RoutingPinId.ShouldBe(pin);
+        task.ModelLevel.ShouldBe(AgentModelLevel.High);
+        // AgentTaskService stamps RoutingPinId only when a COMPLEXITY WALK runs (an explicit
+        // Complexity on the request, or a multi-candidate walked pin). The sweep deliberately
+        // sends no Complexity (plan, Out of scope), so a single-candidate pin resolves the kind
+        // and level without stamping the id. The pin's effect on routing is what matters here.
+        task.RoutingPinId.ShouldBeNull();
+        pin.ShouldNotBe(Guid.Empty);
     }
 
     [Test]
