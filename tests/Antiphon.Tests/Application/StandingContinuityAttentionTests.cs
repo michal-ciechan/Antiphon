@@ -46,7 +46,7 @@ public class StandingContinuityAttentionTests
             row.SessionId.ShouldBe(f.B.Id); row.Actions.ShouldContain(AttentionAction.OpenAgent);
             row.Actions.ShouldContain(AttentionAction.OpenDrawer);
             row.Severity.ShouldBe(AlertSeverity.Error);
-            row.Title.ShouldContain(reason.ToString());
+            row.Headline.ShouldContain(reason.ToString());
             (await db.Alerts.CountAsync(a => a.AgentId == f.Agent.Id)).ShouldBe(1);
             (await db.Alerts.FindAsync(alertId))!.Detail.ShouldBe("Synthetic metadata");
             var state = (await db.AgentSupervisionStates.FindAsync(f.Agent.Id))!;

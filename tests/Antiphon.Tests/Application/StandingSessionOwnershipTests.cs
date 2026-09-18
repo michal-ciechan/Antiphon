@@ -19,6 +19,13 @@ namespace Antiphon.Tests.Application;
 public class StandingSessionOwnershipTests
 {
     [Test]
+    public void C561_model_and_migration_agree()
+    {
+        using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        db.Database.HasPendingModelChanges().ShouldBeFalse();
+    }
+
+    [Test]
     public async Task Deleting_and_recreating_the_same_name_does_not_adopt_historical_ownership()
     {
         await using var f = new StandingRecoveryFixture(new FakeAgentProtocolAdapter());
@@ -124,7 +131,7 @@ public class StandingSessionOwnershipTests
                 sessions.Metadata.RemoveIndex(index);
             foreach (var name in new[] { "StandingAgentId", "RestartFailureKind", "InteractiveLaunchCompletedAt" }) sessions.Ignore(name);
             foreach (var name in new[] { "RestartBackoffFailures", "LastObservedRestartSessionId", "LastObservedRestartStartedAt",
-                "ContinuityHeldAt", "ContinuitySessionId", "ContinuityReason", "ContinuityEvidence" })
+                "ContinuityHeldAt", "ContinuitySessionId", "ContinuityReason", "ContinuityEvidence", "ContinuityResumeFailures" })
                 builder.Entity<AgentSupervisionState>().Ignore(name);
         }
     }
