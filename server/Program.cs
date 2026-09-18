@@ -115,6 +115,9 @@ try
 
     // Typed settings — IOptions<T> pattern (never inject IConfiguration into services)
     builder.Services.Configure<GitSettings>(builder.Configuration.GetSection("Git"));
+    builder.Services.AddOptions<GitSettings>()
+        .Validate(s => s.IndexLockStaleAfterSeconds >= 30, "Git:IndexLockStaleAfterSeconds must be at least 30.")
+        .ValidateOnStart();
     builder.Services.Configure<ProjectsSettings>(builder.Configuration.GetSection("Projects"));
     builder.Services.Configure<LlmSettings>(builder.Configuration.GetSection("Llm"));
     builder.Services.Configure<SignalRSettings>(builder.Configuration.GetSection("SignalR"));

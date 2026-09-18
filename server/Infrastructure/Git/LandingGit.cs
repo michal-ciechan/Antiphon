@@ -307,6 +307,29 @@ public class LandingGit : ILandingGit
         return new(null, null, fingerprint, "source_remote_changed_during_confirmation");
     }
 
+    public virtual async Task<LandingIndexLockObservation> InspectIndexLockAsync(string checkout, CancellationToken ct)
+    {
+        try
+        {
+            ct.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(checkout))
+                return new("", false, null, null, [], GitIndexLock.PathErrorReason);
+            var result = await RunAsync(checkout,
+                ["rev-parse", "--path-format=absolute", "--git-path", "index.lock"], ct);
+            var path = result.Output.Trim();
+            if (!result.Succeeded || path.Length == 0)
+                return new(path, false, null, null, [], GitIndexLock.PathErrorReason);
+            var census = GitIndexLock.CensusGitProcesses();
+            var observed = GitIndexLock.Observe(path, DateTime.UtcNow, census);
+            return new(observed.Path, observed.Present, observed.LastWriteUtc, observed.Length,
+                observed.CandidateHolders, null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new("", false, null, null, [], GitIndexLock.PathErrorReason);
+        }
+    }
+
     public async Task<LandingGitResult> PinAsync(string repository, string recoveryRef, string sha, CancellationToken ct)
     {
         if (!IsOid(sha) || !recoveryRef.StartsWith("refs/antiphon/land/", StringComparison.Ordinal))

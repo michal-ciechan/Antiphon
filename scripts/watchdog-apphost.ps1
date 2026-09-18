@@ -177,6 +177,11 @@ function Test-LaunchInFlight {
 
 Write-Log 'INFO' "fire beginning (PID $PID$(if ($ProbeOnly) { '; ProbeOnly' }))"
 
+$gitIndexLock = Get-AppHostGitIndexLock -SourceRoot $root
+if ($gitIndexLock -and $gitIndexLock.Stale) {
+    Write-Log 'WARN' (Format-AppHostGitIndexLockNote $gitIndexLock)
+}
+
 $inFlight = Test-LaunchInFlight
 if ($inFlight) {
     Write-Log 'INFO' "skip: launch in flight - $inFlight"

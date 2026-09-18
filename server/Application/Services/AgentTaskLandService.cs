@@ -33,6 +33,7 @@ public sealed class AgentTaskLandService
     private readonly DelegationSettings _settings;
     private readonly ILogger<AgentTaskLandService> _logger;
     private readonly LandDeliveryBoundary _boundary;
+    private readonly GitSettings? _gitSettings;
     private LandExecutionIdentity? _execution;
 
     public AgentTaskLandService(
@@ -46,7 +47,7 @@ public sealed class AgentTaskLandService
         IOptions<DelegationSettings> settings,
         ILogger<AgentTaskLandService> logger,
         AgentTaskLandingProtocol? protocol = null, IRepositoryMutationLease? leases = null, ILandingGit? landingGit = null,
-        LandDeliveryBoundary? boundary = null)
+        LandDeliveryBoundary? boundary = null, IOptions<GitSettings>? gitSettings = null)
     {
         _protocol = protocol;
         _boundary = boundary ?? new LandDeliveryBoundary();
@@ -61,6 +62,7 @@ public sealed class AgentTaskLandService
         _clock = clock;
         _settings = settings.Value;
         _logger = logger;
+        _gitSettings = gitSettings?.Value;
     }
 
     /// <summary>Persist and queue an explicit land request. The endpoint returns before git runs.</summary>
@@ -227,6 +229,12 @@ public sealed class AgentTaskLandService
                 $"Landing waits for repository/source writer {holder.Id:N} ({holder.Status}).", ct);
             return LandRunResult.Held;
         }
+        var indexLock = await ProbeAdmissionIndexLockAsync(task, ct);
+        if (indexLock is not null)
+        {
+            await HoldAsync(task, request, indexLock.Value.Code, null, indexLock.Value.Detail, ct);
+            return LandRunResult.Held;
+        }
         await using (var admission = await _db.Database.BeginTransactionAsync(ct))
         {
         await LockTaskAsync(task.Id, ct);
@@ -293,12 +301,13 @@ public sealed class AgentTaskLandService
             }
             try
             {
-                var resolved = await new AgentTaskLandSourceResolver(_db, _landingGit, _leases, _clock)
+                var resolved = await new AgentTaskLandSourceResolver(_db, _landingGit, _leases, _clock,
+                    _gitSettings is null ? null : Options.Create(_gitSettings))
                     .ResolveAsync(task, request, lease, ct);
                 if (resolved.StaleRequest) return LandRunResult.Complete;
                 if (resolved.Reason is not null)
                 {
-                    await RefuseAsync(task, FormatSourceRefusal(request, resolved.Reason), ct);
+                    await RefuseAsync(task, AppendDetail(FormatSourceRefusal(request, resolved.Reason), resolved.Detail), ct);
                     return LandRunResult.Complete;
                 }
             }
@@ -347,7 +356,7 @@ public sealed class AgentTaskLandService
             if (op?.VerifiedAt is not null)
                 Record(task, OrchestrationStage.Verify, op.VerificationPassed ? StageOutcomeKind.Clean : StageOutcomeKind.Skipped,
                     DurationSeconds(op, OrchestrationStage.Verify), op.VerificationSkipReason ?? "verification passed");
-            await RefuseAsync(task, result.Reason ?? "publication_unconfirmed", ct);
+            await RefuseAsync(task, AppendDetail(result.Reason ?? "publication_unconfirmed", result.Detail), ct);
             return LandRunResult.Complete;
         }
         if (op!.Mode != LandOperationMode.CleanupRetry)
@@ -379,6 +388,54 @@ public sealed class AgentTaskLandService
             $"{reason} expected={request.ExpectedSourceSha ?? "null"} local={request.LocalBeforeSha ?? "null"} "
             + $"remote={request.RemoteSourceSha ?? "null"} candidate={request.CandidateSourceSha ?? "null"}",
             request);
+
+    internal static string AppendDetail(string reason, string? detail) =>
+        string.IsNullOrEmpty(detail) ? reason : reason + "; " + detail;
+
+    /// <summary>
+    /// CARD-0543 V-11s: probe the source worktree always, and the registered target checkout only
+    /// when a worktree currently has the merge-target branch. RepoPath is not probed
+    /// unconditionally, so a lock in a detached canonical checkout does not hold a land that
+    /// will use update-ref (A-6). A registration lookup failure falls back to RepoPath.
+    /// </summary>
+    private async Task<(string Code, string Detail)?> ProbeAdmissionIndexLockAsync(AgentTask task, CancellationToken ct)
+    {
+        if (_landingGit is null || task.RepoPath is null)
+            return null;
+        if (task.WorktreePath is not null
+            && await ProbeCheckoutIndexLockAsync(task.WorktreePath, ct) is { } source)
+            return source;
+
+        string? targetCheckout = null;
+        try
+        {
+            var targetRef = FullRef(task.MergeTargetRef ?? "master");
+            var rows = (await _landingGit.RegistrationsAsync(task.RepoPath, ct))
+                .Where(r => r.Branch == targetRef).ToList();
+            if (rows.Count == 1 && !rows[0].Locked && !rows[0].Prunable)
+                targetCheckout = await _landingGit.CanonicalDirectoryAsync(rows[0].Path, ct);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            targetCheckout = task.RepoPath;
+        }
+
+        if (targetCheckout is not null
+            && !GitIndexLock.PathsEqual(targetCheckout, task.WorktreePath)
+            && await ProbeCheckoutIndexLockAsync(targetCheckout, ct) is { } target)
+            return target;
+        return null;
+    }
+
+    private async Task<(string Code, string Detail)?> ProbeCheckoutIndexLockAsync(string checkout, CancellationToken ct)
+    {
+        var observation = await _landingGit!.InspectIndexLockAsync(checkout, ct);
+        return GitIndexLock.Refusal(observation, GitIndexLock.StaleAfter(_gitSettings?.IndexLockStaleAfterSeconds),
+            _clock.GetUtcNow().UtcDateTime);
+    }
+
+    private static string FullRef(string branch) =>
+        branch.StartsWith("refs/", StringComparison.Ordinal) ? branch : "refs/heads/" + branch;
 
     private async Task<AgentTask?> FindWriterAsync(AgentTask task, string common, CancellationToken ct)
     {

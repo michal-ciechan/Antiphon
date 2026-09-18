@@ -1,23 +1,26 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>CARD-0488 D-3/D-4: observe remote source and journal a behind-only fast-forward before preparation.</summary>
 public sealed class AgentTaskLandSourceResolver(
-    AppDbContext db, ILandingGit git, IRepositoryMutationLease leases, TimeProvider clock)
+    AppDbContext db, ILandingGit git, IRepositoryMutationLease leases, TimeProvider clock,
+    IOptions<GitSettings>? gitSettings = null)
 {
     public sealed record Result(AgentTaskLanding? Operation, string? Reason, bool CreatedOperation,
-        bool StaleRequest = false, LandInspectionDiagnostic? Diagnostic = null)
+        bool StaleRequest = false, LandInspectionDiagnostic? Diagnostic = null, string? Detail = null)
     {
         public static Result Stale() => new(null, null, false, StaleRequest: true);
-        public static Result Refused(string reason, LandInspectionDiagnostic? diagnostic = null)
-            => new(null, reason, false, Diagnostic: diagnostic);
+        public static Result Refused(string reason, LandInspectionDiagnostic? diagnostic = null, string? detail = null)
+            => new(null, reason, false, Diagnostic: diagnostic, Detail: detail);
     }
 
     private readonly AgentTaskLandRequestWriter _writer = new(db, clock);
@@ -110,6 +113,8 @@ public sealed class AgentTaskLandSourceResolver(
                 request.SourceAdvanceChildOperation = "source-ff";
                 if (await CheckpointAsync(task, request, baseline, ct) is { } retryAdvanceStop) return retryAdvanceStop;
                 baseline = LandSourceCheckpointBaseline.From(request, task);
+                if (await IndexLockRefusalAsync(local.RegisteredPath, task, request, baseline, local.HeadSha, savedR, expected, ct) is { } retryLock)
+                    return retryLock;
                 var merge = await git.RunOwnedAsync(local.RegisteredPath,
                     ["-c", "merge.autoStash=false", "merge", "--ff-only", expected],
                     async (pid, ticks, token) =>
@@ -125,7 +130,11 @@ public sealed class AgentTaskLandSourceResolver(
                 if (await CheckpointAsync(task, request, baseline, ct) is { } retryClearStop) return retryClearStop;
                 baseline = LandSourceCheckpointBaseline.From(request, task);
                 if (!merge.Succeeded)
+                {
+                    if (await IndexLockRefusalAsync(local.RegisteredPath, task, request, baseline, local.HeadSha, savedR, expected, ct) is { } retryFailedLock)
+                        return retryFailedLock;
                     return await RefuseAsync(task, request, baseline, "source_fast_forward_failed", local.HeadSha, savedR, expected, ct);
+                }
                 var after = await git.InspectAsync(coordinates, ct);
                 if (!after.Accepted || after.Snapshot!.HeadSha != expected)
                     return await RefuseAsync(task, request, baseline, after.Reason ?? "source_changed",
@@ -240,6 +249,8 @@ public sealed class AgentTaskLandSourceResolver(
             if (beforeMerge is not null)
                 return await RefuseAsync(task, request, baseline, beforeMerge, local.HeadSha, request.RemoteSourceSha,
                     expected, ct);
+            if (await IndexLockRefusalAsync(local.RegisteredPath, task, request, baseline, local.HeadSha, observed.Sha, expected, ct) is { } ffLock)
+                return ffLock;
             var merge = await git.RunOwnedAsync(local.RegisteredPath,
                 ["-c", "merge.autoStash=false", "merge", "--ff-only", expected],
                 async (pid, ticks, token) =>
@@ -255,8 +266,12 @@ public sealed class AgentTaskLandSourceResolver(
             if (await CheckpointAsync(task, request, baseline, ct) is { } clearStop) return clearStop;
             baseline = LandSourceCheckpointBaseline.From(request, task);
             if (!merge.Succeeded)
+            {
+                if (await IndexLockRefusalAsync(local.RegisteredPath, task, request, baseline, local.HeadSha, observed.Sha, expected, ct) is { } ffFailedLock)
+                    return ffFailedLock;
                 return await RefuseAsync(task, request, baseline, "source_fast_forward_failed", local.HeadSha,
                     observed.Sha, expected, ct);
+            }
             var after = await git.InspectAsync(coordinates, ct);
             if (!after.Accepted || after.Snapshot!.HeadSha != expected
                 || after.Snapshot.GitDirectory != local.GitDirectory
@@ -394,27 +409,38 @@ public sealed class AgentTaskLandSourceResolver(
         return await PersistRefusalAsync(task, request, baseline, reason, ct);
     }
 
+    private async Task<Result?> IndexLockRefusalAsync(string checkout, AgentTask task, AgentTaskLandRequest request,
+        LandSourceCheckpointBaseline baseline, string? local, string? remote, string? candidate, CancellationToken ct)
+    {
+        var observation = await git.InspectIndexLockAsync(checkout, ct);
+        var hit = GitIndexLock.Refusal(observation, GitIndexLock.StaleAfter(gitSettings?.Value.IndexLockStaleAfterSeconds),
+            clock.GetUtcNow().UtcDateTime);
+        if (hit is null) return null;
+        return await RefuseAsync(task, request, baseline, hit.Value.Code, local, remote, candidate, ct,
+            detail: hit.Value.Detail);
+    }
+
     private async Task<Result> RefuseAsync(AgentTask task, AgentTaskLandRequest request,
         LandSourceCheckpointBaseline baseline, string reason, string? local, string? remote,
-        string? candidate, CancellationToken ct, LandInspectionDiagnostic? diagnostic = null)
+        string? candidate, CancellationToken ct, LandInspectionDiagnostic? diagnostic = null, string? detail = null)
     {
         request.SourceRefusalReason = reason;
         request.LocalBeforeSha = local;
         request.RemoteSourceSha = remote;
         request.CandidateSourceSha = candidate;
         if (diagnostic is not null) LandFailureDiagnostic.ApplyInspection(request, diagnostic);
-        return await PersistRefusalAsync(task, request, baseline, reason, ct, diagnostic);
+        return await PersistRefusalAsync(task, request, baseline, reason, ct, diagnostic, detail);
     }
 
     private async Task<Result> PersistRefusalAsync(AgentTask task, AgentTaskLandRequest request,
         LandSourceCheckpointBaseline baseline, string reason, CancellationToken ct,
-        LandInspectionDiagnostic? diagnostic = null)
+        LandInspectionDiagnostic? diagnostic = null, string? detail = null)
     {
         var applied = await _writer.ApplyAsync(task, request, baseline, LandSourceCheckpointPatch.From(request), ct);
         if (applied.Disposition == LandSourceCheckpointDisposition.StaleRequest) return Result.Stale();
         if (applied.Disposition == LandSourceCheckpointDisposition.SourceStateChanged)
             throw new LandSourceResolutionConflictException();
-        return Result.Refused(reason, diagnostic);
+        return Result.Refused(reason, diagnostic, detail);
     }
 
     private async Task<Result?> CheckpointAsync(AgentTask task, AgentTaskLandRequest request,

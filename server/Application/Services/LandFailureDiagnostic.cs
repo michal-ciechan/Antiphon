@@ -27,6 +27,7 @@ internal static class LandFailureDiagnostic
         "git rev-parse <identity>",
         "git worktree list",
         "git check-ref-format <ref>",
+        "git rev-parse --git-path index.lock",
         "filesystem canonicalization",
     };
 
@@ -85,7 +86,9 @@ internal static class LandFailureDiagnostic
             "status" => "git status --porcelain=v1",
             "ls-files" => "git ls-files --others --ignored",
             "worktree" => "git worktree list",
-            "rev-parse" => "git rev-parse <identity>",
+            "rev-parse" => arguments.Contains("--git-path")
+                ? "git rev-parse --git-path index.lock"
+                : "git rev-parse <identity>",
             "check-ref-format" => "git check-ref-format <ref>",
             _ => "",
         };

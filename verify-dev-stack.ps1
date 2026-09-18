@@ -23,6 +23,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = $PSScriptRoot
+. (Join-Path $RepoRoot 'scripts\apphost-common.ps1')
 
 # ── Port / URL scheme ──────────────────────────────────────────────────────
 if ($SimpleMode) {
@@ -119,8 +120,18 @@ if (-not $SkipBrowser) {
     } catch { Add-Result "Browser smoke" $false $_.Exception.Message }
 }
 
+# CARD-0543: report a present lock; do not fail the stack exit on it.
+$gitIndexLock = Get-AppHostGitIndexLock -SourceRoot $RepoRoot
+if ($null -eq $gitIndexLock) {
+    Add-Result "Git index lock" $true "absent"
+} elseif ($gitIndexLock.Stale) {
+    Add-Result "Git index lock" $false ("stale ({0:n1} min) at {1} — Remove-Item '{1}'" -f $gitIndexLock.AgeMinutes, $gitIndexLock.Path)
+} else {
+    Add-Result "Git index lock" $true ("fresh ({0:n1} min)" -f $gitIndexLock.AgeMinutes)
+}
+
 # ── Summary ─────────────────────────────────────────────────────────────────
-$failed = $results | Where-Object { $_.Status -eq 'FAIL' }
+$failed = $results | Where-Object { $_.Status -eq 'FAIL' -and $_.Check -ne 'Git index lock' }
 Write-Host ""
 if ($failed) {
     Write-Host "Stack NOT healthy — $($failed.Count) check(s) failed:" -ForegroundColor Red

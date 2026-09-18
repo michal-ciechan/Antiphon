@@ -294,7 +294,9 @@ metadata (`sourceDiagnosticCommand`, `sourceDiagnosticExitCode`, `sourceDiagnost
 captured stderr. POST land returns additive `requestId` and `notification`.
 Repeated inactive pending requests preserve age and identity. `delegate.ps1 -Status`
 prints delegate, land, candidate/refusal/execution-failure/inspection, publication/cleanup,
-`Landing reason:` from the operation, and receipt separately. Missing optional fields from an
+`Landing reason:` from the operation, and receipt separately. A land hold's `Reason:` line
+is `holdReasonCode; holder …; holdDetail` — including `git_index_lock_stale` /
+`git_index_lock_held` with the lock path and `Remove-Item` in the detail. Missing optional fields from an
 older server print no false failure line. The Attention view
 projects held and aged requests and unresolved receipts independently of task openness.
 

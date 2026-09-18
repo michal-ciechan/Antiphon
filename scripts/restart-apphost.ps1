@@ -68,6 +68,7 @@ if (-not $PSBoundParameters.ContainsKey('LockMaxAgeMinutes')) {
 }
 
 $root    = Split-Path $PSScriptRoot -Parent      # scripts/ -> repo root
+$restartBeganUtc = [datetime]::UtcNow
 $worktree = Get-AppHostWorktreeClassification -SourceRoot $root
 if (-not $worktree.Verified -or (-not $worktree.IsMainWorktree -and -not $AllowWorktree)) {
     Format-AppHostWorktreeGuardMessage -Classification $worktree | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
@@ -163,6 +164,11 @@ try {
     if (Test-AppHostTrackedEdits -SourceRoot $root) {
         Write-Host "NOTE: source checkout has tracked edits; SHA equality does not prove uncommitted behavior is loaded. Probe the changed feature directly." -ForegroundColor Yellow
     }
+    $gitIndexLock = Get-AppHostGitIndexLock -SourceRoot $root
+    $gitIndexLockNote = Format-AppHostGitIndexLockNote $gitIndexLock
+    if ($gitIndexLockNote) {
+        Write-Host $gitIndexLockNote -ForegroundColor Yellow
+    }
 
     # Guard: which PID owns the session-runner port, so we never kill it.
     $srPid = Get-AppHostPortOwners $sessionRunnerPort | Select-Object -First 1
@@ -189,6 +195,11 @@ try {
     Get-AppHostStrayProcesses |
         Where-Object { $_.Id -ne $srPid } |
         ForEach-Object { Stop-AppHostProcessId -ProcessId $_.Id; Write-Host "  killed stale $($_.ProcessName) (PID $($_.Id))" }
+
+    $gitIndexLockAfterKill = Get-AppHostGitIndexLock -SourceRoot $root
+    if ($gitIndexLockAfterKill -and $gitIndexLockAfterKill.LastWriteTimeUtc -gt $restartBeganUtc) {
+        Write-Host "NOTE: git index lock appeared during this restart's kill (mtime after script start); probably orphaned by this restart's kill. $($gitIndexLockAfterKill.Path). Remove it with: Remove-Item '$($gitIndexLockAfterKill.Path)'. Never remove a lock while a git process older than it is running." -ForegroundColor Yellow
+    }
 
     # 4) Reset launch signals so the wait below is not fooled by stale state.
     Remove-Item $urlFile -ErrorAction SilentlyContinue
