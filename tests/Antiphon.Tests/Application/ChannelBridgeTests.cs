@@ -934,6 +934,33 @@ public class ChannelBridgeTests
         services.AddSingleton<IAntiphonMessagingProducer>(messaging);
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IOptions<AgentSessionSettings>>(Options.Create(new AgentSessionSettings()));
+        // CARD-0484: without this the queue falls back to production DeliveryVerificationSettings
+        // (30s transcript confirm), and every bound-channel inbound here delivers inline through the
+        // verified path and runs that loop to its deadline before returning a degraded screen-only
+        // Delivered. Same compressed block BridgeQueueHarness uses, verbatim.
+        var verification = new DeliveryVerificationSettings
+        {
+            Enabled = true,
+            EvidenceTimeoutSeconds = 1, // fast wedge verdicts in tests
+            PollIntervalMs = 50,
+            PostSubmitAdvanceTimeoutSeconds = 1,
+            StrandedAgeSeconds = 0,
+            // Same shape as production, compressed: one re-press window inside the deadline
+            // so a swallowed Enter recovers and a never-recorded body still fails fast.
+            TranscriptConfirmTimeoutSeconds = 3,
+            ReEnterIntervalSeconds = 1,
+            // Compressed too: long enough for a record that lands just past the deadline,
+            // short enough that the genuine-failure suites do not pay for it.
+            PostFailureConfirmGraceSeconds = 3,
+            // CARD-0164: wall-clock floor for unobservable/null-baseline confirm. Keep the
+            // production default — tests that need an "old" row stamp it explicitly.
+            UnobservableBaselineConfirmClockToleranceSeconds = 30,
+            // Production attempt COUNT (the retry is what CARD-0056 slice 3 is about) with
+            // the pause between attempts compressed away.
+            BootPromptRetryDelaySeconds = 0,
+        };
+        services.AddSingleton<IOptions<SupervisionSettings>>(Options.Create(
+            new SupervisionSettings { DeliveryVerification = verification }));
         // DebounceWindowMs 0 = passthrough: these tests assert synchronous routing; the debounce
         // behaviour has its own suites (ChannelInboundDebouncerTests + the rapid-fire bridge tests).
         services.AddSingleton(Options.Create(new ChannelBridgeSettings
