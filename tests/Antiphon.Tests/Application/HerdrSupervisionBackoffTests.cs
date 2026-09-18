@@ -32,7 +32,7 @@ public class HerdrSupervisionBackoffTests
         await f.DueAsync();
         var first = await f.SessionAsync();
         await f.ExitAsync(AgentExitReason.HerdrPaneClosed);
-        await using (var reconcileDb = Db())
+        await using (var reconcileDb = f.Db())
         {
             var row = await f.SessionAsync();
             var runner = new SessionReconciliationServiceTests.FakeRunnerClient { Sessions = [new SessionRunnerSessionDto(
@@ -60,7 +60,7 @@ public class HerdrSupervisionBackoffTests
         held.HerdrHealthySince.ShouldBeNull();
         await f.NoLaunchAsync();
         (await f.StateAsync()).ConsecutiveFailures.ShouldBe(held.ConsecutiveFailures);
-        await using var db = Db();
+        await using var db = f.Db();
         (await db.AgentIncidents.CountAsync(i => i.AgentId == f.AgentId && i.Kind == AgentIncidentKind.HerdrSupervisionHeld)).ShouldBe(1);
         (await db.AgentIncidents.CountAsync(i => i.AgentId == f.AgentId && i.CreatedAt >= held.HerdrFailureHeldAt
             && (i.Kind == AgentIncidentKind.RestartScheduled || i.Kind == AgentIncidentKind.BackoffEscalated))).ShouldBe(0);
@@ -115,7 +115,7 @@ public class HerdrSupervisionBackoffTests
         await f.IdleAsync();
         await f.ExitAsync(AgentExitReason.HerdrLaunchDetectTimeout);
         await f.ExitAsync(AgentExitReason.HerdrPaneClosed);
-        await using (var reconcileDb = Db())
+        await using (var reconcileDb = f.Db())
         {
             var row = await f.SessionAsync();
             var runner = new SessionReconciliationServiceTests.FakeRunnerClient { Sessions = [new SessionRunnerSessionDto(
@@ -126,7 +126,7 @@ public class HerdrSupervisionBackoffTests
         await f.TickAsync();
         (await f.StateAsync()).HerdrConsecutiveFailures.ShouldBe(1);
         (await f.SessionAsync()).HerdrSupervisionFailureKind.ShouldBe(HerdrSupervisionFailureKind.DetectTimeout);
-        await using var db = Db();
+        await using var db = f.Db();
         (await db.AgentIncidents.CountAsync(i => i.AgentId == f.AgentId && i.Kind == AgentIncidentKind.Crash)).ShouldBe(1);
     }
 
@@ -152,7 +152,7 @@ public class HerdrSupervisionBackoffTests
         using var siblingScope = f.Harness.Provider.CreateScope();
         var sibling = await siblingScope.ServiceProvider.GetRequiredService<AgentService>().CreateAsync(
             new CreateAgentRequest("Sibling", f.Root, SessionBackend: SessionBackend.Herdr, AlwaysOn: true), CancellationToken.None);
-        await using var db = Db();
+        await using var db = f.Db();
         var siblingSession = new AgentSession { Id = Guid.NewGuid(), Cwd = f.Root, AgentKind = AgentKind.ClaudeCode,
             SessionBackend = SessionBackend.Herdr, Status = SessionStatus.Failed, CreatedAt = DateTime.UtcNow,
             StartedAt = DateTime.UtcNow, HerdrSupervisionFailureKind = HerdrSupervisionFailureKind.PaneClosed };
@@ -194,7 +194,7 @@ public class HerdrSupervisionBackoffTests
         var cardId = await scenario.AddCardOnBoardAsync(boardId, columnId);
         await using var f = await Fixture.CreateAsync([]);
         await f.SeedTerminalAsync(HerdrSupervisionFailureKind.PaneClosed);
-        await using var db = Db();
+        await using var db = f.Db();
         var session = await f.SessionAsync();
         await db.AgentSessions.Where(s => s.Id == session.Id).ExecuteUpdateAsync(u => u.SetProperty(s => s.CardId, cardId));
         try
@@ -211,7 +211,7 @@ public class HerdrSupervisionBackoffTests
     {
         await using var f = await Fixture.CreateAsync([]);
         await f.SeedTerminalAsync(HerdrSupervisionFailureKind.PaneClosed);
-        await using var db = Db();
+        await using var db = f.Db();
         await db.AgentSessions.Where(s => s.Cwd == f.Root).ExecuteUpdateAsync(u => u.SetProperty(s => s.SessionBackend, backend));
         await db.Agents.Where(a => a.Id == f.AgentId).ExecuteUpdateAsync(u => u.SetProperty(a => a.IsPoolDelegate, pool));
         await f.TickAsync();
@@ -244,7 +244,7 @@ public class HerdrSupervisionBackoffTests
             using var scope = f.Harness.Provider.CreateScope();
             await scope.ServiceProvider.GetRequiredService<AgentControlService>().StartAsync(f.AgentId, new(), CancellationToken.None);
             var session = await f.SessionAsync();
-            await using var db = Db();
+            await using var db = f.Db();
             await db.AgentSessions.Where(s => s.Id == session.Id).ExecuteUpdateAsync(u => u
                 .SetProperty(s => s.Status, SessionStatus.Failed)
                 .SetProperty(s => s.HerdrSupervisionFailureKind, HerdrSupervisionFailureKind.NonQualifying));
@@ -263,7 +263,7 @@ public class HerdrSupervisionBackoffTests
     {
         await using var f = await Fixture.CreateAsync([]);
         await f.SeedTerminalAsync(HerdrSupervisionFailureKind.DetectTimeout, held: true);
-        await using var db = Db();
+        await using var db = f.Db();
         await db.AgentSupervisionStates.Where(s => s.AgentId == f.AgentId)
             .ExecuteUpdateAsync(u => u.SetProperty(s => s.NextRestartAt, DateTime.UtcNow.AddHours(-1)));
         await f.NoLaunchAsync();
@@ -279,7 +279,7 @@ public class HerdrSupervisionBackoffTests
         await f.TickAsync();
         hook.OnNextCommit = async () =>
         {
-            await using var db = Db();
+            await using var db = f.Db();
             await db.AgentSupervisionStates.Where(s => s.AgentId == f.AgentId).ExecuteUpdateAsync(u => u
                 .SetProperty(s => s.HerdrFailureHeldAt, DateTime.UtcNow)
                 .SetProperty(s => s.HerdrConsecutiveFailures, 3).SetProperty(s => s.NextRestartAt, (DateTime?)null));
@@ -306,7 +306,7 @@ public class HerdrSupervisionBackoffTests
     {
         await using var f = await Fixture.CreateAsync([]);
         await f.SeedTerminalAsync(HerdrSupervisionFailureKind.DetectTimeout, held: true);
-        await using var db = Db();
+        await using var db = f.Db();
         var latch = DateTime.UtcNow.AddMinutes(-5);
         await db.AgentSupervisionStates.Where(s => s.AgentId == f.AgentId).ExecuteUpdateAsync(u => u
             .SetProperty(s => s.Suspended, true).SetProperty(s => s.LivenessLatchedAt, latch));
@@ -344,7 +344,7 @@ public class HerdrSupervisionBackoffTests
         after.LastHerdrObservedSessionId.ShouldBe(before.LastHerdrObservedSessionId);
         after.LastHerdrObservedStartedAt.ShouldBe(before.LastHerdrObservedStartedAt);
         after.ConsecutiveFailures.ShouldBe(before.ConsecutiveFailures);
-        await using var db = Db();
+        await using var db = f.Db();
         (await db.AgentIncidents.CountAsync(i => i.AgentId == f.AgentId && i.Kind == AgentIncidentKind.HerdrSupervisionRetried)).ShouldBe(1);
     }
 
@@ -358,7 +358,7 @@ public class HerdrSupervisionBackoffTests
         var state = await f.StateAsync();
         state.LastHerdrObservedStartedAt.ShouldBe(previous.StartedAt);
         state.HerdrConsecutiveFailures.ShouldBe(0);
-        await using var db = Db();
+        await using var db = f.Db();
         (await db.AgentIncidents.CountAsync(i => i.AgentId == f.AgentId && i.Kind == AgentIncidentKind.HerdrSupervisionRetried)).ShouldBe(0);
         (await db.AgentIncidents.CountAsync(i => i.AgentId == f.AgentId && i.Kind == AgentIncidentKind.HerdrSupervisionHeld)).ShouldBe(0);
         await f.TickAsync();
@@ -399,7 +399,7 @@ public class HerdrSupervisionBackoffTests
         }
         (await f.StateAsync()).HerdrFailureHeldAt.ShouldNotBeNull();
         await f.NoLaunchAsync();
-        await using var db = Db();
+        await using var db = f.Db();
         (await db.AgentIncidents.CountAsync(i => i.AgentId == f.AgentId && i.Kind == AgentIncidentKind.HerdrSupervisionRetried)).ShouldBe(1);
         (await db.AgentIncidents.CountAsync(i => i.AgentId == f.AgentId && i.Kind == AgentIncidentKind.HerdrSupervisionHeld)).ShouldBe(1);
     }
@@ -409,12 +409,13 @@ public class HerdrSupervisionBackoffTests
     {
         await using var f = await Fixture.CreateAsync([]);
         await f.SeedTerminalAsync(null, streak: 2);
-        await using var db = Db();
+        await using var db = f.Db();
         await db.AgentSessions.Where(s => s.Cwd == f.Root).ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Running));
         await f.TickAsync();
         var first = (await f.StateAsync()).HerdrHealthySince;
         await f.Harness.DisposeAsync();
-        f.Harness = AgentSupervisionTests.BuildHarness(f.Root, [], definitionKind: "ClaudeCode");
+        f.Harness = AgentSupervisionTests.BuildHarness(f.Root, [], definitionKind: "ClaudeCode",
+            connectionString: f.Schema.ConnectionString);
         f.Harness.Clock.Advance(TimeSpan.FromMinutes(9));
         await f.TickAsync();
         (await f.StateAsync()).HerdrHealthySince.ShouldBe(first);
@@ -429,7 +430,7 @@ public class HerdrSupervisionBackoffTests
     {
         await using var f = await Fixture.CreateAsync([]);
         await f.SeedTerminalAsync(null, streak: 2);
-        await using var db = Db();
+        await using var db = f.Db();
         await db.AgentSessions.Where(s => s.Cwd == f.Root).ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Starting));
         await f.TickAsync();
         f.Harness.Clock.Advance(TimeSpan.FromSeconds(60));
@@ -444,7 +445,7 @@ public class HerdrSupervisionBackoffTests
     {
         await using var f = await Fixture.CreateAsync([]);
         await f.SeedTerminalAsync(HerdrSupervisionFailureKind.DetectTimeout, streak: 2);
-        await using var db = Db();
+        await using var db = f.Db();
         await using var tx = await db.Database.BeginTransactionAsync();
         await db.Agents.FromSqlInterpolated($"""SELECT * FROM "Agents" WHERE "Id" = {f.AgentId} FOR UPDATE""").SingleAsync();
         var tick = f.TickAsync();
@@ -463,7 +464,7 @@ public class HerdrSupervisionBackoffTests
         await using var f = await Fixture.CreateAsync([]);
         await f.SeedTerminalAsync(HerdrSupervisionFailureKind.DetectTimeout, held: true);
         var held = (await f.StateAsync()).HerdrFailureHeldAt;
-        await using var db = Db();
+        await using var db = f.Db();
         await db.Agents.Where(a => a.Id == f.AgentId).ExecuteUpdateAsync(u => u
             .SetProperty(a => a.AlwaysOn, false).SetProperty(a => a.SessionBackend, SessionBackend.PtyHost));
         await f.TickAsync();
@@ -480,7 +481,7 @@ public class HerdrSupervisionBackoffTests
     {
         await using var f = await Fixture.CreateAsync([]);
         await f.SeedTerminalAsync(HerdrSupervisionFailureKind.DetectTimeout, held: true);
-        await using var db = Db();
+        await using var db = f.Db();
         await db.AgentSessions.Where(s => s.Cwd == f.Root).ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Running));
         await f.StartAsync(new StartAgentRequest(ResetHerdrFailureHold: true));
         (await f.StateAsync()).HerdrFailureHeldAt.ShouldNotBeNull();
@@ -494,17 +495,19 @@ public class HerdrSupervisionBackoffTests
         await f.SeedTerminalAsync(HerdrSupervisionFailureKind.PaneClosed, streak: 1);
         await f.TickAsync();
         await f.Harness.DisposeAsync();
-        f.Harness = AgentSupervisionTests.BuildHarness(f.Root, [], definitionKind: "ClaudeCode");
+        f.Harness = AgentSupervisionTests.BuildHarness(f.Root, [], definitionKind: "ClaudeCode",
+            connectionString: f.Schema.ConnectionString);
         await f.TickAsync();
         (await f.StateAsync()).HerdrConsecutiveFailures.ShouldBe(2);
-        await using var db = Db();
+        await using var db = f.Db();
         await db.AgentSessions.Where(s => s.Cwd == f.Root).ExecuteUpdateAsync(u => u
             .SetProperty(s => s.StartedAt, DateTime.UtcNow)
             .SetProperty(s => s.HerdrSupervisionFailureKind, HerdrSupervisionFailureKind.ChildGone));
         await f.TickAsync();
         (await f.StateAsync()).HerdrFailureHeldAt.ShouldNotBeNull();
         await f.Harness.DisposeAsync();
-        f.Harness = AgentSupervisionTests.BuildHarness(f.Root, [f.Sentinel], new SupervisionSettings { HerdrFailureLimit = 10 }, definitionKind: "ClaudeCode");
+        f.Harness = AgentSupervisionTests.BuildHarness(f.Root, [f.Sentinel], new SupervisionSettings { HerdrFailureLimit = 10 },
+            definitionKind: "ClaudeCode", connectionString: f.Schema.ConnectionString);
         await f.NoLaunchAsync();
         (await f.StateAsync()).HerdrConsecutiveFailures.ShouldBe(3);
     }
@@ -520,7 +523,7 @@ public class HerdrSupervisionBackoffTests
         (await f.StateAsync()).HerdrFailureHeldAt.ShouldNotBeNull();
         await Should.ThrowAsync<ConflictException>(() => f.StartAsync());
         (await f.StateAsync()).Suspended.ShouldBeTrue();
-        await using var db = Db();
+        await using var db = f.Db();
         (await db.AgentIncidents.AnyAsync(i => i.AgentId == f.AgentId && i.Kind == AgentIncidentKind.SuspendedByUser)).ShouldBeTrue();
     }
 
@@ -543,7 +546,7 @@ public class HerdrSupervisionBackoffTests
     {
         await using var f = await Fixture.CreateAsync([], includeModelAvailability: true);
         await f.SeedTerminalAsync(HerdrSupervisionFailureKind.DetectTimeout, held: true);
-        await using var db = Db();
+        await using var db = f.Db();
         var alias = ModelAlias.Haiku;
         await db.Agents.Where(a => a.Id == f.AgentId).ExecuteUpdateAsync(u => u.SetProperty(a => a.ModelId, alias));
         var hold = new ModelAvailabilityHold { Id = Guid.NewGuid(), Kind = AgentKind.ClaudeCode, ModelAlias = alias,
@@ -566,7 +569,7 @@ public class HerdrSupervisionBackoffTests
         await using var f = await Fixture.CreateAsync([], includeModelAvailability: true);
         await f.SeedTerminalAsync(HerdrSupervisionFailureKind.PaneClosed, streak: 1);
         await f.TickAsync();
-        await using var db = Db();
+        await using var db = f.Db();
         var alias = ModelAlias.Haiku;
         await db.Agents.Where(a => a.Id == f.AgentId).ExecuteUpdateAsync(u => u.SetProperty(a => a.ModelId, alias));
         var hold = new ModelAvailabilityHold { Id = Guid.NewGuid(), Kind = AgentKind.ClaudeCode, ModelAlias = alias,
@@ -586,7 +589,6 @@ public class HerdrSupervisionBackoffTests
     }
 
     internal static ConflictException Timeout() => new("herdr did not detect agent kind 'grok' within 60000ms (last observed: none)", "detect_timeout");
-    internal static AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions());
 
     internal sealed class Fixture : IAsyncDisposable
     {
@@ -594,19 +596,31 @@ public class HerdrSupervisionBackoffTests
         public required Guid AgentId { get; init; }
         public required AgentSupervisionTests.Harness Harness { get; set; }
         public required FakeAgentProtocolAdapter Sentinel { get; init; }
+        public required IsolatedTestSchema Schema { get; init; }
+
+        public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
 
         public static async Task<Fixture> CreateAsync(IReadOnlyList<IAgentProtocolAdapter> adapters, int limit = 3,
             bool includeModelAvailability = false, Action<DbContextOptionsBuilder>? configureDb = null)
         {
             var root = Path.Combine(Path.GetTempPath(), "antiphon-c388-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
-            var sentinel = new FakeAgentProtocolAdapter { ThrowOnStart = new InvalidOperationException("CARD-0388 sentinel: a launch reached the sentinel") };
-            var h = AgentSupervisionTests.BuildHarness(root, [..adapters, sentinel],
-                new SupervisionSettings { HerdrFailureLimit = limit }, includeModelAvailability: includeModelAvailability,
-                definitionKind: "ClaudeCode", configureDb: configureDb);
-            var agent = await h.Scope.ServiceProvider.GetRequiredService<AgentService>().CreateAsync(
-                new CreateAgentRequest("Herdr test", root, SessionBackend: SessionBackend.Herdr, AlwaysOn: true), CancellationToken.None);
-            return new Fixture { Root = root, AgentId = agent.Id, Harness = h, Sentinel = sentinel };
+            var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            try
+            {
+                var sentinel = new FakeAgentProtocolAdapter { ThrowOnStart = new InvalidOperationException("CARD-0388 sentinel: a launch reached the sentinel") };
+                var h = AgentSupervisionTests.BuildHarness(root, [..adapters, sentinel],
+                    new SupervisionSettings { HerdrFailureLimit = limit }, includeModelAvailability: includeModelAvailability,
+                    definitionKind: "ClaudeCode", configureDb: configureDb, connectionString: schema.ConnectionString);
+                var agent = await h.Scope.ServiceProvider.GetRequiredService<AgentService>().CreateAsync(
+                    new CreateAgentRequest("Herdr test", root, SessionBackend: SessionBackend.Herdr, AlwaysOn: true), CancellationToken.None);
+                return new Fixture { Root = root, AgentId = agent.Id, Harness = h, Sentinel = sentinel, Schema = schema };
+            }
+            catch
+            {
+                await schema.DisposeAsync();
+                throw;
+            }
         }
 
         public async Task SeedTerminalAsync(HerdrSupervisionFailureKind? evidence, int streak = 0, bool held = false, DateTime? startedAt = null)
@@ -665,6 +679,11 @@ public class HerdrSupervisionBackoffTests
             (await db.AgentSessions.AnyAsync(s => s.Cwd == Root && s.FailureReason != null && s.FailureReason.Contains("CARD-0388 sentinel"))).ShouldBeFalse();
             (await db.AgentIncidents.CountAsync(i => i.AgentId == AgentId && i.Kind == AgentIncidentKind.StartFailure)).ShouldBe(0);
         }
-        public async ValueTask DisposeAsync() { await Harness.DisposeAsync(); await AgentSupervisionTests.CleanupAsync(Root); }
+        public async ValueTask DisposeAsync()
+        {
+            await Harness.DisposeAsync();
+            await AgentSupervisionTests.CleanupAsync(Root);
+            await Schema.DisposeAsync();
+        }
     }
 }

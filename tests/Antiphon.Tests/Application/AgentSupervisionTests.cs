@@ -585,14 +585,15 @@ public class AgentSupervisionTests
     internal static Harness BuildHarness(string tempRoot, IReadOnlyList<IAgentProtocolAdapter> adapters,
         SupervisionSettings? supervision = null, ISessionRunnerClient? runner = null,
         bool includeModelAvailability = false, string definitionKind = "Raw",
-        Action<DbContextOptionsBuilder>? configureDb = null)
+        Action<DbContextOptionsBuilder>? configureDb = null,
+        string? connectionString = null)
     {
         var clock = new MutableTimeProvider(DateTimeOffset.UtcNow);
         var supervisorLog = new List<string>();
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options =>
         {
-            options.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
+            options.UseNpgsql(connectionString ?? TestDbFixture.ConnectionString, npgsql =>
             {
                 npgsql.MigrationsAssembly("Antiphon.Server");
                 npgsql.SetPostgresVersion(16, 0);
