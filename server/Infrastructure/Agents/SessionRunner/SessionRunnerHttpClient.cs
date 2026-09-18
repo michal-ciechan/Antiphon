@@ -87,11 +87,11 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             response.EnsureSuccessStatusCode();
             var capabilities = await response.Content
                 .ReadFromJsonAsync<RunnerCapabilitiesDto>(JsonOptions, deadline.Token);
+            // A well-formed 200 whose body is JSON null is a runner saying "I have nothing to
+            // declare" — no evidence, exactly like the 404 above. Only an unparseable body is a
+            // failure to answer (the "malformed" arm of V-511-3).
             if (capabilities is null)
-            {
-                return new RunnerCapabilityProbe(null, RunnerIdentity.Unknown,
-                    new InvalidOperationException("The session runner returned an empty capabilities body."));
-            }
+                return new RunnerCapabilityProbe(null, RunnerIdentity.Unknown, null);
 
             lock (_capabilityGate)
             {
