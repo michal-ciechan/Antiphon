@@ -118,9 +118,11 @@ the actually-reviewed, approved commit lives on a later round's branch. Before c
    confirm the SHA, `restart-apphost.ps1 -ExpectedServerSha <sha>`, confirm healthy, **then**
    close the card with a reason summarizing the whole stage history (defects found, how fixed,
    final verified counts) — this is the last thing anyone reads about the card.
-5. A stale `.git/index.lock` can silently block every git write step for a long time with
-   misleading refusal codes. If land keeps failing for no clear reason, check for and remove a
-   confirmed-stale lock file (verify via `Get-Process` that nothing holds it first).
+5. A stale `.git/index.lock` holds the land as `git_index_lock_stale` or
+   `git_index_lock_held` (path and `Remove-Item` in the hold/`-Status` `Reason:`
+   detail) instead of `target_advance_failed`. Confirm with `Get-Process git` that
+   nothing older than the lock is running, then `Remove-Item` that path; the 5 s
+   sweep resumes the land. Do not delete a lock a live git process still owns.
 
 ## 7. Mutation is post-land, throttled, and (as of CARD-0552) trackable
 

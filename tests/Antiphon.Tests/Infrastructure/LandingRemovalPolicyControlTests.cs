@@ -292,6 +292,8 @@ public sealed class LandingRemovalPolicyControlTests
             => Task.FromResult<IReadOnlyList<LandingRegistration>>([new(LocalChange == "checkout" ? Path.Combine(Root, "other") : Root,
                 Request.Source.TargetFullRef, Sha, false, false)]);
         public Task<LandingDestination> DestinationAsync(string r, string t, CancellationToken c) => throw new NotSupportedException();
+        public Task<LandingIndexLockObservation> InspectIndexLockAsync(string checkout, CancellationToken ct)
+            => Task.FromResult(new LandingIndexLockObservation("", false, null, null, [], null));
         public Task<LandingGitResult> PinAsync(string r,string p,string s,CancellationToken c) => throw new NotSupportedException();
         public Task<LandingGitResult> PushAsync(string r,LandingDestination d,string s,CancellationToken c) => throw new NotSupportedException();
         public Task<LandingGitResult> PushOwnedAsync(string r,LandingDestination d,string s,Func<int,long,CancellationToken,Task> a,CancellationToken c) => throw new NotSupportedException();

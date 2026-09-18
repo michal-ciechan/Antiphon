@@ -157,7 +157,14 @@ Before relying on newly landed server behavior:
    `pwsh -NoProfile -File scripts/restart-apphost.ps1 -ExpectedServerSha <full-intended-head>`.
 4. Require exit 0 and a fresh `GET /api/version` showing that exact SHA and
    `capabilities` containing `land-v2`. Probe the required feature directly when
-   the checkout has tracked edits.
+   the checkout has tracked edits. `restart-apphost.ps1` also prints a NOTE when
+   `.git/index.lock` is present (and again after its process-tree kill if a lock
+   appeared during the kill). That NOTE does not refuse the restart. Do not
+   `Remove-Item` the lock while a `git` process older than it is still running;
+   after confirming none, `Remove-Item '<path>'` as printed. `verify-dev-stack.ps1`
+   reports an `Git index lock` row (`OK absent` / `OK fresh` / `FAIL stale`)
+   without changing its exit code. The watchdog writes one `WARN` per fire while
+   a stale lock is present.
 5. Record desired and observed full SHAs in the deployment report.
 
 `delegate.ps1 -Land` GETs `/api/version` first (5s bound, `ANTIPHON_VERSION_PROBE_TIMEOUT_SEC`

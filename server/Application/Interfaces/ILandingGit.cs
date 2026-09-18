@@ -23,4 +23,5 @@ public interface ILandingGit
     Task<LandingGitResult> PushAsync(string repository, LandingDestination destination, string sha, CancellationToken ct);
     Task<LandingGitResult> PushOwnedAsync(string repository, LandingDestination destination, string sha,
         Func<int, long, CancellationToken, Task> started, CancellationToken ct);
+    Task<LandingIndexLockObservation> InspectIndexLockAsync(string checkout, CancellationToken ct);
 }

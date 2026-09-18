@@ -1,17 +1,20 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>Durable checkpoints precede their dependent mutation. Publication is monotonic.</summary>
 public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     IRepositoryMutationLease leases, IWorktreeManager worktrees, ILandingVerifier verifier, TimeProvider clock,
-    IWorktreeCleanupJournal? cleanupJournal = null, ILogger<AgentTaskLandingProtocol>? logger = null)
+    IWorktreeCleanupJournal? cleanupJournal = null, ILogger<AgentTaskLandingProtocol>? logger = null,
+    IOptions<GitSettings>? gitSettings = null)
 {
     private readonly AgentTaskLandingState _state = new();
 
@@ -194,6 +197,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 await RecheckRemoteSourceAsync(op, request, ct);
                 await RecheckSourceAsync(op, InputSha(op), ct);
                 await CheckTargetAsync(op, op.TargetBeforeSha, ct);
+                await RequireNoIndexLockAsync(op.WorktreePath, ct);
                 op.RebaseStartedAt = Now();
                 await TransitionAsync(op, LandPhase.RebaseStarted, ct);
                 await RecheckRemoteSourceAsync(op, request, ct);
@@ -206,6 +210,8 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     // Only this live invocation may abort the rebase it started.
                     var conflicts = await git.RunAsync(op.WorktreePath, ["diff", "--name-only", "--diff-filter=U", "-z"], ct);
                     var abort = await MutateAsync(op, op.WorktreePath, ["rebase", "--abort"], ct);
+                    if (await TryIndexLockRefusalAsync(op.WorktreePath, ct) is { } rebaseLock)
+                        throw new LandingRefusal(rebaseLock.Code, rebaseLock.Detail);
                     Require(abort.Succeeded, "rebase_abort_failed");
                     await RecheckSourceAsync(op, InputSha(op), ct);
                     var files = conflicts.Succeeded ? conflicts.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries) : [];
@@ -270,9 +276,20 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 {
                     Require(await IsAncestorAsync(op.RepositoryPath, current, op.VerifiedSourceSha!, ct), "target_not_fast_forward");
                     var checkout = await TargetCheckoutAsync(op, ct);
-                    var advanced = checkout is null
-                        ? await MutateAsync(op, op.RepositoryPath, ["update-ref", "--no-deref", op.TargetFullRef, op.VerifiedSourceSha!, current], ct)
-                        : await MutateAsync(op, checkout, ["-c", "merge.autoStash=false", "merge", "--ff-only", op.VerifiedSourceSha!], ct);
+                    LandingGitResult advanced;
+                    if (checkout is null)
+                    {
+                        advanced = await MutateAsync(op, op.RepositoryPath,
+                            ["update-ref", "--no-deref", op.TargetFullRef, op.VerifiedSourceSha!, current], ct);
+                    }
+                    else
+                    {
+                        await RequireNoIndexLockAsync(checkout, ct);
+                        advanced = await MutateAsync(op, checkout,
+                            ["-c", "merge.autoStash=false", "merge", "--ff-only", op.VerifiedSourceSha!], ct);
+                        if (!advanced.Succeeded && await TryIndexLockRefusalAsync(checkout, ct) is { } mergeLock)
+                            throw new LandingRefusal(mergeLock.Code, mergeLock.Detail);
+                    }
                     Require(advanced.Succeeded, "target_advance_failed");
                 }
                 await CheckTargetAsync(op, op.VerifiedSourceSha!, ct);
@@ -316,10 +333,12 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             // a normal land with LastReason=landing_io_error and skip the interrupted-after-publication path.
             if (op is not null && _state.HasPublication(op)) throw;
             var reason = ex is LandingRefusal ? ex.Message : "landing_io_error";
+            var detail = ex is LandingRefusal refusal ? refusal.Detail : null;
             if (op is not null)
             {
                 op.LastReason = reason;
-                if (op.Phase is LandPhase.Inspected or LandPhase.RecoveryPinned or LandPhase.RebaseStarted or LandPhase.Prepared)
+                if (op.Phase is LandPhase.Inspected or LandPhase.RecoveryPinned or LandPhase.RebaseStarted or LandPhase.Prepared
+                    && reason is not (GitIndexLock.StaleCode or GitIndexLock.HeldCode))
                 {
                     op.Publication = LandPublicationOutcome.Refused;
                     _state.Transition(op, LandPhase.Refused, Now());
@@ -328,7 +347,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 op.UpdatedAt = Now();
                 op.ConcurrencyToken = Guid.NewGuid();
             }
-            return new(op, reason, []);
+            return new(op, reason, []) { Detail = detail };
         }
     }
 
@@ -604,6 +623,19 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     }
 
     private DateTime Now() => clock.GetUtcNow().UtcDateTime;
+    private async Task RequireNoIndexLockAsync(string checkout, CancellationToken ct)
+    {
+        if (await TryIndexLockRefusalAsync(checkout, ct) is { } hit)
+            throw new LandingRefusal(hit.Code, hit.Detail);
+    }
+
+    private async Task<(string Code, string Detail)?> TryIndexLockRefusalAsync(string checkout, CancellationToken ct)
+    {
+        var observation = await git.InspectIndexLockAsync(checkout, ct);
+        return GitIndexLock.Refusal(observation, GitIndexLock.StaleAfter(gitSettings?.Value.IndexLockStaleAfterSeconds),
+            clock.GetUtcNow().UtcDateTime);
+    }
+
     private static void Require(bool condition, string reason) { if (!condition) throw new LandingRefusal(reason); }
     private static string FullRef(string branch) => branch.StartsWith("refs/", StringComparison.Ordinal) ? branch : "refs/heads/" + branch;
     private static bool SamePath(string a, string b) => string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(a)),
@@ -614,10 +646,14 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     private static bool Matches(LandSourceSnapshot snapshot, AgentTaskLanding op, string sha) => snapshot.HeadSha == sha
         && SamePath(snapshot.CommonDirectory, op.CommonDirectory) && SamePath(snapshot.GitDirectory, op.GitDirectory)
         && SamePath(snapshot.RegisteredPath, op.WorktreePath);
-    private sealed class LandingRefusal(string reason) : Exception(reason);
+    private sealed class LandingRefusal(string reason, string? detail = null) : Exception(reason)
+    {
+        public string? Detail { get; } = detail;
+    }
 }
 
 public sealed record LandingProtocolResult(AgentTaskLanding? Operation, string? Reason, IReadOnlyList<string> Conflicts)
 {
     public bool Published => Operation is not null && new AgentTaskLandingState().HasPublication(Operation);
+    public string? Detail { get; init; }
 }

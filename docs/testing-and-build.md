@@ -96,6 +96,15 @@ pwsh -File scripts/test-duration-tripwire.ps1 -Trx path\to\run.trx
 
 The allowlist is `tests/Antiphon.Tests/slow-tests-allowlist.txt` (exact simple or fully-qualified class names, case-insensitive). Every test class is tagged `Unit` xor `Integration` (`TestLaneCategoryGuardTests`).
 
+### Simulating a stale `index.lock` (CARD-0543)
+
+Only inside `ScratchGitRepo`, `LandingGitFixture` or `LandingSafetyHarness` temp directories.
+Resolve the path with `git rev-parse --path-format=absolute --git-path index.lock` in the
+checkout under test; create it with `File.WriteAllBytes(path, [])`; age it with
+`File.SetLastWriteTimeUtc(path, DateTime.UtcNow - TimeSpan.FromHours(1))`. Never read or
+write `C:\src\Antiphon\.git`. Script coverage: `pwsh -File scripts/test-apphost-git-index-lock.ps1`
+(scratch repo under `$env:TEMP`; does not touch `logs/apphost.*.lock`).
+
 ### CARD-0443 Windows cleanup qualification
 
 Run the explicit Windows class against the same producer-owned build, with fresh results:

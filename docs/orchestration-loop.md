@@ -661,6 +661,17 @@ wait for the outcome event; it never fires for a request no process holds. Three
 attempts refuse (`LandRefused`); `-Land` again starts a new request. A `Warning` "did not
 finish (server restarted); re-running" is informational.
 
+A present `.git/index.lock` in a checkout the land is about to mutate holds the request
+before admission (`git_index_lock_stale` when the file is at least five minutes old with no
+git process started at or before it; `git_index_lock_held` when it is younger or a candidate
+git process is still running). The hold consumes no attempt; the 5 s sweep re-picks the
+request, so deleting the file resumes the land without a new POST. The same codes refuse
+in-protocol immediately before `rebase` / `rebase --abort` / `merge --ff-only`. Hold and
+refusal detail name the lock path and the exact `Remove-Item` command. The pipeline never
+deletes a lock it did not create (a timeout kill of GitWorkspaceService's own lock-taking
+child is the one reclaim). `update-ref` advances are not blocked by a lock in a checkout
+that does not have the target branch.
+
 An explicit retry of an eligible terminal `Refused` operation creates a fresh operation,
 even when the source is unchanged. It repeats validation and verification as required,
 retains the previous operation and recovery pins, and may refuse again if the target or

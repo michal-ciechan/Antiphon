@@ -765,3 +765,77 @@ function Show-DcpTimeoutVerdict {
     Write-Host "  Wait for any in-flight launch to finish before re-running this script." -ForegroundColor Yellow
     Write-Host ''
 }
+
+# CARD-0543: same 300 s threshold as Git:IndexLockStaleAfterSeconds. Scripts never delete.
+$AppHostGitIndexLockStaleAfterSeconds = 300
+
+function Get-AppHostGitIndexLock {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceRoot
+    )
+    $gitPath = $null
+    try {
+        $gitPath = & git -C $SourceRoot rev-parse --path-format=absolute --git-path index.lock 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $gitPath = ([string]$gitPath).Trim()
+    } catch {
+        return $null
+    }
+    if ([string]::IsNullOrWhiteSpace($gitPath)) { return $null }
+    if (-not (Test-Path -LiteralPath $gitPath)) { return $null }
+
+    $item = Get-Item -LiteralPath $gitPath
+    $mtime = $item.LastWriteTimeUtc
+    $now = [datetime]::UtcNow
+    $age = $now - $mtime
+    $holderPid = $null
+    $holderStart = $null
+    $procs = @(Get-Process -Name git -ErrorAction SilentlyContinue)
+    foreach ($proc in $procs) {
+        $start = $null
+        $startReadable = $true
+        try { $start = $proc.StartTime.ToUniversalTime() } catch { $startReadable = $false }
+        if (-not $startReadable -or ($null -ne $start -and $start -le $mtime.AddSeconds(2))) {
+            $holderPid = $proc.Id
+            $holderStart = $start
+            break
+        }
+    }
+    $staleAfter = [timespan]::FromSeconds($AppHostGitIndexLockStaleAfterSeconds)
+    $isStale = ($age -ge $staleAfter) -and ($null -eq $holderPid)
+    return [pscustomobject]@{
+        Path              = $gitPath
+        Present           = $true
+        LastWriteTimeUtc  = $mtime
+        Length            = $item.Length
+        AgeMinutes        = $age.TotalMinutes
+        Stale             = $isStale
+        HolderPid         = $holderPid
+        HolderStartUtc    = $holderStart
+    }
+}
+
+function Format-AppHostGitIndexLockNote {
+    param($Lock)
+    if ($null -eq $Lock -or -not $Lock.Present) { return $null }
+    $age = [timespan]::FromMinutes([double]$Lock.AgeMinutes)
+    $h = [int][math]::Floor($age.TotalHours)
+    $m = $age.Minutes
+    $s = $age.Seconds
+    if ($Lock.Stale) {
+        $liveness = 'No git process older than the lock is running; it is an orphan from an interrupted git write'
+        $kind = 'stale'
+    } elseif ($Lock.HolderPid) {
+        if ($Lock.HolderStartUtc) {
+            $started = $Lock.HolderStartUtc.ToUniversalTime().ToString('o')
+        } else {
+            $started = 'unreadable'
+        }
+        $liveness = "A git process started before the lock is still running (PID $($Lock.HolderPid), started $started)"
+        $kind = 'held'
+    } else {
+        $liveness = "The lock is younger than $AppHostGitIndexLockStaleAfterSeconds s"
+        $kind = 'held'
+    }
+    return "NOTE: git index lock ($kind) present at $($Lock.Path) (age ${h}h ${m}m ${s}s, $($Lock.Length) bytes). $liveness. Remove it with: Remove-Item '$($Lock.Path)'. Never remove a lock while a git process older than it is running."
+}

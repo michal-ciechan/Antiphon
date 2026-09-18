@@ -32,4 +32,10 @@ public class GitSettings
     /// The sweep never prunes, removes, or fails a task.
     /// </summary>
     public int WorktreeHealthIntervalSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// CARD-0543: an <c>index.lock</c> this old with no git process started at or before its
+    /// mtime is <c>stale</c>. Must be at least 30. Scripts mirror 300 as a constant.
+    /// </summary>
+    public int IndexLockStaleAfterSeconds { get; set; } = 300;
 }

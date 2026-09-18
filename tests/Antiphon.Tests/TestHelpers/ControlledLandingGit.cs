@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
 
 namespace Antiphon.Tests.TestHelpers;
 
@@ -211,6 +212,17 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
             Path.GetFullPath(OverrideGitDirectory ?? SourceGitDirectory),
             _sourceBranch, _sourceHead, _sourceHead, status, ignored);
         return new(snapshot, RejectInspection ? "source_rejected" : null);
+    }
+
+    public Task<LandingIndexLockObservation> InspectIndexLockAsync(string checkout, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var gitDir = IsSource(checkout) ? SourceGitDirectory : GitDirectory;
+        var path = Path.Combine(gitDir, "index.lock");
+        var observed = GitIndexLock.Observe(path, DateTime.UtcNow, GitIndexLock.CensusGitProcesses());
+        return Task.FromResult(new LandingIndexLockObservation(
+            observed.Path, observed.Present, observed.LastWriteUtc, observed.Length,
+            observed.CandidateHolders, null));
     }
 
     public Task<LandingDestination> DestinationAsync(string repository, string targetFullRef, CancellationToken ct)
