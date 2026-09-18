@@ -43,7 +43,7 @@ different reason than diagnosed.
 | 0446 | 1 | HerdrSupervisionBackoffTests.A_synchronous_refusal_before_any_row_leaves_the_streak_alone | (b) | Pass in batch 1 (file touched `df45d4c7b`, `40234784f`). |
 | 0446 | 2 | SessionMessageQueuePtyIntegrationTests.A_body_typed_while_an_overlay_is_up_recovers_via_Esc_and_submits | (b) | 1/1 pass method-scoped (46.8s, real ConPTY + fakeclaude). One run only. |
 | 0446 | 3 | DelegateLaunchArgvIntegrityTests.Every_dispatched_launch_round_trips_through_both_backends | (b) | Pass in batch 1. CARD-0497 (`b67710b97`, `775f0937e`, 09-12) changed the composer budget handling and this test. |
-| 0446 | 4 | CheckInterpreterProvisionerTests (4 cases) in a combined `*Check*` process | see below | Alone: 12/12 pass in batch 1. Still on the shared `TestDbFixture` (`CheckInterpreterProvisionerTests.cs:287`), never converted to `CreateIsolatedSchemaAsync`. Combined-run result: CHECK_RESULT_PLACEHOLDER |
+| 0446 | 4 | CheckInterpreterProvisionerTests (4 cases) in a combined `*Check*` process | **(a)** | Alone: 12/12 pass in batch 1. In the combined `/*/*/*Check*/*` process (268 tests) exactly the four named cases fail: `the_deny_all_tool_hook_is_written_into_its_scratch_directory` (hook file absent from the test's scratch dir, line 68), `a_second_call_changes_nothing` (agent count for the test's own slug is 0, line 94), `a_workspace_that_was_cleaned_up_is_healed_on_the_next_call` (`DirectoryNotFoundException` on the scratch `.claude`, line 157), `the_specialists_working_directory_is_seeded_as_trusted_in_claude_json` (not trusted, line 187). Same mechanism as the card: the provisioner reconciles another test's Check owner from the shared database instead of provisioning into this test's scratch directory. Class still uses the shared `TestDbFixture` (`CheckInterpreterProvisionerTests.cs:287`), never converted to `CreateIsolatedSchemaAsync`. |
 | 0446 | 5 | InstructionBundleTests.delegate_basics_carries_the_standing_rules_and_none_of_the_days_state | (b) | Pass in batch 1 (`430d48c83`, `b67710b97`, `3b59359a3`, `7284f89a3`). |
 | 0446 | 6 | UnmarkedWaitingContractTests.unmarked_waiting_attention_kind_is_appended_after_report_unsettled | (b) | Same test as 0424 item 5. |
 | 0446 | 7 | DelegationHarnessCensusTests.RuleB_dispatcher_harnesses_call_AddDelegationWorktreeGraph | (b) | Pass in batch 1 (`c98dc9fc7`, 09-10). |
@@ -118,6 +118,16 @@ failed in the 233-test batch-1 process (`HerdrConsecutiveFailures` expected 1, w
 dates from `572c25f7d` (CARD-0388, 09-06). This is a fresh instance of the CARD-0424
 shared-database isolation pattern; it is not itemized on any of the five cards.
 
+The combined `*Check*` run also failed all eight parameterised cases of
+`AgentTaskLandCheckpointMatrixTests.C448_V19_EveryPublicationRecoveryCutRejectsCrossedCoordinates`
+(C14-C17 × source/destination; each "should throw InterruptedBoundary but did not", lines
+195/227, 56s-4m29s each). Not on any of the five cards and **not attributable here**: for
+the entire 48 minutes a second `Antiphon.Tests.exe` from another delegate (worktree
+`card-task-ae8ba1b4`, `bin-r543`, filter `AgentTaskLandHoldVisibilityTests|AgentTaskLandRefusedRetryTests|AgentTaskLandPublicationTests`)
+was running land tests on this machine with its own Postgres testcontainer, and the matrix
+class is `ParallelLimiter<ProcessSpawnLimit>` + `Slow`, which the limiter cannot cap across
+processes. A clean re-run of that class alone is needed before filing anything.
+
 ## Method
 
 | Run | Filter | Result | TRX |
@@ -131,7 +141,7 @@ shared-database isolation pattern; it is not itemized on any of the five cards.
 | overlay | `/*/*/SessionMessageQueuePtyIntegrationTests/A_body_typed_while_an_overlay_is_up_recovers_via_Esc_and_submits` | 1/1 pass, 46.8s | `.antiphon/inv0486-overlay/run.trx` |
 | backoff2 | `/*/*/HerdrSupervisionBackoffTests/A_launch_still_owned_by_the_queue_is_consumed_only_after_its_catch_classifies_it` | 1/1 pass (red in batch 1) | `.antiphon/inv0486-backoff2/run.trx` |
 | SessionRunner | `/*/*/(ProcessSpawnLimitTests*)\|(TranscriptAdoptionSafetyTests*)/*` | 46 total, 1 failed (roster), 1m11s | `.antiphon/inv0486-sr/sr.trx` |
-| check | `/*/*/*Check*/*` | CHECK_RUN_PLACEHOLDER | `.antiphon/inv0486-check/check.trx` |
+| check | `/*/*/*Check*/*` | 268 total, 12 failed (4 CheckInterpreterProvisionerTests + 8 AgentTaskLandCheckpointMatrixTests.C448_V19), 48m10s | `.antiphon/inv0486-check/check.trx` |
 
 Antiphon.Tests and Antiphon.SessionRunner.Tests were run one after the other, never
 concurrently. Each Antiphon.Tests invocation was a separate process (the pinned TUnit 1.44
@@ -146,6 +156,11 @@ OR syntax is class-level only, so method-scoped items were single invocations).
   no commit since 09-12 touching the Codex submit path other than CARD-0497/0502.
 - The batch-1 failure of `A_launch_still_owned_by_the_queue…` was observed once; the
   ordering that triggers it was not isolated.
+- The `*Check*` combined run shared the host with another delegate's `Antiphon.Tests`
+  process throughout. The four CheckInterpreterProvisionerTests failures are in-process
+  (shared fixture database inside one testcontainer) and match the card's mechanism, so the
+  neighbour does not weaken that verdict; the C448_V19 matrix failures might be the
+  neighbour's doing and are reported only as an observation.
 
 ## Not done, noted
 
