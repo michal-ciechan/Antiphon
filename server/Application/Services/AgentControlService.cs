@@ -630,7 +630,11 @@ public sealed class AgentControlService
                 agent.CurrentCardId = null;
                 agent.UpdatedAt = UtcNow();
                 new StandingContinuityState(_db, _timeProvider).Clear(intent);
-                if (!automatic) await ClearSupervisionLatchAsync(agent, ct);
+                if (!automatic)
+                {
+                    intent.ContinuityResumeFailures = 0;
+                    await ClearSupervisionLatchAsync(agent, ct);
+                }
                 if (fresh || resumeSessionId is not null || retryContinuity || spec.Kind is not (AgentKind.ClaudeCode or AgentKind.Grok))
                     _db.AgentIncidents.Add(new AgentIncident
                     {

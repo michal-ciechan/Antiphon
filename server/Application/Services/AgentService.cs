@@ -231,7 +231,8 @@ public sealed class AgentService
                 s => new AgentSupervisionDto(
                     s.Suspended, s.ConsecutiveFailures, s.NextRestartAt, s.LastEscalationTier,
                     s.HerdrConsecutiveFailures, s.HerdrFailureHeldAt, s.LastHerdrFailureKind,
-                    s.RestartBackoffFailures, s.ContinuityHeldAt, s.ContinuitySessionId, s.ContinuityReason, s.ContinuityEvidence),
+                    s.RestartBackoffFailures, s.ContinuityHeldAt, s.ContinuitySessionId, s.ContinuityReason, s.ContinuityEvidence,
+                    s.ContinuityResumeFailures),
                 ct);
     }
 

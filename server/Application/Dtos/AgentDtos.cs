@@ -256,7 +256,8 @@ public sealed record AgentSupervisionDto(
     DateTime? ContinuityHeldAt = null,
     Guid? ContinuitySessionId = null,
     StandingContinuityReason? ContinuityReason = null,
-    string? ContinuityEvidence = null);
+    string? ContinuityEvidence = null,
+    int ContinuityResumeFailures = 0);
 
 public sealed record StandingSessionHistoryDto(IReadOnlyList<StandingSessionHistoryItemDto> Items, Guid? NextBefore);
 

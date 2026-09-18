@@ -111,4 +111,14 @@ describe('standing conversation recovery', () => {
     expect(screen.getByText(/cannot prove ownership/)).toBeInTheDocument()
     expect(screen.queryByText(/provider could not find/)).not.toBeInTheDocument()
   })
+
+  it('repeated resume failure explains the hold without claiming the history is gone', () => {
+    renderWithProviders(<StandingSessionRecovery agent={{ ...agent, supervision: {
+      ...agent.supervision!, continuityReason: 'RepeatedResumeFailure',
+    } }} />)
+    expect(screen.getByText(/resumed this conversation repeatedly/)).toBeInTheDocument()
+    expect(screen.getByText(/history is intact/i)).toBeInTheDocument()
+    expect(screen.queryByText(/provider could not find/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retry after repair' })).toBeInTheDocument()
+  })
 })

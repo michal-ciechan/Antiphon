@@ -52,5 +52,7 @@ public sealed class RestartFailurePolicy
         state.RestartBackoffFailures = Math.Min(state.RestartBackoffFailures, int.MaxValue - 1) + 1;
         if (kind == RestartFailureKind.LaunchOrProcessFailure)
             state.ConsecutiveFailures = Math.Min(state.ConsecutiveFailures, int.MaxValue - 1) + 1;
+        if (kind is RestartFailureKind.Unknown or RestartFailureKind.LaunchOrProcessFailure)
+            state.ContinuityResumeFailures = Math.Min(state.ContinuityResumeFailures, int.MaxValue - 1) + 1;
     }
 }

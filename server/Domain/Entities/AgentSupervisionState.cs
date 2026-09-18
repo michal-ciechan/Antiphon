@@ -17,6 +17,13 @@ public class AgentSupervisionState
 
     public int ConsecutiveFailures { get; set; }
     public int RestartBackoffFailures { get; set; }
+
+    /// <summary>
+    /// Non-infrastructure supervised resume failures (<see cref="RestartFailureKind.Unknown"/> and
+    /// <see cref="RestartFailureKind.LaunchOrProcessFailure"/>). Trips the CARD-0466 continuity hold
+    /// at <c>Supervision:ResumeFailureHoldAttempts</c>. Not reset when a supervised resume clears the hold.
+    /// </summary>
+    public int ContinuityResumeFailures { get; set; }
     public Guid? LastObservedRestartSessionId { get; set; }
     public DateTime? LastObservedRestartStartedAt { get; set; }
     public DateTime? ContinuityHeldAt { get; set; }

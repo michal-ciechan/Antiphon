@@ -27,6 +27,8 @@ export function StandingSessionRecovery({ agent }: { agent: AgentSummaryDto }) {
         ? 'The provider could not find this conversation.'
         : reason === 'OwnershipUnproven'
           ? 'Antiphon cannot prove ownership of this history. This does not mean the history was deleted.'
+          : reason === 'RepeatedResumeFailure'
+            ? 'Antiphon resumed this conversation repeatedly without it staying up. Its history is intact. Retry after repair, select an owned conversation, or start fresh.'
           : 'The existing conversation cannot currently be resumed. Inspect and repair its target or configuration.'}</Text>
       <Text size="sm">Target: {agent.supervision?.continuitySessionId ?? 'Unknown'}</Text>
     </Alert>}

@@ -63,4 +63,17 @@ public class ColumnTextTests
         ColumnText.ClipOrNull(null, 10).ShouldBeNull();
         ColumnText.ClipOrNull("", 10).ShouldBe("");
     }
+
+    [Test]
+    public void WithoutNul_replaces_each_NUL_and_returns_the_same_instance_when_clean()
+    {
+        ColumnText.WithoutNul(null).ShouldBeNull();
+        ReferenceEquals(ColumnText.WithoutNul(""), "").ShouldBeTrue();
+        var s = "clean";
+        ReferenceEquals(ColumnText.WithoutNul(s), s).ShouldBeTrue();
+        ColumnText.WithoutNul("a\0b").ShouldBe("a\uFFFDb");
+        ColumnText.WithoutNul("\0\0").ShouldBe("\uFFFD\uFFFD");
+        ColumnText.WithoutNul("\0x\0").ShouldBe("\uFFFDx\uFFFD");
+        ColumnText.WithoutNul("a\0b")!.Length.ShouldBe(3);
+    }
 }

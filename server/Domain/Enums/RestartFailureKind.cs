@@ -14,4 +14,5 @@ public enum StandingContinuityReason
     TargetMissing,
     TargetIncompatible,
     OwnershipUnproven,
+    RepeatedResumeFailure,
 }
