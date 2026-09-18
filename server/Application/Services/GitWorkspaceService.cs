@@ -941,10 +941,15 @@ public class GitWorkspaceService
 
     // The shared identity resolver for immediate inspection, HTTP recovery and settlement
     // recovery. The checkout is not the attempt identity: refs can move after Git commits
-    // but before the receipt is saved. Reflogs retain attempts no longer on any branch.
+    // but before the receipt is saved. Two legs, never --reflog (CARD-0527: the full reflog
+    // walk costs 74-135s in a many-worktree checkout and exceeded the git budget on every
+    // settle since go-live). Coverage: every ref, plus every commit this checkout's HEAD has
+    // pointed at within reflog retention -- a gated commit is porcelain `git commit` at HEAD,
+    // so logs/HEAD records it even after the branch that held it is deleted.
     private async Task<GitStrictList<string>> FindGatedCommitsAsync(
         string repo, Guid taskId, string identityKey, string identity, CancellationToken ct)
     {
+        var unbornHead = false;
         var head = await RunAsync(repo, ct, "rev-parse", "--verify", "--quiet", "HEAD");
         if (head.Code != 0)
         {
@@ -961,13 +966,23 @@ public class GitWorkspaceService
                 }
             }
             if (!unborn) return new(false, [], head.Code, head.Stderr);
+            unbornHead = true;
         }
-        var result = await RunAsync(repo, ct, "log", "--all", "--reflog", "--fixed-strings", "--all-match",
+        var refs = await RunAsync(repo, ct, "log", "--all", "--fixed-strings", "--all-match",
             $"--grep={taskId:D}", $"--grep={identity}", "--format=%H");
-        if (result.Code != 0) return new(false, [], result.Code, result.Stderr);
+        if (refs.Code != 0) return new(false, [], refs.Code, refs.Stderr);
+        var candidates = SplitShas(refs.Stdout);
+        if (!unbornHead)
+        {
+            // An unborn HEAD has no reflog to walk (`log -g HEAD` exits 128 there); refs alone
+            // cover it. Dropped combination: unborn HEAD *and* the commit gone from every ref.
+            var reflog = await RunAsync(repo, ct, "log", "--walk-reflogs", "HEAD", "--fixed-strings", "--all-match",
+                $"--grep={taskId:D}", $"--grep={identity}", "--format=%H");
+            if (reflog.Code != 0) return new(false, [], reflog.Code, reflog.Stderr);
+            candidates = candidates.Concat(SplitShas(reflog.Stdout));
+        }
         var matches = new List<string>();
-        foreach (var sha in result.Stdout.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-                     .Distinct(StringComparer.Ordinal))
+        foreach (var sha in candidates.Distinct(StringComparer.Ordinal))
         {
             // The history grep is only a candidate filter, never identity proof.
             var trailers = await ReadTrailersAsync(repo, sha, ct);
@@ -979,6 +994,9 @@ public class GitWorkspaceService
         }
         return new(true, matches, 0);
     }
+
+    private static IEnumerable<string> SplitShas(string stdout) =>
+        stdout.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
     public sealed record GitTrailer(string Key, string Value);
 

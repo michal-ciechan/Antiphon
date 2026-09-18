@@ -284,6 +284,21 @@ feed shows the hold as `CommitRecoveryPending`. The Commit-child audit reads tra
 parser (`GitWorkspaceService.ReadTrailersAsync`), so any `trailer.separators` spelling is accepted
 and body prose is not.
 
+The identity search behind every one of those reads is two `git log` legs and never `--reflog`
+(CARD-0527: the full reflog walk cost 74-135s in a many-worktree checkout and blew the git budget
+on every settle since go-live): `log --all …` for every ref, then `log --walk-reflogs HEAD …` for
+every commit this checkout's HEAD has pointed at within reflog retention, which is what still finds
+a gated commit whose branch was deleted. The reflog leg is skipped on a validated unborn HEAD.
+When that search, the repository inspection or `status` is unavailable AND no unresolved obligation
+or already-found settlement commit says a commit may exist, the settlement degrades instead of
+re-handing forever: the task settles once with `uncommitted:N (history search unavailable)`,
+`uncommitted:N (repository inspection unavailable)`, `commit refused: status inspection unavailable`
+or `no commit needed (status inspection unavailable)`, plus the usual `Report names N file(s) still
+uncommitted in the shared checkout:` Warning event; no commit is attempted and no Commit child is
+spawned. With an obligation the CARD-0547 hold is unchanged. On the Worktree side a successful
+gated commit whose receipt is not yet readable no longer fails the merge-back: the merge proceeds
+and the outcome detail carries `gated commit receipt pending (operation <id>)`.
+
 ### Default stage shape by complexity (CARD-0352's `complexity:` label)
 
 | Label | Investigate | Plan | TestDesign | Code | Review | Mutation after land | Dispatches |

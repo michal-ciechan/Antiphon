@@ -507,6 +507,13 @@ public sealed class DelegationWorktreeService
             targetCheckoutBefore = await FindCheckoutOfBranchAsync(repo, targetRef[11..], ct);
         }
 
+        // CARD-0527 D-3: set when the gated commit SUCCEEDED but its receipt was not yet readable.
+        // The work is committed on the branch and the trailers travel with the rebase, so the merge
+        // proceeds; only the receipt is deferred to a later recovery by operation id.
+        string? receipt = null;
+        string? WithReceipt(string? detail) => receipt is null ? detail
+            : string.IsNullOrEmpty(detail) ? receipt : detail + "; " + receipt;
+
         try
         {
             // The delegate may have left uncommitted work — a report that says "done" with a dirty
@@ -549,31 +556,40 @@ public sealed class DelegationWorktreeService
                     worktree, $"task {DelegationReportFormatter.Short(task.Id)}: {task.Title}", ct);
             }
         }
+        catch (CommitInspectionPendingException pending)
+        {
+            // Caught by name, before the generic catch: the commit exists. Reporting it as a failed
+            // commit and stranding the branch is the wrong outcome (CARD-0527 D-3).
+            _logger.LogWarning(
+                "Gated commit receipt pending for task {TaskId} operation {OperationId} in {Worktree}; merging anyway.",
+                task.Id, pending.OperationId, worktree);
+            receipt = $"gated commit receipt pending (operation {pending.OperationId:D})";
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return new MergeOutcome(MergeResult.Failed, [], $"Committing the delegate's work failed: {ex.Message}");
         }
 
         if (task.MergeTargetRef is not { } target)
-            return new MergeOutcome(MergeResult.LeftForHuman, [], $"Branch {branch} kept — no merge target was set.");
+            return new MergeOutcome(MergeResult.LeftForHuman, [], WithReceipt($"Branch {branch} kept — no merge target was set."));
 
         // Nothing on the branch beyond the target means the delegate changed nothing (a read-only
         // investigation, or work it decided against). Don't leave an empty branch around.
         var source = await _landingGit.InspectAsync(new(task.Id, repo, worktree, "refs/heads/" + branch, targetRef!), ct);
-        if (!source.Accepted) return new MergeOutcome(MergeResult.Failed, [], source.Reason);
+        if (!source.Accepted) return new MergeOutcome(MergeResult.Failed, [], WithReceipt(source.Reason));
         var ahead = await GitAsync(worktree, ct, "rev-list", "--count", $"{targetBefore}..{source.Snapshot!.HeadSha}");
         if (ahead.Ok && ahead.StdOut.Trim() == "0")
         {
             var cleanup = await RemoveLocalAsync(task, target, targetBefore!, targetCheckoutBefore, lease, ct);
-            return new MergeOutcome(MergeResult.NothingToMerge, [], cleanup.IsClean
-                ? "No changes beyond target; cleanup complete." : $"No changes beyond target; cleanup retained: {cleanup.Residue}");
+            return new MergeOutcome(MergeResult.NothingToMerge, [], WithReceipt(cleanup.IsClean
+                ? "No changes beyond target; cleanup complete." : $"No changes beyond target; cleanup retained: {cleanup.Residue}"));
         }
 
         // Rebase, never merge commits (repo convention). A conflict aborts cleanly: the worktree is
         // left exactly as the delegate finished it, which is what the Merge task needs to see.
         if (await ReadCleanTargetAsync(repo, targetRef!, ct) != targetBefore
             || await FindCheckoutOfBranchAsync(repo, targetRef![11..], ct) != targetCheckoutBefore)
-            return new MergeOutcome(MergeResult.Failed, [], "target_changed");
+            return new MergeOutcome(MergeResult.Failed, [], WithReceipt("target_changed"));
         var rebase = await GitAsync(worktree, ct, "-c", "rebase.autoStash=false", "-c", "rebase.updateRefs=false", "rebase", targetBefore!);
         if (!rebase.Ok)
         {
@@ -584,24 +600,24 @@ public sealed class DelegationWorktreeService
             await GitAsync(worktree, ct, "rebase", "--abort");
 
             if (files.Count > 0)
-                return new MergeOutcome(MergeResult.Conflicted, files, rebase.StdErr.Trim());
+                return new MergeOutcome(MergeResult.Conflicted, files, WithReceipt(rebase.StdErr.Trim()));
 
-            return new MergeOutcome(MergeResult.Failed, [], $"Rebase onto {target} failed: {rebase.StdErr.Trim()}");
+            return new MergeOutcome(MergeResult.Failed, [], WithReceipt($"Rebase onto {target} failed: {rebase.StdErr.Trim()}"));
         }
 
         var prepared = await _landingGit.InspectAsync(source.Snapshot!.Coordinates, ct);
         if (!prepared.Accepted || prepared.Snapshot!.GitDirectory != source.Snapshot.GitDirectory
             || rebase.RebaseHeadSha is null || prepared.Snapshot.HeadSha != rebase.RebaseHeadSha)
-            return new MergeOutcome(MergeResult.Failed, [], "source_changed");
+            return new MergeOutcome(MergeResult.Failed, [], WithReceipt("source_changed"));
         var advanced = await AdvanceTargetAsync(repo, prepared.Snapshot!.HeadSha, targetRef!, targetBefore!, targetCheckoutBefore, ct);
         if (advanced is { } failure)
-            return new MergeOutcome(MergeResult.Failed, [], failure);
+            return new MergeOutcome(MergeResult.Failed, [], WithReceipt(failure));
 
         var removal = await RemoveLocalAsync(task, target, prepared.Snapshot.HeadSha, targetCheckoutBefore, lease, ct);
         var detail = $"{branch} → {target}";
         if (!removal.IsClean && removal.Residue is not null)
             detail += $"; cleanup incomplete: {removal.Residue}";
-        return new MergeOutcome(MergeResult.Merged, [], detail);
+        return new MergeOutcome(MergeResult.Merged, [], WithReceipt(detail));
     }
 
     /// <summary>

@@ -7,6 +7,8 @@ namespace Antiphon.Tests.TestHelpers;
 public sealed class RecordingGitWorkspaceService : GitWorkspaceService
 {
     public List<string> Verbs { get; } = [];
+    /// <summary>Every recorded invocation's full argument vector (CARD-0527 recipe pins).</summary>
+    public List<string[]> Calls { get; } = [];
     public Func<string[], Task>? BeforeRun { get; set; }
     public Func<string[], (int Code, string Stdout, string Stderr)?>? OverrideRun { get; set; }
 
@@ -44,6 +46,7 @@ public sealed class RecordingGitWorkspaceService : GitWorkspaceService
 
     private async Task RecordAsync(string[] args)
     {
+        Calls.Add(args);
         if (args.Length > 0)
             Verbs.Add(args[0]);
         if (BeforeRun is not null)

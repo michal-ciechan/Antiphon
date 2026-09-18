@@ -3172,20 +3172,36 @@ public sealed class AgentTaskReplyService
         if (!recoveryStarted && repository == GitWorkspaceService.RepositoryInspection.NotWorktree
             && existing.Items.Count == 0)
             return null;
+        // CARD-0527 D-2: the durable obligation (or a commit already found for this settlement) is
+        // the only evidence that a commit may exist. Without it, no inspection failure holds the
+        // task: holding re-hands the boundary once a sweep, forever, and no commit can be lost.
+        var holds = recoveryStarted || existing.Items.Count > 0;
         // A successful empty reachable-history search is not proof that an attempted
         // mutation did nothing. Only a durable, explicitly known no-commit result clears it.
         if (!existing.Succeeded || existing.Items.Count > 1 || recoveryStarted && existing.Items.Count == 0)
-            throw new ServiceUnavailableException("Settlement recovery requires one exact identity; inspect git history.",
-                "settlement_recovery_unavailable");
+        {
+            if (holds)
+                throw new ServiceUnavailableException("Settlement recovery requires one exact identity; inspect git history.",
+                    "settlement_recovery_unavailable");
+            // A resolved no-commit obligation IS the durable, explicitly known result the comment
+            // above demands, so it falls through to the ordinary no-commit note as if the search
+            // had succeeded empty. Everything else degrades to an honest uncommitted note.
+            if (!nothingToCommit)
+                return await CommitSkippedNoteAsync(db, git, task, repo, "history search", existing.Error, now, ct);
+        }
 
         if (repository != GitWorkspaceService.RepositoryInspection.Worktree)
-            throw new ServiceUnavailableException("Settlement repository inspection is unavailable.",
-                "settlement_recovery_unavailable");
+        {
+            if (holds)
+                throw new ServiceUnavailableException("Settlement repository inspection is unavailable.",
+                    "settlement_recovery_unavailable");
+            return await CommitSkippedNoteAsync(db, git, task, repo, "repository inspection", null, now, ct);
+        }
 
         var dirty = await git.TryGetChangesAsync(repo, ct);
         if (!dirty.Succeeded)
         {
-            if (existing.Items.Count == 1 || nothingToCommit)
+            if (holds)
                 throw new ServiceUnavailableException("The settlement commit exists; residual status is not yet available.",
                     "settlement_recovery_unavailable");
             return new("commit refused: status inspection unavailable", "Git status could not be inspected; no commit attempted.");
@@ -3338,8 +3354,15 @@ public sealed class AgentTaskReplyService
         {
             var remaining = await git.TryGetChangesAsync(repo, ct);
             if (!remaining.Succeeded)
-                throw new ServiceUnavailableException("No commit was needed; residual status is not yet available.",
-                    "settlement_recovery_unavailable");
+            {
+                if (holds)
+                    throw new ServiceUnavailableException("No commit was needed; residual status is not yet available.",
+                        "settlement_recovery_unavailable");
+                // CARD-0527 D-2: the gate already recorded CommitRecoveryNotNeeded, so there is no
+                // obligation to recover; not Durable, because nothing was committed.
+                return new("no commit needed (status inspection unavailable)",
+                    "The gate found nothing to commit for the task's footprint; residual dirty paths could not be inspected.");
+            }
             var remainingPaths = SettlementDirtyPaths(remaining.Items);
             return NoCommitNeededNote(remainingPaths);
         }
@@ -3379,6 +3402,40 @@ public sealed class AgentTaskReplyService
             ? string.Join(", ", result.Refusals.Select(r => r.Path))
             : result.Stderr;
         return new CommitOnSettleNote(refused, warning);
+    }
+
+    /// <summary>
+    /// CARD-0527 D-2: an obligation-free settlement whose git inspection failed. No commit can be
+    /// lost here, so the task settles once with an honest note instead of re-handing the boundary
+    /// forever. No commit is attempted and no Commit-role child is spawned: git has just failed in
+    /// this checkout and the child would run the same git under the same load.
+    /// </summary>
+    private async Task<CommitOnSettleNote?> CommitSkippedNoteAsync(
+        AppDbContext db, GitWorkspaceService git, AgentTask task, string repo,
+        string what, string? error, DateTime now, CancellationToken ct)
+    {
+        var dirty = await git.TryGetChangesAsync(repo, ct);
+        if (!dirty.Succeeded)
+            return new("commit refused: status inspection unavailable", "Git status could not be inspected; no commit attempted.");
+        var dirtyPaths = SettlementDirtyPaths(dirty.Items);
+        // Nothing attributable is dirty: the hook would have done nothing even when git worked.
+        if (dirtyPaths.Length == 0) return null;
+
+        var because = string.IsNullOrWhiteSpace(error) ? $"{what} unavailable" : $"{what} unavailable ({error!.Trim()})";
+        // Same prefix as the commit-on-settle Off arm so the per-day log metric keeps counting.
+        db.AgentTaskEvents.Add(NewEvent(
+            task.Id, AgentTaskEventType.Warning,
+            $"Report names {dirtyPaths.Length} file(s) still uncommitted in the shared checkout: "
+            + string.Join(", ", dirtyPaths.Take(20)) + $". Commit-on-settle skipped: {because}.",
+            now));
+        _logger.LogWarning(
+            "Commit-on-settle skipped for task {TaskId} in {Repo}: {What} unavailable ({Error}); {Count} file(s) left uncommitted.",
+            task.Id, repo, what, error ?? "no detail", dirtyPaths.Length);
+        return new CommitOnSettleNote(
+            $"uncommitted:{dirtyPaths.Length} ({what} unavailable)",
+            $"The report names {dirtyPaths.Length} file(s) that are still uncommitted in the shared checkout "
+            + $"\u2014 the work has not landed. Commit-on-settle was skipped because the {because}; no commit was "
+            + "attempted. Commit before building on it.");
     }
 
     private static CommitOnSettleNote NoCommitNeededNote(string[] remainingPaths) =>

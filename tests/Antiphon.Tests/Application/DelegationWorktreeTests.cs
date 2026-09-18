@@ -1060,14 +1060,15 @@ public class DelegationWorktreeTests
 
     private static (DelegationWorktreeService Service, WorktreeManager Manager) CreateService(
         ScratchGitRepo repo,
-        int? worktreeAddTimeoutSeconds = null)
+        int? worktreeAddTimeoutSeconds = null,
+        GitWorkspaceService? workspaceGit = null)
     {
         var graph = DelegationTestServices.CreateGitGraph(new GitSettings
         {
             WorktreeBasePath = repo.WorktreeRoot, WorktreeStaleAfterDays = 7,
             WorktreeJanitorIntervalHours = 24, WorktreeAddTimeoutSeconds = worktreeAddTimeoutSeconds ?? 180,
             DefaultBranch = "master",
-        });
+        }, workspaceGit: workspaceGit);
         return (graph.Worktrees, graph.Manager);
     }
 
