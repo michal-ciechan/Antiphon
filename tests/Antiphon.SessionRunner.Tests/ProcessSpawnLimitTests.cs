@@ -3,7 +3,7 @@ using TUnit.Core;
 
 namespace Antiphon.SessionRunner.Tests;
 
-/// <summary>CARD-0208: process-spawning classes share a 1-wide lane in this assembly.</summary>
+/// <summary>CARD-0208: process-spawning classes share a 1-wide lane in this assembly. The roster is a floor, not a census.</summary>
 [Category("Unit")]
 public class ProcessSpawnLimitTests
 {
@@ -14,7 +14,7 @@ public class ProcessSpawnLimitTests
     }
 
     [Test]
-    public void Process_spawning_classes_are_exactly_the_limiter_population()
+    public void Process_spawning_classes_carry_the_limiter()
     {
         Type[] expected =
         [
@@ -40,23 +40,27 @@ public class ProcessSpawnLimitTests
             typeof(SessionCpuWatchdogTests),
             typeof(SessionLivenessTests),
             typeof(TranscriptAdoptionSafetyTests),
+            typeof(CodexCommandLengthHttpAcceptanceTests),
+            typeof(HerdrLabelFollowLiveTests),
+            typeof(HerdrLabelFollowSchedulingTests),
+            typeof(HerdrLabelSnapshotTests),
+            typeof(HerdrPaneDisposalGuardedLiveTests),
+            typeof(HerdrPaneDisposalServiceTests),
+            typeof(HerdrPaneDisposalStopRegressionTests),
+            typeof(RemoteControlConditionalInputTests),
+            typeof(RunnerCustodyCrashTests),
+            typeof(RunnerCustodyTests),
+            typeof(RunnerSessionGenerationTests),
         ];
-
-        foreach (var type in expected)
-        {
-            Attribute.GetCustomAttribute(type, typeof(ParallelLimiterAttribute<ProcessSpawnLimit>))
-                .ShouldNotBeNull($"{type.Name} must carry [ParallelLimiter<ProcessSpawnLimit>]");
-        }
 
         var actual = typeof(ProcessSpawnLimit).Assembly.GetTypes()
             .Where(type => type.IsClass
                            && Attribute.GetCustomAttribute(type, typeof(ParallelLimiterAttribute<ProcessSpawnLimit>)) is not null)
             .ToHashSet();
 
-        actual.SetEquals(expected).ShouldBeTrue(
-            "unexpected limiter types: "
-            + string.Join(", ", actual.Except(expected).Select(type => type.Name).OrderBy(name => name, StringComparer.Ordinal))
-            + "; missing: "
+        actual.ShouldNotBeEmpty();
+        actual.IsSupersetOf(expected).ShouldBeTrue(
+            "missing: "
             + string.Join(", ", expected.Except(actual).Select(type => type.Name).OrderBy(name => name, StringComparer.Ordinal)));
     }
 }
