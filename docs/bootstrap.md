@@ -550,8 +550,9 @@ Start either without re-login: `Start-ScheduledTask -TaskName "Antiphon Session 
 <!-- CARD-0254 preserved source ends -->
 
 - **A hard-killed git child orphans `.git/index.lock`** (CARD-0543). `GitWorkspaceService` now
-  sets `GIT_OPTIONAL_LOCKS=0` so a timed-out `git status` no longer creates that lock, and
-  reclaims only its own lock-taking child's file after a timeout kill. Reads keep working
+  sets `GIT_OPTIONAL_LOCKS=0` so a timed-out `git status` no longer creates that lock. It does
+  not delete a lock after a timeout kill (a foreign lock can appear in the pre-lock window).
+  Reads keep working
   against a leftover lock; mutations (`merge --ff-only`, `add`, `reset --hard`) fail with
   "File exists". Land surfaces `git_index_lock_stale` / `git_index_lock_held` instead of
   `target_advance_failed`. Do not delete a lock while a `git` process older than it is

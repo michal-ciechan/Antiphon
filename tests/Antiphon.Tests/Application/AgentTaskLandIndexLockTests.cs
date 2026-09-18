@@ -163,6 +163,62 @@ public sealed class AgentTaskLandIndexLockTests
     }
 
     [Test]
+    public async Task Lock_created_during_rebase_is_reported_held_and_same_sha_repost_lands()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var sha = await h.AddSourceAsync();
+        await File.WriteAllTextAsync(Path.Combine(h.Fixture.Repository, "master-move.txt"), "moved\n");
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "add", ".");
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "commit", "-m", "move master");
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "push", "origin", "HEAD:refs/heads/master");
+        var lockPath = await ResolveLockAsync(h.Fixture.Source);
+        var created = false;
+        h.Fixture.Git.BeforeCommand = (repo, args) =>
+        {
+            if (!created
+                && GitIndexLock.PathsEqual(repo, h.Fixture.Source)
+                && args.Contains("rebase")
+                && !args.Contains("--abort")
+                && !File.Exists(lockPath))
+            {
+                File.WriteAllBytes(lockPath, []);
+                created = true;
+            }
+            return Task.FromResult<Antiphon.Server.Application.Dtos.LandingGitResult?>(null);
+        };
+        (await h.RunAsync()).ShouldBe(LandRunResult.Complete);
+        created.ShouldBeTrue();
+        var first = await h.OperationAsync();
+        first.ShouldNotBeNull();
+        first!.LastReason.ShouldBe(GitIndexLock.HeldCode);
+        first.LastReason.ShouldNotBe("interrupted_rebase_requires_inspection");
+        first.Phase.ShouldBe(LandPhase.Refused);
+        h.Fixture.Git.Trace.ShouldContain(a => a.Contains("rebase") && !a.Contains("--abort"));
+        await using (var db = h.CreateContext())
+        {
+            var refused = await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Fixture.TaskId
+                && e.Type == AgentTaskEventType.LandRefused);
+            refused.Detail.ShouldContain(lockPath);
+            (await db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == h.Fixture.TaskId
+                && e.Detail.Contains("interrupted_rebase_requires_inspection"))).ShouldBeFalse();
+        }
+        File.Delete(lockPath);
+        h.Fixture.Git.BeforeCommand = null;
+        h.Fixture.Git.Trace.Clear();
+        await h.RequestAsync(expectedSourceSha: sha);
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+        await using var again = h.CreateContext();
+        (await again.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == h.Fixture.TaskId
+            && e.Type == AgentTaskEventType.Landed)).ShouldBeTrue();
+        (await again.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == h.Fixture.TaskId
+            && e.Detail.Contains("interrupted_rebase_requires_inspection"))).ShouldBeFalse();
+        var second = await h.OperationAsync();
+        second.ShouldNotBeNull();
+        second!.Id.ShouldNotBe(first.Id);
+    }
+
+    [Test]
     public async Task Lock_created_during_ff_merge_is_reported_held()
     {
         await using var h = new LandingSafetyHarness();

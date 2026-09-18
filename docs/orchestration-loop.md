@@ -668,8 +668,9 @@ git process is still running). The hold consumes no attempt; the 5 s sweep re-pi
 request, so deleting the file resumes the land without a new POST. The same codes refuse
 in-protocol immediately before `rebase` / `rebase --abort` / `merge --ff-only`. Hold and
 refusal detail name the lock path and the exact `Remove-Item` command. The pipeline never
-deletes a lock it did not create (a timeout kill of GitWorkspaceService's own lock-taking
-child is the one reclaim). `update-ref` advances are not blocked by a lock in a checkout
+deletes an `index.lock`, including after a timeout kill of a GitWorkspaceService child.
+`GIT_OPTIONAL_LOCKS=0` stops reads from creating one; any leftover lock is surfaced on the
+next land. `update-ref` advances are not blocked by a lock in a checkout
 that does not have the target branch.
 
 An explicit retry of an eligible terminal `Refused` operation creates a fresh operation,

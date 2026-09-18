@@ -337,8 +337,13 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             if (op is not null)
             {
                 op.LastReason = reason;
-                if (op.Phase is LandPhase.Inspected or LandPhase.RecoveryPinned or LandPhase.RebaseStarted or LandPhase.Prepared
-                    && reason is not (GitIndexLock.StaleCode or GitIndexLock.HeldCode))
+                // RebaseStarted is not resumable: a lock refusal after abort (or a rebase that
+                // never started) must become Refused, or the next POST hits interrupted_rebase.
+                // RecoveryPinned / Inspected / Prepared keep lock codes excluded so V-8 stays pinned.
+                var lockCode = reason is GitIndexLock.StaleCode or GitIndexLock.HeldCode;
+                if (op.Phase == LandPhase.RebaseStarted
+                    || (op.Phase is LandPhase.Inspected or LandPhase.RecoveryPinned or LandPhase.Prepared
+                        && !lockCode))
                 {
                     op.Publication = LandPublicationOutcome.Refused;
                     _state.Transition(op, LandPhase.Refused, Now());

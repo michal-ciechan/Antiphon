@@ -1,3 +1,4 @@
+using System.Reflection;
 using Antiphon.Server.Application.Services;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -35,31 +36,12 @@ public sealed class GitIndexLockTests
     }
 
     [Test]
-    public void TryReclaimAfterKill_respects_child_start()
+    public void TryReclaimAfterKill_is_gone()
     {
-        var dir = Directory.CreateTempSubdirectory("c543-reclaim").FullName;
-        try
-        {
-            var path = Path.Combine(dir, "index.lock");
-            var childStart = DateTime.UtcNow;
-            File.WriteAllBytes(path, []);
-            File.SetLastWriteTimeUtc(path, childStart - TimeSpan.FromSeconds(60));
-            GitIndexLock.TryReclaimAfterKill(path, childStart, "commit").ShouldBeFalse();
-            File.Exists(path).ShouldBeTrue();
-
-            File.SetLastWriteTimeUtc(path, childStart + TimeSpan.FromSeconds(1));
-            GitIndexLock.TryReclaimAfterKill(path, childStart, "commit").ShouldBeTrue();
-            File.Exists(path).ShouldBeFalse();
-
-            File.WriteAllBytes(path, []);
-            File.SetLastWriteTimeUtc(path, childStart + TimeSpan.FromSeconds(1));
-            GitIndexLock.TryReclaimAfterKill(path, childStart, "log").ShouldBeFalse();
-            File.Exists(path).ShouldBeTrue();
-        }
-        finally
-        {
-            try { Directory.Delete(dir, true); } catch (IOException) { }
-        }
+        const BindingFlags any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
+        typeof(GitIndexLock).GetMethod("TryReclaimAfterKill", any).ShouldBeNull();
+        typeof(GitIndexLock).GetMethod("IsLockTakingVerb", any).ShouldBeNull();
+        typeof(GitIndexLock).GetMethod("FirstVerb", any).ShouldBeNull();
     }
 }
 
