@@ -29,7 +29,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         if (channelBound)
             await h.BindChannelAsync();
         var id = await h.SeedPendingMessageAsync(
-            "the brief", deliveryAttempts: 1, baselineSequence: floor,
+            "the brief that must persist", deliveryAttempts: 1, baselineSequence: floor,
             status: QueuedMessageStatus.Sent, lastDeliveryStartedAt: t0.AddSeconds(sentAfterMarkSeconds));
         await h.Queue.HandleDeliveryFailureAsync(
             h.SessionId, [id], DeliveryVerdict.NoTranscriptRecord, default,
@@ -67,7 +67,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         var floor = await h.CurrentTranscriptMaxSequenceAsync();
         clock.Advance(TimeSpan.FromSeconds(31));
         var id = await h.SeedPendingMessageAsync(
-            "the brief", deliveryAttempts: 1, baselineSequence: floor,
+            "the brief that must persist", deliveryAttempts: 1, baselineSequence: floor,
             status: QueuedMessageStatus.Sent, lastDeliveryStartedAt: t0.AddSeconds(31));
         await h.Queue.HandleDeliveryFailureAsync(
             h.SessionId, [id], DeliveryVerdict.NoTranscriptRecord, default,
@@ -96,7 +96,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         await h.InsertTurnAsync("earlier prompt", "earlier answer");
         var floor = await h.CurrentTranscriptMaxSequenceAsync();
         var id = await h.SeedPendingMessageAsync(
-            "the brief", deliveryAttempts: 1, baselineSequence: floor,
+            "the brief that must persist", deliveryAttempts: 1, baselineSequence: floor,
             status: QueuedMessageStatus.Sent, lastDeliveryStartedAt: t0.AddSeconds(10));
         await h.Queue.HandleDeliveryFailureAsync(
             h.SessionId, [id], DeliveryVerdict.NoComposerEvidence, default,
@@ -153,7 +153,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         await h.InsertTurnAsync("earlier prompt", "earlier answer");
         var floor = await h.CurrentTranscriptMaxSequenceAsync();
         var id = await h.SeedPendingMessageAsync(
-            "the brief", deliveryAttempts: 1, baselineSequence: floor,
+            "the brief that must persist", deliveryAttempts: 1, baselineSequence: floor,
             status: QueuedMessageStatus.Sent, lastDeliveryStartedAt: t0.AddSeconds(10));
         await h.Queue.HandleDeliveryFailureAsync(
             h.SessionId, [id], DeliveryVerdict.NoTranscriptRecord, default,
@@ -176,7 +176,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         {
             h.Adapter.OnSubmitted = body => h.Runtime.ObserveTranscriptAsync(StubbedUserPrompt(h.SessionId, body), default);
             await h.Queue.FlushStrandedQueuesAsync(default);
-            h.Adapter.Inputs.Count(i => i == "the brief").ShouldBe(1);
+            h.Adapter.Inputs.Count(i => i == "the brief that must persist").ShouldBe(1);
             await using var failDb = CreateContext();
             var failed = await failDb.SessionQueuedMessages.SingleAsync(m => m.Id == id);
             failed.Status.ShouldBe(QueuedMessageStatus.Pending);
@@ -191,14 +191,14 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         }
 
         await h.Queue.FlushStrandedQueuesAsync(default);
-        h.Adapter.Inputs.Count(i => i == "the brief").ShouldBe(1);
+        h.Adapter.Inputs.Count(i => i == "the brief that must persist").ShouldBe(1);
         await using var db = CreateContext();
         var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
         row.Status.ShouldBe(QueuedMessageStatus.Sent);
         row.DeliveryAttempts.ShouldBe(1);
         (await db.TranscriptEntries.SingleAsync(t =>
                 t.AgentSessionId == h.SessionId && t.Kind == TranscriptKinds.UserPrompt && t.Sequence > preSweepMax))
-            .Text.ShouldBe("the brief");
+            .Text.ShouldBe("the brief that must persist");
         h.Adapter.Killed.ShouldBeFalse();
         (await db.AgentIncidents.CountAsync(i =>
             i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryVerificationFailed)).ShouldBe(1);

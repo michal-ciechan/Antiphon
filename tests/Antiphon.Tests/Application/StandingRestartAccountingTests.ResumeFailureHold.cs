@@ -285,8 +285,9 @@ public partial class StandingRestartAccountingTests
             var id = Guid.Parse(accepted.PersistentSessionId!);
             await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
             await ReachHoldAsync(h, agent.Id, id);
-
-            await h.Control.StartAsync(agent.Id, new(RetryContinuity: true), default);
+            await using var retryScope = h.Provider.CreateAsyncScope();
+            await retryScope.ServiceProvider.GetRequiredService<AgentControlService>()
+                .StartAsync(agent.Id, new(RetryContinuity: true), default);
             await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
             healthyRetry.StartedSessionId.ShouldBe(id);
             healthyRetry.StartedArgs.ShouldContain("--resume");
@@ -304,9 +305,18 @@ public partial class StandingRestartAccountingTests
                 h.Provider.GetRequiredService<AgentSessionRuntime>(),
                 id, 1, AgentExitReason.ProcessExited, AgentSupervisionTests.CreateContext);
             await h.Supervisor().TickAsync(default);
+            await using (var afterExit = AgentSupervisionTests.CreateContext())
+            {
+                var state = (await afterExit.AgentSupervisionStates.FindAsync(agent.Id))!;
+                state.ContinuityResumeFailures.ShouldBe(1);
+                state.ContinuityHeldAt.ShouldBeNull();
+                state.NextRestartAt.ShouldNotBeNull();
+            }
             for (var k = 1; k <= 4; k++)
             {
-                h.Clock.Advance(TimeSpan.FromSeconds(5 * Math.Pow(2, k) + 1));
+                // Human retry resets ContinuityResumeFailures, not RestartBackoffFailures, so
+                // the remaining ladder is already past 5·2^k seconds.
+                await AdvancePastNextRestartAsync(h, agent.Id);
                 await h.Supervisor().TickAsync(default);
                 await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
                 await h.Supervisor().TickAsync(default);
@@ -444,5 +454,15 @@ public partial class StandingRestartAccountingTests
             await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
             await h.Supervisor().TickAsync(default);
         }
+    }
+
+    private static async Task AdvancePastNextRestartAsync(AgentSupervisionTests.Harness h, Guid agentId)
+    {
+        await using var db = AgentSupervisionTests.CreateContext();
+        var due = (await db.AgentSupervisionStates.FindAsync(agentId))!.NextRestartAt;
+        due.ShouldNotBeNull();
+        var now = h.Clock.GetUtcNow().UtcDateTime;
+        if (due.Value > now)
+            h.Clock.Advance(due.Value - now + TimeSpan.FromSeconds(1));
     }
 }
