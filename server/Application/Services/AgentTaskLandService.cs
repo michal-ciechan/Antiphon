@@ -393,10 +393,13 @@ public sealed class AgentTaskLandService
         string.IsNullOrEmpty(detail) ? reason : reason + "; " + detail;
 
     /// <summary>
-    /// CARD-0543 V-11s: probe the source worktree always, and the registered target checkout only
-    /// when a worktree currently has the merge-target branch. RepoPath is not probed
-    /// unconditionally, so a lock in a detached canonical checkout does not hold a land that
-    /// will use update-ref (A-6). A registration lookup failure falls back to RepoPath.
+    /// CARD-0543 V-11s: probe the source worktree when its directory still exists, and the
+    /// registered target checkout only when a worktree currently has the merge-target branch.
+    /// RepoPath is not probed unconditionally, so a lock in a detached canonical checkout does
+    /// not hold a land that will use update-ref (A-6). A registration lookup failure falls back
+    /// to RepoPath. A missing source-worktree directory is not a lock: cleanup never clears
+    /// <see cref="AgentTask.WorktreePath"/>, and probing it would turn
+    /// <c>index_lock_path_error</c> into a permanent <c>git_index_lock_held</c> hold.
     /// </summary>
     private async Task<(string Code, string Detail)?> ProbeAdmissionIndexLockAsync(AgentTask task, CancellationToken ct)
     {
@@ -429,7 +432,11 @@ public sealed class AgentTaskLandService
 
     private async Task<(string Code, string Detail)?> ProbeCheckoutIndexLockAsync(string checkout, CancellationToken ct)
     {
+        if (!Directory.Exists(checkout))
+            return null;
         var observation = await _landingGit!.InspectIndexLockAsync(checkout, ct);
+        if (!Directory.Exists(checkout))
+            return null;
         return GitIndexLock.Refusal(observation, GitIndexLock.StaleAfter(_gitSettings?.IndexLockStaleAfterSeconds),
             _clock.GetUtcNow().UtcDateTime);
     }

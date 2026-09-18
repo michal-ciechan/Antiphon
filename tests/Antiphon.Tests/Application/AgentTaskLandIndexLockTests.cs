@@ -249,6 +249,62 @@ public sealed class AgentTaskLandIndexLockTests
     }
 
     [Test]
+    public async Task Missing_source_worktree_does_not_hold_as_index_lock()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "remove", "--force", h.Fixture.Source);
+        Directory.Exists(h.Fixture.Source).ShouldBeFalse();
+        var result = await h.RunAsync();
+        result.ShouldNotBe(LandRunResult.Held);
+        await using var db = h.CreateContext();
+        var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Fixture.TaskId);
+        request.State.ShouldNotBe(LandRequestState.Held);
+        request.HoldReasonCode.ShouldNotBe(GitIndexLock.HeldCode);
+        request.HoldReasonCode.ShouldNotBe(GitIndexLock.StaleCode);
+        (await db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == h.Fixture.TaskId
+            && e.Type == AgentTaskEventType.Held)).ShouldBeFalse();
+        var refused = await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Fixture.TaskId
+            && e.Type == AgentTaskEventType.LandRefused);
+        refused.Detail.ShouldNotContain(GitIndexLock.HeldCode);
+        refused.Detail.ShouldNotContain("index_lock");
+    }
+
+    [Test]
+    public async Task Reland_after_removed_worktree_is_not_held_as_index_lock()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        (await h.RunAsync()).ShouldBe(LandRunResult.Complete);
+        if (Directory.Exists(h.Fixture.Source))
+            await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "remove", "--force", h.Fixture.Source);
+        Directory.Exists(h.Fixture.Source).ShouldBeFalse();
+        await using (var db = h.CreateContext())
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            task.WorktreePath.ShouldNotBeNull();
+            Directory.Exists(task.WorktreePath!).ShouldBeFalse();
+        }
+        await h.RequestAsync();
+        var result = await h.RunAsync();
+        result.ShouldNotBe(LandRunResult.Held);
+        await using var again = h.CreateContext();
+        var request = await again.AgentTaskLandRequests
+            .OrderByDescending(r => r.RequestedAt)
+            .FirstAsync(r => r.TaskId == h.Fixture.TaskId);
+        request.State.ShouldNotBe(LandRequestState.Held);
+        request.HoldReasonCode.ShouldNotBe(GitIndexLock.HeldCode);
+        request.HoldReasonCode.ShouldNotBe(GitIndexLock.StaleCode);
+        (await again.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Fixture.TaskId
+            && e.Type == AgentTaskEventType.Held
+            && e.Detail != null
+            && (e.Detail.Contains(GitIndexLock.HeldCode) || e.Detail.Contains("index_lock_path_error"))))
+            .ShouldBe(0);
+    }
+
+    [Test]
     public async Task Update_ref_advance_ignores_repository_lock()
     {
         await using var h = new LandingSafetyHarness();
