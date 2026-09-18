@@ -189,12 +189,55 @@ public class HerdrSupervisionBackoffTests
     [Test]
     public async Task Card_owned_sessions_never_move_the_herdr_streak()
     {
-        await using var scenario = new AttentionServiceTests.Scenario();
-        var (_, boardId, columnId) = await scenario.AddBoardAsync("Herdr ownership");
-        var cardId = await scenario.AddCardOnBoardAsync(boardId, columnId);
         await using var f = await Fixture.CreateAsync([]);
         await f.SeedTerminalAsync(HerdrSupervisionFailureKind.PaneClosed);
         await using var db = f.Db();
+        var now = DateTime.UtcNow;
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var columnId = Guid.NewGuid();
+        var cardId = Guid.NewGuid();
+        db.Projects.Add(new Project
+        {
+            Id = projectId,
+            Name = $"herdr-own-{projectId:N}"[..30],
+            GitRepositoryUrl = "https://example.test/herdr-own.git",
+            LocalRepositoryPath = Path.Combine(f.Root, "project"),
+            BaseBranch = "main",
+            CreatedAt = now,
+            UpdatedAt = now,
+        });
+        db.Boards.Add(new Board
+        {
+            Id = boardId,
+            ProjectId = projectId,
+            Name = "Herdr ownership",
+            CreatedAt = now,
+            UpdatedAt = now,
+        });
+        db.BoardColumns.Add(new BoardColumn
+        {
+            Id = columnId,
+            BoardId = boardId,
+            StateKey = "backlog",
+            Name = "Backlog",
+            ColumnOrder = 0,
+            CardStatus = CardStatus.Backlog,
+            CreatedAt = now,
+            UpdatedAt = now,
+        });
+        db.Cards.Add(new Card
+        {
+            Id = cardId,
+            BoardId = boardId,
+            BoardColumnId = columnId,
+            Identifier = $"OWN-{cardId:N}"[..16],
+            Title = "A live card on this board",
+            Status = CardStatus.Backlog,
+            CreatedAt = now,
+            UpdatedAt = now,
+        });
+        await db.SaveChangesAsync();
         var session = await f.SessionAsync();
         await db.AgentSessions.Where(s => s.Id == session.Id).ExecuteUpdateAsync(u => u.SetProperty(s => s.CardId, cardId));
         try
