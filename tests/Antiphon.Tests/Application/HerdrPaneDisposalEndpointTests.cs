@@ -9,6 +9,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
+[Category("Integration")]
 public sealed class HerdrPaneDisposalEndpointTests
 {
     [Test] [Arguments("p1")] [Arguments("w1:p*")] [Arguments("w1:p1,w1:p2")] [Arguments("current")]
