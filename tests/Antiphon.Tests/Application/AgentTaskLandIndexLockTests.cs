@@ -309,13 +309,14 @@ public sealed class AgentTaskLandIndexLockTests
     {
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
-        await h.AddSourceAsync();
+        var sha = await h.AddSourceAsync();
         Directory.Exists(h.Fixture.Source).ShouldBeTrue();
         var gitPath = Path.Combine(h.Fixture.Source, ".git");
         File.Exists(gitPath).ShouldBeTrue();
         File.Delete(gitPath);
         Directory.Exists(h.Fixture.Source).ShouldBeTrue();
-        var result = await h.RunAsync();
+        await h.RequestAsync(expectedSourceSha: sha);
+        var result = await h.RunQueuedAsync();
         result.ShouldBe(LandRunResult.Held);
         await using var db = h.CreateContext();
         var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Fixture.TaskId);
