@@ -764,5 +764,5 @@ under Implementation slices plus `StandingSessionOwnershipTests` and the client 
 
 --- next stage ---
 next: code
-handoff: Code implements S1-S5 of the CARD-0561 plan against this verification design (39 guards, 27 V, 12 R rows): PersistTranscriptAsync/PersistResult internal, capture SentAt before the revert nulls it, the three test partials and interceptors under Missing setup, then the ordinary V/R floor (class filters, StandingSessionOwnershipTests, client build); Mutation runs the 38 PCs after land.
+handoff: Code implements S1-S5 of the CARD-0561 plan against this verification design (39 guards, 30 V, 12 R rows): PersistTranscriptAsync/PersistResult internal, capture SentAt before the revert nulls it, the three test partials and interceptors under Missing setup, then the ordinary V/R floor (class filters, StandingSessionOwnershipTests, client build); Mutation runs the 38 PCs after land.
 artifact: docs/superpowers/plans/2026-09-18-card-0561-poisoned-transcript-resume-loop-plan.md
