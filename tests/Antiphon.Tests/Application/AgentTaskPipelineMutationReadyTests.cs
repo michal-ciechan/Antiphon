@@ -461,17 +461,34 @@ public partial class AgentTaskPipelineEndpointTests
         db.AgentTaskLandings.Add(op);
         await db.SaveChangesAsync();
 
-        using var client = _factory.CreateClient();
-        var json = await client.GetStringAsync("/api/agent-tasks/pipeline");
+        try
+        {
+            using var client = _factory.CreateClient();
+            var json = await client.GetStringAsync("/api/agent-tasks/pipeline");
 
-        using var document = JsonDocument.Parse(json);
-        var row = document.RootElement.GetProperty("stages").EnumerateArray()
-            .Single(s => s.GetProperty("role").GetString() == "Mutation")
-            .GetProperty("ready").EnumerateArray()
-            .Single(r => r.GetProperty("card").GetProperty("id").GetGuid() == companion.Id);
-        row.GetProperty("sourceLandingOperationId").GetGuid().ShouldBe(op.Id);
-        row.GetProperty("sourceLandingSha").GetString().ShouldBe(sha);
-        row.GetProperty("originalCard").GetProperty("id").GetGuid().ShouldBe(original.Id);
-        row.GetProperty("originalCard").GetProperty("identifier").GetString().ShouldBe("C552-0001");
+            using var document = JsonDocument.Parse(json);
+            var row = document.RootElement.GetProperty("stages").EnumerateArray()
+                .Single(s => s.GetProperty("role").GetString() == "Mutation")
+                .GetProperty("ready").EnumerateArray()
+                .Single(r => r.GetProperty("card").GetProperty("id").GetGuid() == companion.Id);
+            row.GetProperty("sourceLandingOperationId").GetGuid().ShouldBe(op.Id);
+            row.GetProperty("sourceLandingSha").GetString().ShouldBe(sha);
+            row.GetProperty("originalCard").GetProperty("id").GetGuid().ShouldBe(original.Id);
+            row.GetProperty("originalCard").GetProperty("identifier").GetString().ShouldBe("C552-0001");
+        }
+        finally
+        {
+            // The factory host's database is shared across this class and ResetAsync only clears
+            // caches, so a seeded ready row would make the empty-contract test's assertions
+            // depend on declaration order. Leave the host as it was found.
+            db.AgentTaskLandings.Remove(op);
+            await db.SaveChangesAsync();
+            db.AgentTasks.Remove(owner);
+            db.Cards.RemoveRange(original, companion);
+            db.BoardColumns.RemoveRange(columns);
+            db.Boards.Remove(board);
+            db.Projects.Remove(project);
+            await db.SaveChangesAsync();
+        }
     }
 }
