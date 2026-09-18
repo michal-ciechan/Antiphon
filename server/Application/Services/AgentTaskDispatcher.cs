@@ -1235,7 +1235,7 @@ public sealed class AgentTaskDispatcher
                 continue;
             }
 
-            string reason;
+            string reason = "";
             var withholdKill = false;
             if (!started || briefNeverTyped)
             {
@@ -1245,19 +1245,36 @@ public sealed class AgentTaskDispatcher
                 // the compact's housekeeping — the work may still have landed unbound.
                 // Only when `started` is false: a Pending brief with real prompts since dispatch
                 // is a delivery miss, not a bind refusal.
-                if (!started && await TryRecoverBindRefusalAsync(task, sessionId, ct))
-                    continue;
+                // CARD-0551: a file that carries the brief and no done report withholds the kill
+                // (evaluated before the CARD-0112 capability-mismatch branch).
+                if (!started)
+                {
+                    var recovery = await TryRecoverBindRefusalAsync(task, sessionId, ct);
+                    if (recovery.Outcome == BindRefusalOutcome.Recovered)
+                        continue;
+                    if (recovery.Outcome == BindRefusalOutcome.UnreportedActivity)
+                    {
+                        reason =
+                            $"Boot prompt reached the session but its transcript is unbound: {(int)timeout.TotalMinutes} "
+                            + "minutes after dispatch Antiphon ingested no transcript row for this task, while "
+                            + $"transcript file {recovery.UnreportedJsonlPath} carries this task's brief and no "
+                            + "closing report token yet. The delegate may be WORKING with no transcript bound "
+                            + "to read (CARD-0064); the session was NOT killed — read it before re-running.";
+                        withholdKill = true;
+                    }
+                }
 
-                // CARD-0112: an explicit capability omission is positive evidence that this runner
-                // cannot observe the task's transcript. Fail the uncorrelatable task, but do not
-                // kill a session that may have been doing the requested work all along.
-                if (!started
+                if (!withholdKill
+                    && !started
                     && await TryGetRunnerCapabilityMismatchAsync(task, sessionId, ct) is { } mismatch)
                 {
+                    // CARD-0112: an explicit capability omission is positive evidence that this runner
+                    // cannot observe the task's transcript. Fail the uncorrelatable task, but do not
+                    // kill a session that may have been doing the requested work all along.
                     reason = mismatch.Message;
                     withholdKill = true;
                 }
-                else
+                else if (!withholdKill)
                 {
                     var evidence = DescribeBriefQueueEvidence(
                         briefRow?.Status, briefRow?.DeliveryAttempts ?? 0);
@@ -1583,13 +1600,21 @@ public sealed class AgentTaskDispatcher
             // zero TranscriptEntries. A dead session that ingested turns is CARD-0021's "no report
             // is coming"; do not widen.
             var hasTranscript = false;
+            string? unreportedJsonlPath = null;
             if (task.AgentSessionId is Guid unbound)
             {
                 hasTranscript = await _db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == unbound, ct);
-                if (!hasTranscript && await TryRecoverBindRefusalAsync(task, unbound, ct))
+                if (!hasTranscript)
                 {
-                    _deadSessions.Forget(task.Id);
-                    continue;
+                    var recovery = await TryRecoverBindRefusalAsync(task, unbound, ct);
+                    if (recovery.Outcome == BindRefusalOutcome.Recovered)
+                    {
+                        _deadSessions.Forget(task.Id);
+                        continue;
+                    }
+
+                    if (recovery.Outcome == BindRefusalOutcome.UnreportedActivity)
+                        unreportedJsonlPath = recovery.UnreportedJsonlPath;
                 }
             }
 
@@ -1611,6 +1636,10 @@ public sealed class AgentTaskDispatcher
             }
 
             var classified = AgentTaskLiveness.ClassifyFailure(task.AgentSessionId, session, hasTranscript);
+            var classifiedReason = unreportedJsonlPath is null
+                ? classified.Reason
+                : classified.Reason.TrimEnd()
+                    + $" transcript file {unreportedJsonlPath} carries the brief and no report";
 
             // CARD-0547 D-3: settlement may still owe a gated commit its record. Hold within the
             // window, keeping the grace bookkeeping (the session is still dead); past it, fail
@@ -1629,7 +1658,7 @@ public sealed class AgentTaskDispatcher
             // the whole justification for acting is that the session is already gone, so if that
             // evidence is ever wrong a kill would be the CARD-0056 disaster rather than tidiness.
             await FailAndNotifyAsync(
-                task, classified.Reason, "dead-session reconciler", ct, classified.FailureCode, orphaned: pending);
+                task, classifiedReason, "dead-session reconciler", ct, classified.FailureCode, orphaned: pending);
 
             _deadSessions.Forget(task.Id);
             failed++;
@@ -1764,10 +1793,24 @@ public sealed class AgentTaskDispatcher
             return false;
         }
 
-        // Gate 3 — CARD-0085. Same call, same contract, as the two sweeps above. Skipped when the
-        // task holds a commit-recovery obligation (CARD-0547): a settled session is not an unbound
-        // one, and that recovery would mark it Succeeded without ever closing the obligation.
-        if (pending.Count == 0 && await TryRecoverBindRefusalAsync(task, sessionId, ct))
+        // Gate 3 — CARD-0085, and ONLY for the population CARD-0085 was written for: a session that
+        // ingested nothing. Same predicate as the dead-session reconciler. A session with rows is
+        // judged by its rows (the report path settles it; this sweep fails it, non-destructively) —
+        // CARD-0551 case (b): ten of eleven recoveries traced to this gate had a bound transcript.
+        // Skipped when the task holds a commit-recovery obligation (CARD-0547).
+        var hasTranscript = await _db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == sessionId, ct);
+        if (hasTranscript)
+        {
+            var ingested = await _db.TranscriptEntries.CountAsync(t => t.AgentSessionId == sessionId, ct);
+            _logger.LogInformation(
+                "Task {ShortId} is past its deadline with {Count} ingested row(s); bind-refusal recovery not attempted",
+                DelegationReportFormatter.Short(task.Id), ingested);
+        }
+
+        var bindRefusal = BindRefusalResult.None;
+        if (!hasTranscript && pending.Count == 0)
+            bindRefusal = await TryRecoverBindRefusalAsync(task, sessionId, ct);
+        if (bindRefusal.Outcome == BindRefusalOutcome.Recovered)
             return false;
 
         // Gate 4 — CARD-0353 S2. The boot arm is the ONE deadline here that kills and retries, so
@@ -1804,6 +1847,11 @@ public sealed class AgentTaskDispatcher
             + "The task is Failed, not escalated and not retried: a bigger model cannot finish a "
             + "task that never ends, and re-running it is your call. The session was NOT killed "
             + $"— read session {sessionId} for what it was actually doing before you decide.";
+        if (bindRefusal.Outcome == BindRefusalOutcome.UnreportedActivity)
+        {
+            reason = reason.TrimEnd()
+                + $" transcript file {bindRefusal.UnreportedJsonlPath} carries the brief and no report";
+        }
 
         await FailAndNotifyAsync(task, reason, "overdue-task deadline", ct, orphaned: pending);
         return true;
@@ -4306,30 +4354,35 @@ public sealed class AgentTaskDispatcher
     /// service (settlement it already owns); either missing leaves today's Failed in place so
     /// predating harnesses stay unchanged.
     /// </summary>
-    private async Task<bool> TryRecoverBindRefusalAsync(
+    private async Task<BindRefusalResult> TryRecoverBindRefusalAsync(
         AgentTask task, Guid sessionId, CancellationToken ct)
     {
         if (_replies is null || _bindRefusalRecovery is null)
-            return false;
+            return BindRefusalResult.None;
 
         var session = await _db.AgentSessions.AsNoTracking()
             .FirstOrDefaultAsync(s => s.Id == sessionId, ct);
         var knownSessionIds = await _db.AgentSessions.AsNoTracking()
             .Select(s => s.Id)
             .ToHashSetAsync(ct);
-        var evidence = await _bindRefusalRecovery.TryFindAsync(task, session, knownSessionIds, ct);
-        if (evidence is null)
-            return false;
+        var scan = await _bindRefusalRecovery.TryFindAsync(task, session, knownSessionIds, ct);
+        if (scan.Recovery is { } evidence)
+        {
+            await _replies.RecoverFromBindRefusalAsync(task.Id, evidence, ct);
+            // Settlement ran on a different scope/DbContext. This tracker still holds the pre-recovery
+            // Dispatched entity; detach so a later SaveChanges in this tick cannot clobber Succeeded.
+            _db.Entry(task).State = EntityState.Detached;
+            _logger.LogWarning(
+                "Task {ShortId} recovered from an unbound session ({Evidence}); C1–C4 were not changed. "
+                + "Session {SessionId} was not killed.",
+                DelegationReportFormatter.Short(task.Id), evidence.Describe(), sessionId);
+            return new BindRefusalResult(BindRefusalOutcome.Recovered, scan.UnreportedJsonlPath);
+        }
 
-        await _replies.RecoverFromBindRefusalAsync(task.Id, evidence, ct);
-        // Settlement ran on a different scope/DbContext. This tracker still holds the pre-recovery
-        // Dispatched entity; detach so a later SaveChanges in this tick cannot clobber Succeeded.
-        _db.Entry(task).State = EntityState.Detached;
-        _logger.LogWarning(
-            "Task {ShortId} recovered from an unbound session ({Evidence}); C1–C4 were not changed. "
-            + "Session {SessionId} was not killed.",
-            DelegationReportFormatter.Short(task.Id), evidence.Describe(), sessionId);
-        return true;
+        if (scan.UnreportedJsonlPath is { } path)
+            return new BindRefusalResult(BindRefusalOutcome.UnreportedActivity, path);
+
+        return BindRefusalResult.None;
     }
 
     private sealed record RepairSourcePrep(string? OwnerSha, List<string> Warnings, string? FailureReason);
