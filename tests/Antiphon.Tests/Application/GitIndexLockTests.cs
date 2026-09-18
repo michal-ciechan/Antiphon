@@ -1,4 +1,5 @@
 using System.Reflection;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -33,6 +34,23 @@ public sealed class GitIndexLockTests
         var observation = new GitIndexLock.Observation(
             present ? @"C:\tmp\index.lock" : "", present, mtime, present ? 0 : null, holders);
         GitIndexLock.Classify(observation, StaleAfter, Now).ShouldBe(expected);
+    }
+
+    [Test]
+    public void Evaluate_path_error_is_held()
+    {
+        var observation = new LandingIndexLockObservation(
+            @"C:\tmp\.git\index.lock",
+            false,
+            null,
+            null,
+            [],
+            GitIndexLock.PathErrorReason);
+        var (kind, detail) = GitIndexLock.Evaluate(observation, StaleAfter, Now);
+        kind.ShouldBe(GitIndexLock.Kind.Held);
+        detail.ShouldNotBeNull();
+        detail.ShouldContain(GitIndexLock.PathErrorReason);
+        detail.ShouldContain(@"C:\tmp\.git\index.lock");
     }
 
     [Test]
