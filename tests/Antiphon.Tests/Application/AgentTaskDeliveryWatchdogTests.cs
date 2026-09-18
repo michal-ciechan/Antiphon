@@ -1663,7 +1663,7 @@ public class AgentTaskDeliveryWatchdogTests
                     $"{DelegationReportFormatter.TaskMarker(task.Id)} the plan is written.",
                     started)
                 + "\n"
-                + JsonlAssistant(cwd, "done.", started.AddMinutes(2))
+                + JsonlDoneAssistant(cwd, task.Id, started.AddMinutes(2))
                 + "\n");
 
             await harness.FailNeverStartedAsync(CancellationToken.None);
@@ -1672,6 +1672,7 @@ public class AgentTaskDeliveryWatchdogTests
             var recovered = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
             recovered.Status.ShouldBe(AgentTaskStatus.Succeeded);
             recovered.Result.ShouldContain(jsonl, customMessage: "incident/result names the file, not a bind");
+            recovered.Result.ShouldContain("reported done");
             (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == task.AgentSessionId))
                 .ShouldBe(0, "Arm B does not ingest. C4 stays refused.");
             var incident = await verify.AgentIncidents.SingleAsync(
@@ -1719,7 +1720,7 @@ public class AgentTaskDeliveryWatchdogTests
                     $"{DelegationReportFormatter.TaskMarker(task.Id)} the plan is written.",
                     started)
                 + "\n"
-                + JsonlAssistant(cwd, "done.", started.AddMinutes(2))
+                + JsonlDoneAssistant(cwd, task.Id, started.AddMinutes(2))
                 + "\n");
 
             await harness.FailNeverStartedAsync(CancellationToken.None);
@@ -1728,9 +1729,60 @@ public class AgentTaskDeliveryWatchdogTests
             var recovered = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
             recovered.Status.ShouldBe(AgentTaskStatus.Succeeded);
             recovered.Result.ShouldContain(jsonl);
+            recovered.Result.ShouldContain("reported done");
             (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == task.AgentSessionId))
                 .ShouldBe(0, "Arm B does not ingest. C4 stays refused.");
             stopper.Killed.ShouldNotContain(task.AgentSessionId!.Value);
+        }
+        finally
+        {
+            TryDeleteTree(projectsRoot);
+            TryDeleteTree(cwd);
+        }
+    }
+
+    [Test]
+    public async Task jsonl_brief_without_a_done_report_fails_unbound_and_does_not_kill()
+    {
+        // W-2 / CARD-0551: today's fixture content (brief only) is no longer recovery evidence.
+        // Fail, name the file, withhold the kill.
+        var projectsRoot = Directory.CreateTempSubdirectory("card0551-w2-jsonl").FullName;
+        var cwd = Directory.CreateTempSubdirectory("card0551-w2-cwd").FullName;
+        string? jsonl = null;
+        try
+        {
+            var (harness, stopper) = CreateHarness(new DelegateBindRefusalRecoverySettings
+            {
+                ClaudeProjectsRoot = projectsRoot,
+            });
+            var task = await SeedRecoverableTaskAsync(
+                dispatchedMinutesAgo: 11,
+                workingDirectory: cwd,
+                sessionCwd: cwd);
+
+            var encoded = DelegateBindRefusalRecovery.EncodeClaudeProjectDir(cwd);
+            var projectDir = Path.Combine(projectsRoot, encoded);
+            Directory.CreateDirectory(projectDir);
+            jsonl = Path.Combine(projectDir, task.AgentSessionId!.Value.ToString("D") + ".jsonl");
+            await File.WriteAllTextAsync(jsonl,
+                JsonlUser(
+                    cwd,
+                    $"{DelegationReportFormatter.TaskMarker(task.Id)} the plan is written.",
+                    DateTime.UtcNow)
+                + "\n");
+
+            await harness.FailNeverStartedAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            failed.Status.ShouldBe(AgentTaskStatus.Failed);
+            failed.FailureReason.ShouldNotBeNull();
+            failed.FailureReason.ShouldContain("transcript is unbound");
+            failed.FailureReason.ShouldContain(jsonl);
+            stopper.Killed.ShouldNotContain(task.AgentSessionId!.Value);
+            (await verify.AgentIncidents.AnyAsync(
+                i => i.AgentId == task.AgentId && i.Kind == AgentIncidentKind.DelegateBindRefusalRecovered))
+                .ShouldBeFalse();
         }
         finally
         {
@@ -1759,9 +1811,11 @@ public class AgentTaskDeliveryWatchdogTests
 
             var projectDir = Path.Combine(projectsRoot, DelegateBindRefusalRecovery.EncodeClaudeProjectDir(cwd));
             Directory.CreateDirectory(projectDir);
+            var started = DateTime.UtcNow;
             await File.WriteAllTextAsync(
                 Path.Combine(projectDir, Guid.NewGuid().ToString("D") + ".jsonl"),
-                JsonlUser(cwd, DelegationReportFormatter.TaskMarker(task.Id), DateTime.UtcNow) + "\n");
+                JsonlUser(cwd, DelegationReportFormatter.TaskMarker(task.Id), started) + "\n"
+                + JsonlDoneAssistant(cwd, task.Id, started.AddMinutes(2)) + "\n");
 
             await harness.FailNeverStartedAsync(CancellationToken.None);
 
@@ -1797,9 +1851,11 @@ public class AgentTaskDeliveryWatchdogTests
 
             var projectDir = Path.Combine(projectsRoot, DelegateBindRefusalRecovery.EncodeClaudeProjectDir(cwd));
             Directory.CreateDirectory(projectDir);
+            var started = DateTime.UtcNow;
             await File.WriteAllTextAsync(
                 Path.Combine(projectDir, otherSessionId.ToString("D") + ".jsonl"),
-                JsonlUser(cwd, DelegationReportFormatter.TaskMarker(task.Id), DateTime.UtcNow) + "\n");
+                JsonlUser(cwd, DelegationReportFormatter.TaskMarker(task.Id), started) + "\n"
+                + JsonlDoneAssistant(cwd, task.Id, started.AddMinutes(2)) + "\n");
 
             await harness.FailNeverStartedAsync(CancellationToken.None);
 
@@ -1835,9 +1891,11 @@ public class AgentTaskDeliveryWatchdogTests
 
             var projectDir = Path.Combine(projectsRoot, DelegateBindRefusalRecovery.EncodeClaudeProjectDir(cwd));
             Directory.CreateDirectory(projectDir);
+            var started = DateTime.UtcNow;
             await File.WriteAllTextAsync(
                 Path.Combine(projectDir, Guid.NewGuid().ToString("D") + ".jsonl"),
-                JsonlAssistant(cwd, "I read CARD-0010 in another task.", DateTime.UtcNow) + "\n");
+                JsonlAssistant(cwd, "I read CARD-0010 in another task.", started) + "\n"
+                + JsonlDoneAssistant(cwd, task.Id, started.AddMinutes(2)) + "\n");
 
             await harness.FailNeverStartedAsync(CancellationToken.None);
 
@@ -1879,6 +1937,8 @@ public class AgentTaskDeliveryWatchdogTests
             await File.WriteAllTextAsync(jsonl,
                 JsonlUser(cwd, "green", hourAgo) + "\n"
                 + JsonlAssistant(cwd, $"CARD-0083 {DelegationReportFormatter.TaskMarker(task.Id)}", hourAgo.AddMinutes(1))
+                + "\n"
+                + JsonlDoneAssistant(cwd, task.Id, hourAgo.AddMinutes(2))
                 + "\n");
 
             await harness.FailNeverStartedAsync(CancellationToken.None);
@@ -3005,6 +3065,9 @@ public class AgentTaskDeliveryWatchdogTests
             timestamp = timestamp.UtcDateTime.ToString("o"),
             message = new { role = "assistant", content = new[] { new { type = "text", text } } },
         });
+
+    private static string JsonlDoneAssistant(string cwd, Guid taskId, DateTimeOffset timestamp) =>
+        JsonlAssistant(cwd, "Report.\n" + DelegationReportFormatter.ReportToken(taskId, "done"), timestamp);
 
     private static void TryDeleteTree(string path)
     {

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -261,6 +262,165 @@ public class AgentTaskOverdueDeadlineTests
         recovered.Status.ShouldBe(AgentTaskStatus.Succeeded, "the work is in the repo; the row was wrong");
         recovered.Result.ShouldContain(sha);
         stopper.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task an_overdue_mid_turn_session_with_rows_is_failed_not_recovered_from_workspace_commits()
+    {
+        // T-1 / CARD-0551: the a2e66829 shape — mid-turn with a bound transcript — plus the
+        // existing Gate 3 git fixture. Recovery must not run; the sweep fails without killing.
+        using var repo = new ScratchGitRepo("card0551-overdue-t1");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "plan.md"), "the plan\n");
+        await repo.GitAsync("add", ".");
+        await repo.GitAsync("commit", "-m", "docs(providers): CARD-0083 plan - the contract");
+
+        var (harness, stopper) = CreateHarness();
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(
+            dispatchedMinutesAgo: 70_000,
+            workingDirectory: repo.Path,
+            title: "CARD-0083 plan the provider contract",
+            withAgent: true);
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.AssistantText, "earlier work", 69_500),
+            (TranscriptKinds.UserPrompt, "the brief", 69_000),
+            (TranscriptKinds.ToolCall, "Bash", 51_500),
+            (TranscriptKinds.ToolResult, "ok", 51_000));
+
+        await harness.FailOverdueTasksAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason.ShouldNotBeNull();
+        failed.FailureReason.ShouldContain("waiting on the model");
+        failed.FailureReason.ShouldContain("NOT killed");
+        failed.RecoveredAt.ShouldBeNull();
+        failed.Result.ShouldBeNull();
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task && e.Type == AgentTaskEventType.Warning)).ShouldBeFalse();
+        (await verify.AgentIncidents.AnyAsync(
+            i => i.Kind == AgentIncidentKind.DelegateBindRefusalRecovered
+                && i.SessionId == scenario.SessionId)).ShouldBeFalse();
+        stopper.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Arguments("model-wait")]
+    [Arguments("local-execution")]
+    public async Task an_overdue_mid_turn_session_with_rows_is_not_recovered_from_jsonl(string shape)
+    {
+        // T-2 / CARD-0551: the two live tails, plus a JSONL file that would recover a zero-row
+        // session. Rows present → Gate 3 must not read the file.
+        var projectsRoot = Directory.CreateTempSubdirectory("card0551-t2-projects").FullName;
+        var cwd = Directory.CreateTempSubdirectory("card0551-t2-cwd").FullName;
+        try
+        {
+            var (harness, stopper) = CreateHarness(claudeProjectsRoot: projectsRoot);
+            await using var scenario = new Scenario();
+            var task = await scenario.SeedTaskAsync(
+                dispatchedMinutesAgo: 70_000, workingDirectory: cwd, withAgent: true);
+            if (shape == "model-wait")
+            {
+                await scenario.SeedEntriesAsync(
+                    (TranscriptKinds.AssistantText, "earlier work", 69_500),
+                    (TranscriptKinds.UserPrompt, "the brief", 69_000),
+                    (TranscriptKinds.ToolCall, "Bash", 51_500),
+                    (TranscriptKinds.ToolResult, "ok", 51_000));
+            }
+            else
+            {
+                await scenario.SeedEntriesAsync(
+                    (TranscriptKinds.AssistantText, "earlier work", 69_500),
+                    (TranscriptKinds.UserPrompt, "the brief", 69_000),
+                    (TranscriptKinds.ToolCall, "Bash", 61_000));
+            }
+
+            await WriteJsonlBriefAndDoneAsync(projectsRoot, cwd, scenario.SessionId, task);
+
+            await harness.FailOverdueTasksAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task);
+            failed.Status.ShouldBe(AgentTaskStatus.Failed, "rows present: the sweep fails, it does not recover");
+            failed.Status.ShouldNotBe(AgentTaskStatus.Succeeded);
+            var events = await verify.AgentTaskEvents.Where(e => e.AgentTaskId == task).ToListAsync();
+            events.ShouldNotContain(e => e.Detail.Contains("ingested transcript rows"));
+            stopper.Killed.ShouldBeEmpty();
+        }
+        finally
+        {
+            TryDeleteTree(projectsRoot);
+            TryDeleteTree(cwd);
+        }
+    }
+
+    [Test]
+    public async Task a_zero_row_overdue_session_still_recovers_from_jsonl_done_report()
+    {
+        // T-3 / CARD-0551: the CARD-0085 population Gate 3 still owns — zero rows, ceiling
+        // breached, JSONL with brief + done.
+        var projectsRoot = Directory.CreateTempSubdirectory("card0551-t3-projects").FullName;
+        var cwd = Directory.CreateTempSubdirectory("card0551-t3-cwd").FullName;
+        try
+        {
+            var (harness, stopper) = CreateHarness(claudeProjectsRoot: projectsRoot);
+            await using var scenario = new Scenario();
+            var task = await scenario.SeedTaskAsync(
+                dispatchedMinutesAgo: 150_000, workingDirectory: cwd, withAgent: true);
+            var jsonl = await WriteJsonlBriefAndDoneAsync(projectsRoot, cwd, scenario.SessionId, task);
+
+            await harness.FailOverdueTasksAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var recovered = await verify.AgentTasks.SingleAsync(t => t.Id == task);
+            recovered.Status.ShouldBe(AgentTaskStatus.Succeeded);
+            recovered.RecoveredAt.ShouldNotBeNull();
+            recovered.RecoveredAt.ShouldBe(recovered.CompletedAt);
+            recovered.Result.ShouldNotBeNull();
+            recovered.Result.ShouldContain(jsonl);
+            stopper.Killed.ShouldBeEmpty();
+        }
+        finally
+        {
+            TryDeleteTree(projectsRoot);
+            TryDeleteTree(cwd);
+        }
+    }
+
+    [Test]
+    public async Task an_idle_bound_session_past_the_ceiling_is_failed_not_recovered_from_jsonl()
+    {
+        // T-4 / CARD-0551: idle tail with rows, ceiling breached, JSONL with brief + done.
+        // The report path owns an idle bound session; the sweep must not read the file.
+        var projectsRoot = Directory.CreateTempSubdirectory("card0551-t4-projects").FullName;
+        var cwd = Directory.CreateTempSubdirectory("card0551-t4-cwd").FullName;
+        try
+        {
+            var (harness, stopper) = CreateHarness(claudeProjectsRoot: projectsRoot);
+            await using var scenario = new Scenario();
+            var task = await scenario.SeedTaskAsync(
+                dispatchedMinutesAgo: 150_000, workingDirectory: cwd, withAgent: true);
+            await scenario.SeedEntriesAsync(
+                (TranscriptKinds.UserPrompt, "the brief", 149_000),
+                (TranscriptKinds.TurnEnd, null, 148_000));
+            await WriteJsonlBriefAndDoneAsync(projectsRoot, cwd, scenario.SessionId, task);
+
+            await harness.FailOverdueTasksAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task);
+            failed.Status.ShouldBe(AgentTaskStatus.Failed);
+            failed.RecoveredAt.ShouldBeNull();
+            failed.FailureReason.ShouldContain($"{Ceiling}-minute ceiling for role Code");
+            stopper.Killed.ShouldBeEmpty();
+        }
+        finally
+        {
+            TryDeleteTree(projectsRoot);
+            TryDeleteTree(cwd);
+        }
     }
 
     [Test]
@@ -641,10 +801,65 @@ public class AgentTaskOverdueDeadlineTests
 
     private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper) CreateHarness(
         Action<DelegationSettings>? configure = null,
-        SaveChangesInterceptor? saveInterceptor = null)
+        SaveChangesInterceptor? saveInterceptor = null,
+        string? claudeProjectsRoot = null)
     {
-        var built = OverdueSweepHarness.Create(configure, saveInterceptor: saveInterceptor);
+        var built = OverdueSweepHarness.Create(
+            configure, saveInterceptor: saveInterceptor, claudeProjectsRoot: claudeProjectsRoot);
         return (built.Dispatcher, built.Stopper);
+    }
+
+    private static async Task<string> WriteJsonlBriefAndDoneAsync(
+        string projectsRoot, string cwd, Guid sessionId, Guid taskId)
+    {
+        var encoded = DelegateBindRefusalRecovery.EncodeClaudeProjectDir(cwd);
+        var projectDir = Path.Combine(projectsRoot, encoded);
+        Directory.CreateDirectory(projectDir);
+        var jsonl = Path.Combine(projectDir, sessionId.ToString("D") + ".jsonl");
+        var started = DateTime.UtcNow;
+        await File.WriteAllTextAsync(jsonl,
+            JsonlUser(cwd, $"{DelegationReportFormatter.TaskMarker(taskId)} the plan is written.", started)
+            + "\n"
+            + JsonlAssistant(
+                cwd,
+                "Report.\n" + DelegationReportFormatter.ReportToken(taskId, "done"),
+                started.AddMinutes(2))
+            + "\n");
+        return jsonl;
+    }
+
+    private static string JsonlUser(string cwd, string text, DateTimeOffset timestamp) =>
+        JsonSerializer.Serialize(new
+        {
+            type = "user",
+            uuid = Guid.NewGuid().ToString("D"),
+            cwd,
+            timestamp = timestamp.UtcDateTime.ToString("o"),
+            message = new { role = "user", content = text },
+        });
+
+    private static string JsonlAssistant(string cwd, string text, DateTimeOffset timestamp) =>
+        JsonSerializer.Serialize(new
+        {
+            type = "assistant",
+            uuid = Guid.NewGuid().ToString("D"),
+            cwd,
+            timestamp = timestamp.UtcDateTime.ToString("o"),
+            message = new { role = "assistant", content = new[] { new { type = "text", text } } },
+        });
+
+    private static void TryDeleteTree(string path)
+    {
+        try
+        {
+            if (!Directory.Exists(path))
+                return;
+            foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+                File.SetAttributes(file, FileAttributes.Normal);
+            Directory.Delete(path, recursive: true);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
