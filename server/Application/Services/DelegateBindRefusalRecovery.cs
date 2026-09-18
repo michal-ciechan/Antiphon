@@ -43,20 +43,22 @@ public sealed class DelegateBindRefusalRecovery
     }
 
     /// <summary>
-    /// Either arm is enough. Null means "no positive evidence" — including "could not ask git"
-    /// and "projects root missing". Absence is not evidence the work did not happen, but it is
-    /// also not evidence that it did, so the caller still Fails.
+    /// Either arm is enough for <see cref="DelegateBindRefusalScan.Recovery"/>. A file that
+    /// carries this task's brief and no closing <c>done</c> report is
+    /// <see cref="DelegateBindRefusalScan.UnreportedJsonlPath"/> — evidence the delegate is
+    /// working unbound, never evidence of completion (CARD-0551).
     /// </summary>
-    public async Task<DelegateBindRefusalEvidence?> TryFindAsync(
+    public async Task<DelegateBindRefusalScan> TryFindAsync(
         AgentTask task, AgentSession? session, IReadOnlySet<Guid> knownSessionIds, CancellationToken ct)
     {
         var commits = await TryGitAsync(task, ct);
-        var jsonl = TryScanJsonl(task, session, knownSessionIds);
+        var (reportedJsonl, unreportedJsonl) = TryScanJsonl(task, session, knownSessionIds);
 
-        if (commits.Count == 0 && jsonl is null)
-            return null;
+        DelegateBindRefusalEvidence? recovery = null;
+        if (commits.Count > 0 || reportedJsonl is not null)
+            recovery = new DelegateBindRefusalEvidence(commits, reportedJsonl);
 
-        return new DelegateBindRefusalEvidence(commits, jsonl);
+        return new DelegateBindRefusalScan(recovery, unreportedJsonl);
     }
 
     private async Task<IReadOnlyList<string>> TryGitAsync(AgentTask task, CancellationToken ct)
@@ -99,29 +101,31 @@ public sealed class DelegateBindRefusalRecovery
             .Where(s => s.Length > 0)];
     }
 
-    private string? TryScanJsonl(AgentTask task, AgentSession? session, IReadOnlySet<Guid> knownSessionIds)
+    private (string? Reported, string? Unreported) TryScanJsonl(
+        AgentTask task, AgentSession? session, IReadOnlySet<Guid> knownSessionIds)
     {
         // This root contains Claude Code transcripts only. A hit for any other tool is therefore
         // wrong-tool evidence, while the tool-agnostic git arm above remains available to all.
         if (task.AgentKind != AgentKind.ClaudeCode)
-            return null;
+            return (null, null);
 
         // C3 cannot be evaluated without a start time; recovering from a file we cannot date is
         // how the 2026-08-09 operator-collision would come back.
         if (session?.StartedAt is not { } startedAt)
-            return null;
+            return (null, null);
 
         var cwd = session.Cwd;
         if (string.IsNullOrWhiteSpace(cwd))
-            return null;
+            return (null, null);
 
         var needles = JsonlNeedles(task);
         if (needles.Count == 0)
-            return null;
+            return (null, null);
 
         if (!Directory.Exists(_projectsRoot))
-            return null;
+            return (null, null);
 
+        string? unreported = null;
         foreach (var file in EnumerateCandidates(cwd))
         {
             try
@@ -131,8 +135,11 @@ public sealed class DelegateBindRefusalRecovery
                 if (IsAnotherSessionTranscript(file, task.AgentSessionId, knownSessionIds))
                     continue;
 
-                if (TryMatchJsonl(file, cwd, startedAt, needles))
-                    return file;
+                var match = MatchJsonl(file, cwd, startedAt, needles, task.Id);
+                if (match == JsonlMatchKind.Reported)
+                    return (file, unreported);
+                if (match == JsonlMatchKind.Unreported && unreported is null)
+                    unreported = file;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
             {
@@ -140,7 +147,7 @@ public sealed class DelegateBindRefusalRecovery
             }
         }
 
-        return null;
+        return (null, unreported);
     }
 
     private IEnumerable<string> EnumerateCandidates(string cwd)
@@ -166,14 +173,21 @@ public sealed class DelegateBindRefusalRecovery
     /// <summary>
     /// C2 then C3 then a distinctive-needle search of submitted-input records (a <c>user</c>
     /// record, or an <c>attachment</c> whose <c>attachment.type</c> is <c>queued_command</c>).
-    /// A C3 refusal stops the read — using that file would undermine CARD-0006.
+    /// A C3 refusal stops the read — using that file would undermine CARD-0006. A brief match
+    /// is identity only (CARD-0551): the file recovers only when a later assistant record's
+    /// <c>text</c> blocks end with this task's <c>[antiphon-report:&lt;id&gt; done]</c> line.
     /// </summary>
-    private static bool TryMatchJsonl(
-        string path, string sessionCwd, DateTime startedAt, IReadOnlyList<Needle> needles)
+    internal static bool TryMatchJsonl(
+        string path, string sessionCwd, DateTime startedAt, IReadOnlyList<Needle> needles, Guid taskId) =>
+        MatchJsonl(path, sessionCwd, startedAt, needles, taskId) == JsonlMatchKind.Reported;
+
+    internal static JsonlMatchKind MatchJsonl(
+        string path, string sessionCwd, DateTime startedAt, IReadOnlyList<Needle> needles, Guid taskId)
     {
         using var reader = new StreamReader(path);
         string? cwd = null;
         DateTimeOffset? firstTimestamp = null;
+        var briefSeen = false;
         string? line;
         while ((line = reader.ReadLine()) is not null)
         {
@@ -185,6 +199,7 @@ public sealed class DelegateBindRefusalRecovery
             catch (JsonException) { continue; }
 
             var isUserRecord = false;
+            string? assistantText = null;
             using (doc)
             {
                 var root = doc.RootElement;
@@ -207,7 +222,7 @@ public sealed class DelegateBindRefusalRecovery
                     cwd = cwdEl.GetString();
                     // C2: no match → skip (never read past the lead).
                     if (!CwdMatches(cwd, sessionCwd))
-                        return false;
+                        return JsonlMatchKind.None;
                 }
 
                 if (firstTimestamp is null
@@ -220,16 +235,69 @@ public sealed class DelegateBindRefusalRecovery
                     firstTimestamp = parsed;
                     // C3: first timestamped record predating the session is the operator-collision.
                     if (parsed.UtcDateTime < startedAt.ToUniversalTime() - EpochSkewSlack)
-                        return false;
+                        return JsonlMatchKind.None;
                 }
+
+                assistantText = ConcatenateAssistantTextBlocks(root);
             }
 
             // C2 must have matched (or we have not seen a cwd yet — keep scanning the lead).
             if (cwd is not null && isUserRecord && needles.Any(n => n.IsMatch(line)))
-                return true;
+                briefSeen = true;
+
+            if (briefSeen
+                && assistantText is not null
+                && DelegationReportFormatter.TryFindReportToken(taskId, assistantText, out var verdict)
+                && string.Equals(verdict, "done", StringComparison.Ordinal))
+            {
+                return JsonlMatchKind.Reported;
+            }
         }
 
-        return false;
+        return briefSeen ? JsonlMatchKind.Unreported : JsonlMatchKind.None;
+    }
+
+    /// <summary>
+    /// Same extraction <c>TranscriptNormalizer.FromAssistant</c> uses: concatenated
+    /// <c>message.content[]</c> blocks of <c>type:"text"</c>, joined with LF. Thinking and
+    /// <c>tool_use</c> blocks are ignored — a report written through the Write tool is not a
+    /// closing line.
+    /// </summary>
+    private static string? ConcatenateAssistantTextBlocks(JsonElement root)
+    {
+        if (!root.TryGetProperty("type", out var typeEl)
+            || typeEl.ValueKind != JsonValueKind.String
+            || !string.Equals(typeEl.GetString(), "assistant", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        if (!root.TryGetProperty("message", out var message)
+            || message.ValueKind != JsonValueKind.Object
+            || !message.TryGetProperty("content", out var content)
+            || content.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        List<string>? parts = null;
+        foreach (var block in content.EnumerateArray())
+        {
+            if (block.ValueKind != JsonValueKind.Object)
+                continue;
+            if (!block.TryGetProperty("type", out var blockType)
+                || blockType.ValueKind != JsonValueKind.String
+                || !string.Equals(blockType.GetString(), "text", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (!block.TryGetProperty("text", out var textEl) || textEl.ValueKind != JsonValueKind.String)
+                continue;
+            (parts ??= []).Add(textEl.GetString() ?? "");
+        }
+
+        return parts is null ? null : string.Join("\n", parts);
     }
 
     /// <summary>
@@ -268,7 +336,7 @@ public sealed class DelegateBindRefusalRecovery
         return list;
     }
 
-    private static IReadOnlyList<Needle> JsonlNeedles(AgentTask task) =>
+    internal static IReadOnlyList<Needle> JsonlNeedles(AgentTask task) =>
     [
         Needle.Bounded(DelegationReportFormatter.Short(task.Id)),
         Needle.Literal(DelegationReportFormatter.TaskMarker(task.Id)),
@@ -369,9 +437,38 @@ public sealed record DelegateBindRefusalEvidence(
         if (Commits.Count > 0)
             bits.Add("commit " + string.Join(", ", Commits.Take(5)));
         if (JsonlPath is { } path)
-            bits.Add("transcript file " + path);
+            bits.Add("transcript file " + path + " (reported done)");
         return bits.Count == 0 ? "unknown evidence" : string.Join("; ", bits);
     }
+}
+
+/// <summary>
+/// Result of scanning git and JSONL for bind-refusal evidence (CARD-0551).
+/// <see cref="Recovery"/> is set when commits exist or a later assistant record reported
+/// <c>done</c>. <see cref="UnreportedJsonlPath"/> is the first file that passed C1–C3 and the
+/// brief match but had no closing <c>done</c> report.
+/// </summary>
+public sealed record DelegateBindRefusalScan(
+    DelegateBindRefusalEvidence? Recovery,
+    string? UnreportedJsonlPath);
+
+public enum BindRefusalOutcome
+{
+    NoEvidence,
+    Recovered,
+    UnreportedActivity,
+}
+
+public sealed record BindRefusalResult(BindRefusalOutcome Outcome, string? UnreportedJsonlPath)
+{
+    public static BindRefusalResult None { get; } = new(BindRefusalOutcome.NoEvidence, null);
+}
+
+internal enum JsonlMatchKind
+{
+    None,
+    Unreported,
+    Reported,
 }
 
 /// <summary>

@@ -938,12 +938,11 @@ public sealed class AgentTaskReplyService
 
         var now = UtcNow();
         var where = evidence.Describe();
-        var note =
-            $"Recovered from an unbound session; work is at {where}. C1–C4 were not changed.";
-        var warning =
-            $"WARNING: this task was recovered from an unbound session (zero ingested transcript "
-            + $"rows). The work is at {where}. C1–C4 were not changed. Do not redispatch — that "
-            + "would run again on top of already-landed work.";
+        var ingested = task.AgentSessionId is Guid sid
+            ? await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == sid, ct)
+            : 0;
+        var (note, warning, incidentSummary, incidentDetail) = BindRefusalRecoveryText(
+            DelegationReportFormatter.Short(task.Id), where, ingested);
 
         task.Status = AgentTaskStatus.Succeeded;
         task.Result = note;
@@ -966,9 +965,8 @@ public sealed class AgentTaskReplyService
             await RecordIncidentOnceAsync(
                 scope.ServiceProvider, db, task, sessionId,
                 AgentIncidentKind.DelegateBindRefusalRecovered,
-                $"Delegate task {DelegationReportFormatter.Short(task.Id)} recovered from an unbound session",
-                $"task {DelegationReportFormatter.Short(task.Id)} recovered from an unbound session; "
-                + $"work is at {where}. C1–C4 were not changed.",
+                incidentSummary,
+                incidentDetail,
                 ct);
         }
 
@@ -985,10 +983,41 @@ public sealed class AgentTaskReplyService
             afterPersist: _ =>
             {
                 _logger.LogWarning(
-                    "Task {ShortId} recovered from bind refusal ({Evidence}); settled Succeeded. Session not killed.",
-                    DelegationReportFormatter.Short(task.Id), where);
+                    "Task {ShortId} {Phrase} ({Evidence}); settled Succeeded. Session not killed.",
+                    DelegationReportFormatter.Short(task.Id),
+                    ingested == 0
+                        ? "recovered from an unbound session (zero ingested transcript rows)"
+                        : $"settled from workspace evidence with a bound transcript ({ingested} ingested transcript row(s); no report was read)",
+                    where);
                 return Task.CompletedTask;
             });
+    }
+
+    /// <summary>
+    /// CARD-0551 D-3: the recovery text states the real ingested-row count. Zero keeps today's
+    /// unbound-session wording; N &gt; 0 names the bound transcript so the warning cannot lie.
+    /// </summary>
+    internal static (string Note, string Warning, string IncidentSummary, string IncidentDetail)
+        BindRefusalRecoveryText(string shortId, string where, int ingested)
+    {
+        if (ingested <= 0)
+        {
+            return (
+                $"Recovered from an unbound session; work is at {where}. C1–C4 were not changed.",
+                $"WARNING: this task was recovered from an unbound session (zero ingested transcript "
+                + $"rows). The work is at {where}. C1–C4 were not changed. Do not redispatch — that "
+                + "would run again on top of already-landed work.",
+                $"Delegate task {shortId} recovered from an unbound session",
+                $"task {shortId} recovered from an unbound session; work is at {where}. C1–C4 were not changed.");
+        }
+
+        var phrase =
+            $"settled from workspace evidence with a bound transcript ({ingested} ingested transcript row(s); no report was read)";
+        return (
+            $"Succeeded: {phrase}; work is at {where}. C1–C4 were not changed.",
+            $"WARNING: this task was {phrase}. The work is at {where}. C1–C4 were not changed. Do not redispatch — that would run again on top of already-landed work.",
+            $"Delegate task {shortId} {phrase}",
+            $"task {shortId} {phrase}; work is at {where}. C1–C4 were not changed.");
     }
 
     /// <summary>
