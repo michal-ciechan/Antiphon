@@ -98,6 +98,11 @@ public sealed class GrokRulesInitializationTests
     [Arguments("fragment", false)]
     [Arguments("user", false)]
     [Arguments("before_prompt", false)]
+    [Arguments("sha_one_uppercase_letter", true)]
+    [Arguments("sha_uppercase", true)]
+    [Arguments("generation_uppercase", true)]
+    [Arguments("id_uppercase", true)]
+    [Arguments("wrong_hash_uppercase", false)]
     public async Task Only_current_refresh_assistant_ack_with_confirmed_prompt_releases_barrier(string variant, bool released)
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -114,6 +119,30 @@ public sealed class GrokRulesInitializationTests
         if (variant == "quoted") ack = "> " + ack;
         if (variant == "fenced") ack = "```\n" + ack + "\n```";
         if (variant == "fragment") ack = ack[..^1];
+        if (variant is "sha_one_uppercase_letter" or "sha_uppercase" or "generation_uppercase" or "id_uppercase")
+        {
+            var token = variant switch
+            {
+                "sha_one_uppercase_letter" or "sha_uppercase" => fixture.Receipt.Sha256,
+                "generation_uppercase" => fixture.Receipt.Generation.ToString("N"),
+                _ => message.Id.ToString("N"),
+            };
+            string upper;
+            if (variant == "sha_one_uppercase_letter")
+            {
+                var i = token.IndexOfAny("abcdef".ToCharArray());
+                i.ShouldBeGreaterThanOrEqualTo(0, variant);
+                upper = token[..i] + char.ToUpperInvariant(token[i]) + token[(i + 1)..];
+            }
+            else
+            {
+                upper = token.ToUpperInvariant();
+            }
+            var mutated = ack.Replace(token, upper);
+            mutated.ShouldNotBe(ack, variant);
+            ack = mutated;
+        }
+        if (variant == "wrong_hash_uppercase") ack = ack.Replace(fixture.Receipt.Sha256, new string('A', 64));
         if (variant != "no_prompt") Add(1, TranscriptKinds.UserPrompt, message.Body);
         if (variant == "unrelated_turn") Add(2, TranscriptKinds.UserPrompt, "Unrelated user work");
         Add(variant == "before_prompt" ? 0 : 3,
