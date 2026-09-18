@@ -305,6 +305,32 @@ public sealed class AgentTaskLandIndexLockTests
     }
 
     [Test]
+    public async Task Existing_source_worktree_with_broken_git_holds_as_index_lock()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        Directory.Exists(h.Fixture.Source).ShouldBeTrue();
+        var gitPath = Path.Combine(h.Fixture.Source, ".git");
+        File.Exists(gitPath).ShouldBeTrue();
+        File.Delete(gitPath);
+        Directory.Exists(h.Fixture.Source).ShouldBeTrue();
+        var result = await h.RunAsync();
+        result.ShouldBe(LandRunResult.Held);
+        await using var db = h.CreateContext();
+        var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Fixture.TaskId);
+        request.State.ShouldBe(LandRequestState.Held);
+        request.HoldReasonCode.ShouldBe(GitIndexLock.HeldCode);
+        request.HoldDetail.ShouldNotBeNull();
+        request.HoldDetail.ShouldContain(GitIndexLock.PathErrorReason);
+        request.Attempt.ShouldBe(0);
+        (await h.OperationAsync()).ShouldBeNull();
+        h.Verifier.Calls.ShouldBe(0);
+        (await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == h.Fixture.TaskId
+            && n.Kind == LandNotificationKind.Held)).ShouldBe(1);
+    }
+
+    [Test]
     public async Task Update_ref_advance_ignores_repository_lock()
     {
         await using var h = new LandingSafetyHarness();
