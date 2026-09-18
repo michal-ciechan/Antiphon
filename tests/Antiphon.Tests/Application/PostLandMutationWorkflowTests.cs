@@ -274,4 +274,54 @@ public sealed class PostLandMutationWorkflowTests
         (await db.AgentTasks.CountAsync(t => t.CardId == companion.Id)).ShouldBe(0);
         (await world.SessionCountForAsync(companion.Id)).ShouldBe(0);
     }
+
+    /// <summary>
+    /// CARD-0552 V-552-39. G-133 with the shape this card introduces present: a Done original, a
+    /// Backlog companion and a confirmed landing LINKED to it. The card-transition sweep still
+    /// creates no task and no session, and moves neither card.
+    /// </summary>
+    [Test]
+    public async Task C552_L12_NoTickSpendWithLinkedCompanion()
+    {
+        await using var world = await CardWorkTransitionServiceTests.CardWorkTransitionServiceTestsHarness.CreateAsync();
+        var original = await world.SeedCardAsync(CardStatus.Done);
+        var companion = await world.SeedCardAsync(CardStatus.Backlog);
+        var owner = await world.SeedTaskAsync(original.Id, AgentTaskStatus.Succeeded,
+            dispatchedAt: world.Now.AddHours(-2), completedAt: world.Now.AddHours(-1));
+        await using (var seed = world.CreateContext())
+        {
+            var tracked = await seed.AgentTasks.SingleAsync(t => t.Id == owner.Id);
+            tracked.Workspace = WorkspaceMode.Worktree;
+            tracked.RepoPath = tracked.WorkingDirectory;
+            var sha = new string('b', 40);
+            var op = new AgentTaskLanding
+            {
+                Id = Guid.NewGuid(), TaskId = owner.Id, Active = true,
+                Phase = LandPhase.PublicationConfirmed, Publication = LandPublicationOutcome.Landed,
+                Cleanup = LandCleanupStatus.Complete, Mode = LandOperationMode.Fresh,
+                OriginalSourceSha = new string('c', 40), RebasedSourceSha = sha, VerifiedSourceSha = sha,
+                ObservedRemoteTargetSha = sha, TargetBeforeSha = new string('a', 40),
+                TargetFullRef = "refs/heads/master", DestinationFullRef = "refs/heads/master",
+                SourceFullRef = "refs/heads/source", RepositoryPath = tracked.WorkingDirectory,
+                CommonDirectory = tracked.WorkingDirectory, WorktreePath = tracked.WorkingDirectory,
+                GitDirectory = tracked.WorkingDirectory, SourcePinned = true, TargetPinned = true,
+                PreparedPinned = true, VerificationPassed = true, VerifiedAt = world.Now,
+                RemoteFingerprint = new string('a', 64), RemoteConfirmedAt = world.Now.AddHours(-1),
+                ConfirmationMethod = "push-endpoint-read-fetch-ancestry",
+                VerificationCardId = companion.Id, CreatedAt = world.Now, UpdatedAt = world.Now,
+            };
+            op.RecoveryRefPrefix = $"refs/antiphon/land/{owner.Id:N}/{op.Id:N}";
+            seed.AgentTaskLandings.Add(op);
+            await seed.SaveChangesAsync();
+            new AgentTaskLandingState().HasPublication(op).ShouldBeTrue();
+        }
+
+        (await world.ScanAsync()).ShouldBe(0);
+
+        await using var db = world.CreateContext();
+        (await db.AgentTasks.CountAsync(t => t.CardId == companion.Id)).ShouldBe(0);
+        (await world.SessionCountForAsync(companion.Id)).ShouldBe(0);
+        (await world.ReadCardAsync(original.Id)).Status.ShouldBe(CardStatus.Done);
+        (await world.ReadCardAsync(companion.Id)).Status.ShouldBe(CardStatus.Backlog);
+    }
 }
