@@ -61,6 +61,7 @@ const ALL_KINDS: AttentionKind[] = [
   'CapacityRecoveryExhausted',
   'StandingSpecialistHealth',
   'RemoteControlModal',
+  'MutationDispositionPending',
 ]
 
 function item(overrides: Partial<AttentionItemDto> & { kind: AttentionKind }): AttentionItemDto {
@@ -133,6 +134,21 @@ describe('attentionVisuals', () => {
     expect(groupOf(row)).toBe('broken')
     expect(targetOf(row)).toBe('/orchestrator?tab=delegations&task=task-547')
     expect(keyOf(row)).toContain('CommitRecoveryPending')
+  })
+
+  it('draws MutationDispositionPending as a battery awaiting disposition', () => {
+    const visual = ATTENTION_VISUALS.MutationDispositionPending
+    expect(visual.label).toBe('Mutation disposition pending')
+    expect(visual.color).toBe('warning')
+    expect(visual.hint.toLowerCase()).toContain('companion')
+    const row = item({
+      kind: 'MutationDispositionPending',
+      severity: 'Warning',
+      taskId: 'task-552',
+    })
+    expect(groupOf(row)).toBe('suspect')
+    expect(targetOf(row)).toBe('/orchestrator?tab=delegations&task=task-552')
+    expect(keyOf(row)).toContain('MutationDispositionPending')
   })
 
   it('draws DispatchWarningUnconfirmed as a missing dispatch receipt', () => {
