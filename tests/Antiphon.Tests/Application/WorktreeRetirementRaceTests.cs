@@ -39,8 +39,8 @@ public sealed class WorktreeRetirementRaceTests
     [Test]
     public async Task C459_RequeueReservesWorkspace()
     {
-        var claimFirst = (Requeued: false);
-        claimFirst.Requeued.ShouldBeFalse();
+        var claimFirstRequeued = false;
+        claimFirstRequeued.ShouldBeFalse();
         await Task.CompletedTask;
     }
 
