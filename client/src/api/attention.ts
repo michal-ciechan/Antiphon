@@ -22,6 +22,8 @@ export type AttentionKind =
   | 'DispatchWarningUnconfirmed'
   /** CARD-0547: settlement committed under the gate but could not save its record; held for recovery. */
   | 'CommitRecoveryPending'
+  /** CARD-0535: a queued task has waited on a dispatcher hold past the warning age. */
+  | 'DispatchHeld'
   | 'StandingContinuityDecision'
   | 'HerdrSupervisionHeld'
   /** The delegate asked a question. Only a human answer moves this. */

@@ -79,7 +79,7 @@ readiness or qualification alone cannot resolve a real-service outage.
 | Distillations ledger / stats (CARD-0330) | GET | `/api/distillations?since=&outcome=&feedback=&limit=`, `/api/distillations/stats?since=` — `scripts/distiller.ps1 -Stats` / `-List [-Flagged]` |
 | Distillation feedback (CARD-0330) | POST | `/api/agent-tasks/{id}/distillation/feedback` `{ verdict: Good\|Lost\|Noisy, note? }` — 409 if the task has no distillation. `delegate.ps1 -Flag <id> -Verdict Lost\|Noisy\|Good [-Note]` |
 | Home Tasks rail (cards + unbound delegations) | GET | `/api/home/tasks` |
-| What needs a human (fleet-global) | GET | `/api/attention` |
+| What needs a human (fleet-global) | GET | `/api/attention` — `DispatchHeld` (CARD-0535) is a queued dispatcher hold past `Delegation:DispatchHeldWarningSeconds`; `ConditionKey` `dispatch-held:{id:N}`. |
 | Issue / list / rotate / revoke a Delegation Capability (CARD-0398) | POST / GET / POST rotate / POST revoke | `/api/delegation-capabilities`, `/api/delegation-capabilities/{id}`, `…/rotate`, `…/revoke` — `scripts/capability.ps1`. GET never returns the token. |
 | A session's screen | GET | `/api/sessions/{id}/buffer` |
 | A session's transcript | GET | `/api/sessions/{id}/transcript?since={sequence}` |

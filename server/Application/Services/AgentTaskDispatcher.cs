@@ -226,6 +226,21 @@ public sealed class AgentTaskDispatcher
         int ResumedRoutingBlocked = 0,
         int SkippedCapacityWait = 0);
 
+    private enum DispatchOneResult { Dispatched, HeldOnLease, NotClaimed }
+
+    private enum HoldKind
+    {
+        Scope, RoutingPin, ModelHeld, CapacityWait, RepairSourceLanding, SiblingLanding, Lease, ConcurrencyCap,
+    }
+
+    private sealed class QueuedHoldIndex
+    {
+        public Dictionary<Guid, string> LastHeld { get; } = new();
+        public Dictionary<Guid, DateTime> HeldSince { get; } = new();
+        public HashSet<Guid> Warned { get; } = new();
+        public HashSet<Guid> Errored { get; } = new();
+    }
+
     public async Task<TickResult> TickAsync(CancellationToken ct)
     {
         using var observation = new RuntimePhase(_logger, _timeProvider, Guid.Empty, "dispatcher.sweep");
@@ -374,14 +389,11 @@ public sealed class AgentTaskDispatcher
 
         // CARD-0481: a new reason deserves a trace even when this task was held before.
         // Repeated ticks with the same reason remain silent.
+        // CARD-0535: the same query also yields the queue-stint floor (latest Dispatched)
+        // and HeldAged prefixes so age escalation is restart-safe without new columns.
         var queuedIds = queued.Select(t => t.Id).ToList();
-        var lastHeld = (await _db.AgentTaskEvents.AsNoTracking()
-                .Where(e => queuedIds.Contains(e.AgentTaskId) && e.Type == AgentTaskEventType.Held)
-                .Select(e => new { e.AgentTaskId, e.At, e.Id, e.Detail })
-                .ToListAsync(ct))
-            .OrderByDescending(e => e.At).ThenByDescending(e => e.Id)
-            .GroupBy(e => e.AgentTaskId)
-            .ToDictionary(g => g.Key, g => g.First().Detail);
+        var holdIndex = await LoadQueuedHoldIndexAsync(queuedIds, ct);
+        var lastHeld = holdIndex.LastHeld;
 
         var dispatched = 0;
         // Only process-spawning dispatches count against the cap — see the `active` query above.
@@ -419,6 +431,7 @@ public sealed class AgentTaskDispatcher
         var skippedCapacityWait = 0;
         var blockedRoutingExhausted = 0;
         var failures = 0;
+        var heldThisTick = new List<(Guid TaskId, HoldKind Kind)>();
 
         foreach (var task in queued)
         {
@@ -428,6 +441,14 @@ public sealed class AgentTaskDispatcher
                 && active + dispatchedAgainstCap >= _settings.MaxConcurrentTasks)
             {
                 skippedConcurrency++;
+                var capDetail = DispatchHoldDetails.ConcurrencyCap(_settings.MaxConcurrentTasks);
+                heldThisTick.Add((task.Id, HoldKind.ConcurrencyCap));
+                if (await TraceHeldAsync(task, capDetail, lastHeld, ct))
+                {
+                    _logger.LogInformation(
+                        "Task {ShortId} held: {Detail}",
+                        DelegationReportFormatter.Short(task.Id), capDetail);
+                }
                 continue;
             }
 
@@ -453,6 +474,7 @@ public sealed class AgentTaskDispatcher
             if (blocking is { } held)
             {
                 skippedScope++;
+                heldThisTick.Add((task.Id, HoldKind.Scope));
                 if (await TraceHeldAsync(task, held.Describe(task), lastHeld, ct))
                 {
                     // Information, and only on the transition into held - a per-tick line would
@@ -477,6 +499,7 @@ public sealed class AgentTaskDispatcher
                 if (pin?.NotBefore is { } notBefore && notBefore > UtcNow())
                 {
                     skippedRoutingPin++;
+                    heldThisTick.Add((task.Id, HoldKind.RoutingPin));
                     if (await TraceHeldAsync(task, $"routing pin not before {notBefore:yyyy-MM-ddTHH:mm:ssZ}; dispatch "
                                 + $"paused ({pin.Reason}).", lastHeld, ct))
                     {
@@ -542,6 +565,7 @@ public sealed class AgentTaskDispatcher
                             await _db.SaveChangesAsync(ct);
                         }
 
+                        heldThisTick.Add((task.Id, HoldKind.ModelHeld));
                         if (await TraceHeldAsync(task, $"{alias} is held; dispatch paused for that model.", lastHeld, ct))
                         {
                             _logger.LogInformation(
@@ -574,6 +598,7 @@ public sealed class AgentTaskDispatcher
                     .FirstOrDefaultAsync(t => t.Id == repairOwnerId, ct);
                 if (owner?.LandRequestedAt is not null)
                 {
+                    heldThisTick.Add((task.Id, HoldKind.RepairSourceLanding));
                     await TraceHeldAsync(task, $"{DelegationReportFormatter.Short(owner.Id)} is landing", lastHeld, ct);
 
                     continue;
@@ -589,6 +614,7 @@ public sealed class AgentTaskDispatcher
                 var siblingGuard = await EvaluateCardSiblingBaseAsync(task, ct);
                 if (siblingGuard.Hold is { } heldSibling)
                 {
+                    heldThisTick.Add((task.Id, HoldKind.SiblingLanding));
                     if (await TraceHeldAsync(task, heldSibling.HoldDetail, lastHeld, ct))
                     {
                         _logger.LogInformation(
@@ -616,12 +642,28 @@ public sealed class AgentTaskDispatcher
                     }
                     var detail = $"waiting for {wait.ExecutionKind} capacity ({wait.RequestedAlias ?? "any alias"}); "
                         + $"capacity wait {DelegationReportFormatter.Short(wait.Id)} not yet granted.";
+                    heldThisTick.Add((task.Id, HoldKind.CapacityWait));
                     if (await TraceHeldAsync(task, detail, lastHeld, ct))
                         _logger.LogInformation("Task {ShortId} held: {Detail}", DelegationReportFormatter.Short(task.Id), detail);
                     continue;
                 }
 
-                if (await DispatchOneAsync(task, ct, siblingObservation))
+                var outcome = await DispatchOneAsync(task, ct, siblingObservation);
+                if (outcome == DispatchOneResult.HeldOnLease)
+                {
+                    var leaseDetail = await DescribeLeaseHoldAsync(task, ct);
+                    heldThisTick.Add((task.Id, HoldKind.Lease));
+                    if (await TraceHeldAsync(task, leaseDetail, lastHeld, ct))
+                    {
+                        _logger.LogInformation(
+                            "Task {ShortId} held: {Detail}",
+                            DelegationReportFormatter.Short(task.Id), leaseDetail);
+                    }
+
+                    continue;
+                }
+
+                if (outcome == DispatchOneResult.Dispatched)
                 {
                     if (_capacityRecovery is { IsEnabled: true } && task.AgentSessionId is { } launchedSessionId)
                     {
@@ -675,11 +717,11 @@ public sealed class AgentTaskDispatcher
                     }
 
                     // The other half of the transition: a task that was held and now runs.
-                    if (lastHeld.ContainsKey(task.Id))
+                    if (lastHeld.TryGetValue(task.Id, out var releasedDetail))
                     {
                         _logger.LogInformation(
-                            "Task {ShortId} released: its scope '{Scope}' no longer intersects a running task",
-                            DelegationReportFormatter.Short(task.Id), task.Scope);
+                            "Task {ShortId} released: hold cleared (last reason: {Detail})",
+                            DelegationReportFormatter.Short(task.Id), releasedDetail);
                     }
                 }
             }
@@ -705,6 +747,13 @@ public sealed class AgentTaskDispatcher
             }
         }
 
+        var occupantShorts = busyScopes
+            .Select(s => DelegationReportFormatter.Short(s.Id))
+            .Take(8)
+            .ToList();
+        await EscalateHeldAgeAsync(
+            heldThisTick, lastHeld, holdIndex, queued, active + dispatchedAgainstCap, occupantShorts, ct);
+
         return new TickResult(
             queued.Count, dispatched, skippedConcurrency, skippedScope, failures, sweepFailures,
             skippedModelAvailability, skippedRoutingPin, blockedRoutingExhausted, resumedRoutingBlocked, skippedCapacityWait);
@@ -723,6 +772,160 @@ public sealed class AgentTaskDispatcher
         await _db.SaveChangesAsync(ct);
         lastHeld[task.Id] = detail;
         return true;
+    }
+
+    private async Task<QueuedHoldIndex> LoadQueuedHoldIndexAsync(
+        IReadOnlyList<Guid> queuedIds, CancellationToken ct)
+    {
+        var index = new QueuedHoldIndex();
+        if (queuedIds.Count == 0)
+            return index;
+        var rows = await _db.AgentTaskEvents.AsNoTracking()
+            .Where(e => queuedIds.Contains(e.AgentTaskId)
+                && (e.Type == AgentTaskEventType.Held
+                    || e.Type == AgentTaskEventType.HeldAged
+                    || e.Type == AgentTaskEventType.Dispatched))
+            .Select(e => new { e.AgentTaskId, e.At, e.Id, e.Type, e.Detail })
+            .ToListAsync(ct);
+        foreach (var group in rows.GroupBy(e => e.AgentTaskId))
+        {
+            var floor = DateTime.MinValue;
+            foreach (var row in group)
+            {
+                if (row.Type == AgentTaskEventType.Dispatched && row.At > floor)
+                    floor = row.At;
+            }
+
+            var lastHeld = group
+                .Where(e => e.Type == AgentTaskEventType.Held)
+                .OrderByDescending(e => e.At).ThenByDescending(e => e.Id)
+                .FirstOrDefault();
+            if (lastHeld is not null)
+                index.LastHeld[group.Key] = lastHeld.Detail;
+
+            var firstHeld = group
+                .Where(e => e.Type == AgentTaskEventType.Held && e.At > floor)
+                .OrderBy(e => e.At).ThenBy(e => e.Id)
+                .FirstOrDefault();
+            if (firstHeld is not null)
+                index.HeldSince[group.Key] = firstHeld.At;
+
+            foreach (var aged in group.Where(e => e.Type == AgentTaskEventType.HeldAged && e.At > floor))
+            {
+                if (aged.Detail.StartsWith(DispatchHoldDetails.WarningPrefix, StringComparison.Ordinal))
+                    index.Warned.Add(group.Key);
+                if (aged.Detail.StartsWith(DispatchHoldDetails.ErrorPrefix, StringComparison.Ordinal))
+                    index.Errored.Add(group.Key);
+            }
+        }
+
+        return index;
+    }
+
+    private async Task<string> DescribeLeaseHoldAsync(AgentTask task, CancellationToken ct)
+    {
+        var taskKey = ScopeResolver.KeyFor(task.RepoPath, task.WorkingDirectory);
+        var running = await (
+            from request in _db.AgentTaskLandRequests.AsNoTracking()
+            join holder in _db.AgentTasks.AsNoTracking() on request.TaskId equals holder.Id
+            where request.IsPending && request.State == LandRequestState.Running
+            select new { request, holder }).ToListAsync(ct);
+        var match = running
+            .Where(x => ScopeResolver.KeyFor(x.holder.RepoPath, x.holder.WorkingDirectory) == taskKey)
+            .OrderBy(x => x.request.StartedAt ?? DateTime.MaxValue)
+            .ThenBy(x => x.request.Id)
+            .FirstOrDefault();
+        if (match is not null)
+        {
+            return DispatchHoldDetails.LeaseHeldByLand(
+                DelegationReportFormatter.Short(match.holder.Id),
+                match.holder.Title,
+                DelegationReportFormatter.Short(match.request.Id),
+                match.request.StartedAt ?? match.request.RequestedAt);
+        }
+
+        if (_repositoryLeases is not null && task.RepoPath is not null)
+        {
+            var reason = await _repositoryLeases.DescribeUnavailableAsync(task.RepoPath, ct);
+            if (!string.IsNullOrWhiteSpace(reason))
+                return DispatchHoldDetails.LeaseFenced(reason);
+        }
+
+        return DispatchHoldDetails.LeaseOccupiedUnknown;
+    }
+
+    private async Task EscalateHeldAgeAsync(
+        IReadOnlyList<(Guid TaskId, HoldKind Kind)> heldThisTick,
+        Dictionary<Guid, string> lastHeld,
+        QueuedHoldIndex index,
+        IReadOnlyList<AgentTask> queued,
+        int running,
+        IReadOnlyList<string> occupantShorts,
+        CancellationToken ct)
+    {
+        if (heldThisTick.Count == 0)
+            return;
+        var now = UtcNow();
+        var byId = queued.ToDictionary(t => t.Id);
+        var changed = new HashSet<Guid>();
+        foreach (var (taskId, kind) in heldThisTick)
+        {
+            if (kind == HoldKind.RoutingPin)
+                continue;
+            if (!index.HeldSince.TryGetValue(taskId, out var heldSince))
+                continue;
+            if (!byId.TryGetValue(taskId, out var task))
+                continue;
+            if (!lastHeld.TryGetValue(taskId, out var reason) || string.IsNullOrEmpty(reason))
+                continue;
+            var age = (now - heldSince).TotalSeconds;
+            if (age < _settings.DispatchHeldWarningSeconds)
+                continue;
+            var seconds = (int)age;
+            if (age >= _settings.DispatchHeldWarningSeconds && !index.Warned.Contains(taskId))
+            {
+                var detail = DispatchHoldDetails.Escalation(
+                    DispatchHoldDetails.WarningPrefix, seconds, heldSince, task.CreatedAt, reason,
+                    running, _settings.MaxConcurrentTasks, occupantShorts);
+                _db.AgentTaskEvents.Add(new AgentTaskEvent
+                {
+                    Id = Guid.NewGuid(), AgentTaskId = taskId, Type = AgentTaskEventType.HeldAged,
+                    Detail = detail, At = now,
+                });
+                index.Warned.Add(taskId);
+                changed.Add(taskId);
+                _logger.LogWarning(
+                    "Task {ShortId} held aged: {Detail}",
+                    DelegationReportFormatter.Short(taskId), detail);
+            }
+
+            if (age >= _settings.DispatchHeldErrorSeconds && !index.Errored.Contains(taskId))
+            {
+                var detail = DispatchHoldDetails.Escalation(
+                    DispatchHoldDetails.ErrorPrefix, seconds, heldSince, task.CreatedAt, reason,
+                    running, _settings.MaxConcurrentTasks, occupantShorts);
+                _db.AgentTaskEvents.Add(new AgentTaskEvent
+                {
+                    Id = Guid.NewGuid(), AgentTaskId = taskId, Type = AgentTaskEventType.HeldAged,
+                    Detail = detail, At = now,
+                });
+                index.Errored.Add(taskId);
+                changed.Add(taskId);
+                _logger.LogError(
+                    "Task {ShortId} held aged: {Detail}",
+                    DelegationReportFormatter.Short(taskId), detail);
+            }
+        }
+
+        if (changed.Count == 0)
+            return;
+        await _db.SaveChangesAsync(ct);
+        foreach (var taskId in changed)
+        {
+            var rootId = byId.TryGetValue(taskId, out var task) ? task.RootTaskId : taskId;
+            await _eventBus.PublishToAllAsync(
+                "AgentTaskChanged", new { taskId, rootId }, ct);
+        }
     }
 
     /// <summary>
@@ -3128,7 +3331,7 @@ public sealed class AgentTaskDispatcher
         return true;
     }
 
-    private async Task<bool> DispatchOneAsync(
+    private async Task<DispatchOneResult> DispatchOneAsync(
         AgentTask task, CancellationToken ct, SiblingBaseGuard? siblingObservation = null)
     {
         // Admission and landing read running claims under the same common-directory lease.
@@ -3138,15 +3341,7 @@ public sealed class AgentTaskDispatcher
         await using var repositoryLease = needsLease && _repositoryLeases is not null
             ? await _repositoryLeases.TryAcquireAsync(task.RepoPath!, ct) : null;
         if (needsLease && repositoryLease is null)
-        {
-            _db.AgentTaskEvents.Add(new AgentTaskEvent
-            {
-                Id = Guid.NewGuid(), AgentTaskId = task.Id, Type = AgentTaskEventType.Held,
-                Detail = "Held: repository mutation lease is occupied or unavailable.", At = UtcNow(),
-            });
-            await _db.SaveChangesAsync(ct);
-            return false;
-        }
+            return DispatchOneResult.HeldOnLease;
 
         // Transactional claim: re-read under the concurrency token so a second tick (or another
         // server instance) racing this one loses cleanly instead of double-launching a delegate.
@@ -3169,13 +3364,13 @@ public sealed class AgentTaskDispatcher
         if (claimed is null)
         {
             await transaction.RollbackAsync(ct);
-            return false;
+            return DispatchOneResult.NotClaimed;
         }
 
         if (await ExpireClaimedOptionalWorkAsync(claimed, ct))
         {
             await transaction.CommitAsync(ct);
-            return false;
+            return DispatchOneResult.NotClaimed;
         }
         var now = UtcNow();
 
@@ -3189,7 +3384,7 @@ public sealed class AgentTaskDispatcher
             await transaction.CommitAsync(ct);
             await _eventBus.PublishToAllAsync(
                 "AgentTaskChanged", new { taskId = claimed.Id, rootId = claimed.RootTaskId }, ct);
-            return false;
+            return DispatchOneResult.NotClaimed;
         }
 
         // CARD-0136 / CARD-0336: a low reading warns on every dispatch path (reuse and spawn).
@@ -3229,17 +3424,17 @@ public sealed class AgentTaskDispatcher
                     await DeliverReuseMessagesAsync(claimed, ct);
                     await _eventBus.PublishToAllAsync(
                         "AgentTaskChanged", new { taskId = claimed.Id, rootId = claimed.RootTaskId }, ct);
-                    return true;
+                    return DispatchOneResult.Dispatched;
 
                 case ReuseOutcome.Expired:
                     await transaction.CommitAsync(ct);
-                    return false;
+                    return DispatchOneResult.NotClaimed;
                 case ReuseOutcome.WaitForAgent:
                     // The pinned agent is mid-task. Delivering the follow-up now would land it
                     // BETWEEN the running task's turns and corrupt both correlations — wait for
                     // the settle → pool handshake instead; the task stays queued.
                     await transaction.RollbackAsync(ct);
-                    return false;
+                    return DispatchOneResult.NotClaimed;
             }
         }
 
@@ -3259,7 +3454,7 @@ public sealed class AgentTaskDispatcher
             && await TryFailGrokCredentialProbeAsync(claimed, program, ct))
         {
             await transaction.CommitAsync(ct);
-            return false;
+            return DispatchOneResult.NotClaimed;
         }
 
         // Isolation is real, not declarative: a Worktree task gets its own `git worktree add`
@@ -3274,7 +3469,7 @@ public sealed class AgentTaskDispatcher
             {
                 await FailAsync(claimed, prep.FailureReason, ct);
                 await transaction.CommitAsync(ct);
-                return false;
+                return DispatchOneResult.NotClaimed;
             }
 
             repairStartSha = prep.OwnerSha;
@@ -3315,7 +3510,7 @@ public sealed class AgentTaskDispatcher
             {
                 await FailAsync(claimed, capture.FailureReason, ct);
                 await transaction.CommitAsync(ct);
-                return false;
+                return DispatchOneResult.NotClaimed;
             }
 
             claimed.ProgressBaselineJson = capture.Json;
@@ -3397,7 +3592,7 @@ public sealed class AgentTaskDispatcher
                     .SetProperty(t => t.CompletedAt, UtcNow())
                     .SetProperty(t => t.FailureReason, "Optional work expired before execution.")
                     .SetProperty(t => t.ConcurrencyToken, Guid.NewGuid()), ct);
-            return false;
+            return DispatchOneResult.NotClaimed;
         }
         claimed.Status = AgentTaskStatus.Dispatched;
         claimed.DispatchedAt = now;
@@ -3543,7 +3738,7 @@ public sealed class AgentTaskDispatcher
             }
         }
 
-        return true;
+        return DispatchOneResult.Dispatched;
     }
 
     private static string FormatWorktreeCreatedDetail(AgentTask claimed, bool armed)

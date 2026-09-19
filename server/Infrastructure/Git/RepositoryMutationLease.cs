@@ -32,6 +32,16 @@ public sealed class RepositoryMutationLease(ILandingGit git) : IRepositoryMutati
         && ReferenceEquals(owned.Provider, this) && !owned.Disposed
         && LandingGit.PathsEqual(owned.CommonDirectory, commonDirectory);
 
+    public async Task<string?> DescribeUnavailableAsync(string repository, CancellationToken ct)
+    {
+        var common = await git.CommonDirectoryAsync(repository, ct);
+        if (!await RepositoryChildJournal.HasUnfinishedAsync(common, git, ct))
+            return null;
+        return "unfinished repository child journal under "
+            + Path.Combine(common, "antiphon", "children")
+            + "; run scripts/recover-repository-children.ps1";
+    }
+
     private sealed class OwnedLease(RepositoryMutationLease provider, string common, FileStream stream) : RepositoryLease
     {
         public RepositoryMutationLease Provider { get; } = provider;

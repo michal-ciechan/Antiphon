@@ -50,6 +50,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     icon: TbGitCommit,
     hint: 'A gated commit exists but its settlement record was not saved; the task is held for the re-hand. The evidence has the git recipe and how to discard it.',
   },
+  DispatchHeld: {
+    label: 'Dispatch held',
+    color: 'warning',
+    icon: TbClockPause,
+    hint: 'A queued task has waited on a dispatcher hold past the warning age.',
+  },
   DispatchWarningUnconfirmed: { label: 'Dispatch receipt missing', color: 'danger', icon: TbMailExclamation, hint: 'The caller has no complete matching UserPrompt for a dispatch-base warning.' },
   StandingContinuityDecision: {
     label: 'Conversation decision', color: 'danger', icon: TbHelpCircle,
