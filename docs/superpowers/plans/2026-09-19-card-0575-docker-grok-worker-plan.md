@@ -1136,3 +1136,366 @@ Combined adopted floor is **740.1 minutes (12 h 20 m 6 s)**, with zero credited 
 TestDesign must audit D-18's newly introduced independently bypassable provenance guards (range attribution/integrity, source-key conflict checks, generation preservation at each boundary, live-effect fencing and atomic receipt persistence) instead of declaring all of them covered by PC-139. Reuse existing controls only where they really exercise the same production guard; split independent guards with new IDs after PC-172, concrete mutations and decisive assertions. Budget every added I control at least 0.85 initial-green + 3.0 red/restore/green minutes, plus its ordinary method if not already counted; increase the forward estimates for measured expanded cases. The 172 count describes the **adopted TestDesign inventory**, not a claim that its prior audit covered the new D-18 implementation. No new provenance PC count or Mutation savings is invented by this Plan amendment, and the next Code brief must use the completed focused audit's inventory/cost.
 
 **Focused handoff:** audit only D-18/S4d, D-19's PC-81 assertion, their DL-2/Docker-completion/receipt variants, and D-20's adopted 24-control accounting. Confirm pre-launch source attribution through real ingestion, genuine delayed G1 acceptance versus identical G2 rejection, unknown provenance holds, and independent PC reds. Preserve the original 140 recipes/floors and all adopted VD-1 controls. No architectural question remains unanswered in this Plan dispatch; implementation and the focused verification-design approval remain. **Next: test-design.**
+
+
+## Verification design
+
+Focused generation-provenance audit: 2026-09-19, TestDesign task `f7cf0fe7`, inspected source `e25550e78a2ed812341c0efc7099fddb02144b18`. **Disposition: ready for Code under this verification contract.** D-18/S4d supplies an implementable production provenance seam, and D-19 supplies PC-81's missing decisive assertion. This appendix governs the forward inventory and cost; it does not rewrite D-1..D-20, the original 140 recipes, the adopted 32 VD-1 additions, or their historical floors. No tests, builds, migrations, Docker operations or provider turns were run in this documentation audit.
+
+The requested checkout of `feat/card-task-5e3ba4d4` was refused because that branch is checked out in `C:/Antiphon/worktrees/card-task-5e3ba4d4`. This task instead uses its own `feat/card-task-f7cf0fe7` branch at the exact requested SHA, confirmed with `git log -1`; no other worktree or source branch was changed.
+
+### Inspection
+
+Paths without a directory below are relative to the directory of the preceding fully qualified test path. Only the specified bodies are credited; the prior two TestDesign audits remain the inspection record for unaffected G-1..172.
+
+| Test/fixture bodies read in this audit | Boundaries -> V/R IDs or exclusion |
+|---|---|
+| `tests/Antiphon.SessionRunner.Tests/GrokTranscriptTailerTests.cs`: `Real_turn_rows_normalize_to_UserPrompt_ToolCall_coalesced_text_and_TurnEnd`, `A_half_written_trailing_line_is_held_until_its_newline_arrives`, `A_retail_from_offset_zero_reproduces_identical_sequences_and_uuids`, `Child_exit_flushes_streamed_text_without_synthesizing_a_TurnEnd`; raw user/agent/tool/end constants, `TempUpdatesPath`, `AppendRowsAsync`, `PollForEntriesAsync`, `BestEffortDelete` | Nearest file/normalizer fixture for new T/Z methods: lazy file, raw byte append, split records, buffered flush and replay -> V-11a, R-4/R-11. Existing UUID/sequence equality alone cannot establish generation. |
+| `tests/Antiphon.SessionRunner.Tests/RunnerStartupReadinessTests.cs`: `Adoption_blocks_http_until_the_complete_session_set_is_represented`; `LocalHttpRunner.cs`, entire constructor/start/crash/dispose; `RunnerSessionGenerationTests.cs`: `C502_V27_fast_exit_before_Start_returns_carries_the_generation`, `C502_V26_kill_and_relaunch_publish_their_own_generations`, `C502_V26_exited_manifest_adoption_for_A_publishes_A_while_B_is_registered` | Nearest actual child/restart fixture for Z and native extension: random port, ownership, original generation and awaited exit -> V-11a/V-11f; existing R-9 retained. Herdr/Windows exit evidence cannot prove Linux writer termination. |
+| `tests/Antiphon.Tests/Agents/SessionRunnerGenerationWireTests.cs`, all methods and `StubHandler`, `Json`, `Client`, `StubFactory` | Real wire serializer/client precedent for W; launch tokens are not per-entry transcript tokens -> V-11b, R-11. A prebuilt server DTO bypasses this boundary. |
+| `tests/Antiphon.Tests/Application/AgentSessionRuntimeTests.Persist.cs`, all test bodies, `PersistFixture`, `SnapshotRunnerClient`, `RowFailure`, `RacingCatchUp`, `NonDatabaseFailure` | Batch failure -> row retry -> stub/skip; 23505 currently treated as benign; transient retry and snapshot dedup -> V-11c, R-11. These host fixtures insert DTOs directly and use the shared DB: adopt their interceptors, not their generation/connection setup. |
+| `tests/Antiphon.Tests/Application/SessionGenerationDeliveryOverlapTests.cs`, all four tests and helpers | Lock exclusion, late receipt, generation-conditional kill and replacement launch -> V-11d/e, R-11. Directly inserted host transcript is regression evidence only. |
+| `tests/Antiphon.Tests/Application/VerificationRoundDeliveryTests.cs`: `C544_CompletionRecovery`, `C544_PointerReceiptRequiresContent`, `C544_CompletionReceiptWholeWire`, `AssertReceivedOnceAsync`; `GrokRulesQueueBarrierTests.cs`, all 28 arguments and body | Actual producer/queue, busy/eligible, commit cuts, full text and hash; rules barriers for every entry point -> V-11d/e, R-6/R-8. Existing content checks are preserved in Docker variants. |
+| `tests/Antiphon.Tests/TestHelpers/C544DeliveryRig.cs`, entire rig/boundary/fault; `C544World.BuildServices` registration tail, `RestartAsync`, `CreateContext`, `C544Clock`; `BridgeQueueHarness` actual `OnSubmitted` callback; `TestDbFixture.CreateDbContextOptions`/`CreateIsolatedSchemaAsync`; `ProductionRunnerGuard.PointEveryProgramBootAwayFromTheProductionRunner`; `DelegationTestServices.AddGitWorkspaceService`/`AddDelegationWorktreeGraph` | Nearest fixture for new Q/B methods: recreate provider, real queue, identity-specific transaction cuts, isolated cloned database, production-runner exclusion -> all V-11. Existing callback inserts transcript rows: it must be replaced by raw ACP production below. |
+| `tests/Antiphon.Tests/Antiphon.Tests.csproj` and runner friend-assembly declarations | Runner project reference and `InternalsVisibleTo` already permit the application test world to use the real tailer/journal; linked `LocalHttpRunner` exists. No new test-project dependency is needed. |
+| Production `GrokTranscriptTailer` read loop/partial-line/snapshot; `GrokTranscriptNormalizer.Normalize`/`FlushPending`/`AccumulateOrEmit`/`EmitPending`; `TranscriptSidecar`; runner `StartTailerFor`/`RestoreTailerFromSidecar`; `SessionRunnerHttpClient.GetTranscriptAsync`/`MapTranscript`; `AgentSessionRuntime.ObserveTranscriptAsync`/`SyncTranscriptAsync`/bulk and individual persistence/stub/result paths; queue late-confirm/matching/working queries; `GrokRulesRefreshService` transcript selection/`Judge`; `SessionGeneration` | Confirms separate persistence/live-effect seams, byte-zero replay, mutable current generation, and existing null-rejecting UTC-microsecond equality -> all V-11 controls. Inspection is not execution evidence. |
+
+Owner sections read: project layer/enforcement conventions; orchestration delegate/report and repair-source rules; testing isolation, exact filters, alternate outputs, Mutation and delivery acceptance; session delivery/generation/restart invariants; Pty paste/delivery evidence. No unrelated Docker/security/launch decisions were reopened.
+
+**Missing setup, assigned concretely to Code.** All Docker test classes and the D-18 production members remain proposed at the inspected SHA. The following extends the already commissioned `DockerGrokTestWorld`; it is required implementation work, not a claim that those helpers exist:
+
+- Preserve the isolated cloned PostgreSQL database across provider restart; wire all runtime, scanner, receipt and callback contexts to its connection. Use the real reply/refinement/completion producers, queue, spill store, rules reconciliation and ingestion. Register the delegation graph with the existing helper. Dispose providers, tailers and hosted scanners before reopening. Use a timer-capable fake clock and explicitly pump deadlines/periodic timers; a frozen `GetUtcNow` with real `Task.Delay` is prohibited. The frozen filename second for PC-81 is separate from advancing delivery timers.
+- Add a raw ACP recipient to the actual adapter submit callback. Record submitted bytes independently, append measured Grok-format user rows (including missing native UUID variants), and read guest artifacts through the frozen mount map. The real lifecycle coordinator/journal admits its writer; the real tailer normalizes and stamps entries. No successful expected transcript gets a generation assigned by a fixture. Delayed events are held only after production stamping; delayed raw normalization preserves only raw file/journal state before recreating the tailer.
+- Use a loopback HTTP/SSE endpoint over production runner DTO serialization and `SessionRunnerHttpClient`, with mixed G1/G2/unknown entries. The endpoint may delay/drop a serialized response but cannot add provenance. Production ingestion then persists it. Exercise event and snapshot routes separately; do not use `SnapshotRunnerClient` for a successful provenance round trip.
+- Add an identity-scoped no-op observation/cut object named `C575ProvenanceBoundary`, plus journal external-I/O and EF transaction fault hooks. Cuts are `range-save`, `range-committed`, `file-identity-save`, `file-identity-committed`, `raw-appended`, `checkpoint-save`, `checkpoint-committed`, `event-publish`, `ingest-save`, `ingest-committed`, `queue-receipt-save`, `queue-receipt-committed`, `refinement-receipt-save`, `refinement-receipt-committed` and `completion-receipt-save`. Require exactly one reached cut. Observe post-commit only after transaction commit, not SavedChanges within a transaction. Observe published events while the failing save is paused, before cleanup can hide them.
+- Names such as `validatedHistory.IsKnown`, `validation.IsQualified`, `duplicateDecision.Conflict`, `receipt.Accepted` and `observedLiveEffectCalls` below mean captured **production** validation/candidate/action decisions, not fixture reimplementations. Expose concrete internal validators or read-only observations where required. Negative validator tests may construct invalid persisted/wire inputs; successful delivery tests may not inject qualified evidence. This is how a validator's red is observed before another guard, FK or complete-text check masks it.
+- For journal faults use owned scratch streams and the real journal serialization/atomic-write code, with only Docker/process/file-failure observations substituted. File replacement uses the same bytes and path but another real file identity; rewrite retains identity and length; shortening is independent. Read the journal back at the commit observation. Same-generation recreation preserves source offsets and stream identity. Actual process-death persistence is additionally checked by the owned `LocalHttpRunner`/native V-8 lane.
+- For ingestion races use two providers with distinct runtime instances and DB contexts, pause before source-key insertion, then release both. Source-key uniqueness testing uses direct inserts with different stored sequences/native UUIDs and the same non-null source key; catch expected 23505 as an observation. Apply the generated migration to a fresh private database/template for migration PCs, never clone an already-fixed template and claim to have exercised mutated DDL.
+- Preserve each original PC recipe and test. In particular PC-81 uses D-19's bounded scanner/flush passes and asserts both prompt counts **before** dereferencing B's read; collision/hold is recorded, never thrown as the expected red. Identical-body/different-ID receipts use each reserved queue ID and its own attempt floor. PC-113's same-generation crash arm still detects a second submit; its added delayed-G1-after-G2 arm proves a genuine old receipt without requiring the mutant to bypass PC-145.
+
+### Delivery inventory
+
+D-18 changes evidence delivery as well as input recovery. The durable joins are the existing refinement GUID or completion notification ID -> reserved queue/member IDs -> frozen session/G1/worker/config/container binding -> attempt floor and frozen final-wire/artifact hashes -> `(SessionId, StreamId, RecordStartOffset, PartIndex)` source key -> persisted transcript ID/sequence -> queue receipt -> refinement/completion receipt. Display sequence, raw UUID, current session generation and the transport envelope are not alternative identities.
+
+| Path / producer -> destination | Persistence boundary and recovery | Observable receipt / verification |
+|---|---|---|
+| P-1 lifecycle reservation -> Grok raw-stream writer | Write-through launch-pending journal commits exact stream/range before exec; lazy file identity before attributed publication. Handover closes G1/opens G2 after stopped writer and final complete drain. Restart reads retained ranges and checkpoints, or holds on unknown evidence. | V-11a observes durable ranges before exec/publication, then the actual raw record's producing generation. Launch success is not input receipt. G/PC-83/89/97/100/102/136 plus 173..201/258..259/263..264. |
+| P-2 real queue -> recipient -> raw ACP file | Existing acceptance, spill, keyed enqueue, attempt and submit boundaries remain DL-2/DL-3/Docker completion's real path. Raw append can precede normalization or runner death. Restart re-tails from zero using the journal; unknown history holds. | Complete final-wire UserPrompt from the submit callback, exact guest reads of all artifacts, original source tuple and exactly one original submission. Busy and already eligible recipients both required. V-11d; PC-81/109/110/113/139/145 and new receipt controls. |
+| P-3 tailer/normalizer -> runner event hub/HTTP or snapshot -> server ingestion | Commit checkpoint before publish. Lost event or response recovers via snapshot/re-tail. Store original generation/source using source-key dedup before sequence rebase; row-save failure and 23505 race preserve or reject evidence explicitly. | A fresh DB context reads the same producing token/source bytes, one row per source part, distinct rows for distinct source positions even when text/UUID are identical. V-11b/c; PC-192..228/258..261. DB persistence alone does not finish delivery acceptance. |
+| P-4 persisted transcript -> queue confirming verdict | Shared Docker candidate predicate reads original attempt/floor, complete UserPrompt, qualified source, original generation and artifacts; queue verdict and receipt commit together. Retry after a cut recovers a matching original row, not a current-generation guess. | Exact matched transcript ID, stored sequence, source tuple, G1 and hashes in the saved queue receipt; complete UserPrompt remains queryable after restart. V-11d; PC-109/110/139, 235..248/260/265. |
+| P-5 queue verdict or late transcript -> refinement receipt | Real boot/periodic reconciler first reconciles evidence, including terminal-task history; saved queue receipt is copied/validated idempotently. Cut after queue commit but before link resumes from that exact tuple. | ConfirmedReceiptJson joins the complete original prompt and files; one receipt for the accepted GUID, zero recovery input to G2. V-11d; PC-113/145/149..153, 249..256/262. |
+| P-6 profile-v1 terminal producer -> Docker caller completion | Existing terminal/outbox/keyed queue and CompletionDeliveryJson identity remain authoritative; Docker receipt is linked through the same producing-source path. Cover terminal save, enqueue failure, frozen rendering, attempt, prompt, verdict and completion-link cuts. | Complete caller UserPrompt, actual artifact reads, original notification/queue IDs and the same G1 source tuple before and after terminal settlement. V-11d; R-8 and PC-115..117/162/257. |
+| P-7 persisted old history -> current-session live effects/rules | Persistence remains allowed; Observe/Sync effects, queue SQL end/activity queries and rules SQL selection fence old/unknown entries independently. Server restart boundary has captured generation, no native source. | Busy G2 gets zero new input/false rules acknowledgement from G1; eligible G2 is not made busy by old activity. Genuine G1 receipts remain usable. V-11e; PC-229..234. |
+| P-8 under-ceiling row-less Now -> recipient | Capture expected generation before input. No durable queue/outbox/recovery contract is added; oversize refusal remains PC-148. | Immediate complete UserPrompt is compared with the pre-input generation; a later G2 look-up cannot establish receipt. V-11d/PC-242. No crash-recovery acceptance is claimed for this row-less API. |
+
+**Handoff matrix.** Cross busy/eligible with refinement-primary, refinement-secondary, and Docker completion where the boundary applies. Exercise the inherited acceptance/enqueue/spill/attempt cuts, then (1) append before normalization, (2) checkpoint save failure/commit before publish, (3) event drop or HTTP failure before server receipt, (4) ingest rollback/commit before confirming query, (5) queue verdict+receipt rollback/commit before link, (6) refinement or completion link rollback/commit. For each accepted recoverable case restart the relevant runner/server provider, run the real scanner and queue, and require the matching complete recipient prompt and saved source receipt. Queue-insert failures remain explicit even when no row exists. A rollback before acceptance has no obligation and needs a new request; it is not a delivered case.
+
+Run same-generation recovery, delayed stamped G1 event after G2, and delayed raw G1 normalization after G2. In the latter two, advance only through the real writer handover; G2 receives a separate authorized byte-identical prompt for the negative PC-139 arrangement. Deliver the real G1 evidence last for the positive companion. Unknown provenance stays held, with no fabricated prompt/receipt and no G2 input. Exercise inline confirm, grace, late-confirm, interrupted-Sent and Enter-only paths through the same predicate; preserve both sequence and timestamp attempt-floor modes. Completion repeats before and after producer terminal settlement. One invalid discriminator at a time keeps each negative result attributable.
+
+**Substitutes and acceptance limit.** Scripted Docker I/O establishes guard/cut behavior, not container stop/file identity on Linux. Scratch raw ACP establishes deterministic attribution, not the pinned provider's append/resume behavior. Loopback serialization establishes event/snapshot mapping, not remote reliability. A mount-map guest reader establishes path/content logic, not Docker mounts or model consumption. V-7/V-8/V-9 remain mandatory for their respective native/live claims; V-11f adds the D-18 native append/resume check. Accepted request, queue insert, terminal result, Sent flag, transport ack, or persisted transcript alone cannot pass producer-to-recipient delivery. Review must reject a design/evidence set that stops before matching **complete UserPrompt** and the specified artifact reads.
+
+### Proves it works now
+
+These are Code implementation/verification contracts, not test execution claims. T/Z/W/Q/B retain the exact class/project aliases in the earlier executable selection table. Every new positive-control method below also runs as ordinary V/R, including its valid companion and parameter rows.
+
+| ID | Behavior / layer | Test/command | Expected |
+|---|---|---|---|
+| V-11a | Durable attribution / actual scratch files, journal, lifecycle and normalizer | T/Z exact methods PC-173..201/204/258..259/263..264; existing `Reservation_precedes_exec`, `Stop_requires_io_drain`, `Spawn_crash_does_not_double_exec`, `Lost_or_corrupt_journal_holds`, `Adoption_checks_mapping_digest`, `Adoption_checks_full_container_id` | Original G1 survives byte-zero replay/G2; journal or file ambiguity holds before attributed evidence/new writer; no synthetic successful end. |
+| V-11b | Both wire routes / real serializer and HTTP client | W `Transcript_provenance_roundtrips_stream_and_snapshot`, `Source_roundtrips_stream_and_snapshot`, `Snapshot_version_does_not_invent_generation` | Per-entry G1/G2/null and full source tuple preserved; absent/new envelope version never fills entries. |
+| V-11c | Ingestion/retry/migration / PostgreSQL and real runtime | Q exact methods PC-206..228/260..261 | Original tuple survives provider/context recreation, per-row retry and sequence rebase; conflict visible, original row unchanged; legacy nulls remain null. |
+| V-11d | Input/receipt recovery / producer -> real queue -> raw recipient -> tailer -> HTTP -> ingestion -> receipts | Q exact methods PC-235..257/262/265; B `Same_second_refinements_do_not_overwrite`; Q `Complete_prompt_is_required`, `Receipt_floor_is_required`, `Accepted_prompt_is_not_retyped`, `Receipt_requires_bound_generation`, `Refinement_cannot_retarget_new_generation`, `Caller_receipt_requires_whole_note`; inherited V-5/R-8 handoff matrix | Both busy/eligible receipts carry exact original source/wire/artifacts; late genuine G1 confirms without input; identical G2/unknown/below-floor text does not. PC-81 B gets one full receipt/read, including after service recreation. |
+| V-11e | Live-effect isolation / runtime callbacks and SQL queries | Q exact methods PC-229..234 | Old/unknown history persists without G2 live effect, rules release or false end/activity; captured restart boundary can affect its own generation but cannot be a receipt. |
+| V-11f | Pinned native stream compatibility / existing disposable native lane | Extend `DockerGrokNativeDelegateAcceptanceTests.Native_grok_dispatch_reads_complete_instructions` (V-8) with G1 append, owned crash/restart and G2 resume; keep existing native/live opt-ins | Record exact native file identity, EOF/checkpoint, G1/G2 raw rows and saved receipts. Unchanged prefix/append-resume behavior demonstrated on pinned Grok; rewrite/truncation is non-qualified and returns to Investigate. |
+
+Run `Invoke-C575Selection` for the exact project/class/method in each new PC row and for the existing affected methods, with fresh TRX and nonzero executed counts. The earlier class roster also selects these new methods; do not rerun a method solely because both V and PC tables name it. For example:
+
+```powershell
+Invoke-C575Selection 'Antiphon.SessionRunner.Tests' 'DockerGrokTranscriptTests' 'Generation_ranges_survive_retail'
+Invoke-C575Selection 'Antiphon.Tests' 'DockerGrokRunnerWireTests' 'Transcript_provenance_roundtrips_stream_and_snapshot'
+Invoke-C575Selection 'Antiphon.Tests' 'DockerGrokDeliveryRecoveryTests' 'Transcript_provenance_survives_ingestion_restart'
+Invoke-C575Selection 'Antiphon.Tests' 'DockerGrokDeliveryRecoveryTests' 'Old_generation_replay_does_not_release_current_delivery'
+```
+
+Boundary coverage inside these methods: empty versus existing/lazy file; exact boundary and one byte either side; UTF-8 multibyte characters split across read buffers; LF and CRLF; no newline versus completed newline; missing UUID; multiple normalized parts; keyless buffered chunks; same source replay versus same text at different offsets; two sources sharing a native UUID; unknown prefix; zero/negative/reversed/overlapping/multiple-open ranges; unsupported version; matching/replaced/short/rewritten file; delayed event versus delayed raw tail; old/current/null generations; same instant with different timezone and sub-microsecond tails; host-null versus Docker-null; bulk/individual/stub/23505; no attempt/sequence floor/timestamp floor; missing/malformed/old saved receipt; primary and secondary artifact hashes independently corrupted. Run one valid control before invalid cases. Invalid-shape tests hold every other validation precondition valid.
+
+### Guards the regression
+
+- **R-11 wire:** `SessionRunnerGenerationWireTests/*` through the Antiphon.Tests helper: launch echo, capability refusal, conditional-input/kill behavior unchanged. New per-entry metadata must not repurpose the launch envelope.
+- **R-11 runtime:** `SessionGenerationDeliveryOverlapTests/*` and exact `AgentSessionRuntimeTests` methods beginning `C561_` from `AgentSessionRuntimeTests.Persist.cs`. Host late-confirm avoids kill, stale A cannot kill B, NUL sanitation/dedup, row retry/stub/skip/transient/race behavior remain intact. Run the C561 persistence methods individually; do not select unrelated C561 methods by an assembly-wide wildcard.
+- **R-11 tailer:** add `GrokTranscriptTailerTests.Child_exit_flushes_streamed_text_without_synthesizing_a_TurnEnd` to preserved R-4.
+- Preserve every R-1..R-10 selection. R-6 protects rules barrier routes; R-7 protects host spills and row-less Now; R-8's Docker variants must now join the original producing tuple through completion confirmation. Legacy unknown host transcripts remain valid host history while Docker refuses them as receipt evidence.
+
+### Guard inventory
+
+Canonical G/PC-1..172 are adopted once, unchanged. D-18 adds **93** independently testable guards G-173..265, each with one distinct PC below. No guard is waived. Shared-validator variants use one guard/PC only when they execute that same production predicate; independent field checks and separate query/callback/transaction gates are separate rows.
+
+Reused guards are not re-counted: G-83 durable launch barrier, G-89 drain, G-97 spawn recovery, G-100 unreadable journal hold, G-102 mapping binding, G-136 container binding; G-109 complete prompt, G-110 original floor, G-113 receipt-before-retry, G-139 candidate-to-attempt generation, G-145 pre-input attempt binding, G-149..153 retention/terminal restrictions, and G-162 frozen completion wire agreement. PC-139 mutates only its shared candidate-to-attempt comparison. PC-236 independently protects attempt-to-obligation comparison. PC-229/230 do not replace the SQL guards PC-231..233.
+
+| Guard | Plan reference / safety-critical guard | Positive control |
+|---|---|---|
+| G-173 | D-18/S4d: Launch-pending commit contains the range, not just occupancy. | PC-173 |
+| G-174 | D-18/S4d: Lazy file identity is committed before attributed publication. | PC-174 |
+| G-175 | D-18/S4d: Initial unknown history is excluded from the new range. | PC-175 |
+| G-176 | D-18/S4d: Same-generation restart retains the open range start and stream ID. | PC-176 |
+| G-177 | D-18/S4d: Advancing occupancy retains prior closed ranges. | PC-177 |
+| G-178 | D-18/S4d: The new range starts at final drained EOF, not the last tailer poll. | PC-178 |
+| G-179 | D-18/S4d: Partial JSONL EOF cannot establish a writer boundary. | PC-179 |
+| G-180 | D-18/S4d: A new range cannot be committed while the old writer remains unproven stopped. | PC-180 |
+| G-181 | D-18/S4d: Closing G1 and opening G2 is one durable launch-pending transition. | PC-181 |
+| G-182 | D-18/S4d: Closing an open range changes only its end. | PC-182 |
+| G-183 | D-18/S4d: A negative journal range start is invalid. | PC-183 |
+| G-184 | D-18/S4d: Two otherwise well-shaped overlapping ranges cannot authorize attribution. | PC-184 |
+| G-185 | D-18/S4d: Journal source host path must match the bound stream. | PC-185 |
+| G-186 | D-18/S4d: Journal native conversation identity must match. | PC-186 |
+| G-187 | D-18/S4d: Journal exact guest cwd must match. | PC-187 |
+| G-188 | D-18/S4d: Sidecar adoption must select the journal's exact stream. | PC-188 |
+| G-189 | D-18/S4d: Same-path replacement file is not the recorded stream. | PC-189 |
+| G-190 | D-18/S4d: A file shorter than a validated checkpoint cannot be replayed as intact. | PC-190 |
+| G-191 | D-18/S4d: Same-identity, same-length modified prefix cannot retain attribution. | PC-191 |
+| G-192 | D-18/S4d: Updated prefix checkpoint is durable before attributed events become observable. | PC-192 |
+| G-193 | D-18/S4d: A receipt-bearing raw record must lie wholly inside exactly one range. | PC-193 |
+| G-194 | D-18/S4d: The record's original range supplies its producing generation. | PC-194 |
+| G-195 | D-18/S4d: Source offsets identify exact raw bytes across partial reads. | PC-195 |
+| G-196 | D-18/S4d: Source hash describes the raw record rather than normalized prompt text. | PC-196 |
+| G-197 | D-18/S4d: One raw record's emitted parts have distinct deterministic source identities. | PC-197 |
+| G-198 | D-18/S4d: Delayed normalizer flush preserves buffered generation. | PC-198 |
+| G-199 | D-18/S4d: Delayed normalizer flush preserves buffered source identity. | PC-199 |
+| G-200 | D-18/S4d: Buffered G1 state cannot be combined with G2 chunks. | PC-200 |
+| G-201 | D-18/S4d: Boundary flushing cannot manufacture a successful TurnEnd. | PC-201 |
+| G-202 | D-18/S4d: Shared HTTP entry mapping preserves supplied generation. | PC-202 |
+| G-203 | D-18/S4d: Shared HTTP entry mapping preserves the complete source tuple. | PC-203 |
+| G-204 | D-18/S4d: Runner snapshot contains the stamped entries, including mixed generations. | PC-204 |
+| G-205 | D-18/S4d: Envelope format metadata cannot label null entries. | PC-205 |
+| G-206 | D-18/S4d: Bulk persistence keeps normalized supplied generation. | PC-206 |
+| G-207 | D-18/S4d: Persistence keeps the complete supplied source record. | PC-207 |
+| G-208 | D-18/S4d: Per-row retry keeps the original generation after batch failure. | PC-208 |
+| G-209 | D-18/S4d: Per-row retry keeps source data after batch failure. | PC-209 |
+| G-210 | D-18/S4d: Stubbed/sanitized-incomplete data cannot remain qualified receipt evidence. | PC-210 |
+| G-211 | D-18/S4d: An existing legacy unknown row cannot acquire current provenance on replay. | PC-211 |
+| G-212 | D-18/S4d: Unknown provenance schema versions cannot qualify. | PC-212 |
+| G-213 | D-18/S4d: Empty stream GUID cannot qualify. | PC-213 |
+| G-214 | D-18/S4d: Negative source start cannot qualify. | PC-214 |
+| G-215 | D-18/S4d: Empty/reversed raw record extent cannot qualify. | PC-215 |
+| G-216 | D-18/S4d: Negative normalized part index cannot qualify. | PC-216 |
+| G-217 | D-18/S4d: Missing/non-hex/wrong-length record hash cannot qualify. | PC-217 |
+| G-218 | D-18/S4d: A valid source tuple with null generation cannot qualify. | PC-218 |
+| G-219 | D-18/S4d: A generation token without a complete source tuple cannot qualify. | PC-219 |
+| G-220 | D-18/S4d: Source key uses invariant stream/start/part identity. | PC-220 |
+| G-221 | D-18/S4d: Source identity overrides UUID/sequence dedup for attributed rows. | PC-221 |
+| G-222 | D-18/S4d: The filtered source-key index is independently unique. | PC-222 |
+| G-223 | D-18/S4d: An existing source key cannot accept a conflicting raw hash. | PC-223 |
+| G-224 | D-18/S4d: An existing source key cannot accept a different generation. | PC-224 |
+| G-225 | D-18/S4d: An existing source key cannot accept different normalized content. | PC-225 |
+| G-226 | D-18/S4d: The same source key cannot accept changed record end/tuple extent. | PC-226 |
+| G-227 | D-18/S4d: A source-index race must validate the winner, not silently swallow 23505. | PC-227 |
+| G-228 | D-18/S4d: Valid historical generation evidence remains ingestible after G2 starts. | PC-228 |
+| G-229 | D-18/S4d: ObserveTranscriptAsync fences old/unknown entries before live actions. | PC-229 |
+| G-230 | D-18/S4d: SyncTranscriptAsync fences old/unknown entries before live actions. | PC-230 |
+| G-231 | D-18/S4d: Working-state end query excludes old/unknown Docker ends. | PC-231 |
+| G-232 | D-18/S4d: Working-state activity query excludes old/unknown Docker activity. | PC-232 |
+| G-233 | D-18/S4d: Rules reconciliation selects only eligible current-generation source evidence. | PC-233 |
+| G-234 | D-18/S4d: Server-generated restart boundary uses transaction-captured generation. | PC-234 |
+| G-235 | D-18/S4d: A matching prompt cannot confirm a never-attempted queue row. | PC-235 |
+| G-236 | D-18/S4d: Attempt generation must equal the refinement's frozen generation. | PC-236 |
+| G-237 | D-18/S4d: A complete matching prompt in another session cannot confirm. | PC-237 |
+| G-238 | D-18/S4d: QueuedUserPrompt/assistant/tool data cannot satisfy Docker UserPrompt receipt. | PC-238 |
+| G-239 | D-18/S4d: Valid text/generation with null or invalid/stub provenance cannot confirm. | PC-239 |
+| G-240 | D-18/S4d: Missing attempt/candidate generations cannot pass via null equality. | PC-240 |
+| G-241 | D-18/S4d: Genuine late G1 receipt remains eligible after current G2 replaces it. | PC-241 |
+| G-242 | D-18/S4d: Under-ceiling Now uses its pre-input generation for immediate confirmation. | PC-242 |
+| G-243 | D-18/S4d: Queue verdict cannot commit without its matched receipt. | PC-243 |
+| G-244 | D-18/S4d: Receipt retains the matched persisted entry identity and stored sequence. | PC-244 |
+| G-245 | D-18/S4d: Receipt stores producing generation, not current session generation. | PC-245 |
+| G-246 | D-18/S4d: Receipt freezes the matched source key and tuple. | PC-246 |
+| G-247 | D-18/S4d: Receipt hashes the frozen final wire, not logical or newly rendered text. | PC-247 |
+| G-248 | D-18/S4d: Receipt carries hashes for every referenced artifact. | PC-248 |
+| G-249 | D-18/S4d: Post-verdict refinement recovery copies the saved tuple without reselecting. | PC-249 |
+| G-250 | D-18/S4d: Receipt link must belong to the reserved queue identity. | PC-250 |
+| G-251 | D-18/S4d: Receipt link must belong to the frozen destination session. | PC-251 |
+| G-252 | D-18/S4d: Receipt link must agree with the frozen accepted generation. | PC-252 |
+| G-253 | D-18/S4d: Receipt link must agree with frozen final wire hash. | PC-253 |
+| G-254 | D-18/S4d: Receipt link verifies all recorded artifact hashes. | PC-254 |
+| G-255 | D-18/S4d: Confirmed progress cannot commit without ConfirmedReceiptJson. | PC-255 |
+| G-256 | D-18/S4d: Sent or old Delivered/LateConfirmed without source receipt cannot confirm. | PC-256 |
+| G-257 | D-18/S4d: Docker completion confirmation retains the matched tuple and existing notification identity. | PC-257 |
+| G-258 | D-18/S4d: Unknown journal provenance versions hold instead of being interpreted as current. | PC-258 |
+| G-259 | D-18/S4d: Provenance history cannot be adopted by another Antiphon session. | PC-259 |
+| G-260 | D-18/S4d: Supplied generation preserves UTC microsecond equality through storage. | PC-260 |
+| G-261 | D-18/S4d: Migration never backfills provenance from row/session timestamps. | PC-261 |
+| G-262 | D-18/S4d: Receipt's source key/tuple and entry reference must describe the persisted matched evidence. | PC-262 |
+| G-263 | D-18/S4d: A closed range end cannot precede its start. | PC-263 |
+| G-264 | D-18/S4d: A stream cannot have more than one open generation range. | PC-264 |
+| G-265 | D-18/S4d: Receipt records stored session sequence rather than replay-local sequence. | PC-265 |
+
+
+### Positive controls
+
+Each row means: **break the named G-n with the compiling production defect, run the exact method, require red at the stated assertion, restore exact source and refresh timestamps/rebuild, then require the same method green**. Method names are implementation contracts. No recipe depends on build failure, fixture exception, timeout, zero tests, invalid discovery or editing a test to make red. All 93 added controls use the I integration budget, including runner file/validator cases.
+
+Aliases expand as before: T=`DockerGrokTranscriptTests`, Z=`DockerGrokRecoveryTests` in Antiphon.SessionRunner.Tests; W=`DockerGrokRunnerWireTests`, Q=`DockerGrokDeliveryRecoveryTests` in Antiphon.Tests. Read-only validator results named in assertions are the production observations specified under Inspection; they do not introduce new persisted entity properties.
+
+| PC / guard | Compiling production defect | Exact method | Decisive assertion red |
+|---|---|---|---|
+| PC-173 / G-173 | Omit TranscriptProvenance from the journal write while keeping the lease commit successful. | Z `Provenance_is_durable_before_exec` | `committedJournal.Ranges.ShouldHaveSingleItem()` |
+| PC-174 / G-174 | Publish an attributed event before committing the lazy file identity; pause at the identity-save cut. | Z `Lazy_file_identity_precedes_publication` | `attributedEvents.Count.ShouldBe(0)` |
+| PC-175 / G-175 | Set a new range StartOffset to zero instead of the existing EOF. | T `Preexisting_prefix_remains_unknown` | `oldPrompt.AcceptedStartedAt.ShouldBeNull()` |
+| PC-176 / G-176 | Replace the existing open range with a range starting at the restart EOF. | Z `Same_generation_reuses_original_range` | `recoveredRange.ShouldBe(originalRange)` |
+| PC-177 / G-177 | Clear old ranges when adding the replacement generation. | Z `Replacement_preserves_closed_history` | `reloaded.Ranges.Count.ShouldBe(2)` |
+| PC-178 / G-178 | Close G1 and start G2 at the saved tailer offset before a final complete G1 row. | Z `Handover_uses_drained_eof` | `lastG1Prompt.AcceptedStartedAt.ShouldBe(g1)` |
+| PC-179 / G-179 | Remove only the complete-line check in range handover. | Z `Partial_final_record_blocks_handover` | `newGenerationExecs.ShouldBe(0)` |
+| PC-180 / G-180 | Bypass stopped-writer eligibility in range preparation, retaining ordinary stop/release gates. | Z `Live_writer_blocks_range_handover` | `rangeCountAtHeldWriter.ShouldBe(1)` |
+| PC-181 / G-181 | Commit G1 closure separately, then encounter the armed failure before saving G2. | Z `Range_handover_is_atomic` | `rangesAfterCut.ShouldBe(rangesBeforeCut)` |
+| PC-182 / G-182 | Replace its generation with G2 during closure. | Z `Closing_range_preserves_prior_identity` | `closedRange.AcceptedStartedAt.ShouldBe(g1)` |
+| PC-183 / G-183 | Remove only the nonnegative range-start check. | Z `Negative_range_start_refuses_attribution` | `validatedHistory.IsKnown.ShouldBeFalse()` |
+| PC-184 / G-184 | Remove only the range-overlap check. | Z `Overlapping_ranges_refuse_attribution` | `validatedHistory.IsKnown.ShouldBeFalse()` |
+| PC-185 / G-185 | Ignore only the stored source-path comparison. | Z `Provenance_path_must_match` | `validatedHistory.IsKnown.ShouldBeFalse()` |
+| PC-186 / G-186 | Ignore only the native-session comparison. | Z `Provenance_native_session_must_match` | `validatedHistory.IsKnown.ShouldBeFalse()` |
+| PC-187 / G-187 | Ignore only the stored guest-cwd comparison. | Z `Provenance_cwd_must_match` | `validatedHistory.IsKnown.ShouldBeFalse()` |
+| PC-188 / G-188 | Use the current journal stream despite a different sidecar stream reference. | Z `Sidecar_stream_reference_must_match` | `adopted.ShouldBeFalse()` |
+| PC-189 / G-189 | Ignore only file identity equality while length and hash match. | Z `File_identity_must_match` | `validatedHistory.IsKnown.ShouldBeFalse()` |
+| PC-190 / G-190 | Accept the shorter length and validate only the remaining prefix. | Z `Short_file_refuses_attribution` | `validatedHistory.IsKnown.ShouldBeFalse()` |
+| PC-191 / G-191 | Skip only the recorded prefix SHA comparison. | Z `Rewritten_prefix_refuses_attribution` | `validatedHistory.IsKnown.ShouldBeFalse()` |
+| PC-192 / G-192 | Publish before the checkpoint save, whose armed failure is caught as a hold. | T `Checkpoint_commit_precedes_publication` | `attributedEvents.Count.ShouldBe(0)` |
+| PC-193 / G-193 | Select a range using only record start, ignoring exclusive end. | T `Record_must_fit_one_known_range` | `candidate.IsQualified.ShouldBeFalse()` |
+| PC-194 / G-194 | Stamp the latest range generation on every replayed row. | T `Generation_ranges_survive_retail` | `replayedG1.AcceptedStartedAt.ShouldBe(g1)` |
+| PC-195 / G-195 | Compute offsets from decoded character counts. | T `Source_offsets_count_utf8_bytes` | `source.RecordStartOffset.ShouldBe(expectedByteOffset)` |
+| PC-196 / G-196 | Hash normalized Text instead of the raw record bytes. | T `Source_hash_covers_complete_raw_record` | `source.RecordSha256.ShouldBe(expectedRawHash)` |
+| PC-197 / G-197 | Assign PartIndex zero to every part of a multi-part record. | T `Source_parts_have_stable_ordinals` | `partSourceKeys.Distinct().Count().ShouldBe(partSourceKeys.Count)` |
+| PC-198 / G-198 | Use the flushing record's generation for buffered text. | T `Buffered_generation_survives_flush` | `bufferedPart.AcceptedStartedAt.ShouldBe(g1)` |
+| PC-199 / G-199 | Use the flushing record's Source for buffered text. | T `Buffered_source_survives_flush` | `bufferedPart.Source.ShouldBe(originalChunkSource)` |
+| PC-200 / G-200 | Skip the recorded-boundary flush/reset and reuse a keyless pending turn. | T `Generation_boundary_resets_normalizer` | `g2Text.ShouldBe(secondGenerationText)` |
+| PC-201 / G-201 | Append an end_turn part when flushing buffered text at handover. | T `Generation_boundary_never_invents_turn_end` | `emittedKinds.ShouldNotContain(TranscriptKinds.TurnEnd)` |
+| PC-202 / G-202 | Drop AcceptedStartedAt in SessionRunnerHttpClient.MapTranscript. | W `Transcript_provenance_roundtrips_stream_and_snapshot` | `mapped.AcceptedStartedAt.ShouldBe(produced.AcceptedStartedAt)` |
+| PC-203 / G-203 | Drop Source in MapTranscript. | W `Source_roundtrips_stream_and_snapshot` | `mapped.Source.ShouldBe(produced.Source)` |
+| PC-204 / G-204 | Reconstruct snapshot entries without their optional provenance fields. | T `Snapshot_keeps_entry_provenance` | `snapshotEntries.ShouldBe(publishedEntries)` |
+| PC-205 / G-205 | In GetTranscriptAsync, when ProvenanceVersion is present, fill a null entry generation from the last non-null entry generation in that snapshot. | W `Snapshot_version_does_not_invent_generation` | `mappedUnknown.AcceptedStartedAt.ShouldBeNull()` |
+| PC-206 / G-206 | Assign session.StartedAt when storing an attributed event. | Q `Transcript_provenance_survives_ingestion_restart` | `persisted.AcceptedStartedAt.ShouldBe(g1)` |
+| PC-207 / G-207 | Persist SourceKey but null SourceJson. | Q `Ingestion_preserves_source_json` | `persisted.SourceJson.ShouldBe(expectedCanonicalSourceJson)` |
+| PC-208 / G-208 | Set the retry row's generation to the current session generation. | Q `Individual_retry_preserves_generation` | `retried.AcceptedStartedAt.ShouldBe(g1)` |
+| PC-209 / G-209 | Clear SourceKey and SourceJson only in the individual retry path. | Q `Individual_retry_preserves_source` | `retried.SourceJson.ShouldBe(expectedCanonicalSourceJson)` |
+| PC-210 / G-210 | Remove only the persist-stub exclusion in the shared source-eligibility predicate; retain diagnostic source fields. | Q `Stub_cannot_retain_receipt_eligibility` | `storedStub.IsReceiptEligible.ShouldBeFalse()` |
+| PC-211 / G-211 | Upgrade the matching unknown row using the current session generation. | Q `Unknown_row_is_not_upgraded` | `originalUnknown.AcceptedStartedAt.ShouldBeNull()` |
+| PC-212 / G-212 | Skip only the supported-version check. | Q `Tuple_version_is_supported` | `validation.IsQualified.ShouldBeFalse()` |
+| PC-213 / G-213 | Remove only the nonempty StreamId check. | Q `Tuple_stream_id_is_required` | `validation.IsQualified.ShouldBeFalse()` |
+| PC-214 / G-214 | Remove only the nonnegative RecordStartOffset check. | Q `Tuple_start_is_nonnegative` | `validation.IsQualified.ShouldBeFalse()` |
+| PC-215 / G-215 | Remove only RecordEndOffset greater-than-start check. | Q `Tuple_end_exceeds_start` | `validation.IsQualified.ShouldBeFalse()` |
+| PC-216 / G-216 | Remove only the nonnegative PartIndex check. | Q `Tuple_part_is_nonnegative` | `validation.IsQualified.ShouldBeFalse()` |
+| PC-217 / G-217 | Remove only the SHA-256 shape check. | Q `Tuple_hash_has_sha256_shape` | `validation.IsQualified.ShouldBeFalse()` |
+| PC-218 / G-218 | Permit source-bearing rows without AcceptedStartedAt. | Q `Tuple_requires_generation` | `validation.IsQualified.ShouldBeFalse()` |
+| PC-219 / G-219 | Bypass the complete-Source prerequisite for generation-bearing rows, accepting absent or incomplete Source. | Q `Generation_requires_source_tuple` | `validation.IsQualified.ShouldBeFalse()` |
+| PC-220 / G-220 | Derive SourceKey from stored Sequence instead of raw source coordinates. | Q `Source_key_is_canonical` | `persisted.SourceKey.ShouldBe(expectedSourceKey)` |
+| PC-221 / G-221 | Apply legacy UUID/sequence dedup before source-key handling. | Q `Attributed_dedup_precedes_legacy_dedup` | `distinctSourceRows.Count.ShouldBe(2)` |
+| PC-222 / G-222 | Make the generated non-null source-key index non-unique. | Q `Source_key_is_database_unique` | `secondInsertSucceeded.ShouldBeFalse()` |
+| PC-223 / G-223 | Skip only hash equality in the common duplicate validator. | Q `Duplicate_source_requires_same_hash` | `duplicateDecision.Conflict.ShouldBeTrue()` |
+| PC-224 / G-224 | Skip only generation equality in the common duplicate validator. | Q `Duplicate_source_requires_same_generation` | `duplicateDecision.Conflict.ShouldBeTrue()` |
+| PC-225 / G-225 | Skip only normalized-content equality in the common duplicate validator. | Q `Duplicate_source_requires_same_content` | `duplicateDecision.Conflict.ShouldBeTrue()` |
+| PC-226 / G-226 | Skip only RecordEndOffset equality in the common duplicate validator. | Q `Duplicate_source_requires_same_extent` | `duplicateDecision.Conflict.ShouldBeTrue()` |
+| PC-227 / G-227 | Treat attributed 23505 as a benign duplicate without loading/checking the stored row. | Q `Concurrent_source_conflict_is_not_success` | `ingestionFaultRecorded.ShouldBeTrue()` |
+| PC-228 / G-228 | Drop valid attributed rows whose generation differs from current StartedAt. | Q `Old_valid_generation_is_persisted` | `storedG1Rows.Count.ShouldBe(1)` |
+| PC-229 / G-229 | Bypass only the ObserveTranscriptAsync live-eligibility gate. | Q `Old_event_has_no_live_effects` | `observedLiveEffectCalls.ShouldBe(0)` |
+| PC-230 / G-230 | Bypass only the SyncTranscriptAsync live-eligibility gate. | Q `Old_snapshot_has_no_live_effects` | `observedLiveEffectCalls.ShouldBe(0)` |
+| PC-231 / G-231 | Remove only the generation eligibility filter from the end subquery. | Q `Old_generation_replay_does_not_release_current_delivery` | `working[g2SessionId].ShouldBeTrue()` |
+| PC-232 / G-232 | Remove only the generation eligibility filter from the activity subquery. | Q `Old_activity_does_not_busy_current_generation` | `working[g2SessionId].ShouldBeFalse()` |
+| PC-233 / G-233 | Remove only the generation/source eligibility filter from the rules transcript query. | Q `Old_rules_rows_cannot_open_current_barrier` | `rules.State.ShouldNotBe(GrokRulesState.Ready)` |
+| PC-234 / G-234 | Stamp the restart boundary from a later lookup of the session row. | Q `Restart_boundary_uses_captured_generation` | `restartBoundary.AcceptedStartedAt.ShouldBe(capturedGeneration)` |
+| PC-235 / G-235 | Remove the attempted-row prerequisite from the Docker receipt predicate. | Q `Never_attempted_row_cannot_confirm` | `receipt.Accepted.ShouldBeFalse()` |
+| PC-236 / G-236 | Skip only attempt-to-obligation equality, retaining candidate-to-attempt equality. | Q `Refinement_attempt_generation_must_match` | `receipt.Accepted.ShouldBeFalse()` |
+| PC-237 / G-237 | Remove only the candidate destination-session filter. | Q `Receipt_candidate_belongs_to_destination` | `receipt.Accepted.ShouldBeFalse()` |
+| PC-238 / G-238 | Allow QueuedUserPrompt as a Docker receipt candidate. | Q `Receipt_candidate_is_user_prompt` | `receipt.Accepted.ShouldBeFalse()` |
+| PC-239 / G-239 | Remove the qualified-source prerequisite from the shared receipt predicate. | Q `Receipt_candidate_requires_qualified_source` | `receipt.Accepted.ShouldBeFalse()` |
+| PC-240 / G-240 | In SessionGeneration.Equal, return left == right for the null-token branch instead of false. | Q `Receipt_null_generation_is_not_equality` | `SessionGeneration.Equal(null, null).ShouldBeFalse()` |
+| PC-241 / G-241 | Also require candidate generation to equal the current session generation. | Q `Receipt_generation_is_historical_not_current` | `receipt.Accepted.ShouldBeTrue()` |
+| PC-242 / G-242 | Read expected generation after input, after the fixture advances to G2. | Q `Rowless_now_captures_generation_before_input` | `receipt.Accepted.ShouldBeFalse()` |
+| PC-243 / G-243 | Save Delivered/LateConfirmed first, then save DockerReceiptJson in a second transaction. | Q `Queue_verdict_and_receipt_commit_together` | `verdictAfterReceiptSaveCut.ShouldBeNull()` |
+| PC-244 / G-244 | Choose the latest same-text transcript row when building the receipt. | Q `Queue_receipt_keeps_matched_entry` | `receipt.TranscriptEntryId.ShouldBe(matchedEntry.Id)` |
+| PC-245 / G-245 | Populate receipt AcceptedStartedAt from current session.StartedAt. | Q `Queue_receipt_keeps_matched_generation` | `receipt.AcceptedStartedAt.ShouldBe(g1)` |
+| PC-246 / G-246 | Reconstruct receipt Source from the current stream checkpoint. | Q `Queue_receipt_keeps_matched_source` | `receipt.Source.ShouldBe(matchedEntrySource)` |
+| PC-247 / G-247 | Hash the pre-spill logical body when constructing DockerReceiptJson. | Q `Queue_receipt_keeps_final_wire_hash` | `receipt.WireSha256.ShouldBe(expectedFinalWireHash)` |
+| PC-248 / G-248 | Keep only the primary artifact hash when constructing the two-level receipt. | Q `Queue_receipt_keeps_all_artifact_hashes` | `receipt.ArtifactHashes.ShouldBe(expectedArtifactHashes)` |
+| PC-249 / G-249 | Rerun receipt lookup and select a later same-wire row rather than copying queue receipt. | Q `Refinement_copies_exact_saved_receipt` | `refinement.ConfirmedReceiptJson.ShouldBe(queue.DockerReceiptJson)` |
+| PC-250 / G-250 | Skip only queue-ID validation during refinement receipt linking. | Q `Receipt_link_checks_queue_identity` | `refinement.ConfirmedAt.ShouldBeNull()` |
+| PC-251 / G-251 | Skip only session-ID validation during receipt linking. | Q `Receipt_link_checks_session_identity` | `refinement.ConfirmedAt.ShouldBeNull()` |
+| PC-252 / G-252 | Skip only receipt-to-obligation generation validation. | Q `Receipt_link_checks_generation` | `refinement.ConfirmedAt.ShouldBeNull()` |
+| PC-253 / G-253 | Skip only final-wire hash validation during receipt linking. | Q `Receipt_link_checks_wire_hash` | `refinement.ConfirmedAt.ShouldBeNull()` |
+| PC-254 / G-254 | Skip only artifact validation during receipt linking. | Q `Receipt_link_checks_artifact_hashes` | `refinement.ConfirmedAt.ShouldBeNull()` |
+| PC-255 / G-255 | Save ConfirmedAt/progress first, then the receipt in a later transaction. | Q `Refinement_progress_and_receipt_commit_together` | `confirmedAtAfterReceiptSaveCut.ShouldBeNull()` |
+| PC-256 / G-256 | Mark refinement Confirmed from verdict alone when DockerReceiptJson is absent. | Q `Legacy_verdict_without_receipt_cannot_confirm` | `refinement.ConfirmedAt.ShouldBeNull()` |
+| PC-257 / G-257 | During completion link, select a current-generation same-text row instead of the queue's saved receipt. | Q `Completion_keeps_original_docker_receipt` | `completionReceipt.TranscriptEntryId.ShouldBe(originalG1Entry.Id)` |
+| PC-258 / G-258 | Remove only journal provenance schema-version validation. | Z `Journal_provenance_version_is_supported` | `validatedHistory.IsKnown.ShouldBeFalse()` |
+| PC-259 / G-259 | Remove only journal SessionId comparison, with container/path/native identity held equal. | Z `Journal_session_identity_must_match` | `validatedHistory.IsKnown.ShouldBeFalse()` |
+| PC-260 / G-260 | Skip SessionGeneration.Normalize on supplied ingestion generation. | Q `Generation_normalizes_to_utc_microseconds` | `persisted.AcceptedStartedAt.ShouldBe(expectedTruncatedUtc)` |
+| PC-261 / G-261 | Backfill legacy AcceptedStartedAt using the session StartedAt in the migration. | Q `Provenance_migration_leaves_legacy_unknown` | `legacy.AcceptedStartedAt.ShouldBeNull()` |
+| PC-262 / G-262 | Skip source-reference integrity validation when linking a saved receipt. | Q `Receipt_link_checks_source_reference` | `refinement.ConfirmedAt.ShouldBeNull()` |
+| PC-263 / G-263 | Remove only closed-range end greater-than-or-equal-start validation. | Z `Reversed_range_refuses_attribution` | `validatedHistory.IsKnown.ShouldBeFalse()` |
+| PC-264 / G-264 | Remove only open-range-count validation. | Z `Multiple_open_ranges_refuse_attribution` | `validatedHistory.IsKnown.ShouldBeFalse()` |
+| PC-265 / G-265 | Copy the runner event Sequence instead of persisted TranscriptEntry.Sequence. | Q `Queue_receipt_keeps_stored_sequence` | `receipt.Sequence.ShouldBe(matchedEntry.Sequence)` |
+
+
+**Unmasking and positive companions required by these recipes:**
+
+- PC-173 reads the committed journal before an additional launch guard could refuse it; failure is the empty range assertion, not a missing exec callback. PC-174/192 observe publication at the held write boundary. PC-181 injects between the two writes only in the mutant; fixed code has one failed atomic range transaction and retains the original range list. PC-176/177/182 compare reloaded state and then replay; serializing the whole journal from memory does not satisfy persistence.
+- PC-178 appends a final complete G1 row after the last tailer read, then proves stopped/drained before G2. PC-179's container stop and external drain observations are successful; the only bad input is the unfinished JSONL EOF. PC-180 instead has a complete EOF but an unproven writer, and asserts the range list before a separate launch/lease guard can mask it. Existing PC-88/89 continue testing stop/drain independently.
+- PC-183/184/185..187/189..191/258..259/263..264 call the production journal validator with exactly one invalid discriminator and inspect its decision before tailing. They then verify the full path holds with visible reason, no attributed receipt and no new writer. The direct validator assertion supplies the red even when a later safeguard also refuses. PC-188 has valid journal/file/container state and only the sidecar stream reference wrong.
+- PC-193 uses a well-shaped single range whose known end is inside a complete source record; it does not use overlapping ranges or a partial JSON record. PC-195 includes a preceding multibyte row and partial buffer reads, and asserts both start/end offsets. PC-196 calculates expected hash from independent raw bytes. PC-197 uses a record that emits several parts and compares exact deterministic ordinals on a second replay; UUID equality is not the assertion.
+- PC-198/199 buffer a real G1 chunk until a later flush and independently check generation/source. PC-200 uses keyless G1 and G2 text that would coalesce if state were retained. PC-201 uses buffered assistant text with **no native turn_completed** anywhere in the arranged sequence; an actual successful native end cannot mask an invented one.
+- PC-202/203 each run event and snapshot routes against production-stamped entries; MapTranscript is shared, so these are field guards, not duplicate transport mappings. PC-204 separately tests the runner snapshot construction before HTTP. PC-205 includes mixed G1/G2/null entries and version absent/present; no generation on an envelope authorizes a fill.
+- PC-206/207 read through a new context/provider. PC-208/209 force a batch failure with a bad sibling; the target row succeeds on individual retry without becoming a stub. PC-210 separately arranges a stub with diagnostic source fields and observes the shared **source-eligibility** predicate before complete-text matching; it is not an end-to-end successful receipt. PC-211 retains an existing null-source row and checks it remains unknown; new valid source-key rows must not require silently changing that legacy row.
+- PC-212..219 vary one tuple field at a time through the production validator, with otherwise valid generation/source/body. Unsupported version is distinct from missing tuple. PC-218 tests null generation with valid Source; PC-219 tests valid generation without Source. PC-240 tests the existing `SessionGeneration.Equal` null branch directly (`null/null`, null/G1, G1/null) in addition to end-to-end refusal, so upstream qualification cannot mask its red. No new duplicate generation matcher is commissioned.
+- PC-220 uses locale-independent expected `stream:N:start:part`, a rebased stored sequence, and checks replay under a different culture without changing process-global culture for other tests. PC-221 varies both repeated UUID/different source and missing UUID/reused tailer sequence/different source; also replay the same source without a second row. PC-222 uses independent contexts, different sequence and UUID, and a fresh migrated database; compare returned insert outcomes, never count a thrown constraint/build failure as red.
+- PC-223..226 feed valid-shape conflicting duplicates after the original source exists; only hash, normalized generation, normalized content (including kind/role/tool fields where relevant), or end offset differs. Record a production conflict before returning and retain the original bytes. Run replay within one batch, across requests and after recreation. PC-227 forces the *race* path: the losing context initially sees no source key; the winner commits conflicting content; 23505 must load/validate that winner. The normal duplicate check never sees the conflict first.
+- PC-228 asserts durable G1 history independently of all live effects. PC-229/230 each supply old and unknown UserPrompt, AssistantText, TurnEnd and CompactBoundary and observe live-action invocations immediately after the relevant runtime gate, before SQL can mask a forbidden invocation. Persistence and late-receipt reconciliation are not counted as forbidden live effects. Current G2 counterparts produce their normal effects. Sync's unconditional catch-up settlement/rules call must be included, not only AddedTurnBoundary.
+- PC-231 drives the real SQL query with busy G2 and a higher-stored-sequence G1 end; PC-232 uses idle G2 and later-ingested G1 activity, testing timestamp and no-timestamp branches. PC-233 uses an old but otherwise valid prompt/assistant ACK/end for the *current* rules ID/hash/rules generation; only its session producing generation is wrong. Also cover old compaction boundaries without a false refresh and current prompt plus old ACK/end. These three methods call query/reconciliation paths directly as well as queue delivery, preventing callback gates from masking their reds.
+- PC-234 pauses the restart transaction's boundary production, advances the persisted row to a newer generation after the captured transaction, then resumes. Compare the boundary with the captured token; its Source remains null, and a receipt matcher rejects it. A current captured restart boundary still ends only its own abandoned turn.
+- PC-235 retains a valid bound queue/obligation and valid candidate but zero attempts. PC-236 has a G2 attempt and genuine G2 candidate against a G1 obligation; all artifact/floor/source checks pass. Observe the shared candidate decision before the receipt-link guard. PC-237 uses another session's genuine prompt with the same normalized timestamp/text; PC-238 uses genuine normalized QueuedUserPrompt and separately assistant/tool kinds. PC-239 passes valid generation/full text/floor with unknown, invalid or stub source. No fixture-created successful receipt is used for these delivery positives.
+- PC-241 uses delayed genuine G1 after current G2 with no new input. PC-242 pauses between input and confirmation, advances through the writer boundary to G2 and records its separate same-wire input; the row-less G1 call cannot borrow G2's receipt. Its positive immediate G1 case succeeds; crash recovery is excluded for row-less Now.
+- PC-243 and PC-255 fail the receipt save at a transaction boundary, read with a fresh context and require **both** verdict/progress and receipt to be absent. After a committed queue receipt, recreate with two valid same-wire records whose stored sequences differ; PC-244/249/257 must still point at the originally selected G1 row. PC-245 delays the link until current G2; PC-246 advances the current stream checkpoint; PC-247 uses a real secondary spill; PC-248 checks primary and secondary hashes, one omitted member at a time; PC-265 forces source sequence rebase. Queue receipt comparisons include queue/session IDs, stored sequence, generation, source key/tuple, wire and ordered artifact hash set, not flags alone.
+- PC-250..254/262 arrange one inconsistent saved receipt component at a time, with all other independent checks valid. For PC-252, the candidate/source/reference are a real internally consistent G2 receipt and only the obligation's G1 binding disagrees. PC-262 instead retains a valid binding/hash but pairs the recorded source with a different real persisted entry. PC-254 corrupts primary and secondary independently; missing/corrupt bytes remain retained. Read the link validation result before unrelated retry/retention behavior, then assert ConfirmedAt remains null. PC-256 covers Sent, Delivered and LateConfirmed without receipt and no genuine recoverable candidate; a second case then supplies real late G1 and confirms exactly once.
+- PC-260 uses UTC ticks ending in 9 at the microsecond boundary, an equivalent non-UTC instant, and a genuinely different one-microsecond token; PostgreSQL rounding cannot masquerade as intentional truncation. PC-261 starts from a pre-migration legacy row whose session timestamp is known; legacy provenance and receipt fields stay null while new rows round-trip normally.
+
+PC-81's approved D-19 assertion is executable: timestamp-only naming collides, A remains intact, B is accepted but held, and `recipient.CompletePromptsFor(secondRefinementId).Count.ShouldBe(1)` fails with zero. Count assertions precede missing-read access; the mutation does not alter create-or-verify. PC-139's D-18 amendment is executable through the real producing path; its negative G2 candidate is observed at the common predicate before link validation, and its delayed-G1 positive uses journal evidence rather than current-generation equality. G-109/110 preserve independent full-text/floor reds with valid provenance. All 24 adopted G/PC-149..172 remain required, including pre-delete observations that expose FK-masked retention defects and independent-provider uniqueness races.
+
+Mutation reports **break, exact assertion red, restore, fresh green after land**; Code implements tests and runs ordinary V/R; ordinary Review judges these tests and ordinary evidence before land. Each Mutation cycle uses `--treenode-filter "/*/*/ClassName/ExactTestMethod"` instantiated from its table row, including all arguments of that method, never a class/suite. Keep per-PC TRX/count/assertion evidence. The original helper's source-local result path is for Code; sourced Mutation uses its caller-assigned external evidence root and local inherited execution. No snapshot mounts/build contexts go to Docker Desktop. Restore exact source/index bytes and owned-output disposition; do not commit/push from a sourced snapshot.
+
+### Out of scope
+
+- Rewriting/re-auditing unaffected original G/PC-1..172, image/auth/worker selection or lifecycle product decisions. Their accepted recipes, qualification requirements and 174/413.5 plus 203.4/536.7 historical floors are preserved verbatim.
+- Implementing/running tests, migrations or live qualification in this TestDesign task. “Executable” here means a concrete mutation, exact method, reachable arrangement and decisive assertion with all missing setup commissioned; it does not claim those new methods compile or pass yet.
+- Full Cartesian products of unrelated corrupt tuple fields, every invalid journal shape with every busy/cut state, and all legacy host cases with every Docker failure. One-invalid-field PCs plus valid mixed-generation end-to-end matrices cover these independently. Busy/eligible x relevant handoff cuts, both HTTP routes, both delayed-source routes, and both floor modes are **not** excluded.
+- Recovery guarantees for row-less Now, timestamp-based inference of unknown historical provenance, native file rewriting as an automatic repair, or model file-consumption claims from scripted reads. Those are explicitly disallowed or separately qualified by D-18 and V-7/V-8/V-9.
+- Additional full-assembly/client/browser passes: the preserved Unit/named V/R roster and R-11 bound this change. Actual native append incompatibility goes to Investigate; a missing production observation seam goes back to Plan rather than being replaced by a fixture generation label.
+
+### Cost
+
+All values are **estimated execution floors**, not measured runtime, authoring time, or timeout budgets. No savings are credited. The initial four-method 3.4-minute note is arithmetically correct and **insufficient as the final forward delta**: those four methods are included once among the 93 new exact methods, leaving 89 further methods at the same I rate.
+
+| Ordinary V/R floor (Code) | Calculation | Minutes |
+|---|---|---:|
+| Original setup/build, unchanged | .NET 8 + isolated fixture/DB 5 + image/native preparation 22 | 35 |
+| Adopted ordinary V/R, unchanged | original 139 + first VD-1 9 + added 24-control 20.4 | 168.4 |
+| Four D-18 methods already named by Plan | 4 x 0.85 | 3.4 |
+| Further provenance exact methods | 89 x 0.85 | 75.65 |
+| Additional parameter-block allowance on 13 affected existing controls | PC-81/83/89/97/100/102/109/110/113/116/136/139/145, 13 x 0.85 | 11.05 |
+| Added R-11 selections | wire class 1 + overlap class 2 + C561 persistence methods 3 + tailer exit method 1 | 7 |
+| Native D-18 extension to existing V-8 | append/checkpoint/file identity and owned restart/resume | 4 |
+| **Forward ordinary V/R** | 168.4 + 3.4 + 75.65 + 11.05 + 7 + 4 | **269.5** |
+| **Forward Code floor** | setup/build 35 + V/R 269.5 | **304.5** |
+
+| Positive-control floor (Mutation) | Calculation | Minutes |
+|---|---|---:|
+| Adopted setup/discovery/build, unchanged | fixed | 8 |
+| Adopted exact-method initial greens, unchanged | original 83 + 6.8 + 20.4 | 110.2 |
+| New initial greens | 93 x 0.85 | 79.05 |
+| Expanded existing-method initial-green allowance | same 13 blocks x 0.85 | 11.05 |
+| Adopted every-PC cycles, unchanged | original 322.5 + first eight 24 + next 24 controls 72 | 418.5 |
+| New every-PC red/restore/green cycles | 93 x (0.60 build + 0.85 red + 0.10 restore + 0.60 fresh rebuild + 0.85 green) | 279 |
+| Expanded existing-method red/green allowance | 13 x (0.85 extra red + 0.85 extra green); builds/restoration already in adopted cycles | 22.1 |
+| **Forward Mutation floor** | setup 8 + initial greens 200.3 + every-PC cycles 719.6 | **927.9** |
+| **Total forward verification floor** | setup/build 43 + ordinary V/R 269.5 + PC initial greens 200.3 + every-PC cycles 719.6 | **1232.4 (20 h 32 m 24 s)** |
+
+Forward inventory: **P=15, U=45, I=205; total 265**. Compared with the adopted 203.4/536.7 floors, the forward Code delta is **101.1 minutes**, Mutation delta **391.2 minutes**, combined **492.3 minutes**. The original 140 and adopted 172 floors are historical subtotals, not the next Code/Mutation dispatch budgets. After accounting for Plan's provisional 3.4, this audit adds another **97.7 minutes** to its 206.8 Code subtotal.
+
+Suites/filters are the preserved `Invoke-C575Selection` roster, every added exact method, the 13 named expanded methods, R-11, and the existing V-8 native method with the specified extension. Each method's entire declared parameter block runs; 0.85 minutes is a minimum budgeting unit, not a promise about its expanded case count. Record fresh TRX expanded cases and wall times during Code/Mutation and increase the forward estimate if measured costs exceed these floors. The added allowances explicitly include new cuts and regressions; they do not authorize another full-suite pass.
+
+Savings: **0 minutes**. No cache/batch/concurrency measurements were made; multiple guards touch the same tailer/runtime/queue files, so shared-file mutants cannot be batched. Method scoping avoids unrelated suites but is already priced into the inherited rates; subtracting that saving again would double-count it.
+
+**Before-handoff audit:** bodies and nearest fixtures read as listed; canonical guards=265, mapped=265, missing=0, duplicate PC mappings=0. Added IDs 173..265 are contiguous and each has a distinct method, mutation and decisive assertion; all original 140 recipes and adopted 32 additions remain intact. All PC recipes are executable design contracts with required setup specified; execution remains pending. No human choice or unverifiable architecture seam remains in this focused audit. **Next: code**, then ordinary Review, confirmed land and SourceLanding Mutation under the existing pipeline.
