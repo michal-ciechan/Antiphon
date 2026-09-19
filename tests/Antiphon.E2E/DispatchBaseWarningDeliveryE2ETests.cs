@@ -23,6 +23,36 @@ public class DispatchBaseWarningDeliveryE2ETests
     }
 
     [Test]
+    public async Task C508_MismatchWarningReachesCaller()
+    {
+        await using var f = new LandDeliveryFixture();
+        await f.InitializeAsync(dispatch: true); await f.StartMismatchDispatchAsync();
+        var intents = await f.WaitForMismatchIntentAsync();
+        await f.AssertDispatchReceiptsAsync(intents);
+    }
+
+    [Test]
+    public async Task C508_MismatchWarningWaitsForCaller()
+    {
+        await using var f = new LandDeliveryFixture();
+        await f.InitializeAsync(busy: true, dispatch: true); await f.StartMismatchDispatchAsync();
+        var intents = await f.WaitForMismatchIntentAsync();
+        await f.TwoNotificationScansAsync();
+        await using (var db = f.CreateContext())
+        {
+            var rows = await db.SessionQueuedMessages.Where(m => m.SourceTaskId == f.TaskId && m.SourceLandNotificationId != null).ToListAsync();
+            rows.Count.ShouldBe(1); rows.ShouldAllBe(m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts == 0);
+            (await db.AgentTaskLandNotifications.Where(n => n.TaskId == f.TaskId).ToListAsync()).ShouldAllBe(n => n.ConfirmedAt == null);
+            (await db.TranscriptEntries.CountAsync(p => p.AgentSessionId == f.CallerId && p.Kind == TranscriptKinds.UserPrompt
+                && p.Text!.Contains("[dispatch-base "))).ShouldBe(0);
+        }
+        Directory.GetFiles(Path.Combine(f.Root, "native"), "updates.jsonl", SearchOption.AllDirectories)
+            .SelectMany(File.ReadAllLines).Count(line => line.Contains("user_message_chunk")
+                && line.Contains("[dispatch-base ")).ShouldBe(0);
+        await f.ReleaseBusyAsync(); await f.AssertDispatchReceiptsAsync(intents);
+    }
+
+    [Test]
     public async Task C540_CollapsedWarningsWaitForBusyCaller()
     {
         await using var f = new LandDeliveryFixture();

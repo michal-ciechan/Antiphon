@@ -49,6 +49,12 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
         services.PostConfigure<DelegationSettings>(settings => settings.AllowedRoots =
             [Path.Combine(Root, "repo"), Path.Combine(Root, "trees", "source")]);
         services.AddSingleton<LandDeliveryBoundary>(p => new FileBoundary(this, p.GetRequiredService<IServiceScopeFactory>()));
+        var lease = services.SingleOrDefault(d => d.ServiceType == typeof(IRepositoryMutationLease));
+        if (lease is not null) services.Remove(lease);
+        services.AddSingleton<IRepositoryMutationLease>(p => new MoveDefaultOnLease(
+            new RepositoryMutationLease(p.GetRequiredService<ILandingGit>()),
+            Root,
+            p.GetRequiredService<IServiceScopeFactory>()));
         var clock = new LandClock(Root);
         services.AddScoped(p => ActivatorUtilities.CreateInstance<AgentTaskLandService>(p, clock));
         services.AddScoped(p => ActivatorUtilities.CreateInstance<AgentTaskLandingProtocol>(p, clock));
@@ -62,6 +68,41 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
             p.GetRequiredService<IOptions<DelegationSettings>>(), p.GetRequiredService<TimeProvider>(), backendOverride: "modern"));
         services.AddSingleton<Antiphon.Messaging.Client.IAntiphonMessagingProducer, RefusingCanaryMessaging>();
         services.AddSingleton<Antiphon.Messaging.Client.IAntiphonMessagingConsumer, RefusingCanaryMessaging>();
+    }
+
+    /// <summary>
+    /// Fires once when <c>move-default-on-lease.json</c> is present: after the dispatcher's
+    /// pre-lease base observation and before the locked claim, matching
+    /// AgentTaskDispatchBaseGuardTests.C508_GuardRefMismatchWarnedOnce.
+    /// </summary>
+    private sealed class MoveDefaultOnLease(IRepositoryMutationLease inner, string root, IServiceScopeFactory scopes)
+        : IRepositoryMutationLease
+    {
+        private int _fired;
+
+        public async Task<RepositoryLease?> TryAcquireAsync(string repository, CancellationToken ct)
+        {
+            var path = Path.Combine(root, "move-default-on-lease.json");
+            if (File.Exists(path) && Interlocked.Exchange(ref _fired, 1) == 0)
+            {
+                using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(path, ct));
+                var projectId = doc.RootElement.GetProperty("projectId").GetGuid();
+                var baseBranch = doc.RootElement.GetProperty("baseBranch").GetString()!;
+                await using var scope = scopes.CreateAsyncScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                await db.Projects.Where(p => p.Id == projectId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(p => p.BaseBranch, baseBranch), ct);
+                await File.WriteAllTextAsync(Path.Combine(root, "move-default-on-lease.fired.json"),
+                    JsonSerializer.Serialize(new { projectId, baseBranch, at = DateTime.UtcNow, pid = Environment.ProcessId }), ct);
+            }
+            return await inner.TryAcquireAsync(repository, ct);
+        }
+
+        public bool Owns(RepositoryLease lease, string commonDirectory) =>
+            inner.Owns(lease, commonDirectory);
+
+        public Task<string?> DescribeUnavailableAsync(string repository, CancellationToken ct) =>
+            inner.DescribeUnavailableAsync(repository, ct);
     }
 
     private sealed class FileBoundary(LandDeliveryOptions options, IServiceScopeFactory scopes) : LandDeliveryBoundary
