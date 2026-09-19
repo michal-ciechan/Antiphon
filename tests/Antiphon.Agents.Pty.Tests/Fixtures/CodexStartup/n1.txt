@@ -1,0 +1,16 @@
+Update available! 0.153.4 -> 0.154.0
+Run npm install -g @openai/codex to update.
+
+OpenAI Codex (v0.153.4)
+model:       loading   /model to change
+directory:   C:\Antiphon\worktrees\card-task-1925f7be
+permissions: YOLO mode
+
+You have 2 usage limit resets available. Run /usage to use one.
+
+Queued follow-up inputs
+  ↳ [antiphon-task:1925f7be] role=Plan … 'C:\src\Antiphon\.antiphon\task-1925f7be-brief.md' …
+    alt + ↑ edit last queued message
+
+> Ask Codex to do anything
+  gpt-6-astra default · C:\Antiphon\worktrees\card-task-1925f7be

@@ -1,0 +1,15 @@
+Run npm install -g @openai/codex to update.
+
+OpenAI Codex (v0.153.4)
+model:       gpt-6-astra xhigh   /model to change
+directory:   C:\Antiphon\worktrees\card-task-1925f7be
+permissions: YOLO mode
+
+Tip: New Use /fast to enable our fastest inference …
+
+You have 2 usage limit resets available. Run /usage to use one.
+
+Starting MCP servers (1/3): cua_repl, node_repl (2s  esc to interrupt)
+
+> [antiphon-task:1925f7be] role=Plan … task-1925f7be-brief.md … [antiphon-task:1925f7be]
+  tab to queue message                                                                               100% context left
