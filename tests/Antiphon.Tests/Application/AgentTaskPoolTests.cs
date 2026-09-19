@@ -491,7 +491,9 @@ public class AgentTaskPoolTests
             await db.SaveChangesAsync();
         }
 
-        var tick = await dispatcher.TickAsync(CancellationToken.None);
+        // A new scope: the previous dispatcher tracked the agent as Running.
+        var (released, _, _) = CreateHarness(connectionString: cs);
+        var tick = await released.TickAsync(CancellationToken.None);
         tick.Dispatched.ShouldBe(1);
         await using var after = CreateContext(cs);
         (await after.AgentTasks.SingleAsync(t => t.Id == seeded.FollowUp.Id)).Status
@@ -560,7 +562,9 @@ public class AgentTaskPoolTests
                 Role = AgentTaskRole.Docs,
                 AgentKind = AgentKind.ClaudeCode,
                 ModelLevel = AgentModelLevel.Medium,
-                Workspace = WorkspaceMode.Shared,
+                // ReadOnly so SerialiseSharedWriters does not hold the follow-up behind this
+                // occupant; occupancy for standing reuse is the live session, not the writer lease.
+                Workspace = WorkspaceMode.ReadOnly,
                 WorkingDirectory = workspace.Path,
                 AgentId = agentId,
                 AgentSessionId = sessionId,
@@ -595,7 +599,8 @@ public class AgentTaskPoolTests
             await db.SaveChangesAsync();
         }
 
-        var tick = await dispatcher.TickAsync(CancellationToken.None);
+        var (released, _, _) = CreateHarness(connectionString: cs);
+        var tick = await released.TickAsync(CancellationToken.None);
         tick.Dispatched.ShouldBe(1);
         await using var after = CreateContext(cs);
         (await after.AgentTasks.SingleAsync(t => t.Id == followUp.Id)).Status
