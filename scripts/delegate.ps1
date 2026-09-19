@@ -435,6 +435,89 @@ function Write-AntiphonLandFailure {
     exit 1
 }
 
+function Invoke-AntiphonGit {
+    param([string]$Root, [string[]]$GitArgs)
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $hadNative = $false
+    $prevNative = $false
+    if ($null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue)) {
+        $hadNative = $true
+        $prevNative = $PSNativeCommandUseErrorActionPreference
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
+    try {
+        $text = & git -C $Root @GitArgs 2>$null
+        return [pscustomobject]@{
+            Ok   = ($LASTEXITCODE -eq 0)
+            Text = if ($null -eq $text) { '' } else { ([string]$text).Trim() }
+        }
+    } catch {
+        return [pscustomobject]@{ Ok = $false; Text = '' }
+    } finally {
+        $ErrorActionPreference = $prevEap
+        if ($hadNative) { $PSNativeCommandUseErrorActionPreference = $prevNative }
+    }
+}
+
+function Write-AntiphonBindFailureDiagnosis {
+    param([string]$Field, [string]$Value, [string]$Detail)
+    $versionUri = "$api/api/version"
+    $probe = Invoke-AntiphonLandVersionProbe -SafeApi (Get-AntiphonSafeApiBase -Api $api)
+    $served = $null
+    $served7 = $null
+    if (-not $probe.Ok) {
+        $why = $probe.StatusCode
+        if ($null -eq $why -or [string]::IsNullOrWhiteSpace([string]$why)) { $why = $probe.Error }
+        if ([string]::IsNullOrWhiteSpace([string]$why)) { $why = 'error' }
+        $headFrag = "GET $versionUri failed ($why)"
+    } else {
+        $observed = $null
+        try {
+            if (-not [string]::IsNullOrWhiteSpace($probe.Body)) {
+                $version = $probe.Body | ConvertFrom-Json
+                if ($null -ne $version.version -and [string]$version.version -ne '') {
+                    $observed = [string]$version.version
+                }
+            }
+        } catch { }
+        if ([string]::IsNullOrWhiteSpace($observed)) {
+            $headFrag = "GET $versionUri failed (no version)"
+        } else {
+            $served = $observed
+            $served7 = if ($observed.Length -ge 7) { $observed.Substring(0, 7) } else { $observed }
+            $headFrag = "served build $served7"
+        }
+    }
+
+    $parts = @("diagnosis: $headFrag rejected '$Value' for '$Field'")
+    if ($null -ne $served) {
+        $root = Get-AntiphonCheckoutRoot
+        $headInfo = Invoke-AntiphonGit -Root $root -GitArgs @('rev-parse', 'HEAD')
+        $head = $headInfo.Text
+        $head7 = if (-not [string]::IsNullOrWhiteSpace($head) -and $head.Length -ge 7) { $head.Substring(0, 7) } else { $head }
+        $known = (Invoke-AntiphonGit -Root $root -GitArgs @('cat-file', '-e', ($served + '^{commit}'))).Ok
+        if (-not $known) {
+            $parts += "served build $served7 is not a commit this checkout knows"
+        } elseif (-not [string]::IsNullOrWhiteSpace($head) -and $served.Equals($head, [StringComparison]::OrdinalIgnoreCase)) {
+            $parts += 'HEAD equals the served build; the value is genuinely unknown to this source'
+        } else {
+            $ancestor = (Invoke-AntiphonGit -Root $root -GitArgs @('merge-base', '--is-ancestor', $served, $head)).Ok
+            if ($ancestor) {
+                $n = (Invoke-AntiphonGit -Root $root -GitArgs @('rev-list', '--count', ($served + '..' + $head))).Text
+                if ([string]::IsNullOrWhiteSpace($n)) { $n = '0' }
+                $parts += "HEAD $head7 is $n commit(s) ahead of the served build"
+            } else {
+                $parts += "served build $served7 is not an ancestor of HEAD $head7"
+            }
+        }
+    }
+    $parts += "restart the AppHost from the canonical checkout (pwsh -NoProfile -File scripts/restart-apphost.ps1), confirm GET $versionUri, then re-run this exact command; do not re-dispatch under a different -Role"
+    # Console.Out, not Write-Output: Invoke-Antiphon is assigned ($created = Invoke-Antiphon ...),
+    # so a success-stream line would be captured and never shown.
+    [Console]::Out.WriteLine(($parts -join '; '))
+}
+
 function Invoke-Antiphon {
     param([string]$Method, [string]$Path, $Body)
     $uri = "$api$Path"
@@ -450,6 +533,21 @@ function Invoke-Antiphon {
         # outside the allowed roots, cost ceiling reached) and that is the actionable part.
         $detail = $_.ErrorDetails.Message
         if ([string]::IsNullOrWhiteSpace($detail)) { $detail = $_.Exception.Message }
+        $code = Get-AntiphonHttpStatusCode $_
+        if ($code -eq 400 -and $detail -match 'could not be converted to [\w.]+\. Path: \$\.(?<field>\w+)') {
+            $field = $Matches['field']
+            $value = '<unknown>'
+            if ($null -ne $Body) {
+                $hasField = $false
+                if ($Body -is [hashtable]) { $hasField = $Body.ContainsKey($field) }
+                elseif ($Body.PSObject -and $Body.PSObject.Properties[$field]) { $hasField = $true }
+                if ($hasField) {
+                    $raw = $Body[$field]
+                    if ($null -ne $raw -and "$raw" -ne '') { $value = [string]$raw }
+                }
+            }
+            Write-AntiphonBindFailureDiagnosis -Field $field -Value $value -Detail $detail
+        }
         Write-Error "Antiphon $Method $Path failed: $detail"
         exit 1
     }
