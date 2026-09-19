@@ -16,12 +16,14 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="TUnit" Version="1.44.0" />
     <PackageReference Include="Shouldly" Version="4.*" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="9.5.0" />
   </ItemGroup>
 
   <ItemGroup>
     <!-- Golden recordings of REAL Claude PTY bytes — replayed to pin our parsers/detectors/screen
          reconstruction against ground truth. Copied verbatim to the test output. -->
     <Content Include="golden\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures\CodexStartup\**\*" CopyToOutputDirectory="PreserveNewest" />
     <!-- Node peers for the pty input path. The real Claude is Node, so a .NET peer cannot
          characterise the consumer that actually loses bytes (CARD-0027). -->
     <Content Include="probes\**\*" CopyToOutputDirectory="PreserveNewest" />

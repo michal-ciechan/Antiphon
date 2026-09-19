@@ -342,4 +342,19 @@ public static class CodexTrustPromptDetector
         return compact.Contains("doyoutrustthecontentsofthisdirectory")
             && compact.Contains("yes,continue");
     }
+
+    /// <summary>
+    /// CARD-0574 D-5: trust is a current-frame decision. Historical raw text must not
+    /// authorize Enter on a different modal.
+    /// </summary>
+    public static bool IsVisibleOnCurrentScreen(string? renderedScreen)
+    {
+        if (string.IsNullOrEmpty(renderedScreen))
+            return false;
+
+        var compact = Regex.Replace(renderedScreen, @"\s+", "", RegexOptions.CultureInvariant)
+            .ToLowerInvariant();
+        return compact.Contains("doyoutrustthecontentsofthisdirectory")
+            && compact.Contains("yes,continue");
+    }
 }
