@@ -417,6 +417,7 @@ public class AgentTaskPoolTests
             .ToListAsync();
         held.Count.ShouldBe(1);
         held[0].Detail.ShouldBe(DispatchHoldDetails.PinnedAgentNoOpenTask(pinned.Name, pinned.Status, pinned.Id));
+        held[0].Detail.ShouldContain($"/api/agents/{agentId:D}/stop");
     }
 
     // ---- CARD-0537: WaitForAgent is a traced hold -------------------------------------------
@@ -533,6 +534,7 @@ public class AgentTaskPoolTests
         var held = await HeldAsync(verify, followUp.Id);
         held.Count.ShouldBe(1);
         held[0].Detail.ShouldBe(DispatchHoldDetails.PinnedAgentNoOpenTask(agentName, AgentStatus.Running, agentId));
+        held[0].Detail.ShouldContain($"/api/agents/{agentId:D}/stop");
     }
 
     [Test]
