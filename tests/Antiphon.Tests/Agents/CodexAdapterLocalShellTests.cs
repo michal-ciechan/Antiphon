@@ -166,7 +166,7 @@ public class CodexAdapterLocalShellTests
     public async Task Question_detection_ignores_question_mark_in_prompt_echo()
     {
         SkipIfNotWindows();
-        using var painted = PaintedCodexCmd.Positive();
+        using var painted = PaintedCodexCmd.Positive(compact: true);
         await using var adapter = new CodexAdapter(FastOptions());
         await adapter.StartAsync(CmdBatchSpec(painted.BatchPath), CancellationToken.None);
         await WaitUntilSnapshotContainsAsync(adapter, "Ask Codex to do anything", TimeSpan.FromSeconds(60));
@@ -180,7 +180,7 @@ public class CodexAdapterLocalShellTests
         result.TurnCompleted.ShouldBeTrue();
         result.ResponseText.ShouldNotBeNull();
         result.ResponseText.ShouldContain("answer has no question");
-        result.IsAskingQuestion.ShouldBeFalse();
+        result.IsAskingQuestion.ShouldBeFalse(result.ResponseText);
     }
 
     [Test]
@@ -278,7 +278,7 @@ public class CodexAdapterLocalShellTests
 
         private PaintedCodexCmd(string batchPath) => BatchPath = batchPath;
 
-        public static PaintedCodexCmd Positive() => FromScript("");
+        public static PaintedCodexCmd Positive(bool compact = false) => FromScript("", compact: compact);
 
         public static PaintedCodexCmd SlowThenPositive() =>
             FromScript("ping -n 5 127.0.0.1 > nul\r\necho SLOW_START_BODY\r\n");
@@ -305,10 +305,23 @@ public class CodexAdapterLocalShellTests
                 extraFiles: [loading]);
         }
 
-        private static PaintedCodexCmd FromScript(string extraPrefix, string[]? extraFiles = null)
+        /// <summary>
+        /// P-2 banner/composer/footer. Compact drops trailing padding so a later typed command
+        /// is not split by ConPTY scroll; full height is required after trust so the two-label
+        /// prompt leaves the current screen. The Desktop-app tip query mark is not part of the
+        /// ready layout and would trip the in-process question detector.
+        /// </summary>
+        private static string PositiveLayout(bool compact)
+        {
+            var screen = CodexStartupFixtures.P2.Replace(
+                "codex?app-landing-page=true", "codex/app-landing-page=true", StringComparison.Ordinal);
+            return compact ? screen.TrimEnd() + "\r\n" : screen;
+        }
+
+        private static PaintedCodexCmd FromScript(string extraPrefix, string[]? extraFiles = null, bool compact = false)
         {
             var layout = Path.Combine(Path.GetTempPath(), $"antiphon-c574-layout-{Guid.NewGuid():N}.txt");
-            File.WriteAllText(layout, CodexStartupFixtures.P2);
+            File.WriteAllText(layout, PositiveLayout(compact));
             var batch = new PtyTempBatch(
                 "@echo off\r\nchcp 65001 > nul\r\n" + extraPrefix +
                 $"type \"{layout}\"\r\nprompt $S\r\n");
