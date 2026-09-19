@@ -57,10 +57,22 @@ child. Do not `POST /api/agents` per feature, and do not invent a unique working
 for a child -- that mints identity (and, with a path that is not a real checkout, a project
 and a board) instead of a task. A child started that way and prompted via session messages
 never reports back -- no `[task ... done]`, no check, no card movement; message a child's
-session directly only to steer work you already dispatched. Dispatch is sequential-by-default:
-a 409 `concurrency_limit` names this project's occupants and cap; wait, or re-send with
-`-IgnoreConcurrencyLimit` only when the user asked for parallel work this turn. Other
-projects' work never counts against yours.
+session directly only to steer work you already dispatched.
+
+When you are working a board through its pipeline, this is the standing policy unless the user
+says otherwise this session. One task per pipeline stage (Investigate, Plan, TestDesign, Code,
+Mutation, Review), stages running in parallel with each other, each in its own -Worktree, never
+two tasks in the same stage. On every completion dispatch the named next stage. Land a stage's
+work as soon as it is confirmed. Keep the Code stage at a depth of two (in flight, queued and
+ready together, read from GET /api/agent-tasks/pipeline): below two, pull the next unstarted
+Backlog card, lowest rank first, and start it through Plan toward Code; at two, start no new Plan
+toward Code. A card whose Code work touches the same source area as a Code task already in flight
+waits for that task to land, even with a free Code slot. File a Backlog card the moment
+Investigate or Review finds a structural defect; never batch them. A 409 `concurrency_limit`
+carries `axis` and the open occupants with their roles: re-send with `-IgnoreConcurrencyLimit`
+only when the axis is `absolute` and no occupant is in the stage you are dispatching; when it is
+`role`, or a same-stage occupant is listed, defer. Other projects' work never counts against
+yours. The reasons are in docs/orchestration-loop.md §1.
 
 Model-tier names are **not AgentKind values**. In `delegate.ps1`, `-Kind` selects
 `ClaudeCode`, `Grok`, or `Codex`; `-Level` selects `Frontier`, `High`, `Medium`, or `Low`.
