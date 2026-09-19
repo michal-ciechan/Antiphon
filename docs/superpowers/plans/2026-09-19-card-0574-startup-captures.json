@@ -1,0 +1,54 @@
+{
+  "card": "CARD-0574",
+  "testDesignTask": "eda54a92",
+  "replayedAtUtc": "2026-09-19T11:46:37.5185038Z",
+  "replaySourceCommit": "b49623d9e37c4b908ad6e75104cb350d84139650",
+  "replayImplementation": "src/Antiphon.Agents.Pty/TerminalScreen.cs; Feed each segment ending ESC[?2026l through synchronizedFrame, then GetScreenText",
+  "captures": [
+    {
+      "id": "P-1",
+      "cliVersion": "0.147.0",
+      "source": "C:\\logs\\antiphon\\session-runner\\5851adc8187447da8073f2c789a54ab2.ansi.log",
+      "sourceReference": "docs/superpowers/plans/2026-08-27-card-0133-codex-readiness-and-boot-wedge-plan.md",
+      "sourceSha256": "46f2221d57ca2162d1b37be282fd1e962eaf1b52db27f6fe1c4539b9d3e649e9",
+      "synchronizedFrame": 8,
+      "prefixUtf8Bytes": 5390,
+      "replayCols": 120,
+      "replayRows": 30,
+      "originalGeometry": "Not independently persisted in these archived files; 120x30 replay matches the repository launch/test geometry. This is rendered-layout evidence, not original terminal geometry qualification.",
+      "redaction": "Eight-character task suffix in cwd replaced by 00000000; row widths preserved. No work-body or credential material retained.",
+      "renderedScreenSha256": "860c2cbcedd5824cf70c574847cfe9154f03ef51559d753745a378e7b33856e2",
+      "renderedScreen": "╭─────────────────────────────────────────────────╮\n│ ✨ Update available! 0.147.0 -> 0.149.0         │\n│ Run npm install -g @openai/codex to update.     │\n│                                                 │\n│ See full release notes:                         │\n│ https://github.com/openai/codex/releases/latest │\n╰─────────────────────────────────────────────────╯\n\n╭───────────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.147.0)                            │\n│                                                       │\n│ model:       gpt-5.6-terra high   /model to change    │\n│ directory:   C:\\Antiphon\\worktrees\\card-task-00000000 │\n│ permissions: YOLO mode                                │\n╰───────────────────────────────────────────────────────╯\n\n  Tip: Type / to open the command popup; Tab autocompletes slash commands.\n\n\n› Improve documentation in @filename\n\n  gpt-5.6-terra high · C:\\Antiphon\\worktrees\\card-task-00000000\n\n\n\n\n\n\n\n"
+    },
+    {
+      "id": "P-2",
+      "cliVersion": "0.151.0",
+      "source": "C:\\logs\\antiphon\\session-runner\\f83bb10b787f4a3a8155cb58ca260a99.ansi.log",
+      "sourceReference": "docs/investigations/2026-09-01-card-0299-codex-plan-unsubmitted.md",
+      "sourceSha256": "747dd4614d1fa6871ea2779d36e59d234ae558fa43e356904f50c2708874e9d3",
+      "synchronizedFrame": 44,
+      "prefixUtf8Bytes": 7099,
+      "replayCols": 120,
+      "replayRows": 30,
+      "originalGeometry": "Not independently persisted in these archived files; 120x30 replay matches the repository launch/test geometry. This is rendered-layout evidence, not original terminal geometry qualification.",
+      "redaction": "Eight-character task suffix in cwd replaced by 00000000; row widths preserved. No work-body or credential material retained.",
+      "renderedScreenSha256": "a1f5a5ac526406b18e4f18e2ba8790ac41714596c760a0d7b1fb2b0cb66795c4",
+      "renderedScreen": "╭─────────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.151.0)                          │\n│                                                     │\n│ model:       gpt-5.6-terra xhigh   /model to change │\n│ directory:   C:\\src\\Antiphon                        │\n│ permissions: YOLO mode                              │\n╰─────────────────────────────────────────────────────╯\n\n  Tip: Try the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true\n\n• You have 1 usage limit reset available. Run /usage to use one.\n\n\n› Ask Codex to do anything\n\n  gpt-5.6-terra xhigh · C:\\src\\Antiphon\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "id": "P-3",
+      "cliVersion": "0.153.4",
+      "source": "C:\\logs\\antiphon\\session-runner\\03b5506027cf4275bf472cd4bbbf8680.ansi.log",
+      "sourceReference": "archived session screen selected by TestDesign; rendered layout evidence, no task-success assertion",
+      "sourceSha256": "4816537f8eb3b4eb7b433c6c6c366348c671926e0e5b5b7e52503e3710c2d20e",
+      "synchronizedFrame": 25,
+      "prefixUtf8Bytes": 9002,
+      "replayCols": 120,
+      "replayRows": 30,
+      "originalGeometry": "Not independently persisted in these archived files; 120x30 replay matches the repository launch/test geometry. This is rendered-layout evidence, not original terminal geometry qualification.",
+      "redaction": "Eight-character task suffix in cwd replaced by 00000000; row widths preserved. No work-body or credential material retained.",
+      "renderedScreenSha256": "c21bc3a7d61216ab60a8aef63a2c94eba80983a2009ec904be0e30a337071932",
+      "renderedScreen": "╭─────────────────────────────────────────────────╮\n│ ✨ Update available! 0.153.4 -> 0.154.0         │\n│ Run npm install -g @openai/codex to update.     │\n│                                                 │\n│ See full release notes:                         │\n│ https://github.com/openai/codex/releases/latest │\n╰─────────────────────────────────────────────────╯\n\n╭───────────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.153.4)                            │\n│                                                       │\n│ model:       gpt-6-astra xhigh   /model to change     │\n│ directory:   C:\\Antiphon\\worktrees\\card-task-00000000 │\n│ permissions: YOLO mode                                │\n╰───────────────────────────────────────────────────────╯\n\n  Tip: Try the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true\n\n• You have 2 usage limit resets available. Run /usage to use one.\n\n⚠ Heads up, you have less than 5% of your weekly limit left. Run /status for a breakdown.\n\n\n› Ask Codex to do anything\n\n  gpt-6-astra xhigh · C:\\Antiphon\\worktrees\\card-task-00000000\n\n\n\n"
+    }
+  ]
+}
