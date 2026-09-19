@@ -63,10 +63,9 @@ public class AgentRegistrySettings
     public int CodexReadyMaxWaitMs { get; set; } = 60000;
 
     /// <summary>
-    /// CARD-0299 S3. After quiet+trust, how long ready waits for
-    /// <c>Starting MCP servers</c> / <c>Booting MCP server</c> to leave the screen
-    /// (plus 500 ms of consecutive absence). Zero disables the wait. The bound is a
-    /// cap, not a sleep; expiry logs a Warning and proceeds — the boot line is not a modal.
+    /// CARD-0574 D-3. Compatibility key: a positive value is a once-per-wait diagnostic
+    /// threshold after MCP is first observed. Zero suppresses that warning only. It does
+    /// not disable the positive ready gate or add time to <see cref="CodexReadyMaxWaitMs"/>.
     /// </summary>
     public int CodexBootStatusMaxWaitMs { get; set; } = 10_000;
     public int CodexDoneQuietPeriodMs { get; set; } = 3000;

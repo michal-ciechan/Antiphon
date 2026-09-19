@@ -32,7 +32,6 @@ public sealed class CodexAdapter : IAgentProtocolAdapter
     private TaskCompletionSource? _firstPromptOutput;
     private string? _lastPrompt;
     private string? _blindSubmitWarning;
-    private bool _acceptedTrustPrompt;
     private bool _started;
 
     public CodexAdapter(IOptions<AgentRegistrySettings> options)
@@ -45,7 +44,6 @@ public sealed class CodexAdapter : IAgentProtocolAdapter
         {
             QuietPeriod = TimeSpan.FromMilliseconds(settings.CodexReadyQuietPeriodMs),
             MaxWait = TimeSpan.FromMilliseconds(settings.CodexReadyMaxWaitMs),
-            // Lockstep with RunnerCodexAdapter.WaitForReadyAsync: quiet+trust, then MCP boot line.
             BootStatusMaxWait = TimeSpan.FromMilliseconds(settings.CodexBootStatusMaxWaitMs),
         };
         _doneDetector = new CodexDoneDetector
@@ -149,7 +147,7 @@ public sealed class CodexAdapter : IAgentProtocolAdapter
     public Task<bool> WaitForReadyAsync(CancellationToken ct)
     {
         EnsureStarted();
-        return _readyDetector.WaitAsync(_runner, AcceptTrustPromptIfVisibleAsync, ct);
+        return _readyDetector.WaitAsync(_runner, ct);
     }
 
     public async Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct)
@@ -197,18 +195,6 @@ public sealed class CodexAdapter : IAgentProtocolAdapter
     {
         _firstPromptOutput?.TrySetResult();
         OnTextDelta?.Invoke(chunk);
-    }
-
-    private async Task AcceptTrustPromptIfVisibleAsync(CancellationToken ct)
-    {
-        if (_acceptedTrustPrompt)
-            return;
-
-        if (!CodexTrustPromptDetector.IsVisible(_runner.SnapshotText(), _runner.SnapshotScreen()))
-            return;
-
-        _acceptedTrustPrompt = true;
-        await _runner.WriteAsync("\r", ct);
     }
 
     private static AgentExitReason MapExitReason(PtyExitReason reason) => reason switch

@@ -357,6 +357,13 @@ public partial class HerdrAlwaysOnChannelParityTests
         sidecar.WorkspaceLabel.ShouldBe("PredictionMarkets");
     }
 
+    [Test]
+    public void Generic_herdr_codex_banner_is_not_startup_ready()
+    {
+        Antiphon.Agents.Pty.CodexStartupScreen.Classify("agent:codex env=none")
+            .IsReady.ShouldBeFalse("V-5: generic agent:codex refuses");
+    }
+
     /// <summary>
     /// CARD-0187 S2: the herdr launch definition is parametrised over ClaudeCode / Grok / Codex.
     /// Claude/Grok use the fake CLIs; Codex has none so it uses the same <c>cmd.exe</c> stub as
@@ -387,6 +394,7 @@ public partial class HerdrAlwaysOnChannelParityTests
                     AgentKind.Codex => HerdrAgentKinds.Codex,
                     _ => HerdrAgentKinds.Claude,
                 },
+                CodexStartupScreen = kind == AgentKind.Codex ? Antiphon.Agents.Pty.Tests.CodexStartupFixtures.P3 : null,
             };
             fake.Start();
             await fake.WaitUntilListeningAsync();

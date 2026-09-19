@@ -26,7 +26,6 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
     // below — a failed capture must fall back here, not to 0, once this adapter has observed rows.
     private long? _lastKnownTranscriptSequence;
     private string? _lastPrompt;
-    private bool _acceptedTrustPrompt;
     private bool _started;
 
     public RunnerCodexAdapter(
@@ -138,23 +137,38 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
     public async Task<bool> WaitForReadyAsync(CancellationToken ct)
     {
         EnsureStarted();
-        var quiet = await _terminal.WaitForQuietAfterVisibleAsync(
-            TimeSpan.FromMilliseconds(_settings.CodexReadyQuietPeriodMs),
-            TimeSpan.FromMilliseconds(_settings.CodexReadyMaxWaitMs),
-            ct,
-            AcceptTrustPromptIfVisibleAsync);
-        if (!quiet)
-            return false;
-
-        // Lockstep with CodexReadyDetector.WaitAsync / CodexAdapter: quiet+trust, then MCP boot line.
-        await CodexMcpBoot.WaitUntilAbsentAsync(
-            _terminal.SnapshotScreenAsync,
-            CodexMcpBoot.AbsentSettle,
-            TimeSpan.FromMilliseconds(_settings.CodexBootStatusMaxWaitMs),
-            ms => _logger?.LogWarning(
-                "Codex MCP boot line still visible after {Ms}ms; typing anyway", ms),
-            ct);
-        return true;
+        return await CodexReadyWait.WaitAsync(
+            async token =>
+            {
+                var snap = await _terminal.GetSnapshotAsync(token);
+                return new CodexStartupSnapshot(snap.RenderedScreen, snap.RawOutput);
+            },
+            new CodexReadyWaitOptions
+            {
+                MaxWait = TimeSpan.FromMilliseconds(_settings.CodexReadyMaxWaitMs),
+                Settle = TimeSpan.FromMilliseconds(_settings.CodexReadyQuietPeriodMs),
+                BootStatusThreshold = TimeSpan.FromMilliseconds(_settings.CodexBootStatusMaxWaitMs),
+                OnDiagnostic = message =>
+                {
+                    if (message.StartsWith("codex-startup not-ready", StringComparison.Ordinal))
+                    {
+                        _logger?.LogWarning(
+                            "Session {SessionId} {Message}", _terminal.SessionId, message);
+                    }
+                    else
+                    {
+                        _logger?.LogDebug(
+                            "Session {SessionId} {Message}", _terminal.SessionId, message);
+                    }
+                },
+                OnBootStatusThreshold = ms => _logger?.LogWarning(
+                    "Session {SessionId} Codex MCP still observed after {Ms}ms; continuing the positive gate",
+                    _terminal.SessionId,
+                    ms),
+            },
+            writeAsync: (input, token) => _terminal.WriteAsync(input, token),
+            isExited: () => _terminal.Exited.IsCompleted,
+            ct: ct);
     }
 
     /// <summary>
@@ -314,19 +328,5 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
     {
         if (!_started)
             throw new InvalidOperationException("RunnerCodexAdapter not started.");
-    }
-
-    private async Task AcceptTrustPromptIfVisibleAsync(CancellationToken ct)
-    {
-        if (_acceptedTrustPrompt)
-            return;
-
-        var raw = await _terminal.SnapshotTextAsync(ct);
-        var screen = await _terminal.SnapshotScreenAsync(ct);
-        if (!CodexTrustPromptDetector.IsVisible(raw, screen))
-            return;
-
-        _acceptedTrustPrompt = true;
-        await _terminal.WriteAsync("\r", ct);
     }
 }

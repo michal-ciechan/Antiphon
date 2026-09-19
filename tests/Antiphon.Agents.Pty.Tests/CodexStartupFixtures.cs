@@ -4,7 +4,7 @@ using System.Text.Json;
 
 namespace Antiphon.Agents.Pty.Tests;
 
-internal static class CodexStartupFixtures
+public static class CodexStartupFixtures
 {
     private static readonly Lazy<IReadOnlyDictionary<string, string>> Captures = new(LoadCaptures);
 

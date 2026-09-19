@@ -27,6 +27,11 @@
   <ItemGroup>
     <!-- Pinned real-Claude record shapes (captured by headed canaries; e.g. compact-boundary.jsonl). -->
     <Content Include="Agents\Fixtures\**" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\Antiphon.Agents.Pty.Tests\Fixtures\CodexStartup\**\*"
+             Link="Fixtures\CodexStartup\%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" />
+    <Compile Include="..\Antiphon.Agents.Pty.Tests\CodexStartupFixtures.cs"
+             Link="Agents\CodexStartupFixtures.cs" />
     <Content Include="..\Antiphon.SessionRunner.Tests\Fixtures\grok-transport-error.jsonl"
              Link="Fixtures\grok-transport-error.jsonl"
              CopyToOutputDirectory="PreserveNewest" />

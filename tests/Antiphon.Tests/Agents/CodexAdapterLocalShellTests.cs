@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Antiphon.Agents.Pty;
+using Antiphon.Agents.Pty.Tests;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
@@ -54,17 +55,7 @@ public class CodexAdapterLocalShellTests
     /// an interactive cmd does not re-echo the commands you type, so the prompt still appears
     /// exactly once in the snapshot and <c>ExtractResponse</c> still strips it.
     /// </summary>
-    private static AgentLaunchSpec InteractiveCmdSpec() => new(
-        DefinitionName: "codex-fake",
-        Kind: AgentKind.Codex,
-        Exe: Cmd,
-        Args: new[] { "/d", "/k", "prompt $G" },
-        Env: new Dictionary<string, string>(),
-        Cwd: Environment.CurrentDirectory,
-        Cols: 120,
-        Rows: 30);
-
-    private static AgentLaunchSpec TrustPromptCmdSpec(string batchPath) => new(
+    private static AgentLaunchSpec CmdBatchSpec(string batchPath) => new(
         DefinitionName: "codex-fake",
         Kind: AgentKind.Codex,
         Exe: Cmd,
@@ -139,9 +130,10 @@ public class CodexAdapterLocalShellTests
     public async Task Wait_for_turn_complete_returns_question_state_after_quiet_output()
     {
         SkipIfNotWindows();
+        using var painted = PaintedCodexCmd.Positive();
         await using var adapter = new CodexAdapter(FastOptions());
-        await adapter.StartAsync(InteractiveCmdSpec(), CancellationToken.None);
-        await WaitUntilSnapshotContainsAsync(adapter, ">", TimeSpan.FromSeconds(60));
+        await adapter.StartAsync(CmdBatchSpec(painted.BatchPath), CancellationToken.None);
+        await WaitUntilSnapshotContainsAsync(adapter, "Ask Codex to do anything", TimeSpan.FromSeconds(60));
         (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue();
 
         await adapter.SendPromptAsync(
@@ -159,35 +151,25 @@ public class CodexAdapterLocalShellTests
     public async Task Wait_for_ready_accepts_codex_directory_trust_prompt()
     {
         SkipIfNotWindows();
-        using var bat = new PtyTempBatch("""
-            @echo off
-            echo Do you trust the contents of this directory?
-            echo 1. Yes, continue
-            set /p CHOICE=
-            echo READY_AFTER_TRUST
-            prompt $G
-            """);
+        using var painted = PaintedCodexCmd.TrustThenPositive();
         await using var adapter = new CodexAdapter(FastOptions());
-        await adapter.StartAsync(TrustPromptCmdSpec(bat.Path), CancellationToken.None);
-        // Title-only is not enough: cmd writes ESC]0;… before the batch body
-        // (measured 2321ms to title, body still absent at 6549ms under load).
+        await adapter.StartAsync(CmdBatchSpec(painted.BatchPath), CancellationToken.None);
         await WaitUntilSnapshotContainsAsync(adapter, "1. Yes, continue", TimeSpan.FromSeconds(60));
 
         var ready = await adapter.WaitForReadyAsync(CancellationToken.None);
 
         ready.ShouldBeTrue();
-        // WaitForReady sends Enter on the trust prompt then waits QuietPeriod;
-        // the accept echo can land after that quiet, so gate on it separately.
-        await WaitUntilSnapshotContainsAsync(adapter, "READY_AFTER_TRUST", TimeSpan.FromSeconds(60));
+        await WaitUntilSnapshotContainsAsync(adapter, "Ask Codex to do anything", TimeSpan.FromSeconds(60));
     }
 
     [Test]
     public async Task Question_detection_ignores_question_mark_in_prompt_echo()
     {
         SkipIfNotWindows();
+        using var painted = PaintedCodexCmd.Positive();
         await using var adapter = new CodexAdapter(FastOptions());
-        await adapter.StartAsync(InteractiveCmdSpec(), CancellationToken.None);
-        await WaitUntilSnapshotContainsAsync(adapter, ">", TimeSpan.FromSeconds(60));
+        await adapter.StartAsync(CmdBatchSpec(painted.BatchPath), CancellationToken.None);
+        await WaitUntilSnapshotContainsAsync(adapter, "Ask Codex to do anything", TimeSpan.FromSeconds(60));
         (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue();
 
         await adapter.SendPromptAsync(
@@ -205,9 +187,10 @@ public class CodexAdapterLocalShellTests
     public async Task Kill_terminates_codex_process_with_stopped_exit_reason()
     {
         SkipIfNotWindows();
+        using var painted = PaintedCodexCmd.Positive();
         await using var adapter = new CodexAdapter(FastOptions());
-        await adapter.StartAsync(InteractiveCmdSpec(), CancellationToken.None);
-        await WaitUntilSnapshotContainsAsync(adapter, ">", TimeSpan.FromSeconds(60));
+        await adapter.StartAsync(CmdBatchSpec(painted.BatchPath), CancellationToken.None);
+        await WaitUntilSnapshotContainsAsync(adapter, "Ask Codex to do anything", TimeSpan.FromSeconds(60));
         (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue();
 
         await Task.Delay(300); // settle; not a deadline
@@ -233,24 +216,13 @@ public class CodexAdapterLocalShellTests
         CodexDoneMaxWaitMs = 15_000,
     });
 
-    private static AgentLaunchSpec SlowStartCmdSpec(string batchPath) => new(
-        DefinitionName: "codex-fake",
-        Kind: AgentKind.Codex,
-        Exe: Cmd,
-        Args: new[] { "/d", "/q", "/k", batchPath },
-        Env: new Dictionary<string, string>(),
-        Cwd: Environment.CurrentDirectory,
-        Cols: 120,
-        Rows: 30);
-
     [Test]
     public async Task Wait_for_ready_does_not_fire_during_slow_start_silence()
     {
         SkipIfNotWindows();
-        using var bat = new PtyTempBatch(
-            "@echo off\r\nping -n 5 127.0.0.1 > nul\r\necho SLOW_START_BODY\r\nprompt $G\r\n");
+        using var painted = PaintedCodexCmd.SlowThenPositive();
         await using var adapter = new CodexAdapter(SlowStartOptions());
-        await adapter.StartAsync(SlowStartCmdSpec(bat.Path), CancellationToken.None);
+        await adapter.StartAsync(CmdBatchSpec(painted.BatchPath), CancellationToken.None);
 
         var sw = Stopwatch.StartNew();
         var ready = await adapter.WaitForReadyAsync(CancellationToken.None);
@@ -266,10 +238,9 @@ public class CodexAdapterLocalShellTests
     public async Task Wait_for_turn_complete_does_not_succeed_on_a_stripped_empty_slow_start()
     {
         SkipIfNotWindows();
-        using var bat = new PtyTempBatch(
-            "@echo off\r\nping -n 5 127.0.0.1 > nul\r\necho SLOW_START_BODY\r\nprompt $G\r\n");
+        using var painted = PaintedCodexCmd.SlowThenPositive();
         await using var adapter = new CodexAdapter(SlowStartOptions());
-        await adapter.StartAsync(SlowStartCmdSpec(bat.Path), CancellationToken.None);
+        await adapter.StartAsync(CmdBatchSpec(painted.BatchPath), CancellationToken.None);
 
         await adapter.SendPromptAsync(AsCodexTurn("cd ."), CancellationToken.None);
         var result = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
@@ -280,5 +251,81 @@ public class CodexAdapterLocalShellTests
         VisiblePtyOutput.HasVisibleOutput(result.RawSnapshot).ShouldBeTrue(
             "a completed empty turn is the card title — the snapshot must have visible text");
         result.RawSnapshot.ShouldContain("SLOW_START_BODY");
+    }
+
+    [Test]
+    public async Task Loaded_layout_release_is_required_by_the_in_process_adapter()
+    {
+        SkipIfNotWindows();
+        var gate = Path.Combine(Path.GetTempPath(), $"antiphon-c574-gate-{Guid.NewGuid():N}.txt");
+        using var painted = PaintedCodexCmd.LoadingUntil(gate);
+        await using var adapter = new CodexAdapter(SlowStartOptions());
+        await adapter.StartAsync(CmdBatchSpec(painted.BatchPath), CancellationToken.None);
+        await WaitUntilSnapshotContainsAsync(adapter, "loading", TimeSpan.FromSeconds(60));
+
+        var ready = adapter.WaitForReadyAsync(CancellationToken.None);
+        await Task.Delay(300);
+        ready.IsCompleted.ShouldBeFalse("R-40: ready.IsCompleted.ShouldBeFalse() while the child holds Loading");
+
+        File.WriteAllText(gate, "go");
+        (await ready.WaitAsync(TimeSpan.FromSeconds(20))).ShouldBeTrue("R-40: release plus settle");
+    }
+
+    private sealed class PaintedCodexCmd : IDisposable
+    {
+        private readonly List<string> _files = [];
+        public string BatchPath { get; }
+
+        private PaintedCodexCmd(string batchPath) => BatchPath = batchPath;
+
+        public static PaintedCodexCmd Positive() => FromScript("");
+
+        public static PaintedCodexCmd SlowThenPositive() =>
+            FromScript("ping -n 5 127.0.0.1 > nul\r\necho SLOW_START_BODY\r\n");
+
+        public static PaintedCodexCmd TrustThenPositive() =>
+            FromScript(
+                "echo Do you trust the contents of this directory?\r\n" +
+                "echo 1. Yes, continue\r\n" +
+                "set /p CHOICE=\r\n");
+
+        public static PaintedCodexCmd LoadingUntil(string gatePath)
+        {
+            var loading = Path.Combine(Path.GetTempPath(), $"antiphon-c574-loading-{Guid.NewGuid():N}.txt");
+            File.WriteAllText(loading,
+                CodexStartupFixtures.ReplaceModelValue(CodexStartupFixtures.P2, "loading"));
+            return FromScript(
+                $"type \"{loading}\"\r\n" +
+                $":wait\r\n" +
+                $"if exist \"{gatePath}\" goto go\r\n" +
+                $"ping -n 2 127.0.0.1 > nul\r\n" +
+                $"goto wait\r\n" +
+                $":go\r\n" +
+                $"for /l %%i in (1,1,40) do echo.\r\n",
+                extraFiles: [loading]);
+        }
+
+        private static PaintedCodexCmd FromScript(string extraPrefix, string[]? extraFiles = null)
+        {
+            var layout = Path.Combine(Path.GetTempPath(), $"antiphon-c574-layout-{Guid.NewGuid():N}.txt");
+            File.WriteAllText(layout, CodexStartupFixtures.P2);
+            var batch = new PtyTempBatch(
+                "@echo off\r\nchcp 65001 > nul\r\n" + extraPrefix +
+                $"type \"{layout}\"\r\nprompt $S\r\n");
+            var painted = new PaintedCodexCmd(batch.Path);
+            painted._files.Add(layout);
+            painted._files.Add(batch.Path);
+            if (extraFiles is not null)
+                painted._files.AddRange(extraFiles);
+            return painted;
+        }
+
+        public void Dispose()
+        {
+            foreach (var file in _files)
+            {
+                try { File.Delete(file); } catch { }
+            }
+        }
     }
 }
