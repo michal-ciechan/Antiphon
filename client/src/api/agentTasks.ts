@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiGet, apiPost } from './client'
 import type { AgentModelLevel } from './agents'
 import type { AgentKind } from './boards'
@@ -720,6 +720,7 @@ export function useAgentTasks(includeChecks = false, options: AgentTaskListOptio
     // SignalR invalidates on every task change; this only covers a dropped connection.
     refetchInterval: 15_000,
     staleTime: 5_000,
+    placeholderData: keepPreviousData,
   })
 }
 
@@ -729,6 +730,7 @@ export function useAgentTaskListSummary(options: AgentTaskScopeOptions = {}) {
     queryFn: () => apiGet<AgentTaskListSummaryDto>(queryForAgentTaskSummary(options)),
     refetchInterval: 15_000,
     staleTime: 5_000,
+    placeholderData: keepPreviousData,
   })
 }
 
