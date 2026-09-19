@@ -384,6 +384,16 @@ the model rides `-c` TOML config overrides, all of which live in
 | `model_reasoning_effort=<low\|medium\|high\|xhigh>` | set **explicitly on every launch**, from the tier. Codex's own per-model defaults are wrong at both ends — `gpt-6-astra` defaults to `low` (same as Sol before it), and the operator's `~/.codex/config.toml` here says `xhigh` and would otherwise be inherited by a Low-tier delegate. Neither default tracks the tier the caller asked for. Frontier stays at `xhigh`; `ultra` is in Astra's catalog and is not wired. |
 | `disable_paste_burst=true` | CARD-0133. Codex's PasteBurst heuristic suppresses Enter for 120 ms after a typed burst and re-extends that window on every suppressed Enter; the queue's ~20 ms body→Enter gap lands inside it (9 of 78 cold Codex delegate launches). A static launch flag, not a delay. Official top-level boolean (default false); `-c` outranks `~/.codex/config.toml`, which does not set this key. Applied to both delegate and named-agent Codex launches. |
 
+**Startup readiness (CARD-0574).** Cold Codex work is withheld until a positively identified
+loaded-model, empty-composer, model/effort/cwd-footer layout has settled for
+`CodexReadyQuietPeriodMs` (1 s) inside `CodexReadyMaxWaitMs` (60 s). An absent MCP marker, a quiet
+terminal, `model: loading`, queue-mode (`tab to queue message`), or a nonempty composer cannot
+authorize input. `CodexBootStatusMaxWaitMs` is a once-per-wait diagnostic after MCP is first
+seen; zero suppresses that warning only and is not a bypass. Ready is not delivered: the queue
+still requires a native UserPrompt. Passive layout evidence does not prove the CLI will process
+the next byte (CARD-0133 S0-P4/S4 remain deferred). Automatic queue delivery admits only
+`SessionStatus.Running`; `SendNow` / Mode.Now refuse a non-Running session with "still starting".
+
 Tier → reasoning effort: `Frontier`→`xhigh`, `High`→`high`, `Medium`→`medium`, `Low`→`low`.
 
 **Compaction ownership (CARD-0395).** Codex reconstructs its instruction/context state through
