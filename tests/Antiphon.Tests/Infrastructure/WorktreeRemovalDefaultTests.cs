@@ -12,6 +12,7 @@ public sealed class WorktreeRemovalDefaultTests
     [Arguments("legacy")]
     [Arguments("publication")]
     [Arguments("local")]
+    [Arguments("settled")]
     [Arguments("unknown")]
     public async Task C448_V36_InterfaceDefaultsNeverDelegateDeletion(string entry)
     {
@@ -23,6 +24,7 @@ public sealed class WorktreeRemovalDefaultTests
         {
             "publication" => WorktreeRemovalPurpose.Publication,
             "local" => WorktreeRemovalPurpose.LocalMerge,
+            "settled" => WorktreeRemovalPurpose.SettledTask,
             _ => (WorktreeRemovalPurpose)999,
         }, source, "fixture-common", "fixture-admin", new string('a', 40), new string('b', 40),
             Guid.NewGuid(), null!);

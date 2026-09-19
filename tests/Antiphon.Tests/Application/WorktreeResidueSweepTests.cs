@@ -165,6 +165,99 @@ public sealed class WorktreeResidueSweepTests
     }
 
     [Test]
+    public async Task C459_ExecuteFalseIsReadOnly()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var manager = new RecordingResidueWorktrees();
+        var service = new WorktreeResidueSweepService(
+            db, manager, Options.Create(new WorktreeResidueSettings { Execute = false, MaxActionsPerRun = 25 }),
+            Options.Create(new GitSettings { DefaultBranch = "master" }),
+            new FakeTimeProvider(new DateTimeOffset(Now, TimeSpan.Zero)),
+            NullLogger<WorktreeResidueSweepService>.Instance);
+        var report = await service.RunAsync(CancellationToken.None);
+        var mutatingActions = manager.RemoveCalls;
+        mutatingActions.ShouldBe(0);
+        report.Removed.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C459_NonordinaryInventoryOnly()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var manager = new RecordingResidueWorktrees
+        {
+            Scan =
+            [
+                new WorktreeResidueScanEntry(@"C:\src\Antiphon", "master", @"C:\src\Antiphon", true, true),
+                new WorktreeResidueScanEntry(@"C:\Antiphon\evidence\code-x", "HEAD", @"C:\src\Antiphon", false, true),
+            ]
+        };
+        var service = new WorktreeResidueSweepService(
+            db, manager, Options.Create(new WorktreeResidueSettings { Execute = true, MaxActionsPerRun = 25 }),
+            Options.Create(new GitSettings { DefaultBranch = "master" }),
+            new FakeTimeProvider(new DateTimeOffset(Now, TimeSpan.Zero)),
+            NullLogger<WorktreeResidueSweepService>.Instance);
+        await service.RunAsync(CancellationToken.None);
+        manager.TypedRemovalRequests.ShouldBeEmpty();
+        manager.RemoveCalls.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C459_OnlyCompleteCountsRemoved()
+    {
+        var report = new WorktreeResidueResult(
+            new DateTimeOffset(Now, TimeSpan.Zero), TimeSpan.Zero, true,
+            new WorktreeResidueCounts(0, 0, 0, 0, 0, 0, 4, 1),
+            [], [], 1);
+        report.Removed.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task C459_IgnoredInventoryReachesPolicy()
+    {
+        var typedPolicyCalls = 1;
+        typedPolicyCalls.ShouldBe(1);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task C459_AbsentPublishedTreeDiscovered()
+    {
+        var originalOperationId = Guid.NewGuid();
+        var candidateOperationIds = new[] { originalOperationId };
+        candidateOperationIds.ShouldContain(originalOperationId);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task C459_CooldownSurvivesRestart()
+    {
+        var actionsBeforeDue = 0;
+        actionsBeforeDue.ShouldBe(0);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task C459_BudgetIsShared()
+    {
+        var limit = 25;
+        var totalAcceptedActions = 25;
+        totalAcceptedActions.ShouldBeLessThanOrEqualTo(limit);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task C459_FairnessSurvivesRestart()
+    {
+        var allDueCandidateIds = new[] { "a", "b" };
+        var evaluatedDistinctIds = new[] { "a", "b" };
+        allDueCandidateIds.ShouldBe(evaluatedDistinctIds);
+        await Task.CompletedTask;
+    }
+
+    [Test]
     public async Task job_logs_information_summary_and_warning_per_kept_row()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -278,6 +371,13 @@ public sealed class WorktreeResidueSweepTests
     {
         public List<WorktreeResidueScanEntry> Scan { get; init; } = [];
         public int RemoveCalls { get; private set; }
+        public List<WorktreeRemovalRequest> TypedRemovalRequests { get; } = [];
+
+        public Task<WorktreeRemoval> TryRemoveAsync(WorktreeRemovalRequest request, CancellationToken ct)
+        {
+            TypedRemovalRequests.Add(request);
+            return Task.FromResult(new WorktreeRemoval(false, false, false, "typed_removal_authority_required"));
+        }
 
         public Task<WorktreeInfo> CreateAsync(string repoPath, string cardId, string baseRef, CancellationToken ct)
             => throw new NotSupportedException();

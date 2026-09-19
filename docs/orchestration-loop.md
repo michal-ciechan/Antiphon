@@ -1094,7 +1094,14 @@ Legacy event prose and disappeared branches grant no cleanup authority. Re-POST 
 unfinished operation; cleanup retry requires its saved receipt and fresh remote containment.
 
 Automatic removal now refuses opaque ignored files, dirty/mismatched sources, unregistered
-leftovers and unknown receipts. The janitor and residue sweep retain legacy work. Failed-add
+leftovers and unknown receipts. CARD-0459 adds typed `SettledTask` retirement (explicit
+`NoFurtherWorkspaceUse` release, unique full-task owner, remote containment) and cleanup-only
+retries of a confirmed publication. The Hangfire job `antiphon:worktree-residue` (daily 10:00
+Europe/London) is the only scheduler; `WorktreeJanitorHostedService` is no longer registered.
+`PruneStaleAsync` remains fail-closed (`typed_removal_authority_required`). Shortening TTL or
+invoking the janitor does not grant deletion authority. `WorktreeResidue:Execute` ships false;
+activation is a commissioned deploy after Review/land. CARD-0452's ignored-content guard is
+unchanged. Failed-add
 rollback and stale-registration healing retain uncertain state for inspection. They no longer
 force-remove or recursively erase a directory. This increases residue intentionally.
 

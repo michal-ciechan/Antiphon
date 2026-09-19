@@ -1,6 +1,7 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Infrastructure.Git;
@@ -32,7 +33,8 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
         WorktreeDirectoryPass Finish(string? reason) => new(new(unregistered, directoryGone, false, reason), outcome, failedAt);
         try
         {
-            if (request.CleanupContext is not null && !IsAbsent(source.WorktreePath))
+            if ((request.CleanupContext is not null || request.Purpose == WorktreeRemovalPurpose.SettledTask)
+                && !IsAbsent(source.WorktreePath))
             {
                 if (request.ManagedRoot is null || !WorktreeNativeIO.Within(source.WorktreePath, request.ManagedRoot)
                     || !LandingGit.PathsEqual(await git.CanonicalDirectoryAsync(source.WorktreePath, ct), source.WorktreePath)
@@ -49,6 +51,11 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
             if (!directoryGone)
             {
                 if (unregistered) return Finish("unregistered_directory");
+                if (registration.Any(r => r.Locked)) return Finish("registration_locked");
+                if (registration.Any(r => r.Prunable)) return Finish("registration_prunable");
+                if (rows.Any(r => !LandingGit.PathsEqual(r.Path, source.WorktreePath)
+                    && WorktreeNativeIO.Within(r.Path, source.WorktreePath)))
+                    return Finish("nested_registration");
                 var inspection = await git.InspectAsync(source, ct);
                 if (!Matches(inspection, request)) return Finish(inspection.Reason ?? "source_changed");
                 // Non-forcing Git removal ALSO deletes ignored files. No patterns grant ownership.
@@ -84,7 +91,13 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 unregistered = !rows.Any(r => LandingGit.PathsEqual(r.Path, source.WorktreePath));
                 if (!directoryGone || !unregistered) { failedAt = clock.GetTimestamp(); return Finish("worktree_removal_incomplete"); }
             }
-            else if (!unregistered || request.Purpose != WorktreeRemovalPurpose.Publication)
+            else if (!unregistered)
+                return Finish("missing_source_without_cleanup_receipt");
+            else if (request.Purpose == WorktreeRemovalPurpose.Publication)
+                return Finish(null);
+            else if (request.Purpose == WorktreeRemovalPurpose.SettledTask && request.HasDeletionIntent)
+                return Finish(null);
+            else
                 return Finish("missing_source_without_cleanup_receipt");
             return Finish(null);
         }
@@ -138,7 +151,8 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
 
     private async Task<string?> AuthorityAsync(WorktreeRemovalRequest request, CancellationToken ct, bool refreshRemote = true)
     {
-        if (request.Purpose is not (WorktreeRemovalPurpose.Publication or WorktreeRemovalPurpose.LocalMerge))
+        if (request.Purpose is not (WorktreeRemovalPurpose.Publication or WorktreeRemovalPurpose.LocalMerge
+            or WorktreeRemovalPurpose.SettledTask))
             return "removal_purpose_unsupported";
         var source = request.Source;
         var common = await git.CommonDirectoryAsync(source.RepositoryPath, ct);
@@ -146,6 +160,26 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
             return "repository_lease_required";
         if (!LandingGit.IsOid(request.ExpectedSourceSha) || !LandingGit.IsOid(request.ExpectedTargetSha)
             || source.SourceFullRef == source.TargetFullRef) return "invalid_removal_identity";
+        if (request.Purpose == WorktreeRemovalPurpose.SettledTask)
+        {
+            if (request.RetirementId is not Guid retirementId) return "retirement_receipt_required";
+            var retirement = await evidence.ReadRetirementAsync(retirementId, ct);
+            if (retirement is null || retirement.Id != retirementId || !retirement.Active
+                || retirement.TaskId != source.TaskId || retirement.SourceFullRef != source.SourceFullRef
+                || retirement.SourceSha != request.ExpectedSourceSha
+                || !LandingGit.PathsEqual(retirement.RepositoryPath, source.RepositoryPath)
+                || !LandingGit.PathsEqual(retirement.WorktreePath, source.WorktreePath)
+                || !LandingGit.PathsEqual(retirement.GitDirectory, request.GitDirectory)
+                || !LandingGit.PathsEqual(retirement.CommonDirectory, common)
+                || retirement.State is WorktreeRetirementState.Revoked)
+                return "retirement_receipt_mismatch";
+            if (!refreshRemote) return null;
+            var destination = new LandingDestination(retirement.RemoteName, retirement.DestinationFullRef,
+                retirement.RemoteFingerprint);
+            var retirementObserved = await git.ObserveRetirementAsync(source.RepositoryPath, destination,
+                request.ExpectedSourceSha, retirement.Id, "cleanup-observed", ct);
+            return retirementObserved.Reason ?? (retirementObserved.ContainsSource ? null : "remote_no_longer_contains_source");
+        }
         if (request.Purpose == WorktreeRemovalPurpose.LocalMerge)
         {
             if (!request.TargetCheckoutRecorded) return "local_target_identity_required";

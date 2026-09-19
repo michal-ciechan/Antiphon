@@ -251,7 +251,9 @@ public sealed class DataRetentionService
                 && !_db.AgentTaskLandings.Any(op => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == op.TaskId))
                 && !_db.AgentTaskLandRequests.Any(r => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == r.TaskId))
                 && !_db.AgentTaskDispatchWarningIntents.Any(i => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == i.TaskId))
-                && !_db.AgentTaskLandNotifications.Any(n => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == n.TaskId)))
+                && !_db.AgentTaskLandNotifications.Any(n => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == n.TaskId))
+                && !_db.TaskWorktreeRetirements.Any(r => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == r.TaskId)
+                    && r.Active && r.State != WorktreeRetirementState.Complete && r.State != WorktreeRetirementState.Revoked))
             .GroupBy(t => t.RootTaskId)
             .Where(g => g.Max(t => t.CompletedAt ?? t.CreatedAt) < cutoff)
             .Select(g => g.Key)
@@ -270,6 +272,24 @@ public sealed class DataRetentionService
             .ToListAsync(ct);
 
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        var eligibleTaskIds = await _db.AgentTasks
+            .Where(t => eligibleRootIds.Contains(t.RootTaskId))
+            .Select(t => t.Id)
+            .ToListAsync(ct);
+        var retirementIds = await _db.TaskWorktreeRetirements
+            .Where(r => eligibleTaskIds.Contains(r.TaskId))
+            .Select(r => r.Id)
+            .ToListAsync(ct);
+        if (retirementIds.Count > 0)
+        {
+            await _db.TaskWorktreeRetirementAttempts
+                .Where(a => retirementIds.Contains(a.RetirementId))
+                .ExecuteDeleteAsync(ct);
+            await _db.TaskWorktreeRetirements
+                .Where(r => retirementIds.Contains(r.Id))
+                .ExecuteDeleteAsync(ct);
+        }
+
         var removed = 0;
         foreach (var depth in depths)
         {

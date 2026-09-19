@@ -20,6 +20,13 @@ public interface ILandingGit
     Task<LandingSourceObservation> ObserveSourceAsync(string repository, string sourceFullRef,
         string observationPrefix, CancellationToken ct);
     Task<LandingGitResult> PinAsync(string repository, string recoveryRef, string sha, CancellationToken ct);
+    Task<LandingRemoteObservation> ObserveRetirementAsync(string repository, LandingDestination destination,
+        string sourceSha, Guid retirementId, string pinName, CancellationToken ct)
+        => Task.FromResult(new LandingRemoteObservation(null, false, "retirement_observation_not_implemented"));
+    Task<LandingGitResult> PinRetirementAsync(string repository, Guid retirementId, string pinName, string sha, CancellationToken ct)
+        => Task.FromResult(new LandingGitResult(1, "", "retirement_pin_not_implemented"));
+    Task<LandingGitResult> DeleteRetirementPinAsync(string repository, Guid retirementId, string pinName, string expectedSha, CancellationToken ct)
+        => Task.FromResult(new LandingGitResult(1, "", "retirement_pin_not_implemented"));
     Task<LandingGitResult> PushAsync(string repository, LandingDestination destination, string sha, CancellationToken ct);
     Task<LandingGitResult> PushOwnedAsync(string repository, LandingDestination destination, string sha,
         Func<int, long, CancellationToken, Task> started, CancellationToken ct);

@@ -10,4 +10,6 @@ public interface IWorktreeRemovalEvidence
         => Task.FromResult<VerificationRemovalAuthority?>(null);
     Task<bool> RecordVerificationRemovalStartAsync(WorktreeRemovalRequest request, CancellationToken ct)
         => Task.FromResult(false);
+    Task<TaskWorktreeRetirement?> ReadRetirementAsync(Guid retirementId, CancellationToken ct)
+        => Task.FromResult<TaskWorktreeRetirement?>(null);
 }

@@ -108,6 +108,22 @@ public sealed class WorktreeRemovalEvidence(IServiceScopeFactory scopes) : IWork
         { return null; }
     }
 
+    public async Task<TaskWorktreeRetirement?> ReadRetirementAsync(Guid retirementId, CancellationToken ct)
+    {
+        await using var scope = scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var row = await db.TaskWorktreeRetirements.AsNoTracking()
+            .SingleOrDefaultAsync(r => r.Id == retirementId, ct);
+        if (row is null || !row.Active) return null;
+        var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == row.TaskId, ct);
+        if (task is null || task.Attempt != row.TaskAttempt
+            || task.Role == AgentTaskRole.Mutation || task.SourceLandingOperationId is not null
+            || task.RepairSourceTaskId is not null
+            || task.Status is not (AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled))
+            return null;
+        return row;
+    }
+
     public async Task<bool> RecordVerificationRemovalStartAsync(WorktreeRemovalRequest request, CancellationToken ct)
     {
         if (await ReadVerificationAsync(request, ct) is null) return false;

@@ -41,6 +41,12 @@ public sealed class WorktreeResidueSettingsValidator : IValidateOptions<Worktree
         if (options.MinSettledMinutes <= 0)
             failures.Add("WorktreeResidue:MinSettledMinutes must be positive.");
 
+        if (options.MaxActionsPerRun <= 0)
+            failures.Add("WorktreeResidue:MaxActionsPerRun must be positive.");
+
+        if (options.RunResultPageSize <= 0)
+            failures.Add("WorktreeResidue:RunResultPageSize must be positive.");
+
         return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);

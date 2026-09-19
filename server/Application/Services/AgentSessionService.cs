@@ -186,6 +186,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             var spec = await BuildRuntimeLaunchSpecAsync(launchSpec, session, worktree.Path, resumeMode: null, ct);
             EnsureHerdrLaunchAllowed(session, spec);
             claimedLaunch = _launchOwnership?.TryRegister(session.Id) ?? false;
+            await AdmitWorkspaceAsync(session, ct);
             await adapter.StartAsync(spec, ct);
 
             RunAttemptStateMachine.Transition(attempt, RunPhase.InitializingSession, UtcNow());
@@ -451,6 +452,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
             EnsureHerdrLaunchAllowed(session, spec);
             await RequireCurrentCheckLaunchAsync(session, agentId, acceptedGeneration, ct);
+            await AdmitWorkspaceAsync(session, ct);
             await adapter.StartAsync(spec, ct);
 
             await CaptureGrokRulesReceiptAsync(session, ct);
@@ -655,6 +657,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 return;
             }
 
+            await AdmitWorkspaceAsync(session, ct);
             await ((IAttachableProtocolAdapter)adapter).AttachAsync(session.Id, ct);
             attached = true;
             await CaptureGrokRulesReceiptAsync(session, ct);
@@ -1433,6 +1436,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             adapter = _adapterFactory.Create(session.AgentKind, session.RunnerId);
             var spec = await BuildRuntimeLaunchSpecAsync(launchSpec, session, cwd, effectiveResumeMode, ct);
             EnsureHerdrLaunchAllowed(session, spec);
+            await AdmitWorkspaceAsync(session, ct);
             await adapter.StartAsync(spec, ct);
             await CaptureGrokRulesReceiptAsync(session, ct);
             await WaitForReadyOrThrowAsync(adapter, session.Id, ct);
@@ -2933,6 +2937,16 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             return WorkflowDefinitionParser.ParseYamlDefinition(activeDefinition.Content).Hooks;
 
         return WorkflowDefinitionParser.ParseYamlHooks(activeDefinition.Content);
+    }
+
+    private async Task AdmitWorkspaceAsync(AgentSession session, CancellationToken ct)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var admission = scope.ServiceProvider.GetService<WorkspaceUseAdmission>();
+        if (admission is null || string.IsNullOrWhiteSpace(session.Cwd)) return;
+        await admission.RequireConsumerAsync(new WorkspaceReservationCommand(
+            new WorkspaceReservationKey(session.Cwd, "", session.Cwd),
+            WorkspaceReservationKind.Launch, null, session.Id), ct);
     }
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;

@@ -3,6 +3,7 @@ using System;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260919234842_AddCard0459WorktreeRetirement")]
+    partial class AddCard0459WorktreeRetirement
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -756,17 +759,6 @@ namespace Antiphon.Server.Migrations
                     b.Property<int>("Rows")
                         .HasColumnType("integer");
 
-                    b.Property<string>("RunnerCwd")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("RunnerId")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<Guid?>("RunnerStoreId")
-                        .HasColumnType("uuid");
-
                     b.Property<int>("SessionBackend")
                         .HasColumnType("integer");
 
@@ -801,9 +793,6 @@ namespace Antiphon.Server.Migrations
                     b.HasIndex("DelegationTokenHash")
                         .HasDatabaseName("IX_AgentSessions_DelegationTokenHash");
 
-                    b.HasIndex("RunnerId")
-                        .HasDatabaseName("IX_AgentSessions_RunnerId");
-
                     b.HasIndex("TuiProfileRevisionId")
                         .HasDatabaseName("IX_AgentSessions_TuiProfileRevisionId");
 
@@ -815,10 +804,7 @@ namespace Antiphon.Server.Migrations
 
                     b.HasIndex("StandingAgentId", "CreatedAt");
 
-                    b.ToTable("AgentSessions", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_AgentSessions_RunnerBinding_AllOrNone", "(\"RunnerId\" IS NULL AND \"RunnerStoreId\" IS NULL AND \"RunnerCwd\" IS NULL) OR (\"RunnerId\" IS NOT NULL AND \"RunnerStoreId\" IS NOT NULL AND \"RunnerCwd\" IS NOT NULL)");
-                        });
+                    b.ToTable("AgentSessions", (string)null);
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentSupervisionState", b =>

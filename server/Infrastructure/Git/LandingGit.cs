@@ -218,11 +218,17 @@ public class LandingGit : ILandingGit
         return endpoints[0];
     }
 
-    public async Task<LandingRemoteObservation> ObserveAsync(string repository, LandingDestination destination,
+    public Task<LandingRemoteObservation> ObserveAsync(string repository, LandingDestination destination,
         string sourceSha, string observationRef, CancellationToken ct)
     {
         if (!IsOid(sourceSha) || !observationRef.StartsWith("refs/antiphon/land/", StringComparison.Ordinal))
-            return new(null, false, "invalid_observation_identity");
+            return Task.FromResult(new LandingRemoteObservation(null, false, "invalid_observation_identity"));
+        return ObserveWithPrefixAsync(repository, destination, sourceSha, observationRef, ct);
+    }
+
+    private async Task<LandingRemoteObservation> ObserveWithPrefixAsync(string repository, LandingDestination destination,
+        string sourceSha, string observationRef, CancellationToken ct)
+    {
         var check = await RunAsync(repository, ["check-ref-format", observationRef], ct);
         if (!check.Succeeded) return new(null, false, "invalid_observation_ref");
         for (var attempt = 0; attempt < 3; attempt++)
@@ -330,9 +336,39 @@ public class LandingGit : ILandingGit
         }
     }
 
+    public Task<LandingRemoteObservation> ObserveRetirementAsync(string repository, LandingDestination destination,
+        string sourceSha, Guid retirementId, string pinName, CancellationToken ct)
+    {
+        if (!IsRetirementPinName(pinName))
+            return Task.FromResult(new LandingRemoteObservation(null, false, "invalid_observation_identity"));
+        return ObserveWithPrefixAsync(repository, destination, sourceSha, RetirementPrefix(retirementId) + pinName, ct);
+    }
+
+    public Task<LandingGitResult> PinRetirementAsync(string repository, Guid retirementId, string pinName, string sha, CancellationToken ct)
+    {
+        if (!IsRetirementPinName(pinName))
+            return Task.FromResult(new LandingGitResult(1, "", "invalid_recovery_identity"));
+        return PinWithPrefixAsync(repository, RetirementPrefix(retirementId) + pinName, sha, ct);
+    }
+
+    public async Task<LandingGitResult> DeleteRetirementPinAsync(string repository, Guid retirementId, string pinName, string expectedSha, CancellationToken ct)
+    {
+        if (!IsOid(expectedSha) || !IsRetirementPinName(pinName))
+            return new(1, "", "invalid_recovery_identity");
+        var recoveryRef = RetirementPrefix(retirementId) + pinName;
+        return await RunAsync(repository, ["update-ref", "--no-deref", "-d", recoveryRef, expectedSha], ct);
+    }
+
     public async Task<LandingGitResult> PinAsync(string repository, string recoveryRef, string sha, CancellationToken ct)
     {
         if (!IsOid(sha) || !recoveryRef.StartsWith("refs/antiphon/land/", StringComparison.Ordinal))
+            return new(1, "", "invalid_recovery_identity");
+        return await PinWithPrefixAsync(repository, recoveryRef, sha, ct);
+    }
+
+    private async Task<LandingGitResult> PinWithPrefixAsync(string repository, string recoveryRef, string sha, CancellationToken ct)
+    {
+        if (!IsOid(sha))
             return new(1, "", "invalid_recovery_identity");
         var valid = await RunAsync(repository, ["check-ref-format", recoveryRef], ct);
         if (!valid.Succeeded) return new(1, "", "invalid_recovery_ref");
@@ -403,6 +439,12 @@ public class LandingGit : ILandingGit
 
     internal static bool IsOid(string value) => value.Length is 40 or 64
         && value.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
+
+    internal static string RetirementPrefix(Guid retirementId) =>
+        $"refs/antiphon/retirement/{retirementId:N}/";
+
+    internal static bool IsRetirementPinName(string pinName) =>
+        pinName is "source" or "target" or "cleanup-observed" or "target-before";
 
     internal static bool PathsEqual(string left, string right) => string.Equals(
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)), Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),

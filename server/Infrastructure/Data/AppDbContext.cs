@@ -61,6 +61,12 @@ public class AppDbContext : DbContext
     public DbSet<AgentTaskLandNotification> AgentTaskLandNotifications => Set<AgentTaskLandNotification>();
     public DbSet<AgentTaskDispatchWarningIntent> AgentTaskDispatchWarningIntents => Set<AgentTaskDispatchWarningIntent>();
     public DbSet<WorktreeCleanupAttempt> WorktreeCleanupAttempts => Set<WorktreeCleanupAttempt>();
+    public DbSet<TaskWorktreeRetirement> TaskWorktreeRetirements => Set<TaskWorktreeRetirement>();
+    public DbSet<TaskWorktreeRetirementAttempt> TaskWorktreeRetirementAttempts => Set<TaskWorktreeRetirementAttempt>();
+    public DbSet<WorktreeResidueRun> WorktreeResidueRuns => Set<WorktreeResidueRun>();
+    public DbSet<WorktreeResidueRunCandidate> WorktreeResidueRunCandidates => Set<WorktreeResidueRunCandidate>();
+    public DbSet<WorktreeResidueCandidateCursor> WorktreeResidueCandidateCursors => Set<WorktreeResidueCandidateCursor>();
+    public DbSet<WorkspaceUseReservation> WorkspaceUseReservations => Set<WorkspaceUseReservation>();
     public DbSet<AgentTaskEvent> AgentTaskEvents => Set<AgentTaskEvent>();
     public DbSet<StageOutcome> StageOutcomes => Set<StageOutcome>();
     public DbSet<AgentTuiProfile> AgentTuiProfiles => Set<AgentTuiProfile>();
@@ -2403,6 +2409,97 @@ public class AppDbContext : DbContext
             entity.Property(c => c.CreatedAt).IsRequired();
             entity.HasIndex(c => c.OriginalAgentId)
                 .HasDatabaseName("IX_AgentPinCleanupRecords_OriginalAgentId");
+        });
+
+        modelBuilder.Entity<TaskWorktreeRetirement>(entity =>
+        {
+            entity.ToTable("TaskWorktreeRetirements");
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.ConcurrencyToken).IsConcurrencyToken();
+            entity.Property(r => r.CallerIdentity).HasMaxLength(200);
+            entity.Property(r => r.ReleaseReason).HasMaxLength(1000);
+            entity.Property(r => r.HandoffDispositionJson).HasColumnType("jsonb").HasDefaultValue("[]");
+            entity.Property(r => r.RepositoryPath).HasMaxLength(1000);
+            entity.Property(r => r.CommonDirectory).HasMaxLength(1000);
+            entity.Property(r => r.WorktreePath).HasMaxLength(1000);
+            entity.Property(r => r.GitDirectory).HasMaxLength(1000);
+            entity.Property(r => r.SourceFullRef).HasMaxLength(400);
+            entity.Property(r => r.SourceSha).HasMaxLength(64);
+            entity.Property(r => r.TargetFullRef).HasMaxLength(400);
+            entity.Property(r => r.RemoteName).HasMaxLength(100);
+            entity.Property(r => r.DestinationFullRef).HasMaxLength(400);
+            entity.Property(r => r.RemoteFingerprint).HasMaxLength(64);
+            entity.Property(r => r.ObservedTargetSha).HasMaxLength(64);
+            entity.Property(r => r.ReportDigest).HasMaxLength(64);
+            entity.Property(r => r.ResultPreservationPath).HasMaxLength(1000);
+            entity.Property(r => r.DeliverablePreservationPath).HasMaxLength(1000);
+            entity.Property(r => r.LastReason).HasMaxLength(400);
+            entity.HasIndex(r => new { r.TaskId, r.TaskAttempt }).IsUnique().HasFilter("\"Active\" = TRUE")
+                .HasDatabaseName("IX_TaskWorktreeRetirements_TaskId_Attempt_Active");
+            entity.HasOne<AgentTask>().WithMany().HasForeignKey(r => r.TaskId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<TaskWorktreeRetirementAttempt>(entity =>
+        {
+            entity.ToTable("TaskWorktreeRetirementAttempts");
+            entity.HasKey(a => a.Id);
+            entity.Property(a => a.CommandResult).HasMaxLength(400);
+            entity.Property(a => a.Residue).HasMaxLength(400);
+            entity.HasIndex(a => new { a.RetirementId, a.AttemptNumber }).IsUnique()
+                .HasDatabaseName("IX_TaskWorktreeRetirementAttempts_Retirement_Attempt");
+            entity.HasOne<TaskWorktreeRetirement>().WithMany().HasForeignKey(a => a.RetirementId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<WorktreeResidueRun>().WithMany().HasForeignKey(a => a.SweepRunId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<WorktreeResidueRun>(entity =>
+        {
+            entity.ToTable("WorktreeResidueRuns");
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.Scope).HasMaxLength(200);
+            entity.HasIndex(r => r.StartedAt).HasDatabaseName("IX_WorktreeResidueRuns_StartedAt");
+        });
+
+        modelBuilder.Entity<WorktreeResidueRunCandidate>(entity =>
+        {
+            entity.ToTable("WorktreeResidueRunCandidates");
+            entity.HasKey(c => c.Id);
+            entity.Property(c => c.Lane).HasMaxLength(40);
+            entity.Property(c => c.Outcome).HasMaxLength(40);
+            entity.Property(c => c.ReasonCode).HasMaxLength(80);
+            entity.Property(c => c.Path).HasMaxLength(1000);
+            entity.Property(c => c.Branch).HasMaxLength(400);
+            entity.HasIndex(c => c.RunId).HasDatabaseName("IX_WorktreeResidueRunCandidates_RunId");
+            entity.HasOne<WorktreeResidueRun>().WithMany().HasForeignKey(c => c.RunId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<WorktreeResidueCandidateCursor>(entity =>
+        {
+            entity.ToTable("WorktreeResidueCandidateCursors");
+            entity.HasKey(c => c.Id);
+            entity.Property(c => c.CandidateKey).HasMaxLength(80);
+            entity.HasIndex(c => c.CandidateKey).IsUnique()
+                .HasDatabaseName("IX_WorktreeResidueCandidateCursors_CandidateKey");
+        });
+
+        modelBuilder.Entity<WorkspaceUseReservation>(entity =>
+        {
+            entity.ToTable("WorkspaceUseReservations");
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.CanonicalPath).HasMaxLength(1000);
+            entity.Property(r => r.SourceFullRef).HasMaxLength(400);
+            entity.Property(r => r.CommonDirectory).HasMaxLength(1000);
+            entity.HasIndex(r => new { r.CanonicalPath, r.SourceFullRef, r.Kind })
+                .HasFilter("\"Active\" = TRUE")
+                .HasDatabaseName("IX_WorkspaceUseReservations_Path_Ref_Kind_Active");
+        });
+
+        modelBuilder.Entity<AgentTaskLandRequest>(entity =>
+        {
+            entity.Property(r => r.CleanupOnly).IsRequired().HasDefaultValue(false);
+            entity.Property(r => r.Origin).IsRequired().HasDefaultValue(LandRequestOrigin.ExplicitCaller);
         });
 
     }

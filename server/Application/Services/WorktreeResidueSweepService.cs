@@ -29,6 +29,9 @@ public sealed class WorktreeResidueSweepService
     private readonly GitSettings _git;
     private readonly TimeProvider _clock;
     private readonly ILogger<WorktreeResidueSweepService> _logger;
+    private readonly TaskWorktreeRetirementService? _retirement;
+    private readonly AgentTaskLandService? _lands;
+    private readonly IWorkspaceReservationJournal? _reservations;
 
     public WorktreeResidueSweepService(
         AppDbContext db,
@@ -36,7 +39,10 @@ public sealed class WorktreeResidueSweepService
         IOptions<WorktreeResidueSettings> settings,
         IOptions<GitSettings> git,
         TimeProvider clock,
-        ILogger<WorktreeResidueSweepService> logger)
+        ILogger<WorktreeResidueSweepService> logger,
+        TaskWorktreeRetirementService? retirement = null,
+        AgentTaskLandService? lands = null,
+        IWorkspaceReservationJournal? reservations = null)
     {
         _db = db;
         _worktrees = worktrees;
@@ -44,10 +50,22 @@ public sealed class WorktreeResidueSweepService
         _git = git.Value;
         _clock = clock;
         _logger = logger;
+        _retirement = retirement;
+        _lands = lands;
+        _reservations = reservations;
     }
+
+    public Task<WorktreeResidueRunDto> PreviewAsync(Guid? projectId, Guid? boardId, CancellationToken ct) =>
+        PersistRunAsync(execute: false, preview: true, projectId, boardId, ct);
 
     public async Task<WorktreeResidueResult> RunAsync(CancellationToken cancellationToken)
     {
+        if (_retirement is not null)
+        {
+            var dto = await PersistRunAsync(_settings.Execute, preview: false, null, null, cancellationToken);
+            return ToLegacyResult(dto);
+        }
+
         var started = _clock.GetUtcNow();
         var utcNow = started.UtcDateTime;
         var defaultBranch = string.IsNullOrWhiteSpace(_git.DefaultBranch) ? "master" : _git.DefaultBranch;
@@ -115,6 +133,207 @@ public sealed class WorktreeResidueSweepService
             rows,
             rows.Where(r => r.Keep).ToList(),
             removed);
+    }
+
+    private async Task<WorktreeResidueRunDto> PersistRunAsync(
+        bool execute, bool preview, Guid? projectId, Guid? boardId, CancellationToken ct)
+    {
+        var now = _clock.GetUtcNow().UtcDateTime;
+        var run = new Domain.Entities.WorktreeResidueRun
+        {
+            Id = Guid.NewGuid(),
+            StartedAt = now,
+            Execute = execute && !preview,
+            Preview = preview,
+            ActionBudget = Math.Max(0, _settings.MaxActionsPerRun),
+            ProjectId = projectId,
+            BoardId = boardId,
+        };
+        _db.WorktreeResidueRuns.Add(run);
+
+        var tasks = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.WorktreePath != null || t.WorktreeBranch != null)
+            .ToListAsync(ct);
+        if (projectId is Guid pid)
+            tasks = tasks.Where(t => t.ProjectId == pid).ToList();
+
+        var extraRepos = tasks.Select(t => t.RepoPath).Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => p!)
+            .Distinct(PathComparer).ToList();
+        var scan = await _worktrees.ScanResidueCandidatesAsync(extraRepos, ct);
+        var landings = await _db.AgentTaskLandings.AsNoTracking()
+            .Where(o => o.Active && o.Cleanup != LandCleanupStatus.Complete
+                && (o.Publication == LandPublicationOutcome.Landed || o.Publication == LandPublicationOutcome.AlreadyPresent))
+            .ToListAsync(ct);
+        var releases = await _db.TaskWorktreeRetirements.AsNoTracking().Where(r => r.Active).ToListAsync(ct);
+
+        var actions = 0;
+        foreach (var task in tasks.OrderBy(t => t.CompletedAt ?? t.CreatedAt).ThenBy(t => t.Id))
+        {
+            ct.ThrowIfCancellationRequested();
+            var release = releases.FirstOrDefault(r => r.TaskId == task.Id && r.TaskAttempt == task.Attempt);
+            var (authorized, reason) = _retirement is null
+                ? (false, "release_required")
+                : await _retirement.EvaluateEligibilityAsync(task, release, ct);
+            var outcome = WorktreeResidueCandidateOutcome.Held;
+            var code = reason ?? "release_required";
+            if (authorized && execute && !preview && actions < run.ActionBudget && _retirement is not null && release is not null)
+            {
+                var removed = await _retirement.TryRetireAsync(release, run.Id, ct);
+                actions++;
+                if (removed.IsClean)
+                {
+                    outcome = WorktreeResidueCandidateOutcome.Removed;
+                    code = "removed";
+                    run.Removed++;
+                }
+                else if (removed.DirectoryGone || removed.Unregistered || removed.BranchDeleted)
+                {
+                    outcome = WorktreeResidueCandidateOutcome.Partial;
+                    code = removed.Residue ?? "partial";
+                    run.Partial++;
+                }
+                else
+                {
+                    outcome = WorktreeResidueCandidateOutcome.Refused;
+                    code = removed.Residue ?? "refused";
+                    run.Refused++;
+                    await PersistCooldownAsync("task:" + task.Id.ToString("N"), ct);
+                }
+            }
+            else if (!authorized)
+            {
+                run.Held++;
+            }
+
+            _db.WorktreeResidueRunCandidates.Add(new Domain.Entities.WorktreeResidueRunCandidate
+            {
+                Id = Guid.NewGuid(),
+                RunId = run.Id,
+                Lane = nameof(WorktreeResidueLane.SettledTask),
+                Outcome = outcome.ToString(),
+                ReasonCode = code,
+                TaskId = task.Id,
+                RetirementId = release?.Id,
+                Path = task.WorktreePath,
+                Branch = task.WorktreeBranch,
+                EvaluatedAt = now,
+            });
+            run.Candidates++;
+        }
+
+        foreach (var op in landings)
+        {
+            ct.ThrowIfCancellationRequested();
+            var outcome = WorktreeResidueCandidateOutcome.Held;
+            var code = "publication_retry";
+            Guid? requestId = null;
+            if (execute && !preview && actions < run.ActionBudget && _lands is not null)
+            {
+                try
+                {
+                    var queued = await _lands.RequestCleanupRetryAsync(op.TaskId, op.Id, run.Id, ct);
+                    actions++;
+                    outcome = WorktreeResidueCandidateOutcome.Queued;
+                    code = "retry_queued";
+                    requestId = queued.RequestId;
+                    run.Queued++;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    outcome = WorktreeResidueCandidateOutcome.Refused;
+                    code = "publication_unconfirmed";
+                    run.Refused++;
+                }
+            }
+            else
+            {
+                run.Held++;
+            }
+
+            _db.WorktreeResidueRunCandidates.Add(new Domain.Entities.WorktreeResidueRunCandidate
+            {
+                Id = Guid.NewGuid(),
+                RunId = run.Id,
+                Lane = nameof(WorktreeResidueLane.Publication),
+                Outcome = outcome.ToString(),
+                ReasonCode = code,
+                TaskId = op.TaskId,
+                LandingOperationId = op.Id,
+                LandRequestId = requestId,
+                Path = op.WorktreePath,
+                Branch = op.SourceFullRef,
+                EvaluatedAt = now,
+            });
+            run.Candidates++;
+        }
+
+        foreach (var entry in scan)
+        {
+            var matched = tasks.Count(t => PathsEqual(t.WorktreePath, entry.Path)
+                || BranchesEqual(t.WorktreeBranch, entry.Branch));
+            if (matched == 1) continue;
+            _db.WorktreeResidueRunCandidates.Add(new Domain.Entities.WorktreeResidueRunCandidate
+            {
+                Id = Guid.NewGuid(),
+                RunId = run.Id,
+                Lane = nameof(WorktreeResidueLane.Inventory),
+                Outcome = WorktreeResidueCandidateOutcome.Held.ToString(),
+                ReasonCode = matched == 0 ? "identity_unknown" : "identity_ambiguous",
+                Path = entry.Path,
+                Branch = entry.Branch,
+                EvaluatedAt = now,
+            });
+            run.Candidates++;
+            run.Held++;
+        }
+
+        run.ActionsAccepted = actions;
+        run.FinishedAt = _clock.GetUtcNow().UtcDateTime;
+        await _db.SaveChangesAsync(ct);
+        var page = await _db.WorktreeResidueRunCandidates.AsNoTracking()
+            .Where(c => c.RunId == run.Id)
+            .OrderBy(c => c.EvaluatedAt).ThenBy(c => c.Id)
+            .Take(Math.Max(1, _settings.RunResultPageSize))
+            .ToListAsync(ct);
+        return new WorktreeResidueRunDto(
+            run.Id, run.StartedAt, run.FinishedAt, run.Execute, run.Preview, run.ActionBudget, run.ActionsAccepted,
+            run.Candidates, run.Held, run.Deferred, run.Queued, run.Refused, run.Partial, run.Removed,
+            page.Select(c => new WorktreeResidueCandidateDto(
+                c.Id, c.Lane, c.Outcome, c.ReasonCode, c.TaskId, c.RetirementId, c.LandingOperationId, c.LandRequestId,
+                c.Path, c.Branch, c.DirectoryRemoved, c.RegistrationRemoved, c.BranchRemoved)).ToList(),
+            0, _settings.RunResultPageSize, run.Candidates);
+    }
+
+    private async Task PersistCooldownAsync(string key, CancellationToken ct)
+    {
+        var due = _clock.GetUtcNow().UtcDateTime.AddHours(24);
+        var cursor = await _db.WorktreeResidueCandidateCursors.SingleOrDefaultAsync(c => c.CandidateKey == key, ct);
+        if (cursor is null)
+        {
+            _db.WorktreeResidueCandidateCursors.Add(new Domain.Entities.WorktreeResidueCandidateCursor
+            {
+                Id = Guid.NewGuid(),
+                CandidateKey = key,
+                LastEvaluatedAt = _clock.GetUtcNow().UtcDateTime,
+                NotBefore = due,
+            });
+        }
+        else
+        {
+            cursor.LastEvaluatedAt = _clock.GetUtcNow().UtcDateTime;
+            cursor.NotBefore = due;
+        }
+    }
+
+    private WorktreeResidueResult ToLegacyResult(WorktreeResidueRunDto dto)
+    {
+        var rows = dto.Rows.Select(r => new WorktreeResidueRow(
+            r.Path ?? "", r.Branch ?? "", null, "", r.TaskId, null,
+            r.Outcome == nameof(WorktreeResidueCandidateOutcome.Removed) ? WorktreeResidueLabel.Eligible : WorktreeResidueLabel.Unknown,
+            r.ReasonCode, r.ReasonCode, r.Outcome != nameof(WorktreeResidueCandidateOutcome.Removed))).ToList();
+        return new WorktreeResidueResult(dto.StartedAt, TimeSpan.Zero, dto.Execute,
+            new WorktreeResidueCounts(dto.Held, 0, 0, 0, 0, 0, dto.Held + dto.Refused + dto.Partial, dto.Removed),
+            rows, rows.Where(r => r.Keep).ToList(), dto.Removed);
     }
 
     internal static IReadOnlyList<WorktreeResidueRow> Classify(
