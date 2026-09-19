@@ -145,18 +145,35 @@ public sealed class AgentTaskLandPublicationTests
         var sha = await h.AddSourceAsync();
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "merge", "--ff-only", sha);
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "update-ref", "refs/remotes/origin/master", sha);
-        h.Fixture.Git.BeforeCommand = (_, args) => Task.FromResult<LandingGitResult?>(fault switch
+        // CARD-0488 observes the remote *source* branch (ls-remote/fetch/merge-base against
+        // SourceRef) in the resolver before an operation exists, and rechecks it in the protocol.
+        // Only the target-branch observation is faulted: that is the read whose failure must not
+        // be replaced by cached (refs/remotes/origin/*) or local containment. The resolver's
+        // ancestry checks share merge-base's argument shape but always precede the first target
+        // ls-remote, and the trace records a command before BeforeCommand sees it.
+        bool TargetObservation(IReadOnlyList<string> args) => args[0] switch
         {
-            "timeout" when args[0] == "ls-remote" => throw new TimeoutException("fixture timeout"),
-            "canceled" when args[0] == "ls-remote" => throw new OperationCanceledException("fixture cancel"),
-            "read-error" when args[0] == "ls-remote" => new(128, "", "synthetic-private-marker"),
-            "empty" when args[0] == "ls-remote" => new(0, "", ""),
-            "malformed" when args[0] == "ls-remote" => new(0, "invalid\\trefs/heads/master\\n", ""),
-            "missing" when args[0] == "ls-remote" => new(2, "", ""),
-            "fetch-error" when args[0] == "fetch" => new(128, "", "synthetic-private-marker"),
-            "ancestry-error" when args[0] == "merge-base" => new(128, "", "synthetic-private-marker"),
-            _ => null,
-        });
+            "ls-remote" => args.Contains(h.Fixture.TargetRef),
+            "fetch" => args.Any(a => a.StartsWith(h.Fixture.TargetRef + ":", StringComparison.Ordinal)),
+            "merge-base" => h.Fixture.Git.Trace.Any(t => t[0] == "ls-remote" && t.Contains(h.Fixture.TargetRef)),
+            _ => false,
+        };
+        h.Fixture.Git.BeforeCommand = (_, args) =>
+        {
+            if (!TargetObservation(args)) return Task.FromResult<LandingGitResult?>(null);
+            return Task.FromResult<LandingGitResult?>(fault switch
+            {
+                "timeout" when args[0] == "ls-remote" => throw new TimeoutException("fixture timeout"),
+                "canceled" when args[0] == "ls-remote" => throw new OperationCanceledException("fixture cancel"),
+                "read-error" when args[0] == "ls-remote" => new(128, "", "synthetic-private-marker"),
+                "empty" when args[0] == "ls-remote" => new(0, "", ""),
+                "malformed" when args[0] == "ls-remote" => new(0, "invalid\\trefs/heads/master\\n", ""),
+                "missing" when args[0] == "ls-remote" => new(2, "", ""),
+                "fetch-error" when args[0] == "fetch" => new(128, "", "synthetic-private-marker"),
+                "ancestry-error" when args[0] == "merge-base" => new(128, "", "synthetic-private-marker"),
+                _ => null,
+            });
+        };
         h.Fixture.Git.Trace.Clear();
         if (fault is "timeout" or "canceled")
         {
@@ -166,7 +183,18 @@ public sealed class AgentTaskLandPublicationTests
             await h.FailAsync(error);
         }
         else await h.RunAsync();
+        h.Fixture.Git.Trace.ShouldContain(a => a[0] == "ls-remote" && a.Contains(h.Fixture.SourceRef),
+            "the remote source observation must run unfaulted before the target observation");
         var operation = (await h.OperationAsync()).ShouldNotBeNull();
+        operation.SourceRemoteSha.ShouldBe(h.Fixture.SeedSha);
+        if (fault is not ("timeout" or "canceled"))
+            operation.LastReason.ShouldBe(fault switch
+            {
+                "read-error" or "missing" => "remote_read_failed",
+                "empty" or "malformed" => "remote_response_invalid",
+                "fetch-error" => "remote_fetch_failed",
+                _ => "remote_ancestry_error",
+            });
         operation.RemoteConfirmedAt.ShouldBeNull();
         // Drain-side timeout/cancellation settlement can retain a null operation reason.
         (operation.LastReason ?? "").ShouldNotContain("synthetic-private-marker");
