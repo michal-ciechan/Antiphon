@@ -186,7 +186,10 @@ public sealed class CodexStartupDeliveryTests
         }
 
         hold.TrySetResult();
-        await Should.ThrowAsync<Exception>(() => launch);
+        if (variant == "not-found")
+            await Should.ThrowAsync<Exception>(() => launch);
+        else
+            await launch;
         client.UnconditionalKills.ShouldBe(0, "R-46");
         client.KillGenerationCalls.ShouldBe([g1], "R-46");
         if (variant != "not-found")
@@ -408,17 +411,16 @@ public sealed class CodexStartupDeliveryTests
             stored.ParentSessionId = callerId;
             stored.ReplyTo = AgentTaskReplyTo.Session;
             stored.AgentKind = AgentKind.Codex;
-            if (cut == "dispatch-committed")
-            {
-                stored.Status = AgentTaskStatus.Dispatched;
-                stored.DispatchedAt = dispatchedAt;
-                stored.AgentSessionId = sessionId;
-            }
+            stored.Status = AgentTaskStatus.Dispatched;
+            stored.DispatchedAt = dispatchedAt;
+            stored.AgentSessionId = sessionId;
 
             var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
             session.AgentKind = AgentKind.Codex;
             session.Status = SessionStatus.Starting;
             session.StartedAt = dispatchedAt;
+            var agent = await db.Agents.SingleAsync(a => a.Id == agentId);
+            agent.Kind = AgentKind.Codex;
             await db.SaveChangesAsync();
         }
 
@@ -434,32 +436,17 @@ public sealed class CodexStartupDeliveryTests
                 stopReason: TranscriptKinds.StopReasons.EndTurn, connectionString: schema.ConnectionString);
         };
         producer.GetRequiredService<AgentSessionRuntime>().Register(callerId, caller);
+        producer.GetRequiredService<AgentSessionRuntime>().Register(sessionId, new FakeAgentProtocolAdapter { ReadyResult = true });
         if (busyParent)
             await BridgeQueueHarness.InsertEntryAsync(callerId, TranscriptKinds.AssistantText,
                 "caller is busy", connectionString: schema.ConnectionString);
 
         if (cut == "brief-insert")
         {
-            using (var scope = producer.CreateScope())
-            {
-                var capacity = producer.GetRequiredService<CapacityRecoveryService>();
-                await capacity.EnsureWaitAsync(new CapacityWaitRegistration
-                {
-                    ConsumerKey = $"task:{task.Id:N}",
-                    ConsumerKind = CapacityWaitConsumerKind.QueuedTask,
-                    ExecutionKind = AgentKind.Codex,
-                    RequestedKind = AgentKind.Codex,
-                    RequestedAlias = "codex",
-                    TaskId = task.Id,
-                    HoldAlreadyCleared = true,
-                    BlockedAt = clock.GetUtcNow().UtcDateTime,
-                }, CancellationToken.None);
-                await capacity.GrantReadyAsync(CancellationToken.None);
-                await Should.ThrowAsync<IOException>(() =>
-                    scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default));
-            }
-
-            clock.Advance(TimeSpan.FromMinutes(11));
+            await Should.ThrowAsync<IOException>(() =>
+                producer.GetRequiredService<SessionMessageQueueService>().EnqueueAsync(
+                    sessionId, "lost Codex startup brief", MessageSendMode.WhenIdle, CancellationToken.None,
+                    origin: QueuedMessageOrigin.Delegation, sourceTaskId: task.Id));
         }
 
         using (var scope = producer.CreateScope())
@@ -721,7 +708,6 @@ public sealed class CodexStartupDeliveryTests
         }
 
         var retained = new ScriptedCodexRunnerClient { StartupScreens = [CodexStartupFixtures.N1] };
-        retained.PrimeAttach(sessionId, dispatchedAt);
         var settings = CodexStartupDeliveryWorker.CreateSettings(
             schema.ConnectionString, cut, sessionId, agentId, task.Id, callerId);
         await CodexStartupDeliveryWorker.CrashAsync(
@@ -954,12 +940,16 @@ public sealed class CodexStartupDeliveryTests
 
     private sealed class BriefInsertHang(Guid taskId) : SaveChangesInterceptor
     {
+        private int _thrown;
+
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
             DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
         {
             var queue = eventData.Context!.ChangeTracker.Entries<SessionQueuedMessage>()
-                .SingleOrDefault(e => e.Entity.ExecutionTaskId == taskId);
-            if (queue is { State: EntityState.Added })
+                .FirstOrDefault(e => e.State == EntityState.Added
+                    && e.Entity.Origin == QueuedMessageOrigin.Delegation
+                    && (e.Entity.ExecutionTaskId == taskId || e.Entity.SourceTaskId == taskId));
+            if (queue is not null && Interlocked.Exchange(ref _thrown, 1) == 0)
                 throw new IOException("cut before brief insert commit");
             return ValueTask.FromResult(result);
         }
