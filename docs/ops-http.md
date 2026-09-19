@@ -318,6 +318,8 @@ be an authorized Code/Worktree task in the same project and git common directory
 (`assessment`, `reason`, `sources[].origin` / `ownerTaskId` / `commit`). Land on a repair task
 returns 409 `repair_source_landing_owner_required`.
 
+`POST /api/agent-tasks` answers 400 `…could not be converted… Path: $.role` only for a name the served build's enum lacks; on master every scripted role binds (`AgentTaskRoleBindingTests`), so that 400 means the served build predates the value: check `GET /api/version` against HEAD and restart (CARD-0493).
+
 CARD-0544 (dormant: `InterimVerification:Enabled=false`, every card `FullOnly`): `POST /api/agent-tasks`
 accepts optional `verificationRound` (`Final` | `Interim`), `verificationSubjectTaskId`,
 `verificationBaselineOutcomeId` and `verificationSelection` (`artifactPath`, `artifactCommitSha`,

@@ -99,7 +99,9 @@ established and the required feature/capability is present; unknown/unrelated bu
 history cannot establish activation. Record desired and observed full SHAs in the
 deployment report. After out-of-band publication, update the canonical checkout
 using the existing runbook before choosing the intended deployment HEAD. Executable
-procedure: [apphost-runbook.md](apphost-runbook.md).
+procedure: [apphost-runbook.md](apphost-runbook.md). A new enum member (a role, a workspace mode) is a
+server capability exactly like `land-v2`: the script accepting it proves nothing about the served
+build.
 
 **Also automatic: what a stage run found.** A land op writes its own `StageOutcome` rows with no
 orchestrator action (§5). A Review/Test/Merge/Deploy delegate — or any dispatch given `-Stage`
