@@ -18,6 +18,7 @@ Object.defineProperty(window, 'matchMedia', {
 });
 
 HTMLCanvasElement.prototype.getContext = vi.fn(() => null);
+HTMLElement.prototype.scrollIntoView = vi.fn();
 
 class ResizeObserverMock {
   observe = vi.fn();
