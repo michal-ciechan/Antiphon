@@ -2403,23 +2403,23 @@ mutated row, not exit status alone.
 | PC-23 | Use ancestry-only comparison at land call | LS.C508_RebasedSiblingMarkerMatrix: all-minus marker absent |
 | PC-24 | Skip LandRequestedAt hold arm | DG.a_sibling_land_in_flight_holds_until_the_base_contains_it: first status Queued, path null |
 | PC-25 | Treat historical LandRequested event as active despite null column | DG.a_stranded_request_row_with_a_null_column_only_warns: Dispatched and zero Held |
-| PC-26 | Omit AddNotification in terminal land producer | LD.C508_SiblingOutcomeCommitRecovers: committed terminal has one owed note and complete original receipt |
-| PC-27 | Pass fresh Guid on each reconcile keyed enqueue | LD.C508_SiblingOutcomeQueueInsertRecovers: original queue ID reused and one native prompt |
-| PC-28 | Return when EnqueueAttempts>0 and QueueMessageId=null | LD.C508_SiblingOutcomeEnqueueRecovers: original note obtains one complete prompt |
+| PC-26 | Omit AddNotification in terminal land producer | LD.C467_V25_HardCrashAfterOutcomeCommitRecoversReceipt: committed terminal has one owed note and complete original receipt (amendment C) |
+| PC-27 | Pass fresh Guid on each reconcile keyed enqueue | LD.C467_V26_HardCrashAfterQueueInsertReusesRow: original queue ID reused and one native prompt (amendment C) |
+| PC-28 | Return when EnqueueAttempts>0 and QueueMessageId=null | LD.C467_V31_EnqueueFailureRecoversAutomatically: original note obtains one complete prompt (amendment C) |
 | PC-29 | Allow QueuedUserPrompt alongside UserPrompt | AgentTaskLandReceiptTests.C467_V11_RejectFalseReceipts: queued-prompt row ConfirmedAt=null |
 | PC-30 | Remove session predicate from receipt query | AgentTaskLandReceiptTests.C488_ApprovalReceiptNeedsDestination: ConfirmedAt=null |
 | PC-31 | Strip first line from expected body in BOTH IsConfirmedBy and IsCompleteIn receipt conjuncts | AgentTaskLandReceiptTests.C488_ApprovalReceiptNeedsIdentity: wrong identity leaves ConfirmedAt=null |
 | PC-32 | Remove IsCompleteIn conjunct | AgentTaskLandReceiptTests.C488_ApprovalReceiptNeedsCompleteBody: head-only remains unconfirmed |
 | PC-33 | Remove sequence-floor predicate | AgentTaskLandReceiptTests.C488_ApprovalReceiptNeedsSequenceFloor: ConfirmedAt=null |
 | PC-34 | Remove timestamp-floor predicate | AgentTaskLandReceiptTests.C488_ApprovalReceiptNeedsTimeFloor: ConfirmedAt=null |
-| PC-35 | Force queue working verdict false in delivery eligibility | LD.C508_SiblingOutcomeWaitsForBusyCaller: DeliveryAttempts=0 before release |
-| PC-36 | Disable completion scan, retaining test's dropped wakeup | LD.C508_SiblingOutcomeLostFlushRecovers: complete prompt without new input |
-| PC-37 | Return LateConfirmCounts.Empty before attempted-row examination | LD.C508_SiblingOutcomeVerdictRecovers: native submission count=1 after catch-up |
+| PC-35 | Force queue working verdict false in delivery eligibility | LD.C467_V23_BusyCallerDoesNotBlockAnotherLand: DeliveryAttempts=0 before release (amendment C) |
+| PC-36 | Disable completion scan, retaining test's dropped wakeup | LD.C467_V28_LostFlushWakeupRecoversOnIdleCaller: complete prompt without new input (amendment C) |
+| PC-37 | Return LateConfirmCounts.Empty before attempted-row examination | LD.C467_V30_ReceiptSaveFailureNeverRetypes (cut=`verdict`): native submission count=1 after catch-up (amendment C) |
 | PC-38 | Remove destination conflict comparison, retaining digest comparison | AgentTaskLandNotificationRecoveryTests.C467_V09_KeyedQueueRacesAndDistinctEvents: crossed-session enqueue throws ConflictException |
 | PC-39 | Commit/dispose terminal transaction before SaveChanges; remove later commit | AgentTaskLandNotificationPersistenceTests.C508_AfterSaveRollsBackOutcome: after-save fault leaves zero terminal events/notes |
 | PC-40 | In MaterializeAsync omit note insertion, retaining Warning and marker save | DBN.C508_WarningCommitCreatesObligation: Warning count=1, matching note count=1 (mutant 0) |
-| PC-41 | At projection skip note insertion if Local/DB already has a DispatchBase note for TaskId; still insert Warning/marker | DE.C508_WarningProducerToReceipt: each original warning has a note/complete native receipt; first claim note count=2 |
-| PC-42 | Add Kind!=DispatchBase to notification scan, retaining intent pass | DE.C508_WarningBootScanReachesCaller: original note complete prompt count=1 after restart/scans |
+| PC-41 | At projection skip note insertion if Local/DB already has a DispatchBase note for TaskId; still insert Warning/marker | DE.C540_CollapsedWarningsReachIdleCaller: each original warning has a note/complete native receipt; first claim note count=2 (amendment C) |
+| PC-42 | Add Kind!=DispatchBase to notification scan, retaining intent pass | DE.C540_PreEnqueueCrashRecoversWarnings: original note complete prompt count=1 after restart/scans (amendment C) |
 | PC-43 | Pass moving HEAD instead of verifiedSha | LS.C508_RebasedSiblingMarkerMatrix: pinned-M row retains marker even though moving HEAD contains patch |
 | PC-44 | Pass WorktreeBaseRef instead of WorktreeBaseRequestedRef to resolver | DW.C508_ReuseKeepsRecordedBase: adversarial recorded E/null request/no managed tree creates at M |
 | PC-45 | Remove fresh-repair skip only, retaining owner land hold | DG.C508_RepairRecordsOwnerAndSkipsSiblings: other sibling's active land cannot prevent Dispatched |
@@ -2427,7 +2427,7 @@ mutated row, not exit status alone.
 | PC-47 | Set repair WorktreeBaseTaskId=null | DG.C508_RepairRecordsOwnerAndSkipsSiblings: BaseTaskId=owner.Id |
 | PC-48 | Invert mismatch comparison when building capture drafts | DG.C508_GuardRefMismatchWarnedOnce: unequal-ref/one-sibling row mismatch count=1; equal-ref count=0 |
 | PC-49 | In mismatch materialization, if claim has >1 sibling intent, add a second valid Warning/note pair with fresh IDs and same detail | DG.C508_GuardRefMismatchWarnedOnce: two-sibling claim has one mismatch and three total notes (mutant two/four), no constraint error |
-| PC-50 | Omit only mismatch note insertion in materializer; retain Warning/marker | DE.C508_MismatchWarningReachesCaller: zero-sibling mismatch has one complete native prompt |
+| PC-50 | Omit only mismatch note insertion in materializer; retain Warning/marker | DG.C508_GuardRefMismatchWarnedOnce (0 siblings, moveTheDefault=true): mismatch note count=1 (amendment C; native queue is PC-41) |
 | PC-51 | Commit/dispose projection transaction before SaveChanges; remove later commit | DBN.C508_WarningCommitAtomic: after-save fault leaves pair counts=0 and MaterializedAt=null |
 | PC-52 | In ReconcileAsync replace DispatchBase ParentSessionId with current task parent | DBN.C508_WarningPayloadAndDestination: after second A->B edit, queue destination remains A |
 | PC-53 | Compute capture digest from body only | DBN.C508_WarningPayloadAndDestination: committed intent digest equals independent route+newline+body digest; same bytes/IDs with A vs B give different factory digests |
@@ -2437,7 +2437,7 @@ mutated row, not exit status alone.
 | PC-57 | Widen Outcome monitor query to include DispatchBase | LM.C508_RequestlessDispatchNotes: caught SweepAsync exception=null; Outcome still ages |
 | PC-58 | Map DispatchBase notes to LandOutcomeUnconfirmed | LM.C508_RequestlessDispatchNotes: kind DispatchWarningUnconfirmed and null LandRequestId |
 | PC-59 | Remove SourceLandNotificationId exclusion in HasCompletionNoteAsync | DBN.C508_WarningsAreNotReports: task-key/digest-equal warning alone returns false |
-| PC-60 | Omit ONLY hosted intent-scan invocation; retain Capture, MaterializeAsync, notification scan and any fast path | DE.C508_DispatchWarningPrecommitCrashRecovers: at immediate postclaim cut fast path never ran; after restart original note/complete prompt count=1 (mutant 0) |
+| PC-60 | Omit ONLY hosted intent-scan invocation; retain Capture, MaterializeAsync, notification scan and any fast path | DE.C540_ClaimCrashRecoversCollapsedWarnings: at immediate postclaim cut fast path never ran; after restart original note/complete prompt count=1 (mutant 0) (amendment C) |
 | PC-61 | Set UnresolvedDefault=null on RepoHead arm only | BS.C508_UnresolvedDefaultRetainsName: two generated invalid input names retained respectively |
 | PC-62 | Build capture body from unadorned detail, computing digest consistently | DBN.C508_WarningPayloadAndDestination: committed intent first line equals exact independent dispatch-base header |
 | PC-63 | Remove ContentDigest conflict comparison only | DBN.C508_WarningQueueDigestCollision: same key/session with changed digest throws ConflictException |
@@ -2484,7 +2484,7 @@ mutated row, not exit status alone.
 | PC-104 | Choose master in guard's default probe instead of the configured failing candidate | DG.C508_GuardPreservesFailedDefault: with valid M distinct from H, both arbitrary missing-default rows observe HEAD, not master; resulting default warning still names original ref |
 | PC-105 | On Resolve's Explicit arm return failed defaultBranch.Ref in UnresolvedDefault instead of null | DG.C508_MissingDefaultWarns: requested-base row has zero default intents/pairs despite invalid configured default |
 | PC-106 | In the existing failed-progress-baseline branch add a fresh task-bound Dispatched event and Capture its frozen drafts before the existing Failed commit | DBN.C508_RefusedClaimHasNoIntent: failed-baseline row has zero intents; its committed worktree-created event does not authorize any |
-| PC-107 | After successful dispatch enqueue each frozen intent.Detail directly to saved parent using old task conversation key, while retaining durable delivery | DE.C508_WarningProducerToReceipt: native warning-detail census contains only keyed expected prompts, no unkeyed duplicate |
+| PC-107 | After successful dispatch enqueue each frozen intent.Detail directly to saved parent using old task conversation key, while retaining durable delivery | DE.C540_CollapsedWarningsReachIdleCaller: native warning-detail census contains only keyed expected prompts, no unkeyed duplicate (amendment C) |
 | PC-108 | In CLI-generated S2b migration Up change unique:true to false ONLY on (DispatchEventId,WarningKey) index | DBN.C508_IntentUniqueKeys: predecessor-to-current upgrade then duplicate event/key with distinct IDs must throw 23505 for named index |
 | PC-109 | In CLI-generated S2b migration Up change unique:true to false ONLY on NotificationId index | DBN.C508_IntentUniqueKeys: predecessor-to-current upgrade then duplicate NotificationId with different event/key must throw 23505 for named index |
 | PC-110 | Remove Capture's event/task binding check | DBN.C508_IntentCaptureBinding: cross-task final event capture is refused and no intent is tracked/committed |
@@ -2610,8 +2610,8 @@ Use producer-owned forward-slash outputs. Example ordinary selections
 dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c508/ --nologo
 dotnet build tests/Antiphon.E2E --property:OutputPath=bin-c508/ --nologo
 dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c508/ -- --treenode-filter '/*/Antiphon.Tests.Application/(WorktreeBaseSelectionTests*)|(DelegationWorktreeTests*)|(AgentTaskDispatchBaseGuardTests*)|(AgentTaskLandStageOutcomeTests*)|(DispatchBaseNotificationTests*)|(AgentTaskLandMonitoringTests*)|(DataRetentionServiceTests*)/*' --report-trx --report-trx-filename focused.trx --results-directory .antiphon/c508-b-focused
-dotnet run --project tests/Antiphon.E2E --no-build --property:OutputPath=bin-c508/ -- --treenode-filter '/*/*/DispatchBaseWarningDeliveryE2ETests/C508_*' --report-trx --report-trx-filename warnings.trx --results-directory .antiphon/c508-b-warnings
-dotnet run --project tests/Antiphon.E2E --no-build --property:OutputPath=bin-c508/ -- --treenode-filter '/*/*/AgentTaskLandDeliveryE2ETests/C508_*' --report-trx --report-trx-filename land.trx --results-directory .antiphon/c508-b-land
+dotnet run --project tests/Antiphon.E2E --no-build --property:OutputPath=bin-c508/ -- --treenode-filter '/*/*/DispatchBaseWarningDeliveryE2ETests/C540_*' --report-trx --report-trx-filename warnings.trx --results-directory .antiphon/c508-b-warnings
+dotnet run --project tests/Antiphon.E2E --no-build --property:OutputPath=bin-c508/ -- --treenode-filter '/*/*/AgentTaskLandDeliveryE2ETests/C467_*' --report-trx --report-trx-filename land.trx --results-directory .antiphon/c508-b-land
 pwsh -File scripts/test-client.ps1 attentionVisuals.test.ts
 ~~~
 
@@ -2642,7 +2642,7 @@ Concrete PC-60/61 commands (red and restored-green use separate fresh result
 directories and freshly built outputs, never --no-build after a mutation):
 
 ~~~powershell
-dotnet run --project tests/Antiphon.E2E --property:OutputPath=bin-c508-pc/ -- --treenode-filter '/*/*/DispatchBaseWarningDeliveryE2ETests/C508_DispatchWarningPrecommitCrashRecovers' --report-trx --report-trx-filename pc60-red.trx --results-directory .antiphon/c508-pc60-red
+dotnet run --project tests/Antiphon.E2E --property:OutputPath=bin-c508-pc/ -- --treenode-filter '/*/*/DispatchBaseWarningDeliveryE2ETests/C540_ClaimCrashRecoversCollapsedWarnings' --report-trx --report-trx-filename pc60-red.trx --results-directory .antiphon/c508-pc60-red
 dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c508-pc/ -- --treenode-filter '/*/*/WorktreeBaseSelectionTests/C508_UnresolvedDefaultRetainsName' --report-trx --report-trx-filename pc61-red.trx --results-directory .antiphon/c508-pc61-red
 ~~~
 
@@ -2662,3 +2662,51 @@ Ordinary floor=344 minutes, PC floor=358.5 minutes, total=702.5 minutes,
 all estimated. P-3/P-4 executability gaps are closed; implementation/tests
 remain Code's work. **Next: code**, followed by ordinary Review, land,
 and all pending SourceLanding Mutation cycles.
+
+## Plan amendment C — CARD-0508 D1 PC homes (2026-09-19)
+
+CARD-0534's retroactive Review of landed CARD-0508 found 25 of 116 PC rows
+had no target method: 11 DBN methods were never added, and every DE/LD
+`C508_*` native name is absent (DispatchBaseWarningDeliveryE2ETests holds
+CARD-0540 `C540_*` rows; AgentTaskLandDeliveryE2ETests holds CARD-0467
+`C467_*` rows).
+
+**DBN:** Code adds the 11 missing methods under the names in the B-audit
+PC table (`C508_WarningCommitCreatesObligation`, `C508_WarningCommitAtomic`,
+`C508_WarningsAreNotReports`, `C508_WarningQueueDigestCollision`,
+`C508_RequestlessNotificationUpgrade`, `C508_ClaimIntentAtomic`,
+`C508_IntentCaptureRoute`, `C508_IntentRetryBookkeepingFailure`,
+`C508_IntentScanPaging`, `C508_IntentScanIsolation`,
+`C508_RefusedClaimHasNoIntent`). Those PC rows keep their original homes.
+
+**DE/LD native names:** do not add duplicate `C508_*` E2E methods. CARD-0467
+and CARD-0540 already implemented the same producer/handoff cuts against
+the shared notification queue, land terminal producer, and dispatch-warning
+intent scan. Mutation must target those existing methods. The compiling
+defects are unchanged; only the exact-method filter names change.
+
+| Control | Was (no home) | Exact method now |
+|---|---|---|
+| PC-26 | LD.C508_SiblingOutcomeCommitRecovers | AgentTaskLandDeliveryE2ETests.C467_V25_HardCrashAfterOutcomeCommitRecoversReceipt |
+| PC-27 | LD.C508_SiblingOutcomeQueueInsertRecovers | AgentTaskLandDeliveryE2ETests.C467_V26_HardCrashAfterQueueInsertReusesRow |
+| PC-28 | LD.C508_SiblingOutcomeEnqueueRecovers | AgentTaskLandDeliveryE2ETests.C467_V31_EnqueueFailureRecoversAutomatically |
+| PC-35 | LD.C508_SiblingOutcomeWaitsForBusyCaller | AgentTaskLandDeliveryE2ETests.C467_V23_BusyCallerDoesNotBlockAnotherLand |
+| PC-36 | LD.C508_SiblingOutcomeLostFlushRecovers | AgentTaskLandDeliveryE2ETests.C467_V28_LostFlushWakeupRecoversOnIdleCaller |
+| PC-37 | LD.C508_SiblingOutcomeVerdictRecovers | AgentTaskLandDeliveryE2ETests.C467_V30_ReceiptSaveFailureNeverRetypes (cut=`verdict`) |
+| PC-41 | DE.C508_WarningProducerToReceipt | DispatchBaseWarningDeliveryE2ETests.C540_CollapsedWarningsReachIdleCaller |
+| PC-42 | DE.C508_WarningBootScanReachesCaller | DispatchBaseWarningDeliveryE2ETests.C540_PreEnqueueCrashRecoversWarnings |
+| PC-50 | DE.C508_MismatchWarningReachesCaller | AgentTaskDispatchBaseGuardTests.C508_GuardRefMismatchWarnedOnce (`divergentSiblings=0`, `moveTheDefault=true`): mismatch note count=1. Native prompt for this producer rides the same queue as PC-41. |
+| PC-60 | DE.C508_DispatchWarningPrecommitCrashRecovers | DispatchBaseWarningDeliveryE2ETests.C540_ClaimCrashRecoversCollapsedWarnings |
+| PC-107 | DE.C508_WarningProducerToReceipt (unkeyed census) | DispatchBaseWarningDeliveryE2ETests.C540_CollapsedWarningsReachIdleCaller |
+
+Ordinary V-11/V-12 land-sibling native rows remap onto the C467 methods above
+plus `C467_V22_AlreadyIdleGetsOutcomeWithoutNewInput` for the eligible
+receipt. Sibling-marker *content* stays LS.C508_RebasedSiblingMarkerMatrix
+(PC-23/PC-43). Ordinary V-14/V-21 dispatch-warning native rows remap onto
+the C540 methods in DispatchBaseWarningDeliveryE2ETests. V-16's dispatcher
+half remains DG.C508_GuardRefMismatchWarnedOnce; its native half is the
+PC-50 remap.
+
+This amendment does not drop a compiling defect, a handoff, or a native
+receipt class. It names the methods that actually exist after CARD-0467
+and CARD-0540 landed on the same delivery machine.

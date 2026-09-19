@@ -8,6 +8,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -618,10 +619,11 @@ public partial class DispatchBaseNotificationTests
     // ---- fixtures ---------------------------------------------------------------------------
 
     private static AgentTaskDispatchWarningIntent NewIntent(
-        AgentTask task, AgentTaskEvent dispatchEvent, string key, string detail, DateTime at)
+        AgentTask task, AgentTaskEvent dispatchEvent, string key, string detail, DateTime at,
+        Guid? id = null, Guid? notificationId = null)
     {
         var payload = DispatchBaseNotificationPayload.Capture(
-            Guid.NewGuid(), Guid.NewGuid(), task.Id, dispatchEvent.Id, task.Attempt, key,
+            id ?? Guid.NewGuid(), notificationId ?? Guid.NewGuid(), task.Id, dispatchEvent.Id, task.Attempt, key,
             task.ReplyTo, task.ParentSessionId, detail, at);
         return new AgentTaskDispatchWarningIntent
         {
@@ -755,7 +757,8 @@ public partial class DispatchBaseNotificationTests
     }
 
     private static ServiceProvider CreateProvider(
-        string connectionString, string worktreeBase, string defaultBranch, Func<Task>? onLeaseAcquired = null)
+        string connectionString, string worktreeBase, string defaultBranch, Func<Task>? onLeaseAcquired = null,
+        IInterceptor? interceptor = null, LandDeliveryBoundary? boundary = null, ITaskProgressGit? progressGit = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -766,7 +769,14 @@ public partial class DispatchBaseNotificationTests
             services.TryAddSingleton<ILandingGit, LandingGit>();
         }
 
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString));
+        if (progressGit is not null)
+            services.AddSingleton(progressGit);
+
+        services.AddDbContext<AppDbContext>(o =>
+        {
+            o.UseNpgsql(connectionString);
+            if (interceptor is not null) o.AddInterceptors(interceptor);
+        });
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton(Options.Create(new SupervisionSettings()));
@@ -790,7 +800,7 @@ public partial class DispatchBaseNotificationTests
             DefaultBranch = defaultBranch,
         });
         services.AddSingleton<CompletionNoteFlushQueue>();
-        services.AddSingleton<LandDeliveryBoundary>();
+        services.AddSingleton(boundary ?? new LandDeliveryBoundary());
         services.AddScoped<AgentTaskLandNotificationService>();
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentTaskDispatcher>();
