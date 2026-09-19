@@ -20,6 +20,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [NotInParallel("MessageQueue")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CodexStartupDeliveryTests
 {
     private static readonly SessionStatus[] NonRunning =
@@ -33,7 +34,7 @@ public sealed class CodexStartupDeliveryTests
     {
         var hold = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var adapter = new FakeAgentProtocolAdapter { ReadyHold = hold };
-        await using var h = await CreateCodexHarnessAsync(adapter, SessionStatus.Starting);
+        await using var h = await CreateCodexHarnessAsync(SessionStatus.Starting, adapter);
         var generation = await StartedAtAsync(h.SessionId);
         using var scope = h.Provider.CreateScope();
         var launch = scope.ServiceProvider.GetRequiredService<AgentSessionService>()
@@ -55,12 +56,13 @@ public sealed class CodexStartupDeliveryTests
     [Arguments(SessionStatus.Running)]
     public async Task Enqueue_during_boot_keeps_the_brief_pending_without_attempt(SessionStatus status)
     {
-        var adapter = new FakeAgentProtocolAdapter { ReadyResult = status == SessionStatus.Running };
-        await using var h = await CreateCodexHarnessAsync(adapter, status);
+        await using var h = await CreateCodexHarnessAsync(status);
+        var adapter = h.Adapter;
+        adapter.ReadyResult = status == SessionStatus.Running;
         if (status == SessionStatus.Running)
         {
             var dto = await h.Queue.EnqueueAsync(h.SessionId, "boot brief", MessageSendMode.WhenIdle, CancellationToken.None);
-            dto.Messages.ShouldNotBeEmpty();
+            dto.Messages.ShouldBeEmpty("idle Running session delivers immediately");
             adapter.SubmittedBodies.ShouldContain(b => b.Contains("boot brief"));
             return;
         }
@@ -83,8 +85,8 @@ public sealed class CodexStartupDeliveryTests
     {
         foreach (var status in NonRunning)
         {
-            var adapter = new FakeAgentProtocolAdapter();
-            await using var h = await CreateCodexHarnessAsync(adapter, status);
+            await using var h = await CreateCodexHarnessAsync(status);
+            var adapter = h.Adapter;
             var id = await h.SeedPendingMessageAsync("flush brief", createdAtUtc: DateTime.UtcNow.AddMinutes(-10));
             if (which == "session")
                 await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
@@ -115,8 +117,9 @@ public sealed class CodexStartupDeliveryTests
     [Arguments(SessionStatus.Running)]
     public async Task Turn_end_during_boot_types_nothing(SessionStatus status)
     {
-        var adapter = new FakeAgentProtocolAdapter { ReadyResult = true };
-        await using var h = await CreateCodexHarnessAsync(adapter, status);
+        await using var h = await CreateCodexHarnessAsync(status);
+        var adapter = h.Adapter;
+        adapter.ReadyResult = true;
         var id = await h.SeedPendingMessageAsync("turn-end brief");
         await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
         if (status == SessionStatus.Running)
@@ -137,7 +140,7 @@ public sealed class CodexStartupDeliveryTests
     {
         var hold = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var adapter = new FakeAgentProtocolAdapter { ReadyHold = hold };
-        await using var h = await CreateCodexHarnessAsync(adapter, SessionStatus.Starting);
+        await using var h = await CreateCodexHarnessAsync(SessionStatus.Starting, adapter);
         var generation = await StartedAtAsync(h.SessionId);
         var queue = h.Provider.GetRequiredService<AgentSessionLaunchQueue>();
         queue.EnqueueInteractiveSession(h.SessionId, h.AgentId, generation, Spec(h, generation), null);
@@ -167,7 +170,7 @@ public sealed class CodexStartupDeliveryTests
     public async Task Readiness_failure_kills_before_disposal()
     {
         var adapter = new FakeAgentProtocolAdapter { ReadyResult = false };
-        await using var h = await CreateCodexHarnessAsync(adapter, SessionStatus.Starting);
+        await using var h = await CreateCodexHarnessAsync(SessionStatus.Starting, adapter);
         var generation = await StartedAtAsync(h.SessionId);
         using var scope = h.Provider.CreateScope();
         await Should.ThrowAsync<InvalidOperationException>(() =>
@@ -180,7 +183,7 @@ public sealed class CodexStartupDeliveryTests
     public async Task Readiness_timeout_does_not_consume_delivery_or_boot_wedge_attempts()
     {
         var adapter = new FakeAgentProtocolAdapter { ReadyResult = false };
-        await using var h = await CreateCodexHarnessAsync(adapter, SessionStatus.Starting);
+        await using var h = await CreateCodexHarnessAsync(SessionStatus.Starting, adapter);
         var id = await h.SeedPendingMessageAsync("wedge brief");
         var generation = await StartedAtAsync(h.SessionId);
         using var scope = h.Provider.CreateScope();
@@ -207,7 +210,7 @@ public sealed class CodexStartupDeliveryTests
     public async Task Restart_during_boot_reverifies_before_delivering()
     {
         var adapter = new FakeAgentProtocolAdapter { ReadyResult = false };
-        await using var h = await CreateCodexHarnessAsync(adapter, SessionStatus.Starting);
+        await using var h = await CreateCodexHarnessAsync(SessionStatus.Starting, adapter);
         await h.SeedPendingMessageAsync("resume brief");
         using var scope = h.Provider.CreateScope();
         try
@@ -226,8 +229,9 @@ public sealed class CodexStartupDeliveryTests
     [Test]
     public async Task A_marker_or_prefix_receipt_does_not_confirm_the_brief()
     {
-        var adapter = new FakeAgentProtocolAdapter { ReadyResult = true };
-        await using var h = await CreateCodexHarnessAsync(adapter, SessionStatus.Running);
+        await using var h = await CreateCodexHarnessAsync(SessionStatus.Running);
+        var adapter = h.Adapter;
+        adapter.ReadyResult = true;
         await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "[antiphon-task:deadbeef]");
         await h.Queue.EnqueueAsync(h.SessionId, "full body that must match", MessageSendMode.WhenIdle, CancellationToken.None);
         await using var db = BridgeQueueHarness.CreateContext();
@@ -238,8 +242,9 @@ public sealed class CodexStartupDeliveryTests
     [Test]
     public async Task Old_receipt_does_not_confirm_this_attempt()
     {
-        var adapter = new FakeAgentProtocolAdapter { ReadyResult = true };
-        await using var h = await CreateCodexHarnessAsync(adapter, SessionStatus.Running);
+        await using var h = await CreateCodexHarnessAsync(SessionStatus.Running);
+        var adapter = h.Adapter;
+        adapter.ReadyResult = true;
         const string body = "same full body";
         await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, body);
         var id = await h.SeedPendingMessageAsync(body, deliveryAttempts: 1);
@@ -252,22 +257,56 @@ public sealed class CodexStartupDeliveryTests
     [Test]
     public async Task Wrong_session_receipt_does_not_confirm_this_attempt()
     {
-        var adapter = new FakeAgentProtocolAdapter { ReadyResult = true };
-        await using var h = await CreateCodexHarnessAsync(adapter, SessionStatus.Running);
+        await using var h = await CreateCodexHarnessAsync(SessionStatus.Running);
+        var adapter = h.Adapter;
+        adapter.ReadyResult = true;
+        adapter.OnSubmitted = _ => Task.CompletedTask;
+        adapter.EchoTypedInputToScreen = false;
+        adapter.SwallowSubmits = 99;
         const string body = "cross-session body";
-        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, body, sessionId: Guid.NewGuid());
+        var otherSessionId = await AddSessionAsync(h.TempRoot);
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.UserPrompt, body, sessionId: otherSessionId, timestamp: DateTime.UtcNow);
         var id = await h.SeedPendingMessageAsync(body);
         await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
         await using var db = BridgeQueueHarness.CreateContext();
         var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
         row.DeliveryVerdict.ShouldNotBe(DeliveryVerdict.Delivered, "R-52");
+        row.DeliveryVerdict.ShouldNotBe(DeliveryVerdict.LateConfirmed, "R-52");
+    }
+
+    [Test]
+    [Arguments("starting")]
+    [Arguments("running")]
+    public async Task Crash_at_running_handoff_preserves_the_queued_brief(string cut)
+    {
+        await using var h = await CreateCodexHarnessAsync(
+            cut == "starting" ? SessionStatus.Starting : SessionStatus.Running);
+        var adapter = h.Adapter;
+        adapter.ReadyResult = true;
+        var id = await h.SeedPendingMessageAsync("handoff brief");
+        if (cut == "starting")
+        {
+            WorkWrites(adapter).ShouldBeEmpty();
+            await using var db = BridgeQueueHarness.CreateContext();
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+            row.Status.ShouldBe(QueuedMessageStatus.Pending);
+            row.DeliveryAttempts.ShouldBe(0);
+            return;
+        }
+
+        await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
+        adapter.SubmittedBodies.ShouldContain(b => b.Contains("handoff brief"));
+        await using var verify = BridgeQueueHarness.CreateContext();
+        (await verify.SessionQueuedMessages.SingleAsync(m => m.Id == id)).Id.ShouldBe(id);
     }
 
     [Test]
     public async Task Committed_brief_is_recovered_after_service_recreation()
     {
-        var adapter = new FakeAgentProtocolAdapter { ReadyResult = true };
-        await using var h = await CreateCodexHarnessAsync(adapter, SessionStatus.Starting);
+        await using var h = await CreateCodexHarnessAsync(SessionStatus.Starting);
+        var adapter = h.Adapter;
+        adapter.ReadyResult = true;
         var id = await h.SeedPendingMessageAsync("recovered brief");
         await using (var db = BridgeQueueHarness.CreateContext())
         {
@@ -286,8 +325,10 @@ public sealed class CodexStartupDeliveryTests
     [Test]
     public async Task Interrupted_typed_brief_recovers_with_enter_only()
     {
-        var adapter = new FakeAgentProtocolAdapter { ReadyResult = true, EchoTypedInputToScreen = true };
-        await using var h = await CreateCodexHarnessAsync(adapter, SessionStatus.Running);
+        await using var h = await CreateCodexHarnessAsync(SessionStatus.Running);
+        var adapter = h.Adapter;
+        adapter.ReadyResult = true;
+        adapter.EchoTypedInputToScreen = true;
         const string body = "held composer body";
         adapter.PrimeComposer(body);
         await h.SeedPendingMessageAsync(body, deliveryAttempts: 1, status: QueuedMessageStatus.Sent);
@@ -298,8 +339,9 @@ public sealed class CodexStartupDeliveryTests
     [Test]
     public async Task Accepted_prompt_before_verdict_commit_is_not_typed_again()
     {
-        var adapter = new FakeAgentProtocolAdapter { ReadyResult = true };
-        await using var h = await CreateCodexHarnessAsync(adapter, SessionStatus.Running);
+        await using var h = await CreateCodexHarnessAsync(SessionStatus.Running);
+        var adapter = h.Adapter;
+        adapter.ReadyResult = true;
         const string body = "already accepted";
         await h.SeedPendingMessageAsync(body, deliveryAttempts: 1, status: QueuedMessageStatus.Sent);
         await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, body);
@@ -310,8 +352,8 @@ public sealed class CodexStartupDeliveryTests
     [Test]
     public async Task Enqueue_failure_is_reported_to_the_original_caller()
     {
-        var adapter = new FakeAgentProtocolAdapter();
-        await using var h = await CreateCodexHarnessAsync(adapter, SessionStatus.Running);
+        await using var h = await CreateCodexHarnessAsync(SessionStatus.Running);
+        var adapter = h.Adapter;
         await Should.ThrowAsync<ValidationException>(
             () => h.Queue.EnqueueAsync(h.SessionId, "   ", MessageSendMode.WhenIdle, CancellationToken.None));
         WorkWrites(adapter).ShouldBeEmpty("R-58");
@@ -334,8 +376,9 @@ public sealed class CodexStartupDeliveryTests
     [Test]
     public async Task Crash_after_attempt_commit_recovers_an_untyped_brief()
     {
-        var adapter = new FakeAgentProtocolAdapter { ReadyResult = true };
-        await using var h = await CreateCodexHarnessAsync(adapter, SessionStatus.Running);
+        await using var h = await CreateCodexHarnessAsync(SessionStatus.Running);
+        var adapter = h.Adapter;
+        adapter.ReadyResult = true;
         var id = await h.SeedPendingMessageAsync("untyped after commit", deliveryAttempts: 1, status: QueuedMessageStatus.Sent);
         await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
         adapter.SubmittedBodies.Count(b => b.Contains("untyped after commit")).ShouldBeLessThanOrEqualTo(1, "R-62");
@@ -346,8 +389,9 @@ public sealed class CodexStartupDeliveryTests
     [Test]
     public async Task Producer_brief_reaches_an_already_eligible_recipient_whole()
     {
-        var adapter = new FakeAgentProtocolAdapter { ReadyResult = true };
-        await using var h = await CreateCodexHarnessAsync(adapter, SessionStatus.Running);
+        await using var h = await CreateCodexHarnessAsync(SessionStatus.Running);
+        var adapter = h.Adapter;
+        adapter.ReadyResult = true;
         await h.Queue.EnqueueAsync(h.SessionId, "eligible brief", MessageSendMode.WhenIdle, CancellationToken.None);
         adapter.SubmittedBodies.ShouldContain(b => b.Contains("eligible brief"), "R-63");
     }
@@ -355,8 +399,9 @@ public sealed class CodexStartupDeliveryTests
     [Test]
     public async Task Producer_brief_waits_for_busy_recipient_and_arrives_whole()
     {
-        var adapter = new FakeAgentProtocolAdapter { ReadyResult = true };
-        await using var h = await CreateCodexHarnessAsync(adapter, SessionStatus.Running);
+        await using var h = await CreateCodexHarnessAsync(SessionStatus.Running);
+        var adapter = h.Adapter;
+        adapter.ReadyResult = true;
         await h.MarkWorkingAsync();
         await h.Queue.EnqueueAsync(h.SessionId, "busy brief", MessageSendMode.WhenIdle, CancellationToken.None,
             deliverIfIdle: true);
@@ -375,8 +420,9 @@ public sealed class CodexStartupDeliveryTests
     [Arguments(SessionStatus.Running)]
     public async Task Send_now_during_boot_is_refused_without_input(SessionStatus status)
     {
-        var adapter = new FakeAgentProtocolAdapter { ReadyResult = true };
-        await using var h = await CreateCodexHarnessAsync(adapter, status);
+        await using var h = await CreateCodexHarnessAsync(status);
+        var adapter = h.Adapter;
+        adapter.ReadyResult = true;
         var id = await h.SeedPendingMessageAsync("send-now brief");
         if (status == SessionStatus.Running)
         {
@@ -404,8 +450,9 @@ public sealed class CodexStartupDeliveryTests
     [Arguments(SessionStatus.Running)]
     public async Task Mode_now_during_boot_is_refused_without_input(SessionStatus status)
     {
-        var adapter = new FakeAgentProtocolAdapter { ReadyResult = true };
-        await using var h = await CreateCodexHarnessAsync(adapter, status);
+        await using var h = await CreateCodexHarnessAsync(status);
+        var adapter = h.Adapter;
+        adapter.ReadyResult = true;
         if (status == SessionStatus.Running)
         {
             await h.Queue.EnqueueAsync(h.SessionId, "mode-now brief", MessageSendMode.Now, CancellationToken.None);
@@ -435,17 +482,15 @@ public sealed class CodexStartupDeliveryTests
     }
 
     private static async Task<BridgeQueueHarness> CreateCodexHarnessAsync(
-        FakeAgentProtocolAdapter adapter, SessionStatus status)
+        SessionStatus status, FakeAgentProtocolAdapter? launchAdapter = null)
     {
         var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
-            ConfigureServices = s =>
-            {
-                s.AddSingleton<IAgentProtocolAdapterFactory>(new OneAdapterFactory(adapter));
-            },
+            ConfigureServices = launchAdapter is null
+                ? null
+                : s => s.AddSingleton<IAgentProtocolAdapterFactory>(new OneAdapterFactory(launchAdapter)),
         });
-        h.Runtime.Register(h.SessionId, adapter);
         await using var db = BridgeQueueHarness.CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
         session.AgentKind = AgentKind.Codex;
@@ -496,6 +541,28 @@ public sealed class CodexStartupDeliveryTests
     {
         await using var db = BridgeQueueHarness.CreateContext();
         return await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == sessionId);
+    }
+
+    private static async Task<Guid> AddSessionAsync(string cwd)
+    {
+        var id = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await using var db = BridgeQueueHarness.CreateContext();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = id,
+            DefinitionName = "codex",
+            AgentKind = AgentKind.Codex,
+            Status = SessionStatus.Running,
+            Cwd = cwd,
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now,
+        });
+        await db.SaveChangesAsync();
+        return id;
     }
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
