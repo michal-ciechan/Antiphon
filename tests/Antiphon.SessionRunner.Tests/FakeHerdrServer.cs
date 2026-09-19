@@ -52,6 +52,12 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
     public bool EchoSendTextToScreen { get; set; }
 
     /// <summary>
+    /// CARD-0574: opt-in Codex startup screen applied after launch-script echo so
+    /// <c>agent:codex</c> is not treated as ready. Null keeps the generic default.
+    /// </summary>
+    public string? CodexStartupScreen { get; set; }
+
+    /// <summary>
     /// CARD-0187: kind <c>pane.send_text</c> of <c>&amp; '&lt;x&gt;.launch.ps1'</c> stamps on the pane
     /// after <see cref="LaunchScriptDetectDelayMs"/>. Null = never detect (timeout seam). Default
     /// claude so existing CARD-0160/0164/0186 tests keep passing.
@@ -886,6 +892,13 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
             pane.ScreenText = text == "\u0015" ? "" : text;
         }
 
+        if (IsLaunchScriptInvocation(text)
+            && CodexStartupScreen is not null
+            && pane.LaunchDetectKind == HerdrAgentKinds.Codex)
+        {
+            pane.ScreenText = CodexStartupScreen;
+        }
+
         return OkJson();
     }
 
@@ -953,7 +966,13 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         }
     }
 
-    private static void ApplyLaunchDetection(PaneState pane)
+    private string? CodexStartupFor(string kind) =>
+        CodexStartupScreen is not null
+        && string.Equals(kind, HerdrAgentKinds.Codex, StringComparison.OrdinalIgnoreCase)
+            ? CodexStartupScreen
+            : null;
+
+    private void ApplyLaunchDetection(PaneState pane)
     {
         if (pane.Agent is not null)
             return;
@@ -965,7 +984,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
             return;
 
         pane.Agent = kind;
-        pane.ScreenText ??= $"agent:{kind} env={FormatEnv(pane.Env)}";
+        pane.ScreenText = CodexStartupFor(kind) ?? pane.ScreenText ?? $"agent:{kind} env={FormatEnv(pane.Env)}";
     }
 
     private string PaneReadJson(JsonElement parameters)
@@ -1119,7 +1138,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         pane.AgentName = name;
         // CARD-0164: sticky revision is the fake's default (measured 0.8.2). Screen text may change
         // on agent.start; revision does NOT auto-bump — tests that need it call SetPaneRevision.
-        pane.ScreenText = $"agent:{kind} env={FormatEnv(pane.Env)}";
+        pane.ScreenText = CodexStartupFor(kind) ?? $"agent:{kind} env={FormatEnv(pane.Env)}";
         return
             $"{{\"type\":\"agent_started\",\"agent\":{{\"pane_id\":\"{pane.PaneId}\",\"tab_id\":\"{pane.TabId}\",\"workspace_id\":\"{pane.WorkspaceId}\",\"terminal_id\":\"{pane.TerminalId}\",\"name\":{JsonSerializer.Serialize(name)},\"agent\":{JsonSerializer.Serialize(kind)},\"agent_status\":\"idle\",\"cwd\":{JsonSerializer.Serialize(pane.Cwd)},\"revision\":{pane.Revision},\"focused\":false,\"interactive_ready\":true,\"launch_pending\":false}},\"argv\":[]}}";
     }

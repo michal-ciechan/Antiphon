@@ -29,12 +29,31 @@ internal sealed class ScriptedCodexRunnerClient : ISessionRunnerClient
         "  codex\n  the answer so far\n\n  > \n  gpt-5.6-luna low · ~/tmp\n";
 
     private readonly List<SessionRunnerTranscriptEvent> _entries = new();
+    private readonly List<string> _writes = new();
     private long _sequence;
     private int _screenReads;
+    private int _startupIndex;
     private int _enters;
     private string? _lastBody;
+    private DateTime? _acceptedStartedAt;
+    private bool _exited;
 
     public Guid SessionId { get; private set; }
+
+    /// <summary>
+    /// CARD-0574: opt-in startup frames. When set, <see cref="GetSnapshotAsync"/> returns
+    /// these screens in order (last frame sticks) instead of the turn idle/working pair.
+    /// </summary>
+    public IReadOnlyList<string>? StartupScreens { get; set; }
+
+    public TaskCompletionSource? SnapshotHold { get; set; }
+
+    public IReadOnlyList<string> Writes => _writes;
+    public List<DateTime> KillGenerationCalls { get; } = [];
+    public int UnconditionalKills { get; private set; }
+    public int ResizeCalls { get; private set; }
+    public int SnapshotReads => _screenReads;
+    public DateTime? AcceptedStartedAt => _acceptedStartedAt;
 
     /// <summary>Raw pty output; must be non-empty or the CARD-0052 visible-output guard blocks every verdict.</summary>
     public string RawOutput { get; set; } = "codex ready\n";
@@ -82,8 +101,10 @@ internal sealed class ScriptedCodexRunnerClient : ISessionRunnerClient
     public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
     {
         SessionId = sessionId;
+        _acceptedStartedAt = spec.AcceptedStartedAt ?? DateTime.UtcNow;
         return Task.FromResult(new SessionRunnerSessionDto(
-            sessionId, 1234, DateTime.UtcNow, "Running", null, AgentExitReason.Unknown, 0));
+            sessionId, 1234, _acceptedStartedAt.Value, "Running", null, AgentExitReason.Unknown, 0,
+            AcceptedStartedAt: _acceptedStartedAt));
     }
 
     public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
@@ -91,19 +112,41 @@ internal sealed class ScriptedCodexRunnerClient : ISessionRunnerClient
 
     public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
         Task.FromResult(new SessionRunnerSessionDto(
-            sessionId, 1234, DateTime.UtcNow, "Running", null, AgentExitReason.Unknown, _sequence));
+            sessionId, 1234, _acceptedStartedAt ?? DateTime.UtcNow,
+            _exited ? "Exited" : "Running",
+            _exited ? 0 : null,
+            _exited ? AgentExitReason.KilledByRequest : AgentExitReason.Unknown,
+            _sequence,
+            AcceptedStartedAt: _acceptedStartedAt));
 
     public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) =>
         Task.FromResult(new SessionRunnerBufferDto(sessionId, RawOutput, _sequence));
 
-    public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct)
+    public async Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct)
     {
-        var working = _screenReads++ < IndicatorScreenReads;
-        if (working)
-            _sequence++; // the TUI repaints the indicator while the turn runs
+        if (SnapshotHold is not null)
+            await SnapshotHold.Task.WaitAsync(ct);
 
-        return Task.FromResult(new SessionRunnerSnapshotDto(
-            sessionId, RawOutput, working ? WorkingScreen : QuietScreen, _sequence, DateTime.UtcNow));
+        _screenReads++;
+        string screen;
+        if (StartupScreens is { Count: > 0 } frames)
+        {
+            var idx = Math.Min(_startupIndex, frames.Count - 1);
+            screen = frames[idx];
+            if (_startupIndex < frames.Count - 1)
+                _startupIndex++;
+        }
+        else
+        {
+            var working = (_screenReads - 1) < IndicatorScreenReads;
+            if (working)
+                _sequence++;
+            screen = working ? WorkingScreen : QuietScreen;
+        }
+
+        return new SessionRunnerSnapshotDto(
+            sessionId, RawOutput, screen, _sequence, _acceptedStartedAt ?? DateTime.UtcNow,
+            _acceptedStartedAt);
     }
 
     public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
@@ -124,6 +167,7 @@ internal sealed class ScriptedCodexRunnerClient : ISessionRunnerClient
 
     public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
     {
+        _writes.Add(input);
         _sequence++;
         if (input == "\r")
         {
@@ -145,11 +189,36 @@ internal sealed class ScriptedCodexRunnerClient : ISessionRunnerClient
 
     public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) => Task.CompletedTask;
 
-    public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) => Task.CompletedTask;
+    public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct)
+    {
+        ResizeCalls++;
+        return Task.CompletedTask;
+    }
 
-    public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct) =>
-        Task.FromResult(new SessionRunnerSessionDto(
-            sessionId, null, DateTime.UtcNow, "Exited", 0, AgentExitReason.KilledByRequest, _sequence));
+    public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct)
+    {
+        UnconditionalKills++;
+        _exited = true;
+        return Task.FromResult(new SessionRunnerSessionDto(
+            sessionId, null, DateTime.UtcNow, "Exited", 0, AgentExitReason.KilledByRequest, _sequence,
+            AcceptedStartedAt: _acceptedStartedAt));
+    }
+
+    public Task<RunnerKillGenerationResult> KillGenerationAsync(
+        Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct)
+    {
+        KillGenerationCalls.Add(expectedAcceptedStartedAt);
+        if (_acceptedStartedAt is { } accepted
+            && !SessionGeneration.Equal(accepted, expectedAcceptedStartedAt))
+        {
+            return Task.FromResult(new RunnerKillGenerationResult(
+                sessionId, false, KillGenerationOutcomes.Mismatch, accepted));
+        }
+
+        _exited = true;
+        return Task.FromResult(new RunnerKillGenerationResult(
+            sessionId, true, KillGenerationOutcomes.Killed, expectedAcceptedStartedAt));
+    }
 
     public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(
         [EnumeratorCancellation] CancellationToken ct)

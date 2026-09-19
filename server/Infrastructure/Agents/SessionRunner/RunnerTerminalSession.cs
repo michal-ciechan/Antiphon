@@ -128,7 +128,17 @@ internal sealed class RunnerTerminalSession
     public async Task<string> SnapshotScreenAsync(CancellationToken ct)
     {
         EnsureStarted();
-        return (await _client.GetSnapshotAsync(_sessionId, ct)).RenderedScreen;
+        return (await GetSnapshotAsync(ct)).RenderedScreen;
+    }
+
+    /// <summary>
+    /// CARD-0574 D-1: one runner snapshot per readiness decision so raw text and the
+    /// rendered screen are the same frame.
+    /// </summary>
+    public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(CancellationToken ct)
+    {
+        EnsureStarted();
+        return _client.GetSnapshotAsync(_sessionId, ct);
     }
 
     public async Task<long> GetLastSequenceAsync(CancellationToken ct)

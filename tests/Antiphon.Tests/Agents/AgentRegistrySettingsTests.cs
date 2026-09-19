@@ -395,6 +395,23 @@ public class AgentRegistrySettingsTests
     }
 
     [Test]
+    public void Codex_boot_threshold_binds_zero_default_and_custom_without_changing_ready_budget()
+    {
+        new AgentRegistrySettings().CodexBootStatusMaxWaitMs.ShouldBe(10_000, "V-3 default");
+        new AgentRegistrySettings().CodexReadyMaxWaitMs.ShouldBe(60_000, "V-3 ready budget unchanged");
+
+        var custom = ValidSettings(new AgentDefinition { Kind = "ClaudeCode", Exe = "cl.bat" });
+        custom.CodexBootStatusMaxWaitMs = 250;
+        custom.CodexReadyMaxWaitMs = 60_000;
+        new AgentRegistrySettingsValidator().Validate(name: null, custom).Failed.ShouldBeFalse("V-3 custom");
+
+        var zero = ValidSettings(new AgentDefinition { Kind = "ClaudeCode", Exe = "cl.bat" });
+        zero.CodexBootStatusMaxWaitMs = 0;
+        new AgentRegistrySettingsValidator().Validate(name: null, zero).Failed.ShouldBeFalse("V-3 zero");
+        zero.CodexReadyMaxWaitMs.ShouldBe(60_000, "V-3 zero does not change ready budget");
+    }
+
+    [Test]
     public void Validator_accepts_zero_codex_boot_status_max_wait()
     {
         var result = new AgentRegistrySettingsValidator().Validate(name: null, ValidSettings(
