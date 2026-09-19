@@ -8,6 +8,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
+[Category("Slow")]
 public class AgentTaskScopedListTests
 {
     [Test]
@@ -319,6 +320,50 @@ public class AgentTaskScopedListTests
         noneRows.Items.Count.ShouldBe(3);
         noneRows.Items.ShouldAllBe(t => t.ScopeSource == AgentTaskScopeSource.None);
         emptyCounter.LabelSelects().ShouldBeLessThanOrEqualTo(2);
+    }
+
+    [Test]
+    public async Task Unscoped_summary_uses_sql_aggregates_without_goal_or_result()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using (var seed = ScopedAgentTaskListFixture.CreateContext(schema.ConnectionString))
+            await ScopedAgentTaskListFixture.SeedFleetAsync(seed);
+
+        var counter = new ScopeQueryCounter();
+        await using var measure = ScopedAgentTaskListFixture.CreateContext(schema.ConnectionString, counter);
+        counter.Reset();
+        var summary = await ScopedAgentTaskListFixture.CreateService(measure)
+            .GetListSummaryAsync(CancellationToken.None);
+        summary.Active.ShouldBe(9);
+        counter.Commands.ShouldNotBeEmpty();
+        counter.LabelSelects().ShouldBe(0);
+        foreach (var sql in counter.Commands)
+            AssertNoTaskBodyColumns(sql);
+    }
+
+    [Test]
+    public async Task Scoped_summary_projects_slim_rows_without_goal_or_result()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using (var seed = ScopedAgentTaskListFixture.CreateContext(schema.ConnectionString))
+            await ScopedAgentTaskListFixture.SeedFleetAsync(seed);
+
+        var counter = new ScopeQueryCounter();
+        await using var measure = ScopedAgentTaskListFixture.CreateContext(schema.ConnectionString, counter);
+        counter.Reset();
+        var summary = await ScopedAgentTaskListFixture.CreateService(measure)
+            .GetListSummaryAsync(ScopedAgentTaskListFixture.ProjectXScope(), CancellationToken.None);
+        summary.Active.ShouldBe(4);
+        counter.Commands.ShouldNotBeEmpty();
+        counter.LabelSelects().ShouldBeGreaterThan(0);
+        foreach (var sql in counter.Commands)
+            AssertNoTaskBodyColumns(sql);
+    }
+
+    private static void AssertNoTaskBodyColumns(string sql)
+    {
+        sql.ShouldNotContain("\"Goal\"", Case.Sensitive);
+        sql.ShouldNotContain("\"Result\"", Case.Sensitive);
     }
 
     private static void AssertRow(
