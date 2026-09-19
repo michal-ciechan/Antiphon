@@ -658,8 +658,8 @@ longer standing in for this specific defect.
 Cheapest first:
 
 ```bash
-# has it settled?  (one request, no model)
-curl -s localhost:17202/api/agent-tasks | python -c "..."   # filter by short id
+# has it settled?  (one request, no model; CARD-0515 envelope is { scope, items, excluded })
+curl -s localhost:17202/api/agent-tasks | python -c "import json,sys; d=json.load(sys.stdin); items=d['items'] if isinstance(d, dict) else d; ..."   # filter .items by short id
 
 # the stored report — available BEFORE the notification
 pwsh -NoProfile -File scripts/delegate.ps1 -Status <id>

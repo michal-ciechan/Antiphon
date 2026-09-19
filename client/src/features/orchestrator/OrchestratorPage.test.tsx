@@ -175,7 +175,7 @@ describe('OrchestratorPage', () => {
     window.history.pushState({}, '', '/orchestrator?tab=history')
     renderWithProviders(<OrchestratorPage />)
 
-    expect(await screen.findByRole('heading', { name: 'History' })).toBeInTheDocument()
+    expect(await screen.findByTestId('delegations-history')).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Delegations' })).not.toBeInTheDocument()
     expect(screen.queryByTestId('lane-working')).not.toBeInTheDocument()
   })
@@ -213,7 +213,7 @@ describe('OrchestratorPage', () => {
     window.history.pushState({}, '', '/orchestrator?tab=history')
     renderWithProviders(<OrchestratorPage />)
 
-    expect(await screen.findByRole('heading', { name: 'History' })).toBeInTheDocument()
+    expect(await screen.findByTestId('delegations-history')).toBeInTheDocument()
     expect(requests.cardsRequests()).toBe(0)
     expect(requests.orchestratorStateRequests()).toBe(0)
 

@@ -94,7 +94,7 @@ export function DelegationsHistory() {
 
   if (tasks.isLoading) {
     return (
-      <Group justify="center" py="xl">
+      <Group justify="center" py="xl" data-testid="delegations-history">
         <Loader size="md" />
       </Group>
     )
@@ -102,14 +102,14 @@ export function DelegationsHistory() {
 
   if (tasks.error) {
     return (
-      <Alert color="red" icon={<TbAlertCircle />} title="Error loading settled tasks">
+      <Alert color="red" icon={<TbAlertCircle />} title="Error loading settled tasks" data-testid="delegations-history">
         {tasks.error instanceof Error ? tasks.error.message : 'No tasks returned.'}
       </Alert>
     )
   }
 
   return (
-    <Stack gap="md">
+    <Stack gap="md" data-testid="delegations-history">
       <Group justify="space-between">
         <Group gap="xs">
           <Title order={4}>{boardId ? selectedBoardName ?? 'History' : 'Fleet — all boards'}</Title>

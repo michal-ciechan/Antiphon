@@ -150,7 +150,9 @@ than the one being fixed. Scoping either is a separate decision on a separate ca
 
 - [docs/antiphon-api.md](../../antiphon-api.md) list entry: the three new parameters, the
   envelope, the unknown-key refusal, and the new row fields. Delete the false clause
-  "scripts and `delegate.ps1` depend on that" — replace with the web client, which does.
+  "scripts and `delegate.ps1` depend on that". Name the real production list callers:
+  the web client, `scripts/checkpoint-task.ps1`, and `scripts/prune-test-data.ps1`.
+  `delegate.ps1` still does not list. PowerShell callers read `.items` off the envelope.
   Add to `/summary` that it takes the same scope; add to `/pipeline` an explicit
   "fleet-wide across every board; there is no board filter".
 - [docs/ops-http.md](../../ops-http.md) has no row for listing delegated work at all,
@@ -754,3 +756,9 @@ exact executable test selector and decisive assertion once Code
 implements the named tests. Setup omissions are enumerated above; no unverifiable
 seam or human choice remains. Next stage: **code**, then separate ordinary Review,
 confirmed land and SourceLanding Mutation.
+
+## Review repair (Code continuation)
+
+Activation requires **`restart: server`** and a **client rebuild** (envelope list,
+scoped `/summary` aggregates, History/Delegations heading and scope UI). `restart: none`
+is incorrect. Original Code task `65ffa1fa` remains the landing owner.

@@ -99,16 +99,16 @@ process-bug card if it recurs in a fresh session (see CARD-0551 in this project'
 
 ## 5. API quirks to route around, not fight
 
-- `GET /api/agent-tasks?boardId=Y` is NOT a filter: `boardId` is not a bound parameter on the
-  route, so minimal-API binding drops the key silently and every board's rows come back
-  (CARD-0541, being fixed under CARD-0515). Query known task IDs directly with
-  `GET /api/agent-tasks/{id}` instead of trusting a board-filtered list.
+- `GET /api/agent-tasks?boardId=Y` **is** a filter (CARD-0515). The body is always an envelope
+  `{ scope, items, excluded }` — read `.items`, never treat the envelope as one row. An omitted
+  `boardId`/`projectId` is the whole fleet (`scope` is null). Query a known task with
+  `GET /api/agent-tasks/{id}` when you already have the id.
 - `?status=X` works: case-insensitive, comma list unions, an unrecognised value is
   `422 validation_failed` (pinned by CARD-0546). What looked like "zero rows for a genuinely
   running task" was PowerShell, not the server: a bare `Invoke-RestMethod ... | Select-Object`
   emits the JSON array as one `Object[]` and prints a header plus one blank row for ANY array.
   Always parenthesise the call — `(Invoke-RestMethod ...) | Select-Object ...`, or
-  `(Invoke-RestMethod ...).cards | ...` for an envelope — or assign it to a variable and pipe
+  `(Invoke-RestMethod ...).items | ...` for the list envelope — or assign it to a variable and pipe
   that. Inline `@(Invoke-RestMethod ...)` does NOT enumerate (verified live). For occupancy prefer
   `GET /api/agent-tasks/pipeline` (in-flight / queued / blocked / ready per stage) over a
   hand-filtered list.

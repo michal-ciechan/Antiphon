@@ -259,10 +259,13 @@ GET    /api/agent-tasks                      list envelope `{ scope, items, excl
                                              `include`, `only`). `since` keeps every non-settled
                                              row regardless of age and trims only settled rows by
                                              CompletedAt. Omitting projectId/boardId returns every
-                                             board (`scope` is null, `excluded` is zeros). The
-                                             only in-repo production caller is the web client
-                                             (`client/src/api/agentTasks.ts`); `delegate.ps1`
-                                             does not list. Status names are case-insensitive
+                                             board (`scope` is null, `excluded` is zeros). In-repo
+                                             production list callers are the web client
+                                             (`client/src/api/agentTasks.ts`),
+                                             `scripts/checkpoint-task.ps1` (Working/Dispatched
+                                             occupancy) and `scripts/prune-test-data.ps1`
+                                             (open-task safety); `delegate.ps1` does not list.
+                                             Status names are case-insensitive
                                              (`working` == `Working`); an unrecognised value,
                                              including an undefined number, is `422
                                              validation_failed` with `errors.status` naming it,
