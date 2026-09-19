@@ -619,6 +619,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         if (session.Status != SessionStatus.Starting)
             return;
 
+        // CARD-0574 D-9: capture the attached generation before attach. A replacement that
+        // restamps StartedAt must not be the kill target if this resume later fails.
+        var resumedGeneration = SessionGeneration.Normalize(session.StartedAt);
         var now = UtcNow();
         var startingSeconds = Math.Max(0, (int)(now - session.StartedAt).TotalSeconds);
         session.LaunchResumedAt = now;
@@ -701,7 +704,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         {
             _logger.LogWarning(ex, "Resumed launch after a server restart failed for session {SessionId}", sessionId);
             if (attached && adapter is not null)
-                await KillAndDisposeAsync(adapter);
+                await KillAndDisposeAsync(adapter, resumedGeneration);
             else
             {
                 await KillRunnerSessionAsync(session.Id);
