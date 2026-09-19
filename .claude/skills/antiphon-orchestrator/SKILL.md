@@ -12,19 +12,35 @@ tick by tick, and the specific traps that cost real time when missed.
 
 ## 0. Policy defaults, unless the user says otherwise
 
-- **1 task per pipeline stage, in parallel across stages.** Never two same-stage tasks running at
-  once. Before dispatching a stage, check that role's slot directly (`GET /api/agent-tasks/{id}`
-  for known IDs, not the list-filter endpoints — see §5) rather than assuming.
+The owner is `docs/orchestration-loop.md` §1, "Standing pipeline policy" (CARD-0533); this is the
+short form.
+
+- **1 task per pipeline stage, in parallel across stages.** Never two tasks in the same stage at
+  once. Before dispatching a stage, check that role's in-flight row on
+  `GET /api/agent-tasks/pipeline` (or a known task by `GET /api/agent-tasks/{id}`, see §5), not
+  your memory.
 - **`-Worktree` by default on every dispatch.** Shared checkout only when explicitly told to
   default to Shared (globally/per-project/per-invocation), or when a task must continue on a
   branch that's already checked out elsewhere (see §4).
+- **One stage transition per completion.** Read `next=`/`handoff:` off the header and dispatch
+  that stage (§1). Parallelism comes from different cards sitting at different stages, not from
+  fanning out several dispatches at once.
+- **Code stage at a depth of two** (in flight + queued + ready). Below two, pull the next unstarted
+  Backlog card, lowest rank first, and start it through Plan toward Code; at two, start no new Plan
+  toward Code.
+- **Same source area as an in-flight Code task: defer that card's Code**, even with a free slot —
+  a worktree scope overlap only warns (CARD-0063), and the conflict lands on you at merge
+  (CARD-0535/CARD-0537, 2026-09-19).
+- **Land as soon as a stage's work is confirmed** (§6); don't hold landings to the end of a
+  session.
 - **Concurrency is per-project.** The absolute cap (`concurrency_limit` 409) and each stage's
   `recommendedInFlight` are both scoped to the project the board belongs to — unrelated boards
   (other projects) never count against it.
+- **`-IgnoreConcurrencyLimit` only for `axis: absolute` with no same-stage occupant** in the 409's
+  `open` list. `axis: role`, or a listed occupant in the role you are dispatching: defer. The
+  absolute axis wins the report when both caps trip, so read the list.
 - **File a card immediately** for any structural bug/defect found during Investigate or Review,
   before moving on. Don't let a real finding evaporate into a chat message.
-- **Prefer sequential dispatch**, one stage transition at a time, unless the user explicitly asks
-  for parallel fan-out.
 
 ## 1. Dispatch the next stage from the completion header, never the report body
 
