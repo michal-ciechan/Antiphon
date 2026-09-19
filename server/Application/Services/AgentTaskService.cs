@@ -1653,23 +1653,61 @@ public sealed class AgentTaskService
     public async Task<AgentTaskListSummaryDto> GetListSummaryAsync(
         AgentTaskScopeRequest? scope, CancellationToken ct)
     {
-        var candidates = await LoadListCandidatesAsync(
-            rootId: null, statuses: null, includeChecks: false, since: null, ct);
+        var query = _db.AgentTasks.AsNoTracking().Where(AgentTaskRoles.NotSpecialist);
+        if (scope is null)
+        {
+            var byStatus = await query
+                .GroupBy(t => t.Status)
+                .Select(group => new { Status = group.Key, Count = group.Count() })
+                .ToListAsync(ct);
+            var runs = await query.Select(t => t.RootTaskId).Distinct().CountAsync(ct);
+            var totalCostUsd = await query.SumAsync(t => t.CostUsd, ct);
+            var counts = byStatus.ToDictionary(group => group.Status.ToString(), group => group.Count);
+            return new AgentTaskListSummaryDto(
+                Active: byStatus.Where(group => group.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
+                    .Sum(group => group.Count),
+                Blocked: byStatus.Where(group => group.Status == AgentTaskStatus.Blocked).Sum(group => group.Count),
+                Runs: runs,
+                TotalCostUsd: totalCostUsd,
+                ByStatus: counts);
+        }
+
+        var candidates = (await query
+                .Select(t => new
+                {
+                    t.Id,
+                    t.RootTaskId,
+                    t.Status,
+                    t.CostUsd,
+                    t.CardId,
+                    t.ProjectId,
+                })
+                .ToListAsync(ct))
+            .Select(t => new AgentTask
+            {
+                Id = t.Id,
+                RootTaskId = t.RootTaskId,
+                Status = t.Status,
+                CostUsd = t.CostUsd,
+                CardId = t.CardId,
+                ProjectId = t.ProjectId,
+            })
+            .ToList();
         var labels = await LoadScopeLabelsAsync(candidates, scope, ct);
         var (items, _) = AgentTaskScope.Partition(candidates, labels, scope);
 
-        var byStatus = items
+        var scopedByStatus = items
             .GroupBy(t => t.Status)
             .Select(group => new { Status = group.Key, Count = group.Count() })
             .ToList();
-        var counts = byStatus.ToDictionary(group => group.Status.ToString(), group => group.Count);
+        var scopedCounts = scopedByStatus.ToDictionary(group => group.Status.ToString(), group => group.Count);
         return new AgentTaskListSummaryDto(
-            Active: byStatus.Where(group => group.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
+            Active: scopedByStatus.Where(group => group.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
                 .Sum(group => group.Count),
-            Blocked: byStatus.Where(group => group.Status == AgentTaskStatus.Blocked).Sum(group => group.Count),
+            Blocked: scopedByStatus.Where(group => group.Status == AgentTaskStatus.Blocked).Sum(group => group.Count),
             Runs: items.Select(t => t.RootTaskId).Distinct().Count(),
             TotalCostUsd: items.Sum(t => t.CostUsd),
-            ByStatus: counts);
+            ByStatus: scopedCounts);
     }
 
     private async Task<List<AgentTask>> LoadListCandidatesAsync(
