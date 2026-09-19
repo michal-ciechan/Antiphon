@@ -61,6 +61,35 @@ public sealed partial class LandDeliveryFixture
         await db.SaveChangesAsync();
     }
 
+    /// <summary>
+    /// V-16 / PC-50: zero ordinary sibling warnings; the project's default is moved under the
+    /// lease so capture owes exactly one <c>base-observation-stale</c> intent.
+    /// </summary>
+    public async Task StartMismatchDispatchAsync()
+    {
+        File.Exists(Path.Combine(Root, "dispatch-task.txt")).ShouldBeTrue("opt-in dispatch setup required");
+        Console.WriteLine($"C508 mismatch native evidence: {Root}");
+        await GitAsync(Repository, "branch", "project-default", "master");
+        await using var db = CreateContext();
+        var now = DateTime.UtcNow;
+        var project = new Project { Id = Guid.NewGuid(), Name = "C508 mismatch", GitRepositoryUrl = Remote,
+            BaseBranch = "master", CreatedAt = now, UpdatedAt = now };
+        var board = new Board { Id = Guid.NewGuid(), ProjectId = project.Id, Name = "C508 mismatch", CreatedAt = now, UpdatedAt = now };
+        var column = new BoardColumn { Id = Guid.NewGuid(), BoardId = board.Id, StateKey = "backlog", Name = "Backlog",
+            CardStatus = CardStatus.Backlog, CreatedAt = now, UpdatedAt = now };
+        var card = new Card { Id = Guid.NewGuid(), BoardId = board.Id, BoardColumnId = column.Id,
+            Identifier = "CARD-0508", Title = "Mismatch dispatch", CreatedAt = now, UpdatedAt = now };
+        db.AddRange(project, board, column, card);
+        db.AgentTasks.Add(new AgentTask { Id = TaskId, RootTaskId = TaskId, CardId = card.Id, ProjectId = project.Id,
+            Title = "C508 mismatch queued dispatch", Goal = "Complete this owned fixture turn.", Kind = AgentTaskKind.Worker,
+            Role = AgentTaskRole.Code, AgentKind = AgentKind.Grok, Workspace = WorkspaceMode.Worktree,
+            WorkingDirectory = Repository, RepoPath = Repository, Status = AgentTaskStatus.Queued,
+            ReplyTo = AgentTaskReplyTo.Session, ParentSessionId = CallerId, CreatedAt = now });
+        await File.WriteAllTextAsync(Path.Combine(Root, "move-default-on-lease.json"),
+            JsonSerializer.Serialize(new { projectId = project.Id, baseBranch = "project-default" }));
+        await db.SaveChangesAsync();
+    }
+
     public async Task<List<AgentTaskDispatchWarningIntent>> DispatchIntentsAsync()
     {
         await using var db = CreateContext();
@@ -79,6 +108,18 @@ public sealed partial class LandDeliveryFixture
             else intent.Detail.ShouldNotContain("also covers");
             intent.ParentSessionId.ShouldBe(CallerId);
         }
+        return intents;
+    }
+
+    public async Task<List<AgentTaskDispatchWarningIntent>> WaitForMismatchIntentAsync()
+    {
+        await UntilAsync(async () => (await DispatchIntentsAsync()).Count == 1, "one committed mismatch dispatch intent", 120);
+        var intents = await DispatchIntentsAsync();
+        intents.ShouldHaveSingleItem();
+        intents[0].WarningKey.ShouldBe(DispatchBaseNotificationPayload.MismatchKey);
+        intents[0].Detail.ShouldContain("master");
+        intents[0].Detail.ShouldContain("project-default");
+        intents[0].ParentSessionId.ShouldBe(CallerId);
         return intents;
     }
 
@@ -121,16 +162,20 @@ public sealed partial class LandDeliveryFixture
                     && p.TryGetProperty("update", out var u) && u.GetProperty("sessionUpdate").GetString() == "user_message_chunk")
                 .Select(d => d.RootElement.GetProperty("params").GetProperty("update").GetProperty("content").GetProperty("text").GetString()!).ToList();
             bool IsWarning(string? text) => text is not null && (text.Contains("[dispatch-base ", StringComparison.Ordinal)
-                || text.Contains("branched from", StringComparison.Ordinal) && text.Contains("kept branch", StringComparison.Ordinal));
-            prompts.Count(p => IsWarning(p.Text)).ShouldBe(2);
-            nativePrompts.Count(IsWarning).ShouldBe(2, "all native keyed and unkeyed sibling warnings");
+                || text.Contains("branched from", StringComparison.Ordinal) && text.Contains("kept branch", StringComparison.Ordinal)
+                || text.Contains("sibling containment was evaluated against", StringComparison.Ordinal));
+            prompts.Count(p => IsWarning(p.Text)).ShouldBe(original.Count);
+            nativePrompts.Count(IsWarning).ShouldBe(original.Count, "one native complete prompt per committed dispatch intent");
             foreach (var intent in original)
             {
                 prompts.Count(p => PromptSubmissionMatch.IsCompleteIn(intent.Body, p.Text ?? "")).ShouldBe(1);
                 nativePrompts.Count(p => PromptSubmissionMatch.IsCompleteIn(intent.Body, p)).ShouldBe(1);
                 (await check.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId == intent.NotificationId)).ShouldBe(1);
             }
-            (await check.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == CallerId && m.Body.Contains("kept branch"))).ShouldBe(2);
+            var siblingCount = original.Count(i => i.WarningKey.StartsWith(
+                DispatchBaseNotificationPayload.SiblingKeyPrefix, StringComparison.Ordinal));
+            (await check.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == CallerId && m.Body.Contains("kept branch")))
+                .ShouldBe(siblingCount);
         }
         finally { foreach (var document in native) document.Dispose(); }
         await SnapshotAsync();

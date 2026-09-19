@@ -2427,7 +2427,7 @@ mutated row, not exit status alone.
 | PC-47 | Set repair WorktreeBaseTaskId=null | DG.C508_RepairRecordsOwnerAndSkipsSiblings: BaseTaskId=owner.Id |
 | PC-48 | Invert mismatch comparison when building capture drafts | DG.C508_GuardRefMismatchWarnedOnce: unequal-ref/one-sibling row mismatch count=1; equal-ref count=0 |
 | PC-49 | In mismatch materialization, if claim has >1 sibling intent, add a second valid Warning/note pair with fresh IDs and same detail | DG.C508_GuardRefMismatchWarnedOnce: two-sibling claim has one mismatch and three total notes (mutant two/four), no constraint error |
-| PC-50 | Omit only mismatch note insertion in materializer; retain Warning/marker | DG.C508_GuardRefMismatchWarnedOnce (0 siblings, moveTheDefault=true): mismatch note count=1 (amendment C; native queue is PC-41) |
+| PC-50 | Omit only mismatch note insertion in materializer; retain Warning/marker | DE.C508_MismatchWarningReachesCaller: zero-sibling mismatch yields one complete native prompt (mutant 0). Dispatcher note-count half remains DG.C508_GuardRefMismatchWarnedOnce (`divergentSiblings=0`, `moveTheDefault=true`) |
 | PC-51 | Commit/dispose projection transaction before SaveChanges; remove later commit | DBN.C508_WarningCommitAtomic: after-save fault leaves pair counts=0 and MaterializedAt=null |
 | PC-52 | In ReconcileAsync replace DispatchBase ParentSessionId with current task parent | DBN.C508_WarningPayloadAndDestination: after second A->B edit, queue destination remains A |
 | PC-53 | Compute capture digest from body only | DBN.C508_WarningPayloadAndDestination: committed intent digest equals independent route+newline+body digest; same bytes/IDs with A vs B give different factory digests |
@@ -2610,7 +2610,7 @@ Use producer-owned forward-slash outputs. Example ordinary selections
 dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c508/ --nologo
 dotnet build tests/Antiphon.E2E --property:OutputPath=bin-c508/ --nologo
 dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c508/ -- --treenode-filter '/*/Antiphon.Tests.Application/(WorktreeBaseSelectionTests*)|(DelegationWorktreeTests*)|(AgentTaskDispatchBaseGuardTests*)|(AgentTaskLandStageOutcomeTests*)|(DispatchBaseNotificationTests*)|(AgentTaskLandMonitoringTests*)|(DataRetentionServiceTests*)/*' --report-trx --report-trx-filename focused.trx --results-directory .antiphon/c508-b-focused
-dotnet run --project tests/Antiphon.E2E --no-build --property:OutputPath=bin-c508/ -- --treenode-filter '/*/*/DispatchBaseWarningDeliveryE2ETests/C540_*' --report-trx --report-trx-filename warnings.trx --results-directory .antiphon/c508-b-warnings
+dotnet run --project tests/Antiphon.E2E --no-build --property:OutputPath=bin-c508/ -- --treenode-filter '/*/*/DispatchBaseWarningDeliveryE2ETests/*' --report-trx --report-trx-filename warnings.trx --results-directory .antiphon/c508-b-warnings
 dotnet run --project tests/Antiphon.E2E --no-build --property:OutputPath=bin-c508/ -- --treenode-filter '/*/*/AgentTaskLandDeliveryE2ETests/C467_*' --report-trx --report-trx-filename land.trx --results-directory .antiphon/c508-b-land
 pwsh -File scripts/test-client.ps1 attentionVisuals.test.ts
 ~~~
@@ -2695,7 +2695,7 @@ defects are unchanged; only the exact-method filter names change.
 | PC-37 | LD.C508_SiblingOutcomeVerdictRecovers | AgentTaskLandDeliveryE2ETests.C467_V30_ReceiptSaveFailureNeverRetypes (cut=`verdict`) |
 | PC-41 | DE.C508_WarningProducerToReceipt | DispatchBaseWarningDeliveryE2ETests.C540_CollapsedWarningsReachIdleCaller |
 | PC-42 | DE.C508_WarningBootScanReachesCaller | DispatchBaseWarningDeliveryE2ETests.C540_PreEnqueueCrashRecoversWarnings |
-| PC-50 | DE.C508_MismatchWarningReachesCaller | AgentTaskDispatchBaseGuardTests.C508_GuardRefMismatchWarnedOnce (`divergentSiblings=0`, `moveTheDefault=true`): mismatch note count=1. Native prompt for this producer rides the same queue as PC-41. |
+| PC-50 | DE.C508_MismatchWarningReachesCaller | DispatchBaseWarningDeliveryE2ETests.C508_MismatchWarningReachesCaller: zero-sibling mismatch, one complete native UserPrompt. DG.C508_GuardRefMismatchWarnedOnce (`divergentSiblings=0`, `moveTheDefault=true`) remains the dispatcher note-count half. |
 | PC-60 | DE.C508_DispatchWarningPrecommitCrashRecovers | DispatchBaseWarningDeliveryE2ETests.C540_ClaimCrashRecoversCollapsedWarnings |
 | PC-107 | DE.C508_WarningProducerToReceipt (unkeyed census) | DispatchBaseWarningDeliveryE2ETests.C540_CollapsedWarningsReachIdleCaller |
 
@@ -2704,9 +2704,35 @@ plus `C467_V22_AlreadyIdleGetsOutcomeWithoutNewInput` for the eligible
 receipt. Sibling-marker *content* stays LS.C508_RebasedSiblingMarkerMatrix
 (PC-23/PC-43). Ordinary V-14/V-21 dispatch-warning native rows remap onto
 the C540 methods in DispatchBaseWarningDeliveryE2ETests. V-16's dispatcher
-half remains DG.C508_GuardRefMismatchWarnedOnce; its native half is the
-PC-50 remap.
+half remains DG.C508_GuardRefMismatchWarnedOnce; its native half is
+DE.C508_MismatchWarningReachesCaller (eligible) and
+DE.C508_MismatchWarningWaitsForCaller (busy).
 
-This amendment does not drop a compiling defect, a handoff, or a native
-receipt class. It names the methods that actually exist after CARD-0467
-and CARD-0540 landed on the same delivery machine.
+Amendment C's original closing sentence over-claimed: remapping PC-50 onto
+DG.C508_GuardRefMismatchWarnedOnce dropped the native UserPrompt class for
+`base-observation-stale`. That home is restored below (amendment D). V-14's
+second-claim/re-dispatch row is still one C540 claim, not two; see D.
+
+## Plan amendment D — restore mismatch native receipt (2026-09-19)
+
+Review of task 55d7d6e2 found two Code defects on `1ed2de1b`:
+
+1. **PC-50 / V-16 native receipt.** DG.C508_GuardRefMismatchWarnedOnce proves
+   the dispatcher note row only. Native UserPrompt for
+   `base-observation-stale` is DE.C508_MismatchWarningReachesCaller (eligible)
+   and DE.C508_MismatchWarningWaitsForCaller (busy): move the project default
+   under the lease, then `AssertDispatchReceiptsAsync`. PC-50's compiling
+   defect (omit only mismatch note insertion) now goes red on the native
+   complete-prompt count, not on a note-count substitute.
+
+2. **C508_IntentScanPaging MaterializedAt.** Postgres timestamptz truncates
+   to microseconds. The value check is
+   `ShouldBe(now, TimeSpan.FromMilliseconds(1))`, not `ShouldNotBeNull()`.
+
+**V-14 second-claim / re-dispatch** is still unproven natively:
+C540_CollapsedWarningsReachIdleCaller is one claim with two collapsed sibling
+warnings, not two genuine claims / four distinct notes. That remaining gap
+is a follow-up card, not this repair.
+
+**Next: review.** Ordinary V/R includes Unit, named DBN/DG classes, and the
+DE mismatch methods. PCs stay pending for SourceLanding Mutation.
