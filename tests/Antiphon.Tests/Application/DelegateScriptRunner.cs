@@ -21,10 +21,17 @@ internal static class DelegateScriptRunner
     public static Task<(int ExitCode, string Output)> RunAsync(string apiBaseUrl, params string[] args) =>
         RunAsync(apiBaseUrl, environment: null, args);
 
+    public static Task<(int ExitCode, string Output)> RunAsync(
+        string apiBaseUrl,
+        IReadOnlyDictionary<string, string?>? environment,
+        params string[] args) =>
+        RunAsync(apiBaseUrl, environment, workingDirectory: null, args);
+
     public static async Task<(int ExitCode, string Output)> RunAsync(
         string apiBaseUrl,
         IReadOnlyDictionary<string, string?>? environment,
-        params string[] args)
+        string? workingDirectory,
+        IReadOnlyList<string> args)
     {
         var scriptPath = Path.Combine(RepoRoot, "scripts", "delegate.ps1");
         var startInfo = new ProcessStartInfo("pwsh")
@@ -32,6 +39,8 @@ internal static class DelegateScriptRunner
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
+        if (!string.IsNullOrWhiteSpace(workingDirectory))
+            startInfo.WorkingDirectory = workingDirectory;
         startInfo.ArgumentList.Add("-NoProfile");
         startInfo.ArgumentList.Add("-NonInteractive");
         startInfo.ArgumentList.Add("-File");
