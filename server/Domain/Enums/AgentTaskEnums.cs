@@ -256,6 +256,13 @@ public enum AgentTaskEventType
     /// Detail names the started event, the path and the reason.
     /// </summary>
     CommitRecoveryAbandoned = 36,
+
+    /// <summary>
+    /// CARD-0535. A Queued task's dispatcher hold has aged past
+    /// <c>Delegation:DispatchHeldWarningSeconds</c> or <c>DispatchHeldErrorSeconds</c>.
+    /// Detail starts with <c>Warning:</c> or <c>Error:</c>. Appended; never renumber.
+    /// </summary>
+    HeldAged = 37,
 }
 
 /// <summary>

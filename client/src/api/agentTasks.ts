@@ -105,6 +105,8 @@ export type AgentTaskEventType =
   | 'Diagnosed'
   /** An orchestrator recorded a finding override for a stage run (CARD-0272 S3). */
   | 'FindingRecorded'
+  /** CARD-0535: a queued dispatcher hold aged past the warning or error threshold. */
+  | 'HeldAged'
 
 export interface AgentTaskSummaryDto {
   id: string

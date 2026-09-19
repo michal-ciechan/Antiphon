@@ -574,6 +574,20 @@ public sealed class DelegationSettings
     public int LandErrorSeconds { get; set; } = 900;
 
     /// <summary>
+    /// CARD-0535: a Queued task's dispatcher hold older than this writes one <c>HeldAged</c>
+    /// <c>Warning:</c> row and a <c>DispatchHeld</c> attention item. Separate from
+    /// <see cref="LandWarningSeconds"/> so a long cap queue can be tolerated without changing
+    /// land. Default 300. Not in appsettings.json; the default rules.
+    /// </summary>
+    public int DispatchHeldWarningSeconds { get; set; } = 300;
+
+    /// <summary>
+    /// CARD-0535: <c>Error:</c> <c>HeldAged</c> and <c>DispatchHeld</c> Error once the hold is
+    /// this old. Must exceed <see cref="DispatchHeldWarningSeconds"/>. Default 900.
+    /// </summary>
+    public int DispatchHeldErrorSeconds { get; set; } = 900;
+
+    /// <summary>
     /// Started-and-interrupted git attempts on one land request before the sweep refuses
     /// (CARD-0331). Held passes do not count. Floor 1, ceiling 10.
     /// </summary>
@@ -1082,6 +1096,9 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
         var failures = new List<string>();
         if (options.LandWarningSeconds <= 0 || options.LandErrorSeconds <= options.LandWarningSeconds)
             failures.Add("Delegation land thresholds must be positive and Error must exceed Warning.");
+        if (options.DispatchHeldWarningSeconds <= 0
+            || options.DispatchHeldErrorSeconds <= options.DispatchHeldWarningSeconds)
+            failures.Add("Delegation dispatch-held thresholds must be positive and Error must exceed Warning.");
         if (options.CheckInterpreterFirstAttemptSeconds is { } firstAttempt
             && (firstAttempt <= 0 || firstAttempt > options.CheckInterpreterWaitSeconds))
             failures.Add("Delegation:CheckInterpreterFirstAttemptSeconds must be positive and no greater than CheckInterpreterWaitSeconds, or null.");

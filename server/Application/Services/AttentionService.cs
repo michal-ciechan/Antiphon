@@ -202,6 +202,7 @@ public sealed class AttentionService
         items.AddRange(await BuildParkedMessageItemsAsync(ct));
         items.AddRange(await BuildCallerNoteUndeliveredItemsAsync(now, ct));
         items.AddRange(await BuildLandItemsAsync(now, ct));
+        items.AddRange(await BuildDispatchHeldItemsAsync(now, ct));
         items.AddRange(await BuildCardlessDetailsNoPromptItemsAsync(now, ct));
         items.AddRange(await BuildInboundUnconsumedItemsAsync(since, ct));
         items.AddRange(await BuildRecentIncidentItemsAsync(since, attachedIncidents, ct));
@@ -1211,6 +1212,80 @@ public sealed class AttentionService
     }
 
     // ---- condition 2: a parked queued message ----------------------------------------------------
+
+    private async Task<List<AttentionItemDto>> BuildDispatchHeldItemsAsync(DateTime now, CancellationToken ct)
+    {
+        var items = new List<AttentionItemDto>();
+        var queued = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.Status == AgentTaskStatus.Queued)
+            .Where(AgentTaskRoles.NotSpecialist)
+            .ToListAsync(ct);
+        if (queued.Count == 0)
+            return items;
+        var ids = queued.Select(t => t.Id).ToList();
+        var events = await _db.AgentTaskEvents.AsNoTracking()
+            .Where(e => ids.Contains(e.AgentTaskId)
+                && (e.Type == AgentTaskEventType.Held
+                    || e.Type == AgentTaskEventType.HeldAged
+                    || e.Type == AgentTaskEventType.Dispatched))
+            .Select(e => new { e.AgentTaskId, e.At, e.Id, e.Type, e.Detail })
+            .ToListAsync(ct);
+        var byTask = events.GroupBy(e => e.AgentTaskId).ToDictionary(g => g.Key, g => g.ToList());
+        foreach (var task in queued)
+        {
+            if (!byTask.TryGetValue(task.Id, out var rows))
+                continue;
+            var latest = rows.OrderByDescending(e => e.At).ThenByDescending(e => e.Id).First();
+            if (latest.Type is not (AgentTaskEventType.Held or AgentTaskEventType.HeldAged))
+                continue;
+            var lastHeld = rows
+                .Where(e => e.Type == AgentTaskEventType.Held)
+                .OrderByDescending(e => e.At).ThenByDescending(e => e.Id)
+                .FirstOrDefault();
+            if (lastHeld is null)
+                continue;
+            if (lastHeld.Detail.StartsWith(DispatchHoldDetails.RoutingPinPrefix, StringComparison.Ordinal))
+                continue;
+            var floor = DateTime.MinValue;
+            foreach (var row in rows)
+            {
+                if (row.Type == AgentTaskEventType.Dispatched && row.At > floor)
+                    floor = row.At;
+            }
+
+            var firstHeld = rows
+                .Where(e => e.Type == AgentTaskEventType.Held && e.At > floor)
+                .OrderBy(e => e.At).ThenBy(e => e.Id)
+                .FirstOrDefault();
+            if (firstHeld is null)
+                continue;
+            var heldSince = firstHeld.At;
+            var age = (now - heldSince).TotalSeconds;
+            if (age < _delegation.DispatchHeldWarningSeconds)
+                continue;
+            var agedCount = rows.Count(e => e.Type == AgentTaskEventType.HeldAged && e.At > floor);
+            var severity = age >= _delegation.DispatchHeldErrorSeconds
+                ? AlertSeverity.Error
+                : AlertSeverity.Warning;
+            items.Add(new AttentionItemDto(
+                AttentionKind.DispatchHeld,
+                severity,
+                task.Id,
+                null,
+                task.AgentId,
+                null,
+                task.Title,
+                $"Queued and held for {(int)age}s; {lastHeld.Detail}",
+                $"task={task.Id:N}; created={task.CreatedAt:O}; heldSince={heldSince:O}; escalations={agedCount}",
+                heldSince,
+                null,
+                [AttentionAction.OpenDrawer],
+                task.CardId,
+                ConditionKey: $"dispatch-held:{task.Id:N}"));
+        }
+
+        return items;
+    }
 
     private async Task<List<AttentionItemDto>> BuildLandItemsAsync(DateTime now, CancellationToken ct)
     {

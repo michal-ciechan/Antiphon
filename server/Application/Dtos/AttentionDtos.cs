@@ -283,6 +283,13 @@ public enum AttentionKind
     /// holding the task for the re-hand. Appended after shipped 40; do not renumber.
     /// </summary>
     CommitRecoveryPending = 41,
+
+    /// <summary>
+    /// CARD-0535: a Queued non-specialist task has waited on a dispatcher hold past
+    /// <c>Delegation:DispatchHeldWarningSeconds</c>. ConditionKey <c>dispatch-held:{id:N}</c>.
+    /// Dated routing pins are excluded. Appended; never renumber.
+    /// </summary>
+    DispatchHeld = 42,
 }
 
 /// <summary>
