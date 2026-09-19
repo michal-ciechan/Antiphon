@@ -135,6 +135,22 @@ public sealed class DispatchHeldAttentionTests
     }
 
     [Test]
+    public async Task a_pinned_agent_parked_hold_is_a_dispatch_held_warning_row()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var now = UtcMs();
+        const string agentName = "pool-alpha";
+        var detail = DispatchHoldDetails.PinnedAgentParkedOn(
+            agentName, "abcd1234", AgentTaskStatus.Blocked);
+        var (task, _) = await SeedQueuedHeldAsync(schema, now, now.AddSeconds(-301), detail: detail);
+        var item = (await ReadAsync(schema, now)).ShouldHaveSingleItem();
+        item.Kind.ShouldBe(AttentionKind.DispatchHeld);
+        item.Severity.ShouldBe(AlertSeverity.Warning);
+        item.Headline.ShouldContain(agentName);
+        item.ConditionKey.ShouldBe($"dispatch-held:{task.Id:N}");
+    }
+
+    [Test]
     public async Task two_reads_share_the_condition_key()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();

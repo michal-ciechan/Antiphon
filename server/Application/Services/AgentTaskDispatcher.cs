@@ -226,11 +226,11 @@ public sealed class AgentTaskDispatcher
         int ResumedRoutingBlocked = 0,
         int SkippedCapacityWait = 0);
 
-    private enum DispatchOneResult { Dispatched, HeldOnLease, NotClaimed }
+    private enum DispatchOneResult { Dispatched, HeldOnLease, HeldForAgent, NotClaimed }
 
     private enum HoldKind
     {
-        Scope, RoutingPin, ModelHeld, CapacityWait, RepairSourceLanding, SiblingLanding, Lease, ConcurrencyCap,
+        Scope, RoutingPin, ModelHeld, CapacityWait, RepairSourceLanding, SiblingLanding, Lease, ConcurrencyCap, PinnedAgent,
     }
 
     private sealed class QueuedHoldIndex
@@ -663,6 +663,20 @@ public sealed class AgentTaskDispatcher
                     continue;
                 }
 
+                if (outcome == DispatchOneResult.HeldForAgent)
+                {
+                    var agentDetail = await DescribeAgentWaitAsync(task, ct);
+                    heldThisTick.Add((task.Id, HoldKind.PinnedAgent));
+                    if (await TraceHeldAsync(task, agentDetail, lastHeld, ct))
+                    {
+                        _logger.LogInformation(
+                            "Task {ShortId} held: {Detail}",
+                            DelegationReportFormatter.Short(task.Id), agentDetail);
+                    }
+
+                    continue;
+                }
+
                 if (outcome == DispatchOneResult.Dispatched)
                 {
                     if (_capacityRecovery is { IsEnabled: true } && task.AgentSessionId is { } launchedSessionId)
@@ -852,6 +866,51 @@ public sealed class AgentTaskDispatcher
         }
 
         return DispatchHoldDetails.LeaseOccupiedUnknown;
+    }
+
+    private async Task<string> DescribeAgentWaitAsync(AgentTask task, CancellationToken ct)
+    {
+        if (task.AgentId is not Guid pinId)
+            return DispatchHoldDetails.PinnedAgentNoOpenTask("(none)", AgentStatus.Stopped);
+
+        var agent = await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == pinId, ct);
+        if (agent is null)
+            return DispatchHoldDetails.PinnedAgentNoOpenTask("retired", AgentStatus.Stopped);
+
+        if (agent.IsPoolDelegate)
+        {
+            var parked = await _db.AgentTasks.AsNoTracking()
+                .Where(t => t.AgentId == agent.Id
+                    && t.Id != task.Id
+                    && (t.Status == AgentTaskStatus.Dispatched
+                        || t.Status == AgentTaskStatus.Working
+                        || t.Status == AgentTaskStatus.Blocked))
+                .OrderByDescending(t => t.DispatchedAt)
+                .ThenByDescending(t => t.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+            if (parked is null)
+                return DispatchHoldDetails.PinnedAgentNoOpenTask(agent.Name, agent.Status);
+
+            return DispatchHoldDetails.PinnedAgentParkedOn(
+                agent.Name, DelegationReportFormatter.Short(parked.Id), parked.Status);
+        }
+
+        if (await LiveSessionIdOfAsync(agent, ct) is not Guid session)
+            return DispatchHoldDetails.StandingAgentNoSession(agent.Name);
+
+        var busy = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.AgentId == agent.Id
+                && t.Id != task.Id
+                && t.AgentSessionId == session
+                && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working))
+            .OrderByDescending(t => t.DispatchedAt)
+            .ThenByDescending(t => t.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (busy is null)
+            return DispatchHoldDetails.StandingAgentNoSession(agent.Name);
+
+        return DispatchHoldDetails.StandingAgentBusy(
+            agent.Name, DelegationReportFormatter.Short(busy.Id), busy.Status);
     }
 
     private async Task EscalateHeldAgeAsync(
@@ -3430,11 +3489,14 @@ public sealed class AgentTaskDispatcher
                     await transaction.CommitAsync(ct);
                     return DispatchOneResult.NotClaimed;
                 case ReuseOutcome.WaitForAgent:
-                    // The pinned agent is mid-task. Delivering the follow-up now would land it
-                    // BETWEEN the running task's turns and corrupt both correlations — wait for
-                    // the settle → pool handshake instead; the task stays queued.
+                    // The pinned agent is not Idle. For a pool delegate that means its last task
+                    // did not release it (Blocked keeps the session for the answer); only a
+                    // settle-and-release, a stop or a cancel changes that. Delivering the
+                    // follow-up now would land it BETWEEN the running task's turns and corrupt
+                    // both correlations — wait for the settle → pool handshake instead; the
+                    // task stays queued and the tick loop traces the wait (CARD-0537).
                     await transaction.RollbackAsync(ct);
-                    return DispatchOneResult.NotClaimed;
+                    return DispatchOneResult.HeldForAgent;
             }
         }
 

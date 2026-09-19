@@ -105,6 +105,7 @@ param(
 
     # Follow-up: run this on the SAME agent that ran the given task (short id from its report),
     # keeping that agent's context. Waits if the agent is still busy; inherits its directory+tier.
+    # 409 follow_up_agent_blocked if that agent is parked on a Blocked task — Reply or cancel it first.
     [Parameter(ParameterSetName = 'Create')]
     [string]$OnAgent,
 

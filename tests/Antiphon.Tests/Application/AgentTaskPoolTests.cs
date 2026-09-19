@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -410,6 +411,240 @@ public class AgentTaskPoolTests
         await using var verify = CreateContext();
         (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status
             .ShouldBe(AgentTaskStatus.Queued, "still queued — it runs when its agent goes warm");
+        var pinned = await verify.Agents.SingleAsync(a => a.Id == agentId);
+        var held = await verify.AgentTaskEvents
+            .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held)
+            .ToListAsync();
+        held.Count.ShouldBe(1);
+        held[0].Detail.ShouldBe(DispatchHoldDetails.PinnedAgentNoOpenTask(pinned.Name, pinned.Status));
+    }
+
+    // ---- CARD-0537: WaitForAgent is a traced hold -------------------------------------------
+
+    [Test]
+    public async Task a_follow_up_behind_a_blocked_task_writes_one_held_event_naming_it()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var (dispatcher, stopper, _) = CreateHarness(connectionString: cs);
+        var seeded = await SeedFollowUpBehindBlockedAsync(workspace.Path, cs);
+
+        AgentTaskDispatcher.TickResult? last = null;
+        for (var i = 0; i < 3; i++)
+            last = await dispatcher.TickAsync(CancellationToken.None);
+
+        last!.Dispatched.ShouldBe(0);
+        stopper.Killed.ShouldBeEmpty();
+        await using var verify = CreateContext(cs);
+        (await verify.AgentTasks.SingleAsync(t => t.Id == seeded.FollowUp.Id)).Status
+            .ShouldBe(AgentTaskStatus.Queued);
+        var held = await HeldAsync(verify, seeded.FollowUp.Id);
+        held.Count.ShouldBe(1);
+        held[0].Detail.ShouldContain(seeded.AgentName);
+        held[0].Detail.ShouldContain(DelegationReportFormatter.Short(seeded.Blocked.Id));
+        held[0].Detail.ShouldContain("Blocked");
+        held[0].Detail.ShouldContain("-Reply");
+        held[0].Detail.ShouldBe(DispatchHoldDetails.PinnedAgentParkedOn(
+            seeded.AgentName, DelegationReportFormatter.Short(seeded.Blocked.Id), AgentTaskStatus.Blocked));
+    }
+
+    [Test]
+    public async Task the_hold_retraces_on_reply_and_releases_on_settle()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var (dispatcher, _, _) = CreateHarness(connectionString: cs);
+        var seeded = await SeedFollowUpBehindBlockedAsync(workspace.Path, cs);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using (var db = CreateContext(cs))
+        {
+            var blocked = await db.AgentTasks.SingleAsync(t => t.Id == seeded.Blocked.Id);
+            blocked.Status = AgentTaskStatus.Working;
+            await db.SaveChangesAsync();
+        }
+
+        await dispatcher.TickAsync(CancellationToken.None);
+        await using (var verify = CreateContext(cs))
+        {
+            var held = await HeldAsync(verify, seeded.FollowUp.Id);
+            held.Count.ShouldBe(2);
+            held[^1].Detail.ShouldContain("Working");
+        }
+
+        await dispatcher.TickAsync(CancellationToken.None);
+        await using (var verify = CreateContext(cs))
+            (await HeldAsync(verify, seeded.FollowUp.Id)).Count.ShouldBe(2);
+
+        var now = DateTime.UtcNow;
+        await using (var db = CreateContext(cs))
+        {
+            var blocked = await db.AgentTasks.SingleAsync(t => t.Id == seeded.Blocked.Id);
+            blocked.Status = AgentTaskStatus.Succeeded;
+            var agent = await db.Agents.SingleAsync(a => a.Id == seeded.AgentId);
+            agent.Status = AgentStatus.Idle;
+            agent.PoolIdleSince = now;
+            agent.PoolReservedForRootTaskId = blocked.RootTaskId;
+            await db.SaveChangesAsync();
+        }
+
+        var tick = await dispatcher.TickAsync(CancellationToken.None);
+        tick.Dispatched.ShouldBe(1);
+        await using var after = CreateContext(cs);
+        (await after.AgentTasks.SingleAsync(t => t.Id == seeded.FollowUp.Id)).Status
+            .ShouldBe(AgentTaskStatus.Dispatched);
+        (await HeldAsync(after, seeded.FollowUp.Id)).Count.ShouldBe(2);
+        var dispatched = await after.AgentTaskEvents
+            .SingleAsync(e => e.AgentTaskId == seeded.FollowUp.Id && e.Type == AgentTaskEventType.Dispatched);
+        dispatched.Detail.ShouldStartWith("Reused warm delegate");
+    }
+
+    [Test]
+    public async Task a_pinned_agent_running_with_no_open_task_is_a_named_hold()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var (dispatcher, _, _) = CreateHarness(connectionString: cs);
+        var (agentId, _) = await SeedWarmAgentAsync(
+            workspace.Path, AgentModelLevel.Medium, idleMinutes: 0, connectionString: cs);
+        string agentName;
+        await using (var db = CreateContext(cs))
+        {
+            var agent = await db.Agents.SingleAsync(a => a.Id == agentId);
+            agent.Status = AgentStatus.Running;
+            agent.PoolIdleSince = null;
+            agentName = agent.Name;
+            await db.SaveChangesAsync();
+        }
+
+        var followUp = await SeedQueuedTaskAsync(
+            workspace.Path, AgentModelLevel.Medium, pinnedAgentId: agentId, connectionString: cs);
+
+        for (var i = 0; i < 3; i++)
+            await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext(cs);
+        var held = await HeldAsync(verify, followUp.Id);
+        held.Count.ShouldBe(1);
+        held[0].Detail.ShouldBe(DispatchHoldDetails.PinnedAgentNoOpenTask(agentName, AgentStatus.Running));
+    }
+
+    [Test]
+    public async Task a_busy_standing_agent_writes_one_held_event()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var (dispatcher, _, _) = CreateHarness(connectionString: cs);
+        var (agentId, sessionId) = await SeedWarmAgentAsync(
+            workspace.Path, AgentModelLevel.Medium, idleMinutes: 0, connectionString: cs);
+        AgentTask busy;
+        string agentName;
+        await using (var db = CreateContext(cs))
+        {
+            var agent = await db.Agents.SingleAsync(a => a.Id == agentId);
+            agent.IsPoolDelegate = false;
+            agent.Status = AgentStatus.Running;
+            agent.AlwaysOn = true;
+            agentName = agent.Name;
+            busy = new AgentTask
+            {
+                Id = Guid.NewGuid(),
+                RootTaskId = Guid.NewGuid(),
+                Title = "standing occupant",
+                Goal = "standing occupant",
+                Role = AgentTaskRole.Docs,
+                AgentKind = AgentKind.ClaudeCode,
+                ModelLevel = AgentModelLevel.Medium,
+                Workspace = WorkspaceMode.Shared,
+                WorkingDirectory = workspace.Path,
+                AgentId = agentId,
+                AgentSessionId = sessionId,
+                Status = AgentTaskStatus.Working,
+                DispatchedAt = DateTime.UtcNow.AddMinutes(-5),
+                CreatedAt = DateTime.UtcNow.AddMinutes(-6),
+            };
+            busy.RootTaskId = busy.Id;
+            db.AgentTasks.Add(busy);
+            await db.SaveChangesAsync();
+        }
+
+        var followUp = await SeedQueuedTaskAsync(
+            workspace.Path, AgentModelLevel.Medium, pinnedAgentId: agentId, connectionString: cs);
+
+        for (var i = 0; i < 3; i++)
+            await dispatcher.TickAsync(CancellationToken.None);
+
+        await using (var verify = CreateContext(cs))
+        {
+            var held = await HeldAsync(verify, followUp.Id);
+            held.Count.ShouldBe(1);
+            held[0].Detail.ShouldBe(DispatchHoldDetails.StandingAgentBusy(
+                agentName, DelegationReportFormatter.Short(busy.Id), AgentTaskStatus.Working));
+        }
+
+        await using (var db = CreateContext(cs))
+        {
+            var occupant = await db.AgentTasks.SingleAsync(t => t.Id == busy.Id);
+            occupant.Status = AgentTaskStatus.Succeeded;
+            occupant.CompletedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        var tick = await dispatcher.TickAsync(CancellationToken.None);
+        tick.Dispatched.ShouldBe(1);
+        await using var after = CreateContext(cs);
+        (await after.AgentTasks.SingleAsync(t => t.Id == followUp.Id)).Status
+            .ShouldBe(AgentTaskStatus.Dispatched);
+        var dispatched = await after.AgentTaskEvents
+            .SingleAsync(e => e.AgentTaskId == followUp.Id && e.Type == AgentTaskEventType.Dispatched);
+        dispatched.Detail.ShouldStartWith("Delivered into standing agent");
+    }
+
+    [Test]
+    public async Task a_pinned_agent_wait_escalates_through_held_aged()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var t0 = UtcMs();
+        var clock = new FakeTimeProvider(new DateTimeOffset(t0, TimeSpan.Zero));
+        var (dispatcher, _, _) = CreateHarness(clock, cs);
+        var seeded = await SeedFollowUpBehindBlockedAsync(workspace.Path, cs);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+        clock.Advance(TimeSpan.FromSeconds(299));
+        await dispatcher.TickAsync(CancellationToken.None);
+        await using (var verify = CreateContext(cs))
+            (await AgedAsync(verify, seeded.FollowUp.Id)).Count.ShouldBe(0);
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await dispatcher.TickAsync(CancellationToken.None);
+        await using (var verify = CreateContext(cs))
+        {
+            var aged = await AgedAsync(verify, seeded.FollowUp.Id);
+            aged.Count.ShouldBe(1);
+            aged[0].Detail.ShouldStartWith(DispatchHoldDetails.WarningPrefix);
+            aged[0].Detail.ShouldContain(seeded.AgentName);
+        }
+
+        clock.Advance(TimeSpan.FromSeconds(600));
+        await dispatcher.TickAsync(CancellationToken.None);
+        await using (var verify = CreateContext(cs))
+        {
+            var aged = await AgedAsync(verify, seeded.FollowUp.Id);
+            aged.Count.ShouldBe(2);
+            aged.ShouldContain(e => e.Detail.StartsWith(DispatchHoldDetails.ErrorPrefix, StringComparison.Ordinal));
+        }
+
+        clock.Advance(TimeSpan.FromSeconds(100));
+        await dispatcher.TickAsync(CancellationToken.None);
+        await using var after = CreateContext(cs);
+        (await AgedAsync(after, seeded.FollowUp.Id)).Count.ShouldBe(2);
     }
 
     [Test]
@@ -786,12 +1021,12 @@ public class AgentTaskPoolTests
     // ---- helpers ---------------------------------------------------------------------------
 
     private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper, ServiceProvider Provider)
-        CreateHarness(TimeProvider? timeProvider = null)
+        CreateHarness(TimeProvider? timeProvider = null, string? connectionString = null)
     {
         var stopper = new RecordingSessionStopper();
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString ?? TestDbFixture.ConnectionString));
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(timeProvider ?? TimeProvider.System);
         services.AddSingleton(Options.Create(new SupervisionSettings()));
@@ -833,12 +1068,12 @@ public class AgentTaskPoolTests
     private static async Task<(Guid AgentId, Guid SessionId)> SeedWarmAgentAsync(
         string directory, AgentModelLevel level, int idleMinutes, Guid? reservedForRoot = null,
         Guid? projectId = null, AgentKind kind = AgentKind.ClaudeCode,
-        string? launchEnvJson = null)
+        string? launchEnvJson = null, string? connectionString = null)
     {
         var sessionId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
         var now = DateTime.UtcNow;
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         db.AgentSessions.Add(new AgentSession
         {
             Id = sessionId,
@@ -902,7 +1137,8 @@ public class AgentTaskPoolTests
         Guid? projectId = null,
         AgentKind kind = AgentKind.ClaudeCode,
         string? worktreePath = null,
-        string? inheritedLaunchEnvJson = null)
+        string? inheritedLaunchEnvJson = null,
+        string? connectionString = null)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -924,7 +1160,7 @@ public class AgentTaskPoolTests
             InheritedLaunchEnvJson = inheritedLaunchEnvJson ?? "{}",
             CreatedAt = DateTime.UtcNow,
         };
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         db.AgentTasks.Add(task);
         await db.SaveChangesAsync();
         return task;
@@ -1178,7 +1414,68 @@ public class AgentTaskPoolTests
         return (agentId, sessionId);
     }
 
-    private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+    private static async Task<(Guid AgentId, Guid SessionId, string AgentName, AgentTask Blocked, AgentTask FollowUp)>
+        SeedFollowUpBehindBlockedAsync(string directory, string connectionString)
+    {
+        var (agentId, sessionId) = await SeedWarmAgentAsync(
+            directory, AgentModelLevel.Medium, idleMinutes: 0, connectionString: connectionString);
+        string agentName;
+        AgentTask blocked;
+        await using (var db = CreateContext(connectionString))
+        {
+            var agent = await db.Agents.SingleAsync(a => a.Id == agentId);
+            agent.Status = AgentStatus.Running;
+            agent.PoolIdleSince = null;
+            agentName = agent.Name;
+            var now = DateTime.UtcNow;
+            var blockedId = Guid.NewGuid();
+            blocked = new AgentTask
+            {
+                Id = blockedId,
+                RootTaskId = blockedId,
+                Title = "blocked occupant",
+                Goal = "blocked occupant",
+                Role = AgentTaskRole.Docs,
+                AgentKind = AgentKind.ClaudeCode,
+                ModelLevel = AgentModelLevel.Medium,
+                Workspace = WorkspaceMode.Shared,
+                WorkingDirectory = directory,
+                AgentId = agentId,
+                AgentSessionId = sessionId,
+                Status = AgentTaskStatus.Blocked,
+                DispatchedAt = now.AddMinutes(-5),
+                CompletedAt = now.AddMinutes(-1),
+                CreatedAt = now.AddMinutes(-6),
+            };
+            db.AgentTasks.Add(blocked);
+            await db.SaveChangesAsync();
+        }
+
+        var followUp = await SeedQueuedTaskAsync(
+            directory, AgentModelLevel.Medium, pinnedAgentId: agentId, connectionString: connectionString);
+        return (agentId, sessionId, agentName, blocked, followUp);
+    }
+
+    private static Task<List<AgentTaskEvent>> HeldAsync(AppDbContext db, Guid taskId) =>
+        db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Held)
+            .OrderBy(e => e.At).ThenBy(e => e.Id)
+            .ToListAsync();
+
+    private static Task<List<AgentTaskEvent>> AgedAsync(AppDbContext db, Guid taskId) =>
+        db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.HeldAged)
+            .OrderBy(e => e.At).ThenBy(e => e.Id)
+            .ToListAsync();
+
+    private static DateTime UtcMs()
+    {
+        var now = DateTime.UtcNow;
+        return now.AddTicks(-(now.Ticks % TimeSpan.TicksPerMillisecond));
+    }
+
+    private static AppDbContext CreateContext(string? connectionString = null) =>
+        new(TestDbFixture.CreateDbContextOptions(connectionString));
 
     private static AgentService CreateAgentService(AppDbContext db) => new(
         db,

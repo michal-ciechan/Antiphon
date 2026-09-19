@@ -362,6 +362,35 @@ public sealed class AgentTaskService
 
                 subscriptionOwner = followAgent;
 
+                // CARD-0537 D-4: a follow-up onto an agent parked on a Blocked task cannot
+                // resolve on its own — it would occupy a project slot until a human replies
+                // or cancels. Refuse at create; a wait behind Dispatched/Working still queues.
+                var blockedOnAgent = await _db.AgentTasks.AsNoTracking()
+                    .Where(t => t.AgentId == followAgent.Id && t.Status == AgentTaskStatus.Blocked)
+                    .OrderByDescending(t => t.CompletedAt)
+                    .ThenByDescending(t => t.CreatedAt)
+                    .FirstOrDefaultAsync(ct);
+                if (blockedOnAgent is not null)
+                {
+                    var priorShort = DelegationReportFormatter.Short(priorId);
+                    var blockedShort = DelegationReportFormatter.Short(blockedOnAgent.Id);
+                    var sessionLive = blockedOnAgent.AgentSessionId is Guid blockedSessionId
+                        && await _db.AgentSessions.AsNoTracking().AnyAsync(
+                            s => s.Id == blockedSessionId
+                                && (s.Status == SessionStatus.Starting || s.Status == SessionStatus.Running),
+                            ct);
+                    if (sessionLive)
+                    {
+                        throw new ConflictException(
+                            $"Task {priorShort} ran on agent '{followAgent.Name}', which is parked on Blocked task {blockedShort} waiting for an answer; a follow-up would queue behind it indefinitely. Reply to it (delegate.ps1 -Reply {blockedShort} \"...\") or cancel it (POST /api/agent-tasks/{blockedShort}/cancel), then re-send.",
+                            "follow_up_agent_blocked");
+                    }
+
+                    throw new ConflictException(
+                        $"Task {priorShort} ran on agent '{followAgent.Name}', which is parked on Blocked task {blockedShort} whose session is no longer live; a reply cannot reach it. Cancel it (POST /api/agent-tasks/{blockedShort}/cancel) and re-send; the follow-up then starts a fresh delegate with the prior task's inherited context.",
+                        "follow_up_agent_blocked");
+                }
+
                 // The agent is already running, as whatever program it was launched as. A follow-up
                 // keeps that context, so the kind is not a choice any more: unset inherits the prior
                 // task's, and an explicit mismatch is refused rather than silently reinterpreted.
@@ -2371,10 +2400,11 @@ public sealed class AgentTaskService
     }
 
     /// <summary>
-    /// Delete a pool delegate's Agent row (dependents cascade). Keyed off the AGENT's
-    /// IsPoolDelegate, not the task's Ephemeral flag: a follow-up task pins a pool agent (so it is
-    /// not "ephemeral"), but cancelling it must still retire that agent — while a user's standing
-    /// agent must never be deleted by any task action. The task's snapshotted
+    /// Delete a pool delegate's Agent row (dependents cascade) when this task owned it.
+    /// Keyed off the AGENT's IsPoolDelegate, not the task's Ephemeral flag: a follow-up task pins
+    /// a pool agent (so it is not "ephemeral"), but cancelling it must still retire that agent when
+    /// it ran on it and nothing else open still pins it (CARD-0537) — while a user's standing agent
+    /// must never be deleted by any task action. The task's snapshotted
     /// <see cref="AgentTask.AgentName"/> keeps the board naming who ran the work.
     /// </summary>
     internal async Task RemoveEphemeralAgentAsync(AgentTask task, Guid? agentId, CancellationToken ct)
@@ -2383,8 +2413,36 @@ public sealed class AgentTaskService
             return;
 
         var agent = await _db.Agents.FirstOrDefaultAsync(a => a.Id == id, ct);
-        if (agent is { IsPoolDelegate: true })
-            _db.Agents.Remove(agent);
+        if (agent is not { IsPoolDelegate: true })
+            return;
+
+        if (task.AgentSessionId is null)
+        {
+            _logger.LogInformation(
+                "Task {ShortId} never ran on pool delegate '{Name}'; leaving it as it is",
+                DelegationReportFormatter.Short(task.Id), agent.Name);
+            return;
+        }
+
+        var other = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.AgentId == id
+                && t.Id != task.Id
+                && (t.Status == AgentTaskStatus.Queued
+                    || t.Status == AgentTaskStatus.Dispatched
+                    || t.Status == AgentTaskStatus.Working
+                    || t.Status == AgentTaskStatus.Blocked))
+            .OrderByDescending(t => t.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (other is not null)
+        {
+            _logger.LogInformation(
+                "Task {ShortId} is not the sole owner of pool delegate '{Name}'; {OtherShort} is still {Status}; leaving it as it is",
+                DelegationReportFormatter.Short(task.Id), agent.Name,
+                DelegationReportFormatter.Short(other.Id), other.Status);
+            return;
+        }
+
+        _db.Agents.Remove(agent);
     }
 
     /// <summary>

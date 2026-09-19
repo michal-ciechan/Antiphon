@@ -1054,6 +1054,170 @@ public class AgentTaskServiceIntegrationTests
         summary.Status.ShouldBe(AgentTaskStatus.Canceled);
     }
 
+    // ---- CARD-0537 S3: cancel retires only what the task owned ------------------------------
+
+    [Test]
+    public async Task cancelling_a_queued_follow_up_keeps_the_shared_pool_agent_and_its_incidents()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var agentId = await SeedPoolAgentAsync(workspace.Path, AgentModelLevel.Low, cs);
+        var sessionId = await SeedLiveSessionAsync(workspace.Path, SessionStatus.Running, cs);
+        await using (var db = CreateContext(cs))
+        {
+            var agent = await db.Agents.SingleAsync(a => a.Id == agentId);
+            agent.Status = AgentStatus.Running;
+            db.AgentIncidents.Add(new AgentIncident
+            {
+                Id = Guid.NewGuid(),
+                AgentId = agentId,
+                Kind = AgentIncidentKind.TranscriptBoundByDiscovery,
+                Severity = AlertSeverity.Info,
+                Message = "bound by discovery",
+                CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var blocked = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Blocked, sessionId: sessionId,
+            connectionString: cs);
+        await PinTaskAgentAsync(blocked.Id, agentId, cs);
+        var followUp = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Queued, connectionString: cs);
+        await PinTaskAgentAsync(followUp.Id, agentId, cs);
+
+        await using var cancelDb = CreateContext(cs);
+        var stopper = new RecordingSessionStopper();
+        var summary = await CreateService(cancelDb, stopper: stopper)
+            .CancelAsync(followUp.Id, CancellationToken.None);
+
+        summary.Status.ShouldBe(AgentTaskStatus.Canceled);
+        stopper.Killed.ShouldBeEmpty();
+        await using var verify = CreateContext(cs);
+        var kept = await verify.Agents.SingleAsync(a => a.Id == agentId);
+        kept.Status.ShouldBe(AgentStatus.Running);
+        (await verify.AgentIncidents.CountAsync(i => i.AgentId == agentId)).ShouldBe(1);
+    }
+
+    [Test]
+    public async Task cancelling_a_queued_follow_up_on_a_warm_agent_leaves_it_for_the_janitor()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var agentId = await SeedPoolAgentAsync(workspace.Path, AgentModelLevel.Low, cs);
+        DateTime idleSince;
+        await using (var db = CreateContext(cs))
+            idleSince = (await db.Agents.SingleAsync(a => a.Id == agentId)).PoolIdleSince!.Value;
+
+        var followUp = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Queued, connectionString: cs);
+        await PinTaskAgentAsync(followUp.Id, agentId, cs);
+
+        await using var cancelDb = CreateContext(cs);
+        await CreateService(cancelDb).CancelAsync(followUp.Id, CancellationToken.None);
+
+        await using var verify = CreateContext(cs);
+        var agent = await verify.Agents.SingleAsync(a => a.Id == agentId);
+        agent.Status.ShouldBe(AgentStatus.Idle);
+        agent.PoolIdleSince.ShouldBe(idleSince);
+    }
+
+    [Test]
+    public async Task cancelling_a_running_task_keeps_its_agent_while_another_open_task_pins_it()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var agentId = await SeedPoolAgentAsync(workspace.Path, AgentModelLevel.Low, cs);
+        var sessionId = await SeedLiveSessionAsync(workspace.Path, SessionStatus.Running, cs);
+        AgentStatus beforeStatus;
+        await using (var db = CreateContext(cs))
+        {
+            var agent = await db.Agents.SingleAsync(a => a.Id == agentId);
+            agent.Status = AgentStatus.Running;
+            beforeStatus = agent.Status;
+            await db.SaveChangesAsync();
+        }
+
+        var running = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Working, sessionId: sessionId,
+            connectionString: cs);
+        await PinTaskAgentAsync(running.Id, agentId, cs);
+        var followUp = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Queued, connectionString: cs);
+        await PinTaskAgentAsync(followUp.Id, agentId, cs);
+
+        await using var cancelDb = CreateContext(cs);
+        var stopper = new RecordingSessionStopper();
+        await CreateService(cancelDb, stopper: stopper).CancelAsync(running.Id, CancellationToken.None);
+
+        stopper.Killed.ShouldBe([sessionId]);
+        await using var verify = CreateContext(cs);
+        var kept = await verify.Agents.SingleAsync(a => a.Id == agentId);
+        kept.Status.ShouldBe(beforeStatus);
+        (await verify.AgentTasks.SingleAsync(t => t.Id == followUp.Id)).Status
+            .ShouldBe(AgentTaskStatus.Queued);
+    }
+
+    [Test]
+    public async Task cancelling_the_sole_owner_still_retires_the_pool_agent()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var agentId = await SeedPoolAgentAsync(workspace.Path, AgentModelLevel.Low, cs);
+        var sessionId = await SeedLiveSessionAsync(workspace.Path, SessionStatus.Running, cs);
+        var prior = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Succeeded, connectionString: cs);
+        await PinTaskAgentAsync(prior.Id, agentId, cs);
+        var running = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Working, sessionId: sessionId,
+            connectionString: cs);
+        await PinTaskAgentAsync(running.Id, agentId, cs);
+
+        await using var cancelDb = CreateContext(cs);
+        await CreateService(cancelDb).CancelAsync(running.Id, CancellationToken.None);
+
+        await using var verify = CreateContext(cs);
+        (await verify.Agents.AnyAsync(a => a.Id == agentId)).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task retrying_an_ephemeral_task_keeps_an_agent_another_task_pins()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var agentId = await SeedPoolAgentAsync(workspace.Path, AgentModelLevel.Low, cs);
+        var sessionId = await SeedLiveSessionAsync(workspace.Path, SessionStatus.Running, cs);
+        var failed = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Failed, sessionId: sessionId,
+            connectionString: cs);
+        await using (var db = CreateContext(cs))
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == failed.Id);
+            row.AgentId = agentId;
+            row.Ephemeral = true;
+            await db.SaveChangesAsync();
+        }
+
+        var followUp = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Queued, connectionString: cs);
+        await PinTaskAgentAsync(followUp.Id, agentId, cs);
+
+        await using var retryDb = CreateContext(cs);
+        var summary = await CreateService(retryDb).RetryAsync(failed.Id, CancellationToken.None);
+
+        summary.Status.ShouldBe(AgentTaskStatus.Queued);
+        var stored = await retryDb.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == failed.Id);
+        stored.AgentId.ShouldBeNull();
+        await using var verify = CreateContext(cs);
+        (await verify.Agents.AnyAsync(a => a.Id == agentId)).ShouldBeTrue();
+    }
+
     // ---- workspace defaults: an orchestrator owns something ---------------------------------
 
     [Test]
@@ -1300,6 +1464,150 @@ public class AgentTaskServiceIntegrationTests
         created.FollowUpMessage.ShouldBe("agent retired - fresh delegate with inherited context");
     }
 
+    // ---- CARD-0537 S2: create refuses a follow-up onto a Blocked agent ----------------------
+
+    [Test]
+    public async Task a_follow_up_onto_an_agent_parked_on_a_blocked_task_is_refused()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var agentId = await SeedPoolAgentAsync(workspace.Path, AgentModelLevel.Low, cs);
+        var sessionId = await SeedLiveSessionAsync(workspace.Path, SessionStatus.Running, cs);
+        var prior = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Succeeded, connectionString: cs);
+        await PinTaskAgentAsync(prior.Id, agentId, cs);
+        var blocked = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Blocked, sessionId: sessionId,
+            connectionString: cs);
+        await using (var db = CreateContext(cs))
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == blocked.Id);
+            row.AgentId = agentId;
+            row.DispatchedAt = DateTime.UtcNow.AddMinutes(-5);
+            row.CompletedAt = DateTime.UtcNow.AddMinutes(-1);
+            await db.SaveChangesAsync();
+        }
+
+        await using var createDb = CreateContext(cs);
+        var before = await createDb.AgentTasks.CountAsync();
+        var agentName = (await createDb.Agents.SingleAsync(a => a.Id == agentId)).Name;
+        var ex = await Should.ThrowAsync<ConflictException>(
+            () => CreateService(createDb).CreateAsync(
+                NewRequest("now add the edge cases") with
+                {
+                    FollowUpOnTask = DelegationReportFormatter.Short(prior.Id),
+                },
+                ManualCaller(workspace.Path),
+                CancellationToken.None));
+        ex.Code.ShouldBe("follow_up_agent_blocked");
+        ex.Message.ShouldContain(DelegationReportFormatter.Short(blocked.Id));
+        ex.Message.ShouldContain(agentName);
+        ex.Message.ShouldContain("-Reply");
+        (await createDb.AgentTasks.CountAsync()).ShouldBe(before);
+    }
+
+    [Test]
+    public async Task names_cancel_when_the_blocked_tasks_session_is_dead()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var agentId = await SeedPoolAgentAsync(workspace.Path, AgentModelLevel.Low, cs);
+        var sessionId = await SeedLiveSessionAsync(workspace.Path, SessionStatus.Stopped, cs);
+        var prior = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Succeeded, connectionString: cs);
+        await PinTaskAgentAsync(prior.Id, agentId, cs);
+        var blocked = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Blocked, sessionId: sessionId,
+            connectionString: cs);
+        await using (var db = CreateContext(cs))
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == blocked.Id);
+            row.AgentId = agentId;
+            row.CompletedAt = DateTime.UtcNow.AddMinutes(-1);
+            await db.SaveChangesAsync();
+        }
+
+        await using var createDb = CreateContext(cs);
+        var ex = await Should.ThrowAsync<ConflictException>(
+            () => CreateService(createDb).CreateAsync(
+                NewRequest("retry on the parked agent") with
+                {
+                    FollowUpOnTask = DelegationReportFormatter.Short(prior.Id),
+                },
+                ManualCaller(workspace.Path),
+                CancellationToken.None));
+        ex.Code.ShouldBe("follow_up_agent_blocked");
+        ex.Message.ShouldContain("/cancel");
+        ex.Message.ShouldContain("inherited context");
+        ex.Message.ShouldNotContain("-Reply");
+    }
+
+    [Test]
+    public async Task a_follow_up_on_a_prior_task_that_is_itself_blocked_is_refused()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var agentId = await SeedPoolAgentAsync(workspace.Path, AgentModelLevel.Low, cs);
+        var sessionId = await SeedLiveSessionAsync(workspace.Path, SessionStatus.Running, cs);
+        var prior = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Blocked, sessionId: sessionId,
+            connectionString: cs);
+        await using (var db = CreateContext(cs))
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == prior.Id);
+            row.AgentId = agentId;
+            row.CompletedAt = DateTime.UtcNow.AddMinutes(-1);
+            await db.SaveChangesAsync();
+        }
+
+        await using var createDb = CreateContext(cs);
+        var ex = await Should.ThrowAsync<ConflictException>(
+            () => CreateService(createDb).CreateAsync(
+                NewRequest("follow the blocked prior") with
+                {
+                    FollowUpOnTask = DelegationReportFormatter.Short(prior.Id),
+                },
+                ManualCaller(workspace.Path),
+                CancellationToken.None));
+        ex.Code.ShouldBe("follow_up_agent_blocked");
+        ex.Message.ShouldContain(DelegationReportFormatter.Short(prior.Id));
+        ex.Message.ShouldContain("-Reply");
+    }
+
+    [Test]
+    public async Task a_follow_up_behind_a_working_task_still_queues()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var agentId = await SeedPoolAgentAsync(workspace.Path, AgentModelLevel.Low, cs);
+        var sessionId = await SeedLiveSessionAsync(workspace.Path, SessionStatus.Running, cs);
+        var prior = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Succeeded, connectionString: cs);
+        await PinTaskAgentAsync(prior.Id, agentId, cs);
+        var working = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Working, sessionId: sessionId,
+            connectionString: cs);
+        await PinTaskAgentAsync(working.Id, agentId, cs);
+
+        await using var db = CreateContext(cs);
+        var created = await CreateService(db).CreateAsync(
+            NewRequest("next slice on the live agent") with
+            {
+                FollowUpOnTask = DelegationReportFormatter.Short(prior.Id),
+            },
+            ManualCaller(workspace.Path),
+            CancellationToken.None);
+
+        created.Status.ShouldBe(AgentTaskStatus.Queued);
+        created.FollowUpMessage.ShouldBe("follow-up on the live agent");
+        var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
+        stored.AgentId.ShouldBe(agentId);
+    }
+
     // ---- CARD-0272 S2: role → orchestration stage, FollowUpOfTaskId -------------------------
 
     [Test]
@@ -1425,7 +1733,8 @@ public class AgentTaskServiceIntegrationTests
             () => CreateService(db).ResolveTaskIdAsync("not-an-id", CancellationToken.None));
     }
 
-    private static async Task<Guid> SeedPoolAgentAsync(string directory, AgentModelLevel level)
+    private static async Task<Guid> SeedPoolAgentAsync(
+        string directory, AgentModelLevel level, string? connectionString = null)
     {
         var agent = new Agent
         {
@@ -1441,18 +1750,41 @@ public class AgentTaskServiceIntegrationTests
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow,
         };
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         db.Agents.Add(agent);
         await db.SaveChangesAsync();
         return agent.Id;
     }
 
-    private static async Task PinTaskAgentAsync(Guid taskId, Guid agentId)
+    private static async Task PinTaskAgentAsync(Guid taskId, Guid agentId, string? connectionString = null)
     {
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
         task.AgentId = agentId;
         await db.SaveChangesAsync();
+    }
+
+    private static async Task<Guid> SeedLiveSessionAsync(
+        string directory, SessionStatus status, string? connectionString = null)
+    {
+        var sessionId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await using var db = CreateContext(connectionString);
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = sessionId,
+            DefinitionName = "fake",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = status,
+            Cwd = directory,
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now,
+        });
+        await db.SaveChangesAsync();
+        return sessionId;
     }
 
     // ---- retry and escalation --------------------------------------------------------------
@@ -1818,7 +2150,8 @@ public class AgentTaskServiceIntegrationTests
         Guid? sessionId = null,
         string? result = null,
         Guid? parentSessionId = null,
-        string? failureReason = null)
+        string? failureReason = null,
+        string? connectionString = null)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -1843,7 +2176,7 @@ public class AgentTaskServiceIntegrationTests
             CreatedAt = DateTime.UtcNow,
         };
 
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         db.AgentTasks.Add(task);
         await db.SaveChangesAsync();
         return task;
@@ -1872,7 +2205,8 @@ public class AgentTaskServiceIntegrationTests
             NullLogger<AgentTaskService>.Instance);
     }
 
-    private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+    private static AppDbContext CreateContext(string? connectionString = null) =>
+        new(TestDbFixture.CreateDbContextOptions(connectionString));
 
     /// <summary>A real directory on disk — the resolver verifies existence, so a fake path won't do.</summary>
     private sealed class TempWorkspace : IDisposable

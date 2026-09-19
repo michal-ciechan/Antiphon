@@ -1,8 +1,10 @@
+using Antiphon.Server.Domain.Enums;
+
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// Stable dispatcher-hold detail strings (CARD-0535). Ages and counters must not appear in
-/// Held details — <c>TraceHeldAsync</c> dedupes on exact text.
+/// Stable dispatcher-hold detail strings (CARD-0535 / CARD-0537). Ages and counters must not appear
+/// in Held details — <c>TraceHeldAsync</c> dedupes on exact text.
 /// </summary>
 public static class DispatchHoldDetails
 {
@@ -25,6 +27,30 @@ public static class DispatchHoldDetails
 
     public static string LeaseFenced(string reason) =>
         $"Held: repository mutation lease is fenced: {reason}.";
+
+    public static string PinnedAgentParkedOn(
+        string agentName, string parkedShort, AgentTaskStatus parkedStatus)
+    {
+        var text =
+            $"Held: pinned agent '{agentName}' is not idle; it is parked on task {parkedShort} ({parkedStatus}).";
+        if (parkedStatus == AgentTaskStatus.Blocked)
+        {
+            text +=
+                $" That task is waiting for an answer: reply to it (delegate.ps1 -Reply {parkedShort} \"...\") or cancel it (POST /api/agent-tasks/{parkedShort}/cancel); this follow-up dispatches when the agent is released to the pool.";
+        }
+
+        return text;
+    }
+
+    public static string PinnedAgentNoOpenTask(string agentName, AgentStatus agentStatus) =>
+        $"Held: pinned agent '{agentName}' is {agentStatus} with no open task and has not been released to the pool; stop it (POST /api/agents/{{id}}/stop) to relaunch, or cancel this task.";
+
+    public static string StandingAgentBusy(
+        string agentName, string busyShort, AgentTaskStatus busyStatus) =>
+        $"Held: standing agent '{agentName}' is busy with task {busyShort} ({busyStatus}) on its live session.";
+
+    public static string StandingAgentNoSession(string agentName) =>
+        $"Held: standing agent '{agentName}' (always-on) has no live session; waiting for supervision to restart it.";
 
     public static string Escalation(
         string prefix,
