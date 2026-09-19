@@ -60,9 +60,24 @@ function Get-WorkingDirectory($task) {
 }
 
 function Get-TaskId($task) {
+    if ($null -eq $task) { return $null }
     if ($null -ne $task.summary -and $task.summary.id) { return [string]$task.summary.id }
     if ($task.id) { return [string]$task.id }
     return $null
+}
+
+# CARD-0515: GET /api/agent-tasks is always `{ scope, items, excluded }`. Wrapping the
+# envelope in @() yields one bogus row with a null id, which skips every real occupant
+# and deadens the exit-3 shared-checkout refusal.
+function Get-AgentTaskListRows($response) {
+    if ($null -eq $response) { return @() }
+    $prop = $null
+    try { $prop = $response.PSObject.Properties['items'] } catch { }
+    if ($null -ne $prop) {
+        if ($null -eq $prop.Value) { return @() }
+        return @($prop.Value)
+    }
+    return @($response)
 }
 
 function Get-Workspace($task) {
@@ -114,7 +129,7 @@ try {
     foreach ($path in @('/api/agent-tasks?status=Working', '/api/agent-tasks?status=Dispatched')) {
         try {
             $response = Invoke-AntiphonGet $path
-            foreach ($row in @($response)) {
+            foreach ($row in (Get-AgentTaskListRows $response)) {
                 if ($null -ne $row) { $open.Add($row) }
             }
         } catch { }
