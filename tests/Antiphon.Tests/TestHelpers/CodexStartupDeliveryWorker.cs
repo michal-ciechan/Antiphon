@@ -50,8 +50,10 @@ internal static class CodexStartupDeliveryWorker
     {
         var settings = JsonSerializer.Deserialize<Settings>(encoded, Json)
             ?? throw new InvalidOperationException("C574 worker settings");
-        await using var pipe = new PipeSessionRunnerClient(settings.Pipe);
         var hang = new HangCutInterceptor(settings.Cut, settings.ReadyPath);
+        var failureCut = settings.Cut is "failed-committed" or "note-committed" or "prompt-accepted"
+            or "obligation-insert";
+        await using PipeSessionRunnerClient? pipe = failureCut ? null : new PipeSessionRunnerClient(settings.Pipe);
         await using var provider = BuildChildProvider(settings.Connection, pipe, hang);
         using var scope = provider.CreateScope();
         var sp = scope.ServiceProvider;
@@ -75,9 +77,10 @@ internal static class CodexStartupDeliveryWorker
         if (settings.Cut is "failed-committed" or "note-committed" or "prompt-accepted"
             or "obligation-insert")
         {
-            await sp.GetRequiredService<AgentTaskDispatcher>()
+            var n = await sp.GetRequiredService<AgentTaskDispatcher>()
                 .FailNeverStartedAsync(CancellationToken.None);
-            return;
+            throw new InvalidOperationException(
+                "FailNeverStarted returned " + n + " without reaching the " + settings.Cut + " hang");
         }
 
         if (settings.Cut is "snapshot" or "running")
@@ -98,15 +101,17 @@ internal static class CodexStartupDeliveryWorker
 
     internal static async Task CrashAsync(Settings settings, ScriptedCodexRunnerClient retained, string assembly)
     {
-        using var host = new PipeSessionRunnerHost(settings.Pipe, retained);
-        var hosted = host.RunAsync();
+        var failureCut = settings.Cut is "failed-committed" or "note-committed" or "prompt-accepted"
+            or "obligation-insert";
+        PipeSessionRunnerHost? host = failureCut ? null : new PipeSessionRunnerHost(settings.Pipe, retained);
+        var hosted = host?.RunAsync();
         var start = new ProcessStartInfo("dotnet")
         {
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            WorkingDirectory = Environment.CurrentDirectory,
+            WorkingDirectory = Path.GetDirectoryName(assembly) ?? Environment.CurrentDirectory,
         };
         foreach (var arg in new[]
                  {
@@ -143,10 +148,15 @@ internal static class CodexStartupDeliveryWorker
                 worker.Kill(entireProcessTree: false);
             await worker.WaitForExitAsync();
             await Task.WhenAll(stdout, stderr);
-            host.Stop();
-            try { await hosted; }
-            catch (OperationCanceledException) { }
-            catch (IOException) { }
+            host?.Stop();
+            if (hosted is not null)
+            {
+                try { await hosted; }
+                catch (OperationCanceledException) { }
+                catch (IOException) { }
+            }
+
+            host?.Dispose();
         }
     }
 
@@ -161,7 +171,7 @@ internal static class CodexStartupDeliveryWorker
             sessionId, agentId, taskId, callerSessionId, body);
 
     private static ServiceProvider BuildChildProvider(
-        string connection, ISessionRunnerClient runner, HangCutInterceptor hang)
+        string connection, ISessionRunnerClient? runner, HangCutInterceptor hang)
     {
         var registry = new AgentRegistrySettings
         {
@@ -209,7 +219,8 @@ internal static class CodexStartupDeliveryWorker
         services.AddSingleton(Options.Create(registry));
         services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(
             new BridgeQueueHarness.OptionsMonitorStub<AgentRegistrySettings>(registry));
-        services.AddSingleton<ISessionRunnerClient>(runner);
+        if (runner is not null)
+            services.AddSingleton<ISessionRunnerClient>(runner);
         services.AddSingleton<AgentRegistry>();
         services.AddSingleton<AgentSessionLaunchQueue>();
         services.AddSingleton<ILaunchOwnership>(sp => sp.GetRequiredService<AgentSessionLaunchQueue>());
@@ -229,8 +240,11 @@ internal static class CodexStartupDeliveryWorker
         services.AddScoped<RoutingPinService>();
         services.AddScoped<ComplexityRoutingService>();
         services.AddScoped<AgentTaskDispatcher>();
-        services.AddSingleton<IAgentProtocolAdapterFactory>(sp =>
-            new AgentProtocolAdapterFactory(sp.GetRequiredService<IOptions<AgentRegistrySettings>>(), runner));
+        if (runner is not null)
+        {
+            services.AddSingleton<IAgentProtocolAdapterFactory>(sp =>
+                new AgentProtocolAdapterFactory(sp.GetRequiredService<IOptions<AgentRegistrySettings>>(), runner));
+        }
         services.AddSingleton<IWorktreeManager>(new BridgeQueueHarness.NoWorktreeManager());
         services.AddSingleton<IWorkspaceHookRunner>(
             new Antiphon.Server.Infrastructure.WorkspaceHooks.WorkspaceHookRunner(
