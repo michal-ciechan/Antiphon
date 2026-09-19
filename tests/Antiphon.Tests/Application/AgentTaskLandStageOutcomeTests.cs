@@ -410,125 +410,131 @@ public class AgentTaskLandStageOutcomeTests
     /// V-9 / G-23, G-43: the land-side sibling comparison is patch-aware and pinned to the
     /// operation's verified SHA. An all-minus (rebased/cherry-picked) sibling produces no marker
     /// and no warning; a minus+plus sibling still names its exact short id and branch. The
-    /// component rows call <c>CollectUnlandedSiblingsAsync</c> directly with a frozen verified
+    /// component row calls <c>CollectUnlandedSiblingsAsync</c> directly with a frozen verified
     /// SHA while the repository HEAD has moved on to contain the patch: the frozen SHA decides.
+    /// One method per row (CARD-0567): two real lands plus the component row did not fit one
+    /// 180 s budget on a loaded host, and a timeout hid which row was at fault.
     /// </summary>
     [Test]
     [Timeout(180_000)]
-    public async Task C508_RebasedSiblingMarkerMatrix()
+    public async Task C508_RebasedSiblingMarkerMatrix_AllMinusSiblingIsSilent()
     {
-        // ---- all-minus: the build replays the sibling's patch, so nothing is left behind ----
-        {
-            using var repo = new ScratchGitRepo("c508-ls-allminus");
-            using var remote = new TemporaryDirectory("c508-ls-allminus-remote");
-            await ScratchGitRepo.GitInAsync(remote.Path, "init", "--bare");
-            await repo.CommitFileAsync("README.md", "base\n");
-            await repo.GitAsync("remote", "add", "origin", remote.Path);
-            await repo.GitAsync("push", "-u", "origin", "master");
+        // The build replays the sibling's patch, so nothing is left behind.
+        using var repo = new ScratchGitRepo("c508-ls-allminus");
+        using var remote = new TemporaryDirectory("c508-ls-allminus-remote");
+        await ScratchGitRepo.GitInAsync(remote.Path, "init", "--bare");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("remote", "add", "origin", remote.Path);
+        await repo.GitAsync("push", "-u", "origin", "master");
 
-            await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-            await using var db = CreateContext(schema);
-            var (land, worktrees) = CreateLand(db, repo);
-            var card = await SeedCardAsync(db);
-            var sibling = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
-            await CommitInAsync(sibling.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215");
-            var siblingTip = (await ScratchGitRepo.GitInAsync(sibling.WorktreePath!, "rev-parse", "HEAD"))
-                .StdOut.Trim();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var (land, worktrees) = CreateLand(db, repo);
+        var card = await SeedCardAsync(db);
+        var sibling = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
+        await CommitInAsync(sibling.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215");
+        var siblingTip = (await ScratchGitRepo.GitInAsync(sibling.WorktreePath!, "rev-parse", "HEAD"))
+            .StdOut.Trim();
 
-            // The build task is cut independently from M, never from the sibling, and carries the
-            // same patch by content. That is what makes git cherry report '-' and not '+'.
-            var build = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
-            (await ScratchGitRepo.GitInAsync(build.WorktreePath!, "merge-base", "--is-ancestor", siblingTip, "HEAD"))
-                .Ok.ShouldBeFalse("the build worktree must not be cut from the sibling");
-            await CommitInAsync(build.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215 (replayed)");
-            await CommitInAsync(build.WorktreePath!, "feature.md", "the work\n", "feature");
+        // The build task is cut independently from M, never from the sibling, and carries the
+        // same patch by content. That is what makes git cherry report '-' and not '+'.
+        var build = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
+        (await ScratchGitRepo.GitInAsync(build.WorktreePath!, "merge-base", "--is-ancestor", siblingTip, "HEAD"))
+            .Ok.ShouldBeFalse("the build worktree must not be cut from the sibling");
+        await CommitInAsync(build.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215 (replayed)");
+        await CommitInAsync(build.WorktreePath!, "feature.md", "the work\n", "feature");
 
-            await RequestHeadAsync(land, build);
-            await land.RunAsync(build.Id, null, CancellationToken.None);
+        await RequestHeadAsync(land, build);
+        await land.RunAsync(build.Id, null, CancellationToken.None);
 
-            var landed = await db.AgentTaskEvents.AsNoTracking()
-                .SingleAsync(e => e.AgentTaskId == build.Id && e.Type == AgentTaskEventType.Landed);
-            landed.Detail.ShouldNotContain("unlanded-sibling=");
-            (await db.AgentTaskEvents.CountAsync(e =>
-                e.AgentTaskId == build.Id && e.Type == AgentTaskEventType.Warning)).ShouldBe(0);
-            // The sibling branch itself is never touched by the land.
-            (await ScratchGitRepo.GitInAsync(repo.Path, "rev-parse", sibling.WorktreeBranch!)).StdOut.Trim()
-                .ShouldBe(siblingTip);
-            // The remote target really has the build content, not just a marker-free event.
-            (await ScratchGitRepo.GitInAsync(remote.Path, "show", "master:feature.md")).StdOut
-                .ShouldBe("the work\n");
-        }
+        var landed = await db.AgentTaskEvents.AsNoTracking()
+            .SingleAsync(e => e.AgentTaskId == build.Id && e.Type == AgentTaskEventType.Landed);
+        landed.Detail.ShouldNotContain("unlanded-sibling=");
+        (await db.AgentTaskEvents.CountAsync(e =>
+            e.AgentTaskId == build.Id && e.Type == AgentTaskEventType.Warning)).ShouldBe(0);
+        // The sibling branch itself is never touched by the land.
+        (await ScratchGitRepo.GitInAsync(repo.Path, "rev-parse", sibling.WorktreeBranch!)).StdOut.Trim()
+            .ShouldBe(siblingTip);
+        // The remote target really has the build content, not just a marker-free event.
+        (await ScratchGitRepo.GitInAsync(remote.Path, "show", "master:feature.md")).StdOut
+            .ShouldBe("the work\n");
+    }
 
-        // ---- minus + plus: one patch replayed, one still only on the sibling ----
-        {
-            using var repo = new ScratchGitRepo("c508-ls-mixed");
-            using var remote = new TemporaryDirectory("c508-ls-mixed-remote");
-            await ScratchGitRepo.GitInAsync(remote.Path, "init", "--bare");
-            await repo.CommitFileAsync("README.md", "base\n");
-            await repo.GitAsync("remote", "add", "origin", remote.Path);
-            await repo.GitAsync("push", "-u", "origin", "master");
+    [Test]
+    [Timeout(180_000)]
+    public async Task C508_RebasedSiblingMarkerMatrix_MixedSiblingKeepsMarker()
+    {
+        // Minus + plus: one patch replayed, one still only on the sibling.
+        using var repo = new ScratchGitRepo("c508-ls-mixed");
+        using var remote = new TemporaryDirectory("c508-ls-mixed-remote");
+        await ScratchGitRepo.GitInAsync(remote.Path, "init", "--bare");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("remote", "add", "origin", remote.Path);
+        await repo.GitAsync("push", "-u", "origin", "master");
 
-            await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-            await using var db = CreateContext(schema);
-            var (land, worktrees) = CreateLand(db, repo);
-            var card = await SeedCardAsync(db);
-            var sibling = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
-            await CommitInAsync(sibling.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215");
-            await CommitInAsync(sibling.WorktreePath!, "extra.md", "only on the sibling\n", "docs(plan): extra");
-            var siblingTip = (await ScratchGitRepo.GitInAsync(sibling.WorktreePath!, "rev-parse", "HEAD"))
-                .StdOut.Trim();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var (land, worktrees) = CreateLand(db, repo);
+        var card = await SeedCardAsync(db);
+        var sibling = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
+        await CommitInAsync(sibling.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215");
+        await CommitInAsync(sibling.WorktreePath!, "extra.md", "only on the sibling\n", "docs(plan): extra");
+        var siblingTip = (await ScratchGitRepo.GitInAsync(sibling.WorktreePath!, "rev-parse", "HEAD"))
+            .StdOut.Trim();
 
-            var build = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
-            await CommitInAsync(build.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215 (replayed)");
-            await CommitInAsync(build.WorktreePath!, "feature.md", "the work\n", "feature");
+        var build = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
+        await CommitInAsync(build.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215 (replayed)");
+        await CommitInAsync(build.WorktreePath!, "feature.md", "the work\n", "feature");
 
-            await RequestHeadAsync(land, build);
-            await land.RunAsync(build.Id, null, CancellationToken.None);
+        await RequestHeadAsync(land, build);
+        await land.RunAsync(build.Id, null, CancellationToken.None);
 
-            var landed = await db.AgentTaskEvents.AsNoTracking()
-                .SingleAsync(e => e.AgentTaskId == build.Id && e.Type == AgentTaskEventType.Landed);
-            landed.Detail.ShouldContain(
-                $"unlanded-sibling={DelegationReportFormatter.Short(sibling.Id)}:{sibling.WorktreeBranch}");
-            var warning = await db.AgentTaskEvents.AsNoTracking()
-                .SingleAsync(e => e.AgentTaskId == build.Id && e.Type == AgentTaskEventType.Warning);
-            warning.Detail.ShouldContain(sibling.WorktreeBranch!);
-            warning.Detail.ShouldContain(DelegationReportFormatter.Short(sibling.Id));
-            (await ScratchGitRepo.GitInAsync(repo.Path, "rev-parse", sibling.WorktreeBranch!)).StdOut.Trim()
-                .ShouldBe(siblingTip);
-        }
+        var landed = await db.AgentTaskEvents.AsNoTracking()
+            .SingleAsync(e => e.AgentTaskId == build.Id && e.Type == AgentTaskEventType.Landed);
+        landed.Detail.ShouldContain(
+            $"unlanded-sibling={DelegationReportFormatter.Short(sibling.Id)}:{sibling.WorktreeBranch}");
+        var warning = await db.AgentTaskEvents.AsNoTracking()
+            .SingleAsync(e => e.AgentTaskId == build.Id && e.Type == AgentTaskEventType.Warning);
+        warning.Detail.ShouldContain(sibling.WorktreeBranch!);
+        warning.Detail.ShouldContain(DelegationReportFormatter.Short(sibling.Id));
+        (await ScratchGitRepo.GitInAsync(repo.Path, "rev-parse", sibling.WorktreeBranch!)).StdOut.Trim()
+            .ShouldBe(siblingTip);
+    }
 
-        // ---- component: the frozen verified SHA decides, not a moving HEAD ----
-        {
-            using var repo = new ScratchGitRepo("c508-ls-pinned");
-            await repo.CommitFileAsync("README.md", "base\n");
-            var pinnedM = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+    [Test]
+    [Timeout(180_000)]
+    public async Task C508_RebasedSiblingMarkerMatrix_PinnedVerifiedShaDecides()
+    {
+        // Component: the frozen verified SHA decides, not a moving HEAD.
+        using var repo = new ScratchGitRepo("c508-ls-pinned");
+        await repo.CommitFileAsync("README.md", "base\n");
+        var pinnedM = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
 
-            await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-            await using var db = CreateContext(schema);
-            var (land, worktrees) = CreateLand(db, repo);
-            var card = await SeedCardAsync(db);
-            var sibling = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
-            await CommitInAsync(sibling.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215");
-            var siblingTip = (await ScratchGitRepo.GitInAsync(sibling.WorktreePath!, "rev-parse", "HEAD"))
-                .StdOut.Trim();
-            var build = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var (land, worktrees) = CreateLand(db, repo);
+        var card = await SeedCardAsync(db);
+        var sibling = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
+        await CommitInAsync(sibling.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215");
+        var siblingTip = (await ScratchGitRepo.GitInAsync(sibling.WorktreePath!, "rev-parse", "HEAD"))
+            .StdOut.Trim();
+        var build = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
 
-            // HEAD moves on to contain the sibling's patch; the pinned M still does not.
-            await repo.GitAsync("cherry-pick", siblingTip);
-            (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldNotBe(pinnedM);
+        // HEAD moves on to contain the sibling's patch; the pinned M still does not.
+        await repo.GitAsync("cherry-pick", siblingTip);
+        (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldNotBe(pinnedM);
 
-            var pinned = await CollectAsync(land, build, repo.Path, pinnedM);
-            pinned.Marker.ShouldBe(
-                $"unlanded-sibling={DelegationReportFormatter.Short(sibling.Id)}:{sibling.WorktreeBranch}");
-            pinned.Warnings.Count.ShouldBe(1);
-            pinned.Warnings[0].ShouldContain(sibling.WorktreeBranch!);
+        var pinned = await CollectAsync(land, build, repo.Path, pinnedM);
+        pinned.Marker.ShouldBe(
+            $"unlanded-sibling={DelegationReportFormatter.Short(sibling.Id)}:{sibling.WorktreeBranch}");
+        pinned.Warnings.Count.ShouldBe(1);
+        pinned.Warnings[0].ShouldContain(sibling.WorktreeBranch!);
 
-            // The same inputs read against the moving HEAD are silent — so the pinned row above is
-            // the frozen SHA doing the work, not an unconditional warning.
-            var moving = await CollectAsync(land, build, repo.Path, verifiedSha: null);
-            moving.Marker.ShouldBeNull();
-            moving.Warnings.ShouldBeEmpty();
-        }
+        // The same inputs read against the moving HEAD are silent — so the pinned row above is
+        // the frozen SHA doing the work, not an unconditional warning.
+        var moving = await CollectAsync(land, build, repo.Path, verifiedSha: null);
+        moving.Marker.ShouldBeNull();
+        moving.Warnings.ShouldBeEmpty();
     }
 
     private static async Task CommitInAsync(string worktree, string file, string content, string message)
@@ -539,25 +545,18 @@ public class AgentTaskLandStageOutcomeTests
     }
 
     /// <summary>
-    /// Invokes the private land-side collector with real git/DB inputs. This is a component row,
-    /// not a land: it supplies the frozen verified SHA directly so the pinning can be separated
-    /// from everything else the land does.
+    /// Invokes the land-side collector with real git/DB inputs through its internal seam. This
+    /// is a component row, not a land: it supplies the frozen verified SHA directly so the pinning
+    /// can be separated from everything else the land does, and formats the marker with the same
+    /// production helper the land uses, so a signature or format change fails at compile time
+    /// rather than by reflection at run time (CARD-0567).
     /// </summary>
     private static async Task<(string? Marker, IReadOnlyList<string> Warnings)> CollectAsync(
         AgentTaskLandService land, AgentTask task, string rebasedHeadRepo, string? verifiedSha)
     {
-        var method = typeof(AgentTaskLandService).GetMethod(
-            "CollectUnlandedSiblingsAsync",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        method.ShouldNotBeNull();
-        var pending = (Task)method.Invoke(
-            land, [task, rebasedHeadRepo, CancellationToken.None, verifiedSha])!;
-        await pending;
-        var result = pending.GetType().GetProperty("Result")!.GetValue(pending)!;
-        var type = result.GetType();
-        return (
-            (string?)type.GetField("Item1")!.GetValue(result),
-            (IReadOnlyList<string>)type.GetField("Item2")!.GetValue(result)!);
+        var (siblings, warnings) = await land.CollectUnlandedSiblingsAsync(
+            task, rebasedHeadRepo, CancellationToken.None, verifiedSha);
+        return (AgentTaskLandService.UnlandedMarker(siblings), warnings);
     }
 
     private static async Task<AgentTask> SeedSucceededWorktreeAsync(

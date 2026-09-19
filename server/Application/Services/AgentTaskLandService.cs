@@ -371,7 +371,7 @@ public sealed class AgentTaskLandService
         var type = op.Publication == LandPublicationOutcome.AlreadyPresent ? AgentTaskEventType.AlreadyPresent
             : op.Cleanup == LandCleanupStatus.Complete ? AgentTaskEventType.Landed : AgentTaskEventType.LandedWithResidue;
         var (siblings, warnings) = await CollectUnlandedSiblingsAsync(task, op.RepositoryPath, ct, op.VerifiedSourceSha);
-        var marker = siblings.Count == 0 ? null : $"unlanded-sibling={string.Join(",", siblings)}";
+        var marker = UnlandedMarker(siblings);
         await SettleLandedAsync(task, type, AppendUnlandedMarker(FormatOutcome(op), marker), warnings, siblings, ct);
         return LandRunResult.Complete;
     }
@@ -497,11 +497,16 @@ public sealed class AgentTaskLandService
     private static string AppendUnlandedMarker(string outcome, string? marker) =>
         marker is null ? outcome : $"{outcome}, {marker}";
 
+    /// <summary>The landed-event marker for the sibling tokens; null when nothing is unlanded.</summary>
+    internal static string? UnlandedMarker(IReadOnlyList<string> siblings) =>
+        siblings.Count == 0 ? null : $"unlanded-sibling={string.Join(",", siblings)}";
+
     /// <summary>
     /// Same-card kept Worktree branches whose tip is not an ancestor of the rebased HEAD
     /// (CARD-0215). Warn on a surviving uncontained branch; absence grants no landing authority.
+    /// Internal so the stage-outcome component rows call it as a typed seam (CARD-0567).
     /// </summary>
-    private async Task<(IReadOnlyList<string> Siblings, IReadOnlyList<string> Warnings)> CollectUnlandedSiblingsAsync(
+    internal async Task<(IReadOnlyList<string> Siblings, IReadOnlyList<string> Warnings)> CollectUnlandedSiblingsAsync(
         AgentTask task, string rebasedHeadRepo, CancellationToken ct, string? verifiedSha = null)
     {
         if (task.CardId is null || task.RepoPath is null || !Directory.Exists(rebasedHeadRepo))
