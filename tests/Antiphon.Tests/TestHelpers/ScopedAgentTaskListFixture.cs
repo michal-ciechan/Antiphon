@@ -77,7 +77,13 @@ public static class ScopedAgentTaskListFixture
             Project(ProjectX, AntiphonName),
             Project(ProjectY, GymStatName));
         if (includeY2Twin)
+        {
+            // Isolated clone only: production names are unique, but R-9/PC-18 needs two
+            // projects that share a name so byProject keys by id, not name.
+            await db.Database.ExecuteSqlRawAsync(
+                """ALTER TABLE "Projects" DROP CONSTRAINT IF EXISTS "IX_Projects_Name";""");
             db.Add(Project(ProjectY2, GymStatName));
+        }
         db.AddRange(
             Board(BoardB1, ProjectX, BoardB1Name),
             Board(BoardB2, ProjectX, BoardB2Name),
