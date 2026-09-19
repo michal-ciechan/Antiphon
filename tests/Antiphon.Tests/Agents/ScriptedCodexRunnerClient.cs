@@ -1,3 +1,4 @@
+using System.Net.Http;
 using System.Runtime.CompilerServices;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
@@ -36,9 +37,11 @@ internal sealed class ScriptedCodexRunnerClient : ISessionRunnerClient
     private int _enters;
     private string? _lastBody;
     private DateTime? _acceptedStartedAt;
+    private DateTime? _liveAcceptedStartedAt;
     private bool _exited;
+    private int _waitingOnSnapshot;
 
-    public Guid SessionId { get; private set; }
+    public Guid SessionId { get; set; }
 
     /// <summary>
     /// CARD-0574: opt-in startup frames. When set, <see cref="GetSnapshotAsync"/> returns
@@ -48,12 +51,39 @@ internal sealed class ScriptedCodexRunnerClient : ISessionRunnerClient
 
     public TaskCompletionSource? SnapshotHold { get; set; }
 
+    /// <summary>True while <see cref="GetSnapshotAsync"/> is blocked on <see cref="SnapshotHold"/>.</summary>
+    public bool WaitingOnSnapshot => Volatile.Read(ref _waitingOnSnapshot) > 0;
+
     public IReadOnlyList<string> Writes => _writes;
     public List<DateTime> KillGenerationCalls { get; } = [];
     public int UnconditionalKills { get; private set; }
+    public bool ReplacementAlive => !_exited;
+    public bool KillGenerationNotFound { get; set; }
+    public bool ReportNullAcceptedStartedAt { get; set; }
     public int ResizeCalls { get; private set; }
     public int SnapshotReads => _screenReads;
     public DateTime? AcceptedStartedAt => _acceptedStartedAt;
+    public DateTime? LiveAcceptedStartedAt => _liveAcceptedStartedAt;
+
+    public void PrimeAttach(Guid sessionId, DateTime? generation)
+    {
+        SessionId = sessionId;
+        _acceptedStartedAt = generation;
+        _liveAcceptedStartedAt = generation;
+    }
+
+    /// <summary>
+    /// CARD-0574 R-61: restamp the live runner generation while a G1 wait is held.
+    /// <paramref name="reported"/> stays on GetAsync so the G1 exit waiter can be coordinated
+    /// separately from KillGeneration matching.
+    /// </summary>
+    public void RestampLive(DateTime generation, bool reported = false)
+    {
+        _liveAcceptedStartedAt = generation;
+        if (reported)
+            _acceptedStartedAt = generation;
+        _exited = false;
+    }
 
     /// <summary>Raw pty output; must be non-empty or the CARD-0052 visible-output guard blocks every verdict.</summary>
     public string RawOutput { get; set; } = "codex ready\n";
@@ -102,22 +132,16 @@ internal sealed class ScriptedCodexRunnerClient : ISessionRunnerClient
     {
         SessionId = sessionId;
         _acceptedStartedAt = spec.AcceptedStartedAt ?? DateTime.UtcNow;
-        return Task.FromResult(new SessionRunnerSessionDto(
-            sessionId, 1234, _acceptedStartedAt.Value, "Running", null, AgentExitReason.Unknown, 0,
-            AcceptedStartedAt: _acceptedStartedAt));
+        _liveAcceptedStartedAt = _acceptedStartedAt;
+        return Task.FromResult(Dto());
     }
 
     public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
+        Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>(
+            SessionId == Guid.Empty ? [] : [Dto()]);
 
     public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
-        Task.FromResult(new SessionRunnerSessionDto(
-            sessionId, 1234, _acceptedStartedAt ?? DateTime.UtcNow,
-            _exited ? "Exited" : "Running",
-            _exited ? 0 : null,
-            _exited ? AgentExitReason.KilledByRequest : AgentExitReason.Unknown,
-            _sequence,
-            AcceptedStartedAt: _acceptedStartedAt));
+        Task.FromResult(Dto(sessionId));
 
     public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) =>
         Task.FromResult(new SessionRunnerBufferDto(sessionId, RawOutput, _sequence));
@@ -125,7 +149,17 @@ internal sealed class ScriptedCodexRunnerClient : ISessionRunnerClient
     public async Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct)
     {
         if (SnapshotHold is not null)
-            await SnapshotHold.Task.WaitAsync(ct);
+        {
+            Interlocked.Increment(ref _waitingOnSnapshot);
+            try
+            {
+                await SnapshotHold.Task.WaitAsync(ct);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _waitingOnSnapshot);
+            }
+        }
 
         _screenReads++;
         string screen;
@@ -199,20 +233,24 @@ internal sealed class ScriptedCodexRunnerClient : ISessionRunnerClient
     {
         UnconditionalKills++;
         _exited = true;
-        return Task.FromResult(new SessionRunnerSessionDto(
-            sessionId, null, DateTime.UtcNow, "Exited", 0, AgentExitReason.KilledByRequest, _sequence,
-            AcceptedStartedAt: _acceptedStartedAt));
+        return Task.FromResult(Dto(sessionId));
     }
 
     public Task<RunnerKillGenerationResult> KillGenerationAsync(
         Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct)
     {
         KillGenerationCalls.Add(expectedAcceptedStartedAt);
-        if (_acceptedStartedAt is { } accepted
-            && !SessionGeneration.Equal(accepted, expectedAcceptedStartedAt))
+        if (KillGenerationNotFound)
+        {
+            throw new HttpRequestException(
+                "Response status code does not indicate success: 404 (Not Found).");
+        }
+
+        if (_liveAcceptedStartedAt is { } live
+            && !SessionGeneration.Equal(live, expectedAcceptedStartedAt))
         {
             return Task.FromResult(new RunnerKillGenerationResult(
-                sessionId, false, KillGenerationOutcomes.Mismatch, accepted));
+                sessionId, false, KillGenerationOutcomes.Mismatch, live));
         }
 
         _exited = true;
@@ -226,4 +264,15 @@ internal sealed class ScriptedCodexRunnerClient : ISessionRunnerClient
         await Task.CompletedTask;
         yield break;
     }
+
+    private SessionRunnerSessionDto Dto(Guid? sessionId = null) =>
+        new(
+            sessionId ?? SessionId,
+            1234,
+            _acceptedStartedAt ?? DateTime.UtcNow,
+            _exited ? "Exited" : "Running",
+            _exited ? 0 : null,
+            _exited ? AgentExitReason.KilledByRequest : AgentExitReason.Unknown,
+            _sequence,
+            AcceptedStartedAt: ReportNullAcceptedStartedAt ? null : _acceptedStartedAt);
 }

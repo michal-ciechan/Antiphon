@@ -27,6 +27,13 @@ public class TestDbFixture
 	[Before(Assembly)]
 	public static async Task InitializeAsync()
 	{
+		if (Environment.GetEnvironmentVariable(CodexStartupDeliveryWorker.Marker) is { } startup)
+		{
+			try { await CodexStartupDeliveryWorker.RunAsync(startup); Environment.Exit(0); }
+			catch (Exception ex) { Console.Error.WriteLine(ex.GetType().Name + ": " + ex.StackTrace); Environment.Exit(1); }
+			return;
+		}
+
 		if (Environment.GetEnvironmentVariable(PostLandMutationDeliveryWorker.Marker) is { } delivery)
 		{
 			try { await PostLandMutationDeliveryWorker.RunAsync(delivery); Environment.Exit(0); }

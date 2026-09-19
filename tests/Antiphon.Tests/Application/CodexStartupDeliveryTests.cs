@@ -3,14 +3,17 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Agents.Pty;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -151,19 +154,43 @@ public sealed class CodexStartupDeliveryTests
     }
 
     [Test]
-    public async Task Readiness_failure_targets_only_the_accepted_generation()
+    [Arguments("replacement")]
+    [Arguments("mismatch")]
+    [Arguments("not-found")]
+    public async Task Readiness_failure_targets_only_the_accepted_generation(string variant)
     {
+        var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var client = BlockedRunner();
-        var generation = DateTime.UtcNow;
-        var adapter = new RunnerCodexAdapter(client, ReadySettings());
-        await adapter.StartAsync(SpecWithGeneration(generation), CancellationToken.None);
-        var ready = adapter.WaitForReadyAsync(CancellationToken.None);
-        (await ready.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeFalse();
-        await adapter.KillGenerationAsync(generation, TimeSpan.FromSeconds(1), CancellationToken.None);
-        client.KillGenerationCalls.ShouldBe([generation], "R-46");
-        var replacement = new ScriptedCodexRunnerClient { StartupScreens = [CodexStartupFixtures.P3] };
-        replacement.ShouldNotBeNull();
-        true.ShouldBeTrue("R-46 replacementAlive");
+        client.SnapshotHold = hold;
+        if (variant == "not-found")
+            client.KillGenerationNotFound = true;
+        await using var h = await CreateCodexHarnessAsync(
+            SessionStatus.Starting, runner: client, ready: ReadySettings(maxMs: 1200, settleMs: 50));
+        var g1 = SessionGeneration.Normalize(await StartedAtAsync(h));
+        using var scope = h.Provider.CreateScope();
+        var launch = scope.ServiceProvider.GetRequiredService<AgentSessionService>()
+            .LaunchInteractiveAsync(h.SessionId, h.AgentId, Spec(h, g1), null, false, null,
+                CancellationToken.None, acceptedGeneration: g1);
+        await WaitUntilAsync(() => client.WaitingOnSnapshot);
+        var g2 = SessionGeneration.Next(g1, DateTime.UtcNow);
+        if (variant is "replacement" or "mismatch")
+        {
+            await using (var db = OpenDb(h))
+            {
+                var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
+                session.StartedAt = g2;
+                await db.SaveChangesAsync();
+            }
+
+            client.RestampLive(g2, reported: variant == "mismatch");
+        }
+
+        hold.TrySetResult();
+        await Should.ThrowAsync<Exception>(() => launch);
+        client.UnconditionalKills.ShouldBe(0, "R-46");
+        client.KillGenerationCalls.ShouldBe([g1], "R-46");
+        if (variant != "not-found")
+            client.ReplacementAlive.ShouldBeTrue("R-46 replacementAlive");
     }
 
     [Test]
@@ -307,19 +334,24 @@ public sealed class CodexStartupDeliveryTests
         await using var h = await CreateCodexHarnessAsync(SessionStatus.Starting);
         var adapter = h.Adapter;
         adapter.ReadyResult = true;
-        var id = await h.SeedPendingMessageAsync("recovered brief");
-        await using (var db = BridgeQueueHarness.CreateContext())
+        const string body = "recovered brief";
+        var id = await h.SeedPendingMessageAsync(body);
+        long sequence;
+        await using (var db = OpenDb(h))
         {
             var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
             session.Status = SessionStatus.Running;
             await db.SaveChangesAsync();
+            sequence = (await db.SessionQueuedMessages.SingleAsync(m => m.Id == id)).Sequence;
         }
 
         await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
-        adapter.SubmittedBodies.ShouldContain(b => b.Contains("recovered brief"));
-        await using var verify = BridgeQueueHarness.CreateContext();
+        (await CompleteReceiptCountAsync(h, body)).ShouldBe(1, "R-53");
+        await using var verify = OpenDb(h);
         var row = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == id);
         row.Id.ShouldBe(id, "R-53");
+        row.Sequence.ShouldBe(sequence, "R-53");
+        row.Body.ShouldBe(body, "R-53");
     }
 
     [Test]
@@ -345,32 +377,166 @@ public sealed class CodexStartupDeliveryTests
         const string body = "already accepted";
         await h.SeedPendingMessageAsync(body, deliveryAttempts: 1, status: QueuedMessageStatus.Sent);
         await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, body);
+        var before = adapter.Inputs.Count;
         await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+        adapter.Inputs.Skip(before).ToArray().ShouldBeEmpty("R-55");
         WorkWrites(adapter).ShouldBeEmpty("R-55");
+        (await CompleteReceiptCountAsync(h, body)).ShouldBe(1, "R-55");
     }
 
     [Test]
-    public async Task Enqueue_failure_is_reported_to_the_original_caller()
+    [Arguments(false, "dispatch-committed")]
+    [Arguments(true, "dispatch-committed")]
+    [Arguments(false, "brief-insert")]
+    [Arguments(true, "brief-insert")]
+    public async Task Enqueue_failure_is_reported_to_the_original_caller(bool busyParent, string cut)
     {
-        await using var h = await CreateCodexHarnessAsync(SessionStatus.Running);
-        var adapter = h.Adapter;
-        await Should.ThrowAsync<ValidationException>(
-            () => h.Queue.EnqueueAsync(h.SessionId, "   ", MessageSendMode.WhenIdle, CancellationToken.None));
-        WorkWrites(adapter).ShouldBeEmpty("R-58");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var workspace = Directory.CreateTempSubdirectory("c574-r58").FullName;
+        var (agentId, sessionId) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
+            schema.ConnectionString, workspace);
+        var (_, callerId) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
+            schema.ConnectionString, workspace);
+        var task = await ModelAvailabilityDispatcherTests.SeedQueuedTaskAsync(
+            schema.ConnectionString, workspace, agentId, AgentModelLevel.High, "lost Codex startup brief");
+        var dispatchedAt = DateTime.UtcNow.AddMinutes(-12);
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            (await db.Agents.SingleAsync(a => a.Id == agentId)).ModelLevel = AgentModelLevel.High;
+            var stored = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            stored.Attempt = 3;
+            stored.ParentSessionId = callerId;
+            stored.ReplyTo = AgentTaskReplyTo.Session;
+            stored.AgentKind = AgentKind.Codex;
+            if (cut == "dispatch-committed")
+            {
+                stored.Status = AgentTaskStatus.Dispatched;
+                stored.DispatchedAt = dispatchedAt;
+                stored.AgentSessionId = sessionId;
+            }
+
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            session.AgentKind = AgentKind.Codex;
+            session.Status = SessionStatus.Starting;
+            session.StartedAt = dispatchedAt;
+            await db.SaveChangesAsync();
+        }
+
+        var clock = new OffsetClock();
+        IInterceptor? fault = cut == "brief-insert" ? new BriefInsertHang(task.Id) : null;
+        await using var producer = CreateFailureProvider(schema.ConnectionString, fault, clock);
+        var caller = new FakeAgentProtocolAdapter { ReadyResult = true };
+        caller.OnSubmitted = async submitted =>
+        {
+            await BridgeQueueHarness.InsertEntryAsync(callerId, TranscriptKinds.UserPrompt, submitted,
+                timestamp: clock.GetUtcNow().UtcDateTime, connectionString: schema.ConnectionString);
+            await BridgeQueueHarness.InsertEntryAsync(callerId, TranscriptKinds.TurnEnd,
+                stopReason: TranscriptKinds.StopReasons.EndTurn, connectionString: schema.ConnectionString);
+        };
+        producer.GetRequiredService<AgentSessionRuntime>().Register(callerId, caller);
+        if (busyParent)
+            await BridgeQueueHarness.InsertEntryAsync(callerId, TranscriptKinds.AssistantText,
+                "caller is busy", connectionString: schema.ConnectionString);
+
+        if (cut == "brief-insert")
+        {
+            using (var scope = producer.CreateScope())
+            {
+                var capacity = producer.GetRequiredService<CapacityRecoveryService>();
+                await capacity.EnsureWaitAsync(new CapacityWaitRegistration
+                {
+                    ConsumerKey = $"task:{task.Id:N}",
+                    ConsumerKind = CapacityWaitConsumerKind.QueuedTask,
+                    ExecutionKind = AgentKind.Codex,
+                    RequestedKind = AgentKind.Codex,
+                    RequestedAlias = "codex",
+                    TaskId = task.Id,
+                    HoldAlreadyCleared = true,
+                    BlockedAt = clock.GetUtcNow().UtcDateTime,
+                }, CancellationToken.None);
+                await capacity.GrantReadyAsync(CancellationToken.None);
+                await Should.ThrowAsync<IOException>(() =>
+                    scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default));
+            }
+
+            clock.Advance(TimeSpan.FromMinutes(11));
+        }
+
+        using (var scope = producer.CreateScope())
+            (await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
+                .FailNeverStartedAsync(default)).ShouldBe(1, "R-58");
+
+        await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var failed = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed, "R-58");
+        var failureObligation = await verify.AgentTaskLandNotifications.AsNoTracking()
+            .SingleOrDefaultAsync(n => n.TaskId == task.Id && n.Kind == LandNotificationKind.DeliveryFailure);
+        failureObligation.ShouldNotBeNull("R-58");
+        if (busyParent)
+        {
+            caller.SubmittedBodies.ShouldBeEmpty("R-58 busy parent holds Pending");
+            await BridgeQueueHarness.InsertEntryAsync(callerId, TranscriptKinds.TurnEnd,
+                stopReason: TranscriptKinds.StopReasons.EndTurn, connectionString: schema.ConnectionString);
+            await producer.GetRequiredService<SessionMessageQueueService>().OnTurnEndAsync(callerId, default);
+        }
+
+        await producer.GetRequiredService<SessionMessageQueueService>().FlushStrandedQueuesAsync(default);
+        var note = await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.SourceTaskId == task.Id);
+        note.SourceLandNotificationId.ShouldBe(failureObligation.Id);
+        (await CompleteReceiptCountAsync(schema.ConnectionString, callerId, note.Body)).ShouldBe(1, "R-58");
     }
 
     [Test]
-    public async Task Resumed_readiness_failure_cannot_kill_replacement()
+    [Arguments("replacement")]
+    [Arguments("superseded-exit")]
+    [Arguments("null-generation")]
+    public async Task Resumed_readiness_failure_cannot_kill_replacement(string variant)
     {
+        var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var client = BlockedRunner();
-        var g1 = DateTime.UtcNow;
-        var adapter = new RunnerCodexAdapter(client, ReadySettings());
-        await adapter.StartAsync(SpecWithGeneration(g1), CancellationToken.None);
-        var ready = adapter.WaitForReadyAsync(CancellationToken.None);
-        (await ready.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeFalse();
-        client.UnconditionalKills.ShouldBe(0, "R-61");
-        await adapter.KillGenerationAsync(g1, TimeSpan.FromSeconds(1), CancellationToken.None);
-        client.KillGenerationCalls.ShouldBe([g1], "R-61");
+        client.SnapshotHold = hold;
+        if (variant == "null-generation")
+            client.ReportNullAcceptedStartedAt = true;
+        await using var h = await CreateCodexHarnessAsync(
+            SessionStatus.Starting, runner: client, ready: ReadySettings(maxMs: 1200, settleMs: 50),
+            dispatchedTask: true);
+        var g1 = SessionGeneration.Normalize(await StartedAtAsync(h));
+        client.PrimeAttach(h.SessionId, variant == "null-generation" ? null : g1);
+        using var scope = h.Provider.CreateScope();
+        var resume = scope.ServiceProvider.GetRequiredService<AgentSessionService>()
+            .ResumeInterruptedLaunchAsync(h.SessionId, h.AgentId, CancellationToken.None);
+        try
+        {
+            await WaitUntilAsync(() => client.WaitingOnSnapshot);
+            var g2 = SessionGeneration.Next(g1, DateTime.UtcNow);
+            if (variant is "replacement" or "superseded-exit")
+            {
+                await using (var db = OpenDb(h))
+                {
+                    var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
+                    session.StartedAt = g2;
+                    await db.SaveChangesAsync();
+                }
+
+                client.RestampLive(g2, reported: variant == "superseded-exit");
+            }
+
+            hold.TrySetResult();
+            await Should.ThrowAsync<Exception>(() => resume);
+            client.UnconditionalKills.ShouldBe(0, "R-61");
+            if (variant == "null-generation")
+                client.KillGenerationCalls.ShouldBeEmpty("R-61 null AcceptedStartedAt makes no runner kill call");
+            else
+                client.KillGenerationCalls.ShouldBe([g1], "R-61");
+            if (variant != "null-generation")
+                client.ReplacementAlive.ShouldBeTrue("R-61");
+        }
+        finally
+        {
+            hold.TrySetResult();
+            try { await resume.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch { /* already observed */ }
+        }
     }
 
     [Test]
@@ -379,11 +545,14 @@ public sealed class CodexStartupDeliveryTests
         await using var h = await CreateCodexHarnessAsync(SessionStatus.Running);
         var adapter = h.Adapter;
         adapter.ReadyResult = true;
-        var id = await h.SeedPendingMessageAsync("untyped after commit", deliveryAttempts: 1, status: QueuedMessageStatus.Sent);
+        const string body = "untyped after commit";
+        var id = await h.SeedPendingMessageAsync(body, deliveryAttempts: 1, status: QueuedMessageStatus.Sent);
         await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
-        adapter.SubmittedBodies.Count(b => b.Contains("untyped after commit")).ShouldBeLessThanOrEqualTo(1, "R-62");
-        await using var db = BridgeQueueHarness.CreateContext();
-        (await db.SessionQueuedMessages.AnyAsync(m => m.Id == id)).ShouldBeTrue("R-62");
+        (await CompleteReceiptCountAsync(h, body)).ShouldBe(1, "R-62");
+        await using var db = OpenDb(h);
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+        row.Id.ShouldBe(id, "R-62");
+        PromptSubmissionMatch.IsCompleteIn(body, row.Body).ShouldBeTrue("R-62");
     }
 
     [Test]
@@ -392,8 +561,12 @@ public sealed class CodexStartupDeliveryTests
         await using var h = await CreateCodexHarnessAsync(SessionStatus.Running);
         var adapter = h.Adapter;
         adapter.ReadyResult = true;
-        await h.Queue.EnqueueAsync(h.SessionId, "eligible brief", MessageSendMode.WhenIdle, CancellationToken.None);
-        adapter.SubmittedBodies.ShouldContain(b => b.Contains("eligible brief"), "R-63");
+        const string body = "eligible brief";
+        await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
+        (await CompleteReceiptCountAsync(h, body)).ShouldBe(1, "R-63");
+        await using var db = OpenDb(h);
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        PromptSubmissionMatch.IsCompleteIn(body, row.Body).ShouldBeTrue("R-63");
     }
 
     [Test]
@@ -403,12 +576,14 @@ public sealed class CodexStartupDeliveryTests
         var adapter = h.Adapter;
         adapter.ReadyResult = true;
         await h.MarkWorkingAsync();
-        await h.Queue.EnqueueAsync(h.SessionId, "busy brief", MessageSendMode.WhenIdle, CancellationToken.None,
+        const string body = "busy brief";
+        await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None,
             deliverIfIdle: true);
         WorkWrites(adapter).ShouldBeEmpty();
+        (await CompleteReceiptCountAsync(h, body)).ShouldBe(0, "R-64 before turn-end");
         adapter.TurnCompleted = true;
         await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
-        adapter.SubmittedBodies.ShouldContain(b => b.Contains("busy brief"), "R-64");
+        (await CompleteReceiptCountAsync(h, body)).ShouldBe(1, "R-64");
     }
 
     [Test]
@@ -424,10 +599,11 @@ public sealed class CodexStartupDeliveryTests
         var adapter = h.Adapter;
         adapter.ReadyResult = true;
         var id = await h.SeedPendingMessageAsync("send-now brief");
+        const string body = "send-now brief";
         if (status == SessionStatus.Running)
         {
             await h.Queue.SendNowAsync(h.SessionId, id, CancellationToken.None);
-            adapter.SubmittedBodies.ShouldContain(b => b.Contains("send-now brief"));
+            (await CompleteReceiptCountAsync(h, body)).ShouldBe(1, "R-65");
             return;
         }
 
@@ -435,10 +611,46 @@ public sealed class CodexStartupDeliveryTests
             () => h.Queue.SendNowAsync(h.SessionId, id, CancellationToken.None));
         ex.Message.ShouldContain("is still starting");
         WorkWrites(adapter).ShouldBeEmpty("R-65");
-        await using var db = BridgeQueueHarness.CreateContext();
-        var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
-        row.Status.ShouldBe(QueuedMessageStatus.Pending, "R-65");
-        row.DeliveryAttempts.ShouldBe(0, "R-65");
+        await using (var db = OpenDb(h))
+        {
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+            row.Status.ShouldBe(QueuedMessageStatus.Pending, "R-65");
+            row.DeliveryAttempts.ShouldBe(0, "R-65");
+        }
+
+        await using (var db = OpenDb(h))
+        {
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
+            session.Status = SessionStatus.Running;
+            await db.SaveChangesAsync();
+        }
+
+        adapter.ReadyResult = true;
+        await h.Queue.SendNowAsync(h.SessionId, id, CancellationToken.None);
+        (await CompleteReceiptCountAsync(h, body)).ShouldBe(1, "R-65 later Running send");
+        await using var verify = OpenDb(h);
+        var delivered = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+        delivered.Id.ShouldBe(id, "R-65");
+        PromptSubmissionMatch.IsCompleteIn(body, delivered.Body).ShouldBeTrue("R-65");
+    }
+
+    [Test]
+    public async Task Send_now_during_boot_beats_a_closed_grok_rules_barrier()
+    {
+        await using var h = await CreateCodexHarnessAsync(SessionStatus.Starting);
+        await using (var db = OpenDb(h))
+        {
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
+            session.AgentKind = AgentKind.Grok;
+            session.GrokRulesState = GrokRulesState.Pending;
+            await db.SaveChangesAsync();
+        }
+
+        var id = await h.SeedPendingMessageAsync("grok send-now");
+        var ex = await Should.ThrowAsync<ConflictException>(
+            () => h.Queue.SendNowAsync(h.SessionId, id, CancellationToken.None));
+        ex.Message.ShouldContain("is still starting");
+        WorkWrites(h.Adapter).ShouldBeEmpty("R-65");
     }
 
     [Test]
@@ -453,19 +665,96 @@ public sealed class CodexStartupDeliveryTests
         await using var h = await CreateCodexHarnessAsync(status);
         var adapter = h.Adapter;
         adapter.ReadyResult = true;
+        const string body = "mode-now brief";
         if (status == SessionStatus.Running)
         {
-            await h.Queue.EnqueueAsync(h.SessionId, "mode-now brief", MessageSendMode.Now, CancellationToken.None);
-            adapter.SubmittedBodies.ShouldContain(b => b.Contains("mode-now brief"));
+            await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.Now, CancellationToken.None);
+            (await CompleteReceiptCountAsync(h, body)).ShouldBe(1, "R-66");
             return;
         }
 
-        var before = await CountQueueAsync(h.SessionId);
+        var before = await CountQueueAsync(h);
         var ex = await Should.ThrowAsync<ConflictException>(
-            () => h.Queue.EnqueueAsync(h.SessionId, "mode-now brief", MessageSendMode.Now, CancellationToken.None));
+            () => h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.Now, CancellationToken.None));
         ex.Message.ShouldContain("is still starting");
         WorkWrites(adapter).ShouldBeEmpty("R-66");
-        (await CountQueueAsync(h.SessionId)).ShouldBe(before, "R-66");
+        (await CountQueueAsync(h)).ShouldBe(before, "R-66");
+    }
+
+    [Test]
+    public async Task Crash_cut_worker_entry()
+    {
+        // Assembly-load entry for ANTIPHON_C574_STARTUP_WORKER; the fixture hijacks Before(Assembly).
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    [Arguments("failed-committed")]
+    [Arguments("note-committed")]
+    [Arguments("prompt-accepted")]
+    public async Task Readiness_failure_notice_survives_worker_crash(string cut)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var workspace = Directory.CreateTempSubdirectory("c574-v7").FullName;
+        var (agentId, sessionId) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
+            schema.ConnectionString, workspace);
+        var (_, callerId) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
+            schema.ConnectionString, workspace);
+        var task = await ModelAvailabilityDispatcherTests.SeedQueuedTaskAsync(
+            schema.ConnectionString, workspace, agentId, AgentModelLevel.High, "readiness failure notice");
+        var dispatchedAt = DateTime.UtcNow.AddMinutes(-12);
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            var stored = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            stored.Status = AgentTaskStatus.Dispatched;
+            stored.DispatchedAt = dispatchedAt;
+            stored.AgentSessionId = sessionId;
+            stored.ParentSessionId = callerId;
+            stored.ReplyTo = AgentTaskReplyTo.Session;
+            stored.Attempt = 1;
+            stored.AgentKind = AgentKind.Codex;
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            session.Status = SessionStatus.Starting;
+            session.AgentKind = AgentKind.Codex;
+            session.StartedAt = dispatchedAt;
+            await db.SaveChangesAsync();
+        }
+
+        var retained = new ScriptedCodexRunnerClient { StartupScreens = [CodexStartupFixtures.N1] };
+        retained.PrimeAttach(sessionId, dispatchedAt);
+        var settings = CodexStartupDeliveryWorker.CreateSettings(
+            schema.ConnectionString, cut, sessionId, agentId, task.Id, callerId);
+        await CodexStartupDeliveryWorker.CrashAsync(
+            settings, retained, typeof(CodexStartupDeliveryTests).Assembly.Location);
+
+        var clock = new OffsetClock();
+        clock.Advance(TimeSpan.FromMinutes(11));
+        await using var recovered = CreateFailureProvider(schema.ConnectionString, null, clock);
+        var caller = new FakeAgentProtocolAdapter { ReadyResult = true };
+        caller.OnSubmitted = async submitted =>
+        {
+            await BridgeQueueHarness.InsertEntryAsync(callerId, TranscriptKinds.UserPrompt, submitted,
+                timestamp: DateTime.UtcNow, connectionString: schema.ConnectionString);
+            await BridgeQueueHarness.InsertEntryAsync(callerId, TranscriptKinds.TurnEnd,
+                stopReason: TranscriptKinds.StopReasons.EndTurn, connectionString: schema.ConnectionString);
+        };
+        recovered.GetRequiredService<AgentSessionRuntime>().Register(callerId, caller);
+        using (var scope = recovered.CreateScope())
+        {
+            var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+            await dispatcher.FailNeverStartedAsync(default);
+            await dispatcher.RemindUnacknowledgedFailuresAsync(default);
+        }
+
+        await recovered.GetRequiredService<SessionMessageQueueService>().FlushStrandedQueuesAsync(default);
+        await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var obligation = await verify.AgentTaskLandNotifications.AsNoTracking()
+            .SingleAsync(n => n.TaskId == task.Id && n.Kind == LandNotificationKind.DeliveryFailure);
+        var note = await verify.SessionQueuedMessages.AsNoTracking()
+            .SingleAsync(m => m.SourceLandNotificationId == obligation.Id);
+        (await CompleteReceiptCountAsync(schema.ConnectionString, callerId, note.Body)).ShouldBe(1);
+        (await verify.AgentTaskLandNotifications.CountAsync(n => n.TaskId == task.Id)).ShouldBe(1);
+        (await verify.AgentTasks.CountAsync(t => t.Id == task.Id)).ShouldBe(1);
     }
 
     [Test]
@@ -482,22 +771,62 @@ public sealed class CodexStartupDeliveryTests
     }
 
     private static async Task<BridgeQueueHarness> CreateCodexHarnessAsync(
-        SessionStatus status, FakeAgentProtocolAdapter? launchAdapter = null)
+        SessionStatus status,
+        FakeAgentProtocolAdapter? launchAdapter = null,
+        ScriptedCodexRunnerClient? runner = null,
+        IOptions<AgentRegistrySettings>? ready = null,
+        bool dispatchedTask = false)
     {
         var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
-            ConfigureServices = launchAdapter is null
-                ? null
-                : s => s.AddSingleton<IAgentProtocolAdapterFactory>(new OneAdapterFactory(launchAdapter)),
+            ConfigureServices = s =>
+            {
+                if (launchAdapter is not null)
+                    s.AddSingleton<IAgentProtocolAdapterFactory>(new OneAdapterFactory(launchAdapter));
+                else if (runner is not null)
+                {
+                    var options = ready ?? ReadySettings();
+                    s.AddSingleton<ISessionRunnerClient>(runner);
+                    s.AddSingleton(options);
+                    s.AddSingleton<IAgentProtocolAdapterFactory>(new RunnerCodexFactory(runner, options));
+                }
+            },
         });
-        await using var db = BridgeQueueHarness.CreateContext();
+        await using var db = OpenDb(h);
         var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
         session.AgentKind = AgentKind.Codex;
+        session.DefinitionName = "codex";
         session.Status = status;
+        session.StartedAt = SessionGeneration.Normalize(session.StartedAt);
+        if (dispatchedTask)
+        {
+            var taskId = Guid.NewGuid();
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = taskId,
+                RootTaskId = taskId,
+                Title = "c574 resume",
+                Goal = "Do the thing.",
+                Role = AgentTaskRole.Plan,
+                AgentKind = AgentKind.Codex,
+                ModelLevel = AgentModelLevel.Frontier,
+                Workspace = WorkspaceMode.Shared,
+                WorkingDirectory = h.TempRoot,
+                AgentSessionId = h.SessionId,
+                AgentId = h.AgentId,
+                Status = AgentTaskStatus.Dispatched,
+                CreatedAt = session.StartedAt,
+                DispatchedAt = session.StartedAt,
+            });
+        }
+
         await db.SaveChangesAsync();
         return h;
     }
+
+    private static AppDbContext OpenDb(BridgeQueueHarness h) =>
+        new(TestDbFixture.CreateDbContextOptions(h.ConnectionString));
 
     private static IReadOnlyList<string> WorkWrites(FakeAgentProtocolAdapter adapter) =>
         adapter.Inputs.Where(i => i != "\r" && i.Length > 0).ToArray();
@@ -505,9 +834,11 @@ public sealed class CodexStartupDeliveryTests
     private static AgentLaunchSpec Spec(BridgeQueueHarness h, DateTime? generation = null) =>
         SpecWithGeneration(generation ?? DateTime.UtcNow) with { Cwd = h.TempRoot, SessionId = h.SessionId };
 
-    private static async Task<DateTime> StartedAtAsync(Guid sessionId)
+    private static Task<DateTime> StartedAtAsync(BridgeQueueHarness h) => StartedAtAsync(h.SessionId, h.ConnectionString);
+
+    private static async Task<DateTime> StartedAtAsync(Guid sessionId, string? connection = null)
     {
-        await using var db = BridgeQueueHarness.CreateContext();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
         return await db.AgentSessions.Where(s => s.Id == sessionId).Select(s => s.StartedAt).SingleAsync();
     }
 
@@ -523,9 +854,8 @@ public sealed class CodexStartupDeliveryTests
         SessionId: Guid.NewGuid(),
         AcceptedStartedAt: generation);
 
-    private static IOptions<Antiphon.Server.Application.Settings.AgentRegistrySettings> ReadySettings(
-        int settleMs = 50, int maxMs = 400) =>
-        Options.Create(new Antiphon.Server.Application.Settings.AgentRegistrySettings
+    private static IOptions<AgentRegistrySettings> ReadySettings(int settleMs = 50, int maxMs = 400) =>
+        Options.Create(new AgentRegistrySettings
         {
             CodexReadyQuietPeriodMs = settleMs,
             CodexReadyMaxWaitMs = maxMs,
@@ -537,10 +867,22 @@ public sealed class CodexStartupDeliveryTests
         StartupScreens = [CodexStartupFixtures.N1],
     };
 
-    private static async Task<int> CountQueueAsync(Guid sessionId)
+    private static async Task<int> CountQueueAsync(BridgeQueueHarness h)
     {
-        await using var db = BridgeQueueHarness.CreateContext();
-        return await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == sessionId);
+        await using var db = OpenDb(h);
+        return await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == h.SessionId);
+    }
+
+    private static Task<int> CompleteReceiptCountAsync(BridgeQueueHarness h, string body) =>
+        CompleteReceiptCountAsync(h.ConnectionString, h.SessionId, body);
+
+    private static async Task<int> CompleteReceiptCountAsync(string connection, Guid sessionId, string body)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
+        var prompts = await db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt)
+            .ToListAsync();
+        return prompts.Count(p => p.Text is not null && PromptSubmissionMatch.IsCompleteIn(body, p.Text));
     }
 
     private static async Task<Guid> AddSessionAsync(string cwd)
@@ -570,14 +912,56 @@ public sealed class CodexStartupDeliveryTests
         var start = DateTime.UtcNow;
         while (!predicate())
         {
-            if (DateTime.UtcNow - start > TimeSpan.FromSeconds(10))
+            if (DateTime.UtcNow - start > TimeSpan.FromSeconds(15))
                 throw new TimeoutException("condition not met");
-            await Task.Yield();
+            await Task.Delay(20);
         }
     }
+
+    private static ServiceProvider CreateFailureProvider(
+        string connection, IInterceptor? fault, TimeProvider clock) =>
+        CapacityRecoveryTaskTests.CreateDispatcherProvider(connection, fault, clock,
+            new DeliveryVerificationSettings
+            {
+                EvidenceTimeoutSeconds = 1,
+                PollIntervalMs = 50,
+                PostSubmitAdvanceTimeoutSeconds = 1,
+                StrandedAgeSeconds = 0,
+                TranscriptConfirmTimeoutSeconds = 3,
+                ReEnterIntervalSeconds = 1,
+                PostFailureConfirmGraceSeconds = 3,
+                UnobservableBaselineConfirmClockToleranceSeconds = 30,
+                BootPromptRetryDelaySeconds = 0,
+            });
 
     private sealed class OneAdapterFactory(IAgentProtocolAdapter adapter) : IAgentProtocolAdapterFactory
     {
         public IAgentProtocolAdapter Create(AgentKind kind) => adapter;
+    }
+
+    private sealed class RunnerCodexFactory(
+        ISessionRunnerClient client, IOptions<AgentRegistrySettings> options) : IAgentProtocolAdapterFactory
+    {
+        public IAgentProtocolAdapter Create(AgentKind kind) => new RunnerCodexAdapter(client, options);
+    }
+
+    private sealed class OffsetClock : TimeProvider
+    {
+        private TimeSpan _offset;
+        public override DateTimeOffset GetUtcNow() => DateTimeOffset.UtcNow + _offset;
+        public void Advance(TimeSpan amount) => _offset += amount;
+    }
+
+    private sealed class BriefInsertHang(Guid taskId) : SaveChangesInterceptor
+    {
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            var queue = eventData.Context!.ChangeTracker.Entries<SessionQueuedMessage>()
+                .SingleOrDefault(e => e.Entity.ExecutionTaskId == taskId);
+            if (queue is { State: EntityState.Added })
+                throw new IOException("cut before brief insert commit");
+            return ValueTask.FromResult(result);
+        }
     }
 }
