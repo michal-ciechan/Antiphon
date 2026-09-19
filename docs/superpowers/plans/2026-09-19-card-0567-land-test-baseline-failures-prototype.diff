@@ -1,0 +1,465 @@
+diff --git a/server/Application/Services/AgentTaskLandService.cs b/server/Application/Services/AgentTaskLandService.cs
+index dc04ffd51..ef45c59c4 100644
+--- a/server/Application/Services/AgentTaskLandService.cs
++++ b/server/Application/Services/AgentTaskLandService.cs
+@@ -371,7 +371,7 @@ public sealed class AgentTaskLandService
+         var type = op.Publication == LandPublicationOutcome.AlreadyPresent ? AgentTaskEventType.AlreadyPresent
+             : op.Cleanup == LandCleanupStatus.Complete ? AgentTaskEventType.Landed : AgentTaskEventType.LandedWithResidue;
+         var (siblings, warnings) = await CollectUnlandedSiblingsAsync(task, op.RepositoryPath, ct, op.VerifiedSourceSha);
+-        var marker = siblings.Count == 0 ? null : $"unlanded-sibling={string.Join(",", siblings)}";
++        var marker = UnlandedMarker(siblings);
+         await SettleLandedAsync(task, type, AppendUnlandedMarker(FormatOutcome(op), marker), warnings, siblings, ct);
+         return LandRunResult.Complete;
+     }
+@@ -497,11 +497,16 @@ public sealed class AgentTaskLandService
+     private static string AppendUnlandedMarker(string outcome, string? marker) =>
+         marker is null ? outcome : $"{outcome}, {marker}";
+ 
++    /// <summary>The landed-event marker for the sibling tokens; null when nothing is unlanded.</summary>
++    internal static string? UnlandedMarker(IReadOnlyList<string> siblings) =>
++        siblings.Count == 0 ? null : $"unlanded-sibling={string.Join(",", siblings)}";
++
+     /// <summary>
+     /// Same-card kept Worktree branches whose tip is not an ancestor of the rebased HEAD
+     /// (CARD-0215). Warn on a surviving uncontained branch; absence grants no landing authority.
++    /// Internal so the stage-outcome component rows call it as a typed seam (CARD-0567).
+     /// </summary>
+-    private async Task<(IReadOnlyList<string> Siblings, IReadOnlyList<string> Warnings)> CollectUnlandedSiblingsAsync(
++    internal async Task<(IReadOnlyList<string> Siblings, IReadOnlyList<string> Warnings)> CollectUnlandedSiblingsAsync(
+         AgentTask task, string rebasedHeadRepo, CancellationToken ct, string? verifiedSha = null)
+     {
+         if (task.CardId is null || task.RepoPath is null || !Directory.Exists(rebasedHeadRepo))
+diff --git a/tests/Antiphon.Tests/Application/AgentTaskLandPublicationTests.cs b/tests/Antiphon.Tests/Application/AgentTaskLandPublicationTests.cs
+index 2b60bd8be..d261e4d76 100644
+--- a/tests/Antiphon.Tests/Application/AgentTaskLandPublicationTests.cs
++++ b/tests/Antiphon.Tests/Application/AgentTaskLandPublicationTests.cs
+@@ -145,18 +145,35 @@ public sealed class AgentTaskLandPublicationTests
+         var sha = await h.AddSourceAsync();
+         await h.Fixture.RequiredAsync(h.Fixture.Repository, "merge", "--ff-only", sha);
+         await h.Fixture.RequiredAsync(h.Fixture.Repository, "update-ref", "refs/remotes/origin/master", sha);
+-        h.Fixture.Git.BeforeCommand = (_, args) => Task.FromResult<LandingGitResult?>(fault switch
++        // CARD-0488 observes the remote *source* branch (ls-remote/fetch/merge-base against
++        // SourceRef) in the resolver before an operation exists, and rechecks it in the protocol.
++        // Only the target-branch observation is faulted: that is the read whose failure must not
++        // be replaced by cached (refs/remotes/origin/*) or local containment. The resolver's
++        // ancestry checks share merge-base's argument shape but always precede the first target
++        // ls-remote, and the trace records a command before BeforeCommand sees it.
++        bool TargetObservation(IReadOnlyList<string> args) => args[0] switch
+         {
+-            "timeout" when args[0] == "ls-remote" => throw new TimeoutException("fixture timeout"),
+-            "canceled" when args[0] == "ls-remote" => throw new OperationCanceledException("fixture cancel"),
+-            "read-error" when args[0] == "ls-remote" => new(128, "", "synthetic-private-marker"),
+-            "empty" when args[0] == "ls-remote" => new(0, "", ""),
+-            "malformed" when args[0] == "ls-remote" => new(0, "invalid\\trefs/heads/master\\n", ""),
+-            "missing" when args[0] == "ls-remote" => new(2, "", ""),
+-            "fetch-error" when args[0] == "fetch" => new(128, "", "synthetic-private-marker"),
+-            "ancestry-error" when args[0] == "merge-base" => new(128, "", "synthetic-private-marker"),
+-            _ => null,
+-        });
++            "ls-remote" => args.Contains(h.Fixture.TargetRef),
++            "fetch" => args.Any(a => a.StartsWith(h.Fixture.TargetRef + ":", StringComparison.Ordinal)),
++            "merge-base" => h.Fixture.Git.Trace.Any(t => t[0] == "ls-remote" && t.Contains(h.Fixture.TargetRef)),
++            _ => false,
++        };
++        h.Fixture.Git.BeforeCommand = (_, args) =>
++        {
++            if (!TargetObservation(args)) return Task.FromResult<LandingGitResult?>(null);
++            return Task.FromResult<LandingGitResult?>(fault switch
++            {
++                "timeout" when args[0] == "ls-remote" => throw new TimeoutException("fixture timeout"),
++                "canceled" when args[0] == "ls-remote" => throw new OperationCanceledException("fixture cancel"),
++                "read-error" when args[0] == "ls-remote" => new(128, "", "synthetic-private-marker"),
++                "empty" when args[0] == "ls-remote" => new(0, "", ""),
++                "malformed" when args[0] == "ls-remote" => new(0, "invalid\\trefs/heads/master\\n", ""),
++                "missing" when args[0] == "ls-remote" => new(2, "", ""),
++                "fetch-error" when args[0] == "fetch" => new(128, "", "synthetic-private-marker"),
++                "ancestry-error" when args[0] == "merge-base" => new(128, "", "synthetic-private-marker"),
++                _ => null,
++            });
++        };
+         h.Fixture.Git.Trace.Clear();
+         if (fault is "timeout" or "canceled")
+         {
+@@ -166,7 +183,18 @@ public sealed class AgentTaskLandPublicationTests
+             await h.FailAsync(error);
+         }
+         else await h.RunAsync();
++        h.Fixture.Git.Trace.ShouldContain(a => a[0] == "ls-remote" && a.Contains(h.Fixture.SourceRef),
++            "the remote source observation must run unfaulted before the target observation");
+         var operation = (await h.OperationAsync()).ShouldNotBeNull();
++        operation.SourceRemoteSha.ShouldBe(h.Fixture.SeedSha);
++        if (fault is not ("timeout" or "canceled"))
++            operation.LastReason.ShouldBe(fault switch
++            {
++                "read-error" or "missing" => "remote_read_failed",
++                "empty" or "malformed" => "remote_response_invalid",
++                "fetch-error" => "remote_fetch_failed",
++                _ => "remote_ancestry_error",
++            });
+         operation.RemoteConfirmedAt.ShouldBeNull();
+         // Drain-side timeout/cancellation settlement can retain a null operation reason.
+         (operation.LastReason ?? "").ShouldNotContain("synthetic-private-marker");
+diff --git a/tests/Antiphon.Tests/Application/AgentTaskLandRefusedRetryTests.cs b/tests/Antiphon.Tests/Application/AgentTaskLandRefusedRetryTests.cs
+index 1986221d1..356527269 100644
+--- a/tests/Antiphon.Tests/Application/AgentTaskLandRefusedRetryTests.cs
++++ b/tests/Antiphon.Tests/Application/AgentTaskLandRefusedRetryTests.cs
+@@ -165,15 +165,20 @@ public sealed class AgentTaskLandRefusedRetryTests
+         await s.RefuseAsync();
+         File.Delete(s.Sentinel);
+         var marker = equal ? s.A.UpdatedAt : s.InitialRequest;
++        var settled = (await s.EventsAsync()).Last(e => e.IsLandTerminal);
++        Guid requestId;
+         await using (var db = s.H.CreateContext())
+         {
+             var task = await db.AgentTasks.SingleAsync(t => t.Id == s.F.TaskId);
+             task.LandRequestedAt = marker;
+             task.LandStartedAt = marker;
+             task.LandAttempt = 1;
+-            // CARD-0467 added durable request identity and one terminal event per request.
+-            // Model the legacy pending crash state with its old timestamp beside the retained
+-            // settled history; reviving the settled row would claim its terminal event twice.
++            // A request persisted before CARD-0488 (schema 1, no review binding) that a restart
++            // finds pending beside A's settled history. CARD-0467's one-terminal-event-per-request
++            // rule is why A's own settled row is not revived. CARD-0488 refuses such a row at
++            // admission (legacy_review_binding_required) before any source inspection; request
++            // identity, not timestamps, now decides what may replace a refusal, so `equal` keeps
++            // the two historical fixture shapes without changing the production path.
+             var request = new AgentTaskLandRequest
+             {
+                 Id = Guid.NewGuid(), TaskId = task.Id, RequestedAt = marker, StartedAt = marker,
+@@ -184,6 +189,7 @@ public sealed class AgentTaskLandRefusedRetryTests
+             await db.SaveChangesAsync();
+             task.CurrentLandRequestId = request.Id;
+             await db.SaveChangesAsync();
++            requestId = request.Id;
+         }
+         if (equal) (await s.TaskAsync()).LandRequestedAt.ShouldBe(s.A.UpdatedAt);
+         else (await s.TaskAsync()).LandRequestedAt!.Value.ShouldBeLessThan(s.A.UpdatedAt);
+@@ -194,7 +200,18 @@ public sealed class AgentTaskLandRefusedRetryTests
+         (await s.OperationsAsync()).ShouldHaveSingleItem().Id.ShouldBe(s.A.Id, "automatic recovery must retain only A");
+         (await s.TaskAsync()).ActiveLandingId.ShouldBe(s.A.Id);
+         active.LastReason.ShouldBe(s.A.LastReason);
+-        s.Trace.ShouldContain(t => s.IsSourceStatus(t.Repository, t.Args) && t.Result.Succeeded && t.Result.Output.Length == 0);
++        var terminal = (await s.EventsAsync()).Last(e => e.IsLandTerminal);
++        terminal.Id.ShouldNotBe(settled.Id, "recovery must settle the legacy request with its own terminal event");
++        terminal.LandRequestId.ShouldBe(requestId);
++        terminal.LandingOperationId.ShouldBe(s.A.Id);
++        terminal.Detail.ShouldContain("legacy_review_binding_required");
++        await using (var db = s.H.CreateContext())
++        {
++            var legacy = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == requestId);
++            legacy.IsPending.ShouldBeFalse();
++            legacy.State.ShouldBe(LandRequestState.Completed);
++            legacy.TerminalEventId.ShouldBe(terminal.Id);
++        }
+         s.Trace.ShouldNotContain(t => s.IsTargetStatus(t.Repository, t.Args) || t.Args[0] == "update-ref");
+         await s.AssertPinsAsync();
+         await s.AssertRefusalAsync(active);
+diff --git a/tests/Antiphon.Tests/Application/AgentTaskLandStageOutcomeTests.cs b/tests/Antiphon.Tests/Application/AgentTaskLandStageOutcomeTests.cs
+index 02e48576d..0c49ce5a2 100644
+--- a/tests/Antiphon.Tests/Application/AgentTaskLandStageOutcomeTests.cs
++++ b/tests/Antiphon.Tests/Application/AgentTaskLandStageOutcomeTests.cs
+@@ -115,9 +115,11 @@ public class AgentTaskLandStageOutcomeTests
+         await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "land me\n");
+         await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "feature.md");
+         await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "feature");
+-        // Fetch URL stays the bare remote so prepare succeeds; push URL is unusable so finalize
+-        // is the step that fails (a rival push before RunAsync would fail prepare instead —
+-        // origin-ahead is a rebase refusal).
++        // The push endpoint is the only endpoint landing reads (CARD-0488 D-3: the remote source is
++        // observed on origin's push URL, never the fetch URL), so an unusable push URL is refused
++        // by source resolution before any operation, stage row or Git mutation exists. The fetch
++        // URL stays the bare remote so RequestHeadAsync can still publish the source; a rival push
++        // before RunAsync would be an origin-ahead refusal instead.
+         await repo.GitAsync("remote", "set-url", "--push", "origin", Path.Combine(remote.Path, "no-such-remote.git"));
+ 
+         await RequestHeadAsync(land, task);
+@@ -125,8 +127,9 @@ public class AgentTaskLandStageOutcomeTests
+ 
+         var rows = await RowsAsync(db, task.Id);
+         rows.ShouldBeEmpty("unreadable push endpoint is refused before preparation or verification");
++        (await db.AgentTaskLandings.CountAsync(o => o.TaskId == task.Id)).ShouldBe(0, "refused before any operation exists");
+         var refused = await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.LandRefused);
+-        refused.Detail.ShouldContain("remote_read_failed");
++        refused.Detail.ShouldContain("source_remote_unreadable");
+         Directory.Exists(task.WorktreePath).ShouldBeTrue();
+         await AssertPendingClearedAsync(db, task.Id, attempt: 1);
+     }
+@@ -410,125 +413,131 @@ public class AgentTaskLandStageOutcomeTests
+     /// V-9 / G-23, G-43: the land-side sibling comparison is patch-aware and pinned to the
+     /// operation's verified SHA. An all-minus (rebased/cherry-picked) sibling produces no marker
+     /// and no warning; a minus+plus sibling still names its exact short id and branch. The
+-    /// component rows call <c>CollectUnlandedSiblingsAsync</c> directly with a frozen verified
++    /// component row calls <c>CollectUnlandedSiblingsAsync</c> directly with a frozen verified
+     /// SHA while the repository HEAD has moved on to contain the patch: the frozen SHA decides.
++    /// One method per row (CARD-0567): two real lands plus the component row did not fit one
++    /// 180 s budget on a loaded host, and a timeout hid which row was at fault.
+     /// </summary>
+     [Test]
+     [Timeout(180_000)]
+-    public async Task C508_RebasedSiblingMarkerMatrix()
++    public async Task C508_RebasedSiblingMarkerMatrix_AllMinusSiblingIsSilent()
+     {
+-        // ---- all-minus: the build replays the sibling's patch, so nothing is left behind ----
+-        {
+-            using var repo = new ScratchGitRepo("c508-ls-allminus");
+-            using var remote = new TemporaryDirectory("c508-ls-allminus-remote");
+-            await ScratchGitRepo.GitInAsync(remote.Path, "init", "--bare");
+-            await repo.CommitFileAsync("README.md", "base\n");
+-            await repo.GitAsync("remote", "add", "origin", remote.Path);
+-            await repo.GitAsync("push", "-u", "origin", "master");
+-
+-            await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+-            await using var db = CreateContext(schema);
+-            var (land, worktrees) = CreateLand(db, repo);
+-            var card = await SeedCardAsync(db);
+-            var sibling = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
+-            await CommitInAsync(sibling.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215");
+-            var siblingTip = (await ScratchGitRepo.GitInAsync(sibling.WorktreePath!, "rev-parse", "HEAD"))
+-                .StdOut.Trim();
+-
+-            // The build task is cut independently from M, never from the sibling, and carries the
+-            // same patch by content. That is what makes git cherry report '-' and not '+'.
+-            var build = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
+-            (await ScratchGitRepo.GitInAsync(build.WorktreePath!, "merge-base", "--is-ancestor", siblingTip, "HEAD"))
+-                .Ok.ShouldBeFalse("the build worktree must not be cut from the sibling");
+-            await CommitInAsync(build.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215 (replayed)");
+-            await CommitInAsync(build.WorktreePath!, "feature.md", "the work\n", "feature");
+-
+-            await RequestHeadAsync(land, build);
+-            await land.RunAsync(build.Id, null, CancellationToken.None);
+-
+-            var landed = await db.AgentTaskEvents.AsNoTracking()
+-                .SingleAsync(e => e.AgentTaskId == build.Id && e.Type == AgentTaskEventType.Landed);
+-            landed.Detail.ShouldNotContain("unlanded-sibling=");
+-            (await db.AgentTaskEvents.CountAsync(e =>
+-                e.AgentTaskId == build.Id && e.Type == AgentTaskEventType.Warning)).ShouldBe(0);
+-            // The sibling branch itself is never touched by the land.
+-            (await ScratchGitRepo.GitInAsync(repo.Path, "rev-parse", sibling.WorktreeBranch!)).StdOut.Trim()
+-                .ShouldBe(siblingTip);
+-            // The remote target really has the build content, not just a marker-free event.
+-            (await ScratchGitRepo.GitInAsync(remote.Path, "show", "master:feature.md")).StdOut
+-                .ShouldBe("the work\n");
+-        }
++        // The build replays the sibling's patch, so nothing is left behind.
++        using var repo = new ScratchGitRepo("c508-ls-allminus");
++        using var remote = new TemporaryDirectory("c508-ls-allminus-remote");
++        await ScratchGitRepo.GitInAsync(remote.Path, "init", "--bare");
++        await repo.CommitFileAsync("README.md", "base\n");
++        await repo.GitAsync("remote", "add", "origin", remote.Path);
++        await repo.GitAsync("push", "-u", "origin", "master");
+ 
+-        // ---- minus + plus: one patch replayed, one still only on the sibling ----
+-        {
+-            using var repo = new ScratchGitRepo("c508-ls-mixed");
+-            using var remote = new TemporaryDirectory("c508-ls-mixed-remote");
+-            await ScratchGitRepo.GitInAsync(remote.Path, "init", "--bare");
+-            await repo.CommitFileAsync("README.md", "base\n");
+-            await repo.GitAsync("remote", "add", "origin", remote.Path);
+-            await repo.GitAsync("push", "-u", "origin", "master");
+-
+-            await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+-            await using var db = CreateContext(schema);
+-            var (land, worktrees) = CreateLand(db, repo);
+-            var card = await SeedCardAsync(db);
+-            var sibling = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
+-            await CommitInAsync(sibling.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215");
+-            await CommitInAsync(sibling.WorktreePath!, "extra.md", "only on the sibling\n", "docs(plan): extra");
+-            var siblingTip = (await ScratchGitRepo.GitInAsync(sibling.WorktreePath!, "rev-parse", "HEAD"))
+-                .StdOut.Trim();
+-
+-            var build = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
+-            await CommitInAsync(build.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215 (replayed)");
+-            await CommitInAsync(build.WorktreePath!, "feature.md", "the work\n", "feature");
+-
+-            await RequestHeadAsync(land, build);
+-            await land.RunAsync(build.Id, null, CancellationToken.None);
+-
+-            var landed = await db.AgentTaskEvents.AsNoTracking()
+-                .SingleAsync(e => e.AgentTaskId == build.Id && e.Type == AgentTaskEventType.Landed);
+-            landed.Detail.ShouldContain(
+-                $"unlanded-sibling={DelegationReportFormatter.Short(sibling.Id)}:{sibling.WorktreeBranch}");
+-            var warning = await db.AgentTaskEvents.AsNoTracking()
+-                .SingleAsync(e => e.AgentTaskId == build.Id && e.Type == AgentTaskEventType.Warning);
+-            warning.Detail.ShouldContain(sibling.WorktreeBranch!);
+-            warning.Detail.ShouldContain(DelegationReportFormatter.Short(sibling.Id));
+-            (await ScratchGitRepo.GitInAsync(repo.Path, "rev-parse", sibling.WorktreeBranch!)).StdOut.Trim()
+-                .ShouldBe(siblingTip);
+-        }
++        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
++        await using var db = CreateContext(schema);
++        var (land, worktrees) = CreateLand(db, repo);
++        var card = await SeedCardAsync(db);
++        var sibling = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
++        await CommitInAsync(sibling.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215");
++        var siblingTip = (await ScratchGitRepo.GitInAsync(sibling.WorktreePath!, "rev-parse", "HEAD"))
++            .StdOut.Trim();
+ 
+-        // ---- component: the frozen verified SHA decides, not a moving HEAD ----
+-        {
+-            using var repo = new ScratchGitRepo("c508-ls-pinned");
+-            await repo.CommitFileAsync("README.md", "base\n");
+-            var pinnedM = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+-
+-            await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+-            await using var db = CreateContext(schema);
+-            var (land, worktrees) = CreateLand(db, repo);
+-            var card = await SeedCardAsync(db);
+-            var sibling = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
+-            await CommitInAsync(sibling.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215");
+-            var siblingTip = (await ScratchGitRepo.GitInAsync(sibling.WorktreePath!, "rev-parse", "HEAD"))
+-                .StdOut.Trim();
+-            var build = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
+-
+-            // HEAD moves on to contain the sibling's patch; the pinned M still does not.
+-            await repo.GitAsync("cherry-pick", siblingTip);
+-            (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldNotBe(pinnedM);
+-
+-            var pinned = await CollectAsync(land, build, repo.Path, pinnedM);
+-            pinned.Marker.ShouldBe(
+-                $"unlanded-sibling={DelegationReportFormatter.Short(sibling.Id)}:{sibling.WorktreeBranch}");
+-            pinned.Warnings.Count.ShouldBe(1);
+-            pinned.Warnings[0].ShouldContain(sibling.WorktreeBranch!);
+-
+-            // The same inputs read against the moving HEAD are silent — so the pinned row above is
+-            // the frozen SHA doing the work, not an unconditional warning.
+-            var moving = await CollectAsync(land, build, repo.Path, verifiedSha: null);
+-            moving.Marker.ShouldBeNull();
+-            moving.Warnings.ShouldBeEmpty();
+-        }
++        // The build task is cut independently from M, never from the sibling, and carries the
++        // same patch by content. That is what makes git cherry report '-' and not '+'.
++        var build = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
++        (await ScratchGitRepo.GitInAsync(build.WorktreePath!, "merge-base", "--is-ancestor", siblingTip, "HEAD"))
++            .Ok.ShouldBeFalse("the build worktree must not be cut from the sibling");
++        await CommitInAsync(build.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215 (replayed)");
++        await CommitInAsync(build.WorktreePath!, "feature.md", "the work\n", "feature");
++
++        await RequestHeadAsync(land, build);
++        await land.RunAsync(build.Id, null, CancellationToken.None);
++
++        var landed = await db.AgentTaskEvents.AsNoTracking()
++            .SingleAsync(e => e.AgentTaskId == build.Id && e.Type == AgentTaskEventType.Landed);
++        landed.Detail.ShouldNotContain("unlanded-sibling=");
++        (await db.AgentTaskEvents.CountAsync(e =>
++            e.AgentTaskId == build.Id && e.Type == AgentTaskEventType.Warning)).ShouldBe(0);
++        // The sibling branch itself is never touched by the land.
++        (await ScratchGitRepo.GitInAsync(repo.Path, "rev-parse", sibling.WorktreeBranch!)).StdOut.Trim()
++            .ShouldBe(siblingTip);
++        // The remote target really has the build content, not just a marker-free event.
++        (await ScratchGitRepo.GitInAsync(remote.Path, "show", "master:feature.md")).StdOut
++            .ShouldBe("the work\n");
++    }
++
++    [Test]
++    [Timeout(180_000)]
++    public async Task C508_RebasedSiblingMarkerMatrix_MixedSiblingKeepsMarker()
++    {
++        // Minus + plus: one patch replayed, one still only on the sibling.
++        using var repo = new ScratchGitRepo("c508-ls-mixed");
++        using var remote = new TemporaryDirectory("c508-ls-mixed-remote");
++        await ScratchGitRepo.GitInAsync(remote.Path, "init", "--bare");
++        await repo.CommitFileAsync("README.md", "base\n");
++        await repo.GitAsync("remote", "add", "origin", remote.Path);
++        await repo.GitAsync("push", "-u", "origin", "master");
++
++        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
++        await using var db = CreateContext(schema);
++        var (land, worktrees) = CreateLand(db, repo);
++        var card = await SeedCardAsync(db);
++        var sibling = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
++        await CommitInAsync(sibling.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215");
++        await CommitInAsync(sibling.WorktreePath!, "extra.md", "only on the sibling\n", "docs(plan): extra");
++        var siblingTip = (await ScratchGitRepo.GitInAsync(sibling.WorktreePath!, "rev-parse", "HEAD"))
++            .StdOut.Trim();
++
++        var build = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
++        await CommitInAsync(build.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215 (replayed)");
++        await CommitInAsync(build.WorktreePath!, "feature.md", "the work\n", "feature");
++
++        await RequestHeadAsync(land, build);
++        await land.RunAsync(build.Id, null, CancellationToken.None);
++
++        var landed = await db.AgentTaskEvents.AsNoTracking()
++            .SingleAsync(e => e.AgentTaskId == build.Id && e.Type == AgentTaskEventType.Landed);
++        landed.Detail.ShouldContain(
++            $"unlanded-sibling={DelegationReportFormatter.Short(sibling.Id)}:{sibling.WorktreeBranch}");
++        var warning = await db.AgentTaskEvents.AsNoTracking()
++            .SingleAsync(e => e.AgentTaskId == build.Id && e.Type == AgentTaskEventType.Warning);
++        warning.Detail.ShouldContain(sibling.WorktreeBranch!);
++        warning.Detail.ShouldContain(DelegationReportFormatter.Short(sibling.Id));
++        (await ScratchGitRepo.GitInAsync(repo.Path, "rev-parse", sibling.WorktreeBranch!)).StdOut.Trim()
++            .ShouldBe(siblingTip);
++    }
++
++    [Test]
++    [Timeout(180_000)]
++    public async Task C508_RebasedSiblingMarkerMatrix_PinnedVerifiedShaDecides()
++    {
++        // Component: the frozen verified SHA decides, not a moving HEAD.
++        using var repo = new ScratchGitRepo("c508-ls-pinned");
++        await repo.CommitFileAsync("README.md", "base\n");
++        var pinnedM = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
++
++        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
++        await using var db = CreateContext(schema);
++        var (land, worktrees) = CreateLand(db, repo);
++        var card = await SeedCardAsync(db);
++        var sibling = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
++        await CommitInAsync(sibling.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215");
++        var siblingTip = (await ScratchGitRepo.GitInAsync(sibling.WorktreePath!, "rev-parse", "HEAD"))
++            .StdOut.Trim();
++        var build = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
++
++        // HEAD moves on to contain the sibling's patch; the pinned M still does not.
++        await repo.GitAsync("cherry-pick", siblingTip);
++        (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldNotBe(pinnedM);
++
++        var pinned = await CollectAsync(land, build, repo.Path, pinnedM);
++        pinned.Marker.ShouldBe(
++            $"unlanded-sibling={DelegationReportFormatter.Short(sibling.Id)}:{sibling.WorktreeBranch}");
++        pinned.Warnings.Count.ShouldBe(1);
++        pinned.Warnings[0].ShouldContain(sibling.WorktreeBranch!);
++
++        // The same inputs read against the moving HEAD are silent — so the pinned row above is
++        // the frozen SHA doing the work, not an unconditional warning.
++        var moving = await CollectAsync(land, build, repo.Path, verifiedSha: null);
++        moving.Marker.ShouldBeNull();
++        moving.Warnings.ShouldBeEmpty();
+     }
+ 
+     private static async Task CommitInAsync(string worktree, string file, string content, string message)
+@@ -539,25 +548,18 @@ public class AgentTaskLandStageOutcomeTests
+     }
+ 
+     /// <summary>
+-    /// Invokes the private land-side collector with real git/DB inputs. This is a component row,
+-    /// not a land: it supplies the frozen verified SHA directly so the pinning can be separated
+-    /// from everything else the land does.
++    /// Invokes the land-side collector with real git/DB inputs through its internal seam. This
++    /// is a component row, not a land: it supplies the frozen verified SHA directly so the pinning
++    /// can be separated from everything else the land does, and formats the marker with the same
++    /// production helper the land uses, so a signature or format change fails at compile time
++    /// rather than by reflection at run time (CARD-0567).
+     /// </summary>
+     private static async Task<(string? Marker, IReadOnlyList<string> Warnings)> CollectAsync(
+         AgentTaskLandService land, AgentTask task, string rebasedHeadRepo, string? verifiedSha)
+     {
+-        var method = typeof(AgentTaskLandService).GetMethod(
+-            "CollectUnlandedSiblingsAsync",
+-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+-        method.ShouldNotBeNull();
+-        var pending = (Task)method.Invoke(
+-            land, [task, rebasedHeadRepo, CancellationToken.None, verifiedSha])!;
+-        await pending;
+-        var result = pending.GetType().GetProperty("Result")!.GetValue(pending)!;
+-        var type = result.GetType();
+-        return (
+-            (string?)type.GetField("Item1")!.GetValue(result),
+-            (IReadOnlyList<string>)type.GetField("Item2")!.GetValue(result)!);
++        var (siblings, warnings) = await land.CollectUnlandedSiblingsAsync(
++            task, rebasedHeadRepo, CancellationToken.None, verifiedSha);
++        return (AgentTaskLandService.UnlandedMarker(siblings), warnings);
+     }
+ 
+     private static async Task<AgentTask> SeedSucceededWorktreeAsync(
