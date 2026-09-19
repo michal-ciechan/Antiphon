@@ -2731,8 +2731,8 @@ Review of task 55d7d6e2 found two Code defects on `1ed2de1b`:
 
 **V-14 second-claim / re-dispatch** is still unproven natively:
 C540_CollapsedWarningsReachIdleCaller is one claim with two collapsed sibling
-warnings, not two genuine claims / four distinct notes. That remaining gap
-is a follow-up card, not this repair.
+warnings, not two genuine claims / four distinct notes. Follow-up
+CARD-0576, not this repair.
 
 **Next: review.** Ordinary V/R includes Unit, named DBN/DG classes, and the
 DE mismatch methods. PCs stay pending for SourceLanding Mutation.
