@@ -467,17 +467,13 @@ public sealed partial class SessionMessageQueueService
                 await afterLandQueueInsert(row.Id, ct);
 
             // If the agent is already idle (waiting at the prompt), there is no upcoming turn-end to
-            // flush on — deliver right away so the message isn't stranded. But NEVER into a session
-            // still Starting: the write lands during TUI boot (the runner's write path now waits
-            // out the pty cold start), Claude takes the prompt and starts working, and the launch's
-            // ready probe — which waits for an IDLE composer — times out and KILLS a healthy,
-            // already-working delegate (live miss 2026-08-09, session 429445c3, died mid-task at
-            // 2m41s). A Starting session's messages stay Pending; the launch path flushes the
-            // queue itself the moment boot completes (FlushSessionAsync).
+            // flush on — deliver right away so the message isn't stranded. Non-Running sessions stay
+            // Pending here; DeliverNextLockedAsync is the single automatic admission predicate
+            // (CARD-0574 D-10). The launch path flushes the queue itself the moment boot completes
+            // (FlushSessionAsync).
             var working = await IsWorkingAsync(db, sessionId, ct);
             if (deliverIfIdle
                 && _runtime.ListLiveSessions().Contains(sessionId)
-                && await IsAcceptingInputAsync(sessionId, ct)
                 && !working)
             {
                 await DeliverNextLockedAsync(db, sessionId, ct);
@@ -930,6 +926,11 @@ public sealed partial class SessionMessageQueueService
     {
         if (!_runtime.ListLiveSessions().Contains(sessionId))
             throw new ConflictException($"Agent session '{sessionId}' is not live; cannot send now.");
+        if (!await IsAcceptingInputAsync(sessionId, ct))
+        {
+            throw new ConflictException(
+                $"Agent session '{sessionId}' is still starting; its terminal is not ready for input yet.");
+        }
 
         var sem = GetLock(sessionId);
         await sem.WaitAsync(ct);
@@ -1154,9 +1155,7 @@ public sealed partial class SessionMessageQueueService
             {
                 await using var scope = _scopeFactory.CreateAsyncScope();
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                // Same Starting-session guard as the enqueue path: redelivering into a booting
-                // TUI would re-create the ready-probe kill this watchdog exists to recover from.
-                if (await IsAcceptingInputAsync(sessionId, ct) && !await IsWorkingAsync(db, sessionId, ct))
+                if (!await IsWorkingAsync(db, sessionId, ct))
                     result = await DeliverNextLockedAsync(db, sessionId, ct);
             }
             finally
@@ -1231,9 +1230,7 @@ public sealed partial class SessionMessageQueueService
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            // Same Starting-session guard as the enqueue path: a boundary arriving while the TUI
-            // still boots must not put text in front of the launch's ready probe.
-            if (await IsAcceptingInputAsync(sessionId, ct) && !await IsWorkingAsync(db, sessionId, ct))
+            if (!await IsWorkingAsync(db, sessionId, ct))
             {
                 // A pending auto-compact after a *manual* compact is redundant; drop it.
                 await CancelPendingSupervisionLockedAsync(db, sessionId, "idle-flush", ct);
@@ -1526,9 +1523,16 @@ public sealed partial class SessionMessageQueueService
         var rules = rulesScope.ServiceProvider.GetService<GrokRulesRefreshService>();
         if (rules is not null) await rules.ReconcileAsync(sessionId, ct);
         var rulesSession = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
-        var rulesClosed = rulesSession is not null && GrokRulesRefreshService.IsClosed(rulesSession);
-        if (rulesClosed && rulesSession?.Status == SessionStatus.Starting) return FlushResult.Nothing;
-        if (rulesSession?.GrokRulesState == GrokRulesState.Failed) return FlushResult.Nothing;
+        // CARD-0574 D-10: one automatic admission predicate. Never type into a session that is
+        // not Running. Starting means the launch's ready probe has not seen an idle composer;
+        // Created has no process; Stopping/Stopped/Failed are written only by kill and failure.
+        // Live miss 2026-08-09, session 429445c3: a Starting session's write landed during TUI
+        // boot, Claude started working, and the launch's ready probe — which waits for an IDLE
+        // composer — timed out and killed a healthy already-working delegate at 2m41s.
+        if (rulesSession is null || rulesSession.Status != SessionStatus.Running)
+            return FlushResult.Nothing;
+        var rulesClosed = GrokRulesRefreshService.IsClosed(rulesSession);
+        if (rulesSession.GrokRulesState == GrokRulesState.Failed) return FlushResult.Nothing;
         // CARD-0161: resolve ceilings once per flush for this session (herdr vs pty).
         var ceilings = await CeilingsForSessionAsync(db, sessionId, ct);
 

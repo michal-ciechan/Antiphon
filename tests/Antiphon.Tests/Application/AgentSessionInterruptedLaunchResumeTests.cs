@@ -127,9 +127,10 @@ public class AgentSessionInterruptedLaunchResumeTests
         await Should.ThrowAsync<InvalidOperationException>(fixture.ResumeAsync());
 
         adapter.Attached.ShouldBeTrue();
-        adapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
+        adapter.Lifecycle.ShouldBe(["KillGeneration", "Dispose"]);
         await using var db = ResumeFixture.CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        adapter.KillGenerationCalls.ShouldBe([SessionGeneration.Normalize(session.StartedAt)]);
         session.Status.ShouldBe(SessionStatus.Failed);
         session.FailureReason.ShouldContain("Resumed launch after a server restart failed");
         session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
