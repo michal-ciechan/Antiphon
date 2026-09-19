@@ -499,3 +499,82 @@ the exact requested `b7f8903f` base instead.
 
 Next stage: **test-design**. Append verification to this artifact; do not implement
 or broaden the feature before that stage completes.
+
+## Verification design
+
+TestDesign task `2dbc8291`, based on `a28fa3b9`. This appendix preserves D-1 through
+D-11 and S1 through S5. Named new methods are implementation requirements, not
+executed tests. No product build, container, provider turn or mutation ran during
+TestDesign. The requested branch was already held by its Plan worktree; the
+appendix is delivered on `feat/card-task-2dbc8291` at the requested base.
+
+### Inspection
+
+- `tests/Antiphon.PtyHost.Tests/PtyHostLauncherTests.cs`,
+  `ShadowCopyStoreTests.cs`, and `PipeTestClient.cs`: bodies and local helpers read.
+  Existing launcher methods skip Linux; shadow tests use synthetic Windows assets.
+  S1 therefore needs a Linux-native fixture, not removal of the Windows skips.
+- `tests/Antiphon.SessionRunner.Tests/LocalHttpRunner.cs` and
+  `RunnerStartupReadinessTests.cs`: bodies read. The executable, adoption blocker
+  and child are Windows-specific. Reuse random-port ownership and joined teardown,
+  not the executable name or Herdr blocker, for the new Linux fixture.
+- `tests/Antiphon.Tests/Agents/SessionRunnerGenerationWireTests.cs`: bodies and
+  HTTP stub read. Generation echo, missing capability, conditional-input unknown
+  and no raw-kill fallback are existing local-wire obligations.
+- `tests/Antiphon.Tests/Application/AgentSessionLaunchQueueOwnershipTests.cs`:
+  bodies, `OwnershipFixture` and `OneAdapterFactory` read. Existing accepted
+  generation capture and obsolete queued launch tests do not carry remote owner.
+- `tests/Antiphon.Tests/Application/SessionReconciliationServiceTests.cs`:
+  stale exit/resume/readoption and stale-list bodies, `BuildService`,
+  `SeedWorkingAgentWithSessionAsync` and `FakeRunnerClient` read. Its single-runner
+  fake and shared-store helpers need explicit owner inventories and an isolated DB.
+- `tests/Antiphon.Tests/Application/SessionRunnerEventPumpTests.cs` and
+  `SessionDeliveryProfileTests.cs`: bodies and helpers read. The former deliberately
+  demonstrates a blocked local pump; do not invert that historical assertion while
+  testing the new receive pump. The latter currently resolves PtyHost globally.
+- `tests/Antiphon.Tests/TestHelpers/BridgeQueueHarness.cs`: service graph,
+  creation, default adapter and transcript callback read;
+  `QueuedReceiptAssertions.cs` read in full. Both can write transcript rows directly
+  from fake submission. Neither alone proves the new socket/event persistence path.
+- `GrokRulesQueueBarrierTests.cs`, `GrokRulesReceiptTests.cs`: bodies read;
+  `SessionMessageQueueInterruptedAttemptTests.cs`: initial delivered, late-confirm,
+  Enter-only, retype, busy and recovery-window bodies read. Existing queue status is
+  `Sent`; `DeliveryVerdict.Delivered`/`LateConfirmed` and complete recipient evidence
+  are separate checks. There is no `QueuedMessageStatus.Delivered`.
+- `TestDbFixture.cs` isolation API and `ProductionRunnerGuard.cs` bodies read.
+  `CreateIsolatedSchemaAsync` now clones a database despite its historical name.
+  Every context in a new fixture must use the returned connection, including fault
+  injectors, restarts and verification queries; static `BridgeQueueHarness.CreateContext`
+  would silently inspect the default store.
+
+The required setup is absent at this base: no phone-home peer/fixture, Linux launcher
+fixture, image or acceptance script exists. Code supplies these within S1-S5.
+New fixtures retain the assembly-local process limiter, own every child and socket,
+and await shutdown. A test booting real server `Program` disables check interpreter,
+diagnose, output distiller and Hangfire, uses the cloned DB and a refusing local
+runner (or a fixture-owned random port), and never calls production 17204.
+Use fake time only for lease/ticket tests. Queue deadlines use the real clock or
+an offset over it; a frozen `TimeProvider` with real timers is not valid queue setup.
+
+### Delivery inventory
+
+Durable identity is `(AgentSession.Id, RunnerId, RunnerStoreId, StartedAt)` for a
+launch/session, extended by `SessionQueuedMessage.Id`, immutable submitted body and
+`LastDeliveryBaselineSequence`/`LastDeliveryGeneration` for input. A connection
+epoch and request ID correlate transient RPCs; neither replaces that durable tuple.
+Transcript UUID/sequence identifies a persisted recipient record, not a command ack.
+
+| Path | Producer -> destination | Persistence and recovery | Observable receipt |
+|---|---|---|---|
+| Standing launch | `AgentControlService` -> launch queue -> bound client -> socket dispatcher -> `SessionRunnerRuntime` | Commit all owner fields and accepted generation before enqueue. Rollback sends nothing. Recreate server DI after the commit/enqueue cut and resolve the same owner. An unanswered sent launch remains reserved until that owner's fresh inventory resolves it. | Same-generation runner session and runtime attachment; this is launch receipt only, never prompt delivery. |
+| Rules initialization | Composer/rules payload -> runner rules file -> rules refresh queue -> Grok | Persist expected generation/hash/count and runner receipt. Inject receipt-save and refresh-enqueue failure separately; retry must converge on the same refresh identity. Runner path is Linux-readable; server must not stat it. | Complete refresh UserPrompt, matching rules acknowledgement and successful TurnEnd persist before ordinary queued work is released. A file receipt alone does not release it. |
+| Ordinary input | Normal queue API -> durable message -> queue worker -> bound adapter/client -> socket -> recipient composer | Failed DB insert has no send. Committed row survives lost wakeup. Before-send cancellation writes nothing; after-send disconnect/timeout is unknown, with no transport replay. Queue recovery pulls transcript first, then uses same-generation composer evidence for Enter-only; unavailable deferral spends no attempt. | Complete normalized submitted body in this session's UserPrompt beyond its attempt floor, with matching generation/identity, plus queue verdict. The real canary additionally requires nonce-bearing assistant text and TurnEnd. |
+| Transcript/live events | Runner tailer/event hub -> bounded subscriber -> socket -> runtime -> PostgreSQL -> queue receipt reader | Runner transcript is the source for reconnect. Subscribe before inventory/catch-up; commit backfill before releasing live events. Disconnect on overflow, recover from transcript; replayed UUIDs are deduplicated. Crash before DB save replays; crash after save before verdict late-confirms without typing. | Query persisted recipient entries through the server transcript API/DB and prove content, order and uniqueness. Sent, request acceptance, socket ack and screen PONG are intermediate observations only. |
+
+Controlled peers may model provider transcript records only after observing the bytes
+actually submitted through the real queue and socket. They must send those records
+through production event/catch-up ingestion, never insert the expected recipient rows
+directly. This proves routing, queue recovery and persistence, but not POSIX PTY or
+Grok acceptance. Native benign-child tests prove the Linux process/pipe boundary but
+not provider auth or transcript format. Only the opt-in real Grok turn closes both
+remaining boundaries. Ordinary Review rejects evidence stopping before the recipient.
