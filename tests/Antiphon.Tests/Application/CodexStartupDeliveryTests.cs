@@ -545,15 +545,50 @@ public sealed class CodexStartupDeliveryTests
     [Test]
     public async Task Producer_brief_reaches_an_already_eligible_recipient_whole()
     {
-        await using var h = await CreateCodexHarnessAsync(SessionStatus.Running);
-        var adapter = h.Adapter;
-        adapter.ReadyResult = true;
-        const string body = "eligible brief";
-        await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
-        (await CompleteReceiptCountAsync(h, body)).ShouldBe(1, "R-63");
-        await using var db = OpenDb(h);
-        var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
-        PromptSubmissionMatch.IsCompleteIn(body, row.Body).ShouldBeTrue("R-63");
+        var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = new ScriptedCodexRunnerClient
+        {
+            StartupScreens = [CodexStartupFixtures.P3, CodexStartupFixtures.P3, CodexStartupFixtures.P3],
+            SnapshotHold = hold,
+        };
+        await using var h = await CreateCodexHarnessAsync(
+            SessionStatus.Starting, runner: client, ready: ReadySettings(maxMs: 30_000, settleMs: 50));
+        var generation = SessionGeneration.Normalize(await StartedAtAsync(h));
+        using var scope = h.Provider.CreateScope();
+        var launch = scope.ServiceProvider.GetRequiredService<AgentSessionService>()
+            .LaunchInteractiveAsync(h.SessionId, h.AgentId, Spec(h, generation), null, false, null,
+                CancellationToken.None, acceptedGeneration: generation);
+        try
+        {
+            await WaitUntilAsync(() => client.WaitingOnSnapshot);
+            const string body = "eligible brief";
+            await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None,
+                deliverIfIdle: false);
+            Guid id;
+            await using (var db = OpenDb(h))
+            {
+                var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+                row.Status.ShouldBe(QueuedMessageStatus.Pending, "R-63");
+                row.DeliveryAttempts.ShouldBe(0, "R-63");
+                id = row.Id;
+                PromptSubmissionMatch.IsCompleteIn(body, row.Body).ShouldBeTrue("R-63");
+            }
+
+            WorkWrites(h.Adapter).ShouldBeEmpty("R-63");
+            hold.TrySetResult();
+            await launch;
+            (await CompleteReceiptCountAsync(h, body)).ShouldBe(1, "R-63");
+            await using var verify = OpenDb(h);
+            var delivered = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+            delivered.Id.ShouldBe(id, "R-63");
+            PromptSubmissionMatch.IsCompleteIn(body, delivered.Body).ShouldBeTrue("R-63");
+        }
+        finally
+        {
+            hold.TrySetResult();
+            try { await launch.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch { /* already observed */ }
+        }
     }
 
     [Test]
@@ -574,13 +609,14 @@ public sealed class CodexStartupDeliveryTests
     }
 
     [Test]
-    [Arguments(SessionStatus.Created)]
-    [Arguments(SessionStatus.Starting)]
-    [Arguments(SessionStatus.Stopping)]
-    [Arguments(SessionStatus.Stopped)]
-    [Arguments(SessionStatus.Failed)]
-    [Arguments(SessionStatus.Running)]
-    public async Task Send_now_during_boot_is_refused_without_input(SessionStatus status)
+    [Arguments(SessionStatus.Created, false)]
+    [Arguments(SessionStatus.Starting, false)]
+    [Arguments(SessionStatus.Stopping, false)]
+    [Arguments(SessionStatus.Stopped, false)]
+    [Arguments(SessionStatus.Failed, false)]
+    [Arguments(SessionStatus.Running, false)]
+    [Arguments(SessionStatus.Running, true)]
+    public async Task Send_now_during_boot_is_refused_without_input(SessionStatus status, bool busy)
     {
         await using var h = await CreateCodexHarnessAsync(status);
         var adapter = h.Adapter;
@@ -589,8 +625,14 @@ public sealed class CodexStartupDeliveryTests
         const string body = "send-now brief";
         if (status == SessionStatus.Running)
         {
+            if (busy)
+                await h.MarkWorkingAsync();
             await h.Queue.SendNowAsync(h.SessionId, id, CancellationToken.None);
             (await CompleteReceiptCountAsync(h, body)).ShouldBe(1, "R-65");
+            await using var running = OpenDb(h);
+            var sent = await running.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+            sent.Id.ShouldBe(id, "R-65");
+            PromptSubmissionMatch.IsCompleteIn(body, sent.Body).ShouldBeTrue("R-65");
             return;
         }
 
@@ -641,13 +683,14 @@ public sealed class CodexStartupDeliveryTests
     }
 
     [Test]
-    [Arguments(SessionStatus.Created)]
-    [Arguments(SessionStatus.Starting)]
-    [Arguments(SessionStatus.Stopping)]
-    [Arguments(SessionStatus.Stopped)]
-    [Arguments(SessionStatus.Failed)]
-    [Arguments(SessionStatus.Running)]
-    public async Task Mode_now_during_boot_is_refused_without_input(SessionStatus status)
+    [Arguments(SessionStatus.Created, false)]
+    [Arguments(SessionStatus.Starting, false)]
+    [Arguments(SessionStatus.Stopping, false)]
+    [Arguments(SessionStatus.Stopped, false)]
+    [Arguments(SessionStatus.Failed, false)]
+    [Arguments(SessionStatus.Running, false)]
+    [Arguments(SessionStatus.Running, true)]
+    public async Task Mode_now_during_boot_is_refused_without_input(SessionStatus status, bool busy)
     {
         await using var h = await CreateCodexHarnessAsync(status);
         var adapter = h.Adapter;
@@ -655,8 +698,12 @@ public sealed class CodexStartupDeliveryTests
         const string body = "mode-now brief";
         if (status == SessionStatus.Running)
         {
+            if (busy)
+                await h.MarkWorkingAsync();
+            var beforeRunning = await CountQueueAsync(h);
             await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.Now, CancellationToken.None);
             (await CompleteReceiptCountAsync(h, body)).ShouldBe(1, "R-66");
+            (await CountQueueAsync(h)).ShouldBe(beforeRunning, "R-66");
             return;
         }
 
