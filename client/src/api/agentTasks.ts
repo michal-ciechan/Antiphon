@@ -182,6 +182,49 @@ export interface AgentTaskSummaryDto {
   complexity?: 'Hard' | 'Medium' | 'Easy' | null
   /** When the caller last answered this task (CARD-0348). Null until the first reply. */
   repliedAt?: string | null
+  /** CARD-0515. Stored project, else the bound card's board project. */
+  projectId?: string | null
+  projectName?: string | null
+  /** CARD-0515. Bound card's board only. */
+  boardId?: string | null
+  boardName?: string | null
+  /** CARD-0515. Task, Card, or None (unscoped). */
+  scopeSource?: AgentTaskScopeSource
+}
+
+export type AgentTaskScopeSource = 'Task' | 'Card' | 'None'
+export type AgentTaskUnscopedMode = 'exclude' | 'include' | 'only'
+
+export interface AgentTaskScopeOptions {
+  projectId?: string | null
+  boardId?: string | null
+  unscoped?: AgentTaskUnscopedMode
+}
+
+export interface AgentTaskScopeDto {
+  projectId: string | null
+  projectName: string | null
+  boardId: string | null
+  boardName: string | null
+  unscoped: AgentTaskUnscopedMode
+}
+
+export interface AgentTaskExcludedByProjectDto {
+  projectId: string
+  projectName: string | null
+  count: number
+}
+
+export interface AgentTaskListExcludedDto {
+  total: number
+  unscoped: number
+  byProject: AgentTaskExcludedByProjectDto[]
+}
+
+export interface AgentTaskListEnvelopeDto {
+  scope: AgentTaskScopeDto | null
+  items: AgentTaskSummaryDto[]
+  excluded: AgentTaskListExcludedDto
 }
 
 export interface AgentTaskEventDto {
@@ -603,10 +646,23 @@ export const AGENT_TASK_ROLES: Array<{
 
 export const agentTaskKeys = {
   list: (includeChecks = false, options: AgentTaskListOptions = {}) =>
-    ['agentTasks', 'list', includeChecks, options.since ?? null, options.status?.join(',') ?? null] as const,
-  summary: () => ['agentTasks', 'summary'] as const,
+    [
+      'agentTasks',
+      'list',
+      includeChecks,
+      options.since ?? null,
+      options.status?.join(',') ?? null,
+      ...scopeCacheKey(options),
+    ] as const,
+  summary: (options: AgentTaskScopeOptions = {}) =>
+    ['agentTasks', 'summary', ...scopeCacheKey(options)] as const,
   detail: (id: string) => ['agentTasks', 'detail', id] as const,
   pipeline: () => ['agentTasks', 'pipeline'] as const,
+}
+
+function scopeCacheKey(options: AgentTaskScopeOptions) {
+  const unscoped = options.unscoped && options.unscoped !== 'exclude' ? options.unscoped : null
+  return [options.projectId ?? null, options.boardId ?? null, unscoped] as const
 }
 
 /** Seven days is the shipped Delegation:DefaultWindowDays setting. */
@@ -615,10 +671,16 @@ export const DELEGATIONS_DEFAULT_WINDOW_DAYS = 7
 /** Settled tasks this recent still sit on the active board (the *Just settled* lane). */
 export const DELEGATIONS_ACTIVE_GRACE_MINUTES = 60
 
-export interface AgentTaskListOptions {
+export interface AgentTaskListOptions extends AgentTaskScopeOptions {
   /** `default` / `active` resolve when each request runs, keeping the window rolling without cache-key churn. */
   since?: string | 'default' | 'active'
   status?: AgentTaskStatus[]
+}
+
+function appendScope(query: URLSearchParams, options: AgentTaskScopeOptions) {
+  if (options.projectId) query.set('projectId', options.projectId)
+  if (options.boardId) query.set('boardId', options.boardId)
+  if (options.unscoped && options.unscoped !== 'exclude') query.set('unscoped', options.unscoped)
 }
 
 function queryForAgentTasks(includeChecks: boolean, options: AgentTaskListOptions): string {
@@ -634,8 +696,16 @@ function queryForAgentTasks(includeChecks: boolean, options: AgentTaskListOption
     query.set('since', since)
   }
   if (options.status?.length) query.set('status', options.status.join(','))
+  appendScope(query, options)
   const suffix = query.toString()
   return suffix ? `/agent-tasks?${suffix}` : '/agent-tasks'
+}
+
+function queryForAgentTaskSummary(options: AgentTaskScopeOptions): string {
+  const query = new URLSearchParams()
+  appendScope(query, options)
+  const suffix = query.toString()
+  return suffix ? `/agent-tasks/summary?${suffix}` : '/agent-tasks/summary'
 }
 
 /**
@@ -646,17 +716,17 @@ function queryForAgentTasks(includeChecks: boolean, options: AgentTaskListOption
 export function useAgentTasks(includeChecks = false, options: AgentTaskListOptions = {}) {
   return useQuery({
     queryKey: agentTaskKeys.list(includeChecks, options),
-    queryFn: () => apiGet<AgentTaskSummaryDto[]>(queryForAgentTasks(includeChecks, options)),
+    queryFn: () => apiGet<AgentTaskListEnvelopeDto>(queryForAgentTasks(includeChecks, options)),
     // SignalR invalidates on every task change; this only covers a dropped connection.
     refetchInterval: 15_000,
     staleTime: 5_000,
   })
 }
 
-export function useAgentTaskListSummary() {
+export function useAgentTaskListSummary(options: AgentTaskScopeOptions = {}) {
   return useQuery({
-    queryKey: agentTaskKeys.summary(),
-    queryFn: () => apiGet<AgentTaskListSummaryDto>('/agent-tasks/summary'),
+    queryKey: agentTaskKeys.summary(options),
+    queryFn: () => apiGet<AgentTaskListSummaryDto>(queryForAgentTaskSummary(options)),
     refetchInterval: 15_000,
     staleTime: 5_000,
   })
@@ -696,7 +766,7 @@ function useTaskMutation<TVariables, TResult>(
       // The PREFIX, not agentTaskKeys.list() — that would invalidate only the default board and
       // leave an open includeChecks view stale.
       queryClient.invalidateQueries({ queryKey: ['agentTasks', 'list'] })
-      queryClient.invalidateQueries({ queryKey: agentTaskKeys.summary() })
+      queryClient.invalidateQueries({ queryKey: ['agentTasks', 'summary'] })
       queryClient.invalidateQueries({ queryKey: ['agentTasks', 'detail'] })
     },
   })

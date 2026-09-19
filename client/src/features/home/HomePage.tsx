@@ -82,7 +82,7 @@ function DesktopHomePage() {
     for (const a of agents.data) {
       if (a.workingDirectory.trim()) dirs.add(a.workingDirectory.trim())
     }
-    for (const t of tasks.data) {
+    for (const t of tasks.data.items) {
       if (!isActiveTask(t)) continue
       dirs.add(taskRunDir(t))
       if (t.repoPath) dirs.add(t.repoPath)
@@ -92,7 +92,7 @@ function DesktopHomePage() {
   const gitInfos = useWorkspaceGitInfos(gitDirs)
 
   const projects = useMemo(
-    () => buildProjects(agents.data ?? [], tasks.data ?? [], gitInfos.data ?? []),
+    () => buildProjects(agents.data ?? [], tasks.data?.items ?? [], gitInfos.data ?? []),
     [agents.data, tasks.data, gitInfos.data],
   )
 
@@ -317,7 +317,7 @@ function DesktopHomePage() {
 /** A pull signal, not an attention state: only recent successful deliverables count. */
 function ToReadBadge({ dirKeys }: { dirKeys: string[] }) {
   const tasks = useAgentTasks(false, { since: 'default' })
-  const count = (tasks.data ?? []).filter(
+  const count = (tasks.data?.items ?? []).filter(
     (task) => taskIsInProject(task, dirKeys) && isUnreadDeliverable(task),
   ).length
 

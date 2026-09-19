@@ -59,7 +59,7 @@ export function MobileHomePage() {
   const hasGlance = glanceCounts.blocked + glanceCounts.broken + glanceCounts.review > 0
 
   const inMotion = useMemo(
-    () => (tasks.data ?? []).filter(isActiveTask).sort(byWatchOrder),
+    () => (tasks.data?.items ?? []).filter(isActiveTask).sort(byWatchOrder),
     [tasks.data],
   )
 
@@ -88,7 +88,7 @@ export function MobileHomePage() {
   )
 
   const delta = useMemo(
-    () => computeAwayDelta(tasks.data ?? [], cards, lastSeen, nowMs, plans),
+    () => computeAwayDelta(tasks.data?.items ?? [], cards, lastSeen, nowMs, plans),
     [tasks.data, cards, lastSeen, nowMs, plans],
   )
 

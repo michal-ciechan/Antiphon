@@ -25,6 +25,7 @@ namespace Antiphon.E2E;
 /// a shape the backend no longer produces.
 /// </summary>
 [NotInParallel]
+[ParallelLimiter<ProcessSpawnLimit>]
 [Category("OptIn")]
 public class ContractSnapshotTests
 {
@@ -232,6 +233,62 @@ public class ContractSnapshotTests
                 db.Agents.Add(DelegateAgent(id, name, cwd, levels[name], t0));
             await db.SaveChangesAsync();
 
+            var projectX = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1");
+            var projectY = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2");
+            var boardB1 = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1");
+            var boardC = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb3");
+            var cardB1 = Guid.Parse("cccccccc-cccc-cccc-cccc-ccccccccccc1");
+            var cardC = Guid.Parse("cccccccc-cccc-cccc-cccc-ccccccccccc3");
+            if (!await db.Projects.AnyAsync(p => p.Id == projectX))
+            {
+                db.Add(new Project
+                {
+                    Id = projectX, Name = "Antiphon", GitRepositoryUrl = "https://example.test/antiphon",
+                    CreatedAt = t0, UpdatedAt = t0,
+                });
+                db.Add(new Project
+                {
+                    Id = projectY, Name = "gym-stat", GitRepositoryUrl = "https://example.test/gym-stat",
+                    CreatedAt = t0, UpdatedAt = t0,
+                });
+                db.Add(new Board
+                {
+                    Id = boardB1, ProjectId = projectX, Name = "Antiphon board",
+                    MaxConcurrentSessions = 1, CreatedAt = t0, UpdatedAt = t0,
+                });
+                db.Add(new Board
+                {
+                    Id = boardC, ProjectId = projectY, Name = "gym-stat board",
+                    MaxConcurrentSessions = 1, CreatedAt = t0, UpdatedAt = t0,
+                });
+                var colB1 = new BoardColumn
+                {
+                    Id = Guid.Parse("dddddddd-dddd-dddd-dddd-ddddddddddd1"),
+                    BoardId = boardB1, StateKey = "backlog-b1", Name = "Backlog",
+                    ColumnOrder = 0, CardStatus = CardStatus.Backlog, CreatedAt = t0, UpdatedAt = t0,
+                };
+                var colC = new BoardColumn
+                {
+                    Id = Guid.Parse("dddddddd-dddd-dddd-dddd-ddddddddddd3"),
+                    BoardId = boardC, StateKey = "backlog-c", Name = "Backlog",
+                    ColumnOrder = 0, CardStatus = CardStatus.Backlog, CreatedAt = t0, UpdatedAt = t0,
+                };
+                db.AddRange(colB1, colC);
+                db.Add(new Card
+                {
+                    Id = cardB1, BoardId = boardB1, BoardColumnId = colB1.Id,
+                    Identifier = "CARD-0039", Title = "CARD-0039", Description = "scope",
+                    CreatedAt = t0, UpdatedAt = t0,
+                });
+                db.Add(new Card
+                {
+                    Id = cardC, BoardId = boardC, BoardColumnId = colC.Id,
+                    Identifier = "CARD-0039", Title = "CARD-0039", Description = "scope",
+                    CreatedAt = t0, UpdatedAt = t0,
+                });
+                await db.SaveChangesAsync();
+            }
+
             db.AgentTasks.AddRange(
                 Task(root, root, null, 0, "Ship the Postgres 18 upgrade", cwd, t0, agents["task-upgrade"], "task-upgrade", t =>
                 {
@@ -239,6 +296,8 @@ public class ContractSnapshotTests
                     t.Role = Server.Domain.Enums.AgentTaskRole.Plan;
                     t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Frontier;
                     t.Status = Server.Domain.Enums.AgentTaskStatus.Working;
+                    t.ProjectId = projectX;
+                    t.CardId = cardB1;
                     t.DispatchedAt = t0;
                     t.TokensIn = 84_000; t.CacheReadTokens = 2_400_000; t.CacheCreationTokens = 41_000;
                     t.TokensOut = 3_100; t.CostUsd = 0.412m; t.CostPricingVersion = Server.Application.Services.DelegationCost.PricingVersion;
@@ -250,6 +309,7 @@ public class ContractSnapshotTests
                     t.Role = Server.Domain.Enums.AgentTaskRole.Code;
                     t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Frontier;
                     t.Status = Server.Domain.Enums.AgentTaskStatus.Working;
+                    t.CardId = cardB1;
                     t.Workspace = Server.Domain.Enums.WorkspaceMode.Worktree;
                     t.MergeTargetRef = "feat/pg18";
                     t.DispatchedAt = t0.AddMinutes(2);
@@ -262,6 +322,7 @@ public class ContractSnapshotTests
                     t.Role = Server.Domain.Enums.AgentTaskRole.Test;
                     t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Low;
                     t.Status = Server.Domain.Enums.AgentTaskStatus.Succeeded;
+                    t.ProjectId = projectX;
                     t.Scope = "tests/**";
                     t.DispatchedAt = t0.AddMinutes(9);
                     t.CompletedAt = t0.AddMinutes(13).AddSeconds(24);
@@ -277,6 +338,8 @@ public class ContractSnapshotTests
                     t.Role = Server.Domain.Enums.AgentTaskRole.Docs;
                     t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Medium;
                     t.Status = Server.Domain.Enums.AgentTaskStatus.Blocked;
+                    t.ProjectId = projectY;
+                    t.CardId = cardC;
                     t.Workspace = Server.Domain.Enums.WorkspaceMode.ReadOnly;
                     t.Scope = "docs/setup.md";
                     t.DispatchedAt = t0.AddMinutes(3);

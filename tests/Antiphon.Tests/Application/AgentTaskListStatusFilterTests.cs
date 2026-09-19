@@ -62,8 +62,8 @@ public class AgentTaskListStatusFilterTests
             var rows = await service.ListAsync(
                 root, [status], includeChecks: false, since: null, CancellationToken.None);
 
-            rows.Select(r => r.Id).ShouldBe([seeded[status]], $"status={status}");
-            rows.Single().Status.ShouldBe(status, "ToSummary must pass task.Status through unchanged");
+            rows.Items.Select(r => r.Id).ShouldBe([seeded[status]], $"status={status}");
+            rows.Items.Single().Status.ShouldBe(status, "ToSummary must pass task.Status through unchanged");
         }
     }
 
@@ -89,13 +89,13 @@ public class AgentTaskListStatusFilterTests
             includeChecks: false,
             since: null,
             CancellationToken.None);
-        occupancy.Select(r => r.Id).ShouldBe(
+        occupancy.Items.Select(r => r.Id).ShouldBe(
             [seeded[AgentTaskStatus.Dispatched], seeded[AgentTaskStatus.Working], seeded[AgentTaskStatus.Blocked]],
             ignoreOrder: true);
 
         var working = await service.ListAsync(
             root, [AgentTaskStatus.Working], includeChecks: false, since: null, CancellationToken.None);
-        working.Select(r => r.Id).ShouldBe([seeded[AgentTaskStatus.Working]]);
+        working.Items.Select(r => r.Id).ShouldBe([seeded[AgentTaskStatus.Working]]);
     }
 
     // ---- V-3 -------------------------------------------------------------------------------
@@ -122,9 +122,9 @@ public class AgentTaskListStatusFilterTests
         var rows = await service.ListAsync(
             root, statuses: null, includeChecks: false, since: now.AddDays(-1), CancellationToken.None);
 
-        rows.Select(r => r.Id).ShouldBe([oldWorking, recentSucceeded], ignoreOrder: true,
+        rows.Items.Select(r => r.Id).ShouldBe([oldWorking, recentSucceeded], ignoreOrder: true,
             "a Working row created 10 days ago is kept; a Succeeded row completed 10 days ago is trimmed");
-        rows.Select(r => r.Id).ShouldNotContain(oldSucceeded);
+        rows.Items.Select(r => r.Id).ShouldNotContain(oldSucceeded);
     }
 
     // ---- V-4 -------------------------------------------------------------------------------
@@ -145,11 +145,11 @@ public class AgentTaskListStatusFilterTests
 
         var hidden = await service.ListAsync(
             root, [AgentTaskStatus.Working], includeChecks: false, since: null, CancellationToken.None);
-        hidden.Select(r => r.Id).ShouldBe([codeWorking], "includeChecks:false hides the Check row and nothing else");
+        hidden.Items.Select(r => r.Id).ShouldBe([codeWorking], "includeChecks:false hides the Check row and nothing else");
 
         var shown = await service.ListAsync(
             root, [AgentTaskStatus.Working], includeChecks: true, since: null, CancellationToken.None);
-        shown.Select(r => r.Id).ShouldBe([codeWorking, checkWorking], ignoreOrder: true);
+        shown.Items.Select(r => r.Id).ShouldBe([codeWorking, checkWorking], ignoreOrder: true);
     }
 
     // ---- V-5 -------------------------------------------------------------------------------
@@ -170,11 +170,11 @@ public class AgentTaskListStatusFilterTests
 
         var unfiltered = await service.ListAsync(
             root, statuses: null, includeChecks: false, since: null, CancellationToken.None);
-        unfiltered.Select(r => r.Id).ShouldBe(seededIds, ignoreOrder: true, "null means no status predicate");
+        unfiltered.Items.Select(r => r.Id).ShouldBe(seededIds, ignoreOrder: true, "null means no status predicate");
 
         var empty = await service.ListAsync(
             root, statuses: [], includeChecks: false, since: null, CancellationToken.None);
-        empty.Select(r => r.Id).ShouldBe(seededIds, ignoreOrder: true, "an empty list means no status predicate, never match-nothing");
+        empty.Items.Select(r => r.Id).ShouldBe(seededIds, ignoreOrder: true, "an empty list means no status predicate, never match-nothing");
     }
 
     // ---- helpers ---------------------------------------------------------------------------

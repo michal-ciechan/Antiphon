@@ -295,7 +295,42 @@ public sealed record AgentTaskSummaryDto(
     /// When the caller last answered this task (CARD-0348). Null until the first reply.
     /// Trailing so no positional constructor call moves.
     /// </summary>
-    DateTime? RepliedAt = null);
+    DateTime? RepliedAt = null,
+    /// <summary>CARD-0515. Stored project, else the bound card's board project.</summary>
+    Guid? ProjectId = null,
+    string? ProjectName = null,
+    /// <summary>CARD-0515. Bound card's board only; card-less rows stay null.</summary>
+    Guid? BoardId = null,
+    string? BoardName = null,
+    /// <summary>CARD-0515. <c>Task</c>, <c>Card</c>, or <c>None</c> (unscoped).</summary>
+    AgentTaskScopeSource ScopeSource = AgentTaskScopeSource.None);
+
+/// <summary>CARD-0515. Echo of the list/summary scope the caller selected.</summary>
+public sealed record AgentTaskScopeEchoDto(
+    Guid? ProjectId,
+    string? ProjectName,
+    Guid? BoardId,
+    string? BoardName,
+    string Unscoped);
+
+public sealed record AgentTaskExcludedByProjectDto(
+    Guid ProjectId,
+    string? ProjectName,
+    int Count);
+
+public sealed record AgentTaskListExcludedDto(
+    int Total,
+    int Unscoped,
+    IReadOnlyList<AgentTaskExcludedByProjectDto> ByProject);
+
+/// <summary>
+/// CARD-0515. Every <c>GET /api/agent-tasks</c> body. An omitted scope has
+/// <see cref="Scope"/> null and a zero <see cref="Excluded"/> block.
+/// </summary>
+public sealed record AgentTaskListEnvelopeDto(
+    AgentTaskScopeEchoDto? Scope,
+    IReadOnlyList<AgentTaskSummaryDto> Items,
+    AgentTaskListExcludedDto Excluded);
 
 /// <summary>Fleet-wide counters for the delegations board, independent of its history window.</summary>
 public sealed record AgentTaskListSummaryDto(

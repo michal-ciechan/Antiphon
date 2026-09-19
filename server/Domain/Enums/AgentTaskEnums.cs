@@ -332,6 +332,17 @@ public enum AgentTaskReportEvidence
 }
 
 /// <summary>
+/// CARD-0515. Where a list row's project identity came from. <see cref="None"/> is honest
+/// unscoped work — never inferred from a filesystem path.
+/// </summary>
+public enum AgentTaskScopeSource
+{
+    None = 0,
+    Task = 1,
+    Card = 2,
+}
+
+/// <summary>
 /// Durable, machine-readable class of a task failure (CARD-0256). Null on every existing and
 /// otherwise-unclassified failure — prose in <c>FailureReason</c> stays the human record.
 /// The repeat-dispatch guard keys on this rather than parsing that prose.

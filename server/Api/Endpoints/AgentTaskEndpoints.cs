@@ -30,20 +30,39 @@ public static class AgentTaskEndpoints
         // includeChecks defaults false: specialist rows (Check, Distill, Diagnose) are
         // machinery, not delegated work, and the board is for the latter.
         tasks.MapGet("/", async (
+            HttpContext http,
             Guid? rootId,
             DateTime? since,
             string? status,
             bool? includeChecks,
+            Guid? projectId,
+            Guid? boardId,
+            string? unscoped,
             AgentTaskService service,
             CancellationToken ct) =>
-            Results.Ok(await service.ListAsync(
-                rootId, ParseStatuses(status), includeChecks ?? false, since, ct)));
+        {
+            RejectUnknownListQueryKeys(http.Request.Query);
+            return Results.Ok(await service.ListAsync(
+                rootId,
+                ParseStatuses(status),
+                includeChecks ?? false,
+                since,
+                AgentTaskScope.Parse(projectId, boardId, unscoped),
+                ct));
+        });
 
         // These are deliberately calculated over the whole fleet, not the board's current history
-        // window. The headline must not imply an old blocked task stopped existing.
+        // window. The headline must not imply an old blocked task stopped existing. CARD-0515:
+        // the same boardId/projectId/unscoped predicate as the list, so a scoped header cannot
+        // disagree with its rows. Pipeline and attention stay fleet-wide.
         tasks.MapGet("/summary", async (
+            Guid? projectId,
+            Guid? boardId,
+            string? unscoped,
             AgentTaskService service,
-            CancellationToken ct) => Results.Ok(await service.GetListSummaryAsync(ct)));
+            CancellationToken ct) =>
+            Results.Ok(await service.GetListSummaryAsync(
+                AgentTaskScope.Parse(projectId, boardId, unscoped), ct)));
 
         // CARD-0304. Declared BEFORE /{id} so "pipeline" is never read as a task id. Read-only
         // fleet projection; advisory recommendations never refuse dispatch from here.
@@ -349,6 +368,20 @@ public static class AgentTaskEndpoints
         catch (ForbiddenException)
         {
             return null;
+        }
+    }
+
+    private static void RejectUnknownListQueryKeys(IQueryCollection query)
+    {
+        foreach (var key in query.Keys)
+        {
+            if (AgentTaskScope.SupportedListQueryKeys.Any(supported =>
+                    supported.Equals(key, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            throw new UnknownQueryParameterException(key, AgentTaskScope.SupportedListQueryKeys);
         }
     }
 

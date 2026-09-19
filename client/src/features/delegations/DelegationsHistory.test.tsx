@@ -1,7 +1,8 @@
 import { HttpResponse, http } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentTaskDetailDto, AgentTaskListSummaryDto, AgentTaskSummaryDto } from '../../api/agentTasks'
-import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { agentTaskEnvelope } from '../../test/agentTaskEnvelope'
+import { renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { DelegationsHistory } from './DelegationsHistory'
 
@@ -138,7 +139,7 @@ function serveTasks(tasks: AgentTaskSummaryDto[] = SETTLED, summaryOverride?: Pa
     ...summaryOverride,
   }
   server.use(
-    http.get('/api/agent-tasks', () => HttpResponse.json(tasks)),
+    http.get('/api/agent-tasks', () => HttpResponse.json(agentTaskEnvelope(tasks))),
     http.get('/api/agent-tasks/summary', () => HttpResponse.json(listSummary)),
     http.get('/api/agent-tasks/:id', ({ params }) => {
       const found = tasks.find((task) => task.id === params.id)
@@ -156,7 +157,7 @@ describe('DelegationsHistory', () => {
       http.get('/api/agent-tasks', ({ request }) => {
         const params = new URL(request.url).searchParams
         captured.push({ since: params.get('since'), status: params.get('status') })
-        return HttpResponse.json(SETTLED)
+        return HttpResponse.json(agentTaskEnvelope(SETTLED))
       }),
       http.get('/api/agent-tasks/summary', () =>
         HttpResponse.json({ active: 0, blocked: 0, runs: 4, totalCostUsd: 0, byStatus: {} }),
@@ -248,4 +249,141 @@ describe('DelegationsHistory', () => {
     )
     expect(document.querySelectorAll('[data-testid^="history-row-"]').length).toBeLessThan(80)
   })
+
+  it('history defaults to the fleet envelope', async () => {
+    serveScopedHistory()
+    renderWithProviders(<DelegationsHistory />)
+    expect(await screen.findByText('Fleet — all boards')).toBeInTheDocument()
+    expect(await screen.findByText('Antiphon settled')).toBeInTheDocument()
+    expect(screen.getByText('gym-stat settled')).toBeInTheDocument()
+    expect(screen.queryByTestId('history-hidden-by-scope')).not.toBeInTheDocument()
+  })
+
+  it('history selection scopes rows and counters', async () => {
+    const captured: string[] = []
+    serveScopedHistory(captured)
+    renderWithProviders(<DelegationsHistory />)
+    await screen.findByText('Antiphon settled')
+    await userEvent.click(screen.getByLabelText('Board scope'))
+    await userEvent.click(await screen.findByRole('option', { name: 'Antiphon board (Antiphon)' }))
+    await waitFor(() => expect(screen.queryByText('gym-stat settled')).not.toBeInTheDocument())
+    expect(captured.some((url) => url.includes(`boardId=${HIST_B1}`))).toBe(true)
+    await userEvent.click(screen.getByLabelText('Board scope'))
+    await userEvent.click(await screen.findByRole('option', { name: 'gym-stat board (gym-stat)' }))
+    await waitFor(() => expect(screen.queryByText('Antiphon settled')).not.toBeInTheDocument())
+    expect(screen.getByText('gym-stat settled')).toBeInTheDocument()
+    await userEvent.click(screen.getByLabelText('Board scope'))
+    await userEvent.click(await screen.findByRole('option', { name: 'All boards' }))
+    expect(await screen.findByText('Fleet — all boards')).toBeInTheDocument()
+  })
+
+  it('history shows exact exclusions', async () => {
+    serveScopedHistory()
+    server.use(
+      http.get('/api/agent-tasks', ({ request }) => {
+        const boardId = new URL(request.url).searchParams.get('boardId')
+        if (boardId === HIST_C) {
+          return HttpResponse.json(
+            agentTaskEnvelope([], {
+              excluded: {
+                total: 6,
+                unscoped: 2,
+                byProject: [{ projectId: HIST_X, projectName: 'Antiphon', count: 4 }],
+              },
+            }),
+          )
+        }
+        return HttpResponse.json(agentTaskEnvelope([histX, histY]))
+      }),
+    )
+    renderWithProviders(<DelegationsHistory />)
+    await screen.findByText('Antiphon settled')
+    await userEvent.click(screen.getByLabelText('Board scope'))
+    await userEvent.click(await screen.findByRole('option', { name: 'gym-stat board (gym-stat)' }))
+    expect(await screen.findByTestId('history-hidden-by-scope')).toHaveTextContent(
+      'hidden by scope: 4 Antiphon, 2 unscoped',
+    )
+    expect(screen.queryByText('Antiphon settled')).not.toBeInTheDocument()
+  })
+
+  it('history labels resolved and unscoped tasks', async () => {
+    const n1 = summary({
+      id: '33333333-3333-3333-3333-333333333331',
+      title: 'unscoped history',
+      status: 'Succeeded',
+      completedAt: '2026-09-13T12:00:00Z',
+      workingDirectory: 'C:/src/antiphon',
+      repoPath: 'C:/src/antiphon',
+      scopeSource: 'None',
+    })
+    const x1 = summary({
+      id: '11111111-1111-1111-1111-111111111111',
+      title: 'CARD-0039 antiphon',
+      status: 'Succeeded',
+      completedAt: '2026-09-13T12:00:00Z',
+      cardIdentifier: 'CARD-0039',
+      projectName: 'Antiphon',
+      scopeSource: 'Task',
+    })
+    const y1 = summary({
+      id: '22222222-2222-2222-2222-222222222221',
+      title: 'CARD-0039 gym',
+      status: 'Succeeded',
+      completedAt: '2026-09-13T12:00:00Z',
+      cardIdentifier: 'CARD-0039',
+      projectName: 'gym-stat',
+      scopeSource: 'Task',
+    })
+    serveTasks([n1, x1, y1])
+    renderWithProviders(<DelegationsHistory />)
+    const n1Row = await screen.findByTestId(`history-row-${shortId(n1.id)}`)
+    expect(within(n1Row).getByText('unscoped')).toBeInTheDocument()
+    expect(within(await screen.findByTestId(`history-row-${shortId(x1.id)}`)).getByText('Antiphon')).toBeInTheDocument()
+    expect(within(await screen.findByTestId(`history-row-${shortId(y1.id)}`)).getByText('gym-stat')).toBeInTheDocument()
+  })
 })
+
+const HIST_X = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1'
+const HIST_Y = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2'
+const HIST_B1 = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1'
+const HIST_C = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb3'
+const histX = summary({
+  id: '11111111-1111-1111-1111-111111111111',
+  title: 'Antiphon settled',
+  status: 'Succeeded',
+  completedAt: '2026-09-13T12:00:00Z',
+  projectId: HIST_X,
+  projectName: 'Antiphon',
+  scopeSource: 'Task',
+})
+const histY = summary({
+  id: '22222222-2222-2222-2222-222222222221',
+  title: 'gym-stat settled',
+  status: 'Succeeded',
+  completedAt: '2026-09-13T12:00:00Z',
+  projectId: HIST_Y,
+  projectName: 'gym-stat',
+  scopeSource: 'Task',
+})
+
+function serveScopedHistory(captured: string[] = []) {
+  server.use(
+    http.get('/api/boards', () =>
+      HttpResponse.json([
+        { id: HIST_B1, projectId: HIST_X, projectName: 'Antiphon', name: 'Antiphon board', description: '', trackerKind: 'Internal', maxConcurrentSessions: 1, cardCount: 0, createdAt: '2026-09-13T00:00:00Z', updatedAt: '2026-09-13T00:00:00Z' },
+        { id: HIST_C, projectId: HIST_Y, projectName: 'gym-stat', name: 'gym-stat board', description: '', trackerKind: 'Internal', maxConcurrentSessions: 1, cardCount: 0, createdAt: '2026-09-13T00:00:00Z', updatedAt: '2026-09-13T00:00:00Z' },
+      ]),
+    ),
+    http.get('/api/agent-tasks/summary', ({ request }) => {
+      captured.push(request.url)
+      return HttpResponse.json({ active: 0, blocked: 0, runs: 2, totalCostUsd: 0, byStatus: {} })
+    }),
+    http.get('/api/agent-tasks', ({ request }) => {
+      captured.push(request.url)
+      const boardId = new URL(request.url).searchParams.get('boardId')
+      if (boardId === HIST_B1) return HttpResponse.json(agentTaskEnvelope([histX], { excluded: { total: 5, unscoped: 2, byProject: [{ projectId: HIST_Y, projectName: 'gym-stat', count: 3 }] } }))
+      if (boardId === HIST_C) return HttpResponse.json(agentTaskEnvelope([histY], { excluded: { total: 6, unscoped: 2, byProject: [{ projectId: HIST_X, projectName: 'Antiphon', count: 4 }] } }))
+      return HttpResponse.json(agentTaskEnvelope([histX, histY]))
+    }),
+  )
+}

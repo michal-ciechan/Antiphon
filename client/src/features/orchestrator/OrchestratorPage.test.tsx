@@ -45,7 +45,7 @@ function serve(items: AttentionItemDto[]) {
     ),
     http.get('/api/agent-tasks', () => {
       agentTaskRequests += 1
-      return HttpResponse.json([])
+      return HttpResponse.json({ scope: null, items: [], excluded: { total: 0, unscoped: 0, byProject: [] } })
     }),
     http.get('/api/agent-tasks/summary', () =>
       HttpResponse.json({ active: 0, blocked: 0, runs: 0, totalCostUsd: 0, byStatus: {} }),
