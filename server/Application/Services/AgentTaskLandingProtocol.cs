@@ -97,6 +97,12 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 }
             }
 
+            if (request is { CleanupOnly: true })
+            {
+                Require(request.RequiredLandingOperationId is Guid required && op is not null && op.Id == required
+                    && _state.HasPublication(op), "cleanup_only_operation_mismatch");
+            }
+
             if (op is not null && _state.HasPublication(op))
             {
                 op.Mode = LandOperationMode.CleanupRetry;

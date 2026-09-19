@@ -296,6 +296,7 @@ public sealed class AgentTaskReplyService
 
         var task = await db.AgentTasks.FirstOrDefaultAsync(t => t.Id == taskId, ct)
             ?? throw new NotFoundException(nameof(AgentTask), taskId);
+        await AdmitWorkspaceAsync(scope.ServiceProvider, task, ct);
 
         if (task.Status == AgentTaskStatus.Blocked)
         {
@@ -481,6 +482,7 @@ public sealed class AgentTaskReplyService
 
         var task = await db.AgentTasks.FirstOrDefaultAsync(t => t.Id == taskId, ct)
             ?? throw new NotFoundException(nameof(AgentTask), taskId);
+        await AdmitWorkspaceAsync(scope.ServiceProvider, task, ct);
 
         var now = UtcNow();
         var trimmed = message.Trim();
@@ -3917,6 +3919,21 @@ public sealed class AgentTaskReplyService
             Detail = detail.Length <= 4000 ? detail : detail[..4000],
             At = at,
         };
+
+    private static async Task AdmitWorkspaceAsync(IServiceProvider services, AgentTask task, CancellationToken ct)
+    {
+        var admission = services.GetService<WorkspaceUseAdmission>();
+        if (admission is null) return;
+        var path = task.WorktreePath ?? task.WorkingDirectory;
+        if (string.IsNullOrWhiteSpace(path)) return;
+        var branch = task.WorktreeBranch is null ? ""
+            : task.WorktreeBranch.StartsWith("refs/", StringComparison.Ordinal) ? task.WorktreeBranch
+            : "refs/heads/" + task.WorktreeBranch;
+        await admission.RequireConsumerAsync(new WorkspaceReservationCommand(
+            new WorkspaceReservationKey(path, branch, task.RepoPath ?? path),
+            WorkspaceReservationKind.Launch, task.Id), ct);
+        await admission.InvalidateReleaseAsync(task.Id, ct);
+    }
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
 }

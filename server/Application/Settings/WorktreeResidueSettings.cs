@@ -26,4 +26,10 @@ public sealed class WorktreeResidueSettings
     /// Settled tasks younger than this stay <c>Settling</c> (a land may be queued or held).
     /// </summary>
     public int MinSettledMinutes { get; set; } = 120;
+
+    /// <summary>Shared action budget across both cleanup lanes. Default 25.</summary>
+    public int MaxActionsPerRun { get; set; } = 25;
+
+    /// <summary>Maximum candidate rows returned in one run-result page.</summary>
+    public int RunResultPageSize { get; set; } = 50;
 }

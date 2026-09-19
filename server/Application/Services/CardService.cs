@@ -10,6 +10,7 @@ using Antiphon.Server.Domain.StateMachine;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -1001,6 +1002,13 @@ public sealed class CardService : IScheduledCardActions
             card.AutoDispatchHeldAt = UtcNow();
 
         await SaveCardWriteAsync(card, ct);
+        var admission = _db.GetService<WorkspaceUseAdmission>();
+        if (admission is not null)
+        {
+            var related = await _db.AgentTasks.AsNoTracking().Where(t => t.CardId == card.Id).Select(t => t.Id).ToListAsync(ct);
+            foreach (var taskId in related)
+                await admission.InvalidateReleaseAsync(taskId, ct);
+        }
 
         TrackerCardStatePushResult? push = null;
         if (card.ExternalIssueRef is not null && _trackerStatePush is not null)

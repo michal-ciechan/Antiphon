@@ -90,6 +90,59 @@ public static class AgentTaskEndpoints
             WorktreeHealthService health,
             CancellationToken ct) => Results.Ok(await health.SweepAsync(ct)));
 
+        // CARD-0459. Static residue routes before /{id}.
+        tasks.MapPost("/worktree-residue/preview", async (
+            WorktreeResiduePreviewRequest request,
+            HttpContext http,
+            AgentTaskService service,
+            WorktreeResidueSweepService sweep,
+            CancellationToken ct) =>
+        {
+            var caller = await ResolveCallerAsync(http, service, ct);
+            if (caller.Task is not null)
+                throw new ForbiddenException("A child task token cannot inventory arbitrary worktrees.", "caller_scope");
+            return Results.Ok(await sweep.PreviewAsync(request.ProjectId, request.BoardId, ct));
+        });
+
+        tasks.MapGet("/worktree-residue/runs/{runId:guid}", async (
+            Guid runId,
+            int? page,
+            HttpContext http,
+            AgentTaskService service,
+            TaskWorktreeRetirementService retirement,
+            CancellationToken ct) =>
+        {
+            var caller = await ResolveCallerAsync(http, service, ct);
+            return Results.Ok(await retirement.GetRunAsync(runId, page ?? 0, caller, ct));
+        });
+
+        tasks.MapPost("/{id}/worktree-retirement", async (
+            string id,
+            ReleaseWorktreeRetirementRequest request,
+            HttpContext http,
+            AgentTaskService service,
+            TaskWorktreeRetirementService retirement,
+            CancellationToken ct) =>
+        {
+            var taskId = await service.ResolveTaskIdAsync(id, ct);
+            var caller = await ResolveCallerAsync(http, service, ct);
+            return Results.Ok(await retirement.ReleaseAsync(taskId, request, caller, ct));
+        });
+
+        tasks.MapDelete("/{id}/worktree-retirement/{retirementId:guid}", async (
+            string id,
+            Guid retirementId,
+            HttpContext http,
+            AgentTaskService service,
+            TaskWorktreeRetirementService retirement,
+            CancellationToken ct) =>
+        {
+            var taskId = await service.ResolveTaskIdAsync(id, ct);
+            var caller = await ResolveCallerAsync(http, service, ct);
+            await retirement.RevokeAsync(taskId, retirementId, caller, ct);
+            return Results.NoContent();
+        });
+
         // {id} is a string, not :guid — a delegate only ever SEES 8-char short ids (the completion
         // note, the board chip), so -Status and -Reply must accept them or they are unusable.
         tasks.MapGet("/{id}", async (

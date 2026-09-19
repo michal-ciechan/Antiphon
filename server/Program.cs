@@ -434,6 +434,10 @@ try
     builder.Services.AddScoped<ZombieCensusJob>();
     builder.Services.AddScoped<WorktreeResidueSweepService>();
     builder.Services.AddScoped<WorktreeResidueJob>();
+    builder.Services.AddScoped<IWorkspaceReservationJournal, WorkspaceReservationJournal>();
+    builder.Services.AddScoped<IRetirementCommandJournal, RetirementCommandJournal>();
+    builder.Services.AddScoped<WorkspaceUseAdmission>();
+    builder.Services.AddScoped<TaskWorktreeRetirementService>();
     builder.Services.AddScoped<AgentSupervisorService>();
     builder.Services.AddScoped<HerdrSupervisionStateService>();
     builder.Services.AddScoped<IAgentIncidentRecorder>(sp => sp.GetRequiredService<AgentSupervisorService>());
@@ -646,7 +650,6 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     // Background services for GitHub PR monitoring and external change detection
     builder.Services.AddHostedService<GitHubMonitorService>();
     builder.Services.AddHostedService<ChangeDetectionService>();
-    builder.Services.AddHostedService<WorktreeJanitorHostedService>();
     builder.Services.AddHostedService<WorktreeHealthHostedService>();
     builder.Services.AddHostedService<RunAttemptStallHostedService>();
     builder.Services.AddHostedService<WatchdogHostedService>();

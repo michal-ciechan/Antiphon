@@ -95,6 +95,10 @@ internal static class DelegationTestServices
         services.TryAddSingleton<GatedCommitService>();
         services.TryAddScoped<DelegationWorktreeService>();
         services.TryAddScoped<DispatchBaseWarningIntentService>();
+        services.TryAddScoped<IWorkspaceReservationJournal, Antiphon.Server.Infrastructure.Data.WorkspaceReservationJournal>();
+        services.TryAddScoped<IRetirementCommandJournal, Antiphon.Server.Infrastructure.Data.RetirementCommandJournal>();
+        services.TryAddScoped<WorkspaceUseAdmission>();
+        services.TryAddScoped<TaskWorktreeRetirementService>();
         return services;
     }
 

@@ -1,5 +1,12 @@
 # Session runtime invariants
 
+- **Workspace-use reservation (CARD-0459).** Create, requeue, dispatch (including ReadOnly),
+  Answer/Continue/Refine, Land, card reopen, Start/Attach/Resume and Herdr attach consult a
+  persisted workspace reservation. A claimed retirement excludes new use of that exact path and
+  branch. Checking only a launch spec is not enough: the final adapter Start/Attach path
+  revalidates. Cleanup never stops an owner. Completed retirement keeps a historical fence against
+  stale resume; new work gets new coordinates.
+
 - **Herdr label following is generation-bound metadata (CARD-0462).** The shared durable
   admission consumes an hour even on refusal/failure; restart never resets it. File replacement
   precedes publication, and retirement/deletion share the snapshot path lock. The observer holds

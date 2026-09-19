@@ -7,6 +7,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -838,6 +839,13 @@ public sealed class AgentControlService
         var cwd = occupant.Cwd is { Length: > 0 } processCwd
             ? Path.GetFullPath(processCwd)
             : Path.GetFullPath(agent.WorkingDirectory);
+        var herdrAdmission = _db.GetService<WorkspaceUseAdmission>();
+        if (herdrAdmission is not null)
+        {
+            await herdrAdmission.RequireConsumerAsync(new WorkspaceReservationCommand(
+                new WorkspaceReservationKey(cwd, "", cwd),
+                WorkspaceReservationKind.Launch, null), ct);
+        }
         var sessionId = inspect.NativeSessionId ?? Guid.NewGuid();
         var existing = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct);
         AgentSession session;

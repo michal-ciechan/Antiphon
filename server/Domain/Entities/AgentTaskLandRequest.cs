@@ -68,4 +68,9 @@ public sealed class AgentTaskLandRequest
     public int? SourceDiagnosticExitCode { get; set; }
     public string? SourceDiagnosticCode { get; set; }
     public string? SourceDiagnosticExceptionType { get; set; }
+
+    public bool CleanupOnly { get; set; }
+    public Guid? RequiredLandingOperationId { get; set; }
+    public Guid? SweepRunId { get; set; }
+    public LandRequestOrigin Origin { get; set; }
 }

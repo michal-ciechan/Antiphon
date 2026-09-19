@@ -464,7 +464,7 @@ the one-shot rollout pass.
 | Id | Cron (Europe/London) | Default | What it does |
 |---|---|---|---|
 | `antiphon:zombie-census` | `30 9 * * *` | report-only | OS-process zombie census (CARD-0298). No execute switch. |
-| `antiphon:worktree-residue` | `0 10 * * *` | `WorktreeResidue:Execute = false` | Classifies leftover `feat/card-task-*` worktrees, `card-task-*` directories, and local branches against `AgentTasks`. Removes `Eligible` rows only after `Execute` is flipped true (CARD-0328 D5). |
+| `antiphon:worktree-residue` | `0 10 * * *` | `WorktreeResidue:Execute = false` | CARD-0459: inventories settled-task and confirmed-publication residue, persists a run, and (only when Execute is true) retires released clean trees or queues cleanup-only landing retries. Preview: `POST /api/agent-tasks/worktree-residue/preview`. Release: `POST /api/agent-tasks/{id}/worktree-retirement`. Operator script: `scripts/worktree-residue.ps1`. Shortening TTL or calling `PruneStaleAsync` does not grant authority. |
 
 ### Start the frontend (React/Vite — port 17282)
 

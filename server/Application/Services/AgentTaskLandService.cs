@@ -34,6 +34,7 @@ public sealed class AgentTaskLandService
     private readonly ILogger<AgentTaskLandService> _logger;
     private readonly LandDeliveryBoundary _boundary;
     private readonly GitSettings? _gitSettings;
+    private readonly WorkspaceUseAdmission? _workspaceUse;
     private LandExecutionIdentity? _execution;
 
     public AgentTaskLandService(
@@ -47,8 +48,10 @@ public sealed class AgentTaskLandService
         IOptions<DelegationSettings> settings,
         ILogger<AgentTaskLandService> logger,
         AgentTaskLandingProtocol? protocol = null, IRepositoryMutationLease? leases = null, ILandingGit? landingGit = null,
-        LandDeliveryBoundary? boundary = null, IOptions<GitSettings>? gitSettings = null)
+        LandDeliveryBoundary? boundary = null, IOptions<GitSettings>? gitSettings = null,
+        WorkspaceUseAdmission? workspaceUse = null)
     {
+        _workspaceUse = workspaceUse;
         _protocol = protocol;
         _boundary = boundary ?? new LandDeliveryBoundary();
         _leases = leases;
@@ -83,6 +86,15 @@ public sealed class AgentTaskLandService
             throw new ConflictException("Only a Worktree task can be landed.");
         if (task.Status != AgentTaskStatus.Succeeded)
             throw new ConflictException($"Task {DelegationReportFormatter.Short(task.Id)} must have succeeded before it can land.");
+        if (_workspaceUse is not null && !string.IsNullOrWhiteSpace(task.WorktreePath))
+        {
+            var branch = task.WorktreeBranch is null ? ""
+                : task.WorktreeBranch.StartsWith("refs/", StringComparison.Ordinal) ? task.WorktreeBranch
+                : "refs/heads/" + task.WorktreeBranch;
+            await _workspaceUse.RequireConsumerAsync(new WorkspaceReservationCommand(
+                new WorkspaceReservationKey(task.WorktreePath, branch, task.RepoPath ?? task.WorktreePath),
+                WorkspaceReservationKind.Launch, task.Id), ct);
+        }
 
         var shortId = DelegationReportFormatter.Short(task.Id);
         if (_queue.IsActive(taskId) && task.LandRequestedAt is null)
@@ -161,6 +173,41 @@ public sealed class AgentTaskLandService
         await PublishAsync(task, ct);
         return new LandRequestResult(task.Id, pending ? "requeued" : "queued", request.Id,
             request.ReplyTo == AgentTaskReplyTo.None ? "not-required" : "tracked");
+    }
+
+    /// <summary>Queue cleanup-only retry of a confirmed publication. Never publishes.</summary>
+    public async Task<LandRequestResult> RequestCleanupRetryAsync(Guid taskId, Guid operationId, Guid? sweepRunId, CancellationToken ct)
+    {
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        await _db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM \"AgentTasks\" WHERE \"Id\" = {taskId} FOR UPDATE", ct);
+        var task = await _db.AgentTasks.SingleOrDefaultAsync(t => t.Id == taskId, ct)
+            ?? throw new NotFoundException(nameof(AgentTask), taskId.ToString());
+        var op = await _db.AgentTaskLandings.AsNoTracking().SingleOrDefaultAsync(o => o.Id == operationId, ct);
+        if (op is null || !op.Active || op.TaskId != taskId || !new AgentTaskLandingState().HasPublication(op)
+            || op.Cleanup == LandCleanupStatus.Complete)
+            throw new ConflictException("Cleanup retry requires the exact confirmed active operation.", "publication_unconfirmed");
+        if (await _db.AgentTaskLandRequests.AnyAsync(r => r.TaskId == taskId && r.IsPending, ct))
+            throw new ConflictException("A pending land request already exists.", "land_request_pending");
+
+        var now = _clock.GetUtcNow().UtcDateTime;
+        var request = NewRequest(task, now, task.LandVerifyFilter, op.OriginalSourceSha, op.ReviewEvidenceId,
+            LandApprovalKind.InheritedResume);
+        request.CleanupOnly = true;
+        request.RequiredLandingOperationId = operationId;
+        request.SweepRunId = sweepRunId;
+        request.Origin = LandRequestOrigin.ScheduledCleanup;
+        request.ReplyTo = AgentTaskReplyTo.None;
+        request.ParentSessionId = null;
+        _db.AgentTaskLandRequests.Add(request);
+        task.CurrentLandRequestId = request.Id;
+        task.LandRequestedAt = now;
+        task.LandStartedAt = null;
+        task.LandAttempt = 0;
+        task.ConcurrencyToken = Guid.NewGuid();
+        await _db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+        if (!_boundary.DropWakeup("land-request", request.Id)) _queue.TryEnqueue(taskId, request.VerifyFilter, request.Id);
+        return new LandRequestResult(task.Id, "queued", request.Id, "not-required");
     }
 
     /// <summary>Run one background land request. A Shared-writer hold leaves the request pending.</summary>
@@ -291,7 +338,16 @@ public sealed class AgentTaskLandService
             && active.SourceRemoteFingerprint is { Length: 64 }
             && GitObjectId.IsFull(active.ReviewedSourceSha)
             && active.ApprovalLandRequestId == request.Id;
-        if (!published && !resumeExisting)
+        if (request.CleanupOnly)
+        {
+            if (request.RequiredLandingOperationId is not Guid required
+                || active is null || active.Id != required || !published)
+            {
+                await RefuseAsync(task, "cleanup_only_operation_mismatch", ct);
+                return LandRunResult.Complete;
+            }
+        }
+        else if (!published && !resumeExisting)
         {
             var canResolve = request.SchemaVersion == 2 && GitObjectId.IsFull(request.ExpectedSourceSha);
             if (!canResolve)

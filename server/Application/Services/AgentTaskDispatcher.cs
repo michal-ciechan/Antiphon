@@ -90,6 +90,7 @@ public sealed class AgentTaskDispatcher
     private readonly LandDeliveryBoundary? _landBoundary;
     // CARD-0544 D-7. Optional; absent, a queued Interim task is held rather than launched.
     private readonly InterimVerificationPolicy? _interimPolicy;
+    private readonly WorkspaceUseAdmission? _workspaceUse;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -146,8 +147,10 @@ public sealed class AgentTaskDispatcher
         ITaskProgressGit? progressGit = null,
         DispatchBaseWarningIntentService? dispatchWarnings = null,
         LandDeliveryBoundary? landBoundary = null,
-        InterimVerificationPolicy? interimPolicy = null)
+        InterimVerificationPolicy? interimPolicy = null,
+        WorkspaceUseAdmission? workspaceUse = null)
     {
+        _workspaceUse = workspaceUse;
         _interimPolicy = interimPolicy;
         _repositoryLeases = repositoryLeases;
         _verification = verification;
@@ -3429,6 +3432,20 @@ public sealed class AgentTaskDispatcher
         // FOR UPDATE reuses the tick's tracked instance; reload so Capture sees the locked row
         // (a pre-claim route edit) rather than the outer snapshot. PC-71.
         await _db.Entry(claimed).ReloadAsync(ct);
+
+        if (_workspaceUse is not null)
+        {
+            var path = claimed.WorktreePath ?? claimed.WorkingDirectory;
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                var branch = claimed.WorktreeBranch is null ? ""
+                    : claimed.WorktreeBranch.StartsWith("refs/", StringComparison.Ordinal) ? claimed.WorktreeBranch
+                    : "refs/heads/" + claimed.WorktreeBranch;
+                await _workspaceUse.RequireConsumerAsync(new WorkspaceReservationCommand(
+                    new WorkspaceReservationKey(path, branch, claimed.RepoPath ?? path),
+                    WorkspaceReservationKind.Launch, claimed.Id), ct);
+            }
+        }
 
         if (await ExpireClaimedOptionalWorkAsync(claimed, ct))
         {

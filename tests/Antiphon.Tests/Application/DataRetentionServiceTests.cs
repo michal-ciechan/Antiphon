@@ -1142,6 +1142,99 @@ public class DataRetentionServiceTests
         return id;
     }
 
+    [Test]
+    public async Task C459_IncompleteRetirementRetainsEvidence()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var stale = DaysAgo(200);
+            var taskId = Guid.NewGuid();
+            await SeedTaskRowAsync(marker, taskId, taskId, parentTaskId: null, depth: 0,
+                AgentTaskStatus.Succeeded, stale, stale.AddHours(1));
+            var other = Guid.NewGuid();
+            await SeedTaskRowAsync(marker, other, other, parentTaskId: null, depth: 0,
+                AgentTaskStatus.Succeeded, stale, stale.AddHours(1));
+            await using (var db = CreateContext())
+            {
+                db.TaskWorktreeRetirements.Add(new TaskWorktreeRetirement
+                {
+                    Id = Guid.NewGuid(),
+                    TaskId = taskId,
+                    TaskAttempt = 1,
+                    TerminalStatus = AgentTaskStatus.Succeeded,
+                    TaskCompletedAt = stale.AddHours(1),
+                    ReleasedTaskRevision = Guid.NewGuid(),
+                    ReleasedAt = stale.AddHours(2),
+                    State = WorktreeRetirementState.Claimed,
+                    Active = true,
+                    UpdatedAt = stale.AddHours(2),
+                    SourceSha = new string('a', 40),
+                    SourceFullRef = "refs/heads/feat/card-task-aaaaaaaa",
+                    WorktreePath = Path.Combine(Path.GetTempPath(), marker, "tree"),
+                    RepositoryPath = Path.Combine(Path.GetTempPath(), marker),
+                    CommonDirectory = Path.Combine(Path.GetTempPath(), marker),
+                    GitDirectory = Path.Combine(Path.GetTempPath(), marker, ".git"),
+                });
+                await db.SaveChangesAsync();
+            }
+
+            await using var prune = CreateContext();
+            await CreateService(prune).PruneTasksAsync(CancellationToken.None);
+            var retainedTask = await TaskExistsAsync(taskId);
+            retainedTask.ShouldBeTrue();
+            (await TaskExistsAsync(other)).ShouldBeFalse();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task C459_CompletedRetirementExpiresInDependencyOrder()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var stale = DaysAgo(200);
+            var taskId = Guid.NewGuid();
+            await SeedTaskRowAsync(marker, taskId, taskId, parentTaskId: null, depth: 0,
+                AgentTaskStatus.Succeeded, stale, stale.AddHours(1));
+            await using (var db = CreateContext())
+            {
+                db.TaskWorktreeRetirements.Add(new TaskWorktreeRetirement
+                {
+                    Id = Guid.NewGuid(),
+                    TaskId = taskId,
+                    TaskAttempt = 1,
+                    TerminalStatus = AgentTaskStatus.Succeeded,
+                    TaskCompletedAt = stale.AddHours(1),
+                    ReleasedTaskRevision = Guid.NewGuid(),
+                    ReleasedAt = stale.AddHours(2),
+                    State = WorktreeRetirementState.Complete,
+                    Active = false,
+                    UpdatedAt = stale.AddHours(3),
+                    SourceSha = new string('a', 40),
+                    SourceFullRef = "refs/heads/feat/card-task-aaaaaaaa",
+                    WorktreePath = Path.Combine(Path.GetTempPath(), marker, "tree"),
+                    RepositoryPath = Path.Combine(Path.GetTempPath(), marker),
+                    CommonDirectory = Path.Combine(Path.GetTempPath(), marker),
+                    GitDirectory = Path.Combine(Path.GetTempPath(), marker, ".git"),
+                });
+                await db.SaveChangesAsync();
+            }
+
+            await using var prune = CreateContext();
+            await CreateService(prune).PruneTasksAsync(CancellationToken.None);
+            (await TaskExistsAsync(taskId)).ShouldBeFalse();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
     private static async Task<Guid> SeedTaskRowAsync(
         string marker,
         Guid id,

@@ -405,6 +405,10 @@ GET    /api/stage-outcomes                   CARD-0272 per-stage hit rate vs. co
                                              wraps this as a table.
 GET    /api/agent-tasks/areas?directory=     the repo's named areas (antiphon.areas.json)
 GET    /api/agent-tasks/pipeline             fleet-wide across every board; there is no board filter. Advisory in-flight / queued / blocked / ready snapshot. Queued queueReason is one of sharedCheckoutLease, siblingLandInFlight, concurrencyCap, routingPinNotBefore, awaitingDispatch. In-flight, queued and blocked rows carry agentKind / modelLevel; in-flight and queued also carry workspace. Ready rows sit on the stage named by a settled stage-role task's `next:` handoff (`Investigate`/`Plan`/`TestDesign`/`Code`/`Review`) and carry `sourcePlanTaskId`, `sourceRole`, `deliverablePath`, `handoff`. A Succeeded Plan with `NextStage` unset and a verified `docs/superpowers/plans/` deliverable still yields a Code ready row (CARD-0146 S4 legacy). `land`/`decide`/`none` produce no ready row.
+POST   /api/agent-tasks/worktree-residue/preview   CARD-0459 inventory only (projectId/boardId). Never deletes.
+GET    /api/agent-tasks/worktree-residue/runs/{runId}  durable run/candidate page (`page`).
+POST   /api/agent-tasks/{id}/worktree-retirement  record NoFurtherWorkspaceUse release. Does not delete.
+DELETE /api/agent-tasks/{id}/worktree-retirement/{retirementId}  revoke only before claim/intent.
 ```
 
 `CreateAgentTaskRequest` (`server/Application/Dtos/AgentTaskDtos.cs`) is the biggest body in the

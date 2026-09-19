@@ -62,6 +62,7 @@ public sealed class AgentTaskService
     // CARD-0544. Optional so predating harnesses keep constructing this; absent, an explicit
     // Interim request is refused as unready and Final (the default) is unaffected.
     private readonly InterimVerificationPolicy? _interimPolicy;
+    private readonly WorkspaceUseAdmission? _workspaceUse;
 
     public AgentTaskService(
         AppDbContext db,
@@ -85,8 +86,10 @@ public sealed class AgentTaskService
         SourceLandingAdmission? sourceLanding = null,
         ILandingGit? landingGit = null,
         GitWorkspaceService? workspaceGit = null,
-        InterimVerificationPolicy? interimPolicy = null)
+        InterimVerificationPolicy? interimPolicy = null,
+        WorkspaceUseAdmission? workspaceUse = null)
     {
+        _workspaceUse = workspaceUse;
         _interimPolicy = interimPolicy;
         _areas = areas;
         _db = db;
@@ -1116,6 +1119,7 @@ public sealed class AgentTaskService
             if (verificationAdmission is not null)
                 await _interimPolicy!.LatchOwnerLockedAsync(verificationAdmission.SubjectTaskId, ct);
 
+        await AdmitWorkspaceAsync(task, ct);
         _db.AgentTasks.Add(task);
         _db.AgentTaskEvents.Add(new AgentTaskEvent
         {
@@ -2403,6 +2407,7 @@ public sealed class AgentTaskService
                 });
         }
 
+        await AdmitWorkspaceAsync(task, ct);
         await StopDelegateAsync(task, ct);
         if (_capacityRecovery is not null)
             await _capacityRecovery.SupersedeTaskWaitsOnAsync(
@@ -2640,6 +2645,7 @@ public sealed class AgentTaskService
             CommitOnSettle = CommitOnSettlePolicy.Never,
         };
 
+        await AdmitWorkspaceAsync(task, ct);
         _db.AgentTasks.Add(task);
         _db.AgentTaskEvents.Add(new AgentTaskEvent
         {
@@ -2771,6 +2777,7 @@ public sealed class AgentTaskService
                     : new GitWorkspaceService.UpstreamSnapshot(false, null, null)),
         };
 
+        await AdmitWorkspaceAsync(task, ct);
         _db.AgentTasks.Add(task);
         _db.AgentTaskEvents.Add(new AgentTaskEvent
         {
@@ -3489,6 +3496,20 @@ public sealed class AgentTaskService
 
     internal static string HashToken(string token) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token))).ToLowerInvariant();
+
+    private async Task AdmitWorkspaceAsync(AgentTask task, CancellationToken ct)
+    {
+        if (_workspaceUse is null) return;
+        var path = task.WorktreePath ?? task.WorkingDirectory;
+        if (string.IsNullOrWhiteSpace(path)) return;
+        var branch = task.WorktreeBranch is null ? ""
+            : task.WorktreeBranch.StartsWith("refs/", StringComparison.Ordinal) ? task.WorktreeBranch
+            : "refs/heads/" + task.WorktreeBranch;
+        await _workspaceUse.RequireConsumerAsync(new WorkspaceReservationCommand(
+            new WorkspaceReservationKey(path, branch, task.RepoPath ?? path),
+            WorkspaceReservationKind.Launch, task.Id), ct);
+        await _workspaceUse.InvalidateReleaseAsync(task.Id, ct);
+    }
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
 }

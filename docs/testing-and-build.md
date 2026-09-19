@@ -64,6 +64,14 @@
 - **A `dotnet build` that sits for 20+ minutes at near-zero CPU is probably reading `obj/…/*.FileListAbsolute.txt`, not hung** (CARD-0222, same doc): every `--property:OutputPath=bin-<name>/` build shares the project's one `obj/` and appends to that ledger, `IncrementalClean` reads/filters/rewrites it on every build and prunes only entries under the CURRENT `OutDir`, so it grew to 228 MB / 770,706 lines for `Antiphon.SessionRunner` and 97 MB for `Antiphon.Tests` (nested `bin-X\bin-Y\…` trees from before CARD-0110's exclude). Measured: 157 s of a 181 s Tests build in `ReadLinesFromFile`+`FindUnderPath`; full graph 21m31s → 1m28s after a reset. `Directory.Build.targets` now deletes a ledger over 2 MB (`AntiphonCleanFileMaxBytes`, `0` to disable) with a warning naming the card. The tell from outside: the outer `dotnet` process has ~1 s of CPU, one MSBuild node ticks at ~10 % of a core in `FindUnderPath` (`dotnet-stack report -p <node>`), and no `Antiphon.Tests.exe` has been spawned yet — there is never a `testhost.exe` under the Microsoft.Testing.Platform runner.
 <!-- CARD-0254 preserved source ends -->
 
+## CARD-0459 worktree residue
+
+Ordinary Code/Review uses `OutputPath=bin-c459/` (forward slash), the Unit lane, and the named
+classes in `docs/superpowers/plans/2026-09-19-card-0459-worktree-cleanup-plan.md`.
+`scripts/test-worktree-residue.ps1` covers the operator script. `WorktreeResidue:Execute` stays
+false in shipped config. Do not treat `PruneStaleAsync` or a shorter TTL as cleanup authority.
+CARD-0452 ignored-content policy is unchanged; residue tests must not add a production override.
+
 ## Fast lane (CARD-0110 / CARD-0475 S5)
 
 ### Default Code/Review recipe
