@@ -144,6 +144,8 @@ The trailing wildcards also prevent this version's source-generated discovery fr
 the entire OR expression as one literal class name ([pinned hint extractor](https://github.com/thomhurst/TUnit/blob/42e3be6d99bb637d21e1dac711d76991a99e49c3/TUnit.Engine/Services/MetadataFilterMatcher.cs#L164)).
 Check that the suffix patterns selected only the intended classes; do not infer coverage from
 exit zero. A failed filter can produce a fresh TRX with zero tests (native exit 8).
+When a land test injects a Git fault, scope it to the target-branch observation, because CARD-0488's resolver observes the source branch first (CARD-0567 groups 1 and 4).
+The method-segment OR form `/*/*/Class/(MethodA*)|(MethodB*)` works on the pinned TUnit 1.44, while a bare `|` between two full paths does not: it silently ran the whole `AgentTaskLandRefusedRetryTests` class in one case and zero tests in another.
 
 `--list-tests --treenode-filter ...` is not scoped-execution evidence on this runner: CARD-0403
 observed all 5389 discovery entries even with a single-class filter. Require actual executed
