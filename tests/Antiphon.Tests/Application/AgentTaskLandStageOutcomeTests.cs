@@ -115,9 +115,11 @@ public class AgentTaskLandStageOutcomeTests
         await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "land me\n");
         await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "feature.md");
         await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "feature");
-        // Fetch URL stays the bare remote so prepare succeeds; push URL is unusable so finalize
-        // is the step that fails (a rival push before RunAsync would fail prepare instead —
-        // origin-ahead is a rebase refusal).
+        // The push endpoint is the only endpoint landing reads (CARD-0488 D-3: the remote source is
+        // observed on origin's push URL, never the fetch URL), so an unusable push URL is refused
+        // by source resolution before any operation, stage row or Git mutation exists. The fetch
+        // URL stays the bare remote so RequestHeadAsync can still publish the source; a rival push
+        // before RunAsync would be an origin-ahead refusal instead.
         await repo.GitAsync("remote", "set-url", "--push", "origin", Path.Combine(remote.Path, "no-such-remote.git"));
 
         await RequestHeadAsync(land, task);
@@ -125,8 +127,9 @@ public class AgentTaskLandStageOutcomeTests
 
         var rows = await RowsAsync(db, task.Id);
         rows.ShouldBeEmpty("unreadable push endpoint is refused before preparation or verification");
+        (await db.AgentTaskLandings.CountAsync(o => o.TaskId == task.Id)).ShouldBe(0, "refused before any operation exists");
         var refused = await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.LandRefused);
-        refused.Detail.ShouldContain("remote_read_failed");
+        refused.Detail.ShouldContain("source_remote_unreadable");
         Directory.Exists(task.WorktreePath).ShouldBeTrue();
         await AssertPendingClearedAsync(db, task.Id, attempt: 1);
     }
