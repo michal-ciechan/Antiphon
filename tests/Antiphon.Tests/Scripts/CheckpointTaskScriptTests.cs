@@ -149,6 +149,13 @@ public sealed class CheckpointTaskScriptTests
 
         public string BaseUrl { get; }
 
+        private static object Envelope(params object[] items) => new
+        {
+            scope = (object?)null,
+            items,
+            excluded = new { total = 0, unscoped = 0, byProject = Array.Empty<object>() },
+        };
+
         private async Task PumpAsync()
         {
             while (!_cts.IsCancellationRequested)
@@ -180,8 +187,7 @@ public sealed class CheckpointTaskScriptTests
                 else if (query.Contains("status=Working", StringComparison.OrdinalIgnoreCase))
                 {
                     body = _extra
-                        ? new object[]
-                        {
+                        ? Envelope(
                             self,
                             new
                             {
@@ -193,13 +199,12 @@ public sealed class CheckpointTaskScriptTests
                                     status = "Working",
                                     workingDirectory = _dir,
                                 },
-                            },
-                        }
-                        : new object[] { self };
+                            })
+                        : Envelope(self);
                 }
                 else
                 {
-                    body = Array.Empty<object>();
+                    body = Envelope();
                 }
 
                 var json = System.Text.Json.JsonSerializer.Serialize(body);

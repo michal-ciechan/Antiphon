@@ -103,6 +103,13 @@ function Get-AntiphonList {
     $raw = Invoke-Antiphon GET $Path
     $list = New-Object System.Collections.ArrayList
     if ($null -eq $raw) { return ,$list }
+    # CARD-0515: GET /api/agent-tasks is always `{ scope, items, excluded }`. Treating
+    # the envelope as one row leaves $openBoards/$openProjects empty and the
+    # -Execute no-non-terminal-task-attached guard protects nothing.
+    $itemsProp = $null
+    try { $itemsProp = $raw.PSObject.Properties['items'] } catch { }
+    if ($null -ne $itemsProp) { $raw = $itemsProp.Value }
+    if ($null -eq $raw) { return ,$list }
     $isCollection = $false
     if ($raw -is [System.Array]) { $isCollection = $true }
     elseif ($raw -is [System.Collections.IList]) { $isCollection = $true }
