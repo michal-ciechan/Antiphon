@@ -1,0 +1,150 @@
+=== alpine wget host.docker.internal:17202/health ===
+Unable to find image 'alpine:3.20' locally
+3.20: Pulling from library/alpine
+25f1d6b1951a: Pulling fs layer
+25f1d6b1951a: Verifying Checksum
+25f1d6b1951a: Download complete
+25f1d6b1951a: Pull complete
+Digest: sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+Status: Downloaded newer image for alpine:3.20
+Connecting to host.docker.internal:17202 (192.168.65.254:17202)
+  HTTP/1.1 200 OK
+  Connection: close
+  Content-Type: text/plain
+  Date: Sat, 19 Sep 2026 16:57:54 GMT
+  Server: Kestrel
+  Cache-Control: no-store, no-cache
+  Expires: Thu, 01 Jan 1970 00:00:00 GMT
+  Pragma: no-cache
+  Transfer-Encoding: chunked
+  X-Correlation-Id: 0HNOM61VE2MAP:00000001
+  
+writing to stdout
+-                    100% |********************************|     7  0:00:00 ETA
+written to stdout
+Healthy
+
+=== alpine wget host.docker.internal:17202/api/version ===
+Connecting to host.docker.internal:17202 (192.168.65.254:17202)
+  HTTP/1.1 200 OK
+  Connection: close
+  Content-Type: application/json; charset=utf-8
+  Date: Sat, 19 Sep 2026 16:57:56 GMT
+  Server: Kestrel
+  Transfer-Encoding: chunked
+  X-Correlation-Id: 0HNOM61VE2MAQ:00000001
+  
+writing to stdout
+-                    100% |********************************|   153  0:00:00 ETA
+written to stdout
+{"version":"1044eef74db59426d69356a2d0d9ec03d2b9a967","informationalVersion":"1.0.0+1044eef74db59426d69356a2d0d9ec03d2b9a967","capabilities":["land-v2"]}
+
+=== alpine wget host.docker.internal:17202/api/boards (first 400 via head) ===
+Connecting to host.docker.internal:17202 (192.168.65.254:17202)
+  HTTP/1.1 200 OK
+  Connection: close
+  Content-Type: application/json; charset=utf-8
+  Date: Sat, 19 Sep 2026 16:57:58 GMT
+  Server: Kestrel
+  Transfer-Encoding: chunked
+  X-Correlation-Id: 0HNOM61VE2MAR:00000001
+  
+writing to stdout
+[{"id":"8988ca03-7414-47ad-b0b6-51556c701703","projectId":"d4ea7ae9-e769-474b-95b9-aa25fbc1303f","projectName":"Antiphon","name":"Antiphon","description":"","trackerKind":"GitHubIssues","maxConcurrentS
+
+=== getent host.docker.internal + wget 17203 ===
+192.168.65.254    host.docker.internal  host.docker.internal
+Connecting to host.docker.internal:17203 (192.168.65.254:17203)
+  HTTP/1.1 403 Forbidden
+wget: server returned error: HTTP/1.1 403 Forbidden
+
+=== HTTPS antiphon.desktop.codeperf.net from alpine (busybox wget) ===
+100.79.51.37      antiphon.desktop.codeperf.net  antiphon.desktop.codeperf.net
+Connecting to antiphon.desktop.codeperf.net (100.79.51.37:443)
+  HTTP/1.1 200 OK
+  Alt-Svc: h3=":443"; ma=2592000
+  Cache-Control: no-cache
+  Content-Type: text/html
+  Date: Sat, 19 Sep 2026 16:58:03 GMT
+  Etag: W/"504-TCUJPED+ngmIzT3ce6h/QUcGivU"
+  Vary: Origin
+  Via: 1.1 Caddy
+  Connection: close
+  Transfer-Encoding: chunked
+  
+writing to stdout
+<!doctype html>
+<html lang="en">
+  <head>
+    <
+
+=== HTTPS /health /api/boards /api/version ===
+Connecting to antiphon.desktop.codeperf.net (100.79.51.37:443)
+  HTTP/1.1 200 OK
+  Alt-Svc: h3=":443"; ma=2592000
+  Cache-Control: no-cache
+  Content-Type: text/html
+  Date: Sat, 19 Sep 2026 16:58:06 GMT
+  Etag: W/"504-TCUJPED+ngmIzT3ce6h/QUcGivU"
+  
+Connecting to antiphon.desktop.codeperf.net (100.79.51.37:443)
+  HTTP/1.1 200 OK
+  Alt-Svc: h3=":443"; ma=2592000
+  Content-Type: application/json; charset=utf-8
+  Date: Sat, 19 Sep 2026 16:58:06 GMT
+  Server: Kestrel
+  Vary: Accept-Encoding
+  Via: 1
+Connecting to antiphon.desktop.codeperf.net (100.79.51.37:443)
+  HTTP/1.1 200 OK
+  Alt-Svc: h3=":443"; ma=2592000
+  Content-Type: application/json; charset=utf-8
+  Date: Sat, 19 Sep 2026 16:58:06 GMT
+  Server: Kestrel
+  Vary: Accept-Encoding
+  Via: 1
+
+=== alpine+curl --resolve Caddy via host.docker.internal IP ===
+host_ip=192.168.65.254
+--- / via 443 ---
+HTTP/2 200 
+alt-svc: h3=":443"; ma=2592000
+cache-control: no-cache
+content-type: text/html
+date: Sat, 19 Sep 2026 16:58:12 GMT
+etag: W/"504-TCUJPED+ngmIzT3ce6h/QUcGivU"
+vary: Origin
+via: 1.1 Caddy
+
+--- /health ---
+HTTP/2 200 
+alt-svc: h3=":443"; ma=2592000
+cache-control: no-cache
+content-type: text/html
+date: Sat, 19 Sep 2026 16:58:13 GMT
+etag: W/"504-TCUJPED+ngmIzT3ce6h/QUcGivU"
+vary: Origin
+via: 1.1 Caddy
+
+--- /api/boards ---
+HTTP/2 200 
+alt-svc: h3=":443"; ma=2592000
+content-type: application/json; charset=utf-8
+date: Sat, 19 Sep 2026 16:58:12 GMT
+server: Kestrel
+vary: Accept-Encoding
+via: 1.1 Caddy
+x-correlation-id: 0HNOM61VE2MAV:00000001
+
+--- /api/version ---
+HTTP/2 200 
+alt-svc: h3=":443"; ma=2592000
+content-type: application/json; charset=utf-8
+date: Sat, 19 Sep 2026 16:58:13 GMT
+server: Kestrel
+vary: Accept-Encoding
+via: 1.1 Caddy
+x-correlation-id: 0HNOM61VE2MB0:00000001
+
+
+

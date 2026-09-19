@@ -1,0 +1,3 @@
+OSType=linux Architecture=x86_64 ServerVersion=29.5.3 OperatingSystem=Docker Desktop NCPU=8 MemTotal=8327405568 DockerRootDir=/var/lib/docker Name=docker-desktop
+CgroupDriver=cgroupfs SecurityOptions=["name=seccomp,profile=builtin","name=cgroupns"]
+

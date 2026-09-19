@@ -1,0 +1,12 @@
+=== GET :17204/sessions (runner, no /api) ===
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Date: Sat, 19 Sep 2026 17:00:38 GMT
+Server: Kestrel
+Transfer-Encoding: chunked
+
+
+=== GET :17202/api/version ===
+{"version":"1044eef74db59426d69356a2d0d9ec03d2b9a967","informationalVersion":"1.0.0+1044eef74db59426d69356a2d0d9ec03d2b9a967","capabilities":["land-v2"]}
+
+

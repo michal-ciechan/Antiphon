@@ -1,0 +1,30 @@
+54d5e9536aeb7b0a41db18852be70048df8b08e1ffb71cade95738dabba6a9d1
+=== docker exec without -t: tty ===
+tty=not a tty none
+stdin_tty=no
+=== docker exec -t: tty ===
+tty=/dev/pts/0
+stdin_tty=yes
+=== docker exec -e ANTIPHON_API callback to host.docker.internal:17202/health ===
+ANTIPHON_API=http://host.docker.internal:17202
+Connecting to host.docker.internal:17202 (192.168.65.254:17202)
+  HTTP/1.1 200 OK
+  Connection: close
+  Content-Type: text/plain
+  Date: Sat, 19 Sep 2026 17:00:37 GMT
+  Server: Kestrel
+  Cache-Control: no-store, no-cache
+  Expires: Thu, 01 Jan 1970 00:00:00 GMT
+  Pragma: no-cache
+  Transfer-Encoding: chunked
+  X-Correlation-Id: 0HNOM61VE2MB5:00000001
+  
+writing to stdout
+-                    100% |********************************|     7  0:00:00 ETA
+written to stdout
+Healthy
+=== pwsh present? ===
+/usr/bin/wget
+=== host docker exec of this container from Windows (this is the v0 shape) ===
+v0-exec-ok
+

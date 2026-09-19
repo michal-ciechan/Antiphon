@@ -1,0 +1,5 @@
+=== new container NO volume: auth.json must be absent ===
+ls: /root/.grok: No such file or directory
+ls: /opt/grok-home: No such file or directory
+GROK_HOME=
+

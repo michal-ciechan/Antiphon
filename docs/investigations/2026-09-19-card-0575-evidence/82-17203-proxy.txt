@@ -1,0 +1,46 @@
+=== 17203/health ===
+HTTP/1.1 200 OK
+Vary: Origin
+Content-Type: text/html
+Cache-Control: no-cache
+Etag: W/"504-TCUJPED+ngmIzT3ce6h/QUcGivU"
+Date: Sat, 19 Sep 2026 17:04:09 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Content-Length: 1284
+
+
+=== 17203/api/version ===
+HTTP/1.1 200 OK
+Vary: Origin
+connection: close
+content-type: application/json; charset=utf-8
+date: Sat, 19 Sep 2026 17:04:09 GMT
+server: Kestrel
+x-correlation-id: 0HNOM61VE2MBF:00000001
+Transfer-Encoding: chunked
+
+
+=== 17203/api/version Host antiphon ===
+HTTP/1.1 200 OK
+Vary: Origin
+connection: close
+content-type: application/json; charset=utf-8
+date: Sat, 19 Sep 2026 17:04:09 GMT
+server: Kestrel
+x-correlation-id: 0HNOM61VE2MBG:00000001
+Transfer-Encoding: chunked
+
+
+=== 17203/health Host antiphon ===
+HTTP/1.1 200 OK
+Vary: Origin
+Content-Type: text/html
+Cache-Control: no-cache
+Etag: W/"504-TCUJPED+ngmIzT3ce6h/QUcGivU"
+Date: Sat, 19 Sep 2026 17:04:09 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Content-Length: 1284
+
+

@@ -1,0 +1,20 @@
+# Linux grok 1.0.34 ELF + dummy-home TUI (2026-09-19)
+
+## file / ldd / hex (alpine:3.20, official install.sh)
+
+/root/.grok/downloads/grok-linux-x86_64: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), static-pie linked, BuildID[xxHash]=06efca9a9105fcc5, stripped
+
+ldd:
+	/lib/ld-musl-x86_64.so.1 (0x795aa5073000)
+
+hex first 16:
+7f 45 4c 46 02 01 01 00  00 00 00 00 00 00 00 00  |.ELF............|
+
+Without a TTY (docker run, no -t): grok --always-approve --no-alt-screen
+Error: No such device or address (os error 6)
+
+With a TTY (docker run -t): tty=/dev/pts/0 then grok paints OSC title "grok", enables mouse/bracketed-paste modes, and is killed by timeout 8. Dummy GROK_HOME=/tmp/gh, no host auth.json mounted.
+
+Host grok.exe is PE: mz=MZ size=151293256 version 1.0.34 (3736acbc8658) [stable]
+Linux install reports the same version string 1.0.34 (3736acbc8658).
+Mounting grok.exe into alpine and exec'ing it: WSL vsock error, no --version output.

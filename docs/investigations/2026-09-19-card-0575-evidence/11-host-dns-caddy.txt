@@ -1,0 +1,70 @@
+Resolve-DnsName antiphon.desktop.codeperf.net (default resolver):
+
+Name                          Type TTL Section IPAddress
+----                          ---- --- ------- ---------
+antiphon.desktop.codeperf.net A    300 Answer  100.79.51.37
+
+
+Resolve-DnsName -Server 1.1.1.1:
+
+Name                          Type TTL Section IPAddress
+----                          ---- --- ------- ---------
+antiphon.desktop.codeperf.net A    300 Answer  100.79.51.37
+
+Name      : .
+QueryType : OPT
+TTL       : 0
+Section   : Additional
+Data      : {}
+
+
+
+curl --resolve to 127.0.0.1:443 / :
+HTTP/1.1 200 OK
+Alt-Svc: h3=":443"; ma=2592000
+Cache-Control: no-cache
+Content-Type: text/html
+Date: Sat, 19 Sep 2026 16:57:48 GMT
+Etag: W/"504-TCUJPED+ngmIzT3ce6h/QUcGivU"
+Vary: Origin
+Via: 1.1 Caddy
+Transfer-Encoding: chunked
+
+
+curl --resolve /health :
+HTTP/1.1 200 OK
+Alt-Svc: h3=":443"; ma=2592000
+Cache-Control: no-cache
+Content-Type: text/html
+Date: Sat, 19 Sep 2026 16:57:49 GMT
+Etag: W/"504-TCUJPED+ngmIzT3ce6h/QUcGivU"
+Vary: Origin
+Via: 1.1 Caddy
+Transfer-Encoding: chunked
+
+
+curl --resolve /api/boards :
+HTTP/1.1 200 OK
+Alt-Svc: h3=":443"; ma=2592000
+Content-Type: application/json; charset=utf-8
+Date: Sat, 19 Sep 2026 16:57:49 GMT
+Server: Kestrel
+Vary: Accept-Encoding
+Via: 1.1 Caddy
+X-Correlation-Id: 0HNOM61VE2MAN:00000001
+Transfer-Encoding: chunked
+
+
+curl --resolve /api/version :
+HTTP/1.1 200 OK
+Alt-Svc: h3=":443"; ma=2592000
+Content-Type: application/json; charset=utf-8
+Date: Sat, 19 Sep 2026 16:57:49 GMT
+Server: Kestrel
+Vary: Accept-Encoding
+Via: 1.1 Caddy
+X-Correlation-Id: 0HNOM61VE2MAO:00000001
+Transfer-Encoding: chunked
+
+
+

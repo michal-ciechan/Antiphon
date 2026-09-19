@@ -1,0 +1,5 @@
+CONTAINER ID   NAMES               IMAGE         STATUS                PORTS
+c1033627dd49   antiphon-postgres   postgres:16   Up 3 days (healthy)   0.0.0.0:17280->5432/tcp, [::]:17280->5432/tcp
+5432/tcp -> 0.0.0.0:17280
+5432/tcp -> [::]:17280
+

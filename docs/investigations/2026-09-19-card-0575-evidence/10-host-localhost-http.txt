@@ -1,0 +1,74 @@
+URL http://127.0.0.1:17202/health
+BYTES 7
+HTTP/1.1 200 OK
+Content-Type: text/plain
+Date: Sat, 19 Sep 2026 16:57:43 GMT
+Server: Kestrel
+Cache-Control: no-store, no-cache
+Expires: Thu, 01 Jan 1970 00:00:00 GMT
+Pragma: no-cache
+Transfer-Encoding: chunked
+X-Correlation-Id: 0HNOM61VE2MAJ:00000001
+
+
+BODY_SNIP Healthy
+=====
+URL http://127.0.0.1:17202/api/version
+BYTES 153
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Date: Sat, 19 Sep 2026 16:57:44 GMT
+Server: Kestrel
+Transfer-Encoding: chunked
+X-Correlation-Id: 0HNOM61VE2MAK:00000001
+
+
+BODY_SNIP {"version":"1044eef74db59426d69356a2d0d9ec03d2b9a967","informationalVersion":"1.0.0+1044eef74db59426d69356a2d0d9ec03d2b9a967","capabilities":["land-v2"]}
+=====
+URL http://127.0.0.1:17202/api/boards
+BYTES 5936
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Date: Sat, 19 Sep 2026 16:57:44 GMT
+Server: Kestrel
+Transfer-Encoding: chunked
+X-Correlation-Id: 0HNOM61VE2MAL:00000001
+
+
+BODY_SNIP [{"id":"8988ca03-7414-47ad-b0b6-51556c701703","projectId":"d4ea7ae9-e769-474b-95b9-aa25fbc1303f","projectName":"Antiphon","name":"Antiphon","description":"","trackerKind":"GitHubIssues","maxConcurrentSessions":1,"cardCount":571,"createdAt":
+=====
+URL http://127.0.0.1:17203/
+BYTES 1284
+HTTP/1.1 200 OK
+Vary: Origin
+Content-Type: text/html
+Cache-Control: no-cache
+Etag: W/"504-TCUJPED+ngmIzT3ce6h/QUcGivU"
+Date: Sat, 19 Sep 2026 16:57:46 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Content-Length: 1284
+
+
+BODY_SNIP <!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>client</ti
+=====
+URL http://localhost:17202/health
+BYTES 7
+HTTP/1.1 200 OK
+Content-Type: text/plain
+Date: Sat, 19 Sep 2026 16:57:45 GMT
+Server: Kestrel
+Cache-Control: no-store, no-cache
+Expires: Thu, 01 Jan 1970 00:00:00 GMT
+Pragma: no-cache
+Transfer-Encoding: chunked
+X-Correlation-Id: 0HNOM61VE2MAM:00000001
+
+
+BODY_SNIP Healthy

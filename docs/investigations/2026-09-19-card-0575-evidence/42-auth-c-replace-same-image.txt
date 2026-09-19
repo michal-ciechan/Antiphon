@@ -1,0 +1,12 @@
+card0575-auth
+4e4f8c4bbc94bb0b2493c2f760be9ee9a31d48c24475cfff34fec092c43006fe
+total 4
+drwxrwxrwx    1 root     root          4096 Sep 19 16:58 .
+drwxr-xr-x    1 root     root          4096 Sep 19 16:58 ..
+-rwxrwxrwx    1 root     root            58 Sep 19 16:58 auth.json
+-rw-r--r--    1 root     root             6 Sep 19 16:58 wrote-from-a.txt
+---
+{"marker":"CARD0575-DUMMY-NOT-A-SECRET","scope":"dummy"}
+
+extra
+

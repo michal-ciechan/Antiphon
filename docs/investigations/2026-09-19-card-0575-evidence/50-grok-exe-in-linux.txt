@@ -1,0 +1,5 @@
+=== copy grok.exe into linux container and exec (expect exec format error) ===
+-rwxrwxrwx    1 root     root     151293256 Sep 18 06:06 /grok.exe
+<3>WSL (1 - ) ERROR: UtilBindVsockAnyPort:309: socket failed 1
+
+

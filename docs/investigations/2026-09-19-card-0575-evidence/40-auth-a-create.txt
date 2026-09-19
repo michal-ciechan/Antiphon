@@ -1,0 +1,8 @@
+9358170789b479ee0c60a60a3fb729194e915c8d38de74b992663ad4151f37b6
+total 4
+drwxrwxrwx    1 root     root          4096 Sep 19 16:58 .
+drwxr-xr-x    1 root     root          4096 Sep 19 16:58 ..
+-rwxrwxrwx    1 root     root            58 Sep 19 16:58 auth.json
+---
+{"marker":"CARD0575-DUMMY-NOT-A-SECRET","scope":"dummy"}
+

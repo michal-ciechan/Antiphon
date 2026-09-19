@@ -1,0 +1,18 @@
+=== alpine musl: install.sh (expect glibc mismatch or unsupported) ===
+Fetching latest stable version...
+Installing Grok 1.0.34 (linux-x86_64)...
+  Downloading grok 1.0.34...
+  Binary linked to /root/.grok/bin/grok and /root/.grok/bin/agent.
+Grok 1.0.34 installed to /root/.grok/bin/grok
+  Symlinked /usr/local/bin/grok -> /root/.grok/bin/grok
+  Symlinked /usr/local/bin/agent -> /root/.grok/bin/agent
+
+Run 'grok' or 'agent' to get started!
+total 8
+drwxr-xr-x    2 root     root          4096 Sep 19 17:00 .
+drwxr-xr-x    6 root     root          4096 Sep 19 17:00 ..
+lrwxrwxrwx    1 root     root            30 Sep 19 17:00 agent -> ../downloads/grok-linux-x86_64
+lrwxrwxrwx    1 root     root            30 Sep 19 17:00 grok -> ../downloads/grok-linux-x86_64
+grok 1.0.34 (3736acbc8658)
+
+

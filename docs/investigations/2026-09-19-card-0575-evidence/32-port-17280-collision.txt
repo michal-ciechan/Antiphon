@@ -1,0 +1,8 @@
+=== try bind host 17280 from inside worker (must fail; do not start postgres) ===
+docker: Error response from daemon: failed to set up container networking: driver failed programming external connectivity on endpoint card0575-steal17280 (10832ed3998b75d2553de44e352282ca6ec75766b5dead961cef78bb8c231415): Bind for 0.0.0.0:17280 failed: port is already allocated
+
+Run 'docker run --help' for more information
+
+=== confirm antiphon-postgres still running ===
+antiphon-postgres Up 3 days (healthy) 0.0.0.0:17280->5432/tcp, [::]:17280->5432/tcp
+

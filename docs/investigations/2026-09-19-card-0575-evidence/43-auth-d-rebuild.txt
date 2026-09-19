@@ -1,0 +1,70 @@
+#0 building with "desktop-linux" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile.dummyA
+#1 transferring dockerfile:
+#1 transferring dockerfile: 96B 0.2s done
+#1 DONE 0.3s
+
+#2 [internal] load metadata for docker.io/library/alpine:3.20
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context:
+#3 transferring context: 2B 0.0s done
+#3 DONE 0.1s
+
+#4 [1/2] FROM docker.io/library/alpine:3.20
+#4 DONE 0.1s
+
+#5 [2/2] RUN echo image-A > /image-id.txt
+#5 DONE 0.6s
+
+#6 exporting to image
+#6 exporting layers 0.1s done
+#6 writing image sha256:9c8b0c0532b335748eb30f20a8898500bfb4d60cd0a13af37bd0e91d7bcc00a9 done
+#6 naming to docker.io/library/card0575-dummy:a 0.0s done
+#6 DONE 0.2s
+card0575-auth
+6c1b82a69a07ba53c148f2675afae0eba5834fb908bfd6b22cb3d9364f15072e
+=== on image A ===
+image-A
+
+{"marker":"CARD0575-DUMMY-NOT-A-SECRET","scope":"dummy"}
+
+extra
+#0 building with "desktop-linux" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile.dummyB
+#1 transferring dockerfile: 96B 0.1s done
+#1 DONE 0.2s
+
+#2 [internal] load metadata for docker.io/library/alpine:3.20
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B 0.0s done
+#3 DONE 0.1s
+
+#4 [1/2] FROM docker.io/library/alpine:3.20
+#4 CACHED
+
+#5 [2/2] RUN echo image-B > /image-id.txt
+#5 DONE 0.6s
+
+#6 exporting to image
+#6 exporting layers
+#6 exporting layers 0.2s done
+#6 writing image sha256:c98f95e79d7e3ee86266d325ceb98583189d724b004aa8ba9e014a0b48cf6e19
+#6 writing image sha256:c98f95e79d7e3ee86266d325ceb98583189d724b004aa8ba9e014a0b48cf6e19 0.0s done
+#6 naming to docker.io/library/card0575-dummy:b 0.0s done
+#6 DONE 0.3s
+card0575-auth
+c0f5deeed9dfdfbb1f47f45f6a519d7e1d25ffe16b1a63a1db4bcd3c7f8dd2e8
+=== on image B (new image id) ===
+image-B
+
+{"marker":"CARD0575-DUMMY-NOT-A-SECRET","scope":"dummy"}
+
+extra
+Image=sha256:c98f95e79d7e3ee86266d325ceb98583189d724b004aa8ba9e014a0b48cf6e19 ConfigImage=card0575-dummy:b
+

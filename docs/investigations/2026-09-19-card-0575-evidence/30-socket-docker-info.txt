@@ -1,0 +1,58 @@
+=== docker:cli docker info via /var/run/docker.sock ===
+Unable to find image 'docker:cli' locally
+cli: Pulling from library/docker
+e2de96513ba9: Pulling fs layer
+c76a910ce805: Pulling fs layer
+4f4fb700ef54: Pulling fs layer
+77a41eff6a96: Pulling fs layer
+35795b4c35e2: Pulling fs layer
+a101e4c098be: Pulling fs layer
+4e75e082420c: Pulling fs layer
+b8d17cde8350: Pulling fs layer
+42e2b8e363b8: Pulling fs layer
+d1588276fcb5: Pulling fs layer
+a101e4c098be: Waiting
+35795b4c35e2: Waiting
+4e75e082420c: Waiting
+b8d17cde8350: Waiting
+42e2b8e363b8: Waiting
+d1588276fcb5: Waiting
+77a41eff6a96: Waiting
+4f4fb700ef54: Verifying Checksum
+4f4fb700ef54: Download complete
+77a41eff6a96: Verifying Checksum
+77a41eff6a96: Download complete
+e2de96513ba9: Verifying Checksum
+e2de96513ba9: Download complete
+e2de96513ba9: Pull complete
+c76a910ce805: Verifying Checksum
+c76a910ce805: Download complete
+c76a910ce805: Pull complete
+4f4fb700ef54: Pull complete
+77a41eff6a96: Pull complete
+4e75e082420c: Verifying Checksum
+4e75e082420c: Download complete
+b8d17cde8350: Verifying Checksum
+b8d17cde8350: Download complete
+42e2b8e363b8: Verifying Checksum
+42e2b8e363b8: Download complete
+d1588276fcb5: Verifying Checksum
+d1588276fcb5: Download complete
+35795b4c35e2: Verifying Checksum
+35795b4c35e2: Download complete
+a101e4c098be: Verifying Checksum
+a101e4c098be: Download complete
+35795b4c35e2: Pull complete
+a101e4c098be: Pull complete
+4e75e082420c: Pull complete
+b8d17cde8350: Pull complete
+42e2b8e363b8: Pull complete
+d1588276fcb5: Pull complete
+Digest: sha256:018edbc908e08fcc9dbf029c812c34251e9b4719e6f71ca0e5eae2a987d014ca
+Status: Downloaded newer image for docker:cli
+Name=docker-desktop OSType=linux ServerVersion=29.5.3 OperatingSystem=Docker Desktop
+
+=== docker:cli docker ps --filter antiphon-postgres ===
+antiphon-postgres 0.0.0.0:17280->5432/tcp, [::]:17280->5432/tcp
+
+
