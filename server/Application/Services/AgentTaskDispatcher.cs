@@ -875,7 +875,7 @@ public sealed class AgentTaskDispatcher
 
         var agent = await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == pinId, ct);
         if (agent is null)
-            return DispatchHoldDetails.PinnedAgentNoOpenTask("retired", AgentStatus.Stopped);
+            return DispatchHoldDetails.PinnedAgentNoOpenTask("retired", AgentStatus.Stopped, pinId);
 
         if (agent.IsPoolDelegate)
         {
@@ -889,7 +889,7 @@ public sealed class AgentTaskDispatcher
                 .ThenByDescending(t => t.CreatedAt)
                 .FirstOrDefaultAsync(ct);
             if (parked is null)
-                return DispatchHoldDetails.PinnedAgentNoOpenTask(agent.Name, agent.Status);
+                return DispatchHoldDetails.PinnedAgentNoOpenTask(agent.Name, agent.Status, agent.Id);
 
             return DispatchHoldDetails.PinnedAgentParkedOn(
                 agent.Name, DelegationReportFormatter.Short(parked.Id), parked.Status);

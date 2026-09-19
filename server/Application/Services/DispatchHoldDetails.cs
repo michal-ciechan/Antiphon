@@ -42,8 +42,13 @@ public static class DispatchHoldDetails
         return text;
     }
 
-    public static string PinnedAgentNoOpenTask(string agentName, AgentStatus agentStatus) =>
-        $"Held: pinned agent '{agentName}' is {agentStatus} with no open task and has not been released to the pool; stop it (POST /api/agents/{{id}}/stop) to relaunch, or cancel this task.";
+    public static string PinnedAgentNoOpenTask(string agentName, AgentStatus agentStatus, Guid? agentId = null)
+    {
+        var stopRoute = agentId is Guid id
+            ? $"POST /api/agents/{id:D}/stop"
+            : "POST /api/agents/{id}/stop";
+        return $"Held: pinned agent '{agentName}' is {agentStatus} with no open task and has not been released to the pool; stop it ({stopRoute}) to relaunch, or cancel this task.";
+    }
 
     public static string StandingAgentBusy(
         string agentName, string busyShort, AgentTaskStatus busyStatus) =>

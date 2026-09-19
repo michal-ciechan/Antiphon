@@ -65,7 +65,7 @@ Rejected: converting the follow-up to Blocked or Failed after a timeout (the bri
 `DescribeAgentWaitAsync` reads the pinned agent row and the newest open task on it other than the claimed one (`AgentId == pinned.Id && Id != claimed.Id && Status in {Dispatched, Working, Blocked}`, ordered by `DispatchedAt` descending, then `CreatedAt`). Builders live in `DispatchHoldDetails`:
 
 - `PinnedAgentParkedOn(agentName, parkedShort, parkedStatus)` → `Held: pinned agent '{agentName}' is not idle; it is parked on task {parkedShort} ({parkedStatus}).` For `Blocked` the sentence continues: ` That task is waiting for an answer: reply to it (delegate.ps1 -Reply {parkedShort} "...") or cancel it (POST /api/agent-tasks/{parkedShort}/cancel); this follow-up dispatches when the agent is released to the pool.`
-- `PinnedAgentNoOpenTask(agentName, agentStatus)` → `Held: pinned agent '{agentName}' is {agentStatus} with no open task and has not been released to the pool; stop it (POST /api/agents/{id}/stop) to relaunch, or cancel this task.` This is the shape of the sourced `verification_release_unresolved` arm and of the existing test at `:391`.
+- `PinnedAgentNoOpenTask(agentName, agentStatus, agentId)` → `Held: pinned agent '{agentName}' is {agentStatus} with no open task and has not been released to the pool; stop it (POST /api/agents/{agentId}/stop) to relaunch, or cancel this task.` `agentId` is the pinned agent's guid (D format) in the stop route; omit it only when the pin itself is missing. This is the shape of the sourced `verification_release_unresolved` arm and of the existing test at `:391`.
 - `StandingAgentBusy(agentName, busyShort, busyStatus)` → `Held: standing agent '{agentName}' is busy with task {busyShort} ({busyStatus}) on its live session.`
 - `StandingAgentNoSession(agentName)` → `Held: standing agent '{agentName}' (always-on) has no live session; waiting for supervision to restart it.`
 
@@ -159,7 +159,7 @@ Ordinary verification (Code runs all of it; Review reads it; PCs are for Mutatio
 |---|---|---|---|
 | V-1 | S1 | `AgentTaskPoolTests.a_follow_up_behind_a_blocked_task_writes_one_held_event_naming_it` | Parked-on-Blocked setup. Three ticks → F `Queued`; exactly one `Held` row; detail contains the agent name, `Short(B)`, `Blocked` and `-Reply`; `TickResult.Dispatched == 0`; stopper killed nothing. |
 | V-2 | S1 | `…the_hold_retraces_on_reply_and_releases_on_settle` | Continue V-1: reply → tick → two `Held` rows, newest contains `Working`; tick again → still two. Release → tick → F `Dispatched`; one `Dispatched` event starting `Reused warm delegate`; `Held` count stays two. |
-| V-3 | S1 | `…a_pinned_agent_running_with_no_open_task_is_a_named_hold` | Agent `Running`, no task → one `Held` row equal to `DispatchHoldDetails.PinnedAgentNoOpenTask(name, Running)`; three ticks, still one. |
+| V-3 | S1 | `…a_pinned_agent_running_with_no_open_task_is_a_named_hold` | Agent `Running`, no task → one `Held` row equal to `DispatchHoldDetails.PinnedAgentNoOpenTask(name, Running, agentId)`; three ticks, still one; detail contains the agent's guid in the stop route. |
 | V-4 | S1 | `…a_busy_standing_agent_writes_one_held_event` | Standing agent with T `Working` on its live session; F pinned → three ticks → one `Held` row equal to `StandingAgentBusy(name, Short(T), Working)`. Set T `Succeeded` → tick → F `Dispatched` with detail starting `Delivered into standing agent`. |
 | V-5 | S1 | `…a_pinned_agent_wait_escalates_through_held_aged` (needs CARD-0535) | Parked-on-Blocked; ticks at T0 and +299 s → zero `HeldAged`; +300 s → one row starting `Warning:` whose detail contains the agent name; +900 s → second row starting `Error:`; +1000 s → still two. |
 | V-6 | S1 | `DispatchHeldAttentionTests` case (needs CARD-0535) | Queued F with a `Held` row carrying `PinnedAgentParkedOn(...)` at now − 301 s → one `DispatchHeld` item, `Warning`, headline contains the agent name, `ConditionKey == dispatch-held:{F:N}`. |
@@ -173,7 +173,8 @@ Ordinary verification (Code runs all of it; Review reads it; PCs are for Mutatio
 | V-14 | S3 | `…cancelling_a_queued_follow_up_on_a_warm_agent_leaves_it_for_the_janitor` | A `Idle` warm; F `Queued` pinned → cancel → A exists, `Idle`, `PoolIdleSince` unchanged. |
 | V-15 | S3 | `…cancelling_a_running_task_keeps_its_agent_while_another_open_task_pins_it` | A with live session S; T `Working` (`AgentSessionId = S`) pinned; F `Queued` pinned → `CancelAsync(T)` → `stopper.Killed == [S]`; A exists, status unchanged; F still `Queued`. |
 | V-16 | S3 | `…cancelling_the_sole_owner_still_retires_the_pool_agent` | A; T `Working` on S pinned; a `Succeeded` prior pinned (settled rows do not count) → cancel T → A row gone. |
-| V-17 | S3 | `…retrying_an_ephemeral_task_keeps_an_agent_another_task_pins` | T `Failed`, `Ephemeral = true`, `AgentId = A`, `AgentSessionId = S`; F `Queued` pinned to A → `RetryAsync(T)` → T `Queued` with `AgentId == null`; A exists. (Seed as `retrying_a_failed_task_requeues_it_at_the_same_tier` does.) |
+| V-17 | S3 | `…retrying_an_ephemeral_task_keeps_an_agent_another_task_pins` | T `Failed`, `Ephemeral = true`, `AgentId = A`, `AgentSessionId = S`; F `Queued` pinned to A → `RetryAsync(T)` → T `Queued` with `AgentId == null`; A exists. Exercises R3 (session still set at retire). (Seed as `retrying_a_failed_task_requeues_it_at_the_same_tier` does.) |
+| V-17b | S3 | `…retrying_a_sole_owner_ephemeral_task_retires_its_pool_agent` | T `Failed`, `Ephemeral = true`, `AgentId = A`, `AgentSessionId = S`; a `Succeeded` prior pinned (settled rows do not count) → `RetryAsync(T)` → T `Queued` with `AgentId == null` and `AgentSessionId == null`; A row gone (R4). |
 | V-18 | S3 | existing `AgentTaskDeadSessionReconciliationTests` (`:374`, `:698`), `cancelling_a_running_task_stops_its_delegate`, `cancelling_a_queued_task_settles_it` | Unchanged and green. |
 
 Run commands (from the worktree; daemons hold `bin/`):
@@ -204,6 +205,8 @@ Delete every `bin-c537/` directory afterwards. Do not run the full `Antiphon.Tes
 | PC-7 | R3 removed | V-15: row deleted |
 | PC-8 | R3 counts settled statuses as open | V-16: row kept |
 | PC-9 | `HoldKind.PinnedAgent` excluded from escalation (needs CARD-0535) | V-5: zero `HeldAged` |
+| PC-10 | `RequeueAsync` nulls `task.AgentSessionId` before `RemoveEphemeralAgentAsync` | V-17b: A row kept |
+| PC-11 | `PinnedAgentNoOpenTask` interpolates a literal `{id}` instead of `agentId` | V-3: detail lacks the agent's guid |
 
 ## Risks
 

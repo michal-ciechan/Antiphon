@@ -2348,15 +2348,16 @@ public sealed class AgentTaskService
         if (task.Attempt > task.MaxAttempts)
             task.MaxAttempts = task.Attempt;
         task.Status = AgentTaskStatus.Queued;
-        task.AgentSessionId = null;
         // --model is a LAUNCH argument, so a new tier needs a new process. An ephemeral delegate is
         // discarded — row included, or every retry leaks a dead agent; a pinned agent is the
-        // caller's explicit choice and stays.
+        // caller's explicit choice and stays. CARD-0537 R2 treats a null AgentSessionId as never-ran,
+        // so retire before clearing the session (same order as BlockOnWallAsync).
         if (task.Ephemeral)
         {
             await RemoveEphemeralAgentAsync(task, task.AgentId, ct);
             task.AgentId = null;
         }
+        task.AgentSessionId = null;
         task.DispatchedAt = null;
         task.CompletedAt = null;
         // This field describes the current settlement only. A retry is a fresh attempt on the

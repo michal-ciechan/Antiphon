@@ -1218,6 +1218,38 @@ public class AgentTaskServiceIntegrationTests
         (await verify.Agents.AnyAsync(a => a.Id == agentId)).ShouldBeTrue();
     }
 
+    [Test]
+    public async Task retrying_a_sole_owner_ephemeral_task_retires_its_pool_agent()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var agentId = await SeedPoolAgentAsync(workspace.Path, AgentModelLevel.Low, cs);
+        var sessionId = await SeedLiveSessionAsync(workspace.Path, SessionStatus.Running, cs);
+        var prior = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Succeeded, connectionString: cs);
+        await PinTaskAgentAsync(prior.Id, agentId, cs);
+        var failed = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Failed, sessionId: sessionId,
+            connectionString: cs);
+        await using (var db = CreateContext(cs))
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == failed.Id);
+            row.AgentId = agentId;
+            row.Ephemeral = true;
+            await db.SaveChangesAsync();
+        }
+
+        await using var retryDb = CreateContext(cs);
+        var summary = await CreateService(retryDb).RetryAsync(failed.Id, CancellationToken.None);
+
+        summary.Status.ShouldBe(AgentTaskStatus.Queued);
+        summary.AgentId.ShouldBeNull();
+        summary.AgentSessionId.ShouldBeNull();
+        await using var verify = CreateContext(cs);
+        (await verify.Agents.AnyAsync(a => a.Id == agentId)).ShouldBeFalse();
+    }
+
     // ---- workspace defaults: an orchestrator owns something ---------------------------------
 
     [Test]
