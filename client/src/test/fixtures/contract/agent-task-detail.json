@@ -43,11 +43,16 @@
     "landRequestedAt": null,
     "landStartedAt": null,
     "landAttempt": 0,
-    "cardId": null,
-    "cardIdentifier": null,
+    "cardId": "cccccccc-cccc-cccc-cccc-ccccccccccc3",
+    "cardIdentifier": "CARD-0039",
     "reportEvidence": "Legacy",
     "complexity": null,
-    "repliedAt": null
+    "repliedAt": null,
+    "projectId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2",
+    "projectName": "gym-stat",
+    "boardId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb3",
+    "boardName": "gym-stat board",
+    "scopeSource": "Task"
   },
   "goal": "Rewrite the Windows install section.",
   "result": "Rewrote \u0022## Windows install\u0022 in docs/setup.md \u2014 34 lines changed, every command now pwsh 7.\n\nOne decision is yours: should the old cmd examples be deleted, or kept alongside?",
@@ -142,5 +147,6 @@
   "worktreeBaseSha": null,
   "session": null,
   "commitOnSettle": null,
-  "commitBaselineSha": null
+  "commitBaselineSha": null,
+  "verification": null
 }
