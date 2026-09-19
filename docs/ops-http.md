@@ -79,7 +79,8 @@ readiness or qualification alone cannot resolve a real-service outage.
 | Distillations ledger / stats (CARD-0330) | GET | `/api/distillations?since=&outcome=&feedback=&limit=`, `/api/distillations/stats?since=` — `scripts/distiller.ps1 -Stats` / `-List [-Flagged]` |
 | Distillation feedback (CARD-0330) | POST | `/api/agent-tasks/{id}/distillation/feedback` `{ verdict: Good\|Lost\|Noisy, note? }` — 409 if the task has no distillation. `delegate.ps1 -Flag <id> -Verdict Lost\|Noisy\|Good [-Note]` |
 | Home Tasks rail (cards + unbound delegations) | GET | `/api/home/tasks` |
-| What needs a human (fleet-global) | GET | `/api/attention` — `DispatchHeld` (CARD-0535) is a queued dispatcher hold past `Delegation:DispatchHeldWarningSeconds`; `ConditionKey` `dispatch-held:{id:N}`. |
+| What needs a human (fleet-global) | GET | `/api/attention` — fleet-global across every board; there is no board filter. `DispatchHeld` (CARD-0535) is a queued dispatcher hold past `Delegation:DispatchHeldWarningSeconds`; `ConditionKey` `dispatch-held:{id:N}`. |
+| Delegated work | GET | `/api/agent-tasks?projectId=` — always `{ scope, items, excluded }`. An omitted `projectId`/`boardId` is the whole fleet (`scope` null). `unscoped=exclude|include|only` (default exclude when a scope id is present). Unknown list keys are `400 unknown_query_parameter`. `/summary` takes the same scope. `/pipeline` stays fleet-wide. |
 | Issue / list / rotate / revoke a Delegation Capability (CARD-0398) | POST / GET / POST rotate / POST revoke | `/api/delegation-capabilities`, `/api/delegation-capabilities/{id}`, `…/rotate`, `…/revoke` — `scripts/capability.ps1`. GET never returns the token. |
 | A session's screen | GET | `/api/sessions/{id}/buffer` |
 | A session's transcript | GET | `/api/sessions/{id}/transcript?since={sequence}` |
@@ -112,10 +113,11 @@ if ($env:ANTIPHON_TASK_TOKEN) { $h['X-Antiphon-Task-Token'] = $env:ANTIPHON_TASK
 $board = (Invoke-RestMethod "$api/api/boards" -Headers $h) | Where-Object name -eq 'Antiphon'
 (Invoke-RestMethod "$api/api/cards?boardId=$($board.id)" -Headers $h).cards | Select-Object identifier, title, status
 
-# delegated work in flight (occupancy) -- status names are case-insensitive, a comma list unions,
+# delegated work in flight (occupancy) -- always an envelope; read .items. Prefer ?projectId=
+# on an Antiphon-board question. Status names are case-insensitive, a comma list unions,
 # an unrecognised value is 422 validation_failed
-(Invoke-RestMethod "$api/api/agent-tasks?status=Dispatched,Working,Blocked" -Headers $h) |
-    Select-Object id, role, status, cardIdentifier
+(Invoke-RestMethod "$api/api/agent-tasks?projectId=$($project.id)&status=Dispatched,Working,Blocked" -Headers $h).items |
+    Select-Object id, role, status, cardIdentifier, projectName, boardName
 # the purpose-built occupancy read: in-flight / queued / blocked / ready rows per stage (CARD-0304);
 # GET /api/agent-tasks/summary `byStatus` is the fleet-wide cross-check on the same column
 Invoke-RestMethod "$api/api/agent-tasks/pipeline" -Headers $h

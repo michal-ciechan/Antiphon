@@ -1,6 +1,7 @@
 import { HttpResponse, http } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentTaskDetailDto, AgentTaskListSummaryDto, AgentTaskSummaryDto } from '../../api/agentTasks'
+import { agentTaskEnvelope } from '../../test/agentTaskEnvelope'
 import { renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { DelegationsBoard } from './DelegationsBoard'
@@ -162,7 +163,7 @@ function serveTasks(tasks: AgentTaskSummaryDto[] = RUN, summaryOverride?: Partia
     ...summaryOverride,
   }
   server.use(
-    http.get('/api/agent-tasks', () => HttpResponse.json(tasks)),
+    http.get('/api/agent-tasks', () => HttpResponse.json(agentTaskEnvelope(tasks))),
     http.get('/api/agent-tasks/summary', () => HttpResponse.json(summary)),
     http.get('/api/agent-tasks/:id', ({ params }) => {
       const found = tasks.find((t) => t.id === params.id)
@@ -180,7 +181,7 @@ describe('DelegationsBoard', () => {
       http.get('/api/agent-tasks', ({ request }) => {
         const params = new URL(request.url).searchParams
         captured.push({ since: params.get('since'), status: params.get('status') })
-        return HttpResponse.json(RUN)
+        return HttpResponse.json(agentTaskEnvelope(RUN))
       }),
       http.get('/api/agent-tasks/summary', () =>
         HttpResponse.json({ active: 2, blocked: 1, runs: 2, totalCostUsd: 0, byStatus: {} }),
@@ -401,4 +402,171 @@ describe('DelegationsBoard', () => {
     expect(await screen.findByText('A settled task from last week')).toBeInTheDocument()
     window.history.pushState({}, '', '/')
   })
+
+  it('board defaults to the fleet envelope', async () => {
+    serveScopedBoard()
+    renderWithProviders(<DelegationsBoard />)
+    expect(await screen.findByText('Fleet — all boards')).toBeInTheDocument()
+    expect(screen.getByLabelText('Board scope')).toBeInTheDocument()
+    expect(await screen.findByText('Antiphon row')).toBeInTheDocument()
+    expect(screen.getByText('gym-stat row')).toBeInTheDocument()
+    expect(screen.queryByTestId('board-hidden-by-scope')).not.toBeInTheDocument()
+  })
+
+  it('board selection scopes rows and counters', async () => {
+    const captured: string[] = []
+    serveScopedBoard(captured)
+    renderWithProviders(<DelegationsBoard />)
+    await screen.findByText('Antiphon row')
+    await userEvent.click(screen.getByLabelText('Board scope'))
+    await userEvent.click(await screen.findByRole('option', { name: 'Antiphon board (Antiphon)' }))
+    await waitFor(() => expect(screen.queryByText('gym-stat row')).not.toBeInTheDocument())
+    expect(screen.getByText('Antiphon row')).toBeInTheDocument()
+    expect(captured.some((url) => url.includes(`boardId=${B1}`))).toBe(true)
+    await userEvent.click(screen.getByLabelText('Board scope'))
+    await userEvent.click(await screen.findByRole('option', { name: 'gym-stat board (gym-stat)' }))
+    await waitFor(() => expect(screen.queryByText('Antiphon row')).not.toBeInTheDocument())
+    expect(screen.getByText('gym-stat row')).toBeInTheDocument()
+    await userEvent.click(screen.getByLabelText('Board scope'))
+    await userEvent.click(await screen.findByRole('option', { name: 'All boards' }))
+    await waitFor(() => expect(screen.getByText('Antiphon row')).toBeInTheDocument())
+    expect(screen.getByText('gym-stat row')).toBeInTheDocument()
+    expect(screen.getByText('Fleet — all boards')).toBeInTheDocument()
+  })
+
+  it('board shows exact exclusions', async () => {
+    let resolveX: (() => void) | undefined
+    const holdX = new Promise<void>((resolve) => {
+      resolveX = resolve
+    })
+    server.use(
+      http.get('/api/boards', () => HttpResponse.json(SCOPE_BOARDS)),
+      http.get('/api/agent-tasks/summary', ({ request }) => {
+        const boardId = new URL(request.url).searchParams.get('boardId')
+        return HttpResponse.json({
+          active: boardId === C ? 1 : boardId === B1 ? 1 : 2,
+          blocked: 0,
+          runs: boardId ? 1 : 2,
+          totalCostUsd: 0,
+          byStatus: {},
+        })
+      }),
+      http.get('/api/agent-tasks', async ({ request }) => {
+        const boardId = new URL(request.url).searchParams.get('boardId')
+        if (boardId === B1) {
+          await holdX
+          return HttpResponse.json(
+            agentTaskEnvelope([xRow], {
+              excluded: {
+                total: 5,
+                unscoped: 2,
+                byProject: [{ projectId: Y, projectName: 'gym-stat', count: 3 }],
+              },
+            }),
+          )
+        }
+        if (boardId === C) {
+          return HttpResponse.json(
+            agentTaskEnvelope([], {
+              excluded: {
+                total: 6,
+                unscoped: 2,
+                byProject: [
+                  { projectId: X, projectName: 'Antiphon', count: 4 },
+                ],
+              },
+            }),
+          )
+        }
+        return HttpResponse.json(agentTaskEnvelope([xRow, yRow]))
+      }),
+    )
+    renderWithProviders(<DelegationsBoard />)
+    await screen.findByText('Antiphon row')
+    await userEvent.click(screen.getByLabelText('Board scope'))
+    await userEvent.click(await screen.findByRole('option', { name: 'Antiphon board (Antiphon)' }))
+    await userEvent.click(screen.getByLabelText('Board scope'))
+    await userEvent.click(await screen.findByRole('option', { name: 'gym-stat board (gym-stat)' }))
+    resolveX?.()
+    await waitFor(() => expect(screen.getByTestId('board-hidden-by-scope')).toHaveTextContent('hidden by scope: 4 Antiphon, 2 unscoped'))
+    expect(screen.queryByText('Antiphon row')).not.toBeInTheDocument()
+    expect(screen.queryByText('gym-stat row')).not.toBeInTheDocument()
+  })
 })
+
+const X = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1'
+const Y = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2'
+const B1 = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1'
+const B2 = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb2'
+const C = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb3'
+
+const SCOPE_BOARDS = [
+  { id: B1, projectId: X, projectName: 'Antiphon', name: 'Antiphon board', description: '', trackerKind: 'Internal', maxConcurrentSessions: 1, cardCount: 0, createdAt: '2026-09-13T00:00:00Z', updatedAt: '2026-09-13T00:00:00Z' },
+  { id: B2, projectId: X, projectName: 'Antiphon', name: 'Antiphon other', description: '', trackerKind: 'Internal', maxConcurrentSessions: 1, cardCount: 0, createdAt: '2026-09-13T00:00:00Z', updatedAt: '2026-09-13T00:00:00Z' },
+  { id: C, projectId: Y, projectName: 'gym-stat', name: 'gym-stat board', description: '', trackerKind: 'Internal', maxConcurrentSessions: 1, cardCount: 0, createdAt: '2026-09-13T00:00:00Z', updatedAt: '2026-09-13T00:00:00Z' },
+]
+
+const xRow = summary({
+  id: '11111111-1111-1111-1111-111111111111',
+  title: 'Antiphon row',
+  status: 'Working',
+  projectId: X,
+  projectName: 'Antiphon',
+  boardId: B1,
+  boardName: 'Antiphon board',
+  scopeSource: 'Task',
+})
+const yRow = summary({
+  id: '22222222-2222-2222-2222-222222222221',
+  title: 'gym-stat row',
+  status: 'Working',
+  projectId: Y,
+  projectName: 'gym-stat',
+  boardId: C,
+  boardName: 'gym-stat board',
+  scopeSource: 'Task',
+})
+
+function serveScopedBoard(captured: string[] = []) {
+  server.use(
+    http.get('/api/boards', () => HttpResponse.json(SCOPE_BOARDS)),
+    http.get('/api/agent-tasks/summary', ({ request }) => {
+      captured.push(request.url)
+      const boardId = new URL(request.url).searchParams.get('boardId')
+      return HttpResponse.json({
+        active: boardId ? 1 : 2,
+        blocked: 0,
+        runs: boardId ? 1 : 2,
+        totalCostUsd: 0,
+        byStatus: {},
+      })
+    }),
+    http.get('/api/agent-tasks', ({ request }) => {
+      captured.push(request.url)
+      const boardId = new URL(request.url).searchParams.get('boardId')
+      if (boardId === B1) {
+        return HttpResponse.json(
+          agentTaskEnvelope([xRow], {
+            excluded: {
+              total: 5,
+              unscoped: 2,
+              byProject: [{ projectId: Y, projectName: 'gym-stat', count: 3 }],
+            },
+          }),
+        )
+      }
+      if (boardId === C) {
+        return HttpResponse.json(
+          agentTaskEnvelope([yRow], {
+            excluded: {
+              total: 6,
+              unscoped: 2,
+              byProject: [{ projectId: X, projectName: 'Antiphon', count: 4 }],
+            },
+          }),
+        )
+      }
+      return HttpResponse.json(agentTaskEnvelope([xRow, yRow]))
+    }),
+  )
+}

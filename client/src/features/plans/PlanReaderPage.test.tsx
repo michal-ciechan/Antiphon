@@ -118,7 +118,7 @@ describe('PlanReaderPage', () => {
       }),
       http.get('/api/agent-tasks', () => {
         requested.push('/api/agent-tasks')
-        return HttpResponse.json([])
+        return HttpResponse.json({ scope: null, items: [], excluded: { total: 0, unscoped: 0, byProject: [] } })
       }),
       http.post('/api/agent-tasks/:id/read', () => HttpResponse.json({})),
     )

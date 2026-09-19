@@ -1,13 +1,16 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import type { AgentTaskDetailDto, AgentTaskListSummaryDto, AgentTaskSummaryDto } from '../../api/agentTasks'
+import type { AgentTaskDetailDto, AgentTaskListEnvelopeDto, AgentTaskListSummaryDto, AgentTaskSummaryDto } from '../../api/agentTasks'
 import { agentTaskKeys } from '../../api/agentTasks'
+import { boardKeys } from '../../api/boards'
+import { agentTaskEnvelope } from '../../test/agentTaskEnvelope'
 import { DelegationsHistory } from './DelegationsHistory'
 import { SETTLED_STATUSES, isSettled } from './taskVisuals'
 import agentTasksFixture from '../../test/fixtures/contract/agent-tasks.json'
 import agentTaskDetailFixture from '../../test/fixtures/contract/agent-task-detail.json'
 
-const tasks = agentTasksFixture as AgentTaskSummaryDto[]
+const fixture = agentTasksFixture as AgentTaskListEnvelopeDto | AgentTaskSummaryDto[]
+const tasks = Array.isArray(fixture) ? fixture : fixture.items
 const detail = agentTaskDetailFixture as unknown as AgentTaskDetailDto
 const settled = tasks.filter((task) => isSettled(task.status))
 const listSummary: AgentTaskListSummaryDto = {
@@ -29,10 +32,11 @@ function withHistoryData(Story: () => React.ReactElement) {
   })
   client.setQueryData(
     agentTaskKeys.list(false, { since: 'default', status: SETTLED_STATUSES }),
-    settled,
+    agentTaskEnvelope(settled),
   )
   client.setQueryData(agentTaskKeys.summary(), listSummary)
   client.setQueryData(agentTaskKeys.detail(detail.summary.id), detail)
+  client.setQueryData(boardKeys.all, [])
   return (
     <QueryClientProvider client={client}>
       <Story />

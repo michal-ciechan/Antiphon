@@ -43,6 +43,24 @@ const task: AgentTaskSummaryDto = {
 }
 
 describe('TaskChip', () => {
+  it('chip labels resolved and unscoped tasks', () => {
+    const n1 = {
+      ...task,
+      id: '33333333-3333-3333-3333-333333333331',
+      title: 'path twin',
+      workingDirectory: 'C:/src/antiphon',
+      repoPath: 'C:/src/antiphon',
+      scopeSource: 'None' as const,
+      projectName: null,
+    }
+    const resolved = { ...task, projectName: 'Antiphon', scopeSource: 'Task' as const }
+    const { rerender } = renderWithProviders(<TaskChip task={resolved} onOpen={() => {}} />)
+    expect(screen.getByText('Antiphon')).toBeInTheDocument()
+    rerender(<TaskChip task={n1} onOpen={() => {}} />)
+    expect(screen.getByText('unscoped')).toBeInTheDocument()
+    expect(screen.queryByText('Antiphon')).not.toBeInTheDocument()
+  })
+
   it('labels a recovered elapsed time as unobserved', async () => {
     renderWithProviders(<TaskChip task={task} onOpen={() => {}} />)
 

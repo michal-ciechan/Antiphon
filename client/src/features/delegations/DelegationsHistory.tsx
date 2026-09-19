@@ -8,6 +8,7 @@ import {
   Group,
   Loader,
   SegmentedControl,
+  Select,
   Stack,
   Text,
   Title,
@@ -23,6 +24,8 @@ import {
   useAgentTasks,
   type AgentTaskSummaryDto,
 } from '../../api/agentTasks'
+import { useBoards } from '../../api/boards'
+import { hiddenByScopeLine, scopeChipLabel } from './scopeVisuals'
 import { isUnreadDeliverable } from '../home/taskReview'
 import { formatClockTime } from '../home/workLineFormat'
 import { TaskDrawer } from './TaskDrawer'
@@ -52,16 +55,20 @@ type OutcomeFilter = 'all' | 'Succeeded' | 'Failed' | 'Canceled'
 export function DelegationsHistory() {
   const [showAll, setShowAll] = useState(false)
   const [outcome, setOutcome] = useState<OutcomeFilter>('all')
+  const boards = useBoards()
+  const [boardId, setBoardId] = useState<string | null>(null)
+  const scope = boardId ? { boardId } : {}
   const tasks = useAgentTasks(false, {
     since: showAll ? undefined : 'default',
     status: SETTLED_STATUSES,
+    ...scope,
   })
-  const summary = useAgentTaskListSummary()
+  const summary = useAgentTaskListSummary(scope)
   const [searchParams] = useSearchParams()
   const [drawerId, setDrawerId] = useState<string | null>(searchParams.get('task'))
 
   const settled = useMemo(() => {
-    const rows = (tasks.data ?? []).filter((task) => isSettled(task.status))
+    const rows = (tasks.data?.items ?? []).filter((task) => isSettled(task.status))
     rows.sort(
       (a, b) =>
         Date.parse(b.completedAt ?? b.createdAt) - Date.parse(a.completedAt ?? a.createdAt),
@@ -78,6 +85,8 @@ export function DelegationsHistory() {
 
   const totals = summary.data
   const runs = totals?.runs ?? 0
+  const hiddenLine = hiddenByScopeLine(tasks.data?.excluded)
+  const selectedBoardName = boards.data?.find((board) => board.id === boardId)?.name
 
   const open = (task: AgentTaskSummaryDto | string) => {
     setDrawerId(typeof task === 'string' ? task : task.id)
@@ -103,7 +112,7 @@ export function DelegationsHistory() {
     <Stack gap="md">
       <Group justify="space-between">
         <Group gap="xs">
-          <Title order={4}>History</Title>
+          <Title order={4}>{boardId ? selectedBoardName ?? 'History' : 'Fleet — all boards'}</Title>
           <Badge variant="light" color="gray">
             {totals?.runs ?? 0} run{totals?.runs === 1 ? '' : 's'}
           </Badge>
@@ -125,6 +134,20 @@ export function DelegationsHistory() {
           </Badge>
         </Group>
         <Group gap="xs">
+          <Select
+            size="xs"
+            aria-label="Board scope"
+            w={220}
+            value={boardId ?? ''}
+            onChange={(value) => setBoardId(value || null)}
+            data={[
+              { value: '', label: 'All boards' },
+              ...(boards.data ?? []).map((board) => ({
+                value: board.id,
+                label: `${board.name} (${board.projectName})`,
+              })),
+            ]}
+          />
           <SegmentedControl
             size="xs"
             value={outcome}
@@ -146,6 +169,11 @@ export function DelegationsHistory() {
           </Tooltip>
         </Group>
       </Group>
+      {hiddenLine && (
+        <Text size="sm" c="dimmed" data-testid="history-hidden-by-scope">
+          {hiddenLine}
+        </Text>
+      )}
 
       {visible.length === 0 ? (
         <HistoryEmpty runs={runs} showAll={showAll} onShowAll={() => setShowAll(true)} />
@@ -317,6 +345,9 @@ function HistoryRow({
             {task.cardIdentifier}
           </Badge>
         )}
+        <Badge size="xs" variant="light" color={task.scopeSource === 'None' || !task.projectName ? 'gray' : 'blue'} style={{ flexShrink: 0 }}>
+          {scopeChipLabel(task)}
+        </Badge>
         {task.parentTaskId && (
           <Text size="xs" c="dimmed" truncate style={{ flexShrink: 1, minWidth: 0 }}>
             ↳{rootTitle ? ` ${rootTitle}` : ''}

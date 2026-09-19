@@ -1,5 +1,7 @@
 import { HttpResponse, http } from 'msw'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { AgentTaskSummaryDto } from '../../api/agentTasks'
+import { agentTaskEnvelope } from '../../test/agentTaskEnvelope'
 import { renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { HomePage } from './HomePage'
@@ -154,7 +156,7 @@ function seed({
 } = {}) {
   server.use(
     http.get('/api/agents', () => HttpResponse.json(agents)),
-    http.get('/api/agent-tasks', () => HttpResponse.json(tasks)),
+    http.get('/api/agent-tasks', () => HttpResponse.json(agentTaskEnvelope(tasks as AgentTaskSummaryDto[]))),
     http.get('/api/agent-tasks/pipeline', () =>
       HttpResponse.json({
         asOf: '2026-08-17T10:00:00Z',
@@ -502,6 +504,23 @@ describe('HomePage', () => {
     expect(glance).toHaveTextContent('Broken 1')
     expect(glance).not.toHaveTextContent('Review')
     expect(screen.queryByText(/Needs attention/)).not.toBeInTheDocument()
+  })
+
+  it('unread badge consumes envelope items', async () => {
+    seed({
+      agents: [agent({})],
+      tasks: [
+        task({
+          status: 'Succeeded',
+          role: 'Code',
+          completedAt: new Date().toISOString(),
+          readAt: null,
+          title: 'just finished',
+        }),
+      ],
+    })
+    renderWithProviders(<HomePage />)
+    expect(await screen.findByRole('button', { name: 'To read (1)' })).toBeInTheDocument()
   })
 
   it('shows no attention glance on a quiet fleet, and counts settled failures as quiet', async () => {

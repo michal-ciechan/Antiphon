@@ -282,11 +282,11 @@ public class AgentTaskCardBindingTests
 
         var hidden = await CreateService(db, workspace)
             .ListAsync(null, null, includeChecks: false, CancellationToken.None);
-        hidden.ShouldNotContain(t => t.Id == created.Id);
+        hidden.Items.ShouldNotContain(t => t.Id == created.Id);
 
         var shown = await CreateService(db, workspace)
             .ListAsync(null, null, includeChecks: true, CancellationToken.None);
-        shown.ShouldContain(t => t.Id == created.Id);
+        shown.Items.ShouldContain(t => t.Id == created.Id);
     }
 
     [Test]
@@ -309,7 +309,7 @@ public class AgentTaskCardBindingTests
         detail.Summary.CardIdentifier.ShouldBe("CARD-0110");
 
         var listed = await service.ListAsync(null, null, includeChecks: false, CancellationToken.None);
-        listed.ShouldContain(t => t.Id == created.Id && t.CardIdentifier == "CARD-0110");
+        listed.Items.ShouldContain(t => t.Id == created.Id && t.CardIdentifier == "CARD-0110");
     }
 
     [Test]
@@ -328,9 +328,9 @@ public class AgentTaskCardBindingTests
         var listed = await CreateService(db, workspace).ListAsync(
             rootId: null, statuses: null, includeChecks: false, since, CancellationToken.None);
 
-        listed.Select(task => task.Id).ShouldNotContain(oldTerminal.Id);
-        listed.Select(task => task.Id).ShouldContain(oldBlocked.Id);
-        listed.Select(task => task.Id).ShouldContain(recentTerminal.Id);
+        listed.Items.Select(task => task.Id).ShouldNotContain(oldTerminal.Id);
+        listed.Items.Select(task => task.Id).ShouldContain(oldBlocked.Id);
+        listed.Items.Select(task => task.Id).ShouldContain(recentTerminal.Id);
     }
 
     [Test]
@@ -350,11 +350,11 @@ public class AgentTaskCardBindingTests
         var full = await service.ListAsync(null, null, includeChecks: false, CancellationToken.None);
         var summary = await service.GetListSummaryAsync(CancellationToken.None);
 
-        summary.Runs.ShouldBe(full.Select(task => task.RootTaskId).Distinct().Count());
-        summary.Active.ShouldBe(full.Count(task => task.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working));
-        summary.Blocked.ShouldBe(full.Count(task => task.Status == AgentTaskStatus.Blocked));
-        summary.TotalCostUsd.ShouldBe(full.Sum(task => task.CostUsd));
-        foreach (var group in full.GroupBy(task => task.Status))
+        summary.Runs.ShouldBe(full.Items.Select(task => task.RootTaskId).Distinct().Count());
+        summary.Active.ShouldBe(full.Items.Count(task => task.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working));
+        summary.Blocked.ShouldBe(full.Items.Count(task => task.Status == AgentTaskStatus.Blocked));
+        summary.TotalCostUsd.ShouldBe(full.Items.Sum(task => task.CostUsd));
+        foreach (var group in full.Items.GroupBy(task => task.Status))
             summary.ByStatus[group.Key.ToString()].ShouldBe(group.Count());
     }
 

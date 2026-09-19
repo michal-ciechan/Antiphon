@@ -985,8 +985,8 @@ public class AgentTaskCheckInterpreterTests
         var hidden = await h.Tasks.ListAsync(interpretation.RootTaskId, null, false, CancellationToken.None);
         var shown = await h.Tasks.ListAsync(interpretation.RootTaskId, null, true, CancellationToken.None);
 
-        hidden.ShouldBeEmpty("one row per interpreted check would bury the delegations board");
-        shown.ShouldHaveSingleItem().Id.ShouldBe(interpretation.Id);
+        hidden.Items.ShouldBeEmpty("one row per interpreted check would bury the delegations board");
+        shown.Items.ShouldHaveSingleItem().Id.ShouldBe(interpretation.Id);
     }
 
     // ---- helpers ---------------------------------------------------------------------------------

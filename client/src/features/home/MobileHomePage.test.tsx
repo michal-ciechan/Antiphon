@@ -1,6 +1,8 @@
 import { HttpResponse, http } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
+import type { AgentTaskSummaryDto } from '../../api/agentTasks'
 import type { AttentionItemDto } from '../../api/attention'
+import { agentTaskEnvelope } from '../../test/agentTaskEnvelope'
 import { renderWithProviders, screen, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { AWAY_LAST_SEEN_KEY } from './awayDelta'
@@ -123,7 +125,7 @@ function seed({
         plans,
       }),
     ),
-    http.get('/api/agent-tasks', () => HttpResponse.json(tasks)),
+    http.get('/api/agent-tasks', () => HttpResponse.json(agentTaskEnvelope(tasks as AgentTaskSummaryDto[]))),
     http.get('/api/cards', () => HttpResponse.json({ cards, truncated: false })),
   )
 }

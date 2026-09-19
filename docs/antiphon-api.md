@@ -250,24 +250,31 @@ curl -s -X POST http://localhost:17202/api/agents/{id}/attach-herdr \
 
 ```
 POST   /api/agent-tasks                      create (CreateAgentTaskRequest)
-GET    /api/agent-tasks                      list. Query: rootId, status (comma list of
-                                             AgentTaskStatus), includeChecks (bool, default false;
-                                             hides Check, Distill, and Diagnose specialist rows),
-                                             since (ISO instant). `since` keeps every non-settled
+GET    /api/agent-tasks                      list envelope `{ scope, items, excluded }`. Query:
+                                             rootId, status (comma list of AgentTaskStatus),
+                                             includeChecks (bool, default false; hides Check,
+                                             Distill, and Diagnose specialist rows), since (ISO
+                                             instant), projectId, boardId, unscoped
+                                             (`exclude` default when a scope id is present,
+                                             `include`, `only`). `since` keeps every non-settled
                                              row regardless of age and trims only settled rows by
-                                             CompletedAt. Omitting every filter returns the full
-                                             table — scripts and `delegate.ps1` depend on that.
-                                             Status names are case-insensitive (`working` ==
-                                             `Working`); an unrecognised value, including an
-                                             undefined number, is `422 validation_failed` with
-                                             `errors.status` naming it, and a comma list with one
-                                             bad entry is refused whole (CARD-0546). `boardId` /
-                                             `projectId` are NOT bound on this route until
-                                             CARD-0515 lands: the key is silently dropped today
-                                             (CARD-0541). A PowerShell caller must put
-                                             parentheses around `Invoke-RestMethod` (or assign it
-                                             to a variable) before piping, or the array prints as
-                                             one blank row; inline `@(...)` does not help.
+                                             CompletedAt. Omitting projectId/boardId returns every
+                                             board (`scope` is null, `excluded` is zeros). The
+                                             only in-repo production caller is the web client
+                                             (`client/src/api/agentTasks.ts`); `delegate.ps1`
+                                             does not list. Status names are case-insensitive
+                                             (`working` == `Working`); an unrecognised value,
+                                             including an undefined number, is `422
+                                             validation_failed` with `errors.status` naming it,
+                                             and a comma list with one bad entry is refused whole
+                                             (CARD-0546). An unrecognised query key is `400
+                                             unknown_query_parameter` naming the key and listing
+                                             the supported set. `unscoped` without a scope id is
+                                             `422 validation_failed`. A known board whose project
+                                             is not `projectId` is `422 scope_conflict`. Each row
+                                             carries projectId/projectName/boardId/boardName/
+                                             scopeSource (`Task`/`Card`/`None`). A PowerShell
+                                             caller reads `.items` off the envelope.
 GET    /api/agent-tasks/{id}                 {id} accepts the 8-char short id.
                                              `session` is read-time liveness: sessionId,
                                              status, working, lastSeenAt, endedAt,
@@ -283,8 +290,11 @@ GET    /api/agent-tasks/{id}                 {id} accepts the 8-char short id.
                                              `landRequestedAt`, `landStartedAt`,
                                              `landAttempt` (a pending land without
                                              reading events).
-GET    /api/agent-tasks/summary              fleet-wide counters (active, blocked, runs,
-                                             totalCostUsd, byStatus), independent of the list window
+GET    /api/agent-tasks/summary              counters (active, blocked, runs, totalCostUsd,
+                                             byStatus) with the same projectId/boardId/unscoped
+                                             predicate as the list. Omitted scope is fleet-wide
+                                             and independent of the list window. Specialists stay
+                                             hidden.
 POST   /api/agent-tasks/{id}/commit          gated commit of named paths (task-token caller).
                                              Body `{ paths, message }`. 200 `{ sha, files }`.
                                              Paths is a required nonempty array of explicit repository-relative
@@ -391,7 +401,7 @@ GET    /api/stage-outcomes                   CARD-0272 per-stage hit rate vs. co
                                              `FollowUp`/`Deploy`. `scripts/stage-value-report.ps1`
                                              wraps this as a table.
 GET    /api/agent-tasks/areas?directory=     the repo's named areas (antiphon.areas.json)
-GET    /api/agent-tasks/pipeline             fleet-wide advisory in-flight / queued / blocked / ready snapshot. Queued queueReason is one of sharedCheckoutLease, siblingLandInFlight, concurrencyCap, routingPinNotBefore, awaitingDispatch. In-flight, queued and blocked rows carry agentKind / modelLevel; in-flight and queued also carry workspace. Ready rows sit on the stage named by a settled stage-role task's `next:` handoff (`Investigate`/`Plan`/`TestDesign`/`Code`/`Review`) and carry `sourcePlanTaskId`, `sourceRole`, `deliverablePath`, `handoff`. A Succeeded Plan with `NextStage` unset and a verified `docs/superpowers/plans/` deliverable still yields a Code ready row (CARD-0146 S4 legacy). `land`/`decide`/`none` produce no ready row.
+GET    /api/agent-tasks/pipeline             fleet-wide across every board; there is no board filter. Advisory in-flight / queued / blocked / ready snapshot. Queued queueReason is one of sharedCheckoutLease, siblingLandInFlight, concurrencyCap, routingPinNotBefore, awaitingDispatch. In-flight, queued and blocked rows carry agentKind / modelLevel; in-flight and queued also carry workspace. Ready rows sit on the stage named by a settled stage-role task's `next:` handoff (`Investigate`/`Plan`/`TestDesign`/`Code`/`Review`) and carry `sourcePlanTaskId`, `sourceRole`, `deliverablePath`, `handoff`. A Succeeded Plan with `NextStage` unset and a verified `docs/superpowers/plans/` deliverable still yields a Code ready row (CARD-0146 S4 legacy). `land`/`decide`/`none` produce no ready row.
 ```
 
 `CreateAgentTaskRequest` (`server/Application/Dtos/AgentTaskDtos.cs`) is the biggest body in the
@@ -655,7 +665,7 @@ button, `scripts/github-sync.ps1`, or the Windmill job.
 ### Everything else
 
 ```
-GET    /api/attention                        the one "what needs a human" projection — fleet-global and unfiltered
+GET    /api/attention                        the one "what needs a human" projection — fleet-global across every board; there is no board filter
 GET    /api/plans  |  /api/plans/content     read-only projection over plan markdown in the repo (git is the store; there is no write path and there will not be one)
 GET    /api/audit  |  /cost-summary  |  /cost-ledger  |  /conversation    DELETE /api/audit/archive
 GET    /api/github/status  |  /repos  |  /repos/{owner}/{repo}/branches   POST /api/github/repos/refresh

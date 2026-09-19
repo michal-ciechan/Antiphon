@@ -169,8 +169,8 @@ public class AgentTaskListEndpointTests
         var body = await response.Content.ReadAsStringAsync();
         response.StatusCode.ShouldBe(HttpStatusCode.OK, body);
         using var document = JsonDocument.Parse(body);
-        document.RootElement.ValueKind.ShouldBe(JsonValueKind.Array, body);
-        return document.RootElement.EnumerateArray().Select(e => e.Clone()).ToList();
+        document.RootElement.ValueKind.ShouldBe(JsonValueKind.Object, body);
+        return document.RootElement.GetProperty("items").EnumerateArray().Select(e => e.Clone()).ToList();
     }
 
     private async Task<Guid> SeedAsync(Guid root, AgentTaskStatus status, AgentTaskRole role = AgentTaskRole.Code)

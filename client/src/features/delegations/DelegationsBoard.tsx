@@ -8,6 +8,7 @@ import {
   Group,
   Loader,
   Paper,
+  Select,
   SimpleGrid,
   Stack,
   Switch,
@@ -24,7 +25,9 @@ import {
   useAgentTasks,
   type AgentTaskSummaryDto,
 } from '../../api/agentTasks'
+import { useBoards } from '../../api/boards'
 import { DelegateModal } from './DelegateModal'
+import { hiddenByScopeLine } from './scopeVisuals'
 import { TaskChip } from './TaskChip'
 import { TaskDrawer } from './TaskDrawer'
 import { TaskTree } from './TaskTree'
@@ -38,8 +41,11 @@ import { LANES, buildTaskForest, formatCost, laneOf, subtreeIds, type TaskNode }
  * you walk a tree to find it.
  */
 export function DelegationsBoard() {
-  const tasks = useAgentTasks(false, { since: 'active' })
-  const summary = useAgentTaskListSummary()
+  const boards = useBoards()
+  const [boardId, setBoardId] = useState<string | null>(null)
+  const scope = boardId ? { boardId } : {}
+  const tasks = useAgentTasks(false, { since: 'active', ...scope })
+  const summary = useAgentTaskListSummary(scope)
   // ?task=<id> opens the drawer on arrival — how the home page's task rows land here.
   const [searchParams] = useSearchParams()
   const [selectedId, setSelectedId] = useState<string | null>(searchParams.get('task'))
@@ -51,7 +57,9 @@ export function DelegationsBoard() {
   // anything their set wins outright — a refetch must never re-collapse what they opened.
   const [expanded, setExpanded] = useState<Set<string> | null>(null)
 
-  const all = useMemo(() => tasks.data ?? [], [tasks.data])
+  const all = useMemo(() => tasks.data?.items ?? [], [tasks.data])
+  const hiddenLine = hiddenByScopeLine(tasks.data?.excluded)
+  const selectedBoardName = boards.data?.find((board) => board.id === boardId)?.name
   const forest = useMemo(() => buildTaskForest(all), [all])
 
   // Roots open, deeper sub-orchestrators closed: the run's top-level fan-out is visible at once,
@@ -107,7 +115,7 @@ export function DelegationsBoard() {
     <Stack gap="md">
       <Group justify="space-between">
         <Group gap="xs">
-          <Title order={4}>Delegations</Title>
+          <Title order={4}>{boardId ? selectedBoardName ?? 'Delegations' : 'Fleet — all boards'}</Title>
           <Badge variant="light" color="gray">
             {totals?.runs ?? 0} run{totals?.runs === 1 ? '' : 's'}
           </Badge>
@@ -126,6 +134,20 @@ export function DelegationsBoard() {
           </Badge>
         </Group>
         <Group gap="xs">
+          <Select
+            size="xs"
+            aria-label="Board scope"
+            w={220}
+            value={boardId ?? ''}
+            onChange={(value) => setBoardId(value || null)}
+            data={[
+              { value: '', label: 'All boards' },
+              ...(boards.data ?? []).map((board) => ({
+                value: board.id,
+                label: `${board.name} (${board.projectName})`,
+              })),
+            ]}
+          />
           {selectedId && (
             <Switch
               size="xs"
@@ -144,6 +166,11 @@ export function DelegationsBoard() {
           </Button>
         </Group>
       </Group>
+      {hiddenLine && (
+        <Text size="sm" c="dimmed" data-testid="board-hidden-by-scope">
+          {hiddenLine}
+        </Text>
+      )}
 
       <Group align="stretch" gap="md" wrap="nowrap" style={{ alignItems: 'flex-start' }}>
         <Paper withBorder p="xs" w={380} style={{ flexShrink: 0 }}>

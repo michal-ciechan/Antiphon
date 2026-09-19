@@ -1613,15 +1613,66 @@ public sealed class AgentTaskService
     /// fleet would otherwise bury the board under them. The query-string name is kept from
     /// CARD-0047; it now hides every specialist role.
     /// </param>
-    public Task<IReadOnlyList<AgentTaskSummaryDto>> ListAsync(
+    public Task<AgentTaskListEnvelopeDto> ListAsync(
         Guid? rootId, AgentTaskStatus? status, bool includeChecks, CancellationToken ct) =>
-        ListAsync(rootId, status is { } singleStatus ? [singleStatus] : null, includeChecks, since: null, ct);
+        ListAsync(rootId, status is { } singleStatus ? [singleStatus] : null, includeChecks, since: null, scope: null, ct);
 
     /// <summary>
     /// Lists delegated work. A history window only trims settled rows: queued, dispatched,
     /// working, and blocked tasks always remain visible, even when their run began long ago.
     /// </summary>
-    public async Task<IReadOnlyList<AgentTaskSummaryDto>> ListAsync(
+    public Task<AgentTaskListEnvelopeDto> ListAsync(
+        Guid? rootId,
+        IReadOnlyCollection<AgentTaskStatus>? statuses,
+        bool includeChecks,
+        DateTime? since,
+        CancellationToken ct) =>
+        ListAsync(rootId, statuses, includeChecks, since, scope: null, ct);
+
+    public async Task<AgentTaskListEnvelopeDto> ListAsync(
+        Guid? rootId,
+        IReadOnlyCollection<AgentTaskStatus>? statuses,
+        bool includeChecks,
+        DateTime? since,
+        AgentTaskScopeRequest? scope,
+        CancellationToken ct)
+    {
+        var candidates = await LoadListCandidatesAsync(rootId, statuses, includeChecks, since, ct);
+        var labels = await LoadScopeLabelsAsync(candidates, scope, ct);
+        var (items, excluded) = AgentTaskScope.Partition(candidates, labels, scope);
+        return new AgentTaskListEnvelopeDto(
+            AgentTaskScope.Echo(scope, labels),
+            items.Select(t => ToSummary(t, candidates, labels)).ToList(),
+            excluded);
+    }
+
+    /// <summary>Fleet counters for the board header. Specialist machinery stays hidden.</summary>
+    public Task<AgentTaskListSummaryDto> GetListSummaryAsync(CancellationToken ct) =>
+        GetListSummaryAsync(null, ct);
+
+    public async Task<AgentTaskListSummaryDto> GetListSummaryAsync(
+        AgentTaskScopeRequest? scope, CancellationToken ct)
+    {
+        var candidates = await LoadListCandidatesAsync(
+            rootId: null, statuses: null, includeChecks: false, since: null, ct);
+        var labels = await LoadScopeLabelsAsync(candidates, scope, ct);
+        var (items, _) = AgentTaskScope.Partition(candidates, labels, scope);
+
+        var byStatus = items
+            .GroupBy(t => t.Status)
+            .Select(group => new { Status = group.Key, Count = group.Count() })
+            .ToList();
+        var counts = byStatus.ToDictionary(group => group.Status.ToString(), group => group.Count);
+        return new AgentTaskListSummaryDto(
+            Active: byStatus.Where(group => group.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
+                .Sum(group => group.Count),
+            Blocked: byStatus.Where(group => group.Status == AgentTaskStatus.Blocked).Sum(group => group.Count),
+            Runs: items.Select(t => t.RootTaskId).Distinct().Count(),
+            TotalCostUsd: items.Sum(t => t.CostUsd),
+            ByStatus: counts);
+    }
+
+    private async Task<List<AgentTask>> LoadListCandidatesAsync(
         Guid? rootId,
         IReadOnlyCollection<AgentTaskStatus>? statuses,
         bool includeChecks,
@@ -1647,30 +1698,7 @@ public sealed class AgentTaskService
                     && t.Status != AgentTaskStatus.Canceled));
         }
 
-        var tasks = await query.OrderBy(t => t.CreatedAt).ToListAsync(ct);
-        var cardIdentifiers = await LoadCardIdentifiersAsync(tasks, ct);
-        return tasks.Select(t => ToSummary(t, tasks, cardIdentifiers)).ToList();
-    }
-
-    /// <summary>Fleet counters for the board header. Specialist machinery stays hidden.</summary>
-    public async Task<AgentTaskListSummaryDto> GetListSummaryAsync(CancellationToken ct)
-    {
-        var tasks = _db.AgentTasks.AsNoTracking().Where(AgentTaskRoles.NotSpecialist);
-        var byStatus = await tasks
-            .GroupBy(t => t.Status)
-            .Select(group => new { Status = group.Key, Count = group.Count() })
-            .ToListAsync(ct);
-        var runs = await tasks.Select(t => t.RootTaskId).Distinct().CountAsync(ct);
-        var totalCostUsd = await tasks.SumAsync(t => t.CostUsd, ct);
-
-        var counts = byStatus.ToDictionary(group => group.Status.ToString(), group => group.Count);
-        return new AgentTaskListSummaryDto(
-            Active: byStatus.Where(group => group.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
-                .Sum(group => group.Count),
-            Blocked: byStatus.Where(group => group.Status == AgentTaskStatus.Blocked).Sum(group => group.Count),
-            Runs: runs,
-            TotalCostUsd: totalCostUsd,
-            ByStatus: counts);
+        return await query.OrderBy(t => t.CreatedAt).ToListAsync(ct);
     }
 
     public async Task<AgentTaskDetailDto> GetAsync(Guid id, CancellationToken ct, Guid? pollingSessionId = null)
@@ -1774,7 +1802,7 @@ public sealed class AgentTaskService
             }
         }
         return new AgentTaskDetailDto(
-            ToSummary(task, family, await LoadCardIdentifiersAsync([task], ct)), task.Goal, task.Result,
+            ToSummary(task, family, await LoadScopeLabelsAsync([task], scope: null, ct)), task.Goal, task.Result,
             task.ResultFilePath, task.DeliverablePath, task.DeliverableRef,
             task.FailureReason, task.MergeTargetRef, events, task.FailureCode, blocked,
             task.StandingAuthority, task.AutoContinueOnWait, task.NextStage, task.NextHandoff,
@@ -1847,7 +1875,7 @@ public sealed class AgentTaskService
         var family = await _db.AgentTasks.AsNoTracking()
             .Where(t => t.RootTaskId == task.RootTaskId)
             .ToListAsync(ct);
-        return ToSummary(task, family, await LoadCardIdentifiersAsync([task], ct));
+        return ToSummary(task, family, await LoadScopeLabelsAsync([task], scope: null, ct));
     }
 
     public async Task<AgentTaskSummaryDto> CancelAsync(Guid id, CancellationToken ct)
@@ -2836,14 +2864,14 @@ public sealed class AgentTaskService
     /// carries the subtree cost rollup, which a single row cannot answer.</summary>
     public async Task<AgentTaskSummaryDto> GetSummaryAsync(
         AgentTask task, IReadOnlyList<AgentTask> family, CancellationToken ct = default) =>
-        ToSummary(task, family, await LoadCardIdentifiersAsync([task], ct));
+        ToSummary(task, family, await LoadScopeLabelsAsync([task], scope: null, ct));
 
     /// <summary>The DTO for one task, re-reading its run for the cost rollup.</summary>
     private async Task<AgentTaskSummaryDto> SummaryOfAsync(AgentTask task, CancellationToken ct)
     {
         var family = await _db.AgentTasks.AsNoTracking()
             .Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
-        return ToSummary(task, family, await LoadCardIdentifiersAsync([task], ct));
+        return ToSummary(task, family, await LoadScopeLabelsAsync([task], scope: null, ct));
     }
 
     internal static bool IsSettled(AgentTaskStatus status) =>
@@ -2859,26 +2887,89 @@ public sealed class AgentTaskService
             || (parent.WorktreePath is not null && DelegationWorkspaceResolver.IsWithinRoot(repoPath, parent.WorktreePath)));
 
     /// <summary>
-    /// The identifiers of every card the given tasks are bound to (CARD-0040). One query for the
-    /// whole page: a per-row lookup on a board listing hundreds of tasks is a hundred round-trips
-    /// for a string that is already denormalisable.
+    /// CARD-0515. Two batch lookups for the page: card ids joined to boards and projects, then
+    /// stored project ids. Empty id sets skip their query (0..2), never a per-row round-trip.
+    /// Paths are not consulted.
     /// </summary>
-    private async Task<IReadOnlyDictionary<Guid, string>> LoadCardIdentifiersAsync(
-        IEnumerable<AgentTask> tasks, CancellationToken ct)
+    private async Task<AgentTaskScopeLabels> LoadScopeLabelsAsync(
+        IReadOnlyCollection<AgentTask> tasks,
+        AgentTaskScopeRequest? scope,
+        CancellationToken ct)
     {
         var cardIds = tasks.Where(t => t.CardId is not null).Select(t => t.CardId!.Value).Distinct().ToList();
-        if (cardIds.Count == 0)
-            return new Dictionary<Guid, string>();
+        var projectIds = tasks.Where(t => t.ProjectId is not null).Select(t => t.ProjectId!.Value).ToList();
+        if (scope?.ProjectId is Guid requestedProject)
+            projectIds.Add(requestedProject);
+        projectIds = projectIds.Distinct().ToList();
 
-        return await _db.Cards.AsNoTracking()
-            .Where(c => cardIds.Contains(c.Id))
-            .ToDictionaryAsync(c => c.Id, c => c.Identifier, ct);
+        var cardIdentifiers = new Dictionary<Guid, string>();
+        var cardBindings = new Dictionary<Guid, AgentTaskCardScopeBinding>();
+        var boards = new Dictionary<Guid, AgentTaskBoardScopeBinding>();
+
+        if (cardIds.Count > 0)
+        {
+            var cardRows = await _db.Cards.AsNoTracking()
+                .Where(c => cardIds.Contains(c.Id))
+                .Select(c => new
+                {
+                    c.Id,
+                    c.Identifier,
+                    c.BoardId,
+                    BoardName = c.Board.Name,
+                    ProjectId = c.Board.ProjectId,
+                    ProjectName = c.Board.Project.Name,
+                })
+                .ToListAsync(ct);
+            foreach (var row in cardRows)
+            {
+                cardIdentifiers[row.Id] = row.Identifier;
+                var binding = new AgentTaskCardScopeBinding(
+                    row.BoardId, row.BoardName, row.ProjectId, row.ProjectName);
+                cardBindings[row.Id] = binding;
+                boards[row.BoardId] = new AgentTaskBoardScopeBinding(
+                    row.BoardId, row.BoardName, row.ProjectId, row.ProjectName);
+            }
+        }
+
+        if (scope?.BoardId is Guid requestedBoard && !boards.ContainsKey(requestedBoard))
+        {
+            var extra = await _db.Boards.AsNoTracking()
+                .Where(b => b.Id == requestedBoard)
+                .Select(b => new { b.Id, b.Name, b.ProjectId, ProjectName = b.Project.Name })
+                .FirstOrDefaultAsync(ct);
+            if (extra is not null)
+            {
+                boards[extra.Id] = new AgentTaskBoardScopeBinding(
+                    extra.Id, extra.Name, extra.ProjectId, extra.ProjectName);
+                if (!projectIds.Contains(extra.ProjectId))
+                    projectIds.Add(extra.ProjectId);
+            }
+        }
+
+        var projects = new Dictionary<Guid, string>();
+        if (projectIds.Count > 0)
+        {
+            var projectRows = await _db.Projects.AsNoTracking()
+                .Where(p => projectIds.Contains(p.Id))
+                .Select(p => new { p.Id, p.Name })
+                .ToListAsync(ct);
+            foreach (var row in projectRows)
+                projects[row.Id] = row.Name;
+        }
+
+        return new AgentTaskScopeLabels
+        {
+            CardIdentifiers = cardIdentifiers,
+            CardBindings = cardBindings,
+            Projects = projects,
+            Boards = boards,
+        };
     }
 
     private static AgentTaskSummaryDto ToSummary(
         AgentTask task,
         IReadOnlyList<AgentTask> family,
-        IReadOnlyDictionary<Guid, string>? cardIdentifiers = null)
+        AgentTaskScopeLabels labels)
     {
         // Walk the parent chain rather than recursing children — the same O(n) pass answers both
         // "my subtree's cost" and "my child count" for every row in a run.
@@ -2890,6 +2981,7 @@ public sealed class AgentTaskService
             if (other.ParentTaskId == task.Id) childCount++;
         }
 
+        var resolved = AgentTaskScope.Resolve(task, labels);
         return new AgentTaskSummaryDto(
             task.Id, task.RootTaskId, task.ParentTaskId, task.Depth, task.Title, task.Kind, task.Role,
             task.AgentKind,
@@ -2906,13 +2998,17 @@ public sealed class AgentTaskService
             task.ExpectedDurationMinutes, task.NextCheckAt, task.CheckCount,
             task.LandRequestedAt, task.LandStartedAt, task.LandAttempt,
             task.CardId,
-            task.CardId is Guid cardId && cardIdentifiers is not null
-                && cardIdentifiers.TryGetValue(cardId, out var identifier)
+            task.CardId is Guid cardId && labels.CardIdentifiers.TryGetValue(cardId, out var identifier)
                     ? identifier
                     : null,
             task.ReportEvidence,
             task.Complexity,
-            task.RepliedAt);
+            task.RepliedAt,
+            resolved.ProjectId,
+            resolved.ProjectName,
+            resolved.BoardId,
+            resolved.BoardName,
+            resolved.Source);
     }
 
     private static string FormatComplexityCreatedDetail(ComplexityRoutingService.Walk walk)
