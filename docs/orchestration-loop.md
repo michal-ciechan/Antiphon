@@ -194,6 +194,52 @@ noticed.
 Lowest `rank` first — the formula already prefers a card that **changes how everything else gets done** over one more feature.
 Prefer a card whose plan already exists — but check properly, see below.
 
+### Standing pipeline policy: one task per stage, Code fed to two (CARD-0533)
+
+**This is the orchestrator's default for working the Antiphon board.** It was the operator's
+standing instruction on every overnight run from 2026-09-13/14 through 2026-09-18/19 and is
+recorded here so a fresh seat starts from it instead of being told again. The user's words in a
+session override it for that session; nothing below needs restating to apply. The delivered copy
+is the `orchestrator` bundle; this section carries the reasons.
+
+1. **One task per stage, stages in parallel.** Run at most one task in each stage role
+   (Investigate, Plan, TestDesign, Code, Mutation, Review) at a time, and let different stages
+   run concurrently — each in its own `-Worktree`, so they never serialise on the shared
+   checkout. Never two tasks in the same stage at once. Before dispatching a stage, read that
+   stage's in-flight row on `GET /api/agent-tasks/pipeline` (or `/orchestrator?tab=pipeline`),
+   not your memory of what you dispatched.
+2. **On every completion, dispatch the named next stage.** Read `next=` and `handoff:` off the
+   completion header (§1, CARD-0146). `next=unmarked` goes back to the same delegate for the
+   missing block (§0's ladder); it is never guessed from the diff.
+3. **Land promptly.** Once a stage's work is confirmed — a Plan or investigation artifact, a
+   reviewed Code branch — run `-Land` then (§5), not at the end of the night. Unlanded work is
+   how the 9-hour strandings under "Is there a solid plan?" happened.
+4. **Keep the Code stage at a depth of two.** Count Code rows that are in flight, queued or
+   `ready` (a settled Plan or TestDesign whose `next:` is code) on the pipeline snapshot. Fewer
+   than two: pull the next unstarted Backlog card — lowest `rank` first, as under Picking — and
+   start it through Investigate/Plan toward Code. Already two: start no new Plan toward Code;
+   Investigate, Plan and TestDesign for cards already in the pipe still run. This is CARD-0146
+   D7's "planning should only stop if more than 1 card waiting to execute", with its pull side
+   stated as well.
+5. **Same source area as an in-flight Code task: defer, even with a free Code slot.** A Worktree
+   task whose scope intersects a running one is warned, not held (CARD-0063, preserved detail
+   below), so nothing stops two Code tasks editing the same file and conflicting at merge. When a
+   card's plan names the same file or area as another card's in-flight Code task, hold its Code
+   dispatch until that task lands, and say so on the card thread. CARD-0537's plan (2026-09-19)
+   sequenced its first slice behind CARD-0535's Code task for exactly this reason; the deferral
+   costs an hour, the conflict costs a Merge task and a second Review.
+6. **File a card the moment a structural defect is found.** Investigate and Review turn up bugs
+   outside their card's scope; each one gets its own Backlog card now (`card.ps1 new`, with the
+   evidence), never a note to batch later. A finding that lives only in a chat reply or a report
+   body is gone at the next compaction.
+7. **`-IgnoreConcurrencyLimit` answers the absolute cap, never a same-stage collision.** A 409
+   `concurrency_limit` carries `axis` (`absolute` or `role`) and the `open` occupants with their
+   roles; the absolute axis wins the report when both caps are exceeded, so read the list, not
+   only the axis. `axis: role`, or any listed occupant in the role you are dispatching: defer —
+   that is rule 1, and the flag would lift the per-role cap along with the absolute one.
+   `axis: absolute` with no occupant in that role: re-send with `-IgnoreConcurrencyLimit`,
+   because rule 1 is the standing request for cross-stage parallelism.
+
 ### Reprioritising the backlog
 
 An agent that can call the API — `delegate.ps1 -Role Custom` (or Plan), or a `ScheduleKind.Prompt`
@@ -321,13 +367,17 @@ Code's ordinary V/R, mandatory pre-land `Review`, and post-land Mutation's delib
 axes (`AgentTask.Stage` vs `AgentTask.NextStage`); neither is renamed to disambiguate, so read the
 column, not the word.
 
-**WIP defaults (documented rule, CARD-0146 D7 — dates are the operator instructions that fixed
-these, 2026-09-01/02).** `RecommendedInFlight = 1` for every stage role. Plan-side WIP (Investigate
-+ Plan + TestDesign together) is 1; Execute (Code) WIP is 1; Mutation has its own WIP of 1; Plan holds once the Code stage's
-`ready` list reaches 2 rows ("planning should only stop if more than 1 card waiting to execute");
-alternate one complex/UI card with one medium/simple card, and prefer GitHub-linked cards. All of
-this is advisory — CARD-0147's create-time concurrency gate is the hard stop, this is the
-judgement call underneath it.
+**WIP defaults (documented rule, CARD-0146 D7, restated by CARD-0533 — dates are the operator
+instructions that fixed these, 2026-09-01/02 and 2026-09-13/14).** `RecommendedInFlight = 1` for
+every stage role, and that is the per-stage rule: one Investigate, one Plan, one TestDesign, one
+Code, one Mutation and one Review may all be in flight together, never two tasks in the same
+stage. The 2026-09-01 reading that the plan-side stages share one slot is superseded — they run
+concurrently, each in its own worktree. Code is fed to a depth of two (in flight + queued +
+ready); Plan toward Code holds at that depth ("planning should only stop if more than 1 card
+waiting to execute") and resumes below it. Alternate one complex/UI card with one medium/simple
+card, and prefer GitHub-linked cards. All of this is advisory — CARD-0147's create-time
+concurrency gate is the hard stop, this is the judgement call underneath it; the full rule set is
+§1's standing pipeline policy.
 
 **A `Test` agent runs and reports. It does not repair.** The boundary, stated so it is not a matter
 of taste:
@@ -425,9 +475,12 @@ Frontier maps to fable (Claude) by default, or `grok-4.6` when `Kind=Grok` is pa
 If `delegate.ps1` 409s `model_disabled`, pick an alias from `available` or wait until
 `disabledUntil`; do not retry the same kind/tier. If the 409 also says the available list does
 not satisfy a routing pin, wait, pass `-IgnoreModelDisabled` to queue, or replace the pin — do
-not pick from `available`. Dispatch is sequential-by-default: a 409 `concurrency_limit` names
-this project's occupants and cap; wait, or re-send with `-IgnoreConcurrencyLimit` only when
-the user asked for parallel work this turn. Other projects' work never counts against yours.
+not pick from `available`. Dispatch is sequential-by-default at the gate: a 409 `concurrency_limit` names
+this project's occupants, the cap and the `axis` it tripped. On a board worked under §1's standing
+policy that policy is the request for cross-stage parallelism: re-send with `-IgnoreConcurrencyLimit`
+when the axis is `absolute` and no listed occupant shares the stage you are dispatching; defer when
+the axis is `role` or a same-stage occupant is listed. Elsewhere, only when the user asked for
+parallel work this turn. Other projects' work never counts against yours.
 
 ### Reuse first
 
