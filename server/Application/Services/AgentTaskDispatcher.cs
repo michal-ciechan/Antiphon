@@ -3426,6 +3426,10 @@ public sealed class AgentTaskDispatcher
             return DispatchOneResult.NotClaimed;
         }
 
+        // FOR UPDATE reuses the tick's tracked instance; reload so Capture sees the locked row
+        // (a pre-claim route edit) rather than the outer snapshot. PC-71.
+        await _db.Entry(claimed).ReloadAsync(ct);
+
         if (await ExpireClaimedOptionalWorkAsync(claimed, ct))
         {
             await transaction.CommitAsync(ct);
