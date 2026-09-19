@@ -570,6 +570,8 @@ Transcript UUID/sequence identifies a persisted recipient record, not a command 
 | Rules initialization | Composer/rules payload -> runner rules file -> rules refresh queue -> Grok | Persist expected generation/hash/count and runner receipt. Inject receipt-save and refresh-enqueue failure separately; retry must converge on the same refresh identity. Runner path is Linux-readable; server must not stat it. | Complete refresh UserPrompt, matching rules acknowledgement and successful TurnEnd persist before ordinary queued work is released. A file receipt alone does not release it. |
 | Ordinary input | Normal queue API -> durable message -> queue worker -> bound adapter/client -> socket -> recipient composer | Failed DB insert has no send. Committed row survives lost wakeup. Before-send cancellation writes nothing; after-send disconnect/timeout is unknown, with no transport replay. Queue recovery pulls transcript first, then uses same-generation composer evidence for Enter-only; unavailable deferral spends no attempt. | Complete normalized submitted body in this session's UserPrompt beyond its attempt floor, with matching generation/identity, plus queue verdict. The real canary additionally requires nonce-bearing assistant text and TurnEnd. |
 | Transcript/live events | Runner tailer/event hub -> bounded subscriber -> socket -> runtime -> PostgreSQL -> queue receipt reader | Runner transcript is the source for reconnect. Subscribe before inventory/catch-up; commit backfill before releasing live events. Disconnect on overflow, recover from transcript; replayed UUIDs are deduplicated. Crash before DB save replays; crash after save before verdict late-confirms without typing. | Query persisted recipient entries through the server transcript API/DB and prove content, order and uniqueness. Sent, request acceptance, socket ack and screen PONG are intermediate observations only. |
+| Command outcomes | Bound client request -> runner runtime -> epoch/request-correlated caller waiter | Waiters are transient, session owner/generation is durable. Unsent cancellation is no-op; crash after execution before reply yields unknown, never automatic write retry. Reads may be freshly requested; launch/input recovery is as above; stop is retried only explicitly against the captured generation. | Calling service receives the matching complete DTO or typed failure. Conditional input/kill requires its generation-qualified result; neither is evidence of prompt receipt. Test each supported operation and the reply-loss cut. |
+| Registration/availability | Adopted runner -> authenticated server directory/status reader | Availability and single-use ticket are transient; mounted RunnerStoreId and DB ownership persist. Server restart requires fresh registration; runner restart keeps store ID, changes boot and re-adopts before registration. | Authenticated socket plus completed inventory/transcript recovery and current lease make status Ready; registration acceptance/heartbeat alone cannot make session input delivered. |
 
 Controlled peers may model provider transcript records only after observing the bytes
 actually submitted through the real queue and socket. They must send those records
@@ -594,6 +596,9 @@ with the literal turn rows, `TempUpdatesPath`, `AppendRowsAsync`, `PollForEntrie
 and `NormalizeFixture`. Launcher and PtyHost entrypoint bodies were also inspected.
 Native fixtures must not copy the Windows `cmd.exe` child, swallowed cleanup failure,
 or direct DB transcript insertion from these helpers.
+Also read the existing `SessionMessageQueueDeliveryVerificationTests` transcript
+and degraded `LastDelivery` receipt methods, runner `SessionRunnerSettings`,
+`GrokRulesSettings`/`GrokRulesTransport` and `ShadowCopyStore` closure/copy bodies.
 
 Inspection-to-boundary index: launcher/shadow/pipe -> V-1, R-1;
 startup/HTTP/wire -> V-2, R-2; control/launch/DB -> V-3, R-3;
@@ -716,6 +721,10 @@ unmutated implementation. No mutation is required during Code or ordinary Review
   tickets; competing unexpired boot versus expired same-store adoption; stale result
   versus current result with the same request ID; timeout/cancellation before and
   after send. Record received frames and pending waiters, never only status codes.
+  Add `PhoneHomeConnectionTests.Supported_operations_preserve_contracts` for every
+  D-3 operation with exact DTO/body/result or typed Problem Details parity against
+  the shared mapper, and `Default_buffers_and_rules_fit_full_envelopes` for the
+  actual configured-size serialization check below.
 - R-3: Durable owner, launch transaction, exact scope/capacity/path/generation |
   `PhoneHomeStandingLaunchTests`, `PhoneHomeSessionRoutingTests`,
   `PhoneHomeCommandDispatcherTests` methods in PCs | each invalid admission arm
@@ -736,6 +745,11 @@ unmutated implementation. No mutation is required during Code or ordinary Review
   verified receipt. Finally emit the fresh whole prompt and require one verified
   receipt. Existing degraded screen-only semantics may persist; `Sent` or a degraded
   `Delivered` enum alone must not satisfy this test's recipient predicate.
+  In PC assertions `verifiedReceipt` means the production receipt claims
+  `ConfirmedBy == DeliveryConfirmedBy.Transcript` and `Degraded == false`.
+  Separately compare the persisted complete body and floor without calling the
+  production matcher being mutated; this independent assertion prevents a lying
+  production receipt from becoming the test's own oracle.
 - R-6: Recovery cannot duplicate or lose the turn | V-6 plus
   `PhoneHomeQueuedTurnTests.Offline_deferral_does_not_spend_attempts`,
   `PhoneHomeQueuedTurnTests.Rules_receipt_is_owner_bound_and_remote_readable`,
@@ -773,9 +787,12 @@ Use a small configured cap for exhaustive cases and one real 16 MiB default-boun
 case. Apply the shared framing guard on both peers. Do the same for request counts
 31/32/33, live event count 1023/1024/1025 and pending event bytes 16 MiB-1/equal/+1;
 the first exceeded limit wins, so test count-first and bytes-first separately.
-Zero/negative options fail startup. Serialize default runner buffer/snapshot bounds
-and maximum configured Grok rules payload, including JSON escaping; assert they fit
-or return a typed complete-read failure. A too-large transcript produces no partial
+Zero/negative options fail startup. The inspected defaults are 262144 runner replay
+characters and 262144 UTF-8 rules-file bytes. Serialize full buffer/snapshot and
+rules envelopes at those defaults, including maximum JSON escaping and metadata;
+require each to fit the 16 MiB default and preserve exact bytes after decoding.
+Repeat with deliberately larger configured limits and require a typed complete-read
+failure if the full serialized envelope exceeds the transport limit. A too-large transcript produces no partial
 success, does not become receipt, and does not cause an endless reconnect/read loop.
 Hold command execution and event consumption independently to prove boundedness and
 continued receive progress. Successful below-limit controls must still exchange
@@ -790,3 +807,252 @@ sibling prefix, descendant worktree, `..`, alternate drive and raw POSIX server 
 are refused. Equivalent canonical Windows root spelling follows existing host
 canonicalization, not POSIX canonicalization on Windows. Exercise capacity during
 startup adoption and same-boot reconnect as well as fresh registration.
+
+### Guard inventory
+
+This appendix assigns fresh sequential G/PC numbers; the earlier table remains a
+seed table. There are **46 independently bypassable checks**, not 46 implementation
+features. Splits are confined to the existing D/S requirements: both readiness
+barriers, transient fencing versus durable ownership, the two admission sites,
+generation operations, native closure/detach, transcript receipt/recovery and the
+explicit transport bounds. No fleet, worktree or container lifecycle guard is added.
+A common predicate may cover a data matrix; separate call sites or recovery gates
+must not be hidden behind one positive control. No safety-critical guard is excluded.
+
+| Guard | Plan reference and invariant | Control |
+|---|---|---|
+| G-1 | D-2: shared credential/allowed-runner authentication applies to register and connect. | PC-1 |
+| G-2 | D-2/D-5: connection ticket is unexpired, single-use and bound to runner/store/boot. | PC-2 |
+| G-3 | D-2: runner finishes adoption before registering. | PC-3 |
+| G-4 | D-7: directory dispatch eligibility waits for complete recovery. | PC-4 |
+| G-5 | D-5: socket disconnect or expired heartbeat forbids new work without killing children. | PC-5 |
+| G-6 | D-4/D-5: competing unexpired boot and incompatible store cannot replace the owner. | PC-6 |
+| G-7 | D-3/D-5: stale-epoch response cannot complete a current waiter. | PC-7 |
+| G-8 | D-7: event runner/store/epoch provenance must match the DB session owner. | PC-8 |
+| G-9 | D-5: reconnect/cancel/timeout never replays a sent mutating RPC. | PC-9 |
+| G-10 | D-5: unresolved sent launch keeps its generation reserved until fresh owner evidence. | PC-10 |
+| G-11 | D-4: owner fields are all-null legacy or all-present valid binding. | PC-11 |
+| G-12 | D-4: transaction commit precedes launch enqueue; rollback has no command. | PC-12 |
+| G-13 | D-6: bound operations use persisted owner, never current pin/local fallback. | PC-13 |
+| G-14 | D-6: unavailable inventory is unknown, not authoritative absence. | PC-14 |
+| G-15 | D-6: all reconciliation passes act only on their owner partition. | PC-15 |
+| G-16 | D-6: owner availability/epoch is rechecked before absence writes. | PC-16 |
+| G-17 | D-1/D-8: server admission excludes card/task/pool/wrong-kind/backend/profile starts before side effects. | PC-17 |
+| G-18 | D-3/D-8: runner admission rejects unsupported operations and non-Grok/cwd/custody payloads independently of server policy. | PC-18 |
+| G-19 | D-8: capacity one includes adopted sessions and concurrent reservations. | PC-19 |
+| G-20 | D-8: exactly the configured canonical host root maps to `/work`. | PC-20 |
+| G-21 | D-8: trusted projection changes only Linux transport fields and retains full rules/reserved identities/local definition. | PC-21 |
+| G-22 | D-8: native resume stays strict and same-owner; missing history cannot become fresh launch. | PC-22 |
+| G-23 | D-3/D-6: launch accepts only its generation echo. | PC-23 |
+| G-24 | D-3: conditional input retains expected generation/sequence and never falls back to raw input. | PC-24 |
+| G-25 | D-6: stop uses captured generation, never a newly fetched generation or unconditional kill. | PC-25 |
+| G-26 | D-9: dependency closure includes the extensionless Linux apphost. | PC-26 |
+| G-27 | D-9: dependency closure includes Linux native PTY assets. | PC-27 |
+| G-28 | D-9: shadow copy preserves executable mode. | PC-28 |
+| G-29 | D-9: POSIX child creates a new session and fails on detach error. | PC-29 |
+| G-30 | D-9: detached child releases all intermediary stdio handles. | PC-30 |
+| G-31 | D-9: canceled launch cleans up the actual spawned host. | PC-31 |
+| G-32 | D-7/acceptance: receipt requires the complete matching recipient UserPrompt. | PC-32 |
+| G-33 | D-5/acceptance: receipt must clear the attempt's transcript floor. | PC-33 |
+| G-34 | D-8: ordinary work waits for rules prompt, matching acknowledgement and successful end. | PC-34 |
+| G-35 | D-7: live events wait until transcript catch-up commits. | PC-35 |
+| G-36 | D-7: replayed transcript UUID/sequence does not duplicate persisted receipt. | PC-36 |
+| G-37 | D-7: runner event-hub subscription is bounded and overflow is explicit. | PC-37 |
+| G-38 | D-7: server catch-up live buffer is bounded and overflow restarts recovery. | PC-38 |
+| G-39 | D-3: shared complete-message UTF-8 bound applies before whole-body allocation on both peers. | PC-39 |
+| G-40 | D-3: in-flight request admission is bounded. | PC-40 |
+| G-41 | D-3/D-7: runtime/event handlers cannot block the socket response receive loop. | PC-41 |
+| G-42 | D-11: remote delivery never borrows local modern PTY ceilings. | PC-42 |
+| G-43 | D-6: Linux rows/PIDs never reach local OS census or termination decisions. | PC-43 |
+| G-44 | D-5: backend-unavailable queue deferral is uncharged and non-destructive. | PC-44 |
+| G-45 | D-8: rules file receipt is validated against the bound owner and expected generation/hash/count before refresh enqueue. | PC-45 |
+| G-46 | D-2/D-8: registration secret cannot cross child-environment or public diagnostic boundaries. | PC-46 |
+
+### Positive controls
+
+These are compiling production mutations, not edits to assertions, test fakes or
+skip attributes. Code creates the exact methods and named observations specified
+here. On the unmodified code each must exercise both refusal and successful recovery
+where applicable. Mutation applies one defect, builds, runs only its exact method,
+records the indicated assertion red, restores the exact source, forces rebuild and
+runs the same method green. A failure before the indicated assertion (including
+native launch/fixture setup), zero tests, timeout outside the asserted deadline or
+an all-skipped result is not PC evidence. For negative tests, hold every unrelated
+gate open; for overflow tests, raise downstream limits so another guard cannot mask
+the mutation. Keep a per-PC record of break, red, restore and green after land.
+
+Project abbreviations in this table are command inputs, not wildcard filters:
+`T = tests/Antiphon.Tests`, `R = tests/Antiphon.SessionRunner.Tests`,
+`P = tests/Antiphon.PtyHost.Tests`. Use the table's exact project/class/method;
+for example PC-1 is
+`dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-card0490-pc/ -- --treenode-filter '/*/*/PhoneHomeConnectionTests/Authentication_is_required_at_both_endpoints'`.
+Do not widen to the class. Fresh TRX and
+external evidence paths are additionally required by the commissioning brief.
+
+| Control | Compiling defect, exact method and expected red assertion |
+|---|---|
+| PC-1 | Bypass the shared registration credential validator. T `PhoneHomeConnectionTests.Authentication_is_required_at_both_endpoints`: `acceptedInvalidCredential.ShouldBeFalse()` fails for register and connect arms; each arm uses the configured runner ID. |
+| PC-2 | Return valid from the connection-ticket consumption validator without binding/expiry/used checks. T `PhoneHomeConnectionTests.Tickets_are_bound_expiring_and_single_use`: `invalidTicketConnected.ShouldBeFalse()` fails; valid-secret arms independently vary runner, store, boot, expiry and reuse. |
+| PC-3 | Move registration before awaiting runner adoption. R `PhoneHomeConnectionServiceTests.Adoption_precedes_registration`: with adoption held, `registrationRequests.Count.ShouldBe(0)` fails. Release adoption and require exactly one valid registration. |
+| PC-4 | Mark directory Ready immediately after socket authentication. T `PhoneHomeConnectionTests.Recovery_barrier_withholds_dispatch`: hold transcript commit, assert `dispatchEligible.ShouldBeFalse()`; mutation makes it true. |
+| PC-5 | Remove the connection-liveness eligibility predicate. T `PhoneHomeConnectionTests.Disconnect_and_lease_expiry_refuse_new_work`: fake-time 89s/90s/91s and explicit disconnect arms make `newLaunchFrames.Count.ShouldBe(0)` fail. Child/DB remain alive in the correct build. |
+| PC-6 | Accept every authenticated boot/store in connection arbitration. T `PhoneHomeConnectionTests.Live_boot_and_store_identity_cannot_be_replaced`: `replacementAccepted.ShouldBeFalse()` fails for an unexpired competing boot and for wrong store after expiry. Same-store expired boot and same-boot reconnect must succeed. |
+| PC-7 | Remove epoch comparison when matching a response to its request waiter. T `PhoneHomeConnectionTests.Old_epoch_reply_cannot_complete_current_request`: reused request ID, old reply first, `currentWaiter.IsCompleted.ShouldBeFalse()` fails; new reply then succeeds. |
+| PC-8 | Skip event provenance validation before runtime ingestion. T `PhoneHomeEventPumpTests.Foreign_owner_or_epoch_events_never_reach_runtime`: valid generation but wrong runner/store/epoch arms make `persistedForeignEntries.ShouldBeEmpty()` fail. A current owner event must persist. |
+| PC-9 | Copy a sent unresolved mutating request into reconnect's outbound work. T `PhoneHomeConnectionTests.Unanswered_mutation_is_not_replayed`: `peerInputFrames.Count.ShouldBe(1)` fails before any queue recovery is enabled; repeat disconnect/timeout/after-send cancel. |
+| PC-10 | Release the accepted launch reservation when its response is lost. T `PhoneHomeStandingLaunchTests.Unknown_launch_blocks_replacement_until_owner_probe`: held owner probe plus second start makes `replacementLaunchFrames.Count.ShouldBe(0)` fail. Original owner list resolves the reservation without duplicate spawn. |
+| PC-11 | Remove the new owner all-or-none check constraint from model/migration in a disposable test migration build. T `PhoneHomeStandingLaunchTests.Binding_constraint_rejects_partial_owner`: apply migrations to a new empty task-owned database (not a clone already containing this constraint); direct SQL partial update succeeds, so `partialBindingRejected.ShouldBeTrue()` fails. Test all six partial null combinations and legacy/all-present success. Restore generated files/snapshot before green. |
+| PC-12 | Enqueue launch before awaiting the binding transaction commit. T `PhoneHomeStandingLaunchTests.Start_commits_binding_before_remote_launch`: gate commit/force rollback, observe from independent connection, `commandsBeforeCommit.ShouldBeEmpty()` fails. |
+| PC-13 | Route a persisted non-null binding through the local default client. T `PhoneHomeSessionRoutingTests.Restart_and_pin_change_keep_persisted_owner`: `localCallsForBoundSession.ShouldBeEmpty()` fails across session operations; do not rely on the local fake throwing in fixture setup. |
+| PC-14 | Convert unavailable inventory into `Available([])`. T `PhoneHomeReconciliationTests.Unavailable_owner_does_not_close_rows_or_block_local_scan`: `remoteStatus.ShouldBe(originalRemoteStatus)` fails after grace while local control advances. |
+| PC-15 | Remove the owner partition predicate from reconciliation's shared DB selection. T `PhoneHomeReconciliationTests.Every_pass_uses_only_its_owner_partition`: `otherOwnerChanges.ShouldBeEmpty()` fails in failure/readoption/agent-status arms with valid current generations. |
+| PC-16 | Omit the availability/epoch recheck immediately before an absence update. T `PhoneHomeReconciliationTests.Disconnect_after_list_blocks_absence_write`: disconnect/change epoch after valid list and missing get, `row.Status.ShouldBe(SessionStatus.Running)` fails. |
+| PC-17 | Return allow from the server phone-home admission policy. T `PhoneHomeStandingLaunchTests.Unsupported_start_is_refused_before_reservation`: each R-3 server arm makes `reservationCountDelta.ShouldBe(0)` fail; an injected launch recorder keeps an invalid process from actually spawning. |
+| PC-18 | Skip the runner dispatch allow-list/payload validation. R `PhoneHomeCommandDispatcherTests.Unsupported_operation_or_launch_never_enters_runtime`: with server absent, `runtimeMutations.ShouldBeEmpty()` fails for wrong kind/cwd, Herdr, kill-all, unknown operation and verification binding. Also assert capability DTO never advertises Windows custody. |
+| PC-19 | Remove the capacity-one reservation check. R `PhoneHomeCommandDispatcherTests.Capacity_counts_adopted_and_concurrent_launches`: adopted occupant and simultaneous starts make `maxOwnedSessions.ShouldBe(1)` fail. |
+| PC-20 | Replace exact canonical-root equality with prefix matching. T `PhoneHomeStandingLaunchTests.Only_exact_host_root_maps_to_runner_cwd`: sibling/descendant case makes `outOfRootAccepted.ShouldBeFalse()` fail; baseline `/work` projection succeeds. |
+| PC-21 | Skip the trusted final Linux launch projection. T `PhoneHomeStandingLaunchTests.Projection_keeps_identity_rules_and_local_definition`: `remoteSpec.Cwd.ShouldBe("/work")` fails; same method additionally checks executable, callback, home, zero memory, byte-identical rules/args/reserved IDs and unchanged local spec. |
+| PC-22 | On missing remote native history, clear resume arguments and take fresh launch. T `PhoneHomeStandingLaunchTests.Resume_never_probes_host_history_or_starts_fresh`: `freshLaunches.ShouldBeEmpty()` fails. Host filesystem probe recorder must stay empty in both builds. |
+| PC-23 | Remove generation echo validation from the phone-home response mapper. T `PhoneHomeSessionRoutingTests.Launch_requires_matching_generation_echo`: null/mismatched echo makes `launchAccepted.ShouldBeFalse()` fail; exact echo succeeds. |
+| PC-24 | Send raw input after a conditional-input refusal. T `PhoneHomeSessionRoutingTests.Conditional_input_keeps_generation_and_has_no_raw_fallback`: stale-generation/sequence/unsupported/lost-result cases make `rawInputFrames.ShouldBeEmpty()` fail. |
+| PC-25 | In remote stop, fetch current runner generation and use it instead of the captured accepted generation. T `PhoneHomeSessionRoutingTests.Stop_never_recaptures_replacement_generation`: replace generation after capture; `replacementKilled.ShouldBeFalse()` fails. |
+| PC-26 | Omit extensionless `Antiphon.PtyHost` from `ShadowCopyStore` closure. P `ShadowCopyStoreTests.Linux_closure_keeps_apphost_and_native_library`: `File.Exists(shadowApphost).ShouldBeTrue()` fails after a successful build; minimal deps fixture requires the closure path. |
+| PC-27 | Exclude `libporta_pty.so` from that closure. P `ShadowCopyStoreTests.Linux_closure_keeps_apphost_and_native_library`: `File.Exists(shadowNativeLibrary).ShouldBeTrue()` fails. Run separately from PC-26; restore/build between them. |
+| PC-28 | Set copied apphost Unix mode to read/write without execute bits. P `ShadowCopyStoreTests.Linux_copy_preserves_execute_mode`: `shadowMode.ShouldBe(sourceMode)` fails on Linux before launch. |
+| PC-29 | Replace the POSIX `setsid` call with a successful no-op, keeping error plumbing compilable. P `LinuxPtyHostLauncherTests.Detach_creates_a_new_session`: `hostSessionId.ShouldBe(hostPid)` fails; use a parent whose session ID differs. Separate ordinary fault-injection arm makes a native detach error exit visibly without pipe readiness. |
+| PC-30 | Remove child stdio redirection to `/dev/null`. P `LinuxPtyHostLauncherTests.Intermediary_pipes_reach_eof_while_host_lives`: `stdoutAndStderrCompletedWithinFiveSeconds.ShouldBeTrue()` fails while owned host remains alive; also inspect all three descriptors. Teardown uses captured PID/pipe, not the stuck launcher task. |
+| PC-31 | Skip `TryKillSpawnedHostAsync` in canceled-launch handling. P `LinuxPtyHostLauncherTests.Canceled_launch_leaves_no_owned_host`: `ownedHostsAfterFiveSeconds.ShouldBeEmpty()` fails, well before launch TTL. Fixture finally kills/joins only its captured process identities. |
+| PC-32 | Make the queue's complete-prompt matcher accept a matching head without its tail. T `PhoneHomeQueuedTurnTests.Only_complete_matching_UserPrompt_confirms`: peer emits truncated record above floor, `verifiedReceipt.ShouldBeFalse()` fails. Do not mutate the test's independently recomputed full-body assertion. |
+| PC-33 | Drop the sequence-floor check in receipt confirmation. T `PhoneHomeQueuedTurnTests.Receipt_must_be_after_attempt_floor`: full matching stale sequence with otherwise fresh timestamp makes `verifiedReceipt.ShouldBeFalse()` fail. Fresh complete above-floor control passes. |
+| PC-34 | Bypass the Grok rules barrier in ordinary queue delivery. T `PhoneHomeQueuedTurnTests.Rules_barrier_requires_prompt_ack_and_successful_end`: emit file receipt only, then partial/incorrect acknowledgement, then failed end; `ordinaryInputFrames.ShouldBeEmpty()` fails before the valid full rules turn. |
+| PC-35 | Release buffered live transcript events before backfill commit. T `PhoneHomeEventPumpTests.Catchup_commits_before_live_release`: hold earlier prompt commit and send later end; `liveProcessedBeforeCatchup.ShouldBeFalse()` fails. After release assert complete ordered prompt/text/end in PostgreSQL. |
+| PC-36 | On replay, assign fresh UUIDs and new sequences before existing deduplication. T `PhoneHomeEventPumpTests.Replayed_uuid_persists_once`: `persistedPromptCount.ShouldBe(1)` fails with two catch-ups of one observed submission. This avoids a mutation masked by the DB unique constraint. |
+| PC-37 | Use an unbounded channel for the phone-home event-hub subscriber. R `PhoneHomeConnectionServiceTests.Hub_overflow_disconnects_for_recovery`: stall downstream consumption and exceed count/bytes independently; `overflowNotified.ShouldBeTrue()` fails. Existing local subscriber behavior is a control. |
+| PC-38 | Disable server pending-live-event limit enforcement during catch-up. T `PhoneHomeEventPumpTests.Live_buffer_overflow_withholds_ready_and_recovers`: hold DB catch-up, flood within per-frame limit; `closedForOverflow.ShouldBeTrue()` fails, followed by whole transcript recovery in the restored build. |
+| PC-39 | Disable the shared cumulative UTF-8 message-size check. T `PhoneHomeConnectionTests.Fragmented_message_limit_is_enforced_on_both_peers`: default and small-cap peer arms make `oversizedMessageAccepted.ShouldBeFalse()` fail; each peer's test reads complete response/error and verifies no partial transcript acceptance. |
+| PC-40 | Bypass in-flight admission when all 32 slots are occupied. T `PhoneHomeConnectionTests.Request_limit_refuses_the_thirty_third_request`: `peerOutstandingRequests.ShouldBe(32)` fails; releasing one permits exactly one later request. |
+| PC-41 | Await runtime command execution inline in the socket receive pump. R `PhoneHomeConnectionServiceTests.Held_command_does_not_block_receive_progress`: held launch plus a later heartbeat/cancel/read response makes `receiveProgressBeforeLaunchRelease.ShouldBeTrue()` fail at the bounded barrier observation. |
+| PC-42 | Resolve phone-home delivery from local `PtyDeliveryProfile`. T `SessionDeliveryProfileTests.Phone_home_Grok_never_uses_local_modern_evidence`: forced local ModernConPty makes `remoteSingleWriteMaxBytes.ShouldBe(1024)` fail; local profile remains modern. |
+| PC-43 | Remove the remote-owner exclusion before local census classification. T `PhoneHomeReconciliationTests.List_consumers_keep_remote_unknown_and_local_pids_separate`: overlapping numeric PIDs make `localDecisionsAttributedToRemote.ShouldBeEmpty()` fail. No real OS kill is used. |
+| PC-44 | Charge an attempt when bound runner is unavailable before input. T `PhoneHomeQueuedTurnTests.Offline_deferral_does_not_spend_attempts`: `attemptsAfter.ShouldBe(attemptsBefore)` fails; repeat reconnect then require complete recipient evidence once. |
+| PC-45 | Accept runner rules receipt without checking expected rules generation/hash/count. T `PhoneHomeQueuedTurnTests.Rules_receipt_is_owner_bound_and_remote_readable`: wrong generation/hash/count makes `refreshRowsBeforeValidReceipt.ShouldBeEmpty()` fail. Valid `/state/...` receipt passes without host filesystem access and ends in recipient rules evidence. |
+| PC-46 | Copy the runner registration secret into the composed child environment. T `PhoneHomeStandingLaunchTests.Secrets_never_cross_child_or_status_boundary`: `childEnvironmentValues.ShouldNotContain(secretSentinel)` fails; ordinary arms also inspect URL/query, captured logs, status DTO and transcript for the sentinel. Use an ephemeral test secret, never a mounted credential. |
+
+G-26/G-27 deliberately have separate PCs targeting distinct assertions in one method.
+There is no duplicate G-to-PC mapping. Parameterized cases of one common guard do
+not justify class-wide mutation runs. The separate native error/setup tests, version
+mismatch, invalid configuration, mount permission and auth-refusal checks remain
+ordinary V/R: they do not replace any guard's red/restore/green cycle.
+
+### Out of scope
+
+- No fleet placement, agent CRUD/UI, worktrees, delegated execution, remote hosts,
+  SourceLanding product support on Linux, Herdr, custody/cgroup accounting, automatic
+  spend/relaunch, image pruning or container replacement. Unsupported entry points
+  are negative admission tests, not implementations of those features.
+- No general Linux provider or CARD-0038 ceiling/skip audit. Real-model work is one
+  Grok standing session and one ordinary queued canary turn after normal rules
+  initialization. Busy/recovery permutations use deterministic peers, not more
+  billed live turns.
+- No client/browser suite, broker or external-channel delivery: no such path changes.
+- No guarantee that a detached host survives container replacement. V-1 tests runner
+  process restart inside one container/native environment, with init/reaping intact.
+- No live production outage, deployment or daemon restart. Fixture crashes affect
+  only processes owned by that test. No broad PID enumeration is cleanup authority.
+- No full product migration of SourceLanding custody to Linux within this card.
+  The native-PC execution seam below must be resolved without silently adding it.
+
+### Cost
+
+All figures below are **estimates**, not measured performance or claimed passing
+counts. The full-suite historical 25.5-minute figure is not used. Actual Code and
+Mutation reports replace estimates with elapsed times, expanded TRX counts and
+failure names. No test run occurred in this TestDesign task.
+
+Ordinary Code floor, sequential on one worker:
+
+| Item | Exact selection / operation | Minutes |
+|---|---|---:|
+| Setup | Isolated PostgreSQL clone, fixture roots, secret file, approved existing OAuth mount and image prerequisites | 8 |
+| Build | Windows builds of T/R/P into `bin-card0490/` | 6 |
+| Linux image/build | linux-x64 runner/host publish plus test SDK target with same runtime/native assets, image pinned to Grok 1.0.34 | 12 |
+| Unit | T filter `/*/*/*/*[Category=Unit]` | 3 |
+| New server integrations | T classes `PhoneHomeConnectionTests`, `PhoneHomeStandingLaunchTests`, `PhoneHomeSessionRoutingTests`, `PhoneHomeReconciliationTests`, `PhoneHomeEventPumpTests`, `PhoneHomeQueuedTurnTests` | 12 |
+| Existing server regressions | T classes `AgentSessionLaunchQueueOwnershipTests`, `AgentSessionLaunchFailureTests`, `AgentControlServiceIntegrationTests`, `SessionReconciliationServiceTests`, `SessionRunnerEventPumpTests`, `SessionRunnerGenerationWireTests`, `SessionRunnerCapabilityGateTests`, `GrokRulesQueueBarrierTests`, `GrokRulesReceiptTests`, `SessionMessageQueueInterruptedAttemptTests`, `SessionDeliveryProfileTests`, `ZombieCensusServiceTests` | 18 |
+| Runner integrations | R classes `PhoneHomeCommandDispatcherTests`, `PhoneHomeConnectionServiceTests`, `GrokTranscriptTailerTests`; Windows `PtyHostAdoptionTests` | 6 |
+| Windows native regressions | P classes `PtyHostLauncherTests`, `HostSessionPipeTests`, `ParentDeathSpikeTests`, `ShadowCopyStoreTests` | 6 |
+| Linux native ordinary | P `LinuxPtyHostLauncherTests`, Linux shadow methods; R `LinuxPhoneHomeRunnerTests` | 6 |
+| Real canary | V-7 harness, one queued Grok turn plus normal rules initialization and evidence inspection | 8 |
+| Cleanup/evidence | Verify TRX selection/counts, sanitize artifact, join owned children and remove inventoried alternate outputs | 3 |
+| **Code total** | **Setup/build 26 + ordinary V/R 59 + cleanup 3** | **88** |
+
+Build once per platform/project graph, then use `--no-build` for ordinary selections.
+Example concrete command:
+
+```powershell
+dotnet build tests/Antiphon.Tests --property:OutputPath=bin-card0490/ --nologo
+dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-card0490/ -- --treenode-filter '/*/*/(PhoneHomeConnectionTests*)|(PhoneHomeStandingLaunchTests*)|(PhoneHomeSessionRoutingTests*)|(PhoneHomeReconciliationTests*)|(PhoneHomeEventPumpTests*)|(PhoneHomeQueuedTurnTests*)/*' --report-trx --report-trx-filename phone-home.trx --results-directory .antiphon/card0490-v-new
+```
+
+Run the other table rows with a single exact class selector per class, or the same
+parenthesized TUnit OR syntax, and a fresh result directory per invocation. Code must
+show every expected class/method in the resulting nonzero TRX, including native
+Linux methods with no skips. `AgentLaunchSpecTests` is included in Unit. The existing
+tailer replay/half-line/exit methods are included by its class selection. Ordinary
+Linux execution may use the task-owned SDK image/test target from S5; this permission
+does not extend to handing a SourceLanding snapshot to Docker during Mutation.
+
+Mutation floor (no broad suites and no additional live-model turn):
+
+| Item | Included work | Minutes |
+|---|---|---:|
+| Baseline/setup | Obtain commissioned snapshot/evidence root; build and establish baseline method greens | 8 |
+| 42 managed controls | PC-1 through PC-27 and PC-32 through PC-46: 42 x (mutant build 0.75 + exact red 0.25 + restore/rebuild 0.75 + exact green 0.25) | 84 |
+| 4 native controls | PC-28 through PC-31: 4 x (mutant build 1 + exact red 1 + restore/rebuild 1 + exact green 1) | 16 |
+| Evidence/restoration | Per-PC assertion/TRX review, exact source/index restoration, output inventory and external restoration record | 5 |
+| **Mutation total** | **8 + 84 + 16 + 5; includes every PC red/restore/green** | **113** |
+
+**Total verification floor = 88 Code + 113 Mutation = 201 estimated minutes.**
+Ordinary Review is a separate caller-commissioned activity; its revalidation time is
+not hidden inside these Code/Mutation floors. SourceLanding platform commissioning
+is not priced as a software implementation: it is the unresolved execution gate
+below, not assumed zero-cost work.
+
+Savings: method-scoped PC red/green executions cost 29 minutes of the table
+(42 x 0.5 + 4 x 2). Re-running the estimated 12-minute new-server integration battery
+for both phases of 46 PCs would cost 1104 minutes and still miss Linux-specific
+proof; method scoping avoids **1075 estimated execution minutes** relative to that
+explicit wasteful comparator. Build/restore cost remains paid. No savings are
+claimed for batching or parallel shards (0 minutes credited); same-file and
+cross-process interference risks make the serial floor reviewable. Unit plus named
+affected integrations avoids an unmeasured full assembly run; no fabricated numeric
+full-suite saving is claimed. One real turn is mandatory, so live-turn saving is zero.
+
+### Handoff gate and in-scope plan correction
+
+The test design now has bodies read; **guards=46, mapped=46, missing=0,
+duplicate PC mappings=0**. All controls have precise methods, compiling defects,
+decisive red assertions and priced restoration/green runs. **The Code handoff gate
+is not satisfied: PC-28 through PC-31 have no permitted native execution lane under
+the current post-land commissioning contract.** The other 42 are designed for the
+ordinary local test host; the Linux closure fixtures for PC-26/27 must remain
+platform-neutral so they assert file retention on that host without executing ELF.
+
+This is an **in-scope verification seam**, not a request to expand the product.
+The plan requires post-land SourceLanding Mutation, and the repository's
+`docs/orchestration-loop.md` SourceLanding contract requires local inherited
+execution and forbids giving the snapshot to an external executor, broker, remote
+service or pre-existing process. The planned desktop Linux container is launched
+by a pre-existing Docker daemon. A Windows sourced snapshot cannot be mounted or
+copied into that daemon to run the native PCs under that contract. A Windows-only
+test, an all-skipped Linux test, a build, an ordinary pre-land native green, or an
+unsourced post-land checkout does not prove the requested sourced red/green cycle.
+
+**Next: Plan**, limited to resolving and documenting an authorized native-PC
+execution mechanism consistent with local inherited custody, or obtaining an
+explicit commissioning-contract decision. Do not silently add Linux SourceLanding
+product support, use WSL/Docker as an unreviewed escape, waive these four controls,
+or mark the design executable end-to-end. After that seam is resolved, TestDesign
+checks only the execution amendment and native cost before `next: code`; all V/R
+and guard definitions above remain the bounded first-slice design. The later
+multi-agent/worktree/remote-host features remain follow-up-card scope.
