@@ -165,15 +165,20 @@ public sealed class AgentTaskLandRefusedRetryTests
         await s.RefuseAsync();
         File.Delete(s.Sentinel);
         var marker = equal ? s.A.UpdatedAt : s.InitialRequest;
+        var settled = (await s.EventsAsync()).Last(e => e.IsLandTerminal);
+        Guid requestId;
         await using (var db = s.H.CreateContext())
         {
             var task = await db.AgentTasks.SingleAsync(t => t.Id == s.F.TaskId);
             task.LandRequestedAt = marker;
             task.LandStartedAt = marker;
             task.LandAttempt = 1;
-            // CARD-0467 added durable request identity and one terminal event per request.
-            // Model the legacy pending crash state with its old timestamp beside the retained
-            // settled history; reviving the settled row would claim its terminal event twice.
+            // A request persisted before CARD-0488 (schema 1, no review binding) that a restart
+            // finds pending beside A's settled history. CARD-0467's one-terminal-event-per-request
+            // rule is why A's own settled row is not revived. CARD-0488 refuses such a row at
+            // admission (legacy_review_binding_required) before any source inspection; request
+            // identity, not timestamps, now decides what may replace a refusal, so `equal` keeps
+            // the two historical fixture shapes without changing the production path.
             var request = new AgentTaskLandRequest
             {
                 Id = Guid.NewGuid(), TaskId = task.Id, RequestedAt = marker, StartedAt = marker,
@@ -184,6 +189,7 @@ public sealed class AgentTaskLandRefusedRetryTests
             await db.SaveChangesAsync();
             task.CurrentLandRequestId = request.Id;
             await db.SaveChangesAsync();
+            requestId = request.Id;
         }
         if (equal) (await s.TaskAsync()).LandRequestedAt.ShouldBe(s.A.UpdatedAt);
         else (await s.TaskAsync()).LandRequestedAt!.Value.ShouldBeLessThan(s.A.UpdatedAt);
@@ -194,7 +200,18 @@ public sealed class AgentTaskLandRefusedRetryTests
         (await s.OperationsAsync()).ShouldHaveSingleItem().Id.ShouldBe(s.A.Id, "automatic recovery must retain only A");
         (await s.TaskAsync()).ActiveLandingId.ShouldBe(s.A.Id);
         active.LastReason.ShouldBe(s.A.LastReason);
-        s.Trace.ShouldContain(t => s.IsSourceStatus(t.Repository, t.Args) && t.Result.Succeeded && t.Result.Output.Length == 0);
+        var terminal = (await s.EventsAsync()).Last(e => e.IsLandTerminal);
+        terminal.Id.ShouldNotBe(settled.Id, "recovery must settle the legacy request with its own terminal event");
+        terminal.LandRequestId.ShouldBe(requestId);
+        terminal.LandingOperationId.ShouldBe(s.A.Id);
+        terminal.Detail.ShouldContain("legacy_review_binding_required");
+        await using (var db = s.H.CreateContext())
+        {
+            var legacy = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == requestId);
+            legacy.IsPending.ShouldBeFalse();
+            legacy.State.ShouldBe(LandRequestState.Completed);
+            legacy.TerminalEventId.ShouldBe(terminal.Id);
+        }
         s.Trace.ShouldNotContain(t => s.IsTargetStatus(t.Repository, t.Args) || t.Args[0] == "update-ref");
         await s.AssertPinsAsync();
         await s.AssertRefusalAsync(active);
