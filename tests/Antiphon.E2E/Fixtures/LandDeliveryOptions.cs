@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -163,8 +164,25 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
         }
     }
 
+    /// <summary>
+    /// CARD-0550/CARD-0459: native land issues ~740 git process spawns; at 80–200 ms each that
+    /// consumes the 60 s receipt window before FakeGrok is even typed. Cache stable identity
+    /// reads and collapse Inspect's paired IdentityAsync. Fetch of observation pins does not
+    /// invalidate worktree identity. Production <see cref="LandingGit"/> stays uncached.
+    /// </summary>
     private sealed class EvidenceGit(string root) : LandingGit
     {
+        private readonly object _gate = new();
+        private readonly Dictionary<string, LandingGitResult> _stable = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, LandingGitResult> _volatile = new(StringComparer.Ordinal);
+
+        protected override void ConfigureProcess(ProcessStartInfo start)
+        {
+            start.Environment["GIT_FLUSH"] = "0";
+            start.ArgumentList.Add("-c");
+            start.ArgumentList.Add("gc.auto=0");
+        }
+
         private async Task RecordAsync(string repository, IReadOnlyList<string> arguments, LandingGitResult result)
         {
             var path = Path.Combine(root, $"protocol-git-{Guid.NewGuid():N}.json");
@@ -172,14 +190,61 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
                 repository, arguments, result.ExitCode, at = DateTime.UtcNow, pid = Environment.ProcessId }));
             File.Move(path + ".tmp", path);
         }
+
+        private static string Key(string repository, IReadOnlyList<string> arguments)
+            => Path.GetFullPath(repository) + "\0" + string.Join('\0', arguments);
+
+        private static bool IsStableRead(IReadOnlyList<string> arguments)
+            => arguments.Contains("--git-common-dir")
+               || arguments.Contains("check-ref-format")
+               || (arguments.Count >= 2 && arguments[0] == "remote" && arguments[1] == "get-url");
+
+        private static bool InvalidatesVolatile(IReadOnlyList<string> arguments)
+        {
+            if (arguments.Count > 1 && arguments[0] == "worktree" && arguments[1] != "list")
+                return true;
+            foreach (var argument in arguments)
+            {
+                if (argument is "rebase" or "merge" or "push" or "update-ref" or "add" or "remove"
+                    or "commit" or "checkout" or "checkout-index" or "restore" or "reset")
+                    return true;
+            }
+            return false;
+        }
+
         public override async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
         {
-            var result = await base.RunAsync(repository, arguments, ct); await RecordAsync(repository, arguments, result); return result;
+            var key = Key(repository, arguments);
+            var stable = IsStableRead(arguments);
+            lock (_gate)
+            {
+                if (stable && _stable.TryGetValue(key, out var cachedStable))
+                    return cachedStable;
+                if (!stable && !InvalidatesVolatile(arguments) && _volatile.TryGetValue(key, out var cached))
+                    return cached;
+            }
+
+            var result = await base.RunAsync(repository, arguments, ct);
+            await RecordAsync(repository, arguments, result);
+            lock (_gate)
+            {
+                if (InvalidatesVolatile(arguments))
+                    _volatile.Clear();
+                else if (stable)
+                    _stable[key] = result;
+                else
+                    _volatile[key] = result;
+            }
+            return result;
         }
+
         public override async Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments,
             Func<int, long, CancellationToken, Task> started, CancellationToken ct)
         {
-            var result = await base.RunOwnedAsync(repository, arguments, started, ct); await RecordAsync(repository, arguments, result); return result;
+            var result = await base.RunOwnedAsync(repository, arguments, started, ct);
+            await RecordAsync(repository, arguments, result);
+            lock (_gate) _volatile.Clear();
+            return result;
         }
     }
 
