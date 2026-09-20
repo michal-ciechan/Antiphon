@@ -86,6 +86,8 @@ function Copy-ThrowawayGrokHome([string] $sourceHome, [string] $destHome) {
         }
     }
     # Do not copy auth.json.lock, bin/, or sessions/ from the live home.
+    # Pre-create sessions/ so compose can overlay a writable bind on the read-only parent.
+    New-Item -ItemType Directory -Force -Path (Join-Path $dst 'sessions') | Out-Null
     return Test-Path -LiteralPath (Join-Path $dst 'auth.json')
 }
 
@@ -251,7 +253,7 @@ if ([string]::Equals(
 if ([string]::IsNullOrWhiteSpace([string]$generated.grokSessionsMount)) {
     $generated.grokSessionsMount = Join-Path (Split-Path -Parent ([string]$generated.oauthMount)) 'grok-sessions'
 }
-New-Item -ItemType Directory -Force -Path ([string]$generated.oauthMount), ([string]$generated.grokSessionsMount) | Out-Null
+New-Item -ItemType Directory -Force -Path ([string]$generated.oauthMount), (Join-Path ([string]$generated.oauthMount) 'sessions'), ([string]$generated.grokSessionsMount) | Out-Null
 
 Assert-NotProductionPort $generated.serverPort 'serverPort'
 Assert-NotProductionPort $generated.postgresPort 'postgresPort'
