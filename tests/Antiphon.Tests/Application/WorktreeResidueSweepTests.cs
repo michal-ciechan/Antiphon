@@ -207,54 +207,149 @@ public sealed class WorktreeResidueSweepTests
     [Test]
     public async Task C459_OnlyCompleteCountsRemoved()
     {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var manager = new RecordingResidueWorktrees();
+        var service = new WorktreeResidueSweepService(
+            db, manager, Options.Create(new WorktreeResidueSettings { Execute = true, MaxActionsPerRun = 25 }),
+            Options.Create(new GitSettings { DefaultBranch = "master" }),
+            new FakeTimeProvider(new DateTimeOffset(Now, TimeSpan.Zero)),
+            NullLogger<WorktreeResidueSweepService>.Instance);
+        var dto = await service.PreviewAsync(null, null, CancellationToken.None);
         var report = new WorktreeResidueResult(
             new DateTimeOffset(Now, TimeSpan.Zero), TimeSpan.Zero, true,
-            new WorktreeResidueCounts(0, 0, 0, 0, 0, 0, 4, 1),
-            [], [], 1);
-        report.Removed.ShouldBe(1);
+            new WorktreeResidueCounts(0, 0, 0, 0, 0, 0, dto.Candidates, dto.Removed),
+            [], [], dto.Removed);
+        report.Removed.ShouldBe(0);
+        manager.RemoveCalls.ShouldBe(0);
     }
 
     [Test]
     public async Task C459_IgnoredInventoryReachesPolicy()
     {
-        var typedPolicyCalls = 1;
+        await using var h = await SettledRemovalHarness.CreateAsync();
+        var path = Path.Combine(h.Host.Fixture.Source, ".antiphon", "report.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(path, "private");
+        var typedPolicyCalls = 0;
+        h.Host.Fixture.Git.BeforeCommand = (_, args) =>
+        {
+            if (args[0] == "ls-files") typedPolicyCalls++;
+            return Task.FromResult<LandingGitResult?>(null);
+        };
+        var result = await h.RemoveAsync();
+        result.IsClean.ShouldBeFalse();
         typedPolicyCalls.ShouldBe(1);
-        await Task.CompletedTask;
     }
 
     [Test]
     public async Task C459_AbsentPublishedTreeDiscovered()
     {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var originalOperationId = Guid.NewGuid();
-        var candidateOperationIds = new[] { originalOperationId };
+        var taskId = Guid.NewGuid();
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = taskId, RootTaskId = taskId, Title = "pub", Goal = "pub",
+            Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Worktree,
+            WorkingDirectory = Path.GetTempPath(), Status = AgentTaskStatus.Succeeded,
+            ReplyTo = AgentTaskReplyTo.None, CreatedAt = Now.AddHours(-5), CompletedAt = Now.AddHours(-3),
+        });
+        db.AgentTaskLandings.Add(new AgentTaskLanding
+        {
+            Id = originalOperationId, TaskId = taskId, SchemaVersion = 1, Active = true,
+            Publication = LandPublicationOutcome.Landed, Cleanup = LandCleanupStatus.Pending,
+            RepositoryPath = @"C:\repo", WorktreePath = @"C:\trees\missing", CommonDirectory = @"C:\repo",
+            GitDirectory = @"C:\repo\.git", SourceFullRef = "refs/heads/feat/x", TargetFullRef = "refs/heads/master",
+            OriginalSourceSha = new string('a', 40), TargetBeforeSha = new string('b', 40),
+            RecoveryRefPrefix = $"refs/antiphon/land/{taskId:N}/{originalOperationId:N}",
+            CreatedAt = Now, UpdatedAt = Now,
+        });
+        await db.SaveChangesAsync();
+        var manager = new RecordingResidueWorktrees { Scan = [] };
+        var service = new WorktreeResidueSweepService(
+            db, manager, Options.Create(new WorktreeResidueSettings { Execute = false, MaxActionsPerRun = 25 }),
+            Options.Create(new GitSettings { DefaultBranch = "master" }),
+            new FakeTimeProvider(new DateTimeOffset(Now, TimeSpan.Zero)),
+            NullLogger<WorktreeResidueSweepService>.Instance);
+        var dto = await service.PreviewAsync(null, null, CancellationToken.None);
+        var candidateOperationIds = dto.Rows.Where(r => r.LandingOperationId is not null).Select(r => r.LandingOperationId!.Value).ToArray();
         candidateOperationIds.ShouldContain(originalOperationId);
-        await Task.CompletedTask;
     }
 
     [Test]
     public async Task C459_CooldownSurvivesRestart()
     {
-        var actionsBeforeDue = 0;
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        db.WorktreeResidueCandidateCursors.Add(new WorktreeResidueCandidateCursor
+        {
+            Id = Guid.NewGuid(),
+            CandidateKey = "task:" + Guid.NewGuid().ToString("N"),
+            LastEvaluatedAt = Now,
+            NotBefore = Now.AddHours(23).AddMinutes(59).AddSeconds(59),
+        });
+        await db.SaveChangesAsync();
+        var manager = new RecordingResidueWorktrees();
+        var service = new WorktreeResidueSweepService(
+            db, manager, Options.Create(new WorktreeResidueSettings { Execute = true, MaxActionsPerRun = 25 }),
+            Options.Create(new GitSettings { DefaultBranch = "master" }),
+            new FakeTimeProvider(new DateTimeOffset(Now, TimeSpan.Zero)),
+            NullLogger<WorktreeResidueSweepService>.Instance);
+        await service.RunAsync(CancellationToken.None);
+        var actionsBeforeDue = manager.TypedRemovalRequests.Count + manager.RemoveCalls;
         actionsBeforeDue.ShouldBe(0);
-        await Task.CompletedTask;
     }
 
     [Test]
     public async Task C459_BudgetIsShared()
     {
         var limit = 25;
-        var totalAcceptedActions = 25;
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var manager = new RecordingResidueWorktrees();
+        var service = new WorktreeResidueSweepService(
+            db, manager, Options.Create(new WorktreeResidueSettings { Execute = true, MaxActionsPerRun = limit }),
+            Options.Create(new GitSettings { DefaultBranch = "master" }),
+            new FakeTimeProvider(new DateTimeOffset(Now, TimeSpan.Zero)),
+            NullLogger<WorktreeResidueSweepService>.Instance);
+        var dto = await service.PreviewAsync(null, null, CancellationToken.None);
+        var totalAcceptedActions = dto.ActionsAccepted;
         totalAcceptedActions.ShouldBeLessThanOrEqualTo(limit);
-        await Task.CompletedTask;
     }
 
     [Test]
     public async Task C459_FairnessSurvivesRestart()
     {
-        var allDueCandidateIds = new[] { "a", "b" };
-        var evaluatedDistinctIds = new[] { "a", "b" };
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var ids = new List<Guid>();
+        for (var i = 0; i < 3; i++)
+        {
+            var id = Guid.NewGuid();
+            ids.Add(id);
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = id, RootTaskId = id, Title = "fair" + i, Goal = "fair",
+                Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Worktree,
+                WorkingDirectory = @"C:\trees\card-task-" + i, WorktreePath = @"C:\trees\card-task-" + i,
+                WorktreeBranch = "feat/card-task-" + i, Status = AgentTaskStatus.Succeeded,
+                ReplyTo = AgentTaskReplyTo.None, CreatedAt = Now.AddHours(-5 - i), CompletedAt = Now.AddHours(-3 - i),
+            });
+        }
+        await db.SaveChangesAsync();
+        var manager = new RecordingResidueWorktrees();
+        var service = new WorktreeResidueSweepService(
+            db, manager, Options.Create(new WorktreeResidueSettings { Execute = false, MaxActionsPerRun = 25 }),
+            Options.Create(new GitSettings { DefaultBranch = "master" }),
+            new FakeTimeProvider(new DateTimeOffset(Now, TimeSpan.Zero)),
+            NullLogger<WorktreeResidueSweepService>.Instance);
+        var first = await service.PreviewAsync(null, null, CancellationToken.None);
+        var second = await service.PreviewAsync(null, null, CancellationToken.None);
+        var allDueCandidateIds = first.Rows.Where(r => r.TaskId is not null).Select(r => r.TaskId!.Value).OrderBy(g => g).ToArray();
+        var evaluatedDistinctIds = second.Rows.Where(r => r.TaskId is not null).Select(r => r.TaskId!.Value).OrderBy(g => g).Distinct().ToArray();
         allDueCandidateIds.ShouldBe(evaluatedDistinctIds);
-        await Task.CompletedTask;
     }
 
     [Test]

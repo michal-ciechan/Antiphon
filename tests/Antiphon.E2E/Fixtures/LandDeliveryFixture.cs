@@ -40,6 +40,7 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
     public string Remote => Path.Combine(Root, "remote" + _suffix + ".git");
     private string CallerDirectory => Path.Combine(Root, "caller" + _suffix);
     public Guid TaskId { get; } = Guid.NewGuid();
+    public IServiceProvider Services => _app.Services;
     public Guid CallerId { get; private set; }
     public string SourceSha { get; private set; } = "";
     public TimeSpan InterruptedAttemptAge { get; private set; }
