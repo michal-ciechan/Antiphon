@@ -7,9 +7,6 @@ RUN dotnet publish src/Antiphon.SessionRunner/Antiphon.SessionRunner.csproj -c R
 
 FROM mcr.microsoft.com/dotnet/aspnet:9.0
 WORKDIR /app
-COPY --from=build /out/runner/ ./
-COPY --from=build /out/ptyhost/Antiphon.PtyHost /app/Antiphon.PtyHost
-COPY --from=build /out/ptyhost/libporta_pty.so /app/libporta_pty.so
 # Phone-home stays off until compose/launch injects PhoneHome__Enabled and PhoneHome__ServerOrigin.
 # Do not bake a ServerOrigin URL into the image.
 # Do not COPY OAuth credential files or any GROK_HOME contents (CARD-0575).
@@ -24,6 +21,9 @@ RUN apt-get update \
  && /usr/local/bin/grok --version \
  && /usr/local/bin/grok --version | grep -F '1.0.34' \
  && rm -rf /tmp/grok-install
+COPY --from=build /out/runner/ ./
+COPY --from=build /out/ptyhost/Antiphon.PtyHost /app/Antiphon.PtyHost
+COPY --from=build /out/ptyhost/libporta_pty.so /app/libporta_pty.so
 ENV PhoneHome__Enabled=false
 USER $APP_UID
 ENTRYPOINT ["dotnet", "Antiphon.SessionRunner.dll"]

@@ -21,6 +21,8 @@ public sealed class VerifyPhoneHomeGrokScriptTests
         compose.ShouldNotContain("host.docker.internal:17205");
         compose.ShouldContain("PHONE_HOME_GROK_HOME");
         compose.ShouldContain("PHONE_HOME_GROK_SESSIONS");
+        compose.ShouldContain("SessionRunner__PtyHostDir");
+        compose.ShouldContain("/tmp/antiphon-pty-hosts");
         System.Text.RegularExpressions.Regex.IsMatch(
             compose,
             @"PHONE_HOME_GROK_HOME[\s\S]*?read_only:\s*true",

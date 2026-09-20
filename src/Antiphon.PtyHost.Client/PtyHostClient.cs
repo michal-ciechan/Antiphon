@@ -45,7 +45,11 @@ public sealed class PtyHostClient : IAsyncDisposable
         while (DateTime.UtcNow < deadline)
         {
             ct.ThrowIfCancellationRequested();
-            var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+            var pipe = new NamedPipeClientStream(
+                ".",
+                pipeName,
+                PipeDirection.InOut,
+                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
             try
             {
                 using (var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct))

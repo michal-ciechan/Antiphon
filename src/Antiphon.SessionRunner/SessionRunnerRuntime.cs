@@ -3085,13 +3085,19 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _sessionId, _hostPid, bound);
         }
 
+        // Linux TASK_COMM_LEN is 15 chars, so "Antiphon.PtyHost" becomes "Antiphon.PtyHos"
+        // and a Contains("PtyHost") check never matches the live host.
+        private static bool IsPtyHostProcessName(string name) =>
+            name.Contains("PtyHost", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Antiphon.Pty", StringComparison.OrdinalIgnoreCase);
+
         private bool HostProcessStillAlive()
         {
             try
             {
                 using var host = System.Diagnostics.Process.GetProcessById(_hostPid);
                 // Pid reuse by an unrelated process counts as "gone" — never wait on a stranger.
-                return !host.HasExited && host.ProcessName.Contains("PtyHost", StringComparison.OrdinalIgnoreCase);
+                return !host.HasExited && IsPtyHostProcessName(host.ProcessName);
             }
             catch (Exception)
             {
@@ -3104,7 +3110,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             try
             {
                 using var host = System.Diagnostics.Process.GetProcessById(_hostPid);
-                if (!host.HasExited && host.ProcessName.Contains("PtyHost", StringComparison.OrdinalIgnoreCase))
+                if (!host.HasExited && IsPtyHostProcessName(host.ProcessName))
                     host.Kill(entireProcessTree: true);
             }
             catch

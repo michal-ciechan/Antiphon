@@ -422,6 +422,30 @@ function Stop-OwnedProcess($proc) {
     }
 }
 
+function Write-RunnerDiagnostics {
+    $logPath = Join-Path $EvidenceRoot 'container-logs.txt'
+    try {
+        & docker compose -f $composeFile -p $composeProject logs --no-color --tail 400 2>&1 |
+            Set-Content -LiteralPath $logPath -Encoding utf8
+        Write-Host "Wrote container logs to $logPath"
+    }
+    catch {
+        Write-Host "Could not capture container logs: $($_.Exception.Message)"
+    }
+    $hostLogDir = Join-Path ([string]$generated.stateRoot) 'session-runner\pty-hosts\logs'
+    if (Test-Path -LiteralPath $hostLogDir) {
+        Get-ChildItem -LiteralPath $hostLogDir -File | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $EvidenceRoot $_.Name) -Force
+        }
+    }
+    $runnerLogs = Join-Path ([string]$generated.stateRoot) 'runner-logs'
+    if (Test-Path -LiteralPath $runnerLogs) {
+        Get-ChildItem -LiteralPath $runnerLogs -File -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $EvidenceRoot $_.Name) -Force
+        }
+    }
+}
+
 function Start-IsolatedServerProcess {
     Write-Host "Starting isolated Antiphon.Server at $($generated.serverOrigin) SessionRunner__BaseUrl=$($generated.localRunnerOrigin) StandingAgentId=$($generated.standingAgentId)"
     $script:serverProc = Start-IsolatedDll -Dll $serverDll -WorkDir $serverOutDir -EnvVars (Get-IsolatedServerEnv)
@@ -609,7 +633,7 @@ try {
         if ([string]::IsNullOrWhiteSpace($sessionId)) { throw "Start did not return a session id: $($started | ConvertTo-Json -Depth 4 -Compress)" }
         $generation = $null
         if ($started.liveSession -and $started.liveSession.startedAt) { $generation = [string]$started.liveSession.startedAt }
-        Write-Host "Started session $sessionId generation=$generation; waiting for rules barrier idle then queueing canary"
+        Write-Host "Queued standing start session $sessionId generation=$generation; waiting for liveSession.status=Running"
 
         $idleDeadline = (Get-Date).AddSeconds([Math]::Min($TurnTimeoutSeconds, 180))
         $readyForPrompt = $false
@@ -617,18 +641,27 @@ try {
             $detail = Invoke-IsolatedJson GET "$origin/api/agents/$($generated.standingAgentId)"
             $working = $false
             if ($null -ne $detail.working) { $working = [bool]$detail.working }
-            $status = [string]$detail.status
-            if ($detail.liveSession) { $sessionId = [string]$detail.liveSession.id; $generation = [string]$detail.liveSession.startedAt }
-            if ($status -eq 'Running' -or $status -eq '1') {
+            $sessionStatus = $null
+            $failureReason = $null
+            if ($detail.liveSession) {
+                $sessionId = [string]$detail.liveSession.id
+                $generation = [string]$detail.liveSession.startedAt
+                $sessionStatus = [string]$detail.liveSession.status
+                if ($detail.liveSession.failureReason) { $failureReason = [string]$detail.liveSession.failureReason }
+            }
+            if ($sessionStatus -eq 'Failed' -or $sessionStatus -eq '3') {
+                Write-RunnerDiagnostics
+                throw "Standing start failed (session $sessionId): $failureReason"
+            }
+            if ($sessionStatus -eq 'Running' -or $sessionStatus -eq '1') {
                 if (-not $working) { $readyForPrompt = $true; break }
             }
-            elseif ($status -eq 'Failed' -or $status -eq '3') {
-                throw "Standing start failed: $($detail | ConvertTo-Json -Depth 5 -Compress)"
-            }
+            Write-Host "liveSession.status=$sessionStatus working=$working failure=$failureReason"
             Start-Sleep -Seconds 3
         }
         if (-not $readyForPrompt) {
-            Write-Host "Composer not idle after rules wait; queueing WhenIdle anyway."
+            Write-RunnerDiagnostics
+            throw "Session $sessionId did not become Running+idle within the rules wait. Not queueing a turn into a failed or still-starting host."
         }
 
         $attemptFloor = [DateTime]::UtcNow
@@ -662,6 +695,7 @@ try {
         }
         if (-not $userPrompt -or -not $assistant -or -not $turnEnd) {
             ($transcript | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath (Join-Path $EvidenceRoot 'transcript-incomplete.json') -Encoding utf8
+            Write-RunnerDiagnostics
             throw "V-7 turn incomplete. userPrompt=$(if ($userPrompt) {'yes'} else {'no'}) assistantNonce=$(if ($assistant) {'yes'} else {'no'}) turnEnd=$(if ($turnEnd) {'yes'} else {'no'})."
         }
 

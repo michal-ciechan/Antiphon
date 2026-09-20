@@ -21,6 +21,10 @@ services:
       # UnauthorizedAccessException before the pty-host starts, so the POSIX path is required,
       # not cosmetic. /state is the writable bind; /work is read-only.
       SessionRunner__SessionLogPath: /state/session-runner
+      # Shadow-copy the Linux pty-host onto overlay ext4, not the Windows bind at /state
+      # (NTFS/9p drops Unix execute bits and breaks the pipe handshake).
+      SessionRunner__PtyHostDir: /tmp/antiphon-pty-hosts
+      Serilog__LogPath: /state/runner-logs
     volumes:
       - type: bind
         source: ${PHONE_HOME_WORKSPACE}
