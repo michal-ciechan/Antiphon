@@ -257,7 +257,15 @@ internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
                 if (frame.Operation == PhoneHomeOperation.Launch && HeldLaunches > 0)
                 {
                     HeldLaunches--;
-                    await _held.Task.WaitAsync(ct);
+                    var heldFrame = frame;
+                    _ = Task.Run(async () =>
+                    {
+                        await _held.Task.WaitAsync(CancellationToken.None);
+                        var heldReply = Reply?.Invoke(heldFrame) ?? DefaultReply(heldFrame);
+                        if (heldReply is not null)
+                            await PhoneHomeFraming.WriteFrameAsync(Socket, heldReply, 16 * 1024 * 1024, CancellationToken.None);
+                    }, ct);
+                    continue;
                 }
 
                 var reply = Reply?.Invoke(frame) ?? DefaultReply(frame);

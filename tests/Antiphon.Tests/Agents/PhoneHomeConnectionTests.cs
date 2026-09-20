@@ -130,10 +130,11 @@ public class PhoneHomeConnectionTests
         live.IsLeaseExpired(TimeSpan.FromSeconds(90)).ShouldBeFalse();
         clock.Advance(TimeSpan.FromSeconds(2));
         live.IsLeaseExpired(TimeSpan.FromSeconds(90)).ShouldBeTrue();
+        host.Directory.SnapshotLive();
         var newLaunchFrames = new List<PhoneHomeFrame>();
         try
         {
-            await new PhoneHomeRunnerClient(live).StartAsync(Guid.NewGuid(), DummySpec(), CancellationToken.None);
+            await host.Directory.Resolve("grok-linux").StartAsync(Guid.NewGuid(), DummySpec(), CancellationToken.None);
             newLaunchFrames.AddRange(peer.Launches);
         }
         catch
@@ -144,7 +145,7 @@ public class PhoneHomeConnectionTests
         host.Directory.Disconnect(live, "test");
         try
         {
-            await new PhoneHomeRunnerClient(live).StartAsync(Guid.NewGuid(), DummySpec(), CancellationToken.None);
+            await host.Directory.Resolve("grok-linux").StartAsync(Guid.NewGuid(), DummySpec(), CancellationToken.None);
             newLaunchFrames.AddRange(peer.Launches);
         }
         catch
