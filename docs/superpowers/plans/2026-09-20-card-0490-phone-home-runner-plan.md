@@ -298,6 +298,38 @@ the Grok join-safe/spill transform; the local `PtyDeliveryProfile` still probes 
 the local runner. Thus Linux's current misleading Inbox label cannot downgrade
 unrelated Windows sessions or borrow their ModernConPty evidence.
 
+### D-12: PC-28 through PC-31 use a fresh, inherited QEMU/TCG process
+
+Plan amendment `3f77b203` (2026-09-20, base `2be56d1a`): keep the Mutation
+worker and SourceLanding binding on the existing Windows `windows-job-v1` lane.
+For these four controls only, its local test harness starts a new
+`qemu-system-x86_64.exe` child using full-system TCG emulation, boots an offline
+Linux test disk, executes one exact method, collects its results, and joins QEMU.
+Linux executes the real ELF apphost, kernel `setsid`, descriptors and Unix modes;
+this is a real Linux guest on emulated hardware, not a mocked POSIX API.
+
+The reason for TCG is custody: guest CPU/device execution lives in the inherited
+QEMU process. Do not enable WHPX/KVM, vhost-user, external device backends, daemon
+mode or a VM manager. A fresh boot has no saved execution state. Guest detach
+cannot outlive that process. Keep the existing Windows job's descendant accounting
+and drained-output receipt; neither a guest success marker nor QEMU exit replaces
+the task's native receipt. This is an inference from the inspected custody code
+and QEMU's documented execution model, to qualify with the ordinary harness checks
+below before land; it is not a claim that a sourced run has already succeeded.
+
+Rejected: a new container through Docker Desktop/Testcontainers (the daemon owns
+its execution); a fresh `docker.exe`/`wsl.exe` client (client ancestry does not contain
+the guest); DinD started by an existing daemon (same ownership gap); a Linux
+phone-home Mutation worker (expands product admission/custody); an unsourced clone,
+Windows substitute, skipped test or pre-land green (does not prove sourced PCs).
+A fresh Linux daemon would itself need an inherited Linux execution host here;
+QEMU already supplies that host, so adding Docker inside it buys nothing for four
+PtyHost tests. Product D-1 through D-11 and S1 through S5 remain in force.
+
+The exact harness, qualification, evidence and revised costs are in the
+[native-PC execution amendment](#native-pc-execution-amendment-3f77b203).
+This decision needs no SourceLanding API, capability, admission or cleanup change.
+
 ## Implementation slices
 
 Commit/push each slice before a long verification run. Names marked **new** are
@@ -1056,3 +1088,230 @@ or mark the design executable end-to-end. After that seam is resolved, TestDesig
 checks only the execution amendment and native cost before `next: code`; all V/R
 and guard definitions above remain the bounded first-slice design. The later
 multi-agent/worktree/remote-host features remain follow-up-card scope.
+
+## Native-PC execution amendment (3f77b203)
+
+This section supersedes the preceding unresolved native execution gate and its
+native cost assumptions. The TestDesign appendix above, including all 46 guard
+rows, all 46 PC rows, their assertions and V/R selections, is retained unchanged.
+Next is a narrow **TestDesign** check of this amendment and its costs, then Code.
+The executable harness described here is Code work, not an existing command.
+
+### Ground truth for the execution decision
+
+| Assumption | Inspected behavior at `2be56d1a` | Decision / limit |
+|---|---|---|
+| Fresh Testcontainers means a fresh inherited executor. | `tests/Antiphon.Tests/TestHelpers/TestDbFixtureLifecycle.cs`, `TestDbOperations.CreateAsync/StartAsync/DisposeOwnedAsync`, creates and disposes `postgres:16-alpine` through Testcontainers. It has no repository bind/resource mapping and does not spawn a daemon. | Precedent for a task-owned data dependency, not for moving snapshot execution to its daemon. Retain the existing DB fixture for the other PCs; no DB is needed by these four. |
+| Existing SourceLanding runs establish a Docker exception. | No such exception or execution recipe was found in the custody owners, CARD-0478 records or fixture implementation. The dated CARD-0552 investigation recorded zero admitted/completed sourced Mutations on this board as of September 17. That is historical evidence, not a current fleet census. | Do not invent a precedent or infer permission from earlier unsourced batteries. |
+| A new Linux runner can own this Mutation. | `src/Antiphon.SessionRunner/SessionRunnerRuntime.cs`, `VerificationCustodyBackend`, advertises custody only for Windows ModernConPty. The SourceLanding owner requires fresh Worker/Mutation/Worktree and inherited execution. | Keep the existing Windows worker/binding. No Linux SourceLanding feature. |
+| A child that detaches can leave the Windows task's custody. | `ModernConPtyConnection.Spawn` checks atomic job membership before resume and requires exactly `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, without either breakaway flag. `PtyAgentRunner.SealAndObserveCustodyAsync` reads the original job, then drains and rechecks. `PtyCustodyTests.C478_G198_NonemptyJob` tests descendants surviving root exit. | Spawn the entire Linux machine as one inherited Windows process; qualify that exact process under this job. Guest PIDs are diagnostics, not Windows cleanup authority. |
+| Docker/native tool prerequisites are already sufficient. | No `qemu-system-x86_64.exe` or `qemu-img.exe` resolved on this task's PATH. No QEMU fixture or pinned guest asset is present in the inspected plan/base. | Code must provision and record the two tools and source-free guest asset, then qualify them; this Plan has not run them. |
+| PC-28 can run on a host-mounted Windows directory. | The assertion compares real Unix mode bits; the other three methods depend on Linux sessions, descriptors and process cleanup. | Build, shadow-copy and run on the guest's ext4 filesystem, never on FAT/NTFS/9p. FAT is only a read-only archive transport. |
+
+Testcontainers explicitly connects to a Docker-compatible runtime/endpoint; it
+does not make that daemon a descendant of the test process.
+[Testcontainers configuration](https://dotnet.testcontainers.org/custom_configuration/).
+QEMU documents TCG on Windows and full guest CPU/memory/device emulation, while
+also identifying optional external offloads that this recipe excludes.
+[QEMU execution model](https://www.qemu.org/docs/master/system/introduction.html).
+
+### Bounded additions to S1/S5
+
+All paths below marked new are test infrastructure, shipped and reviewed with the
+original Code task before its land. No product runner or custody source is changed
+to permit this lane.
+
+| Slice | Files | Required ordinary checks |
+|---|---|---|
+| S1-E: reproducible native inputs | **New** `tests/fixtures/card0490-linux/README.md`, `guest-init.sh`, `run-one.sh`, `assets.lock.json`; **new** `scripts/prepare-card0490-linux-assets.ps1`; `.gitattributes` for just these shell files | Pin QEMU binary bundle, boot disk, distribution/kernel, SDK `10.0.204`, net9 runtime, native libraries and offline NuGet inputs by version/hash. Boot disk contains tools/dependencies and the pinned bootstrap unit only, no application source, compiled Antiphon assemblies, credentials or saved VM memory. Align guest distribution/user/native dependencies with S5's Linux image and record the comparison. Pin shell inputs to LF so packaging preserves working-file bytes. Preparation runs before sourced commissioning. |
+| S1-E: foreground host wrapper | **New** `scripts/test-card0490-native.ps1` | One PC/phase per invocation; literal allow-list of the four method/project pairs; hashes and exact source inventory; immutable input staging; inherited `ProcessStartInfo.ArgumentList` launches; concurrent stdout/stderr drain; join on every exit. A private asset profile supplies absolute paths matching the tracked lock. No arbitrary command endpoint. |
+| S1-E: wrapper and guest qualification | **New** `tests/Antiphon.PtyHost.Tests/Card0490NativeExecutionTests.cs`; **new** `tests/Antiphon.Agents.Pty.Tests/Card0490NativeCustodyTests.cs` | `Wrong_method_or_input_digest_is_rejected`, `Missing_or_skipped_or_wrong_method_result_is_rejected`, `Exact_method_result_survives_guest_shutdown`; custody `Qemu_remains_accounted_after_wrapper_exit` and `Guest_shutdown_allows_original_job_zero_and_drain`. Use the existing custody test helpers and assembly-local process limiter. |
+| S5-E: operational recipe | `docs/testing-and-build.md` and fixture README above | Document only CARD-0490's four-control recipe, asset preparation, exact invocation, result inspection and restoration. Preserve the general SourceLanding prohibitions and D-10's product compose lane. |
+
+The new methods validate the execution fixture, not additional phone-home product
+guards. No G/PC renumbering or added product behavior is intended. TestDesign must
+check these ordinary fixture checks without reopening the other 42 controls.
+
+### Exact local execution contract
+
+1. **Commission and bind.** The caller uses the existing post-land companion,
+   confirmed O/L and fresh Worker/Mutation/Worktree. Before any mutant the delegate
+   validates HEAD=L, creation ID, clean tracked/index bytes, launch binding and
+   external evidence root E from its brief. No new worktree, branch or Linux agent
+   is created. Check the prequalified asset lock and source-free disk hashes.
+   Missing assets/custody are an infrastructure refusal, not permission to fall
+   back to Docker/WSL. Do not install or download prerequisites in the snapshot.
+2. **Freeze and package one phase.** Under E, create
+   `card0490-native/<PC>/<baseline|red|green>/<run-id>/` with `input`, logs and
+   a task-owned overlay. Package the current tracked working-file bytes, not just
+   `git archive HEAD` (which would lose the mutant), using the Git tracked-path
+   inventory. Exclude `.git`, ignored outputs and untracked files; reject path
+   escapes/reparse points. Preserve Git executable modes in `source.tar`; source
+   and entrypoint hashes, L/O/task/creation, PC, phase and exact method go in
+   `manifest.json`. Record the intended production diff separately. Those two
+   ASCII-named files are the entire immutable input directory. Check per-file
+   hashes again before/after the run. Do not edit snapshot or staging while it runs.
+3. **Start a new machine as a child.** The foreground wrapper starts and awaits
+   `qemu-img.exe create -f qcow2 -F qcow2 -b <absolute-base> <absolute-overlay>`.
+   Then it starts `qemu-system-x86_64.exe` directly with `UseShellExecute=false`,
+   no breakaway/elevation/service dispatch, redirected streams, and these fixed
+   argument/value pairs (paths are separate arguments or JSON strings, never shell
+   interpolation):
+
+   ```text
+   -no-user-config -nodefaults
+   -machine q35 -accel tcg,thread=multi -cpu max -smp 2 -m 4096
+   -display none -monitor none -nic none -no-reboot
+   -chardev stdio,id=pcio,signal=off -serial chardev:pcio
+   -blockdev <root-json> -device virtio-blk-pci,drive=pcroot,bootindex=1
+   -blockdev <input-json> -device virtio-blk-pci,drive=pcinput
+   ```
+
+   `root-json` is the serialized object
+   `{"driver":"qcow2","node-name":"pcroot","file":{"driver":"file","filename":"<absolute-overlay>"}}`.
+   `input-json` is
+   `{"driver":"vvfat","node-name":"pcinput","dir":"<absolute-input>","fat-type":32,"label":"C0490INPUT","rw":false,"read-only":true}`.
+   The pinned boot disk boots via its installed BIOS bootloader. Use no
+   `-daemonize`, `-incoming`, `-loadvm`, networking, shared host filesystem, socket,
+   disk service, vhost backend, external emulator helper or accelerator fallback.
+   QEMU and qemu-img are fresh locally inherited processes; a pre-existing **file**
+   containing an inert toolchain is not a pre-existing executor.
+
+   These option families and read-only FAT are documented by
+   [QEMU invocation](https://www.qemu.org/docs/master/system/invocation.html),
+   [block options](https://www.qemu.org/docs/master/interop/qemu-qmp-ref.html),
+   [disk images](https://www.qemu.org/docs/master/system/images.html#virtual-fat-disk-images)
+   and [qemu-img](https://www.qemu.org/docs/master/tools/qemu-img.html).
+   Code pins a tested QEMU release instead of depending on the moving master docs.
+4. **Run only the selected method.** Each boot gets a fresh init/reaper and guest
+   boot ID. Its one-shot fixture unit mounts `C0490INPUT` read-only, verifies hashes,
+   and extracts onto a new ext4 directory `/work/card0490`. It runs the packaged
+   `run-one.sh` under the S5-equivalent non-root UID with isolated HOME/TMPDIR/state.
+   Use offline NuGet inputs; missing packages refuse the run. Build fresh Linux
+   binaries in the guest from those bytes, including the real apphost/native PTY
+   closure. Do not reuse a Windows publish, precompiled application or prior
+   phase's `bin`/`obj`. Pass the validated manifest L as MSBuild `SourceRevisionId`
+   (the existing `Directory.Build.props` otherwise falls back to unknown without
+   Git metadata); the per-file hashes additionally identify the mutant. The guest
+   checkout is disposable test input without Git
+   metadata, not another managed/unbound SourceLanding worktree.
+
+   Example PC-29 invocation inside that directory (manifest selects an allow-listed
+   literal filter, not shell text):
+
+   ```sh
+   dotnet restore tests/Antiphon.PtyHost.Tests --source /opt/nuget-offline
+   dotnet run --project tests/Antiphon.PtyHost.Tests --no-restore --property:SourceRevisionId="$landed_sha" --property:OutputPath=bin-card0490-native/ -- --treenode-filter '/*/*/LinuxPtyHostLauncherTests/Detach_creates_a_new_session' --report-trx --report-trx-filename result.trx --results-directory /results
+   ```
+
+   The remaining filters are exactly `/*/*/ShadowCopyStoreTests/Linux_copy_preserves_execute_mode`,
+   `/*/*/LinuxPtyHostLauncherTests/Intermediary_pipes_reach_eof_while_host_lives`, and
+   `/*/*/LinuxPtyHostLauncherTests/Canceled_launch_leaves_no_owned_host` for PC-28,
+   PC-30 and PC-31. No class/assembly selector or all-PC batch is allowed.
+5. **Return evidence and stop.** The unit retains the native `dotnet` exit code,
+   TRX, build/test logs, actual selected case/count/outcome, kernel/SDK/native asset
+   identity, boot ID, and source/test/output hashes. It emits these over the
+   process-owned serial stream as nonce/length/hash-delimited base64 file frames;
+   the wrapper records raw streams and validates complete frames into E. Guest
+   shutdown happens only after the method's `finally` has joined its captured
+   host/child identities. Init reaps orphans. The wrapper waits for QEMU exit and
+   both stream drains before returning. QEMU exit zero alone is never test success.
+   Missing/truncated evidence, boot/build failure, zero cases, skip, wrong method,
+   or a failure other than the prescribed assertion is infrastructure/invalid-PC
+   evidence. On cancellation the wrapper stops only its owned QEMU handle and
+   joins/drains it; it reports incomplete, never an inferred red or green.
+6. **Repeat with restoration.** Run baseline green first for each exact method;
+   apply its one planned mutation in the sourced tree; export/build/run red in a
+   new VM; restore exact tracked/index bytes and refresh timestamps; export/build/
+   run green in another new VM. PC-28 through PC-31 run serially. Restored-green
+   input hashes must equal baseline's; only the prescribed production files may
+   differ for red. The checked-in test/harness bytes stay unchanged. Preserve the
+   PC-specific assertion from the matrix, including its existing five-second
+   deadlines. TCG slowness never authorizes a wider assertion or a substitute
+   timeout failure. Boot/build budgets are separate from assertion deadlines.
+7. **Restore and retain.** Delete only exactly inventoried, joined phase overlays
+   and disposable input archives after retaining manifests/diffs/hashes/results.
+   Keep retained files under E; never publish source to an external executor.
+   Restore the sole managed snapshot, remove its precisely inventoried alternate
+   outputs, and write the existing restoration record. No commit/push or runtime
+   receipt fabrication. The caller later seals the full task launch set and uses
+   the existing original Windows job's zero/drained receipt for CleanupVerification.
+   An unknown or surviving process remains residue; guest evidence cannot waive it.
+
+The proposed host command is:
+
+```powershell
+pwsh -NoProfile -File scripts/test-card0490-native.ps1 -SnapshotRoot '<managed-worktree>' -BindingFile '<external-commissioning-json>' -AssetProfile '<prequalified-local-profile>' -Pc PC-29 -Phase red -EvidenceRoot '<assigned-E>'
+```
+
+`BindingFile` records O/L/task/creation and the accepted execution binding from the
+commissioning evidence; it is an input cross-check, not newly minted runtime proof.
+The wrapper does not perform mutations, restore files, commit, dispatch agents or
+operate a production session. The Mutation delegate owns those separate phase steps.
+For pre-land Code/Review, a separate explicit `-Ordinary` parameter set omits
+`BindingFile`, permits only `-Phase baseline`, and records the ordinary source SHA
+with no sourced/custody claim. It uses identical packaging, QEMU arguments, build
+and result validation. There is no automatic downgrade from a failed sourced
+preflight to this mode; ordinary output cannot satisfy the companion's PC evidence.
+
+### Verification design addition: qualify the execution boundary before land
+
+Ordinary Code must demonstrate the same QEMU/toolchain/profile recipe first on its
+ordinary worktree. Run each of the four exact methods green with real Linux cases,
+and retain expanded counts, original deadlines, image/input hashes and timings.
+The S5 Docker canary and Linux adoption tests still run as designed; a QEMU native
+green does not replace the one real Grok transcript-confirmed turn.
+
+Use the existing Windows custody fixture for the new QEMU-specific ordinary tests:
+launch a wrapper under `PtyAgentRunner.StartTrackedAsync`/ModernConPty, have its
+fresh QEMU guest reach a pipe/serial barrier, then let that wrapper exit while
+QEMU remains alive. The original job must still report nonzero and not drained.
+Release the guest through a test-owned inherited pipe, await QEMU shutdown, and
+require the same job to reach zero with drained output. Exercise abrupt owned
+QEMU stop too, with no success verdict from partial results. This proves containment
+of this dependency without extending custody into Linux or forging a SourceLanding
+receipt. Run the Pty assembly sequentially with the other process-spawning suites.
+
+The fixture qualification also exercises a wrong method, tampered source digest,
+missing result, skipped result and truncated final frame: each must be rejected.
+Use fixture outputs for these negative harness cases, not production mutations.
+The canonical PC-28 through PC-31 assertions remain the only four product controls.
+Code and Review must reject an unqualified helper or a silent accelerator/runtime
+fallback before land. Actual PCs remain pending until the post-land sourced run.
+
+### Revised native cost and handoff
+
+These are explicit **unmeasured estimates** replacing the native assumptions in
+the frozen Cost section. TCG is slower than the original container estimate; Code
+must measure the exact recipe and TestDesign/Review must retain any higher floor.
+Provisioning packages/binaries is assumed available without operator credentials;
+asset download delay and implementation authoring remain separately reported.
+
+| Stage addition/replacement | Calculation | Minutes |
+|---|---|---:|
+| Code: pin/prepare source-free tools, guest and offline packages | Additional setup beyond the existing S5 image | 20 |
+| Code: four exact greens plus wrapper/custody qualification | 24 native baseline minutes (as below) + 16 harness/custody minutes, additional to existing V/R | 40 |
+| **Revised Code floor** | **88 + 20 + 40** | **148** |
+| Mutation: native asset/source/identity preflight | Additional to the existing 8-minute managed setup | 12 |
+| Mutation: four native baseline greens, fresh VM each | 4 x (boot 1 + build 3 + method 1 + drain/export 1) | 24 |
+| Mutation: four native red/restore/green cycles | 4 x 2 x (boot 2 + fresh build 4 + method 1 + drain/export 1); replaces original 16 | 64 |
+| **Revised Mutation floor** | **8 existing setup + 84 managed PCs + 12 + 24 + 64 + 5 restoration** | **197** |
+| **Revised combined floor** | **148 Code + 197 Mutation; ordinary Review and authoring separate** | **345** |
+
+No parallelization saving is assumed. If TCG cannot keep an unmutated native test
+inside its existing five-second assertion, record the measured failing boundary
+and return it for an execution-plan correction; do not weaken the test or claim
+the native-PC obligation is satisfied. All 46 PCs remain mandatory.
+
+Amendment validation: inspected owners/source and QEMU/Testcontainers primary
+documentation; checked the unchanged verification appendix and one-to-one 46/46
+mapping. No build, VM, container, provider turn, custody qualification or PC was
+executed by this Plan task. The requested branch checkout was refused because
+`feat/card-task-2dbc8291` was already held by its own worktree; this amendment uses
+the confirmed `2be56d1a` base in this task's worktree and publishes to that requested
+remote branch without disturbing the other worktree.
+
+**Next: test-design.** Check only D-12, S1-E/S5-E, the inherited-QEMU qualification,
+source/evidence binding and revised native costs. Then hand Code this exact recipe
+and the unchanged 46-control matrix. No commissioning-contract exception or Linux
+SourceLanding product work is requested.
