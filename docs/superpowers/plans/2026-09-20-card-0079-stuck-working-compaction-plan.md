@@ -7,6 +7,14 @@ Code references below are against that commit. Its parent code is `3c7a4057`.
 The requested investigation branch is occupied by another worktree; this plan's
 branch, `feat/card-task-15587e3f`, starts at the exact requested investigation SHA.
 
+Amendment task: `fed4b83c`, 2026-09-20, based on plan commit
+`eb3a3fddb0dd26c8f79b1def89f05bab488d4158`. The operator explicitly authorized
+automatic unattended restart for this specific silent post-compaction pattern.
+That settles the former D-1/D-3 fork; this amendment supersedes the original
+operator-only design. The original branch remains checked out elsewhere, so the
+amendment is authored on `feat/card-task-fed4b83c` at that exact base and published
+as a fast-forward to the requested plan branch.
+
 This is a plan, not an implementation or an operational recovery receipt. No live
 session was stopped or restarted and no check was sent by this Plan dispatch.
 TestDesign remains a separate stage; the proposed tests and positive controls
@@ -14,20 +22,19 @@ below are its input, not executed evidence.
 
 ## Outcome and completion boundary
 
-Recover the current interpreter with an explicit Stop followed by **Fresh**, after
-reviewing and retiring obsolete Check work. Prevent the next identical outage
-from hiding behind `Working` for four hours: recognize a silent auto-compaction
-continuation, record a durable recovery-needed episode, release provably untyped
-Check occupants, and refuse new work into that generation. Preserve the real
-working-state rule and all normal busy-session protections.
+Automatically stop and restart an eligible AlwaysOn Claude Check seat when its
+current unfinished Check turn has an explicit auto `CompactBoundary`, its
+synthetic continuation, no subsequent `TurnEnd` or useful progress, and at least
+ten minutes of silence. Commit an audit record before the automatic action;
+conditionally stop only that accepted generation, then strictly resume the same
+conversation once. Release obsolete untyped Check occupants and prevent new work
+from entering the retiring generation. Never make a still-running turn look idle.
 
-There is one policy decision before implementation. The default below preserves
-the repository's rule that a stall is detection and decision, never an automatic
-kill. It restores this outage through the operator runbook and gives subsequent
-outages a bounded, visible recovery path. It **does not promise unattended
-restoration**. If unattended kill/restart is required, approve that exception and
-revise the recovery design before TestDesign. Merely changing D8 does not authorize
-destroying the older turn that caused the queue to wait.
+The exception does not extend to general stalls, other AlwaysOn jobs, transient
+delegates, or long turns that have made progress after compaction. Operator Stop
+and all existing holds still win. The immediate Stop/Fresh runbook below remains
+available independently, including when automatic recovery refuses or its budget
+is exhausted. A launch acknowledgment is not proof that Check service recovered.
 
 ## Ground truth
 
@@ -43,54 +50,59 @@ destroying the older turn that caused the queue to wait.
 | The queue is stuck retrying Enter. | Investigation: 50 Pending rows, all with zero attempts; the old CARD-0501 head was canceled. `CancelDeadBriefsAsync` runs inside delivery, which Working prevents. | Clean proven obsolete untyped briefs without requiring a delivery attempt or an idle session. Preserve attempted-composer recovery. |
 | Any transcript catch-up return proves a successful fresh observation. | `AgentSessionRuntime.CatchUpTranscriptAsync:690` returns whether it stored new entries. `false` means either no new entries or a swallowed failure. The dispatcher's wrapper also swallows failure. | Introduce an explicit observation-success result for this detector; absence after an unsuccessful pull cannot confirm a new episode. |
 | The new request graph is the only Check path. | `AgentTaskCheckService.RoutedAsync` selects it only for a configured qualified chain; `SpecialistTaskRunner.RunAsync` remains the legacy primary path. | Gate both paths and the final standing dispatch, including the compatibility slug seat. |
-| Stop and Start automatically choose a clean conversation. | `AgentControlService.StopAsync:976` suspends supervision. Ordinary Start resumes Claude history; `{ "fresh": true }` explicitly selects a new ID. Queue switching refuses attempted Pending input and moves never-attempted input. | Use Fresh explicitly for this occurrence, retain old history, and inspect/cancel obsolete briefs before switching. |
+| Stop then Start is already a safe unattended restart API. | `AgentControlService.StopAsync:976` records `SuspendedByUser`; `StartAsync:143` rejects automatic Fresh/history selection. The supervisor resumes with `Fresh:false` and its ordinary failure ladder. | Add an internal episode-bound strict-resume path. Do not call human Stop, pretend `automatic:false`, permit automatic Fresh, or let the supervisor independently relaunch during this action. |
+| A generation check also guards against late output. | `SessionRunnerRuntime.KillGenerationAsync:779` locks launch identity only. The conditional-input path also checks output revision, but neither is a compaction-specific stop predicate. | Add a narrow conditional compaction-stop contract; recheck transcript/binding and observed output at the runner immediately before signaling the process. No fallback to unconditional kill. |
+| Fetching the runner snapshot guarantees its native tailer is current. | `ITranscriptTailer.Snapshot()` returns everything parsed so far; it is not a fresh read-to-end receipt. | Require a new successful bound-tail observation with a consumed-file watermark. A paused/unbound/erroring tailer cannot authorize stop. |
+| Existing incidents provide a durable restart budget. | `AgentIncident` is pruned (normally 30 days / 500 per agent); `AgentSupervisionState` failure counts reset after healthy uptime. | Keep episode state and the automatic-compaction restart budget separately; incident pruning, uptime, process/server restart and task settlement cannot reset them. |
 | Failure or a launch acknowledgment proves recovery. | Existing checks settle on correlated reports. Delivery and caller receipt require whole matching UserPrompt evidence. Health or `Sent` alone does not prove either. | Close recovery only on a new, useful Check reading and its caller receipt. |
 
 ## Decisions
 
-These are stated defaults for the caller to accept or amend, not silently granted
-authority for automated session destruction.
+D-1/D-3 record the supplied operator decision. The remaining decisions define the
+narrow implementation of that authorization; none is a pending approval gate.
 
-- **D-1 — Operator-controlled process recovery.** Detection, bounded task failure,
-  admission refusal, and attention are automatic. Kill/Stop and Fresh remain
-  explicit operator actions. The brief asks for the current session's operator
-  unblock; it does not expressly supersede the standing no-auto-kill rule for all
-  future sessions. Source: [AGENTS.md](../../../AGENTS.md), Sessions and pty, and
-  [ops-http.md, Killing](../../ops-http.md#killing): "A stalled session is a
-  detection and decision state, never an automatic kill." Rejected: quietly
-  borrowing the boot-stall license to kill; this is a reused conversation with
-  earlier work, not an empty first boot turn. Caller decision: accept this
-  operator-gated design, or commission an explicit, narrowly scoped automatic
-  recovery exception. The latter needs a revised durable attempt budget,
-  generation-fenced stop/start and crash-recovery design before code.
-- **D-2 — Narrow first release.** Detect ClaudeCode standing Check seats, using
-  `StandingSpecialistSeatPolicy` including configured-slug compatibility, plus a
-  positively identified `(auto)` boundary in an unfinished ordinary turn. Include
-  declared physical Check alternates. Do not act on generic workers, Codex, Grok,
-  manual compaction, trigger-less legacy boundaries, or idle sessions. Rejected:
-  a fleet-wide "Working too long" timer, which would include legitimate tools and
-  unrelated provider states.
-- **D-3 — Ten minutes of silent continuation.** Add typed
-  `Delegation:CheckCompactionContinuationWaitMinutes`, default 10; zero disables
-  discovery of new episodes, negative values fail validation. Measure from the
-  later of the current accepted launch, the auto boundary, and its synthetic
-  continuation prompt, using conservative event/arrival times as described below.
-  This is a chosen operational bound, not a measured provider percentile. Keep
-  the 60-second caller budget, 10-minute delivery budget, and 240-minute generic
-  role fallback unchanged. Rejected: shortening Check's whole role ceiling or
-  increasing the caller wait, neither of which fixes the session.
-- **D-4 — A separate episode, never a fake idle verdict.** Persist the detected
-  episode on the session, bound to its accepted `StartedAt` and boundary sequence.
+- **D-1 — Authorized automatic restart, with a named exception.** The operator's
+  `fed4b83c` brief expressly replaces operator-controlled recovery for the exact
+  silent compaction-continuation condition. The service may terminate that old
+  turn and resume its process unattended after all guards below pass. Keep
+  [AGENTS.md](../../../AGENTS.md)'s standing no-auto-kill rule verbatim and add a
+  narrowly worded CARD-0079 exception/link when implementing; document the same
+  scope in [ops-http.md](../../ops-http.md#killing) and the runtime owner. Rejected:
+  detection-only as completion of this card, or a generic Working-age kill rule.
+- **D-2 — AlwaysOn Check seats only.** Require physical seat and logical owner
+  AlwaysOn, neither pool-owned nor suspended; effective ClaudeCode execution;
+  current standing ownership; and `StandingSpecialistSeatPolicy` Check identity.
+  A configured-slug legacy primary additionally needs positive evidence that the
+  unfinished prompt is its own correlated Check, not merely a matching name.
+  Declared qualified Claude Check alternates qualify independently. Require no
+  card/non-Check assignment, interactive human turn, outstanding tool call, or
+  unresolved attempted queue input. Exclude other standing jobs, ephemeral work,
+  Codex/Grok, manual/unknown compaction and idle sessions. Rejected: treating
+  AlwaysOn alone, a slug alone, or an old boundary anywhere in history as license.
+- **D-3 — Authorized ten-minute silent bound.** Add typed
+  `Delegation:CheckCompactionContinuationWaitMinutes`, default **10**. Accept zero
+  (disable new discovery and any not-yet-issued automatic stop/resume) or values
+  at least 10; reject negatives and 1–9. At the default, act at elapsed >= 10:00,
+  never at 9:59.999, measured by the formula below. A later response permanently
+  disqualifies that boundary; do not reset a generic inactivity timer. This is an
+  operator-selected bound, not proof that a silent provider cannot still be
+  computing. Keep all caller/delivery/role deadlines unchanged. Rejected: aging
+  every Working turn, or killing ten minutes after any historical compaction.
+- **D-4 — A separate episode, never a fake idle verdict.** Persist an episode
+  bound to the physical agent, session, accepted `StartedAt` and boundary identity.
   A recovery-needed session can still truthfully report `working=true`.
   Rejected: toggling session status to Stopped while its process lives, setting a
   model hold, reusing the boot-liveness latch, or disguising a compaction stall as
   missing native history in the continuity hold.
-- **D-5 — Fresh for the current operator recovery.** The previous resume recovered
-  for only about 25 minutes before another auto-compaction. Fresh preserves the old
-  conversation row while avoiding resumption of the same compacted context.
-  Rejected: `{}` Start as an equivalent repair, `/compact`, raw Enter/Esc, or a
-  second copy of the old Check brief. This does not make Fresh the automatic
-  policy for other standing conversations.
+- **D-5 — Automatic strict resume; Fresh remains the operator repair.** Restart
+  means stop generation G and launch G2 of the same session/native conversation,
+  using `Fresh:false`, no initial prompt, and existing ownership/continuity rules.
+  Do not replay the delivered pre-compaction Check or synthesize its success.
+  This preserves CARD-0466; authorization to restart does not require discarding
+  history. The previous resume was followed by another compaction after roughly
+  25 minutes, so a repeated stall must not become a resume loop. The independent
+  runbook uses explicit Fresh to test that stronger remedy. Rejected: automatic
+  Fresh/history fallback, raw Enter/Esc, `/compact`, or a repeated old brief.
 - **D-6 — Cancel obsolete input, retain possible delivery evidence.** Only linked,
   terminal Check briefs proven never attempted may be canceled automatically.
   Do not move historical Checks to the new session for replay. Rejected: deleting
@@ -100,9 +112,24 @@ authority for automated session destruction.
   existing policy; do not invent one or alter pins/holds. With no usable seat,
   ship the existing degraded digest with the specific recovery-needed reason.
   Caller-facing failures use the existing durable delivery obligation.
-- **D-8 — Separate TestDesign.** This brief requests a plan with PCs/guards but does
-  not fold TestDesign into Plan. After D-1/D-3 acceptance, commission TestDesign
-  to finalize the named tests, ordinary verification profile and mutation matrix.
+- **D-8 — Separate TestDesign.** This amendment requests updated slices/guards/PCs,
+  not folded verification. D-1/D-3 are settled; send this artifact directly to
+  TestDesign to finalize executable coverage and the ordinary verification profile.
+- **D-9 — One bounded action, durable across restarts.** Allow one stop/resume
+  operation per episode and at most one automatic compaction restart per physical
+  agent in a rolling 24 hours. Another automatic restart additionally requires a
+  useful Check result and whole caller receipt after the preceding one. Consume
+  the allowance at durable stop-request commit; never refund an ambiguous action.
+  A refused/failed resume or a second episode before both conditions are met
+  holds the seat for an operator, with a reason. Time alone, incident pruning, server
+  recreation and generic healthy uptime never release this hold. Reject an
+  unbounded supervisor retry ladder driven by this exception.
+- **D-10 — Audit before effects; uncertainty withholds effects.** Persist the
+  evidence and action intent before contacting the runner, retain phase outcomes,
+  and publish incidents/attention from that durable record. Unknown ownership,
+  stale transcript, stop outcome, or launch identity blocks further destructive
+  action. A failed read is never evidence of silence. A refusal remains visible;
+  it is not reported as a successful unattended restart.
 
 ## Immediate operator unblock (independent of shipping the fix)
 
@@ -166,15 +193,43 @@ with session/generation, ordinary prompt sequence, boundary sequence, effective
 wait start, elapsed duration, and reason. It consumes the existing working
 verdict rather than reimplementing `IsWorkingAsync`.
 
-Eligibility requires an owned, current, Running ClaudeCode Check session; an
-ordinary, non-housekeeping UserPrompt in its unfinished turn; and an explicit
-auto CompactBoundary later in that turn. The synthetic continuation is permitted
-and contributes to the clock but is not a human prompt or evidence of progress.
-No subsequent AssistantText, Thinking, ToolCall, ToolResult, ordinary UserPrompt,
-TurnEnd, interrupt end, manual compact end or restart boundary may have advanced
-the episode. Any such progress excludes this **silent continuation** diagnosis;
-other stall/deadline policies continue to own later stalls. Do not infer the
-episode from the last row's kind alone.
+The automatic trigger is the conjunction of all these facts, never just its timer:
+
+1. D-2 scope and current ownership hold; DB status is Running and the existing
+   transcript-derived verdict is Working. Seat/owner and Check interpretation
+   remain enabled, unsuspended, without liveness, continuity, Herdr, provider,
+   quota or capacity hold. Both generation tokens are present and equal.
+2. In that generation, after its latest effective end, the owning ordinary
+   UserPrompt is a positively correlated Check; explicit `(auto)` CompactBoundary
+   B follows it; the known synthetic continuation prompt C follows B. The original
+   Check may already be terminal, as in the investigation; its identity must
+   still be provable. Missing C or an ambiguous prompt does not qualify.
+3. No TurnEnd follows B. There is also no interrupt/manual-compact/restart end,
+   AssistantText, Thinking, ToolCall, ToolResult, ordinary UserPrompt, error/wall
+   or unclassified substantive activity after B, except C. A later substantive
+   record disqualifies B permanently, even if that later work itself goes quiet.
+   Repeated auto boundaries must form a still-silent chain with a continuation
+   after the newest boundary; they postpone eligibility, never accelerate it.
+4. `now - waitStart >= N minutes`, where N defaults to 10 and
+   `waitStart = max(acceptedStartedAt, B.Timestamp, B.CreatedAt,
+   C.Timestamp, C.CreatedAt)`. Ignore null event time only under the ownership
+   fence below; arrival time remains mandatory. Both DB and a successful fresh
+   runner observation satisfy the same evidence predicate before action.
+
+There must be no unmatched in-flight tool call before B either. Pending human,
+Channel, Scheduled, unknown-origin or unrelated machine input, open non-Check/card
+work, or unresolved attempted/Sent input veto automatic stop rather than being
+discarded. Historical transcript-confirmed Sent Checks are retained as history;
+the delivered Check that owns B is explicitly the turn authorized for termination.
+
+These guards spare a legitimately long continuation that emits thinking/text or
+tool activity, and all long non-Check turns. No observable test distinguishes
+silent internal provider computation from this outage with certainty. The
+operator's ten-minute choice accepts that residual risk only for this bounded
+Check pattern; a spinner, `lastSeenAt`, CPU use, or old screen text never proves
+either progress or failure. A changed output revision at final stop preflight
+conservatively defers and requires another observation; it does not become
+delivery evidence or start a generic inactivity countdown.
 
 Respect both sequence and timestamp evidence: catch-up can append historical rows
 above current rows. Anchor in the current launch/last effective end, reject an
@@ -186,53 +241,119 @@ Use the later event/arrival time to delay suspicion on newly imported records;
 future times do not breach. Exact 10:00 is overdue, 9:59.999 is not. Multiple
 auto boundaries select the newest still-silent episode and restart its grace.
 
-On a stored overdue suspect, pull the runner transcript, persist it without queue
-side effects, and re-evaluate. Add an observation API/result that distinguishes
-successful/no-change from unavailable/unsupported/persist-failed; retain the
-existing boolean method's meaning for existing callers. Read the runner's
-accepted generation and DB ownership before and after observation, then recheck
-them under the existing session delivery/standing-start lock discipline at commit.
-Missing generation evidence, an observation error, or a changed pointer/token
-means no new recovery-needed transition. A failed pull is not proof of silence.
-Do not hold a database transaction across runner I/O or call full Sync while
-holding the delivery lock (it can re-enter queue flushing).
+On a stored overdue suspect, pull a fresh bound transcript, persist it without
+queue side effects, and re-evaluate. Add an observation result distinguishing
+success/no-change from unavailable, unsupported, unbound, stale-tail and partial
+persist failure; retain the old boolean API's meaning for existing callers.
+Require the Claude tailer to complete a read-to-end pass of the currently claimed
+file, with a stable binding identity and consumed byte watermark. A partial line,
+skipped/unparsed new record, claim switch, unreadable file or outstanding persist
+failure is Unknown. The result carries runner generation, native boundary/prompt
+identity, transcript revision and output revision; DB arrival sequence alone is
+not a native event ID. Do not assume `Snapshot()` already has this contract.
+
+Read ownership before and after observation and recheck under delivery/standing
+start locks at commit. No DB transaction spans runner I/O. Do not call full Sync
+inside a delivery lock, since it can re-enter queue flushing. The final runner
+stop check below closes the ordinary catch-up-to-stop race for observable progress.
 
 ### Durable episode and lifecycle
 
-Add nullable session fields for the latest episode:
-`CompactionStallStartedAt` (accepted generation token),
-`CompactionStallBoundarySequence`, `CompactionStallDetectedAt`,
-`CompactionStallResolvedAt`, and bounded resolution/evidence as needed. These
-are new fields, not changes to CompactionRecoveryWatermark. An active episode
-requires matching current StartedAt, a detected time, and no resolution.
-Write the episode and one `CompactionContinuationStalled` incident atomically.
-Append enum values, never renumber them. Use the persisted generation/boundary
-key for deduplication, not incident existence or an in-memory cooldown.
+Use a new `CheckCompactionRecovery` entity instead of overwriting latest-episode
+fields on the session. Its unique key is `(PhysicalAgentId, SessionId,
+AcceptedStartedAt, BoundaryIdentity)`; store DB boundary/continuation sequences
+alongside native identities. Carry prompt/task correlation, boundary/arrival
+times, configured threshold, detected/observed times, bounded evidence, state,
+reason, attempt ID, stop-request/outcome times, resume target/generation,
+launch outcome, and useful-Check/caller-receipt identities. Append enum values;
+do not change CompactionRecoveryWatermark, model holds or boot-liveness state.
+Persist phase transitions and their incidents atomically. Keep unresolved rows
+and referenced evidence out of ordinary retention. Retain terminal action audit
+at least 90 days; keep the last automatic-attempt timestamp and receipt-gated
+eligibility on AgentSupervisionState independently of incident/episode pruning.
 
-Run the service as an isolated dispatcher sweep before the delivery watchdog and
-new dispatch. Discover eligible sessions even with zero pending tasks: traffic
-must not be needed to reveal a broken standing interpreter. A bounded one-minute
-cadence using injected TimeProvider is sufficient; isolate failures per session.
-The dispatcher already runs only while Delegation is enabled. Disabling discovery
-does not erase a recorded unresolved episode or authorize fresh work into it.
+An `ActiveCompactionRecoveryId` on AgentSupervisionState and row-locked
+compare-and-set transitions serialize sweep, restart, supervisor and duplicate
+observations. Only one operation can own stop/resume at a time. Additional detected
+episodes may be recorded for audit but cannot claim that slot; AwaitingCheck keeps
+the last-attempt receipt gate without hiding a new episode from detection.
+The operation blocks automatic start by other mechanisms until resolved; it does
+not set `Suspended`, which remains human intent. A restart cannot reset D-9.
 
-Transitions are:
+Run the service before the delivery watchdog and new dispatch, at most once per
+minute with TimeProvider, including seats with no pending tasks. Its existing-action
+reconciliation must run before the dispatcher's Delegation-enabled early return;
+discovery/effects remain gated by that setting. Isolate failures per seat.
+Reconcile existing actions even when discovery is disabled; zero or
+disabled delegation prevents any next not-yet-issued stop/resume and records
+`DisabledNeedsDecision` if a stop already happened. Never forget in-flight effects.
 
-- Healthy -> Suspected (read-only) -> Confirmed recovery-needed after successful
-  observation and locked generation/evidence recheck.
-- Confirmed -> Resolved on observed subsequent progress/end of the affected turn,
-  or explicit stop/new accepted launch. Preserve episode evidence on the old row.
-  An unacknowledged old generation cannot block a genuinely new launch; conversely
-  a stale observation of old progress cannot resolve the replacement's episode.
-- A same-conversation resume establishes a new generation/end fence. It can be
-  considered again only for a new eligible auto boundary, not replay of this one.
-  Runtime recovery is not yet proof of a successful Check; keep health recovery
-  tied to an actual valid reading.
+| State/transition | Durable fact and permitted side effect |
+|---|---|
+| Suspected (read-only) -> Confirmed | Fresh observation and locked predicate pass; write episode plus Warning `CompactionContinuationStalled`. Admission closes only for this generation. |
+| Confirmed -> AbortedProgress / Superseded | Late progress/end or changed ownership before stop. Record why; do not stop or resume. A new generation is not marked stalled by old evidence. |
+| Confirmed -> NeedsDecision | A safety veto, D-9 budget, unsupported runner, or permission/hold blocks action. Record the precise reason and zero automatic effects. |
+| Confirmed -> StopRequested | Recheck intent, scope, silence and queue; atomically claim the one allowance, attempt ID, expected generation and observation plus Warning `CompactionContinuationRestartRequested`. Commit before RPC. |
+| StopRequested -> Stopped | Conditional runner result positively confirms target generation exited. Stamp distinct `SessionTerminationSource.CompactionContinuationRecovery`; never `OperatorRequest`. |
+| Stopped -> ResumeReserved | Existing start composition/reservation accepts a strict same-ID resume and atomically records new generation G2 on the episode; no new native history and no prompt replay. |
+| ResumeReserved -> AwaitingCheck | Matching launch completes. Open admission for G2; preserve the old episode and record `RestartedAwaitingCheck`, not Recovered. |
+| AwaitingCheck -> Recovered | A newly created Check has whole interpreter UserPrompt, correlated useful reading/report/TurnEnd and whole caller-note receipt. Record those IDs, then release the receipt half of D-9 (24-hour limit still applies). |
+| Any owned action -> NeedsDecision / SupersededByOperator | Unprovable stop, failed/refused launch, repeated episode, or human Stop/selection. No general supervisor retry or Fresh fallback. Explicit human recovery may supersede the operation without resetting the rolling allowance. |
 
-Keep reevaluating active episodes for late progress, not only undiscovered
-sessions. Restart, incident pruning, or task settlement must not lose the
-recovery-needed projection. Existing explicit Start/Fresh/Stop remains the process
-control surface; this service never sends input or invokes Kill/Stop/Start.
+### Conditional stop, strict resume and crash cuts
+
+Add a dedicated runner capability `compactionContinuationStopV1` and narrow
+`POST /sessions/{id}/stop-compaction-continuation` request. It carries attempt ID,
+expected accepted generation, native boundary/continuation identity, threshold,
+and the successful observation's transcript/binding/output revisions. Only the
+server recovery service calls it; no generic public `force`/`autoRestart` flag.
+The runner validates Claude format, the bound fresh-tail result and silent
+pattern under its existing launch gate, then checks revisions again at the
+termination boundary. Use a test barrier immediately before the final check.
+Any new record, output, end, binding or generation change refuses without
+termination; do not convert a refusal into a Failed/Stopped session row.
+Unknown, missing, legacy capability or timeout never falls back to `/kill`,
+`kill-generation`, raw input or process-name termination. Existing kill-generation
+semantics for other callers stay unchanged. Serialize accepted stop with output/
+transcript observation so already-observed progress wins; a provider can still
+produce its first token after the stop decision, the residual risk stated above.
+
+Add an internal episode-bound resume entry in AgentControlService, using the
+existing strict `Fresh:false` reservation, ownership and launch queue. Do not
+pretend it is a manual Start or weaken automatic Fresh refusal. Carry the episode
+ID through reservation and the queued launch, and revalidate it, current pointer,
+old generation, D-2 intent and all normal launch gates before launch side effects.
+No quota/auth/model override is granted. Ordinary supervisor and capacity recovery
+stand down for an action-owned seat, including after a process restart. No
+transaction spans process I/O; serialize with the same delivery/start lock order,
+and do not hold a non-reentrant queue lock while invoking code that acquires it.
+
+Resume is permitted only after positively observed exit of G. A DB Stopped row,
+kill request acknowledgment without exit, runner absence or unreachable runner
+does not prove that. Persist G2 with its launch reservation before enqueueing so
+crash reconciliation recognizes the exact accepted launch, rather than selecting
+another generation. The actual accepted launch produces the existing restart/end
+fence; detection never manufactures a TurnEnd or restart boundary. The existing
+`WriteRestartBoundaryIfInterruptedAsync` is best-effort. For this recovery, verify
+its durable fence before allowing G2 queue delivery; a failed fence write keeps
+admission closed and retries only that bookkeeping, never another process restart.
+
+Crash handling must be executable, not an in-memory retry promise:
+
+- Before StopRequested commits: zero stop calls. Audit-store failure withholds
+  the action. Once committed, multiple sweep instances own the same attempt.
+- After stop request with a lost response: reconcile the captured generation.
+  Positive same-generation exit permits progress; if it still lives, only a fresh
+  successful observation and the same conditional operation may finish the stop.
+  Reusing the operation does not consume another allowance. Missing/changed/
+  ambiguous state holds; never stop the replacement or launch on an assumption.
+- After Stopped but before resume reservation: revalidate intent and resume once.
+  After reservation but before enqueue/ack: use G2 and existing interrupted-launch
+  recovery, with the episode check in that path too. A failed launch ends this
+  attempt; do not let the ordinary supervisor start a second one.
+- After launch but before completion bookkeeping: adopt only the stored G2 and
+  reconcile Check/receipt evidence. Late exits/results for G cannot close G2 or
+  resolve its episode. Human Stop wins at every remaining side-effect boundary.
 
 ### Occupancy, admission and queue handling
 
@@ -245,14 +366,27 @@ legacy marker lookup must still be exact and scoped to this task/session/dispatc
 Do not call `AgentTaskService.CancelAsync` here: it calls StopDelegateAsync.
 
 Use a dedicated failure code/reason such as `CompactionContinuationStalled` with
-boundary, generation, age and the statement that the session was not killed.
+boundary, generation, age and the episode/automatic-action state. Do not claim
+the session was killed before an exit result, or claim it was never killed when
+this episode did terminate it.
 Reuse the existing fail/event/caller-notification transaction and its recovery
 outbox. This path cannot flow into the generic never-started kill or automatic
 retry/escalation tails. At defaults an already-old episode's new occupant is
 released at the first watchdog tick after ten minutes, not at 240 minutes.
-Already Working, Sent, attempted-Pending, mismatched or uncertain tasks remain
-with their existing settlement/deadline protections and are named in attention
-for operator review. Old investigation occupants whose brief was untyped qualify.
+Before an automatic stop, Working/Sent tasks retain their evidence and are never
+failed as undelivered. Attempted-Pending, unconfirmed Sent, mismatched or uncertain
+tasks veto automatic action. Old investigation occupants with untyped briefs
+qualify for the non-destructive deadline path.
+
+After a positively confirmed automatic stop, retire all exact same-generation
+untyped Check occupants, including one younger than its delivery deadline, with
+the distinct reason `CompactionRecoveryRetiredGeneration` (not delivery timeout).
+Fail the owning delivered Check only if still open, recording that its turn was
+interrupted by this authorized recovery. Preserve its Sent/receipt rows; do not
+rewrite it as never delivered, requeue it, or rebind it to G2. A terminal owning
+Check stays terminal. Commit task outcomes, events and caller outbox obligations
+before reopening G2 admission, and keep this path out of generic fail/retry/kill
+tails. These exact task transitions are replay-safe after a stop/commit crash.
 
 Make admission consult one shared current-episode predicate in three places:
 legacy Check `SpecialistTaskRunner.RunAsync`, routed physical-candidate selection
@@ -270,36 +404,54 @@ using queue-owned locking and full never-attempted evidence
 linked-task cancellation rules; do not implement a second text-only cleanup.
 Retry this cleanup after a failure commit and at subsequent episode sweeps, so a
 crash between task failure and queue cancellation cannot leave permanent residue.
-It types nothing and preserves unrelated/attempted rows. Do not automatically
-cancel the delivered pre-compaction prompt or replay it into the replacement.
+It types nothing and preserves unrelated/attempted rows. Cancel obsolete Check
+briefs only after their tasks are terminal and their full never-attempted proof
+passes. Do not cancel the delivered pre-compaction queue record or replay it into
+the resumed generation. No older Check task or queue brief crosses this restart;
+only newly requested, correlated Check work can demonstrate recovery.
 
 ### Visibility
 
 Project one durable `CompactionContinuationStalled` attention item for an active
 episode, including physical seat, session, accepted start, boundary time/sequence,
-elapsed silence, affected task and pending-brief count. Link to existing agent
-and session views and the operator procedure; no new card status or alert sink.
+elapsed silence, affected task, pending-brief count, action phase and refusal or
+failure reason. Explicitly label automatic stop/resume and its operation ID.
+Link to agent/session incident history and the operator procedure; no new card
+status or alert sink. Warning incidents record detection and intent before RPC;
+All action audit names actor `check-compaction-recovery` and authorization
+`CARD-0079/fed4b83c`; outcome incidents record conditional-stop refusal/confirmed exit, resume accepted,
+launch success/failure and receipt-confirmed recovery. NeedsDecision/failure is
+Error; do not page every sweep or use a human-decision alert channel. Use existing
+incident notification policy and event bus after transaction commit, with durable
+retry for publication. Store metadata/IDs and bounded diagnostics, not copied
+prompt bodies or secrets. Retain the action audit even after attention clears.
 Add the kind's normal client visual/type mapping. Health must not advertise that
 seat as warm-ready just because Status is Running. A declared alternate can keep
 the logical service available. For a legacy primary, the session attention item
-must still exist without routing/health rows. Clear episode attention on actual
-resolution; do not mark logical service recovered merely because attention clears.
+must still exist without routing/health rows. At AwaitingCheck display resumed /
+validation pending and allow a new Check; clear recovery attention only on the
+receipt-backed success or a documented operator supersession. A false alarm ended
+by late progress clears its stall attention with an AbortedProgress audit, not a
+claim that an automatic restart succeeded.
 
 ## Implementation slices
 
-Each slice is a meaningful commit with its real validation outcome. Build only
-after the policy decision and separate TestDesign have completed.
+Each slice is a meaningful commit with its real validation outcome. D-1/D-3 are
+settled; Build follows separate TestDesign. Paths for application test names below
+are `tests/Antiphon.Tests/Application/` unless otherwise stated. New production
+types and tests are proposed, not existing APIs.
 
 | Slice | Production/document files | Tests and acceptance |
 |---|---|---|
 | S0: operator repair | Execute the preceding runbook; record evidence in `docs/investigations/2026-09-20-card-0079-operator-recovery.md` (new). No production edit. | New generation, no replayed dead briefs, first useful Check plus caller receipt, subsequent census. State explicitly if not yet performed. |
-| S1: episode policy and durable storage | New `server/Application/Services/CompactionContinuationPolicy.cs`; `server/Application/Settings/DelegationSettings.cs` and its existing validation/composition; `server/Domain/Entities/AgentSession.cs`; append incident/failure enums; `server/Infrastructure/Data/AppDbContext.cs`; CLI-generated `server/Migrations/*CheckCompactionStall*` and model snapshot. | New `CompactionContinuationPolicyTests.cs` and `CheckCompactionContinuationSettingsTests.cs`; migration round trip, strict threshold, ordinary/manual/unknown/generation/backfill guards. All new test paths in this table are under `tests/Antiphon.Tests/Application/`. |
-| S2: observed detection and resolution | New `CheckCompactionContinuationService.cs`; `AgentSessionRuntime.cs` additive observation result; `AgentTaskDispatcher.cs` sweep integration; `server/Program.cs` DI as needed. | New `CheckCompactionContinuationTests.cs`; successful no-change pull vs failed pull; late reply; restart without fresh traffic; generation race; independent-session failure; dedup after incident pruning; resolved/new episode. Existing `CompactionRecoveryTests`, runtime catch-up/settlement tests. |
-| S3: bounded occupancy and clean admission | `AgentTaskDispatcher.cs`; `SessionMessageQueueService.cs`; `SpecialistTaskRunner.cs`; `SpecialistRequestService.cs`; shared seat/session episode predicate near `StandingSpecialistSeatPolicy.cs`; `AgentTaskCheckService.cs` failure wording if needed. | New `CheckCompactionRecoveryFlowTests.cs`; extend `AgentTaskDeliveryWatchdogTests`, `AgentTaskStandingAgentDispatchTests`, `SessionMessageQueueWedgedHeadTests`, `SpecialistFailurePolicyTests`, `SpecialistStartIntentTests`. Prove both Check entry paths and a queued-before-detection dispatch race. |
-| S4: attention, health and recovery documentation | `AttentionService.cs`, attention DTO/enum owner; `StandingSpecialistHealthService.cs`; `client/src/api/attention.ts`; `client/src/features/attention/attentionVisuals.ts`; `docs/session-runtime-invariants.md` and `docs/ops-http.md`. | New `CheckCompactionAttentionTests.cs`; extend `SpecialistHealthAttentionTests`, `attentionVisuals.test.ts`, `AttentionPanel.test.tsx` only if rendering changes. Include legacy primary with no routing row and a healthy alternate. |
-| S5: end-to-end ordinary acceptance | Extend `CheckNoteDeliveryHandoffTests.cs`; compose existing standing recovery HTTP/queue-switch fixtures instead of mock-only success. Add evidence to the operator-recovery document after deployment. | Real DB/dispatcher/queue flow from stuck episode through explicit Stop/Fresh to a newly created Check and whole caller receipt; busy and already eligible callers; durable notification failure recovery. Existing `StandingSessionRecoveryHttpTests`, `StandingSessionQueueSwitchTests`, `ReceiptFailureDeliveryTests`. |
+| S1: policy, durable operation and budget | New `server/Application/Services/CompactionContinuationPolicy.cs`; `server/Application/Settings/DelegationSettings.cs` (validator in same file); new `server/Domain/Entities/CheckCompactionRecovery.cs`; `AgentSupervisionState.cs`; appended incident/failure/termination and new phase enums under `server/Domain/Enums/`; `server/Infrastructure/Data/AppDbContext.cs`; CLI-generated migration/snapshot; `DataRetentionService.cs`. | New `CompactionContinuationPolicyTests`, `CheckCompactionContinuationSettingsTests`, `CheckCompactionRecoveryPersistenceTests`; extend `DataRetentionServiceTests`. Threshold, null/backfilled time, Check-only scope, progress permanently disqualifies, unique active operation, audit retention and durable 24-hour/receipt budget. |
+| S2: reliable observation and guarded runner stop | `src/Antiphon.SessionRunner.Contracts/SessionRunnerContracts.cs` and new `CompactionContinuationStop.cs`; `src/Antiphon.SessionRunner/Program.cs`, `SessionRunnerRuntime.cs`, `ITranscriptTailer.cs`, `TranscriptTailer.cs`; `server/Application/Interfaces/ISessionRunnerClient.cs`; `server/Infrastructure/Agents/SessionRunner/SessionRunnerHttpClient.cs`; `AgentSessionRuntime.cs`, `AgentSessionService.cs`; `tests/Antiphon.Tests/TestHelpers/{Fake,Scripted,Direct}SessionRunnerClient.cs`. | New `tests/Antiphon.SessionRunner.Tests/CompactionContinuationStopTests.cs` and `TranscriptTailerObservationTests.cs`; extend `RunnerSessionGenerationTests`, `TranscriptTailerCompactionTests`, `AgentSessionRuntimeTests.Persist.cs`; new `tests/Antiphon.Tests/Agents/CompactionContinuationWireTests.cs`. Fresh read-to-end, partial/error/unbound observations, late output/end, generation race, missing capability, exit confirmation and no unconditional fallback. Other tailers report Unsupported for this Claude-only observation. |
+| S3: automatic coordinator and strict resume | New `CheckCompactionContinuationService.cs`; `AgentTaskDispatcher.cs` sweep; `AgentControlService.cs` internal episode-bound reservation; `AgentSessionLaunchQueue.cs`; `AgentSupervisorService.cs`; `SessionReconciliationService.cs` for interrupted launch; `StandingSpecialistSeatPolicy.cs`; `server/Program.cs` DI. | New `CheckCompactionContinuationTests`, `CheckCompactionAutomaticRestartTests`; extend `AgentSupervisionTests`, `SpecialistStartIntentTests`, `StandingSessionSwitchConcurrencyTests`, `AgentSessionRuntimeTests`. Confirmed episode -> automatic conditional stop -> one strict resume without a human call; all crash cuts, suspended/hold changes, zero setting, source/replacement generation and supervisor races. |
+| S4: occupancy, queue and admission | `AgentTaskDispatcher.cs`, `SessionMessageQueueService.cs`, `SpecialistTaskRunner.cs`, `SpecialistRequestService.cs`, shared episode predicate; `AgentTaskCheckService.cs` failure wording and existing outbox path. | New `CheckCompactionRecoveryFlowTests`; extend `AgentTaskDeliveryWatchdogTests`, `AgentTaskStandingAgentDispatchTests`, `SessionMessageQueueWedgedHeadTests`, `SpecialistFailurePolicyTests`. Both Check entry paths, final dispatch race, old/young untyped occupants, exact owning delivered Check, no replay into G2, healthy alternate, and attempted/human-input veto. |
+| S5: visible audit and exception documentation | `AttentionService.cs`, `server/Application/Dtos/AttentionDtos.cs`, `StandingSpecialistHealthService.cs`, existing incident/event publication; `client/src/api/attention.ts`, `client/src/features/attention/attentionVisuals.ts`; `AGENTS.md` narrow exception alongside unchanged rule; `docs/session-runtime-invariants.md`, `docs/ops-http.md`. | New `CheckCompactionAttentionTests`; extend `SpecialistHealthAttentionTests`, `attentionVisuals.test.ts`, `AttentionPanel.test.tsx` only if rendering changes. Intent precedes effects, refusals/errors visible, no false Recovered at launch, legacy primary without routing rows, durable visibility after pruning/publication failure. |
+| S6: complete automatic flow and acceptance | Extend `CheckNoteDeliveryHandoffTests.cs`, using real DB/dispatcher/queue and an isolated scripted runner through the new HTTP contract; add deployment evidence to `docs/investigations/2026-09-20-card-0079-operator-recovery.md` only when performed. | Stuck eligible episode -> automatic stop/strict resume (no manual Stop/Start) -> new Check -> useful result -> whole parent receipt, with busy and eligible parents and crash-recovered notification. Extend `ReceiptFailureDeliveryTests`, retain manual `StandingSessionRecoveryHttpTests` and `StandingSessionQueueSwitchTests`. Separate fake-runner mechanism evidence from live natural-compaction acceptance. |
 
-Do not alter auto-compaction scheduling, native tailer interpretation, model holds,
+Do not alter auto-compaction scheduling, native transcript event interpretation, model holds,
 role-wide ceilings, CARD-0501 attempt accounting, or standing ownership rules in
 these slices. If implementation discovers those contracts need changing, return
 the specific finding to the caller instead of broadening the repair silently.
@@ -320,22 +472,53 @@ land under the repository workflow.
 | PC-4 | `Successful_unchanged_pull_confirms_but_failed_pull_does_not` (`CheckCompactionContinuationTests`) | Collapse no-change and pull-failure outcomes; assertion on durable episode presence/absence fails. No transport/build exception counts as red. |
 | PC-5 | `Catch_up_progress_saves_the_suspected_session` (`CheckCompactionContinuationTests`) | Skip post-pull reevaluation; the late response/end incorrectly creates an episode. |
 | PC-6 | `Old_generation_observation_cannot_hold_the_replacement` (`CheckCompactionContinuationTests`) | Remove the generation/pointer fence at commit; replacement is incorrectly marked recovery-needed. Include same-ID resume. |
-| PC-7 | `Silent_compaction_releases_only_the_untyped_check_occupant_without_killing` (`CheckCompactionRecoveryFlowTests`) | Restore unconditional D8 continue; task remains Dispatched instead of Failed. Separate control routes failure through the generic kill tail; recorded kill list must fail. |
+| PC-7 | `Held_recovery_releases_the_expired_untyped_occupant_without_generic_kill` (`CheckCompactionRecoveryFlowTests`) | Restore unconditional D8 continue; task remains Dispatched instead of Failed. Seed a confirmed episode whose automatic allowance is exhausted; assert zero generic kill calls. |
 | PC-8 | `Attempted_or_sent_brief_retains_its_existing_owner_and_delivery_evidence` (`CheckCompactionRecoveryFlowTests`) | Treat Pending as sufficient proof of never-attempted; a current-composer row is incorrectly canceled/failed. |
 | PC-9 | `Legacy_check_refuses_the_stalled_primary_before_task_creation` (`CheckCompactionRecoveryFlowTests`) | Remove legacy admission gate; unexpected task/queue creation fails. |
 | PC-10 | `Routed_check_excludes_only_the_stalled_physical_seat` (`CheckCompactionRecoveryFlowTests`) | Remove physical-seat gate, or apply primary episode to all alternates; selected candidate/launch evidence fails. Test each mutation separately. |
 | PC-11 | `Confirmed_episode_survives_restart_and_incident_pruning` (`CheckCompactionContinuationTests`) | Use incident existence/in-memory dedup instead of persisted episode; duplicate incident or lost refusal/attention fails. |
 | PC-12 | `Terminal_untyped_briefs_are_pruned_while_working_after_a_commit_gap` (`CheckCompactionRecoveryFlowTests`) | Put cleanup back behind idle or omit reconciliation after failure commit; obsolete Pending brief remains. Human/attempted rows must remain unchanged. |
-| PC-13 | `Explicit_fresh_recovery_delivers_a_new_check_and_its_whole_caller_note` (`CheckNoteDeliveryHandoffTests`) | Break the post-recovery new Check dispatch/receipt path or use Sent as caller receipt; whole UserPrompt and correlated reading assertions fail. |
+| PC-13 | `Automatic_restart_delivers_a_new_check_and_its_whole_caller_note` (`CheckNoteDeliveryHandoffTests`) | Disable the episode resume transition; a same-session new accepted generation, successful new Check and caller receipt fail. No manual Stop/Start is called by this test. |
 | PC-14 | `Healthy_working_session_still_defers_delivery_and_is_never_killed` (`CheckCompactionRecoveryFlowTests`) | Remove ordinary D8/D9 protection; healthy busy control fails. Also retain existing `a_working_session_with_a_pending_brief_is_neither_failed_nor_killed` in `AgentTaskDeliveryWatchdogTests`. |
+| PC-15 | `Only_owned_always_on_claude_check_seats_may_auto_restart` (`CheckCompactionAutomaticRestartTests`) | Bypass the shared automatic-scope predicate; representative non-AlwaysOn, ordinary AlwaysOn, non-Claude, pool, human-turn and slug-lookalike cases violate zero stop/resume assertions. |
+| PC-16 | `Ten_minutes_without_a_turn_end_is_insufficient_without_boundary_and_continuation` (`CompactionContinuationPolicyTests`) | Remove the boundary/continuation requirement; a long ordinary Working turn wrongly becomes eligible. |
+| PC-17 | `Tail_observation_failure_is_unknown_not_silence` (`TranscriptTailerObservationTests`, runner project) | Treat incomplete/failed read-to-end as successful; expected Unknown fails with unparsed trailing bytes still present. |
+| PC-18 | `Late_output_or_turn_end_prevents_conditional_stop` (`CompactionContinuationStopTests`, runner project) | Remove the final revision/pattern recheck after the test barrier; inject output or TurnEnd there and assert the process kill count stays zero. |
+| PC-19 | `Replacement_generation_is_never_stopped` (`CompactionContinuationStopTests`, runner project) | Remove accepted-generation comparison; replacement gets a kill call instead of a mismatch refusal. |
+| PC-20 | `Unsupported_or_ambiguous_stop_never_falls_back_or_resumes` (`CheckCompactionAutomaticRestartTests`) | Treat Unknown/Missing/unsupported as confirmed exit; resume count changes from zero. Separately assert generic kill and raw-input call lists remain empty. |
+| PC-21 | `Human_stop_between_detection_and_effect_revokes_recovery` (`CheckCompactionAutomaticRestartTests`) | Remove final intent check at the selected stop or queued-resume boundary; no-effect assertion fails. TestDesign names one boundary per mutation. |
+| PC-22 | `Restart_intent_must_commit_before_any_runner_effect` (`CheckCompactionAutomaticRestartTests`) | Move conditional stop ahead of durable commit; injected commit failure still produces a stop call, violating zero effects. |
+| PC-23 | `Lost_stop_response_reconciles_only_the_captured_generation` (`CheckCompactionAutomaticRestartTests`) | Infer stopped from runner absence; an unknown outcome improperly launches G2. Include positive exited-generation recovery as an ordinary control. |
+| PC-24 | `Resume_reservation_survives_crash_without_a_second_launch` (`CheckCompactionAutomaticRestartTests`) | Ignore the persisted G2 reservation after service recreation; assert more than one accepted generation/launch for the operation. |
+| PC-25 | `Supervisor_cannot_bypass_an_active_or_failed_compaction_operation` (`CheckCompactionAutomaticRestartTests`) | Remove supervisor episode gate; concurrent sweep or failed-resume case records an extra launch. |
+| PC-26 | `One_compaction_restart_per_day_survives_pruning_and_service_recreation` (`CheckCompactionRecoveryPersistenceTests`) | Replace durable last-attempt admission with incident existence; second episode inside 24 hours incorrectly stops the seat. |
+| PC-27 | `A_second_restart_needs_useful_check_and_caller_receipt_even_after_a_day` (`CheckCompactionRecoveryPersistenceTests`) | Remove receipt eligibility; after 24 hours without receipt, second stop is incorrectly authorized. |
+| PC-28 | `Automatic_recovery_preserves_history_and_all_launch_holds` (`CheckCompactionAutomaticRestartTests`) | Change recovery request to Fresh; assert the same session/native ID is resumed and the existing automatic-Fresh refusal is not bypassed. Hold/no-override variants remain ordinary guards. |
+| PC-29 | `Confirmed_stop_retires_exact_old_checks_without_replay` (`CheckCompactionRecoveryFlowTests`) | Omit retirement of a younger untyped occupant; assert it remains open or its old brief appears in G2. Assert delivered owning Check history remains unchanged. |
+| PC-30 | `Resumed_is_not_recovered_until_the_whole_parent_note_arrives` (`CheckCompactionAttentionTests`) | Accept queue Sent as receipt; recovery attention and D-9 receipt gate incorrectly clear before whole parent UserPrompt. |
+| PC-31 | `Disabling_recovery_revokes_unissued_stop_and_resume` (`CheckCompactionAutomaticRestartTests`) | Omit the effective zero-setting check at a selected side-effect boundary; an already confirmed episode still issues a new stop/resume. |
+| PC-32 | `Attempted_or_unrelated_input_vetoes_the_automatic_stop` (`CheckCompactionAutomaticRestartTests`) | Remove queue/work preflight veto; attempted Pending, unconfirmed Sent or unrelated input produces a stop instead of visible NeedsDecision. |
+| PC-33 | `Failed_restart_fence_write_keeps_new_generation_admission_closed` (`CheckCompactionAutomaticRestartTests`) | Ignore the durable restart-fence check; with its write failed, assert recovery remains validation-blocked and no new Check task is admitted. Incorrect AwaitingCheck/admission fails even if the ordinary Working gate still prevents typing. |
 
-Additional ordinary guards: 9:59.999 vs 10:00; setting zero/negative; repeated
+Additional ordinary guards: 9:59.999 vs 10:00; setting zero/negative/1–9; repeated
 auto boundaries; timestamp inversions and nulls; already terminal task; no queue
 row; mismatched execution task; concurrent sweep; unavailable observation does
 not block healthy other sessions; no pending task at detection; failure/outbox
 commit vs note enqueue crash; record remains visible after task settlement;
 real late progress resolves an episode but a health success still needs a valid
-Check. Assert zero input/kill/start calls on every automatic detector path.
+Check. Assert zero input/stop/resume on every veto path and exactly one conditional
+stop plus one strict resume on the accepted path, with exact session/generation
+and attempt IDs. A delivered old Check is never retyped. Keep positive passing
+controls for legitimate >10-minute compaction continuations emitting Thinking,
+tool activity or text; idle/manual/missing-boundary cases; and stale backfill.
+
+Exercise every crash cut in the lifecycle section, duplicate concurrent sweeps,
+owner/seat AlwaysOn or routing changes, quota/auth/model/capacity/continuity/Herdr
+holds at both preflight and resume, 24-hour exact threshold, terminal episode
+retention, runner restart during native-tail observation, and successful no-change
+observation followed by progress at final stop. A stop refusal cannot mutate the
+session to Failed. Audit metadata must show automatic actor, threshold, evidence,
+expected/observed generations, outcome and refusal; never log a fabricated success.
 
 For delivery acceptance, inventory and join the original checked task/check number,
 Check run task, interpreter session/generation, its brief queue row, correlated
@@ -359,6 +542,7 @@ Representative ordinary commands, to be finalized by TestDesign:
 dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c79/ --nologo
 dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c79/ -- --treenode-filter '/*/*/*/*[Category=Unit]' --report-trx --report-trx-filename unit.trx --results-directory .antiphon/c79-unit
 dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c79/ -- --treenode-filter '/*/*/(CheckCompactionContinuationTests*)|(CheckCompactionRecoveryFlowTests*)|(AgentTaskDeliveryWatchdogTests*)/*' --report-trx --report-trx-filename recovery.trx --results-directory .antiphon/c79-recovery
+dotnet run --project tests/Antiphon.SessionRunner.Tests --property:OutputPath=bin-c79/ -- --treenode-filter '/*/*/(CompactionContinuationStopTests*)|(TranscriptTailerObservationTests*)|(RunnerSessionGenerationTests*)/*' --report-trx --report-trx-filename runner.trx --results-directory .antiphon/c79-runner
 pwsh -File scripts/test-client.ps1 attentionVisuals.test
 ```
 
@@ -379,23 +563,32 @@ rules for SourceLanding; this Plan worktree is not a SourceLanding snapshot.
 
 After ordinary Code, separate Review and confirmed land, activate only through
 the canonical checkout/runbook and verify `/api/version` against the intended SHA.
-Apply the additive schema before activating the detector. Re-read effective
-settings, the current seat generation and any active episode. Use the operator
-acceptance window above; report role outcomes rather than counting the truncated
-`INTERPRETER DOWN` text in parent Check events.
+Apply the additive schema and deploy/verify the new runner capability before
+enabling automatic actions. Re-read effective settings, current seat generation,
+standing ownership and active episode. Missing capability withholds automatic
+effects and remains visible. In an isolated test deployment, seed the captured
+pattern and drive real automatic conditional stop/resume with no manual recovery;
+capture every phase and the first new useful Check with parent receipt. In live
+operation observe the next natural compaction, the next ten real Checks and their
+role outcomes, noting any conditional-stop refusal or recovery hold. Do not
+force-compact/kill a production interpreter as a test. Absence of a natural stall
+means live automatic-restart acceptance is still pending, not proven by ten
+ordinary successes. The operator Fresh runbook is separately reported evidence.
 
-Rollback: stop new episode discovery with the dedicated setting, retain episode
-and transcript evidence, and resolve the affected seat explicitly. Do not clear
+Rollback: set the dedicated setting to zero, preventing new discovery and any
+unissued automatic stop/resume, retain action/transcript evidence and reconcile
+already-issued effects. A stopped seat becomes visible DisabledNeedsDecision,
+never an excuse for an implicit supervisor resume. Do not clear
 model holds, globally bypass admission, downgrade data, or label the unchanged
 stuck session healthy to make a dashboard green. A code rollback alone does not
 recover that session. Record pending acceptance/Mutation work honestly.
 
-## Next-stage decision
+## Next-stage handoff
 
-Caller: accept D-1's operator-controlled recovery and D-3's provisional 10-minute
-bound, or request a revised plan with explicit unattended recovery authority.
-The immediate operator unblock can be commissioned independently. Once accepted,
-send this artifact to **TestDesign**, then Code; verification was not folded into
-this dispatch. The provider-level cause remains unknown and is not required to
-detect this episode, but failure of the fresh-session canary is new evidence for
-Investigate rather than permission for another restart loop.
+D-1/D-3 are settled by the operator's explicit authorization. Send this amended
+artifact to **TestDesign**, then Code; verification was not folded into this
+dispatch. Finalize method-scoped PCs, ordinary profile and cross-process race
+fixtures for the automatic path. The provider-level cause is still unknown;
+failure or recurrence after the bounded strict resume records NeedsDecision and
+calls for investigation/operator Fresh, never a broader restart loop. This Plan
+dispatch changed no runtime behavior and performed no live recovery.
