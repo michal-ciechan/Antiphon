@@ -238,11 +238,13 @@ public sealed class WorktreeLandingCleanupRetryTests
         await File.WriteAllTextAsync(sentinel, "fixture report");
         await h.RunAsync();
         var op = (await h.OperationAsync()).ShouldNotBeNull();
+        Guid originalNoteId;
         await using (var db = h.CreateContext())
         {
             var manualNote = await db.AgentTaskLandNotifications.SingleAsync(n =>
                 n.TaskId == h.Fixture.TaskId && n.Kind == LandNotificationKind.Outcome);
             manualNote.ParentSessionId.ShouldBe(originalCaller);
+            originalNoteId = manualNote.Id;
             var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
             task.ParentSessionId = Guid.NewGuid();
             await db.SaveChangesAsync();
@@ -252,8 +254,7 @@ public sealed class WorktreeLandingCleanupRetryTests
         await h.RequestCleanupRetryAsync(op.Id);
         await h.RunAsync();
         await using var verify = h.CreateContext();
-        var kept = await verify.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n =>
-            n.TaskId == h.Fixture.TaskId && n.Kind == LandNotificationKind.Outcome);
+        var kept = await verify.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == originalNoteId);
         kept.ParentSessionId.ShouldBe(originalCaller);
     }
     [Test]
@@ -408,11 +409,14 @@ public sealed class WorktreeLandingCleanupRetryTests
         var cut = new EnqueueCut { Fail = true };
         var failing = new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System, cut);
         await failing.ReconcileAsync(note.Id, CancellationToken.None);
-        await db.Entry(note).ReloadAsync();
-        note.QueueMessageId.ShouldBeNull();
-        note.State.ShouldNotBe(LandNotificationState.NotRequired);
+        db.ChangeTracker.Clear();
+        var afterFail = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id);
+        afterFail.QueueMessageId.ShouldBeNull();
+        afterFail.State.ShouldNotBe(LandNotificationState.NotRequired);
         cut.Fail = false;
         await using var restored = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        await restored.AgentTaskLandNotifications.Where(n => n.Id == note.Id)
+            .ExecuteUpdateAsync(s => s.SetProperty(n => n.NextAttemptAt, DateTime.UtcNow.AddMinutes(-1)));
         var recovery = new AgentTaskLandNotificationService(restored, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System);
         await recovery.ReconcileAsync(note.Id, CancellationToken.None);
         var row = await restored.SessionQueuedMessages.SingleAsync(m => m.SourceLandNotificationId == note.Id);
