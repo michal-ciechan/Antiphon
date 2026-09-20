@@ -1,6 +1,7 @@
 using Antiphon.E2E.Fixtures;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -78,9 +79,22 @@ public sealed class WorktreeRetirementDeliveryE2ETests
             key, WorkspaceReservationKind.Retirement, f.TaskId, RetirementId: Guid.NewGuid()), CancellationToken.None);
         retirement.Accepted.ShouldBeFalse();
         await using var db = f.CreateContext();
+        if (cut == "unknown-start")
+        {
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = Guid.NewGuid(), DefinitionName = "grok", AgentKind = AgentKind.Grok,
+                Cwd = f.Source, Status = SessionStatus.Starting, Cols = 80, Rows = 24,
+                CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+            (await reservations.TryClaimRetirementAsync(new WorkspaceReservationCommand(
+                key, WorkspaceReservationKind.Retirement, f.TaskId, RetirementId: Guid.NewGuid()), CancellationToken.None))
+                .Accepted.ShouldBeFalse();
+        }
+
         (await db.WorkspaceUseReservations.CountAsync(r => r.TaskId == f.TaskId && r.Active && r.Kind == WorkspaceReservationKind.Launch))
             .ShouldBe(1);
-        cut.ShouldNotBeNullOrWhiteSpace();
     }
 
     private static IServiceScope CreateScope(LandDeliveryFixture f) => f.Services.CreateScope();

@@ -1,7 +1,9 @@
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Shouldly;
@@ -184,9 +186,76 @@ public sealed class WorktreeLandingCleanupRetryTests
     }
 
     [Test]
-    public async Task C459_LostWakeupRecoversSameRequest() => await C459_ScheduledHasNoCallerObligation();
+    public async Task C459_LostWakeupRecoversSameRequest()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        var sentinel = Path.Combine(h.Fixture.Source, ".antiphon", "report.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(sentinel)!);
+        await File.WriteAllTextAsync(sentinel, "fixture report");
+        await h.RunAsync();
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        File.Delete(sentinel);
+        var queued = await h.RequestCleanupRetryAsync(op.Id);
+        var originalRequestId = queued.RequestId;
+        h.Queue.TryDequeue(out var lost).ShouldBeTrue();
+        h.Queue.Release(lost.TaskId);
+        await h.SweepAsync();
+        await h.RunQueuedAsync();
+        await using var db = h.CreateContext();
+        var request = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == originalRequestId);
+        var cleanupCompletedRequestId = request.Id;
+        cleanupCompletedRequestId.ShouldBe(originalRequestId);
+        request.CleanupOnly.ShouldBeTrue();
+        request.IsPending.ShouldBeFalse();
+        (await h.OperationAsync())!.Cleanup.ShouldBe(LandCleanupStatus.Complete);
+    }
+
     [Test]
-    public async Task C459_ManualNoteSnapshotSurvivesCleanup() => await C459_ScheduledHasNoCallerObligation();
+    public async Task C459_ManualNoteSnapshotSurvivesCleanup()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var originalCaller = Guid.NewGuid();
+        await using (var db = h.CreateContext())
+        {
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = originalCaller, DefinitionName = "grok", AgentKind = AgentKind.Grok,
+                Cwd = h.Fixture.Source, Status = SessionStatus.Running, Cols = 80, Rows = 24,
+                CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow,
+            });
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            task.ReplyTo = AgentTaskReplyTo.Session;
+            task.ParentSessionId = originalCaller;
+            await db.SaveChangesAsync();
+        }
+
+        await h.AddSourceAsync();
+        var sentinel = Path.Combine(h.Fixture.Source, ".antiphon", "report.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(sentinel)!);
+        await File.WriteAllTextAsync(sentinel, "fixture report");
+        await h.RunAsync();
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        await using (var db = h.CreateContext())
+        {
+            var manualNote = await db.AgentTaskLandNotifications.SingleAsync(n =>
+                n.TaskId == h.Fixture.TaskId && n.Kind == LandNotificationKind.Outcome);
+            manualNote.ParentSessionId.ShouldBe(originalCaller);
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            task.ParentSessionId = Guid.NewGuid();
+            await db.SaveChangesAsync();
+        }
+
+        File.Delete(sentinel);
+        await h.RequestCleanupRetryAsync(op.Id);
+        await h.RunAsync();
+        await using var verify = h.CreateContext();
+        var kept = await verify.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n =>
+            n.TaskId == h.Fixture.TaskId && n.Kind == LandNotificationKind.Outcome);
+        kept.ParentSessionId.ShouldBe(originalCaller);
+    }
     [Test]
     public async Task C459_OutcomeObligationIsAtomic()
     {
@@ -225,33 +294,137 @@ public sealed class WorktreeLandingCleanupRetryTests
     [Test]
     public async Task C459_CompletePromptIsRequired()
     {
-        DateTime? confirmedAt = null;
-        confirmedAt.ShouldBeNull();
-        await Task.CompletedTask;
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
+        var service = new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System);
+        await service.ReconcileAsync(note.Id, CancellationToken.None);
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == note.QueueMessageId);
+        row.Status = QueuedMessageStatus.Sent;
+        row.DeliveryAttempts = 1;
+        row.LastDeliveryBaselineSequence = 10;
+        row.DeliveryVerdict = DeliveryVerdict.Delivered;
+        await db.SaveChangesAsync();
+        await service.ReconcileAsync(note.Id, CancellationToken.None);
+        await db.Entry(note).ReloadAsync();
+        note.ConfirmedAt.ShouldBeNull("transport success and Delivered cannot confirm");
+
+        db.TranscriptEntries.Add(PrefixPrompt(h.SessionId, 11, row.Body[..Math.Min(200, row.Body.Length)]));
+        await db.SaveChangesAsync();
+        await service.ReconcileAsync(note.Id, CancellationToken.None);
+        await db.Entry(note).ReloadAsync();
+        note.ConfirmedAt.ShouldBeNull("prefix-only UserPrompt cannot confirm");
+
+        var other = Guid.NewGuid();
+        db.AgentSessions.Add(new AgentSession { Id = other, CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow });
+        db.TranscriptEntries.Add(PrefixPrompt(other, 11, row.Body));
+        await db.SaveChangesAsync();
+        await service.ReconcileAsync(note.Id, CancellationToken.None);
+        await db.Entry(note).ReloadAsync();
+        note.ConfirmedAt.ShouldBeNull("wrong recipient cannot confirm");
+
+        db.TranscriptEntries.Add(PrefixPrompt(h.SessionId, 10, row.Body));
+        await db.SaveChangesAsync();
+        await service.ReconcileAsync(note.Id, CancellationToken.None);
+        await db.Entry(note).ReloadAsync();
+        note.ConfirmedAt.ShouldBeNull("old baseline cannot confirm");
+
+        db.TranscriptEntries.Add(PrefixPrompt(h.SessionId, 12, row.Body));
+        await db.SaveChangesAsync();
+        await service.ReconcileAsync(note.Id, CancellationToken.None);
+        await db.Entry(note).ReloadAsync();
+        note.ConfirmedAt.ShouldNotBeNull();
+        h.Adapter.Inputs.ShouldBeEmpty();
     }
 
     [Test]
     public async Task C459_IdleReceiptRecoversLostFlush()
     {
-        var completeMatchingPrompts = 1;
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
+        var drop = new DropFlushWakeup();
+        var service = new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System, drop);
+        await service.ReconcileAsync(note.Id, CancellationToken.None);
+        await db.Entry(note).ReloadAsync();
+        note.QueueMessageId.ShouldNotBeNull();
+        note.ConfirmedAt.ShouldBeNull();
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == note.QueueMessageId);
+        row.Status = QueuedMessageStatus.Sent;
+        row.DeliveryAttempts = 1;
+        row.LastDeliveryBaselineSequence = 10;
+        await db.SaveChangesAsync();
+        db.TranscriptEntries.Add(PrefixPrompt(h.SessionId, 11, row.Body));
+        await db.SaveChangesAsync();
+        await service.ReconcileAsync(note.Id, CancellationToken.None);
+        await db.Entry(note).ReloadAsync();
+        var completeMatchingPrompts = note.ConfirmedAt is null ? 0 : 1;
         completeMatchingPrompts.ShouldBe(1);
-        await Task.CompletedTask;
+        h.Adapter.Inputs.ShouldBeEmpty();
     }
 
     [Test]
     public async Task C459_ReceiptFailureNeverRetypes()
     {
-        var submittedMatchingBodies = new[] { "one" };
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
+        var service = new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System);
+        await service.ReconcileAsync(note.Id, CancellationToken.None);
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == note.QueueMessageId);
+        row.Status = QueuedMessageStatus.Sent;
+        row.DeliveryAttempts = 1;
+        row.LastDeliveryBaselineSequence = 10;
+        await db.SaveChangesAsync();
+        db.TranscriptEntries.Add(PrefixPrompt(h.SessionId, 11, row.Body));
+        await db.SaveChangesAsync();
+        await new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System, new ReceiptSaveFailure())
+            .ReconcileAsync(note.Id, CancellationToken.None);
+        (await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id)).ConfirmedAt.ShouldBeNull();
+        await using var restarted = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var recovery = new AgentTaskLandNotificationService(restarted, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System);
+        await recovery.ReconcileAsync(note.Id, CancellationToken.None);
+        await recovery.ReconcileAsync(note.Id, CancellationToken.None);
+        var saved = await restarted.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id);
+        saved.ConfirmedAt.ShouldNotBeNull();
+        var submittedMatchingBodies = await restarted.TranscriptEntries.AsNoTracking()
+            .Where(p => p.AgentSessionId == h.SessionId && p.Kind == TranscriptKinds.UserPrompt && p.Text == row.Body)
+            .Select(p => p.Text)
+            .ToListAsync();
         submittedMatchingBodies.ShouldHaveSingleItem();
-        await Task.CompletedTask;
+        h.Adapter.Inputs.ShouldBeEmpty();
     }
 
     [Test]
     public async Task C459_EnqueueFailureRemainsOwed()
     {
-        var completeMatchingPrompts = 1;
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
+        var cut = new EnqueueCut { Fail = true };
+        var failing = new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System, cut);
+        await failing.ReconcileAsync(note.Id, CancellationToken.None);
+        await db.Entry(note).ReloadAsync();
+        note.QueueMessageId.ShouldBeNull();
+        note.State.ShouldNotBe(LandNotificationState.NotRequired);
+        cut.Fail = false;
+        await using var restored = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var recovery = new AgentTaskLandNotificationService(restored, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System);
+        await recovery.ReconcileAsync(note.Id, CancellationToken.None);
+        var row = await restored.SessionQueuedMessages.SingleAsync(m => m.SourceLandNotificationId == note.Id);
+        row.Status = QueuedMessageStatus.Sent;
+        row.DeliveryAttempts = 1;
+        row.LastDeliveryBaselineSequence = 10;
+        restored.TranscriptEntries.Add(PrefixPrompt(h.SessionId, 11, row.Body));
+        await restored.SaveChangesAsync();
+        await recovery.ReconcileAsync(note.Id, CancellationToken.None);
+        var saved = await restored.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id);
+        var completeMatchingPrompts = saved.ConfirmedAt is null ? 0 : 1;
         completeMatchingPrompts.ShouldBe(1);
-        await Task.CompletedTask;
     }
 
     private static async Task<int> CountPublicationsAsync(LandingSafetyHarness h)
@@ -260,5 +433,34 @@ public sealed class WorktreeLandingCleanupRetryTests
         return await db.AgentTaskEvents.CountAsync(e =>
             e.AgentTaskId == h.Fixture.TaskId &&
             (e.Type == AgentTaskEventType.Landed || e.Type == AgentTaskEventType.AlreadyPresent));
+    }
+
+    private static TranscriptEntry PrefixPrompt(Guid sessionId, long sequence, string text) => new()
+    {
+        Id = Guid.NewGuid(),
+        AgentSessionId = sessionId,
+        Sequence = sequence,
+        Kind = TranscriptKinds.UserPrompt,
+        Text = text,
+        Timestamp = DateTime.UtcNow,
+        CreatedAt = DateTime.UtcNow,
+    };
+
+    private sealed class DropFlushWakeup : LandDeliveryBoundary
+    {
+        public override bool DropWakeup(string boundary, Guid identity) => boundary == "completion";
+    }
+
+    private sealed class ReceiptSaveFailure : LandDeliveryBoundary
+    {
+        public override Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct) =>
+            boundary == "receipt-before-save" ? Task.FromException(new IOException("owned receipt save failure")) : Task.CompletedTask;
+    }
+
+    private sealed class EnqueueCut : LandDeliveryBoundary
+    {
+        public bool Fail;
+        public override Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct) =>
+            Fail && boundary == "before-enqueue" ? Task.FromException(new IOException("owned enqueue failure")) : Task.CompletedTask;
     }
 }
