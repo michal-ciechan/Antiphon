@@ -15,8 +15,8 @@ internal sealed class SettledRemovalHarness : IAsyncDisposable
 {
     public LandingSafetyHarness Host { get; }
     public Guid RetirementId { get; private set; }
-    public string SourceSha { get; private set; } = "";
-    public string TargetSha { get; private set; } = "";
+    public string SourceSha { get; set; } = "";
+    public string TargetSha { get; set; } = "";
     public string CommonDirectory { get; private set; } = "";
     public string GitDirectory { get; private set; } = "";
     public string Fingerprint { get; private set; } = "";
