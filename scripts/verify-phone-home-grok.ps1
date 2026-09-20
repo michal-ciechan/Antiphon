@@ -7,7 +7,8 @@ param(
     [ValidateSet('local-docker', 'server2')]
     [string] $Placement = 'local-docker',
     [switch] $WriteConfigOnly,
-    [switch] $SkipContainer
+    [switch] $SkipContainer,
+    [int] $HoldSeconds = 0
 )
 
 Set-StrictMode -Version Latest
@@ -353,6 +354,17 @@ try {
     if (-not $up) { throw "Isolated server /health did not return 200 on $($generated.serverOrigin)." }
     Write-Host "Isolated server healthy: $health"
 
+    if ([string]$generated.placement -eq 'server2') {
+        $fwName = "CARD-0490-v7-$($generated.serverPort)"
+        try {
+            New-NetFirewallRule -DisplayName $fwName -Direction Inbound -Action Allow -Protocol TCP -LocalPort ([int]$generated.serverPort) -RemoteAddress '100.64.0.0/10' -ErrorAction Stop | Out-Null
+            Write-Host "Opened Tailscale inbound firewall rule $fwName for port $($generated.serverPort)"
+        }
+        catch {
+            Write-Host "Could not add Tailscale firewall rule $fwName (elevation may be required): $($_.Exception.Message)"
+        }
+    }
+
     $env:PHONE_HOME_SERVER_ORIGIN = [string]$generated.phoneHomeServerOrigin
     $env:PHONE_HOME_WORKSPACE = [string]$generated.hostWorkspaceRoot
     $env:PHONE_HOME_STATE = [string]$generated.stateRoot
@@ -381,6 +393,29 @@ try {
         Write-Host "CARD-0490 container started against isolated origin. Queue the canary through the isolated API; do not use 17202."
     }
 
+    if ($HoldSeconds -gt 0 -and $blockers.Count -eq 0) {
+        $statusPath = Join-Path $EvidenceRoot 'runner-status.json'
+        $deadline = (Get-Date).AddSeconds($HoldSeconds)
+        $ready = $false
+        Write-Host "Holding $HoldSeconds s for phone-home runner status at $($generated.serverOrigin)/api/session-runners/$($generated.runnerId)/status"
+        while ((Get-Date) -lt $deadline) {
+            try {
+                $st = Invoke-RestMethod -Uri "$($generated.serverOrigin)/api/session-runners/$($generated.runnerId)/status" -UseBasicParsing -TimeoutSec 3
+                ($st | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $statusPath -Encoding utf8
+                if ($st.available -eq $true) {
+                    $ready = $true
+                    Write-Host "Runner available=true dispatchEligible=$($st.dispatchEligible) store=$($st.runnerStoreId) epoch=$($st.epoch)"
+                    break
+                }
+            }
+            catch { }
+            Start-Sleep -Seconds 2
+        }
+        if (-not $ready) {
+            Write-Host "Runner did not become available within $HoldSeconds s. See $statusPath"
+        }
+    }
+
     if ($qemuBlockers.Count -gt 0) {
         Write-Host "QEMU ordinary-lane blockers written to $blockerPath (container V-7 is independent)."
     }
@@ -400,6 +435,10 @@ finally {
     }
     if ($pgStarted) {
         try { & docker rm -f $pgName 2>$null | Out-Null } catch { }
+    }
+    if ($generated -and [string]$generated.placement -eq 'server2' -and $generated.serverPort) {
+        $fwName = "CARD-0490-v7-$($generated.serverPort)"
+        try { Remove-NetFirewallRule -DisplayName $fwName -ErrorAction SilentlyContinue | Out-Null } catch { }
     }
     $v7bins = Get-ChildItem -Path $repoRoot -Recurse -Directory -Filter 'bin-card0490-v7' -ErrorAction SilentlyContinue
     foreach ($d in $v7bins) {
