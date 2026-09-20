@@ -16,6 +16,11 @@ services:
       PhoneHome__AllowedCwd: /work
       PhoneHome__GrokHome: /state/grok
       GROK_HOME: /state/grok
+      # appsettings.json ships the Windows default C:\logs\antiphon\session-runner, which the
+      # Linux runner resolves against /app and then cannot create. Every launch fails with
+      # UnauthorizedAccessException before the pty-host starts, so the POSIX path is required,
+      # not cosmetic. /state is the writable bind; /work is read-only.
+      SessionRunner__SessionLogPath: /state/session-runner
     volumes:
       - type: bind
         source: ${PHONE_HOME_WORKSPACE}
