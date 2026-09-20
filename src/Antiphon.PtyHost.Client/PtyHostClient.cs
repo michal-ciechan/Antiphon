@@ -45,14 +45,17 @@ public sealed class PtyHostClient : IAsyncDisposable
         while (DateTime.UtcNow < deadline)
         {
             ct.ThrowIfCancellationRequested();
+            var remaining = deadline - DateTime.UtcNow;
+            if (remaining < TimeSpan.FromMilliseconds(50))
+                break;
             var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
             try
             {
-                using (var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
-                {
-                    connectCts.CancelAfter(TimeSpan.FromSeconds(2));
-                    await pipe.ConnectAsync(connectCts.Token);
-                }
+                // Do not slice ConnectAsync into 2s cancels: on Linux those aborted connects
+                // sit in the listen backlog and the host's Accept never completes (CARD-0490
+                // Docker phone-home: socket existed, host waited 30s, runner timed out at 15s).
+                var milliseconds = (int)Math.Clamp(remaining.TotalMilliseconds, 50, int.MaxValue);
+                await Task.Run(() => pipe.Connect(milliseconds), ct);
 
                 await PtyHostFraming.WriteAsync(pipe, new HelloMessage(PtyHostProtocol.Version), ct);
                 var reply = await PtyHostFraming.ReadAsync(pipe, ct);
