@@ -218,7 +218,7 @@ public class LandingGit : ILandingGit
         return endpoints[0];
     }
 
-    public Task<LandingRemoteObservation> ObserveAsync(string repository, LandingDestination destination,
+    public virtual Task<LandingRemoteObservation> ObserveAsync(string repository, LandingDestination destination,
         string sourceSha, string observationRef, CancellationToken ct)
     {
         if (!IsOid(sourceSha) || !observationRef.StartsWith("refs/antiphon/land/", StringComparison.Ordinal))
@@ -262,7 +262,7 @@ public class LandingGit : ILandingGit
         return new(null, false, "remote_changed_during_confirmation");
     }
 
-    public async Task<LandingSourceObservation> ObserveSourceAsync(string repository, string sourceFullRef,
+    public virtual async Task<LandingSourceObservation> ObserveSourceAsync(string repository, string sourceFullRef,
         string observationPrefix, CancellationToken ct)
     {
         if (!sourceFullRef.StartsWith("refs/heads/", StringComparison.Ordinal)
