@@ -148,8 +148,11 @@ function Invoke-IsolatedJson {
         return Invoke-RestMethod @params
     }
     catch {
-        $detail = $_.ErrorDetails.Message
-        if ([string]::IsNullOrWhiteSpace($detail)) { $detail = $_.Exception.Message }
+        $detail = $null
+        if ($null -ne $_.ErrorDetails -and $null -ne $_.ErrorDetails.PSObject.Properties['Message']) {
+            $detail = [string]$_.ErrorDetails.Message
+        }
+        if ([string]::IsNullOrWhiteSpace($detail)) { $detail = [string]$_.Exception.Message }
         throw "$Method $Uri failed: $detail"
     }
 }
@@ -485,15 +488,17 @@ try {
             alwaysOn                 = $false
             details                  = 'CARD-0490 V-7 isolated Grok phone-home canary'
         }
+        $assign = [string]$created.assignmentPolicy
+        if ([string]::IsNullOrWhiteSpace($assign) -or $assign -eq '0') { $assign = 'AutoPick' }
         $patch = @{
             name                       = $created.name
             workingDirectory           = $created.workingDirectory
             details                    = $created.details
             defaultWorkflowTemplateId  = $created.defaultWorkflowTemplateId
-            assignmentPolicy           = $created.assignmentPolicy
+            assignmentPolicy           = $assign
             alwaysOn                   = $false
-            kind                       = 4
-            sessionBackend             = 0
+            kind                       = 'Grok'
+            sessionBackend             = 'PtyHost'
         }
         $agent = Invoke-IsolatedJson PATCH "$origin/api/agents/$($created.id)" $patch
         if ([string]$agent.id -ne $standingId) {
@@ -508,15 +513,17 @@ try {
         }
     }
     elseif ([string]$agent.kind -ne 'Grok' -and [string]$agent.kind -ne '4') {
+        $assign = [string]$agent.assignmentPolicy
+        if ([string]::IsNullOrWhiteSpace($assign) -or $assign -eq '0') { $assign = 'AutoPick' }
         $patch = @{
             name                       = $agent.name
             workingDirectory           = $agent.workingDirectory
             details                    = $agent.details
             defaultWorkflowTemplateId  = $agent.defaultWorkflowTemplateId
-            assignmentPolicy           = $agent.assignmentPolicy
+            assignmentPolicy           = $assign
             alwaysOn                   = $false
-            kind                       = 4
-            sessionBackend             = 0
+            kind                       = 'Grok'
+            sessionBackend             = 'PtyHost'
         }
         $agent = Invoke-IsolatedJson PATCH "$origin/api/agents/$($agent.id)" $patch
     }
