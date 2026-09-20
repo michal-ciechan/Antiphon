@@ -29,12 +29,19 @@ public sealed class PtyHostServer(PtyHostOptions options, HostSession session, H
             NamedPipeServerStream pipe;
             try
             {
+                // CurrentUserOnly on Unix runs SO_PEERCRED after accept. In Docker that check
+                // can hang or reject the same-UID runner, so the client Connect waits out the
+                // 15s timeout while the host sits in WaitForConnection (CARD-0490 V-7). Windows
+                // keeps the ACL. Same-container Linux phone-home is already UID-isolated.
+                var pipeOptions = PipeOptions.Asynchronous;
+                if (OperatingSystem.IsWindows())
+                    pipeOptions |= PipeOptions.CurrentUserOnly;
                 pipe = new NamedPipeServerStream(
                     options.PipeName,
                     PipeDirection.InOut,
                     maxNumberOfServerInstances: 1,
                     PipeTransmissionMode.Byte,
-                    PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+                    pipeOptions);
                 await pipe.WaitForConnectionAsync(lifetime.Token);
             }
             catch (OperationCanceledException)
