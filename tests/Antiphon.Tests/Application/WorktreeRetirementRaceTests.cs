@@ -1,5 +1,7 @@
+using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -298,9 +300,12 @@ public sealed class WorktreeRetirementRaceTests
             ReplyTo = AgentTaskReplyTo.None, CreatedAt = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
-        var holds = await world.Admission.HasLiveTaskConsumerAsync(world.Path, "", world.OwnerTask.Id, CancellationToken.None);
-        holds.ShouldBeTrue();
-        var removeCalls = holds ? 0 : 1;
+        (await world.Admission.HasLiveTaskConsumerAsync(world.Path, "", world.OwnerTask.Id, CancellationToken.None)).ShouldBeTrue();
+        var (owner, release) = await world.ReleasedWorktreeAsync();
+        var (authorized, reason) = await world.Retirement.EvaluateEligibilityAsync(owner, release, CancellationToken.None);
+        authorized.ShouldBeFalse();
+        reason.ShouldBe("live_owner");
+        var removeCalls = authorized ? 1 : 0;
         removeCalls.ShouldBe(0);
     }
 
@@ -315,9 +320,18 @@ public sealed class WorktreeRetirementRaceTests
             Cwd = world.Path, Status = SessionStatus.Running, Cols = 80, Rows = 24,
             CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow,
         });
+        db.Agents.Add(new Agent
+        {
+            Id = Guid.NewGuid(), Name = "pooled", Slug = "pooled-" + Guid.NewGuid().ToString("N")[..8],
+            WorkingDirectory = world.Path, Status = AgentStatus.Ready, PoolIdleSince = DateTime.UtcNow,
+        });
         await db.SaveChangesAsync();
         (await world.Admission.HasLiveSessionOwnerAsync(world.Path, CancellationToken.None)).ShouldBeTrue();
-        var removeCalls = 0;
+        var (owner, release) = await world.ReleasedWorktreeAsync();
+        var (authorized, reason) = await world.Retirement.EvaluateEligibilityAsync(owner, release, CancellationToken.None);
+        authorized.ShouldBeFalse();
+        reason.ShouldBe("live_owner");
+        var removeCalls = authorized ? 1 : 0;
         removeCalls.ShouldBe(0);
     }
 
@@ -334,24 +348,51 @@ public sealed class WorktreeRetirementRaceTests
         });
         await db.SaveChangesAsync();
         (await world.Admission.HasLiveSessionOwnerAsync(world.Path, CancellationToken.None)).ShouldBeTrue();
-        var removeCalls = 0;
+        var (owner, release) = await world.ReleasedWorktreeAsync();
+        var (authorized, reason) = await world.Retirement.EvaluateEligibilityAsync(owner, release, CancellationToken.None);
+        authorized.ShouldBeFalse();
+        reason.ShouldBe("live_owner");
+        var removeCalls = authorized ? 1 : 0;
         removeCalls.ShouldBe(0);
     }
 
     [Test]
     public async Task C459_UnknownChildHolds()
     {
-        await using var world = await RaceWorld.CreateAsync();
-        var removeCalls = 0;
-        removeCalls.ShouldBe(0);
-        await Task.CompletedTask;
+        await using var h = await SettledRemovalHarness.CreateAsync();
+        var children = Path.Combine(h.CommonDirectory, "antiphon", "children");
+        Directory.CreateDirectory(children);
+        await File.WriteAllTextAsync(Path.Combine(children, Guid.NewGuid().ToString("N") + ".json"),
+            JsonSerializer.Serialize(new { SchemaVersion = 1, CommonDirectory = h.CommonDirectory, ProcessId = (int?)null, StartTicks = (long?)null }));
+        var leases = h.Host.Services.GetRequiredService<IRepositoryMutationLease>();
+        var lease = await leases.TryAcquireAsync(h.Host.Fixture.Repository, CancellationToken.None);
+        if (lease is not null)
+        {
+            try { await h.RemoveAsync(lease: lease); }
+            finally { await lease.DisposeAsync(); }
+        }
+
+        h.RemoveCalls.ShouldBe(0);
+        Directory.Exists(h.Host.Fixture.Source).ShouldBeTrue();
     }
 
     [Test]
     public async Task C459_CleanupNeverStopsOwner()
     {
         await using var world = await RaceWorld.CreateAsync();
-        world.Stopper.Killed.Count.ShouldBe(0);
+        await using var db = world.CreateDb();
+        var sessionId = Guid.NewGuid();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = sessionId, DefinitionName = "grok", AgentKind = AgentKind.Grok,
+            Cwd = world.Path, Status = SessionStatus.Running, Cols = 80, Rows = 24,
+            CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+        var (owner, release) = await world.ReleasedWorktreeAsync();
+        var (authorized, _) = await world.Retirement.EvaluateEligibilityAsync(owner, release, CancellationToken.None);
+        authorized.ShouldBeFalse();
+        (await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Running);
         var stopCalls = world.Stopper.Killed.Count;
         stopCalls.ShouldBe(0);
     }
@@ -481,6 +522,7 @@ public sealed class WorktreeRetirementRaceTests
         public required WorkspaceReservationJournal Journal { get; init; }
         public required WorkspaceUseAdmission Admission { get; init; }
         public required AgentTaskService Tasks { get; init; }
+        public required TaskWorktreeRetirementService Retirement { get; init; }
         public required RecordingSessionStopper Stopper { get; init; }
         public Guid RetirementId { get; } = Guid.NewGuid();
         public WorkspaceReservationKey Key => new(Path, "", Path);
@@ -517,10 +559,14 @@ public sealed class WorktreeRetirementRaceTests
             var tasks = new AgentTaskService(db, new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
                 settings, new MockEventBus(), stopper, TimeProvider.System, NullLogger<AgentTaskService>.Instance,
                 workspaceUse: admission);
+            var residue = Options.Create(new WorktreeResidueSettings { MinSettledMinutes = 120, MaxActionsPerRun = 25, RunResultPageSize = 50 });
+            var git = Options.Create(new GitSettings { WorktreeBasePath = path, DefaultBranch = "master" });
+            var retirement = new TaskWorktreeRetirementService(db, TimeProvider.System, residue, git,
+                NullLogger<TaskWorktreeRetirementService>.Instance, admission: admission);
             return new RaceWorld
             {
                 Schema = schema, Path = path, OwnerTask = owner, Journal = journal, Admission = admission,
-                Tasks = tasks, Stopper = stopper,
+                Tasks = tasks, Retirement = retirement, Stopper = stopper,
             };
         }
 
@@ -533,6 +579,44 @@ public sealed class WorktreeRetirementRaceTests
             new(new WorkspaceReservationKey(Path, "", Path), WorkspaceReservationKind.Retirement, null, RetirementId: RetirementId);
         public AgentTaskService.Caller ManualCaller() => new(null, null, Path);
         public AgentTaskService.Caller ParentCaller() => new(OwnerTask, null, Path);
+
+        public async Task<(AgentTask Owner, TaskWorktreeRetirement Release)> ReleasedWorktreeAsync()
+        {
+            await using var db = CreateDb();
+            var owner = await db.AgentTasks.SingleAsync(t => t.Id == OwnerTask.Id);
+            owner.Workspace = WorkspaceMode.Worktree;
+            owner.WorktreePath = Path;
+            owner.WorktreeBranch = "feat/card-task-race";
+            owner.RepoPath = Path;
+            var release = new TaskWorktreeRetirement
+            {
+                Id = Guid.NewGuid(),
+                TaskId = owner.Id,
+                TaskAttempt = owner.Attempt,
+                TerminalStatus = owner.Status,
+                TaskCompletedAt = owner.CompletedAt ?? DateTime.UtcNow.AddHours(-3),
+                ReportDigest = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
+                    System.Text.Encoding.UTF8.GetBytes(owner.Result ?? ""))),
+                ReleasedTaskRevision = owner.ConcurrencyToken,
+                CallerIdentity = "operator",
+                ReleaseReason = "x",
+                ReleasedAt = DateTime.UtcNow,
+                HandoffDispositionJson = "[]",
+                RepositoryPath = Path,
+                CommonDirectory = Path,
+                WorktreePath = Path,
+                GitDirectory = Path,
+                SourceFullRef = "refs/heads/feat/card-task-race",
+                SourceSha = new string('a', 40),
+                TargetFullRef = "refs/heads/master",
+                State = WorktreeRetirementState.Released,
+                Active = true,
+                UpdatedAt = DateTime.UtcNow,
+            };
+            db.TaskWorktreeRetirements.Add(release);
+            await db.SaveChangesAsync();
+            return (owner, release);
+        }
 
         public async ValueTask DisposeAsync()
         {

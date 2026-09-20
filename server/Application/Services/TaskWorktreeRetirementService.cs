@@ -257,6 +257,14 @@ public sealed class TaskWorktreeRetirementService
             return (false, "handoff_pending");
         if (!await ArtifactsRetrievableAsync(task, ct)) return (false, "artifact_unpreserved");
         if (await HasRecoveryDebtAsync(task, ct)) return (false, "recovery_debt");
+        if (_admission is not null)
+        {
+            var path = task.WorktreePath ?? task.WorkingDirectory ?? "";
+            if (await _admission.HasLiveTaskConsumerAsync(path, task.WorktreeBranch ?? "", task.Id, ct))
+                return (false, "live_owner");
+            if (await _admission.HasLiveSessionOwnerAsync(path, ct))
+                return (false, "live_owner");
+        }
         try { await RequireUniqueOrdinaryOwnerAsync(task, ct); }
         catch (ConflictException ex) { return (false, ex.Code ?? "identity_unknown"); }
         return (true, null);
@@ -286,7 +294,9 @@ public sealed class TaskWorktreeRetirementService
             var consumers = await _admission.FindLiveConsumersAsync(
                 new WorkspaceReservationKey(retirement.WorktreePath, retirement.SourceFullRef, retirement.CommonDirectory),
                 retirement.TaskId, ct);
-            if (consumers.Count > 0)
+            if (consumers.Count > 0
+                || await _admission.HasLiveTaskConsumerAsync(retirement.WorktreePath, retirement.SourceFullRef, retirement.TaskId, ct)
+                || await _admission.HasLiveSessionOwnerAsync(retirement.WorktreePath, ct))
             {
                 await ReleaseClaimBeforeIntentAsync(retirement, ct);
                 return new(false, false, false, "live_owner");
