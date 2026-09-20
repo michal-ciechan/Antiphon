@@ -12,12 +12,12 @@ public class LinuxPhoneHomeRunnerTests
     {
         if (!OperatingSystem.IsLinux())
             throw new SkipTestException("Linux runner adoption executes on Linux.");
-        var storeA = Antiphon.SessionRunner.PhoneHomeStoreIdentity.LoadOrCreate(
-            Path.Combine(Path.GetTempPath(), "c490-store-" + Guid.NewGuid().ToString("N")));
-        var storeB = Antiphon.SessionRunner.PhoneHomeStoreIdentity.LoadOrCreate(
-            Path.GetTempPath() + Path.DirectorySeparatorChar + "unused");
+        var path = Path.Combine(Path.GetTempPath(), "c490-store-" + Guid.NewGuid().ToString("N"), "runner-store-id");
+        var storeA = Antiphon.SessionRunner.PhoneHomeStoreIdentity.LoadOrCreate(path);
+        var storeB = Antiphon.SessionRunner.PhoneHomeStoreIdentity.LoadOrCreate(path);
         storeA.ShouldNotBe(Guid.Empty);
+        storeB.ShouldBe(storeA);
+        File.ReadAllText(path).Trim().ShouldBe(storeA.ToString("D"));
         await Task.CompletedTask;
-        _ = storeB;
     }
 }

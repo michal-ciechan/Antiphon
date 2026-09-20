@@ -43,6 +43,7 @@ public static class SessionRunnerEndpoints
             var ticket = http.Request.Headers[PhoneHomeProtocol.TicketHeader].ToString();
             if (string.IsNullOrWhiteSpace(ticket))
                 throw new ForbiddenException("Connection ticket is required.");
+            directory.PeekTicket(runnerId, ticket);
             var socket = await http.WebSockets.AcceptWebSocketAsync();
             PhoneHomeLiveConnection connection;
             try

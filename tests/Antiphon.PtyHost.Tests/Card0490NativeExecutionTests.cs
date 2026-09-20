@@ -51,12 +51,10 @@ public class Card0490NativeExecutionTests
     [Test]
     public async Task Sourced_refusal_never_downgrades_to_ordinary()
     {
-        var ordinaryInvocations = 0;
         var args = new[] { "-BindingFile", "x", "-Ordinary" };
-        if (args.Contains("-Ordinary") && args.Contains("-BindingFile"))
-            ordinaryInvocations = 0;
-        else
-            ordinaryInvocations = 1;
+        NativeInputPolicy.OrdinaryAndBindingConflict(args).ShouldBeTrue();
+        NativeInputPolicy.OrdinaryAndBindingConflict(["-Ordinary"]).ShouldBeFalse();
+        var ordinaryInvocations = NativeInputPolicy.OrdinaryAndBindingConflict(args) ? 0 : 1;
         ordinaryInvocations.ShouldBe(0);
         await Task.CompletedTask;
     }

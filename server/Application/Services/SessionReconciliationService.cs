@@ -208,6 +208,13 @@ public sealed class SessionReconciliationService
 
             if (!runnerById.TryGetValue(session.Id, out var runnerSession))
             {
+                if (ownerRunnerId is not null && _directory is not null)
+                {
+                    var recheck = await _directory.GetInventoryAsync(ownerRunnerId, ct);
+                    if (recheck is RunnerInventory.Unavailable)
+                        continue;
+                }
+
                 SessionRunnerSessionDto? refreshed = null;
                 try
                 {

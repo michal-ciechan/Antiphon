@@ -3,20 +3,11 @@ using System.Net.Http.Json;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
-using Antiphon.Server.Api.Endpoints;
-using Antiphon.Server.Api.Middleware;
 using Antiphon.Server.Application.Dtos;
-using Antiphon.Server.Application.Interfaces;
-using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
@@ -38,6 +29,7 @@ public class PhoneHomeConnectionTests
         if (registered.IsSuccessStatusCode)
             acceptedInvalidCredential = true;
         registered.IsSuccessStatusCode.ShouldBeFalse();
+        registered.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
 
         using var ws = new ClientWebSocket();
         ws.Options.SetRequestHeader(PhoneHomeProtocol.TicketHeader, "not-a-ticket");
@@ -48,7 +40,7 @@ public class PhoneHomeConnectionTests
         }
         catch (Exception)
         {
-            // expected
+            // expected: handshake rejected before a socket is established
         }
 
         acceptedInvalidCredential.ShouldBeFalse();
@@ -57,7 +49,8 @@ public class PhoneHomeConnectionTests
     [Test]
     public async Task Tickets_are_bound_expiring_and_single_use()
     {
-        await using var host = await PhoneHomeTestHost.StartAsync();
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var host = await PhoneHomeTestHost.StartAsync(clock);
         var ticket = await host.RegisterAsync();
         var invalidTicketConnected = false;
 
@@ -77,7 +70,28 @@ public class PhoneHomeConnectionTests
                 await reused.ConnectAsync(host.ConnectUri, CancellationToken.None);
                 invalidTicketConnected = reused.State == WebSocketState.Open;
             }
-            catch { /* expected */ }
+            catch
+            {
+                // expected
+            }
+        }
+
+        invalidTicketConnected.ShouldBeFalse();
+
+        var fresh = await host.RegisterAsync();
+        clock.Advance(TimeSpan.FromSeconds(31));
+        using (var expired = new ClientWebSocket())
+        {
+            expired.Options.SetRequestHeader(PhoneHomeProtocol.TicketHeader, fresh.Ticket);
+            try
+            {
+                await expired.ConnectAsync(host.ConnectUri, CancellationToken.None);
+                invalidTicketConnected = expired.State == WebSocketState.Open;
+            }
+            catch
+            {
+                // expected
+            }
         }
 
         invalidTicketConnected.ShouldBeFalse();
@@ -87,11 +101,21 @@ public class PhoneHomeConnectionTests
     public async Task Recovery_barrier_withholds_dispatch()
     {
         await using var host = await PhoneHomeTestHost.StartAsync();
-        var connection = host.Directory.SnapshotLive();
-        var dispatchEligible = connection?.DispatchEligible ?? false;
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+        var dispatchEligible = live.DispatchEligible;
         dispatchEligible.ShouldBeFalse();
-        host.Directory.MarkRecovered(connection!);
+
+        var client = new PhoneHomeRunnerClient(live);
+        await Should.ThrowAsync<InvalidOperationException>(() =>
+            client.StartAsync(Guid.NewGuid(), DummySpec(), CancellationToken.None));
+        peer.Launches.ShouldBeEmpty();
+
+        host.Directory.MarkRecovered(live);
         host.Directory.SnapshotLive()!.DispatchEligible.ShouldBeTrue();
+        var started = await client.StartAsync(Guid.NewGuid(), DummySpec(), CancellationToken.None);
+        started.Status.ShouldBe("Running");
+        peer.Launches.Count.ShouldBe(1);
     }
 
     [Test]
@@ -99,29 +123,37 @@ public class PhoneHomeConnectionTests
     {
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         await using var host = await PhoneHomeTestHost.StartAsync(clock);
-        var ticket = await host.RegisterAsync();
-        using var ws = new ClientWebSocket();
-        ws.Options.SetRequestHeader(PhoneHomeProtocol.TicketHeader, ticket.Ticket);
-        await ws.ConnectAsync(host.ConnectUri, CancellationToken.None);
-        var live = host.Directory.SnapshotLive()!;
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
         host.Directory.MarkRecovered(live);
         clock.Advance(TimeSpan.FromSeconds(89));
         live.IsLeaseExpired(TimeSpan.FromSeconds(90)).ShouldBeFalse();
         clock.Advance(TimeSpan.FromSeconds(2));
         live.IsLeaseExpired(TimeSpan.FromSeconds(90)).ShouldBeTrue();
-        host.Directory.Disconnect(live, "test");
         var newLaunchFrames = new List<PhoneHomeFrame>();
         try
         {
             await new PhoneHomeRunnerClient(live).StartAsync(Guid.NewGuid(), DummySpec(), CancellationToken.None);
-            newLaunchFrames.Add(new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.Launch));
+            newLaunchFrames.AddRange(peer.Launches);
         }
         catch
         {
-            // expected: unavailable
+            // expected: unavailable after lease expiry
+        }
+
+        host.Directory.Disconnect(live, "test");
+        try
+        {
+            await new PhoneHomeRunnerClient(live).StartAsync(Guid.NewGuid(), DummySpec(), CancellationToken.None);
+            newLaunchFrames.AddRange(peer.Launches);
+        }
+        catch
+        {
+            // expected
         }
 
         newLaunchFrames.Count.ShouldBe(0);
+        peer.Launches.ShouldBeEmpty();
     }
 
     [Test]
@@ -141,60 +173,108 @@ public class PhoneHomeConnectionTests
         }
 
         replacementAccepted.ShouldBeFalse();
+
+        try
+        {
+            await host.RegisterAsync(storeId: Guid.NewGuid());
+            replacementAccepted = true;
+        }
+        catch
+        {
+            replacementAccepted = false;
+        }
+
+        replacementAccepted.ShouldBeFalse();
+
+        var sameBoot = await host.RegisterAsync();
+        sameBoot.Ticket.ShouldNotBeNullOrWhiteSpace();
     }
 
     [Test]
     public async Task Old_epoch_reply_cannot_complete_current_request()
     {
         await using var host = await PhoneHomeTestHost.StartAsync();
-        var live = new PhoneHomeLiveConnection(
-            "grok-linux", Guid.NewGuid(), Guid.NewGuid(), epoch: 2,
-            new NullWebSocket(), new PhoneHomeLimits(), TimeProvider.System);
-        var currentWaiter = new TaskCompletionSource<bool>();
-        currentWaiter.TrySetResult(false);
-        currentWaiter.Task.IsCompleted.ShouldBeTrue();
-        // A reply from epoch 1 must not complete epoch 2 waiters: the connection ignores mismatched epochs.
-        live.Epoch.ShouldBe(2);
-        currentWaiter.Task.Result.ShouldBeFalse();
+        await using var peer = await host.ConnectPeerAsync(autoReply: false);
+        var live = await host.WaitLiveAsync();
+        host.Directory.MarkRecovered(live);
+        var client = new PhoneHomeRunnerClient(live);
+        var currentWaiter = client.GetHealthAsync(CancellationToken.None);
+        var request = await peer.WaitForAsync(PhoneHomeOperation.Health);
+        await peer.EmitAsync(new PhoneHomeFrame(
+            PhoneHomeFrameKind.Result, live.Epoch - 1, request.RequestId, PhoneHomeOperation.Health,
+            JsonSerializer.SerializeToElement(new { status = "stale" }, PhoneHomeFraming.Json)));
+        await Task.Delay(100);
+        currentWaiter.IsCompleted.ShouldBeFalse();
+        await peer.EmitAsync(new PhoneHomeFrame(
+            PhoneHomeFrameKind.Result, live.Epoch, request.RequestId, PhoneHomeOperation.Health,
+            JsonSerializer.SerializeToElement(new { status = "Healthy" }, PhoneHomeFraming.Json)));
+        var health = await currentWaiter.WaitAsync(TimeSpan.FromSeconds(3));
+        health.ShouldNotBeNull();
     }
 
     [Test]
     public async Task Unanswered_mutation_is_not_replayed()
     {
-        var service = new RecordingConnection();
-        service.SentMutations.Count.ShouldBe(0);
-        service.NoteSent();
-        var peerInputFrames = service.SentMutations;
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        await using var peer = await host.ConnectPeerAsync(autoReply: false);
+        var live = await host.WaitLiveAsync();
+        host.Directory.MarkRecovered(live);
+        var client = new PhoneHomeRunnerClient(live);
+        var sent = client.SendInputAsync(Guid.NewGuid(), "hello-phone-home", CancellationToken.None);
+        var first = await peer.WaitForAsync(PhoneHomeOperation.Input);
+        host.Directory.Disconnect(live, "drop");
+        await Should.ThrowAsync<Exception>(async () => await sent.WaitAsync(TimeSpan.FromSeconds(2)));
+        var peerInputFrames = peer.Inputs;
         peerInputFrames.Count.ShouldBe(1);
-        service.ReconnectWithoutReplay();
+
+        await using var peer2 = await host.ConnectPeerAsync(autoReply: false);
+        await Task.Delay(200);
+        peer2.Inputs.ShouldBeEmpty();
         peerInputFrames.Count.ShouldBe(1);
-        await Task.CompletedTask;
     }
 
     [Test]
     public async Task Register_connect_and_correlate_out_of_order_results()
     {
         await using var host = await PhoneHomeTestHost.StartAsync();
-        var ticket = await host.RegisterAsync();
-        ticket.Ticket.ShouldNotBeNullOrWhiteSpace();
-        using var ws = new ClientWebSocket();
-        ws.Options.SetRequestHeader(PhoneHomeProtocol.TicketHeader, ticket.Ticket);
-        await ws.ConnectAsync(host.ConnectUri, CancellationToken.None);
-        ws.State.ShouldBe(WebSocketState.Open);
-        var a = Guid.NewGuid();
-        var b = Guid.NewGuid();
-        await PhoneHomeFraming.WriteFrameAsync(ws, new PhoneHomeFrame(PhoneHomeFrameKind.Result, 1, b, PhoneHomeOperation.Health, Payload: JsonSerializer.SerializeToElement(new { ok = true }, PhoneHomeFraming.Json)), 16 * 1024, CancellationToken.None);
-        await PhoneHomeFraming.WriteFrameAsync(ws, new PhoneHomeFrame(PhoneHomeFrameKind.Result, 1, a, PhoneHomeOperation.Health, Payload: JsonSerializer.SerializeToElement(new { ok = true }, PhoneHomeFraming.Json)), 16 * 1024, CancellationToken.None);
-        a.ShouldNotBe(b);
+        await using var peer = await host.ConnectPeerAsync(autoReply: false);
+        var live = await host.WaitLiveAsync();
+        var client = new PhoneHomeRunnerClient(live);
+        var a = client.GetHealthAsync(CancellationToken.None);
+        var first = await peer.WaitForAsync(PhoneHomeOperation.Health);
+        var b = client.GetBufferAsync(Guid.NewGuid(), CancellationToken.None);
+        var second = await peer.WaitForAsync(PhoneHomeOperation.Buffer);
+        second.RequestId.ShouldNotBe(first.RequestId);
+        await peer.EmitAsync(new PhoneHomeFrame(
+            PhoneHomeFrameKind.Result, live.Epoch, second.RequestId, PhoneHomeOperation.Buffer,
+            JsonSerializer.SerializeToElement(new RunnerBufferDto(Guid.Empty, "later", 2), PhoneHomeFraming.Json)));
+        var buffer = await b.WaitAsync(TimeSpan.FromSeconds(3));
+        buffer.Buffer.ShouldBe("later");
+        a.IsCompleted.ShouldBeFalse();
+        await peer.EmitAsync(new PhoneHomeFrame(
+            PhoneHomeFrameKind.Result, live.Epoch, first.RequestId, PhoneHomeOperation.Health,
+            JsonSerializer.SerializeToElement(new { status = "Healthy" }, PhoneHomeFraming.Json)));
+        var health = await a.WaitAsync(TimeSpan.FromSeconds(3));
+        health.ShouldNotBeNull();
     }
 
     [Test]
     public async Task Held_launch_does_not_block_heartbeat_or_reads()
     {
         await using var host = await PhoneHomeTestHost.StartAsync();
-        var live = host.Directory.SnapshotLive();
-        (live is null || live.SocketOpen || !live.DispatchEligible).ShouldBeTrue();
-        await Task.CompletedTask;
+        await using var peer = await host.ConnectPeerAsync();
+        peer.HeldLaunches = 1;
+        var live = await host.WaitLiveAsync();
+        host.Directory.MarkRecovered(live);
+        var client = new PhoneHomeRunnerClient(live);
+        var launch = client.StartAsync(Guid.NewGuid(), DummySpec(), CancellationToken.None);
+        await peer.WaitForAsync(PhoneHomeOperation.Launch);
+        var health = await client.GetHealthAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(3));
+        health.ShouldNotBeNull();
+        launch.IsCompleted.ShouldBeFalse();
+        peer.ReleaseHeld();
+        var started = await launch.WaitAsync(TimeSpan.FromSeconds(3));
+        started.Status.ShouldBe("Running");
     }
 
     [Test]
@@ -205,10 +285,35 @@ public class PhoneHomeConnectionTests
             new Antiphon.SessionRunner.PhoneHomeSettings { AllowedCwd = "/work", Capacity = 1, Enabled = true });
         foreach (PhoneHomeOperation op in Enum.GetValues<PhoneHomeOperation>())
         {
+            object body = op == PhoneHomeOperation.Launch
+                ? new RunnerLaunchRequest(Guid.NewGuid(), "grok", [], new Dictionary<string, string>(), "/work", 80, 24)
+                : op is PhoneHomeOperation.Input
+                    ? new { sessionId = Guid.NewGuid(), input = "x" }
+                    : op is PhoneHomeOperation.Resize
+                        ? new { sessionId = Guid.NewGuid(), cols = 80, rows = 24 }
+                        : op is PhoneHomeOperation.KillGeneration
+                            ? new { sessionId = Guid.NewGuid(), expectedAcceptedStartedAt = DateTime.UtcNow }
+                            : op is PhoneHomeOperation.ConditionalInput
+                                ? new RunnerConditionalInputRequest(DateTime.UtcNow, 0, "x") { }
+                                : new { sessionId = Guid.NewGuid() };
+            if (op == PhoneHomeOperation.ConditionalInput)
+            {
+                body = new
+                {
+                    sessionId = Guid.NewGuid(),
+                    expectedAcceptedStartedAt = DateTime.UtcNow,
+                    expectedLastSequence = 0L,
+                    input = "x",
+                };
+            }
+
             var frame = new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), op,
-                JsonSerializer.SerializeToElement(new { sessionId = Guid.NewGuid() }, PhoneHomeFraming.Json));
+                JsonSerializer.SerializeToElement(body, PhoneHomeFraming.Json));
             var result = await dispatcher.DispatchAsync(frame, CancellationToken.None);
             result.Kind.ShouldBeOneOf(PhoneHomeFrameKind.Result, PhoneHomeFrameKind.Error);
+            if (op is PhoneHomeOperation.Capabilities or PhoneHomeOperation.Health or PhoneHomeOperation.List
+                or PhoneHomeOperation.Launch or PhoneHomeOperation.Input)
+                result.Kind.ShouldBe(PhoneHomeFrameKind.Result);
         }
     }
 
@@ -232,28 +337,53 @@ public class PhoneHomeConnectionTests
         PhoneHomeFraming.CanAccept(16, 1, 16).ShouldBeFalse();
         var oversizedMessageAccepted = PhoneHomeFraming.CanAccept(0, 17, 16);
         oversizedMessageAccepted.ShouldBeFalse();
-        await Task.CompletedTask;
+
+        await using var host = await PhoneHomeTestHost.StartAsync(limits: new PhoneHomeLimits(MaxMessageUtf8Bytes: 256));
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+        var huge = new string('z', 1024);
+        var accepted = true;
+        try
+        {
+            await PhoneHomeFraming.WriteFrameAsync(
+                peer.Socket,
+                new PhoneHomeFrame(PhoneHomeFrameKind.Event, live.Epoch, Guid.Empty, EventName: "SessionTranscript",
+                    Payload: JsonSerializer.SerializeToElement(new { text = huge }, PhoneHomeFraming.Json)),
+                256,
+                CancellationToken.None);
+        }
+        catch (PhoneHomeTransportException)
+        {
+            accepted = false;
+        }
+
+        oversizedMessageAccepted = accepted;
+        oversizedMessageAccepted.ShouldBeFalse();
     }
 
     [Test]
     public async Task Request_limit_refuses_the_thirty_third_request()
     {
         var limits = new PhoneHomeLimits(MaxInFlightRequests: 32);
-        var peerOutstandingRequests = 32;
+        await using var host = await PhoneHomeTestHost.StartAsync(limits: limits);
+        await using var peer = await host.ConnectPeerAsync(autoReply: false);
+        var live = await host.WaitLiveAsync();
+        var client = new PhoneHomeRunnerClient(live);
+        var waiters = new List<Task>();
+        for (var i = 0; i < 32; i++)
+            waiters.Add(client.GetHealthAsync(CancellationToken.None));
+
+        var deadline = DateTime.UtcNow.AddSeconds(3);
+        while (live.InFlight < 32 && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+        var peerOutstandingRequests = live.InFlight;
         peerOutstandingRequests.ShouldBe(limits.MaxInFlightRequests);
-        (peerOutstandingRequests + 1 > limits.MaxInFlightRequests).ShouldBeTrue();
-        await Task.CompletedTask;
+        await Should.ThrowAsync<PhoneHomeTransportException>(() => client.GetHealthAsync(CancellationToken.None));
+        waiters.Count(t => t.IsCompleted).ShouldBe(0);
     }
 
     private static AgentLaunchSpec DummySpec() =>
         new("grok", AgentKind.Grok, "grok", [], new Dictionary<string, string>(), "/work", 80, 24);
-
-    private sealed class RecordingConnection
-    {
-        public List<PhoneHomeFrame> SentMutations { get; } = [];
-        public void NoteSent() => SentMutations.Add(new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.Input));
-        public void ReconnectWithoutReplay() { /* production reconnect must not copy sent mutations */ }
-    }
 
     private sealed class FakeRuntime : Antiphon.SessionRunner.IPhoneHomeRuntimeSurface
     {
@@ -275,125 +405,5 @@ public class PhoneHomeConnectionTests
         public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) => Task.CompletedTask;
         public Task<RunnerKillGenerationResult> KillGenerationAsync(Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct) =>
             Task.FromResult(new RunnerKillGenerationResult(sessionId, false, KillGenerationOutcomes.Missing, null));
-    }
-
-    private sealed class NullWebSocket : WebSocket
-    {
-        public override WebSocketCloseStatus? CloseStatus => null;
-        public override string? CloseStatusDescription => null;
-        public override WebSocketState State => WebSocketState.Open;
-        public override string? SubProtocol => null;
-        public override void Abort() { }
-        public override Task CloseAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken) => Task.CompletedTask;
-        public override Task CloseOutputAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken) => Task.CompletedTask;
-        public override void Dispose() { }
-        public override Task<WebSocketReceiveResult> ReceiveAsync(ArraySegment<byte> buffer, CancellationToken cancellationToken) =>
-            Task.FromResult(new WebSocketReceiveResult(0, WebSocketMessageType.Close, true));
-        public override Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken) => Task.CompletedTask;
-    }
-}
-
-internal sealed class PhoneHomeTestHost : IAsyncDisposable
-{
-    public WebApplication App { get; private set; } = null!;
-    public HttpClient Http { get; private set; } = null!;
-    public PhoneHomeRunnerDirectory Directory { get; private set; } = null!;
-    public Uri ConnectUri { get; private set; } = null!;
-    public string Secret { get; } = "test-secret-" + Guid.NewGuid().ToString("N");
-    public Guid StoreId { get; } = Guid.NewGuid();
-    public Guid BootId { get; } = Guid.NewGuid();
-
-    public static async Task<PhoneHomeTestHost> StartAsync(TimeProvider? clock = null)
-    {
-        var host = new PhoneHomeTestHost();
-        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
-        builder.Logging.ClearProviders();
-        builder.WebHost.ConfigureKestrel(o => o.Listen(IPAddress.Loopback, 0));
-        var settings = Options.Create(new PhoneHomeRunnerSettings
-        {
-            Enabled = true,
-            AllowedRunnerId = "grok-linux",
-            StandingAgentId = Guid.NewGuid(),
-            HostWorkspaceRoot = @"C:\work",
-            SharedSecret = host.Secret,
-            LeaseSeconds = 90,
-        });
-        var local = new RecordingLocalClient();
-        host.Directory = new PhoneHomeRunnerDirectory(local, settings, new EmptyScopeFactory(), clock ?? TimeProvider.System);
-        builder.Services.AddSingleton(host.Directory);
-        builder.Services.AddSingleton(settings);
-        host.App = builder.Build();
-        host.App.UseWebSockets();
-        host.App.UseMiddleware<ExceptionMiddleware>();
-        host.App.MapSessionRunnerEndpoints();
-        await host.App.StartAsync();
-        var url = host.App.Urls.Single();
-        host.Http = new HttpClient { BaseAddress = new Uri(url) };
-        var origin = new Uri(url);
-        host.ConnectUri = new Uri($"ws://{origin.Authority}/api/session-runners/grok-linux/connect");
-        return host;
-    }
-
-    public PhoneHomeRegistrationRequest Registration(Guid? bootId = null) =>
-        new(PhoneHomeProtocol.Version, "grok-linux", bootId ?? BootId, StoreId, "linux", 1, null);
-
-    public async Task<PhoneHomeRegistrationResponse> RegisterAsync(Guid? bootId = null)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Post, PhoneHomeProtocol.RegisterPath);
-        request.Headers.TryAddWithoutValidation(PhoneHomeProtocol.SecretHeader, Secret);
-        request.Content = JsonContent.Create(Registration(bootId), options: PhoneHomeFraming.Json);
-        using var response = await Http.SendAsync(request);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<PhoneHomeRegistrationResponse>(PhoneHomeFraming.Json)
-            ?? throw new InvalidOperationException("empty register");
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-        Http?.Dispose();
-        if (App is not null)
-            await App.DisposeAsync();
-    }
-
-    private sealed class EmptyScopeFactory : IServiceScopeFactory
-    {
-        public IServiceScope CreateScope() => new EmptyScope();
-        private sealed class EmptyScope : IServiceScope, IServiceProvider
-        {
-            public IServiceProvider ServiceProvider => this;
-            public object? GetService(Type serviceType) => null;
-            public void Dispose() { }
-        }
-    }
-
-    private sealed class RecordingLocalClient : Antiphon.Server.Application.Interfaces.ISessionRunnerClient
-    {
-        public List<string> Calls { get; } = [];
-        public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
-        {
-            Calls.Add("start");
-            return Task.FromResult(new SessionRunnerSessionDto(sessionId, 1, DateTime.UtcNow, "Running", null, AgentExitReason.Unknown, 0));
-        }
-        public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
-            Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
-        public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
-            Task.FromResult(new SessionRunnerSessionDto(sessionId, 1, DateTime.UtcNow, "Running", null, AgentExitReason.Unknown, 0));
-        public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) =>
-            Task.FromResult(new SessionRunnerBufferDto(sessionId, "", 0));
-        public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
-            Task.FromResult(new SessionRunnerSnapshotDto(sessionId, "", "", 0, DateTime.UtcNow));
-        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
-            Task.FromResult(new SessionRunnerTranscriptDto(sessionId, [], 0));
-        public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) => Task.CompletedTask;
-        public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) => Task.CompletedTask;
-        public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) => Task.CompletedTask;
-        public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct) =>
-            Task.FromResult(new SessionRunnerSessionDto(sessionId, 1, DateTime.UtcNow, "Exited", 0, AgentExitReason.KilledByRequest, 0));
-        public IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(CancellationToken ct) => Empty();
-        private static async IAsyncEnumerable<SessionRunnerEvent> Empty()
-        {
-            await Task.CompletedTask;
-            yield break;
-        }
     }
 }
