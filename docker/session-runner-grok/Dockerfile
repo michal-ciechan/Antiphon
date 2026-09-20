@@ -10,5 +10,7 @@ WORKDIR /app
 COPY --from=build /out/runner/ ./
 COPY --from=build /out/ptyhost/Antiphon.PtyHost /app/Antiphon.PtyHost
 COPY --from=build /out/ptyhost/libporta_pty.so /app/libporta_pty.so
+# Phone-home stays off until compose/launch injects PhoneHome__Enabled and PhoneHome__ServerOrigin.
+# Do not bake a ServerOrigin URL into the image.
 ENV PhoneHome__Enabled=false
 ENTRYPOINT ["dotnet", "Antiphon.SessionRunner.dll"]

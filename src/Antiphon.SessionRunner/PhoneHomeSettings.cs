@@ -6,7 +6,7 @@ public sealed class PhoneHomeSettings
 {
     public bool Enabled { get; set; }
     public string RunnerId { get; set; } = "grok-linux";
-    public string ServerOrigin { get; set; } = "http://host.docker.internal:17202";
+    public string ServerOrigin { get; set; } = "";
     public string SecretPath { get; set; } = "/run/secrets/phone-home";
     public string StoreIdPath { get; set; } = "/state/runner-store-id";
     public string AllowedCwd { get; set; } = "/work";

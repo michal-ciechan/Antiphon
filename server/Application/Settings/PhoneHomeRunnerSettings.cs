@@ -10,7 +10,7 @@ public sealed class PhoneHomeRunnerSettings
     public string HostWorkspaceRoot { get; set; } = "";
     public string RunnerWorkspace { get; set; } = "/work";
     public string ChildGrokHome { get; set; } = "/state/grok";
-    public string CallbackOrigin { get; set; } = "http://host.docker.internal:17202";
+    public string CallbackOrigin { get; set; } = "";
     public string SharedSecret { get; set; } = "";
     public int TicketTtlSeconds { get; set; } = 30;
     public int HeartbeatSeconds { get; set; } = PhoneHomeProtocol.DefaultHeartbeatSeconds;
