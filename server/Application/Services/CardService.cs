@@ -10,7 +10,6 @@ using Antiphon.Server.Domain.StateMachine;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -101,6 +100,7 @@ public sealed class CardService : IScheduledCardActions
     // CARD-0347: optional like the launch resolver. Production always registers it; a fixture
     // that omits it gets no GitHub push on close/reopen.
     private readonly TrackerCardStatePushService? _trackerStatePush;
+    private readonly WorkspaceUseAdmission? _workspaceUse;
 
     public CardService(
         AppDbContext db,
@@ -119,8 +119,10 @@ public sealed class CardService : IScheduledCardActions
         IOptions<CardsSettings>? cards = null,
         TrackerCardStatePushService? trackerStatePush = null,
         IOptions<GrokRulesSettings>? grokRulesSettings = null,
-        CardTaskFileService? cardFiles = null)
+        CardTaskFileService? cardFiles = null,
+        WorkspaceUseAdmission? workspaceUse = null)
     {
+        _workspaceUse = workspaceUse;
         _db = db;
         _cardFiles = cardFiles;
         _agentRegistry = agentRegistry;
@@ -1002,12 +1004,11 @@ public sealed class CardService : IScheduledCardActions
             card.AutoDispatchHeldAt = UtcNow();
 
         await SaveCardWriteAsync(card, ct);
-        var admission = _db.GetService<WorkspaceUseAdmission>();
-        if (admission is not null)
+        if (_workspaceUse is not null)
         {
             var related = await _db.AgentTasks.AsNoTracking().Where(t => t.CardId == card.Id).Select(t => t.Id).ToListAsync(ct);
             foreach (var taskId in related)
-                await admission.InvalidateReleaseAsync(taskId, ct);
+                await _workspaceUse.InvalidateReleaseAsync(taskId, ct);
         }
 
         TrackerCardStatePushResult? push = null;
