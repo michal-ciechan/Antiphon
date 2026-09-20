@@ -208,27 +208,26 @@ public sealed class TaskWorktreeRetirementTests
     public async Task C459_ArtifactsPreserved(string shape)
     {
         await using var world = await World.CreateAsync(AgentTaskStatus.Succeeded);
-        if (shape != "inline")
+        if (shape == "tree-only")
         {
             world.Task.ResultFilePath = Path.Combine(world.Task.WorktreePath!, "only-in-tree.md");
-            if (shape == "missing") world.Task.Result = "";
+            await world.Db.SaveChangesAsync();
+        }
+        if (shape == "missing")
+        {
+            world.Task.DeliverablePath = Path.Combine(world.Task.WorktreePath!, "missing-out.bin");
             await world.Db.SaveChangesAsync();
         }
 
         var removeCalls = 0;
         try
         {
-            var body = shape == "missing"
-                ? world.ValidRelease() with { MissingReportReviewed = true }
-                : world.ValidRelease();
-            await world.Service.ReleaseAsync(world.Task.Id, body, world.Operator, CancellationToken.None);
+            await world.Service.ReleaseAsync(world.Task.Id, world.ValidRelease(), world.Operator, CancellationToken.None);
             removeCalls = 1;
         }
         catch (ConflictException ex)
         {
-            ex.Code.ShouldBe(shape == "missing" && string.IsNullOrWhiteSpace(world.Task.ResultFilePath)
-                ? "handoff_pending"
-                : "artifact_unpreserved");
+            ex.Code.ShouldBe("artifact_unpreserved");
         }
 
         if (shape == "inline") removeCalls.ShouldBe(1);

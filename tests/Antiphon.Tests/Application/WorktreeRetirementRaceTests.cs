@@ -46,7 +46,7 @@ public sealed class WorktreeRetirementRaceTests
                 _ => new CreateAgentTaskRequest(Goal: "child", Role: AgentTaskRole.Code, Kind: AgentTaskKind.Worker,
                     Workspace: WorkspaceMode.Shared, WorkingDirectory: world.Path),
             };
-            await world.Tasks.CreateAsync(request, world.ParentCaller(), CancellationToken.None);
+            await world.Tasks.CreateAsync(request, world.ManualCaller(), CancellationToken.None);
             acceptedConsumers++;
         }
         catch (ConflictException ex)
@@ -71,6 +71,8 @@ public sealed class WorktreeRetirementRaceTests
             row.Status = AgentTaskStatus.Failed;
             row.CompletedAt = DateTime.UtcNow;
             await db.SaveChangesAsync();
+            var launch = await db.WorkspaceUseReservations.SingleAsync(r => r.TaskId == created.Id && r.Active);
+            await world.Journal.ReleaseConsumerAsync(launch.Id, launch.Generation, CancellationToken.None);
         }
 
         (await world.Journal.TryClaimRetirementAsync(world.CreateKeyCommand(), CancellationToken.None)).Accepted.ShouldBeTrue();
@@ -78,6 +80,18 @@ public sealed class WorktreeRetirementRaceTests
         try
         {
             await world.Tasks.RetryAsync(created.Id, CancellationToken.None);
+            claimFirstRequeued = true;
+        }
+        catch (ConflictException)
+        {
+            claimFirstRequeued = false;
+        }
+
+        try
+        {
+            await world.Admission.RequireConsumerAsync(
+                world.CreateKeyCommand() with { Kind = WorkspaceReservationKind.Launch, TaskId = created.Id },
+                CancellationToken.None);
             claimFirstRequeued = true;
         }
         catch (ConflictException ex)
