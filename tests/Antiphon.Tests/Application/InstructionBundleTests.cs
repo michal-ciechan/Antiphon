@@ -626,10 +626,17 @@ public class InstructionBundleTests
         code.ShouldContain("next: review when implementation and ordinary V/R are complete, even with zero PCs");
         code.ShouldNotContain("fast-forward");
         code.ShouldNotContain("deploy-local");
+        // CARD-0585: the closed-list obligation, the unlisted-run rule and the stub rule.
+        code.ShouldContain("### Checkpoints");
+        code.ShouldContain("is a stub, not done");
+        code.ShouldContain("unlisted");
+        testDesign.ShouldContain("### Checkpoints");
 
         var review = InstructionBundles.TextOf(InstructionBundles.StageReview);
         review.ShouldContain("Read-only");
         review.ShouldContain("Do not fix anything");
+        review.ShouldContain("CP-n lines");
+        review.ShouldContain("cannot go red");
     }
 
     [Test]

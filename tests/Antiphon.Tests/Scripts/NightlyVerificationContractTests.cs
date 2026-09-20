@@ -1,8 +1,4 @@
-using System.Diagnostics;
-using System.Text.RegularExpressions;
-using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
-using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
@@ -80,36 +76,7 @@ public sealed partial class NightlyVerificationContractTests
     private static Task RunCaseAsync(string caseName, int expectedRows, params string[] requiredRows) =>
         RunHarnessCaseAsync("test-nightly-health.ps1", "C544", caseName, expectedRows, requiredRows);
 
-    /// <summary>Runs one named case of a C487-style harness and requires its exact PASS inventory for <paramref name="prefix"/>.</summary>
-    private static async Task RunHarnessCaseAsync(string harness, string prefix, string caseName, int expectedRows, params string[] requiredRows)
-    {
-        var results = Path.Combine(Path.GetTempPath(), prefix.ToLowerInvariant() + "-nightly-" + Guid.NewGuid().ToString("N"));
-        var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", harness);
-        var startInfo = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", script, "-Case", caseName, "-ResultsDirectory", results })
-            startInfo.ArgumentList.Add(arg);
-        try
-        {
-            using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("pwsh did not start.");
-            var stdout = process.StandardOutput.ReadToEndAsync();
-            var stderr = process.StandardError.ReadToEndAsync();
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-            await process.WaitForExitAsync(timeout.Token);
-            var output = await stdout + await stderr;
-
-            process.ExitCode.ShouldBe(0, output);
-            output.ShouldContain("C487 HARNESS EXIT CODE: 0", Case.Sensitive, output);
-            var lines = output.ReplaceLineEndings("\n").Split('\n');
-            lines.ShouldNotContain(l => l.StartsWith("FAIL ", StringComparison.Ordinal), output);
-            var passed = lines.Where(l => l.StartsWith("PASS " + prefix + " ", StringComparison.Ordinal)).Select(l => l[5..]).ToList();
-            passed.Count.ShouldBe(expectedRows, $"{caseName} named assertion inventory\n{output}");
-            foreach (var row in requiredRows)
-                passed.ShouldContain(row, $"{caseName} must assert '{row}'\n{output}");
-            Regex.IsMatch(output, $@"C487: {expectedRows} passed, 0 failed, {expectedRows} rows").ShouldBeTrue(output);
-        }
-        finally
-        {
-            try { Directory.Delete(results, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-        }
-    }
+    /// <summary>Forwards to <see cref="ScriptHarness.RunHarnessCaseAsync"/> (CARD-0585 S6 lifted the body out).</summary>
+    private static Task RunHarnessCaseAsync(string harness, string prefix, string caseName, int expectedRows, params string[] requiredRows) =>
+        ScriptHarness.RunHarnessCaseAsync(harness, prefix, caseName, expectedRows, requiredRows);
 }
