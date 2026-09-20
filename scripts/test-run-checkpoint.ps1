@@ -165,6 +165,13 @@ function Test-C585_RosterMiss {
     $control = New-C585Case -Name 'rostermiss-control'
     $c = Invoke-C585Runner -Fx $control -Trx $script:GreenTrx -Expect @('C585SampleTests')
     Assert-C487 -Cond ($c.Exit -eq 0 -and $c.Text -notmatch 'ROSTER MISS') -Name 'C585 RosterMiss control a matching -Expect token is green' -Detail ('exit={0} {1}' -f $c.Exit, $c.Text)
+    # pwsh -File binds every argument as a string, so several tokens arrive comma-joined.
+    $comma = New-C585Case -Name 'rostermiss-comma'
+    $m = Invoke-C585Runner -Fx $comma -Trx $script:GreenTrx -Expect @('C585SampleTests,C585OtherTests')
+    Assert-C487 -Cond ($m.Exit -eq 0 -and $m.Text -notmatch 'ROSTER MISS') -Name 'C585 RosterMiss a comma-separated -Expect value splits into tokens' -Detail ('exit={0} {1}' -f $m.Exit, $m.Text)
+    $commaMiss = New-C585Case -Name 'rostermiss-comma-miss'
+    $mm = Invoke-C585Runner -Fx $commaMiss -Trx $script:GreenTrx -Expect @('C585SampleTests,NotInRoster')
+    Assert-C487 -Cond ($mm.Exit -eq 3 -and $mm.Text -match 'ROSTER MISS NotInRoster') -Name 'C585 RosterMiss one bad token in a comma-separated value is still red' -Detail ('exit={0} {1}' -f $mm.Exit, $mm.Text)
 }
 
 function Test-C585_BadOutputPath {
@@ -232,7 +239,7 @@ function Test-C585_AsciiOnly {
     Assert-C487 -Cond ($harnessBytes.Count -eq 0) -Name 'C585 AsciiOnly the harness is ASCII-only' -Detail ([string]$harnessBytes.Count)
 }
 
-$script:C585ExpectedRows = 38
+$script:C585ExpectedRows = 40
 
 if (-not (Test-Path -LiteralPath $script:Runner)) { throw ('missing ' + $script:Runner) }
 

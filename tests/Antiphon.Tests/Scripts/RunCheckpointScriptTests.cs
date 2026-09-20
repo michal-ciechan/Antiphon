@@ -34,10 +34,12 @@ public sealed class RunCheckpointScriptTests
         "C585 ZeroExecuted prints no roster lines");
 
     [Test]
-    public Task C585_RosterMiss() => RunCaseAsync("C585_RosterMiss", 3,
+    public Task C585_RosterMiss() => RunCaseAsync("C585_RosterMiss", 5,
         "C585 RosterMiss exit code 3",
         "C585 RosterMiss names the token that matched nothing",
-        "C585 RosterMiss control a matching -Expect token is green");
+        "C585 RosterMiss control a matching -Expect token is green",
+        "C585 RosterMiss a comma-separated -Expect value splits into tokens",
+        "C585 RosterMiss one bad token in a comma-separated value is still red");
 
     [Test]
     public Task C585_BadOutputPath() => RunCaseAsync("C585_BadOutputPath", 10,

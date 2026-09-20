@@ -188,7 +188,10 @@ if ($executedNames.Count -gt $shown) {
 
 # (7) Verdict.
 $rosterMisses = New-Object 'System.Collections.Generic.List[string]'
-foreach ($token in @($Expect)) {
+# Split on commas too: `pwsh -File` binds every argument as a string, so -Expect A,B arrives as
+# one element there and as two when the script is dot-sourced or called in-process.
+$expectTokens = @(@($Expect) | ForEach-Object { ([string]$_).Split(',') } | ForEach-Object { $_.Trim() })
+foreach ($token in $expectTokens) {
     if ([string]::IsNullOrWhiteSpace($token)) { continue }
     $hit = $false
     foreach ($testName in $executedNames) {
