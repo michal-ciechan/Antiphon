@@ -224,6 +224,13 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
             .SweepAsync(CancellationToken.None);
     }
 
+    public async Task<LandRequestResult> RequestCleanupRetryAsync(Guid operationId, Guid? sweepRunId = null)
+    {
+        await using var scope = Services.CreateAsyncScope();
+        return await CreateLand(scope.ServiceProvider.GetRequiredService<AppDbContext>(), scope.ServiceProvider)
+            .RequestCleanupRetryAsync(Fixture.TaskId, operationId, sweepRunId, CancellationToken.None);
+    }
+
     public async Task<LandRunResult> RunQueuedAsync(string? filter = null)
     {
         if (!Queue.TryDequeue(out var request) || request.TaskId != Fixture.TaskId
