@@ -115,6 +115,24 @@ public sealed class SettledWorktreeRemovalTests
             await proc.WaitForExitAsync();
             proc.ExitCode.ShouldBe(0);
             request = h.Request(lease) with { Source = h.Host.Fixture.Coordinates with { WorktreePath = alias } };
+            try
+            {
+                h.Host.Fixture.Git.Trace.Clear();
+                var junctioned = await h.RemoveAsync(request, lease);
+                h.RemoveCalls.ShouldBe(0);
+                junctioned.IsClean.ShouldBeFalse();
+                Directory.Exists(h.Host.Fixture.Source).ShouldBeTrue();
+            }
+            finally
+            {
+                using var rm = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe")
+                {
+                    UseShellExecute = false, CreateNoWindow = true,
+                    ArgumentList = { "/c", "rmdir", alias },
+                });
+                rm?.WaitForExit();
+            }
+            return;
         }
         else
         {
@@ -296,8 +314,11 @@ public sealed class SettledWorktreeRemovalTests
             switch (change)
             {
                 case "rewrite":
-                    await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Remote, "update-ref", h.Host.Fixture.TargetRef,
-                        h.Host.Fixture.SeedSha);
+                    await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "checkout", "--orphan", "c459-orphan");
+                    await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "commit", "--allow-empty", "-m", "orphan");
+                    var orphan = (await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "rev-parse", "HEAD")).Trim();
+                    await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Remote, "update-ref", h.Host.Fixture.TargetRef, orphan);
+                    await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "checkout", "-f", "master");
                     break;
                 case "delete":
                     await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Remote, "update-ref", "-d", h.Host.Fixture.TargetRef);
@@ -401,7 +422,7 @@ public sealed class SettledWorktreeRemovalTests
             {
                 await using var db = h.Host.CreateContext();
                 var row = await db.TaskWorktreeRetirements.SingleAsync(r => r.Id == h.RetirementId);
-                row.TaskId = Guid.NewGuid();
+                row.Active = false;
                 await db.SaveChangesAsync();
             }
             return null;
@@ -429,13 +450,17 @@ public sealed class SettledWorktreeRemovalTests
                 h.Host.Fixture.Remote, "nested");
             await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Source, "commit", "-am", "submodule fixture");
             h.SourceSha = (await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Source, "rev-parse", "HEAD")).Trim();
+            await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "merge", "--ff-only", h.Host.Fixture.SourceRef);
+            await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "push", "origin", h.Host.Fixture.TargetRef);
             await h.SeedRetirementAsync();
         }
+        if (change == "sequencer")
+            await ApplyDirtyAsync(h, "sequencer");
 
         h.Host.Fixture.Git.BeforeCommand = async (repo, args) =>
         {
             if (repo != h.Host.Fixture.Source || args[0] != "status") return null;
-            await ApplyDirtyAsync(h, change);
+            if (change != "sequencer") await ApplyDirtyAsync(h, change);
             if (change == "unreadable") return new LandingGitResult(128, "", "status_failed");
             return null;
         };
@@ -462,6 +487,15 @@ public sealed class SettledWorktreeRemovalTests
             await ApplyDirtyAsync(h, change);
             return null;
         };
+        if (change == "sequencer")
+        {
+            var ignored = 0;
+            h.Host.Fixture.Git.AfterCommand = async (_, args, _) =>
+            {
+                if (args[0] != "ls-files" || ++ignored != 1) return;
+                await ApplyDirtyAsync(h, "sequencer");
+            };
+        }
         h.Host.Fixture.Git.Trace.Clear();
         var result = await h.RemoveAsync();
         h.RemoveCalls.ShouldBe(0);
@@ -526,8 +560,12 @@ public sealed class SettledWorktreeRemovalTests
                 File.SetAttributes(file, FileAttributes.Normal);
             Directory.Delete(h.Host.Fixture.Source, true);
         }
-        if (shape is "registration" or "matching-intent" or "no-intent" or "wrong-intent")
+        if (shape is "matching-intent" or "no-intent" or "wrong-intent")
+            await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "worktree", "prune");
+        if (shape == "registration")
         {
+            var gitFile = Path.Combine(h.Host.Fixture.Source, ".git");
+            if (File.Exists(gitFile)) File.Delete(gitFile);
             await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "worktree", "prune");
         }
         if (shape == "ref")
@@ -562,8 +600,9 @@ public sealed class SettledWorktreeRemovalTests
                 await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "worktree", "add", h.Host.Fixture.Source, h.Host.Fixture.SourceRef);
             if (component == "ref")
             {
+                await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "commit", "--allow-empty", "-m", "recreated");
                 await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "branch", "-f",
-                    h.Host.Fixture.SourceRef[11..], h.Host.Fixture.SeedSha);
+                    h.Host.Fixture.SourceRef[11..], "HEAD");
             }
         };
         var result = await h.RemoveAsync();
@@ -614,11 +653,17 @@ public sealed class SettledWorktreeRemovalTests
     {
         await using var h = await SettledRemovalHarness.CreateAsync();
         var other = Path.Combine(h.ManagedRoot, "other-checkout");
+        var removed = false;
         h.Host.Fixture.Git.AfterCommand = async (_, args, result) =>
         {
-            if (!(args.Contains("worktree") && args.Contains("remove") && result.Succeeded)) return;
-            if (!Directory.Exists(other))
+            if (args.Contains("worktree") && args.Contains("remove") && result.Succeeded)
+                removed = true;
+        };
+        h.Host.Fixture.Git.BeforeCommand = async (_, args) =>
+        {
+            if (removed && args[0] == "worktree" && args.Contains("list") && !Directory.Exists(other))
                 await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "worktree", "add", other, h.Host.Fixture.SourceRef);
+            return null;
         };
         h.Host.Fixture.Git.Trace.Clear();
         var result = await h.RemoveAsync();
@@ -666,6 +711,7 @@ public sealed class SettledWorktreeRemovalTests
             "tags" => "v1",
             "other-retirement" => "refs/antiphon/retirement/" + Guid.NewGuid().ToString("N") + "/source",
             "land" => "refs/antiphon/land/" + h.Host.Fixture.TaskId.ToString("N") + "/source",
+            "existing-wrong-namespace" => "refs/antiphon/land/" + h.Host.Fixture.TaskId.ToString("N") + "/source",
             _ => "source",
         };
         if (ns == "existing-wrong-namespace")
@@ -675,7 +721,7 @@ public sealed class SettledWorktreeRemovalTests
         }
 
         var pinned = await git.PinRetirementAsync(h.Host.Fixture.Repository, h.RetirementId, pin, h.SourceSha, CancellationToken.None);
-        var wrongNamespaceAccepted = pinned.Succeeded && ns != "source";
+        var wrongNamespaceAccepted = pinned.Succeeded;
         wrongNamespaceAccepted.ShouldBeFalse();
         if (ns is "heads" or "tags" or "other-retirement" or "land")
             pinned.Succeeded.ShouldBeFalse();
