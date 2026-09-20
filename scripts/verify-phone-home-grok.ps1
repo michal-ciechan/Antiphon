@@ -187,40 +187,36 @@ function Set-PlacementOrigin($config, [string] $placement) {
     return $config
 }
 
-function Read-ContainerBlockers($config) {
-    $blockers = [System.Collections.Generic.List[string]]::new()
+function Add-ContainerBlockers($config, [System.Collections.Generic.List[string]] $blockers) {
     $primary = Get-PrimaryGrokHome
     $mount = [System.IO.Path]::GetFullPath([string]$config.oauthMount)
     if ([string]::Equals($primary, $mount, [StringComparison]::OrdinalIgnoreCase)) {
-        $blockers.Add("oauthMount is the primary GROK_HOME; copy auth.json into a throwaway directory and mount that read-only.")
+        [void]$blockers.Add("oauthMount is the primary GROK_HOME; copy auth.json into a throwaway directory and mount that read-only.")
     }
     $auth = Join-Path $mount 'auth.json'
     if (-not (Test-Path -LiteralPath $auth)) {
-        $blockers.Add("Grok OAuth copy missing: expected auth.json in throwaway oauthMount ($mount), copied from primary GROK_HOME (env GROK_HOME or %USERPROFILE%\.grok). Do not bind-mount the primary store. Mount the copy read-only at /state/grok via PHONE_HOME_GROK_HOME. Not XAI_API_KEY.")
+        [void]$blockers.Add("Grok OAuth copy missing: expected auth.json in throwaway oauthMount ($mount), copied from primary GROK_HOME (env GROK_HOME or %USERPROFILE%\.grok). Do not bind-mount the primary store. Mount the copy read-only at /state/grok via PHONE_HOME_GROK_HOME. Not XAI_API_KEY.")
     }
     $dockerfile = Join-Path $repoRoot 'docker/session-runner-grok/Dockerfile'
     $df = Get-Content -LiteralPath $dockerfile -Raw
     if ($df -notmatch '1\.0\.34' -or $df -notmatch 'grok') {
-        $blockers.Add("docker/session-runner-grok/Dockerfile does not install Grok 1.0.34; the image cannot complete a provider turn until grok is pinned into the image.")
+        [void]$blockers.Add("docker/session-runner-grok/Dockerfile does not install Grok 1.0.34; the image cannot complete a provider turn until grok is pinned into the image.")
     }
     if ($df -match '(?im)^\s*ENV\s+PhoneHome__ServerOrigin\b') {
-        $blockers.Add("docker/session-runner-grok/Dockerfile must not ENV PhoneHome__ServerOrigin.")
+        [void]$blockers.Add("docker/session-runner-grok/Dockerfile must not ENV PhoneHome__ServerOrigin.")
     }
-    return $blockers
 }
 
-function Read-QemuBlockers {
-    $blockers = [System.Collections.Generic.List[string]]::new()
+function Add-QemuBlockers([System.Collections.Generic.List[string]] $blockers) {
     if (Test-Path -LiteralPath $assetLock) {
         $lockText = Get-Content -LiteralPath $assetLock -Raw
         if ($lockText -match 'pending-operator-pin') {
-            $blockers.Add("tests/fixtures/card0490-linux/assets.lock.json still has pending-operator-pin; replace qemu/qemu-img/bootDisk sha256 pins before the QEMU ordinary lane / PC-28-31.")
+            [void]$blockers.Add("tests/fixtures/card0490-linux/assets.lock.json still has pending-operator-pin; replace qemu/qemu-img/bootDisk sha256 pins before the QEMU ordinary lane / PC-28-31.")
         }
     }
     else {
-        $blockers.Add("Asset lock missing: tests/fixtures/card0490-linux/assets.lock.json")
+        [void]$blockers.Add("Asset lock missing: tests/fixtures/card0490-linux/assets.lock.json")
     }
-    return $blockers
 }
 
 Assert-ComposeDoesNotHardcodeOrigin
@@ -270,12 +266,14 @@ if ($configDir) { New-Item -ItemType Directory -Force -Path $configDir | Out-Nul
 Write-Host "Wrote isolated live config: $configPath"
 Write-Host "placement=$($generated.placement) phoneHomeServerOrigin=$($generated.phoneHomeServerOrigin) (PhoneHome__ServerOrigin / PHONE_HOME_SERVER_ORIGIN)"
 
-$blockers = Read-ContainerBlockers $generated
-$qemuBlockers = Read-QemuBlockers
+$blockers = [System.Collections.Generic.List[string]]::new()
+$qemuBlockers = [System.Collections.Generic.List[string]]::new()
+Add-ContainerBlockers $generated $blockers
+Add-QemuBlockers $qemuBlockers
 $blockerPath = Join-Path $EvidenceRoot 'blockers.txt'
 $allBlockers = [System.Collections.Generic.List[string]]::new()
-foreach ($b in $blockers) { $allBlockers.Add($b) }
-foreach ($b in $qemuBlockers) { $allBlockers.Add("qemu: $b") }
+foreach ($b in $blockers) { [void]$allBlockers.Add($b) }
+foreach ($b in $qemuBlockers) { [void]$allBlockers.Add("qemu: $b") }
 $allBlockers | Set-Content -LiteralPath $blockerPath -Encoding utf8
 
 if ($WriteConfigOnly) {

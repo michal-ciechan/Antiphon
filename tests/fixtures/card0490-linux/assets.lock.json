@@ -1,6 +1,16 @@
 {
-  "qemu": { "version": "9.2.0", "sha256": "pending-operator-pin" },
-  "qemu-img": { "version": "9.2.0", "sha256": "pending-operator-pin" },
+  "qemu": {
+    "version": "9.2.0",
+    "sha256": "af68dfd0ad3d95ff0869b593289eff4c26f5a6a2793b441010c51da891b58269",
+    "source": "https://qemu.weilnetz.de/w64/2024/qemu-w64-setup-20241220.exe",
+    "file": "qemu-system-x86_64.exe"
+  },
+  "qemu-img": {
+    "version": "9.2.0",
+    "sha256": "3442263b42a2a869ffdd9f35e9d7d0119b1fd26226aa2c748bf77395a0a0dfda",
+    "source": "https://qemu.weilnetz.de/w64/2024/qemu-w64-setup-20241220.exe",
+    "file": "qemu-img.exe"
+  },
   "bootDisk": { "sha256": "pending-operator-pin" },
   "sdk": "10.0.204",
   "runtime": "net9.0"
