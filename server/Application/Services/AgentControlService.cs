@@ -53,6 +53,8 @@ public sealed class AgentControlService
     private readonly OrchestratorWorkspaceWarningService? _workspaceWarning;
     private readonly HerdrSupervisionStateService _herdrSupervision;
     private readonly global::Antiphon.SessionRunner.Contracts.GrokRulesSettings _grokRulesSettings;
+    private readonly PhoneHomeLaunchPolicy? _phoneHome;
+    private readonly ISessionRunnerDirectory? _runnerDirectory;
 
     public AgentControlService(
         AppDbContext db,
@@ -79,7 +81,9 @@ public sealed class AgentControlService
         OrchestratorWorkspaceWarningService? workspaceWarning = null,
         HerdrSupervisionStateService? herdrSupervision = null,
         IOptions<SupervisionSettings>? supervision = null,
-        IOptions<global::Antiphon.SessionRunner.Contracts.GrokRulesSettings>? grokRulesSettings = null)
+        IOptions<global::Antiphon.SessionRunner.Contracts.GrokRulesSettings>? grokRulesSettings = null,
+        PhoneHomeLaunchPolicy? phoneHome = null,
+        ISessionRunnerDirectory? runnerDirectory = null)
     {
         _db = db;
         _agentService = agentService;
@@ -104,6 +108,8 @@ public sealed class AgentControlService
         _grokRulesSettings = grokRulesSettings?.Value ?? new();
         _herdrSupervision = herdrSupervision ?? new HerdrSupervisionStateService(
             db, supervision ?? Options.Create(new SupervisionSettings()), timeProvider, launchQueue, eventBus);
+        _phoneHome = phoneHome;
+        _runnerDirectory = runnerDirectory;
     }
 
     /// <summary>
@@ -252,6 +258,10 @@ public sealed class AgentControlService
         Guid sessionId;
         if (card is not null)
         {
+            _phoneHome?.RefuseUnsupportedStart(
+                agent, cardStart: true, delegatedTask: false, worktree: false,
+                sourceLanding: false, onAgent: false, backend: agent.SessionBackend,
+                kind: launchKind, customWrapper: null);
             if (initialPrompt is not null)
             {
                 throw new ValidationException(
@@ -384,7 +394,20 @@ public sealed class AgentControlService
                 ResumeBody: policyBody);
         }
 
-        AgentExecutableResolver.Default.EnsureSpawnable(spec.Exe);
+        _phoneHome?.RefuseUnsupportedStart(
+            agent,
+            cardStart: false,
+            delegatedTask: false,
+            worktree: false,
+            sourceLanding: false,
+            onAgent: false,
+            backend: agent.SessionBackend,
+            kind: spec.Kind,
+            customWrapper: null);
+        if (_phoneHome?.IsPinnedAgent(agent.Id) == true)
+            spec = _phoneHome.Project(spec, agent);
+        else
+            AgentExecutableResolver.Default.EnsureSpawnable(spec.Exe);
 
         if (agent.SessionBackend == SessionBackend.Herdr)
         {
@@ -555,6 +578,9 @@ public sealed class AgentControlService
                 EffectiveModelId = resolved.EffectiveModelId,
                 ComposedBundleStamp = composition.ComposedStamp,
                 InstructionFileStamp = composition.InstructionFileStamp,
+                RunnerId = _phoneHome?.IsPinnedAgent(agent.Id) == true ? _phoneHome.AllowedRunnerId : null,
+                RunnerStoreId = _phoneHome?.IsPinnedAgent(agent.Id) == true ? await ResolvePhoneHomeStoreIdAsync(ct) : null,
+                RunnerCwd = _phoneHome?.IsPinnedAgent(agent.Id) == true ? _phoneHome.RunnerWorkspace : null,
             };
             _db.AgentSessions.Add(session);
             await _db.SaveChangesAsync(ct);
@@ -1177,6 +1203,17 @@ public sealed class AgentControlService
             .FromSqlInterpolated($"""SELECT * FROM "Agents" WHERE "Id" = {agentId} FOR UPDATE""")
             .FirstOrDefaultAsync(ct)
         ?? throw new NotFoundException(nameof(Agent), agentId);
+
+    private Task<Guid> ResolvePhoneHomeStoreIdAsync(CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var storeId = _runnerDirectory?.LiveStoreId;
+        if (storeId is null || storeId == Guid.Empty)
+            throw new ServiceUnavailableException(
+                "Phone-home runner store is unavailable.",
+                PhoneHomeProblemTypes.Unavailable);
+        return Task.FromResult(storeId.Value);
+    }
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
 }

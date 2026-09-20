@@ -39,6 +39,13 @@ public class AgentSession
 
     public SessionStatus Status { get; set; } = SessionStatus.Created;
     public string Cwd { get; set; } = string.Empty;
+
+    /// <summary>
+    /// CARD-0490: owning phone-home runner id. Null with the other runner fields means the local HTTP runner.
+    /// </summary>
+    public string? RunnerId { get; set; }
+    public Guid? RunnerStoreId { get; set; }
+    public string? RunnerCwd { get; set; }
     public int Cols { get; set; } = 120;
     public int Rows { get; set; } = 30;
     public DateTime CreatedAt { get; set; }

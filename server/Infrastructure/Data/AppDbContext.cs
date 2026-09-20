@@ -1120,7 +1120,9 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<AgentSession>(entity =>
         {
-            entity.ToTable("AgentSessions");
+            entity.ToTable("AgentSessions", t => t.HasCheckConstraint(
+                "CK_AgentSessions_RunnerBinding_AllOrNone",
+                """("RunnerId" IS NULL AND "RunnerStoreId" IS NULL AND "RunnerCwd" IS NULL) OR ("RunnerId" IS NOT NULL AND "RunnerStoreId" IS NOT NULL AND "RunnerCwd" IS NOT NULL)"""));
             entity.HasIndex(s => new { s.StandingAgentId, s.CreatedAt });
             entity.HasKey(s => s.Id);
             entity.Property(s => s.CardId).IsRequired(false);
@@ -1131,6 +1133,9 @@ public class AppDbContext : DbContext
             entity.Property(s => s.SessionBackend).IsRequired();
             entity.Property(s => s.Status).IsRequired();
             entity.Property(s => s.Cwd).IsRequired().HasMaxLength(1000);
+            entity.Property(s => s.RunnerId).HasMaxLength(64);
+            entity.Property(s => s.RunnerCwd).HasMaxLength(1000);
+            entity.HasIndex(s => s.RunnerId).HasDatabaseName("IX_AgentSessions_RunnerId");
             entity.Property(s => s.PinLaunchHash).HasMaxLength(64);
             entity.Property(s => s.PinLaunchAbsolutePath).HasMaxLength(2000);
             entity.Property(s => s.PinLastNotifiedHash).HasMaxLength(64);

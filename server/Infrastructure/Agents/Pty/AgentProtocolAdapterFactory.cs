@@ -11,6 +11,7 @@ public sealed class AgentProtocolAdapterFactory : IAgentProtocolAdapterFactory
 {
     private readonly IOptions<AgentRegistrySettings> _options;
     private readonly ISessionRunnerClient _sessionRunnerClient;
+    private readonly ISessionRunnerDirectory? _directory;
     private readonly IOptions<SupervisionSettings>? _supervisionSettings;
     private readonly ILoggerFactory? _loggerFactory;
     private readonly IOptions<Antiphon.SessionRunner.Contracts.GrokRulesSettings>? _rulesSettings;
@@ -20,28 +21,38 @@ public sealed class AgentProtocolAdapterFactory : IAgentProtocolAdapterFactory
         ISessionRunnerClient sessionRunnerClient,
         IOptions<SupervisionSettings>? supervisionSettings = null,
         ILoggerFactory? loggerFactory = null,
-        IOptions<Antiphon.SessionRunner.Contracts.GrokRulesSettings>? rulesSettings = null)
+        IOptions<Antiphon.SessionRunner.Contracts.GrokRulesSettings>? rulesSettings = null,
+        ISessionRunnerDirectory? directory = null)
     {
         _options = options;
         _sessionRunnerClient = sessionRunnerClient;
         _supervisionSettings = supervisionSettings;
         _loggerFactory = loggerFactory;
         _rulesSettings = rulesSettings;
+        _directory = directory;
     }
 
-    public IAgentProtocolAdapter Create(AgentKind kind) => kind switch
+    public IAgentProtocolAdapter Create(AgentKind kind) => Create(kind, runnerId: null);
+
+    public IAgentProtocolAdapter Create(AgentKind kind, string? runnerId)
     {
-        AgentKind.Raw => new RunnerRawAdapter(_sessionRunnerClient),
-        AgentKind.ClaudeCode => new RunnerClaudeAdapter(
-            _sessionRunnerClient, _options, _supervisionSettings,
-            _loggerFactory?.CreateLogger<RunnerClaudeAdapter>()),
-        AgentKind.Codex => new RunnerCodexAdapter(
-            _sessionRunnerClient, _options,
-            _loggerFactory?.CreateLogger<RunnerCodexAdapter>()),
-        AgentKind.OpenCode => new RunnerOpenCodeAdapter(_sessionRunnerClient, _options),
-        AgentKind.Grok => new RunnerGrokAdapter(
-            _sessionRunnerClient, _options, _supervisionSettings,
-            _loggerFactory?.CreateLogger<RunnerGrokAdapter>(), _rulesSettings),
-        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, $"No adapter is registered for AgentKind '{kind}'."),
-    };
+        var client = string.IsNullOrWhiteSpace(runnerId) || _directory is null
+            ? _sessionRunnerClient
+            : _directory.Resolve(runnerId);
+        return kind switch
+        {
+            AgentKind.Raw => new RunnerRawAdapter(client),
+            AgentKind.ClaudeCode => new RunnerClaudeAdapter(
+                client, _options, _supervisionSettings,
+                _loggerFactory?.CreateLogger<RunnerClaudeAdapter>()),
+            AgentKind.Codex => new RunnerCodexAdapter(
+                client, _options,
+                _loggerFactory?.CreateLogger<RunnerCodexAdapter>()),
+            AgentKind.OpenCode => new RunnerOpenCodeAdapter(client, _options),
+            AgentKind.Grok => new RunnerGrokAdapter(
+                client, _options, _supervisionSettings,
+                _loggerFactory?.CreateLogger<RunnerGrokAdapter>(), _rulesSettings),
+            _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, $"No adapter is registered for AgentKind '{kind}'."),
+        };
+    }
 }

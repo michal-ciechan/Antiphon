@@ -3,6 +3,10 @@
 For everyday operation, use the [canonical local restart runbook](apphost-runbook.md):
 first start, AppHost or runner restart, verification, locks, exits and Job Object caveats.
 
+The CARD-0490 Linux Grok phone-home runner is an opt-in companion compose file
+(`docker-compose.runner-grok.yml`), not a replacement for `docker-compose.dev.yml` and not an
+AppHost service. It publishes no runner port.
+
 ## Runner restart observation (CARD-0420)
 
 `pwsh -NoProfile -File scripts/restart-session-runner.ps1` preserves detached

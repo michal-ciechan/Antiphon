@@ -880,6 +880,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
     public ChannelReader<RunnerServerSentEvent> Subscribe(CancellationToken ct) => _events.Subscribe(ct);
 
+    public ChannelReader<RunnerServerSentEvent> SubscribeBounded(
+        int maxEvents, int maxBytes, Action onOverflow, CancellationToken ct) =>
+        _events.SubscribeBounded(maxEvents, maxBytes, onOverflow, ct);
+
+    internal int LiveSessionCount => _sessions.Count;
+
     /// <summary>Transcript ownership, rule C1 (see <see cref="TranscriptClaimRegistry"/>). Test surface.</summary>
     internal TranscriptClaimRegistry TranscriptClaims => _transcriptClaims;
 
@@ -3272,37 +3278,99 @@ public sealed record RunnerServerSentEvent(string EventName, string Json);
 public sealed class SessionRunnerEventHub
 {
     private readonly object _gate = new();
-    private readonly List<Channel<RunnerServerSentEvent>> _subscribers = [];
+    private readonly List<Subscriber> _subscribers = [];
 
-    public ChannelReader<RunnerServerSentEvent> Subscribe(CancellationToken ct)
-    {
-        var channel = Channel.CreateUnbounded<RunnerServerSentEvent>(new UnboundedChannelOptions
+    public ChannelReader<RunnerServerSentEvent> Subscribe(CancellationToken ct) =>
+        Add(new Subscriber(Channel.CreateUnbounded<RunnerServerSentEvent>(new UnboundedChannelOptions
         {
             SingleReader = true,
             SingleWriter = false
-        });
+        })), ct);
 
+    public ChannelReader<RunnerServerSentEvent> SubscribeBounded(
+        int maxEvents, int maxBytes, Action onOverflow, CancellationToken ct)
+    {
+        if (maxEvents <= 0 || maxBytes <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxEvents), "Bounded subscription limits must be positive.");
+        var channel = Channel.CreateBounded<RunnerServerSentEvent>(new BoundedChannelOptions(maxEvents)
+        {
+            FullMode = BoundedChannelFullMode.DropWrite,
+            SingleReader = true,
+            SingleWriter = false
+        });
+        return Add(new Subscriber(channel, maxEvents, maxBytes, onOverflow), ct);
+    }
+
+    private ChannelReader<RunnerServerSentEvent> Add(Subscriber subscriber, CancellationToken ct)
+    {
         lock (_gate)
-            _subscribers.Add(channel);
+            _subscribers.Add(subscriber);
 
         ct.Register(() =>
         {
             lock (_gate)
-                _subscribers.Remove(channel);
-            channel.Writer.TryComplete();
+                _subscribers.Remove(subscriber);
+            subscriber.Channel.Writer.TryComplete();
         });
 
-        return channel.Reader;
+        return subscriber.Channel.Reader;
     }
 
     public void Publish<T>(string eventName, T payload)
     {
-        var evt = new RunnerServerSentEvent(eventName, System.Text.Json.JsonSerializer.Serialize(payload));
-        Channel<RunnerServerSentEvent>[] subscribers;
+        var json = System.Text.Json.JsonSerializer.Serialize(payload);
+        var evt = new RunnerServerSentEvent(eventName, json);
+        var bytes = System.Text.Encoding.UTF8.GetByteCount(json) + eventName.Length;
+        Subscriber[] subscribers;
         lock (_gate)
             subscribers = [.. _subscribers];
 
         foreach (var subscriber in subscribers)
-            subscriber.Writer.TryWrite(evt);
+        {
+            if (subscriber.TryOverflow(bytes, out var overflowed) && overflowed)
+            {
+                subscriber.Channel.Writer.TryComplete();
+                subscriber.OnOverflow?.Invoke();
+                continue;
+            }
+
+            subscriber.Channel.Writer.TryWrite(evt);
+        }
+    }
+
+    private sealed class Subscriber(
+        Channel<RunnerServerSentEvent> channel,
+        int? maxEvents = null,
+        int? maxBytes = null,
+        Action? onOverflow = null)
+    {
+        public Channel<RunnerServerSentEvent> Channel { get; } = channel;
+        public Action? OnOverflow { get; } = onOverflow;
+        private int _count;
+        private int _bytes;
+        private bool _overflowed;
+
+        public bool TryOverflow(int incomingBytes, out bool overflowed)
+        {
+            overflowed = false;
+            if (maxEvents is null || maxBytes is null)
+                return false;
+            if (_overflowed)
+            {
+                overflowed = true;
+                return true;
+            }
+
+            if (_count + 1 > maxEvents.Value || _bytes + incomingBytes > maxBytes.Value)
+            {
+                _overflowed = true;
+                overflowed = true;
+                return true;
+            }
+
+            _count++;
+            _bytes += incomingBytes;
+            return true;
+        }
     }
 }

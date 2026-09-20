@@ -74,6 +74,37 @@ public class SessionDeliveryProfileTests
     }
 
     [Test]
+    public async Task Phone_home_Grok_never_uses_local_modern_evidence()
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        var session = new AgentSession
+        {
+            Id = Guid.NewGuid(),
+            DefinitionName = "grok",
+            AgentKind = AgentKind.Grok,
+            SessionBackend = SessionBackend.PtyHost,
+            Status = SessionStatus.Running,
+            Cwd = "D:/tmp",
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = DateTime.UtcNow,
+            StartedAt = DateTime.UtcNow,
+            LastSeenAt = DateTime.UtcNow,
+            RunnerId = "grok-linux",
+            RunnerStoreId = Guid.NewGuid(),
+            RunnerCwd = "/work",
+        };
+        db.AgentSessions.Add(session);
+        await db.SaveChangesAsync();
+        await using var owned = Build(advertiseHerdr: true, backendOverride: "modern");
+
+        var ceilings = await owned.Profile.ForSessionAsync(db, session.Id, CancellationToken.None);
+        var remoteSingleWriteMaxBytes = ceilings.SingleWriteMaxBytes;
+        remoteSingleWriteMaxBytes.ShouldBe(1_024);
+        owned.Pty.Ceilings.Backend.ShouldBe(owned.Pty.Ceilings.Backend);
+    }
+
+    [Test]
     public async Task Unknown_session_id_returns_pty_profile_answer()
     {
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
@@ -106,7 +137,7 @@ public class SessionDeliveryProfileTests
     }
 
     /// <param name="advertiseHerdr">true = lists herdr; false = answers without herdr; null = unreachable.</param>
-    private static Owned Build(bool? advertiseHerdr)
+    private static Owned Build(bool? advertiseHerdr, string backendOverride = "inbox")
     {
         var services = new ServiceCollection();
         ISessionRunnerClient client = advertiseHerdr switch
@@ -122,7 +153,7 @@ public class SessionDeliveryProfileTests
             NullLogger<PtyDeliveryProfile>.Instance,
             Options.Create(new DelegationSettings()),
             TimeProvider.System,
-            backendOverride: "inbox");
+            backendOverride: backendOverride);
         var profile = new SessionDeliveryProfile(
             pty,
             Options.Create(new DelegationSettings()),

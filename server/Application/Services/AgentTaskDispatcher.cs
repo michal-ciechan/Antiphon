@@ -90,6 +90,7 @@ public sealed class AgentTaskDispatcher
     private readonly LandDeliveryBoundary? _landBoundary;
     // CARD-0544 D-7. Optional; absent, a queued Interim task is held rather than launched.
     private readonly InterimVerificationPolicy? _interimPolicy;
+    private readonly PhoneHomeLaunchPolicy? _phoneHome;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -146,9 +147,11 @@ public sealed class AgentTaskDispatcher
         ITaskProgressGit? progressGit = null,
         DispatchBaseWarningIntentService? dispatchWarnings = null,
         LandDeliveryBoundary? landBoundary = null,
-        InterimVerificationPolicy? interimPolicy = null)
+        InterimVerificationPolicy? interimPolicy = null,
+        PhoneHomeLaunchPolicy? phoneHome = null)
     {
         _interimPolicy = interimPolicy;
+        _phoneHome = phoneHome;
         _repositoryLeases = repositoryLeases;
         _verification = verification;
         _progressGit = progressGit;
@@ -3600,6 +3603,19 @@ public sealed class AgentTaskDispatcher
         }
 
         var agent = await ResolveAgentAsync(claimed, now, ct);
+        if (_phoneHome?.IsPinnedAgent(agent.Id) == true)
+        {
+            _phoneHome.RefuseUnsupportedStart(
+                agent,
+                cardStart: claimed.CardId is not null,
+                delegatedTask: true,
+                worktree: claimed.Workspace == WorkspaceMode.Worktree,
+                sourceLanding: claimed.SourceLandingOperationId is not null,
+                onAgent: false,
+                backend: agent.SessionBackend,
+                kind: program.Kind,
+                customWrapper: null);
+        }
         // A pool delegate's environment is fixed for the life of its process. Record the task
         // scope at every cold launch (including a deliberate relaunch of an existing pool row),
         // so the warm-pool predicate can never hand that process work from another scope.

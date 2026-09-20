@@ -1,0 +1,237 @@
+using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+
+namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
+
+public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
+{
+    public const string LocalRunnerId = PhoneHomeProtocol.LocalRunnerId;
+
+    private readonly ISessionRunnerClient _local;
+    private readonly PhoneHomeRunnerSettings _settings;
+    private readonly IServiceScopeFactory _scopes;
+    private readonly TimeProvider _clock;
+    private readonly object _gate = new();
+    private readonly Dictionary<string, Ticket> _tickets = new(StringComparer.Ordinal);
+    private PhoneHomeLiveConnection? _live;
+    private Guid? _liveStoreId;
+    private Guid? _liveBootId;
+    private DateTimeOffset _liveLeaseUntil;
+    private long _epoch;
+
+    public PhoneHomeRunnerDirectory(
+        ISessionRunnerClient local,
+        IOptions<PhoneHomeRunnerSettings> settings,
+        IServiceScopeFactory scopes,
+        TimeProvider clock)
+    {
+        _local = local;
+        _settings = settings.Value;
+        _scopes = scopes;
+        _clock = clock;
+    }
+
+    public ISessionRunnerClient Local => _local;
+    public IReadOnlyList<string> KnownRunnerIds =>
+        _settings.Enabled
+            ? [LocalRunnerId, _settings.AllowedRunnerId]
+            : [LocalRunnerId];
+
+    public Guid? LiveStoreId
+    {
+        get
+        {
+            lock (_gate)
+                return SnapshotLive()?.RunnerStoreId ?? _liveStoreId;
+        }
+    }
+
+    public ISessionRunnerClient Resolve(string? runnerId)
+    {
+        if (string.IsNullOrWhiteSpace(runnerId) || runnerId == LocalRunnerId)
+            return _local;
+        var live = SnapshotLive();
+        if (live is null || !string.Equals(live.RunnerId, runnerId, StringComparison.Ordinal))
+            throw new ServiceUnavailableException("Phone-home runner is unavailable.", PhoneHomeProblemTypes.Unavailable);
+        if (!live.DispatchEligible)
+            throw new ServiceUnavailableException("Phone-home runner has not completed recovery.", PhoneHomeProblemTypes.Unavailable);
+        return new PhoneHomeRunnerClient(live);
+    }
+
+    public async Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) =>
+        await GetBindingAsync(sessionId, ct) is SessionRunnerBinding.Remote remote ? remote.Owner : null;
+
+    public async Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct)
+    {
+        await using var scope = _scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var row = await db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => new { s.RunnerId, s.RunnerStoreId, s.RunnerCwd })
+            .FirstOrDefaultAsync(ct);
+        if (row is null)
+            return SessionRunnerBinding.Missing.Instance;
+        if (row.RunnerId is null || row.RunnerStoreId is null || row.RunnerCwd is null)
+            return SessionRunnerBinding.Local.Instance;
+        return new SessionRunnerBinding.Remote(new SessionRunnerOwner(row.RunnerId, row.RunnerStoreId.Value, row.RunnerCwd));
+    }
+
+    public async Task<RunnerInventory> GetInventoryAsync(string? runnerId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(runnerId) || runnerId == LocalRunnerId)
+        {
+            try
+            {
+                return new RunnerInventory.Available(await _local.ListAsync(ct));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return new RunnerInventory.Unavailable(ex.Message);
+            }
+        }
+
+        var live = SnapshotLive();
+        if (live is null || !live.DispatchEligible || live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
+            return new RunnerInventory.Unavailable("phone-home runner unavailable");
+        try
+        {
+            return new RunnerInventory.Available(await new PhoneHomeRunnerClient(live).ListAsync(ct));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new RunnerInventory.Unavailable(ex.Message);
+        }
+    }
+
+    public bool AuthenticateSecret(string? provided)
+    {
+        if (!_settings.Enabled || string.IsNullOrEmpty(_settings.SharedSecret) || string.IsNullOrEmpty(provided))
+            return false;
+        var expected = System.Text.Encoding.UTF8.GetBytes(_settings.SharedSecret);
+        var actual = System.Text.Encoding.UTF8.GetBytes(provided);
+        return CryptographicOperations.FixedTimeEquals(expected, actual);
+    }
+
+    public PhoneHomeRegistrationResponse Register(PhoneHomeRegistrationRequest request)
+    {
+        if (request.ProtocolVersion != PhoneHomeProtocol.Version)
+            throw new ConflictException("Unsupported phone-home protocol version.", PhoneHomeProblemTypes.ProtocolVersion);
+        if (!string.Equals(request.RunnerId, _settings.AllowedRunnerId, StringComparison.Ordinal))
+            throw new ConflictException("Runner id is not allowed.", PhoneHomeProblemTypes.RunnerMismatch);
+        if (request.Capacity != 1)
+            throw new ConflictException("Phone-home capacity must be one.", PhoneHomeProblemTypes.Capacity);
+
+        lock (_gate)
+        {
+            var now = _clock.GetUtcNow();
+            if (_live is { } live && !live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
+            {
+                if (live.ProcessBootId != request.ProcessBootId)
+                    throw new ConflictException("A competing boot cannot replace an unexpired owner.", PhoneHomeProblemTypes.BootConflict);
+            }
+            else if (_liveStoreId is { } store && store != request.RunnerStoreId)
+            {
+                throw new ConflictException("Runner store identity does not match the live binding.", PhoneHomeProblemTypes.StoreMismatch);
+            }
+
+            var ticket = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+            _tickets[ticket] = new Ticket(
+                ticket, request.RunnerId, request.RunnerStoreId, request.ProcessBootId,
+                now.AddSeconds(_settings.TicketTtlSeconds));
+            _liveStoreId = request.RunnerStoreId;
+            _liveBootId = request.ProcessBootId;
+            return new PhoneHomeRegistrationResponse(
+                ticket, now.AddSeconds(_settings.TicketTtlSeconds), request.RunnerStoreId, request.ProcessBootId);
+        }
+    }
+
+    public PhoneHomeLiveConnection AcceptConnect(
+        string runnerId, string ticketValue, System.Net.WebSockets.WebSocket socket)
+    {
+        lock (_gate)
+        {
+            if (!_tickets.Remove(ticketValue, out var ticket))
+                throw new ConflictException("Connection ticket is invalid.", PhoneHomeProblemTypes.InvalidTicket);
+            var now = _clock.GetUtcNow();
+            if (ticket.ExpiresAtUtc < now
+                || !string.Equals(ticket.RunnerId, runnerId, StringComparison.Ordinal)
+                || ticket.RunnerStoreId != _liveStoreId
+                || ticket.ProcessBootId != _liveBootId)
+                throw new ConflictException("Connection ticket is bound, expired, or already used.", PhoneHomeProblemTypes.InvalidTicket);
+
+            _live?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            var epoch = ++_epoch;
+            var connection = new PhoneHomeLiveConnection(
+                runnerId, ticket.RunnerStoreId, ticket.ProcessBootId, epoch, socket, _settings.Limits, _clock);
+            _live = connection;
+            _liveLeaseUntil = now.AddSeconds(_settings.LeaseSeconds);
+            return connection;
+        }
+    }
+
+    public void MarkRecovered(PhoneHomeLiveConnection connection)
+    {
+        lock (_gate)
+        {
+            if (!ReferenceEquals(_live, connection))
+                return;
+            connection.DispatchEligible = true;
+        }
+    }
+
+    public void Disconnect(PhoneHomeLiveConnection connection, string reason)
+    {
+        lock (_gate)
+        {
+            if (!ReferenceEquals(_live, connection))
+                return;
+            connection.DispatchEligible = false;
+            _live = null;
+        }
+    }
+
+    public PhoneHomeRunnerStatusDto Status(string runnerId)
+    {
+        var live = SnapshotLive();
+        var available = live is not null
+            && !live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds))
+            && live.SocketOpen;
+        return new PhoneHomeRunnerStatusDto(
+            runnerId,
+            live?.RunnerStoreId ?? _liveStoreId,
+            live?.ProcessBootId ?? _liveBootId,
+            live?.Epoch,
+            available,
+            live is { DispatchEligible: true } && available,
+            live?.LastHeartbeatUtc,
+            Platform: null,
+            BuildVersion: null,
+            DisconnectReason: available ? null : "unavailable");
+    }
+
+    public PhoneHomeLiveConnection? SnapshotLive()
+    {
+        lock (_gate)
+        {
+            if (_live is null)
+                return null;
+            if (_live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
+            {
+                _live.DispatchEligible = false;
+                return _live;
+            }
+
+            return _live;
+        }
+    }
+
+    private sealed record Ticket(string Value, string RunnerId, Guid RunnerStoreId, Guid ProcessBootId, DateTimeOffset ExpiresAtUtc);
+}

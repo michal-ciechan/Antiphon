@@ -96,6 +96,12 @@ pwsh -File scripts/test-duration-tripwire.ps1 -Trx path\to\run.trx
 
 The allowlist is `tests/Antiphon.Tests/slow-tests-allowlist.txt` (exact simple or fully-qualified class names, case-insensitive). Every test class is tagged `Unit` xor `Integration` (`TestLaneCategoryGuardTests`).
 
+### CARD-0490 phone-home runner and native PC-28–31
+
+Opt-in Linux Grok phone-home is `docker-compose.runner-grok.yml` plus `scripts/verify-phone-home-grok.ps1`. It never publishes a runner port and never targets production 17204.
+
+PC-28 through PC-31 run in an inherited QEMU/TCG guest via `scripts/test-card0490-native.ps1`. Ordinary Code uses `-Ordinary -Phase baseline` only. Sourced Mutation requires `-BindingFile` and must not downgrade to ordinary. Asset pins live in `tests/fixtures/card0490-linux/assets.lock.json`.
+
 ### Simulating a stale `index.lock` (CARD-0543)
 
 Only inside `ScratchGitRepo`, `LandingGitFixture` or `LandingSafetyHarness` temp directories.

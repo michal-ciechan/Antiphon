@@ -182,7 +182,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             attempt.AgentSession = session;
             await _db.SaveChangesAsync(ct);
 
-            adapter = _adapterFactory.Create(request.AgentKind);
+            adapter = _adapterFactory.Create(request.AgentKind, session.RunnerId);
             var spec = await BuildRuntimeLaunchSpecAsync(launchSpec, session, worktree.Path, resumeMode: null, ct);
             EnsureHerdrLaunchAllowed(session, spec);
             claimedLaunch = _launchOwnership?.TryRegister(session.Id) ?? false;
@@ -438,7 +438,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // Standing resume preserves native identity even when local storage cannot be inspected.
             if (session.CardId is not null || session.WorktreeId is not null)
                 resumeMode = ApplyEffectiveResumeMode(session, launchSpec, resumeMode);
-            adapter = _adapterFactory.Create(session.AgentKind);
+            adapter = _adapterFactory.Create(session.AgentKind, session.RunnerId);
             var spec = await BuildRuntimeLaunchSpecAsync(launchSpec, session, session.Cwd, resumeMode, ct);
             spec = spec with { AcceptedStartedAt = acceptedGeneration };
             if (spec.VerificationBinding is { } binding
@@ -631,7 +631,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         var attached = false;
         try
         {
-            adapter = _adapterFactory.Create(session.AgentKind);
+            adapter = _adapterFactory.Create(session.AgentKind, session.RunnerId);
             var hasDispatchedTask = await _db.AgentTasks.AnyAsync(
                 t => t.AgentSessionId == session.Id && t.Status == AgentTaskStatus.Dispatched, ct);
             var resumable = hasDispatchedTask
@@ -1430,7 +1430,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         IAgentProtocolAdapter? adapter = null;
         try
         {
-            adapter = _adapterFactory.Create(session.AgentKind);
+            adapter = _adapterFactory.Create(session.AgentKind, session.RunnerId);
             var spec = await BuildRuntimeLaunchSpecAsync(launchSpec, session, cwd, effectiveResumeMode, ct);
             EnsureHerdrLaunchAllowed(session, spec);
             await adapter.StartAsync(spec, ct);

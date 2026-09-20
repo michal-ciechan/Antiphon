@@ -110,6 +110,7 @@ public sealed class ZombieCensusService
     private async Task<ZombieCensusDbSnapshot> LoadDbSnapshotAsync(CancellationToken cancellationToken)
     {
         var sessionRows = await _db.AgentSessions.AsNoTracking()
+            .Where(s => s.RunnerId == null)
             .Select(s => new { s.Id, s.Status, s.StartedAt, s.EndedAt, s.Cwd, s.AgentKind })
             .ToListAsync(cancellationToken);
         var sessions = sessionRows.Select(s => new ZombieCensusSessionRow(

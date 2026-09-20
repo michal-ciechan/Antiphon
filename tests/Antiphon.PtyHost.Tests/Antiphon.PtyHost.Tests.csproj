@@ -20,6 +20,7 @@
     <ProjectReference Include="..\..\src\Antiphon.PtyHost\Antiphon.PtyHost.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.PtyHost.Client\Antiphon.PtyHost.Client.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.PtyHost.Protocol\Antiphon.PtyHost.Protocol.csproj" />
+    <ProjectReference Include="..\Antiphon.Card0490.NativeHarness\Antiphon.Card0490.NativeHarness.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="..\Shared\TestClassificationMetadata.cs" Link="TestSupport\TestClassificationMetadata.cs" />

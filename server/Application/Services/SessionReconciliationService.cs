@@ -51,6 +51,7 @@ public sealed class SessionReconciliationService
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<SessionReconciliationService> _logger;
     private readonly ILaunchOwnership? _ownership;
+    private readonly ISessionRunnerDirectory? _directory;
 
     public SessionReconciliationService(
         AppDbContext db,
@@ -66,7 +67,8 @@ public sealed class SessionReconciliationService
         IOptions<SessionReconciliationSettings> settings,
         TimeProvider timeProvider,
         ILogger<SessionReconciliationService> logger,
-        ILaunchOwnership? ownership = null)
+        ILaunchOwnership? ownership = null,
+        ISessionRunnerDirectory? directory = null)
     {
         _db = db;
         _runnerClient = runnerClient;
@@ -82,6 +84,7 @@ public sealed class SessionReconciliationService
         _timeProvider = timeProvider;
         _logger = logger;
         _ownership = ownership;
+        _directory = directory;
     }
 
     /// <summary>Runs one reconciliation sweep. Returns the number of rows it had to correct.</summary>
@@ -96,16 +99,38 @@ public sealed class SessionReconciliationService
         // ONE fetch per sweep, shared by both session passes. It is unconditional now: pass 3 asks
         // about sessions the DB does not think are live, so the old "skip the fetch when no DB row
         // is live" shortcut would have hidden exactly the case CARD-0056 is about.
-        var runnerSessions = await TryListRunnerSessionsAsync(ct);
-        if (runnerSessions is not null)
+        if (_directory is null)
         {
-            corrections += await ReconcileSessionsAsync(runnerSessions, now, ct);
-            await ResumeInterruptedLaunchesAsync(runnerSessions, now, ct);
-            await RaiseHerdrPendingIncidentsAsync(runnerSessions, now, ct);
-            corrections += await ReconcileRunnerAliveSessionsAsync(runnerSessions, now, ct);
-            // Pass 4 (CARD-0102): report what the three views of "what is running" add up to.
-            // Returns no corrections on purpose - it changes nothing, ever.
-            await RaiseCensusAlertIfDivergedAsync(runnerSessions, now, ct);
+            var runnerSessions = await TryListRunnerSessionsAsync(ct);
+            if (runnerSessions is not null)
+            {
+                corrections += await ReconcileSessionsAsync(runnerSessions, now, ct, ownerRunnerId: null);
+                await ResumeInterruptedLaunchesAsync(runnerSessions, now, ct);
+                await RaiseHerdrPendingIncidentsAsync(runnerSessions, now, ct);
+                corrections += await ReconcileRunnerAliveSessionsAsync(runnerSessions, now, ct);
+                await RaiseCensusAlertIfDivergedAsync(runnerSessions, now, ct);
+            }
+        }
+        else
+        {
+            foreach (var runnerId in _directory.KnownRunnerIds)
+            {
+                var inventory = await _directory.GetInventoryAsync(
+                    runnerId == PhoneHomeProtocol.LocalRunnerId ? null : runnerId, ct);
+                if (inventory is RunnerInventory.Unavailable)
+                    continue;
+                if (inventory is not RunnerInventory.Available available)
+                    continue;
+                var owner = runnerId == PhoneHomeProtocol.LocalRunnerId ? null : runnerId;
+                corrections += await ReconcileSessionsAsync(available.Sessions, now, ct, owner);
+                if (owner is null)
+                {
+                    await ResumeInterruptedLaunchesAsync(available.Sessions, now, ct);
+                    await RaiseHerdrPendingIncidentsAsync(available.Sessions, now, ct);
+                    corrections += await ReconcileRunnerAliveSessionsAsync(available.Sessions, now, ct);
+                    await RaiseCensusAlertIfDivergedAsync(available.Sessions, now, ct);
+                }
+            }
         }
 
         corrections += await ReconcileAgentsAsync(now, ct);
@@ -154,13 +179,15 @@ public sealed class SessionReconciliationService
     }
 
     private async Task<int> ReconcileSessionsAsync(
-        IReadOnlyList<SessionRunnerSessionDto> runnerSessions, DateTime now, CancellationToken ct)
+        IReadOnlyList<SessionRunnerSessionDto> runnerSessions, DateTime now, CancellationToken ct, string? ownerRunnerId)
     {
         await using var transaction = _db.Database.CurrentTransaction is null
             ? await _db.Database.BeginTransactionAsync(ct) : null;
-        var liveSessions = await _db.AgentSessions
-            .Where(s => LiveStatuses.Contains(s.Status))
-            .ToListAsync(ct);
+        var liveSessionsQuery = _db.AgentSessions.Where(s => LiveStatuses.Contains(s.Status));
+        liveSessionsQuery = ownerRunnerId is null
+            ? liveSessionsQuery.Where(s => s.RunnerId == null)
+            : liveSessionsQuery.Where(s => s.RunnerId == ownerRunnerId);
+        var liveSessions = await liveSessionsQuery.ToListAsync(ct);
         if (liveSessions.Count == 0)
             return 0;
 

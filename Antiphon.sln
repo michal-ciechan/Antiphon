@@ -67,6 +67,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.FakeLlmApi", "src\
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.NightlyWatchdog", "src\Antiphon.NightlyWatchdog\Antiphon.NightlyWatchdog.csproj", "{1F84D0F8-1079-42A6-9818-EDFE50B6FF1F}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.Card0490.NativeHarness", "tests\Antiphon.Card0490.NativeHarness\Antiphon.Card0490.NativeHarness.csproj", "{3CBFDCC5-CFAC-429B-B745-C5990DD372A8}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -413,6 +415,18 @@ Global
 		{1F84D0F8-1079-42A6-9818-EDFE50B6FF1F}.Release|x64.Build.0 = Release|Any CPU
 		{1F84D0F8-1079-42A6-9818-EDFE50B6FF1F}.Release|x86.ActiveCfg = Release|Any CPU
 		{1F84D0F8-1079-42A6-9818-EDFE50B6FF1F}.Release|x86.Build.0 = Release|Any CPU
+		{3CBFDCC5-CFAC-429B-B745-C5990DD372A8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3CBFDCC5-CFAC-429B-B745-C5990DD372A8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3CBFDCC5-CFAC-429B-B745-C5990DD372A8}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{3CBFDCC5-CFAC-429B-B745-C5990DD372A8}.Debug|x64.Build.0 = Debug|Any CPU
+		{3CBFDCC5-CFAC-429B-B745-C5990DD372A8}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{3CBFDCC5-CFAC-429B-B745-C5990DD372A8}.Debug|x86.Build.0 = Debug|Any CPU
+		{3CBFDCC5-CFAC-429B-B745-C5990DD372A8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3CBFDCC5-CFAC-429B-B745-C5990DD372A8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3CBFDCC5-CFAC-429B-B745-C5990DD372A8}.Release|x64.ActiveCfg = Release|Any CPU
+		{3CBFDCC5-CFAC-429B-B745-C5990DD372A8}.Release|x64.Build.0 = Release|Any CPU
+		{3CBFDCC5-CFAC-429B-B745-C5990DD372A8}.Release|x86.ActiveCfg = Release|Any CPU
+		{3CBFDCC5-CFAC-429B-B745-C5990DD372A8}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -442,5 +456,6 @@ Global
 		{8DF17F43-9F04-4A5E-BC90-66B0C4FC3367} = {5D20AA90-6969-D8BD-9DCD-8634F4692FDA}
 		{C262C7FB-5CDB-4371-B1AD-94B7C217BFE6} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{1F84D0F8-1079-42A6-9818-EDFE50B6FF1F} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{3CBFDCC5-CFAC-429B-B745-C5990DD372A8} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal
