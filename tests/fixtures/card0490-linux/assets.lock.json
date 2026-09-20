@@ -11,7 +11,14 @@
     "source": "https://qemu.weilnetz.de/w64/2024/qemu-w64-setup-20241220.exe",
     "file": "qemu-img.exe"
   },
-  "bootDisk": { "sha256": "pending-operator-pin" },
+  "bootDisk": {
+    "version": "1",
+    "sha256": "3ba7499bf171b82773f528690041396d64524aad03214e904a97348b1b526c17",
+    "source": "scripts/build-card0490-bootdisk.ps1",
+    "file": "card0490-bootdisk.qcow2",
+    "format": "qcow2",
+    "virtualSizeMiB": 64
+  },
   "sdk": "10.0.204",
   "runtime": "net9.0"
 }
