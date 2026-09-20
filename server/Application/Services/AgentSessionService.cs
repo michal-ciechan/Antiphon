@@ -1657,10 +1657,17 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             }
         }
 
+        // CARD-0490: a session bound to a remote runner launches in the runner's own filesystem.
+        // The host path in session.Cwd names nothing inside the container, and the phone-home
+        // dispatcher refuses any launch whose cwd is not its AllowedCwd. RunnerCwd is written
+        // with RunnerId/RunnerStoreId under the all-or-none binding constraint, so a non-null
+        // value here is the committed remote workspace, not a guess.
+        var launchCwd = session.RunnerCwd ?? cwd;
+
         var spec = launchSpec with
         {
             Args = args,
-            Cwd = cwd,
+            Cwd = launchCwd,
             Cols = session.Cols,
             Rows = session.Rows,
             MemoryLimitMb = _settings.MemoryLimitMb,
