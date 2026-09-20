@@ -3,10 +3,12 @@
 Current H-5 amendment: Plan task `0c6a0491` supplies the missing durable legacy
 Check-note contract in
 [the legacy Check-note publication plan](2026-09-20-card-0079-legacy-check-note-plan.md).
-It extends S4/S6 only and preserves D-1 through D-10. The TestDesign findings and
-counts below describe the earlier `cf897be0` review; its H-5 gap now has a concrete
-design for **TestDesign re-review before Code**, not an executed verification
-result or a new automatic-restart authorization.
+It extends S4/S6 only and preserves D-1 through D-10. TestDesign `efe21527`
+accepts the concrete H-5 seam in that amendment's [Verification design](2026-09-20-card-0079-legacy-check-note-plan.md#verification-design).
+Current next: **Code**. The effective inventory is 217 guards/217 distinct PCs;
+estimated floors are Code 177.30 + Mutation 469.84 = 647.14 minutes. Earlier
+findings/counts below remain historical except the updated H-5/G-161/PC-161 rows;
+no runtime success or expanded automatic-restart authorization is claimed.
 
 Plan task: `15587e3f`, 2026-09-20. Source: investigation task `e78ba0b0`,
 commit `954f98db85ac99425bbbcde2675694fe8d6ac303`,
@@ -617,10 +619,12 @@ TestDesign task `cf897be0`, 2026-09-20, inspected exact plan HEAD
 left the fix design above unchanged. Later Plan task `0c6a0491` adds the linked
 H-5 amendment and current-stage references; the verification results remain historical.
 
-**Original TestDesign review: return to Plan before Code.** Plan task `0c6a0491`
-has now supplied [the H-5 contract](2026-09-20-card-0079-legacy-check-note-plan.md);
-the current next stage is TestDesign to review it and update this verification
-section before Code. The following findings/counts remain the original review.
+**Original TestDesign review: return to Plan before Code (historical).** Plan task
+`0c6a0491` supplied [the H-5 contract](2026-09-20-card-0079-legacy-check-note-plan.md);
+TestDesign `efe21527` has now accepted its construction and added 48 independent
+controls, a complete checkpoint manifest and revised cost in that amendment's
+Verification design. Current next: **Code**. The following findings/counts remain
+the original review unless expressly superseded there.
 The first 33 proposed controls
 have concrete test construction paths below, with their independent assertions
 split into additional controls. That review found one uncovered production delivery seam,
@@ -794,7 +798,7 @@ DB arrival sequence is supporting evidence, not native identity.
 | H-2 resume outcome | Episode-bound AgentControlService -> real AgentSessionLaunchQueue -> runner/native conversation -> coordinator | G2 reserved before enqueue. Worker death before/after enqueue adopts only stored G2, no second launch. Actual durable restart fence and retirement/outbox commit precede admission. | Same native-history marker, G2 accepted, launch completes and fence persists; still AwaitingCheck. V-4/V-6, PC-24/28/33/72–76/83–91/106/152/156–157 |
 | H-3 interpreter brief/result | AgentTaskCheckService -> legacy SpecialistTaskRunner or routed SpecialistRequestService -> real dispatcher -> session queue -> G2 interpreter | Checked-task ID/check number joins new Check run ID, ExecutionTaskId, brief queue ID, episode and G2. Before task commit: no runnable orphan. After dispatch/before brief enqueue failure: retire through durable failure notification; never fake receipt. Queue/attempt/accepted-prompt gaps recover same brief. | Exact complete UserPrompt after brief attempt floor, then correlated useful reading/report/TurnEnd and settled Check. Busy G2 waits; eligible G2 is flushed by actual producer/launch path. V-5/V-6, PC-13/112–114/117 |
 | H-4 routed Check caller note | AgentTaskCheckService -> PublishCheckRequestAsync -> real caller queue -> parent session | SpecialistRequest ID and (CheckedTaskId, CheckNumber), CallerMessageId, event and CallerPublishedAt are committed atomically. Recreate and retry the same completed request; queue/attempt/receipt cuts use same body/row. Suppression and missing CallerMessageId do not mean receipt. | Matching complete caller UserPrompt after attempt floor. Cross both caller states and producer/queue/attempt/receipt cuts. V-5/V-6, PC-30/115–116/121–123/159–160 |
-| H-5 legacy Check caller note — **amended; TestDesign re-review pending** | AgentTaskCheckService -> LegacyCheckNotePublication P -> atomic Body/event/LegacyCheckNote outbox -> real parent queue | [H-5 amendment](2026-09-20-card-0079-legacy-check-note-plan.md#production-and-recovery-protocol) binds the captured subject execution/Check number, E/G2 and one interpreter task. Produced body and notification survive pre-enqueue death; the existing notification scanner retries the same key. | Original complete parent UserPrompt after the original attempt floor, busy/eligible; no new probe or interpretation. PC-161 now has the proposed scanner-discovery defect and real committed cut in the amendment. Finalize its coverage/cost in TestDesign. |
+| H-5 legacy Check caller note — **executable design accepted; runtime pending** | AgentTaskCheckService -> captured P/run -> atomic Body/event/LegacyCheckNote outbox -> notification scanner -> real Check-origin parent queue/flush worker | [Current H-5 verification](2026-09-20-card-0079-legacy-check-note-plan.md#delivery-inventory) binds original subject execution/number, E/G2, event, notification and keyed row. Every reconciliation entry is held before enqueue until the producer is killed at its committed cut; replacement scanner discovers the same obligation. | Original complete parent UserPrompt after the matching attempt floor, busy/eligible, no new probe/run/count or direct rescue; PC-161 and PC-170–217. Runtime Code/Review and later Mutation remain required. |
 | H-6 interrupted/undelivered task failure note | Dedicated compaction failure/retirement -> existing AgentTaskLandNotificationService -> real caller queue -> parent | Failed + source event + DeliveryFailure notification commit atomically. Durable notification ID joins SourceLandNotificationId, SourceTaskId, body/digest, QueueMessageId and ConfirmingPromptSequence. Preserve obligations on retirement crash and task settlement. | Same complete parent UserPrompt, not merely Failed/Sent/Confirmed flag. Cross six cuts in ReceiptFailureDeliveryTests plus actual worker death, busy and eligible callers. V-5/V-6, PC-118–120/123 |
 | H-7 automatic audit/attention | Episode phase transaction -> incident/event publication -> subscribed test client and attention GET | Episode ID + phase/transition identity survives publication failure/recreation; re-read current attention after reconnect, retry pending publication without duplicate actionable episode. Terminal audit retained independently. | Client receives phase notification through real application event transport and GET returns the matching episode/phase; for disconnected client, reconnect + GET is receipt of current state only, not proof of historical push. V-7/V-6, PC-107–111/124–126 |
 
@@ -1070,7 +1074,7 @@ for TestDesign re-review. A mapping alone is not an executable seam.
 | G-158 | S1 receipt retention: Receipt gate survives terminal episode pruning. | PC-158 |
 | G-159 | S6 exact caller body: Partial matching caller body is not receipt. | PC-159 |
 | G-160 | S6 suppression: Suppressed Check note cannot release recovery gate. | PC-160 |
-| G-161 | S6 legacy publication: Each Produced legacy recovery Check note has immutable P/event/outbox identity and restart discovery before enqueue; contract supplied by the H-5 amendment, pending TestDesign re-review. | PC-161 |
+| G-161 | S6/H-5 independent discovery: A committed Produced LegacyCheckNote outbox is rediscovered after producer death before enqueue. Capture/atomicity/payload/wakeup guards are separately mapped in the amendment's G-170–217. | PC-161 |
 | G-162 | S1 retained evidence: Unresolved recovery protects session evidence. | PC-162 |
 | G-163 | S1 retained evidence: Unresolved recovery protects transcript evidence. | PC-163 |
 | G-164 | S1 retained evidence: Unresolved recovery protects task_tree evidence. | PC-164 |
@@ -1297,7 +1301,7 @@ with an unrelated eligible row which must still prune.
 | PC-158 | `B.Pruned_terminal_episode_does_not_reset_receipt_gate` | Infer budget unlocked when prior episode row has been pruned. | `secondStopRequests.Count.ShouldBe(0) after 91d without caller receipt` |
 | PC-159 | `H.Truncated_caller_note_is_not_receipt` | Replace complete-body match with task-marker containment. | `episode.State.ShouldBe(AwaitingCheck) with correct marker and missing final line` |
 | PC-160 | `H.Superseded_check_without_note_never_recovers_seat` | Treat CallerPublishedAt as receipt despite suppressed CallerMessageId. | `episode.State.ShouldBe(AwaitingCheck); callerMessageId.ShouldBeNull()` |
-| PC-161 | `H.Legacy_produced_note_survives_pre_enqueue_worker_death` | Proposed by the [H-5 amendment](2026-09-20-card-0079-legacy-check-note-plan.md#testdesign-handoff-h-5--g-161--pc-161): exclude LegacyCheckNote from AgentTaskLandNotificationHostedService's unresolved scan after killing the producer at its committed pre-enqueue cut. TestDesign must accept the fixture/control before Code. | `matchingCompleteOriginalParentPrompts.Count.ShouldBe(1)` fails with zero original-note prompts after worker death; no new Check, direct reconciliation or rescue flush. |
+| PC-161 | `H.Legacy_produced_note_survives_pre_enqueue_worker_death` | Add `n.Kind != LandNotificationKind.LegacyCheckNote` to AgentTaskLandNotificationHostedService.ExecuteAsync's unresolved query. Use the [accepted H-5 fixture](2026-09-20-card-0079-legacy-check-note-plan.md#inspection), hold all pre-enqueue entries, kill/await/drain the producer after the actual Produced commit, then boot a fresh worker. | `matchingCompleteOriginalParentPrompts.Count.ShouldBe(1)` fails with zero after two completed scanner passes; both caller states, same P/body, no new Check or direct rescue. |
 | PC-162 | `B.Unresolved_recovery_retains_session_evidence` | Remove recovery referencer only in PruneSessionsAsync. | `protectedIds.ShouldBe(originalIds); unreferencedControlIds.ShouldBeEmpty()` |
 | PC-163 | `B.Unresolved_recovery_retains_transcript_evidence` | Remove recovery referencer only in PruneTranscriptsAsync. | `protectedIds.ShouldBe(originalIds); unreferencedControlIds.ShouldBeEmpty()` |
 | PC-164 | `B.Unresolved_recovery_retains_task_tree_evidence` | Remove recovery referencer only in PruneTasksAsync. | `protectedIds.ShouldBe(originalIds); unreferencedControlIds.ShouldBeEmpty()` |
@@ -1451,7 +1455,7 @@ owned alternate-output directories before builds and remove only those verified
 paths inside this worktree after all children exit; no outputs were created by
 this documentation stage.
 
-**Handoff audit:** bodies/nearest fixtures read; guards=169, mapped=169,
+**Historical cf897be0 handoff audit:** bodies/nearest fixtures read; guards=169, mapped=169,
 missing guard mappings=0, duplicate PC mappings=0. Executable PC designs=168;
 non-executable seam=1 (G-161/PC-161). Runtime methods implemented or executed by
 this TestDesign=0. Numeric execution floor=97 + 318.44 = 415.44 estimated minutes.
@@ -1460,3 +1464,10 @@ task `0c6a0491` now supplies H-5's durable original-note handoff in the linked
 amendment. Current next: **TestDesign** to review that seam and recalculate any
 changed controls/cost before Code; the Code-entry gate awaits that review.
 No human choice or authorization expansion is needed.
+
+Current `efe21527` handoff supersedes that historical stop: [H-5 Verification
+design](2026-09-20-card-0079-legacy-check-note-plan.md#verification-design) accepts
+PC-161 and adds G/PC-170–217. Effective guards=217, mapped=217, missing=0,
+duplicate PC mappings=0; all PC designs executable, runtime executed here=0.
+Use its closed Checkpoints table and revised Cost, not the historical commands
+and 415.44-minute floor above. Current next: **Code**.
