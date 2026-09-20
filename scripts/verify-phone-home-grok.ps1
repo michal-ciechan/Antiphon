@@ -1,8 +1,11 @@
 # CARD-0490 V-7: isolated Antiphon + phone-home Grok container. Never binds 17202-17205.
 # PhoneHome__ServerOrigin is injected at container launch from PHONE_HOME_SERVER_ORIGIN.
+# local-docker uses host.docker.internal; server2 uses the desktop Tailscale IPv4 (never host.docker.internal).
 param(
     [string] $ConfigurationFile = '.antiphon/card0490-live.json',
     [Parameter(Mandatory = $true)][string] $EvidenceRoot,
+    [ValidateSet('local-docker', 'server2')]
+    [string] $Placement = 'local-docker',
     [switch] $WriteConfigOnly,
     [switch] $SkipContainer
 )
@@ -47,6 +50,43 @@ function Assert-NotProductionOrigin([string] $origin, [string] $name) {
     }
 }
 
+function Get-PrimaryGrokHome {
+    $fromEnv = [Environment]::GetEnvironmentVariable('GROK_HOME')
+    if (-not [string]::IsNullOrWhiteSpace($fromEnv)) {
+        return [System.IO.Path]::GetFullPath($fromEnv)
+    }
+    return [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE '.grok'))
+}
+
+function Get-DesktopReachableHost {
+    try {
+        $ip = (& tailscale ip -4 2>$null | Select-Object -First 1)
+        if ($ip -match '^100\.\d+\.\d+\.\d+$') { return $ip.Trim() }
+    }
+    catch { }
+    return '100.79.51.37'
+}
+
+function Copy-ThrowawayGrokHome([string] $sourceHome, [string] $destHome) {
+    $src = [System.IO.Path]::GetFullPath($sourceHome)
+    $dst = [System.IO.Path]::GetFullPath($destHome)
+    if ([string]::Equals($src, $dst, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Throwaway GROK_HOME must not be the primary store ($src)."
+    }
+    New-Item -ItemType Directory -Force -Path $dst | Out-Null
+    $auth = Join-Path $src 'auth.json'
+    if (-not (Test-Path -LiteralPath $auth)) {
+        return $false
+    }
+    foreach ($name in @('auth.json', 'auth.json.lock', 'config.toml')) {
+        $from = Join-Path $src $name
+        if (Test-Path -LiteralPath $from) {
+            Copy-Item -LiteralPath $from -Destination (Join-Path $dst $name) -Force
+        }
+    }
+    return Test-Path -LiteralPath (Join-Path $dst 'auth.json')
+}
+
 function Get-ComposeText {
     if (-not (Test-Path -LiteralPath $composeFile)) {
         throw "Compose file not found: $composeFile"
@@ -64,6 +104,9 @@ function Assert-ComposeDoesNotHardcodeOrigin {
     }
     if ($text -match 'host\.docker\.internal:1720[2-5]') {
         throw "docker-compose.runner-grok.yml must not name production Aspire ports."
+    }
+    if ($text -notmatch '(?s)PHONE_HOME_GROK_HOME.*?read_only:\s*true') {
+        throw "PHONE_HOME_GROK_HOME must be a read-only bind mount."
     }
 }
 
@@ -90,9 +133,12 @@ function New-IsolatedLiveConfig {
         postgresPort           = $postgresPort
         serverOrigin           = "http://127.0.0.1:$serverPort"
         phoneHomeServerOrigin  = "http://host.docker.internal:$serverPort"
+        placement              = 'local-docker'
+        desktopReachableHost   = $null
         runnerId               = 'grok-linux'
         standingAgentId        = $agentId
         hostWorkspaceRoot      = $workspace
+        grokHomeSource         = Get-PrimaryGrokHome
         oauthMount             = $grokHome
         stateRoot              = $state
         secretFile             = $secretFile
@@ -115,11 +161,36 @@ function Merge-LiveConfig($base, $overlay) {
     return $base
 }
 
+function Set-PlacementOrigin($config, [string] $placement) {
+    $config.placement = $placement
+    $port = [int]$config.serverPort
+    if ($placement -eq 'server2') {
+        $hostName = [string]$config.desktopReachableHost
+        if ([string]::IsNullOrWhiteSpace($hostName)) {
+            $hostName = Get-DesktopReachableHost
+        }
+        $config.desktopReachableHost = $hostName
+        $config.phoneHomeServerOrigin = "http://${hostName}:${port}"
+        if ($config.phoneHomeServerOrigin -match 'host\.docker\.internal') {
+            throw "server2 placement must not use host.docker.internal."
+        }
+    }
+    else {
+        $config.phoneHomeServerOrigin = "http://host.docker.internal:${port}"
+    }
+    return $config
+}
+
 function Read-Blockers($config) {
     $blockers = [System.Collections.Generic.List[string]]::new()
-    $auth = Join-Path ([string]$config.oauthMount) 'auth.json'
+    $primary = Get-PrimaryGrokHome
+    $mount = [System.IO.Path]::GetFullPath([string]$config.oauthMount)
+    if ([string]::Equals($primary, $mount, [StringComparison]::OrdinalIgnoreCase)) {
+        $blockers.Add("oauthMount is the primary GROK_HOME; copy auth.json into a throwaway directory and mount that read-only.")
+    }
+    $auth = Join-Path $mount 'auth.json'
     if (-not (Test-Path -LiteralPath $auth)) {
-        $blockers.Add("Grok OAuth store missing: mount a throwaway GROK_HOME at oauthMount ($($config.oauthMount)) containing auth.json (Grok's OAuth file, not XAI_API_KEY). Bind-mount that directory at /state/grok via PHONE_HOME_GROK_HOME.")
+        $blockers.Add("Grok OAuth copy missing: expected auth.json in throwaway oauthMount ($mount), copied from primary GROK_HOME (env GROK_HOME or %USERPROFILE%\.grok). Do not bind-mount the primary store. Mount the copy read-only at /state/grok via PHONE_HOME_GROK_HOME. Not XAI_API_KEY.")
     }
     if (Test-Path -LiteralPath $assetLock) {
         $lockText = Get-Content -LiteralPath $assetLock -Raw
@@ -151,17 +222,35 @@ if (Test-Path -LiteralPath $configPath) {
     $existing = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
     $generated = Merge-LiveConfig $generated $existing
 }
+if ($PSBoundParameters.ContainsKey('Placement')) {
+    $generated.placement = $Placement
+}
+elseif ([string]::IsNullOrWhiteSpace([string]$generated.placement)) {
+    $generated.placement = 'local-docker'
+}
+$generated = Set-PlacementOrigin $generated ([string]$generated.placement)
+$primaryHome = Get-PrimaryGrokHome
+$generated.grokHomeSource = $primaryHome
+if ([string]::Equals(
+        [System.IO.Path]::GetFullPath([string]$generated.oauthMount),
+        $primaryHome,
+        [StringComparison]::OrdinalIgnoreCase)) {
+    $generated.oauthMount = Join-Path (Join-Path $repoRoot '.antiphon') ("card0490-live-" + $generated.runId + '\grok-home')
+}
 
 Assert-NotProductionPort $generated.serverPort 'serverPort'
 Assert-NotProductionPort $generated.postgresPort 'postgresPort'
 Assert-NotProductionOrigin ([string]$generated.serverOrigin) 'serverOrigin'
 Assert-NotProductionOrigin ([string]$generated.phoneHomeServerOrigin) 'phoneHomeServerOrigin'
 
+$copied = Copy-ThrowawayGrokHome ([string]$generated.grokHomeSource) ([string]$generated.oauthMount)
+Write-Host "Throwaway GROK_HOME copy from grokHomeSource path (contents not logged): copiedAuth=$copied mount=$($generated.oauthMount)"
+
 $configDir = Split-Path -Parent $configPath
 if ($configDir) { New-Item -ItemType Directory -Force -Path $configDir | Out-Null }
 ($generated | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $configPath -Encoding utf8
 Write-Host "Wrote isolated live config: $configPath"
-Write-Host "phoneHomeServerOrigin=$($generated.phoneHomeServerOrigin) (injected as PhoneHome__ServerOrigin / PHONE_HOME_SERVER_ORIGIN)"
+Write-Host "placement=$($generated.placement) phoneHomeServerOrigin=$($generated.phoneHomeServerOrigin) (PhoneHome__ServerOrigin / PHONE_HOME_SERVER_ORIGIN)"
 
 $blockers = Read-Blockers $generated
 $blockerPath = Join-Path $EvidenceRoot 'blockers.txt'
@@ -252,6 +341,9 @@ try {
 
     if ($SkipContainer) {
         Write-Host "SkipContainer: isolated server is up; grok container not started."
+    }
+    elseif ($generated.placement -eq 'server2') {
+        Write-Host "server2 placement: start the container on server2 with PHONE_HOME_SERVER_ORIGIN=$($generated.phoneHomeServerOrigin) (desktop Tailscale). host.docker.internal on server2 is server2 itself."
     }
     elseif ($blockers.Count -gt 0) {
         Write-Host "Not starting the Grok container until blockers are cleared:"

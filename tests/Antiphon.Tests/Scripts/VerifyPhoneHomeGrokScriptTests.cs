@@ -20,6 +20,11 @@ public sealed class VerifyPhoneHomeGrokScriptTests
         compose.ShouldNotContain("host.docker.internal:17204");
         compose.ShouldNotContain("host.docker.internal:17205");
         compose.ShouldContain("PHONE_HOME_GROK_HOME");
+        System.Text.RegularExpressions.Regex.IsMatch(
+            compose,
+            @"PHONE_HOME_GROK_HOME[\s\S]*?read_only:\s*true",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            .ShouldBeTrue("throwaway GROK_HOME must be a read-only bind");
 
         var dockerfile = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "docker/session-runner-grok/Dockerfile"));
         System.Text.RegularExpressions.Regex.IsMatch(
@@ -71,6 +76,86 @@ public sealed class VerifyPhoneHomeGrokScriptTests
             .ShouldContain($"127.0.0.1:{serverPort}");
         json.RootElement.TryGetProperty("sharedSecret", out _).ShouldBeFalse();
         output.ShouldContain("PhoneHome__ServerOrigin");
+    }
+
+    [Test]
+    public async Task WriteConfigOnly_copies_primary_auth_into_throwaway_home()
+    {
+        var primary = Path.Combine(Path.GetTempPath(), "grok-primary-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(primary);
+        await File.WriteAllTextAsync(Path.Combine(primary, "auth.json"), """{"x":{"key":"not-a-real-token","expires_at":9999999999}}""");
+        var root = Path.Combine(Path.GetTempPath(), "card0490-live-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var config = Path.Combine(root, "card0490-live.json");
+        var evidence = Path.Combine(root, "evidence");
+        var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "verify-phone-home-grok.ps1");
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "pwsh",
+            WorkingDirectory = DelegateScriptRunner.RepoRoot,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        psi.Environment["GROK_HOME"] = primary;
+        psi.ArgumentList.Add("-NoProfile");
+        psi.ArgumentList.Add("-File");
+        psi.ArgumentList.Add(script);
+        psi.ArgumentList.Add("-ConfigurationFile");
+        psi.ArgumentList.Add(config);
+        psi.ArgumentList.Add("-EvidenceRoot");
+        psi.ArgumentList.Add(evidence);
+        psi.ArgumentList.Add("-WriteConfigOnly");
+        using var proc = System.Diagnostics.Process.Start(psi) ?? throw new InvalidOperationException("pwsh failed to start");
+        var output = await proc.StandardOutput.ReadToEndAsync() + await proc.StandardError.ReadToEndAsync();
+        await proc.WaitForExitAsync();
+        File.Exists(config).ShouldBeTrue(output);
+        var json = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(config));
+        var mount = json.RootElement.GetProperty("oauthMount").GetString();
+        mount.ShouldNotBeNull();
+        Path.GetFullPath(mount!).ShouldNotBe(Path.GetFullPath(primary));
+        File.Exists(Path.Combine(mount!, "auth.json")).ShouldBeTrue(output);
+        output.ShouldNotContain("not-a-real-token");
+    }
+
+    [Test]
+    public async Task Server2_placement_uses_desktop_tailscale_not_docker_internal()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "card0490-live-s2-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var config = Path.Combine(root, "card0490-live.json");
+        var evidence = Path.Combine(root, "evidence");
+        var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "verify-phone-home-grok.ps1");
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "pwsh",
+            WorkingDirectory = DelegateScriptRunner.RepoRoot,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        psi.ArgumentList.Add("-NoProfile");
+        psi.ArgumentList.Add("-File");
+        psi.ArgumentList.Add(script);
+        psi.ArgumentList.Add("-ConfigurationFile");
+        psi.ArgumentList.Add(config);
+        psi.ArgumentList.Add("-EvidenceRoot");
+        psi.ArgumentList.Add(evidence);
+        psi.ArgumentList.Add("-Placement");
+        psi.ArgumentList.Add("server2");
+        psi.ArgumentList.Add("-WriteConfigOnly");
+        using var proc = System.Diagnostics.Process.Start(psi) ?? throw new InvalidOperationException("pwsh failed to start");
+        var output = await proc.StandardOutput.ReadToEndAsync() + await proc.StandardError.ReadToEndAsync();
+        await proc.WaitForExitAsync();
+        File.Exists(config).ShouldBeTrue(output);
+        var json = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(config));
+        json.RootElement.GetProperty("placement").GetString().ShouldBe("server2");
+        var origin = json.RootElement.GetProperty("phoneHomeServerOrigin").GetString();
+        origin.ShouldNotBeNull();
+        origin!.ShouldNotContain("host.docker.internal");
+        origin.ShouldMatch(@"^http://100\.\d+\.\d+\.\d+:\d+$");
+        json.RootElement.GetProperty("serverOrigin").GetString()
+            .ShouldContain("127.0.0.1");
     }
 
     [Test]
