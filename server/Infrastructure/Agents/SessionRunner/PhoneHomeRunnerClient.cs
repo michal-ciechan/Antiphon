@@ -80,14 +80,24 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient
 
     public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
     {
-        var frame = await _connection.RequestAsync(PhoneHomeOperation.Input, new RunnerInputRequest(input), ct);
+        var frame = await _connection.RequestAsync(
+            PhoneHomeOperation.Input, new { sessionId, input }, ct);
         ThrowIfError(frame);
     }
 
     public async Task<RunnerConditionalInputResult> SendConditionalInputAsync(
         Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct)
     {
-        var frame = await _connection.RequestAsync(PhoneHomeOperation.ConditionalInput, request, ct);
+        var frame = await _connection.RequestAsync(
+            PhoneHomeOperation.ConditionalInput,
+            new
+            {
+                sessionId,
+                expectedAcceptedStartedAt = request.ExpectedAcceptedStartedAt,
+                expectedLastSequence = request.ExpectedLastSequence,
+                input = request.Input,
+            },
+            ct);
         if (frame.Kind == PhoneHomeFrameKind.Error)
             return new RunnerConditionalInputResult(sessionId, ConditionalInputOutcomes.Unknown, request.ExpectedAcceptedStartedAt, request.ExpectedLastSequence);
         return Read<RunnerConditionalInputResult>(frame)
@@ -101,7 +111,8 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient
 
     public async Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct)
     {
-        ThrowIfError(await _connection.RequestAsync(PhoneHomeOperation.Resize, new RunnerResizeRequest(cols, rows), ct));
+        ThrowIfError(await _connection.RequestAsync(
+            PhoneHomeOperation.Resize, new { sessionId, cols, rows }, ct));
     }
 
     public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct) =>
@@ -112,7 +123,7 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient
     {
         var frame = await _connection.RequestAsync(
             PhoneHomeOperation.KillGeneration,
-            new RunnerKillGenerationRequest(expectedAcceptedStartedAt),
+            new { sessionId, expectedAcceptedStartedAt },
             ct);
         return Read<RunnerKillGenerationResult>(frame) ?? throw Missing("kill-generation");
     }

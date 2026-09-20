@@ -41,6 +41,10 @@ public class PhoneHomeCommandDispatcherTests
             Guid.NewGuid(), "grok", [], new Dictionary<string, string>(), "C:\\Windows", 80, 24)), CancellationToken.None);
         wrongCwd.Kind.ShouldBe(PhoneHomeFrameKind.Error);
 
+        var emptyExe = await dispatcher.DispatchAsync(Launch(new RunnerLaunchRequest(
+            Guid.NewGuid(), "", [], new Dictionary<string, string>(), "/work", 80, 24)), CancellationToken.None);
+        emptyExe.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+
         runtimeMutations.ShouldBeEmpty();
         runtime.Capabilities().VerificationCustodyBackend.ShouldBeNull();
     }

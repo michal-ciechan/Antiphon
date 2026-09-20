@@ -64,9 +64,46 @@ public class PhoneHomeReconciliationTests
     [Test]
     public async Task List_consumers_keep_remote_unknown_and_local_pids_separate()
     {
-        var localDecisionsAttributedToRemote = new List<int>();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var remote = await SeedAsync(db, "grok-linux", SessionStatus.Running);
+        var local = new AgentSession
+        {
+            Id = Guid.NewGuid(),
+            DefinitionName = "claude",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Running,
+            Cwd = @"C:\work",
+            Cols = 80,
+            Rows = 24,
+            CreatedAt = DateTime.UtcNow,
+            StartedAt = DateTime.UtcNow.AddMinutes(-10),
+            LastSeenAt = DateTime.UtcNow,
+        };
+        db.AgentSessions.Add(local);
+        await db.SaveChangesAsync();
+        var overlappingPid = 4242;
+        var census = new RecordingCensus([
+            new ZombieOsProcess(overlappingPid, 4, "Antiphon.PtyHost.exe", @"C:\x\Antiphon.PtyHost.exe", "Antiphon.PtyHost.exe", @"C:\src", DateTimeOffset.UtcNow, 1, 0),
+        ]);
+        var runner = new EmptyClient();
+        var service = new Antiphon.Server.Infrastructure.Agents.ZombieCensusService(
+            census,
+            runner,
+            db,
+            new System.IO.Abstractions.FileSystem(),
+            TimeProvider.System,
+            Microsoft.Extensions.Options.Options.Create(new Antiphon.Server.Application.Settings.ZombieCensusSettings
+            {
+                SessionLogPath = Path.Combine(Path.GetTempPath(), "c490-census"),
+            }));
+        var result = await service.RunAsync(CancellationToken.None);
+        var localDecisionsAttributedToRemote = result.Rows
+            .Where(r => r.SessionId == remote.Id)
+            .Select(r => overlappingPid)
+            .ToList();
         localDecisionsAttributedToRemote.ShouldBeEmpty();
-        await Task.CompletedTask;
+        result.Rows.ShouldNotContain(r => r.SessionId == remote.Id);
     }
 
     private static async Task<AgentSession> SeedAsync(AppDbContext db, string runnerId, SessionStatus status)
@@ -137,6 +174,12 @@ public class PhoneHomeReconciliationTests
                 ? new RunnerInventory.Available([])
                 : new RunnerInventory.Unavailable("disconnected"));
         }
+    }
+
+    private sealed class RecordingCensus(IReadOnlyList<ZombieOsProcess> processes) : IZombieProcessCensus
+    {
+        public Task<IReadOnlyList<ZombieOsProcess>> SnapshotAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(processes);
     }
 
     private sealed class EmptyClient : ISessionRunnerClient

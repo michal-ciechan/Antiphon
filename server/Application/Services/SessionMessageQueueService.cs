@@ -2617,7 +2617,10 @@ public sealed partial class SessionMessageQueueService
     }
 
     private static bool IsHerdrUnreachable(Exception ex) =>
-        ex is ServiceUnavailableException { Code: HerdrProblemTypes.Unreachable };
+        ex is ServiceUnavailableException { Code: HerdrProblemTypes.Unreachable }
+        || ex is ServiceUnavailableException { Code: var code }
+            && (code == PhoneHomeProblemTypes.Unavailable
+                || string.Equals(code, "phone_home_unavailable", StringComparison.Ordinal));
 
     private static string Describe(DeliveryVerdict verdict) => verdict switch
     {

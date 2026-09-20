@@ -1,10 +1,11 @@
+using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
-using Antiphon.SessionRunner.Contracts;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -51,23 +52,91 @@ public class PhoneHomeSessionRoutingTests
         }
 
         localCallsForBoundSession.ShouldBeEmpty();
+        await Should.ThrowAsync<NotFoundException>(() => routing.GetAsync(Guid.NewGuid(), CancellationToken.None));
+        localCallsForBoundSession.ShouldBeEmpty();
     }
 
     [Test]
     public async Task Launch_requires_matching_generation_echo()
     {
-        var launchAccepted = false;
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        await using var peer = await host.ConnectPeerAsync();
+        peer.Reply = frame =>
+        {
+            if (frame.Operation != PhoneHomeOperation.Launch)
+                return null;
+            var launch = frame.Payload!.Value.Deserialize<RunnerLaunchRequest>(PhoneHomeFraming.Json)!;
+            var echoed = launch.AcceptedStartedAt?.AddSeconds(1) ?? DateTime.UtcNow;
+            return new PhoneHomeFrame(
+                PhoneHomeFrameKind.Result, frame.Epoch, frame.RequestId, frame.Operation,
+                System.Text.Json.JsonSerializer.SerializeToElement(
+                    new RunnerSessionDto(launch.SessionId, 1, echoed, "Running", null, "", 0, AcceptedStartedAt: echoed),
+                    PhoneHomeFraming.Json));
+        };
+        var live = await host.WaitLiveAsync();
+        host.Directory.MarkRecovered(live);
+        var client = new PhoneHomeRunnerClient(live);
         var expected = DateTime.UtcNow;
-        var echoed = expected.AddSeconds(1);
-        launchAccepted = SessionGeneration.Equal(expected, echoed);
+        var spec = new AgentLaunchSpec("grok", AgentKind.Grok, "grok", [], new Dictionary<string, string>(), "/work", 80, 24)
+        {
+            AcceptedStartedAt = expected,
+        };
+        var launchAccepted = true;
+        try
+        {
+            await client.StartAsync(Guid.NewGuid(), spec, CancellationToken.None);
+        }
+        catch (ConflictException)
+        {
+            launchAccepted = false;
+        }
+
         launchAccepted.ShouldBeFalse();
-        await Task.CompletedTask;
+
+        peer.Reply = frame =>
+        {
+            if (frame.Operation != PhoneHomeOperation.Launch)
+                return null;
+            var launch = frame.Payload!.Value.Deserialize<RunnerLaunchRequest>(PhoneHomeFraming.Json)!;
+            return new PhoneHomeFrame(
+                PhoneHomeFrameKind.Result, frame.Epoch, frame.RequestId, frame.Operation,
+                System.Text.Json.JsonSerializer.SerializeToElement(
+                    new RunnerSessionDto(launch.SessionId, 1, expected, "Running", null, "", 0, AcceptedStartedAt: expected),
+                    PhoneHomeFraming.Json));
+        };
+        var ok = await client.StartAsync(Guid.NewGuid(), spec, CancellationToken.None);
+        SessionGeneration.Equal(expected, ok.AcceptedStartedAt ?? ok.StartedAt).ShouldBeTrue();
     }
 
     [Test]
     public async Task Conditional_input_keeps_generation_and_has_no_raw_fallback()
     {
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        await using var peer = await host.ConnectPeerAsync();
+        peer.Reply = frame =>
+        {
+            if (frame.Operation == PhoneHomeOperation.ConditionalInput)
+            {
+                return new PhoneHomeFrame(
+                    PhoneHomeFrameKind.Error, frame.Epoch, frame.RequestId, frame.Operation,
+                    ErrorCode: ConditionalInputOutcomes.GenerationMismatch, ErrorDetail: "stale", StatusCode: 409);
+            }
+
+            if (frame.Operation == PhoneHomeOperation.Input)
+                throw new InvalidOperationException("raw input fallback is forbidden");
+            return null;
+        };
+        var live = await host.WaitLiveAsync();
+        host.Directory.MarkRecovered(live);
+        var client = new PhoneHomeRunnerClient(live);
         var rawInputFrames = new List<string>();
+        var result = await client.SendConditionalInputAsync(
+            Guid.NewGuid(),
+            new RunnerConditionalInputRequest(DateTime.UtcNow, 3, "secret"),
+            CancellationToken.None);
+        result.Outcome.ShouldBe(ConditionalInputOutcomes.Unknown);
+        if (peer.Inputs.Count > 0)
+            rawInputFrames.Add("raw");
         rawInputFrames.ShouldBeEmpty();
         await Task.CompletedTask;
     }
@@ -75,8 +144,33 @@ public class PhoneHomeSessionRoutingTests
     [Test]
     public async Task Stop_never_recaptures_replacement_generation()
     {
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        await using var peer = await host.ConnectPeerAsync();
+        var captured = DateTime.UtcNow.AddMinutes(-1);
+        var replacement = DateTime.UtcNow;
         var replacementKilled = false;
+        peer.Reply = frame =>
+        {
+            if (frame.Operation != PhoneHomeOperation.KillGeneration)
+                return null;
+            var expected = frame.Payload!.Value.GetProperty("expectedAcceptedStartedAt").GetDateTime();
+            var killed = SessionGeneration.Equal(expected, captured);
+            if (!killed)
+                replacementKilled = true;
+            return new PhoneHomeFrame(
+                PhoneHomeFrameKind.Result, frame.Epoch, frame.RequestId, frame.Operation,
+                System.Text.Json.JsonSerializer.SerializeToElement(
+                    new RunnerKillGenerationResult(Guid.Empty, killed,
+                        killed ? KillGenerationOutcomes.Killed : KillGenerationOutcomes.Mismatch, expected),
+                    PhoneHomeFraming.Json));
+        };
+        var live = await host.WaitLiveAsync();
+        host.Directory.MarkRecovered(live);
+        var client = new PhoneHomeRunnerClient(live);
+        var result = await client.KillGenerationAsync(Guid.NewGuid(), captured, CancellationToken.None);
+        result.Killed.ShouldBeTrue();
         replacementKilled.ShouldBeFalse();
+        _ = replacement;
         await Task.CompletedTask;
     }
 

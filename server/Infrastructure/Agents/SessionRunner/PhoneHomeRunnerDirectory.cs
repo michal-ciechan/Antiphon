@@ -132,6 +132,14 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
         lock (_gate)
         {
             var now = _clock.GetUtcNow();
+            if (_liveBootId is { } currentBoot
+                && currentBoot != Guid.Empty
+                && currentBoot != request.ProcessBootId
+                && (_live is { } liveOwner && !liveOwner.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds))
+                    || _liveLeaseUntil > now))
+            {
+                throw new ConflictException("A competing boot cannot replace an unexpired owner.", PhoneHomeProblemTypes.BootConflict);
+            }
             if (_live is { } live && !live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
             {
                 if (live.ProcessBootId != request.ProcessBootId)
@@ -148,8 +156,19 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
                 now.AddSeconds(_settings.TicketTtlSeconds));
             _liveStoreId = request.RunnerStoreId;
             _liveBootId = request.ProcessBootId;
+            _liveLeaseUntil = now.AddSeconds(_settings.LeaseSeconds);
             return new PhoneHomeRegistrationResponse(
                 ticket, now.AddSeconds(_settings.TicketTtlSeconds), request.RunnerStoreId, request.ProcessBootId);
+        }
+    }
+
+    public void PeekTicket(string runnerId, string ticketValue)
+    {
+        lock (_gate)
+        {
+            if (!_tickets.TryGetValue(ticketValue, out var ticket))
+                throw new ConflictException("Connection ticket is invalid.", PhoneHomeProblemTypes.InvalidTicket);
+            ValidateTicket(runnerId, ticket);
         }
     }
 
@@ -160,31 +179,38 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
         {
             if (!_tickets.Remove(ticketValue, out var ticket))
                 throw new ConflictException("Connection ticket is invalid.", PhoneHomeProblemTypes.InvalidTicket);
-            var now = _clock.GetUtcNow();
-            if (ticket.ExpiresAtUtc < now
-                || !string.Equals(ticket.RunnerId, runnerId, StringComparison.Ordinal)
-                || ticket.RunnerStoreId != _liveStoreId
-                || ticket.ProcessBootId != _liveBootId)
-                throw new ConflictException("Connection ticket is bound, expired, or already used.", PhoneHomeProblemTypes.InvalidTicket);
+            ValidateTicket(runnerId, ticket);
 
             _live?.DisposeAsync().AsTask().GetAwaiter().GetResult();
             var epoch = ++_epoch;
             var connection = new PhoneHomeLiveConnection(
                 runnerId, ticket.RunnerStoreId, ticket.ProcessBootId, epoch, socket, _settings.Limits, _clock);
             _live = connection;
-            _liveLeaseUntil = now.AddSeconds(_settings.LeaseSeconds);
+            _liveLeaseUntil = _clock.GetUtcNow().AddSeconds(_settings.LeaseSeconds);
             return connection;
         }
     }
 
-    public void MarkRecovered(PhoneHomeLiveConnection connection)
+    public void MarkRecovered(PhoneHomeLiveConnection? connection)
     {
+        if (connection is null)
+            return;
         lock (_gate)
         {
             if (!ReferenceEquals(_live, connection))
                 return;
             connection.DispatchEligible = true;
         }
+    }
+
+    private void ValidateTicket(string runnerId, Ticket ticket)
+    {
+        var now = _clock.GetUtcNow();
+        if (ticket.ExpiresAtUtc < now
+            || !string.Equals(ticket.RunnerId, runnerId, StringComparison.Ordinal)
+            || ticket.RunnerStoreId != _liveStoreId
+            || ticket.ProcessBootId != _liveBootId)
+            throw new ConflictException("Connection ticket is bound, expired, or already used.", PhoneHomeProblemTypes.InvalidTicket);
     }
 
     public void Disconnect(PhoneHomeLiveConnection connection, string reason)

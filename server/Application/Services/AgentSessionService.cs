@@ -1860,6 +1860,11 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         if (session.AgentKind != AgentKind.Grok || requested != AgentSessionResumeMode.Resume)
             return requested;
 
+        if (!string.IsNullOrWhiteSpace(session.RunnerId))
+            throw new ConflictException(
+                "Phone-home Grok resume cannot probe host history or start fresh.",
+                "phone_home_resume_fresh_refused");
+
         var grokHome = GrokCredentialStore.ResolveGrokHome(spec.Env);
         return GrokNativeSessionStore.Exists(grokHome, session.Id)
             ? AgentSessionResumeMode.Resume

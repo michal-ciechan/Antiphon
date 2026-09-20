@@ -126,9 +126,10 @@ public sealed class PhoneHomeCommandDispatcher
 
     internal void RejectUnsupportedLaunch(RunnerLaunchRequest launch)
     {
-        if (!string.Equals(Path.GetFileName(launch.Exe), "grok", StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(launch.Exe, "grok", StringComparison.OrdinalIgnoreCase)
-            && !launch.Exe.EndsWith("/grok", StringComparison.Ordinal))
+        if (string.IsNullOrWhiteSpace(launch.Exe)
+            || (!string.Equals(Path.GetFileName(launch.Exe), "grok", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(launch.Exe, "grok", StringComparison.OrdinalIgnoreCase)
+                && !launch.Exe.EndsWith("/grok", StringComparison.Ordinal)))
             throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Only the image-owned grok executable may launch.", 409);
         if (!string.Equals(launch.Cwd, _settings.AllowedCwd, StringComparison.Ordinal))
             throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, $"cwd must be '{_settings.AllowedCwd}'.", 409);

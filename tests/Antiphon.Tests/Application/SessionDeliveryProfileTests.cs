@@ -101,7 +101,8 @@ public class SessionDeliveryProfileTests
         var ceilings = await owned.Profile.ForSessionAsync(db, session.Id, CancellationToken.None);
         var remoteSingleWriteMaxBytes = ceilings.SingleWriteMaxBytes;
         remoteSingleWriteMaxBytes.ShouldBe(1_024);
-        owned.Pty.Ceilings.Backend.ShouldBe(owned.Pty.Ceilings.Backend);
+        ceilings.Backend.ShouldBe(DeliveryBackend.InboxConhost);
+        owned.Pty.Ceilings.Backend.ShouldBe(DeliveryBackend.ModernConPty);
     }
 
     [Test]

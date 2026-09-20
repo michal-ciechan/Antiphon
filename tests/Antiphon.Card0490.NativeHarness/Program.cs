@@ -10,11 +10,22 @@ public static class Program
             return 2;
         }
 
-        if (args.Contains("-Ordinary", StringComparer.OrdinalIgnoreCase)
-            && args.Contains("-BindingFile", StringComparer.OrdinalIgnoreCase))
+        if (NativeInputPolicy.OrdinaryAndBindingConflict(args))
         {
             Console.Error.WriteLine("Sourced refusal never downgrades to ordinary.");
             return 3;
+        }
+
+        var lockFile = args.SkipWhile(a => !string.Equals(a, "-AssetProfile", StringComparison.OrdinalIgnoreCase))
+            .Skip(1).FirstOrDefault();
+        if (lockFile is not null && File.Exists(lockFile))
+        {
+            var text = File.ReadAllText(lockFile);
+            if (text.Contains("pending-operator-pin", StringComparison.Ordinal))
+            {
+                Console.Error.WriteLine("CARD-0490 native assets are not pinned (pending-operator-pin).");
+                return 4;
+            }
         }
 
         return 0;

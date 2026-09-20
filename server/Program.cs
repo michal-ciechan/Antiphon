@@ -694,6 +694,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     // CARD-0448 F2: prose-based landing stage backfill is retired.
     builder.Services.AddHostedService<WorkflowFileWatcherHostedService>();
     builder.Services.AddHostedService<SessionRunnerEventPump>();
+    builder.Services.AddHostedService<PhoneHomeRecoveryPump>();
 
     // CARD-0298: Hangfire storage is always registered (dashboard + job serialization). The worker
     // is the dangerous bit — it must not WMI-scan or call the runner from a test Program boot.

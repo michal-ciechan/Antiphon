@@ -60,7 +60,8 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     public async Task<PhoneHomeFrame> RequestAsync(PhoneHomeOperation operation, object? payload, CancellationToken ct)
     {
         if (!DispatchEligible && operation is PhoneHomeOperation.Launch or PhoneHomeOperation.Input
-            or PhoneHomeOperation.ConditionalInput or PhoneHomeOperation.KillGeneration)
+            or PhoneHomeOperation.ConditionalInput or PhoneHomeOperation.KillGeneration
+            or PhoneHomeOperation.ClearBuffer or PhoneHomeOperation.Resize)
             throw new InvalidOperationException("Phone-home connection is not dispatch-eligible.");
         if (Volatile.Read(ref _inFlight) >= _limits.MaxInFlightRequests)
             throw new PhoneHomeTransportException(PhoneHomeProblemTypes.RequestLimit, "In-flight request limit reached.");

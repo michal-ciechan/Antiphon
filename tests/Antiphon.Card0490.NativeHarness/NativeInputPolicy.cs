@@ -19,6 +19,10 @@ public static class NativeInputPolicy
         "unlisted-method", "changed-digest", "unqualified-toolchain", "non-ext4", "prior-workspace", "seeded-output"
     ];
 
+    public static bool OrdinaryAndBindingConflict(IEnumerable<string> args) =>
+        args.Contains("-Ordinary", StringComparer.OrdinalIgnoreCase)
+        && args.Contains("-BindingFile", StringComparer.OrdinalIgnoreCase);
+
     public static bool AllowMethod(string project, string filter)
     {
         foreach (var pair in Allowed)
