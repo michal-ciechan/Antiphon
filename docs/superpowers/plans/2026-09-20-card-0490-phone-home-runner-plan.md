@@ -330,6 +330,29 @@ The exact harness, qualification, evidence and revised costs are in the
 [native-PC execution amendment](#native-pc-execution-amendment-3f77b203).
 This decision needs no SourceLanding API, capability, admission or cleanup change.
 
+### D-12a: transfer the custody probe's pipe ownership before root exit
+
+Correction `6ccfd611` specifies an acknowledged, test-only `DuplicateHandle`
+handoff of QEMU's three parent pipe ends and process handle to the live test
+process. The normal wrapper retains and joins its child itself. The custody probe
+uses the same launch/stream owner, but transfers that ownership before deliberately
+exiting. QEMU remains in the original Windows job throughout. This avoids relying
+on sealed tracked input or on handles crossing `StartTrackedAsync` implicitly.
+The exact sequence and failure ownership are specified in the correction below.
+Rejected: writing to the exited root, changing `bInheritHandles`, retaining an
+unowned pipe, and adding a standing relay/service solely to survive that root.
+
+### D-12b: qualify helper guards as a separate control inventory
+
+Keep G-1 through G-46 and PC-1 through PC-46 byte-for-byte unchanged. Add H-G/H-PC
+IDs for the execution/evidence helper and the pipe handoff; split independent call
+sites and outcome gates. These helpers can falsely certify product controls, so
+ordinary corrupt-input tests alone are insufficient. Their own mutations must
+make the outer, unchanged exact-method assertion fail. The correction prices
+every added cycle and retains separate Code and post-land Mutation floors.
+Rejected: treating test infrastructure as exempt, folding these checks into the
+four native product controls, and retaining 345 minutes as a complete floor.
+
 ## Implementation slices
 
 Commit/push each slice before a long verification run. Names marked **new** are
@@ -1608,3 +1631,369 @@ or passing-runtime claim is made. **Next: Plan**, limited to F-D12-1's concrete
 fixture ownership sequence and F-D12-2's helper-guard coverage/cost amendment,
 followed by focused TestDesign validation. This is an unverifiable-seam return,
 not an operator permission question and not a request to redo the original matrix.
+
+## Plan correction: D-12 pipe ownership and helper controls (6ccfd611)
+
+This correction answers F-D12-1 and F-D12-2 at inspected base `bbd4586d`.
+It supersedes the amendment's unspecified inherited release pipe, its statement
+that only ordinary helper checks are needed, and its 148/197/345 cost totals.
+The preceding TestDesign finding is retained as history; **focused TestDesign is
+next**, to validate this concrete replacement before Code. No helper, guest asset,
+build, custody experiment or PC has been implemented/executed by this Plan task.
+The original `## Verification design` appendix through its handoff gate, including
+all 46 G/PC rows, remains byte-for-byte unchanged.
+
+### Ground truth for the correction
+
+| Assumption in the amendment | Code at `bbd4586d` | Resulting design |
+|---|---|---|
+| A pre-created test pipe reaches the tracked wrapper. | `ModernConPtyConnection.Spawn` calls `CreateProcessW` with `bInheritHandles=false` and pseudoconsole handles, not arbitrary test handles. | The wrapper explicitly opens a local named rendezvous pipe; the test explicitly duplicates the wrapper's redirected anonymous pipe handles. No product spawn change. |
+| The test can release QEMU by typing after wrapper exit. | `PtyAgentRunner.HandleExit` closes the custody input gate; `SealAndObserveCustodyAsync` closes it before querying. `WriteCoreAsync` throws after closure. | QEMU input belongs to a separate owned stream. The test's post-exit `runner.WriteAsync` must still fail. |
+| Root exit ends child custody. | `SealAndObserveCustodyAsync` queries the retained original job; nonzero returns `OutputDrained=false`. `ModernConPtyConnection.Spawn` requires kill-on-close without breakaway. | Transfer handles, never job membership. Observe QEMU in that same job before and after root exit and await its final zero/drain result. |
+| The nearest fixture already implements that transfer. | `PtyCustodyTests.C478_G198_NonemptyJob` and `Antiphon.CustodyTestChild/Program.cs` use named events; the child self-releases after 60 seconds. | Reuse the original-job observer pattern, not its release transport or 60-second lifetime. Add a dedicated pipe-owner probe. |
+| A QEMU process handle or exit code certifies completed tests. | Existing custody separates accounting/drain from root exit. No D-12 parser, wrapper or asset fixture exists at this base. | Child ownership, serial EOF, accepted evidence, and original-job cleanup remain separate obligations. |
+| The 46 product controls cover new helper validators. | The frozen matrix targets product code. The TestDesign return inventories M-1 through M-21 as additional, unmapped boundaries. | The 55 helper controls below split those boundaries and cover the additional handoff gates; retain a separate inventory and cost. |
+
+### F-D12-1: exact pipe and process ownership
+
+Use three participants: **T**, the live TUnit test process; **W**, the short-lived
+wrapper/probe launched by `PtyAgentRunner.StartTrackedAsync`; and **Q**, W's fresh
+QEMU child. **J** is the original job retained by that runner. In sourced execution
+all of these are also descendants of the commissioned worker. This fixture never
+uses a pre-existing receiver, remote process, service or external executor.
+
+The ordinary PowerShell wrapper calls a small checked-in managed host helper
+(`Antiphon.Card0490.NativeHarness`, new test infrastructure). Its `OwnedQemuProcess`
+owns the `Process`, redirected stdin/stdout/stderr and both drain tasks, records
+the exact child at successful `Start`, and removes it from its owned-child set
+only after exit plus drains. `qemu-img` is likewise joined before QEMU starts.
+Use `ProcessStartInfo.ArgumentList`, `UseShellExecute=false` and the fixed D-12
+arguments. All three QEMU streams are redirected. No launch path rediscovers a
+child by process name or treats a disposed `Process` as a joined child.
+
+The probe is another entry point of this same helper. Only the probe can transfer
+ownership; the ordinary product-PC wrapper has no detach/transfer switch. A
+completed transfer is recorded as **transferred to T, still running**, never as
+joined or as successful test evidence. W's ordinary finally still owns and joins
+Q unless this acknowledged transfer completed. No nested `StartTrackedAsync` for
+Q is needed: its direct creation by W inherits J. The test records Q's retained
+process object and checks membership against **J**, not merely membership in any
+job or a nonzero job count. Use the existing `IPtyCustodyNative` test probe to
+retain/observe the actual launch-job handle without changing production APIs.
+
+| Endpoint | Before transfer | After acknowledged transfer and W exit | Final close |
+|---|---|---|---|
+| Q stdin read end | Q only, supplied by redirected process creation | Q only | Q closes it when exiting. |
+| Q stdin write end | W's parent-side stream; non-inheritable outside the intentional Q launch | T's non-inheritable duplicate only; W has disposed its original | T flushes the release command, keeps the writer open through Q exit, then disposes it. Release never depends on EOF. |
+| Q stdout/stderr write ends | Q only | Q only | Q closes them on exit, including abrupt termination. |
+| Q stdout/stderr read ends | W owns both, with **no read/buffering started in probe mode** | T's two duplicates and two owned drain tasks; W's originals are closed | T reads each to EOF, joins the tasks, then disposes both readers. Never dispose a reader to manufacture a successful drain. |
+| Q process handle | W owns the handle captured at creation | T owns a duplicate referring to that same process object | T waits for actual exit before disposing; a PID-only reopen is not the ownership token. |
+| Rendezvous named pipe | T owns server; W explicitly opens client by a unique run name | Both close after acknowledged transfer/root-exit instruction | It carries setup/acknowledgement only, not the post-exit release bytes. |
+| J and tracked terminal pipes | Runner in T owns them throughout | Same runner and original J | Seal/query/drain through existing runner APIs, then dispose after joined teardown. |
+
+Implement the following order in `CustodyPipeHandoff` and its probe; none of these
+actions relies on inheriting a handle from T into `StartTrackedAsync`:
+
+1. T creates a one-instance local `NamedPipeServerStream` with
+   `PipeOptions.CurrentUserOnly`, an unpredictable per-run name and run ID. T
+   starts W tracked and opens/retains its process handle during the launch
+   callback while W is still suspended (`PROCESS_DUP_HANDLE`, query and wait access),
+   and waits for W to open the named pipe with `NamedPipeClientStream`. Verify the
+   connected client's native PID against the captured W, and the run ID. The test
+   holds that exact root handle through transfer, preventing PID-reuse ambiguity.
+2. W starts Q through `OwnedQemuProcess` and retains all four parent-side handles.
+   It sends their numeric values, Q identity, W identity and run ID on the pipe.
+   These are handle values **in W**, not usable handles in T. W keeps them alive,
+   does not start competing stdout/stderr reads, and waits for acknowledgement.
+   Q may block briefly on its output pipe while the reader is being installed.
+3. T uses `DuplicateHandle` from the captured W process into itself, once for each
+   of stdin writer, stdout reader, stderr reader and Q process. Use
+   `DUPLICATE_SAME_ACCESS`, `bInheritHandle=false`, **not** `DUPLICATE_CLOSE_SOURCE`.
+   A failed or partial duplication never authorizes root exit. Wrap the resulting
+   handles in owning safe handles; use raw binary streams, preserving the pipe's
+   synchronous/asynchronous mode. Synchronous reads run on two joined dedicated
+   tasks; do not mark an ordinary synchronous handle as overlapped. T checks Q's
+   identity and `IsProcessInJob(Q, J)` and starts both drains before acknowledging.
+4. T sends `Adopted(runId)`. W disposes its three parent streams and its copy of
+   Q's process handle, records the transfer, then sends `Released(runId)`.
+   Disposing the process handle does not terminate Q. W retains no hidden stream
+   wrapper or extra pipe-end duplicate. T requires `Released`, receives the
+   guest's `READY(runId, nonce)` serial barrier, and sends `ExitRoot(runId)` on
+   the rendezvous pipe. W exits. This explicit acknowledgement precedes the cut;
+   an unacknowledged crash is the failure arm below, not a valid survival sample.
+5. T awaits W exit, verifies Q's retained handle is still unsignaled and Q remains
+   in J, then calls `SealAndObserveCustodyAsync`. Require nonzero active processes
+   and `OutputDrained=false`; do not assert a fixed count because console helpers
+   can contribute. Require `runner.WriteAsync` to throw for the sealed input.
+   Neither sealing nor root exit closes T's duplicated Q endpoints.
+6. T writes and flushes `RELEASE(runId, nonce)` on **Q's duplicated stdin writer**.
+   The guest barrier accepts the matching command, emits `RELEASED` and final
+   nonce-bound frames, reaps its test children and powers off. Keep stdin open
+   until Q exits, avoiding assumptions about QEMU's reaction to host stdin EOF.
+   T observes release acknowledgement, waits on the retained Q process handle,
+   closes its writer, reads stdout and stderr to real EOF, and joins both drains.
+   Q closes its own ends on exit. Read persisted evidence back from E. Only then
+   require the existing original-J observation to become zero and output-drained.
+   This last drain is the tracked **terminal** drain, additional to Q's two raw
+   redirected-stream drains; neither stands in for the other.
+7. On a pre-transfer error W still owns Q: stop its captured process, wait, close
+   the input writer, drain/dispose outputs and report incomplete. T disposes any
+   partial duplicates and joins any started readers after shutdown. On a completed
+   transfer T owns all teardown: cancellation/abrupt-stop kills only the retained
+   Q process, then waits, closes input, joins EOF readers and checks J. A lost
+   acknowledgement or failed receiver is always incomplete; T's `finally` uses
+   the runner's original-job kill as the last owned containment backstop, then
+   observes zero/drain. No exception or timeout manufactures successful evidence.
+   Preserve unresolved output/process state as residue if joining fails.
+
+The guest barrier has no unconditional 60-second self-release. Give boot and
+handoff an explicit harness budget, canceled by T; expiry runs owned teardown and
+fails qualification. The original product tests' five-second assertions remain
+unchanged. Ordinary runs never wait for this test-only release barrier: they keep
+the normal run/export/shutdown sequence and W owns their streams to the end.
+
+Windows documents both pipe/process handle duplication and child job inheritance.
+Those mechanisms support this design; the three real-QEMU ordinary custody tests
+below must still demonstrate it on the pinned toolchain before land.
+[Handle duplication](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-duplicatehandle),
+[job membership](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects),
+[redirected child pipes](https://learn.microsoft.com/en-us/windows/win32/procthread/creating-a-child-process-with-redirected-input-and-output).
+
+### Files and slices added to S1-E/S5-E
+
+Paths here are proposed Code deliverables, not files created by this correction.
+The preceding source-free asset preparation and S5 provider canary remain required.
+
+| Slice | Files | Named tests / completion evidence |
+|---|---|---|
+| E1: one executable host policy and pipe owner | New `tests/Antiphon.Card0490.NativeHarness/Antiphon.Card0490.NativeHarness.csproj`, `Program.cs`, `NativeInputPolicy.cs`, `NativeFilePolicy.cs`, `NativeEvidencePolicy.cs`, `OwnedQemuProcess.cs`, `CustodyPipeHandoff.cs`; existing planned `scripts/test-card0490-native.ps1` becomes a thin parameter/exit-code shim | `Card0490NativeExecutionTests` and `Card0490NativeHandoffTests` below invoke the real shipped helper. No duplicate validator implemented only in a test. Capture unsafe launch/delete intents at an injected I/O sink before they could affect a foreign process/path. |
+| E2: guest probes at real call sites | Planned `tests/fixtures/card0490-linux/guest-init.sh`, `run-one.sh`, `assets.lock.json`; new `check-guard.sh`; planned README and asset preparation script | New `tests/Antiphon.PtyHost.Tests/Card0490NativeGuestGuardTests.cs`, seven exact guest methods below; real ext4/fresh boot, using actual guest guard functions and entrypoint call sites. Missing assets fail qualification. |
+| E3: stream transfer and original-job qualification | Planned `tests/Antiphon.Agents.Pty.Tests/Card0490NativeCustodyTests.cs`; new `tests/Antiphon.PtyHost.Tests/Card0490NativeHandoffTests.cs`; update both test `.csproj` files to reference/stage the complete helper output | `Qemu_remains_accounted_after_wrapper_exit`, `Guest_shutdown_allows_original_job_zero_and_drain`, `Abrupt_Qemu_stop_joins_and_rejects_partial_evidence`; use the assembly-local process limiter and the real original-job observer. |
+| E4: executable control instructions and cost record | Planned fixture README and `docs/testing-and-build.md` | Exact H-PC filters, mutation locations, external evidence layout, source restoration and measured timings. Preserve the general SourceLanding rules and product Docker recipe. |
+
+## Verification design: D-12 correction for focused TestDesign
+
+### F-D12-2: executable helper controls and evidence independence
+
+The following is a design for Code to implement and for TestDesign to validate,
+not a claim of passing coverage. Prefixes identify exact test classes and projects:
+
+- **E** = `Card0490NativeExecutionTests` in `tests/Antiphon.PtyHost.Tests`.
+- **N** = `Card0490NativeGuestGuardTests` in the same project.
+- **H** = `Card0490NativeHandoffTests` in the same project.
+- **C** = `Card0490NativeCustodyTests` in `tests/Antiphon.Agents.Pty.Tests`.
+
+Every `Prefix.Method` in the table expands to the exact filter
+`/*/*/Class/Method`; both red and restored green use that filter, fresh TRX and
+nonzero expanded counts. The assertion named in the table belongs to the outer
+TUnit test and stays unchanged. The compiling mutation changes the named helper
+gate/action, never that assertion, expected fixture, or test driver. Removing a
+guard must produce its prescribed assertion failure, not a setup exception,
+timeout, compile failure or accepted report merely saying `red`.
+
+Host tests drive actual helper boundaries with a minimal valid manifest/source
+tree/TRX/frame set and change one input at a time. Explicit I/O seams control
+launch, writes, exit and drains; filesystem/pipe tests also use real disposable
+files and unpaid inherited pipe peers. A sink records a forbidden launch/delete
+intent without executing it. This makes a validator bypass observable safely.
+All remaining validators get otherwise valid inputs, so a second rejection cannot
+mask the bypass. Barriers, rather than sleeps, hold a single required exit/drain.
+
+The seven **N** methods boot the same fresh offline QEMU recipe. They use a separate
+test-only `FixtureProbe` manifest and the checked-in `check-guard.sh` test driver
+to invoke `guest-init.sh`'s fixture dispatcher for one of six literal probe cases
+against the packaged guest helpers; the seventh method tests rejection of an
+unknown case at that lookup. Keep the dispatch guard in `guest-init.sh`, separate
+from the unchanged `check-guard.sh` test driver.
+The immutable test driver supplies that invalid case directly to the guest
+dispatcher, observing admission without invoking an arbitrary command. They do
+not add arbitrary methods/commands to the four-product-method
+allow-list. The same manifest input hashes, process ownership and transport apply.
+Probe evidence has its own kind and cannot certify a product PC (H-PC-51).
+Each probe intentionally supplies the selected bad input *at the guest boundary*,
+after otherwise-valid host packaging; this avoids having a host rejection mask
+the guest gate. The probe emits its **observed** guard result; the unchanged outer
+TUnit method makes the decisive assertion and inspects persisted evidence.
+
+When mutating the certifier itself, the outer TUnit TRX, raw output and retained
+expected inputs are the verdict authority. Never accept a helper's own `Accepted`
+flag or self-reported TRX as proof that its PC passed. Compile the test driver at
+landed L before the helper mutation; rebuild the changed helper/script from the
+mutated snapshot and invoke those bytes explicitly. Record both hashes; restore
+and rebuild the helper for green. Native helper probes preserve the immutable
+outer driver/check-guard test assertions while changing only the stated guest
+guard. A native fixture error is not intended red.
+
+For PC-28 through PC-31 all test/harness bytes still stay fixed, as originally
+required. For an H-PC only its named helper file/action may differ from baseline;
+the test/outer driver cannot differ. H-PC-44/H-PC-45 supply *fixture* phase
+inventories to test the product-cycle validator; the H-PC's own mutation manifest
+is separate, so testing a certifier does not silently disable source checks on
+the test run itself. No snapshot commits, extra worktrees or external execution.
+
+### Guard and positive-control matrix
+
+Each row pairs H-G-n with H-PC-n one-to-one. M-n refers to the prior TestDesign
+finding. A listed data matrix uses one common predicate at the named call site;
+all its arms execute for that exact method. A second implementation call site or
+independently bypassable predicate requires its own row and cost before Code
+handoff; it cannot be hidden inside a broad test name.
+
+| Guard / PC | Finding; helper location and compiling defect | Exact outer method and intended red assertion |
+|---|---|---|
+| H-G-01 / H-PC-01 | M-1; `NativeInputPolicy`: bypass host method/project pair lookup. | E.`Host_rejects_unlisted_method_project`: `launchIntents.ShouldBeEmpty()` fails for wrong project, class-wide filter and foreign method arms. |
+| H-G-02 / H-PC-02 | M-1; `run-one.sh`: bypass guest's independent literal pair lookup. | N.`Guest_rejects_unlisted_method_project`: `guestExecutionPermitted.ShouldBeFalse()` fails; all other manifest fields are valid. |
+| H-G-03 / H-PC-03 | M-2; `NativeInputPolicy`: bypass commissioned-binding equality at sourced admission. | E.`Sourced_binding_mismatch_prevents_launch`: `launchIntents.ShouldBeEmpty()` fails; independently vary O, L versus actual HEAD, task, creation, execution binding and source-root identity in one shared tuple comparison. |
+| H-G-04 / H-PC-04 | M-2; `NativeInputPolicy`: ignore dirty tracked/index state at initial commissioning. | E.`Dirty_commissioning_state_prevents_launch`: `launchIntents.ShouldBeEmpty()` fails for working-tree and staged-diff arms. Declared later PC mutations use their own phase check. |
+| H-G-05 / H-PC-05 | M-3; `Program.cs`: fall back to ordinary parameter set after failed sourced admission. | E.`Sourced_refusal_never_downgrades_to_ordinary`: `ordinaryInvocations.ShouldBe(0)` fails. |
+| H-G-06 / H-PC-06 | M-4; `NativeFilePolicy`: omit source-root/path containment gate. | E.`Source_escape_is_rejected_before_read`: `outsideReadIntents.ShouldBeEmpty()` fails for parent traversal and sibling-prefix paths. |
+| H-G-07 / H-PC-07 | M-4; `NativeFilePolicy`: omit source ancestor/reparse gate. | E.`Source_reparse_is_rejected_before_read`: `outsideReadIntents.ShouldBeEmpty()` fails using a task-owned junction fixture. |
+| H-G-08 / H-PC-08 | M-4; `NativeFilePolicy`: omit staging/archive-entry containment gate. | E.`Input_escape_is_rejected_before_write`: `outsideWriteIntents.ShouldBeEmpty()` fails for absolute and traversal entry names. |
+| H-G-09 / H-PC-09 | M-4; `NativeFilePolicy`: omit staging ancestor/reparse gate. | E.`Input_reparse_is_rejected_before_write`: `outsideWriteIntents.ShouldBeEmpty()` fails. |
+| H-G-10 / H-PC-10 | M-4; `NativeFilePolicy`: omit evidence-target containment gate. | E.`Evidence_escape_is_rejected_before_write`: `outsideWriteIntents.ShouldBeEmpty()` fails for a frame filename outside E. |
+| H-G-11 / H-PC-11 | M-4; `NativeFilePolicy`: omit evidence ancestor/reparse gate. | E.`Evidence_reparse_is_rejected_before_write`: `outsideWriteIntents.ShouldBeEmpty()` fails. |
+| H-G-12 / H-PC-12 | M-5; `NativeInputPolicy`: package HEAD blob bytes in place of current tracked working bytes. | E.`Package_contains_declared_working_mutant`: `packagedBytes.ShouldBe(workingMutantBytes)` fails. |
+| H-G-13 / H-PC-13 | M-5; `NativeInputPolicy`: add an untracked/ignored output to the tracked inventory. | E.`Package_excludes_untracked_and_outputs`: `actualPaths.ShouldBe(expectedTrackedPaths)` fails, including `.git`, `bin` and `obj` decoys. |
+| H-G-14 / H-PC-14 | M-6; `NativeInputPolicy`: skip input digest recheck immediately before launch. | E.`Changed_input_before_launch_is_rejected`: `launchIntents.ShouldBeEmpty()` fails after a packaging/launch barrier changes a tracked input. |
+| H-G-15 / H-PC-15 | M-6; `guest-init.sh`: skip guest archive/per-file digest validation before extraction/execution. | N.`Guest_rejects_changed_input_digest`: `guestExecutionPermitted.ShouldBeFalse()` fails with a tampered input; matching nonce/method otherwise. |
+| H-G-16 / H-PC-16 | M-7; `NativeInputPolicy`: skip post-run input digest comparison. | E.`Changed_input_after_launch_invalidates_result`: `result.Accepted.ShouldBeFalse()` fails after a controlled input change and otherwise-valid completed result. |
+| H-G-17 / H-PC-17 | M-8; `NativeInputPolicy`: bypass pinned asset-map equality before either launch. | E.`Changed_pinned_asset_prevents_launch`: `launchIntents.ShouldBeEmpty()` fails; independently vary qemu, qemu-img, boot-disk, bootstrap/offline-package and lock/profile digests through the shared map comparator. |
+| H-G-18 / H-PC-18 | M-8; `run-one.sh`: bypass observed guest toolchain/native dependency comparison to the lock. | N.`Guest_rejects_unqualified_toolchain`: `guestExecutionPermitted.ShouldBeFalse()` fails on one changed SDK/kernel/native identity at a time. |
+| H-G-19 / H-PC-19 | M-9; `OwnedQemuProcess`: bypass final QEMU launch-spec equality. | E.`Qemu_spec_refuses_external_execution_options`: `launchIntents.ShouldBeEmpty()` fails for accelerator, networking, daemon, external backend, saved-state and extra-argument arms at a recording launch sink. |
+| H-G-20 / H-PC-20 | M-9; `OwnedQemuProcess`: bypass qemu-img's separate launch-spec equality. | E.`Image_tool_spec_refuses_foreign_overlay`: `launchIntents.ShouldBeEmpty()` fails for wrong base, output, format or extra arguments. |
+| H-G-21 / H-PC-21 | M-9; `OwnedQemuProcess`: change final process-start projection to shell/service/breakaway launch. | E.`Launch_projection_is_direct_and_inherited`: `capturedStart.ShouldBe(expectedDirectStart)` fails at the last recording process factory; ordinary custody also proves real inherited execution. |
+| H-G-22 / H-PC-22 | M-10; `run-one.sh`: omit ext4 filesystem gate. | N.`Guest_refuses_non_ext4_work_root`: `guestExecutionPermitted.ShouldBeFalse()` fails on an otherwise-fresh tmpfs fixture path inside the real guest. |
+| H-G-23 / H-PC-23 | M-10; `guest-init.sh`: accept a pre-existing per-run extraction/work directory. | N.`Guest_refuses_prior_phase_workspace`: `guestExecutionPermitted.ShouldBeFalse()` fails when a marker proves prior state in the disposable guest. |
+| H-G-24 / H-PC-24 | M-10; `run-one.sh`: reuse seeded application `bin`/`obj` instead of enforcing a clean source build. | N.`Guest_build_cannot_reuse_seeded_application_output`: `reusedApplicationOutputs.ShouldBeEmpty()` fails; fixture marker/output hash is the oracle, not an incidental build error. |
+| H-G-25 / H-PC-25 | M-11; `NativeEvidencePolicy`: omit result-to-manifest identity equality. | E.`Crossed_result_identity_is_rejected`: `result.Accepted.ShouldBeFalse()` fails; vary O/L/task/creation/PC/phase/run/source/method binding and nonce independently in the shared comparison. |
+| H-G-26 / H-PC-26 | M-12; `NativeEvidencePolicy`: accept a frame payload whose decoded length differs from its declared length. | E.`Incomplete_frame_is_rejected`: `frameAccepted.ShouldBeFalse()` fails; digest is correct for the shorter actual payload. |
+| H-G-27 / H-PC-27 | M-12; `NativeEvidencePolicy`: accept missing final manifest/frame inventory after EOF. | E.`Missing_final_frame_invalidates_complete_prefix`: `result.Accepted.ShouldBeFalse()` fails even when preceding frames are individually valid. |
+| H-G-28 / H-PC-28 | M-13; `NativeEvidencePolicy`: bypass frame digest check. | E.`Wrong_frame_digest_is_rejected`: `frameAccepted.ShouldBeFalse()` fails with valid length/identity. |
+| H-G-29 / H-PC-29 | M-14; `NativeEvidencePolicy`: ignore the actual expanded TRX method identity. | E.`Wrong_actual_method_is_rejected`: `result.Accepted.ShouldBeFalse()` fails with the expected method named in the envelope but a different real test result. |
+| H-G-30 / H-PC-30 | M-15; `NativeEvidencePolicy`: accept zero executed results. | E.`Zero_cases_cannot_certify_a_run`: `result.Accepted.ShouldBeFalse()` fails with a well-formed zero-case TRX. |
+| H-G-31 / H-PC-31 | M-15; `NativeEvidencePolicy`: skip expected-versus-actual expanded case roster equality. | E.`Missing_expected_case_is_rejected`: `result.Accepted.ShouldBeFalse()` fails with one of two expected cases absent; one valid case prevents the zero guard masking it. |
+| H-G-32 / H-PC-32 | M-15; `NativeEvidencePolicy`: count a skipped case as executed/passed. | E.`Skipped_case_is_rejected`: `result.Accepted.ShouldBeFalse()` fails with complete case identities and a skipped outcome. |
+| H-G-33 / H-PC-33 | M-16; `NativeEvidencePolicy`: accept any failure as intended red. | E.`Only_prescribed_assertion_can_certify_red`: `result.Accepted.ShouldBeFalse()` fails for wrong assertion, fixture error and build-error fixture arms; test execution itself succeeds up to this outer assertion. |
+| H-G-34 / H-PC-34 | M-17; `NativeEvidencePolicy`: swallow result-file write/rename failure and mark persisted. | E.`Failed_evidence_write_is_not_accepted`: `result.Accepted.ShouldBeFalse()` fails with complete parsed frames but a controlled storage failure. |
+| H-G-35 / H-PC-35 | M-17; `NativeEvidencePolicy`: omit persisted-file readback/hash verification. | E.`Changed_persisted_evidence_is_not_accepted`: `result.Accepted.ShouldBeFalse()` fails after a successful write is changed before readback. |
+| H-G-36 / H-PC-36 | M-18; `OwnedQemuProcess`: omit the child-exited predicate from completion. | E.`Live_child_prevents_completed_run`: `completion.IsCompleted.ShouldBeFalse()` fails at a held child barrier with both drain predicates satisfied. |
+| H-G-37 / H-PC-37 | M-18; `OwnedQemuProcess`: omit stdout drain from completion. | E.`Pending_stdout_prevents_completed_run`: `completion.IsCompleted.ShouldBeFalse()` fails with exited child and completed stderr but a held stdout reader. |
+| H-G-38 / H-PC-38 | M-18; `OwnedQemuProcess`: omit stderr drain from completion. | E.`Pending_stderr_prevents_completed_run`: `completion.IsCompleted.ShouldBeFalse()` fails with stdout complete and stderr held. |
+| H-G-39 / H-PC-39 | M-19; `OwnedQemuProcess`: choose a discovered foreign PID instead of the retained owned process object for stop. | E.`Cancellation_targets_only_retained_owned_child`: `stopTargets.ShouldBe([ownedProcessIdentity])` fails at a recording stop sink; no foreign process is killed. |
+| H-G-40 / H-PC-40 | M-19; `OwnedQemuProcess`: return from canceled teardown before the owned join finishes. | E.`Canceled_run_waits_for_owned_join`: `cancellationCompletion.IsCompleted.ShouldBeFalse()` fails while the real owned pipe peer is held, then the test finally releases and joins it. |
+| H-G-41 / H-PC-41 | M-19; `NativeEvidencePolicy`: permit an accepted verdict after cancellation. | E.`Cancellation_cannot_accept_even_complete_frames`: `result.Accepted.ShouldBeFalse()` fails with complete files and joined execution but a canceled-run marker. |
+| H-G-42 / H-PC-42 | M-20; `NativeFilePolicy`: skip exact artifact inventory/identity membership at deletion admission. | E.`Cleanup_refuses_uninventoried_or_replaced_output`: `deleteIntents.ShouldBeEmpty()` fails; canonical/reparse checks still apply and foreign targets only reach a recording sink. |
+| H-G-43 / H-PC-43 | M-20; `NativeFilePolicy`: skip joined-owner prerequisite at deletion admission. | E.`Cleanup_refuses_unjoined_output_owner`: `deleteIntents.ShouldBeEmpty()` fails for inventoried contained files with a live/unknown owner. |
+| H-G-44 / H-PC-44 | M-21; `NativeInputPolicy`: skip restored-green versus baseline source equality. | E.`Restored_source_mismatch_invalidates_cycle`: `cycle.Accepted.ShouldBeFalse()` fails with one changed production file in fixture inventories. |
+| H-G-45 / H-PC-45 | M-21; `NativeInputPolicy`: allow test/harness differences in a product-PC red phase. | E.`Product_cycle_rejects_changed_test_or_harness`: `cycle.Accepted.ShouldBeFalse()` fails; independently vary a test, exporter and host helper path. |
+| H-G-46 / H-PC-46 | D-12a; `CustodyPipeHandoff`: bypass expected rendezvous peer/run binding. | H.`Crossed_peer_or_run_cannot_transfer`: `transferAllowed.ShouldBeFalse()` fails with one crossed identity; use only owned pipe peers. |
+| H-G-47 / H-PC-47 | D-12a; `CustodyPipeHandoff`: acknowledge a partial/failed four-handle duplication. | H.`Partial_duplication_never_authorizes_root_exit`: `exitRootSent.ShouldBeFalse()` fails for each missing pipe/process handle; fixture reports the failure without invalid-handle I/O. |
+| H-G-48 / H-PC-48 | D-12a; `CustodyPipeHandoff`: mark Released before disposing W's original parent ends. | H.`Release_ack_requires_original_end_closure`: `openOriginalEndsAtReleased.ShouldBe(0)` fails; exact owned endpoints are instrumented, then closed in finally. |
+| H-G-49 / H-PC-49 | D-12a; `CustodyPipeHandoff`: accept child membership in any job instead of J. | C.`Transfer_refuses_child_outside_original_job`: `transferAllowed.ShouldBeFalse()` fails for a separately owned unpaid child; test finally joins both jobs. |
+| H-G-50 / H-PC-50 | D-12a; `CustodyPipeHandoff`: close T's Q stdin writer when W exits rather than after Q exits. | C.`Qemu_remains_accounted_after_wrapper_exit`: `releaseChannelWritable.ShouldBeTrue()` fails at the post-root-exit barrier; restored green additionally requires actual `RELEASED`, final frames, Q exit, both raw drains and original-J zero/drain. The failure is the channel-state assertion, never a release timeout. |
+| H-G-51 / H-PC-51 | Helper probes; `NativeEvidencePolicy`: accept FixtureProbe evidence as a product-PC result. | E.`Probe_evidence_cannot_certify_product_control`: `result.Accepted.ShouldBeFalse()` fails with otherwise matching method/source/run fields. |
+| H-G-52 / H-PC-52 | Helper probes; `NativeInputPolicy`: bypass host lookup of the six literal probe cases. | E.`Host_rejects_unlisted_fixture_probe`: `launchIntents.ShouldBeEmpty()` fails for unknown cases and arbitrary command text, caught at the recording launch sink. |
+| H-G-53 / H-PC-53 | Helper probes; `guest-init.sh`: bypass its separate guest probe-case lookup. | N.`Guest_rejects_unlisted_fixture_probe`: `probeDispatchPermitted.ShouldBeFalse()` fails; the immutable probe driver observes the dispatch admission without executing the unknown command. |
+| H-G-54 / H-PC-54 | D-12a; `CustodyPipeHandoff`: close W's original endpoints before receiving Adopted. | H.`Sender_retains_originals_until_adoption`: `originalHandlesOpenUntilAdopted.ShouldBeTrue()` fails at an owned pipe-peer barrier before T duplicates anything. |
+| H-G-55 / H-PC-55 | D-12a; `CustodyPipeHandoff`: bypass the complete milestone-set gate before sending ExitRoot. | H.`Root_exit_waits_for_transfer_and_guest_ready`: `exitRootSent.ShouldBeFalse()` fails with each of Adopted, Released and guest READY independently absent; finally releases the owned peer. |
+
+M coverage is explicit: M-1 -> 01-02; M-2 -> 03-04; M-3 -> 05;
+M-4 -> 06-11; M-5 -> 12-13; M-6 -> 14-15; M-7 -> 16;
+M-8 -> 17-18; M-9 -> 19-21; M-10 -> 22-24; M-11 -> 25;
+M-12 -> 26-27; M-13 -> 28; M-14 -> 29; M-15 -> 30-32;
+M-16 -> 33; M-17 -> 34-35; M-18 -> 36-38; M-19 -> 39-41;
+M-20 -> 42-43; M-21 -> 44-45. H-PC-46 through H-PC-55 cover the new
+handoff/probe boundaries. **Amendment guards=55, mapped=55, missing=0,
+duplicate mappings=0** under these specified seams. Combined planned inventory:
+**101 guards/101 controls** (46 unchanged product + 55 helper).
+
+### Ordinary qualification and mutation execution
+
+Code runs all 55 outer methods unmutated and the original V-D12-1/2/3 obligations.
+The seven N methods are guest qualification runs; H-PC-50's method is also one of
+the three real-QEMU custody methods. Run the other two custody methods explicitly.
+Retain the original immediate/backpressured serial recipient cases and every
+persist/join cut: valid result, truncation, storage failure, completed write with
+pending join, and cancellation. Parser fixture bytes alone cannot prove delivery.
+Qualified input/output must reach the actual persisted recipient files under E.
+Neither guest probes nor custody tests replace PC-28 through PC-31 or the Grok turn.
+
+Mutation runs a baseline, one prescribed defect, exact red, restoration/rebuild,
+and exact green for each helper row, serially where files/seams overlap. The seven
+N controls each use a fresh guest for baseline, red and green. H-PC-50 uses a fresh
+QEMU custody probe for each phase. Other H-PCs are host methods; their data arms
+execute inside the exact-method invocation and their expected failures are
+reported separately in its TRX. No broad class/suite run can stand in for a cycle.
+
+Example commands after the Code implementation (P and A execute sequentially):
+
+```powershell
+dotnet run --project tests/Antiphon.PtyHost.Tests --property:OutputPath=bin-card0490-helper/ -- --treenode-filter '/*/*/Card0490NativeExecutionTests/Pending_stdout_prevents_completed_run' --report-trx --report-trx-filename result.trx --results-directory '<E>/H-PC-37/red/<run-id>'
+dotnet run --project tests/Antiphon.Agents.Pty.Tests --property:OutputPath=bin-card0490-helper/ -- --treenode-filter '/*/*/Card0490NativeCustodyTests/Qemu_remains_accounted_after_wrapper_exit' --report-trx --report-trx-filename result.trx --results-directory '<E>/H-PC-50/green/<run-id>'
+```
+
+The exact driver/helper build separation described above must be implemented by
+the test fixture so a mutant cannot rewrite its outer oracle. Rebuild restored
+helper bytes explicitly or refresh source timestamps; record loaded hashes and
+actual counts. Inventory and remove only producer-owned alternate outputs after
+all commands finish. Keep all sourced evidence/restoration outside the snapshot.
+
+### Complete replacement cost arithmetic
+
+All figures are **unmeasured serial estimates**, with no parallelization saving.
+The earlier 345-minute subtotal includes 16 minutes for an undefined helper/custody
+qualification; replace that 16 rather than charge it twice. Retain the original
+four-product-native baselines/cycles and all other product obligations.
+
+| Code obligation | Calculation | Minutes |
+|---|---|---:|
+| Previous Code floor excluding superseded helper qualification | 148 - 16 | 132 |
+| Host helper build/staging | Additional helper/test assembly build | 4 |
+| 47 host helper methods, including data arms and owned pipe peers | 47 x 0.5, rounded up | 24 |
+| Seven real guest helper qualifications | 7 x (boot 1 + build/probe 3 + method 1 + export/drain 1) | 42 |
+| Three real-QEMU custody methods | 3 x (boot 2 + barriers/assertions 1 + join/drain 1) | 12 |
+| Added evidence/readback/output cleanup | Explicit additional allowance | 4 |
+| **Replacement Code floor** | **132 + 4 + 24 + 42 + 12 + 4** | **218** |
+
+The 47 host methods exclude the seven N methods (02, 15, 18, 22, 23, 24, 53) and
+real-QEMU method 50. H-PC-49 is a host owned-child test. Method 50's ordinary
+green is charged only in the three-custody-method row, not again in host methods.
+
+| Mutation obligation | Calculation | Minutes |
+|---|---|---:|
+| Existing product-control floor | Previous 197, including all 46 product controls | 197 |
+| Helper driver build, host baselines and evidence setup | Build 4 + all 47 host baselines at 0.5, rounded up to 24 + setup 2 | 30 |
+| 47 host helper red/restore/green cycles | 47 x (mutant build 0.75 + exact red 0.5 + restore/build 0.75 + exact green 0.5), rounded up | 118 |
+| Seven guest helper baseline greens | 7 x 6 | 42 |
+| Seven guest helper red/restore/green cycles | 7 x 2 x (boot 2 + fresh build/probe 4 + method 1 + export/drain 1) | 112 |
+| H-PC-50 real-QEMU custody baseline | 1 x 4 | 4 |
+| H-PC-50 real-QEMU custody red/restore/green | 2 x (boot 2 + barriers/assertions 1 + join/drain 1) | 8 |
+| Helper restoration audit and per-PC reporting | Additional to original product restoration | 10 |
+| **Replacement Mutation floor** | **197 + 30 + 118 + 42 + 112 + 4 + 8 + 10** | **521** |
+| **Complete combined floor** | **218 Code + 521 Mutation** | **739** |
+
+The helper correction adds **70 Code + 324 Mutation = 394 minutes** over 345.
+It charges 55 new cycles: 47 host, seven guest, one QEMU custody. Ordinary Review,
+implementation authoring, downloads and unexpected provisioning delay remain
+separate. Method data-arm counts and TCG timings must be measured during Code;
+raise any insufficient floor before commissioning Mutation. There is no discount
+for fixture errors, skipped native cases, omitted controls or wider deadlines.
+
+### Correction validation and handoff
+
+Plan validation passed: the frozen original verification appendix equals
+`bbd4586d` byte-for-byte after Git line-ending normalization (SHA-256
+`f62afc327d2f4ee010cb5d32c51e47470655343800c2d41cd2818a3f905686bb`). The
+structural audit found 55 unique H-G/H-PC pairs and exact methods, all M-1 through
+M-21 covered, 47 host/seven guest/one QEMU-custody cycles, and correct 218/521/739
+totals. `git diff --check` passed. Runtime tests/builds/PCs: **0**, as this is a
+plan-only correction; no runtime acceptance is claimed.
+The requested `feat/card-task-9b33195a` checkout was attempted but refused because
+another worktree owns it; this task uses its own branch at confirmed `bbd4586d`.
+
+**Next: test-design.** Validate only the acknowledged pipe/process transfer,
+shared helper/probe seams, exact intended-red assertions and 218/521/739 floors.
+Check that all independently bypassable gates in this concrete design are mapped.
+Preserve the original 46-control appendix unchanged. Code then implements and
+qualifies the recipe; neither a custody contract exception nor an operator
+permission decision is requested.
