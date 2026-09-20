@@ -8,7 +8,9 @@ param(
     [string] $Placement = 'local-docker',
     [switch] $WriteConfigOnly,
     [switch] $SkipContainer,
-    [int] $HoldSeconds = 0
+    [switch] $SkipTurn,
+    [int] $HoldSeconds = 180,
+    [int] $TurnTimeoutSeconds = 600
 )
 
 Set-StrictMode -Version Latest
@@ -117,18 +119,89 @@ function Assert-ComposeDoesNotHardcodeOrigin {
     }
 }
 
+function Get-Sha256Hex([string] $text) {
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($text)
+    $hash = [System.Security.Cryptography.SHA256]::HashData($bytes)
+    return [System.BitConverter]::ToString($hash).Replace('-', '').ToLowerInvariant()
+}
+
+function Invoke-IsolatedJson {
+    param(
+        [Parameter(Mandatory = $true)][string] $Method,
+        [Parameter(Mandatory = $true)][string] $Uri,
+        $Body = $null,
+        [int] $TimeoutSec = 30
+    )
+    $headers = @{ Accept = 'application/json' }
+    $params = @{
+        Method          = $Method
+        Uri             = $Uri
+        Headers         = $headers
+        TimeoutSec      = $TimeoutSec
+        UseBasicParsing = $true
+    }
+    if ($null -ne $Body) {
+        $params.ContentType = 'application/json'
+        $params.Body = if ($Body -is [string]) { $Body } else { $Body | ConvertTo-Json -Depth 8 -Compress }
+    }
+    try {
+        return Invoke-RestMethod @params
+    }
+    catch {
+        $detail = $_.ErrorDetails.Message
+        if ([string]::IsNullOrWhiteSpace($detail)) { $detail = $_.Exception.Message }
+        throw "$Method $Uri failed: $detail"
+    }
+}
+
+function Wait-HttpHealth([string] $url, $proc, [int] $seconds, [string] $name) {
+    $up = $false
+    for ($i = 0; $i -lt $seconds; $i++) {
+        try {
+            $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 2
+            if ($r.StatusCode -eq 200) { $up = $true; break }
+        }
+        catch { }
+        if ($proc -and $proc.HasExited) { throw "$name exited early (code $($proc.ExitCode))." }
+        Start-Sleep -Seconds 1
+    }
+    if (-not $up) { throw "$name /health did not return 200 on $url." }
+}
+
+function Start-IsolatedDll {
+    param(
+        [Parameter(Mandatory = $true)][string] $Dll,
+        [Parameter(Mandatory = $true)][string] $WorkDir,
+        [Parameter(Mandatory = $true)][hashtable] $EnvVars
+    )
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = 'dotnet'
+    $psi.Arguments = "`"$Dll`""
+    $psi.WorkingDirectory = $WorkDir
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    foreach ($key in $EnvVars.Keys) {
+        $psi.EnvironmentVariables[$key] = [string]$EnvVars[$key]
+    }
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    if (-not $proc) { throw "Failed to start $Dll." }
+    return $proc
+}
+
 function New-IsolatedLiveConfig {
     $serverPort = Get-IsolatedListenPort
     $postgresPort = Get-IsolatedListenPort
+    $runnerPort = Get-IsolatedListenPort
     $runId = [Guid]::NewGuid().ToString('N').Substring(0, 12)
     $root = Join-Path $repoRoot '.antiphon'
     $runRoot = Join-Path $root ("card0490-live-" + $runId)
-    $workspace = Join-Path $runRoot 'work'
-    $state = Join-Path $runRoot 'state'
-    $grokHome = Join-Path $runRoot 'grok-home'
-    $grokSessions = Join-Path $runRoot 'grok-sessions'
+    $workspace = [System.IO.Path]::GetFullPath((Join-Path $runRoot 'work'))
+    $state = [System.IO.Path]::GetFullPath((Join-Path $runRoot 'state'))
+    $grokHome = [System.IO.Path]::GetFullPath((Join-Path $runRoot 'grok-home'))
+    $grokSessions = [System.IO.Path]::GetFullPath((Join-Path $runRoot 'grok-sessions'))
+    $localRunnerLogs = [System.IO.Path]::GetFullPath((Join-Path $runRoot 'local-runner-logs'))
     $secretFile = Join-Path $runRoot 'phone-home.secret'
-    New-Item -ItemType Directory -Force -Path $workspace, $state, $grokHome, $grokSessions, (Split-Path $secretFile) | Out-Null
+    New-Item -ItemType Directory -Force -Path $workspace, $state, $grokHome, $grokSessions, $localRunnerLogs, (Split-Path $secretFile) | Out-Null
     $secret = [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')
     Set-Content -LiteralPath $secretFile -Value $secret -NoNewline -Encoding ascii
     $agentId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
@@ -139,6 +212,8 @@ function New-IsolatedLiveConfig {
     return [ordered]@{
         serverPort             = $serverPort
         postgresPort           = $postgresPort
+        runnerPort             = $runnerPort
+        localRunnerOrigin      = "http://127.0.0.1:$runnerPort"
         serverOrigin           = "http://127.0.0.1:$serverPort"
         phoneHomeServerOrigin  = "http://host.docker.internal:$serverPort"
         placement              = 'local-docker'
@@ -150,6 +225,7 @@ function New-IsolatedLiveConfig {
         oauthMount             = $grokHome
         grokSessionsMount      = $grokSessions
         stateRoot              = $state
+        localRunnerLogPath     = $localRunnerLogs
         secretFile             = $secretFile
         image                  = @{
             dockerfile  = 'docker/session-runner-grok/Dockerfile'
@@ -242,6 +318,10 @@ elseif ([string]::IsNullOrWhiteSpace([string]$generated.placement)) {
     $generated.placement = 'local-docker'
 }
 $generated = Set-PlacementOrigin $generated ([string]$generated.placement)
+if ($null -eq $generated.runnerPort -or $generated.runnerPort -eq '') {
+    $generated.runnerPort = Get-IsolatedListenPort
+}
+$generated.localRunnerOrigin = "http://127.0.0.1:$($generated.runnerPort)"
 $primaryHome = Get-PrimaryGrokHome
 $generated.grokHomeSource = $primaryHome
 if ([string]::Equals(
@@ -257,8 +337,12 @@ New-Item -ItemType Directory -Force -Path ([string]$generated.oauthMount), (Join
 
 Assert-NotProductionPort $generated.serverPort 'serverPort'
 Assert-NotProductionPort $generated.postgresPort 'postgresPort'
+Assert-NotProductionPort $generated.runnerPort 'runnerPort'
 Assert-NotProductionOrigin ([string]$generated.serverOrigin) 'serverOrigin'
 Assert-NotProductionOrigin ([string]$generated.phoneHomeServerOrigin) 'phoneHomeServerOrigin'
+Assert-NotProductionOrigin ([string]$generated.localRunnerOrigin) 'localRunnerOrigin'
+$generated.hostWorkspaceRoot = [System.IO.Path]::GetFullPath([string]$generated.hostWorkspaceRoot)
+$generated.localRunnerOrigin = "http://127.0.0.1:$($generated.runnerPort)"
 
 $copied = Copy-ThrowawayGrokHome ([string]$generated.grokHomeSource) ([string]$generated.oauthMount)
 Write-Host "Throwaway GROK_HOME copy from grokHomeSource path (contents not logged): copiedAuth=$copied mount=$($generated.oauthMount)"
@@ -295,8 +379,53 @@ if ($WriteConfigOnly) {
 
 $pgName = "antiphon-card0490-pg-$($generated.runId)"
 $serverProc = $null
+$runnerProc = $null
 $pgStarted = $false
 $composeProject = "card0490-$($generated.runId)"
+$pgPass = $null
+$serverDll = $null
+$serverOutDir = $null
+$runnerDll = $null
+$runnerOutDir = $null
+
+function Get-IsolatedServerEnv {
+    $secret = (Get-Content -LiteralPath $generated.secretFile -Raw).Trim()
+    return @{
+        ConnectionStrings__DefaultConnection     = "Host=127.0.0.1;Port=$($generated.postgresPort);Database=antiphon_card0490;Username=antiphon;Password=$pgPass"
+        ASPNETCORE_URLS                          = "http://0.0.0.0:$($generated.serverPort)"
+        SessionRunner__BaseUrl                   = [string]$generated.localRunnerOrigin
+        SessionRunner__Enabled                   = 'true'
+        Agents__DefaultDefinition                = 'grok'
+        Delegation__CheckInterpreterEnabled      = 'false'
+        Delegation__DiagnoseEnabled              = 'false'
+        Delegation__OutputDistillerEnabled       = 'false'
+        Hangfire__ServerEnabled                  = 'false'
+        AgentTui__ImportProfilesOnStartup        = 'false'
+        PhoneHomeRunner__Enabled                 = 'true'
+        PhoneHomeRunner__AllowedRunnerId         = [string]$generated.runnerId
+        PhoneHomeRunner__StandingAgentId         = [string]$generated.standingAgentId
+        PhoneHomeRunner__HostWorkspaceRoot       = [string]$generated.hostWorkspaceRoot
+        PhoneHomeRunner__RunnerWorkspace         = '/work'
+        PhoneHomeRunner__ChildGrokHome           = '/state/grok'
+        PhoneHomeRunner__CallbackOrigin          = [string]$generated.phoneHomeServerOrigin
+        PhoneHomeRunner__SharedSecret            = $secret
+    }
+}
+
+function Stop-OwnedProcess($proc) {
+    if ($proc -and -not $proc.HasExited) {
+        try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch { }
+        try { $proc.WaitForExit(5000) | Out-Null } catch { }
+    }
+}
+
+function Start-IsolatedServerProcess {
+    Write-Host "Starting isolated Antiphon.Server at $($generated.serverOrigin) SessionRunner__BaseUrl=$($generated.localRunnerOrigin) StandingAgentId=$($generated.standingAgentId)"
+    $script:serverProc = Start-IsolatedDll -Dll $serverDll -WorkDir $serverOutDir -EnvVars (Get-IsolatedServerEnv)
+    Wait-HttpHealth "$($generated.serverOrigin)/health" $script:serverProc 90 'Isolated server'
+    Write-Host "Isolated server healthy: $($generated.serverOrigin)/health"
+}
+
 try {
     $pgPass = 'card0490_' + [Guid]::NewGuid().ToString('N').Substring(0, 12)
     Write-Host "Starting isolated Postgres on port $($generated.postgresPort) ($pgName)"
@@ -317,44 +446,81 @@ try {
     }
     if (-not $ready) { throw "Isolated Postgres did not become ready." }
 
-    $env:ConnectionStrings__DefaultConnection = "Host=127.0.0.1;Port=$($generated.postgresPort);Database=antiphon_card0490;Username=antiphon;Password=$pgPass"
-    $env:ASPNETCORE_URLS = "http://0.0.0.0:$($generated.serverPort)"
-    $env:SessionRunner__BaseUrl = 'http://127.0.0.1:1'
-    $env:Delegation__CheckInterpreterEnabled = 'false'
-    $env:Delegation__DiagnoseEnabled = 'false'
-    $env:Delegation__OutputDistillerEnabled = 'false'
-    $env:Hangfire__ServerEnabled = 'false'
-    $env:AgentTui__ImportProfilesOnStartup = 'false'
-    $env:PhoneHomeRunner__Enabled = 'true'
-    $env:PhoneHomeRunner__AllowedRunnerId = [string]$generated.runnerId
-    $env:PhoneHomeRunner__StandingAgentId = [string]$generated.standingAgentId
-    $env:PhoneHomeRunner__HostWorkspaceRoot = [string]$generated.hostWorkspaceRoot
-    $env:PhoneHomeRunner__RunnerWorkspace = '/work'
-    $env:PhoneHomeRunner__ChildGrokHome = '/state/grok'
-    $env:PhoneHomeRunner__CallbackOrigin = [string]$generated.phoneHomeServerOrigin
-    $env:PhoneHomeRunner__SharedSecret = (Get-Content -LiteralPath $generated.secretFile -Raw).Trim()
+    $runnerOutDir = Join-Path $repoRoot 'src/Antiphon.SessionRunner/bin-card0490-v7-runner'
+    Write-Host "Building isolated Antiphon.SessionRunner to $runnerOutDir"
+    & dotnet build (Join-Path $repoRoot 'src/Antiphon.SessionRunner/Antiphon.SessionRunner.csproj') --property:OutputPath=bin-card0490-v7-runner/ --nologo | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "Isolated local runner build failed." }
+    $runnerDll = Join-Path $runnerOutDir 'Antiphon.SessionRunner.dll'
+    if ([string]::IsNullOrWhiteSpace([string]$generated.localRunnerLogPath)) {
+        $generated.localRunnerLogPath = Join-Path (Split-Path -Parent ([string]$generated.stateRoot)) 'local-runner-logs'
+    }
+    New-Item -ItemType Directory -Force -Path ([string]$generated.localRunnerLogPath) | Out-Null
+    Write-Host "Starting isolated local SessionRunner at $($generated.localRunnerOrigin) (not 17204, not dead-port 1)"
+    $runnerProc = Start-IsolatedDll -Dll $runnerDll -WorkDir $runnerOutDir -EnvVars @{
+        ASPNETCORE_URLS                = [string]$generated.localRunnerOrigin
+        SessionRunner__SessionLogPath  = [string]$generated.localRunnerLogPath
+        PhoneHome__Enabled             = 'false'
+        Serilog__LogPath               = [string]$generated.localRunnerLogPath
+    }
+    Wait-HttpHealth "$($generated.localRunnerOrigin)/health" $runnerProc 30 'Isolated local SessionRunner'
+    Write-Host "Isolated local SessionRunner healthy: $($generated.localRunnerOrigin)/health"
 
-    $outDir = Join-Path $repoRoot 'server/bin-card0490-v7'
-    Write-Host "Building isolated Antiphon.Server to $outDir"
+    $serverOutDir = Join-Path $repoRoot 'server/bin-card0490-v7'
+    Write-Host "Building isolated Antiphon.Server to $serverOutDir"
     & dotnet build (Join-Path $repoRoot 'server/Antiphon.Server.csproj') --property:OutputPath=bin-card0490-v7/ --nologo | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "Isolated server build failed." }
-    $dll = Join-Path $outDir 'Antiphon.Server.dll'
-    Write-Host "Starting isolated Antiphon.Server at $($generated.serverOrigin)"
-    $serverProc = Start-Process -FilePath 'dotnet' -ArgumentList @($dll) -WorkingDirectory $outDir -PassThru -NoNewWindow
+    $serverDll = Join-Path $serverOutDir 'Antiphon.Server.dll'
+    Start-IsolatedServerProcess
 
-    $health = "$($generated.serverOrigin)/health"
-    $up = $false
-    for ($i = 0; $i -lt 60; $i++) {
-        try {
-            $r = Invoke-WebRequest -Uri $health -UseBasicParsing -TimeoutSec 2
-            if ($r.StatusCode -eq 200) { $up = $true; break }
+    $origin = [string]$generated.serverOrigin
+    $standingId = [string]$generated.standingAgentId
+    $agent = $null
+    try { $agent = Invoke-IsolatedJson GET "$origin/api/agents/$standingId" } catch { $agent = $null }
+    if (-not $agent) {
+        Write-Host "Creating standing Grok agent in workspace $($generated.hostWorkspaceRoot)"
+        $created = Invoke-IsolatedJson POST "$origin/api/agents" @{
+            name                     = 'phone-home-grok'
+            workingDirectory         = [string]$generated.hostWorkspaceRoot
+            createWorkingDirectory   = $true
+            alwaysOn                 = $false
+            details                  = 'CARD-0490 V-7 isolated Grok phone-home canary'
         }
-        catch { }
-        if ($serverProc.HasExited) { throw "Isolated server exited early (code $($serverProc.ExitCode))." }
-        Start-Sleep -Seconds 1
+        $patch = @{
+            name                       = $created.name
+            workingDirectory           = $created.workingDirectory
+            details                    = $created.details
+            defaultWorkflowTemplateId  = $created.defaultWorkflowTemplateId
+            assignmentPolicy           = $created.assignmentPolicy
+            alwaysOn                   = $false
+            kind                       = 4
+            sessionBackend             = 0
+        }
+        $agent = Invoke-IsolatedJson PATCH "$origin/api/agents/$($created.id)" $patch
+        if ([string]$agent.id -ne $standingId) {
+            Write-Host "Standing agent id $($agent.id) differs from configured $standingId; restarting isolated server before the container so epoch stays 1."
+            $generated.standingAgentId = [string]$agent.id
+            ($generated | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $configPath -Encoding utf8
+            Stop-OwnedProcess $serverProc
+            $serverProc = $null
+            Start-Sleep -Seconds 2
+            Start-IsolatedServerProcess
+            $agent = Invoke-IsolatedJson GET "$origin/api/agents/$($generated.standingAgentId)"
+        }
     }
-    if (-not $up) { throw "Isolated server /health did not return 200 on $($generated.serverOrigin)." }
-    Write-Host "Isolated server healthy: $health"
+    elseif ([string]$agent.kind -ne 'Grok' -and [string]$agent.kind -ne '4') {
+        $patch = @{
+            name                       = $agent.name
+            workingDirectory           = $agent.workingDirectory
+            details                    = $agent.details
+            defaultWorkflowTemplateId  = $agent.defaultWorkflowTemplateId
+            assignmentPolicy           = $agent.assignmentPolicy
+            alwaysOn                   = $false
+            kind                       = 4
+            sessionBackend             = 0
+        }
+        $agent = Invoke-IsolatedJson PATCH "$origin/api/agents/$($agent.id)" $patch
+    }
+    Write-Host "Standing Grok agent id=$($agent.id) kind=$($agent.kind) cwd=$($agent.workingDirectory)"
 
     if ([string]$generated.placement -eq 'server2') {
         $fwName = "CARD-0490-v7-$($generated.serverPort)"
@@ -395,26 +561,167 @@ try {
         Write-Host "CARD-0490 container started against isolated origin. Queue the canary through the isolated API; do not use 17202."
     }
 
-    if ($HoldSeconds -gt 0 -and $blockers.Count -eq 0) {
-        $statusPath = Join-Path $EvidenceRoot 'runner-status.json'
+    $statusPath = Join-Path $EvidenceRoot 'runner-status.json'
+    $st = $null
+    if ($HoldSeconds -gt 0 -and $blockers.Count -eq 0 -and -not $SkipContainer -and [string]$generated.placement -ne 'server2') {
         $deadline = (Get-Date).AddSeconds($HoldSeconds)
-        $ready = $false
-        Write-Host "Holding $HoldSeconds s for phone-home runner status at $($generated.serverOrigin)/api/session-runners/$($generated.runnerId)/status"
+        Write-Host "Holding $HoldSeconds s for dispatchEligible phone-home runner at $origin/api/session-runners/$($generated.runnerId)/status"
         while ((Get-Date) -lt $deadline) {
             try {
-                $st = Invoke-RestMethod -Uri "$($generated.serverOrigin)/api/session-runners/$($generated.runnerId)/status" -UseBasicParsing -TimeoutSec 3
+                $st = Invoke-RestMethod -Uri "$origin/api/session-runners/$($generated.runnerId)/status" -UseBasicParsing -TimeoutSec 3
                 ($st | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $statusPath -Encoding utf8
-                if ($st.available -eq $true) {
-                    $ready = $true
-                    Write-Host "Runner available=true dispatchEligible=$($st.dispatchEligible) store=$($st.runnerStoreId) epoch=$($st.epoch)"
+                if ($st.dispatchEligible -eq $true -and $st.available -eq $true) {
+                    Write-Host "Runner available=true dispatchEligible=true store=$($st.runnerStoreId) boot=$($st.processBootId) epoch=$($st.epoch)"
                     break
                 }
+                Write-Host "Runner available=$($st.available) dispatchEligible=$($st.dispatchEligible) epoch=$($st.epoch) heartbeat=$($st.lastHeartbeatUtc)"
             }
-            catch { }
+            catch {
+                Write-Host "Runner status not ready: $($_.Exception.Message)"
+            }
             Start-Sleep -Seconds 2
         }
-        if (-not $ready) {
-            Write-Host "Runner did not become available within $HoldSeconds s. See $statusPath"
+        if (-not $st -or $st.dispatchEligible -ne $true) {
+            throw "Phone-home runner did not become dispatchEligible within $HoldSeconds s. See $statusPath"
+        }
+    }
+
+    $turnEvidencePath = Join-Path $EvidenceRoot 'v7-turn.json'
+    if (-not $SkipTurn -and -not $SkipContainer -and $blockers.Count -eq 0 -and [string]$generated.placement -ne 'server2') {
+        if (-not $st -or $st.dispatchEligible -ne $true) {
+            throw "V-7 turn requires dispatchEligible=true before start."
+        }
+        $nonce = [Guid]::NewGuid().ToString('N').Substring(0, 8)
+        $prompt = "Reply with PHONE_HOME_OK_$nonce and do not use tools."
+        $promptHash = Get-Sha256Hex $prompt
+        Write-Host "Starting pinned standing Grok with fresh=true (first launch; no native history yet)"
+        $started = Invoke-IsolatedJson POST "$origin/api/agents/$($generated.standingAgentId)/start" @{ fresh = $true } 60
+        $sessionId = $null
+        if ($started.liveSession -and $started.liveSession.id) { $sessionId = [string]$started.liveSession.id }
+        elseif ($started.persistentSessionId) { $sessionId = [string]$started.persistentSessionId }
+        if ([string]::IsNullOrWhiteSpace($sessionId)) { throw "Start did not return a session id: $($started | ConvertTo-Json -Depth 4 -Compress)" }
+        $generation = $null
+        if ($started.liveSession -and $started.liveSession.startedAt) { $generation = [string]$started.liveSession.startedAt }
+        Write-Host "Started session $sessionId generation=$generation; waiting for rules barrier idle then queueing canary"
+
+        $idleDeadline = (Get-Date).AddSeconds([Math]::Min($TurnTimeoutSeconds, 180))
+        $readyForPrompt = $false
+        while ((Get-Date) -lt $idleDeadline) {
+            $detail = Invoke-IsolatedJson GET "$origin/api/agents/$($generated.standingAgentId)"
+            $working = $false
+            if ($null -ne $detail.working) { $working = [bool]$detail.working }
+            $status = [string]$detail.status
+            if ($detail.liveSession) { $sessionId = [string]$detail.liveSession.id; $generation = [string]$detail.liveSession.startedAt }
+            if ($status -eq 'Running' -or $status -eq '1') {
+                if (-not $working) { $readyForPrompt = $true; break }
+            }
+            elseif ($status -eq 'Failed' -or $status -eq '3') {
+                throw "Standing start failed: $($detail | ConvertTo-Json -Depth 5 -Compress)"
+            }
+            Start-Sleep -Seconds 3
+        }
+        if (-not $readyForPrompt) {
+            Write-Host "Composer not idle after rules wait; queueing WhenIdle anyway."
+        }
+
+        $attemptFloor = [DateTime]::UtcNow
+        $queued = Invoke-IsolatedJson POST "$origin/api/sessions/$sessionId/messages" @{ body = $prompt; mode = 'WhenIdle' } 60
+        $queueId = $null
+        $lastQueued = @($queued.messages) | Select-Object -Last 1
+        if ($lastQueued -and $lastQueued.id) { $queueId = [string]$lastQueued.id }
+        elseif ($queued.id) { $queueId = [string]$queued.id }
+        Write-Host "Queued canary queueId=$queueId session=$sessionId"
+
+        $userPrompt = $null
+        $assistant = $null
+        $turnEnd = $null
+        $transcript = $null
+        $turnDeadline = (Get-Date).AddSeconds($TurnTimeoutSeconds)
+        while ((Get-Date) -lt $turnDeadline) {
+            $transcript = Invoke-IsolatedJson GET "$origin/api/sessions/$sessionId/transcript"
+            foreach ($entry in @($transcript.entries)) {
+                $kind = [string]$entry.kind
+                $text = [string]$entry.text
+                $ts = $null
+                if ($entry.timestamp) { try { $ts = [DateTime]$entry.timestamp } catch { $ts = $null } }
+                if ($kind -eq 'UserPrompt' -and $text -and ($text.Contains($prompt) -or $text.Contains("PHONE_HOME_OK_$nonce"))) {
+                    if ($null -eq $ts -or $ts.ToUniversalTime() -ge $attemptFloor.AddSeconds(-5)) { $userPrompt = $entry }
+                }
+                if ($kind -eq 'AssistantText' -and $text -and $text.Contains("PHONE_HOME_OK_$nonce")) { $assistant = $entry }
+                if ($kind -eq 'TurnEnd' -and $userPrompt) { $turnEnd = $entry }
+            }
+            if ($userPrompt -and $assistant -and $turnEnd) { break }
+            Start-Sleep -Seconds 4
+        }
+        if (-not $userPrompt -or -not $assistant -or -not $turnEnd) {
+            ($transcript | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath (Join-Path $EvidenceRoot 'transcript-incomplete.json') -Encoding utf8
+            throw "V-7 turn incomplete. userPrompt=$(if ($userPrompt) {'yes'} else {'no'}) assistantNonce=$(if ($assistant) {'yes'} else {'no'}) turnEnd=$(if ($turnEnd) {'yes'} else {'no'})."
+        }
+
+        $updates = @()
+        if (Test-Path -LiteralPath ([string]$generated.grokSessionsMount)) {
+            $updates = @(Get-ChildItem -LiteralPath ([string]$generated.grokSessionsMount) -Recurse -Filter 'updates.jsonl' -ErrorAction SilentlyContinue)
+        }
+        $updatesRel = $null
+        if ($updates.Count -gt 0) {
+            $full = $updates[0].FullName
+            $root = [string]$generated.grokSessionsMount
+            $updatesRel = $full.Substring($root.Length).TrimStart('\', '/')
+            $updatesRel = ('sessions/' + ($updatesRel -replace '\\', '/'))
+        }
+
+        $imageId = $null
+        try {
+            $imageId = (& docker compose -f $composeFile -p $composeProject images -q session-runner-grok 2>$null | Select-Object -First 1)
+        } catch { }
+        $grokVer = $null
+        try {
+            $grokVer = (& docker compose -f $composeFile -p $composeProject exec -T session-runner-grok grok --version 2>$null | Out-String).Trim()
+        } catch { }
+        $sourceSha = (& git -C $repoRoot rev-parse HEAD).Trim()
+
+        $evidence = [ordered]@{
+            sourceSha            = $sourceSha
+            imageDigest          = $imageId
+            grokVersion          = $grokVer
+            runnerId             = [string]$generated.runnerId
+            runnerStoreId        = $st.runnerStoreId
+            processBootId        = $st.processBootId
+            epoch                = $st.epoch
+            sessionId            = $sessionId
+            acceptedGeneration   = $generation
+            queueId              = $queueId
+            attemptFloorUtc      = $attemptFloor.ToString('o')
+            submittedBodyHash    = $promptHash
+            nonce                = $nonce
+            userPrompt           = @{
+                uuid     = $userPrompt.uuid
+                sequence = $userPrompt.sequence
+                textHash = Get-Sha256Hex ([string]$userPrompt.text)
+                timestamp = $userPrompt.timestamp
+            }
+            assistantText        = @{
+                uuid     = $assistant.uuid
+                sequence = $assistant.sequence
+                hasNonce = $true
+            }
+            turnEnd              = @{
+                uuid     = $turnEnd.uuid
+                sequence = $turnEnd.sequence
+                kind     = $turnEnd.kind
+            }
+            linuxUpdatesJsonl    = $updatesRel
+            localRunnerOrigin    = [string]$generated.localRunnerOrigin
+        }
+        ($evidence | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $turnEvidencePath -Encoding utf8
+        Write-Host "V-7 turn confirmed. Evidence: $turnEvidencePath"
+
+        try {
+            Invoke-IsolatedJson POST "$origin/api/agents/$($generated.standingAgentId)/stop" @{} 30 | Out-Null
+            Write-Host "Stopped standing session $sessionId generation=$generation"
+        }
+        catch {
+            Write-Host "Stop after V-7 turn: $($_.Exception.Message)"
         }
     }
 
@@ -432,9 +739,8 @@ finally {
     if ($env:PHONE_HOME_SERVER_ORIGIN) {
         try { & docker compose -f $composeFile -p $composeProject down --remove-orphans 2>$null | Out-Null } catch { }
     }
-    if ($serverProc -and -not $serverProc.HasExited) {
-        try { Stop-Process -Id $serverProc.Id -Force -ErrorAction SilentlyContinue } catch { }
-    }
+    Stop-OwnedProcess $serverProc
+    Stop-OwnedProcess $runnerProc
     if ($pgStarted) {
         try { & docker rm -f $pgName 2>$null | Out-Null } catch { }
     }
@@ -442,7 +748,7 @@ finally {
         $fwName = "CARD-0490-v7-$($generated.serverPort)"
         try { Remove-NetFirewallRule -DisplayName $fwName -ErrorAction SilentlyContinue | Out-Null } catch { }
     }
-    $v7bins = Get-ChildItem -Path $repoRoot -Recurse -Directory -Filter 'bin-card0490-v7' -ErrorAction SilentlyContinue
+    $v7bins = Get-ChildItem -Path $repoRoot -Recurse -Directory -Filter 'bin-card0490-v7*' -ErrorAction SilentlyContinue
     foreach ($d in $v7bins) {
         try { Remove-Item -LiteralPath $d.FullName -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     }

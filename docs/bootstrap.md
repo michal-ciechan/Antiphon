@@ -10,9 +10,10 @@ and must be an isolated Antiphon URL, never 17202–17205. Local Docker uses
 `http://host.docker.internal:<port>`; a server2 container must use the desktop Tailscale
 IPv4 (`http://100.79.51.37:<port>`, MagicDNS `desktop-ktlkpif`) because `host.docker.internal`
 on server2 is server2. `scripts/verify-phone-home-grok.ps1 -Placement server2` writes that
-origin into `.antiphon/card0490-live.json`. The image pins Grok 1.0.34. The script copies
-`auth.json` from the operator primary `GROK_HOME` into a throwaway directory and mounts that
-copy read-only; it never live-mounts `~/.grok`.
+origin into `.antiphon/card0490-live.json`. The image pins Grok 1.0.34. The script starts an
+isolated local SessionRunner for the standing-start liveness probe, copies `auth.json` from
+the operator primary `GROK_HOME` into a throwaway directory and mounts that copy read-only;
+it never live-mounts `~/.grok`. The first standing Grok start is `fresh: true`.
 
 ## Runner restart observation (CARD-0420)
 

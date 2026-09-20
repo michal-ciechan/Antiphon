@@ -81,6 +81,10 @@ public sealed class VerifyPhoneHomeGrokScriptTests
             .ShouldContain($"host.docker.internal:{serverPort}");
         json.RootElement.GetProperty("serverOrigin").GetString()
             .ShouldContain($"127.0.0.1:{serverPort}");
+        var runnerPort = json.RootElement.GetProperty("runnerPort").GetInt32();
+        new[] { 17202, 17203, 17204, 17205 }.ShouldNotContain(runnerPort);
+        json.RootElement.GetProperty("localRunnerOrigin").GetString()
+            .ShouldContain($"127.0.0.1:{runnerPort}");
         json.RootElement.TryGetProperty("sharedSecret", out _).ShouldBeFalse();
         output.ShouldContain("PhoneHome__ServerOrigin");
     }
@@ -198,5 +202,18 @@ public sealed class VerifyPhoneHomeGrokScriptTests
         await proc.WaitForExitAsync();
         proc.ExitCode.ShouldNotBe(0);
         (stdout + stderr).ShouldContain("17202");
+    }
+
+    [Test]
+    public void Script_uses_isolated_local_runner_and_fresh_first_start()
+    {
+        var script = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "verify-phone-home-grok.ps1"));
+        script.ShouldNotContain("http://127.0.0.1:1");
+        script.ShouldContain("SessionRunner__BaseUrl");
+        script.ShouldContain("localRunnerOrigin");
+        script.ShouldContain("dispatchEligible");
+        script.ShouldContain("fresh = $true");
+        script.ShouldContain("PHONE_HOME_OK_");
+        script.ShouldContain("bin-card0490-v7-runner");
     }
 }
