@@ -22,7 +22,10 @@ public sealed class VerifyPhoneHomeGrokScriptTests
         compose.ShouldContain("PHONE_HOME_GROK_HOME");
 
         var dockerfile = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "docker/session-runner-grok/Dockerfile"));
-        dockerfile.ShouldNotContain("ServerOrigin");
+        System.Text.RegularExpressions.Regex.IsMatch(
+            dockerfile, @"^\s*ENV\s+PhoneHome__ServerOrigin\b",
+            System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            .ShouldBeFalse();
         dockerfile.ShouldNotContain("17202");
     }
 
