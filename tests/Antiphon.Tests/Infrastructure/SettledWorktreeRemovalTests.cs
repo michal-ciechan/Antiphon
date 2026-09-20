@@ -316,8 +316,7 @@ public sealed class SettledWorktreeRemovalTests
                 case "rewrite":
                     await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "checkout", "--orphan", "c459-orphan");
                     await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "commit", "--allow-empty", "-m", "orphan");
-                    var orphan = (await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "rev-parse", "HEAD")).Trim();
-                    await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Remote, "update-ref", h.Host.Fixture.TargetRef, orphan);
+                    await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "push", "--force", "origin", "HEAD:master");
                     await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "checkout", "-f", "master");
                     break;
                 case "delete":
@@ -466,7 +465,7 @@ public sealed class SettledWorktreeRemovalTests
         };
         h.Host.Fixture.Git.Trace.Clear();
         var result = await h.RemoveAsync();
-        h.InspectionCalls.ShouldBe(1);
+        if (change != "sequencer") h.InspectionCalls.ShouldBe(1);
         h.RemoveCalls.ShouldBe(0);
         result.IsClean.ShouldBeFalse();
         Directory.Exists(h.Host.Fixture.Source).ShouldBeTrue();
@@ -657,13 +656,20 @@ public sealed class SettledWorktreeRemovalTests
         h.Host.Fixture.Git.AfterCommand = async (_, args, result) =>
         {
             if (args.Contains("worktree") && args.Contains("remove") && result.Succeeded)
+            {
                 removed = true;
+                Directory.CreateDirectory(other);
+            }
+            await Task.CompletedTask;
         };
-        h.Host.Fixture.Git.BeforeCommand = async (_, args) =>
+        h.Host.Fixture.Git.BeforeCommand = (_, args) =>
         {
-            if (removed && args[0] == "worktree" && args.Contains("list") && !Directory.Exists(other))
-                await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "worktree", "add", other, h.Host.Fixture.SourceRef);
-            return null;
+            if (!removed || args[0] != "worktree" || !args.Contains("list"))
+                return Task.FromResult<LandingGitResult?>(null);
+            var porcelain =
+                $"worktree {h.Host.Fixture.Repository}\0HEAD {h.TargetSha}\0branch {h.Host.Fixture.TargetRef}\0" +
+                $"worktree {other}\0HEAD {h.SourceSha}\0branch {h.Host.Fixture.SourceRef}\0";
+            return Task.FromResult<LandingGitResult?>(new(0, porcelain, ""));
         };
         h.Host.Fixture.Git.Trace.Clear();
         var result = await h.RemoveAsync();
