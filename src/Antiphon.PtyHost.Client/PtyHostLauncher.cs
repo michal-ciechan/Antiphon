@@ -5,12 +5,14 @@ namespace Antiphon.PtyHost.Client;
 
 /// <summary>
 /// Launches detached pty-hosts from shadow-copied binaries. The chain is
-/// runner → intermediary (<c>Antiphon.PtyHost.exe --spawn …</c>, exits immediately) → host,
+/// runner → intermediary (<c>Antiphon.PtyHost[.exe] --spawn …</c>, exits immediately) → host,
 /// so the host's recorded parent is dead and no tree-kill aimed at the runner can reach it.
 /// </summary>
 public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
 {
-    public const string HostExeName = "Antiphon.PtyHost.exe";
+    public static string HostExeName => OperatingSystem.IsWindows()
+        ? "Antiphon.PtyHost.exe"
+        : "Antiphon.PtyHost";
 
     private readonly object _gate = new();
     private string? _cachedShadowDir;

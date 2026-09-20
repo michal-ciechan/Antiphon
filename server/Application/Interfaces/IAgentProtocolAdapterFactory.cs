@@ -10,4 +10,5 @@ namespace Antiphon.Server.Application.Interfaces;
 public interface IAgentProtocolAdapterFactory
 {
     IAgentProtocolAdapter Create(AgentKind kind);
+    IAgentProtocolAdapter Create(AgentKind kind, string? runnerId) => Create(kind);
 }

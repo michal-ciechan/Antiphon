@@ -10,6 +10,10 @@ supports**. Credentials and the launch environment are a separate concern with t
 document: [agent-credentials.md](agent-credentials.md). Profile management through the UI is
 [ai-agent-tui-configuration.md](ai-agent-tui-configuration.md).
 
+CARD-0490 adds an opt-in phone-home Linux Grok lane: one named cardless PtyHost session in a
+container, registered over an outbound WebSocket. Local Windows sessions keep `SessionRunner:BaseUrl`.
+See [testing-and-build.md](testing-and-build.md) (CARD-0490).
+
 ## Source of truth
 
 Do not treat the tables below as authoritative when they disagree with the code. Three files own

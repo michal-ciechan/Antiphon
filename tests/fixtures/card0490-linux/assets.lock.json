@@ -1,0 +1,7 @@
+{
+  "qemu": { "version": "9.2.0", "sha256": "pending-operator-pin" },
+  "qemu-img": { "version": "9.2.0", "sha256": "pending-operator-pin" },
+  "bootDisk": { "sha256": "pending-operator-pin" },
+  "sdk": "10.0.204",
+  "runtime": "net9.0"
+}

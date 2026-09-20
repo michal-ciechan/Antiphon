@@ -34,6 +34,20 @@ builder.Host.UseSerilog((ctx, lc) =>
 });
 
 builder.Services.Configure<SessionRunnerSettings>(builder.Configuration.GetSection("SessionRunner"));
+builder.Services.Configure<PhoneHomeSettings>(builder.Configuration.GetSection("PhoneHome"));
+builder.Services.PostConfigure<PhoneHomeSettings>(settings => settings.Validate());
+builder.Services.AddHttpClient(nameof(PhoneHomeConnectionService));
+builder.Services.AddSingleton<IPhoneHomeAdoptionGate, PhoneHomeAdoptionGate>();
+builder.Services.AddSingleton<PhoneHomeCommandDispatcher>(sp =>
+{
+    var runtime = sp.GetRequiredService<SessionRunnerRuntime>();
+    var build = RunnerBuildIdentity.Resolve();
+    return new PhoneHomeCommandDispatcher(
+        new PhoneHomeRuntimeAdapter(runtime, new RunnerBuildDto(
+            build.InformationalVersion, build.CommitSha, build.AssemblyWriteTimeUtc, build.ProcessStartUtc)),
+        sp.GetRequiredService<IOptions<PhoneHomeSettings>>().Value);
+});
+builder.Services.AddHostedService<PhoneHomeConnectionService>();
 builder.Services.PostConfigure<SessionRunnerSettings>(settings =>
 {
     builder.Configuration.GetSection("GrokRules").Bind(settings.GrokRules);
@@ -165,6 +179,7 @@ async ValueTask<object?> HerdrUnreachableFilter(EndpointFilterInvocationContext 
     var adopted = await runtime.AdoptOrphanedHostsAsync(probe, CancellationToken.None);
     if (adopted > 0)
         app.Logger.LogInformation("Adopted {Count} surviving pty-host session(s) from a previous runner", adopted);
+    app.Services.GetRequiredService<IPhoneHomeAdoptionGate>().SignalReady();
 }
 
 app.MapHealthChecks("/health");

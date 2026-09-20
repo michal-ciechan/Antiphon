@@ -31,6 +31,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Antiphon.Agents.Pty\Antiphon.Agents.Pty.csproj" />
+    <ProjectReference Include="..\Antiphon.Card0490.NativeHarness\Antiphon.Card0490.NativeHarness.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.SessionRunner.Contracts\Antiphon.SessionRunner.Contracts.csproj" />
     <!-- Referenced two ways on purpose: the CopyFakeClaude target below stages its FULL output
          (exe + runtimeconfig + deps) into bin\...\fakeclaude\ so tests can exec it through ConPTY,

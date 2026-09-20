@@ -186,4 +186,63 @@ public partial class ShadowCopyStoreTests
         }
         await Task.CompletedTask;
     }
+
+    [Test]
+    public async Task Linux_closure_keeps_apphost_and_native_library()
+    {
+        var (root, source, store) = CreateFixture();
+        try
+        {
+            File.WriteAllText(
+                Path.Combine(source, "Antiphon.PtyHost.deps.json"),
+                """{"targets":{".NETCoreApp,Version=v9.0":{"Antiphon.PtyHost/1.0.0":{"runtime":{"Antiphon.PtyHost.dll":{}}}}}}""");
+            File.WriteAllText(Path.Combine(source, "Antiphon.PtyHost"), "elf-apphost");
+            File.WriteAllText(Path.Combine(source, "libporta_pty.so"), "native-pty");
+            File.WriteAllText(Path.Combine(source, "Unrelated.Package.dll"), "not-in-the-closure");
+
+            var copy = store.EnsureCurrent(source);
+            var shadowApphost = Path.Combine(copy, "Antiphon.PtyHost");
+            var shadowNativeLibrary = Path.Combine(copy, "libporta_pty.so");
+            File.Exists(shadowApphost).ShouldBeTrue();
+            File.Exists(shadowNativeLibrary).ShouldBeTrue();
+            File.ReadAllBytes(shadowApphost).ShouldBe(File.ReadAllBytes(Path.Combine(source, "Antiphon.PtyHost")));
+            File.ReadAllBytes(shadowNativeLibrary).ShouldBe(File.ReadAllBytes(Path.Combine(source, "libporta_pty.so")));
+            File.Exists(Path.Combine(copy, "Unrelated.Package.dll")).ShouldBeFalse();
+        }
+        finally
+        {
+            Cleanup(root);
+        }
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task Linux_copy_preserves_execute_mode()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new TUnit.Core.Exceptions.SkipTestException("Unix execute bits are a Linux assertion.");
+
+        var (root, source, store) = CreateFixture();
+        try
+        {
+            var apphost = Path.Combine(source, "Antiphon.PtyHost");
+            File.WriteAllText(apphost, "elf-apphost");
+            File.SetUnixFileMode(apphost,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+            var sourceMode = File.GetUnixFileMode(apphost);
+
+            var copy = store.EnsureCurrent(source);
+            var shadow = Path.Combine(copy, "Antiphon.PtyHost");
+            File.Exists(shadow).ShouldBeTrue();
+            var shadowMode = File.GetUnixFileMode(shadow);
+            shadowMode.ShouldBe(sourceMode);
+        }
+        finally
+        {
+            Cleanup(root);
+        }
+        await Task.CompletedTask;
+    }
 }

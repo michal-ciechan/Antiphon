@@ -26,7 +26,7 @@ public sealed class SessionDeliveryProfile
     private readonly TimeProvider _time;
     private readonly ILogger<SessionDeliveryProfile> _logger;
 
-    private readonly ConcurrentDictionary<Guid, SessionBackend> _snapshotCache = new();
+    private readonly ConcurrentDictionary<Guid, (SessionBackend Backend, string? RunnerId)> _snapshotCache = new();
     private readonly object _capabilityGate = new();
     private IReadOnlyList<string>? _sessionBackends;
     private DateTimeOffset _probedAt = DateTimeOffset.MinValue;
@@ -54,7 +54,18 @@ public sealed class SessionDeliveryProfile
     public async Task<PtyDeliveryCeilings> ForSessionAsync(
         AppDbContext db, Guid sessionId, CancellationToken ct)
     {
-        var backend = await ResolveSnapshotAsync(db, sessionId, ct);
+        var snapshot = await ResolveSnapshotAsync(db, sessionId, ct);
+        if (!string.IsNullOrWhiteSpace(snapshot.RunnerId))
+        {
+            // CARD-0490: phone-home never borrows local ModernConPty evidence. Conservative inbox
+            // first, then the Grok join-safe transform (brief inline 0).
+            return _settings.CeilingsFor(
+                    Antiphon.Agents.Pty.PtyBackend.InboxConhost,
+                    "phone-home Grok uses the conservative inbox profile; local ModernConPty is not evidence")
+                .ForAgentKind(AgentKind.Grok);
+        }
+
+        var backend = snapshot.Backend;
         if (backend != SessionBackend.Herdr)
             return _ptyProfile.Ceilings;
 
@@ -82,22 +93,23 @@ public sealed class SessionDeliveryProfile
         return _settings.CeilingsFor(Antiphon.Agents.Pty.PtyBackend.InboxConhost, reason);
     }
 
-    private async Task<SessionBackend> ResolveSnapshotAsync(
+    private async Task<(SessionBackend Backend, string? RunnerId)> ResolveSnapshotAsync(
         AppDbContext db, Guid sessionId, CancellationToken ct)
     {
         if (_snapshotCache.TryGetValue(sessionId, out var cached))
             return cached;
 
-        var backend = await db.AgentSessions.AsNoTracking()
+        var row = await db.AgentSessions.AsNoTracking()
             .Where(s => s.Id == sessionId)
-            .Select(s => (SessionBackend?)s.SessionBackend)
+            .Select(s => new { s.SessionBackend, s.RunnerId })
             .FirstOrDefaultAsync(ct);
 
-        if (backend is null)
-            return SessionBackend.PtyHost; // unknown id → today's pty behaviour
+        if (row is null)
+            return (SessionBackend.PtyHost, null); // unknown id → today's pty behaviour
 
-        _snapshotCache[sessionId] = backend.Value;
-        return backend.Value;
+        var snapshot = (row.SessionBackend, row.RunnerId);
+        _snapshotCache[sessionId] = snapshot;
+        return snapshot;
     }
 
     private async Task EnsureCapabilitiesProbedAsync(CancellationToken ct)

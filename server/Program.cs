@@ -259,11 +259,23 @@ try
         .ValidateOnStart();
     builder.Services.AddSingleton<AgentRegistry>();
     builder.Services.AddSingleton<IAgentProtocolAdapterFactory, AgentProtocolAdapterFactory>();
-    builder.Services.AddHttpClient<ISessionRunnerClient, SessionRunnerHttpClient>((sp, client) =>
+    builder.Services.AddSingleton<IValidateOptions<PhoneHomeRunnerSettings>, PhoneHomeRunnerSettingsValidator>();
+    builder.Services.AddOptions<PhoneHomeRunnerSettings>()
+        .Bind(builder.Configuration.GetSection("PhoneHomeRunner"))
+        .ValidateOnStart();
+    builder.Services.AddSingleton<PhoneHomeLaunchPolicy>();
+    builder.Services.AddHttpClient<SessionRunnerHttpClient>((sp, client) =>
     {
         var runnerSettings = sp.GetRequiredService<IOptions<SessionRunnerSettings>>().Value;
         client.Timeout = TimeSpan.FromSeconds(Math.Max(1, runnerSettings.RequestTimeoutSeconds));
     });
+    builder.Services.AddSingleton<PhoneHomeRunnerDirectory>(sp => new PhoneHomeRunnerDirectory(
+        sp.GetRequiredService<SessionRunnerHttpClient>(),
+        sp.GetRequiredService<IOptions<PhoneHomeRunnerSettings>>(),
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<TimeProvider>()));
+    builder.Services.AddSingleton<ISessionRunnerDirectory>(sp => sp.GetRequiredService<PhoneHomeRunnerDirectory>());
+    builder.Services.AddSingleton<ISessionRunnerClient, RoutingSessionRunnerClient>();
     // The /events SSE stream must never hit HttpClient.Timeout (a long-lived response is not a
     // slow request) — liveness is handled by runner keepalives + the client-side idle watchdog.
     builder.Services.AddHttpClient(SessionRunnerHttpClient.EventStreamClientName, client =>
@@ -832,6 +844,8 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
         }
     }
 
+    app.UseWebSockets();
+
     // Health check endpoint (replaces simple /api/health from Story 1.1)
     app.MapHealthChecks("/health");
     // CARD-0179 R3: git SHA identity. Kept off /health because SmokeTests pins that body as
@@ -861,6 +875,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     app.MapAuditEndpoints();
     app.MapGitHubEndpoints();
     app.MapSessionEndpoints();
+    app.MapSessionRunnerEndpoints();
     app.MapOrchestratorEndpoints();
     app.MapAgentTaskEndpoints();
     app.MapModelAvailabilityEndpoints();

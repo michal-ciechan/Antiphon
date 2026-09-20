@@ -153,6 +153,9 @@ public sealed class ShadowCopyStore(string binRoot)
         var closure = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "Antiphon.PtyHost.exe",
+            // linux-x64 apphost (CARD-0490). Content-addressed by basename; Windows still copies
+            // the .exe form above. Both names are retained so a mixed publish does not drop either.
+            "Antiphon.PtyHost",
             "Antiphon.PtyHost.dll",
             "Antiphon.PtyHost.pdb",
             "Antiphon.PtyHost.deps.json",
@@ -166,6 +169,8 @@ public sealed class ShadowCopyStore(string binRoot)
             // dependency — PtyBackendRedistributableTests asserts the two lists agree.
             "conpty.dll",
             "OpenConsole.exe",
+            // Porta.Pty native asset on Linux (CARD-0490). Same Content-item gap as conpty.dll.
+            "libporta_pty.so",
         };
 
         try
@@ -224,6 +229,17 @@ public sealed class ShadowCopyStore(string binRoot)
             var target = Path.Combine(targetDir, relativePath);
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             File.Copy(fullPath, target);
+            if (!OperatingSystem.IsWindows())
+            {
+                try
+                {
+                    File.SetUnixFileMode(target, File.GetUnixFileMode(fullPath));
+                }
+                catch (PlatformNotSupportedException)
+                {
+                    // Non-Unix host: execute bits are not a native concept.
+                }
+            }
         }
     }
 

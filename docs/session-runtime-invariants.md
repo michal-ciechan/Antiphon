@@ -1,5 +1,10 @@
 # Session runtime invariants
 
+- **Phone-home Grok (CARD-0490) is transcript-confirmed.** Registration, heartbeat and screen PONG
+  are not delivery. The complete matching UserPrompt past the attempt floor is the receipt. Local
+  HTTP/SSE is unchanged; remote sessions persist `RunnerId`/`RunnerStoreId`/`RunnerCwd` and never
+  fall back to the local runner.
+
 - **Herdr label following is generation-bound metadata (CARD-0462).** The shared durable
   admission consumes an hour even on refusal/failure; restart never resets it. File replacement
   precedes publication, and retirement/deletion share the snapshot path lock. The observer holds

@@ -1,0 +1,191 @@
+using System.Text.Json;
+using Antiphon.SessionRunner.Contracts;
+
+namespace Antiphon.SessionRunner;
+
+public interface IPhoneHomeRuntimeSurface
+{
+    RunnerCapabilitiesDto Capabilities();
+    string Health();
+    IReadOnlyList<RunnerSessionDto> List();
+    Task<RunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct);
+    Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct);
+    RunnerBufferDto GetBuffer(Guid sessionId);
+    RunnerSnapshotDto GetSnapshot(Guid sessionId);
+    RunnerTranscriptDto GetTranscript(Guid sessionId);
+    Task SendInputAsync(Guid sessionId, string input, CancellationToken ct);
+    Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct);
+    Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct);
+    Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct);
+    Task<RunnerKillGenerationResult> KillGenerationAsync(Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct);
+    int OwnedSessionCount { get; }
+}
+
+public sealed class PhoneHomeCommandDispatcher
+{
+    private readonly IPhoneHomeRuntimeSurface _runtime;
+    private readonly PhoneHomeSettings _settings;
+    private readonly object _mutationGate = new();
+
+    public PhoneHomeCommandDispatcher(IPhoneHomeRuntimeSurface runtime, PhoneHomeSettings settings)
+    {
+        _runtime = runtime;
+        _settings = settings;
+    }
+
+    public async Task<PhoneHomeFrame> DispatchAsync(PhoneHomeFrame request, CancellationToken ct)
+    {
+        if (request.Kind != PhoneHomeFrameKind.Request || request.Operation is null)
+            return Error(request, PhoneHomeProblemTypes.UnsupportedOperation, "Frame is not a request.", 400);
+
+        try
+        {
+            return request.Operation.Value switch
+            {
+                PhoneHomeOperation.Capabilities => Result(request, _runtime.Capabilities()),
+                PhoneHomeOperation.Health => Result(request, new { status = _runtime.Health() }),
+                PhoneHomeOperation.List => Result(request, _runtime.List()),
+                PhoneHomeOperation.Get => Result(request, await _runtime.GetAsync(ReadSessionId(request), ct)),
+                PhoneHomeOperation.Launch => await LaunchAsync(request, ct),
+                PhoneHomeOperation.Buffer => Result(request, _runtime.GetBuffer(ReadSessionId(request))),
+                PhoneHomeOperation.Snapshot => Result(request, _runtime.GetSnapshot(ReadSessionId(request))),
+                PhoneHomeOperation.Transcript => Result(request, _runtime.GetTranscript(ReadSessionId(request))),
+                PhoneHomeOperation.Input => await MutateAsync(request, async () =>
+                {
+                    var body = request.Payload?.Deserialize<RunnerInputRequest>(PhoneHomeFraming.Json)
+                        ?? throw new ArgumentException("Input body is required.");
+                    await _runtime.SendInputAsync(ReadSessionId(request), body.Input, ct);
+                    return Result(request, new { ok = true });
+                }),
+                PhoneHomeOperation.ConditionalInput => await MutateAsync(request, async () =>
+                {
+                    var body = request.Payload?.Deserialize<RunnerConditionalInputRequest>(PhoneHomeFraming.Json)
+                        ?? throw new ArgumentException("Conditional input body is required.");
+                    return Result(request, await _runtime.SendConditionalInputAsync(ReadSessionId(request), body, ct));
+                }),
+                PhoneHomeOperation.ClearBuffer => await MutateAsync(request, async () =>
+                {
+                    await _runtime.ClearLiveBufferAsync(ReadSessionId(request), ct);
+                    return Result(request, new { ok = true });
+                }),
+                PhoneHomeOperation.Resize => await MutateAsync(request, async () =>
+                {
+                    var body = request.Payload?.Deserialize<RunnerResizeRequest>(PhoneHomeFraming.Json)
+                        ?? throw new ArgumentException("Resize body is required.");
+                    await _runtime.ResizeAsync(ReadSessionId(request), body.Cols, body.Rows, ct);
+                    return Result(request, new { ok = true });
+                }),
+                PhoneHomeOperation.KillGeneration => await MutateAsync(request, async () =>
+                {
+                    var body = request.Payload?.Deserialize<RunnerKillGenerationRequest>(PhoneHomeFraming.Json)
+                        ?? throw new ArgumentException("Kill-generation body is required.");
+                    return Result(request, await _runtime.KillGenerationAsync(ReadSessionId(request), body.ExpectedAcceptedStartedAt, ct));
+                }),
+                _ => Error(request, PhoneHomeProblemTypes.UnsupportedOperation, $"Operation '{request.Operation}' is not supported.", 400),
+            };
+        }
+        catch (PhoneHomeAdmissionException ex)
+        {
+            return Error(request, ex.Code, ex.Message, ex.StatusCode);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return Error(request, "not_found", ex.Message, 404);
+        }
+        catch (VerificationCustodyException ex)
+        {
+            return Error(request, ex.Code, ex.Message, 409);
+        }
+        catch (GrokRulesLaunchException ex)
+        {
+            return Error(request, "grok_rules", ex.Message, 409);
+        }
+        catch (HerdrLaunchException ex)
+        {
+            return Error(request, PhoneHomeProblemTypes.UnsupportedTarget, ex.Message, 409);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            return Error(request, PhoneHomeProblemTypes.UnsupportedTarget, ex.Message, 400);
+        }
+    }
+
+    private async Task<PhoneHomeFrame> LaunchAsync(PhoneHomeFrame request, CancellationToken ct)
+    {
+        var launch = request.Payload?.Deserialize<RunnerLaunchRequest>(PhoneHomeFraming.Json)
+            ?? throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Launch body is required.", 400);
+        RejectUnsupportedLaunch(launch);
+        lock (_mutationGate)
+        {
+            if (_runtime.OwnedSessionCount >= _settings.Capacity)
+                throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.Capacity, "Phone-home capacity is one session.", 409);
+        }
+
+        return await MutateAsync(request, async () => Result(request, await _runtime.StartAsync(launch, ct)));
+    }
+
+    internal void RejectUnsupportedLaunch(RunnerLaunchRequest launch)
+    {
+        if (!string.Equals(Path.GetFileName(launch.Exe), "grok", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(launch.Exe, "grok", StringComparison.OrdinalIgnoreCase)
+            && !launch.Exe.EndsWith("/grok", StringComparison.Ordinal))
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Only the image-owned grok executable may launch.", 409);
+        if (!string.Equals(launch.Cwd, _settings.AllowedCwd, StringComparison.Ordinal))
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, $"cwd must be '{_settings.AllowedCwd}'.", 409);
+        if (!string.Equals(launch.Backend, SessionBackends.PtyHost, StringComparison.OrdinalIgnoreCase)
+            && launch.Backend is not null)
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Herdr and unknown backends are refused.", 409);
+        if (launch.Herdr is not null)
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Herdr launches are refused.", 409);
+        if (launch.VerificationBinding is not null)
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Verification custody is refused.", 409);
+        if (launch.MemoryLimitMb != 0)
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Memory limit must be zero.", 409);
+        if (!string.Equals(launch.TranscriptFormat, TranscriptFormats.Grok, StringComparison.OrdinalIgnoreCase)
+            && launch.TranscriptFormat is not null)
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Only the Grok transcript format is admitted.", 409);
+    }
+
+    private async Task<PhoneHomeFrame> MutateAsync(PhoneHomeFrame request, Func<Task<PhoneHomeFrame>> action)
+    {
+        lock (_mutationGate)
+        {
+            // Serialize mutating commands for the single session without blocking the receive pump:
+            // the caller awaits this task off the socket loop.
+        }
+
+        await MutationLock.WaitAsync();
+        try
+        {
+            return await action();
+        }
+        finally
+        {
+            MutationLock.Release();
+        }
+    }
+
+    private static Guid ReadSessionId(PhoneHomeFrame request)
+    {
+        if (request.Payload is { } payload && payload.ValueKind == JsonValueKind.Object
+            && payload.TryGetProperty("sessionId", out var id))
+            return id.GetGuid();
+        throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "sessionId is required.", 400);
+    }
+
+    private static PhoneHomeFrame Result(PhoneHomeFrame request, object payload) =>
+        new(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
+            JsonSerializer.SerializeToElement(payload, PhoneHomeFraming.Json));
+
+    private static PhoneHomeFrame Error(PhoneHomeFrame request, string code, string detail, int status) =>
+        new(PhoneHomeFrameKind.Error, request.Epoch, request.RequestId, request.Operation,
+            ErrorCode: code, ErrorDetail: detail, StatusCode: status);
+
+    private readonly SemaphoreSlim MutationLock = new(1, 1);
+}
+
+public sealed class PhoneHomeAdmissionException(string code, string message, int statusCode) : Exception(message)
+{
+    public string Code { get; } = code;
+    public int StatusCode { get; } = statusCode;
+}

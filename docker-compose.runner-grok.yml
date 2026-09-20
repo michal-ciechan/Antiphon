@@ -1,0 +1,28 @@
+# CARD-0490 companion compose. Does not replace docker-compose.dev.yml.
+services:
+  session-runner-grok:
+    build:
+      context: .
+      dockerfile: docker/session-runner-grok/Dockerfile
+    init: true
+    environment:
+      PhoneHome__Enabled: "true"
+      PhoneHome__RunnerId: grok-linux
+      PhoneHome__ServerOrigin: http://host.docker.internal:17202
+      PhoneHome__SecretPath: /run/secrets/phone-home
+      PhoneHome__StoreIdPath: /state/runner-store-id
+      PhoneHome__AllowedCwd: /work
+      PhoneHome__GrokHome: /state/grok
+    volumes:
+      - type: bind
+        source: ${PHONE_HOME_WORKSPACE}
+        target: /work
+        read_only: true
+      - type: bind
+        source: ${PHONE_HOME_STATE}
+        target: /state
+      - type: bind
+        source: ${PHONE_HOME_SECRET_FILE}
+        target: /run/secrets/phone-home
+        read_only: true
+    # No published runner port. The container phones home.
