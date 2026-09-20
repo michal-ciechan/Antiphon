@@ -548,6 +548,7 @@ carry:
 - **Say the warning count, the flaky suites, the ports in use** — anything true this afternoon and
   false next month.
 - Give **outcomes, not procedures**. The delegate decides how.
+- **A Code brief names the checkpoint list.** Add one line, `checkpoints: <plan artifact path>@<full plan commit sha> section "### Checkpoints"`, the shape the server already renders for an Interim `selection:`. The table stays in the committed plan (owner: [testing-and-build.md](testing-and-build.md), Checkpoint manifest); `-ExpectAbout` is the sum of its `Min` column plus authoring. The `stage-code` bundle carries the obligation to run it as a closed list and to report per row; do not restate that.
 - **Pass `-Stage` on a Debug/Docs/Custom dispatch that is actually answering a landing-step
   question** (CARD-0272) — a title like "verify CARD-nnnn still builds" or "clean up the stale
   worktrees" gets `-Stage Verify` / `-Stage Cleanup` even though the role itself never defaults

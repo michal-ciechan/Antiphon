@@ -70,7 +70,7 @@
 
 Build once into a producer-owned isolated output (forward slash on `OutputPath`). Execute the Unit lane. Execute named affected integration classes together where the pinned TUnit 1.44 OR syntax allows. Inspect a **fresh TRX** for each intended class/method and nonzero counts. `--list-tests` is not execution evidence on this runner. Do not combine UID and tree selectors. Unit and named integrations may be separate invocations of the same built output; do not invent unverified mixed category/class filter syntax. Combined class-filter syntax lives in [Combined class filters (CARD-0403)](#combined-class-filters-card-0403).
 
-The brief/verification section must list coverage-to-class. Code and Review report the filters they ran and the actual expanded counts. Unit-only is insufficient for native delivery, landing, leases or persistence. A broad namespace/full-assembly exception names the affected cross-cutting invariant, the classes that cannot be bounded, and the expected cost **before** the run; missing rationale is a Review defect. CI/nightly keep the broad run. Per-PC Mutation stays method-scoped. Do not silently edit `LandVerifyFilter` or the production verifier as part of a documentation policy change.
+The brief/verification section must list coverage-to-class and end with the `### Checkpoints` table (below). Code and Review report the filters they ran and the actual expanded counts. Unit-only is insufficient for native delivery, landing, leases or persistence. A broad namespace/full-assembly exception names the affected cross-cutting invariant, the classes that cannot be bounded, and the expected cost **before** the run; missing rationale is a Review defect. CI/nightly keep the broad run. Per-PC Mutation stays method-scoped. Do not silently edit `LandVerifyFilter` or the production verifier as part of a documentation policy change.
 
 Example (directory names are examples — use a fresh empty results directory per invocation):
 
@@ -95,6 +95,50 @@ pwsh -File scripts/test-duration-tripwire.ps1 -Trx path\to\run.trx
 ```
 
 The allowlist is `tests/Antiphon.Tests/slow-tests-allowlist.txt` (exact simple or fully-qualified class names, case-insensitive). Every test class is tagged `Unit` xor `Integration` (`TestLaneCategoryGuardTests`).
+
+### Checkpoint manifest (CARD-0585)
+
+A Plan/TestDesign artifact ends its `## Verification design` with a `### Checkpoints` table: one row per isolated build plus one exact test-filter group, bound to the plan slice it closes, and a Code dispatch runs that table as a **closed list** rather than an ad hoc build/test loop. It removes the extra rebuilds (CARD-0490 ran 19 builds for 8 test runs), the hunting for files the plan already named, and the second Code round that CARD-0459 paid for; it does not shrink the named Slow/native V/R work, which is the coverage itself (investigation `docs/superpowers/investigations/2026-09-20-card-0585-batched-edit-test-workflow.md`).
+
+Schema:
+
+| Column | Meaning |
+|---|---|
+| `CP` | `CP-1`, `CP-2`, ... in run order. |
+| `After` | Plan slice(s) whose commits must exist first: `S1`, `S1-S3`, `all`. |
+| `Build` | `<project> -> <bin-x/>` (forward slash, `bin-` prefix), or `CP-n` to reuse that row's output with `--no-build`, allowed only when both rows share the same `After`. |
+| `Group` | Short name, unique in the table, used in results paths and the report line. |
+| `Filter` | The exact `--treenode-filter` (CARD-0403 combined-class syntax), or the exact command for a non-TUnit group. |
+| `Covers` | The V-n/R-n IDs this row is evidence for; the union of all rows is the whole ordinary scope. |
+| `Expect` | Roster rule: `all listed, 0 failed` (default) or `>= N executed, 0 failed` for a lane. |
+| `Min` | Estimated minutes including the build when the row builds; Cost's ordinary floor is the sum. |
+
+Rules:
+
+1. The table is the closed list of builds and test runs for the round. Each row runs once, in order, after its `After` slice is committed; a red row is fixed and rerun as the same row (count the reruns).
+2. Any other build or test command is unlisted: it is reported with a reason, never omitted. A compile error found by a row's own build is fixed and the same `CP-n` rerun, not an unlisted run.
+3. Every row is reported as one line: `CHECKPOINT CP-n commit=<sha> build=<ok|reused|failed> filter=<filter> executed=N passed=N failed=N skipped=N trx=<path>` plus `reruns=k` when k > 0. `scripts/run-checkpoint.ps1` prints exactly this line; produce the identical line by hand only if the script cannot run.
+4. A new test that cannot go red against the production line it guards (self-compare, constant, no outcome assertion) is a stub, not done; Review rejects it.
+5. Review checks the report's lines against the table: a missing row, zero count, unlisted build/test run without a reason, or a broad run without a named invariant and cost is a defect.
+6. Nothing in the table is skipped to save time; splitting a row that exceeds one foreground window is done by the classes/methods it already names.
+
+Worked example (three rows of CARD-0459's plan at `484fb214`, one build shared by two groups):
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min |
+|---|---|---|---|---|---|---|---|
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c459/` | disposition-surface | `/*/*/(TaskWorktreeRetirementTests*)\|(WorktreeResidueEndpointTests*)\|(WorktreeResidueScriptTests*)/*` | V-2, R-2 | all listed, 0 failed | 12 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c459/` | workspace-races | `/*/*/WorktreeRetirementRaceTests/*` | V-4 | all listed, 0 failed | 25 |
+| CP-3 | S2 | CP-2 | settled-removal | `/*/*/SettledWorktreeRemovalTests/*` | V-3 | all listed, 0 failed | 25 |
+
+Running one row:
+
+```powershell
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-3 -Project tests/Antiphon.Tests -OutputPath bin-c459/ -NoBuild -Filter '/*/*/SettledWorktreeRemovalTests/*' -Expect SettledWorktreeRemovalTests -ResultsRoot .antiphon/c459-checkpoints
+```
+
+The script builds unless `-NoBuild`, runs the one filter into a fresh results directory, parses the TRX counters and the executed `Class.Method` roster (from `TestDefinitions/UnitTest/TestMethod@className`, never the display name), then prints the `CHECKPOINT` line, one `FAILED <Class.Method>` line per failure, up to 300 `EXECUTED <Class.Method>` lines and a `CHECKPOINT <Name> EXIT CODE: <n>` trailer — so no delegate opens the TRX. Exit codes: **0** green, **1** one or more failed tests, **2** invalid input (a non-`bin-x/` `OutputPath`, a results directory that already exists), a failed build or no TRX written, **3** fewer than `-MinExecuted` executed tests or an `-Expect` token that matches no executed name. It never deletes anything, never edits a filter and never calls `--list-tests`.
+
+The `### Cost` block's ordinary Code floor is the sum of the table's `Min` column, and `-ExpectAbout` for a Code dispatch is that sum plus authoring time. The Code brief points at the table with one line, `checkpoints: <plan artifact path>@<full plan commit sha> section "### Checkpoints"` — the shape the server already renders for an Interim `selection:`.
 
 ### Simulating a stale `index.lock` (CARD-0543)
 

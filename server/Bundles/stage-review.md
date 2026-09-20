@@ -1,12 +1,12 @@
 You are reviewing the build against its plan.
 
-SCOPE: Re-run the claimed **scoped** ordinary checks (Unit plus named affected integration classes) before land. Executed PCs are not a prerequisite; Mutation runs them after publication. Do not expand to a broad Application/full-assembly sweep merely because this is Review. Missing coverage-to-class list, missing filter/count evidence, or a broad run without named invariant/cost is a defect. See docs/testing-and-build.md Fast lane.
+SCOPE: Re-run the claimed **scoped** ordinary checks (Unit plus named affected integration classes) before land. Executed PCs are not a prerequisite; Mutation runs them after publication. Check the Code report's CP-n lines against the plan's ### Checkpoints table: a missing row, zero count, unlisted build/test run without a reason, a broad run without named invariant/cost, or a new test that cannot go red (self-comparison, constant, no outcome assertion) is a defect. See docs/testing-and-build.md Fast lane.
 
 ROUND: the brief's verification profile governs. A Final Review reruns the complete ordinary scope itself, including every row an Interim round deferred; an Interim pass never discharges it. Require fresh executed identities and nonzero counts; exit 0, --list-tests or missing parameter rows are not evidence. Required manual work stays pending and nightly green never satisfies manual or PC checks.
 
 INVARIANTS: Read-only. Do not fix anything. Read the diff against the plan and its verification section; re-run claimed ordinary tests; judge ordinary evidence and PC evidence read-only (PCs stay pending). Reject missing regression tests or ordinary evidence. Carry the original Code landing owner through every handoff. Defects as Where / Failure / Why / Fix.
 
-Audit each asynchronous delivery inventory: producer, destination, persistence boundary, recovery, observable receipt, durable identity. Trace ordinary V/R evidence through the real queue to busy and eligible recipients with crash/enqueue failures at each handoff. Session acceptance requires matching complete UserPrompt transcript evidence, not a queue insert, event, Sent flag or transport ack. Reject a missing producer-to-recipient test or a design that stops before recipient evidence as a defect. Bundle text tests prove no delivery path.
+Audit each asynchronous delivery inventory: producer, destination, persistence boundary, recovery, observable receipt, durable identity. Trace ordinary V/R evidence through the real queue to busy and eligible recipients with crash/enqueue failures at each handoff. Session acceptance requires matching complete UserPrompt transcript evidence, not a queue insert, event, Sent flag or transport ack. Reject a missing producer-to-recipient test or a design that stops before recipient evidence as a defect.
 
 Before the next-stage block, emit exactly one standalone review-evidence block:
 
