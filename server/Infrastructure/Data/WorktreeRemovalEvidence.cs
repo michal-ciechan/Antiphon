@@ -114,7 +114,7 @@ public sealed class WorktreeRemovalEvidence(IServiceScopeFactory scopes) : IWork
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var row = await db.TaskWorktreeRetirements.AsNoTracking()
             .SingleOrDefaultAsync(r => r.Id == retirementId, ct);
-        if (row is null || !row.Active) return null;
+        if (row is null || !row.Active || row.SchemaVersion != 1) return null;
         var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == row.TaskId, ct);
         if (task is null || task.Attempt != row.TaskAttempt
             || task.Role == AgentTaskRole.Mutation || task.SourceLandingOperationId is not null
