@@ -25,6 +25,7 @@ services:
       # (NTFS/9p drops Unix execute bits and breaks the pipe handshake).
       SessionRunner__PtyHostDir: /tmp/antiphon-pty-hosts
       Serilog__LogPath: /state/runner-logs
+      TMPDIR: /tmp
     volumes:
       - type: bind
         source: ${PHONE_HOME_WORKSPACE}

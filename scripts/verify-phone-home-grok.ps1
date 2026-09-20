@@ -438,6 +438,14 @@ function Write-RunnerDiagnostics {
             Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $EvidenceRoot $_.Name) -Force
         }
     }
+    $ptyCopy = Join-Path $EvidenceRoot 'pty-hosts-tmp'
+    try {
+        New-Item -ItemType Directory -Force -Path $ptyCopy | Out-Null
+        & docker compose -f $composeFile -p $composeProject cp session-runner-grok:/tmp/antiphon-pty-hosts $ptyCopy 2>$null
+        & docker compose -f $composeFile -p $composeProject exec -T session-runner-grok sh -c 'ls -la /tmp/antiphon-pty* /tmp/CoreFxPipe_* 2>/dev/null; echo TMPDIR=$TMPDIR; echo tmp=$(ls -la /tmp | head)' 2>$null |
+            Set-Content -LiteralPath (Join-Path $EvidenceRoot 'container-tmp.txt') -Encoding utf8
+    }
+    catch { }
     $runnerLogs = Join-Path ([string]$generated.stateRoot) 'runner-logs'
     if (Test-Path -LiteralPath $runnerLogs) {
         Get-ChildItem -LiteralPath $runnerLogs -File -ErrorAction SilentlyContinue | ForEach-Object {

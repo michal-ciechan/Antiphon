@@ -144,6 +144,15 @@ public static class PtyHostProtocol
 {
     public const int Version = 1;
 
-    /// <summary>Well-known pipe name for a session's host.</summary>
-    public static string PipeNameFor(Guid sessionId) => $"antiphon-pty-{sessionId:N}";
+    /// <summary>
+    /// Well-known pipe name for a session's host. Windows uses an unrooted name (the NT named-pipe
+    /// prefix is added by the runtime). Linux/macOS use an absolute path under <c>/tmp</c> so the
+    /// runner and host cannot disagree about <see cref="Path.GetTempPath"/> (a Docker phone-home
+    /// launch timed out connecting to <c>CoreFxPipe_antiphon-pty-*</c> while the host waited).
+    /// </summary>
+    public static string PipeNameFor(Guid sessionId)
+    {
+        var name = $"antiphon-pty-{sessionId:N}";
+        return OperatingSystem.IsWindows() ? name : "/tmp/" + name;
+    }
 }
