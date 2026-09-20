@@ -175,6 +175,8 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
         private readonly object _gate = new();
         private readonly Dictionary<string, LandingGitResult> _stable = new(StringComparer.Ordinal);
         private readonly Dictionary<string, LandingGitResult> _volatile = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, LandingSourceObservation> _sourceObs = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, LandingRemoteObservation> _remoteObs = new(StringComparer.Ordinal);
 
         protected override void ConfigureProcess(ProcessStartInfo start)
         {
@@ -229,7 +231,11 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
             lock (_gate)
             {
                 if (InvalidatesVolatile(arguments))
+                {
                     _volatile.Clear();
+                    if (arguments.Any(a => a is "push"))
+                        _remoteObs.Clear();
+                }
                 else if (stable)
                     _stable[key] = result;
                 else
@@ -243,7 +249,47 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
         {
             var result = await base.RunOwnedAsync(repository, arguments, started, ct);
             await RecordAsync(repository, arguments, result);
-            lock (_gate) _volatile.Clear();
+            lock (_gate)
+            {
+                _volatile.Clear();
+                _remoteObs.Clear();
+            }
+            return result;
+        }
+
+        public override async Task<LandingSourceObservation> ObserveSourceAsync(string repository, string sourceFullRef,
+            string observationPrefix, CancellationToken ct)
+        {
+            var key = Path.GetFullPath(repository) + "\0" + sourceFullRef;
+            lock (_gate)
+            {
+                if (_sourceObs.TryGetValue(key, out var cached) && cached.Accepted)
+                    return cached;
+            }
+            var result = await base.ObserveSourceAsync(repository, sourceFullRef, observationPrefix, ct);
+            lock (_gate)
+            {
+                if (result.Accepted)
+                    _sourceObs[key] = result;
+            }
+            return result;
+        }
+
+        public override async Task<LandingRemoteObservation> ObserveAsync(string repository, LandingDestination destination,
+            string sourceSha, string observationRef, CancellationToken ct)
+        {
+            var key = Path.GetFullPath(repository) + "\0" + destination.FullRef + "\0" + sourceSha;
+            lock (_gate)
+            {
+                if (_remoteObs.TryGetValue(key, out var cached) && cached.Reason is null)
+                    return cached;
+            }
+            var result = await base.ObserveAsync(repository, destination, sourceSha, observationRef, ct);
+            lock (_gate)
+            {
+                if (result.Reason is null)
+                    _remoteObs[key] = result;
+            }
             return result;
         }
     }
