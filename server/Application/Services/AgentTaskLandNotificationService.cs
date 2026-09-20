@@ -64,6 +64,8 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                     if (IsCompletionNoteKind(note.Kind))
                         await CompletionNoteStamp.ApplyAsync(db, note.TaskId, note.ContentDigest, existing.CreatedAt, ct);
                     await db.SaveChangesAsync(ct);
+                    if (boundary is not null)
+                        await boundary.ReachedAsync("queue-existing-key", note.TaskId, existing.Id, ct);
                 }
             }
             if (note.QueueMessageId is null)
