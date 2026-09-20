@@ -78,12 +78,13 @@ function Copy-ThrowawayGrokHome([string] $sourceHome, [string] $destHome) {
     if (-not (Test-Path -LiteralPath $auth)) {
         return $false
     }
-    foreach ($name in @('auth.json', 'auth.json.lock', 'config.toml')) {
+    foreach ($name in @('auth.json', 'config.toml', 'version.json')) {
         $from = Join-Path $src $name
         if (Test-Path -LiteralPath $from) {
             Copy-Item -LiteralPath $from -Destination (Join-Path $dst $name) -Force
         }
     }
+    # Do not copy auth.json.lock, bin/, or sessions/ from the live home.
     return Test-Path -LiteralPath (Join-Path $dst 'auth.json')
 }
 
@@ -108,6 +109,9 @@ function Assert-ComposeDoesNotHardcodeOrigin {
     if ($text -notmatch '(?s)PHONE_HOME_GROK_HOME.*?read_only:\s*true') {
         throw "PHONE_HOME_GROK_HOME must be a read-only bind mount."
     }
+    if ($text -notmatch 'PHONE_HOME_GROK_SESSIONS') {
+        throw "docker-compose.runner-grok.yml must interpolate PHONE_HOME_GROK_SESSIONS for writable session files."
+    }
 }
 
 function New-IsolatedLiveConfig {
@@ -119,8 +123,9 @@ function New-IsolatedLiveConfig {
     $workspace = Join-Path $runRoot 'work'
     $state = Join-Path $runRoot 'state'
     $grokHome = Join-Path $runRoot 'grok-home'
+    $grokSessions = Join-Path $runRoot 'grok-sessions'
     $secretFile = Join-Path $runRoot 'phone-home.secret'
-    New-Item -ItemType Directory -Force -Path $workspace, $state, $grokHome, (Split-Path $secretFile) | Out-Null
+    New-Item -ItemType Directory -Force -Path $workspace, $state, $grokHome, $grokSessions, (Split-Path $secretFile) | Out-Null
     $secret = [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')
     Set-Content -LiteralPath $secretFile -Value $secret -NoNewline -Encoding ascii
     $agentId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
@@ -140,6 +145,7 @@ function New-IsolatedLiveConfig {
         hostWorkspaceRoot      = $workspace
         grokHomeSource         = Get-PrimaryGrokHome
         oauthMount             = $grokHome
+        grokSessionsMount      = $grokSessions
         stateRoot              = $state
         secretFile             = $secretFile
         image                  = @{
@@ -181,7 +187,7 @@ function Set-PlacementOrigin($config, [string] $placement) {
     return $config
 }
 
-function Read-Blockers($config) {
+function Read-ContainerBlockers($config) {
     $blockers = [System.Collections.Generic.List[string]]::new()
     $primary = Get-PrimaryGrokHome
     $mount = [System.IO.Path]::GetFullPath([string]$config.oauthMount)
@@ -192,19 +198,27 @@ function Read-Blockers($config) {
     if (-not (Test-Path -LiteralPath $auth)) {
         $blockers.Add("Grok OAuth copy missing: expected auth.json in throwaway oauthMount ($mount), copied from primary GROK_HOME (env GROK_HOME or %USERPROFILE%\.grok). Do not bind-mount the primary store. Mount the copy read-only at /state/grok via PHONE_HOME_GROK_HOME. Not XAI_API_KEY.")
     }
+    $dockerfile = Join-Path $repoRoot 'docker/session-runner-grok/Dockerfile'
+    $df = Get-Content -LiteralPath $dockerfile -Raw
+    if ($df -notmatch '1\.0\.34' -or $df -notmatch 'grok') {
+        $blockers.Add("docker/session-runner-grok/Dockerfile does not install Grok 1.0.34; the image cannot complete a provider turn until grok is pinned into the image.")
+    }
+    if ($df -match '(?im)^\s*ENV\s+PhoneHome__ServerOrigin\b') {
+        $blockers.Add("docker/session-runner-grok/Dockerfile must not ENV PhoneHome__ServerOrigin.")
+    }
+    return $blockers
+}
+
+function Read-QemuBlockers {
+    $blockers = [System.Collections.Generic.List[string]]::new()
     if (Test-Path -LiteralPath $assetLock) {
         $lockText = Get-Content -LiteralPath $assetLock -Raw
         if ($lockText -match 'pending-operator-pin') {
-            $blockers.Add("tests/fixtures/card0490-linux/assets.lock.json still has pending-operator-pin; replace qemu/qemu-img/bootDisk sha256 pins.")
+            $blockers.Add("tests/fixtures/card0490-linux/assets.lock.json still has pending-operator-pin; replace qemu/qemu-img/bootDisk sha256 pins before the QEMU ordinary lane / PC-28-31.")
         }
     }
     else {
         $blockers.Add("Asset lock missing: tests/fixtures/card0490-linux/assets.lock.json")
-    }
-    $dockerfile = Join-Path $repoRoot 'docker/session-runner-grok/Dockerfile'
-    $df = Get-Content -LiteralPath $dockerfile -Raw
-    if ($df -notmatch 'grok') {
-        $blockers.Add("docker/session-runner-grok/Dockerfile does not install Grok 1.0.34; the image cannot complete a provider turn until grok is pinned into the image.")
     }
     return $blockers
 }
@@ -237,6 +251,10 @@ if ([string]::Equals(
         [StringComparison]::OrdinalIgnoreCase)) {
     $generated.oauthMount = Join-Path (Join-Path $repoRoot '.antiphon') ("card0490-live-" + $generated.runId + '\grok-home')
 }
+if ([string]::IsNullOrWhiteSpace([string]$generated.grokSessionsMount)) {
+    $generated.grokSessionsMount = Join-Path (Split-Path -Parent ([string]$generated.oauthMount)) 'grok-sessions'
+}
+New-Item -ItemType Directory -Force -Path ([string]$generated.oauthMount), ([string]$generated.grokSessionsMount) | Out-Null
 
 Assert-NotProductionPort $generated.serverPort 'serverPort'
 Assert-NotProductionPort $generated.postgresPort 'postgresPort'
@@ -252,16 +270,24 @@ if ($configDir) { New-Item -ItemType Directory -Force -Path $configDir | Out-Nul
 Write-Host "Wrote isolated live config: $configPath"
 Write-Host "placement=$($generated.placement) phoneHomeServerOrigin=$($generated.phoneHomeServerOrigin) (PhoneHome__ServerOrigin / PHONE_HOME_SERVER_ORIGIN)"
 
-$blockers = Read-Blockers $generated
+$blockers = Read-ContainerBlockers $generated
+$qemuBlockers = Read-QemuBlockers
 $blockerPath = Join-Path $EvidenceRoot 'blockers.txt'
-$blockers | Set-Content -LiteralPath $blockerPath -Encoding utf8
+$allBlockers = [System.Collections.Generic.List[string]]::new()
+foreach ($b in $blockers) { $allBlockers.Add($b) }
+foreach ($b in $qemuBlockers) { $allBlockers.Add("qemu: $b") }
+$allBlockers | Set-Content -LiteralPath $blockerPath -Encoding utf8
 
 if ($WriteConfigOnly) {
     Write-Host "WriteConfigOnly: isolated ports allocated; container not started."
     if ($blockers.Count -gt 0) {
-        Write-Host "Remaining blockers:"
+        Write-Host "Remaining V-7 container blockers:"
         $blockers | ForEach-Object { Write-Host " - $_" }
         exit 2
+    }
+    if ($qemuBlockers.Count -gt 0) {
+        Write-Host "QEMU ordinary-lane blockers (do not block the isolated Grok container):"
+        $qemuBlockers | ForEach-Object { Write-Host " - $_" }
     }
     exit 0
 }
@@ -333,6 +359,7 @@ try {
     $env:PHONE_HOME_WORKSPACE = [string]$generated.hostWorkspaceRoot
     $env:PHONE_HOME_STATE = [string]$generated.stateRoot
     $env:PHONE_HOME_GROK_HOME = [string]$generated.oauthMount
+    $env:PHONE_HOME_GROK_SESSIONS = [string]$generated.grokSessionsMount
     $env:PHONE_HOME_SECRET_FILE = [string]$generated.secretFile
 
     Write-Host "docker compose config (origin injected, no published runner port)"
@@ -356,6 +383,9 @@ try {
         Write-Host "CARD-0490 container started against isolated origin. Queue the canary through the isolated API; do not use 17202."
     }
 
+    if ($qemuBlockers.Count -gt 0) {
+        Write-Host "QEMU ordinary-lane blockers written to $blockerPath (container V-7 is independent)."
+    }
     if ($blockers.Count -gt 0) {
         Write-Host "V-7 remaining blockers written to $blockerPath"
         exit 2

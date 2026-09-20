@@ -11,6 +11,7 @@
   "standingAgentId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
   "hostWorkspaceRoot": null,
   "oauthMount": null,
+  "grokSessionsMount": null,
   "stateRoot": null,
   "secretFile": null,
   "image": {
