@@ -1381,6 +1381,12 @@ public class DataRetentionServiceTests
         {
             // CARD-0508: intents and notifications hold Restrict FKs to the events and tasks
             // below, so they have to go first or the whole cleanup fails.
+            var retirementIds = await db.TaskWorktreeRetirements.Where(r => taskIds.Contains(r.TaskId)).Select(r => r.Id).ToListAsync();
+            if (retirementIds.Count > 0)
+            {
+                await db.TaskWorktreeRetirementAttempts.Where(a => retirementIds.Contains(a.RetirementId)).ExecuteDeleteAsync();
+                await db.TaskWorktreeRetirements.Where(r => retirementIds.Contains(r.Id)).ExecuteDeleteAsync();
+            }
             await db.AgentTaskDispatchWarningIntents.Where(i => taskIds.Contains(i.TaskId)).ExecuteDeleteAsync();
             await db.AgentTaskLandNotifications.Where(n => taskIds.Contains(n.TaskId)).ExecuteDeleteAsync();
             await db.AgentTaskEvents.Where(e => taskIds.Contains(e.AgentTaskId)).ExecuteDeleteAsync();

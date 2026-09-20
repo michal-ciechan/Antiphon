@@ -7,7 +7,6 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -54,6 +53,7 @@ public sealed class AgentControlService
     private readonly OrchestratorWorkspaceWarningService? _workspaceWarning;
     private readonly HerdrSupervisionStateService _herdrSupervision;
     private readonly global::Antiphon.SessionRunner.Contracts.GrokRulesSettings _grokRulesSettings;
+    private readonly WorkspaceUseAdmission? _workspaceUse;
 
     public AgentControlService(
         AppDbContext db,
@@ -80,8 +80,10 @@ public sealed class AgentControlService
         OrchestratorWorkspaceWarningService? workspaceWarning = null,
         HerdrSupervisionStateService? herdrSupervision = null,
         IOptions<SupervisionSettings>? supervision = null,
-        IOptions<global::Antiphon.SessionRunner.Contracts.GrokRulesSettings>? grokRulesSettings = null)
+        IOptions<global::Antiphon.SessionRunner.Contracts.GrokRulesSettings>? grokRulesSettings = null,
+        WorkspaceUseAdmission? workspaceUse = null)
     {
+        _workspaceUse = workspaceUse;
         _db = db;
         _agentService = agentService;
         _cardService = cardService;
@@ -839,10 +841,9 @@ public sealed class AgentControlService
         var cwd = occupant.Cwd is { Length: > 0 } processCwd
             ? Path.GetFullPath(processCwd)
             : Path.GetFullPath(agent.WorkingDirectory);
-        var herdrAdmission = _db.GetService<WorkspaceUseAdmission>();
-        if (herdrAdmission is not null)
+        if (_workspaceUse is not null)
         {
-            await herdrAdmission.RequireConsumerAsync(new WorkspaceReservationCommand(
+            await _workspaceUse.RequireConsumerAsync(new WorkspaceReservationCommand(
                 new WorkspaceReservationKey(cwd, "", cwd),
                 WorkspaceReservationKind.Launch, null), ct);
         }
