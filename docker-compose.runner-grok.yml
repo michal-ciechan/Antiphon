@@ -1,4 +1,6 @@
 # CARD-0490 companion compose. Does not replace docker-compose.dev.yml.
+# PhoneHome__ServerOrigin is injected at launch (PHONE_HOME_SERVER_ORIGIN). Never hardcode
+# the live Aspire ports. scripts/verify-phone-home-grok.ps1 supplies an isolated origin.
 services:
   session-runner-grok:
     build:
@@ -8,11 +10,12 @@ services:
     environment:
       PhoneHome__Enabled: "true"
       PhoneHome__RunnerId: grok-linux
-      PhoneHome__ServerOrigin: http://host.docker.internal:17202
+      PhoneHome__ServerOrigin: ${PHONE_HOME_SERVER_ORIGIN:?PHONE_HOME_SERVER_ORIGIN must be the isolated Antiphon URL}
       PhoneHome__SecretPath: /run/secrets/phone-home
       PhoneHome__StoreIdPath: /state/runner-store-id
       PhoneHome__AllowedCwd: /work
       PhoneHome__GrokHome: /state/grok
+      GROK_HOME: /state/grok
     volumes:
       - type: bind
         source: ${PHONE_HOME_WORKSPACE}
@@ -21,6 +24,9 @@ services:
       - type: bind
         source: ${PHONE_HOME_STATE}
         target: /state
+      - type: bind
+        source: ${PHONE_HOME_GROK_HOME}
+        target: /state/grok
       - type: bind
         source: ${PHONE_HOME_SECRET_FILE}
         target: /run/secrets/phone-home

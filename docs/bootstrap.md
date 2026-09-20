@@ -5,7 +5,9 @@ first start, AppHost or runner restart, verification, locks, exits and Job Objec
 
 The CARD-0490 Linux Grok phone-home runner is an opt-in companion compose file
 (`docker-compose.runner-grok.yml`), not a replacement for `docker-compose.dev.yml` and not an
-AppHost service. It publishes no runner port.
+AppHost service. It publishes no runner port. `PHONE_HOME_SERVER_ORIGIN` is required at launch
+and must be an isolated Antiphon URL, never 17202–17205. `scripts/verify-phone-home-grok.ps1`
+writes `.antiphon/card0490-live.json` and injects that origin.
 
 ## Runner restart observation (CARD-0420)
 

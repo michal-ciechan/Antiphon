@@ -1,0 +1,19 @@
+{
+  "comment": "CARD-0490 V-7 isolated live-turn config. Copy to .antiphon/card0490-live.json. Contains paths and ports only — never secrets, tokens or auth.json contents. scripts/verify-phone-home-grok.ps1 allocates ports when omitted and refuses 17202-17205.",
+  "serverPort": null,
+  "postgresPort": null,
+  "serverOrigin": null,
+  "phoneHomeServerOrigin": null,
+  "runnerId": "grok-linux",
+  "standingAgentId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+  "hostWorkspaceRoot": null,
+  "oauthMount": null,
+  "stateRoot": null,
+  "secretFile": null,
+  "image": {
+    "dockerfile": "docker/session-runner-grok/Dockerfile",
+    "digest": null,
+    "grokVersion": "1.0.34"
+  },
+  "assetLock": "tests/fixtures/card0490-linux/assets.lock.json"
+}
