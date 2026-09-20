@@ -12,8 +12,7 @@ public sealed class WorktreeResidueScriptTests
     [Test]
     public async Task C459_BatchRequiresFullIds()
     {
-        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
-        var script = Path.Combine(root, "scripts", "test-worktree-residue.ps1");
+        var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "test-worktree-residue.ps1");
         File.Exists(script).ShouldBeTrue();
         var psi = new ProcessStartInfo
         {
