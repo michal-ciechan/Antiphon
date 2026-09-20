@@ -20,6 +20,7 @@ public sealed class VerifyPhoneHomeGrokScriptTests
         compose.ShouldNotContain("host.docker.internal:17204");
         compose.ShouldNotContain("host.docker.internal:17205");
         compose.ShouldContain("PHONE_HOME_GROK_HOME");
+        compose.ShouldContain("PHONE_HOME_GROK_SESSIONS");
         System.Text.RegularExpressions.Regex.IsMatch(
             compose,
             @"PHONE_HOME_GROK_HOME[\s\S]*?read_only:\s*true",
@@ -32,6 +33,12 @@ public sealed class VerifyPhoneHomeGrokScriptTests
             System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.IgnoreCase)
             .ShouldBeFalse();
         dockerfile.ShouldNotContain("17202");
+        dockerfile.ShouldContain("1.0.34");
+        dockerfile.ShouldContain("x.ai/cli/install.sh");
+        System.Text.RegularExpressions.Regex.IsMatch(
+            dockerfile, @"COPY\s+[^\n]*auth\.json",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            .ShouldBeFalse();
     }
 
     [Test]
@@ -109,6 +116,7 @@ public sealed class VerifyPhoneHomeGrokScriptTests
         using var proc = System.Diagnostics.Process.Start(psi) ?? throw new InvalidOperationException("pwsh failed to start");
         var output = await proc.StandardOutput.ReadToEndAsync() + await proc.StandardError.ReadToEndAsync();
         await proc.WaitForExitAsync();
+        proc.ExitCode.ShouldBe(0, output);
         File.Exists(config).ShouldBeTrue(output);
         var json = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(config));
         var mount = json.RootElement.GetProperty("oauthMount").GetString();
@@ -116,6 +124,7 @@ public sealed class VerifyPhoneHomeGrokScriptTests
         Path.GetFullPath(mount!).ShouldNotBe(Path.GetFullPath(primary));
         File.Exists(Path.Combine(mount!, "auth.json")).ShouldBeTrue(output);
         output.ShouldNotContain("not-a-real-token");
+        json.RootElement.GetProperty("grokSessionsMount").GetString().ShouldNotBeNullOrWhiteSpace();
     }
 
     [Test]

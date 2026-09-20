@@ -29,6 +29,9 @@ services:
         target: /state/grok
         read_only: true
       - type: bind
+        source: ${PHONE_HOME_GROK_SESSIONS}
+        target: /state/grok/sessions
+      - type: bind
         source: ${PHONE_HOME_SECRET_FILE}
         target: /run/secrets/phone-home
         read_only: true
