@@ -1315,3 +1315,296 @@ remote branch without disturbing the other worktree.
 source/evidence binding and revised native costs. Then hand Code this exact recipe
 and the unchanged 46-control matrix. No commissioning-contract exception or Linux
 SourceLanding product work is requested.
+
+## Verification design: D-12 validation (9b33195a)
+
+**Disposition: the local QEMU/TCG approach is admissible in principle, but the
+amendment is not yet ready for Code.** This is a focused review of `a67f0636`, not
+a new review of D-1 through D-11 or the original 46-control matrix. All text above
+this section is preserved. The requested checkout was attempted first after reading
+the brief; Git refused because `feat/card-task-3f77b203` belongs to another worktree.
+This task instead checked out its own `feat/card-task-9b33195a` at `a67f0636` and
+confirmed that exact HEAD before inspection.
+
+Two findings prevent the requested Code handoff:
+
+1. **F-D12-1: the ordinary custody qualification has an unspecified release
+   channel after root exit.** The new test must let its tracked wrapper exit while
+   QEMU remains alive, observe the original job as nonzero/not drained, then release
+   the guest through a test-owned inherited pipe. The specified QEMU serial endpoint
+   is the wrapper's redirected stdio. `ModernConPtyConnection.Spawn` passes
+   `bInheritHandles=false`; `PtyAgentRunner.HandleExit` closes tracked input, and
+   `SealAndObserveCustodyAsync` also seals input before querying the job. Therefore
+   `runner.WriteAsync` cannot be that release channel, and an arbitrary fixture pipe
+   does not reach the tracked wrapper merely by existing before `StartTrackedAsync`.
+   The nearest fixture uses Windows named events opened by its child, not an
+   inherited serial pipe. D-12 needs an explicit ownership/handle-transfer sequence
+   identifying the surviving reader, writer and drain owner, with joined teardown
+   after both normal release and abrupt QEMU stop. This is missing fixture design,
+   not proof that inherited QEMU is impossible. No product custody change or
+   commissioning exception is required or authorized by this finding.
+2. **F-D12-2: the new evidence and execution guards have ordinary negative cases
+   but no positive-control design.** The stage contract says, "Every guard that
+   protects a safety-critical assertion gets a PC-n positive control." A helper
+   which accepts the wrong source, wrong method, partial results or unjoined
+   execution can falsely certify PC-28 through PC-31. Calling it test infrastructure
+   does not remove that obligation. The amendment expressly supplies only ordinary
+   fixture-output checks and preserves the four product mutations. Keep the existing
+   46 rows unchanged, but specify separate amendment controls, exact methods,
+   compiling defects, intended red assertions and restore/green costs for the
+   independently bypassable helper guards. An ordinary corrupt-input test is not
+   itself evidence that disabling its validator turns that test red.
+
+### Inspection
+
+- `ShadowCopyStoreTests.cs` in full, including `CreateFixture` and cleanup;
+  `PtyHostLauncherTests.cs` in full, including cancellation, PID discovery and
+  teardown; `PipeTestClient.cs` in full | real modes, detach, pipe EOF and canceled
+  launch -> inherited PC-28 through PC-31 and V-D12-1/R-D12-1 below. The existing
+  launcher tests skip Linux and cannot qualify these native controls.
+- `PtyCustodyTests.cs` in full, including `C478_G198_NonemptyJob`,
+  `Output_drain_cancellation_never_returns_an_exit_observation`,
+  `Tracked_runner_seals_drains_and_observes_original_job`, `NativeProbe`, `Journal`,
+  `WaitCountAsync` and `RequireModern`; `Antiphon.CustodyTestChild/Program.cs` in
+  full | root exit, live descendants, real original-job queries, output drain,
+  named-event release and joined cleanup -> V-D12-3/R-D12-3 and F-D12-1. Do not
+  carry the existing child's 60-second self-release into a guest boot/build barrier.
+- `PtyAgentRunner.LaunchCoreAsync` launch/exit handling and
+  `SealAndObserveCustodyAsync`/`DrainCustodyOutputAsync`/`WriteCoreAsync`;
+  `ModernConPtyConnection.Spawn` creation, containment and resume bodies |
+  inherited local execution is supported; arbitrary pipe inheritance and input
+  after root exit are not supported by those APIs -> F-D12-1.
+- `ShadowCopyStore` copy/closure and `PtyHostLauncher` launch/cancel bodies;
+  `Directory.Build.props`, `global.json`, `.gitattributes`, both affected test
+  project files and their `ProcessSpawnLimit.cs` bodies | ELF closure, explicit
+  `SourceRevisionId`, SDK 10.0.204, net9 runtime, LF scripts, producer-owned output
+  and sequential native test execution -> V-D12-1/R-D12-1.
+- Nearest available script/result fixture bodies:
+  `tests/Antiphon.SessionRunner.Tests/Fixtures/RunnerRestart/platform.ps1` and
+  `scripts/fixtures/nightly/c487-probe/Probe.cs`, `Probe.csproj`, with the beginning
+  and test-definition records of `all.trx` | injected platform failures and actual
+  expanded TUnit result identity -> V-D12-2/R-D12-2. Neither fixture supplies a
+  QEMU boot disk, serial exporter, wrapper, or a custody release channel.
+- `docs/testing-and-build.md` mutation/restoration and filter/output rules;
+  `docs/orchestration-loop.md` SourceLanding and cleanup contract; native custody
+  portions of the runtime/ConPTY owners | no snapshot execution by a pre-existing
+  daemon; no forged receipt or worker-led snapshot cleanup -> V-D12-3/R-D12-3.
+
+No D-12 script, guest asset lock, guest init/exporter or new qualification test
+exists at this base; neither QEMU executable resolves on this task's PATH. This is
+recorded missing Code setup, not an executed-test failure. The absent fixture
+ownership sequence in F-D12-1 is the design gap to settle before that Code work.
+
+The documented command families are consistent with QEMU's primary documentation:
+TCG is available on Windows and emulates the machine; optional external device
+offloads must remain excluded. This supports, but does not experimentally prove,
+the custody inference. [QEMU execution model](https://www.qemu.org/docs/master/system/introduction.html).
+The proposed stdio chardev and explicit accelerator selection have documented
+forms. [QEMU invocation](https://www.qemu.org/docs/master/system/invocation.html).
+The vvfat object supports `dir`, FAT32, the nine-byte label and `rw=false`;
+`qemu-img create -f qcow2 -F qcow2 -b` supports the new overlay. ASCII transport
+filenames and an unchanged host input directory are appropriate restrictions.
+[QMP block options](https://www.qemu.org/docs/master/interop/qemu-qmp-ref.html#object-BlockdevOptionsVVFAT),
+[qemu-img](https://www.qemu.org/docs/master/tools/qemu-img.html),
+[virtual FAT restrictions](https://www.qemu.org/docs/master/system/images.html#virtual-fat-disk-images).
+These moving documents are not a qualified binary/version/hash or measured boot.
+
+### Delivery inventory
+
+D-12 adds evidence delivery, not a new session-input or business-queue path. Its
+durable identity must connect `(O, L, task, creation, PC, phase, run ID,
+manifest/source digest, exact method)` from manifest to the accepted files under E.
+The serial nonce must be bound to that same run, not merely appear on a frame.
+Guest boot ID and asset hashes corroborate the execution; they do not replace
+source identity or the original Windows job's receipt.
+
+| Producer -> destination | Persistence boundary | Recovery and decisive recipient evidence |
+|---|---|---|
+| Tracked working-file packager -> fresh guest | Immutable input under E; guest extraction to new ext4 state | Refuse changed/foreign inputs before accepting execution; retain manifest/diff/hash evidence. Guest-reported per-file inventory must match the phase's input, including the intended mutant rather than HEAD-only archive bytes. |
+| Guest test/exporter -> wrapper through QEMU stdio | Guest TRX/log files are disposable until complete, bound frames have been validated and written under E | Guest crash before export, mid-frame truncation, wrapper write failure and wrapper crash before persistence all leave an incomplete run. A new phase attempt uses a new run directory; it cannot borrow the old attempt's TRX or infer a verdict from QEMU exit. |
+| Wrapper -> evidence reader/Mutation report | Complete matching files under E, followed by process exit and both stream drains | Read the persisted files back after QEMU shutdown. Require actual selected method, every expected case, outcome/decisive assertion and hashes, with joined execution. A valid frame before a failed evidence write, or persisted files before an unresolved join, is not an accepted completed run. |
+| Original Windows job -> existing cleanup authority | Existing native zero/drained receipt for the sealed launch set | No new receipt format/path is introduced. Unknown or surviving execution remains residue. Guest shutdown, wrapper status and file restoration cannot substitute for the original receipt. |
+
+V-D12-2 must exercise the real guest/exporter/stdio/parser/file-reader path with
+both an immediately reading recipient and a deliberately backpressured recipient,
+then inspect persisted complete files after drain. Fixture-supplied TRX/frame bytes
+cover rejection logic only; they cannot prove actual Linux execution, serial
+delivery, custody or exact source use. Inject a failure at each persistence/handoff
+cut above, including after complete-frame parsing but before E write and after E
+write but before join. None may produce accepted red/green evidence. F-D12-2 records
+that these delivery/recovery validators need their own controls.
+
+The original real queue/socket/catch-up tests and busy/already-eligible recipient
+matrix remain unchanged. A QEMU native pass supplies no UserPrompt evidence; the
+matching complete recipient UserPrompt and real Grok turn remain separate required
+acceptance. This review does not re-audit those previous TestDesign bodies.
+
+### Proves it works now
+
+These are ordinary Code obligations, not results obtained by this TestDesign task.
+
+- V-D12-1: actual Linux execution of each original native method | P, fresh QEMU
+  guest | D-12's `-Ordinary -Phase baseline` path, selecting PC-28, PC-29, PC-30 and
+  PC-31 separately | four non-skipped exact-method results, real ELF/native assets,
+  ext4 modes and the original assertions/deadlines; retain actual expanded counts.
+  The guest restore/run command and four literal filters above are retained.
+- V-D12-2: wrapper acceptance and recipient evidence | P plus the ordinary QEMU
+  fixture | `Card0490NativeExecutionTests.Wrong_method_or_input_digest_is_rejected`,
+  `Missing_or_skipped_or_wrong_method_result_is_rejected`, and
+  `Exact_method_result_survives_guest_shutdown` | rejected invalid inputs/results;
+  complete source-bound persisted evidence on both immediate and backpressured
+  reads; invalid/incomplete rather than success at every handoff failure above.
+- V-D12-3: real custody on the selected dependency | A, sequential Windows ModernConPty
+  fixture | `Card0490NativeCustodyTests.Qemu_remains_accounted_after_wrapper_exit`
+  and `Guest_shutdown_allows_original_job_zero_and_drain` | original job remains
+  nonzero/not drained while QEMU survives root exit, then becomes zero/drained
+  after explicitly owned release and shutdown. Abrupt owned stop must join but
+  reject partial test evidence. F-D12-1 prevents declaring this recipe executable.
+
+Here P is `tests/Antiphon.PtyHost.Tests`; A is
+`tests/Antiphon.Agents.Pty.Tests`. Ordinary host invocations use `dotnet run`,
+`--property:OutputPath=bin-card0490/`, one listed class filter and fresh TRX output;
+P and A run sequentially with their assembly-local process limiter. Required native
+qualification must fail qualification on a skip, even though `RequireModern` in
+the nearest existing fixture normally uses a skip for missing prerequisites.
+
+### Guards the regression
+
+- R-D12-1: source/mode identity and phase isolation | V-D12-1 plus the native phase
+  manifests | baseline and restored-green input inventories match exactly; only
+  the declared production diff differs for red; test/harness bytes remain fixed
+  during PC-28 through PC-31; no host-mounted build, prior phase output or timeout
+  substitution can satisfy their original assertions.
+- R-D12-2: false red/green from bad evidence | V-D12-2 | separately exercise wrong
+  method, source digest, run identity, frame length/hash, missing TRX, zero cases,
+  skipped cases, wrong assertion, final-frame truncation, write failure and pending
+  stream drain. Keep all unrelated fields valid in each rejection case; combine
+  backpressure with truncation/write failure as well as with a valid result.
+- R-D12-3: root exit mistaken for cleanup authority | V-D12-3 | capture the original
+  job identity, observe real nonzero accounting after root exit, reject partial
+  evidence after cancellation, retain unknown residue and join every owned helper.
+  The release cannot depend on reopening the sealed tracked input gate.
+
+### Guard inventory
+
+The original product inventory remains **guards=46, mapped=46, missing=0,
+duplicate PC mappings=0**. In this amendment's native subset, G-28 -> PC-28,
+G-29 -> PC-29, G-30 -> PC-30 and G-31 -> PC-31 remain unchanged. This is not a claim
+that every guard introduced by D-12 is covered by those four mappings.
+
+The amendment also promises the following independently bypassable safety checks
+without assigning additional controls. They are inventoried here as findings,
+not silently excluded or folded into a product PC:
+
+| Missing amendment control | Plan boundary requiring a distinct PC |
+|---|---|
+| M-1 | Exact method/project allow-list before execution. |
+| M-2 | Commissioned identity/source binding accepted before sourced execution; independently varied tuple fields. |
+| M-3 | Failed sourced preflight cannot downgrade to ordinary mode. |
+| M-4 | Source/input/evidence path containment and reparse rejection. |
+| M-5 | Current tracked working bytes, including the mutant, rather than HEAD-only or untracked/output inputs. |
+| M-6 | Input hashes checked before launch. |
+| M-7 | Input hashes checked again after execution. |
+| M-8 | Pinned executable/toolchain/disk identity accepted before launch. |
+| M-9 | Fresh locally inherited launch with the fixed TCG/offline/no-external-backend argument contract. |
+| M-10 | Fresh ext4 extraction/build with no previous application output or phase state. |
+| M-11 | Result run/source identity matches the accepted manifest. |
+| M-12 | Complete frame length before result acceptance. |
+| M-13 | Correct frame digest before result acceptance. |
+| M-14 | Actual result method matches the selected exact method. |
+| M-15 | Nonzero expected cases and no missing/skipped cases. |
+| M-16 | Red comes from the prescribed assertion, not a build/fixture/other failure. |
+| M-17 | Evidence persistence failure cannot return an accepted result. |
+| M-18 | Process exit and both stream drains precede completed-run acceptance. |
+| M-19 | Cancellation stops/joins only owned execution and cannot certify partial results. |
+| M-20 | Output deletion is restricted to inventoried, joined owned artifacts. |
+| M-21 | Restored-green source equality and unchanged test/harness bytes across a product PC cycle. |
+
+This is a minimum of **21 additional unmapped amendment guards**; M-2/M-4/M-8/M-9
+must be split further if their implementation uses independently bypassable checks
+or call sites. No waiver is justified. The amended design therefore fails the
+required missing=0 audit despite retaining the original 46/46 matrix. Assigning
+PC numbers without a defect, exact red method and executable fixture would not
+repair that failure.
+
+### Positive controls
+
+The four native product controls remain exactly the previously specified ones:
+
+- PC-28 breaks G-28 by clearing the copied apphost's execute bits; expect
+  `ShadowCopyStoreTests.Linux_copy_preserves_execute_mode` red at
+  `shadowMode.ShouldBe(sourceMode)`.
+- PC-29 breaks G-29 by replacing `setsid` with a successful no-op; expect
+  `LinuxPtyHostLauncherTests.Detach_creates_a_new_session` red at
+  `hostSessionId.ShouldBe(hostPid)`, with a distinct parent session ID.
+- PC-30 breaks G-30 by omitting child stdio redirection; expect
+  `LinuxPtyHostLauncherTests.Intermediary_pipes_reach_eof_while_host_lives` red at
+  `stdoutAndStderrCompletedWithinFiveSeconds.ShouldBeTrue()` while the captured
+  host still lives.
+- PC-31 breaks G-31 by skipping canceled-launch host cleanup; expect
+  `LinuxPtyHostLauncherTests.Canceled_launch_leaves_no_owned_host` red at
+  `ownedHostsAfterFiveSeconds.ShouldBeEmpty()`, before the launch TTL.
+
+Each uses its literal method filter from D-12 and a fresh VM for baseline, red and
+restored green. Code implements tests and runs ordinary V/R; ordinary Review
+judges them before land; SourceLanding Mutation records break, intended assertion
+red, exact restore and fresh green after land. None ran here. The 21 amendment
+control omissions above are F-D12-2, not covered by repeating these four recipes.
+
+### Out of scope
+
+- Product D-1 through D-11, the other 42 controls, queue behavior and Grok canary
+  redesign: explicitly excluded by this dispatch; their existing requirements stay.
+- Product Linux SourceLanding support, new custody authority or exceptions allowing
+  Docker/WSL/remote snapshot execution: unnecessary to the proposed local QEMU lane.
+- Building assets, launching QEMU, running product tests or actual PCs: Code and
+  post-land Mutation work; the current task validates the design and records gaps.
+- A process-list-only substitute for native job accounting, synthetic-only result
+  delivery or widened five-second assertions: excluded because each loses the
+  decisive evidence that the amendment is meant to supply.
+
+### Cost
+
+The amendment's arithmetic is correct, and all these figures remain **estimated**:
+
+| Priced obligation | Minutes |
+|---|---:|
+| Code existing setup/build 26 + new asset preparation 20 | 46 |
+| Code existing V/R 59 + four QEMU greens 24 + ordinary helper/custody qualification 16 | 99 |
+| Code cleanup/evidence | 3 |
+| **Priced Code floor** | **148** |
+| Mutation existing baseline/setup 8 + new preflight 12 + four native baselines 24 | 44 |
+| Mutation 42 managed red/restore/green cycles | 84 |
+| Mutation four native red/restore/green cycles: 4 x 2 x (2 boot + 4 build + 1 method + 1 export/drain) | 64 |
+| Mutation restoration/evidence | 5 |
+| **Priced Mutation floor** | **197** |
+| **Priced combined subtotal** | **345** |
+
+Thus 148 + 197 = 345, and the replacement adds 144 minutes to the prior 201-minute
+estimate: 60 Code and 84 Mutation. The native red/green row pays for all eight
+fresh boots/builds, rather than merely eight one-minute test invocations. Do not
+replace its slower red/green allowance with the six-minute baseline allowance.
+
+**345 is not approved as the complete verification floor.** It prices the original
+46 product controls and ordinary helper qualification, but zero red/restore/green
+cycles for the minimum 21 new helper guards. Zero cost for mandatory cycles is
+unjustified. F-D12-2 requires an explicit additional numeric allocation once those
+executable controls are designed; this review does not fabricate durations for an
+undefined control battery. Ordinary Review, authoring and asset-download delay
+remain separately reported, as D-12 states.
+
+Savings remain 0 minutes from parallelization and 0 from omitting required native
+methods or the real provider turn. The original method-only comparison still
+avoids 1,075 estimated execution minutes (1,104 broad executions minus 29 exact
+method minutes); it does not pay for boot/build/export or the missing helper
+controls. Actual TCG timings may only raise the floor until supported by a measured
+qualification; a deadline failure must return for plan correction.
+
+**Pre-handoff audit:** relevant bodies and nearest fixtures read; original
+guards=46, mapped=46, missing=0, duplicate PC mappings=0, unchanged. Amendment
+audit: at least 21 additional guards unmapped; the post-root-exit release sequence
+is not specified; full numeric floor is therefore not complete. No executable-PC
+or passing-runtime claim is made. **Next: Plan**, limited to F-D12-1's concrete
+fixture ownership sequence and F-D12-2's helper-guard coverage/cost amendment,
+followed by focused TestDesign validation. This is an unverifiable-seam return,
+not an operator permission question and not a request to redo the original matrix.
