@@ -1997,3 +1997,308 @@ Check that all independently bypassable gates in this concrete design are mapped
 Preserve the original 46-control appendix unchanged. Code then implements and
 qualifies the recipe; neither a custody contract exception nor an operator
 permission decision is requested.
+
+## Verification design: D-12 final validation (4f3f4d2d)
+
+**Disposition: ready for Code.** The correction at `7b4bf610` resolves F-D12-1
+and F-D12-2 at design level. Its acknowledged four-handle transfer has executable
+native seams; all 55 helper controls specify an independently observable defect
+and an unchanged outer assertion. The complete estimated floors are **218 minutes
+Code + 521 minutes Mutation = 739 minutes**. No additional guard or product
+change is required by this focused validation. Runtime qualification remains Code
+work; this is not evidence that QEMU, any new test, or any mutation has passed.
+
+The requested checkout of `feat/card-task-6ccfd611` was refused because another
+worktree owns that branch. This task used its own `feat/card-task-4f3f4d2d` at
+`7b4bf610`, confirmed with `git log -1`, and appends only this validation. The
+decisions, correction and original 46-control appendix above are preserved.
+
+### Inspection
+
+- `tests/Antiphon.Agents.Pty.Tests/PtyCustodyTests.cs` in full, including
+  `C478_G198_NonemptyJob`, root-exit replay, drain cancellation, the original-job
+  `NativeProbe`, `Journal`, both count waiters, `RequireModern` and `DrainAsync`;
+  `tests/Antiphon.CustodyTestChild/Program.cs` and its project in full |
+  root suspension, descendant survival, original-job accounting and joined
+  teardown -> V-F3/R-F3, H-PC-46 through H-PC-50 and H-PC-54/H-PC-55. The nearest
+  child uses named events and a 60-second self-release; neither supplies the new
+  pipe handoff. Its catch-and-ignore drain is not a successful raw-stream EOF
+  oracle for the new fixture.
+- `PtyAgentRunner.StartTrackedAsync`, `StartCoreAsync`, `LaunchCoreAsync`,
+  `HandleExit`, `KillAsync`, `SealAndObserveCustodyAsync`, `DrainCustodyOutputAsync`,
+  `DisposeAsync` and `WriteCoreAsync`; `ModernConPtyConnection.Spawn` and its
+  accounting methods; `IPtyCustodyNative.cs` in full | the journal callback occurs
+  before resume, the native probe receives the actual retained J, arbitrary
+  handle inheritance is off, and root exit/sealing closes terminal input ->
+  V-F3/R-F3. The proposed helper uses these existing seams without modifying them.
+- `tests/Antiphon.PtyHost.Tests/ShadowCopyStoreTests.cs`, `PtyHostLauncherTests.cs`
+  and `PipeTestClient.cs` in full, including their fixtures and cleanup |
+  current synthetic Windows assets, Windows-only launcher tests and real named
+  pipe client -> retained V-D12-1/R-D12-1 and V-F2/V-F3. None proves Linux modes,
+  a QEMU release channel or native guest execution. No production PID census is
+  borrowed from the older launcher fixture for new helper cleanup.
+- Both affected test `.csproj` files and `ProcessSpawnLimit.cs` files in full;
+  `Directory.Build.props`, `global.json` and `.gitattributes` in full | complete
+  staged child output, per-assembly serialization, isolated output paths, explicit
+  source SHA and Linux LF input -> V-F1 through V-F4. The helper project/output
+  staging and shell-file LF entries still need implementation.
+- `tests/Antiphon.SessionRunner.Tests/Fixtures/RunnerRestart/platform.ps1`,
+  `scripts/fixtures/nightly/c487-probe/Probe.cs` and `Probe.csproj` in full, plus
+  actual result/definition entries in `all.trx` | recording I/O seams and distinct
+  expanded case IDs versus `TestMethod` identity -> V-F1/R-F1/R-F2. These nearest
+  fixtures support fault-injection and result-fixture construction, not serial
+  delivery or native custody claims.
+- Testing/build and orchestration owners' filter, SourceLanding, restoration and
+  execution rules; runtime/ConPTY owners' native custody sections; the complete
+  D-12 correction and all 55 matrix rows | independent oracle, exact-method PCs,
+  retained original job and numeric floors -> every V-F/R-F below. This focused
+  review does not claim a new inspection of the original product queue fixtures.
+
+The D-12 helper, qualification classes, scripts, asset lock and guest fixture are
+absent at this revision; neither QEMU executable resolves on this task's PATH.
+Code must supply E1-E4/S1-E/S5-E, provision source-free pinned assets before
+sourced commissioning, and stage the complete helper closure. These are specified
+implementation/setup obligations, not unresolved test seams. Missing assets,
+ModernConPty, native cases or a required receipt fail qualification; a skip is
+not success.
+
+The handle design is consistent with the documented native APIs: pipe and process
+handles can be duplicated into another process; noninheritable duplicates remain
+references to the same objects. The held W process handle must include duplication
+rights. [DuplicateHandle](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-duplicatehandle).
+The rendezvous server can inspect its actual client's PID.
+[GetNamedPipeClientProcessId](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getnamedpipeclientprocessid).
+Normal direct child creation retains job membership unless breakaway is permitted;
+the inspected spawn forbids both breakaway modes.
+[Job objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
+These support the implementation inference; the three real-QEMU custody methods
+must establish behavior on the pinned assets before land.
+
+### Delivery inventory
+
+Retain the earlier D-12 delivery inventory in full. No new application queue or
+session-input route is introduced by this correction. Evidence is bound by
+`(O, L, task, creation, PC, phase, run ID, source/manifest digest, exact method)`;
+ordinary runs explicitly carry ordinary source identity instead. Rendezvous,
+READY/RELEASE/RELEASED and final frames additionally bind the same run/nonce to
+the retained W/Q process objects and original J. A numeric handle or PID alone
+does not establish that chain.
+
+| Producer -> destination | Persistence boundary | Recovery and observable receipt |
+|---|---|---|
+| Packager -> fresh guest | Immutable phase inputs under E, then fresh ext4 extraction | Prelaunch and guest digest checks reject changed inputs. Guest evidence must identify the packaged working bytes. A failed attempt uses a new run identity on retry; it never borrows prior output. H-PC-03/04/06-09/12-18/22-24. |
+| W -> T, setup and four-handle adoption | Handoff is live ownership, not durable completion; persist its identity/milestone trace under the run's evidence directory | Before acknowledged transfer W owns teardown; partial duplication never permits root exit. Lost acknowledgement is incomplete and the original-job backstop contains unresolved children. T's actual adopted streams/process handle, closed W originals and matching READY precede ExitRoot. H-PC-46-49/54/55. |
+| T -> guest, release after W exit | RELEASED and final frames are persisted under E; flushing RELEASE itself is not receipt | T writes through its duplicated Q stdin, with the terminal gate still sealed. Require matching RELEASED, Q exit, both actual raw EOFs and their joined readers; abrupt stop/cancellation remains incomplete. H-PC-39-41/50. |
+| Guest exporter -> Q stdout -> W ordinarily, T in the custody probe -> E reader | Complete validated files, successful write/rename and independent readback/hash | Guest crash, truncated frame/final inventory, receiver write failure, or completed persistence with pending exit/drain cannot accept a run. Recovery starts a new attempt and retains the incomplete record. H-PC-25-38/41/51. |
+| Original J -> existing cleanup authority | Existing sealed native accounting/drain evidence, separate from helper files | Same J stays nonzero/not drained after root exit while Q lives; only joined teardown permits zero/drained. Cleanup also requires exact artifact ownership and a joined owner. H-PC-36-43/49/50 plus the unchanged product custody authority. |
+
+V-F4 exercises the real guest/exporter/stdio/persisted-file path for both an
+immediately reading recipient and a deliberately held/backpressured recipient.
+Each gets valid delivery and interrupted delivery; combine backpressure with
+truncation and storage failure. At every handoff exercise failure before admission,
+after admission but before acknowledgement/persistence, and after persistence but
+before join. Handoff tests additionally cut before Adopted, between Adopted and
+Released, and after Released before ExitRoot. Hold barriers deterministically,
+release them in finally, and retain incomplete rather than manufacturing a drain.
+
+Recording launch/delete sinks prove policy decisions without performing forbidden
+effects. Owned pipe peers prove handshake/lifecycle behavior without a VM. Synthetic
+TRX/frames prove validator sensitivity only. None proves actual Linux execution,
+QEMU membership or persisted end-to-end delivery; V-F2 through V-F4 supply those
+separate observations. Neither the helper's Accepted flag nor a transport ACK is
+the outer test oracle. The frozen product real-queue busy/already-eligible tests,
+crash/enqueue recovery, matching **complete UserPrompt** receipt and real Grok
+turn remain mandatory. Review must reject acceptance that stops before recipient
+evidence.
+
+### Proves it works now
+
+These are Code's required ordinary executions, not TestDesign test results.
+
+- V-F1: helper admission, evidence and teardown | host tests | all 41 E methods,
+  five H methods and C.`Transfer_refuses_child_outside_original_job` from the
+  correction matrix | all 47 host methods green, all data arms visible in fresh
+  TRX, valid controls reach the real shipped helper; rejected operations reach
+  no unsafe effect. P class filters `/*/*/Card0490NativeExecutionTests/*` and
+  `/*/*/Card0490NativeHandoffTests/*`; A exact method filter for that C method.
+- V-F2: independent guest gates | real fresh offline QEMU | P filter
+  `/*/*/Card0490NativeGuestGuardTests/*` | all seven N methods green with their
+  actual guest observations persisted and read back; fixed `check-guard.sh`
+  drives the packaged guard call sites. Also retain V-D12-1's four separate
+  product baseline greens and their unchanged five-second assertions.
+- V-F3: acknowledged transfer and original-job custody | Windows ModernConPty,
+  real QEMU | A exact methods `Qemu_remains_accounted_after_wrapper_exit`,
+  `Guest_shutdown_allows_original_job_zero_and_drain`, and
+  `Abrupt_Qemu_stop_joins_and_rejects_partial_evidence` in
+  `Card0490NativeCustodyTests` | Q survives W, release uses T's duplicate, raw
+  streams reach EOF, same J reaches zero/drained; abrupt stop joins but cannot
+  certify partial evidence. Include H-PC-50's channel-state assertion before
+  attempting release, so its mutation fails there rather than at a later timeout.
+- V-F4: durable recipient evidence | real guest/exporter/stdio/file reader |
+  retained V-D12-2's `Card0490NativeExecutionTests.Exact_method_result_survives_guest_shutdown`
+  plus its two named rejection methods and V-F3's abrupt-stop method | immediate
+  and backpressured receipt, the delivery cuts above, independent persisted
+  identity/hash/case/outcome checks and joined execution. Pure parser fixtures
+  cannot complete this obligation.
+
+Use `dotnet run --project tests/Antiphon.PtyHost.Tests` or
+`tests/Antiphon.Agents.Pty.Tests`, `--property:OutputPath=bin-card0490-helper/`,
+the specified `--treenode-filter`, fresh `--report-trx` results and nonzero actual
+counts. Execute P and A sequentially, with their assembly-local process limiters.
+Retain all original V/R selections; these four rows only explain D-12 coverage.
+
+### Guards the regression
+
+- R-F1: a second validator masks a disabled helper guard | the exact E/H/C methods
+  in V-F1 | one bad boundary at a time, all downstream facts otherwise valid;
+  observe launch/read/write/delete/transfer intents before any invalid native I/O.
+  Filesystem fixtures are task-owned, including junction targets and sibling paths.
+- R-F2: a certifier validates its own defective evidence | E/N methods in V-F1/V-F2 |
+  frozen outer TUnit assertions, expected fixture inputs and `check-guard.sh`;
+  record the loaded helper/script hashes and actual failing assertion. For
+  H-PC-29 keep case IDs/roster correct while changing the TRX TestMethod identity.
+  For H-PC-30 supply empty expected/actual expanded rosters at the certifier seam,
+  so roster equality passes and only the nonzero guard refuses. For H-PC-32 keep
+  at least one executed case alongside the skipped case. For H-PC-33 supply a
+  complete matching case roster with the wrong failure diagnostic; build/fixture
+  errors here are fixture *data*, not failures to execute the outer test.
+- R-F3: transfer ACK or W exit is mistaken for completed ownership | H methods
+  and V-F3 | real retained handles, original J, both raw readers and separate
+  terminal drain. For H-PC-47, the transition seam supplies otherwise-ready
+  milestones while varying the four duplication results; the send sink observes
+  ExitRoot without dereferencing a failed handle. For H-PC-55 hold each milestone
+  independently with duplication/membership valid. No timeout is intended red.
+- R-F4: host validation masks a guest defect or helper evidence certifies a product
+  PC | seven N methods and E.`Probe_evidence_cannot_certify_product_control` |
+  valid host packaging, bad input introduced at the guest guard boundary, actual
+  observed result, and a separate FixtureProbe evidence kind. Seeded-output reuse
+  is observed with a marker/hash, never an incidental compilation failure.
+- R-F5: persisted output hides unfinished execution | E evidence/lifecycle methods
+  and V-F4 | vary child exit, stdout EOF and stderr EOF independently while the
+  other two predicates are true; exercise the shared owner for QEMU and qemu-img.
+  Canceled-run acceptance, unjoined deletion and each stream's completion remain
+  separately asserted. No successful teardown is inferred from disposing a reader.
+- R-F6: the PC changes its oracle or passes against stale helper output | every
+  matrix method | build the outer driver from L first, rebuild/stage only the
+  specified changed helper, run the immutable driver against those explicit bytes,
+  then restore and rebuild for green. Product phase-inventory fixtures used by
+  H-PC-44/45 are separate from the helper PC's own source manifest. Matrix data
+  arms use TUnit arguments/data sources so a first failure cannot hide later arms.
+
+These details instantiate the correction's already-required isolation seams;
+they do not add guards or authorize bypassing unrelated validators. Crossing
+every invalid field with every other invalid field is excluded: that would mask
+which gate stopped the operation. Independently varied tuple/map fields and the
+explicit delivery/backpressure/cancellation combinations above cover the relevant
+boundaries. If implementation creates another independent gate instead of the
+specified shared predicate, update its mapping/cost before its implementation
+handoff; do not claim these rows cover an uninspected extra call site.
+
+### Guard inventory
+
+The correction's **Guard and positive-control matrix** is the normative inventory
+and exact assertion list, incorporated here without renumbering or duplicating
+definitions. Its row n maps H-G-n only to H-PC-n for every n from 01 through 55.
+The read-through audit accounts for all rows:
+
+| Existing rows | Guard boundary | Verification |
+|---|---|---|
+| 01-05 | Host/guest method admission, commissioned tuple, clean initial source, no downgrade | V-F1/V-F2, R-F1/R-F4 |
+| 06-11 | Separate source, staging and evidence containment/reparse gates | V-F1, R-F1 |
+| 12-18 | Working-byte inventory, phase digests and host/guest asset identity | V-F1/V-F2, R-F1/R-F4/R-F6 |
+| 19-24 | QEMU and image-tool specs, inherited launch, ext4/fresh workspace/clean build | V-F1/V-F2/V-F3, R-F4/R-F5 |
+| 25-35 | Result identity, frame completeness/hash, actual method/cases/outcome, durable write/readback | V-F1/V-F4, R-F2/R-F5 |
+| 36-45 | Three completion predicates, owned cancellation, cancellation verdict, two deletion predicates, restored source/oracle equality | V-F1/V-F4, R-F5/R-F6 |
+| 46-50 | Peer binding, four-handle adoption, sender closure, exact job and surviving release writer | V-F1/V-F3, R-F3 |
+| 51-55 | Probe/product separation, two probe dispatch sites, retention until adoption and complete exit milestones | V-F1/V-F2/V-F3, R-F3/R-F4 |
+
+Original product inventory: **46 guards/46 controls**, unchanged. Amendment:
+**55 guards, mapped=55, missing=0, duplicate PC mappings=0**. Combined:
+**101 guards, mapped=101, missing=0, duplicate PC mappings=0**. No safety-critical
+guard in this specified design is excluded. There are 55 distinct helper methods:
+41 E, seven N, five H and two C; C-49 is host-only and C-50 uses real QEMU.
+
+### Positive controls
+
+Execute H-PC-01 through H-PC-55 exactly as defined in the correction matrix:
+break the named helper action with its compiling defect; expect its exact
+`Prefix.Method` red at the listed outer assertion; restore/rebuild and require
+that same method green. R-F1 through R-F6 fix the potentially masked fixture arms.
+All 55 are executable test designs through the specified policy/I/O/guest/pipe
+seams; none is presented as an already implemented or executed control.
+
+Keep 47 host cycles, seven fresh-guest cycles (02/15/18/22/23/24/53), and one
+real-QEMU custody cycle (50). Use only `/*/*/Class/ExactMethod` per phase;
+data arms remain in that method and require their own visible results. The outer
+driver's TRX/assertions and retained inputs judge the mutated certifier. A helper
+Accepted flag, zero tests, setup/build failure, skip, or timeout is not red proof.
+The original 46 product PCs and their defects/assertions remain unchanged.
+
+Code implements all tests and runs V/R; ordinary Review judges both implementation
+and ordinary evidence before land. SourceLanding Mutation records each break,
+intended red, exact restoration and fresh green after land, plus discovery and
+external restoration evidence. Same-file/seam controls run serially. No sourced
+snapshot commit/push, new worktree, standing executor or cleanup-contract exception
+is introduced.
+
+### Out of scope
+
+- Reopening D-1 through D-11, the original 46-control design or product queue/Grok
+  behavior: this is the requested focused D-12 validation. Their acceptance stays.
+- Runtime implementation, asset provisioning, builds, QEMU qualification or actual
+  PCs in this TestDesign task: their absence is explicitly recorded above and
+  their work remains charged to Code/Mutation.
+- A Linux SourceLanding feature, Docker/WSL snapshot execution, changed native
+  custody API, automatic permission exception or wider five-second assertion:
+  none is needed to make the specified transfer testable.
+
+### Cost
+
+All durations remain **unmeasured serial estimates**, not observed runtime or a
+cap allowing cases to be omitted. The following decomposition independently
+checks the complete replacement arithmetic without changing its allocations:
+
+| Stage / obligation | Minutes |
+|---|---:|
+| Code setup/build: original 26 + assets 20 + helper build/staging 4 | 50 |
+| Code ordinary V/R: original 59 + four native baselines 24 + 47 host methods rounded from 23.5 to 24 + seven guest qualifications 42 + three custody methods 12 | 161 |
+| Code evidence/cleanup: original 3 + added 4 | 7 |
+| **Code ordinary floor** | **218** |
+| Mutation setup/baselines: original 8 + native preflight 12 + four native baselines 24 + helper driver/host baseline/setup 30 + guest baselines 42 + custody baseline 4 | 120 |
+| Mutation every red/restore/green cycle: 42 managed product 84 + four native product 64 + 47 host helper rounded from 117.5 to 118 + seven guest helper 112 + custody helper 8 | 386 |
+| Mutation evidence/restoration: original 5 + helper audit 10 | 15 |
+| **Mutation floor** | **521** |
+| **Complete verification floor** | **739** |
+
+Code: `148 - 16 + 4 + 24 + 42 + 12 + 4 = 218`. Mutation:
+`197 + 30 + 118 + 42 + 112 + 4 + 8 + 10 = 521`. The correction therefore adds
+`70 + 324 = 394` to 345. The 16-minute superseded qualification is removed once;
+H-PC-50 ordinary execution is charged once within the three custody methods.
+The cycle count is `42 + 4 + 47 + 7 + 1 = 101`. Cost rows use V-F1/V-F2's exact
+class selections for ordinary work and the matrix's exact methods for every PC;
+the inherited product V/R selections remain in the original Cost section.
+
+The unchanged real delivery/cut qualifications remain required within these
+estimated ordinary allocations; sharing a fixture/build or already-produced
+evidence does not remove an arm. Code must report actual expanded counts, fresh
+boots and measured wall time, and raise an insufficient allocation before
+commissioning Mutation. Authoring, ordinary Review, downloads and unexpected
+provisioning delays remain separate. Savings credited here are **0 minutes** for
+parallelization/batching and **0** for omitted native/provider/recipient evidence.
+The earlier explicitly defined product method-only comparison remains 1,075
+estimated execution minutes avoided; no additional helper or full-suite saving is
+invented without a measured comparator.
+
+Pre-handoff audit: relevant bodies and nearest fixtures read; all 101 guards
+mapped one-to-one, missing=0, duplicate PC mappings=0; all 55 new controls have
+executable seams and exact intended-red assertions; numeric floor checked.
+The original appendix is 55,744 Git-blob bytes and equals both `7b4bf610` and
+`bbd4586d`, SHA-256
+`f62afc327d2f4ee010cb5d32c51e47470655343800c2d41cd2818a3f905686bb`.
+Structural inventory/arithmetic and `git diff --check` are the checks for this
+documentation-only task. Runtime tests/builds/PCs executed: **0**.
+
+**Next: Code.** Implement the unchanged product plan plus D-12/E1-E4/S1-E/S5-E,
+all 55 helper methods and the retained recipient/custody qualifications. Run all
+ordinary V/R, measure the 218-minute floor, and return to ordinary Review with
+101 PCs pending for post-land Mutation at the 521-minute estimated floor.
