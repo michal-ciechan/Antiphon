@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -23,6 +24,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     public AgentTaskLandQueue Queue { get; private set; } = new();
     public ControlledVerifier Verifier { get; } = new();
     public SaveFault Fault { get; } = new();
+    public RetirementCutInterceptor RetirementCut { get; } = new();
     public IEventBus Events { get; set; } = new MockEventBus();
     public Action<IServiceCollection>? ConfigureServices { get; set; }
     public SessionMessageQueueService? Messages { get; set; }
@@ -126,8 +128,96 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         throw new InvalidOperationException("Crash boundary was not reached: " + cut);
     }
 
+    public static async Task RunRetirementCrashWorkerAsync(string root, string taskId, string cut, string ready)
+    {
+        var connection = Environment.GetEnvironmentVariable("ANTIPHON_C459_TEST_CONNECTION")
+            ?? throw new InvalidOperationException("Missing private fixture database");
+        var h = new LandingSafetyHarness(root, Guid.Parse(taskId));
+        h.Schema = new IsolatedTestSchema("worker-observer-only", connection);
+        h.BuildServices();
+        async Task PauseAsync()
+        {
+            await File.WriteAllTextAsync(ready, System.Text.Json.JsonSerializer.Serialize(new { cut, worker = Environment.ProcessId }));
+            await Task.Delay(Timeout.Infinite);
+        }
+
+        h.RetirementCut.Cut = cut;
+        h.RetirementCut.Pause = PauseAsync;
+        h.Fixture.Git.AfterCommand = async (_, args, result) =>
+        {
+            if (!result.Succeeded) return;
+            if (cut == "git-exit" && args.Contains("worktree") && args.Contains("remove"))
+                await PauseAsync();
+            if (cut == "branch-cas" && args.Count > 0 && args[0] == "update-ref" && args.Contains("-d")
+                && args.Any(a => a.Contains("feat/card-task", StringComparison.Ordinal)))
+                await PauseAsync();
+        };
+
+        if (cut == "resume")
+        {
+            await using var scope = h.Services.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var service = scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>();
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            var release = await db.TaskWorktreeRetirements.SingleOrDefaultAsync(r => r.TaskId == task.Id && r.Active);
+            if (release is null)
+            {
+                var sha = (await h.Fixture.RequiredAsync(task.WorktreePath ?? h.Fixture.Source, "rev-parse", "HEAD")).Trim();
+                await service.ReleaseAsync(task.Id, new ReleaseWorktreeRetirementRequest(
+                    task.ConcurrencyToken, sha,
+                    Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(task.Result ?? ""))),
+                    true, "reviewed no further use"), new AgentTaskService.Caller(null, null, ""), CancellationToken.None);
+                release = await db.TaskWorktreeRetirements.SingleAsync(r => r.TaskId == task.Id && r.Active);
+            }
+
+            await service.TryRetireAsync(release, null, CancellationToken.None);
+            await File.WriteAllTextAsync(ready + ".resume-trace.json", System.Text.Json.JsonSerializer.Serialize(h.Fixture.Git.Trace));
+            return;
+        }
+
+        await using (var scope = h.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var service = scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>();
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            var sha = (await h.Fixture.RequiredAsync(task.WorktreePath ?? h.Fixture.Source, "rev-parse", "HEAD")).Trim();
+            var body = new ReleaseWorktreeRetirementRequest(
+                task.ConcurrencyToken, sha,
+                Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(task.Result ?? ""))),
+                true, "reviewed no further use");
+            if (cut.StartsWith("release-", StringComparison.Ordinal))
+            {
+                await service.ReleaseAsync(task.Id, body, new AgentTaskService.Caller(null, null, ""), CancellationToken.None);
+            }
+            else if (cut == "run-projection")
+            {
+                var release = await service.ReleaseAsync(task.Id, body, new AgentTaskService.Caller(null, null, ""), CancellationToken.None);
+                var row = await db.TaskWorktreeRetirements.SingleAsync(r => r.Id == release.Id);
+                await service.TryRetireAsync(row, null, CancellationToken.None);
+                var sweep = new WorktreeResidueSweepService(
+                    db,
+                    scope.ServiceProvider.GetRequiredService<IWorktreeManager>(),
+                    Options.Create(new WorktreeResidueSettings { Execute = true, MinSettledMinutes = 0, MaxActionsPerRun = 25 }),
+                    Options.Create(new GitSettings { WorktreeBasePath = Path.Combine(h.Fixture.Root, "trees") }),
+                    TimeProvider.System,
+                    NullLogger<WorktreeResidueSweepService>.Instance,
+                    service);
+                await sweep.RunAsync(CancellationToken.None);
+            }
+            else
+            {
+                var release = await service.ReleaseAsync(task.Id, body, new AgentTaskService.Caller(null, null, ""), CancellationToken.None);
+                var row = await db.TaskWorktreeRetirements.SingleAsync(r => r.Id == release.Id);
+                await service.TryRetireAsync(row, null, CancellationToken.None);
+            }
+        }
+
+        throw new InvalidOperationException("Crash boundary was not reached: " + cut);
+    }
+
     public AppDbContext CreateContext() => new(new DbContextOptionsBuilder<AppDbContext>(
-        TestDbFixture.CreateDbContextOptions(Schema.ConnectionString)).AddInterceptors(Fault, new TransactionFault(Fault)).Options);
+        TestDbFixture.CreateDbContextOptions(Schema.ConnectionString)).AddInterceptors(
+            Fault, new TransactionFault(Fault), RetirementCut, new RetirementTransactionPause(RetirementCut)).Options);
 
     public Task<LandRunResult> RunAsync() => RunAsync(CancellationToken.None);
 
@@ -303,6 +393,68 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
             Invocations.Add((worktree, filter));
             if (Barrier is not null) await Barrier();
             return new(Passed, "fixture verification");
+        }
+    }
+
+    internal sealed class RetirementCutInterceptor : SaveChangesInterceptor
+    {
+        public string? Cut { get; set; }
+        public Func<Task>? Pause { get; set; }
+        internal bool PauseOnCommit { get; set; }
+
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData data, InterceptionResult<int> result, CancellationToken ct = default)
+        {
+            if (Pause is null || string.IsNullOrWhiteSpace(Cut) || data.Context is null)
+                return result;
+            var ctx = data.Context;
+            if (Cut == "release-before" && ctx.ChangeTracker.Entries<TaskWorktreeRetirement>().Any(e => e.State == EntityState.Added))
+                await Pause();
+            if (Cut == "claim-before" && ctx.ChangeTracker.Entries<WorkspaceUseReservation>().Any(e =>
+                    e.State == EntityState.Added && e.Entity.Kind == WorkspaceReservationKind.Retirement))
+                await Pause();
+            if (Cut == "intent-before" && ctx.ChangeTracker.Entries<TaskWorktreeRetirementAttempt>().Any(e =>
+                    e.Entity.CommandIntentId is not null
+                    && (e.State == EntityState.Added || e.Property(a => a.CommandIntentId).IsModified)))
+                await Pause();
+            if (Cut == "terminal-before" && ctx.ChangeTracker.Entries<TaskWorktreeRetirement>().Any(e =>
+                    e.State != EntityState.Unchanged && e.Entity.State == WorktreeRetirementState.Complete))
+                await Pause();
+            PauseOnCommit = Cut switch
+            {
+                "release-after" => ctx.ChangeTracker.Entries<TaskWorktreeRetirement>().Any(e => e.State == EntityState.Added),
+                "claim-after" => ctx.ChangeTracker.Entries<WorkspaceUseReservation>().Any(e =>
+                    e.State == EntityState.Added && e.Entity.Kind == WorkspaceReservationKind.Retirement),
+                "intent-after" => ctx.ChangeTracker.Entries<TaskWorktreeRetirementAttempt>().Any(e =>
+                    e.Entity.CommandIntentId is not null
+                    && (e.State == EntityState.Added || e.Property(a => a.CommandIntentId).IsModified)),
+                "directory-result" => ctx.ChangeTracker.Entries<TaskWorktreeRetirementAttempt>().Any(e =>
+                    e.Entity.DirectoryRemoved == true && (e.State == EntityState.Added || e.Property(a => a.DirectoryRemoved).IsModified)),
+                "registration-result" => ctx.ChangeTracker.Entries<TaskWorktreeRetirementAttempt>().Any(e =>
+                    e.Entity.RegistrationRemoved == true && (e.State == EntityState.Added || e.Property(a => a.RegistrationRemoved).IsModified)),
+                "terminal-after" => ctx.ChangeTracker.Entries<TaskWorktreeRetirement>().Any(e =>
+                    e.State != EntityState.Unchanged && e.Entity.State == WorktreeRetirementState.Complete),
+                "run-projection" => ctx.ChangeTracker.Entries<WorktreeResidueRunCandidate>().Any(e => e.State == EntityState.Added),
+                _ => false,
+            };
+            return result;
+        }
+
+        public override async ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData data, int result, CancellationToken ct = default)
+        {
+            if (PauseOnCommit && Pause is not null && data.Context?.Database.CurrentTransaction is null)
+                await Pause();
+            return result;
+        }
+    }
+
+    private sealed class RetirementTransactionPause(RetirementCutInterceptor cuts) : DbTransactionInterceptor
+    {
+        public override async Task TransactionCommittedAsync(
+            System.Data.Common.DbTransaction transaction, TransactionEndEventData eventData, CancellationToken cancellationToken = default)
+        {
+            if (cuts.PauseOnCommit && cuts.Pause is not null)
+                await cuts.Pause();
         }
     }
 

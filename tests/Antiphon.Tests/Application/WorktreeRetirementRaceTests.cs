@@ -7,6 +7,9 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.WorkspaceHooks;
+using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -108,11 +111,28 @@ public sealed class WorktreeRetirementRaceTests
     public async Task C459_AnswerReservesWorkspace()
     {
         await using var world = await RaceWorld.CreateAsync();
-        (await world.Journal.TryClaimRetirementAsync(world.CreateKeyCommand(), CancellationToken.None)).Accepted.ShouldBeTrue();
+        var created = await world.Tasks.CreateAsync(
+            new CreateAgentTaskRequest(Goal: "answer me", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree,
+                WorkingDirectory: world.Path),
+            world.ManualCaller(), CancellationToken.None);
+        await using (var db = world.CreateDb())
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == created.Id);
+            row.Status = AgentTaskStatus.Blocked;
+            row.WorktreePath = world.Path;
+            row.RepoPath = world.Path;
+            row.WorktreeBranch = "feat/card-task-answer";
+            await db.SaveChangesAsync();
+            var launch = await db.WorkspaceUseReservations.SingleOrDefaultAsync(r => r.TaskId == created.Id && r.Active);
+            if (launch is not null)
+                await world.Journal.ReleaseConsumerAsync(launch.Id, launch.Generation, CancellationToken.None);
+        }
+
+        (await world.Journal.TryClaimRetirementAsync(world.ProductionRetirementCommand(), CancellationToken.None)).Accepted.ShouldBeTrue();
         var answerAdmissions = 0;
         try
         {
-            await world.Admission.RequireConsumerAsync(world.CreateKeyCommand() with { Kind = WorkspaceReservationKind.Launch }, CancellationToken.None);
+            await world.Replies.AnswerAsync(created.Id, "continue", CancellationToken.None);
             answerAdmissions++;
         }
         catch (ConflictException ex)
@@ -127,48 +147,52 @@ public sealed class WorktreeRetirementRaceTests
     public async Task C459_WriterDispatchReservesWorkspace()
     {
         await using var world = await RaceWorld.CreateAsync();
-        (await world.Journal.TryClaimRetirementAsync(world.CreateKeyCommand(), CancellationToken.None)).Accepted.ShouldBeTrue();
-        var dispatchCommitted = false;
-        try
-        {
-            await world.Admission.RequireConsumerAsync(world.CreateKeyCommand() with { Kind = WorkspaceReservationKind.Launch, TaskId = Guid.NewGuid() }, CancellationToken.None);
-            dispatchCommitted = true;
-        }
-        catch (ConflictException)
-        {
-            dispatchCommitted = false;
-        }
-
+        var queued = await world.SeedQueuedTaskAsync(WorkspaceMode.Worktree);
+        (await world.Journal.TryClaimRetirementAsync(world.ProductionRetirementCommand(queued.WorktreeBranch), CancellationToken.None))
+            .Accepted.ShouldBeTrue();
+        await world.Dispatcher.TickAsync(CancellationToken.None);
+        await using var db = world.CreateDb();
+        var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == queued.Id);
+        var dispatchCommitted = stored.Status == AgentTaskStatus.Dispatched;
         dispatchCommitted.ShouldBeFalse();
+        world.Adapter.Started.ShouldBeFalse();
     }
 
     [Test]
     public async Task C459_ReadOnlyDispatchReservesWorkspace()
     {
         await using var world = await RaceWorld.CreateAsync();
-        (await world.Journal.TryClaimRetirementAsync(world.CreateKeyCommand(), CancellationToken.None)).Accepted.ShouldBeTrue();
-        var adapterStarts = 0;
-        try
-        {
-            await world.Admission.RequireConsumerAsync(world.CreateKeyCommand() with { Kind = WorkspaceReservationKind.Launch }, CancellationToken.None);
-            adapterStarts++;
-        }
-        catch (ConflictException)
-        {
-        }
-
+        var queued = await world.SeedQueuedTaskAsync(WorkspaceMode.ReadOnly);
+        (await world.Journal.TryClaimRetirementAsync(world.ProductionRetirementCommand(queued.WorktreeBranch), CancellationToken.None))
+            .Accepted.ShouldBeTrue();
+        await world.Dispatcher.TickAsync(CancellationToken.None);
+        var adapterStarts = world.Adapter.Started ? 1 : 0;
         adapterStarts.ShouldBe(0);
+        await using var db = world.CreateDb();
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == queued.Id)).Status.ShouldNotBe(AgentTaskStatus.Dispatched);
     }
 
     [Test]
     public async Task C459_LandReservesWorkspace()
     {
         await using var world = await RaceWorld.CreateAsync();
-        (await world.Journal.TryClaimRetirementAsync(world.CreateKeyCommand(), CancellationToken.None)).Accepted.ShouldBeTrue();
+        await using (var db = world.CreateDb())
+        {
+            var owner = await db.AgentTasks.SingleAsync(t => t.Id == world.OwnerTask.Id);
+            owner.Workspace = WorkspaceMode.Worktree;
+            owner.WorktreePath = world.Path;
+            owner.RepoPath = world.Path;
+            owner.WorktreeBranch = "feat/card-task-land";
+            owner.Status = AgentTaskStatus.Succeeded;
+            await db.SaveChangesAsync();
+        }
+
+        (await world.Journal.TryClaimRetirementAsync(world.ProductionRetirementCommand("feat/card-task-land"), CancellationToken.None))
+            .Accepted.ShouldBeTrue();
         var newPendingRequests = 0;
         try
         {
-            await world.Admission.RequireConsumerAsync(world.CreateKeyCommand() with { Kind = WorkspaceReservationKind.Launch, TaskId = world.OwnerTask.Id }, CancellationToken.None);
+            await world.Lands.RequestAsync(world.OwnerTask.Id, new LandAgentTaskRequest(null, new string('a', 40), null), CancellationToken.None);
             newPendingRequests++;
         }
         catch (ConflictException)
@@ -176,6 +200,8 @@ public sealed class WorktreeRetirementRaceTests
         }
 
         newPendingRequests.ShouldBe(0);
+        await using var verify = world.CreateDb();
+        (await verify.AgentTaskLandRequests.CountAsync(r => r.TaskId == world.OwnerTask.Id)).ShouldBe(0);
     }
 
     [Test]
@@ -214,26 +240,70 @@ public sealed class WorktreeRetirementRaceTests
     }
 
     [Test]
-    public async Task C459_DirectStartFenced() => await AssertClaimFirstAdapterAsync();
+    public async Task C459_DirectStartFenced()
+    {
+        await using var world = await RaceWorld.CreateAsync();
+        var cardId = await world.SeedCardWithWorktreeAsync();
+        (await world.Journal.TryClaimRetirementAsync(world.ProductionRetirementCommand(), CancellationToken.None)).Accepted.ShouldBeTrue();
+        var adapterStarts = 0;
+        try
+        {
+            await world.Sessions.StartAsync(
+                new StartAgentSessionRequest(cardId, "fake", AgentKind.ClaudeCode, "start fenced"),
+                world.LaunchSpec(), CancellationToken.None);
+            adapterStarts++;
+        }
+        catch (ConflictException ex)
+        {
+            ex.Code.ShouldBe("workspace_reserved");
+        }
+
+        adapterStarts.ShouldBe(0);
+        world.Adapter.Started.ShouldBeFalse();
+    }
+
     [Test]
-    public async Task C459_InteractiveStartFenced() => await AssertClaimFirstAdapterAsync();
+    public async Task C459_InteractiveStartFenced()
+    {
+        await using var world = await RaceWorld.CreateAsync();
+        var session = await world.SeedInteractiveSessionAsync();
+        (await world.Journal.TryClaimRetirementAsync(world.SessionProductionCommand(), CancellationToken.None)).Accepted.ShouldBeTrue();
+        world.LaunchQueue.EnqueueInteractiveSession(session.Id, world.AgentId, session.StartedAt, world.LaunchSpec(session.Id), null);
+        await world.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+        var adapterStarts = world.Adapter.Started ? 1 : 0;
+        adapterStarts.ShouldBe(0);
+    }
+
     [Test]
-    public async Task C459_ResumeFenced() => await AssertClaimFirstAdapterAsync();
+    public async Task C459_ResumeFenced()
+    {
+        await using var world = await RaceWorld.CreateAsync();
+        var session = await world.SeedStoppedCardSessionAsync();
+        (await world.Journal.TryClaimRetirementAsync(world.SessionProductionCommand(), CancellationToken.None)).Accepted.ShouldBeTrue();
+        var adapterStarts = 0;
+        try
+        {
+            await world.Sessions.ResumeAsync(session.Id, world.LaunchSpec(session.Id), AgentSessionResumeMode.Continue, CancellationToken.None);
+            adapterStarts++;
+        }
+        catch (ConflictException ex)
+        {
+            ex.Code.ShouldBe("workspace_reserved");
+        }
+
+        adapterStarts.ShouldBe(0);
+        world.Adapter.Started.ShouldBeFalse();
+    }
+
     [Test]
     public async Task C459_InterruptedAttachFenced()
     {
         await using var world = await RaceWorld.CreateAsync();
-        (await world.Journal.TryClaimRetirementAsync(world.SessionKeyCommand(), CancellationToken.None)).Accepted.ShouldBeTrue();
-        var adapterAttaches = 0;
-        try
-        {
-            await world.Admission.RequireConsumerAsync(world.SessionKeyCommand() with { Kind = WorkspaceReservationKind.Launch, SessionId = Guid.NewGuid() }, CancellationToken.None);
-            adapterAttaches++;
-        }
-        catch (ConflictException)
-        {
-        }
-
+        var session = await world.SeedInterruptedLaunchAsync();
+        (await world.Journal.TryClaimRetirementAsync(world.SessionProductionCommand(), CancellationToken.None)).Accepted.ShouldBeTrue();
+        world.LaunchQueue.ResumeInterrupted(session.Id, world.AgentId);
+        await world.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+        var adapterAttaches = world.Adapter.Attached ? 1 : 0;
         adapterAttaches.ShouldBe(0);
     }
 
@@ -497,26 +567,10 @@ public sealed class WorktreeRetirementRaceTests
         acceptedAttachments.ShouldBe(0);
     }
 
-    private static async Task AssertClaimFirstAdapterAsync()
-    {
-        await using var world = await RaceWorld.CreateAsync();
-        (await world.Journal.TryClaimRetirementAsync(world.SessionKeyCommand(), CancellationToken.None)).Accepted.ShouldBeTrue();
-        var adapterStarts = 0;
-        try
-        {
-            await world.Admission.RequireConsumerAsync(world.SessionKeyCommand() with { Kind = WorkspaceReservationKind.Launch, SessionId = Guid.NewGuid() }, CancellationToken.None);
-            adapterStarts++;
-        }
-        catch (ConflictException)
-        {
-        }
-
-        adapterStarts.ShouldBe(0);
-    }
-
     private sealed class RaceWorld : IAsyncDisposable
     {
         public required IsolatedTestSchema Schema { get; init; }
+        public required ServiceProvider Provider { get; init; }
         public required string Path { get; init; }
         public required AgentTask OwnerTask { get; init; }
         public required WorkspaceReservationJournal Journal { get; init; }
@@ -524,20 +578,75 @@ public sealed class WorktreeRetirementRaceTests
         public required AgentTaskService Tasks { get; init; }
         public required TaskWorktreeRetirementService Retirement { get; init; }
         public required RecordingSessionStopper Stopper { get; init; }
+        public required AgentTaskDispatcher Dispatcher { get; init; }
+        public required AgentTaskReplyService Replies { get; init; }
+        public required AgentTaskLandService Lands { get; init; }
+        public required AgentSessionService Sessions { get; init; }
+        public required AgentSessionLaunchQueue LaunchQueue { get; init; }
+        public required FakeAgentProtocolAdapter Adapter { get; init; }
+        public required Guid AgentId { get; init; }
         public Guid RetirementId { get; } = Guid.NewGuid();
-        public WorkspaceReservationKey Key => new(Path, "", Path);
+        public WorkspaceReservationKey Key => WorkspaceReservationKey.For(Path, "", Path);
 
         public static async Task<RaceWorld> CreateAsync()
         {
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             var path = Directory.CreateTempSubdirectory("c459-race-").FullName;
+            var adapter = new FakeAgentProtocolAdapter { ReadyResult = true };
+            var stopper = new RecordingSessionStopper();
             var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSingleton(TimeProvider.System);
             services.AddScoped(_ => new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)));
+            services.AddSingleton<IEventBus, MockEventBus>();
+            services.AddSingleton(Options.Create(new SupervisionSettings()));
+            services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
+            services.AddSingleton(Options.Create(new AgentSessionSettings
+            {
+                KillGraceMs = 100,
+                SessionLogPath = System.IO.Path.Combine(path, "session-logs"),
+            }));
+            services.AddSingleton(Options.Create(new DelegationSettings
+            {
+                AllowedRoots = [path],
+                MaxDepth = 5,
+                MaxTasksPerRoot = 40,
+                MaxConcurrentTasks = 512,
+            }));
+            services.AddOptions<AgentRegistrySettings>().Configure(s =>
+            {
+                s.DefaultDefinition = "fake";
+                s.Definitions["fake"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "fake" };
+            });
+            services.AddSingleton<AgentRegistry>();
+            services.AddSingleton<AgentSessionLaunchQueue>();
+            services.AddSingleton<AgentSessionRuntime>();
+            services.AddSingleton<SessionMessageQueueService>();
+            services.AddSingleton<IDelegateSessionStopper>(stopper);
+            services.AddSingleton<DelegationWorkspaceResolver>();
+            services.AddSingleton<IWorktreeManager>(new FixedWorktreeManager(path));
+            services.AddDelegationWorktreeGraph(new GitSettings { WorktreeBasePath = path, DefaultBranch = "master" });
+            services.AddSingleton<IAgentProtocolAdapterFactory>(new OneAdapterFactory(adapter));
+            services.AddSingleton<IWorkspaceHookRunner>(new WorkspaceHookRunner(NullLogger<WorkspaceHookRunner>.Instance));
+            services.AddScoped<WorkspaceHookService>();
+            services.AddScoped<AgentSessionService>();
+            services.AddScoped<AgentTaskService>();
+            services.AddSingleton<AgentTaskReplyService>();
+            services.AddScoped<AgentTaskDispatcher>();
+            services.AddSingleton(new AgentTaskLandQueue());
+            services.AddScoped<AgentTaskLandService>();
+            services.AddSingleton(adapter);
             var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
-            var scopes = provider.GetRequiredService<IServiceScopeFactory>();
-            var journal = new WorkspaceReservationJournal(scopes, TimeProvider.System);
+            var scope = provider.CreateScope();
+            var journal = (WorkspaceReservationJournal)scope.ServiceProvider.GetRequiredService<IWorkspaceReservationJournal>();
             var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
-            var admission = new WorkspaceUseAdmission(journal, db);
+            var admission = scope.ServiceProvider.GetRequiredService<WorkspaceUseAdmission>();
+            var agentId = Guid.NewGuid();
+            db.Agents.Add(new Agent
+            {
+                Id = agentId, Name = "c459-race", Slug = "c459-race-" + agentId.ToString("N")[..8],
+                WorkingDirectory = path, Status = AgentStatus.Idle, Kind = AgentKind.ClaudeCode,
+            });
             var id = Guid.NewGuid();
             var owner = new AgentTask
             {
@@ -549,24 +658,19 @@ public sealed class WorktreeRetirementRaceTests
             };
             db.AgentTasks.Add(owner);
             await db.SaveChangesAsync();
-            var stopper = new RecordingSessionStopper();
-            var settings = Options.Create(new DelegationSettings
-            {
-                AllowedRoots = [path],
-                MaxDepth = 5,
-                MaxTasksPerRoot = 40,
-            });
-            var tasks = new AgentTaskService(db, new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
-                settings, new MockEventBus(), stopper, TimeProvider.System, NullLogger<AgentTaskService>.Instance,
-                workspaceUse: admission);
-            var residue = Options.Create(new WorktreeResidueSettings { MinSettledMinutes = 120, MaxActionsPerRun = 25, RunResultPageSize = 50 });
-            var git = Options.Create(new GitSettings { WorktreeBasePath = path, DefaultBranch = "master" });
-            var retirement = new TaskWorktreeRetirementService(db, TimeProvider.System, residue, git,
-                NullLogger<TaskWorktreeRetirementService>.Instance, admission: admission);
             return new RaceWorld
             {
-                Schema = schema, Path = path, OwnerTask = owner, Journal = journal, Admission = admission,
-                Tasks = tasks, Retirement = retirement, Stopper = stopper,
+                Schema = schema, Provider = provider, Path = path, OwnerTask = owner,
+                Journal = journal, Admission = admission,
+                Tasks = scope.ServiceProvider.GetRequiredService<AgentTaskService>(),
+                Retirement = scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>(),
+                Stopper = stopper,
+                Dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>(),
+                Replies = scope.ServiceProvider.GetRequiredService<AgentTaskReplyService>(),
+                Lands = scope.ServiceProvider.GetRequiredService<AgentTaskLandService>(),
+                Sessions = scope.ServiceProvider.GetRequiredService<AgentSessionService>(),
+                LaunchQueue = provider.GetRequiredService<AgentSessionLaunchQueue>(),
+                Adapter = adapter, AgentId = agentId,
             };
         }
 
@@ -576,9 +680,122 @@ public sealed class WorktreeRetirementRaceTests
         public WorkspaceReservationCommand CreateKeyCommand() =>
             new(Key, WorkspaceReservationKind.Retirement, OwnerTask.Id, RetirementId: RetirementId);
         public WorkspaceReservationCommand SessionKeyCommand() =>
-            new(new WorkspaceReservationKey(Path, "", Path), WorkspaceReservationKind.Retirement, null, RetirementId: RetirementId);
+            new(WorkspaceReservationKey.For(Path, "", Path), WorkspaceReservationKind.Retirement, null, RetirementId: RetirementId);
+        public WorkspaceReservationCommand ProductionRetirementCommand(string? branch = null) =>
+            new(WorkspaceReservationKey.For(Path, branch ?? "feat/card-task-race", System.IO.Path.Combine(Path, ".git")),
+                WorkspaceReservationKind.Retirement, OwnerTask.Id, RetirementId: RetirementId);
+        public WorkspaceReservationCommand SessionProductionCommand() =>
+            new(WorkspaceReservationKey.For(Path, "feat/card-task-race", System.IO.Path.Combine(Path, ".git")),
+                WorkspaceReservationKind.Retirement, null, RetirementId: RetirementId);
         public AgentTaskService.Caller ManualCaller() => new(null, null, Path);
         public AgentTaskService.Caller ParentCaller() => new(OwnerTask, null, Path);
+        public AgentLaunchSpec LaunchSpec(Guid? sessionId = null) =>
+            new("fake", AgentKind.ClaudeCode, "fake", [], new Dictionary<string, string>(),
+                Path, 120, 30, SessionId: sessionId);
+
+        public async Task<AgentTask> SeedQueuedTaskAsync(WorkspaceMode workspace)
+        {
+            await using var db = CreateDb();
+            var id = Guid.NewGuid();
+            var row = new AgentTask
+            {
+                Id = id, RootTaskId = id, Title = "queued", Goal = "queued",
+                Role = AgentTaskRole.Code, Kind = AgentTaskKind.Worker, AgentKind = AgentKind.ClaudeCode,
+                ModelLevel = AgentModelLevel.Medium, Workspace = workspace,
+                WorkingDirectory = Path, WorktreePath = Path, RepoPath = Path,
+                WorktreeBranch = "feat/card-task-race", Status = AgentTaskStatus.Queued,
+                ReplyTo = AgentTaskReplyTo.None, CreatedAt = DateTime.UtcNow,
+            };
+            db.AgentTasks.Add(row);
+            await db.SaveChangesAsync();
+            return row;
+        }
+
+        public async Task<Guid> SeedCardWithWorktreeAsync()
+        {
+            await using var db = CreateDb();
+            var now = DateTime.UtcNow;
+            var project = new Project
+            {
+                Id = Guid.NewGuid(), Name = "c459", GitRepositoryUrl = "https://example.test/repo.git",
+                LocalRepositoryPath = Path, BaseBranch = "master", CreatedAt = now, UpdatedAt = now,
+            };
+            var board = new Board { Id = Guid.NewGuid(), ProjectId = project.Id, Name = "c459", CreatedAt = now, UpdatedAt = now };
+            var column = new BoardColumn
+            {
+                Id = Guid.NewGuid(), BoardId = board.Id, StateKey = "backlog", Name = "Backlog",
+                CardStatus = CardStatus.Backlog, IsActive = true, CreatedAt = now, UpdatedAt = now,
+            };
+            var card = new Card
+            {
+                Id = Guid.NewGuid(), BoardId = board.Id, BoardColumnId = column.Id, Identifier = "CARD-0459",
+                Title = "fence", CreatedAt = now, UpdatedAt = now,
+            };
+            var worktree = new Worktree
+            {
+                Id = Guid.NewGuid(), CardId = card.Id, Path = Path, RepoPath = Path,
+                Branch = "feat/card-task-race", BaseRef = "master", Status = WorktreeStatus.Active,
+                CreatedAt = now, LastTouchedAt = now,
+            };
+            card.CurrentWorktreeId = worktree.Id;
+            db.Projects.Add(project);
+            db.Boards.Add(board);
+            db.BoardColumns.Add(column);
+            db.Cards.Add(card);
+            db.Worktrees.Add(worktree);
+            await db.SaveChangesAsync();
+            return card.Id;
+        }
+
+        public async Task<AgentSession> SeedInteractiveSessionAsync()
+        {
+            await using var db = CreateDb();
+            var now = DateTime.UtcNow;
+            var session = new AgentSession
+            {
+                Id = Guid.NewGuid(), DefinitionName = "fake", AgentKind = AgentKind.ClaudeCode,
+                Status = SessionStatus.Starting, Cwd = Path, Cols = 120, Rows = 30,
+                CreatedAt = now, StartedAt = now, LastSeenAt = now, StandingAgentId = AgentId,
+            };
+            db.AgentSessions.Add(session);
+            await db.SaveChangesAsync();
+            return session;
+        }
+
+        public async Task<AgentSession> SeedStoppedCardSessionAsync()
+        {
+            var cardId = await SeedCardWithWorktreeAsync();
+            await using var db = CreateDb();
+            var now = DateTime.UtcNow;
+            var session = new AgentSession
+            {
+                Id = Guid.NewGuid(), CardId = cardId, DefinitionName = "fake", AgentKind = AgentKind.ClaudeCode,
+                Status = SessionStatus.Stopped, Cwd = Path, Cols = 120, Rows = 30,
+                CreatedAt = now, StartedAt = now, LastSeenAt = now, EndedAt = now,
+            };
+            var worktree = await db.Worktrees.SingleAsync(w => w.CardId == cardId);
+            session.WorktreeId = worktree.Id;
+            db.AgentSessions.Add(session);
+            await db.SaveChangesAsync();
+            return session;
+        }
+
+        public async Task<AgentSession> SeedInterruptedLaunchAsync()
+        {
+            var session = await SeedInteractiveSessionAsync();
+            await using var db = CreateDb();
+            var taskId = Guid.NewGuid();
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = taskId, RootTaskId = taskId, Title = "interrupted", Goal = "interrupted",
+                Role = AgentTaskRole.Code, AgentKind = AgentKind.ClaudeCode, Workspace = WorkspaceMode.Worktree,
+                WorkingDirectory = Path, WorktreePath = Path, RepoPath = Path,
+                AgentSessionId = session.Id, AgentId = AgentId, Status = AgentTaskStatus.Dispatched,
+                ReplyTo = AgentTaskReplyTo.None, CreatedAt = DateTime.UtcNow, DispatchedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+            return session;
+        }
 
         public async Task<(AgentTask Owner, TaskWorktreeRetirement Release)> ReleasedWorktreeAsync()
         {
@@ -620,8 +837,30 @@ public sealed class WorktreeRetirementRaceTests
 
         public async ValueTask DisposeAsync()
         {
+            await Provider.DisposeAsync();
             await Schema.DisposeAsync();
             try { Directory.Delete(Path, true); } catch (IOException) { }
         }
+    }
+
+    private sealed class OneAdapterFactory(IAgentProtocolAdapter adapter) : IAgentProtocolAdapterFactory
+    {
+        public IAgentProtocolAdapter Create(AgentKind kind) => adapter;
+    }
+
+    private sealed class FixedWorktreeManager(string path) : IWorktreeManager
+    {
+        public Task<WorktreeInfo> CreateAsync(string repoPath, string cardId, string baseRef, CancellationToken ct)
+        {
+            Directory.CreateDirectory(path);
+            var now = DateTimeOffset.UtcNow;
+            return Task.FromResult(new WorktreeInfo(cardId, repoPath, path, $"feat/card-{cardId}", baseRef, now, now));
+        }
+
+        public Task<IReadOnlyList<WorktreeInfo>> ListAsync(string repoPath, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<WorktreeInfo>>([]);
+        public Task RemoveAsync(string repoPath, string worktreePath, CancellationToken ct) => Task.CompletedTask;
+        public Task TouchAsync(string worktreePath, CancellationToken ct) => Task.CompletedTask;
+        public Task<int> PruneStaleAsync(CancellationToken ct) => Task.FromResult(0);
     }
 }
