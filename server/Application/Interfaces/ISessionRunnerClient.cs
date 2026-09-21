@@ -107,5 +107,14 @@ public interface ISessionRunnerClient
         Task.FromResult(new RunnerKillGenerationResult(
             sessionId, false, KillGenerationOutcomes.Missing, null));
 
+    /// <summary>
+    /// CARD-0079. Default is Unsupported so an untouched fake never falls through to
+    /// <see cref="KillAsync"/> or <see cref="KillGenerationAsync"/>.
+    /// </summary>
+    Task<CompactionContinuationStopResult> StopCompactionContinuationAsync(
+        Guid sessionId, CompactionContinuationStopRequest request, CancellationToken ct) =>
+        Task.FromResult(new CompactionContinuationStopResult(
+            sessionId, request.AttemptId, false, CompactionStopOutcomes.Unsupported, null));
+
     IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(CancellationToken ct);
 }
