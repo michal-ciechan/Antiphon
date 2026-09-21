@@ -45,8 +45,8 @@ PY
 }
 
 ensure_dirs() {
-    sudo -n mkdir -p /work/repos /work/test-evidence "$ROOT/secrets" "$ROOT/baseline" "$EVIDENCE_ROOT"
-    sudo -n chown mc:mc /work /work/repos /work/test-evidence "$ROOT" "$ROOT/secrets" || true
+    sudo -n mkdir -p "$CASE_DIR" /work/repos "$ROOT/secrets" "$ROOT/baseline"
+    sudo -n chown -R mc:mc /work "$ROOT"
     mkdir -p "$CASE_DIR"
     cat > /work/test-evidence/current.env <<EOF
 C590_SHA=$SHA
