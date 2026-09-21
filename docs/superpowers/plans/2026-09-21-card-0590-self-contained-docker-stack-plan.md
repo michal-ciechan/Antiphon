@@ -1,7 +1,10 @@
 # CARD-0590: self-contained Docker stack on server2
 
 Date: 2026-09-21. Stage: Plan; verification remains a separate TestDesign dispatch.
-Baseline: `723ac9534fc3fce49b378e287da08b7b11095716`.
+Source baseline: `723ac9534fc3fce49b378e287da08b7b11095716`.
+Continuation `e7f50f48` incorporates TestDesign commit
+`1d6a213a65a32b6c04861e17f5d8f4e644171fe7` (source unchanged). **Return to TestDesign**;
+the historical rejected assessment below is not an executable verification manifest.
 
 ## Outcome and scope
 
@@ -9,6 +12,14 @@ Deliver a fresh Antiphon installation on server2 with the server (including the 
 session-runner and PostgreSQL in containers. Its application connections, state, workspaces and
 test execution must not depend on the Windows desktop. Reuse CARD-0490's Linux runner/PtyHost
 packaging. Replace the broken root server Dockerfile and deployment Compose file.
+
+The selected topology is brief candidate **(a)**: an explicitly enabled ordinary testing runner
+on server2 can launch a session that creates, tests and removes its own throwaway stack using
+server2 Docker/Testcontainers. This delivers the session-created-stack objective for ordinary
+V/R and general testing. **It does not run a SourceLanding Mutation battery.** Post-land Mutation
+continues on the supported Windows custody path with only local inherited test processes.
+Linux SourceLanding custody is tracked separately as **CARD-0598**; CARD-0594's pipe fix is an
+independent dependency. Neither container health nor ordinary Docker evidence is PC-clean proof.
 
 Deliver the test capability in two increments: **Small** = image builds, client lint/build/Vitest
 and messaging tests; **Medium** = the audited, non-spawning majority of `Antiphon.Tests`, including
@@ -47,6 +58,12 @@ repository files below; owners `docs/bootstrap.md`, `docs/testing-and-build.md`,
 | Messaging tests need no Docker | `InboxConsumerServiceTests` and `KafkaConsumerGroupObservationTests` use Redpanda Testcontainers and skip unless `ANTIPHON_BROKER_TESTS=1`. | Small's messaging check explicitly enables these tests and supplies the socket; report any other opt-in exclusions. |
 | New installation can reuse desktop secrets/state | Data-protection readiness checks Unix ownership, an external key-ring path and a supported protector; Auto without a certificate is not Linux managed-secret readiness. | Persist a private key ring; offer explicit X509 configuration using mounted files. Baseline smoke uses no provider secrets; never weaken readiness or bake credentials. |
 | Health proves the correct image is active | `Directory.Build.props` stamps SourceRevisionId from Git or `unknown`; `.git` must not be sent to the image build. | Pass an explicit full revision build argument into publish and compare `/api/version` to the chosen source SHA during acceptance. |
+| Giving only test services Docker access satisfies a session-created stack | Original D-6 forbade runner socket access; the reused runner image has no Docker CLI/Compose or PowerShell. | Add an explicit ordinary-session-testing image target/Compose override with those tools and socket authority. A host CLI invocation alone does not satisfy acceptance. |
+| CARD-0594 unlocks Linux Mutation | `SourceLandingAdmission.RequireSupportAsync` requires `VerificationCustodyV1`, `windows-job-v1`, and a runner-store ID. `SessionRunnerRuntime.VerificationCustodyBackend` and `Program.cs` advertise this only on Windows modern ConPTY. | CARD-0598 must supply a separately qualified Linux backend before Linux SourceLanding can be admitted. Keep all refusals in CARD-0590. |
+| Changing the admission capability is sufficient | `RunnerCustodyLedger.PrepareStart` independently reserves the binding, writes `unsupported.json` and refuses non-Windows/non-modern verification launches. | Admission and native launch must be implemented together by CARD-0598; no advertised-only capability. |
+| A fresh Docker container is a fresh inherited executor | The current native seam `IPtyCustodyNative` uses Windows job membership and active-process accounting. `VerificationHostIdentity.ContainerId` identifies that original native custody container, not a Docker ID. Docker-launched siblings are controlled by the standing daemon. | Per-dispatch Docker freshness, labels, setsid and root exit do not prove inherited custody. Candidate (b) alone is rejected. |
+| A Raw shell response proves delivery/custody | Raw has no provider UserPrompt transcript or verification binding. `HostCustodyJournal` requires sealed descendant-zero accounting and drained output before producing receipt bytes. | Keep Raw native launch as one gate, add a distinct complete-UserPrompt queue probe, and make no SourceLanding claim from either. |
+| Runner filesystem paths can be bind-mounted into sibling containers | Docker resolves bind sources on its daemon host, not inside the CLI container. `/work` is a named-volume mount in the runner. | Send clean build contexts through Docker's client, use named volumes for child state and `docker cp` for evidence. Do not bind the runner's `/work/...` as a host path. |
 
 ## Decisions
 
@@ -69,20 +86,25 @@ These are implementation decisions within the brief, not requests for a new prod
   `docker/session-runner-grok/Dockerfile`; make only shared image changes needed by both uses
   (revision stamping, verified native payload, state ownership, required health utility).
   Retain Grok 1.0.34 packaging and its no-baked-auth contract. Do not fork a second near-identical
-  runner Dockerfile or change `docker-compose.runner-grok.yml`'s phone-home behavior.
+  runner Dockerfile or change `docker-compose.runner-grok.yml`'s phone-home behavior. Add an
+  opt-in `session-testing` target from the shared runtime base; keep the ordinary runtime as
+  the default/final target so existing builds do not acquire test tools or FakeGrok.
 - **D-5 — Dedicated test image, separate from runtime.** Add `docker/tests/Dockerfile` and
   `docker/tests/Dockerfile.dockerignore`, based on SDK 10 with runtime 9, Node 22 meeting the locked
   Vite engine minimum, npm, Git and PowerShell 7. Assert tool versions while building. Keep root
   runtime context's intentional test exclusion. The test image includes tests, scripts, fixture
   JSON/Markdown, `Antiphon.sln`, root build files, `src`, `server`, `client`, `tools`, `samples` and
   source files inspected by selected guards; no host build outputs or credentials.
-- **D-6 — Host Docker socket only in explicit test services.** Use sibling Testcontainers on
-  server2's Docker Engine, mount `/var/run/docker.sock` into the test container, retain Ryuk, and
-  preflight socket permissions and mapped-port reachability. No DinD, privileged service, global
-  Docker pruning or app-service socket mounts. The test service is trusted build/test code with
-  host-daemon authority; it is separate from agents executing application tasks. Docker Desktop
-  has its own optional override for socket source and `TESTCONTAINERS_HOST_OVERRIDE`, never a
-  desktop dependency in server2's base configuration. This follows the
+- **D-6 — Explicit ordinary-session Docker authority.** Base Compose gives neither application
+  service a Docker socket. Add `docker-compose.session-testing.yml`, selecting the runner image's
+  `session-testing` target and mounting `/var/run/docker.sock` into that runner. Its launched
+  ordinary sessions can invoke Docker/Compose and the S3 scripts; test containers also receive
+  the socket for sibling Testcontainers, with Ryuk retained. The server never receives it.
+  This is a trusted test installation with host-daemon authority, not per-session security
+  isolation. Record/validate the socket GID and supply that supplemental group to the non-root
+  runner/test service; do not chmod the socket world-writable. Preflight actual mapped-port
+  reachability. Reject DinD, privileged services, global pruning and any SourceLanding snapshot
+  access. Desktop-specific overrides remain optional. This uses the
   [Testcontainers sibling-container model](https://dotnet.testcontainers.org/dind/).
 - **D-7 — Admit tests by reviewed class roster.** Add `tests/linux-test-roster.json`: assembly,
   fully qualified class, included lane/shard or excluded reason/owner. Every discovered class is
@@ -93,8 +115,12 @@ These are implementation decisions within the brief, not requests for a new prod
   Add no attributes to hundreds of classes and do not change nightly's execution policy.
 - **D-8 — Baseline native smoke is credential-free.** Use a Raw `/bin/sh` agent with a unique
   marker and bounded input/output/exit checks. This proves actual runner/PtyHost launch and
-  communication, not model replies or UserPrompt transcript delivery. An authenticated Grok
-  canary is optional, separately provisioned under CARD-0575; no paid-model dependency for green.
+  communication. Also launch a Raw test-command session that executes S3/S6 in the runner, and
+  require a separate queue-to-transcript probe with a native Linux FakeGrok in the test-only
+  image. The latter records the whole matching UserPrompt after its attempt floor; shell output
+  cannot substitute. These are distinct acceptance gates, none proves verification custody.
+  FakeGrok's real Linux launch/terminal mode must be qualified, not assumed from its net9.0 TFM.
+  An authenticated Grok canary remains optional under CARD-0575; no paid model is required.
 - **D-9 — Fresh, inactive automation by default.** Disable specialist provisioning, schedules,
   Hangfire jobs that depend on Windows census, and external channel consumers in this test
   deployment. Keep normal explicit API operations and direct runner events enabled. This avoids
@@ -113,9 +139,35 @@ These are implementation decisions within the brief, not requests for a new prod
   `condition: service_healthy` as documented by
   [Docker Compose](https://docs.docker.com/compose/how-tos/startup-order/).
 - **D-12 — Preserve the card boundaries.** S1 absorbs CARD-0587 unless it lands first; CARD-0588
-  retains its four skip changes; CARD-0038/CARD-0490 own native runtime repair. E2E gets only the
-  cheap apphost-name preparation described in S4, with no Chromium/E2E acceptance promise.
+  retains its four skip changes; CARD-0594 owns the recorded Unix pipe/native acceptance repair,
+  CARD-0598 owns Linux custody, and CARD-0038/CARD-0490 retain their broader platform/protocol scope.
+  E2E gets only the cheap apphost-name preparation described in S4, with no Chromium/E2E
+  acceptance promise.
   Do not change remote execution, skip assertions, retries or timeouts to make this card green.
+- **D-13 — Choose candidate (a), not a custody exception.** Ordinary server2 testing and
+  SourceLanding Mutation are separate execution paths. A persistent server2 runner used as an
+  external executor for a sourced snapshot violates the current local-inherited-execution rule;
+  it is not made acceptable by starting a new session. The rule does not forbid the established
+  standing runner *control plane* itself: today's Windows runner launches a fresh bound worker
+  under a native original observer. Server2 currently lacks that supported producer. Do not
+  reinterpret a standing session as the required fresh Worker/Mutation/Worktree.
+- **D-14 — Reject candidate (b) as a shortcut.** A per-Mutation Docker container still delegates
+  execution to a pre-existing daemon and supplies neither supported admission nor native
+  descendant receipts. Fresh task/worktree is necessary but insufficient. Candidate (c), a local
+  Linux observer with proven non-escaping containment and complete receipts, belongs to CARD-0598.
+  Even that backend would not automatically authorize Docker siblings; any such extension needs
+  its own custody/contract review. Do not rename a Linux backend `windows-job-v1` or remove guards.
+- **D-15 — Keep session orchestration concrete and foreground.** S3/S6 provide a committed
+  script entry point a launched test session executes, with a persisted run manifest, fresh child
+  project and evidence export. No new scheduler, result broker or background worker is introduced.
+  The caller awaits the session result. Interruption is incomplete evidence with named residue,
+  not success, and cleanup is an explicit retry against the recorded owner.
+- **D-16 — Preserve delivery semantics without inventing Mutation delivery.** The ordinary
+  canary sends the completed run's sanitized summary through the existing server message queue
+  to an isolated native FakeGrok recipient. Correlate its message/session/generation and full
+  received body. Do not alter production completion/outbox semantics or claim a SourceLanding
+  result was delivered. TestDesign replaces the rejected Linux-Mutation handoff obligation with
+  this ordinary probe and keeps the existing queue's relevant recovery regressions.
 
 ## Runtime and build design
 
@@ -168,6 +220,8 @@ qualification uses the same clean-source principle plus explicit revision inject
 | runner | `SessionRunner__SessionLogPath`, `SessionRunner__PtyHostDir`, `Serilog__LogPath` | `/state/session-runner`, `/state/pty-hosts`, `/state/logs`; Linux filesystem volume retains execute bits |
 | runner | `SessionRunner__PtyBackend`, `ANTIPHON_PTY_BACKEND`, `SessionRunner__Herdr__Enabled` | `inbox`, `inbox`, `false`; no Herdr/modern-ConPTY fallback dependency |
 | runner | `GROK_HOME` | `/state/grok`; starts empty, authentication is optional explicit provisioning |
+| runner, ordinary testing override only | socket, tools and group | `/var/run/docker.sock`, explicit socket supplemental GID, Docker CLI + Compose plugin, PowerShell 7, Git and archive tools; scripts available from the committed `/work/repos` checkout |
+| runner, ordinary testing override only | FakeGrok | Publish `src/Antiphon.FakeGrok` as executable linux-x64 apphost with its complete runtime payload under `/opt/antiphon-tests/fakegrok`; no credentials; test definition only |
 | postgres | database/user/password and data mount | required deployment password; project-owned `pgdata:/var/lib/postgresql/data`; no published port |
 
 Optional Linux managed-secret configuration uses `AgentTui__KeyProtection__Mode=X509Certificate`
@@ -218,6 +272,89 @@ tested host override; do not silently use localhost or the desktop. Keep test-sp
 and resources under the existing Testcontainers owner/reaper. Socket absence/denial is a clear
 preflight failure, never a reason to skip DB or broker tests and report green.
 
+### Session-created throwaway stack (ordinary testing only)
+
+Use the base three-service stack plus the explicit session-testing override as the parent.
+The parent remains on server2 after the initiating desktop CLI exits. Ordinary sessions in its
+runner can execute `pwsh -NoProfile -File scripts/test-docker.ps1 -Group all -ThrowawayStack`
+from a committed checkout in `/work/repos`. `-ThrowawayStack` is a proposed S3 entry point, not
+an existing command. It runs foreground and delegates stack operations to the S6 helper.
+Qualify this invocation through a real server-launched Raw command session, not `docker exec`
+or a host-side script pretending to be that session. The interactive Raw challenge remains a
+separate native-input check. General agent sessions can use the same foreground entry point.
+Keep the S6 wrapper modes explicit: parent qualification launches/awaits the session; the
+session's S3 command invokes S6 only in child-probe mode against its recorded child project.
+Child-probe mode must never start another parent qualification or recursively launch S3.
+
+The helper's required behavior:
+
+1. Read the session ID/accepted generation from the launch fixture and freeze a random run ID,
+   committed source SHA, tool/image identities and exact Compose files. Write a manifest under
+   the parent's owned `/work/test-evidence/<run-id>` before creating resources. Parent project
+   identity and child project identity must differ. Do not accept an arbitrary cleanup prefix.
+2. Export tracked files at the selected SHA into an owned clean context, excluding all local
+   state. Stream/build that context through the Docker client; stamp the SHA explicitly. Source
+   exports are ordinary committed source, never a sourced Mutation snapshot or its copied bytes.
+   Test image includes the clean sources; SDK/Node remain there, not in the runtime target.
+   Admit source only from the configured ordinary checkout root under `/work/repos`, outside
+   managed verification trees. For a task-bound session inspect its authoritative task record
+   and reject `sourceLandingOperationId` before any Docker call; an unreadable task binding is a
+   refusal, not an ordinary classification. The isolated Raw acceptance session is explicitly
+   ordinary/unbound. These checks prevent accidental misuse; host socket authority is not a
+   sandbox, and a copied snapshot remains prohibited regardless of filename or clean Git state.
+3. Start a fresh child `c590-<run-id>` Compose stack using its own named state/workspace volumes
+   and network. Use a throwaway override with no host-published ports, unique image tags and
+   run-owner labels. The child uses the base runtime runner, without recursive session-testing
+   socket access. Run a short-lived probe on the child's network for UI/API/version/native
+   checks. Test services get only their explicitly required socket and volumes.
+4. Execute Small and the frozen Medium roster from the test image. Ordinary DB/broker tests
+   launch their own Testcontainers, separate from the child's application DB. Record both
+   lifecycles and require real DB/broker connections. The session waits for every command and
+   preserves failing exit codes. No test configuration targets the production runner or desktop.
+5. Keep test/probe containers until their reports have been copied out using `docker cp` into
+   the parent's evidence directory. Hash artifacts and atomically record counts, image IDs,
+   session/generation, child resources and outcomes in the run manifest before removal.
+6. In `finally`, inspect exact recorded resource IDs and owner labels before removing the
+   disposable child containers/network/volumes and owned test resources. Never apply child
+   teardown to the parent or another run. Preserve evidence and a resource list after any
+   failed/uncertain cleanup; a retry rechecks those same identities. Ordinary deployment `down`
+   still preserves its reusable volumes. No global prune, automatic orphan sweep or adoption of
+   an unrecognized project. Testcontainers keep their normal owned disposal/Ryuk behavior.
+
+Sibling containers cannot bind a path from the runner's mount namespace as though it were a
+host path: [Docker bind mounts](https://docs.docker.com/engine/storage/bind-mounts/) resolve on
+the daemon host. Named child volumes, transmitted clean build contexts and copied-out reports
+avoid that mismatch. Do not make the parent checkout a broad read/write bind to collect results.
+The sibling Testcontainers model is documented in
+[Testcontainers for .NET](https://dotnet.testcontainers.org/dind/); the actual server2 endpoint
+and permission preflight still decides whether this deployment works.
+
+### Separate native receipt probe
+
+Package native FakeGrok only in the session-testing target, retaining production Grok's defaults.
+Use an isolated test definition with `Agents__GrokCredentialProbeEnabled=false` only in this
+credential-free test override, isolated `GROK_HOME`, and enabled transcript confirmation.
+Reuse the supported FakeGrok transcript format, not the Windows-only LandDelivery fixture.
+If needed, a test-only Linux launch wrapper sets the PTY's raw mode and then `exec`s FakeGrok;
+its executable/terminal/transcript behavior is a real Linux qualification row, not a fake-file
+assertion. No general native-runtime rewrite or production credential-probe bypass fits here.
+
+After the session-created run completes, the verifier submits its exact sanitized summary body
+(head/tail markers, run ID, SHA, outcome and evidence digest) through
+`POST /api/sessions/{recipient}/messages`. Read the recipient's actual transcript and require
+the complete matching UserPrompt after that attempt's floor in the same accepted generation.
+Never write transcript files to manufacture the receipt. Persist expected body, queue identity,
+attempt floor and observed transcript sequence. Cover eligible and busy-then-eligible recipients
+through the real queue; TestDesign must identify relevant enqueue/receipt-persistence recovery
+cuts and the existing regression owners. A delivered failure report is still a failed test run.
+
+The foreground verifier owns this acceptance probe, not a new durable completion service. It
+writes `result-ready` before posting and the returned queue identity before awaiting receipt.
+On crash/unknown POST acknowledgement, record incomplete delivery; inspect existing queue and
+transcript before any explicit retry. Do not promise automatic exactly-once submission across
+that gap or blindly post again. Existing queue rows retain their identity during native queue
+recovery. No parent task settlement/SourceLanding notification is synthesized for this probe.
+
 ### Portability triage
 
 1. Preserve the baseline `.exe` failure evidence, then make E2E's `IsolatedSessionRunner` choose
@@ -248,11 +385,11 @@ names are the required behavioral coverage and proposed test ownership, not a co
 | Slice | Files | Work and exit evidence |
 |---|---|---|
 | **S1 — server image / CARD-0587** | `Dockerfile`, `.dockerignore`; new `tests/Antiphon.Tests/Infrastructure/DockerStackContractTests.cs` | Reproduce old root build; fix repository layout, SDK/RID, static client, bundles and SHA stamp. Actual clean-context image build; image artifact inspection for DLLs, bundle resources, client assets and no test payload. Contract tests guard copy graph and context policy. If CARD-0587 lands first, consume that commit and only add missing requirements. |
-| **S2 — three-service deployment** | `docker-compose.yml`, `docker/session-runner-grok/Dockerfile`; new `docker/stack.env.example` with placeholders; extend `DockerStackContractTests.cs` | Direct internal runner route, health ordering, Linux env, non-root state initialization, private services and persistent volumes. Preserve phone-home image use. Parse/render Compose with dummy values, then start a fresh project and prove server/static assets/version/DB + runner capabilities. |
-| **S3 — Small test target** | new `docker/tests/Dockerfile`, `docker/tests/Dockerfile.dockerignore`, `docker-compose.test.yml`, `scripts/test-docker.ps1`, `scripts/test-docker-container.ps1`; new `tests/Antiphon.Tests/Scripts/DockerTestCommandTests.cs` | Build a complete test context, run client lint/build/Vitest and messaging with opt-in broker tests; validate socket preflight, nonzero execution and failure propagation. Tests drive a fake command boundary with actual result fixtures, not string self-comparison. |
+| **S2 — three-service deployment and explicit test-session authority** | `docker-compose.yml`, `docker/session-runner-grok/Dockerfile`; new `docker-compose.session-testing.yml`, `docker/stack.env.example` with placeholders; extend `DockerStackContractTests.cs` | Direct internal runner route, health ordering, Linux env, non-root state initialization, private services and persistent volumes. Add opt-in runner tools/socket/GID and test-only native FakeGrok target while preserving default phone-home image use. Parse base/override separately; prove effective mounts, tools and capability refusals. |
+| **S3 — Small test target and session entry point** | new `docker/tests/Dockerfile`, `docker/tests/Dockerfile.dockerignore`, `docker-compose.test.yml`, `scripts/test-docker.ps1`, `scripts/test-docker-container.ps1`; new `tests/Antiphon.Tests/Scripts/DockerTestCommandTests.cs` | Build complete test context; provide foreground `-ThrowawayStack` entry point and persisted run manifest; run client lint/build/Vitest and messaging with broker opt-in; validate socket preflight, context transfer, evidence export, nonzero execution and exit propagation. Local command-boundary tests must reject snapshot inputs and wrong source/resource identity without invoking Docker. |
 | **S4 — portable apphost lookup** | new `tests/Shared/TestAppHostPath.cs`; csproj links only where consumed; `tests/Antiphon.E2E/Fixtures/IsolatedSessionRunner.cs`; audited portable lookup sites from `rg -l -F -e fakeclaude.exe -e fakegrok.exe tests`; new `tests/Antiphon.Tests/TestHelpers/TestAppHostPathTests.cs` | Centralize OS suffix and missing-file diagnostics where portability is intended. Prove both platform filename branches with fake files plus native Linux apphost existence. Keep native-only contracts and CARD-0588 files out of the edit set. Exact consumer inventory is a TestDesign prerequisite. |
 | **S5 — Medium roster and execution** | new `tests/linux-test-roster.json`, `tests/Antiphon.Tests/TestHelpers/LinuxTestRosterTests.cs`; test wrapper and manifest tooling from S3 | Complete class accounting, audited included classes/shards, explicit native/process/opt-in exclusions; run portable majority with real DB fixtures. Existing `TestDbFixtureIsolationTests`, `ProductionRunnerGuardTests` and selected `HealthEndpointTests` are required coverage anchors. Do not change their production safety guards. |
-| **S6 — stack acceptance and operations** | new `scripts/verify-docker-stack.ps1`, `tests/Antiphon.Tests/Scripts/DockerStackSmokeCommandTests.cs`, `docs/docker-stack.md`; update `docs/bootstrap.md` and `docs/testing-and-build.md` with links | Foreground isolated smoke with actual Raw session, identity/path checks, DB persistence across recreation and owned-resource cleanup. Run the same committed artifacts on server2 with desktop-independent endpoints. Document build/start/test/stop, retained volumes, per-project cleanup and optional provider setup. No restart/deploy of the desktop stack. |
+| **S6 — session-created stack acceptance and operations** | new `scripts/verify-docker-stack.ps1`, `docker-compose.throwaway.yml`, test-only `docker/session-testing/fakegrok-linux.sh` if terminal setup is needed, `tests/Antiphon.Tests/Scripts/DockerStackSmokeCommandTests.cs`, `docs/docker-stack.md`; update `docs/bootstrap.md` and `docs/testing-and-build.md` with links | Keep interactive Raw smoke. Prove a separate server-launched test-command session creates a child stack, runs S3/S5, exports evidence and cleans only owned resources. Add distinct native FakeGrok complete-UserPrompt queue probe, failed/partial-receipt and interrupted-cleanup guards. Prove DB persistence and same-path workspace visibility; run identical entry points on server2. Document ordinary testing versus Windows Mutation and CARD-0594/0598 dependencies. |
 
 S1 -> S2 and S3; S3 -> S4 -> S5; S2 + S5 -> S6. Small completes after S1-S3;
 overall card acceptance also needs Medium accounting/results and S6. No new test framework,
@@ -273,23 +410,25 @@ build/smoke evidence supplements these guards; source inspection alone cannot pr
 | G-4 / PC-4: revision identity | Drop/replace revision propagation; `Published_revision_matches_requested_source` rejects unknown/mismatched server response, using response fixtures at the wrapper boundary plus live ordinary `/api/version`. |
 | G-5 / PC-5: no desktop application route | Replace internal runner/DB host with localhost/desktop address; `Stack_routes_stay_inside_compose` fails on resolved configuration. |
 | G-6 / PC-6: no public runner/database port | Add a runner or DB published port (separate variants); `Only_server_has_a_published_port` rejects each. |
-| G-7 / PC-7: socket confined to test services | Mount the socket into server or runner (separate variants); `Docker_socket_is_test_only` rejects each. |
+| G-7 / PC-7: explicit ordinary-test socket authority | Mount socket into server/base runner, omit it from the explicit test-session override, omit socket GID preflight or allow sourced input (distinct guards); base/override/command tests must reject each. The enabled test runner's socket is now required, not a forbidden mount. |
 | G-8 / PC-8: context custody | Remove a required deny rule for a worktree `.git` pointer, `.antiphon`, a local env/auth file, or alternate output (separate variants); context-sentinel tests catch each leak in both context policies. Never use actual secrets. |
 | G-9 / PC-9: tests cannot silently disappear | Drop a required class/result file or return zero execution (separate variants); `DockerTestCommandTests.Missing_or_empty_execution_fails` rejects it. |
 | G-10 / PC-10: original test exit code reaches caller | Make the command/result adapter hide nonzero status; `Nonzero_test_exit_is_preserved` must fail even with plausible success output. |
 | G-11 / PC-11: roster stays portable and exhaustive | Add an unclassified class, include a known spawner/native class, or drop a discovered class (separate variants); `LinuxTestRosterTests` rejects each without launching a process. |
 | G-12 / PC-12: test environment never reaches app runner | Remove the dead-runner/refusing-client requirement from the command boundary; `Test_environment_refuses_application_runner` fails. Existing `ProductionRunnerGuardTests` still execute in the ordinary backend lane. |
 | G-13 / PC-13: teardown acts only on its owned Compose project | Substitute a foreign project label or teardown target; `DockerStackSmokeCommandTests.Foreign_project_cleanup_is_refused` proves no delete command was emitted. |
-| G-14 / PC-14: failed session smoke cannot become healthy-stack success | Supply health=green but missing native marker/exit; `Healthy_containers_without_session_evidence_fail` rejects it. |
+| G-14 / PC-14: native/session/receipt evidence cannot become health-only success | Separately remove Raw challenge/exit, session-created run identity, or complete native UserPrompt/attempt-floor match; `DockerStackSmokeCommandTests` rejects each. A Raw marker is never accepted as a transcript receipt. |
 | G-15 / PC-15: Linux state settings are usable | Remove a required absolute path, inject a Windows path, enable Herdr/modern, or lose non-root writable state (separate variants); resolved configuration and state preflight tests identify the defect. |
 | G-16 / PC-16: missing Docker is not a skipped test success | Deny socket/preflight connection while result fixtures report skipped DB/broker tests; `Unavailable_test_daemon_fails_before_execution` rejects the run. |
+| G-17 / PC-17: child source/state/evidence ownership | Independently inject a parent-as-child project, wrong SHA, foreign volume/container ID, caller-only bind path or missing exported evidence; local command-boundary guards fail before unauthorized create/delete or successful result. Real sibling execution remains ordinary V/R. |
+| G-18 / PC-18: interruption cannot become successful delivery/cleanup | Drop result-ready manifest, acknowledge without full UserPrompt, or suppress recorded cleanup residue; exact-method local guards must reject each. Required real queue recovery cuts are ordinary acceptance/regression, never Docker PCs. |
 
 TestDesign must split independently bypassable guards into distinct PCs where these grouped
-requirements need it; do not treat this preliminary 16-row inventory as permission to omit a
+requirements need it; do not treat this preliminary 18-row inventory as permission to omit a
 variant. It also supplies normal Windows/Linux filename tests for S4 and regression cases for
 retained state/startup order. This work changes packaging and harnesses, not asynchronous delivery
-protocols; the delivery inventory should identify the existing native session path exercised by
-the smoke and explicitly distinguish terminal output from provider transcript confirmation.
+protocols; the delivery inventory must cover both the foreground session-created run and the
+separate existing-queue native receipt probe, with their persistence and interruption owners.
 
 Mutation runs after ordinary Review and land under the existing SourceLanding rules. Do not hand
 the immutable snapshot to a remote Docker daemon/server2 or a standing local daemon. Design PC
@@ -309,7 +448,10 @@ Required ordinary acceptance outcomes:
    `/api/version` reports the intended SHA. No application endpoint points to the desktop.
 3. A credential-free Raw session traverses server -> runner -> PtyHost, returns its unique output
    marker after explicit input, and terminates. Health-only success and fake transport receipts
-   do not meet this criterion. Record process/session identity and teardown result.
+   do not meet this criterion. Record process/session identity and teardown result. Independently
+   qualify the native FakeGrok queue probe: full summary UserPrompt after the attempt floor in
+   the expected generation, including busy-then-eligible delivery. Record its queue/transcript
+   evidence separately. Neither gate is a SourceLanding custody receipt.
 4. A DB/API-created sentinel survives server/Postgres container recreation with the same volumes;
    workspace writes made in either app process are visible at the same absolute path in the other.
 5. Small and Medium execute their frozen rosters with nonzero counts, zero unexplained failures,
@@ -323,6 +465,16 @@ Required ordinary acceptance outcomes:
    reusable deployment volumes require a separate explicit destroy operation. No `system prune`,
    no deletion of `antiphon_pgdata`, no other project's resources. Testcontainers clean up their own
    temporary DB/broker resources; image cleanup targets only task-owned tags/IDs.
+8. A session genuinely launched by the parent server inside its server2 runner invokes the
+   foreground entry point, creates a separately named throwaway server/runner/Postgres stack,
+   executes Small + Medium with Testcontainers, exports fresh results and removes its owned
+   disposable resources. Record parent session/generation, child project/resource IDs, source
+   SHA and manifest hash. Test denial/missing Docker and interruption without a false success.
+   A host-side Docker smoke does not meet this session-created-stack gate.
+9. Base Compose remains socket-free for app services; explicit ordinary-session-testing override
+   enables only its intended runner socket and tools. Linux still omits VerificationCustodyV1
+   and refuses sourced verification; existing Windows admission/launch/cleanup behavior remains
+   intact. Do not execute Linux SourceLanding to generate a green result for this card.
 
 The next stage is **TestDesign**, not Code. It must read the touched fixtures/helpers, freeze the
 portable roster and lookup-site inventory, append `## Verification design` with Inspection,
@@ -334,6 +486,11 @@ schedule the three native assemblies as a Linux full-suite requirement.
 
 Coordination facts at Plan time: CARD-0587 and CARD-0588 are Backlog; CARD-0490 is Review and its
 packaging is already in this checkout. Re-read their landing/status before touching shared files.
+Continuation re-read on 2026-09-21: CARD-0587/0588/0594 remain Backlog. New CARD-0598 is Backlog;
+its ID is `af15648d-fd85-4fe5-aa02-8ac893a5dba4`, on the Antiphon board
+`8988ca03-7414-47ad-b0b6-51556c701703`, linked to CARD-0590
+`5e25f062-c57f-426c-9bd3-6b6ad5d2b9a3` by stable finding key
+`card-0590:linux-source-landing-custody`. No dependency task was spawned.
 The Linux pipe-connect failure is recorded inherited evidence, not a newly reproduced defect.
 Do not close this card as working end to end if it reproduces; report the exact launch/connect
 failure to the native owner while retaining completed image/test slices. No fresh investigation
@@ -345,13 +502,42 @@ required deployment password supplied without logging, and the latest native-blo
 They were not probed in Plan. Missing server2 access blocks that acceptance row only; it must not
 be reported as a passed deployment or prevent preparing the concrete images/tests locally.
 
-Estimated implementation sizing (not a checkpoint budget): Small roughly 2-4 hours including clean
-image builds and harness work; Medium another 3-6 hours including class census and one Linux pass;
-native runtime repairs excluded. TestDesign replaces these planning ranges with measured/estimated
-per-checkpoint minutes and separate PC cost before Code. Existing evidence is insufficient to
-claim a current test count or green Linux baseline.
+Original planning ranges were Small 2-4 hours and Medium 3-6 hours, excluding native repair.
+They predate the session-created-stack and native receipt gates and are not a budget for the
+revised scope. TestDesign must estimate the added image/tool/manifest/receipt work and provide
+per-checkpoint minutes and separate PC cost before Code. No current test count, complete cost
+or green Linux baseline is claimed.
 
-## Verification design
+### Dependency disposition
+
+The governing [Mutation contract](../../orchestration-loop.md#code-ordinary-review-land-then-mutation-card-0478)
+says: "Use local inherited execution only; never give snapshot access to an external executor,
+broker, remote service or pre-existing process." It also requires "a fresh Worker/Mutation/Worktree,
+no standing pin, OnAgent, Shared, ReadOnly or merge target." Freshness and execution custody are
+independent requirements; satisfying the former does not waive the latter.
+
+| Work | Owner / disposition | Blocks CARD-0590 completion? |
+|---|---|---|
+| Broken root server image | S1 / CARD-0587; consume its landing if first | Yes, working image required. |
+| Four native-only skip corrections | CARD-0588; keep classes explicitly excluded | No, provided excluded classes are honestly accounted for. |
+| Unix runner-to-PtyHost connection and recorded live/native qualification | CARD-0594; no timeout or transport redesign here | Yes if reproduced by required native gates; do not drop those gates. |
+| Linux SourceLanding admission, native containment, receipts and cleanup | CARD-0598, separate from CARD-0594 | No for the selected ordinary server2 scope; yes before any future Linux Mutation claim. |
+| Docker-created executors during SourceLanding | Unapproved under current custody contract; candidate (b) rejected | Not part of CARD-0590. CARD-0598 does not itself grant daemon snapshot access. |
+| Post-land PCs for CARD-0590 | Existing supported Windows SourceLanding path; local inherited methods only | Companion remains open until that battery/discovery is complete; ordinary Docker evidence is never relabelled PC evidence. |
+
+This is the scope reconciliation expressly commissioned by continuation `e7f50f48`, not an
+unstated default requiring a decision stage. The two objectives are met by different execution
+paths: self-contained session-created stacks for ordinary testing, and custody-compliant local
+Mutation. Running that same Docker workflow *inside* SourceLanding remains unsupported, not
+quietly accepted or hidden as a skip.
+
+## Historical TestDesign rejection (09cc47e1)
+
+The remainder of this assessment through its historical Handoff records what task `09cc47e1`
+found at `5904ce74`; references to "present design", old D-6, seven outcomes and next: plan are
+historical. The revised decisions and acceptance above resolve those design conflicts. Keep the
+inspected fixture inventory and negative evidence; do not use this rejected section as a current
+`## Verification design` or a Code checkpoint manifest. A fresh TestDesign section is still due.
 
 TestDesign assessment, 2026-09-21, task `09cc47e1`, inspected plan commit
 `5904ce74e901fa86c38673cf368205f282e5fd7b`: **return to Plan; not a Code checkpoint manifest**.
@@ -555,3 +741,48 @@ Handoff: `next: plan`. Retain this negative finding and frozen lookup inventory,
 SourceLanding/session-created-stack objective with D-6 and the existing custody contract, name
 the independent Linux custody dependency, then return the amended plan to TestDesign for the
 full portable roster, V/R, one-to-one PCs, exact checkpoints and numeric execution floors.
+
+## Current TestDesign handoff (e7f50f48)
+
+The three rejected design boundaries are now resolved in scope, not claimed green in execution:
+D-6 provides a concrete ordinary-session Docker path; D-13/D-14 preserve SourceLanding custody
+and assign the independent Linux work to CARD-0598; D-8/D-16 and acceptance 3/8 keep distinct
+native execution, session-created stack and full UserPrompt evidence. This Plan dispatch ran
+**0 builds, 0 product tests and 0 PC cycles**. It verified the custody source and live card
+boundaries only. No server2 setup or native behavior has been measured here.
+
+TestDesign must now:
+
+1. Retain the frozen lookup occurrence inventory, inspect the new target/ordinary-source/command
+   seams to be implemented and freeze the complete class roster with transitive helper audit,
+   denominator and exact shards. Do not infer portability from absence of direct Process.Start.
+2. Author the current `## Verification design` and closed `### Checkpoints` table covering all
+   nine ordinary acceptance outcomes, including base and opt-in Compose, actual session-origin
+   child-stack execution, complete native FakeGrok receipt and explicit native dependencies.
+   Distinguish container build/probe commands from each exact TUnit filter. Preserve production
+   runner guards and the original Small/Medium scope; no Linux native-suite parity promise.
+3. Inventory foreground manifest/result/export/cleanup cuts and real queue receipt cuts using
+   the identities and interruption rules above. No new automatic notification recovery is
+   promised. Resolve exactly which existing queue regressions run and which real Linux canary
+   cuts are added; do not revive the rejected Linux SourceLanding executor handoff.
+4. Split G-1..G-18 into independently bypassable, one-to-one method-scoped guards/PCs, with
+   compiling mutations, intended red assertions and restore/green commands. In particular replace
+   old PC-7's runner-socket prohibition; enforce base versus explicit testing override separately.
+   Keep actual image/native/DB/container behavior as ordinary V/R, and use only honest local
+   file/config/result/command seams for Windows sourced PCs. No PC may initialize Testcontainers,
+   use Docker/SSH/server2, or hand source to a daemon. A local guard must not claim to prove the
+   runtime behavior it only checks declaratively. Report any uncovered runtime boundary rather
+   than inventing a custody exception.
+5. Name and verify the selected PC methods' build dependency closure for local execution. They
+   must avoid DB initialization and shared compilation/build-server execution outside inherited
+   custody; preserve the established isolated-build procedure and CARD-0578 dependency if it
+   affects that closure. Do not run whole native assemblies or DB suites just to test scripts.
+6. Provide revised numeric ordinary and Mutation floors plus setup/authoring estimates. The old
+   rejection's empty table and zero issued minutes are historical, not a zero-cost Code budget.
+   Return `next: code` only after those artifacts are complete; if a required native path cannot
+   be verified, name its dependency without weakening the acceptance gate.
+
+Next: **test-design**. The Linux custody card is a future capability dependency; it does not
+block designing or implementing this ordinary server2 stack. CARD-0594 can still block actual
+native acceptance and therefore CARD-0590 closure. No production custody/source/cleanup files
+are in CARD-0590's implementation edit set.
