@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.SessionRunner;
@@ -73,6 +74,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     private readonly IKnownSessionProbe? _knownSessions;
     private readonly CancellationTokenSource _cts = new();
     private volatile bool _claimRevoked;
+    private int _bindGeneration;
     private Guid _claimRevokedBy;
     private Guid? _lastExactLossHolder;
     private DateTime? _lastExactLossReport;
@@ -189,6 +191,153 @@ internal sealed class TranscriptTailer : ITranscriptTailer
             return new RunnerTranscriptDto(_sessionId, _entries.ToArray(), _seq);
     }
 
+    /// <summary>Invoked after a read-to-end and before the binding is accepted. Production leaves it unset.</summary>
+    internal Func<CancellationToken, Task>? CompactionObserveAfterRead { get; set; }
+
+    internal string? BindingIdentity => CaptureBinding()?.Identity;
+
+    public async Task<CompactionTailObservation> ObserveCompactionSilenceAsync(CancellationToken ct)
+    {
+        var before = CaptureBinding();
+        if (before is null)
+            return CompactionTailObservation.Unbound();
+
+        try
+        {
+            var parsed = await ReadBoundFileAsync(before.Path, ct);
+            if (parsed.Failure is not null)
+                return parsed.Failure;
+
+            if (CompactionObserveAfterRead is { } afterRead)
+                await afterRead(ct);
+
+            var after = CaptureBinding();
+            if (after is null || after.Identity != before.Identity)
+                return CompactionTailObservation.Stale(before.Identity);
+
+            var grown = new FileInfo(before.Path);
+            if (grown.Exists && grown.Length != parsed.Consumed)
+            {
+                var reread = await ReadBoundFileAsync(before.Path, ct);
+                if (reread.Failure is not null)
+                    return reread.Failure;
+                parsed = reread;
+                after = CaptureBinding();
+                if (after is null || after.Identity != before.Identity)
+                    return CompactionTailObservation.Stale(before.Identity);
+            }
+
+            return new CompactionTailObservation(
+                CompactionObservationStatuses.Success,
+                true,
+                parsed.Consumed,
+                before.Identity,
+                parsed.TranscriptRevision,
+                parsed.OutputRevision,
+                parsed.NativeBoundaryId,
+                parsed.NativeContinuationId);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return CompactionTailObservation.Unavailable();
+        }
+    }
+
+    private async Task<(CompactionTailObservation? Failure, long Consumed, long TranscriptRevision, long OutputRevision, string? NativeBoundaryId, string? NativeContinuationId)> ReadBoundFileAsync(
+        string path, CancellationToken ct)
+    {
+        var info = new FileInfo(path);
+        if (!info.Exists)
+            return (CompactionTailObservation.Unavailable(), 0, 0, 0, null, null);
+
+        var length = info.Length;
+        var pending = new List<byte>();
+        long offset = 0;
+        long transcript = 0;
+        long output = 0;
+        string? boundaryId = null;
+        string? continuationId = null;
+        var utf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+        while (offset < length)
+        {
+            var chunk = (int)Math.Min(length - offset, MaxReadChunkBytes);
+            var buffer = new byte[chunk];
+            int read;
+            await using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            {
+                fs.Seek(offset, SeekOrigin.Begin);
+                read = await fs.ReadAsync(buffer.AsMemory(0, chunk), ct);
+            }
+
+            if (read <= 0)
+                break;
+            offset += read;
+            pending.AddRange(read == buffer.Length ? buffer : buffer.AsSpan(0, read).ToArray());
+            var consumed = TakeCompleteLines(pending, utf8, ref transcript, ref output, ref boundaryId, ref continuationId);
+            if (consumed is not null)
+                return (consumed, offset, transcript, output, boundaryId, continuationId);
+        }
+
+        if (pending.Count > 0)
+            return (CompactionTailObservation.Partial(CaptureBinding()?.Identity), offset, transcript, output, boundaryId, continuationId);
+
+        return (null, offset, transcript, output, boundaryId, continuationId);
+    }
+
+    private static CompactionTailObservation? TakeCompleteLines(
+        List<byte> pending,
+        UTF8Encoding utf8,
+        ref long transcript,
+        ref long output,
+        ref string? boundaryId,
+        ref string? continuationId)
+    {
+        var start = 0;
+        for (var i = 0; i < pending.Count; i++)
+        {
+            if (pending[i] != (byte)'\n')
+                continue;
+            var count = i - start;
+            if (count > 0)
+            {
+                string line;
+                try { line = utf8.GetString(pending.GetRange(start, count).ToArray()).TrimEnd('\r'); }
+                catch (DecoderFallbackException) { return CompactionTailObservation.Unparsed(null); }
+                if (!string.IsNullOrWhiteSpace(line))
+                {
+                    try { using var _ = JsonDocument.Parse(line); }
+                    catch (JsonException) { return CompactionTailObservation.Unparsed(null); }
+                    foreach (var part in TranscriptNormalizer.Normalize(line))
+                    {
+                        transcript++;
+                        if (part.Kind is TranscriptKinds.AssistantText or TranscriptKinds.Thinking or TranscriptKinds.ToolCall or TranscriptKinds.ToolResult)
+                            output++;
+                        if (TranscriptKinds.IsAutoCompactBoundary(part.Kind, part.Text))
+                            boundaryId = part.Uuid;
+                        if (TranscriptKinds.IsCompactionContinuationPrompt(part.Kind, part.Text))
+                            continuationId = part.Uuid;
+                    }
+                }
+            }
+
+            start = i + 1;
+        }
+
+        if (start > 0)
+            pending.RemoveRange(0, start);
+        return null;
+    }
+
+    private BindingCapture? CaptureBinding()
+    {
+        var path = BoundTranscriptPath;
+        if (string.IsNullOrEmpty(path))
+            return null;
+        return new BindingCapture(path, $"{path}|{BindHow}|{_bindGeneration}");
+    }
+
+    private sealed record BindingCapture(string Path, string Identity);
+
     private async Task RunAsync(CancellationToken ct)
     {
         try
@@ -285,6 +434,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         _claimRevoked = false;
         BoundTranscriptPath = null;
         BindHow = null;
+        _bindGeneration++;
         _knownTranscriptPath = null;
         _logger.LogWarning(
             "Session {SessionId}: transcript {Path} was reclaimed by its namesake session {NewOwner}; "
@@ -506,6 +656,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
 
         BoundTranscriptPath = path;
         BindHow = how;
+        _bindGeneration++;
         try { _onBound?.Invoke(path, how); }
         catch (Exception ex) { _logger.LogDebug(ex, "Recording the transcript binding for session {SessionId} failed", _sessionId); }
 

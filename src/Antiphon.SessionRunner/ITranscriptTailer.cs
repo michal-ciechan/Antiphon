@@ -27,6 +27,12 @@ internal interface ITranscriptTailer : IAsyncDisposable
     /// <summary>Full ordered snapshot of everything parsed so far (for catch-up after a missed stream).</summary>
     RunnerTranscriptDto Snapshot();
 
+    /// <summary>
+    /// CARD-0079 read-to-end of the bound file. Non-Claude tailers cannot certify silence.
+    /// </summary>
+    Task<CompactionTailObservation> ObserveCompactionSilenceAsync(CancellationToken ct) =>
+        Task.FromResult(CompactionTailObservation.Unsupported());
+
     /// <summary>The transcript currently being tailed, or null while unbound.</summary>
     string? BoundTranscriptPath { get; }
 
