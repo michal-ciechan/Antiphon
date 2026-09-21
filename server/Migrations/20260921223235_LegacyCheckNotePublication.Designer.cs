@@ -3,6 +3,7 @@ using System;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260921223235_LegacyCheckNotePublication")]
+    partial class LegacyCheckNotePublication
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -756,17 +759,6 @@ namespace Antiphon.Server.Migrations
                     b.Property<int>("Rows")
                         .HasColumnType("integer");
 
-                    b.Property<string>("RunnerCwd")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("RunnerId")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<Guid?>("RunnerStoreId")
-                        .HasColumnType("uuid");
-
                     b.Property<int>("SessionBackend")
                         .HasColumnType("integer");
 
@@ -801,9 +793,6 @@ namespace Antiphon.Server.Migrations
                     b.HasIndex("DelegationTokenHash")
                         .HasDatabaseName("IX_AgentSessions_DelegationTokenHash");
 
-                    b.HasIndex("RunnerId")
-                        .HasDatabaseName("IX_AgentSessions_RunnerId");
-
                     b.HasIndex("TuiProfileRevisionId")
                         .HasDatabaseName("IX_AgentSessions_TuiProfileRevisionId");
 
@@ -815,10 +804,7 @@ namespace Antiphon.Server.Migrations
 
                     b.HasIndex("StandingAgentId", "CreatedAt");
 
-                    b.ToTable("AgentSessions", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_AgentSessions_RunnerBinding_AllOrNone", "(\"RunnerId\" IS NULL AND \"RunnerStoreId\" IS NULL AND \"RunnerCwd\" IS NULL) OR (\"RunnerId\" IS NOT NULL AND \"RunnerStoreId\" IS NOT NULL AND \"RunnerCwd\" IS NOT NULL)");
-                        });
+                    b.ToTable("AgentSessions", (string)null);
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentSupervisionState", b =>
@@ -1666,11 +1652,6 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
-                    b.Property<bool>("CleanupOnly")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(false);
-
                     b.Property<Guid>("ConcurrencyToken")
                         .IsConcurrencyToken()
                         .HasColumnType("uuid");
@@ -1731,11 +1712,6 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
-                    b.Property<int>("Origin")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
-
                     b.Property<Guid?>("ParentSessionId")
                         .HasColumnType("uuid");
 
@@ -1763,9 +1739,6 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<DateTime>("RequestedAt")
                         .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("RequiredLandingOperationId")
-                        .HasColumnType("uuid");
 
                     b.Property<string>("ResolvedSourceSha")
                         .HasMaxLength(64)
@@ -1842,9 +1815,6 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<int>("State")
                         .HasColumnType("integer");
-
-                    b.Property<Guid?>("SweepRunId")
-                        .HasColumnType("uuid");
 
                     b.Property<string>("TargetFullRefSnapshot")
                         .HasMaxLength(400)
@@ -5995,239 +5965,6 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("SubscriptionUsageSamples", (string)null);
                 });
 
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.TaskWorktreeRetirement", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<bool>("Active")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime?>("BranchRemovedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CallerIdentity")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<Guid?>("CallerSessionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("CallerTaskId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("ClaimAttemptId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("ClaimedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("CommandIntentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("CommandStartedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CommonDirectory")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<Guid>("ConcurrencyToken")
-                        .IsConcurrencyToken()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("DeliverablePreservationPath")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("DestinationFullRef")
-                        .IsRequired()
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<DateTime?>("DirectoryRemovedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("GitDirectory")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("HandoffDispositionJson")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("jsonb")
-                        .HasDefaultValue("[]");
-
-                    b.Property<string>("LastReason")
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<bool>("MissingReportReviewed")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("ObservedTargetSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<DateTime?>("RegistrationRemovedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("ReleaseReason")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<DateTime>("ReleasedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("ReleasedTaskRevision")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("RemoteFingerprint")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("RemoteName")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("ReportDigest")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("RepositoryPath")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("ResultPreservationPath")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<DateTime?>("RetirementCompletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("SchemaVersion")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("SourceFullRef")
-                        .IsRequired()
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<string>("SourceSha")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<int>("State")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("TargetFullRef")
-                        .IsRequired()
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<int>("TaskAttempt")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("TaskCompletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("TaskId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("TerminalStatus")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("WorktreePath")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TaskId", "TaskAttempt")
-                        .IsUnique()
-                        .HasDatabaseName("IX_TaskWorktreeRetirements_TaskId_Attempt_Active")
-                        .HasFilter("\"Active\" = TRUE");
-
-                    b.ToTable("TaskWorktreeRetirements", (string)null);
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.TaskWorktreeRetirementAttempt", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("AttemptNumber")
-                        .HasColumnType("integer");
-
-                    b.Property<bool?>("BranchRemoved")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime?>("CommandIntentAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("CommandIntentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("CommandResult")
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool?>("DirectoryRemoved")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime?>("FinishedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime>("NotBefore")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool?>("RegistrationRemoved")
-                        .HasColumnType("boolean");
-
-                    b.Property<Guid>("ReleasedTaskRevision")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Residue")
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<Guid>("RetirementId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("StartedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("SweepRunId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("SweepRunId");
-
-                    b.HasIndex("RetirementId", "AttemptNumber")
-                        .IsUnique()
-                        .HasDatabaseName("IX_TaskWorktreeRetirementAttempts_Retirement_Attempt");
-
-                    b.ToTable("TaskWorktreeRetirementAttempts", (string)null);
-                });
-
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.TemplateGroup", b =>
                 {
                     b.Property<Guid>("Id")
@@ -6607,60 +6344,6 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("WorkflowTemplates", (string)null);
                 });
 
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.WorkspaceUseReservation", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<bool>("Active")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("CanonicalPath")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("CommonDirectory")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("Generation")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("Kind")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("ReleasedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("RetirementId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("SessionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("SourceFullRef")
-                        .IsRequired()
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<Guid?>("TaskId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CanonicalPath", "SourceFullRef", "Kind")
-                        .HasDatabaseName("IX_WorkspaceUseReservations_Path_Ref_Kind_Active")
-                        .HasFilter("\"Active\" = TRUE");
-
-                    b.ToTable("WorkspaceUseReservations", (string)null);
-                });
-
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.Worktree", b =>
                 {
                     b.Property<Guid>("Id")
@@ -6916,159 +6599,6 @@ namespace Antiphon.Server.Migrations
                         .HasFilter("\"ClearedAt\" IS NULL");
 
                     b.ToTable("WorktreeHealthFindings", (string)null);
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.WorktreeResidueCandidateCursor", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("CandidateKey")
-                        .IsRequired()
-                        .HasMaxLength(80)
-                        .HasColumnType("character varying(80)");
-
-                    b.Property<DateTime>("LastEvaluatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("NotBefore")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CandidateKey")
-                        .IsUnique()
-                        .HasDatabaseName("IX_WorktreeResidueCandidateCursors_CandidateKey");
-
-                    b.ToTable("WorktreeResidueCandidateCursors", (string)null);
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.WorktreeResidueRun", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("ActionBudget")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("ActionsAccepted")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid?>("BoardId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("Candidates")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("Deferred")
-                        .HasColumnType("integer");
-
-                    b.Property<bool>("Execute")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime?>("FinishedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("Held")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("Partial")
-                        .HasColumnType("integer");
-
-                    b.Property<bool>("Preview")
-                        .HasColumnType("boolean");
-
-                    b.Property<Guid?>("ProjectId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("Queued")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("Refused")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("Removed")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Scope")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<DateTime>("StartedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("StartedAt")
-                        .HasDatabaseName("IX_WorktreeResidueRuns_StartedAt");
-
-                    b.ToTable("WorktreeResidueRuns", (string)null);
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.WorktreeResidueRunCandidate", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Branch")
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<bool?>("BranchRemoved")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool?>("DirectoryRemoved")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime>("EvaluatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("LandRequestId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("LandingOperationId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Lane")
-                        .IsRequired()
-                        .HasMaxLength(40)
-                        .HasColumnType("character varying(40)");
-
-                    b.Property<string>("Outcome")
-                        .IsRequired()
-                        .HasMaxLength(40)
-                        .HasColumnType("character varying(40)");
-
-                    b.Property<string>("Path")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("ReasonCode")
-                        .IsRequired()
-                        .HasMaxLength(80)
-                        .HasColumnType("character varying(80)");
-
-                    b.Property<bool?>("RegistrationRemoved")
-                        .HasColumnType("boolean");
-
-                    b.Property<Guid?>("RetirementId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("RunId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("TaskId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("RunId")
-                        .HasDatabaseName("IX_WorktreeResidueRunCandidates_RunId");
-
-                    b.ToTable("WorktreeResidueRunCandidates", (string)null);
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.Agent", b =>
@@ -7964,29 +7494,6 @@ namespace Antiphon.Server.Migrations
                     b.Navigation("Workflow");
                 });
 
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.TaskWorktreeRetirement", b =>
-                {
-                    b.HasOne("Antiphon.Server.Domain.Entities.AgentTask", null)
-                        .WithMany()
-                        .HasForeignKey("TaskId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.TaskWorktreeRetirementAttempt", b =>
-                {
-                    b.HasOne("Antiphon.Server.Domain.Entities.TaskWorktreeRetirement", null)
-                        .WithMany()
-                        .HasForeignKey("RetirementId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("Antiphon.Server.Domain.Entities.WorktreeResidueRun", null)
-                        .WithMany()
-                        .HasForeignKey("SweepRunId")
-                        .OnDelete(DeleteBehavior.SetNull);
-                });
-
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.TokenUsage", b =>
                 {
                     b.HasOne("Antiphon.Server.Domain.Entities.RunAttempt", "RunAttempt")
@@ -8103,15 +7610,6 @@ namespace Antiphon.Server.Migrations
                         .WithMany()
                         .HasForeignKey("TaskId")
                         .OnDelete(DeleteBehavior.SetNull);
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.WorktreeResidueRunCandidate", b =>
-                {
-                    b.HasOne("Antiphon.Server.Domain.Entities.WorktreeResidueRun", null)
-                        .WithMany()
-                        .HasForeignKey("RunId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.Agent", b =>

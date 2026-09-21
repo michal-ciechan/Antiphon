@@ -430,6 +430,7 @@ try
     builder.Services.AddScoped<CheckCompactionBoundary>();
     builder.Services.AddScoped<ICompactionContinuationResume>(sp => sp.GetRequiredService<AgentControlService>());
     builder.Services.AddScoped<CheckCompactionContinuationService>();
+    builder.Services.AddScoped<LegacyCheckNotePublicationService>();
     // The CLAUDE.md floor every agent's working directory carries (CARD-0059). Singleton: it holds no
     // state, touches no database and its only dependency is a logger. Idempotent and never-clobbering,
     // so calling it on every create and every launch costs a comparison when nothing has changed.
