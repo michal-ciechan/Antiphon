@@ -3926,11 +3926,8 @@ public sealed class AgentTaskReplyService
         if (admission is null) return;
         var path = task.WorktreePath ?? task.WorkingDirectory;
         if (string.IsNullOrWhiteSpace(path)) return;
-        var branch = task.WorktreeBranch is null ? ""
-            : task.WorktreeBranch.StartsWith("refs/", StringComparison.Ordinal) ? task.WorktreeBranch
-            : "refs/heads/" + task.WorktreeBranch;
         await admission.RequireConsumerAsync(new WorkspaceReservationCommand(
-            new WorkspaceReservationKey(path, branch, task.RepoPath ?? path),
+            WorkspaceReservationKey.ForTask(task.WorktreePath, task.WorkingDirectory, task.WorktreeBranch, task.RepoPath),
             WorkspaceReservationKind.Launch, task.Id), ct);
         await admission.InvalidateReleaseAsync(task.Id, ct);
     }

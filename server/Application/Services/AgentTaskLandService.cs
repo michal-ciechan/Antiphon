@@ -88,11 +88,8 @@ public sealed class AgentTaskLandService
             throw new ConflictException($"Task {DelegationReportFormatter.Short(task.Id)} must have succeeded before it can land.");
         if (_workspaceUse is not null && !string.IsNullOrWhiteSpace(task.WorktreePath))
         {
-            var branch = task.WorktreeBranch is null ? ""
-                : task.WorktreeBranch.StartsWith("refs/", StringComparison.Ordinal) ? task.WorktreeBranch
-                : "refs/heads/" + task.WorktreeBranch;
             await _workspaceUse.RequireConsumerAsync(new WorkspaceReservationCommand(
-                new WorkspaceReservationKey(task.WorktreePath, branch, task.RepoPath ?? task.WorktreePath),
+                WorkspaceReservationKey.ForTask(task.WorktreePath, task.WorkingDirectory, task.WorktreeBranch, task.RepoPath),
                 WorkspaceReservationKind.Launch, task.Id), ct);
         }
 

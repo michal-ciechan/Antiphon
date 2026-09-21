@@ -25,7 +25,7 @@ public sealed class WorkspaceUseAdmission(
 
     public async Task FenceCompletedAsync(TaskWorktreeRetirement retirement, CancellationToken ct) =>
         await journal.TryAdmitConsumerAsync(new WorkspaceReservationCommand(
-            new WorkspaceReservationKey(retirement.WorktreePath, retirement.SourceFullRef, retirement.CommonDirectory),
+            WorkspaceReservationKey.For(retirement.WorktreePath, retirement.SourceFullRef, retirement.RepositoryPath),
             WorkspaceReservationKind.HistoricalFence, retirement.TaskId, null, retirement.Id), ct);
 
     public async Task<IReadOnlyList<WorkspaceReservationSnapshot>> FindLiveConsumersAsync(
