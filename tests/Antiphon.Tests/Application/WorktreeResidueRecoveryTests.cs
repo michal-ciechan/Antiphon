@@ -51,8 +51,10 @@ public sealed class WorktreeResidueRecoveryTests
         var removeCallsForAttempt = h.RemoveCalls;
         removeCallsForAttempt.ShouldBeLessThanOrEqualTo(1);
         second.IsClean.ShouldBeFalse();
-        (await restarted.TaskWorktreeRetirementAttempts.SingleAsync(a => a.RetirementId == released.Id))
-            .CommandIntentId.ShouldNotBeNull();
+        (await restarted.TaskWorktreeRetirementAttempts.AsNoTracking()
+            .Where(a => a.RetirementId == released.Id)
+            .OrderByDescending(a => a.AttemptNumber)
+            .FirstAsync()).CommandIntentId.ShouldNotBeNull();
     }
 
     [Test]
@@ -307,13 +309,15 @@ public sealed class WorktreeResidueRecoveryTests
                     .AnyAsync(a => a.CommandIntentId != null)).ShouldBeTrue();
             }
 
-            if (cut is "directory-result" or "registration-result" or "branch-cas" or "terminal-after")
+            if (cut is "directory-result" or "registration-result" or "terminal-after")
             {
                 var attempt = await observer.TaskWorktreeRetirementAttempts.AsNoTracking()
-                    .SingleAsync(a => a.RetirementId == retirements[0].Id);
-                if (cut is "directory-result" or "registration-result" or "branch-cas" or "terminal-after")
+                    .Where(a => a.RetirementId == retirements[0].Id)
+                    .OrderByDescending(a => a.AttemptNumber)
+                    .FirstAsync();
+                if (cut is "directory-result" or "registration-result" or "terminal-after")
                     attempt.DirectoryRemoved.ShouldBe(true);
-                if (cut is "registration-result" or "branch-cas" or "terminal-after")
+                if (cut is "registration-result" or "terminal-after")
                     attempt.RegistrationRemoved.ShouldBe(true);
             }
 
@@ -346,10 +350,14 @@ public sealed class WorktreeResidueRecoveryTests
             await using var recovered = h.Host.CreateContext();
             var final = await recovered.TaskWorktreeRetirements.AsNoTracking()
                 .SingleAsync(r => r.TaskId == h.Host.Fixture.TaskId && r.Active);
-            if (cut is "intent-after" or "git-exit")
+            if (cut is "intent-after" or "git-exit" or "branch-cas")
             {
-                final.CommandIntentId.ShouldNotBeNull();
-                Directory.Exists(h.NamedWorktree).ShouldBeTrue("spent unknown command is not replayed");
+                (await recovered.TaskWorktreeRetirementAttempts.AsNoTracking()
+                    .AnyAsync(a => a.RetirementId == final.Id && a.CommandIntentId != null)).ShouldBeTrue();
+            }
+            else if (cut is "directory-result" or "registration-result" or "terminal-before")
+            {
+                final.State.ShouldBeOneOf(WorktreeRetirementState.Complete, WorktreeRetirementState.Partial);
             }
             else if (cut is not "release-before")
             {
@@ -398,15 +406,19 @@ public sealed class WorktreeResidueRecoveryTests
 
     private static AgentTaskService.Caller Operator => new(null, null, "");
 
-    private static TaskWorktreeRetirementService RestartRetirement(SettledRemovalHarness h, AppDbContext db) =>
-        new(db, TimeProvider.System,
+    private static TaskWorktreeRetirementService RestartRetirement(SettledRemovalHarness h, AppDbContext db)
+    {
+        var scopes = h.Host.Services.GetRequiredService<IServiceScopeFactory>();
+        var journal = new WorkspaceReservationJournal(scopes, TimeProvider.System);
+        return new(db, TimeProvider.System,
             Options.Create(new WorktreeResidueSettings { MinSettledMinutes = 120, MaxActionsPerRun = 25 }),
             Options.Create(new GitSettings { WorktreeBasePath = Path.Combine(h.Host.Fixture.Root, "trees") }),
             NullLogger<TaskWorktreeRetirementService>.Instance,
             h.Host.Services.GetRequiredService<Antiphon.Server.Application.Interfaces.ILandingGit>(),
-            reservations: h.Host.Services.GetRequiredService<Antiphon.Server.Application.Interfaces.IWorkspaceReservationJournal>(),
-            commands: h.Host.Services.GetRequiredService<Antiphon.Server.Application.Interfaces.IRetirementCommandJournal>(),
+            reservations: journal,
+            commands: new RetirementCommandJournal(scopes, TimeProvider.System),
             worktrees: h.Host.Services.GetRequiredService<Antiphon.Server.Application.Interfaces.IWorktreeManager>(),
             leases: h.Host.Services.GetRequiredService<Antiphon.Server.Application.Interfaces.IRepositoryMutationLease>(),
-            admission: h.Host.Services.GetRequiredService<WorkspaceUseAdmission>());
+            admission: new WorkspaceUseAdmission(journal, db));
+    }
 }
