@@ -7,3 +7,5 @@ Base `docker-compose.yml` publishes only the server, on `127.0.0.1:5000` unless 
 `scripts/test-docker.ps1 -Group small|backend|all` is the foreground test entry. `scripts/verify-docker-stack.ps1 -Case <literal> -Manifest <path>` runs one checkpoint. SourceLanding Mutation stays on the Windows local path (CARD-0598). A Linux image run is not a custody receipt.
 
 The class accounting checked into `tests/linux-test-roster.json` is the executable copy of the frozen plan roster. Do not drop a class because Linux is red.
+
+Windows CP-1 through CP-5 passed on `3569ed7cd520e3a76bafc0643feb1da0b42c73ca`. CP-6 through CP-57 still need the real server2 Docker cases; the verifier's non-stub path does not run them yet.
