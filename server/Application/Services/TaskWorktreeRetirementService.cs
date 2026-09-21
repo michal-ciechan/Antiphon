@@ -303,14 +303,17 @@ public sealed class TaskWorktreeRetirementService
             }
         }
 
-        var commandId = Guid.NewGuid();
-        if (!await _commands.TryCommitIntentAsync(attempt.Id, commandId, ct))
-            return new(false, false, false, "cleanup_command_slot_spent");
-        retirement.CommandIntentId = commandId;
-        retirement.CommandStartedAt = UtcNow();
-        retirement.State = WorktreeRetirementState.CommandStarted;
-        retirement.UpdatedAt = UtcNow();
-        await _db.SaveChangesAsync(ct);
+        if (attempt.CommandIntentId is null)
+        {
+            var commandId = Guid.NewGuid();
+            if (!await _commands.TryCommitIntentAsync(attempt.Id, commandId, ct))
+                return new(false, false, false, "cleanup_command_slot_spent");
+            retirement.CommandIntentId = commandId;
+            retirement.CommandStartedAt = UtcNow();
+            retirement.State = WorktreeRetirementState.CommandStarted;
+            retirement.UpdatedAt = UtcNow();
+            await _db.SaveChangesAsync(ct);
+        }
 
         var request = new WorktreeRemovalRequest(
             WorktreeRemovalPurpose.SettledTask,
@@ -389,6 +392,8 @@ public sealed class TaskWorktreeRetirementService
             .OrderByDescending(a => a.AttemptNumber)
             .FirstOrDefaultAsync(ct);
         if (latest is not null && latest.FinishedAt is null) return latest;
+        if (latest is not null && latest.CommandIntentId is not null)
+            return latest;
         var now = UtcNow();
         var attempt = new TaskWorktreeRetirementAttempt
         {

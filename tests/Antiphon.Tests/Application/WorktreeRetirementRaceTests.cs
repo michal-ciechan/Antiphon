@@ -111,21 +111,15 @@ public sealed class WorktreeRetirementRaceTests
     public async Task C459_AnswerReservesWorkspace()
     {
         await using var world = await RaceWorld.CreateAsync();
-        var created = await world.Tasks.CreateAsync(
-            new CreateAgentTaskRequest(Goal: "answer me", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree,
-                WorkingDirectory: world.Path),
-            world.ManualCaller(), CancellationToken.None);
+        var created = await world.SeedQueuedTaskAsync(WorkspaceMode.Worktree);
         await using (var db = world.CreateDb())
         {
             var row = await db.AgentTasks.SingleAsync(t => t.Id == created.Id);
             row.Status = AgentTaskStatus.Blocked;
             row.WorktreePath = world.Path;
             row.RepoPath = world.Path;
-            row.WorktreeBranch = "feat/card-task-answer";
+            row.WorktreeBranch = "feat/card-task-race";
             await db.SaveChangesAsync();
-            var launch = await db.WorkspaceUseReservations.SingleOrDefaultAsync(r => r.TaskId == created.Id && r.Active);
-            if (launch is not null)
-                await world.Journal.ReleaseConsumerAsync(launch.Id, launch.Generation, CancellationToken.None);
         }
 
         (await world.Journal.TryClaimRetirementAsync(world.ProductionRetirementCommand(), CancellationToken.None)).Accepted.ShouldBeTrue();
@@ -737,12 +731,14 @@ public sealed class WorktreeRetirementRaceTests
                 Branch = "feat/card-task-race", BaseRef = "master", Status = WorktreeStatus.Active,
                 CreatedAt = now, LastTouchedAt = now,
             };
-            card.CurrentWorktreeId = worktree.Id;
             db.Projects.Add(project);
             db.Boards.Add(board);
             db.BoardColumns.Add(column);
             db.Cards.Add(card);
+            await db.SaveChangesAsync();
             db.Worktrees.Add(worktree);
+            await db.SaveChangesAsync();
+            card.CurrentWorktreeId = worktree.Id;
             await db.SaveChangesAsync();
             return card.Id;
         }

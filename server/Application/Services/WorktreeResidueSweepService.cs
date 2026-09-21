@@ -172,11 +172,20 @@ public sealed class WorktreeResidueSweepService
         {
             ct.ThrowIfCancellationRequested();
             var release = releases.FirstOrDefault(r => r.TaskId == task.Id && r.TaskAttempt == task.Attempt);
+            var outcome = WorktreeResidueCandidateOutcome.Held;
+            var code = "release_required";
+            if (release?.State == WorktreeRetirementState.Complete)
+            {
+                outcome = WorktreeResidueCandidateOutcome.Removed;
+                code = "removed";
+                run.Removed++;
+            }
+            else
+            {
             var (authorized, reason) = _retirement is null
                 ? (false, "release_required")
                 : await _retirement.EvaluateEligibilityAsync(task, release, ct);
-            var outcome = WorktreeResidueCandidateOutcome.Held;
-            var code = reason ?? "release_required";
+            code = reason ?? "release_required";
             if (authorized && execute && !preview && actions < run.ActionBudget && _retirement is not null && release is not null)
             {
                 var removed = await _retirement.TryRetireAsync(release, run.Id, ct);
@@ -204,6 +213,7 @@ public sealed class WorktreeResidueSweepService
             else if (!authorized)
             {
                 run.Held++;
+            }
             }
 
             _db.WorktreeResidueRunCandidates.Add(new Domain.Entities.WorktreeResidueRunCandidate
