@@ -497,6 +497,20 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             ?? throw new InvalidOperationException("Session runner returned an empty compaction-stop response.");
     }
 
+    public async Task<CompactionTailObservation> ObserveCompactionAsync(Guid sessionId, CancellationToken ct)
+    {
+        var features = (await GetCapabilitiesAsync(ct))?.Features;
+        if (features is null
+            || !features.Contains(RunnerCapabilityFeatures.CompactionContinuationStopV1, StringComparer.Ordinal))
+            return CompactionTailObservation.Unsupported();
+
+        var response = await _httpClient.GetAsync($"sessions/{sessionId:D}/compaction-observation", ct);
+        await ThrowForRunnerProblemAsync(response, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<CompactionTailObservation>(JsonOptions, ct)
+            ?? CompactionTailObservation.Unavailable();
+    }
+
     public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(
         [EnumeratorCancellation] CancellationToken ct)
     {

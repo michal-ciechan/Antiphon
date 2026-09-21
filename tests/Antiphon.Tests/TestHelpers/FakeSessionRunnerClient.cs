@@ -32,6 +32,11 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
 
     public bool AdvertiseSessionGeneration { get; set; } = true;
     public bool AdvertiseConditionalInput { get; set; } = true;
+    public bool AdvertiseCompactionStop { get; set; }
+    public CompactionTailObservation? CompactionObservation { get; set; }
+    public List<CompactionContinuationStopRequest> CompactionStops { get; } = [];
+    public CompactionContinuationStopResult? CompactionStopResult { get; set; }
+    public int KillCalls { get; private set; }
     public List<(Guid SessionId, DateTime Expected)> KillGenerationCalls { get; } = [];
     public List<(Guid SessionId, RunnerConditionalInputRequest Request)> ConditionalInputCalls { get; } = [];
     public RunnerConditionalInputResult? ConditionalInputResult { get; set; }
@@ -58,6 +63,8 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
             features.Add(RunnerCapabilityFeatures.SessionGenerationV1);
         if (AdvertiseConditionalInput)
             features.Add(RunnerCapabilityFeatures.ConditionalMaintenanceInputV1);
+        if (AdvertiseCompactionStop)
+            features.Add(RunnerCapabilityFeatures.CompactionContinuationStopV1);
         return Task.FromResult<RunnerCapabilitiesDto?>(new(
             "ModernConPty",
             "modern",
@@ -121,9 +128,27 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
     public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) =>
         throw new NotSupportedException();
 
-    public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct) =>
-        Task.FromResult(new SessionRunnerSessionDto(
+    public Task<CompactionTailObservation> ObserveCompactionAsync(Guid sessionId, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        return Task.FromResult(CompactionObservation ?? CompactionTailObservation.Unsupported());
+    }
+
+    public Task<CompactionContinuationStopResult> StopCompactionContinuationAsync(
+        Guid sessionId, CompactionContinuationStopRequest request, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        CompactionStops.Add(request);
+        return Task.FromResult(CompactionStopResult ?? new CompactionContinuationStopResult(
+            sessionId, request.AttemptId, false, CompactionStopOutcomes.Unsupported, null));
+    }
+
+    public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct)
+    {
+        KillCalls++;
+        return Task.FromResult(new SessionRunnerSessionDto(
             sessionId, null, DateTime.UtcNow, "Exited", 0, AgentExitReason.KilledByRequest, 0));
+    }
 
     public Task<RunnerKillGenerationResult> KillGenerationAsync(
         Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct)

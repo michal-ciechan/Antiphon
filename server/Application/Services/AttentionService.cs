@@ -217,6 +217,7 @@ public sealed class AttentionService
         items.AddRange(await BuildAgentOutlivedTaskItemsAsync(now, ct));
         items.AddRange(await BuildModelAvailabilityHoldItemsAsync(now, ct));
         items.AddRange(await BuildCapacityRecoveryExhaustedItemsAsync(now, ct));
+        items.AddRange(await BuildCompactionContinuationItemsAsync(ct));
         items.AddRange(await BuildStandingSpecialistHealthItemsAsync(ct));
         items.AddRange(await BuildScheduleMisfireItemsAsync(now, ct));
         items.AddRange(await BuildDelegationCapabilityItemsAsync(since, ct));
@@ -2316,6 +2317,38 @@ public sealed class AttentionService
                 row.UnavailableSince ?? row.FirstFailureAt ?? row.UpdatedAt, null,
                 row.LastAttemptTaskId is null ? [AttentionAction.OpenAgent] : [AttentionAction.OpenAgent, AttentionAction.OpenDrawer]));
         }
+        return items;
+    }
+
+    private async Task<List<AttentionItemDto>> BuildCompactionContinuationItemsAsync(CancellationToken ct)
+    {
+        var rows = await _db.CheckCompactionRecoveries.AsNoTracking()
+            .Where(r => CheckCompactionRecoveryStates.Unresolved.Contains(r.State))
+            .ToListAsync(ct);
+        var items = new List<AttentionItemDto>();
+        foreach (var row in rows)
+        {
+            var error = row.State is CheckCompactionRecoveryState.NeedsDecision
+                or CheckCompactionRecoveryState.DisabledNeedsDecision;
+            var phase = row.State == CheckCompactionRecoveryState.AwaitingCheck
+                ? "resumed; validation pending"
+                : row.State.ToString();
+            items.Add(new AttentionItemDto(
+                AttentionKind.CompactionContinuationStalled,
+                error ? AlertSeverity.Error : AlertSeverity.Warning,
+                row.UsefulCheckTaskId ?? row.OwningCheckTaskId,
+                row.SessionId,
+                row.PhysicalAgentId,
+                null,
+                "Compaction continuation stalled",
+                $"Automatic stop/resume {row.Id:D} is {phase}. Boundary {row.BoundarySequence?.ToString() ?? row.BoundaryIdentity} since {row.DetectedAt:u}.",
+                $"operation {row.Id:D}; generation {row.AcceptedStartedAt:O}; reason {row.Reason ?? "none"}; actor {CheckCompactionRecovery.Actor}.",
+                row.DetectedAt,
+                null,
+                [AttentionAction.OpenAgent, AttentionAction.OpenDrawer],
+                ConditionKey: $"compaction-continuation:{row.Id:N}"));
+        }
+
         return items;
     }
 

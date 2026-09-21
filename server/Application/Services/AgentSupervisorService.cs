@@ -273,6 +273,8 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             return false;
         try
         {
+            if (await CheckCompactionAdmission.BlocksAutomaticRestartAsync(_db, agent.Id, ct))
+                return false;
             _logger.LogInformation(
                 "Agent {AgentName}: supervised restart attempt {Attempt} ({Mode})",
                 agent.Name, attemptNumber, "resume");
@@ -462,6 +464,8 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
 
         state.CapacityRecoveryActionKey = wait.ActionKey;
         await _db.SaveChangesAsync(ct);
+        if (await CheckCompactionAdmission.BlocksAutomaticRestartAsync(_db, agent.Id, ct))
+            return false;
         await _control.StartAsync(
             agent.Id,
             new StartAgentRequest(Fresh: false, IgnoreSubscriptionQuota: !StandingSpecialistSeatPolicy.IsAlternate(agent), CapacityRecovery: true),

@@ -226,6 +226,13 @@ public sealed class SpecialistTaskRunner
         if (specialist is null)
             return Finish(SpecialistRunOutcome.Disabled, started);
 
+        if (spec.Role == AgentTaskRole.Check
+            && await CheckCompactionAdmission.ClosesSeatAsync(_db, specialist.Id, ct))
+        {
+            return new SpecialistRun(
+                SpecialistRunOutcome.Held, null, 0m, WaitMs(started), null, "compaction-continuation-stalled");
+        }
+
         var backlog = await _db.AgentTasks.CountAsync(
             t => t.AgentId == specialist.Id
                 && t.Role == spec.Role

@@ -163,6 +163,11 @@ export type AttentionKind =
   | 'StandingSpecialistHealth'
   /** CARD-0514: a remote-control management menu is blocking input. */
   | 'RemoteControlModal'
+  /**
+   * CARD-0079: a Check seat is inside an authorized silent-compaction recovery.
+   * Warning while the episode is open, Error when it needs a decision.
+   */
+  | 'CompactionContinuationStalled'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =
