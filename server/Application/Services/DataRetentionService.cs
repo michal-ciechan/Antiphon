@@ -47,6 +47,7 @@ public sealed class DataRetentionService
     /// </summary>
     public async Task<DataRetentionSweepResult> RunOnceAsync(CancellationToken ct)
     {
+        await PruneCheckCompactionRecoveriesAsync(ct);
         var sessions = await PruneSessionsAsync(ct);
         var transcripts = await PruneTranscriptsAsync(ct);
         var queued = await PruneQueuedMessagesAsync(ct);
@@ -80,12 +81,15 @@ public sealed class DataRetentionService
 
         var cutoff = UtcNow().AddDays(-_settings.SessionRetentionDays);
         var protectedIds = await LoadPersistentSessionIdsAsync(ct);
+        var unresolvedRecovery = CheckCompactionRecoveryStates.Unresolved;
 
         // Terminal + stale LastSeenAt + not a PersistentSessionId + no surviving task
         // names this row via AgentSessionId OR ParentSessionId.
         var query = _db.AgentSessions.Where(s =>
             (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed)
             && s.LastSeenAt < cutoff
+            && !_db.CheckCompactionRecoveries.Any(r => unresolvedRecovery.Contains(r.State)
+                && (r.SessionId == s.Id || r.ResumeSessionId == s.Id))
             && !_db.AgentTaskLandNotifications.Any(n => n.ParentSessionId == s.Id && n.ConfirmedAt == null
                 && n.State != LandNotificationState.NotRequired)
             && !_db.AgentTaskDispatchWarningIntents.Any(i => i.ParentSessionId == s.Id
@@ -123,12 +127,15 @@ public sealed class DataRetentionService
             return 0;
 
         var cutoff = UtcNow().AddDays(-_settings.TranscriptRetentionDays);
+        var unresolvedRecovery = CheckCompactionRecoveryStates.Unresolved;
 
         var protectedIds = await LoadPersistentSessionIdsAsync(ct);
 
         var candidates = await _db.AgentSessions
             .Where(s => (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed)
                 && s.LastSeenAt < cutoff
+                && !_db.CheckCompactionRecoveries.Any(r => unresolvedRecovery.Contains(r.State)
+                    && (r.SessionId == s.Id || r.ResumeSessionId == s.Id))
                 && !_db.AgentTaskLandNotifications.Any(n => n.ParentSessionId == s.Id && n.ConfirmedAt == null
                     && n.State != LandNotificationState.NotRequired)
                 && !_db.AgentTaskDispatchWarningIntents.Any(i => i.ParentSessionId == s.Id
@@ -182,6 +189,7 @@ public sealed class DataRetentionService
             return 0;
 
         var cutoff = UtcNow().AddDays(-_settings.QueuedMessageRetentionDays);
+        var unresolvedRecovery = CheckCompactionRecoveryStates.Unresolved;
         await CompletionNoteStamp.RepairFromAsync(
             _db,
             _db.SessionQueuedMessages.Where(m =>
@@ -196,7 +204,10 @@ public sealed class DataRetentionService
                 && m.DeferredFromRunAttemptId == null
                 && (m.SourceLandNotificationId == null || _db.AgentTaskLandNotifications.Any(n =>
                     n.Id == m.SourceLandNotificationId && n.ConfirmedAt != null))
-                && (m.Origin != QueuedMessageOrigin.Channel || m.ChannelReplySettledAt != null))
+                && (m.Origin != QueuedMessageOrigin.Channel || m.ChannelReplySettledAt != null)
+                && !_db.CheckCompactionRecoveries.Any(r => unresolvedRecovery.Contains(r.State)
+                    && (r.SessionId == m.AgentSessionId || r.ResumeSessionId == m.AgentSessionId
+                        || (r.OwningCheckTaskId != null && r.OwningCheckTaskId == m.SourceTaskId))))
             .ExecuteDeleteAsync(ct);
         if (removed > 0)
         {
@@ -237,6 +248,7 @@ public sealed class DataRetentionService
             return 0;
 
         var cutoff = UtcNow().AddDays(-_settings.TaskRetentionDays);
+        var unresolvedRecovery = CheckCompactionRecoveryStates.Unresolved;
 
         // A root is ineligible if ANY row in its tree is still live (Queued/Dispatched/Working/Blocked).
         var liveRootIds = _db.AgentTasks
@@ -251,7 +263,13 @@ public sealed class DataRetentionService
                 && !_db.AgentTaskLandings.Any(op => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == op.TaskId))
                 && !_db.AgentTaskLandRequests.Any(r => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == r.TaskId))
                 && !_db.AgentTaskDispatchWarningIntents.Any(i => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == i.TaskId))
-                && !_db.AgentTaskLandNotifications.Any(n => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == n.TaskId)))
+                && !_db.AgentTaskLandNotifications.Any(n => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == n.TaskId))
+                && !_db.CheckCompactionRecoveries.Any(r => unresolvedRecovery.Contains(r.State)
+                    && _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId
+                        && (member.Id == r.OwningCheckTaskId
+                            || member.Id == r.UsefulCheckTaskId
+                            || member.AgentSessionId == r.SessionId
+                            || (r.ResumeSessionId != null && member.AgentSessionId == r.ResumeSessionId)))))
             .GroupBy(t => t.RootTaskId)
             .Where(g => g.Max(t => t.CompletedAt ?? t.CreatedAt) < cutoff)
             .Select(g => g.Key)
@@ -285,6 +303,29 @@ public sealed class DataRetentionService
             _logger.LogInformation(
                 "Pruned {Count} task row(s) in {Trees} tree(s) past retention",
                 removed, eligibleRootIds.Count);
+        }
+
+        return removed;
+    }
+
+    /// <summary>
+    /// CARD-0079. Unresolved episodes stay. Terminal action rows stay for
+    /// <see cref="CheckCompactionRecoveryStates.TerminalAuditDays"/>, which is longer
+    /// than ordinary incident retention. The supervision-state receipt gate is a
+    /// different row and is not cleared here.
+    /// </summary>
+    public async Task<int> PruneCheckCompactionRecoveriesAsync(CancellationToken ct)
+    {
+        var cutoff = UtcNow().AddDays(-CheckCompactionRecoveryStates.TerminalAuditDays);
+        var unresolved = CheckCompactionRecoveryStates.Unresolved;
+        var removed = await _db.CheckCompactionRecoveries
+            .Where(r => !unresolved.Contains(r.State) && r.DetectedAt < cutoff)
+            .ExecuteDeleteAsync(ct);
+        if (removed > 0)
+        {
+            _logger.LogInformation(
+                "Pruned {Count} terminal compaction-recovery row(s) past the 90-day audit window",
+                removed);
         }
 
         return removed;

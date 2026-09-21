@@ -464,6 +464,19 @@ public static class TranscriptKinds
     /// </summary>
     public const string ManualCompactMarker = "(manual)";
 
+    /// <summary>
+    /// Trigger marker for an explicit automatic compaction. Only this marker, not a
+    /// missing trigger and not <see cref="ManualCompactMarker"/>, can arm CARD-0079.
+    /// </summary>
+    public const string AutoCompactMarker = "(auto)";
+
+    /// <summary>True when a transcript entry is an explicit automatic compaction boundary.</summary>
+    public static bool IsAutoCompactBoundary(string? kind, string? text) =>
+        kind == CompactBoundary
+        && text is not null
+        && text.Contains(AutoCompactMarker, StringComparison.Ordinal)
+        && !text.Contains(ManualCompactMarker, StringComparison.Ordinal);
+
     /// <summary>True when a transcript entry is a MANUAL compaction boundary (see <see cref="ManualCompactMarker"/>).</summary>
     public static bool IsManualCompactBoundary(string? kind, string? text) =>
         kind == CompactBoundary

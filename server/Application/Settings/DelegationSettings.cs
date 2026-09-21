@@ -665,6 +665,15 @@ public sealed class DelegationSettings
     public int CheckInterpreterWaitSeconds { get; set; } = 60;
 
     /// <summary>
+    /// CARD-0079. Silence after an explicit auto CompactBoundary and its synthetic
+    /// continuation before an eligible AlwaysOn Claude Check seat may be stopped and
+    /// strictly resumed. Zero disables new discovery and any not-yet-issued automatic
+    /// stop or resume. Negatives and 1–9 are rejected. At the default, elapsed 10:00
+    /// is overdue and 9:59.999 is not.
+    /// </summary>
+    public int CheckCompactionContinuationWaitMinutes { get; set; } = 10;
+
+    /// <summary>
     /// Requested first-candidate allocation. Null preserves the full remaining request budget.
     /// A value below the total also requires current latency calibration for the exact execution
     /// fingerprint; configuration alone never authorizes early cutover (CARD-0415).
@@ -1117,6 +1126,14 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
         if (options.MaxOpenTasks <= 0)
         {
             failures.Add("Delegation:MaxOpenTasks must be a positive integer.");
+        }
+
+        if (options.CheckCompactionContinuationWaitMinutes < 0
+            || (options.CheckCompactionContinuationWaitMinutes > 0
+                && options.CheckCompactionContinuationWaitMinutes < 10))
+        {
+            failures.Add(
+                "Delegation:CheckCompactionContinuationWaitMinutes must be 0 or at least 10.");
         }
 
         foreach (var (role, entry) in options.RolePolicy)

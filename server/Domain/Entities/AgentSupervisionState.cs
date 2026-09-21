@@ -57,6 +57,24 @@ public class AgentSupervisionState
 
     public DateTime UpdatedAt { get; set; }
 
+    /// <summary>
+    /// CARD-0079. The operation that currently owns stop/resume for this physical seat.
+    /// Compare-and-set under a row lock. Null when no action is in flight.
+    /// </summary>
+    public Guid? ActiveCompactionRecoveryId { get; set; }
+
+    /// <summary>
+    /// When the rolling automatic-compaction allowance was consumed. Set in the same
+    /// transaction as StopRequested. Incident pruning and healthy uptime do not clear it.
+    /// </summary>
+    public DateTime? LastAutomaticCompactionRestartAt { get; set; }
+
+    /// <summary>
+    /// True only after the restart that consumed <see cref="LastAutomaticCompactionRestartAt"/>
+    /// has both a useful Check and a whole caller receipt. Time alone never sets this.
+    /// </summary>
+    public bool CompactionRestartReceiptEligible { get; set; }
+
     /// <summary>CARD-0412: typed capacity wait for this standing owner, distinct from crash NextRestartAt.</summary>
     public Guid? CapacityWaitId { get; set; }
     public string? CapacityRecoveryActionKey { get; set; }

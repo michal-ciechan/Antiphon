@@ -385,6 +385,19 @@ public enum AgentTaskFailureCode
     ProviderUnresponsive = 3,
     /// <summary>The selected standing specialist identity changed before dispatch.</summary>
     SpecialistIdentityMismatch = 4,
+
+    /// <summary>
+    /// CARD-0079. The occupant was released because its Check turn is the silent
+    /// compaction continuation, after both the delivery deadline and the episode grace.
+    /// This is not the generic never-delivered kill.
+    /// </summary>
+    CompactionContinuationStalled = 5,
+
+    /// <summary>
+    /// CARD-0079. After a confirmed automatic stop, an untyped Check occupant of that
+    /// same generation was retired. Distinct from a delivery timeout.
+    /// </summary>
+    CompactionRecoveryRetiredGeneration = 6,
 }
 
 /// <summary>
