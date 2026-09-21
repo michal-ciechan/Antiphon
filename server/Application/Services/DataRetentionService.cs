@@ -48,6 +48,7 @@ public sealed class DataRetentionService
     public async Task<DataRetentionSweepResult> RunOnceAsync(CancellationToken ct)
     {
         await PruneCheckCompactionRecoveriesAsync(ct);
+        await RetainConfirmedPublicationIdentitiesAsync(ct);
         var sessions = await PruneSessionsAsync(ct);
         var transcripts = await PruneTranscriptsAsync(ct);
         var queued = await PruneQueuedMessagesAsync(ct);
@@ -90,6 +91,12 @@ public sealed class DataRetentionService
             && s.LastSeenAt < cutoff
             && !_db.CheckCompactionRecoveries.Any(r => unresolvedRecovery.Contains(r.State)
                 && (r.SessionId == s.Id || r.ResumeSessionId == s.Id))
+            && !_db.LegacyCheckNotePublications.Any(p =>
+                p.InterpreterSessionId == s.Id
+                && (p.State == LegacyCheckNoteState.Captured
+                    || (p.State == LegacyCheckNoteState.Produced
+                        && !_db.AgentTaskLandNotifications.Any(n =>
+                            n.Id == p.NotificationId && n.ConfirmedAt != null))))
             && !_db.AgentTaskLandNotifications.Any(n => n.ParentSessionId == s.Id && n.ConfirmedAt == null
                 && n.State != LandNotificationState.NotRequired)
             && !_db.AgentTaskDispatchWarningIntents.Any(i => i.ParentSessionId == s.Id
@@ -136,6 +143,12 @@ public sealed class DataRetentionService
                 && s.LastSeenAt < cutoff
                 && !_db.CheckCompactionRecoveries.Any(r => unresolvedRecovery.Contains(r.State)
                     && (r.SessionId == s.Id || r.ResumeSessionId == s.Id))
+                && !_db.LegacyCheckNotePublications.Any(p =>
+                    p.InterpreterSessionId == s.Id
+                    && (p.State == LegacyCheckNoteState.Captured
+                        || (p.State == LegacyCheckNoteState.Produced
+                            && !_db.AgentTaskLandNotifications.Any(n =>
+                                n.Id == p.NotificationId && n.ConfirmedAt != null))))
                 && !_db.AgentTaskLandNotifications.Any(n => n.ParentSessionId == s.Id && n.ConfirmedAt == null
                     && n.State != LandNotificationState.NotRequired)
                 && !_db.AgentTaskDispatchWarningIntents.Any(i => i.ParentSessionId == s.Id
@@ -271,7 +284,15 @@ public sealed class DataRetentionService
                         && (member.Id == r.OwningCheckTaskId
                             || member.Id == r.UsefulCheckTaskId
                             || member.AgentSessionId == r.SessionId
-                            || (r.ResumeSessionId != null && member.AgentSessionId == r.ResumeSessionId)))))
+                            || (r.ResumeSessionId != null && member.AgentSessionId == r.ResumeSessionId))))
+                && !_db.LegacyCheckNotePublications.Any(p =>
+                    p.InterpretationTaskId != null
+                    && (p.State == LegacyCheckNoteState.Captured
+                        || (p.State == LegacyCheckNoteState.Produced
+                            && !_db.AgentTaskLandNotifications.Any(n =>
+                                n.Id == p.NotificationId && n.ConfirmedAt != null)))
+                    && _db.AgentTasks.Any(member =>
+                        member.RootTaskId == t.RootTaskId && member.Id == p.InterpretationTaskId)))
             .GroupBy(t => t.RootTaskId)
             .Where(g => g.Max(t => t.CompletedAt ?? t.CreatedAt) < cutoff)
             .Select(g => g.Key)
@@ -326,6 +347,27 @@ public sealed class DataRetentionService
         }
 
         return removed;
+    }
+
+    /// <summary>
+    /// CARD-0079. A confirmed legacy Check publication keeps its logical identity.
+    /// Payload text may age out; deleting the row would let a later capture mint a second note.
+    /// </summary>
+    public async Task RetainConfirmedPublicationIdentitiesAsync(CancellationToken ct)
+    {
+        var updated = await _db.LegacyCheckNotePublications
+            .Where(p => p.State == LegacyCheckNoteState.Produced
+                && _db.AgentTaskLandNotifications.Any(n => n.Id == p.NotificationId && n.ConfirmedAt != null))
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(p => p.Body, (string?)null)
+                .SetProperty(p => p.FactsSnapshotJson, "{}")
+                .SetProperty(p => p.RenderContextJson, "{}"), ct);
+        if (updated > 0)
+        {
+            _logger.LogInformation(
+                "Retained {Count} confirmed legacy Check publication identities as tombstones",
+                updated);
+        }
     }
 
     /// <summary>
