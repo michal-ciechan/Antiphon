@@ -732,8 +732,11 @@ EOF
         local rel
         rm -f "$CHECKOUT/probe.Dockerfile" "$CHECKOUT/probe.Dockerfile.dockerignore"
         for rel in "${sentinels[@]}"; do
-            rm -f "$CHECKOUT/$rel"
+            rm -rf "$CHECKOUT/$rel"
         done
+        rm -rf "$CHECKOUT/git-pointer" "$CHECKOUT/nested-git" "$CHECKOUT/scratch" \
+            "$CHECKOUT/.grok" "$CHECKOUT/.antiphon" "$CHECKOUT/workspace" \
+            "$CHECKOUT/logs" "$CHECKOUT/server/bin-pc" "$CHECKOUT/client/node_modules"
     }
     set +e
     docker build -f "$CHECKOUT/probe.Dockerfile" -t "$image" "$CHECKOUT" > "$CASE_DIR/build.log" 2>&1
@@ -749,11 +752,14 @@ EOF
     mkdir -p "$CASE_DIR/context"
     docker cp "$cid:/context" "$CASE_DIR/context-copy" >> "$CASE_DIR/command.log" 2>&1
     docker rm "$cid" >/dev/null
-    python3 - <<PY
+    if ! python3 - <<PY > "$CASE_DIR/context-check.txt"
 import os, sys
-root = "$CASE_DIR/context-copy/context"
-missing = []
+root = "$CASE_DIR/context-copy"
+inner = os.path.join(root, "context")
 required = "$required"
+if not os.path.isfile(os.path.join(root, required)) and os.path.isdir(inner):
+    root = inner
+missing = []
 if not os.path.isfile(os.path.join(root, required)):
     missing.append("missing " + required)
 banned = [
@@ -774,17 +780,19 @@ banned = [
     "git-pointer/.git",
 ]
 for rel in banned:
-    if os.path.exists(os.path.join(root, rel)):
+    if os.path.lexists(os.path.join(root, rel)):
         missing.append("present " + rel)
 if missing:
-    print("\\n".join(missing))
+    print("\n".join(missing))
     sys.exit(1)
+print("context-ok " + root)
 PY
-    local py=$?
-    docker image rm "$image" >/dev/null 2>&1 || true
-    if [ "$py" -ne 0 ]; then
+    then
+        docker image rm "$image" >/dev/null 2>&1 || true
         write_result false ContextSentinelLeak 2
     fi
+    rm -rf "$CASE_DIR/context" "$CASE_DIR/context-copy"
+    docker image rm "$image" >/dev/null 2>&1 || true
     write_result true '' 0
 }
 
