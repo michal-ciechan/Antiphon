@@ -5,6 +5,12 @@ Source baseline: `723ac9534fc3fce49b378e287da08b7b11095716`.
 Continuation `e7f50f48` incorporates TestDesign commit
 `1d6a213a65a32b6c04861e17f5d8f4e644171fe7` (source unchanged). **Return to TestDesign**;
 the historical rejected assessment below is not an executable verification manifest.
+Continuation `04b55418` amends S6 against TestDesign tip
+`7a18aca2358c5a4cf6fbf07d54f33f220be94ebd` on `feat/card-task-806c2e25`.
+The ordinary observation/cut contract below supersedes that tip's missing-seam assessment.
+The amendment is on `feat/card-task-04b55418` because the source branch is checked out in
+another worktree. Production source is unchanged. **Next: test-design**, including the full
+portable roster, independent guard/PC mapping, checkpoints and costs; Code is not admitted yet.
 
 ## Outcome and scope
 
@@ -64,6 +70,13 @@ repository files below; owners `docs/bootstrap.md`, `docs/testing-and-build.md`,
 | A fresh Docker container is a fresh inherited executor | The current native seam `IPtyCustodyNative` uses Windows job membership and active-process accounting. `VerificationHostIdentity.ContainerId` identifies that original native custody container, not a Docker ID. Docker-launched siblings are controlled by the standing daemon. | Per-dispatch Docker freshness, labels, setsid and root exit do not prove inherited custody. Candidate (b) alone is rejected. |
 | A Raw shell response proves delivery/custody | Raw has no provider UserPrompt transcript or verification binding. `HostCustodyJournal` requires sealed descendant-zero accounting and drained output before producing receipt bytes. | Keep Raw native launch as one gate, add a distinct complete-UserPrompt queue probe, and make no SourceLanding claim from either. |
 | Runner filesystem paths can be bind-mounted into sibling containers | Docker resolves bind sources on its daemon host, not inside the CLI container. `/work` is a named-volume mount in the runner. | Send clean build contexts through Docker's client, use named volumes for child state and `docker cp` for evidence. Do not bind the runner's `/work/...` as a host path. |
+| An idle message POST returns the submitted queue identity | `SessionEndpoints` passes body/mode only. `EnqueueAsync` commits, then may deliver inline. `BuildQueueDtoAsync` selects Pending only; `C475_AlreadyIdleWhenIdleHasRecipientReceipt` explicitly expects an empty response. | Keep that contract. Observe the owned database across all statuses, separately from POST/GET. |
+| A returned pending row supplies the attempt floor/generation | `QueuedMessageDto` omits them. `SessionQueuedMessage.LastDeliveryBaselineSequence` and `LastDeliveryGeneration` are committed with each typed attempt; a never-attempted Pending row legitimately has neither. | Export the actual committed tuple, preserving nulls and each attempt separately. Never substitute a pre-POST transcript maximum. |
+| Landing failpoints also cut ordinary messages | `afterLandQueueInsert` and `queue-before-typing`/`queue-before-verdict` are gated by `SourceLandNotificationId`; ordinary UI POST has no notification binding. | Do not reuse those hooks or manufacture a task/notification. Use test-host DI interceptors and a forwarding runner client. |
+| New production queue hooks are necessary | `C475_QueueCommitAndTransportRecovery` already uses `SaveChangesInterceptor` and a forwarding `ISessionRunnerClient`. Ordinary Ui enqueue has no completion transaction; its attempt save precedes input, and verdict save follows `DeliverAsync`. | Existing EF and runner interfaces can expose the required cuts without changing server source or public DTOs. Prove commit visibility from a second connection before reporting a reached cut. |
+| One failed transcript save guarantees no receipt is stored | `AgentSessionRuntime.PersistTranscriptAsync` retries a failed batch individually and can persist a stub; both SSE and catch-up pulls can ingest. | Gate every route for the selected native UUID. The save-failure fixture must also cover individual/stub retries until explicitly disarmed. |
+| Native transcript sequence equals the persisted attempt floor domain | Runtime deduplicates by UUID/kind and can rebase runner sequences when saving. `TranscriptEntry` has no generation column. | Compare the floor with server-stored sequence, join native and stored records by UUID/kind/body, and independently verify the unchanged accepted generation. |
+| Canceling a blocked delivery is a hard crash | Queue cancellation/transport exception handlers revert Sent rows. A container replacement also says nothing about the surviving recipient PTY. | Hard-cut only the owned fixture-server process at an exported barrier, retain DB and runner, and verify identity before recovery. Test graceful failure separately. |
 
 ## Decisions
 
@@ -87,8 +100,9 @@ These are implementation decisions within the brief, not requests for a new prod
   (revision stamping, verified native payload, state ownership, required health utility).
   Retain Grok 1.0.34 packaging and its no-baked-auth contract. Do not fork a second near-identical
   runner Dockerfile or change `docker-compose.runner-grok.yml`'s phone-home behavior. Add an
-  opt-in `session-testing` target from the shared runtime base; keep the ordinary runtime as
-  the default/final target so existing builds do not acquire test tools or FakeGrok.
+  opt-in socket-free `receipt-probe` target from the shared runtime base, then `session-testing`
+  from that target; keep ordinary runtime as the default/final target so existing builds do
+  not acquire test tools or FakeGrok.
 - **D-5 — Dedicated test image, separate from runtime.** Add `docker/tests/Dockerfile` and
   `docker/tests/Dockerfile.dockerignore`, based on SDK 10 with runtime 9, Node 22 meeting the locked
   Vite engine minimum, npm, Git and PowerShell 7. Assert tool versions while building. Keep root
@@ -168,6 +182,40 @@ These are implementation decisions within the brief, not requests for a new prod
   received body. Do not alter production completion/outbox semantics or claim a SourceLanding
   result was delivered. TestDesign replaces the rejected Linux-Mutation handoff obligation with
   this ordinary probe and keeps the existing queue's relevant recovery regressions.
+- **D-17 — Observe the owned database; preserve the public API.** A test-only observer discovers
+  the exact ordinary Ui row in `SessionQueuedMessages`, including Sent/Canceled, using the
+  frozen recipient, queue high-water mark and unique full body. Read the actual attempt tuple
+  and stored/native receipt, then export them. Reject a submitted-row API extension, arbitrary
+  SQL/connection-string arguments, Mode.Now, and artificially busy-only coverage: none is needed
+  to fix test observation, and the latter two lose required queue behavior.
+- **D-18 — A test-only host owns cuts through existing interfaces.** Add a small console fixture
+  project using `WebApplicationFactory<Program>` with real Kestrel, following the existing E2E
+  factory's host construction. Replace only test instrumentation via DI: EF save interceptor,
+  transparent runner decorator, and a selected-response barrier. No new production failpoint,
+  settings flag, endpoint, migration or change to Program/queue/runtime is planned. Reject
+  extending `LandDeliveryBoundary` with fictitious task IDs and test code in runtime images.
+- **D-19 — Prove committed cuts, then kill only their owner.** File barriers carry run/case,
+  database/session/row/attempt and host-incarnation identities. A second connection confirms
+  commits before a barrier is ready. The foreground controller explicitly releases, injects
+  the named failure, or hard-kills the owned fixture server; elapsed time never releases a cut.
+  Reject throwing an exception and suppressing the queue's revert as a substitute for a crash.
+- **D-20 — Retain both native and server evidence.** A receipt is the complete native FakeGrok
+  UserPrompt plus its matching persisted UUID/body after the committed server sequence floor,
+  in the same accepted generation. Record each attempt rather than overwriting its floor.
+  Reject screen-only success, a favorable verdict alone, prefix matching, synthetic transcript
+  writes and treating runner sequence numbers as server sequence numbers.
+- **D-21 — Instrumented recovery and stock-image acceptance are separate required runs.** Run
+  no-cut idle/busy delivery against the stock server plus read-only observer, then the recovery
+  cuts against the fixture host built from the same SHA. Add a socket-free `receipt-probe`
+  runner target containing FakeGrok; `session-testing` may derive from it and add Docker tools.
+  Only the parent test-session runner gets Docker authority. Reject requiring the fixture host
+  or Docker tools in the deployment image, or claiming a fixture-host pass qualifies that image.
+- **D-22 — Resume observation, never blind resubmission.** Persist expectation before POST and
+  recover the row independently of its response. Unknown acknowledgements keep delivery
+  incomplete until the original request's owner has ended and database/runner evidence is read.
+  Zero rows is not immediate permission to POST again; duplicates/identity drift refuse success.
+  Explicit retry after proved insert refusal is a separately recorded submission. Existing queue
+  recovery reuses the row. This does not introduce an idempotency key or an exactly-once promise.
 
 ## Runtime and build design
 
@@ -221,7 +269,7 @@ qualification uses the same clean-source principle plus explicit revision inject
 | runner | `SessionRunner__PtyBackend`, `ANTIPHON_PTY_BACKEND`, `SessionRunner__Herdr__Enabled` | `inbox`, `inbox`, `false`; no Herdr/modern-ConPTY fallback dependency |
 | runner | `GROK_HOME` | `/state/grok`; starts empty, authentication is optional explicit provisioning |
 | runner, ordinary testing override only | socket, tools and group | `/var/run/docker.sock`, explicit socket supplemental GID, Docker CLI + Compose plugin, PowerShell 7, Git and archive tools; scripts available from the committed `/work/repos` checkout |
-| runner, ordinary testing override only | FakeGrok | Publish `src/Antiphon.FakeGrok` as executable linux-x64 apphost with its complete runtime payload under `/opt/antiphon-tests/fakegrok`; no credentials; test definition only |
+| runner, receipt-probe/session-testing targets only | FakeGrok | Publish `src/Antiphon.FakeGrok` as executable linux-x64 apphost with its complete runtime payload under `/opt/antiphon-tests/fakegrok`; no credentials; test definition only; receipt-probe has no Docker tools/socket |
 | postgres | database/user/password and data mount | required deployment password; project-owned `pgdata:/var/lib/postgresql/data`; no published port |
 
 Optional Linux managed-secret configuration uses `AgentTui__KeyProtection__Mode=X509Certificate`
@@ -331,7 +379,9 @@ and permission preflight still decides whether this deployment works.
 
 ### Separate native receipt probe
 
-Package native FakeGrok only in the session-testing target, retaining production Grok's defaults.
+Package native FakeGrok in the test-only `receipt-probe` runner target, also inherited by
+`session-testing`, retaining production Grok's defaults. `receipt-probe` has no Docker tools or
+socket; this allows the disposable recipient stack to use FakeGrok without recursive authority.
 Use an isolated test definition with `Agents__GrokCredentialProbeEnabled=false` only in this
 credential-free test override, isolated `GROK_HOME`, and enabled transcript confirmation.
 Reuse the supported FakeGrok transcript format, not the Windows-only LandDelivery fixture.
@@ -349,11 +399,199 @@ through the real queue; TestDesign must identify relevant enqueue/receipt-persis
 cuts and the existing regression owners. A delivered failure report is still a failed test run.
 
 The foreground verifier owns this acceptance probe, not a new durable completion service. It
-writes `result-ready` before posting and the returned queue identity before awaiting receipt.
+writes `result-ready` and the immutable expectation before posting, then obtains the queue
+identity from the owned database observer below, independently of the pending-only response.
 On crash/unknown POST acknowledgement, record incomplete delivery; inspect existing queue and
 transcript before any explicit retry. Do not promise automatic exactly-once submission across
 that gap or blindly post again. Existing queue rows retain their identity during native queue
 recovery. No parent task settlement/SourceLanding notification is synthesized for this probe.
+
+### S6 ordinary observation and recovery-cut fixture (04b55418)
+
+This is the selected implementation design, not an executed verification manifest. It closes
+Q-2/Q-3/Q-5/Q-6's design gaps in the historical TestDesign v2 assessment. TestDesign still owns
+the complete roster, exact tests/PCs, checkpoint commands and cost estimates. All nine acceptance
+outcomes and the ordinary server2 / Windows-local Mutation boundary remain required.
+
+**Placement and execution.** Add `tests/Antiphon.DockerStack.Fixture/` as a test-only console
+project with `serve` and `observe` modes. `serve` boots the real server Program through a local
+Kestrel WebApplicationFactory; `observe` never boots Program or a runner. Use the existing
+`AntiphonAppFixture.KestrelWebApplicationFactory.CreateHost` technique, with an explicit
+container content root/web root and internal listen address. Do not import its Windows Raw
+definition, mock executor, disabled health registrations, desktop endpoints or whole E2E
+assembly. Normal migration, routes, queue service, runtime transcript persistence, delivery
+settings and direct runner implementation remain real. Health/version checks remain enabled.
+
+Publish this executable in a named `delivery-fixture` target of `docker/tests/Dockerfile`,
+including the server payload, settings, static client and embedded bundles from the same clean
+source/publish inputs. It is absent from the root server image and default runner image.
+`docker-compose.delivery-fixture.yml` is a test-only override for the server entry point/image,
+socket-free `receipt-probe` runner, private control/evidence volume and observation service.
+No HTTP fault/admin route is added. Public message requests have only ordinary Body/WhenIdle.
+Runtime image inspection must prove fixture dependencies and FakeGrok are absent there.
+
+The S6 foreground controller launches a dedicated disposable receipt stack per case, such as
+`c590-q-<run>-<case>`, distinct from both the parent and the Small/Medium child. Record all its
+container/network/volume IDs before use; use the existing S6 ownership/export/cleanup rules.
+This avoids interrupting the parent session that runs the controller. The no-cut cases use the
+stock server image with the observer and test runner; cut cases substitute the fixture host.
+All receipt cases carry the original run's already exported sanitized result, not a fabricated
+successful Small/Medium result. A complete failed-run summary still reports a failed run.
+
+The fixture's services receive an immutable case identity file via their private named volume.
+No caller-supplied database URI, raw SQL, server origin, PID or cleanup prefix is accepted.
+The controller derives network endpoints from exact inspected Compose resource IDs and labels,
+then verifies `/api/version`, DB identity and runner/session generation before arming. An
+observer has SELECT-only credentials on `AgentSessions`, `SessionQueuedMessages` and
+`TranscriptEntries` in this throwaway application's DB. Provision the role after migrations
+with a test-only initialization helper; no schema migration or production role is introduced.
+Credentials come from a private file and never appear in commands, manifests or logs.
+Connection identity is recorded without credentials. Use parameterized, read-only queries in
+short repeatable-read transactions, no pooled transaction held while a barrier waits.
+The DB and runner publish no host port; the observer has no Docker socket. Docker access belongs
+only to the already authorized parent controller. Missing/mismatched owner metadata refuses
+observation and control; an unknown connection is never treated as this stack's database.
+
+**Immutable expectation and lookup.** Before a POST, atomically export `expectation.json`:
+schema version, run/case/submission nonce, source SHA, result/evidence digest, parent and receipt
+project/resource identities, recipient session ID, normalized accepted StartedAt, runner identity,
+definition/Cwd, exact UTF-8/LF body and SHA-256, mode WhenIdle, and the recipient's committed
+queue sequence high-water mark. The full bounded body contains unique head/tail/run/case/SHA
+markers and fits below the real spill/inline ceiling. Do not relax production spill behavior.
+Use a dedicated Ui recipient with no other producers. Bootstrap it through a real native prompt
+and completed turn before the measured message, so the attempt baseline is observable; never
+seed transcript entries. Busy cases use FakeGrok's existing busy gate and real turn-end release.
+
+The observer finds rows by exact `AgentSessionId`, `Sequence > prePostQueueSequence` and exact
+trimmed `Body`, across **all statuses**, then checks Origin=Ui and no source task, notification,
+schedule or maintenance binding. Body comparison and hash are both checked; do not use LIKE,
+contains, newest-row selection or Sent as a receipt. Zero matches means not-yet-observed; more
+than one means ambiguous/duplicate and fails. The nonce only finds a candidate: the committed
+database row supplies its identity. Freeze the one `Id` once found and use it thereafter,
+rechecking the immutable fields instead of discovering a replacement row.
+
+Export `row-observed.json` with Id, Sequence, status, CreatedAt/SentAt, DeliveryAttempts,
+LastDeliveryStartedAt, LastDeliveryBaselineSequence, LastDeliveryGeneration, DeliveryVerdict
+and DeliveryVerdictAt, plus the same snapshot's session StartedAt. A never-attempted Pending
+row has attempts=0 and nullable floor/generation; keep these null and label it awaiting attempt.
+For an attempted row require a non-null floor and the expected generation before qualifying
+this canary. No wall-clock/pre-POST floor substitution. The plain already-idle run must observe
+one attempt even though POST's pending list is empty.
+
+Each committed attempt is a separate immutable `attempt-<n>.json`, keyed by queue ID,
+DeliveryAttempts, LastDeliveryStartedAt, generation and floor. In the instrumented host the
+save interceptor snapshots every selected insert/attempt commit before delivery can continue,
+even if no cut is armed. Use per-context captured change metadata in SavingChangesAsync;
+after a successful save entity state is no longer Added/Modified. Confirm the snapshot through
+a fresh read-only connection before atomic export. Never read a shared tracked context or query
+the pending-only API as evidence. Stock no-cut observation is external and requires attempts=1;
+unexpected retries are reported, not retroactively labelled as observed first attempts.
+Enter-only recovery retains the original tuple; a fresh typing retry may commit a new floor,
+so preserve both original and new snapshots rather than asserting all retries keep one floor.
+
+**Receipt and restart join.** Pull the real runner's `/sessions/{id}/transcript` from the private
+network and independently read the stored transcript rows. Persist native UUID/kind/body and
+runner sequence, plus stored UUID/kind/body and **server** sequence. Match the entire expected
+UserPrompt using only the specified LF normalization/outer trim; no fragment or containment
+acceptance. Require exactly one matching native prompt for the measured submission, one stored
+UUID/kind, and a stored sequence strictly above its committed attempt floor. A complete native
+prompt alone while persistence is withheld is `native-received/server-pending`, not success.
+Delivered/LateConfirmed is supporting queue evidence, not a substitute for these records.
+
+`TranscriptEntry` carries no generation token. Bind receipt evidence through the captured
+runner session/accepted generation and native transcript identity, checking runner
+AcceptedStartedAt and DB StartedAt before and after observation against the attempt generation
+at PostgreSQL microsecond precision. Preserve original launch/transcript identity across a
+server-only restart; never annotate an arbitrary old row with the current generation. A changed
+or unavailable generation blocks acceptance of the old manifest. TestDesign includes changed
+generation, old equal-body prompt at/below floor, prefix-only/missing-tail, wrong run/SHA/digest,
+duplicate UUID/body and complete failure-summary rejection/handling cases. Local synthetic
+records may test the validator, but never qualify actual native delivery.
+
+The observer can restart from expectation and frozen row/attempt files with no in-memory
+callback or HTTP response. Read the original database and runner before acting on absence.
+On lost POST acknowledgement, wait for the recorded request owner to finish or be terminated,
+then observe; never automatically re-POST. If no row exists after an unknown acknowledgement,
+record incomplete/unknown until that request has been ruled out. Only a definite insert-failure
+case may explicitly retry after no-row/no-input/native-no-prompt evidence. Record the retry as
+a new submission attempt. A verifier crash after receipt simply repeats read-only validation
+and atomically finishes the same manifest; it sends no message. Preserve expected body,
+observations, reached cuts, command outcomes and artifact hashes before disposing the stack.
+
+**Barrier mechanism.** Add `OrdinaryDeliverySaveInterceptor`,
+`OrdinaryDeliveryRunnerClient` and `OrdinaryDeliveryResponseBarrier` only in the fixture project.
+The host installs them through ConfigureWebHost/ConfigureServices, preserving the real Npgsql
+provider and transparently decorating the configured ISessionRunnerClient. Resolve/capture
+the inner registration once without recursive DI. Forward every untargeted method, session,
+event and byte unchanged. Decorator input records distinguish requested, forwarded and returned
+writes; a transport ACK is not proof of recipient receipt. Instance-local case state is shared
+across scopes, never static/global or keyed only by a reused filename.
+At this baseline `SessionRunnerEventPump` resolves ISessionRunnerClient for SSE and
+AgentSessionRuntime uses it for catch-up and normal input; instrument that outer registration,
+not only SessionRunnerHttpClient. The response barrier must buffer start/flush as well as body
+(`IHttpResponseBodyFeature`), so even headers cannot acknowledge the armed POST prematurely.
+
+SavingChangesAsync captures only the selected ordinary row/transcript UUID. SavedChangesAsync
+emits committed insert/attempt barriers only after a second connection sees the intended state;
+an open outer transaction or invisible commit refuses the cut. This relies on the inspected Ui
+WhenIdle path's transaction boundaries, not on a general assumption that SaveChanges commits
+every caller's transaction. Guard that contract with an ordinary database test. Failed saves
+emit no commit-ready receipt and clear per-context pending observation metadata.
+
+Controls are atomically written files, not env toggles polled by production. An arm names the
+exact case/submission, cut, row (or pre-insert selector), attempt and expected generation.
+The fixture exports a reached record with those identities, host boot nonce/PID/start time,
+container ID and independent durable observation digest, then waits for its exact release.
+Consumed cut/arm IDs persist across server restart; stale/replayed releases cannot free a new
+case, host or attempt. Fixture stop/deadline causes incomplete/failure, never implicit release.
+The controller records a pending action before issuing it and reconciles resource state after
+an interrupted action. It issues SIGKILL only to the exact recorded fixture-server container,
+with automatic restart disabled; await exit, export logs, disarm the consumed cut and start the
+same server against its original volumes. Do not kill/recreate Postgres, runner or recipient.
+Catchable exceptions/cancellation exercise graceful failure, not this crash state. No manual
+row status/age/generation/verdict edits, transcript edits, fake receipts or widened timeouts.
+
+After restart verify the original DB identity, runner/container/session and accepted generation,
+then let the existing startup attachment, catch-up and stranded-queue recovery run. Preserve
+default age/verification windows and budget the actual wait in TestDesign. Do not add a flush
+endpoint, shift the whole server clock or synthesize a turn-end to speed recovery. If native
+reattachment fails (including CARD-0594), record the actual dependency failure and residue; do
+not relaunch a new recipient and count it as recovery of the original generation.
+
+| Cut / handoff | Instrumentation and reached-state proof | Release/recovery contract |
+|---|---|---|
+| `insert-refused` / Q-2 | SavingChangesAsync throws the named injected failure before the selected Added queue row's save. Independent query sees zero matching rows; no forwarded body/Enter and no native prompt. | Await failed POST. Disarm, dispose failed context through normal handling, verify absence, then explicitly submit again. This is a definite refusal, not a crash or auto retry. |
+| `insert-committed` / Q-3 | SavedChangesAsync waits after the selected Ui insert is independently visible: Pending, attempts=0, null floor/generation, no input. It runs before EnqueueAsync can evaluate inline flush. | Hard-cut server, retain row, restart; normal eligible/stranded recovery eventually types the same Id. Also run busy then real turn-end without a crash. |
+| `attempt-committed` / Q-3 | SavedChangesAsync waits after Sent + attempts=1 + original floor/generation + null verdict are independently visible, before any runner input. | Hard-cut/restart; original charge survives. Recovery reuses Id and a fresh body attempt charges once more, with its own recorded floor. |
+| `body-before-enter` / Q-4 | Forwarding client has returned from the real body write and intercepts the separate CR before forwarding it. Read actual composer evidence and confirm no complete native prompt. Preserve bracketed multiline paste and LF. | Hard-cut/restart in the same generation. Existing whole-composer recovery sends only Enter, retains attempt/floor and yields the whole prompt once; any second body is failure. |
+| `recipient-before-ingestion` / Q-5 | Decorator holds the selected native UserPrompt from BOTH StreamEventsAsync and GetTranscriptAsync before handing it to runtime; independent observer bypasses that decorator and pulls the real runner. No matching stored row. Hold all concurrent paths for that UUID; do not return a fabricated empty transcript. | After evidence export, hard-cut server and restart disarmed. Native record remains; normal catch-up persists it, late-confirms the original row and sends no further body/Enter. |
+| `transcript-save-fails` / Q-5 | EF interceptor refuses saves for the actual native UUID/session, including batch, individual and persist-stub attempts. Keep the fault armed until absent stored UUID and actual native receipt are exported. Match UUID even when a fallback changes kind/body. | Exercise the real persistence failure handling, then disarm and permit catch-up (also cover server restart). Require one complete stored prompt, no accepted stub and zero duplicate input. One failed batch alone does not qualify this cut. |
+| `receipt-before-verdict` / Q-5 | SavingChangesAsync holds the selected queue verdict transition to Delivered before save. Independent reads show the complete native/stored prompt and Sent/null verdict with original attempt tuple. No source notification is involved. | Hard-cut/restart. Recovery late-confirms same row with no additional writes; the stored receipt and original floor survive. |
+| `response-before-client` / Q-2/Q-6 | Test-host middleware buffers only the armed ordinary POST response after the endpoint returns, preserving status/headers/body. Export request-completed and discovered row before any response bytes leave the host. | Hard-cut server to make acknowledgement deterministically unknown. Restart/observe the original row and receipt; do not submit again. Default middleware remains pass-through. |
+| `receipt-before-manifest` / Q-6 | Controller durably exports expectation, row, attempt and actual validated receipt, then its own supervised worker stops before replacing the final acknowledgement manifest. | Fresh observer/controller resumes from those files, revalidates against DB/runner, writes the same manifest with zero POSTs. Controller interruption never kills its parent task session. |
+
+For the last cut, `verify-docker-stack.ps1` exposes internal `-ReceiptWorker` and
+`-ResumeManifest <owned-path>` modes. Its foreground supervisor launches and awaits the
+one worker, records/reconciles its exact exit and resumes it explicitly. It does not stop the
+Raw session running Small/Medium or launch another qualification recursively. Resume validates
+the recorded project/container IDs rather than accepting arbitrary targets from a command line.
+
+Each cut is independently armed and exported. A not-reached cut, timeout, host build error,
+wrong identity, missing native prompt or fixture failure is incomplete/failed evidence, never a
+successful crash test. Successful recovery is required for supported happy recovery arms;
+negative inputs/refusals must produce their specified failure rather than silently skipping a
+case. An insert-ready record has no attempt tuple; an attempt-ready record must have one.
+Stock-image idle/busy runs must demonstrate no response/cut middleware dependency.
+
+The local validator/barrier/command tests use files, value records, controlled DB/runner
+substitutes and inherited child processes as appropriate. Database and real native cases are
+ordinary V/R. Sourced PCs must select DB-free local methods only: no fixture `serve` mode,
+Docker, Testcontainers, standing executor or server2 access. TestDesign must split validation
+guards from actual I/O qualification honestly; a simulated response cannot prove a commit or a
+native prompt. New instrumentation must also prove unrelated rows/sessions pass through,
+invalid/stale arms do not activate, committed records come only after success, and normal
+runtime images contain none of the fixture host. This amends G-18 and adds observation/barrier
+guard obligations; it is not the full independent guard inventory or PC battery.
 
 ### Portability triage
 
@@ -390,6 +628,23 @@ names are the required behavioral coverage and proposed test ownership, not a co
 | **S4 — portable apphost lookup** | new `tests/Shared/TestAppHostPath.cs`; csproj links only where consumed; `tests/Antiphon.E2E/Fixtures/IsolatedSessionRunner.cs`; audited portable lookup sites from `rg -l -F -e fakeclaude.exe -e fakegrok.exe tests`; new `tests/Antiphon.Tests/TestHelpers/TestAppHostPathTests.cs` | Centralize OS suffix and missing-file diagnostics where portability is intended. Prove both platform filename branches with fake files plus native Linux apphost existence. Keep native-only contracts and CARD-0588 files out of the edit set. Exact consumer inventory is a TestDesign prerequisite. |
 | **S5 — Medium roster and execution** | new `tests/linux-test-roster.json`, `tests/Antiphon.Tests/TestHelpers/LinuxTestRosterTests.cs`; test wrapper and manifest tooling from S3 | Complete class accounting, audited included classes/shards, explicit native/process/opt-in exclusions; run portable majority with real DB fixtures. Existing `TestDbFixtureIsolationTests`, `ProductionRunnerGuardTests` and selected `HealthEndpointTests` are required coverage anchors. Do not change their production safety guards. |
 | **S6 — session-created stack acceptance and operations** | new `scripts/verify-docker-stack.ps1`, `docker-compose.throwaway.yml`, test-only `docker/session-testing/fakegrok-linux.sh` if terminal setup is needed, `tests/Antiphon.Tests/Scripts/DockerStackSmokeCommandTests.cs`, `docs/docker-stack.md`; update `docs/bootstrap.md` and `docs/testing-and-build.md` with links | Keep interactive Raw smoke. Prove a separate server-launched test-command session creates a child stack, runs S3/S5, exports evidence and cleans only owned resources. Add distinct native FakeGrok complete-UserPrompt queue probe, failed/partial-receipt and interrupted-cleanup guards. Prove DB persistence and same-path workspace visibility; run identical entry points on server2. Document ordinary testing versus Windows Mutation and CARD-0594/0598 dependencies. |
+
+S6 is further divided into the following commit-sized parts. All named new methods/classes are
+design ownership for TestDesign to freeze, not already-existing tests or authorized CP commands.
+
+| Part | Files | Tests and exit evidence |
+|---|---|---|
+| **S6a — owned observation and receipt contracts** | new `tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj`, `Program.cs`, `DeliveryCaseIdentity.cs`, `QueueObservationReader.cs`, `DeliveryEvidenceValidator.cs`; new `tests/Antiphon.Tests/Infrastructure/DockerDeliveryObservationTests.cs`; `tests/Antiphon.Tests/Antiphon.Tests.csproj` project reference | Local validator tests for owner/row uniqueness, status-independent lookup result validation, nullable/no-attempt versus committed-attempt tuples, generation/sequence domains and full-body/UUID acceptance. Separate ordinary DB cases in `DockerDeliveryDatabaseTests.cs` prove real SELECT-only access, Sent discovery, coherent snapshots and unique lookup against PostgreSQL. PCs select only DB-free methods. |
+| **S6b — fixture host and independent cuts** | new fixture `DeliveryFixtureHost.cs`, `OrdinaryDeliverySaveInterceptor.cs`, `OrdinaryDeliveryRunnerClient.cs`, `OrdinaryDeliveryResponseBarrier.cs`, `DeliveryFileBarrier.cs`; new `tests/Antiphon.Tests/Infrastructure/DockerDeliveryBarrierTests.cs`, `DockerDeliveryDatabaseTests.cs` | Local methods prove target-only forwarding, stale/foreign release refusal, persisted one-shot arms, input ordering and no commit receipt after a failed save. Ordinary DB/HTTP tests prove insert/attempt second-connection visibility, verdict hold, batch/individual/stub failure coverage, SSE/pull gate convergence and post-endpoint/pre-response hold. Keep `SessionQueueReceiptPlumbingTests` and existing busy/idle/interrupted-attempt regression owners in TestDesign's ordinary inventory. |
+| **S6c — package and drive isolated receipt stacks** | `docker/tests/Dockerfile`, `docker/tests/Dockerfile.dockerignore`, `docker/session-runner-grok/Dockerfile`; new `docker-compose.delivery-fixture.yml`, `tests/Antiphon.DockerStack.Fixture/provision-observer.sql`; `scripts/verify-docker-stack.ps1`; `DockerStackContractTests.cs`, `DockerStackSmokeCommandTests.cs` | Script cases prove expectation-before-POST, owner-bound observer invocation, action/reached/export ordering, exact server-only kill/start, unknown-ack no-rePOST and verifier resume with zero POST. Stock-image idle/busy real FakeGrok receipts plus every cut use actual PostgreSQL/runner and exported evidence. Inspect all final image targets and effective Compose mounts. No fixture source/payload in production images and no socket in receipt server/runner/observer. |
+| **S6d — recovery evidence and operations** | new `tests/Antiphon.Tests/Scripts/DockerDeliveryRecoveryCommandTests.cs`; S6 script/fixture files above; `docs/docker-stack.md`, `docs/bootstrap.md`, `docs/testing-and-build.md` | Real Linux per-cut case manifest inventory; same row, charge/floor/generation, native+stored receipt and expected additional body/Enter counts. Local command cases guard interrupted export/cleanup, duplicate/changed-identity rejection and failure-summary exit status. Record CARD-0594 block if native recovery cannot run; never replace with synthetic receipt evidence. |
+
+S6a -> S6b -> S6c -> S6d. S6a/S6b local authoring can proceed once TestDesign accepts the full
+manifest; native S6c/S6d additionally depend on S2/S3/S5 packaging and native qualification.
+The amendment plans **no edits** to `server/Program.cs`, `SessionEndpoints.cs`, queue/runtime
+services, DTOs/entities/migrations, `LandDeliveryBoundary`, or the existing E2E landing fixture.
+If Code proves an existing interception point cannot expose a required cut, return the exact
+unreachable boundary/evidence to Plan instead of silently widening the production surface.
 
 S1 -> S2 and S3; S3 -> S4 -> S5; S2 + S5 -> S6. Small completes after S1-S3;
 overall card acceptance also needs Medium accounting/results and S6. No new test framework,
@@ -742,7 +997,7 @@ SourceLanding/session-created-stack objective with D-6 and the existing custody 
 the independent Linux custody dependency, then return the amended plan to TestDesign for the
 full portable roster, V/R, one-to-one PCs, exact checkpoints and numeric execution floors.
 
-## Current TestDesign handoff (e7f50f48)
+## Historical TestDesign handoff (e7f50f48)
 
 The three rejected design boundaries are now resolved in scope, not claimed green in execution:
 D-6 provides a concrete ordinary-session Docker path; D-13/D-14 preserve SourceLanding custody
@@ -787,13 +1042,17 @@ block designing or implementing this ordinary server2 stack. CARD-0594 can still
 native acceptance and therefore CARD-0590 closure. No production custody/source/cleanup files
 are in CARD-0590's implementation edit set.
 
-## Verification design
+## Historical TestDesign v2 rejection (806c2e25)
 
 TestDesign v2, task `806c2e25`, inspected source and plan at
 `a9ca1664b0857ab13e8c1e671f75db6cc30432e9`. **Return to Plan for the S6 observation seam;
 this is not an accepted Code verification manifest.** The ordinary-testing versus
 SourceLanding scope reconciliation is accepted and is not reopened here. No Linux Mutation
 qualification is requested. The fix design above is unchanged.
+
+Historical record: the missing-seam conclusions below describe the pre-04b55418 plan. D-17..D-22
+and the current S6 fixture contract supersede them; retain the inspected facts and unfinished
+roster/guard/checkpoint obligations. Follow the current handoff at the end of this document.
 
 S6 requires the verifier to persist the **returned queue identity**, its actual attempt floor
 and accepted generation, then prove recovery through the existing queue. The specified public
@@ -1018,7 +1277,40 @@ The empty table is a rejection gate, not a zero-test implementation profile.
 - Measured execution savings = **0 minutes**. No equivalent full battery was executed or timed.
   Zero commissioned execution is justified by the required return to Plan, not a claimed speedup.
 
-Handoff: **next: plan**. Amend only S6's ordinary queue observation and deterministic cut seam,
+Historical handoff: **next: plan**. Amend only S6's ordinary queue observation and deterministic cut seam,
 including its edit set and evidence transport; preserve all nine acceptance outcomes and the
 resolved ordinary/Windows-Mutation split. Then resume TestDesign to freeze the complete portable
 class roster, independent G/PC mappings, exact checkpoints and numeric product execution floors.
+
+## Current TestDesign handoff (04b55418)
+
+The selected seam is now specified: test-only SELECT observer, native/stored UUID join,
+Kestrel fixture host using existing EF/runner interfaces, durable file barriers and server-only
+crash/restart. The API and production source edit set remain unchanged. D-17..D-22 and the S6
+ordinary observation section supersede the historical missing-seam assessment. This is a
+completed Plan amendment, not a green implementation or an executable verification manifest.
+
+TestDesign must now:
+
+1. Freeze the complete portable class/helper roster and S4 lookup inventory, preserving Small,
+   Medium, all nine acceptance outcomes and the already-decided Windows-local Mutation limit.
+2. Read the cited save, verdict, runtime fallback/dedup, forwarding, Kestrel and generation
+   bodies; turn S6a..S6d into exact test ownership and independent guards. Account separately
+   for stock-image behavior, fixture correctness, real recovery and local validation.
+3. Map every Q-1..Q-6 boundary/mandatory combination to the selected cut or existing regression.
+   Include all concurrent ingest paths, failed-save fallback, invisible/open-transaction refusal,
+   stale release/restart, unknown acknowledgement, changed generation, retained versus replaced
+   attempt floors, wrong/duplicate/partial receipt and explicit failure-summary outcomes.
+4. Supply every guard's decisive assertion and method-scoped compiling PC variant. Keep local
+   PC test setup free of DB startup, Docker, Testcontainers, server2 and external executors,
+   including assembly hooks. Real DB/native cuts remain ordinary V/R, never substituted PCs.
+5. Append a current `## Verification design` and closed `### Checkpoints` table with exact
+   commands/filters, expected cases/nonzero counts and full ordinary scope. Include fixture
+   publication/image isolation, actual default recovery-window costs and native dependency
+   disposition; do not adopt either historical empty checkpoint table as executable scope.
+6. Price setup/authoring, isolated build closure, ordinary runs and Windows post-land PC
+   cycles separately. No estimated execution saving or zero-minute accepted floor is implied.
+
+Plan validation at `04b55418`: source inspection and Markdown/diff checks only; **0 builds,
+0 product test runs, 0 PC cycles**. No runtime image, native Linux behavior or server2 setup
+was claimed verified. CARD-0594 and CARD-0598 boundaries are preserved, not re-decided.
