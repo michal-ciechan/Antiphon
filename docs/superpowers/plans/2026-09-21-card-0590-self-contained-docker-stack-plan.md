@@ -350,3 +350,208 @@ image builds and harness work; Medium another 3-6 hours including class census a
 native runtime repairs excluded. TestDesign replaces these planning ranges with measured/estimated
 per-checkpoint minutes and separate PC cost before Code. Existing evidence is insufficient to
 claim a current test count or green Linux baseline.
+
+## Verification design
+
+TestDesign assessment, 2026-09-21, task `09cc47e1`, inspected plan commit
+`5904ce74e901fa86c38673cf368205f282e5fd7b`: **return to Plan; not a Code checkpoint manifest**.
+The implementation design above is preserved. The commissioning brief requires a persistent
+server2 runner whose launched session can create and remove a throwaway Antiphon stack through
+Testcontainers **during a SourceLanding Mutation battery**. The present design cannot deliver
+that use case, even if all its image, Small, Medium and Raw-shell checks pass.
+
+There are three separate boundaries to resolve:
+
+1. **Execution placement contradicts the brief.** D-6 permits the Docker socket only in a
+   separate test service and explicitly excludes application-task agents. S3's foreground
+   `docker compose run` entry point is not a session-launched stack. The Mutation paragraph
+   also correctly prohibits giving the sourced snapshot to a standing Docker daemon, including
+   a local one. Adding a socket mount to the runner would violate both decisions; it is not a
+   routine test-fixture adjustment. Plan must specify a custody-compatible execution topology
+   or explicitly return the scope change to the caller. Do not bypass the SourceLanding rule.
+2. **Linux SourceLanding custody is unsupported independently of the pipe handshake.**
+   `server/Application/Services/SourceLandingAdmission.cs:52` requires the feature
+   `VerificationCustodyV1`, backend `windows-job-v1` and a nonempty runner-store identity.
+   `src/Antiphon.SessionRunner/SessionRunnerRuntime.cs:46` advertises that backend only on
+   Windows with modern ConPTY. `src/Antiphon.SessionRunner/Program.cs:205` withholds the feature
+   otherwise. Independently, `RunnerCustodyLedger.PrepareStart` at
+   `src/Antiphon.SessionRunner/RunnerCustodyLedger.cs:125` persists an unsupported record and
+   throws `verification_custody_unsupported_backend` for a verification-bound non-Windows
+   launch. D-3's Linux image and the required inbox backend cannot pass these checks. Removing
+   the checks or fabricating a Windows receipt is not a fix. The plan needs a named custody
+   dependency with descendant accounting, sealing, durable receipts and recovery, separate
+   from CARD-0594's runner-to-PtyHost Unix pipe dependency.
+3. **The acceptance path stops short of the requested mutation use case.** D-8/S6's Raw shell
+   has no verification binding and produces no provider UserPrompt receipt. It remains a
+   necessary native-launch gate, but cannot establish SourceLanding admission, child-container
+   custody, mutation result delivery or cleanup authorization. The current acceptance list has
+   no session-created throwaway stack or recovery/receipt test for that use case.
+
+These are source/design findings, not newly reproduced Linux failures. No source code, runtime
+configuration, platform skip, test timeout or shared service was changed. Do not remove the
+native-session acceptance gate to make the packaging increment appear complete. CARD-0587
+continues to own the root-image overlap; CARD-0588 retains its four skip changes. The caller's
+CARD-0594 dependency does not by itself resolve the independently observed custody refusal.
+
+### Inspection
+
+Bodies read and their verification consequences:
+
+| Tests, fixtures or helpers inspected | Boundary and disposition |
+|---|---|
+| `tests/Antiphon.Tests/Scripts/VerifyPhoneHomeGrokScriptTests.cs` and `Application/DelegateScriptRunner.cs` | Nearest script-test fixture for S3/S6. Real inherited `pwsh` children and command arguments can be observed. Its server2 test deliberately uses a desktop Tailscale origin, so it cannot be reused as desktop-independent acceptance. Source-string assertions alone do not prove container/session behavior. |
+| `tests/Antiphon.Tests/TestHelpers/TestDbFixture.cs`, `TestDbFixtureLifecycle.cs`, `TestDbFixtureIsolationTests.cs` | DB bootstrap is lazy, uses a real PostgreSQL Testcontainer and creates separate cloned databases, not SearchPath schemas. The clone, migration, concurrent-isolation and disposal bodies were read. Ordinary Medium may use this fixture; a SourceLanding PC must not initialize it against a standing daemon. |
+| `TestHelpers/ProductionRunnerGuard.cs`, including both `ProductionRunnerGuardTests` methods, and `AntiphonWebAppFactory.cs` | The dead URL and refusing runner client are independent protections. The factory boots real Program with an isolated database and disables process-producing maintenance. Keep both protections; HTTP tests are not native-session evidence. |
+| `Application/HealthEndpointTests.cs` | Both methods check a non-unknown 40-character version and the in-process stamp. The health response does not establish version, session delivery or custody. A clean image/test context without `.git` needs explicit revision injection. |
+| `TestHelpers/TestLaneCategoryGuardTests.cs` | Its source scan checks Unit xor Integration only. It is not a portable-class roster or a transitive process-spawn audit. No majority claim follows from this guard or the 789-file estimate. |
+| `Application/GrokDelegateDispatchTests.cs`: the staged-FakeGrok specification test, `SpecOf`, `CreateHarness`, `CreateDispatchHarness`, `BuildHarness`, and warm-session setup | The `.exe` lookup at line 267 resolves a real staged file but does not launch it. This is a portable lookup candidate. The warm fixture also contains a Windows-shaped rules path; replacing the executable suffix alone does not certify the whole class on Linux. |
+| `tests/Antiphon.E2E/Fixtures/IsolatedSessionRunner.cs`: construction, start/readiness, `StartProcess`, output drain/stop entry points | `StartProcess` hardcodes the runner apphost `.exe` and missing-file diagnostic. Naming preparation is separate from the fixture's process lifecycle and from browser acceptance. |
+| `tests/Antiphon.E2E/Fixtures/LandDeliveryOptions.cs`: configuration and `FileBoundary.ReachedAsync`; `LandDeliveryFixture.cs`: initialization | Existing delivery cuts include terminal commit, before enqueue, queue insertion, before typing/verdict and before receipt save. This fixture uses native FakeGrok, modern delivery configuration and isolated real services; it is not an available Linux substitute merely by renaming the apphost. CARD-0588 owns its platform treatment. |
+| `tests/Antiphon.SessionRunner.Tests/RunnerCustodyTests.cs`, including nested `CustodyFixture` | The native receipt/restart/orphan tests require Windows modern ConPTY and skip before setup elsewhere. They cannot be counted as Linux acceptance. The fixture reads actual producer receipts; container exit or a runner status is insufficient. |
+| `RunnerCustodyLedger` body, runtime capability property, runner capability route, and `SourceLandingAdmission.RequireSupportAsync` | Independently enforced admission, capability and launch boundaries establish the custody seam above. A test that merely turns off one check would leave the others closed. |
+| Root `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `docker/session-runner-grok/Dockerfile`, `docker-compose.runner-grok.yml`, and `tests/Antiphon.Tests/Antiphon.Tests.csproj` | Actual copy graph, linked fixtures, embedded resource, apphost staging and old phone-home placement inspected. Packaging success is a separate claim from supported SourceLanding execution. |
+
+Required setup has not been observed: server2 Docker/Compose versions, amd64 architecture,
+owned deployment/evidence paths, Docker context, socket authority and mapped-port reachability,
+available resources, deployment-secret injection and current CARD-0594 disposition. These are
+execution preconditions, not passed checks. No server2 access or deployment was attempted.
+
+#### Frozen apphost occurrence inventory
+
+At the inspected commit, `rg -n -F -e fakeclaude.exe -e fakegrok.exe tests` yields **52 lines
+in 18 files**, containing **20 Path.Combine lookup/assertion sites**. Comments and missing-file
+messages account for the other lines. The table freezes this inventory, not a portable-class
+admission decision. Line numbers refer to that commit. All paths are under `tests/`.
+
+| File | Matching lines | Actual lookup lines | S4 disposition |
+|---|---:|---|---|
+| `Antiphon.Tests/Application/GrokDelegateDispatchTests.cs` | 2 | 267 | Portable helper consumer for the specification test; preserve the rest of the class and audit its Windows-shaped fixture data before whole-class admission. |
+| `Antiphon.Tests/TestHelpers/RemoteControlPtyLane.cs` | 3 | 55 | Retain native Windows ConPTY lane; excluded from non-spawning Medium. |
+| `Antiphon.Tests/TestHelpers/HerdrLabelFollowHttpFixture.cs` | 1 | 148 | Retain native Herdr/runner fixture; excluded from non-spawning Medium. |
+| `Antiphon.Tests/Application/DelegationBriefCeilingPtyTests.cs` | 3 | 48 | Retain native ConPTY contract. |
+| `Antiphon.Tests/Application/GrokDelegateEndToEndTests.cs` | 7 | 69, 72 | Retain native process/ConPTY contract. |
+| `Antiphon.Tests/Application/GrokSignInRuntimeTests.cs` | 2 | 37 | Retain native modern-ConPTY contract. |
+| `Antiphon.Tests/Application/HerdrAlwaysOnChannelParityTests.cs` | 4 | 50, 53 | Retain mixed Herdr/native fixture; no class-wide non-spawning claim. |
+| `Antiphon.Tests/Application/SessionMessageQueueGrokPtyIntegrationTests.cs` | 5 | 33 | Retain native producer-to-recipient coverage; it does not become Linux evidence. |
+| `Antiphon.Tests/Application/SessionMessageQueuePtyIntegrationTests.cs` | 9 | 41 | Retain native producer-to-recipient coverage. |
+| `Antiphon.Tests/Application/SessionQueueReceiptPlumbingTests.cs` | 1 | 27 | Retain native ConPTY receipt fixture. |
+| `Antiphon.E2E/Fixtures/LandDeliveryOptions.cs` | 1 | 26 | Retain native delivery fixture configuration; do not duplicate CARD-0588. |
+| `Antiphon.E2E/Fixtures/LandDeliveryFixture.cs` | 1 | 59 | Staged-native assertion; CARD-0588 owns platform treatment. |
+| `Antiphon.Agents.Pty.Tests/ClaudeSubmitContractTests.cs` | 2 | 70 | Native assembly excluded from this Linux target. |
+| `Antiphon.Agents.Pty.Tests/ClaudeVerifiedDeliveryTests.cs` | 2 | 34 | Native assembly excluded. |
+| `Antiphon.Agents.Pty.Tests/FakeClaudeContractTests.cs` | 2 | 31 | Native assembly excluded. |
+| `Antiphon.Agents.Pty.Tests/FakeGrokContractTests.cs` | 2 | 50 | Native assembly excluded; CARD-0588 owns the skip correction. |
+| `Antiphon.Agents.Pty.Tests/FakeVsRealClipParityTests.cs` | 3 | 72 | Native/real-provider canary excluded. |
+| `Antiphon.Agents.Pty.Tests/PtyLargeWriteTests.cs` | 2 | 38 | Native assembly excluded. |
+
+Separately, `Antiphon.E2E/Fixtures/IsolatedSessionRunner.cs:131,135` contains one runner lookup
+and its diagnostic, absent from the fake-name search. S4 prepares the OS suffix there without
+claiming Linux E2E acceptance. The shared-helper boundary must cover Windows/Linux crossed with
+existing/missing files, correct sibling producer directories and diagnostic filename. Native
+Linux execute permission requires ordinary Linux evidence; a fake file on Windows cannot prove it.
+
+The complete portable class roster is **not frozen or certified** by this assessment. No JSON
+roster was manufactured from file counts, category labels or absence of direct Process.Start
+text. The required resumed TestDesign must account for every discovered class, its helper/base
+dependencies, exact shard, exclusion owner and class-count denominator. The three required
+anchors remain `TestDbFixtureIsolationTests`, `ProductionRunnerGuardTests` and
+`HealthEndpointTests`; they are not a replacement for the Medium majority.
+
+### Delivery inventory
+
+The six existing slices change packaging/harnesses, not a new asynchronous notification
+protocol. Their only native smoke is server launch/input -> internal HTTP runner -> PtyHost ->
+Raw shell. Correlate the smoke run nonce, session ID, accepted generation and observed child
+identity; keep runner state on its owned volume and export input/output/exit evidence before
+cleanup. After container removal a live PTY is gone; persisted session records do not prove
+cross-container adoption. A shell's response to a post-launch unique challenge proves that input
+was executed in that shell. It is **not** a matching complete UserPrompt receipt.
+
+The brief's SourceLanding path adds a different qualification obligation: published operation
+and exact landed SHA -> managed task/creation -> verification-bound session generation -> owned
+test executor and stack -> result and native custody receipt -> caller and authorized cleanup.
+The durable join must include operation ID, landed SHA, task ID, creation ID, execution ID,
+runner store, session/generation and original observer/container identity. The current plan has
+no compatible Linux producer for that custody receipt and no session-to-executor handoff design.
+
+Plan must identify each persistence/handoff and recovery owner before TestDesign can enumerate
+real-queue tests: recipient already eligible; recipient busy then eligible; crash after durable
+outcome but before enqueue; enqueue failure; crash after enqueue before send; and crash after
+recipient receipt before its acknowledgement is saved. Recovery must retain the same durable
+notification identity. A session result is delivered only when the destination transcript
+contains the complete matching UserPrompt after the attempt floor. Request acceptance, an insert,
+an event, Sent, transport ACK, shell marker and container health cannot substitute.
+
+Existing LandDelivery boundary hooks illustrate the cuts but do not establish this Linux path.
+Fake command results can test script decisions and failure propagation; they cannot prove
+Docker execution, child custody or recipient delivery. Source/file contract tests can detect
+removed packaging declarations; they cannot prove effective Docker context filtering or the
+published runtime payload. Ordinary real-container evidence remains required for those claims.
+
+### Proves it works now
+
+No product V-case is claimed green. The source inspection establishes why the brief's path
+cannot currently qualify. The revised plan must preserve all seven ordinary acceptance outcomes
+above and add the session-created stack/custody/recipient acceptance path, or obtain an explicit
+scope revision. The Raw-shell gate remains required even when all containers are healthy.
+
+### Guards the regression
+
+No completed R-case or current Linux baseline is claimed. Existing tests named in Inspection
+are inspected anchors, not executed evidence. Preserve the native tests and production-runner
+fences. Do not count a native skip as portable coverage or widen timeouts to hide the pipe failure.
+
+### Guard inventory
+
+The earlier 16 G/PC rows remain preliminary **groups**, not a completed one-to-one inventory.
+They include independently bypassable guards (client/bundles, host/native library, server/runner
+socket mounts, each context policy, evidence file/class/count, path/backend/permissions) that
+still require separate PCs. They omit the brief's Linux custody/executor handoffs entirely.
+Consequently the required `guards=N, mapped=N, missing=0, duplicate PC mappings=0` acceptance
+audit has **not passed**. Issuing a zero-missing claim here would be false.
+
+### Positive controls
+
+No executable PC battery is commissioned by this rejected design. The plan's local inherited
+process rule remains binding. The revised topology must make each PC's exact-method
+break/red/restore/green cycle executable without handing the sourced snapshot to server2, a
+standing daemon or an external executor. Code authors the tests and runs ordinary V/R;
+ordinary Review judges before land; Mutation runs the PCs after land. The native custody guards
+must remain intact while their supported Linux implementation/dependency is designed.
+
+### Out of scope
+
+- Rewriting D-6 or implementing a Linux custody backend in TestDesign: these alter the fix
+  design and need a Plan continuation with explicit ownership.
+- CARD-0594's native pipe repair, CARD-0588's four skips, full nightly/native assembly parity,
+  browser E2E, live providers and desktop deployment: unchanged exclusions/dependencies.
+- Certifying an unaudited Medium roster or pricing an unspecified executor as executable work:
+  neither would be a reviewable Code handoff.
+
+### Checkpoints
+
+No Code checkpoint is issued. The closed list is deliberately empty because this is a rejection
+at a required verification seam, not acceptance of zero-test implementation. Plan must resolve
+the three boundaries above, then TestDesign must supply the complete class roster, split guard
+inventory and populated checkpoint table before `next: code` is permitted.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min |
+|---|---|---|---|---|---|---|---|
+
+### Cost
+
+- **This rejected dispatch:** 0 builds, 0 product test runs, 0 PC cycles. Ordinary Code floor
+  issued = sum of the empty checkpoint table = **0 minutes**; Mutation floor issued =
+  **0 minutes**; issued setup/build + V/R + PC total = **0 minutes**. These numbers mean no
+  execution has been commissioned, not that the requested feature costs zero to verify.
+- **Replanning allowance (estimated): 60 minutes** to define/assign the Linux custody and
+  session-owned executor dependencies and update acceptance. This excludes implementation,
+  the full roster audit and resumed TestDesign. It is not a substitute Code budget.
+- **Measured execution savings: 0 minutes.** No equivalent complete battery was run or timed;
+  a percentage saving or complete ordinary/PC cost would be unsupported. Avoiding a premature
+  Code dispatch is the purpose of the rejection, not a measured optimization claim.
+
+Handoff: `next: plan`. Retain this negative finding and frozen lookup inventory, reconcile the
+SourceLanding/session-created-stack objective with D-6 and the existing custody contract, name
+the independent Linux custody dependency, then return the amended plan to TestDesign for the
+full portable roster, V/R, one-to-one PCs, exact checkpoints and numeric execution floors.
