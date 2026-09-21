@@ -233,7 +233,7 @@ function New-IsolatedLiveConfig {
         image                  = @{
             dockerfile  = 'docker/session-runner-grok/Dockerfile'
             digest      = $null
-            grokVersion = '1.0.34'
+            grokVersion = '1.0.40'
         }
         assetLock              = 'tests/fixtures/card0490-linux/assets.lock.json'
         runId                  = $runId
@@ -281,8 +281,8 @@ function Add-ContainerBlockers($config, [System.Collections.Generic.List[string]
     }
     $dockerfile = Join-Path $repoRoot 'docker/session-runner-grok/Dockerfile'
     $df = Get-Content -LiteralPath $dockerfile -Raw
-    if ($df -notmatch '1\.0\.34' -or $df -notmatch 'grok') {
-        [void]$blockers.Add("docker/session-runner-grok/Dockerfile does not install Grok 1.0.34; the image cannot complete a provider turn until grok is pinned into the image.")
+    if ($df -notmatch '1\.0\.40' -or $df -notmatch 'grok') {
+        [void]$blockers.Add("docker/session-runner-grok/Dockerfile does not install Grok 1.0.40; the image cannot complete a provider turn until grok is pinned into the image.")
     }
     if ($df -match '(?im)^\s*ENV\s+PhoneHome__ServerOrigin\b') {
         [void]$blockers.Add("docker/session-runner-grok/Dockerfile must not ENV PhoneHome__ServerOrigin.")

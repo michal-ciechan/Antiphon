@@ -33,7 +33,7 @@ investigation, not experiments repeated by this Plan task.
 | Host worktrees can be mounted implicitly | Dispatcher/worktree creation uses Windows paths. No container worktree protocol exists. | Reject delegated/card/worktree/SourceLanding use of the pinned agent in this slice; launch only the named cardless standing session. |
 | The Linux PTY ceiling fix must land first | `PtyBackendPolicy` falls back to InboxConhost on Linux; Grok `PtyDeliveryCeilings.ForAgentKind` already sets `BriefInlineMaxBytes=0`. | CARD-0038 is parallel work, not this slice's dependency. Keep conservative Grok delivery and existing spill/receipt behavior. Do not claim a measured POSIX paste ceiling. |
 | Linux must implement Windows custody | `SessionRunnerRuntime.VerificationCustodyBackend` already returns null off Windows. Memory-limit Job Object usage is conditional. | Keep memory limit zero, reject verification bindings, do not advertise `windows-job-v1`. No cgroup/custody project. |
-| Existing transcript handling is enough evidence | `GrokTranscriptTailer.ResolveUpdatesPath` derives `GROK_HOME/sessions/<escaped-full-cwd>/<id>/updates.jsonl` on the runner. Linux Grok 1.0.34's path was not measured by this investigation. | Runner and Grok share Linux paths; prove actual native transcript binding in the container and collect a small sanitized fixture if the format/path differs. |
+| Existing transcript handling is enough evidence | `GrokTranscriptTailer.ResolveUpdatesPath` derives `GROK_HOME/sessions/<escaped-full-cwd>/<id>/updates.jsonl` on the runner. Linux Grok 1.0.40's path was not measured by this investigation. | Runner and Grok share Linux paths; prove actual native transcript binding in the container and collect a small sanitized fixture if the format/path differs. |
 | Container callbacks and auth are unresolved | CARD-0575 measured `http://host.docker.internal:17202` and mounted `GROK_HOME` surviving replacement/rebuild. Its exec wrapper was superseded, not shipped. | Reuse those facts. Never bake OAuth into an image; do not recreate the docker-exec architecture. |
 | A screen or successful transport response proves the turn | Queue, Grok rules initialization and runtime invariants require transcript evidence; adapters use snapshot/quiet only for readiness and submission. | Register/start/acknowledgement/visible PONG are intermediate evidence, not acceptance. |
 
@@ -266,7 +266,7 @@ cgroup accounting or live child survival across replacement.
 
 Add `docker/session-runner-grok/Dockerfile` and `docker-compose.runner-grok.yml` as
 an explicit compose companion, not a replacement for `docker-compose.dev.yml`.
-Publish runner plus PtyHost for linux-x64, include the measured Grok version 1.0.34,
+Publish runner plus PtyHost for linux-x64, include the measured Grok version 1.0.40,
 and pin the distribution input/digest used by the build. Runner entrypoint is
 `dotnet Antiphon.SessionRunner.dll`, with compose `init: true`. Confirm both
 runtime apphosts and native assets in the final image. Use Linux overrides for log,
@@ -450,7 +450,7 @@ state/workspace and no production runner dependency. Update `docs/agent-kinds.md
 `docs/session-runtime-invariants.md`, `docs/testing-and-build.md` and
 `docs/bootstrap.md` with only the new supported lane and run commands.
 If native path evidence requires it, narrowly adjust `GrokTranscriptTailer.cs` and
-add a sanitized linux-1.0.34 fixture to `GrokTranscriptTailerTests.cs`; do not import
+add a sanitized linux-1.0.40 fixture to `GrokTranscriptTailerTests.cs`; do not import
 unrelated CARD-0038 portability repairs.
 
 The harness records source/image/Grok version, runner/store/boot/epoch identity,
@@ -734,7 +734,7 @@ native launcher/shadow tests are under `Antiphon.PtyHost.Tests`.
   (new S5 harness contract) |
   exactly one pinned standing Grok session, normal rules initialization, then one
   short queued UI prompt: `Reply with PHONE_HOME_OK_<nonce> and do not use tools.`
-  Require source SHA, image digest, Grok 1.0.34, runner/store/boot/epoch, session ID,
+  Require source SHA, image digest, Grok 1.0.40, runner/store/boot/epoch, session ID,
   accepted generation, queue ID, attempt floor, submitted-body hash, UserPrompt
   UUID/sequence/text hash, nonce-bearing AssistantText and successful TurnEnd.
   The UserPrompt must be complete, later than the attempt floor, and obtained from
@@ -1030,7 +1030,7 @@ Ordinary Code floor, sequential on one worker:
 |---|---|---:|
 | Setup | Isolated PostgreSQL clone, fixture roots, secret file, approved existing OAuth mount and image prerequisites | 8 |
 | Build | Windows builds of T/R/P into `bin-card0490/` | 6 |
-| Linux image/build | linux-x64 runner/host publish plus test SDK target with same runtime/native assets, image pinned to Grok 1.0.34 | 12 |
+| Linux image/build | linux-x64 runner/host publish plus test SDK target with same runtime/native assets, image pinned to Grok 1.0.40 | 12 |
 | Unit | T filter `/*/*/*/*[Category=Unit]` | 3 |
 | New server integrations | T classes `PhoneHomeConnectionTests`, `PhoneHomeStandingLaunchTests`, `PhoneHomeSessionRoutingTests`, `PhoneHomeReconciliationTests`, `PhoneHomeEventPumpTests`, `PhoneHomeQueuedTurnTests` | 12 |
 | Existing server regressions | T classes `AgentSessionLaunchQueueOwnershipTests`, `AgentSessionLaunchFailureTests`, `AgentControlServiceIntegrationTests`, `SessionReconciliationServiceTests`, `SessionRunnerEventPumpTests`, `SessionRunnerGenerationWireTests`, `SessionRunnerCapabilityGateTests`, `GrokRulesQueueBarrierTests`, `GrokRulesReceiptTests`, `SessionMessageQueueInterruptedAttemptTests`, `SessionDeliveryProfileTests`, `ZombieCensusServiceTests` | 18 |

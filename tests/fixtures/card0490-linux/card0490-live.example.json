@@ -18,7 +18,7 @@
   "image": {
     "dockerfile": "docker/session-runner-grok/Dockerfile",
     "digest": null,
-    "grokVersion": "1.0.34"
+    "grokVersion": "1.0.40"
   },
   "assetLock": "tests/fixtures/card0490-linux/assets.lock.json"
 }

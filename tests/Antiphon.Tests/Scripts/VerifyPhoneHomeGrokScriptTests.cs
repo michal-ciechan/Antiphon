@@ -35,7 +35,7 @@ public sealed class VerifyPhoneHomeGrokScriptTests
             System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.IgnoreCase)
             .ShouldBeFalse();
         dockerfile.ShouldNotContain("17202");
-        dockerfile.ShouldContain("1.0.34");
+        dockerfile.ShouldContain("1.0.40");
         dockerfile.ShouldContain("x.ai/cli/install.sh");
         System.Text.RegularExpressions.Regex.IsMatch(
             dockerfile, @"COPY\s+[^\n]*auth\.json",
