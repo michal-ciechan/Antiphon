@@ -47,6 +47,7 @@ public class AppDbContext : DbContext
     public DbSet<ChatChannel> ChatChannels => Set<ChatChannel>();
     public DbSet<ChannelIngressIncident> ChannelIngressIncidents => Set<ChannelIngressIncident>();
     public DbSet<AgentSupervisionState> AgentSupervisionStates => Set<AgentSupervisionState>();
+    public DbSet<CheckCompactionRecovery> CheckCompactionRecoveries => Set<CheckCompactionRecovery>();
     public DbSet<AgentIncident> AgentIncidents => Set<AgentIncident>();
     public DbSet<FileReviewState> FileReviewStates => Set<FileReviewState>();
     public DbSet<FileSectionReview> FileSectionReviews => Set<FileSectionReview>();
@@ -2500,6 +2501,33 @@ public class AppDbContext : DbContext
         {
             entity.Property(r => r.CleanupOnly).IsRequired().HasDefaultValue(false);
             entity.Property(r => r.Origin).IsRequired().HasDefaultValue(LandRequestOrigin.ExplicitCaller);
+        });
+
+        modelBuilder.Entity<CheckCompactionRecovery>(entity =>
+        {
+            entity.ToTable("CheckCompactionRecoveries");
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.BoundaryIdentity).IsRequired().HasMaxLength(200);
+            entity.Property(r => r.NativeContinuationIdentity).HasMaxLength(200);
+            entity.Property(r => r.EvidenceJson).HasMaxLength(CheckCompactionRecovery.EvidenceMaxLength);
+            entity.Property(r => r.Reason).HasMaxLength(200);
+            entity.Property(r => r.LaunchOutcome).HasMaxLength(200);
+            entity.Property(r => r.ObservationBindingIdentity).HasMaxLength(400);
+            entity.Property(r => r.AcceptedStartedAt).IsRequired();
+            entity.Property(r => r.BoundaryCreatedAt).IsRequired();
+            entity.Property(r => r.ContinuationCreatedAt).IsRequired();
+            entity.Property(r => r.DetectedAt).IsRequired();
+            entity.Property(r => r.State).IsRequired();
+            entity.Property(r => r.ConcurrencyToken).IsConcurrencyToken();
+            entity.HasIndex(r => new { r.PhysicalAgentId, r.SessionId, r.AcceptedStartedAt, r.BoundaryIdentity })
+                .IsUnique()
+                .HasDatabaseName("IX_CheckCompactionRecoveries_Episode");
+            entity.HasIndex(r => new { r.PhysicalAgentId, r.State })
+                .HasDatabaseName("IX_CheckCompactionRecoveries_Agent_State");
+            entity.HasOne(r => r.PhysicalAgent)
+                .WithMany()
+                .HasForeignKey(r => r.PhysicalAgentId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
     }
