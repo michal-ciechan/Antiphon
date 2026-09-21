@@ -264,9 +264,7 @@ public class GrokDelegateDispatchTests
         // and every flag fakegrok/grok.exe would actually receive is asserted — but nothing is
         // spawned, because the value here is the argv, and a spawned TUI would make it a headed
         // test that cannot run in CI. SessionMessageQueueGrokPtyIntegrationTests owns the pty half.
-        var fakeGrok = Path.Combine(AppContext.BaseDirectory, "fakegrok", "fakegrok.exe");
-        if (!File.Exists(fakeGrok))
-            throw new TUnit.Core.Exceptions.SkipTestException($"fakegrok.exe not staged at {fakeGrok}");
+        var fakeGrok = Antiphon.TestSupport.TestAppHostPath.Require("fakegrok", AppContext.BaseDirectory);
 
         var (dispatcher, _) = CreateHarness(grokExe: fakeGrok);
         var task = TaskFor(AgentKind.Grok, AgentModelLevel.Medium, AgentTaskKind.Worker, AgentTaskRole.Check);

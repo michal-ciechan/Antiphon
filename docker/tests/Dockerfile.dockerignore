@@ -1,4 +1,4 @@
-# Runtime build context. The test image uses docker/tests/Dockerfile.dockerignore instead.
+# Test-image context. Supersedes the root .dockerignore for docker/tests/Dockerfile.
 .git
 **/.git
 **/.gitignore
@@ -22,12 +22,5 @@ workspace/
 logs
 logs/
 analysis/
-tests/
-*.md
-*.ps1
-.github/
 server/appsettings.Development.json
-# Embedded instruction bundles are markdown and must survive *.md.
-!server/Bundles/
-!server/Bundles/**
-!server/Bundles/**/*.md
+.github/

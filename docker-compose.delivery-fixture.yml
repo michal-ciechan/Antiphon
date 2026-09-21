@@ -1,0 +1,47 @@
+# Test-only receipt stack. No Docker socket on server, runner, or observer.
+services:
+  antiphon:
+    build:
+      context: .
+      dockerfile: docker/tests/Dockerfile
+      target: delivery-fixture
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+    image: ${C590_FIXTURE_IMAGE:-antiphon-c590-delivery-fixture}
+    user: "1654:1654"
+    restart: "no"
+    entrypoint: ["dotnet", "/fixture/Antiphon.DockerStack.Fixture.dll", "serve"]
+    environment:
+      Agents__GrokCredentialProbeEnabled: "false"
+      SessionRunner__BaseUrl: http://session-runner:8080
+      PhoneHomeRunner__Enabled: "false"
+    volumes:
+      - receipt-evidence:/evidence
+
+  session-runner:
+    build:
+      context: .
+      dockerfile: docker/session-runner-grok/Dockerfile
+      target: receipt-probe
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+    restart: "no"
+    environment:
+      Agents__GrokCredentialProbeEnabled: "false"
+      PhoneHome__Enabled: "false"
+
+  observer:
+    build:
+      context: .
+      dockerfile: docker/tests/Dockerfile
+      target: delivery-fixture
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+    user: "1654:1654"
+    restart: "no"
+    entrypoint: ["dotnet", "/fixture/Antiphon.DockerStack.Fixture.dll", "observe"]
+    volumes:
+      - receipt-evidence:/evidence
+
+volumes:
+  receipt-evidence:

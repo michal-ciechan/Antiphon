@@ -1,5 +1,7 @@
 # Bootstrapping Antiphon
 
+The self-contained server2 stack (CARD-0590) is documented in [docker-stack.md](docker-stack.md). It does not replace the Aspire dev stack below.
+
 For everyday operation, use the [canonical local restart runbook](apphost-runbook.md):
 first start, AppHost or runner restart, verification, locks, exits and Job Object caveats.
 
