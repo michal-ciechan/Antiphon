@@ -321,8 +321,9 @@ public sealed class TaskWorktreeRetirementService
             null, lease, ManagedRoot: ResolveManagedRoot(), RetirementId: retirement.Id,
             HasDeletionIntent: true);
         var removed = await _worktrees.TryRemoveAsync(request, ct);
-        await _commands.RecordComponentAsync(attempt.Id, removed.DirectoryGone, removed.Unregistered,
-            removed.BranchDeleted, removed.Residue, ct);
+        await _commands.RecordComponentAsync(attempt.Id, removed.DirectoryGone, null, null, removed.Residue, ct);
+        await _commands.RecordComponentAsync(attempt.Id, null, removed.Unregistered, null, removed.Residue, ct);
+        await _commands.RecordComponentAsync(attempt.Id, null, null, removed.BranchDeleted, removed.Residue, ct);
         retirement.DirectoryRemovedAt = removed.DirectoryGone ? UtcNow() : retirement.DirectoryRemovedAt;
         retirement.RegistrationRemovedAt = removed.Unregistered ? UtcNow() : retirement.RegistrationRemovedAt;
         retirement.BranchRemovedAt = removed.BranchDeleted ? UtcNow() : retirement.BranchRemovedAt;

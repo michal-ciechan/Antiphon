@@ -150,6 +150,7 @@ public sealed class WorktreeResidueSweepService
             BoardId = boardId,
         };
         _db.WorktreeResidueRuns.Add(run);
+        await _db.SaveChangesAsync(ct);
 
         var tasks = await _db.AgentTasks.AsNoTracking()
             .Where(t => t.WorktreePath != null || t.WorktreeBranch != null)
