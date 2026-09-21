@@ -116,5 +116,12 @@ public interface ISessionRunnerClient
         Task.FromResult(new CompactionContinuationStopResult(
             sessionId, request.AttemptId, false, CompactionStopOutcomes.Unsupported, null));
 
+    /// <summary>
+    /// CARD-0079 fresh tail read. Default is Unsupported so an untouched fake cannot
+    /// confirm silence. Production gets <c>GET /sessions/{id}/compaction-observation</c>.
+    /// </summary>
+    Task<CompactionTailObservation> ObserveCompactionAsync(Guid sessionId, CancellationToken ct) =>
+        Task.FromResult(CompactionTailObservation.Unsupported());
+
     IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(CancellationToken ct);
 }

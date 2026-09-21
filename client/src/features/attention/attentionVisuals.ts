@@ -271,6 +271,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     icon: TbPlugConnectedX,
     hint: 'The remote-control management menu is on screen. Input conversion is unproven until it is dismissed.',
   },
+  CompactionContinuationStalled: {
+    label: 'Compaction continuation',
+    color: 'warning',
+    icon: TbClockExclamation,
+    hint: 'An AlwaysOn Check seat stopped after a silent automatic compaction. Open the agent incident history. A new Check is allowed only after resume; the row clears on a whole caller receipt or an operator supersession.',
+  },
 }
 
 export type AttentionGroupKey = 'now' | 'broken' | 'suspect' | 'failures'

@@ -356,6 +356,15 @@ app.MapPost("/sessions/{id:guid}/kill-generation", async (
     return Results.Ok(result);
 });
 
+app.MapGet("/sessions/{id:guid}/compaction-observation", async (
+    Guid id,
+    SessionRunnerRuntime runtime,
+    CancellationToken cancellationToken) =>
+{
+    var observed = await runtime.ObserveCompactionAsync(id, cancellationToken);
+    return Results.Ok(observed);
+});
+
 app.MapPost("/sessions/{id:guid}/stop-compaction-continuation", async (
     Guid id,
     CompactionContinuationStopRequest request,

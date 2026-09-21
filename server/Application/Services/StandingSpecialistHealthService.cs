@@ -59,7 +59,10 @@ public sealed class StandingSpecialistHealthService(
                 && c.QualifiedAt is not null && c.Fingerprint is not null
                 && sessions.Any(s => s.Id == c.SessionId && s.StartedAt == c.SessionStartedAt && s.Status == SessionStatus.Running)
                 && !held.Any(h => h.Kind == c.AgentKind && (h.ModelAlias == "*" || h.ModelAlias == c.ModelAlias));
-            var ready = candidates.Where(WarmQualified).ToList();
+            var closedSeats = await CheckCompactionAdmission.ClosedSeatIdsAsync(db, ct);
+            bool NotStalled(StandingSpecialistCandidateState c) =>
+                c.PhysicalAgentId is null || !closedSeats.Contains(c.PhysicalAgentId.Value);
+            var ready = candidates.Where(c => WarmQualified(c) && NotStalled(c)).ToList();
             var preferred = owner is null ? null : candidates.SingleOrDefault(c => c.PhysicalAgentId == owner.Id);
             var fallback = health.ActiveCandidateId is { } active && active != preferred?.Id;
             var readiness = candidates.Any(c => c.Id != preferred?.Id && !WarmQualified(c));
