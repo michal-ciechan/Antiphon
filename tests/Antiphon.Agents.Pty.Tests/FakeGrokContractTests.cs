@@ -136,8 +136,9 @@ public class FakeGrokContractTests
         var output = await process.StandardOutput.ReadToEndAsync();
         await process.WaitForExitAsync();
         process.ExitCode.ShouldBe(0);
-        output.ShouldContain("Default model: grok-4.6");
-        output.ShouldContain("* grok-4.6 (default)");
+        output.ShouldContain("Default model: grok-4.7");
+        output.ShouldContain("* grok-4.7 (default)");
+        output.ShouldContain("- grok-4.6");
         output.ShouldContain("- grok-4.5");
     }
 

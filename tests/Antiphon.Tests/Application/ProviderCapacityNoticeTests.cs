@@ -13,7 +13,7 @@ public class ProviderCapacityNoticeTests
     {
         var text = ProviderCapacityNotice.Format(
             AgentKind.Grok,
-            "grok-4.6",
+            "grok-4.7",
             402,
             "Payment Required",
             fallbackDeclared: false,
@@ -34,7 +34,7 @@ public class ProviderCapacityNoticeTests
     {
         var text = ProviderCapacityNotice.Format(
             AgentKind.Grok,
-            "grok-4.6",
+            "grok-4.7",
             402,
             "Payment Required",
             fallbackDeclared: false,
@@ -51,7 +51,7 @@ public class ProviderCapacityNoticeTests
     {
         var text = ProviderCapacityNotice.FormatTransport(
             AgentKind.Grok,
-            "grok-4.6",
+            "grok-4.7",
             retryCount: 0,
             detail: "error sending request for url (http://localhost:10746/v1/chat/completions) [after 15 retries]");
 
@@ -70,7 +70,7 @@ public class ProviderCapacityNoticeTests
     {
         var text = ProviderCapacityNotice.FormatProviderError(
             AgentKind.Grok,
-            "grok-4.6",
+            "grok-4.7",
             500,
             "Internal Server Error",
             detail: "The model is currently at capacity");

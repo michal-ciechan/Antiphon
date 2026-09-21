@@ -37,7 +37,7 @@ export interface CardThreadTaskDto {
   kind: AgentTaskKind
   /**
    * Which agent program ran (or will run) it — `ClaudeCode` unless the caller chose Grok. The tier
-   * alone does not name a model: the same `Frontier` rung is `fable` on Claude and `grok-4.6` on
+   * alone does not name a model: the same `Frontier` rung is `fable` on Claude and `grok-4.7` on
    * Grok (CARD-0084 S4), so the thread reads its tier through `tierAlias(modelLevel, agentKind)`.
    */
   agentKind: AgentKind

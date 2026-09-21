@@ -162,7 +162,7 @@ public class CodexDelegateDispatchTests
         var (dispatcher, _) = CreateHarness();
         var args = SpecOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.High, AgentTaskRole.Check)).Args.ToList();
 
-        args[args.IndexOf("--model") + 1].ShouldBe("grok-4.6");
+        args[args.IndexOf("--model") + 1].ShouldBe("grok-4.7");
         args.ShouldNotContain("--rules");
         args.ShouldContain(GrokLaunchArgs.ReasoningEffortFlag);
         args[args.IndexOf(GrokLaunchArgs.ReasoningEffortFlag) + 1]

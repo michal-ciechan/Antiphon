@@ -40,7 +40,7 @@ public class WallRerouteDispatchTests
             row.AgentKind = walledKind;
             var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
             session.AgentKind = walledKind;
-            session.EffectiveModelId = walledKind == AgentKind.Grok ? "grok-4.6" : "fable";
+            session.EffectiveModelId = walledKind == AgentKind.Grok ? "grok-4.7" : "fable";
             await db.SaveChangesAsync();
         }
         await SeedApiErrorStubTurnAsync(schema, sessionId, task.Id, wallText);
@@ -74,7 +74,7 @@ public class WallRerouteDispatchTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         using var workspace = new TempWorkspace();
         var task = await SeedQueuedOpusAsync(schema, workspace.Path);
-        var wait = await SeedWaitAsync(schema, task.Id, AgentKind.Grok, "grok-4.6", liveSession: true);
+        var wait = await SeedWaitAsync(schema, task.Id, AgentKind.Grok, "grok-4.7", liveSession: true);
         var result = await CapacityRecoveryTaskTests.CreateDispatcher(schema.ConnectionString).TickAsync(CancellationToken.None);
         result.Dispatched.ShouldBe(1);
         await using var verify = CreateContext(schema);
@@ -131,7 +131,7 @@ public class WallRerouteDispatchTests
             await db.SaveChangesAsync();
         }
         var wait = await SeedWaitAsync(schema, task.Id,
-            alreadyChosen ? AgentKind.ClaudeCode : AgentKind.Grok, alreadyChosen ? "opus" : "grok-4.6");
+            alreadyChosen ? AgentKind.ClaudeCode : AgentKind.Grok, alreadyChosen ? "opus" : "grok-4.7");
         var result = await CapacityRecoveryTaskTests.CreateDispatcher(schema.ConnectionString).TickAsync(CancellationToken.None);
         result.ResumedRoutingBlocked.ShouldBe(1);
         await using var verify = CreateContext(schema);

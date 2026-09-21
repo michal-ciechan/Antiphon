@@ -687,7 +687,7 @@ public class ChannelReplyDurabilityTests
             await stamp.AgentSessions.Where(s => s.Id == h.SessionId)
                 .ExecuteUpdateAsync(u => u
                     .SetProperty(s => s.AgentKind, AgentKind.Grok)
-                    .SetProperty(s => s.EffectiveModelId, "grok-4.6"));
+                    .SetProperty(s => s.EffectiveModelId, "grok-4.7"));
         }
 
         var messageId = await h.SeedChannelCorrelationAsync(prompt, conversationKey);
@@ -724,7 +724,7 @@ public class ChannelReplyDurabilityTests
         var hold = await db.ModelAvailabilityHolds.SingleAsync(
             x => x.SourceSessionId == h.SessionId && x.ClearedAt == null);
         hold.Kind.ShouldBe(AgentKind.Grok);
-        hold.ModelAlias.ShouldBe("grok-4.6");
+        hold.ModelAlias.ShouldBe("grok-4.7");
         hold.DisabledUntil.ShouldNotBeNull();
         hold.DisabledUntil!.Value.ShouldBe(DateTime.UtcNow.AddHours(6), TimeSpan.FromSeconds(15));
 
@@ -751,7 +751,7 @@ public class ChannelReplyDurabilityTests
             await stamp.AgentSessions.Where(s => s.Id == h.SessionId)
                 .ExecuteUpdateAsync(u => u
                     .SetProperty(s => s.AgentKind, AgentKind.Grok)
-                    .SetProperty(s => s.EffectiveModelId, "grok-4.6"));
+                    .SetProperty(s => s.EffectiveModelId, "grok-4.7"));
         }
 
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
@@ -913,7 +913,7 @@ public class ChannelReplyDurabilityTests
         await stamp.AgentSessions.Where(s => s.Id == sessionId)
             .ExecuteUpdateAsync(u => u
                 .SetProperty(s => s.AgentKind, AgentKind.Grok)
-                .SetProperty(s => s.EffectiveModelId, "grok-4.6"));
+                .SetProperty(s => s.EffectiveModelId, "grok-4.7"));
     }
 
     private static async Task AssertTransportNoticeAsync(

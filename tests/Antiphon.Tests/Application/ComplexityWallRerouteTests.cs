@@ -139,7 +139,7 @@ public class ComplexityWallRerouteTests
         using var harness = new WallRerouteHarness(schema.ConnectionString, workspace.Path);
         await SeedHardChainAsync(schema);
         await SeedHoldAsync(schema, AgentKind.ClaudeCode, "opus");
-        await SeedHoldAsync(schema, AgentKind.Grok, "grok-4.6");
+        await SeedHoldAsync(schema, AgentKind.Grok, "grok-4.7");
         var parentSessionId = await SeedSessionAsync(schema, workspace.Path);
         var (task, sessionId, _) = await SeedWorkingChainTaskAsync(
             schema, workspace.Path, parentSessionId);
@@ -283,7 +283,7 @@ public class ComplexityWallRerouteTests
             .OrderByDescending(e => e.At)
             .FirstAsync();
         last.Detail.ShouldContain("opus hit a usage wall");
-        last.Detail.ShouldContain("grok-4.6");
+        last.Detail.ShouldContain("grok-4.7");
         last.Detail.ShouldContain("Hard chain 3/3");
         harness.Stopper.Killed.ShouldContain(session2);
     }

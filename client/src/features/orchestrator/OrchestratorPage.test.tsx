@@ -40,7 +40,7 @@ function serve(items: AttentionItemDto[]) {
     http.get('/api/model-availability', () =>
       HttpResponse.json({
         holds: [],
-        available: ['fable', 'opus', 'sonnet', 'haiku', 'grok-4.6'],
+        available: ['fable', 'opus', 'sonnet', 'haiku', 'grok-4.7'],
       }),
     ),
     http.get('/api/agent-tasks', () => {

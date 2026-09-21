@@ -298,10 +298,11 @@ public sealed class AgentTuiDiscoveryTests
             """
             You are logged in with grok.com.
 
-            Default model: grok-4.6
+            Default model: grok-4.7
 
             Available models:
-              * grok-4.6 (default)
+              * grok-4.7 (default)
+              - grok-4.6
               - grok-4.5
             """));
         await using var provider = BuildProvider(probe);
@@ -311,10 +312,13 @@ public sealed class AgentTuiDiscoveryTests
 
         probe.Requests.ShouldHaveSingleItem();
         probe.Requests[0].Arguments.ShouldBe(["models"]);
+        models.Select(model => model.Identifier).ShouldContain("grok-4.7");
         models.Select(model => model.Identifier).ShouldContain("grok-4.6");
         models.Select(model => model.Identifier).ShouldContain("grok-4.5");
-        models.Single(model => model.Identifier == "grok-4.6").Source
+        models.Single(model => model.Identifier == "grok-4.7").Source
             .ShouldBe(AgentTuiModelSource.Curated);
+        models.Single(model => model.Identifier == "grok-4.7").Availability
+            .ShouldBe(AgentTuiModelAvailability.Verified);
         models.Single(model => model.Identifier == "grok-4.6").Availability
             .ShouldBe(AgentTuiModelAvailability.Verified);
         models.Single(model => model.Identifier == "grok-4.5").Availability

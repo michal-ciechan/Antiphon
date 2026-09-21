@@ -21,7 +21,7 @@ internal static class GrokStubEndpoints
             }
 
             ctx.Response.ContentType = "application/json";
-            await ctx.Response.WriteAsync("""{"object":"list","data":[{"id":"grok-4.6","object":"model","created":0,"owned_by":"stub"}]}""", ctx.RequestAborted);
+            await ctx.Response.WriteAsync("""{"object":"list","data":[{"id":"grok-4.7","object":"model","created":0,"owned_by":"stub"},{"id":"grok-4.6","object":"model","created":0,"owned_by":"stub"}]}""", ctx.RequestAborted);
         });
 
         app.MapGet("/settings", async (HttpContext ctx) =>

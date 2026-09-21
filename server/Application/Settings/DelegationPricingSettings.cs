@@ -78,8 +78,8 @@ public sealed class DelegationPricingSettings
     /// which is exactly how a rate table acquires a plausible wrong number.
     ///
     /// Tier mapping follows <see cref="Services.ModelLevelAliases.ForGrok"/>: every level launches
-    /// <c>grok-4.6</c> (CARD-0169 — the operator's own instruction retired grok-4.5 from the
-    /// ladder). All four levels therefore share identical rates; the per-level entries below stay
+    /// <c>grok-4.7</c> (CARD-0169 collapse; 2026-09-21 bump from grok-4.6). All four levels
+    /// therefore share identical rates; the per-level entries below stay
     /// separate only because <see cref="DefaultKindRates"/> is keyed by level, not because the
     /// price actually differs.
     ///
@@ -98,8 +98,9 @@ public sealed class DelegationPricingSettings
         {
             [nameof(AgentKind.Grok)] = new(StringComparer.OrdinalIgnoreCase)
             {
-                // grok-4.6 — $2.00 in / $6.00 out / $0.50 cached input, per million (< 200k).
-                // CARD-0169: every level now launches grok-4.6, so all four entries match.
+                // grok-4.7 — same published $2.00 in / $6.00 out / $0.50 cached input as grok-4.6,
+                // per million (< 200k), until xAI lists a distinct 4.7 table.
+                // CARD-0169 collapse + 2026-09-21 bump: every level launches grok-4.7.
                 [nameof(AgentModelLevel.Frontier)] = GrokTextRates(cachedInputPerMillion: 0.50m),
                 [nameof(AgentModelLevel.High)] = GrokTextRates(cachedInputPerMillion: 0.50m),
                 [nameof(AgentModelLevel.Medium)] = GrokTextRates(cachedInputPerMillion: 0.50m),

@@ -42,7 +42,7 @@ public sealed class ComplexityRoutingComposeTests
         var list = RoutingCandidates.Compose(
             RoutingPinService.Decision.None, chain, "Hard", null, null, Resolve);
 
-        list.Candidates.Select(c => c.Alias).ShouldBe(["fable", "grok-4.6"]);
+        list.Candidates.Select(c => c.Alias).ShouldBe(["fable", "grok-4.7"]);
         list.Origins.ShouldBe([RoutingCandidates.OriginChain, RoutingCandidates.OriginChain]);
         list.Walked.ShouldBeTrue();
         list.Source.ShouldBe("chain:Hard");
@@ -81,7 +81,7 @@ public sealed class ComplexityRoutingComposeTests
         var list = RoutingCandidates.Compose(Decision(pin), chain, "Hard", null, null, Resolve);
 
         list.Candidates.Select(c => (c.Alias, c.Origin)).ShouldBe([
-            ("grok-4.6", RoutingCandidates.OriginPin),
+            ("grok-4.7", RoutingCandidates.OriginPin),
             ("fable", RoutingCandidates.OriginChain),
             ("gpt-6-astra", RoutingCandidates.OriginChain),
         ]);
@@ -180,7 +180,7 @@ public sealed class ComplexityRoutingComposeTests
         list.Candidates.Select(c => (c.Alias, c.Origin)).ShouldBe([
             ("fable", RoutingCandidates.OriginPin),
             ("opus", RoutingCandidates.OriginPin),
-            ("grok-4.6", RoutingCandidates.OriginPin),
+            ("grok-4.7", RoutingCandidates.OriginPin),
         ]);
         list.Walked.ShouldBeTrue();
         list.Source.ShouldBe("pin:CARD-0301 Plan");
@@ -205,7 +205,7 @@ public sealed class ComplexityRoutingComposeTests
 
         list.Candidates.Select(c => (c.Alias, c.Origin)).ShouldBe([
             ("gpt-6-astra", RoutingCandidates.OriginPin),
-            ("grok-4.6", RoutingCandidates.OriginPin),
+            ("grok-4.7", RoutingCandidates.OriginPin),
             ("fable", RoutingCandidates.OriginChain),
             ("opus", RoutingCandidates.OriginChain),
         ]);
@@ -228,7 +228,7 @@ public sealed class ComplexityRoutingComposeTests
 
         list.Candidates.Select(c => (c.Alias, c.Origin)).ShouldBe([
             ("gpt-6-astra", RoutingCandidates.OriginPin),
-            ("grok-4.6", RoutingCandidates.OriginPin),
+            ("grok-4.7", RoutingCandidates.OriginPin),
             ("opus", RoutingCandidates.OriginRolePolicy),
         ]);
         list.Walked.ShouldBeTrue();

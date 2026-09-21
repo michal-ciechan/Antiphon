@@ -99,7 +99,7 @@ public class GrokDelegateDispatchTests
 
         args.ShouldNotContain("--name", customMessage:
             "--name is Claude-only; grok.exe rejects it and the launch would never start");
-        args[args.IndexOf("--model") + 1].ShouldBe("grok-4.6");
+        args[args.IndexOf("--model") + 1].ShouldBe("grok-4.7");
         args.ShouldContain(GrokLaunchArgs.ReasoningEffortFlag);
         args[args.IndexOf(GrokLaunchArgs.ReasoningEffortFlag) + 1]
             .ShouldBe(GrokLaunchArgs.ReasoningEffort(AgentModelLevel.High));
@@ -109,7 +109,7 @@ public class GrokDelegateDispatchTests
     }
 
     [Test]
-    public void grok_maps_every_level_to_grok_4_6()
+    public void grok_maps_every_level_to_grok_4_7()
     {
         // CARD-0169: the operator's own instruction retired grok-4.5 from the ladder entirely -
         // asserted through the launch path rather than the alias table, since this is what makes
@@ -117,10 +117,10 @@ public class GrokDelegateDispatchTests
         // than decorative.
         var (dispatcher, _) = CreateHarness();
 
-        ModelArgOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.Frontier, AgentTaskKind.Worker, AgentTaskRole.Check)).ShouldBe("grok-4.6");
-        ModelArgOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.High, AgentTaskKind.Worker, AgentTaskRole.Check)).ShouldBe("grok-4.6");
-        ModelArgOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.Medium, AgentTaskKind.Worker, AgentTaskRole.Check)).ShouldBe("grok-4.6");
-        ModelArgOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.Low, AgentTaskKind.Worker, AgentTaskRole.Check)).ShouldBe("grok-4.6");
+        ModelArgOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.Frontier, AgentTaskKind.Worker, AgentTaskRole.Check)).ShouldBe("grok-4.7");
+        ModelArgOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.High, AgentTaskKind.Worker, AgentTaskRole.Check)).ShouldBe("grok-4.7");
+        ModelArgOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.Medium, AgentTaskKind.Worker, AgentTaskRole.Check)).ShouldBe("grok-4.7");
+        ModelArgOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.Low, AgentTaskKind.Worker, AgentTaskRole.Check)).ShouldBe("grok-4.7");
     }
 
     [Test]
@@ -133,7 +133,7 @@ public class GrokDelegateDispatchTests
         var (dispatcher, _) = CreateHarness();
         var args = SpecOf(dispatcher, TaskFor(AgentKind.Grok, level, AgentTaskKind.Worker, AgentTaskRole.Check)).Args.ToList();
 
-        args[args.IndexOf("--model") + 1].ShouldBe("grok-4.6");
+        args[args.IndexOf("--model") + 1].ShouldBe("grok-4.7");
         args.ShouldContain(GrokLaunchArgs.ReasoningEffortFlag);
         args[args.IndexOf(GrokLaunchArgs.ReasoningEffortFlag) + 1].ShouldBe(expectedEffort);
         args.ShouldNotContain(ClaudeLaunchArgs.EffortFlag);
@@ -282,7 +282,7 @@ public class GrokDelegateDispatchTests
         spec.Args.ToList()[spec.Args.ToList().IndexOf(GrokLaunchArgs.ReasoningEffortFlag) + 1]
             .ShouldBe(GrokLaunchArgs.ReasoningEffort(AgentModelLevel.Medium));
         spec.Args.ShouldNotContain("--name");
-        spec.Args.ToList()[spec.Args.ToList().IndexOf("--model") + 1].ShouldBe("grok-4.6");
+        spec.Args.ToList()[spec.Args.ToList().IndexOf("--model") + 1].ShouldBe("grok-4.7");
         spec.Cwd.ShouldBe(task.WorkingDirectory);
     }
 
@@ -496,7 +496,7 @@ public class GrokDelegateDispatchTests
         await CreateService(db).EscalateAsync(task.Id, to: null, CancellationToken.None);
 
         var detail = await LatestEscalationDetailAsync(task.Id);
-        detail.ShouldContain("grok-4.6");
+        detail.ShouldContain("grok-4.7");
         detail.ShouldNotContain("fable", customMessage: "a Grok task never runs a Claude model");
         detail.ShouldNotContain("opus");
         detail.ShouldContain("FRESH CONTEXT at the same model");
@@ -517,7 +517,7 @@ public class GrokDelegateDispatchTests
         await CreateService(db).EscalateAsync(task.Id, to: null, CancellationToken.None);
 
         var detail = await LatestEscalationDetailAsync(task.Id);
-        detail.ShouldContain("grok-4.6 -> grok-4.6");
+        detail.ShouldContain("grok-4.7 -> grok-4.7");
         detail.ShouldContain("FRESH CONTEXT at the same model");
         detail.ShouldContain("deeper reasoning effort (medium → xhigh)");
     }
@@ -557,7 +557,7 @@ public class GrokDelegateDispatchTests
 
         var detail = await LatestDispatchDetailAsync(task.Id);
         detail.ShouldStartWith("Dispatched to agent ");
-        detail.ShouldContain("(grok-4.6)", customMessage: "the seeded task is Medium, which now also maps to grok-4.6");
+        detail.ShouldContain("(grok-4.7)", customMessage: "the seeded task is Medium, which now also maps to grok-4.7");
         detail.ShouldNotContain("sonnet");
     }
 
@@ -591,7 +591,7 @@ public class GrokDelegateDispatchTests
 
         var detail = await LatestDispatchDetailAsync(task.Id);
         detail.ShouldStartWith("Reused warm delegate ");
-        detail.ShouldContain("(grok-4.6)");
+        detail.ShouldContain("(grok-4.7)");
         detail.ShouldNotContain("sonnet");
     }
 

@@ -125,7 +125,7 @@ public class ComplexityDispatcherTests
         await SeedHardChainAsync(schema);
         await SeedHoldAsync(schema, "fable", null);
         await SeedHoldAsync(schema, "opus", null);
-        await SeedHoldAsync(schema, "grok-4.6", null, AgentKind.Grok);
+        await SeedHoldAsync(schema, "grok-4.7", null, AgentKind.Grok);
         var (agentId, _) = await SeedWarmAgentAsync(schema, workspace.Path);
         var task = await SeedQueuedChainTaskAsync(schema, workspace.Path, agentId);
         var dispatcher = CreateDispatcher(schema);

@@ -18,16 +18,15 @@ export const TIER_VISUALS: Record<
 }
 
 /**
- * Grok's ladder is SHORTER than the tier axis — xAI ships two models, so Frontier and High are both
- * grok-4.6 and Medium and Low are both grok-4.5. The rungs still differ (a Medium task is cheaper
- * and gets a fresh context), which is why only the NAME collapses here and the violet intensity in
- * TIER_VISUALS is left alone.
+ * Grok's ladder is collapsed onto one id (CARD-0169; 2026-09-21 pin is grok-4.7). The rungs still
+ * differ (a Medium task is cheaper and gets a fresh context plus a shallower reasoning effort),
+ * which is why only the NAME collapses here and the violet intensity in TIER_VISUALS is left alone.
  */
 const GROK_ALIASES: Record<AgentModelLevel, string> = {
-  Frontier: 'grok-4.6',
-  High: 'grok-4.6',
-  Medium: 'grok-4.5',
-  Low: 'grok-4.5',
+  Frontier: 'grok-4.7',
+  High: 'grok-4.7',
+  Medium: 'grok-4.7',
+  Low: 'grok-4.7',
 }
 
 /**
@@ -60,7 +59,7 @@ export function tierAlias(level: AgentModelLevel, kind: AgentKind = 'ClaudeCode'
 
 /**
  * What the tier badge's tooltip says. Claude's aliases are bare family words, so they need the
- * vendor in front to mean anything ("Claude fable"); Grok's already carry it, and "Grok grok-4.6"
+ * vendor in front to mean anything ("Claude fable"); Grok's already carry it, and "Grok grok-4.7"
  * is a stutter. Codex keeps the vendor word (`Frontier tier — Codex gpt-6-astra`) because the
  * slug alone does not name the program. Claude's text is unchanged, byte for byte.
  */

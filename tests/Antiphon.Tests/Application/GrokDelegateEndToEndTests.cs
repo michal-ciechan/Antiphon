@@ -369,7 +369,7 @@ public class GrokDelegateEndToEndTests
             // below rather than by loosening the deadline, so this test cannot pass because the
             // number was made generous.
             d.BootModelWaitDeadlineMinutes = 8;
-            // The repeat hold is a different slice's assertion and would otherwise put grok-4.6 on
+            // The repeat hold is a different slice's assertion and would otherwise put grok-4.7 on
             // an AutoDetected hold that the RETRY below would then refuse to dispatch.
             d.BootStallRepeatHoldMinutes = 0;
         });

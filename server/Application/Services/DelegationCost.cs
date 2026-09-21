@@ -10,7 +10,7 @@ namespace Antiphon.Server.Application.Services;
 ///
 /// Kind matters because the tier is an abstraction over model families that are priced nothing
 /// alike: a Grok Frontier task run through the Claude-shaped ladder would be billed at fable's
-/// $10/$50 instead of grok-4.6's $2/$6, overstating it several-fold and throttling a run on spend
+/// $10/$50 instead of grok-4.7's $2/$6, overstating it several-fold and throttling a run on spend
 /// that never happened (CARD-0084 S5). The kind parameter defaults to ClaudeCode everywhere.
 ///
 /// The four counters are priced at four different rates (CARD-0023). Collapsing them and applying

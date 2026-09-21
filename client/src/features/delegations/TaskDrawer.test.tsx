@@ -90,7 +90,7 @@ function serve(body: AgentTaskDetailDto, extra: Parameters<typeof server.use> = 
   server.use(
     http.get('/api/agent-tasks/:id', () => HttpResponse.json(body)),
     http.get('/api/model-availability', () =>
-      HttpResponse.json({ holds: [], available: ['fable', 'opus', 'grok-4.6'] }),
+      HttpResponse.json({ holds: [], available: ['fable', 'opus', 'grok-4.7'] }),
     ),
     ...extra,
   )

@@ -42,7 +42,7 @@ describe('ComplexityChainPanel', () => {
                 {
                   agentKind: 'Grok',
                   modelLevel: 'Frontier',
-                  alias: 'grok-4.6',
+                  alias: 'grok-4.7',
                   availableNow: true,
                   unavailableReason: null,
                 },
@@ -82,7 +82,7 @@ describe('ComplexityChainPanel', () => {
                 {
                   agentKind: 'Grok',
                   modelLevel: 'Frontier',
-                  alias: 'grok-4.6',
+                  alias: 'grok-4.7',
                   availableNow: true,
                   unavailableReason: null,
                 },

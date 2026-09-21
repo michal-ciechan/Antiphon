@@ -167,7 +167,7 @@ public class CardThreadServiceTests
     public async Task Each_row_says_which_agent_program_ran_it_so_the_tier_can_name_a_model()
     {
         // ModelLevel alone does not name a model: the same High rung is opus on Claude and
-        // grok-4.6 on Grok (CARD-0084 S4). Without the kind on the row, the thread's tier badge
+        // grok-4.7 on Grok (CARD-0084 S4). Without the kind on the row, the thread's tier badge
         // would name a model nobody was paying for on every Grok task.
         await using var scenario = new Scenario("CARD-0713");
         var grok = await scenario.AddTaskAsync(

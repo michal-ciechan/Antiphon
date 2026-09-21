@@ -184,6 +184,7 @@ public class AgentControlServiceIntegrationTests
 
             adapter.Started.ShouldBeTrue();
             adapter.StartedArgs.ShouldNotContain("--model");
+            adapter.StartedArgs.ShouldNotContain("grok-4.7");
             adapter.StartedArgs.ShouldNotContain("grok-4.6");
         }
         finally

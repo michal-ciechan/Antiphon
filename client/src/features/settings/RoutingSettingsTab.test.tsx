@@ -26,7 +26,7 @@ vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
 const grok: ComplexityCandidateDto = {
   agentKind: 'Grok',
   modelLevel: 'Frontier',
-  alias: 'grok-4.6',
+  alias: 'grok-4.7',
   availableNow: true,
   unavailableReason: null,
 }
@@ -75,7 +75,7 @@ function pin(overrides: Partial<RoutingPinDto> = {}): RoutingPinDto {
     strength: 'Required',
     agentKind: 'Grok',
     modelLevel: null,
-    modelAlias: 'grok-4.6',
+    modelAlias: 'grok-4.7',
     agentId: null,
     forbiddenAliases: [],
     notBefore: null,
@@ -207,7 +207,7 @@ const availabilityWithHolds: ModelAvailabilityDto = {
     {
       id: 'hold-open',
       kind: 'Grok',
-      modelAlias: 'grok-4.6',
+      modelAlias: 'grok-4.7',
       source: 'AutoDetected',
       disabledUntil: null,
       hitAt: '2026-09-02T08:00:00Z',
@@ -328,7 +328,7 @@ describe('RoutingSettingsTab', () => {
 
     const anyHard = screen.getByTestId('routing-matrix-cell-any-Hard')
     expect(within(anyHard).getByText('Any role rule')).toBeInTheDocument()
-    expect(within(anyHard).getByText(/Grok\/Frontier \(grok-4.6\)/)).toBeInTheDocument()
+    expect(within(anyHard).getByText(/Grok\/Frontier \(grok-4.7\)/)).toBeInTheDocument()
   })
 
   it('shows inheritance, configuration fallback, and unset text', async () => {
@@ -353,7 +353,7 @@ describe('RoutingSettingsTab', () => {
 
     const codeHard = await screen.findByTestId('routing-matrix-cell-Code-Hard')
     expect(within(codeHard).getByText('held until 2026-09-04T00:00:00Z (manual)')).toBeInTheDocument()
-    expect(within(codeHard).getByText(/Grok\/Frontier \(grok-4.6\)/)).toBeInTheDocument()
+    expect(within(codeHard).getByText(/Grok\/Frontier \(grok-4.7\)/)).toBeInTheDocument()
     expect(within(codeHard).queryByText(/fallback to/i)).not.toBeInTheDocument()
   })
 

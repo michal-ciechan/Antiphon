@@ -356,10 +356,10 @@ public sealed class RoutingPinScriptTests
             """
             {"id":"22222222-2222-2222-2222-222222222222","cardId":null,"cardIdentifier":null,
              "role":"Plan","provenance":"Human","strength":"Required","agentKind":"Grok",
-             "modelLevel":"High","modelAlias":"grok-4.6","agentId":null,"forbiddenAliases":[],
+             "modelLevel":"High","modelAlias":"grok-4.7","agentId":null,"forbiddenAliases":[],
              "notBefore":null,"notAfter":null,"reason":"test","sourceTaskId":null,
              "createdAt":"2026-09-01T00:00:00Z","updatedAt":"2026-09-01T00:00:00Z",
-             "candidates":[{"agentKind":"Grok","modelLevel":"High","alias":"grok-4.6","availableNow":true,"unavailableReason":null}],
+             "candidates":[{"agentKind":"Grok","modelLevel":"High","alias":"grok-4.7","availableNow":true,"unavailableReason":null}],
              "candidateCount":1}
             """;
 
@@ -388,7 +388,7 @@ public sealed class RoutingPinScriptTests
              "cardIdentifier":"CARD-0305","followUpMessage":null,
              "routing":{"complexity":null,"chainProvenance":null,"chainSource":"config",
               "source":"pin:CARD-0305 Code","candidates":[
-                {"agentKind":"Grok","modelLevel":"Frontier","alias":"grok-4.6","outcome":"chosen","reason":null,"origin":"pin"},
+                {"agentKind":"Grok","modelLevel":"Frontier","alias":"grok-4.7","outcome":"chosen","reason":null,"origin":"pin"},
                 {"agentKind":"ClaudeCode","modelLevel":"High","alias":"opus","outcome":"skipped","reason":"already chose an earlier candidate","origin":"rolePolicy"}
               ],"available":[],"walked":true,"role":"Code","chainRole":null}}
             """;

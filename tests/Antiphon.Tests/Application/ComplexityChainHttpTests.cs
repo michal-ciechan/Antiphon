@@ -48,7 +48,7 @@ public sealed class ComplexityChainHttpTests
             candidates.Count.ShouldBe(2);
             candidates[0].GetProperty("alias").GetString().ShouldBe("fable");
             candidates[0].GetProperty("availableNow").GetBoolean().ShouldBeTrue();
-            candidates[1].GetProperty("alias").GetString().ShouldBe("grok-4.6");
+            candidates[1].GetProperty("alias").GetString().ShouldBe("grok-4.7");
 
             var get = await client.GetAsync("/api/complexity-chains");
             get.StatusCode.ShouldBe(HttpStatusCode.OK);

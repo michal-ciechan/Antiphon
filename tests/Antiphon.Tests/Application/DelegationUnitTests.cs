@@ -1725,7 +1725,7 @@ public class DelegationCostTests
 /// <summary>
 /// CARD-0084 S5 — the per-KIND rate overlay. The tier ladder is an abstraction over model families
 /// that are priced nothing alike, so before this existed a Grok task was billed at whatever Claude
-/// model shares its rung: a Grok Frontier delegate priced at fable's $10/$50 instead of grok-4.6's
+/// model shares its rung: a Grok Frontier delegate priced at fable's $10/$50 instead of grok-4.7's
 /// $2/$6, wrong by ~3.8x on a real cache-heavy session. That error runs in the CONSERVATIVE
 /// direction — the per-root ceiling gates dispatch on the sum of these figures, so an inflated one
 /// blocks work on spend that never happened.
@@ -1790,7 +1790,7 @@ public class DelegationKindPricingTests
     public void the_shipped_grok_table_is_xais_published_list_price()
     {
         // https://docs.x.ai/docs/models, retrieved 2026-08-18, sub-200k tier:
-        //   grok-4.6  $2.00 in / $6.00 out / $0.50 cached input   (every level — ForGrok, CARD-0169)
+        //   grok-4.7  $2.00 in / $6.00 out / $0.50 cached input   (every level — ForGrok, CARD-0169)
         // grok-4.5 no longer has a rung on the ladder to price; all four levels share one rate.
         // Cache WRITE is $2.00: xAI publishes no cache-write price, so a cache write is ordinary
         // input — Anthropic's 1.25x TTL premium does not exist here.
@@ -1816,7 +1816,7 @@ public class DelegationKindPricingTests
     [Test]
     public void the_claude_cache_multipliers_do_not_leak_onto_grok()
     {
-        // Both would be wrong, in opposite directions: 0.10x would price grok-4.6's cached input at
+        // Both would be wrong, in opposite directions: 0.10x would price grok-4.7's cached input at
         // $0.20 against a published $0.50, and 1.25x would invent a cache-write premium xAI does
         // not charge. Pinned because the multipliers are what a rate entry falls back to when a
         // future edit drops the explicit pins.
@@ -1836,7 +1836,7 @@ public class DelegationKindPricingTests
     }
 
     [Test]
-    public void a_grok_escalation_at_any_level_costs_the_same_because_every_rung_is_grok_4_6()
+    public void a_grok_escalation_at_any_level_costs_the_same_because_every_rung_is_grok_4_7()
     {
         // CARD-0169: ForGrok maps every level to the same model. The ladder still buys a fresh
         // context; it does not buy a dearer one, and the price must say so rather than imply
@@ -1868,7 +1868,7 @@ public class DelegationKindPricingTests
         var grok = DelegationCost.Estimate(Pricing, AgentModelLevel.Frontier, Session, AfterPromo, AgentKind.Grok);
         grok.ShouldBe(0.604600m);
 
-        // CARD-0169: Medium is grok-4.6 too now, so it prices identically to Frontier — grok-4.5's
+        // CARD-0169: Medium is grok-4.7 too now, so it prices identically to Frontier — grok-4.5's
         // cheaper cached-input rate ($0.30) no longer applies to any level.
         DelegationCost.Estimate(Pricing, AgentModelLevel.Medium, Session, AfterPromo, AgentKind.Grok)
             .ShouldBe(0.604600m);

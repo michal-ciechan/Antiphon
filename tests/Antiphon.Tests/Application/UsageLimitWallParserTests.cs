@@ -133,14 +133,14 @@ public class UsageLimitWallParserTests
         var wall = UsageLimitWallParser.Parse(
             SummerAfternoonUtc,
             "API error (status 402 Payment Required): Grok Build usage balance exhausted",
-            "grok-4.6");
+            "grok-4.7");
 
         wall.ShouldNotBeNull();
         wall!.Kind.ShouldBe(UsageLimitWallKind.ModelCap);
-        wall.ModelAlias.ShouldBe("grok-4.6");
+        wall.ModelAlias.ShouldBe("grok-4.7");
         wall.ResetAt.ShouldBeNull();
         var reason = UsageLimitWallParser.FormatReason(wall);
-        reason.ShouldContain("grok-4.6 provider capacity");
+        reason.ShouldContain("grok-4.7 provider capacity");
         reason.ShouldContain("HTTP 402 Payment Required");
         reason.ShouldContain("usage balance exhausted");
         reason.ShouldContain("no reset stated");
@@ -152,11 +152,11 @@ public class UsageLimitWallParserTests
         var withSuffix = UsageLimitWallParser.Parse(
             SummerAfternoonUtc,
             "API error (status 402 Payment Required): Grok Build usage balance exhausted [after 3 retries]",
-            "grok-4.6");
+            "grok-4.7");
         var without = UsageLimitWallParser.Parse(
             SummerAfternoonUtc,
             "API error (status 402 Payment Required): Grok Build usage balance exhausted",
-            "grok-4.6");
+            "grok-4.7");
 
         withSuffix.ShouldNotBeNull();
         without.ShouldNotBeNull();

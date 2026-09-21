@@ -63,7 +63,7 @@ public sealed record CardThreadTaskDto(
     /// <summary>
     /// Which agent program ran (or will run) it - ClaudeCode unless the caller chose Grok. On the
     /// row because <see cref="ModelLevel"/> alone does not name a model: the same Frontier rung is
-    /// <c>fable</c> on Claude and <c>grok-4.6</c> on Grok (CARD-0084 S4), and this thread is a
+    /// <c>fable</c> on Claude and <c>grok-4.7</c> on Grok (CARD-0084 S4), and this thread is a
     /// surface an operator reads to decide what a card cost and what to escalate.
     /// </summary>
     AgentKind AgentKind,

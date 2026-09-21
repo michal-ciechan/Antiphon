@@ -100,10 +100,10 @@ describe('the tier alias', () => {
   it('names a Grok task the model it actually runs, not a Claude one', () => {
     // A chip reading "fable" on a Grok delegate names a model nobody is paying for, on the one
     // surface an operator scans to decide what to escalate.
-    expect(tierAlias('Frontier', 'Grok')).toBe('grok-4.6')
-    expect(tierAlias('High', 'Grok')).toBe('grok-4.6')
-    expect(tierAlias('Medium', 'Grok')).toBe('grok-4.5')
-    expect(tierAlias('Low', 'Grok')).toBe('grok-4.5')
+    expect(tierAlias('Frontier', 'Grok')).toBe('grok-4.7')
+    expect(tierAlias('High', 'Grok')).toBe('grok-4.7')
+    expect(tierAlias('Medium', 'Grok')).toBe('grok-4.7')
+    expect(tierAlias('Low', 'Grok')).toBe('grok-4.7')
   })
 
   it('names a Codex task the model it actually runs, not a Claude one', () => {
@@ -124,8 +124,8 @@ describe('the tier alias', () => {
   it('keeps the vendor word only where the alias does not already carry it', () => {
     expect(tierTooltip('High', 'ClaudeCode')).toBe('High tier — Claude opus')
     expect(tierTooltip('High')).toBe('High tier — Claude opus')
-    // "Grok grok-4.6" would be a stutter — the alias already names the family.
-    expect(tierTooltip('High', 'Grok')).toBe('High tier — grok-4.6')
+    // "Grok grok-4.7" would be a stutter — the alias already names the family.
+    expect(tierTooltip('High', 'Grok')).toBe('High tier — grok-4.7')
     expect(tierTooltip('Frontier', 'Codex')).toBe('Frontier tier — Codex gpt-6-astra')
     expect(tierTooltip('High', 'Codex')).toBe('High tier — Codex gpt-5.6-sol')
   })

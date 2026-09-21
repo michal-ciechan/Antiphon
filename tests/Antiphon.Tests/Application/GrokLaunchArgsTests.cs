@@ -7,7 +7,7 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>
 /// CARD-0289 — Grok's launch-time reasoning-effort flag, measured against grok CLI 1.0.13 on
-/// 2026-08-31. The catalog for grok-4.6 is xhigh / high / medium / low; grok-4.5 has no xhigh
+/// 2026-08-31. The catalog for grok-4.6 (and grok-4.7) is xhigh / high / medium / low; grok-4.5 has no xhigh
 /// and the CLI refuses to launch with it rather than degrading.
 /// </summary>
 [Category("Unit")]
@@ -35,7 +35,7 @@ public class GrokLaunchArgsTests
             .Select(level => Array.IndexOf(order, GrokLaunchArgs.ReasoningEffort(level)))
             .ToList();
 
-        depths.ShouldAllBe(d => d >= 0, "every effort must be in grok-4.6's catalog");
+        depths.ShouldAllBe(d => d >= 0, "every effort must be in grok-4.7's catalog");
         depths.ShouldBe(depths.OrderByDescending(d => d).ToList());
     }
 
@@ -71,6 +71,7 @@ public class GrokLaunchArgsTests
     {
         GrokLaunchArgs.ReasoningEffortForModel(AgentModelLevel.Frontier, null).ShouldBe("xhigh");
         GrokLaunchArgs.ReasoningEffortForModel(AgentModelLevel.Frontier, "").ShouldBe("xhigh");
+        GrokLaunchArgs.ReasoningEffortForModel(AgentModelLevel.Frontier, "grok-4.7").ShouldBe("xhigh");
         GrokLaunchArgs.ReasoningEffortForModel(AgentModelLevel.Frontier, "grok-4.6").ShouldBe("xhigh");
     }
 }

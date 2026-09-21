@@ -156,7 +156,7 @@ public sealed class RoutingPinCandidateCreateTests
             null,
             CancellationToken.None);
         await SeedHoldAsync(db, AgentKind.Codex, "gpt-6-astra", null);
-        await SeedHoldAsync(db, AgentKind.Grok, "grok-4.6", null);
+        await SeedHoldAsync(db, AgentKind.Grok, "grok-4.7", null);
 
         var created = await Service(db, workspace).CreateAsync(
             new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan),
@@ -191,7 +191,7 @@ public sealed class RoutingPinCandidateCreateTests
             null,
             CancellationToken.None);
         await SeedHoldAsync(db, AgentKind.Codex, "gpt-6-astra", null);
-        await SeedHoldAsync(db, AgentKind.Grok, "grok-4.6", null);
+        await SeedHoldAsync(db, AgentKind.Grok, "grok-4.7", null);
 
         var created = await Service(db, workspace).CreateAsync(
             new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan),

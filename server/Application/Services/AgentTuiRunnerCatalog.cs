@@ -55,7 +55,7 @@ public sealed class AgentTuiRunnerCatalog
             kind,
             "Grok",
             "xAI Grok Build TUI terminal client.",
-            ["grok-4.6", "grok-4.5"],
+            ["grok-4.7", "grok-4.6", "grok-4.5"],
             GrokCapabilities(profileArguments),
             "Use --always-approve for permission bypass and --no-alt-screen so Antiphon can capture the PTY. Structured activity follows the tailed ACP turn_completed stream (CARD-0080 S2)."),
         AgentKind.Raw => new AgentTuiRunnerTypeDto(

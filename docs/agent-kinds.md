@@ -173,10 +173,10 @@ Antiphon dispatches at a *tier* (`Frontier` / `High` / `Medium` / `Low`), not a 
 
 | Tier | Claude | Grok | Codex |
 |---|---|---|---|
-| `Frontier` | `fable` | `grok-4.6` | `gpt-6-astra` |
-| `High` (default) | `opus` | `grok-4.6` | `gpt-5.6-sol` |
-| `Medium` | `sonnet` | `grok-4.6` | `gpt-5.6-terra` |
-| `Low` | `haiku` | `grok-4.6` | `gpt-5.6-luna` |
+| `Frontier` | `fable` | `grok-4.7` | `gpt-6-astra` |
+| `High` (default) | `opus` | `grok-4.7` | `gpt-5.6-sol` |
+| `Medium` | `sonnet` | `grok-4.7` | `gpt-5.6-terra` |
+| `Low` | `haiku` | `grok-4.7` | `gpt-5.6-luna` |
 
 **Model-tier names are not `AgentKind` values.** Fable (Frontier), Opus (High), Sonnet
 (Medium), and Haiku (Low) are tiers within `ClaudeCode`; Astra (Frontier), Sol (High),
@@ -200,9 +200,10 @@ Three things worth knowing about that table:
 
 - **Claude rides family aliases, never versioned ids**, so a launch picks up the family's current
   model without a code change.
-- **Grok is collapsed to `grok-4.6` at every tier** (CARD-0169) — the operator's instruction, not
-  a capability judgement. `grok-4.5` is still a selectable model id in the profile catalogue and
-  in historical records; it is only gone from the ladder new dispatches resolve through.
+- **Grok is collapsed to `grok-4.7` at every tier** (CARD-0169 collapse; 2026-09-21 bump from
+  `grok-4.6`) — the operator's instruction, not a capability judgement. `grok-4.6` and `grok-4.5`
+  remain selectable model ids in the profile catalogue and in historical records; they are only
+  gone from the ladder new dispatches resolve through.
 - **Codex pins full slugs and needs a deliberate bump.** Measured against codex-cli 0.147.0:
   `-m luna` is rejected locally ("Model metadata for `luna` not found") *and* by the service
   (HTTP 400). Bare `-m astra` 400s the same way; the selectable id is `gpt-6-astra`. There are
@@ -269,7 +270,7 @@ outside `TranscriptTailer`.
 
 ## 5. Grok (xAI Grok Build TUI)
 
-**Launch.** `grok.exe --always-approve --no-alt-screen [--model grok-4.6] [--rules <text>]
+**Launch.** `grok.exe --always-approve --no-alt-screen [--model grok-4.7] [--rules <text>]
 (--session-id <guid> | --resume <guid>)` — decided from the on-disk session directory
 (`GROK_HOME/sessions/*/{id}/`), never from the row (CARD-0383).
 

@@ -266,7 +266,7 @@ describe('PipelineStagesPanel', () => {
     expect(screen.getByTestId('pipeline-strip')).toHaveTextContent('as of')
     expect(screen.getByTestId('pipeline-stage-Plan')).toHaveTextContent('Plan')
     expect(screen.getByTestId('pipeline-stage-Code')).toHaveTextContent('Execute')
-    expect(screen.getByTestId('pipeline-stage-Code')).toHaveTextContent('pin: grok-4.6')
+    expect(screen.getByTestId('pipeline-stage-Code')).toHaveTextContent('pin: grok-4.7')
     expect(screen.getByTestId('pipeline-stage-Deploy')).toHaveTextContent('Deploy')
     expect(screen.queryByTestId('pipeline-stage-Review')).not.toBeInTheDocument()
     expect(screen.getByTestId('pipeline-idle')).toHaveTextContent('8 idle stages')
@@ -274,7 +274,7 @@ describe('PipelineStagesPanel', () => {
     const fly = screen.getByTestId(`pipeline-row-${FLY_ID}`)
     expect(fly).toHaveTextContent('#301')
     expect(fly).toHaveTextContent('Phone-friendly pipeline-stage view')
-    expect(fly).toHaveTextContent('grok-4.6 4m')
+    expect(fly).toHaveTextContent('grok-4.7 4m')
     expect(fly).toHaveAttribute('aria-label', 'Open #301 — running')
 
     const queuedRow = screen.getByTestId('pipeline-row-bbbbbbbb-0000-0000-0000-000000000002')

@@ -423,7 +423,7 @@ public class RoutingPinCreateTests
         {
             Id = Guid.NewGuid(),
             Kind = AgentKind.Grok,
-            ModelAlias = "grok-4.6",
+            ModelAlias = "grok-4.7",
             Source = ModelAvailabilitySource.Manual,
             DisabledUntil = DateTime.UtcNow.AddHours(4),
             HitAt = DateTime.UtcNow,
@@ -445,7 +445,7 @@ public class RoutingPinCreateTests
         // The pin was ignored, so Require sees the REQUEST's kind, and the coda that names the
         // pin must not appear — that sentence is only for a Required pin that actually applied.
         refusal.Code.ShouldBe("model_disabled");
-        refusal.Message.ShouldContain("grok-4.6");
+        refusal.Message.ShouldContain("grok-4.7");
         refusal.Message.ShouldNotContain("does not satisfy the pin");
         (await db.AgentTasks.CountAsync()).ShouldBe(0);
     }

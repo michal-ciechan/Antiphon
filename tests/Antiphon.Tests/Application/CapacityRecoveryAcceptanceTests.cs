@@ -117,7 +117,7 @@ public class CapacityRecoveryAcceptanceTests
             $"task:{Guid.NewGuid():N}",
             CapacityWaitConsumerKind.QueuedTask,
             executionKind: AgentKind.Grok,
-            alias: "grok-4.6",
+            alias: "grok-4.7",
             holdAlreadyCleared: true), CancellationToken.None);
         await service.GrantReadyAsync(CancellationToken.None);
         var grokGrant = await CapacityRecoveryTestSupport.CreateContext(schema)

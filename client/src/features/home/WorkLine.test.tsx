@@ -79,7 +79,7 @@ describe('taskWorkLine', () => {
     // The line an operator scans to decide what to escalate: `fable` on a Grok task named a model
     // nobody was paying for (CARD-0084 S4).
     expect(taskWorkLine(task({ agentKind: 'Grok' }), { formatTime: utcTime }).line).toBe(
-      '#56 launch leak - slices 3+4 · grok-4.6',
+      '#56 launch leak - slices 3+4 · grok-4.7',
     )
     // xAI ships two models, so the bottom half of the ladder collapses onto grok-4.5.
     expect(

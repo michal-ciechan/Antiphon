@@ -982,15 +982,15 @@ public partial class AttentionServiceTests
     {
         await using var scenario = new Scenario();
         var holdId = await scenario.AddHoldAsync(
-            AgentKind.Grok, "grok-4.6",
+            AgentKind.Grok, "grok-4.7",
             until: DateTime.UtcNow.AddDays(2),
             reason: "manual hold",
             source: ModelAvailabilitySource.Manual);
 
         var item = (await ItemsForAsync(scenario)).Single(i =>
-            i.Kind == AttentionKind.ModelAvailabilityHold && i.ModelAlias == "grok-4.6");
+            i.Kind == AttentionKind.ModelAvailabilityHold && i.ModelAlias == "grok-4.7");
         item.ModelKind.ShouldBe("Grok");
-        item.ModelAlias.ShouldBe("grok-4.6");
+        item.ModelAlias.ShouldBe("grok-4.7");
         item.Actions.ShouldBe([AttentionAction.ClearHold]);
         item.Headline.ShouldContain("(manual)");
         item.Headline.ShouldContain("held until");
@@ -1003,7 +1003,7 @@ public partial class AttentionServiceTests
         }
 
         (await ItemsForAsync(scenario))
-            .ShouldNotContain(i => i.Kind == AttentionKind.ModelAvailabilityHold && i.ModelAlias == "grok-4.6");
+            .ShouldNotContain(i => i.Kind == AttentionKind.ModelAvailabilityHold && i.ModelAlias == "grok-4.7");
     }
 
     [Test]

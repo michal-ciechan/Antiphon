@@ -193,10 +193,10 @@ public sealed class AgentTuiLaunchResolverTests
         var resolved = await ResolveAsync(
             provider,
             agent,
-            new AgentLaunchOptions(Cols: 120, Rows: 30, TierModelAlias: "grok-4.6"));
+            new AgentLaunchOptions(Cols: 120, Rows: 30, TierModelAlias: "grok-4.7"));
 
         resolved.Spec.Args.ShouldNotContain("--model");
-        resolved.Spec.Args.ShouldNotContain("grok-4.6");
+        resolved.Spec.Args.ShouldNotContain("grok-4.7");
         resolved.ModelArgument.ShouldBe(LaunchModelArgument.ProfileOwned);
         resolved.EffectiveModelId.ShouldBeNull();
     }
@@ -218,10 +218,10 @@ public sealed class AgentTuiLaunchResolverTests
         var resolved = await ResolveAsync(
             provider,
             agent,
-            new AgentLaunchOptions(Cols: 120, Rows: 30, TierModelAlias: "grok-4.6"));
+            new AgentLaunchOptions(Cols: 120, Rows: 30, TierModelAlias: "grok-4.7"));
 
         resolved.Spec.Args.Count(a => a == "--model").ShouldBe(1);
-        resolved.Spec.Args[resolved.Spec.Args.ToList().IndexOf("--model") + 1].ShouldBe("grok-4.6");
+        resolved.Spec.Args[resolved.Spec.Args.ToList().IndexOf("--model") + 1].ShouldBe("grok-4.7");
         resolved.ModelArgument.ShouldBe(LaunchModelArgument.Tier);
         resolved.EffectiveModelId.ShouldBeNull();
     }
@@ -242,7 +242,7 @@ public sealed class AgentTuiLaunchResolverTests
         var rawLaunch = await ResolveAsync(provider, new Agent { Id = Guid.NewGuid(), Name = "Raw", TuiProfileId = raw.Id },
             new AgentLaunchOptions(ModelTier: AgentModelLevel.High));
 
-        grokLaunch.Spec.Args.TakeLast(2).ShouldBe(["--model", "grok-4.6"]);
+        grokLaunch.Spec.Args.TakeLast(2).ShouldBe(["--model", "grok-4.7"]);
         codexLaunch.Spec.Args.TakeLast(2).ShouldBe(["--model", "gpt-5.6-sol"]);
         rawLaunch.Spec.Args.ShouldNotContain("--model");
         rawLaunch.ModelArgument.ShouldBe(LaunchModelArgument.None);

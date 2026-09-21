@@ -14,15 +14,16 @@ public class GrokModelListParserTests
             """
             You are logged in with grok.com.
 
-            Default model: grok-4.6
+            Default model: grok-4.7
 
             Available models:
-              * grok-4.6 (default)
+              * grok-4.7 (default)
+              - grok-4.6
               - grok-4.5
             """;
 
         var models = GrokModelListParser.Parse(output);
-        models.ShouldBe(["grok-4.6", "grok-4.5"]);
+        models.ShouldBe(["grok-4.7", "grok-4.6", "grok-4.5"]);
     }
 
     [Test]

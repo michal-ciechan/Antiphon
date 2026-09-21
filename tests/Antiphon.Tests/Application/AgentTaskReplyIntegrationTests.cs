@@ -2262,7 +2262,7 @@ public partial class AgentTaskReplyIntegrationTests
     /// <summary>
     /// CARD-0084 S5, end to end through the settle path: the kind on the TASK row, not the tier
     /// alone, picks the rate table. Before this, a Grok delegate was billed at whatever Claude
-    /// model shares its rung — Frontier means fable ($10/$50) and grok-4.6 ($2/$6) alike — so the
+    /// model shares its rung — Frontier means fable ($10/$50) and grok-4.7 ($2/$6) alike — so the
     /// per-root ceiling saw ~3.8x the real spend and would throttle a run on money never spent.
     ///
     /// The counters are the Grok-shaped ones: <c>GrokTranscriptNormalizer</c> reads

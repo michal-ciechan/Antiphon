@@ -59,7 +59,7 @@ public class ComplexityCreateTests
         await SeedHardChainAsync(db);
         await SeedHoldAsync(db, AgentKind.ClaudeCode, "fable", until: null);
         await SeedHoldAsync(db, AgentKind.ClaudeCode, "opus", until: null);
-        await SeedHoldAsync(db, AgentKind.Grok, "grok-4.6", until: null);
+        await SeedHoldAsync(db, AgentKind.Grok, "grok-4.7", until: null);
         var sessionId = await SeedSessionAsync(db, workspace.Path);
 
         var created = await Service(db, workspace).CreateAsync(
@@ -90,7 +90,7 @@ public class ComplexityCreateTests
         await SeedHardChainAsync(db);
         await SeedHoldAsync(db, AgentKind.ClaudeCode, "fable", until: null);
         await SeedHoldAsync(db, AgentKind.ClaudeCode, "opus", until: null);
-        await SeedHoldAsync(db, AgentKind.Grok, "grok-4.6", until: null);
+        await SeedHoldAsync(db, AgentKind.Grok, "grok-4.7", until: null);
 
         var ex = await Should.ThrowAsync<RoutingExhaustedException>(() =>
             Service(db, workspace).CreateAsync(

@@ -183,7 +183,7 @@ public class ComplexityChainServiceTests
         dto.Source.ShouldBe("config");
         dto.Provenance.ShouldBe(RoutingPinProvenance.Auto);
         dto.Candidates.ShouldHaveSingleItem();
-        dto.Candidates[0].Alias.ShouldBe("grok-4.6");
+        dto.Candidates[0].Alias.ShouldBe("grok-4.7");
         dto.Candidates[0].AvailableNow.ShouldBeTrue();
     }
 
@@ -291,7 +291,7 @@ public class ComplexityChainServiceTests
         fable.AvailableNow.ShouldBeFalse();
         fable.UnavailableReason.ShouldContain("held until");
         fable.UnavailableReason.ShouldContain("manual");
-        dto.Candidates.Single(c => c.Alias == "grok-4.6").AvailableNow.ShouldBeTrue();
+        dto.Candidates.Single(c => c.Alias == "grok-4.7").AvailableNow.ShouldBeTrue();
     }
 
     private static PutComplexityChainRequest Put(bool Human, string? Reason = null) =>

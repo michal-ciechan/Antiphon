@@ -245,10 +245,11 @@ internal static class Program
         {
             Console.WriteLine("You are logged in with grok.com.");
             Console.WriteLine();
-            Console.WriteLine("Default model: grok-4.6");
+            Console.WriteLine("Default model: grok-4.7");
             Console.WriteLine();
             Console.WriteLine("Available models:");
-            Console.WriteLine("  * grok-4.6 (default)");
+            Console.WriteLine("  * grok-4.7 (default)");
+            Console.WriteLine("  - grok-4.6");
             Console.WriteLine("  - grok-4.5");
             return 0;
         }
@@ -265,7 +266,7 @@ internal static class Program
         TryEnableRawConsole();
 
         var cwd = Path.GetFullPath(GetArg(args, "--cwd") ?? Environment.CurrentDirectory);
-        var model = GetArg(args, "--model") ?? GetArg(args, "-m") ?? "grok-4.6";
+        var model = GetArg(args, "--model") ?? GetArg(args, "-m") ?? "grok-4.7";
         var sessionId = GetArg(args, "--session-id") ?? GetArg(args, "-s");
         var resumeId = GetArg(args, "--resume") ?? GetArg(args, "-r");
         var grokHome = Environment.GetEnvironmentVariable("GROK_HOME");

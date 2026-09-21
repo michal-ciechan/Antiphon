@@ -80,7 +80,7 @@ public class ComplexityChainRoleTests
 
         walk.Source.ShouldBe("chain:Hard");
         walk.ChainRole.ShouldBeNull();
-        walk.Chosen!.Alias.ShouldBe("grok-4.6");
+        walk.Chosen!.Alias.ShouldBe("grok-4.7");
     }
 
     [Test]
@@ -107,7 +107,7 @@ public class ComplexityChainRoleTests
             TaskComplexity.Hard, AgentTaskKind.Worker, AgentTaskRole.Plan,
             RoutingPinService.Decision.None, null, null, false, CancellationToken.None);
 
-        walk.Chosen!.Alias.ShouldBe("grok-4.6");
+        walk.Chosen!.Alias.ShouldBe("grok-4.7");
         walk.ChainSource.ShouldBe("config");
         walk.ChainRole.ShouldBeNull();
         walk.Source.ShouldBe("chain:Hard");
@@ -161,7 +161,7 @@ public class ComplexityChainRoleTests
 
         walk.Source.ShouldBe("chain:Hard");
         walk.ChainRole.ShouldBeNull();
-        walk.Chosen!.Alias.ShouldBe("grok-4.6");
+        walk.Chosen!.Alias.ShouldBe("grok-4.7");
         (await db.ComplexityChains.AsNoTracking()
             .SingleAsync(c => c.Role == AgentTaskRole.Plan)).ClearedAt.ShouldNotBeNull();
     }

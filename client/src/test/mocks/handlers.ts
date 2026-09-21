@@ -17,7 +17,7 @@ export const handlers: HttpHandler[] = [
         'opus',
         'sonnet',
         'haiku',
-        'grok-4.6',
+        'grok-4.7',
         'gpt-6-astra',
         'gpt-5.6-sol',
         'gpt-5.6-terra',

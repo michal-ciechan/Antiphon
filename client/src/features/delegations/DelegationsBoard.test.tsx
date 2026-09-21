@@ -282,7 +282,7 @@ describe('DelegationsBoard', () => {
     renderWithProviders(<DelegationsBoard />)
 
     const grok = await screen.findByTestId(`task-chip-${shortId('77777777-7777-7777-7777-777777777777')}`)
-    expect(within(grok).getByTestId('tier-Frontier')).toHaveTextContent('grok-4.6')
+    expect(within(grok).getByTestId('tier-Frontier')).toHaveTextContent('grok-4.7')
     expect(within(grok).getByText('grok-4.5 →')).toBeInTheDocument()
 
     const claude = screen.getByTestId(`task-chip-${shortId('88888888-8888-8888-8888-888888888888')}`)

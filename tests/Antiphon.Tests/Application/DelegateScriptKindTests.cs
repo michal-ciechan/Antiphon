@@ -156,17 +156,17 @@ public sealed class DelegateScriptKindTests
              "complexity":"Hard",
              "routing":{"complexity":"Hard","chainProvenance":"Human","chainSource":"pin",
                "source":"chain:Hard","role":"Plan","chainRole":null,"walked":true,
-               "available":["grok-4.6"],
+               "available":["grok-4.7"],
                "candidates":[
                  {"agentKind":"ClaudeCode","modelLevel":"Frontier","alias":"fable","outcome":"skipped","reason":"held","origin":"chain"},
-                 {"agentKind":"Grok","modelLevel":"Frontier","alias":"grok-4.6","outcome":"chosen","reason":null,"origin":"chain"}
+                 {"agentKind":"Grok","modelLevel":"Frontier","alias":"grok-4.7","outcome":"chosen","reason":null,"origin":"chain"}
                ]}}
             """);
         var run = await RunDelegateAsync(
             server, "-Role", "Plan", "-Goal", "plan it", "-Complexity", "Hard");
 
         run.ExitCode.ShouldBe(0, run.Output);
-        run.Output.ShouldContain("routed Plan/Hard -> grok-4.6 (candidate 2/2; via any-role Hard chain)");
+        run.Output.ShouldContain("routed Plan/Hard -> grok-4.7 (candidate 2/2; via any-role Hard chain)");
         run.Output.ShouldContain("skipped fable");
     }
 
@@ -179,16 +179,16 @@ public sealed class DelegateScriptKindTests
              "complexity":"Hard",
              "routing":{"complexity":"Hard","chainProvenance":"Human","chainSource":"pin",
                "source":"chain:Plan/Hard","role":"Plan","chainRole":"Plan","walked":true,
-               "available":["grok-4.6"],
+               "available":["grok-4.7"],
                "candidates":[
-                 {"agentKind":"Grok","modelLevel":"Frontier","alias":"grok-4.6","outcome":"chosen","reason":null,"origin":"chain"}
+                 {"agentKind":"Grok","modelLevel":"Frontier","alias":"grok-4.7","outcome":"chosen","reason":null,"origin":"chain"}
                ]}}
             """);
         var run = await RunDelegateAsync(
             server, "-Role", "Plan", "-Goal", "plan it", "-Complexity", "Hard");
 
         run.ExitCode.ShouldBe(0, run.Output);
-        run.Output.ShouldContain("routed Plan/Hard -> grok-4.6 (candidate 1/1)");
+        run.Output.ShouldContain("routed Plan/Hard -> grok-4.7 (candidate 1/1)");
         run.Output.ShouldNotContain("via any-role");
     }
 

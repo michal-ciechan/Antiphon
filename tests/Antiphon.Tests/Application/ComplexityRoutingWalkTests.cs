@@ -91,7 +91,7 @@ public class ComplexityRoutingWalkTests
             TaskComplexity.Hard, AgentTaskKind.Worker, AgentTaskRole.Plan,
             pinDecision, null, null, false, CancellationToken.None);
 
-        walk.Chosen!.Alias.ShouldBe("grok-4.6");
+        walk.Chosen!.Alias.ShouldBe("grok-4.7");
         walk.Outcomes[0].Reason.ShouldBe("forbidden by stage pin");
     }
 
@@ -182,7 +182,7 @@ public class ComplexityRoutingWalkTests
             (AgentKind.ClaudeCode, AgentModelLevel.Frontier),
             (AgentKind.Grok, AgentModelLevel.Frontier));
         await SeedHoldAsync(db, AgentKind.ClaudeCode, "fable", manual: true, until: null);
-        await SeedHoldAsync(db, AgentKind.Grok, "grok-4.6", manual: true, until: null);
+        await SeedHoldAsync(db, AgentKind.Grok, "grok-4.7", manual: true, until: null);
 
         var walk = await Routing(db).WalkAsync(
             TaskComplexity.Hard, AgentTaskKind.Worker, AgentTaskRole.Plan,
@@ -193,7 +193,7 @@ public class ComplexityRoutingWalkTests
         walk.Outcomes.ShouldAllBe(o => o.Outcome == "skipped" && o.Reason != null);
         walk.ExhaustedSentence().ShouldStartWith(ComplexityRoutingService.RoutingExhaustedPrefix);
         walk.ExhaustedSentence().ShouldContain("fable");
-        walk.ExhaustedSentence().ShouldContain("grok-4.6");
+        walk.ExhaustedSentence().ShouldContain("grok-4.7");
     }
 
     [Test]

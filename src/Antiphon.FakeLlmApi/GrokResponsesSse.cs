@@ -19,7 +19,7 @@ public static class GrokResponsesSse
         object Call(ScriptedFunctionCall call, string arguments, string status) => new {
             type = "function_call", id = itemId, call_id = call.CallId, name = call.Name, arguments, status };
         object Envelope(string status, object[] output) => new { id, @object = "response",
-            created_at = DateTimeOffset.UtcNow.ToUnixTimeSeconds(), model = "grok-4.6", status, output,
+            created_at = DateTimeOffset.UtcNow.ToUnixTimeSeconds(), model = "grok-4.7", status, output,
             usage = new { input_tokens = 10, output_tokens = 5, total_tokens = 15,
                 input_tokens_details = new { cached_tokens = 0 }, output_tokens_details = new { reasoning_tokens = 0 } } };
         async Task Emit(string type, object payload)

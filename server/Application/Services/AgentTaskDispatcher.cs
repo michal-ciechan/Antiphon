@@ -4412,7 +4412,7 @@ public sealed class AgentTaskDispatcher
 
         if (isGrok)
         {
-            // Explicit, because grok-4.6's own default AND the operator's config.toml are both
+            // Explicit, because grok-4.7's own default AND the operator's config.toml are both
             // `high` — a Low-tier delegate would think at High, a Frontier one would never reach
             // xhigh (CARD-0289). Two argv elements, counted by the budget guard below.
             extraArgs.AddRange([

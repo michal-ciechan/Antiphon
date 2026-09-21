@@ -194,7 +194,7 @@ describe('CardThreadPanel', () => {
     renderWithProviders(<CardThreadPanel identifier="CARD-0067" />)
 
     const row = await screen.findByTestId('thread-task-t1')
-    expect(row).toHaveTextContent('grok-4.6')
+    expect(row).toHaveTextContent('grok-4.7')
     expect(row).not.toHaveTextContent('opus')
   })
 

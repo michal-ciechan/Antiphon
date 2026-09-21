@@ -36,7 +36,7 @@ public class ModelAvailabilityTests
             var availability = Service(db);
             (await availability.IsHeldAsync(AgentKind.ClaudeCode, "fable", CancellationToken.None)).ShouldBeTrue();
             (await availability.IsHeldAsync(AgentKind.ClaudeCode, "opus", CancellationToken.None)).ShouldBeFalse();
-            (await availability.IsHeldAsync(AgentKind.Grok, "grok-4.6", CancellationToken.None)).ShouldBeFalse();
+            (await availability.IsHeldAsync(AgentKind.Grok, "grok-4.7", CancellationToken.None)).ShouldBeFalse();
         }
         finally
         {
@@ -57,12 +57,12 @@ public class ModelAvailabilityTests
             var availability = Service(db);
             (await availability.IsHeldAsync(AgentKind.ClaudeCode, "fable", CancellationToken.None)).ShouldBeTrue();
             (await availability.IsHeldAsync(AgentKind.ClaudeCode, "haiku", CancellationToken.None)).ShouldBeTrue();
-            (await availability.IsHeldAsync(AgentKind.Grok, "grok-4.6", CancellationToken.None)).ShouldBeFalse();
+            (await availability.IsHeldAsync(AgentKind.Grok, "grok-4.7", CancellationToken.None)).ShouldBeFalse();
 
             var available = await availability.ListAvailableAsync(CancellationToken.None);
             available.ShouldNotContain("fable");
             available.ShouldNotContain("haiku");
-            available.ShouldContain("grok-4.6");
+            available.ShouldContain("grok-4.7");
         }
         finally
         {
@@ -112,7 +112,7 @@ public class ModelAvailabilityTests
             ex.Message.ShouldContain($"fable is disabled until {until:yyyy-MM-ddTHH:mm:ssZ} (session-limit)");
             ex.Message.ShouldContain("available:");
             ex.Message.ShouldContain("opus");
-            ex.Message.ShouldContain("grok-4.6");
+            ex.Message.ShouldContain("grok-4.7");
             var extension = ex.Extensions.ShouldNotBeNull()["modelAvailability"]
                 .ShouldBeOfType<ModelAvailabilityProblemDto>();
             extension.ModelAlias.ShouldBe("fable");
@@ -257,7 +257,7 @@ public class ModelAvailabilityTests
             available.ShouldContain("opus");
             available.ShouldContain("sonnet");
             available.ShouldContain("haiku");
-            available.ShouldContain("grok-4.6");
+            available.ShouldContain("grok-4.7");
             available.ShouldContain("gpt-6-astra");
             available.ShouldContain("gpt-5.6-sol");
         }

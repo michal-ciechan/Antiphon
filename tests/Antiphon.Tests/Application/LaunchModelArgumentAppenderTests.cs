@@ -23,7 +23,7 @@ public sealed class LaunchModelArgumentAppenderTests
         ModelLevelAliases.ForLaunch(AgentKind.Codex, AgentModelLevel.High).ShouldBe("gpt-5.6-sol");
         ModelLevelAliases.ForLaunch(AgentKind.Codex, AgentModelLevel.Medium).ShouldBe("gpt-5.6-terra");
         ModelLevelAliases.ForLaunch(AgentKind.Codex, AgentModelLevel.Low).ShouldBe("gpt-5.6-luna");
-        ModelLevelAliases.ForLaunch(AgentKind.Grok, AgentModelLevel.Low).ShouldBe("grok-4.6");
+        ModelLevelAliases.ForLaunch(AgentKind.Grok, AgentModelLevel.Low).ShouldBe("grok-4.7");
         ModelLevelAliases.ForLaunch(AgentKind.Raw, AgentModelLevel.High).ShouldBeNull();
         ModelLevelAliases.ForLaunch(AgentKind.OpenCode, AgentModelLevel.High).ShouldBeNull();
     }

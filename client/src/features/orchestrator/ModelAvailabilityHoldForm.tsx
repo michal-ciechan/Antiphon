@@ -20,7 +20,7 @@ const ALIASES_BY_KIND: Record<string, { value: string; label: string }[]> = {
   ],
   Grok: [
     { value: '*', label: '* (kind-wide)' },
-    { value: 'grok-4.6', label: 'grok-4.6' },
+    { value: 'grok-4.7', label: 'grok-4.7' },
   ],
   Codex: [
     { value: '*', label: '* (kind-wide)' },

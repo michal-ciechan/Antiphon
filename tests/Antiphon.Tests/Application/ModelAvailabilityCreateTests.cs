@@ -58,7 +58,7 @@ public class ModelAvailabilityCreateTests
         var holdId = Guid.NewGuid();
         using var workspace = new TempWorkspace();
         await using var db = CreateContext();
-        await SeedHoldAsync(db, holdId, "grok-4.6", until: null, kind: AgentKind.Grok);
+        await SeedHoldAsync(db, holdId, "grok-4.7", until: null, kind: AgentKind.Grok);
         try
         {
             var ex = await Should.ThrowAsync<ModelDisabledException>(() =>
@@ -72,7 +72,7 @@ public class ModelAvailabilityCreateTests
 
             ex.Code.ShouldBe("model_disabled");
             ex.StatusCode.ShouldBe(409);
-            ex.Message.ShouldContain("grok-4.6 is disabled");
+            ex.Message.ShouldContain("grok-4.7 is disabled");
         }
         finally
         {
@@ -86,7 +86,7 @@ public class ModelAvailabilityCreateTests
         var holdId = Guid.NewGuid();
         using var workspace = new TempWorkspace();
         await using var db = CreateContext();
-        await SeedHoldAsync(db, holdId, "grok-4.6", until: null, kind: AgentKind.Grok);
+        await SeedHoldAsync(db, holdId, "grok-4.7", until: null, kind: AgentKind.Grok);
         Guid createdId = Guid.Empty;
         try
         {

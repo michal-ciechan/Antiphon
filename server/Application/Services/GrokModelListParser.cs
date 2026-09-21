@@ -7,9 +7,10 @@ namespace Antiphon.Server.Application.Services;
 /// catalogue, not one identifier per line:
 /// <code>
 /// You are logged in with grok.com.
-/// Default model: grok-4.6
+/// Default model: grok-4.7
 /// Available models:
-///   * grok-4.6 (default)
+///   * grok-4.7 (default)
+///   - grok-4.6
 ///   - grok-4.5
 /// </code>
 /// Wrappers and FakeGrok may also emit a bare identifier per line.

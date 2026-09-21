@@ -39,8 +39,9 @@ public static class GrokLaunchArgs
     /// Neither default tracks the tier the caller asked for, so the tier sets it — and the launch
     /// stops depending on a config file nothing in this repo owns.
     ///
-    /// <para>Every value is in grok-4.6's catalog, and <see cref="ModelLevelAliases.ForGrok"/> pins
-    /// grok-4.6 at every rung (CARD-0169), so the ladder cannot emit an out-of-catalog value.
+    /// <para>Every value is in grok-4.7's catalog, and <see cref="ModelLevelAliases.ForGrok"/> pins
+    /// grok-4.7 at every rung (CARD-0169 collapse; 2026-09-21 bump), so the ladder cannot emit an
+    /// out-of-catalog value.
     /// grok-4.5 + Frontier → xhigh is only reachable via an explicit profile/agent ModelId of
     /// grok-4.5 under a Frontier-level dispatch. Live probe 2026-08-31:
     /// <c>grok -m grok-4.5 --reasoning-effort xhigh -p "say ok"</c> exited 1 with
@@ -60,7 +61,7 @@ public static class GrokLaunchArgs
     /// <summary>
     /// <see cref="ReasoningEffort"/> with the grok-4.5 clamp: that model's catalog has no
     /// <c>xhigh</c>, and the CLI refuses to launch rather than degrading. Other grok-4.5 efforts
-    /// pass through; any other model id (including null, which the ladder pins to grok-4.6)
+    /// pass through; any other model id (including null, which the ladder pins to grok-4.7)
     /// keeps the table value.
     /// </summary>
     public static string ReasoningEffortForModel(AgentModelLevel level, string? effectiveModelId)

@@ -144,6 +144,7 @@ public sealed class PinnedProfileLaunchSpecTests
                 task, agent, session, program, null, CancellationToken.None))
                 .Args.ToList();
             args.ShouldNotContain("--model");
+            args.ShouldNotContain("grok-4.7");
             args.ShouldNotContain("grok-4.6");
 
             var queued = await SeedQueuedPinnedAsync(
@@ -154,6 +155,7 @@ public sealed class PinnedProfileLaunchSpecTests
                 .Select(e => e.Detail)
                 .SingleAsync();
             detail.ShouldContain("none (profile owns the model)");
+            detail.ShouldNotContain("grok-4.7");
             detail.ShouldNotContain("grok-4.6");
         }
         finally

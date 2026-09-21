@@ -387,7 +387,7 @@ public class ApiErrorRecoveryServiceTests
             await stamp.AgentSessions.Where(s => s.Id == h.SessionId)
                 .ExecuteUpdateAsync(u => u
                     .SetProperty(s => s.AgentKind, AgentKind.Grok)
-                    .SetProperty(s => s.EffectiveModelId, "grok-4.6"));
+                    .SetProperty(s => s.EffectiveModelId, "grok-4.7"));
         }
 
         await SeedStubAsync(
@@ -409,7 +409,7 @@ public class ApiErrorRecoveryServiceTests
         var hold = await db.ModelAvailabilityHolds.SingleAsync(
             x => x.SourceSessionId == h.SessionId && x.ClearedAt == null);
         hold.Kind.ShouldBe(AgentKind.Grok);
-        hold.ModelAlias.ShouldBe("grok-4.6");
+        hold.ModelAlias.ShouldBe("grok-4.7");
         hold.DisabledUntil.ShouldBe(now.UtcDateTime.AddHours(3));
         hold.Source.ShouldBe(ModelAvailabilitySource.AutoDetected);
         hold.Reason.ShouldContain("provider capacity");

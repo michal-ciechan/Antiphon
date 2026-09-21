@@ -64,7 +64,7 @@ Grok is a first-class runner kind (`AgentKind.Grok`), not only an OpenCode model
 | Auth | WrapperManaged (login lives in `~/.grok/auth.json`) |
 | Model arg | `--model` |
 
-Pick `grok-4.6` (default) or `grok-4.5` from the catalogue. Sessions resume with `--resume <session-id>`. CARD-0395 sends composed standing instructions as a typed payload to a runner advertising `grokRulesFileV1`; the runner writes the complete file and adds a short `--rules` bootstrap requesting a read. Ordinary work waits for the internal read acknowledgement. This is model-mediated retrieval; real-model compliance and two-compaction acceptance remain open.
+Pick `grok-4.7` (default), `grok-4.6`, or `grok-4.5` from the catalogue. Sessions resume with `--resume <session-id>`. CARD-0395 sends composed standing instructions as a typed payload to a runner advertising `grokRulesFileV1`; the runner writes the complete file and adds a short `--rules` bootstrap requesting a read. Ordinary work waits for the internal read acknowledgement. This is model-mediated retrieval; real-model compliance and two-compaction acceptance remain open.
 
 The CARD-0382 Windows raw-argv guard remains unchanged: CR, LF, NUL or more than 4,096 UTF-16 units refuses with `grok_rules_argv_unsafe`. A safe explicit rules value plus composed rules refuses with `grok_rules_source_conflict`; move the append to `SystemPromptAppend`. Installed 1.0.13 treats `--rules @path` as literal text and native resume retains old rules. Neither is a file-loading configuration workaround.
 
@@ -78,8 +78,9 @@ launch request's `transcriptFormat: "grok"`. Do not point the Claude JSONL taile
 formats and their discovery rules are different, and Grok's path is deterministic precisely because
 it needs none of Claude's claim machinery.
 
-Note that the level ladder resolves **every** tier to `grok-4.6` (CARD-0169); `grok-4.5` remains
-selectable as an explicit profile model but is not what a `Low`/`Medium` dispatch will pick.
+Note that the level ladder resolves **every** tier to `grok-4.7` (CARD-0169 collapse;
+2026-09-21 bump); `grok-4.6` and `grok-4.5` remain selectable as explicit profile models but
+are not what a dispatch will pick.
 
 ## Local llm-key-proxy (gkp) Grok profile
 

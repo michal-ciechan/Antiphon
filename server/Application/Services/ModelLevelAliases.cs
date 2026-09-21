@@ -31,11 +31,11 @@ public static class ModelLevelAliases
         _ => "opus",
     };
 
-    // CARD-0169: every level maps to grok-4.6 — the operator's own instruction, not a
-    // capability/cost-derived rung. grok-4.5 stays a valid, selectable model id elsewhere
-    // (the AgentTuiRunnerCatalog listing, historical records) — this only removes it from the
-    // level ladder new dispatches resolve through.
-    public static string ForGrok(AgentModelLevel level) => "grok-4.6";
+    // CARD-0169 collapsed every level onto one Grok id; 2026-09-21 operator instruction
+    // bumped that pin from grok-4.6 to grok-4.7. grok-4.6 and grok-4.5 stay valid,
+    // selectable model ids elsewhere (the AgentTuiRunnerCatalog listing, historical
+    // records) — this only removes them from the level ladder new dispatches resolve through.
+    public static string ForGrok(AgentModelLevel level) => "grok-4.7";
 
     /// <summary>
     /// Codex's ladder (CARD-0099 S3, CARD-0396). Verified against the live CLI's own catalog
@@ -48,8 +48,8 @@ public static class ModelLevelAliases
     /// same-alias fresh-context note. <c>AgentTaskService.SameModelEscalationNote</c> still compares
     /// ALIASES, not kinds (CARD-0289); it simply no longer fires on Codex. <c>gpt-5.4-mini</c>
     /// exists if a cheaper bottom rung is ever wanted; Luna covers Low. (Grok's own ladder no
-    /// longer has rungs to compare against — CARD-0169 collapsed <see cref="ForGrok"/> to grok-4.6
-    /// for every level.)</para>
+    /// longer has rungs to compare against — CARD-0169 collapsed <see cref="ForGrok"/> to one id
+    /// for every level; 2026-09-21 that id is grok-4.7.)</para>
     ///
     /// <para><c>gpt-6-astra</c> is rejected by CLI &lt; 0.153.4. Do not pass the bare id
     /// <c>astra</c> — the backend 400s it the same way as a garbage slug.</para>

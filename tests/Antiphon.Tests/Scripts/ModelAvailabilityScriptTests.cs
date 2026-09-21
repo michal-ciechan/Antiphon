@@ -167,7 +167,7 @@ public sealed class ModelAvailabilityScriptTests
 
                 var payload = Encoding.UTF8.GetBytes(
                     """
-                    {"holds":[],"available":["opus","sonnet","haiku","grok-4.6"],
+                    {"holds":[],"available":["opus","sonnet","haiku","grok-4.7"],
                      "id":"11111111-1111-1111-1111-111111111111","kind":"ClaudeCode",
                      "modelAlias":"fable","source":"Manual","disabledUntil":"2026-09-04T00:00:00Z",
                      "hitAt":"2026-09-01T00:00:00Z","reason":"weekly cap","rawText":null,

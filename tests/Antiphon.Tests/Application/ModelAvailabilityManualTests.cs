@@ -39,7 +39,7 @@ public class ModelAvailabilityManualTests
 
             (await availability.IsHeldAsync(AgentKind.ClaudeCode, "fable", CancellationToken.None)).ShouldBeTrue();
             (await availability.IsHeldAsync(AgentKind.ClaudeCode, "opus", CancellationToken.None)).ShouldBeFalse();
-            (await availability.IsHeldAsync(AgentKind.Grok, "grok-4.6", CancellationToken.None)).ShouldBeFalse();
+            (await availability.IsHeldAsync(AgentKind.Grok, "grok-4.7", CancellationToken.None)).ShouldBeFalse();
 
             var ex = await Should.ThrowAsync<ModelDisabledException>(() =>
                 CreateService(db).CreateAsync(
@@ -53,7 +53,7 @@ public class ModelAvailabilityManualTests
             var extension = ex.Extensions.ShouldNotBeNull()["modelAvailability"]
                 .ShouldBeOfType<ModelAvailabilityProblemDto>();
             extension.Source.ShouldBe("Manual");
-            extension.Available.ShouldContain("grok-4.6");
+            extension.Available.ShouldContain("grok-4.7");
 
             var grok = await CreateService(db).CreateAsync(
                 new CreateAgentTaskRequest(
@@ -138,12 +138,12 @@ public class ModelAvailabilityManualTests
 
             (await availability.IsHeldAsync(AgentKind.ClaudeCode, "fable", CancellationToken.None)).ShouldBeTrue();
             (await availability.IsHeldAsync(AgentKind.ClaudeCode, "haiku", CancellationToken.None)).ShouldBeTrue();
-            (await availability.IsHeldAsync(AgentKind.Grok, "grok-4.6", CancellationToken.None)).ShouldBeFalse();
+            (await availability.IsHeldAsync(AgentKind.Grok, "grok-4.7", CancellationToken.None)).ShouldBeFalse();
 
             var available = await availability.ListAvailableAsync(CancellationToken.None);
             available.ShouldNotContain("fable");
             available.ShouldNotContain("haiku");
-            available.ShouldContain("grok-4.6");
+            available.ShouldContain("grok-4.7");
 
             var ex = await Should.ThrowAsync<ModelDisabledException>(
                 () => availability.RequireAsync(AgentKind.ClaudeCode, "fable", CancellationToken.None));

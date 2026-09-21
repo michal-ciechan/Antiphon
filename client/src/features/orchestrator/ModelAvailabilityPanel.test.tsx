@@ -9,7 +9,7 @@ vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
 
 const empty: ModelAvailabilityDto = {
   holds: [],
-  available: ['fable', 'opus', 'sonnet', 'haiku', 'grok-4.6', 'gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'],
+  available: ['fable', 'opus', 'sonnet', 'haiku', 'grok-4.7', 'gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'],
 }
 
 describe('ModelAvailabilityPanel', () => {
@@ -45,7 +45,7 @@ describe('ModelAvailabilityPanel', () => {
             {
               id: 'hold-open',
               kind: 'Grok',
-              modelAlias: 'grok-4.6',
+              modelAlias: 'grok-4.7',
               source: 'AutoDetected',
               disabledUntil: null,
               hitAt: '2026-09-02T08:00:00Z',
@@ -80,7 +80,7 @@ describe('ModelAvailabilityPanel', () => {
           sourceTaskId: null,
         },
       ],
-      available: ['opus', 'sonnet', 'haiku', 'grok-4.6'],
+      available: ['opus', 'sonnet', 'haiku', 'grok-4.7'],
     }
     const puts: Array<{ url: string; body: unknown }> = []
     const deletes: string[] = []

@@ -323,7 +323,7 @@ describe('compactQueueReason', () => {
 
 describe('rightCell against a pinned now', () => {
   it('renders <alias> <elapsed> for in-flight', () => {
-    expect(rightCell({ kind: 'inFlight', row: inFlight() }, NOW)).toBe('grok-4.6 4m')
+    expect(rightCell({ kind: 'inFlight', row: inFlight() }, NOW)).toBe('grok-4.7 4m')
   })
 
   it('renders elapsed alone when agentKind is missing (pre-S1 server)', () => {
@@ -349,7 +349,7 @@ describe('compactAlias', () => {
     expect(compactAlias('Frontier', 'Codex')).toBe('gpt-6-astra')
     expect(compactAlias('Medium', 'Codex')).toBe('terra')
     expect(compactAlias('Low', 'Codex')).toBe('luna')
-    expect(compactAlias('Frontier', 'Grok')).toBe('grok-4.6')
+    expect(compactAlias('Frontier', 'Grok')).toBe('grok-4.7')
     expect(compactAlias('Frontier', 'ClaudeCode')).toBe('fable')
   })
 })
@@ -433,10 +433,10 @@ describe('stage header helpers', () => {
     })
   })
 
-  it('renders pin: grok-4.6 from the pin alias, and kind only when level is null', () => {
-    expect(stagePinLabel(stage({ routingPin: pin() }))).toBe('pin: grok-4.6')
+  it('renders pin: grok-4.7 from the pin alias, and kind only when level is null', () => {
+    expect(stagePinLabel(stage({ routingPin: pin() }))).toBe('pin: grok-4.7')
     expect(stagePinLabel(stage({ routingPin: pin({ modelLevel: null, agentKind: 'Grok' }) }))).toBe('pin: Grok')
-    expect(stagePinLabel(stage({ routingPin: pin({ candidateCount: 3 }) }))).toBe('pin: grok-4.6 +2')
+    expect(stagePinLabel(stage({ routingPin: pin({ candidateCount: 3 }) }))).toBe('pin: grok-4.7 +2')
     expect(stagePinLabel(stage({ routingPin: null }))).toBeNull()
   })
 })

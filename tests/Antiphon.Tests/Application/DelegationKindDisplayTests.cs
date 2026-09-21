@@ -44,13 +44,13 @@ public class ModelLevelAliasDisplayTests
     }
 
     [Test]
-    [Arguments(AgentModelLevel.Frontier, "grok-4.6")]
-    [Arguments(AgentModelLevel.High, "grok-4.6")]
-    [Arguments(AgentModelLevel.Medium, "grok-4.6")]
-    [Arguments(AgentModelLevel.Low, "grok-4.6")]
+    [Arguments(AgentModelLevel.Frontier, "grok-4.7")]
+    [Arguments(AgentModelLevel.High, "grok-4.7")]
+    [Arguments(AgentModelLevel.Medium, "grok-4.7")]
+    [Arguments(AgentModelLevel.Low, "grok-4.7")]
     public void the_grok_ladder_answers_for_the_grok_kind(AgentModelLevel level, string expected)
     {
-        // CARD-0169: every level launches grok-4.6 - the ladder has no rungs left, by instruction.
+        // CARD-0169: every level launches grok-4.7 - the ladder has no rungs left, by instruction.
         ModelLevelAliases.For(AgentKind.Grok, level).ShouldBe(expected);
         ModelLevelAliases.For(AgentKind.Grok, level).ShouldBe(ModelLevelAliases.ForGrok(level));
     }
@@ -156,7 +156,7 @@ public class ModelLevelAliasDisplayTests
         var note = DelegationReportFormatter.BuildCompletionNote(
             NewTask(AgentKind.Grok, AgentModelLevel.High), Settings, "Landed the change.");
 
-        note.Body.ShouldContain("grok-4.6");
+        note.Body.ShouldContain("grok-4.7");
         note.Body.ShouldNotContain("opus");
     }
 
@@ -184,9 +184,9 @@ public class ModelLevelAliasDisplayTests
 
         var handoff = DelegationReportFormatter.BuildHandoff(task).ShouldNotBeNull();
 
-        // CARD-0169: every Grok level maps to grok-4.6 now, so an escalation's "from" and "to"
+        // CARD-0169: every Grok level maps to grok-4.7 now, so an escalation's "from" and "to"
         // read the same alias - the ladder has no rungs left to distinguish.
-        handoff.ShouldContain("at grok-4.6, escalated to grok-4.6");
+        handoff.ShouldContain("at grok-4.7, escalated to grok-4.7");
         handoff.ShouldNotContain("sonnet");
         handoff.ShouldNotContain("fable");
     }
@@ -213,7 +213,7 @@ public class ModelLevelAliasDisplayTests
         task.FailureReason = "Stalled with no output.";
 
         DelegationReportFormatter.BuildHandoff(task).ShouldNotBeNull()
-            .ShouldContain("ran at grok-4.6 and did not settle this");
+            .ShouldContain("ran at grok-4.7 and did not settle this");
     }
 
     // ---- the check digest an INTERPRETER reasons over -------------------------------------------
@@ -225,12 +225,12 @@ public class ModelLevelAliasDisplayTests
         // nudge, escalate or kill, and it is handed to the caller verbatim when no interpreter is
         // available. "tier=fable" on a Grok delegate would be a false fact in the premises.
         DelegateCheckProbe.RenderDigest(FactsFor(AgentKind.Grok, AgentModelLevel.High))
-            .ShouldContain("tier=grok-4.6");
+            .ShouldContain("tier=grok-4.7");
 
-        // CARD-0169: Low also reads grok-4.6 now - every level does - but the digest must still
+        // CARD-0169: Low also reads grok-4.7 now - every level does - but the digest must still
         // never lie and print another kind's alias here.
         DelegateCheckProbe.RenderDigest(FactsFor(AgentKind.Grok, AgentModelLevel.Low))
-            .ShouldContain("tier=grok-4.6");
+            .ShouldContain("tier=grok-4.7");
     }
 
     [Test]
@@ -319,7 +319,7 @@ public class DelegationRetryEventKindTests
         await CreateService(db).RetryAsync(task.Id, CancellationToken.None);
 
         var detail = await LatestRetryDetailAsync(task.Id);
-        detail.ShouldBe("Retried at grok-4.6.");
+        detail.ShouldBe("Retried at grok-4.7.");
     }
 
     [Test]

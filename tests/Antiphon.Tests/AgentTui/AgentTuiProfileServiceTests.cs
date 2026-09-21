@@ -823,7 +823,7 @@ public class AgentTuiProfileServiceTests
             .ShouldBe(["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
 
         var grok = catalog.Get(AgentKind.Grok, ["--always-approve", "--no-alt-screen"]);
-        grok.CuratedModels.Select(model => model.Identifier).ShouldBe(["grok-4.6", "grok-4.5"]);
+        grok.CuratedModels.Select(model => model.Identifier).ShouldBe(["grok-4.7", "grok-4.6", "grok-4.5"]);
         Capability(grok, "modelArgument").State.ShouldBe(AgentTuiCapabilityState.Supported);
         Capability(grok, "modelDiscovery").State.ShouldBe(AgentTuiCapabilityState.Supported);
         Capability(grok, "structuredActivity").State.ShouldBe(AgentTuiCapabilityState.Supported);
