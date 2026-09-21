@@ -1042,10 +1042,12 @@ Ordinary Code floor, sequential on one worker:
 | **Code total** | **Setup/build 26 + ordinary V/R 59 + cleanup 3** | **88** |
 
 Build once per platform/project graph, then use `--no-build` for ordinary selections.
-The parenthesized class-OR form `/*/*/(PhoneHomeConnectionTests*)|(PhoneHomeStandingLaunchTests*)|.../*`
-matches zero tests on the pinned TUnit 1.44 runner. Use one exact class selector per
-invocation (`/*/*/PhoneHomeConnectionTests/*`, and the same for each named class below)
-and a fresh results directory each time.
+Use one exact class selector per invocation (`/*/*/PhoneHomeConnectionTests/*`, and the
+same for each named class below) and a fresh results directory each time. Review task
+`e55e2313` observed the parenthesized class-OR form
+`/*/*/(PhoneHomeConnectionTests*)|(PhoneHomeStandingLaunchTests*)|.../*` matching zero
+tests; this Code pass executed that same filter as 52 cases. Keep the single-class form
+so each class has its own nonzero TRX.
 
 Example concrete command:
 
