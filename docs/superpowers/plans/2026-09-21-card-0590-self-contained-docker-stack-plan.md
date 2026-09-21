@@ -786,3 +786,239 @@ Next: **test-design**. The Linux custody card is a future capability dependency;
 block designing or implementing this ordinary server2 stack. CARD-0594 can still block actual
 native acceptance and therefore CARD-0590 closure. No production custody/source/cleanup files
 are in CARD-0590's implementation edit set.
+
+## Verification design
+
+TestDesign v2, task `806c2e25`, inspected source and plan at
+`a9ca1664b0857ab13e8c1e671f75db6cc30432e9`. **Return to Plan for the S6 observation seam;
+this is not an accepted Code verification manifest.** The ordinary-testing versus
+SourceLanding scope reconciliation is accepted and is not reopened here. No Linux Mutation
+qualification is requested. The fix design above is unchanged.
+
+S6 requires the verifier to persist the **returned queue identity**, its actual attempt floor
+and accepted generation, then prove recovery through the existing queue. The specified public
+API cannot supply that record for an already eligible recipient:
+
+1. `server/Api/Endpoints/SessionEndpoints.cs:91-97` passes only body and mode to
+   `EnqueueAsync`; it does not capture the service's `onCreated` callback.
+2. `server/Application/Services/SessionMessageQueueService.cs:465-479` saves the row,
+   invokes that internal callback, and can deliver the row **before returning**.
+3. `BuildQueueDtoAsync` at lines 4417-4440 selects **Pending only**. Both the POST response
+   and subsequent GET therefore omit an immediately delivered row. `SessionQueueDto` has
+   no submitted-row identity. `QueuedMessageDto` also omits
+   `LastDeliveryBaselineSequence` and `LastDeliveryGeneration`.
+4. This is deliberate existing behavior, not a hypothetical race:
+   `SessionQueueReceiptPlumbingTests.C475_AlreadyIdleWhenIdleHasRecipientReceipt` asserts
+   `dto.Messages.ShouldBeEmpty()`, proves the whole native recipient UserPrompt, and then
+   obtains the queue row and baseline through its **private database fixture**. The planned
+   Docker script has no corresponding observation contract.
+5. Existing `queue-before-typing` and `queue-before-verdict` hooks are reached only for
+   rows with `SourceLandNotificationId != null` (service lines 1900-1902 and 1939-1941).
+   The public ordinary message POST creates no such binding. `afterLandQueueInsert` is
+   similarly conditional at lines 466-467. Configuring `LandDeliveryBoundary` alone cannot
+   cut this probe at the named persistence boundaries.
+
+The native complete-UserPrompt gate itself remains valid. What is missing is a realizable
+way to observe and interrupt its durable queue handoffs, particularly on the already-idle arm.
+Using only a run nonce/body digest would not satisfy the plan's queue-row identity requirement.
+Keeping every recipient busy to retain its DTO would exclude a mandatory boundary combination.
+`Mode:Now` has no durable queue row and does not solve the requirement.
+
+**Required Plan amendment:** choose and own the S6 observation/fault fixture and its edit set.
+Prefer a test-only observer of the owned stack's PostgreSQL rows, with a separate deterministic
+cut mechanism, over widening the public message API solely for this canary. Define how the
+observer discovers the unique ordinary row across Pending/Sent, reads its committed generation
+and baseline, exports evidence, and reconnects after verifier/server restart. Bind it to the
+recorded project/database/session/run, give it no production database target, and never let it
+write a recipient transcript. Specify independently how insert failure, committed-attempt
+before typing, and complete-receipt before verdict-save are held/released. Existing notification
+hooks cannot be treated as generic hooks. If an API change is chosen instead, add its owner,
+response contract and ordinary regression scope explicitly. This is a Plan continuation, not a
+new operator choice about the already settled topology.
+
+### Inspection
+
+Bodies read during this dispatch (not inherited claims of inspection):
+
+| Test/fixture/helper bodies | Boundaries and disposition |
+|---|---|
+| `SessionMessageQueueServiceTests.When_idle_message_is_held_while_the_agent_is_working`, `When_idle_and_agent_is_idle_the_message_is_delivered_right_away`, `Turn_end_flushes_the_oldest_queued_message`, `CreateHarnessAsync`, transcript insertion and disposal helpers | Busy/eligible DTO distinction -> V-1, R-1. Its adapter manufactures transcript entries; it cannot prove a Linux recipient. |
+| `SessionQueueReceiptPlumbingTests.C475_AlreadyIdleWhenIdleHasRecipientReceipt`, all six arms of `C475_QueueCommitAndTransportRecovery`, `PtyWorld.StartAsync`, `RowsAsync`, `RecreateQueue`, `WaitForReceiptAsync`, `ForwardingClient`, `InsertFault`; all five arms of `C475_PumpPersistsCompleteLinesOnce` | Native recipient evidence plus private row/floor observation -> V-2, R-2/R-3. Native arms are Windows/FakeClaude; pump-only arms write synthetic files. Neither is the missing ordinary Linux fixture. |
+| `LandDeliveryOptions.Configure`, `ConfigureServices`, `FileBoundary.ReachedAsync` | Existing commit/typing/verdict/receipt cuts belong to landing notifications. The public ordinary POST cannot reach those queue hooks; exclusion from S6 canary reuse. |
+| `VerifyPhoneHomeGrokScriptTests` and `DelegateScriptRunner` | Nearest server2 script fixture; its desktop-Tailscale route conflicts with desktop-independent S6, so do not copy that acceptance topology. Local inherited PowerShell command tests remain a usable pattern. |
+| `RunCheckpointScriptTests`, `ScriptHarness.RunHarnessCaseAsync` | Exact exit, named PASS inventory, zero execution, missing class, fresh-results and build-failure boundaries. These are command/result substitutes, not Docker/queue execution. Nearest fixture for new S3/S6 script tests. |
+| `TestDbFixture`, `TestDbFixtureLifecycle` and all six `TestDbFixtureIsolationTests` methods | Lazy container initialization, migrate-once database clones, independent rows, four concurrent clones and disposal. Required ordinary Medium anchor; never initialize this fixture in sourced PCs. |
+| `ProductionRunnerGuard`, both `ProductionRunnerGuardTests` methods, `RefusingSessionRunnerClient`, `AntiphonWebAppFactory` | Dead runner URL and refusing client are independent protections. Ordinary HTTP acceptance may use this factory; native session evidence may not. |
+| `HealthEndpointTests` (both methods) | Non-unknown full SHA and `land-v2` are separate from health. Source-export builds must inject the revision; health cannot discharge native input or receipt. |
+| `TestLaneCategoryGuardTests`, `TestClassificationMetadata`, `TestClassificationGuardTests` | Category/Slow metadata is not process or OS qualification. Partial declarations must merge into one class; compiled discovery still needs reconciliation. |
+| `GrokDelegateDispatchTests.the_spec_a_grok_dispatch_builds_would_spawn_the_real_fakegrok_binary`, `SpecOf`, `CreateHarness`, `CreateDispatchHarness`, `BuildHarness`, `SeedWarmAgentAsync` | Actual S4 portable lookup candidate, but its dispatcher construction resolves a real DB context, and warm setup contains a Windows rules-receipt path. It is not a DB-free PC target. Whole-class Linux admission still needs its transitive audit. |
+| `IsolatedSessionRunner` constructor/start/readiness, `StartProcess`, output and stop entry points | Suffix preparation is separate from E2E lifecycle acceptance. Retain Windows native fixture ownership and CARD-0588 boundaries. |
+| `TestDbFixture.InitializeAsync`, `LandQueueRaceWorker.DispatchWorkerIfRequested`, `PtyBackendEnvGuard.ClearInheritedPtyBackend` | Method filters do not suppress assembly hooks. Clear inherited worker markers before a PC process; otherwise discovery can enter a DB worker before the selected test. |
+| `Antiphon.Tests.csproj`, root build props/targets, server/runner/PtyHost/Pty project references; root Dockerfile/ignore/Compose and runner Dockerfile | PC builds include referenced runtime/fake projects and producer-copy targets even when selected tests do not launch them. Preserve source layout and isolate build outputs. |
+| `FakeGrok` raw-console setup, main input loop, busy gate and UserPrompt append paths | Linux raw console setup is not implemented by the Windows-only helper; the planned test-only terminal wrapper remains necessary to qualify. The existing busy gate uses `[c467-busy]`, writes its held marker, and produces a real turn-end on release. Do not replace receipt with that marker. |
+| Message endpoint handlers, queue DTOs, `EnqueueAsync`, attempt commit, typing/verdict hooks and `BuildQueueDtoAsync` | The S6 observation defect above -> V-1/V-2 and delivery cuts Q-2 through Q-6. |
+
+Missing execution setup remains explicit: server2 amd64/Docker/Compose/tool versions, socket
+GID and actual sibling mapped-port reachability, owned deployment/evidence roots, capacity,
+password injection, image identities, and native launch qualification. None was observed or
+claimed green here. Live read-only card checks on 2026-09-21 found CARD-0578, CARD-0587,
+CARD-0588, CARD-0594 and CARD-0598 still Backlog. CARD-0578 records a SourceLanding isolated-build
+failure before mutation; a future battery must establish its own baseline executable and logs,
+not assume that dependency is solved by an ordinary build.
+
+The frozen fake-apphost occurrence census was reproduced unchanged: **52 matching lines,
+18 files, 20 `Path.Combine` lookup/assertion sites**. The preceding frozen table remains the S4
+disposition inventory. The additional runner apphost lookup remains separate.
+
+A Roslyn syntax census of the **789 tracked Antiphon.Tests C# files plus seven explicitly linked
+sources** found **742 declarations containing direct `[Test]` methods**, merging to **698 fully
+qualified class names** and **7,038 direct test-method declarations**. Sixteen names have multiple
+partial declarations. These are source counts, not expanded TUnit cases or an audited portable
+roster. This dispatch does not label all non-spawners portable from those numbers. In particular,
+the 52-match occurrence inventory cannot provide a class denominator. No `linux-test-roster.json`
+is issued, and the full Medium class/helper audit remains required after the S6 amendment.
+
+### Delivery inventory
+
+The foreground run's durable join is `(source SHA, run ID, parent project, parent session,
+accepted generation, child project, recorded resource IDs, artifact digests)`. Its recipient
+probe adds `(recipient session, accepted generation, immutable summary body/digest, queue row
+ID, committed attempt floor, matching transcript sequence)`. A successful test result and its
+delivery are separate outcomes; a completely received failure summary remains a failed run.
+
+| Handoff | Producer -> destination | Persistence and recovery | Observable receipt / gap |
+|---|---|---|---|
+| F-1 | Parent server launch -> Raw command session -> S3 foreground entry point | Manifest before resource creation; retain parent session/generation and source SHA. A crash before manifest means no child-resource authority; never scan/adopt by prefix. | Actual command-session input/output/exit plus manifest linkage. A host `docker exec` invocation is excluded. |
+| F-2 | S3 clean context -> Docker daemon -> child/test containers | Freeze SHA/image/project/resource identities before consuming results. Crash after creation retains explicit known/unknown residue; retry inspects recorded identities. | Real child UI/API/version/native probes and test results. Image build/container creation is not session delivery. |
+| F-3 | Test containers -> copied reports -> `result-ready` manifest | Export and hash fresh TRX/Vitest reports before removal. Crash/export failure before atomic manifest replacement is incomplete; no result-ready inference from an exited container. | All expected classes and nonzero execution, actual exit status and matching artifact hashes. |
+| F-4 | Foreground cleanup -> owned child resources | Recheck exact IDs/labels; preserve reusable parent volumes. Crash mid-cleanup preserves manifest and residue; explicit retry only. | Resource absence plus recorded successful scoped cleanup; neither a `down` request nor session exit proves absence. |
+| Q-1 | Result-ready manifest -> message POST | Persist exact sanitized body and pre-POST observation before submission. Crash before POST or definite enqueue refusal retains result-ready/incomplete-delivery. | No recipient receipt until actual complete UserPrompt; explicit retry only after inspection. |
+| Q-2 | Message POST -> committed ordinary queue row | Insert failure must leave no row/no typing. An eligible row can become Sent before response. Unknown POST acknowledgement must never trigger blind re-POST. | **Gap:** public POST/GET cannot reveal the completed row identity, floor or generation. A nonce-bearing transcript alone cannot establish queue-row recovery identity. |
+| Q-3 | Pending row -> committed delivery attempt -> native typing | Busy recipient stays pending; eligible recipient takes immediate path. Crash after insert/before flush and after attempt commit/before typing must recover the same row. | **Gap:** planned fixture cannot deterministically hold ordinary rows at these internal cuts or export their committed floor/generation. |
+| Q-4 | Typed body -> Enter -> native provider UserPrompt | Body-before-Enter cut distinguishes held composer from receipt. Complete prompt after original attempt floor is required; retry uses existing queue recovery. | Exact whole body including head/tail/run/SHA/outcome/digest in real FakeGrok transcript. Screen, transport ACK and `Sent` are excluded. |
+| Q-5 | Provider transcript -> persisted server transcript -> queue verdict | Cut before transcript ingestion/save and after complete receipt/before verdict save. Recovery must retain row/floor and avoid typing a second body after confirmed receipt. | **Gap:** landing-only hooks do not cut this ordinary POST. Existing Windows private fixtures prove their own recovery path only. |
+| Q-6 | Complete receipt -> verifier manifest acknowledgement | Crash before acknowledgement leaves exported original expectation/identity; restart inspects existing row/transcript and completes the same manifest without POST. | Complete matching UserPrompt in the recorded generation after the committed floor; public pending-only GET cannot supply the full inspection record. |
+
+Mandatory combinations after the seam is specified: already eligible; busy then real turn-end;
+insert refusal; acknowledgement lost after committed POST; pending-before-flush;
+attempt-before-typing; body-before-Enter; recipient-before-ingestion;
+transcript-save failure; receipt-before-verdict; receipt-before-manifest-save.
+Each must terminate in the matching complete native UserPrompt or an explicit incomplete/failure
+record with residue. The failure branches must not be counted as successful delivery. Cover a
+changed generation, an old equal-body prompt at/below the floor, a prefix-only prompt, missing
+tail, wrong run/SHA/digest, and a complete failure summary. Successful Raw execution and complete
+FakeGrok receipt remain distinct gates. Container replacement cannot imply PTY adoption.
+
+Local Windows script/result fixtures can prove refusal, identity validation, export ordering,
+exit propagation and transcript **validation logic**. They cannot prove native input, Linux
+execute permissions, actual Docker context filtering, daemon resource cleanup or recipient
+delivery. Synthetic transcript pump tests cannot prove a provider received anything. No such
+substitute discharges F-1, the native part of F-2, or Q-4/Q-5.
+
+### Proves it works now
+
+These are inspected evidence anchors for the rejection, **not executed green results**:
+
+- V-1: busy/eligible response distinction | service + real DB, fake adapter |
+  `SessionMessageQueueServiceTests.When_idle_message_is_held_while_the_agent_is_working`
+  and `When_idle_and_agent_is_idle_the_message_is_delivered_right_away` |
+  pending count one versus empty response after immediate delivery; no public returned sent-row ID.
+- V-2: native recipient receipt does not imply a returned row ID | Windows real queue/PTY |
+  `SessionQueueReceiptPlumbingTests.C475_AlreadyIdleWhenIdleHasRecipientReceipt` |
+  empty response, exact file and DB UserPrompt, then private DB read supplies row and floor one.
+
+All nine product acceptance outcomes above remain required. No image build, Linux native smoke,
+server2 installation, Small/Medium execution or session-created stack was performed here.
+
+### Guards the regression
+
+- R-1: preserve immediate idle delivery rather than forcing an artificial busy interval to
+  retain an API DTO | `SessionMessageQueueServiceTests.When_idle_and_agent_is_idle_the_message_is_delivered_right_away`;
+  decisive existing assertions are empty pending response and submitted body.
+- R-2: preserve durable queue recovery with recipient evidence |
+  `SessionQueueReceiptPlumbingTests.C475_QueueCommitAndTransportRecovery`;
+  six named cuts, same row ID, expected attempt count/floor, whole single file/DB UserPrompt,
+  Enter-only or zero further writes as appropriate. Its Windows fixture is an ordinary
+  regression owner, not a sourced PC or Linux canary substitute.
+- R-3: preserve complete-line and UUID persistence |
+  `SessionQueueReceiptPlumbingTests.C475_PumpPersistsCompleteLinesOnce`;
+  partial-line/read-failure/save-failure/restart-after-commit/seeded-sequence arms assert one
+  row with the original UUID/body and no other-session rows. Synthetic-file evidence only.
+
+### Guard inventory
+
+No complete implementation guard inventory is accepted by this rejection. The earlier
+G-1..G-18 remain planning groups and must still be split independently before Code. In
+particular Q-2/Q-3/Q-5/Q-6 require the observation/cut fixture before guard mutations can be
+connected to decisive recipient assertions. Reporting `guards=N, mapped=N, missing=0` would
+be false. **Audit disposition: failed admission to Code; zero accepted complete G/PC mappings.**
+This is not a claim that the feature has zero safety guards, nor permission to omit their PCs.
+
+### Positive controls
+
+No executable post-land battery is commissioned here. The revised plan must give every split
+guard its own exact method and compiling defect. Code authors tests and runs ordinary V/R;
+Review judges before land; Mutation runs method-scoped break/red/restore/fresh-build/green on
+Windows after land. No PC may initialize Testcontainers or invoke Docker, SSH or server2.
+
+The inspected local build closure is `Antiphon.Tests` -> server, runner, FakeLlmApi,
+NightlyWatchdog, messaging test helpers, CustodyTestChild, FakeClaude and FakeGrok; server/runner
+bring Pty, PtyHost, PtyHost.Client, PtyHost.Protocol, messaging and runner contracts. The
+project's MSBuild `GetTargetPath`/copy targets stage native/fake outputs but do not launch them.
+No solution/AppHost build is needed for the proposed script/helper methods. Run inherited builds
+with `MSBUILDDISABLENODEREUSE=1`, `UseSharedCompilation=false`, a forward-slash isolated
+`OutputPath`, and build-server reuse disabled. Verify a fresh executable/log at the actual L;
+CARD-0578 remains a known infrastructure dependency, not a waived failure.
+
+Clear `ANTIPHON_C467_QUEUE_WORKER`, `ANTIPHON_C574_STARTUP_WORKER` and
+`ANTIPHON_C478_DELIVERY_WORKER` before test launch (the respective constants in
+`LandQueueRaceWorker`, `CodexStartupDeliveryWorker` and `PostLandMutationDeliveryWorker`).
+Keep `ANTIPHON_C476_PROBE` under the test launcher so its lifecycle evidence
+can assert `state=never-requested`, `create=0` and no container ID for local PC runs. Ordinary DB
+and native queue tests above cannot be included in that PC process. This setup does not itself
+prove inherited build custody or replace the native SourceLanding receipt.
+
+### Out of scope
+
+- Changing message API behavior, adding a DB observer or adding generic queue failpoints in
+  this TestDesign dispatch. Their selection changes the currently specified S6 seam and belongs
+  in the Plan amendment before the final verification manifest is frozen.
+- Linux SourceLanding/remote Mutation: CARD-0598 owns that independent future capability.
+  Do not reopen it to solve an ordinary message-observation defect.
+- CARD-0587's root-image overlap and CARD-0588's four platform corrections retain their owners.
+  CARD-0594 remains the native pipe/qualification dependency; a repeated failure blocks native
+  acceptance, not permission to replace it with health-only checks.
+- Chromium/browser E2E, native-assembly Linux parity, live providers and live messaging brokers
+  remain excluded by the reconciled plan. Small and the non-spawning Medium majority are still
+  the requested ordinary scope; neither has been silently reduced.
+
+### Checkpoints
+
+No Code checkpoint is issued: the required ordinary scope cannot be represented as a complete
+executable closed list while the S6 observation/cut seam is absent. V-1/V-2 and R-1..R-3 above
+identify existing bodies for Plan/TestDesign review, not additional authorized Code runs.
+The empty table is a rejection gate, not a zero-test implementation profile.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min |
+|---|---|---|---|---|---|---|---|
+
+### Cost
+
+- This dispatch performed **0 builds, 0 product test runs, 0 PC cycles**. It performed source
+  inspection, a foreground Roslyn syntax census and read-only card checks.
+- Issued ordinary Code V/R floor = sum of the empty CP table = **0 minutes**; issued Mutation
+  floor = **0 minutes**; issued setup/build + V/R + PC execution total = **0 minutes**. These
+  are explicitly **uncommissioned** floors, not a budget for the feature. No filter is issued.
+- Estimated prerequisite work: **40 minutes** for a focused S6 Plan amendment (20 for owned
+  observation contract, 20 for deterministic cut/receipt recovery ownership), then **180 minutes**
+  for resumed TestDesign's transitive class audit, full guard split, exact checkpoint manifest
+  and priced PC build/test closure. Estimated prerequisite total = **220 minutes**, excluding
+  implementation and product/PC execution. Actual full Code/Mutation floors must be supplied
+  by that completed design; guessing them here would conceal the unresolved fixture.
+- Measured execution savings = **0 minutes**. No equivalent full battery was executed or timed.
+  Zero commissioned execution is justified by the required return to Plan, not a claimed speedup.
+
+Handoff: **next: plan**. Amend only S6's ordinary queue observation and deterministic cut seam,
+including its edit set and evidence transport; preserve all nine acceptance outcomes and the
+resolved ordinary/Windows-Mutation split. Then resume TestDesign to freeze the complete portable
+class roster, independent G/PC mappings, exact checkpoints and numeric product execution floors.
