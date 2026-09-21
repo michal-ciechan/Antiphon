@@ -20,6 +20,7 @@
     <PackageReference Include="Hangfire.AspNetCore" Version="1.8.25" />
     <PackageReference Include="Hangfire.InMemory" Version="1.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.*" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.20" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.*" />
     <PackageReference Include="System.Management" Version="9.*" />
   </ItemGroup>
@@ -50,6 +51,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\server\Antiphon.Server.csproj" Aliases="global,server" />
+    <ProjectReference Include="..\Antiphon.DockerStack.Fixture\Antiphon.DockerStack.Fixture.csproj" />
     <ProjectReference Include="..\Antiphon.CustodyTestChild\Antiphon.CustodyTestChild.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\src\Antiphon.SessionRunner\Antiphon.SessionRunner.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.FakeLlmApi\Antiphon.FakeLlmApi.csproj" />
@@ -109,6 +111,7 @@
   <ItemGroup>
     <Compile Include="../Antiphon.Agents.Pty.Tests/EffortTestScreen.cs" Link="Agents/EffortTestScreen.cs" />
     <Compile Include="..\Shared\TestClassificationMetadata.cs" Link="TestSupport\TestClassificationMetadata.cs" />
+    <Compile Include="..\Shared\TestAppHostPath.cs" Link="TestSupport\TestAppHostPath.cs" />
     <Compile Include="..\Shared\TestClassificationGuardTests.cs" Link="TestSupport\TestClassificationGuardTests.cs" />
     <None Include="slow-tests-allowlist.txt" CopyToOutputDirectory="PreserveNewest" />
     <EmbeddedResource Include="../../docs/superpowers/plans/2026-09-08-card-0449-claude-effort-dialog-captures.json" LogicalName="Card0449.EffortCaptures.json" />

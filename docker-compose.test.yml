@@ -1,0 +1,18 @@
+# Foreground test containers. Not an application deployment.
+services:
+  tests:
+    build:
+      context: .
+      dockerfile: docker/tests/Dockerfile
+      target: test-runner
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+    init: true
+    privileged: false
+    group_add:
+      - ${DOCKER_SOCKET_GID:?DOCKER_SOCKET_GID is required}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SessionRunner__BaseUrl: http://127.0.0.1:1
+      SessionRunner__Enabled: "false"

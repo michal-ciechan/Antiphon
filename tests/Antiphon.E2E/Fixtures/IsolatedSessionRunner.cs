@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Antiphon.PtyHost.Protocol;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.TestSupport;
 
 namespace Antiphon.E2E.Fixtures;
 
@@ -128,13 +129,19 @@ internal sealed class IsolatedSessionRunner : IAsyncDisposable, IIsolatedSession
 
     private Process StartProcess(int port)
     {
-        var runnerPath = Path.Combine(AppContext.BaseDirectory, "Antiphon.SessionRunner.exe");
-        if (!File.Exists(runnerPath))
+        string runnerPath;
+        try
+        {
+            runnerPath = TestAppHostPath.Require(
+                "Antiphon.SessionRunner", AppContext.BaseDirectory, siblingProducer: false);
+        }
+        catch (FileNotFoundException ex)
         {
             throw new FileNotFoundException(
-                "Antiphon.SessionRunner.exe was not copied to the E2E output directory. "
-                + "The E2E project must reference Antiphon.SessionRunner.",
-                runnerPath);
+                "Antiphon.SessionRunner was not copied to the E2E output directory. "
+                + "The E2E project must reference Antiphon.SessionRunner. Attempted " + ex.FileName,
+                ex.FileName,
+                ex);
         }
 
         var startInfo = new ProcessStartInfo

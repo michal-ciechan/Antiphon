@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Antiphon.DockerStack.Fixture</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\server\Antiphon.Server.csproj" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="9.0.20" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="provision-observer.sql" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

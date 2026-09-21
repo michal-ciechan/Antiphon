@@ -1,22 +1,121 @@
-# docker-compose.yml — Full deployment
+# CARD-0590 self-contained stack. Publish only the server, on loopback unless overridden.
 services:
+  state-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+    user: "0:0"
+    entrypoint: ["/bin/sh", "/stack/init-state.sh"]
+    volumes:
+      - work:/work
+      - server-state:/state
+      - runner-state:/runner-state
+    restart: "no"
+
   antiphon:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+    user: "1654:1654"
+    init: true
     ports:
-      - "5000:8080"
+      - "${ANTIPHON_BIND_ADDRESS:-127.0.0.1}:${ANTIPHON_BIND_PORT:-5000}:8080"
     environment:
-      - ConnectionStrings__DefaultConnection=Host=postgres;Database=antiphon;Username=antiphon;Password=${POSTGRES_PASSWORD}
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=antiphon;Username=antiphon;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      SessionRunner__Enabled: "true"
+      SessionRunner__BaseUrl: http://session-runner:8080
+      PhoneHomeRunner__Enabled: "false"
+      Git__WorkspacePath: /work/repos
+      Git__WorktreeBasePath: /work/worktrees
+      AgentSessions__SessionLogPath: /runner-state/session-runner
+      ZombieCensus__SessionLogPath: /runner-state/session-runner
+      Serilog__LogPath: /state/logs
+      AgentTui__KeyRingPath: /state/keyring
+      Delegation__CheckInterpreterWorkingDirectory: /state/check-interpreter
+      Delegation__DiagnoseWorkingDirectory: /state/diagnose
+      Delegation__CheckInterpreterEnabled: "false"
+      Delegation__DiagnoseEnabled: "false"
+      Delegation__OutputDistillerEnabled: "false"
+      Hangfire__ServerEnabled: "false"
+      ZombieCensus__Enabled: "false"
+      WorktreeResidue__Enabled: "false"
+      Schedules__Enabled: "false"
+      ChannelBridge__Enabled: "false"
+      Digest__Enabled: "false"
+      Agents__DefaultDefinition: grok
+      Agents__Definitions__grok__Kind: Grok
+      Agents__Definitions__grok__Exe: /usr/local/bin/grok
+      Agents__Definitions__raw-sh__Kind: Raw
+      Agents__Definitions__raw-sh__Exe: /bin/sh
+    volumes:
+      - work:/work
+      - server-state:/state
+      - runner-state:/runner-state:ro
     depends_on:
-      - postgres
+      state-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      session-runner:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  session-runner:
+    build:
+      context: .
+      dockerfile: docker/session-runner-grok/Dockerfile
+      target: runtime
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+    user: "1654:1654"
+    init: true
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      PhoneHome__Enabled: "false"
+      SessionRunner__SessionLogPath: /state/session-runner
+      SessionRunner__PtyHostDir: /state/pty-hosts
+      Serilog__LogPath: /state/logs
+      SessionRunner__PtyBackend: inbox
+      ANTIPHON_PTY_BACKEND: inbox
+      SessionRunner__Herdr__Enabled: "false"
+      GROK_HOME: /state/grok
+    volumes:
+      - work:/work
+      - runner-state:/state
+    depends_on:
+      state-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   postgres:
     image: postgres:16
     environment:
       POSTGRES_DB: antiphon
       POSTGRES_USER: antiphon
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U antiphon -d antiphon"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
 volumes:
   pgdata:
+  server-state:
+  runner-state:
+  work:

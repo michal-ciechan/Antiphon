@@ -1,0 +1,14 @@
+# Child stack marker. The controller supplies a distinct compose project name.
+services:
+  antiphon:
+    labels:
+      antiphon.stack: throwaway
+      antiphon.role: child
+  session-runner:
+    labels:
+      antiphon.stack: throwaway
+      antiphon.role: child
+  postgres:
+    labels:
+      antiphon.stack: throwaway
+      antiphon.role: child

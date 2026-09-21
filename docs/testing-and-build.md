@@ -66,6 +66,8 @@
 
 ## Fast lane (CARD-0110 / CARD-0475 S5)
 
+CARD-0590's Linux image, roster, and session-created stack are in [docker-stack.md](docker-stack.md). Those checkpoints are ordinary Docker evidence. They do not run SourceLanding Mutation.
+
 ### Default Code/Review recipe
 
 Build once into a producer-owned isolated output (forward slash on `OutputPath`). Execute the Unit lane. Execute named affected integration classes together where the pinned TUnit 1.44 OR syntax allows. Inspect a **fresh TRX** for each intended class/method and nonzero counts. `--list-tests` is not execution evidence on this runner. Do not combine UID and tree selectors. Unit and named integrations may be separate invocations of the same built output; do not invent unverified mixed category/class filter syntax. Combined class-filter syntax lives in [Combined class filters (CARD-0403)](#combined-class-filters-card-0403).
