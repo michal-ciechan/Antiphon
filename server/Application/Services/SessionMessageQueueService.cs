@@ -1666,6 +1666,10 @@ public sealed partial class SessionMessageQueueService
         var changedSuperseded = false;
         foreach (var message in pending.Where(m => m.Origin == QueuedMessageOrigin.Check).ToList())
         {
+            if (message.SourceLandNotificationId is Guid legacyNotification
+                && await db.AgentTaskLandNotifications.AsNoTracking().AnyAsync(
+                    n => n.Id == legacyNotification && n.Kind == LandNotificationKind.LegacyCheckNote, ct))
+                continue;
             if (!AgentTaskCheckService.TryParseCheckConversationKey(message.ConversationKey, out var taskId))
                 continue;
             var supersession = await AgentTaskCheckService.EvaluateAsync(db, taskId, ct);

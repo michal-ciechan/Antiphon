@@ -48,6 +48,7 @@ public class AppDbContext : DbContext
     public DbSet<ChannelIngressIncident> ChannelIngressIncidents => Set<ChannelIngressIncident>();
     public DbSet<AgentSupervisionState> AgentSupervisionStates => Set<AgentSupervisionState>();
     public DbSet<CheckCompactionRecovery> CheckCompactionRecoveries => Set<CheckCompactionRecovery>();
+    public DbSet<LegacyCheckNotePublication> LegacyCheckNotePublications => Set<LegacyCheckNotePublication>();
     public DbSet<AgentIncident> AgentIncidents => Set<AgentIncident>();
     public DbSet<FileReviewState> FileReviewStates => Set<FileReviewState>();
     public DbSet<FileSectionReview> FileSectionReviews => Set<FileSectionReview>();
@@ -2425,6 +2426,43 @@ public class AppDbContext : DbContext
             entity.HasOne(r => r.PhysicalAgent)
                 .WithMany()
                 .HasForeignKey(r => r.PhysicalAgentId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<LegacyCheckNotePublication>(entity =>
+        {
+            entity.ToTable("LegacyCheckNotePublications");
+            entity.HasKey(p => p.Id);
+            entity.Property(p => p.FactsSnapshotJson).IsRequired();
+            entity.Property(p => p.RenderContextJson).IsRequired();
+            entity.Property(p => p.Body);
+            entity.Property(p => p.ContentDigest).HasMaxLength(128);
+            entity.Property(p => p.EventDetail).HasMaxLength(4000);
+            entity.Property(p => p.SuppressionReason).HasMaxLength(400);
+            entity.Property(p => p.LastError).HasMaxLength(400);
+            entity.Property(p => p.CheckedTaskDispatchedAt).IsRequired();
+            entity.Property(p => p.InterpreterAcceptedStartedAt).IsRequired();
+            entity.Property(p => p.CapturedAt).IsRequired();
+            entity.Property(p => p.InterpretationDeadlineAt).IsRequired();
+            entity.Property(p => p.NextAttemptAt).IsRequired();
+            entity.Property(p => p.State).IsRequired();
+            entity.Property(p => p.ConcurrencyToken).IsConcurrencyToken();
+            entity.HasIndex(p => new { p.CheckedTaskId, p.CheckedTaskAttempt, p.CheckedTaskDispatchedAt, p.CheckNumber })
+                .IsUnique()
+                .HasDatabaseName("IX_LegacyCheckNotePublications_Check");
+            entity.HasIndex(p => p.InterpretationTaskId)
+                .IsUnique()
+                .HasFilter("\"InterpretationTaskId\" IS NOT NULL")
+                .HasDatabaseName("IX_LegacyCheckNotePublications_Run");
+            entity.HasIndex(p => p.NotificationId)
+                .IsUnique()
+                .HasDatabaseName("IX_LegacyCheckNotePublications_Notification");
+            entity.HasIndex(p => p.SourceEventId)
+                .IsUnique()
+                .HasDatabaseName("IX_LegacyCheckNotePublications_Event");
+            entity.HasOne(p => p.Recovery)
+                .WithMany()
+                .HasForeignKey(p => p.RecoveryId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 

@@ -16,7 +16,7 @@ namespace Antiphon.Server.Application.Services;
 public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMessageQueueService messages,
     CompletionNoteFlushQueue flushes, AgentSessionRuntime runtime, TimeProvider clock, LandDeliveryBoundary? boundary = null,
     IRepositoryMutationLease? leases = null, IOptions<SupervisionSettings>? supervision = null,
-    IAgentReportStore? reports = null)
+    IAgentReportStore? reports = null, CheckCompactionBoundary? compactionBoundary = null)
 {
     /// <summary>
     /// Kinds whose keyed row is also the caller's completion note: task-root conversation key,
@@ -61,7 +61,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                     note.EnqueuedAt = existing.CreatedAt;
                     note.State = LandNotificationState.AwaitingReceipt;
                     note.LastErrorCode = null;
-                    if (IsCompletionNoteKind(note.Kind))
+                    if (IsCompletionNoteKind(note.Kind) && note.Kind != LandNotificationKind.LegacyCheckNote)
                         await CompletionNoteStamp.ApplyAsync(db, note.TaskId, note.ContentDigest, existing.CreatedAt, ct);
                     await db.SaveChangesAsync(ct);
                 }
@@ -118,19 +118,24 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                     }
                 }
                 if (boundary is not null) await boundary.ReachedAsync("before-enqueue", note.TaskId, note.Id, ct);
+                if (note.Kind == LandNotificationKind.LegacyCheckNote && compactionBoundary is not null)
+                    await compactionBoundary.ReachedAsync("before-note-enqueue", note.Id, ct);
                 note.EnqueueAttempts++;
-                var conversationKey = IsCompletionNoteKind(note.Kind)
+                var legacyCheck = note.Kind == LandNotificationKind.LegacyCheckNote;
+                var conversationKey = legacyCheck
+                    ? $"check:{note.TaskId:N}"
+                    : IsCompletionNoteKind(note.Kind)
                     ? $"task:{await db.AgentTasks.Where(t => t.Id == note.TaskId).Select(t => t.RootTaskId).SingleAsync(ct):N}"
                     : $"land:{note.Id:N}";
                 await messages.EnqueueAsync(session, note.Body, MessageSendMode.WhenIdle, ct,
-                    QueuedMessageOrigin.Delegation, conversationKey, note.TaskId, note.ContentDigest,
+                    legacyCheck ? QueuedMessageOrigin.Check : QueuedMessageOrigin.Delegation, conversationKey, note.TaskId, note.ContentDigest,
                     completion?.NoteHeader ?? note.Body.Split('\n')[0], onCreated: message => note.QueueMessageId = message,
                     deliverIfIdle: false, sourceLandNotificationId: note.Id,
                     afterLandQueueInsert: boundary is null ? null : (queueId, token) => boundary.ReachedAsync("queue-inserted", note.TaskId, queueId, token),
                     holdUntil: completion is { DistillRequested: true, DistillMode: OutputDistillerMode.Apply } ? completion.DistillDeadlineAt : null);
                 // This outbox kind is also the caller's completion note. Preserve the
                 // check-suppression stamp, including recovery after a lost insert acknowledgement.
-                if (IsCompletionNoteKind(note.Kind))
+                if (IsCompletionNoteKind(note.Kind) && note.Kind != LandNotificationKind.LegacyCheckNote)
                     await CompletionNoteStamp.ApplyAsync(db, note.TaskId, note.ContentDigest, now, ct);
                 note.EnqueuedAt = now;
                 note.State = LandNotificationState.AwaitingReceipt;

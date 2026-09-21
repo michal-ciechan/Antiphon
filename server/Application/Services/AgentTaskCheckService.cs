@@ -76,6 +76,7 @@ public sealed class AgentTaskCheckService
     private readonly SpecialistTaskRunner _runner;
     private readonly SpecialistRequestService? _requests;
     private readonly StandingSpecialistHealthService? _specialistHealth;
+    private readonly LegacyCheckNotePublicationService? _legacyNotes;
 
     public AgentTaskCheckService(
         AppDbContext db,
@@ -95,7 +96,8 @@ public sealed class AgentTaskCheckService
         IAlertService? alerts = null,
         SpecialistTaskRunner? runner = null,
         SpecialistRequestService? requests = null,
-        StandingSpecialistHealthService? specialistHealth = null)
+        StandingSpecialistHealthService? specialistHealth = null,
+        LegacyCheckNotePublicationService? legacyNotes = null)
     {
         _db = db;
         _probe = probe;
@@ -109,6 +111,7 @@ public sealed class AgentTaskCheckService
         _runner = runner ?? new SpecialistTaskRunner(db, timeProvider, logger, alerts);
         _requests = requests;
         _specialistHealth = specialistHealth;
+        _legacyNotes = legacyNotes;
     }
 
     /// <summary>What one check did — for the worker's logging and for the tests.</summary>
@@ -197,6 +200,21 @@ public sealed class AgentTaskCheckService
         }
         else if (!suppress)
         {
+            if (_legacyNotes is not null)
+            {
+                var published = await _legacyNotes.TryPublishAsync(
+                    task, facts.Task.CheckNumber, body,
+                    ComposeEventDetail(interpretation.Text, interpretation.EventLine,
+                        supersededBanner is null ? digest : $"{supersededBanner}\n\n{digest}"),
+                    interpretation.RunTaskId, suppress: false, suppressionReason: null, ct);
+                if (published == LegacyCheckNotePublicationService.PublishResult.Published)
+                {
+                    await _eventBus.PublishToAllAsync(
+                        "AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
+                    return CheckOutcome.Delivered;
+                }
+            }
+
             try
             {
                 await _queue.EnqueueAsync(
@@ -395,7 +413,8 @@ public sealed class AgentTaskCheckService
     /// produces the pre-slice-4 note byte for byte.
     /// </param>
     /// <param name="EventLine">The interpreter line for the checked task's timeline, if one ran.</param>
-    private readonly record struct Interpretation(string? Text, string? DegradedReason, string? EventLine, Guid? RequestId = null)
+    private readonly record struct Interpretation(
+        string? Text, string? DegradedReason, string? EventLine, Guid? RequestId = null, Guid? RunTaskId = null)
     {
         public static Interpretation NotWiredIn { get; } = new(null, null, null);
 
@@ -494,7 +513,7 @@ public sealed class AgentTaskCheckService
             SpecialistRunOutcome.Succeeded => new Interpretation(run.Result, null, line),
             _ => Interpretation.Degraded("interpreter unavailable: the interpretation failed", line),
         };
-        return interpretation with { RequestId = run.RequestId };
+        return interpretation with { RequestId = run.RequestId, RunTaskId = run.RunTaskId };
     }
 
     /// <summary>
