@@ -1054,6 +1054,308 @@ public class DataRetentionServiceTests
         return noteId;
     }
 
+    private sealed record RetentionObservation(string? ErrorType, string Retained, string Unrelated)
+    {
+        public static RetentionObservation Of(Exception? error, IEnumerable<Guid> retained, IEnumerable<Guid> unrelated) =>
+            new(error?.GetType().Name, Join(retained), Join(unrelated));
+
+        private static string Join(IEnumerable<Guid> ids) =>
+            string.Join(",", ids.OrderBy(id => id).Select(id => id.ToString("N")));
+    }
+
+    /// <summary>
+    /// CARD-0079 PC-209. An unresolved publication protects its interpreter task tree
+    /// even when that tree has no notification, session, or recovery pointer of its own.
+    /// </summary>
+    [Test]
+    public async Task Legacy_note_retention_preserves_interpreter_tasks()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var stale = DaysAgo(200);
+        var interpreterId = Guid.NewGuid();
+        var unrelatedId = Guid.NewGuid();
+        await SeedInterpreterPublicationAsync(options, interpreterId, sessionId: null, stale, confirmed: false);
+        await using (var db = new AppDbContext(options))
+        {
+            db.AgentTasks.Add(TerminalTask(unrelatedId, "unrelated retention", stale));
+            await db.SaveChangesAsync();
+        }
+
+        Exception? caught = null;
+        await using (var db = new AppDbContext(options))
+        {
+            try { await CreateService(db).PruneTasksAsync(CancellationToken.None); }
+            catch (Exception ex) { caught = ex; }
+        }
+
+        await using var verify = new AppDbContext(options);
+        var retained = await verify.AgentTasks.AnyAsync(t => t.Id == interpreterId) ? new[] { interpreterId } : Array.Empty<Guid>();
+        var unrelated = await verify.AgentTasks.AnyAsync(t => t.Id == unrelatedId) ? new[] { unrelatedId } : Array.Empty<Guid>();
+        var observedRetention = RetentionObservation.Of(caught, retained, unrelated);
+        var expectedRetention = RetentionObservation.Of(null, new[] { interpreterId }, Array.Empty<Guid>());
+        observedRetention.ShouldBe(expectedRetention);
+    }
+
+    /// <summary>
+    /// CARD-0079 PC-210. The interpreter session survives when only the publication names it.
+    /// </summary>
+    [Test]
+    public async Task Legacy_note_retention_preserves_interpreter_sessions()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var interpreterSession = Guid.NewGuid();
+        var unrelatedSession = Guid.NewGuid();
+        var stale = DaysAgo(100);
+        await SeedStoppedSessionAsync(options, interpreterSession, stale);
+        await SeedStoppedSessionAsync(options, unrelatedSession, stale);
+        await SeedInterpreterPublicationAsync(options, Guid.NewGuid(), interpreterSession, DaysAgo(200), confirmed: false, capturedOnly: true);
+
+        Exception? caught = null;
+        await using (var db = new AppDbContext(options))
+        {
+            try { await CreateService(db).PruneSessionsAsync(CancellationToken.None); }
+            catch (Exception ex) { caught = ex; }
+        }
+
+        await using var verify = new AppDbContext(options);
+        var retained = await verify.AgentSessions.AnyAsync(s => s.Id == interpreterSession) ? new[] { interpreterSession } : Array.Empty<Guid>();
+        var unrelated = await verify.AgentSessions.AnyAsync(s => s.Id == unrelatedSession) ? new[] { unrelatedSession } : Array.Empty<Guid>();
+        var observedRetention = RetentionObservation.Of(caught, retained, unrelated);
+        var expectedRetention = RetentionObservation.Of(null, new[] { interpreterSession }, Array.Empty<Guid>());
+        observedRetention.ShouldBe(expectedRetention);
+    }
+
+    /// <summary>
+    /// CARD-0079 PC-211. Transcript rows of that interpreter session stay with it.
+    /// </summary>
+    [Test]
+    public async Task Legacy_note_retention_preserves_original_receipt_evidence()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var interpreterSession = Guid.NewGuid();
+        var unrelatedSession = Guid.NewGuid();
+        var stale = DaysAgo(40);
+        await SeedStoppedSessionAsync(options, interpreterSession, stale);
+        await SeedStoppedSessionAsync(options, unrelatedSession, stale);
+        var originalTranscript = await SeedSchemaTranscriptAsync(options, interpreterSession, stale);
+        var unrelatedTranscript = await SeedSchemaTranscriptAsync(options, unrelatedSession, stale);
+        await SeedInterpreterPublicationAsync(options, Guid.NewGuid(), interpreterSession, DaysAgo(200), confirmed: false, capturedOnly: true);
+
+        Exception? caught = null;
+        await using (var db = new AppDbContext(options))
+        {
+            try { await CreateService(db).PruneTranscriptsAsync(CancellationToken.None); }
+            catch (Exception ex) { caught = ex; }
+        }
+
+        await using var verify = new AppDbContext(options);
+        var retained = await verify.TranscriptEntries.AnyAsync(t => t.Id == originalTranscript) ? new[] { originalTranscript } : Array.Empty<Guid>();
+        var unrelated = await verify.TranscriptEntries.AnyAsync(t => t.Id == unrelatedTranscript) ? new[] { unrelatedTranscript } : Array.Empty<Guid>();
+        var observedRetention = RetentionObservation.Of(caught, retained, unrelated);
+        var expectedRetention = RetentionObservation.Of(null, new[] { originalTranscript }, Array.Empty<Guid>());
+        observedRetention.ShouldBe(expectedRetention);
+    }
+
+    /// <summary>
+    /// CARD-0079 PC-212. Confirmed publication identity survives retention and blocks a second note.
+    /// </summary>
+    [Test]
+    public async Task Legacy_publication_tombstone_prevents_reminting()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var sessionId = Guid.NewGuid();
+        await SeedStoppedSessionAsync(options, sessionId, DateTime.UtcNow);
+        await using (var db = new AppDbContext(options))
+        {
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            session.Status = SessionStatus.Running;
+            session.EndedAt = null;
+            session.ExitCode = null;
+            await db.SaveChangesAsync();
+        }
+        var seeded = await SeedInterpreterPublicationAsync(
+            options, Guid.NewGuid(), sessionId, DateTime.UtcNow, confirmed: true, attachTasksToSession: true);
+        var unrelatedId = Guid.NewGuid();
+        await using (var db = new AppDbContext(options))
+        {
+            db.AgentTasks.Add(TerminalTask(unrelatedId, "unrelated tombstone", DaysAgo(200)));
+            await db.SaveChangesAsync();
+        }
+
+        await using (var db = new AppDbContext(options))
+            await CreateService(db).RunOnceAsync(CancellationToken.None);
+
+        await using var replay = new AppDbContext(options);
+        var subject = await replay.AgentTasks.SingleAsync(t => t.Id == seeded.CheckedTaskId);
+        var publisher = new LegacyCheckNotePublicationService(replay, TimeProvider.System);
+        await publisher.TryPublishAsync(subject, seeded.CheckNumber, "replayed body", "event", seeded.RunId, false, null, CancellationToken.None);
+
+        await using var verify = new AppDbContext(options);
+        var after = await verify.LegacyCheckNotePublications.SingleAsync(p => p.CheckedTaskId == seeded.CheckedTaskId);
+        var publicationIdentity = (after.Id, after.CheckedTaskId, after.CheckedTaskAttempt, after.CheckedTaskDispatchedAt, after.CheckNumber);
+        var originalIdentity = (seeded.PublicationId, seeded.CheckedTaskId, seeded.Attempt, seeded.DispatchedAt, seeded.CheckNumber);
+        publicationIdentity.ShouldBe(originalIdentity);
+        var newNotes = await verify.AgentTaskLandNotifications
+            .Where(n => n.Kind == LandNotificationKind.LegacyCheckNote && n.Id != seeded.NotificationId)
+            .ToListAsync();
+        newNotes.Count.ShouldBe(0);
+        (await verify.AgentTasks.AnyAsync(t => t.Id == unrelatedId)).ShouldBeFalse();
+    }
+
+    private readonly record struct PublicationSeed(
+        Guid PublicationId, Guid CheckedTaskId, Guid RunId, Guid NotificationId, int Attempt, DateTime DispatchedAt, int CheckNumber);
+
+    private static async Task<PublicationSeed> SeedInterpreterPublicationAsync(
+        DbContextOptions<AppDbContext> options,
+        Guid interpreterTaskId,
+        Guid? sessionId,
+        DateTime stale,
+        bool confirmed,
+        bool capturedOnly = false,
+        bool attachTasksToSession = false)
+    {
+        var now = DateTime.UtcNow;
+        var dispatched = SessionGeneration.Normalize(now);
+        var agentId = Guid.NewGuid();
+        var checkedId = Guid.NewGuid();
+        var runId = interpreterTaskId;
+        var episodeId = Guid.NewGuid();
+        var publicationId = Guid.NewGuid();
+        var eventId = Guid.NewGuid();
+        var noteId = Guid.NewGuid();
+        var generation = dispatched;
+        await using var db = new AppDbContext(options);
+        if (sessionId is Guid existing)
+        {
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == existing);
+            generation = SessionGeneration.Normalize(session.StartedAt);
+        }
+        db.Agents.Add(new Agent
+        {
+            Id = agentId,
+            Name = "c79-retention-" + agentId.ToString("N")[..8],
+            Slug = "c79-" + agentId.ToString("N")[..12],
+            WorkingDirectory = Path.GetTempPath(),
+            Status = AgentStatus.Idle,
+            CreatedAt = stale,
+            UpdatedAt = stale,
+        });
+        db.CheckCompactionRecoveries.Add(new CheckCompactionRecovery
+        {
+            Id = episodeId,
+            PhysicalAgentId = agentId,
+            SessionId = Guid.NewGuid(),
+            AcceptedStartedAt = generation,
+            BoundaryIdentity = "boundary-retention",
+            BoundaryCreatedAt = stale,
+            ContinuationCreatedAt = stale,
+            ConfiguredThresholdMinutes = 10,
+            DetectedAt = stale,
+            State = CheckCompactionRecoveryState.AwaitingCheck,
+            ResumeSessionId = attachTasksToSession ? sessionId : null,
+            ResumeAcceptedStartedAt = attachTasksToSession ? generation : null,
+        });
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = checkedId, RootTaskId = checkedId, Title = "checked retention", Goal = "subject",
+            Role = AgentTaskRole.Code, Kind = AgentTaskKind.Worker, Status = AgentTaskStatus.Succeeded,
+            WorkingDirectory = Path.GetTempPath(), ReplyTo = AgentTaskReplyTo.None,
+            CreatedAt = now, CompletedAt = now, DispatchedAt = dispatched, Attempt = 1,
+            AgentId = agentId, AgentSessionId = attachTasksToSession ? sessionId : null,
+        });
+        db.AgentTasks.Add(TerminalTask(runId, "interpreter retention", stale));
+        db.AgentTasks.Local.Single(t => t.Id == runId).AgentId = agentId;
+        db.AgentTasks.Local.Single(t => t.Id == runId).AgentSessionId = attachTasksToSession ? sessionId : null;
+        if (!capturedOnly)
+        {
+            db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = eventId, AgentTaskId = checkedId, Type = AgentTaskEventType.Check, Detail = "produced", At = now,
+            });
+            db.AgentTaskLandNotifications.Add(new AgentTaskLandNotification
+            {
+                Id = noteId, TaskId = checkedId, SourceEventId = eventId, Kind = LandNotificationKind.LegacyCheckNote,
+                ReplyTo = AgentTaskReplyTo.None, Body = "original note", ContentDigest = "digest",
+                CreatedAt = now, NextAttemptAt = now,
+                State = confirmed ? LandNotificationState.Confirmed : LandNotificationState.Queued,
+                ConfirmedAt = confirmed ? now : null,
+            });
+        }
+        db.LegacyCheckNotePublications.Add(new LegacyCheckNotePublication
+        {
+            Id = publicationId,
+            CheckedTaskId = checkedId,
+            CheckedTaskAttempt = 1,
+            CheckedTaskDispatchedAt = dispatched,
+            CheckNumber = 1,
+            RecoveryId = episodeId,
+            PhysicalAgentId = agentId,
+            InterpreterSessionId = sessionId ?? Guid.NewGuid(),
+            InterpreterAcceptedStartedAt = generation,
+            ParentSessionId = Guid.NewGuid(),
+            CapturedAt = stale,
+            FactsSnapshotJson = "{\"check\":1}",
+            RenderContextJson = "{}",
+            InterpretationTaskId = runId,
+            InterpretationDeadlineAt = now,
+            State = capturedOnly ? LegacyCheckNoteState.Captured : LegacyCheckNoteState.Produced,
+            SourceEventId = capturedOnly ? Guid.NewGuid() : eventId,
+            NotificationId = capturedOnly ? Guid.NewGuid() : noteId,
+            ProducedAt = capturedOnly ? null : now,
+            Body = capturedOnly ? null : "original note",
+            ContentDigest = capturedOnly ? null : "digest",
+            NextAttemptAt = now,
+        });
+        await db.SaveChangesAsync();
+        return new PublicationSeed(publicationId, checkedId, runId, noteId, 1, dispatched, 1);
+    }
+
+    private static AgentTask TerminalTask(Guid id, string title, DateTime stale) => new()
+    {
+        Id = id, RootTaskId = id, Title = title, Goal = "retention",
+        Role = AgentTaskRole.Code, Kind = AgentTaskKind.Worker, Status = AgentTaskStatus.Succeeded,
+        WorkingDirectory = Path.GetTempPath(), ReplyTo = AgentTaskReplyTo.None,
+        CreatedAt = stale, CompletedAt = stale.AddHours(1),
+    };
+
+    private static async Task SeedStoppedSessionAsync(DbContextOptions<AppDbContext> options, Guid sessionId, DateTime lastSeenAt)
+    {
+        await using var db = new AppDbContext(options);
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = sessionId,
+            DefinitionName = "claude",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Stopped,
+            Cwd = Path.GetTempPath(),
+            Cols = 80,
+            Rows = 24,
+            CreatedAt = lastSeenAt.AddDays(-1),
+            StartedAt = lastSeenAt.AddDays(-1),
+            LastSeenAt = lastSeenAt,
+            EndedAt = lastSeenAt,
+            ExitCode = 0,
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task<Guid> SeedSchemaTranscriptAsync(DbContextOptions<AppDbContext> options, Guid sessionId, DateTime at)
+    {
+        var id = Guid.NewGuid();
+        await using var db = new AppDbContext(options);
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = id, AgentSessionId = sessionId, Sequence = 1, Kind = TranscriptKinds.UserPrompt,
+            Uuid = id.ToString("N"), Text = "interpreter prompt", CreatedAt = at, Timestamp = at,
+        });
+        await db.SaveChangesAsync();
+        return id;
+    }
+
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
     private static DataRetentionService CreateService(
