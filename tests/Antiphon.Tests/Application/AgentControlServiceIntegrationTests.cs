@@ -79,6 +79,27 @@ public class AgentControlServiceIntegrationTests
     }
 
     [Test]
+    public async Task Compaction_recovery_refuses_a_fresh_conversation()
+    {
+        var tempRoot = NewTempRoot();
+        try
+        {
+            await using var harness = BuildHarness(tempRoot, [new FakeAgentProtocolAdapter()]);
+            var error = await Should.ThrowAsync<ConflictException>(() => harness.Control.StartAsync(
+                Guid.NewGuid(),
+                new StartAgentRequest(Fresh: true),
+                CancellationToken.None,
+                automatic: true,
+                compactionRecoveryId: Guid.NewGuid()));
+            error.Code.ShouldBe("standing_recovery_operator_required");
+        }
+        finally
+        {
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task Registered_profile_resolver_without_default_preserves_legacy_claude_launch_arguments()
     {
         await using var isolatedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();

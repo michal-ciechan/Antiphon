@@ -275,6 +275,8 @@ public sealed class SessionReconciliationService
                 continue;
             if (_ownership.Owns(session.Id))
                 continue;
+            if (await CheckCompactionAdmission.BlocksGenericLaunchResumeAsync(_db, session.Id, session.StartedAt, ct))
+                continue;
 
             var startingSeconds = Math.Max(0, (int)(now - session.StartedAt).TotalSeconds);
             _logger.LogInformation(

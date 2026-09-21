@@ -19,7 +19,7 @@ namespace Antiphon.Server.Application.Services;
 /// in remote-control mode the booted agent is renamed and put into /remote-control before
 /// its work prompt, so the user can monitor it from elsewhere.
 /// </summary>
-public sealed class AgentControlService
+public sealed class AgentControlService : ICompactionContinuationResume
 {
     private static readonly SessionStatus[] LiveSessionStatuses =
         [SessionStatus.Starting, SessionStatus.Running, SessionStatus.Stopping];
@@ -136,11 +136,19 @@ public sealed class AgentControlService
     /// is supplied. <see cref="Agent.Details"/> is standing-job metadata (CLAUDE.md) and is never
     /// typed as that prompt (CARD-0283).
     /// </summary>
-    public async Task<AgentDetailDto> StartAsync(Guid agentId, StartAgentRequest request, CancellationToken ct, bool automatic = false)
+    public async Task<AgentDetailDto> StartAsync(
+        Guid agentId, StartAgentRequest request, CancellationToken ct, bool automatic = false, Guid? compactionRecoveryId = null)
     {
         if ((request.Fresh ? 1 : 0) + (request.ResumeSessionId is not null ? 1 : 0) + (request.RetryContinuity ? 1 : 0) > 1)
             throw new ValidationException("start", "fresh, resumeSessionId and retryContinuity are mutually exclusive.");
-        if ((automatic || request.CapacityRecovery) && (request.Fresh || request.ResumeSessionId is not null || request.RetryContinuity))
+        if (compactionRecoveryId is not null)
+        {
+            if (request.Fresh || request.RetryContinuity || request.ResumeSessionId is null)
+                throw new ConflictException(
+                    "Compaction recovery resumes only the captured conversation.",
+                    "standing_recovery_operator_required");
+        }
+        else if ((automatic || request.CapacityRecovery) && (request.Fresh || request.ResumeSessionId is not null || request.RetryContinuity))
             throw new ConflictException("Automatic recovery cannot select or discard history.", "standing_recovery_operator_required");
         var agent = await LockAgentAsync(agentId, ct);
 
@@ -273,7 +281,8 @@ public sealed class AgentControlService
         {
             sessionId = await StartInteractiveSessionAsync(
                 agent, remoteControlName, request.Fresh, launchEnvOverride, initialPrompt,
-                request.PolicyRefreshDelta, request.ResumeSessionId, request.RetryContinuity, automatic || request.CapacityRecovery, ct);
+                request.PolicyRefreshDelta, request.ResumeSessionId, request.RetryContinuity, automatic || request.CapacityRecovery, ct,
+                compactionRecoveryId);
             agent.CurrentCardId = null;
         }
 
@@ -292,6 +301,58 @@ public sealed class AgentControlService
         return await _agentService.GetByIdAsync(agent.Id, ct);
     }
 
+    public async Task<CompactionResumeResult> ResumeAsync(Guid episodeId, CancellationToken ct)
+    {
+        var episode = await _db.CheckCompactionRecoveries.AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Id == episodeId, ct);
+        if (episode is null)
+            return new CompactionResumeResult(false, null, null, "missing");
+        if (episode.State == CheckCompactionRecoveryState.ResumeReserved && episode.ResumeAcceptedStartedAt is not null)
+            return new CompactionResumeResult(true, episode.ResumeSessionId, episode.ResumeAcceptedStartedAt, "already-reserved");
+        if (episode.State != CheckCompactionRecoveryState.Stopped)
+            return new CompactionResumeResult(false, null, null, episode.State.ToString());
+
+        try
+        {
+            await StartAsync(
+                episode.PhysicalAgentId,
+                new StartAgentRequest(Fresh: false, ResumeSessionId: episode.SessionId),
+                ct,
+                automatic: true,
+                compactionRecoveryId: episode.Id);
+        }
+        catch (ConflictException ex)
+        {
+            return new CompactionResumeResult(false, null, null, ex.Code ?? "conflict");
+        }
+
+        var reserved = await _db.CheckCompactionRecoveries.AsNoTracking().FirstAsync(r => r.Id == episodeId, ct);
+        return new CompactionResumeResult(
+            reserved.State == CheckCompactionRecoveryState.ResumeReserved,
+            reserved.ResumeSessionId,
+            reserved.ResumeAcceptedStartedAt,
+            reserved.LaunchOutcome ?? "reserved");
+    }
+
+    private async Task ReserveCompactionResumeAsync(
+        Agent agent, AgentSession session, Guid episodeId, DateTime priorGeneration, CancellationToken ct)
+    {
+        var episode = await _db.CheckCompactionRecoveries.FirstOrDefaultAsync(r => r.Id == episodeId, ct)
+            ?? throw new ConflictException("Compaction recovery is gone.", "compaction_recovery_missing");
+        if (episode.PhysicalAgentId != agent.Id || episode.SessionId != session.Id)
+            throw new ConflictException("Compaction recovery does not match this seat.", "compaction_recovery_mismatch");
+        if (episode.State != CheckCompactionRecoveryState.Stopped)
+            throw new ConflictException("Compaction recovery is not ready to resume.", "compaction_recovery_state");
+        if (!SessionGeneration.Equal(episode.AcceptedStartedAt, priorGeneration))
+            throw new ConflictException("Compaction recovery is bound to a different generation.", "compaction_recovery_generation");
+
+        episode.State = CheckCompactionRecoveryState.ResumeReserved;
+        episode.ResumeSessionId = session.Id;
+        episode.ResumeAcceptedStartedAt = session.StartedAt;
+        episode.LaunchOutcome = "reserved";
+        episode.ConcurrencyToken = Guid.NewGuid();
+    }
+
     // Pre-creates a cardless session row (Starting) in the agent's working directory and hands the
     // actual process launch to the background queue, mirroring how card spawns return immediately.
     // By default the agent's previous Claude session is resumed (same id, `claude --resume`) so the
@@ -306,7 +367,8 @@ public sealed class AgentControlService
         Guid? resumeSessionId,
         bool retryContinuity,
         bool automatic,
-        CancellationToken ct)
+        CancellationToken ct,
+        Guid? compactionRecoveryId = null)
     {
         var expectedAgentVersion = agent.UpdatedAt;
         if (string.IsNullOrWhiteSpace(agent.WorkingDirectory))
@@ -519,6 +581,8 @@ public sealed class AgentControlService
                 // CARD-0186: a PATCH that changed the agent's lane takes effect on the next
                 // crash-restart rather than being silently ignored for the life of this row.
                 previous.SessionBackend = agent.SessionBackend;
+                if (compactionRecoveryId is Guid recoveryId)
+                    await ReserveCompactionResumeAsync(agent, previous, recoveryId, priorGeneration, ct);
                 await _db.SaveChangesAsync(ct);
 
                 await AcceptAsync(previous);
@@ -635,7 +699,8 @@ public sealed class AgentControlService
                     intent.ContinuityResumeFailures = 0;
                     await ClearSupervisionLatchAsync(agent, ct);
                 }
-                if (fresh || resumeSessionId is not null || retryContinuity || spec.Kind is not (AgentKind.ClaudeCode or AgentKind.Grok))
+                if (compactionRecoveryId is null
+                    && (fresh || resumeSessionId is not null || retryContinuity || spec.Kind is not (AgentKind.ClaudeCode or AgentKind.Grok)))
                     _db.AgentIncidents.Add(new AgentIncident
                     {
                         Id = Guid.NewGuid(),

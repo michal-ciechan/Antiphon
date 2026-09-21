@@ -90,6 +90,7 @@ public sealed class AgentTaskDispatcher
     private readonly LandDeliveryBoundary? _landBoundary;
     // CARD-0544 D-7. Optional; absent, a queued Interim task is held rather than launched.
     private readonly InterimVerificationPolicy? _interimPolicy;
+    private readonly CheckCompactionContinuationService? _compaction;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -146,9 +147,11 @@ public sealed class AgentTaskDispatcher
         ITaskProgressGit? progressGit = null,
         DispatchBaseWarningIntentService? dispatchWarnings = null,
         LandDeliveryBoundary? landBoundary = null,
-        InterimVerificationPolicy? interimPolicy = null)
+        InterimVerificationPolicy? interimPolicy = null,
+        CheckCompactionContinuationService? compaction = null)
     {
         _interimPolicy = interimPolicy;
+        _compaction = compaction;
         _repositoryLeases = repositoryLeases;
         _verification = verification;
         _progressGit = progressGit;
@@ -244,8 +247,15 @@ public sealed class AgentTaskDispatcher
     public async Task<TickResult> TickAsync(CancellationToken ct)
     {
         using var observation = new RuntimePhase(_logger, _timeProvider, Guid.Empty, "dispatcher.sweep");
+        var sweepFailures = 0;
+        if (_compaction is not null)
+        {
+            sweepFailures += await RunSweepAsync(
+                "compaction continuation", _compaction.SweepAsync, ct);
+        }
+
         if (!_settings.Enabled)
-            return new TickResult(0, 0, 0, 0, 0);
+            return new TickResult(0, 0, 0, 0, 0, sweepFailures);
 
         // The clocks below are INDEPENDENT and each runs isolated (see RunSweepAsync). They
         // used to be five bare awaits, which quietly made every one of them a single point of
@@ -253,8 +263,6 @@ public sealed class AgentTaskDispatcher
         // sweep would abort the tick before the check sweep and the dispatch loop had run, on every
         // tick, and the only trace was one "Delegation dispatch tick failed" line that named
         // neither which clock had died nor what had stopped as a result.
-        var sweepFailures = 0;
-
         // CARD-0302: Check-role Blocked rows with a reading are stale evidence, not questions.
         // Remap them before anything else so the attention feed and notifier see Succeeded.
         sweepFailures += await RunSweepAsync(
@@ -5083,6 +5091,9 @@ public sealed class AgentTaskDispatcher
         AgentTask claimed, Agent standing, DateTime now, CancellationToken ct)
     {
         if (claimed.SpecialistInputPolicyJson is not null) await _db.Entry(standing).ReloadAsync(ct);
+        if (await CheckCompactionAdmission.ClosesSeatAsync(_db, standing.Id, ct))
+            return ReuseOutcome.WaitForAgent;
+
         if (await LiveSessionIdOfAsync(standing, ct) is not Guid session)
             return standing.AlwaysOn ? ReuseOutcome.WaitForAgent : ReuseOutcome.SpawnFresh;
 

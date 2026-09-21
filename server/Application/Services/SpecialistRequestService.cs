@@ -139,6 +139,7 @@ public sealed partial class SpecialistRequestService(AppDbContext db, IOptions<D
             var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
             if (session?.Status != SessionStatus.Running || candidate.SessionId != sessionId || candidate.SessionStartedAt != session.StartedAt) continue;
             if (await StandingSpecialistSeatPolicy.StartRefusalAsync(db, seat, settings.Value, true, ct) is not null) continue;
+            if (await CheckCompactionAdmission.ClosesSeatAsync(db, seat.Id, ct)) continue;
             SpecialistExecutionEvidence? evidence;
             try
             {

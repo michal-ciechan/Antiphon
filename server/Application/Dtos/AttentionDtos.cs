@@ -290,6 +290,13 @@ public enum AttentionKind
     /// Dated routing pins are excluded. Appended; never renumber.
     /// </summary>
     DispatchHeld = 42,
+
+    /// <summary>
+    /// CARD-0079: an AlwaysOn Claude Check seat has a silent explicit auto-compaction
+    /// continuation. Warning while the episode is open, Error when it needs a decision.
+    /// Cleared only by receipt-backed recovery or operator supersession. Appended; never renumber.
+    /// </summary>
+    CompactionContinuationStalled = 43,
 }
 
 /// <summary>
