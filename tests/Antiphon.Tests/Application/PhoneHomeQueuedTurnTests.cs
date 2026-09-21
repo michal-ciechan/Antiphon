@@ -398,7 +398,7 @@ public class PhoneHomeQueuedTurnTests
                 return;
             case "truncated-tail":
                 await h.Runtime.ObserveTranscriptAsync(
-                    Map(Prompt(h.SessionId, body[body.Length / 2..], "trunc-tail-" + Guid.NewGuid().ToString("N"), seq)),
+                    Map(Prompt(h.SessionId, body[(body.Length / 2)..], "trunc-tail-" + Guid.NewGuid().ToString("N"), seq)),
                     CancellationToken.None);
                 return;
             case "complete":
