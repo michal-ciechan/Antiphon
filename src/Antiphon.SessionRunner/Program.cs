@@ -200,8 +200,8 @@ app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings, SessionRunne
         ? [SessionBackends.PtyHost, SessionBackends.Herdr]
         : [SessionBackends.PtyHost];
     IReadOnlyList<string>? features = herdrSettings.Value.Enabled
-        ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement, HerdrPaneDisposalCodes.Capability, HerdrPaneDisposalCodes.BestEffortCapability, GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1]
-        : [GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1];
+        ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement, HerdrPaneDisposalCodes.Capability, HerdrPaneDisposalCodes.BestEffortCapability, GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1, RunnerCapabilityFeatures.CompactionContinuationStopV1]
+        : [GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1, RunnerCapabilityFeatures.CompactionContinuationStopV1];
     if (runtime.VerificationCustodyBackend is not null)
         features = [.. features, RunnerCapabilityFeatures.VerificationCustodyV1];
     return Results.Ok(new RunnerCapabilitiesDto(
@@ -353,6 +353,16 @@ app.MapPost("/sessions/{id:guid}/kill-generation", async (
 {
     var result = await runtime.KillGenerationAsync(
         id, request.ExpectedAcceptedStartedAt, TimeSpan.FromSeconds(5), cancellationToken);
+    return Results.Ok(result);
+});
+
+app.MapPost("/sessions/{id:guid}/stop-compaction-continuation", async (
+    Guid id,
+    CompactionContinuationStopRequest request,
+    SessionRunnerRuntime runtime,
+    CancellationToken cancellationToken) =>
+{
+    var result = await runtime.StopCompactionContinuationAsync(id, request, TimeSpan.FromSeconds(5), cancellationToken);
     return Results.Ok(result);
 });
 

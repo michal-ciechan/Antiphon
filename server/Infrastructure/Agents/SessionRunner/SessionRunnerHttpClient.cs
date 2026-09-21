@@ -475,6 +475,28 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             ?? throw new InvalidOperationException("Session runner returned an empty kill-generation response.");
     }
 
+    public async Task<CompactionContinuationStopResult> StopCompactionContinuationAsync(
+        Guid sessionId, CompactionContinuationStopRequest request, CancellationToken ct)
+    {
+        var features = (await GetCapabilitiesAsync(ct))?.Features;
+        if (features is null
+            || !features.Contains(RunnerCapabilityFeatures.CompactionContinuationStopV1, StringComparer.Ordinal))
+        {
+            return new CompactionContinuationStopResult(
+                sessionId, request.AttemptId, false, CompactionStopOutcomes.Unsupported, null);
+        }
+
+        var response = await _httpClient.PostAsJsonAsync(
+            $"sessions/{sessionId:D}/stop-compaction-continuation",
+            request,
+            JsonOptions,
+            ct);
+        await ThrowForRunnerProblemAsync(response, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<CompactionContinuationStopResult>(JsonOptions, ct)
+            ?? throw new InvalidOperationException("Session runner returned an empty compaction-stop response.");
+    }
+
     public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(
         [EnumeratorCancellation] CancellationToken ct)
     {

@@ -69,6 +69,16 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// </summary>
     internal Func<Guid, RunnerConditionalInputRequest, Task>? ConditionalInputBeforeWrite { get; set; }
 
+    /// <summary>CARD-0079 test seam: after the stop request is accepted and before the final observation.</summary>
+    internal Func<Guid, Task>? CompactionStopBeforeFinalCheck { get; set; }
+
+    /// <summary>CARD-0079 test seam: after final validation and before the process signal.</summary>
+    internal Func<Guid, Task>? CompactionStopBeforeSignal { get; set; }
+
+    internal List<(Guid SessionId, Guid AttemptId)> CompactionStopSignals { get; } = new();
+
+    private readonly ConcurrentDictionary<Guid, CompactionContinuationStopResult> _compactionStops = new();
+
     /// <summary>CARD-0514 test seam: actual backend writes, not the runner input log.</summary>
     internal IReadOnlyList<(Guid SessionId, string Input)> SnapshotBackendWrites()
     {
@@ -804,6 +814,84 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
         finally { gate.Release(); }
     }
+
+    public async Task<CompactionContinuationStopResult> StopCompactionContinuationAsync(
+        Guid sessionId, CompactionContinuationStopRequest request, TimeSpan timeout, CancellationToken ct)
+    {
+        var gate = _launchLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            if (_compactionStops.TryGetValue(request.AttemptId, out var prior))
+                return prior with { Outcome = prior.ConfirmsExit ? CompactionStopOutcomes.Duplicate : prior.Outcome };
+
+            if (!_sessions.TryGetValue(sessionId, out var session))
+                return new CompactionContinuationStopResult(sessionId, request.AttemptId, false, CompactionStopOutcomes.Missing, null);
+
+            if (!SessionGeneration.Equal(session.AcceptedStartedAt, request.ExpectedAcceptedStartedAt))
+            {
+                return new CompactionContinuationStopResult(
+                    sessionId, request.AttemptId, false, CompactionStopOutcomes.Mismatch, session.AcceptedStartedAt);
+            }
+
+            if (CompactionStopBeforeFinalCheck is { } beforeFinal)
+                await beforeFinal(sessionId);
+
+            var observed = await session.ObserveCompactionAsync(ct);
+            if (!ObservationMatches(request, observed))
+            {
+                return new CompactionContinuationStopResult(
+                    sessionId, request.AttemptId, false, CompactionStopOutcomes.Refused, session.AcceptedStartedAt);
+            }
+
+            if (CompactionStopBeforeSignal is { } beforeSignal)
+                await beforeSignal(sessionId);
+
+            if (!SessionGeneration.Equal(session.AcceptedStartedAt, request.ExpectedAcceptedStartedAt) || session.HasExited)
+            {
+                return new CompactionContinuationStopResult(
+                    sessionId, request.AttemptId, false,
+                    session.HasExited ? CompactionStopOutcomes.Refused : CompactionStopOutcomes.Mismatch,
+                    session.AcceptedStartedAt);
+            }
+
+            var again = await session.ObserveCompactionAsync(ct);
+            if (!ObservationMatches(request, again))
+            {
+                return new CompactionContinuationStopResult(
+                    sessionId, request.AttemptId, false, CompactionStopOutcomes.Refused, session.AcceptedStartedAt);
+            }
+
+            CompactionStopSignals.Add((sessionId, request.AttemptId));
+            await session.KillAsync(timeout, ct);
+            var confirmed = session.HasExited;
+            var result = new CompactionContinuationStopResult(
+                sessionId, request.AttemptId, confirmed,
+                confirmed ? CompactionStopOutcomes.Exited : CompactionStopOutcomes.Refused,
+                session.AcceptedStartedAt);
+            _compactionStops[request.AttemptId] = result;
+            return result;
+        }
+        finally { gate.Release(); }
+    }
+
+    private static bool ObservationMatches(CompactionContinuationStopRequest request, CompactionTailObservation observed) =>
+        observed.IsSuccessful
+        && string.Equals(observed.BindingIdentity, request.BindingIdentity, StringComparison.Ordinal)
+        && observed.TranscriptRevision == request.TranscriptRevision
+        && observed.OutputRevision == request.OutputRevision
+        && string.Equals(observed.NativeBoundaryId, request.NativeBoundaryIdentity, StringComparison.Ordinal)
+        && string.Equals(observed.NativeContinuationId, request.NativeContinuationIdentity, StringComparison.Ordinal);
+
+    internal Task<CompactionTailObservation> ObserveCompactionAsync(Guid sessionId, CancellationToken ct)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var session))
+            return Task.FromResult(CompactionTailObservation.Unbound());
+        return session.ObserveCompactionAsync(ct);
+    }
+
+    internal ITranscriptTailer? TailerFor(Guid sessionId) =>
+        _sessions.TryGetValue(sessionId, out var session) ? session.Tailer : null;
 
     /// <summary>
     /// CARD-0514 D-8: write only if this object still matches the accepted generation and
@@ -2640,6 +2728,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (_liveBuffer.Length > cap * 2L)
                 _liveBuffer.Remove(0, _liveBuffer.Length - cap);
         }
+
+        internal ITranscriptTailer? Tailer => _tailer;
+
+        internal Task<CompactionTailObservation> ObserveCompactionAsync(CancellationToken ct) =>
+            _tailer?.ObserveCompactionSilenceAsync(ct) ?? Task.FromResult(CompactionTailObservation.Unbound());
 
         public bool HasExited
         {

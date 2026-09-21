@@ -156,6 +156,12 @@ public static class RunnerCapabilityFeatures
     /// there is no fallback to unguarded <c>/input</c>.
     /// </summary>
     public const string ConditionalMaintenanceInputV1 = "conditionalMaintenanceInputV1";
+
+    /// <summary>
+    /// CARD-0079: conditional compaction-continuation stop. Absence forbids the POST;
+    /// there is no fallback to kill-generation or raw input.
+    /// </summary>
+    public const string CompactionContinuationStopV1 = CompactionContinuationStopCapability.Feature;
 }
 
 /// <summary>Values for <see cref="RunnerLaunchRequest.TranscriptFormat"/>.</summary>
