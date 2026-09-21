@@ -1,13 +1,19 @@
+using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
@@ -273,30 +279,361 @@ public class PhoneHomeStandingLaunchTests
     public async Task Launch_handoff_cuts_preserve_owner_and_reservation()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
-        var session = new AgentSession
+        var workspace = Path.Combine(Path.GetTempPath(), $"ph-launch-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workspace);
+        await File.WriteAllBytesAsync(Path.Combine(workspace, "grok.exe"), [0x4D, 0x5A]);
+        try
         {
-            Id = Guid.NewGuid(),
-            DefinitionName = "grok",
-            AgentKind = AgentKind.Grok,
-            Status = SessionStatus.Starting,
-            Cwd = @"C:\work",
-            Cols = 80,
-            Rows = 24,
-            CreatedAt = DateTime.UtcNow,
-            StartedAt = DateTime.UtcNow,
-            LastSeenAt = DateTime.UtcNow,
-            RunnerId = "grok-linux",
-            RunnerStoreId = Guid.NewGuid(),
-            RunnerCwd = "/work",
+            await using var host = await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString);
+            await using var peer = await host.ConnectPeerAsync();
+            var live = await host.WaitLiveAsync();
+            host.Directory.MarkRecovered(live);
+
+            await FailCommitHasZeroLaunchAsync(schema, host, peer, workspace);
+            await FailEnqueueKeepsStartingOwnerAsync(schema, host, peer, workspace);
+            await DiscardedGraphLeavesOwnerInventoryAsync(schema, host, peer, workspace);
+            await LostLaunchResponseBlocksReplacementAsync(schema, host, peer, workspace, live);
+        }
+        finally
+        {
+            try { Directory.Delete(workspace, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    private static async Task FailCommitHasZeroLaunchAsync(
+        IsolatedTestSchema schema, PhoneHomeTestHost host, PhoneHomeScriptedPeer peer, string workspace)
+    {
+        var agentId = Guid.NewGuid();
+        await SeedPinnedAgentAsync(schema.ConnectionString, agentId, workspace);
+        var launchesBefore = peer.Launches.Count;
+        var localStartsBefore = host.Local.Calls.Count(c => c == "start");
+        var insertFault = new ThrowOnSessionInsert();
+        var gate = new GateScopeFactory();
+        var inner = new FakeAgentProtocolAdapter { ReadyResult = true };
+        await using var harness = BuildLaunchHarness(
+            schema, host, workspace, agentId, [new PrefixStartAdapter(inner)], insertFault, gate);
+        var error = await Should.ThrowAsync<InvalidOperationException>(
+            () => harness.Control.StartAsync(agentId, new StartAgentRequest(Fresh: true), CancellationToken.None));
+        error.Message.ShouldContain("injected session commit failure");
+        peer.Launches.Count.ShouldBe(launchesBefore);
+        host.Local.Calls.Count(c => c == "start").ShouldBe(localStartsBefore);
+        inner.Started.ShouldBeFalse();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        (await db.AgentSessions.CountAsync(s => s.StandingAgentId == agentId)).ShouldBe(0);
+    }
+
+    private static async Task FailEnqueueKeepsStartingOwnerAsync(
+        IsolatedTestSchema schema, PhoneHomeTestHost host, PhoneHomeScriptedPeer peer, string workspace)
+    {
+        var agentId = Guid.NewGuid();
+        await SeedPinnedAgentAsync(schema.ConnectionString, agentId, workspace);
+        var launchesBefore = peer.Launches.Count;
+        var localStartsBefore = host.Local.Calls.Count(c => c == "start");
+        var startGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var inner = new FakeAgentProtocolAdapter { ReadyResult = true, StartGate = startGate };
+        var insertFault = new ThrowOnSessionInsert { Armed = false };
+        var gate = new GateScopeFactory();
+        await using var harness = BuildLaunchHarness(
+            schema, host, workspace, agentId, [new PrefixStartAdapter(inner)], insertFault, gate);
+        try
+        {
+            var detail = await harness.Control.StartAsync(agentId, new StartAgentRequest(Fresh: true), CancellationToken.None);
+            detail.PersistentSessionId.ShouldNotBeNull();
+            var sessionId = Guid.Parse(detail.PersistentSessionId!);
+            var ownedDeadline = DateTime.UtcNow.AddSeconds(3);
+            while (DateTime.UtcNow < ownedDeadline && !harness.LaunchQueue.Owns(sessionId))
+                await Task.Delay(20);
+            harness.LaunchQueue.Owns(sessionId).ShouldBeTrue();
+            inner.Started.ShouldBeFalse();
+            peer.Launches.Count.ShouldBe(launchesBefore);
+            host.Local.Calls.Count(c => c == "start").ShouldBe(localStartsBefore);
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+            var row = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            row.Status.ShouldBe(SessionStatus.Starting);
+            row.RunnerId.ShouldBe(host.AllowedRunnerId);
+            row.RunnerStoreId.ShouldBe(host.StoreId);
+            row.RunnerCwd.ShouldBe("/work");
+            var owner = await host.Directory.GetOwnerAsync(sessionId, CancellationToken.None);
+            owner.ShouldNotBeNull();
+            owner!.RunnerId.ShouldBe(host.AllowedRunnerId);
+            owner.RunnerStoreId.ShouldBe(host.StoreId);
+            var inventory = await host.Directory.GetInventoryAsync(host.AllowedRunnerId, CancellationToken.None);
+            inventory.ShouldBeOfType<RunnerInventory.Available>();
+            var replacement = await harness.Control.StartAsync(agentId, new StartAgentRequest(), CancellationToken.None);
+            replacement.PersistentSessionId.ShouldBe(detail.PersistentSessionId);
+            peer.Launches.Count.ShouldBe(launchesBefore);
+            host.Local.Calls.Count(c => c == "start").ShouldBe(localStartsBefore);
+            await using var after = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+            (await after.AgentSessions.CountAsync(s => s.StandingAgentId == agentId && s.Status == SessionStatus.Starting))
+                .ShouldBe(1);
+        }
+        finally
+        {
+            startGate.TrySetResult();
+        }
+    }
+
+    private static async Task DiscardedGraphLeavesOwnerInventoryAsync(
+        IsolatedTestSchema schema, PhoneHomeTestHost host, PhoneHomeScriptedPeer peer, string workspace)
+    {
+        var agentId = Guid.NewGuid();
+        await SeedPinnedAgentAsync(schema.ConnectionString, agentId, workspace);
+        var launchesBefore = peer.Launches.Count;
+        var localStartsBefore = host.Local.Calls.Count(c => c == "start");
+        var startGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var inner = new FakeAgentProtocolAdapter { ReadyResult = true, StartGate = startGate };
+        var insertFault = new ThrowOnSessionInsert { Armed = false };
+        var gate = new GateScopeFactory();
+        var harness = BuildLaunchHarness(
+            schema, host, workspace, agentId, [new PrefixStartAdapter(inner)], insertFault, gate);
+        Guid sessionId;
+        try
+        {
+            var detail = await harness.Control.StartAsync(agentId, new StartAgentRequest(Fresh: true), CancellationToken.None);
+            sessionId = Guid.Parse(detail.PersistentSessionId!);
+            var ownedDeadline = DateTime.UtcNow.AddSeconds(3);
+            while (DateTime.UtcNow < ownedDeadline && !harness.LaunchQueue.Owns(sessionId))
+                await Task.Delay(20);
+            harness.LaunchQueue.Owns(sessionId).ShouldBeTrue();
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+            var row = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            row.Status.ShouldBe(SessionStatus.Starting);
+            row.RunnerId.ShouldBe(host.AllowedRunnerId);
+            row.RunnerStoreId.ShouldBe(host.StoreId);
+            var owner = await host.Directory.GetOwnerAsync(sessionId, CancellationToken.None);
+            owner.ShouldNotBeNull();
+            owner!.RunnerId.ShouldBe(host.AllowedRunnerId);
+            peer.Launches.Count.ShouldBe(launchesBefore);
+            host.Local.Calls.Count(c => c == "start").ShouldBe(localStartsBefore);
+        }
+        finally
+        {
+            await harness.DisposeAsync();
+            startGate.TrySetResult();
+        }
+
+        await using var recovered = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var surviving = await recovered.AgentSessions.SingleAsync(s => s.Id == sessionId);
+        surviving.Status.ShouldBe(SessionStatus.Starting);
+        surviving.RunnerId.ShouldBe(host.AllowedRunnerId);
+        surviving.RunnerCwd.ShouldBe("/work");
+        var recoveredOwner = await host.Directory.GetOwnerAsync(sessionId, CancellationToken.None);
+        recoveredOwner.ShouldNotBeNull();
+        recoveredOwner!.RunnerStoreId.ShouldBe(host.StoreId);
+        host.Local.Calls.Count(c => c == "start").ShouldBe(localStartsBefore);
+    }
+
+    private static async Task LostLaunchResponseBlocksReplacementAsync(
+        IsolatedTestSchema schema,
+        PhoneHomeTestHost host,
+        PhoneHomeScriptedPeer peer,
+        string workspace,
+        PhoneHomeLiveConnection live)
+    {
+        var agentId = Guid.NewGuid();
+        await SeedPinnedAgentAsync(schema.ConnectionString, agentId, workspace);
+        var launchesBefore = peer.Launches.Count;
+        var localStartsBefore = host.Local.Calls.Count(c => c == "start");
+        var inner = new FakeAgentProtocolAdapter { ReadyResult = true };
+        var probe = new PrefixStartAdapter(inner)
+        {
+            BeforeStart = async (spec, ct) =>
+            {
+                await new PhoneHomeRunnerClient(live).StartAsync(
+                    spec.SessionId ?? Guid.Empty, spec, ct);
+            },
         };
-        db.AgentSessions.Add(session);
+        var insertFault = new ThrowOnSessionInsert { Armed = false };
+        var gate = new GateScopeFactory();
+        await using var harness = BuildLaunchHarness(
+            schema, host, workspace, agentId, [probe], insertFault, gate);
+        peer.HeldLaunches = 1;
+        var detail = await harness.Control.StartAsync(agentId, new StartAgentRequest(Fresh: true), CancellationToken.None);
+        var launch = await peer.WaitForAsync(PhoneHomeOperation.Launch);
+        peer.Launches.Count.ShouldBe(launchesBefore + 1);
+        var replacement = await harness.Control.StartAsync(agentId, new StartAgentRequest(), CancellationToken.None);
+        replacement.PersistentSessionId.ShouldBe(detail.PersistentSessionId);
+        peer.Launches.Count.ShouldBe(launchesBefore + 1);
+        host.Local.Calls.Count(c => c == "start").ShouldBe(localStartsBefore);
+
+        var request = launch.Payload!.Value.Deserialize<RunnerLaunchRequest>(PhoneHomeFraming.Json)!;
+        peer.Sessions.Add(new RunnerSessionDto(
+            request.SessionId, 1, request.AcceptedStartedAt ?? DateTime.UtcNow, "Running", null, "", 0,
+            AcceptedStartedAt: request.AcceptedStartedAt ?? DateTime.UtcNow));
+        peer.ReleaseHeld();
+        await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+        var sessionId = Guid.Parse(detail.PersistentSessionId!);
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var row = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
+        row.RunnerId.ShouldBe(host.AllowedRunnerId);
+        var inventory = await host.Directory.GetInventoryAsync(host.AllowedRunnerId, CancellationToken.None);
+        var available = inventory.ShouldBeOfType<RunnerInventory.Available>();
+        available.Sessions.ShouldContain(s => s.SessionId == sessionId);
+        peer.Launches.Count.ShouldBe(launchesBefore + 1);
+        host.Local.Calls.Count(c => c == "start").ShouldBe(localStartsBefore);
+    }
+
+    private static AgentControlServiceIntegrationTests.Harness BuildLaunchHarness(
+        IsolatedTestSchema schema,
+        PhoneHomeTestHost host,
+        string workspace,
+        Guid agentId,
+        IReadOnlyList<IAgentProtocolAdapter> adapters,
+        ThrowOnSessionInsert insertFault,
+        GateScopeFactory gate)
+    {
+        var connection = schema.ConnectionString;
+        var settings = Options.Create(new PhoneHomeRunnerSettings
+        {
+            Enabled = true,
+            AllowedRunnerId = host.AllowedRunnerId,
+            StandingAgentId = agentId,
+            HostWorkspaceRoot = workspace,
+            RunnerWorkspace = "/work",
+            ChildGrokHome = "/state/grok",
+            CallbackOrigin = "http://host.docker.internal:17202",
+            SharedSecret = host.Secret,
+        });
+        var harness = AgentControlServiceIntegrationTests.BuildHarness(
+            workspace,
+            adapters,
+            defaultKind: "Grok",
+            connectionString: connection,
+            configureServices: s =>
+            {
+                s.AddSingleton<IServiceScopeFactory>(gate);
+                s.AddDbContext<AppDbContext>(o =>
+                {
+                    o.UseNpgsql(connection, npgsql =>
+                    {
+                        npgsql.MigrationsAssembly("Antiphon.Server");
+                        npgsql.SetPostgresVersion(16, 0);
+                    });
+                    o.AddInterceptors(insertFault);
+                });
+                s.AddSingleton(settings);
+                s.AddSingleton<PhoneHomeLaunchPolicy>();
+                s.AddSingleton<ISessionRunnerDirectory>(host.Directory);
+                s.AddSingleton<ISessionRunnerClient>(_ => new RoutingSessionRunnerClient(host.Directory));
+                s.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(
+                    new BridgeQueueHarness.OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
+                    {
+                        DefaultDefinition = "grok",
+                        GrokCredentialProbeEnabled = false,
+                        Definitions =
+                        {
+                            ["grok"] = new AgentDefinition
+                            {
+                                Kind = "Grok",
+                                Exe = Path.Combine(workspace, "grok.exe"),
+                            },
+                        },
+                    }));
+            });
+        gate.Provider = harness.Provider;
+        return harness;
+    }
+
+    private static async Task SeedPinnedAgentAsync(string connectionString, Guid agentId, string workspace)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
+        var now = DateTime.UtcNow;
+        db.Agents.Add(new Agent
+        {
+            Id = agentId,
+            Name = "phone-home-grok",
+            Slug = $"ph-{agentId:N}"[..16],
+            WorkingDirectory = workspace,
+            Kind = AgentKind.Grok,
+            Status = AgentStatus.Idle,
+            SessionBackend = SessionBackend.PtyHost,
+            AlwaysOn = false,
+            IsPoolDelegate = false,
+            CreatedAt = now,
+            UpdatedAt = now,
+        });
         await db.SaveChangesAsync();
-        await using var restarted = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
-        (await restarted.AgentSessions.CountAsync(s => s.Id == session.Id && s.RunnerId == "grok-linux")).ShouldBe(1);
-        var loaded = await restarted.AgentSessions.SingleAsync(s => s.Id == session.Id);
-        loaded.RunnerStoreId.ShouldBe(session.RunnerStoreId);
-        loaded.RunnerCwd.ShouldBe("/work");
+    }
+
+    private sealed class ThrowOnSessionInsert : SaveChangesInterceptor
+    {
+        public bool Armed { get; set; } = true;
+        public Action? OnSessionInserted { get; set; }
+        private bool _inserted;
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            _inserted = eventData.Context is { } ctx
+                && ctx.ChangeTracker.Entries<AgentSession>().Any(e => e.State == EntityState.Added);
+            if (Armed && _inserted)
+                throw new InvalidOperationException("injected session commit failure");
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<int> SavedChangesAsync(
+            SaveChangesCompletedEventData eventData, int result, CancellationToken cancellationToken = default)
+        {
+            if (_inserted)
+                OnSessionInserted?.Invoke();
+            _inserted = false;
+            return base.SavedChangesAsync(eventData, result, cancellationToken);
+        }
+    }
+
+    private sealed class GateScopeFactory : IServiceScopeFactory
+    {
+        public IServiceProvider? Provider { get; set; }
+        public bool Refuse { get; set; }
+
+        public IServiceScope CreateScope()
+        {
+            if (Refuse)
+                throw new InvalidOperationException("injected enqueue failure");
+            return Provider!.CreateScope();
+        }
+    }
+
+    private sealed class PrefixStartAdapter(FakeAgentProtocolAdapter inner) : IAgentProtocolAdapter, IAttachableProtocolAdapter
+    {
+        public Func<AgentLaunchSpec, CancellationToken, Task>? BeforeStart { get; init; }
+
+        public Task<int> Exited => inner.Exited;
+        public int? Pid => inner.Pid;
+        public AgentExitReason ExitReason => inner.ExitReason;
+        public string? AuditDirectory => inner.AuditDirectory;
+        public AgentLaunchBlock? LaunchBlock => inner.LaunchBlock;
+        public event Action<string>? OnTextDelta
+        {
+            add => inner.OnTextDelta += value;
+            remove => inner.OnTextDelta -= value;
+        }
+
+        public async Task StartAsync(AgentLaunchSpec spec, CancellationToken ct)
+        {
+            if (BeforeStart is not null)
+                await BeforeStart(spec, ct);
+            await inner.StartAsync(spec, ct);
+        }
+
+        public Task AttachAsync(Guid sessionId, CancellationToken ct) => inner.AttachAsync(sessionId, ct);
+        public Task<bool> KillAsync(TimeSpan timeout, CancellationToken ct) => inner.KillAsync(timeout, ct);
+        public Task<bool> KillGenerationAsync(DateTime expectedAcceptedStartedAt, TimeSpan timeout, CancellationToken ct) =>
+            inner.KillGenerationAsync(expectedAcceptedStartedAt, timeout, ct);
+        public Task SendPromptAsync(string prompt, CancellationToken ct) => inner.SendPromptAsync(prompt, ct);
+        public Task<bool> WaitForFirstPromptOutputAsync(TimeSpan timeout, CancellationToken ct) =>
+            inner.WaitForFirstPromptOutputAsync(timeout, ct);
+        public Task SendInputAsync(string input, CancellationToken ct) => inner.SendInputAsync(input, ct);
+        public Task<RunnerConditionalInputResult> SendConditionalInputAsync(
+            RunnerConditionalInputRequest request, CancellationToken ct) =>
+            inner.SendConditionalInputAsync(request, ct);
+        public Task ResizeAsync(int cols, int rows, CancellationToken ct) => inner.ResizeAsync(cols, rows, ct);
+        public Task<bool> WaitForReadyAsync(CancellationToken ct) => inner.WaitForReadyAsync(ct);
+        public Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct) => inner.WaitForTurnCompleteAsync(ct);
+        public string SnapshotRawOutput() => inner.SnapshotRawOutput();
+        public Task<string> SnapshotRawOutputAsync(CancellationToken ct) => inner.SnapshotRawOutputAsync(ct);
+        public string SnapshotRenderedScreen() => inner.SnapshotRenderedScreen();
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
     }
 
     private static string JsonSerializerRoundTrip(object value) =>

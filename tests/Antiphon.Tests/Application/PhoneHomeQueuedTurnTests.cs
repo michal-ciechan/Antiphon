@@ -10,6 +10,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -213,26 +214,128 @@ public class PhoneHomeQueuedTurnTests
         ordinaryInputFrames.ShouldBeEmpty();
         var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == ordinary.Messages.Single().Id);
         row.Status.ShouldBe(QueuedMessageStatus.Pending);
+
+        var bytes = "remote-rules"u8.ToArray();
+        var generation = session.GrokRulesGeneration!.Value;
+        var expected = new GrokRulesReceipt(
+            $"/state/instructions/grok/{h.SessionId:N}/rules.md",
+            GrokRulesTransport.Hash(bytes), bytes.Length, 1, generation);
+        session.GrokRulesExpectedSha256 = expected.Sha256;
+        session.GrokRulesExpectedByteCount = expected.ByteCount;
+        await db.SaveChangesAsync();
+        h.Runner.SessionResponse = new SessionRunnerSessionDto(
+            h.SessionId, 1, DateTime.UtcNow, "Running", null, AgentExitReason.Unknown, 0)
+        {
+            GrokRulesReceipt = expected,
+        };
+        var rules = h.Provider.GetRequiredService<GrokRulesRefreshService>();
+        await rules.CaptureReceiptAsync(h.SessionId, CancellationToken.None);
+        await rules.ReconcileAsync(h.SessionId, CancellationToken.None);
+        var refresh = await db.SessionQueuedMessages.AsNoTracking()
+            .SingleAsync(m => m.AgentSessionId == h.SessionId && m.RulesRefreshKey != null);
+        var ack = $"ANTIPHON_RULES_ACK id={refresh.Id:N} generation={generation:N} sha256={expected.Sha256}";
+        h.Adapter.OnSubmitted = async submitted =>
+        {
+            await BridgeQueueHarness.InsertEntryAsync(
+                h.SessionId, TranscriptKinds.UserPrompt, submitted,
+                timestamp: DateTime.UtcNow, connectionString: schema.ConnectionString);
+            await BridgeQueueHarness.InsertEntryAsync(
+                h.SessionId, TranscriptKinds.AssistantText, ack,
+                timestamp: DateTime.UtcNow, connectionString: schema.ConnectionString);
+            await BridgeQueueHarness.InsertEntryAsync(
+                h.SessionId, TranscriptKinds.TurnEnd, stopReason: TranscriptKinds.StopReasons.EndTurn,
+                connectionString: schema.ConnectionString);
+        };
+        await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
+        h.Adapter.SubmittedBodies.ShouldContain(s => s.Contains(refresh.Body, StringComparison.Ordinal));
+        await using (var held = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            var ordinaryStillHeld = await held.SessionQueuedMessages.AsNoTracking()
+                .SingleAsync(m => m.Id == ordinary.Messages.Single().Id);
+            ordinaryStillHeld.Status.ShouldBe(QueuedMessageStatus.Pending);
+        }
+
+        await rules.ReconcileAsync(h.SessionId, CancellationToken.None);
+        await db.Entry(session).ReloadAsync();
+        session.GrokRulesState.ShouldBe(GrokRulesState.Ready);
+        h.Adapter.OnSubmitted = async submitted =>
+        {
+            await BridgeQueueHarness.InsertEntryAsync(
+                h.SessionId, TranscriptKinds.UserPrompt, submitted,
+                timestamp: DateTime.UtcNow, connectionString: schema.ConnectionString);
+            await BridgeQueueHarness.InsertEntryAsync(
+                h.SessionId, TranscriptKinds.TurnEnd, stopReason: TranscriptKinds.StopReasons.EndTurn,
+                connectionString: schema.ConnectionString);
+        };
+        await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
+        h.Adapter.SubmittedBodies.ShouldContain(s => s.Contains("ordinary-phone-home-work", StringComparison.Ordinal));
+        await using var opened = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var delivered = await opened.SessionQueuedMessages.SingleAsync(m => m.Id == ordinary.Messages.Single().Id);
+        delivered.Status.ShouldBe(QueuedMessageStatus.Sent);
+        delivered.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        var ordinaryPrompt = await opened.TranscriptEntries
+            .Where(t => t.AgentSessionId == h.SessionId && t.Kind == TranscriptKinds.UserPrompt && t.Text != null && t.Text.Contains("ordinary-phone-home-work"))
+            .OrderByDescending(t => t.Sequence)
+            .FirstAsync();
+        PromptSubmissionMatch.IsCompleteIn("ordinary-phone-home-work", ordinaryPrompt.Text).ShouldBeTrue();
     }
 
     [Test]
     public async Task Queue_handoff_cuts_recover_to_recipient()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { ConnectionString = schema.ConnectionString });
-        var body = "PHONE_HOME_HANDOFF_BODY_MARKER";
-        await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
-        await using var recovered = await BridgeQueueHarness.CreateAsync(new() { ConnectionString = schema.ConnectionString });
-        recovered.Adapter.OnSubmitted = submitted =>
+        var insertFault = new ThrowOnQueuedMessageInsert();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
         {
-            recovered.Runtime.ObserveTranscriptAsync(Map(Prompt(h.SessionId, submitted, "handoff-uuid", 20)), CancellationToken.None);
-            return Task.CompletedTask;
-        };
-        await recovered.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
-        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
-        var recoveredRow = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId && m.Body == body);
-        var recoveredOk = recoveredRow.Status is QueuedMessageStatus.Sent or QueuedMessageStatus.Pending;
-        recoveredOk.ShouldBeTrue();
+            AlwaysOn = false,
+            ConnectionString = schema.ConnectionString,
+            ConfigureDbContext = o => o.AddInterceptors(insertFault),
+        });
+        await PrepareGrokSessionAsync(h);
+
+        insertFault.Armed = true;
+        const string insertFailBody = "PHONE_HOME_HANDOFF_INSERT_FAIL_MARKER";
+        var insertError = await Should.ThrowAsync<InvalidOperationException>(() =>
+            h.Queue.EnqueueAsync(h.SessionId, insertFailBody, MessageSendMode.WhenIdle, CancellationToken.None));
+        insertError.Message.ShouldContain("injected enqueue insert failure");
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        await using (var dbFail = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            (await dbFail.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == h.SessionId && m.Body == insertFailBody))
+                .ShouldBe(0);
+        }
+
+        insertFault.Armed = false;
+        var idleFloor = await h.CurrentTranscriptMaxSequenceAsync();
+        var retry = await h.Queue.EnqueueAsync(
+            h.SessionId, insertFailBody, MessageSendMode.WhenIdle, CancellationToken.None, deliverIfIdle: false);
+        await RecoverQueuedCutAsync(h, retry.Messages.Single().Id, insertFailBody, busy: false, idleFloor);
+
+        const string busyBody = "PHONE_HOME_HANDOFF_BUSY_MARKER";
+        await h.Runtime.ObserveTranscriptAsync(
+            Map(Prompt(h.SessionId, "prior-open-turn", "busy-1")), CancellationToken.None);
+        var busyFloor = await h.CurrentTranscriptMaxSequenceAsync();
+        var busy = await h.Queue.EnqueueAsync(
+            h.SessionId, busyBody, MessageSendMode.WhenIdle, CancellationToken.None, deliverIfIdle: false);
+        await RecoverQueuedCutAsync(h, busy.Messages.Single().Id, busyBody, busy: true, busyFloor);
+
+        h.Adapter.ThrowOnSend = new ServiceUnavailableException(
+            "Phone-home runner is unavailable.", PhoneHomeProblemTypes.Unavailable);
+        const string socketBody = "PHONE_HOME_HANDOFF_SOCKET_DOWN_MARKER";
+        var socketFloor = await h.CurrentTranscriptMaxSequenceAsync();
+        var socket = await h.Queue.EnqueueAsync(
+            h.SessionId, socketBody, MessageSendMode.WhenIdle, CancellationToken.None, deliverIfIdle: false);
+        try
+        {
+            await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is ConflictException or ServiceUnavailableException)
+        {
+            // bound runner unavailable before input
+        }
+
+        h.Adapter.ThrowOnSend = null;
+        await RecoverQueuedCutAsync(h, socket.Messages.Single().Id, socketBody, busy: false, socketFloor);
     }
 
     [Test]
@@ -320,6 +423,83 @@ public class PhoneHomeQueuedTurnTests
         await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
         var ordinaryInputFrames = h.Adapter.SubmittedBodies.ToList();
         ordinaryInputFrames.ShouldBeEmpty();
+    }
+
+    private static async Task RecoverQueuedCutAsync(
+        BridgeQueueHarness original, Guid queueId, string body, bool busy, long floor)
+    {
+        await using var recovered = await BridgeQueueHarness.CreateAsync(new()
+        {
+            AlwaysOn = false,
+            ConnectionString = original.ConnectionString,
+        });
+        recovered.Runtime.Register(original.SessionId, recovered.Adapter);
+        recovered.Adapter.OnSubmitted = async submitted =>
+        {
+            await BridgeQueueHarness.InsertEntryAsync(
+                original.SessionId, TranscriptKinds.UserPrompt, submitted,
+                timestamp: DateTime.UtcNow, connectionString: original.ConnectionString);
+            await BridgeQueueHarness.InsertEntryAsync(
+                original.SessionId, TranscriptKinds.TurnEnd, stopReason: TranscriptKinds.StopReasons.EndTurn,
+                connectionString: original.ConnectionString);
+        };
+
+        await recovered.Queue.FlushIfIdleAsync(original.SessionId, CancellationToken.None);
+        if (busy)
+        {
+            recovered.Adapter.SubmittedBodies.ShouldBeEmpty();
+            await using (var dbBusy = new AppDbContext(TestDbFixture.CreateDbContextOptions(original.ConnectionString)))
+            {
+                var pending = await dbBusy.SessionQueuedMessages.SingleAsync(m => m.Id == queueId);
+                pending.Status.ShouldBe(QueuedMessageStatus.Pending);
+                pending.Body.ShouldBe(body);
+            }
+
+            await recovered.Runtime.ObserveTranscriptAsync(
+                Map(new RunnerTranscriptEvent(
+                    original.SessionId, floor + 2, TranscriptKinds.TurnEnd, "busy-end", null,
+                    DateTimeOffset.UtcNow, null, null, null, null, null, null, TranscriptKinds.StopReasons.EndTurn)),
+                CancellationToken.None);
+            await recovered.Queue.FlushIfIdleAsync(original.SessionId, CancellationToken.None);
+        }
+
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(original.ConnectionString));
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.Id == queueId);
+        var prompt = await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == original.SessionId
+                && t.Kind == TranscriptKinds.UserPrompt
+                && t.Sequence > floor
+                && t.Text != null
+                && t.Text.Contains(body))
+            .OrderByDescending(t => t.Sequence)
+            .FirstOrDefaultAsync();
+        prompt.ShouldNotBeNull(
+            $"queue {queueId} status={message.Status} verdict={message.DeliveryVerdict} attempts={message.DeliveryAttempts} submitted={recovered.Adapter.SubmittedBodies.Count}");
+        PromptSubmissionMatch.IsCompleteIn(body, prompt!.Text).ShouldBeTrue();
+        var submittedBody = recovered.Adapter.SubmittedBodies.First(s => s.Contains(body, StringComparison.Ordinal));
+        PromptSubmissionMatch.IsCompleteIn(body, submittedBody).ShouldBeTrue();
+        message.AgentSessionId.ShouldBe(original.SessionId);
+        message.Body.ShouldBe(body);
+        message.Status.ShouldBe(QueuedMessageStatus.Sent);
+        message.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+    }
+
+    private sealed class ThrowOnQueuedMessageInsert : SaveChangesInterceptor
+    {
+        public bool Armed { get; set; }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (Armed
+                && eventData.Context is { } ctx
+                && ctx.ChangeTracker.Entries<SessionQueuedMessage>().Any(e => e.State == EntityState.Added))
+            {
+                throw new InvalidOperationException("injected enqueue insert failure");
+            }
+
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
     }
 
     private static async Task<BridgeQueueHarness> CreateReceiptHarnessAsync(string connectionString) =>
