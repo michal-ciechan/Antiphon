@@ -46,7 +46,7 @@ $clientDir = Join-Path $repoRoot 'client'
 $logDir = Join-Path $repoRoot 'logs'
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out-Null }
 $logFile = Join-Path $logDir 'client-tests.log'
-$vitest = Join-Path $clientDir 'node_modules\vitest\vitest.mjs'
+$vitest = Join-Path (Join-Path (Join-Path $clientDir 'node_modules') 'vitest') 'vitest.mjs'
 
 # A fresh linked worktree gets a client/ with no node_modules, and this used to print "run npm ci"
 # and exit 1. That reads as a failing client suite to anyone capturing the output, and it is a dead

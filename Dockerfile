@@ -2,7 +2,7 @@
 # The last stage is the runtime image. Tests and the SDK do not ship.
 ARG SOURCE_REVISION=unknown
 
-FROM node:22-alpine AS client-build
+FROM node:22-bookworm AS client-build
 WORKDIR /src/client
 COPY client/package.json client/package-lock.json ./
 RUN npm ci
