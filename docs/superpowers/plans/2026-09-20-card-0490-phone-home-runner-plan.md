@@ -1042,20 +1042,26 @@ Ordinary Code floor, sequential on one worker:
 | **Code total** | **Setup/build 26 + ordinary V/R 59 + cleanup 3** | **88** |
 
 Build once per platform/project graph, then use `--no-build` for ordinary selections.
+The parenthesized class-OR form `/*/*/(PhoneHomeConnectionTests*)|(PhoneHomeStandingLaunchTests*)|.../*`
+matches zero tests on the pinned TUnit 1.44 runner. Use one exact class selector per
+invocation (`/*/*/PhoneHomeConnectionTests/*`, and the same for each named class below)
+and a fresh results directory each time.
+
 Example concrete command:
 
 ```powershell
 dotnet build tests/Antiphon.Tests --property:OutputPath=bin-card0490/ --nologo
-dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-card0490/ -- --treenode-filter '/*/*/(PhoneHomeConnectionTests*)|(PhoneHomeStandingLaunchTests*)|(PhoneHomeSessionRoutingTests*)|(PhoneHomeReconciliationTests*)|(PhoneHomeEventPumpTests*)|(PhoneHomeQueuedTurnTests*)/*' --report-trx --report-trx-filename phone-home.trx --results-directory .antiphon/card0490-v-new
+dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-card0490/ -- --treenode-filter '/*/*/PhoneHomeConnectionTests/*' --report-trx --report-trx-filename phone-home-connection.trx --results-directory .antiphon/card0490-v-connection
 ```
 
-Run the other table rows with a single exact class selector per class, or the same
-parenthesized TUnit OR syntax, and a fresh result directory per invocation. Code must
-show every expected class/method in the resulting nonzero TRX, including native
-Linux methods with no skips. `AgentLaunchSpecTests` is included in Unit. The existing
-tailer replay/half-line/exit methods are included by its class selection. Ordinary
-Linux execution may use the task-owned SDK image/test target from S5; this permission
-does not extend to handing a SourceLanding snapshot to Docker during Mutation.
+Named new-server classes to run that way, each as its own filter: `PhoneHomeConnectionTests`,
+`PhoneHomeStandingLaunchTests`, `PhoneHomeSessionRoutingTests`, `PhoneHomeReconciliationTests`,
+`PhoneHomeEventPumpTests`, `PhoneHomeQueuedTurnTests`. Code must show every expected
+class/method in the resulting nonzero TRX, including native Linux methods with no skips.
+`AgentLaunchSpecTests` is included in Unit. The existing tailer replay/half-line/exit
+methods are included by its class selection. Ordinary Linux execution may use the
+task-owned SDK image/test target from S5; this permission does not extend to handing a
+SourceLanding snapshot to Docker during Mutation.
 
 Mutation floor (no broad suites and no additional live-model turn):
 
@@ -2321,3 +2327,8 @@ Ordinary V/R for this review-repair round excludes V-F1 through V-F4 as passing
 evidence. Product R-5 receipt tests remain in ordinary scope. Remaining product
 PCs (PC-1 through PC-27 and PC-32 through PC-46) stay pending for post-land
 Mutation after ordinary Review.
+
+`Card0490NativeHandoffTests` (all five methods) skips with
+`SkipTestException("CARD-0490 D-12 is not yet implemented: V-F3 pipe handoff needs a real QEMU process, owned pipes and original job.")`,
+matching `Card0490NativeCustodyTests`. A skip is not V-F3 proof and is not a green
+control for H-PC-46/47/48/54/55.
