@@ -46,30 +46,22 @@ public class Card0490NativeGuestGuardTests
     [Test]
     public async Task Guest_refuses_non_ext4_work_root()
     {
-        RequireLinux();
-        var fstype = File.ReadAllText("/proc/self/mounts");
-        var guestExecutionPermitted = fstype.Contains(" / tmpfs ", StringComparison.Ordinal) && false;
-        guestExecutionPermitted.ShouldBeFalse();
-        await Task.CompletedTask;
+        throw new SkipTestException(
+            "CARD-0490 D-12 is not yet implemented: guest ext4 probes require the real QEMU guest.");
     }
 
     [Test]
     public async Task Guest_refuses_prior_phase_workspace()
     {
-        RequireLinux();
-        var marker = Path.Combine("/tmp", "card0490-prior-" + Guid.NewGuid().ToString("N"));
-        var guestExecutionPermitted = File.Exists(marker);
-        guestExecutionPermitted.ShouldBeFalse();
-        await Task.CompletedTask;
+        throw new SkipTestException(
+            "CARD-0490 D-12 is not yet implemented: guest workspace probes require the real QEMU guest.");
     }
 
     [Test]
     public async Task Guest_build_cannot_reuse_seeded_application_output()
     {
-        RequireLinux();
-        var reusedApplicationOutputs = new List<string>();
-        reusedApplicationOutputs.ShouldBeEmpty();
-        await Task.CompletedTask;
+        throw new SkipTestException(
+            "CARD-0490 D-12 is not yet implemented: guest build probes require the real QEMU guest.");
     }
 
     [Test]

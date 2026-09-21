@@ -2302,3 +2302,22 @@ documentation-only task. Runtime tests/builds/PCs executed: **0**.
 all 55 helper methods and the retained recipient/custody qualifications. Run all
 ordinary V/R, measure the 218-minute floor, and return to ordinary Review with
 101 PCs pending for post-land Mutation at the 521-minute estimated floor.
+
+## D-12 status: not yet implemented (review repair 5782b48f)
+
+The in-memory `OwnedQemuProcess` / `CustodyPipeHandoff` layer never launches a real
+QEMU process, opens a real pipe, or observes a real job object. V-F3/V-F4 therefore
+have no executable native evidence at this revision. QEMU is not on PATH in the
+Code worktree; `tests/fixtures/card0490-linux/assets.lock.json` pins hashes but
+does not ship the binaries.
+
+**SourceLanding Mutation must not be commissioned against D-12.** PC-28 through
+PC-31 and H-PC-01 through H-PC-55 are not-yet-implemented. They are not pending
+controls. A later dedicated Code slice implements E1-E4 on the pinned QEMU 9.2.0
+assets with Windows ModernConPty, Q surviving W, T's duplicated release writer,
+raw-stream EOF, and original-job zero/drain.
+
+Ordinary V/R for this review-repair round excludes V-F1 through V-F4 as passing
+evidence. Product R-5 receipt tests remain in ordinary scope. Remaining product
+PCs (PC-1 through PC-27 and PC-32 through PC-46) stay pending for post-land
+Mutation after ordinary Review.

@@ -1,6 +1,7 @@
 using Antiphon.Card0490.NativeHarness;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.PtyHost.Tests;
 
@@ -103,9 +104,8 @@ public class Card0490NativeExecutionTests
     [Test]
     public async Task Input_reparse_is_rejected_before_write()
     {
-        var outsideWriteIntents = new List<string>();
-        outsideWriteIntents.ShouldBeEmpty();
-        await Task.CompletedTask;
+        throw new SkipTestException(
+            "CARD-0490 D-12 is not yet implemented: reparse rejection needs a real owned junction fixture.");
     }
 
     [Test]
@@ -120,9 +120,8 @@ public class Card0490NativeExecutionTests
     [Test]
     public async Task Evidence_reparse_is_rejected_before_write()
     {
-        var outsideWriteIntents = new List<string>();
-        outsideWriteIntents.ShouldBeEmpty();
-        await Task.CompletedTask;
+        throw new SkipTestException(
+            "CARD-0490 D-12 is not yet implemented: evidence reparse rejection needs a real owned junction fixture.");
     }
 
     [Test]
@@ -203,10 +202,8 @@ public class Card0490NativeExecutionTests
     [Test]
     public async Task Launch_projection_is_direct_and_inherited()
     {
-        var expectedDirectStart = new QemuLaunchSpec("qemu-system-x86_64.exe", ["-no-user-config"], UseShellExecute: false);
-        var capturedStart = expectedDirectStart;
-        capturedStart.ShouldBe(expectedDirectStart);
-        await Task.CompletedTask;
+        throw new SkipTestException(
+            "CARD-0490 D-12 is not yet implemented: launch projection requires a real inherited QEMU start.");
     }
 
     [Test]
@@ -230,11 +227,8 @@ public class Card0490NativeExecutionTests
     [Test]
     public async Task Missing_final_frame_invalidates_complete_prefix()
     {
-        var result = new RunResult(true, Id(), ["M"], 1, ["M"], false, null, true, true, false, "Product");
-        var resultAccepted = result.Accepted && false;
-        result.Accepted.ShouldBeTrue();
-        resultAccepted.ShouldBeFalse();
-        await Task.CompletedTask;
+        throw new SkipTestException(
+            "CARD-0490 D-12 is not yet implemented: final-frame completeness needs the real exporter path.");
     }
 
     [Test]
@@ -344,9 +338,8 @@ public class Card0490NativeExecutionTests
     [Test]
     public async Task Canceled_run_waits_for_owned_join()
     {
-        var cancellationCompletion = new { IsCompleted = false };
-        cancellationCompletion.IsCompleted.ShouldBeFalse();
-        await Task.CompletedTask;
+        throw new SkipTestException(
+            "CARD-0490 D-12 is not yet implemented: canceled join requires a real owned QEMU child.");
     }
 
     [Test]
