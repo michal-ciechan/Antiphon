@@ -8,6 +8,12 @@ $ErrorActionPreference = 'Stop'
 if (-not (Test-Path -LiteralPath $Manifest)) { Write-Error 'Manifest is required'; exit 2 }
 $m = Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json
 $root = [string]$m.evidenceRoot
+if (-not $env:ANTIPHON_C590_STUB) {
+    . (Join-Path $PSScriptRoot 'c590-real.ps1')
+    if (Test-C590LiveCase -Case $Case) {
+        Invoke-C590LiveCase -Case $Case -Manifest $m
+    }
+}
 
 function Test-Boundary {
     param([string]$PathValue, [string]$RootValue, [string]$Canonical)

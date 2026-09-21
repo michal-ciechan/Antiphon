@@ -7,6 +7,15 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'c590-command.ps1')
 
+# Live session entry. Stub command tests never set this switch, so their manifest
+# checks below stay the boundary under test.
+if ($ThrowawayStack -and -not $env:ANTIPHON_C590_STUB) {
+    $env:C590_CASE = 'throwaway-all'
+    if (-not $env:C590_REEXEC) { $env:C590_REEXEC = '1' }
+    & bash (Join-Path $PSScriptRoot 'c590-remote.sh')
+    exit $LASTEXITCODE
+}
+
 if (-not $Manifest -or -not (Test-Path -LiteralPath $Manifest)) {
     Write-Error 'Manifest is required'
     exit 2
