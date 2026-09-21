@@ -31,4 +31,11 @@ public enum SessionTerminationSource
     /// treated as a human stop.
     /// </summary>
     PolicyRefresh = 4,
+
+    /// <summary>
+    /// CARD-0079: conditional compaction-continuation recovery confirmed this generation
+    /// exited. Distinct from <see cref="OperatorRequest"/> so supervision is not suspended,
+    /// and from <see cref="SystemRequest"/> so the audit names the authorized exception.
+    /// </summary>
+    CompactionContinuationRecovery = 5,
 }

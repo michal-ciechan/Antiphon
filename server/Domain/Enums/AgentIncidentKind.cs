@@ -579,4 +579,41 @@ public enum AgentIncidentKind
     /// Warning; no automatic revert.
     /// </summary>
     DelegateCommitAudit = 67,
+
+    /// <summary>
+    /// CARD-0079: an AlwaysOn Claude Check seat has an explicit auto CompactBoundary,
+    /// its synthetic continuation, and no later progress for the configured silence bound.
+    /// Warning. Detection only until a separate restart-requested row records intent.
+    /// </summary>
+    CompactionContinuationStalled = 68,
+
+    /// <summary>
+    /// CARD-0079: the recovery service committed a stop/resume for that episode.
+    /// Warning. Written in the same transaction as the stop request, before any runner call.
+    /// Actor is <c>check-compaction-recovery</c>.
+    /// </summary>
+    CompactionContinuationRestartRequested = 69,
+
+    /// <summary>
+    /// CARD-0079: conditional stop refused, or the captured generation's exit could not be
+    /// proved. Error. No resume follows.
+    /// </summary>
+    CompactionContinuationNeedsDecision = 70,
+
+    /// <summary>
+    /// CARD-0079: late progress or a changed owner aborted the episode before stop.
+    /// Not a successful restart.
+    /// </summary>
+    CompactionContinuationAborted = 71,
+
+    /// <summary>
+    /// CARD-0079: the resumed generation is waiting for a useful Check and a whole caller receipt.
+    /// Launch acknowledgement is not this kind.
+    /// </summary>
+    CompactionContinuationAwaitingCheck = 72,
+
+    /// <summary>
+    /// CARD-0079: useful Check evidence and a whole caller receipt closed the episode.
+    /// </summary>
+    CompactionContinuationRecovered = 73,
 }
