@@ -81,10 +81,10 @@ describe('taskWorkLine', () => {
     expect(taskWorkLine(task({ agentKind: 'Grok' }), { formatTime: utcTime }).line).toBe(
       '#56 launch leak - slices 3+4 · grok-4.7',
     )
-    // xAI ships two models, so the bottom half of the ladder collapses onto grok-4.5.
+    // CARD-0169 collapse: Medium is the same alias as Frontier (2026-09-21 pin is grok-4.7).
     expect(
       taskWorkLine(task({ agentKind: 'Grok', modelLevel: 'Medium' }), { formatTime: utcTime }).line,
-    ).toBe('#56 launch leak - slices 3+4 · grok-4.5')
+    ).toBe('#56 launch leak - slices 3+4 · grok-4.7')
   })
 
   it('every Claude tier still reads exactly as it did before the kind was consulted', () => {
