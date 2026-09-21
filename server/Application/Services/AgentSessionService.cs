@@ -2944,8 +2944,44 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         using var scope = _scopeFactory.CreateScope();
         var admission = scope.ServiceProvider.GetService<WorkspaceUseAdmission>();
         if (admission is null || string.IsNullOrWhiteSpace(session.Cwd)) return;
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var path = session.Cwd;
+        var branch = "";
+        var repo = session.Cwd;
+        if (session.WorktreeId is Guid worktreeId)
+        {
+            var worktree = await db.Worktrees.AsNoTracking().FirstOrDefaultAsync(w => w.Id == worktreeId, ct);
+            if (worktree is not null)
+            {
+                if (!string.IsNullOrWhiteSpace(worktree.Path)) path = worktree.Path;
+                branch = worktree.Branch ?? "";
+                if (!string.IsNullOrWhiteSpace(worktree.RepoPath)) repo = worktree.RepoPath;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(branch) || WorkspaceReservationKey.PathsEqual(repo, path))
+        {
+            var task = await db.AgentTasks.AsNoTracking()
+                .Where(t => t.AgentSessionId == session.Id
+                    || (session.CardId != null && t.CardId == session.CardId)
+                    || t.WorktreePath == path
+                    || t.WorkingDirectory == path)
+                .OrderByDescending(t => t.CreatedAt)
+                .Select(t => new { t.WorktreePath, t.WorkingDirectory, t.WorktreeBranch, t.RepoPath })
+                .FirstOrDefaultAsync(ct);
+            if (task is not null)
+            {
+                if (!string.IsNullOrWhiteSpace(task.WorktreePath ?? task.WorkingDirectory))
+                    path = task.WorktreePath ?? task.WorkingDirectory!;
+                if (!string.IsNullOrWhiteSpace(task.WorktreeBranch))
+                    branch = task.WorktreeBranch;
+                if (!string.IsNullOrWhiteSpace(task.RepoPath))
+                    repo = task.RepoPath;
+            }
+        }
+
         await admission.RequireConsumerAsync(new WorkspaceReservationCommand(
-            new WorkspaceReservationKey(session.Cwd, "", session.Cwd),
+            WorkspaceReservationKey.For(path, branch, repo),
             WorkspaceReservationKind.Launch, null, session.Id), ct);
     }
 

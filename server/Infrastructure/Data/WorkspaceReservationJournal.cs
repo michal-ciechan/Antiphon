@@ -33,13 +33,14 @@ public sealed class WorkspaceReservationJournal(IServiceScopeFactory scopes, Tim
         }
 
         var now = clock.GetUtcNow().UtcDateTime;
+        var key = command.Key.Normalized();
         var row = new WorkspaceUseReservation
         {
             Id = Guid.NewGuid(),
             Generation = 1,
-            CanonicalPath = command.Key.CanonicalPath,
-            SourceFullRef = command.Key.SourceFullRef,
-            CommonDirectory = command.Key.CommonDirectory,
+            CanonicalPath = key.CanonicalPath,
+            SourceFullRef = key.SourceFullRef,
+            CommonDirectory = key.CommonDirectory,
             TaskId = command.TaskId,
             SessionId = command.SessionId,
             RetirementId = command.RetirementId,
@@ -75,13 +76,14 @@ public sealed class WorkspaceReservationJournal(IServiceScopeFactory scopes, Tim
             return new(true, ToSnapshot(mine), null);
         }
 
+        var key = command.Key.Normalized();
         var row = new WorkspaceUseReservation
         {
             Id = Guid.NewGuid(),
             Generation = 1,
-            CanonicalPath = command.Key.CanonicalPath,
-            SourceFullRef = command.Key.SourceFullRef,
-            CommonDirectory = command.Key.CommonDirectory,
+            CanonicalPath = key.CanonicalPath,
+            SourceFullRef = key.SourceFullRef,
+            CommonDirectory = key.CommonDirectory,
             TaskId = command.TaskId,
             RetirementId = command.RetirementId,
             Kind = WorkspaceReservationKind.Retirement,
@@ -127,22 +129,5 @@ public sealed class WorkspaceReservationJournal(IServiceScopeFactory scopes, Tim
         new(row.Id, row.Generation, row.Kind, row.TaskId, row.SessionId, row.RetirementId, row.Active);
 
     private static bool Same(WorkspaceUseReservation row, WorkspaceReservationKey key) =>
-        PathsEqual(row.CanonicalPath, key.CanonicalPath)
-        && string.Equals(row.SourceFullRef, key.SourceFullRef, StringComparison.Ordinal)
-        && PathsEqual(row.CommonDirectory, key.CommonDirectory);
-
-    private static bool PathsEqual(string left, string right)
-    {
-        try
-        {
-            return string.Equals(
-                Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
-                Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
-                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            return string.Equals(left, right, StringComparison.Ordinal);
-        }
-    }
+        WorkspaceReservationKey.Same(row.CanonicalPath, row.SourceFullRef, row.CommonDirectory, key);
 }

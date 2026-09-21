@@ -292,7 +292,7 @@ public sealed class TaskWorktreeRetirementService
         if (_admission is not null)
         {
             var consumers = await _admission.FindLiveConsumersAsync(
-                new WorkspaceReservationKey(retirement.WorktreePath, retirement.SourceFullRef, retirement.CommonDirectory),
+                WorkspaceReservationKey.For(retirement.WorktreePath, retirement.SourceFullRef, retirement.RepositoryPath),
                 retirement.TaskId, ct);
             if (consumers.Count > 0
                 || await _admission.HasLiveTaskConsumerAsync(retirement.WorktreePath, retirement.SourceFullRef, retirement.TaskId, ct)
@@ -357,7 +357,7 @@ public sealed class TaskWorktreeRetirementService
         if (_reservations is not null)
         {
             var claimed = await _reservations.TryClaimRetirementAsync(new(
-                new WorkspaceReservationKey(retirement.WorktreePath, retirement.SourceFullRef, retirement.CommonDirectory),
+                WorkspaceReservationKey.For(retirement.WorktreePath, retirement.SourceFullRef, retirement.RepositoryPath),
                 WorkspaceReservationKind.Retirement, retirement.TaskId, null, retirement.Id), ct);
             if (!claimed.Accepted) return false;
         }

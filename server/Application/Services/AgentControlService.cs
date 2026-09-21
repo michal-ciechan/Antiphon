@@ -869,8 +869,24 @@ public sealed class AgentControlService
             : Path.GetFullPath(agent.WorkingDirectory);
         if (_workspaceUse is not null)
         {
+            var branch = "";
+            var repo = string.IsNullOrWhiteSpace(agent.WorkingDirectory) ? cwd : agent.WorkingDirectory;
+            var owned = await _db.AgentTasks.AsNoTracking()
+                .Where(t => t.AgentId == agent.Id && t.WorktreePath != null)
+                .OrderByDescending(t => t.CreatedAt)
+                .Select(t => new { t.WorktreePath, t.WorktreeBranch, t.RepoPath })
+                .FirstOrDefaultAsync(ct);
+            if (owned is not null)
+            {
+                if (!string.IsNullOrWhiteSpace(owned.WorktreeBranch)) branch = owned.WorktreeBranch;
+                if (!string.IsNullOrWhiteSpace(owned.RepoPath)) repo = owned.RepoPath;
+                if (!string.IsNullOrWhiteSpace(owned.WorktreePath)
+                    && WorkspaceReservationKey.PathsEqual(owned.WorktreePath, cwd))
+                    cwd = owned.WorktreePath;
+            }
+
             await _workspaceUse.RequireConsumerAsync(new WorkspaceReservationCommand(
-                new WorkspaceReservationKey(cwd, "", cwd),
+                WorkspaceReservationKey.For(cwd, branch, repo),
                 WorkspaceReservationKind.Launch, null), ct);
         }
         var sessionId = inspect.NativeSessionId ?? Guid.NewGuid();

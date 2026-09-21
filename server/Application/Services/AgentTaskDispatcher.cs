@@ -3441,11 +3441,8 @@ public sealed class AgentTaskDispatcher
             var path = claimed.WorktreePath ?? claimed.WorkingDirectory;
             if (!string.IsNullOrWhiteSpace(path))
             {
-                var branch = claimed.WorktreeBranch is null ? ""
-                    : claimed.WorktreeBranch.StartsWith("refs/", StringComparison.Ordinal) ? claimed.WorktreeBranch
-                    : "refs/heads/" + claimed.WorktreeBranch;
                 await _workspaceUse.RequireConsumerAsync(new WorkspaceReservationCommand(
-                    new WorkspaceReservationKey(path, branch, claimed.RepoPath ?? path),
+                    WorkspaceReservationKey.ForTask(claimed.WorktreePath, claimed.WorkingDirectory, claimed.WorktreeBranch, claimed.RepoPath),
                     WorkspaceReservationKind.Launch, claimed.Id), ct);
             }
         }
