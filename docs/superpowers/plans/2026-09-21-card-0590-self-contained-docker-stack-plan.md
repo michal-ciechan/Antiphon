@@ -1314,3 +1314,848 @@ TestDesign must now:
 Plan validation at `04b55418`: source inspection and Markdown/diff checks only; **0 builds,
 0 product test runs, 0 PC cycles**. No runtime image, native Linux behavior or server2 setup
 was claimed verified. CARD-0594 and CARD-0598 boundaries are preserved, not re-decided.
+
+## Verification design
+
+Current TestDesign v3, task `062bfba3`, against Plan
+`ceff11d83eee33b1ebbd45dee64a1821cd753dde`. This appended section is the executable
+verification manifest and supersedes both historical rejection manifests, their V/R/G/PC
+numbers, empty checkpoint tables and the preceding TestDesign handoff. It does not replace
+the fix design. D-17â€“D-22 and S6aâ€“S6d are accepted. **Next: Code.** All results below are
+requirements, not claims of executed product tests. Small plus Medium is the ordinary test
+tier; no Linux SourceLanding or custody exception is introduced.
+
+### Inspection
+
+The companion [frozen class roster](2026-09-21-card-0590-linux-test-roster.json) is part of
+this manifest. It contains **698 existing backend classes: 503 included (72.06%), 195
+excluded**, all **24 messaging classes**, and **nine explicitly planned classes**. The
+included backend classes declare 4,657 test methods; all backend classes declare 7,038.
+Messaging declares 206 methods. These are source-method lower bounds, not parameter-expanded
+execution counts. The census traversed bodies in 789 tracked backend C# files and seven
+linked sources, merged partial declarations and inspected helper references rather than
+equating filenames/categories with classes. Embedded C# strings in classification-policy
+tests are not discovery classes. No actual inherited-test declaration adds a baseline class.
+
+The roster records source files/digests, fully qualified identity, helper closure, lane,
+exact shard, and exclusion boundary/owner for every baseline class. Code copies this
+accounting into `tests/linux-test-roster.json`, adds the nine declared classes with their
+explicit checkpoint lanes, and reconciles against compiled `TestClassificationMetadata.Read`
+for each assembly before running. Additional discovered classes, stale names, duplicates,
+unexpected skipped cases and unexecuted selected methods fail admission/evidence. A baseline
+class cannot be removed or reclassified just because Linux is red. A changed helper closure
+requires an explicit roster amendment and review. The planned command tests may spawn only
+inherited local PowerShell children and are outside the non-spawning Medium shards.
+
+| Bodies/fixtures read or syntax-audited | Boundary â†’ evidence |
+|---|---|
+| Root Dockerfile/ignore/Compose, runner Dockerfile, global/root build inputs, server/runner/PtyHost and both test csprojs | Full publish graph, SDK10/runtime9, linked files, tools/samples, embedded bundles and stage/context isolation â†’ V-1/V-3, R-1. No baseline image success inferred. |
+| `VerifyPhoneHomeGrokScriptTests` and `DelegateScriptRunner` process/argv/exit/result bodies; `scripts/test-client.ps1` | Nearest script fixtures for new command classes. Inherited process, exact argv, real exit, source-root resolution, fake credential sentinels â†’ R-2/R-5/R-10. No primary credential store or real messaging call used. |
+| `GrokDelegateDispatchTests.the_spec_a_grok_dispatch_builds_would_spawn_the_real_fakegrok_binary`, `SpecOf`, `TaskFor`, `CreateHarness`, `BuildHarness`, `SeedWarmAgentAsync`; `IsolatedSessionRunner.StartProcess`/readiness/stop | S4 staged-path consumer and diagnostic, no native process in the specification method. Whole Grok class excluded: warm fixture uses `C:\runner\instructions` receipts; the exact specification method is separately selected on Windows and Linux â†’ V-5/R-3/R-10. |
+| `TestDbFixture`, `TestDbFixtureLifecycle`/`TestDbOperations`, `TestDbFixtureIsolationTests`, `TransactionalTestBase`, assembly worker hooks | Lazy PostgreSQL; real migrated/cloned databases, rollback and disposal â†’ V-4/R-4. Worker markers must be cleared. Method selection alone does not suppress assembly hooks. No DB fixture is activated by a PC. |
+| `ProductionRunnerGuard` and both test bodies, refusing client, `AntiphonWebAppFactory`, `MockedFileSystemWebAppFactory`, both `HealthEndpointTests` methods | Independent dead URL and refusing client, per-factory database, startup disablement, SHA and land-v2 â†’ V-4/R-2. These factories clear health probes: they cannot prove stock image health or native delivery. |
+| `TestClassificationMetadata`, `TestClassificationGuardTests`, `TestLaneCategoryGuardTests`, syntax bodies/attributes and helper closure in the roster | Unit/Integration and Slow are not portability evidence. Unknown class and class-prefix overmatch rejected â†’ R-4. `Application.SpecialistToolPolicyTests` is namespace-qualified because `Agents.SpecialistToolPolicyTests` is native. |
+| `BridgeQueueHarness` construction/adapter registration/seed/disposal, `FakeAgentProtocolAdapter`, `RemoteControlRecoveryHarness`, scripted/recording/refusing runner clients | Real queue/DB with simulated receipt generation, no native child â†’ V-4/R-8. Synthetic UserPrompt cannot qualify S6. |
+| `ControlledLandingGit` construction/command boundary, `LandingProtocolHarness` DI/save/transaction fault seams, `DelegationTestServices`; `AgentTaskLandRequestTests` null-column branch | Controlled Git/refusal paths are admitted, real Git/cleanup/verification children excluded. Merely constructing a service that can spawn is distinguished from invoking its process path â†’ V-4/R-4. |
+| `StandingRecoveryFixture`, `AgentControlServiceIntegrationTests` launch harness, `OutputDistillationHarness`, `HerdrLabelFollowDbFixture`, `HerdrDisposalHttpFixture` and linked `HerdrPaneDisposalFixture`/`FakeHerdrServer`, `PhoneHomeTestHost` | Fake adapters/worktree managers, in-process HTTP/named-pipe peers and owned DBs. No live Herdr/runner or installed provider required â†’ V-4. Windows-looking wire/DTO strings alone do not exclude a class. |
+| `WorkspaceHookRunnerTests` script creation/RunAsync/timeout; native/ProcessSpawnLimit-bearing closures | Indirect shell launch is an explicit exclusion even without Process.Start in the test. Native, real Git, script-child and opt-in closures are accounted individually in the roster â†’ R-4, Windows original lanes remain owners. |
+| `SessionMessageQueueServiceTests` busy/idle, separate CR, multiline, CreateHarness; `SessionMessageQueueInterruptedAttemptTests` late-confirm/Enter-only/retype; generation/composer tests in `SessionMessageQueueWedgedHeadTests` | Real service behavior and generation/charge/floor boundaries â†’ R-8; service fixtures shorten clocks and seed records, so do not replace Linux crash acceptance. |
+| `SessionQueueReceiptPlumbingTests.C475_QueueCommitAndTransportRecovery`, idle/pump/multiline methods; `PtyWorld.StartAsync`, `ForwardingClient`, `InsertFault`, transcript pump | Existing Windows native receipt regression â†’ R-9. Six recovery arguments, five pump arguments, idle and multiline = 13 expanded cases. Exception-plus-failed-revert and shifted clock are not hard-crash evidence. |
+| `AgentSessionRuntime.PersistTranscriptAsync`/individual retry/stub handling/UUID dedup/rebase; queue attempt save, input and verdict; `SessionHealthHostedService` and `DeliveryVerificationSettings` | S6b must gate batch, individual and stub, both SSE and pull, and compare stored sequence domain â†’ V-9/V-10/R-6/R-7. Default interrupted age 30+20+30=80 seconds; stranded age 60 seconds; sweep cadence 60 seconds; recovery window 60 minutes. |
+| `AntiphonAppFixture.KestrelWebApplicationFactory.CreateHost` and overrides | Nearest real-Kestrel fixture for the new console host: retain only hosting technique, not E2E mock/Windows settings or removed health checks â†’ V-10/R-7. |
+| FakeGrok console setup/input/busy gate/UserPrompt append bodies | Existing raw console setup is Windows-only; Linux wrapper qualification and real complete native prompt required â†’ V-6/V-8/V-9. `[c467-busy]` and its real release turn are control evidence, never receipt. |
+| Messaging csproj, broker setup/disposal in `InboxConsumerServiceTests` and `KafkaConsumerGroupObservationTests`, live-chat fake/real split, gateway fake-server fixtures | Small enables `ANTIPHON_BROKER_TESTS=1`, supplies Docker and requires real Redpanda connections; fake Telegram/Slack legs run, live credential legs are deliberately absent â†’ V-3/R-2. |
+
+S4 retains the earlier **52 matching lines / 18 files / 20 fake lookup sites** table unchanged.
+Only `GrokDelegateDispatchTests.cs:267` consumes the new fake path helper. The separate E2E
+runner lookup/diagnostic also consumes it. The other sites retain their native owners; no
+bulk `.exe` replacement. Helper cases cross Windows/Linux Ã— fakeclaude/fakegrok/runner Ã—
+existing/missing Ã— correct/wrong sibling directory. New files use the nearest fixtures above.
+
+Missing execution setup is explicit, not waived: server2 amd64 and Docker/Compose versions,
+socket GID/permissions, actual sibling mapped-port DB connectivity, owned ordinary checkout
+under `/work/repos`, private password/observer files, non-root volume ownership, disk/capacity,
+chosen source SHA/image IDs and native Linux qualification. Code records these before Docker
+acceptance; an unavailable prerequisite is a failed/blocked checkpoint. CARD-0594 can block
+native launch/recovery; CARD-0598 remains outside this feature. CARD-0578 can block the later
+Windows isolated PC build and must be reported at actual L. None is assumed fixed here.
+
+### Delivery inventory
+
+Run join: `(source SHA, run ID, parent project/resources, parent session, accepted generation,
+child project/resources, roster hash, result artifact digests)`. Receipt join adds `(case and
+submission nonce, recipient session, runner/store and accepted StartedAt, immutable normalized
+body/hash, queue high-water and Id, attempt number/start/generation/server floor, native UUID,
+stored UUID/kind/body/server sequence)`. PostgreSQL microsecond precision applies to generations.
+Each typing attempt is separately persisted; Enter-only recovery retains the original tuple.
+
+| Path | Producer â†’ destination | Persistence boundary and recovery | Observable receipt / tests |
+|---|---|---|---|
+| F-1 | Parent server â†’ Raw command session â†’ S3 foreground controller | Initial run manifest before any Docker operation, bound to actual accepted launch. Interrupt before manifest gives no child-resource cleanup authority. | Input/output/terminal exit plus session/run join; V-6/V-7, R-5. A host docker exec does not qualify. |
+| F-2 | Controller clean source â†’ daemon â†’ child/test containers | Source/image IDs and exact project/resource ownership recorded. Unknown create result retained as unresolved action, not adopted by prefix. | Real child UI/API/version/native evidence and complete executed roster; V-1â€“V-4/V-7/V-13, R-1/R-2/R-5. |
+| F-3 | Test processes â†’ copied reports â†’ result-ready | All reports copied/hashed before atomic manifest replacement and before removal. Export failure/crash retains incomplete outcome/evidence/resources. | Fresh TRX/Vitest results, per-class executed set, original exit and digests; V-3/V-4/V-11, R-2/R-5. |
+| F-4 | Foreground cleanup â†’ owned resources | Action intent then fresh exact ID+label inspection, delete, observed absence. Interrupted cleanup resumes same manifest, rechecks identities; parent/reusable volumes retained. | Actual owned resource absence and retained foreign sentinels; V-2/V-7/V-11, R-5. A down request alone is insufficient. |
+| Q-1 | Result-ready â†’ immutable expectation â†’ ordinary Ui POST | Body/hash/queue high-water persisted before POST. Pre-POST crash resumes original expectation. Definite refusal and unknown ack remain different states. | No delivery claim before complete native+stored receipt; R-5/R-6, V-8/V-9. |
+| Q-2 | POST â†’ committed ordinary queue row | All-status parameterized SELECT; freeze exactly one unbound Ui Id. Insert-refused leaves zero rows/input/prompts; response-before-client produces unknown ack. Owner must end before absence can be decided. | Stock eligible POST may return empty; observer still finds Sent row/attempt=1. Same Id after unknown ack; no automatic re-POST; V-8/V-9/V-10, R-6/R-7. |
+| Q-3 | Pending â†’ committed attempt â†’ typing | Independently visible insert has attempts=0/null tuple. Attempt has Sent/1/actual floor+generation, no verdict. Export per-context committed state before hard-cutting fixture server. | Recovery of insert uses same row; fresh typing after attempt cut charges exactly once more and appends tuple; V-9/V-10, R-6â€“R-9. |
+| Q-4 | Body â†’ separate Enter â†’ FakeGrok | Body-before-enter barrier records actual forwarded/returned bytes and composer. Hard server crash keeps runner/PTY/generation. | Whole native UserPrompt once. Enter-only sends no second body and retains attempt/floor; V-9, R-6â€“R-9. |
+| Q-5 | Native provider record â†’ server persistence â†’ verdict | Gate selected UUID in both SSE/pull; fail batch/individual/stub saves while armed; hold verdict before save. Hard restart keeps DB+runner. No manual transcript/row/age edits. | Same UUID/kind/full body stored above server floor, same generation. Native-only = server-pending. Receipt recovery has zero further body/Enter; V-9/V-10, R-6â€“R-9. |
+| Q-6 | Validated receipt â†’ final acknowledgement manifest | Export actual receipt first; supervised receipt worker stops before final replace. Resume independently reads original files/DB/runner, never POSTs. | Same manifest/row/attempt/receipt; final durable acknowledgement only after revalidation; V-9/V-11, R-5â€“R-7. |
+
+Native cases below use one dedicated receipt stack per case, separated from parent and test
+child. Reuse the actual exported run result for success cases. The failed-summary case runs
+a deliberately failing owned command (exit 23) and delivers that real failure. Case controller
+uses the test host only for cuts; `stock-idle`/`stock-busy` use the stock server image. All use
+the socket-free receipt runner/observer. Bootstrap every recipient with a genuine completed
+native turn. Make the test recipient always-on through normal configuration so the existing
+stranded sweep applies; keep normal session health watch enabled. Do not manufacture TurnEnd.
+
+| Exact case | Cut/recovery and required final evidence | Covers |
+|---|---|---|
+| `stock-idle` | Already eligible, empty pending response allowed, one queue row/attempt and exactly one native+stored whole prompt. | V-8, Q-2/Q-4/Q-5 |
+| `stock-busy` | Real busy gate; Pending/0/null tuple/no measured input; release causes real TurnEnd, then same row and complete receipt once. | V-8, Q-2/Q-3 |
+| `insert-refused` | Named pre-save failure; failed request ends, zero rows/body/Enter/native prompt; explicit new submission recorded, then complete receipt. | V-9, Q-1/Q-2 |
+| `insert-committed-idle` | Independent Pending/0/null observation before inline flush; SIGKILL only server, restart against original state; same row becomes attempt=1, receipt once. | V-9, Q-3 |
+| `insert-committed-busy` | Same independently visible insert while busy; release barrier, then real busy turn-end; no crash needed for this boundary combination. | V-9, Q-3 |
+| `attempt-committed` | Independent Sent/1/floor/generation/no input; server crash/restart; same Id, exactly attempt=2, two immutable tuples, body+Enter once after recovery, receipt once. | V-9, Q-3 |
+| `body-before-enter` | Body write returned, CR not forwarded, no native prompt; server crash/restart; only one additional CR, original tuple retained, complete receipt once. | V-9, Q-4 |
+| `recipient-before-ingestion` | Independent native receipt and no stored UUID while both ingestion paths held; crash/restart disarmed; same UUID stored and late-confirmed, zero additional input. | V-9, Q-5 |
+| `transcript-save-fails-release` | Real nontransient DbUpdateException forces batch/individual/stub refusal by UUID, exported native receipt/stored absence; disarm and normal catch-up, one full stored row, zero duplicate input. | V-9, Q-5 |
+| `transcript-save-fails-restart` | Same fault coverage, then server-only hard cut/restart disarmed; original generation/row/floor survives and receipt is persisted once. | V-9, Q-5 |
+| `receipt-before-verdict` | Native+stored complete receipt present; committed Sent/null verdict/original tuple; server crash/restart late-confirms with zero further body/Enter. | V-9, Q-5 |
+| `response-before-client` | Endpoint complete and row exported; buffered Start/headers/body/flush all withheld. Kill server, observe unknown ack; same row/receipt, total POST count one. | V-9, Q-2/Q-6 |
+| `receipt-before-manifest` | Original receipt exported; worker stops before final manifest replace. Await worker, resume observer with original files; zero resume POST, same row/receipt/manifest. | V-9, Q-6 |
+| `changed-generation` | After recording an attempt, explicitly replace only this negative-case recipient generation through the supported API; old manifest is refused even if old body remains. Not counted as successful recovery. | V-9, R-6 |
+| `failure-summary` | Actual run exit 23; whole native+stored failure summary delivered; delivery confirmed, overall run still failed. | V-9/V-11 |
+
+Stock busy/eligible plus one independent cut at each handoff is the required native matrix.
+Full busyÃ—every-cut Cartesian expansion adds no distinct branch after attempt acquisition:
+busy is covered before insertion/eligibility and the controlled attempt starts only when idle.
+Partial/prefix/missing-tail, wrong run/case/SHA/outcome/digest, old equal-body at/below floor,
+native versus stored sequence crossing, same/different/missing generation, duplicate row/UUID/body,
+null/no-attempt versus committed tuple, stale/replayed arm/release/host, open/invisible transaction,
+and unknown-ack zero-row cases are separate local/DB boundary matrices under R-5â€“R-7/V-10.
+Every rejection test also supplies a valid near-neighbor that must be accepted/forwarded so
+an always-refuse implementation fails. Native evidence is still required for all happy recovery arms.
+
+Substitutes are explicit: config/ignore parsing and harmless sentinel files prove local policy,
+not Docker's actual context semantics; recorded command adapters prove selected argv/order/status,
+not daemon ownership or process exit; controlled DB callbacks prove validator/interceptor selection,
+not commit visibility; synthetic transcript records prove validator rejection, not provider receipt.
+Ordinary PostgreSQL tests prove transactions/permissions and actual runtime fallback paths, while
+ordinary native Linux cases prove the provider and stock/fixture transport. Windows queue fixtures
+prove their existing native path only. No request, inserted row, event, Sent/verdict or transport ACK
+is delivery evidence. No substitute discharges the complete native+stored UserPrompt join.
+
+### Proves it works now
+
+- V-1: clean old-build reproduction and fixed images | Docker | CP image rows | old build failure accurately captured, new server/client/bundles and executable runner payload with full SHA; actual context sentinels excluded.
+- V-2: private fresh deployment and durable state | server2 Docker/API | deployment-state checkpoint | three healthy services, migrations/UI/API/version correct, DB sentinel survives recreation with same volumes, bidirectional same-path workspace, normal down retains volumes.
+- V-3: Small | real Linux tooling/client/messaging | client and messaging checkpoints | lint/build, full Vitest JSON and all 24 messaging classes/â‰¥206 methods, broker opt-in exercised, no unexplained skip/failure or lost exit.
+- V-4: Medium | real Linux TUnit/PostgreSQL/HTTP | 15 frozen shard checkpoints | 503 classes/â‰¥4,657 methods executed and all discovered classes accounted; required DB isolation/production-runner/version anchors present.
+- V-5: portable apphost resolution | local files plus Linux staged payload | helper/Grok-spec/E2E compile checkpoints | both platform branches, existing/missing and sibling producer paths, staged Linux executable; no E2E parity claim.
+- V-6: native Raw launch/input/output/exit | actual Linux runner/PtyHost | raw-session checkpoint | unique input/output marker and bounded terminal exit, recorded session/generation; dependency failure remains red.
+- V-7: session-created child stack | actual server-launched Raw command session | session envelope, child-build/test/export/cleanup checkpoints | all subordinate CP results linked to parent session, distinct child resources and one source/result manifest, original exit preserved.
+- V-8: stock image delivery | real queue/DB/FakeGrok | stock-idle and stock-busy checkpoints | whole single native UserPrompt plus matching persisted UUID/body above committed floor in original generation.
+- V-9: recovery cuts | real fixture server/DB/FakeGrok | all 13 remaining native cases | each declared barrier reached independently; required same-row/charge/tuple/write counts and receipt, or exact negative-case refusal.
+- V-10: observation/fixture database semantics | real PostgreSQL, real Program/Kestrel with scripted isolated runner | `DockerDeliveryDatabaseTests` | 16 methods below, all executed, no production runner, no fake commit visibility.
+- V-11: failure/export/cleanup interruption | ordinary real daemon plus local boundary controls | interrupted-export/denied-socket/failure-summary and command checkpoints | no false result-ready/delivery/cleanup success; retained evidence/residue and explicit recovery.
+- V-12: ordinary/custody separation | effective images/Compose/capability response and local scripts | packaging/command/native capability gates | base/receipt services socket-free, only explicit parent runner/test services authorized; sourced/unreadable/outside-root input refused before Docker; Linux does not advertise custody.
+- V-13: independent server2 installation | same ordinary entry points | final deployment handoff checkpoint | container IDs, endpoint/route checks and an observed API+session operation after initiating desktop CLI disconnect; no app call back to desktop.
+
+V-10's exact new methods, all in `DockerDeliveryDatabaseTests`:
+`Observer_finds_sent_row_after_empty_post_response`, `Observer_role_refuses_writes`,
+`Observer_snapshot_is_coherent`, `Observer_lookup_rejects_duplicate_rows`,
+`Insert_reached_is_visible_from_second_connection`, `Attempt_reached_is_visible_from_second_connection`,
+`Open_outer_transaction_never_reaches_committed_cut`, `Failed_save_emits_no_reached_record`,
+`Concurrent_context_saves_do_not_cross_observe`, `Verdict_hold_leaves_committed_verdict_null`,
+`Runtime_batch_individual_and_stub_saves_remain_faulted`, `Sse_and_pull_join_same_receipt_gate`,
+`Buffered_response_waits_after_endpoint_completion`, `Observe_mode_does_not_boot_Program`,
+`Serve_keeps_migrations_health_and_real_runner`, `Restarted_observer_uses_frozen_identity`.
+Use separate Npgsql connections and owned isolated databases/roles, not a tracked EF read.
+The runtime-fallback method must invoke actual `AgentSessionRuntime` and observe all three
+save paths, including stub-kind mutation, rather than merely calling the interceptor three times.
+
+### Guards the regression
+
+- R-1: stage/context/config/native-payload/privacy regression | all `DockerStackContractTests` methods named by the PCs; actual files are inputs, assertions name missing artifact/incorrect effective setting; real image inspections remain V-1/V-12.
+- R-2: silent test loss, status hiding, external-runner/live-credential access, or sourced input | named `DockerTestCommandTests` methods; capture actual script execution via inherited child/recording command boundary, assert no forbidden command and exact result/exit.
+- R-3: suffix/producer/diagnostic regression | named `TestAppHostPathTests` methods, both OS choices and real staged Linux file; missing path is a failure rather than a successful skip.
+- R-4: class roster drift/unsafe admission | named `LinuxTestRosterTests`, compiled identity reconciliation and every frozen shard's executed class/method comparison; real DB-isolation and production-runner guards remain included.
+- R-5: owner/manifest/cleanup/native-gate/result-delivery regression | named `DockerStackSmokeCommandTests` and `DockerDeliveryRecoveryCommandTests`; decisive command trace, durable manifest state and failed-run status checks.
+- R-6: weak observation or false receipt | named `DockerDeliveryObservationTests`; full native+stored join and explicit rejection codes, with valid neighbors accepted.
+- R-7: fixture falsely claims a reached cut or alters unrelated traffic | named `DockerDeliveryBarrierTests`, plus V-10's DB methods; independent visibility, no response bytes before release, all fallback/ingestion paths, persisted one-shot identity.
+- R-8: existing queue behavior | full `SessionMessageQueueServiceTests`, `SessionMessageQueueInterruptedAttemptTests`, `SessionMessageQueueWedgedHeadTests` in their Medium shards; busy holds, idle immediate delivery, separate CR/paste, same-generation Enter-only, changed-generation retype, durable charge/floor and late-confirm assertions.
+- R-9: existing Windows recipient/persistence regression | exact four-method `SessionQueueReceiptPlumbingTests` selection in CP-2, 13 expanded cases; original native and DB UserPrompt, row/attempt/floor and write-count assertions remain intact.
+- R-10: unchanged Windows/helper/phone-home contract | exact Grok staged-spec method, `VerifyPhoneHomeGrokScriptTests.Compose_and_dockerfile_do_not_hardcode_server_origin`, and E2E compile/payload check; original Grok version, no baked auth/origin, OS apphost consumer preserved.
+
+### Guard inventory
+
+Each row below is a scoped guard protecting this packaging/verification/delivery harness;
+its PC number is unique. Existing production queue/custody implementation is not changed:
+R-8/R-9 preserve its behavior, and this manifest inventories every new/changed acceptance,
+configuration, observation, barrier and recovery guard. A shared tuple check is tested with
+each field independently wrong. Independent stages, callback paths, receipt domains and
+context policy entries have separate PCs. No untested guard is waived.
+
+| Guard | Plan reference and invariant | Positive control |
+|---|---|---|
+| G-1 | S1/D-3: Server project-reference closure reaches publish | PC-1 |
+| G-2 | S1: Static client is in the final server stage | PC-2 |
+| G-3 | S1: Embedded bundle sources survive context filtering | PC-3 |
+| G-4 | S1/D-3: SDK matches global.json | PC-4 |
+| G-5 | S1-S2: net9 linux-x64 runtime contract | PC-5 |
+| G-6 | S2/D-4: Linux PtyHost apphost is staged | PC-6 |
+| G-7 | S2/D-4: Linux native library is staged | PC-7 |
+| G-8 | S2/D-4: Host managed runtime payload is staged | PC-8 |
+| G-9 | S2/D-4: Host execute permission is required | PC-9 |
+| G-10 | S1/S2/S6c: server publish propagates full revision | PC-10 |
+| G-11 | S1/S2/S6c: runner publish propagates full revision | PC-11 |
+| G-12 | S1/S2/S6c: fixture publish propagates full revision | PC-12 |
+| G-13 | S6: Observed version must equal chosen source | PC-13 |
+| G-14 | S2/D-2: Runner route stays inside Compose | PC-14 |
+| G-15 | S2/D-2: Application database stays inside Compose | PC-15 |
+| G-16 | S2/D-2: antiphon phone-home disabled | PC-16 |
+| G-17 | S2/D-2: session-runner phone-home disabled | PC-17 |
+| G-18 | S2/D-11: session-runner has no published port | PC-18 |
+| G-19 | S2/D-11: postgres has no published port | PC-19 |
+| G-20 | S2/D-11: Default server bind is loopback | PC-20 |
+| G-21 | S2/D-11: Server waits for healthy postgres | PC-21 |
+| G-22 | S2/D-11: Server waits for healthy session-runner | PC-22 |
+| G-23 | S2/D-11: antiphon has an executable health probe | PC-23 |
+| G-24 | S2/D-11: session-runner has an executable health probe | PC-24 |
+| G-25 | S2/D-6: Base antiphon has no socket | PC-25 |
+| G-26 | S2/D-6: Base session-runner has no socket | PC-26 |
+| G-27 | S2/D-6: Testing override gives only intended runner socket | PC-27 |
+| G-28 | S2/D-6: Socket GID is checked before launch | PC-28 |
+| G-29 | S2/D-6: No privileged/socket chmod fallback | PC-29 |
+| G-30 | S2/D-10: Apps execute as non-root shared identity | PC-30 |
+| G-31 | S2/D-10: Foreign state is not recursively adopted | PC-31 |
+| G-32 | S2/D-10: State/work paths are absolute Linux paths | PC-32 |
+| G-33 | S2/D-10: Same workspace path is shared | PC-33 |
+| G-34 | S2/D-10: Database and app state use persistent named volumes | PC-34 |
+| G-35 | S2/D-4: Linux backend remains inbox/Porta | PC-35 |
+| G-36 | S2/D-4: Linux Herdr remains disabled | PC-36 |
+| G-37 | S2/D-9: Fresh stack disables unattended automation | PC-37 |
+| G-38 | S2: Unsupported Linux secret protector is not called ready | PC-38 |
+| G-39 | S2: Keyring is private and outside app payload | PC-39 |
+| G-40 | S1/S3/context: Runtime context denies .git | PC-40 |
+| G-41 | S1/S3/context: Runtime context denies .antiphon/case.json | PC-41 |
+| G-42 | S1/S3/context: Runtime context denies client/.env.local | PC-42 |
+| G-43 | S1/S3/context: Runtime context denies scratch/auth.json | PC-43 |
+| G-44 | S1/S3/context: Runtime context denies .grok/config.toml | PC-44 |
+| G-45 | S1/S3/context: Runtime context denies scratch/key.pfx | PC-45 |
+| G-46 | S1/S3/context: Runtime context denies server/bin/x.dll | PC-46 |
+| G-47 | S1/S3/context: Runtime context denies server/bin-pc/x.dll | PC-47 |
+| G-48 | S1/S3/context: Runtime context denies server/obj/x | PC-48 |
+| G-49 | S1/S3/context: Runtime context denies client/node_modules/x | PC-49 |
+| G-50 | S1/S3/context: Runtime context denies workspace/owned.txt | PC-50 |
+| G-51 | S1/S3/context: Runtime context denies logs/test.log | PC-51 |
+| G-52 | S1/S3/context: Tests context denies .git | PC-52 |
+| G-53 | S1/S3/context: Tests context denies .antiphon/case.json | PC-53 |
+| G-54 | S1/S3/context: Tests context denies client/.env.local | PC-54 |
+| G-55 | S1/S3/context: Tests context denies scratch/auth.json | PC-55 |
+| G-56 | S1/S3/context: Tests context denies .grok/config.toml | PC-56 |
+| G-57 | S1/S3/context: Tests context denies scratch/key.pfx | PC-57 |
+| G-58 | S1/S3/context: Tests context denies server/bin/x.dll | PC-58 |
+| G-59 | S1/S3/context: Tests context denies server/bin-pc/x.dll | PC-59 |
+| G-60 | S1/S3/context: Tests context denies server/obj/x | PC-60 |
+| G-61 | S1/S3/context: Tests context denies client/node_modules/x | PC-61 |
+| G-62 | S1/S3/context: Tests context denies workspace/owned.txt | PC-62 |
+| G-63 | S1/S3/context: Tests context denies logs/test.log | PC-63 |
+| G-64 | S3/D-5: Required linked test and fixture context retained | PC-64 |
+| G-65 | S3/D-5: Test target has required runtime/tools | PC-65 |
+| G-66 | S3: Missing Docker cannot be skip-success | PC-66 |
+| G-67 | S3: Mapped Testcontainers endpoint must connect | PC-67 |
+| G-68 | S3: Broker tests are explicitly enabled | PC-68 |
+| G-69 | S3: Live gateway/provider credentials never inherited | PC-69 |
+| G-70 | S3: Nonzero command status reaches caller | PC-70 |
+| G-71 | S3: Absent report cannot prove execution | PC-71 |
+| G-72 | S3: Zero execution cannot pass | PC-72 |
+| G-73 | S3: Every selected class must execute | PC-73 |
+| G-74 | S3: Skipped selected cases cannot pass | PC-74 |
+| G-75 | S3: Report and exit must agree | PC-75 |
+| G-76 | S3: Reports exported before removal | PC-76 |
+| G-77 | S3: Report digest is validated | PC-77 |
+| G-78 | S3: Test commands preserve dead runner override | PC-78 |
+| G-79 | S3: Tests retain refusing-client factory | PC-79 |
+| G-80 | S3/D-15: Command group cannot inject arbitrary shell | PC-80 |
+| G-81 | S4: Windows apphost suffix preserved | PC-81 |
+| G-82 | S4: Linux apphost has no exe suffix | PC-82 |
+| G-83 | S4: Producer sibling output used | PC-83 |
+| G-84 | S4: Missing apphost is a named failure | PC-84 |
+| G-85 | S4: E2E runner consumes portable lookup | PC-85 |
+| G-86 | S5: Unknown class fails admission | PC-86 |
+| G-87 | S5: Duplicate class fails admission | PC-87 |
+| G-88 | S5: Stale roster entry fails admission | PC-88 |
+| G-89 | S5: Native class cannot be included | PC-89 |
+| G-90 | S5: Spawner/helper closure cannot be included | PC-90 |
+| G-91 | S5: Exclusion requires reason and owner | PC-91 |
+| G-92 | S3/S6/D-13: SourceLanding task is refused before Docker | PC-92 |
+| G-93 | S3/S6/D-13: Unreadable task is never classified ordinary | PC-93 |
+| G-94 | S3/S6/D-13: Managed verification paths are refused | PC-94 |
+| G-95 | S3/S6/D-15: Source must be owned ordinary checkout | PC-95 |
+| G-96 | S6: Parent and child projects differ | PC-96 |
+| G-97 | S6: Run manifest precedes resource creation | PC-97 |
+| G-98 | S6: Child context source is frozen SHA | PC-98 |
+| G-99 | S6: Container binds are in daemon namespace | PC-99 |
+| G-100 | S6: Resource IDs must match recorded owner | PC-100 |
+| G-101 | S6: Resource labels must match recorded owner | PC-101 |
+| G-102 | S6: Reusable deployment volumes survive normal down | PC-102 |
+| G-103 | S6: Cleanup residue prevents complete success | PC-103 |
+| G-104 | S6: Interrupted action resumes against same identities | PC-104 |
+| G-105 | S6: No global prune/adoption by prefix | PC-105 |
+| G-106 | S6/D-8: Raw challenge includes input and output identity | PC-106 |
+| G-107 | S6/D-8: Raw completion requires bounded exit | PC-107 |
+| G-108 | S6/D-15: Test command must originate in launched session | PC-108 |
+| G-109 | S6/D-15: Child mode cannot recurse into parent qualification | PC-109 |
+| G-110 | S6/D-21: Default runtime excludes fixture/FakeGrok payload | PC-110 |
+| G-111 | S6/D-21: Stock server excludes fixture dependencies | PC-111 |
+| G-112 | S6/D-21: Receipt stack gets no Docker authority | PC-112 |
+| G-113 | S6/D-13: Linux capability refusal remains required | PC-113 |
+| G-114 | S6a/D-17: Observer accepts only immutable owned configuration | PC-114 |
+| G-115 | S6a/D-17: Observer cannot accept arbitrary connection/SQL | PC-115 |
+| G-116 | S6a/D-17: Observer role is SELECT-only | PC-116 |
+| G-117 | S6a/D-17: Query parameters bind session | PC-117 |
+| G-118 | S6a/D-17: Query uses committed queue high-water | PC-118 |
+| G-119 | S6a/D-17: Query matches full body | PC-119 |
+| G-120 | S6a/D-17: Sent and Canceled are observable | PC-120 |
+| G-121 | S6a/D-17: Only unbound Ui origin accepted | PC-121 |
+| G-122 | S6a/D-17: Multiple matching queue rows are ambiguous | PC-122 |
+| G-123 | S6a/D-22: Frozen queue identity cannot be replaced | PC-123 |
+| G-124 | S6a/D-20: Never-attempted row retains null tuple | PC-124 |
+| G-125 | S6a/D-20: Attempted row requires committed floor | PC-125 |
+| G-126 | S6a/D-20: Attempts are append-only evidence | PC-126 |
+| G-127 | S6a/D-20: Complete native UserPrompt is mandatory | PC-127 |
+| G-128 | S6a/D-20: Expected body hash is checked independently | PC-128 |
+| G-129 | S6a/D-20: Summary markers match run/case/SHA/outcome/evidence | PC-129 |
+| G-130 | S6a/D-20: Stored UUID/kind/body joins native receipt | PC-130 |
+| G-131 | S6a/D-20: Stored sequence must be strictly above floor | PC-131 |
+| G-132 | S6a/D-20: Sequence domain is server, never native | PC-132 |
+| G-133 | S6a/D-20: Native duplicates invalidate canary | PC-133 |
+| G-134 | S6a/D-20: Stored duplicate UUID/kind invalidates evidence | PC-134 |
+| G-135 | S6a/D-20: Native-only receipt is server-pending | PC-135 |
+| G-136 | S6a/D-20: Generation checked before observation | PC-136 |
+| G-137 | S6a/D-20: Generation checked after observation | PC-137 |
+| G-138 | S6a/D-20: Missing generation is not inferred | PC-138 |
+| G-139 | S6a/D-20: Generation normalization is microsecond equality | PC-139 |
+| G-140 | S6b/D-18: Decorator preserves untargeted runner operations | PC-140 |
+| G-141 | S6b/D-18: SSE path withholds selected native UUID | PC-141 |
+| G-142 | S6b/D-18: Pull path withholds same selected UUID | PC-142 |
+| G-143 | S6b/D-18: Body write completes before Enter cut | PC-143 |
+| G-144 | S6b/D-18: Multiline forwarding is byte-preserving | PC-144 |
+| G-145 | S6b/D-19: Metadata captured before EF state reset | PC-145 |
+| G-146 | S6b/D-19: Failed save emits no committed cut | PC-146 |
+| G-147 | S6b/D-19: Commit requires independent visible observation | PC-147 |
+| G-148 | S6b/D-19: Open outer transaction refuses committed cut | PC-148 |
+| G-149 | S6b/D-19: Context-local pending metadata cannot leak | PC-149 |
+| G-150 | S6b/D-18: Batch transcript failure covers selected UUID | PC-150 |
+| G-151 | S6b/D-18: Individual retry remains faulted | PC-151 |
+| G-152 | S6b/D-18: Stub retry remains faulted by UUID | PC-152 |
+| G-153 | S6b/D-18: Selected verdict is held before save | PC-153 |
+| G-154 | S6b/D-19: Arm identity includes submission/row/attempt | PC-154 |
+| G-155 | S6b/D-19: Release binds exact host incarnation | PC-155 |
+| G-156 | S6b/D-19: Consumed arm persists across host restart | PC-156 |
+| G-157 | S6b/D-19: Deadline/cancel does not release cut | PC-157 |
+| G-158 | S6b/D-18: Response headers cannot acknowledge held POST | PC-158 |
+| G-159 | S6b/D-18: Response body/flush cannot acknowledge held POST | PC-159 |
+| G-160 | S6b/D-18: Unarmed responses pass status/header/body | PC-160 |
+| G-161 | S6b/D-18: DI decorates real registration once | PC-161 |
+| G-162 | S6c/D-22: Immutable expectation precedes POST | PC-162 |
+| G-163 | S6c/D-22: Unknown acknowledgement never retries POST | PC-163 |
+| G-164 | S6c/D-22: Zero rows while request alive is unknown | PC-164 |
+| G-165 | S6c/D-22: Explicit refusal retry needs no-row/no-input/no-prompt | PC-165 |
+| G-166 | S6c/D-19: Reached evidence exported before crash action | PC-166 |
+| G-167 | S6c/D-19: Only exact fixture server is killed | PC-167 |
+| G-168 | S6c/D-19: Crash action intent precedes command | PC-168 |
+| G-169 | S6c/D-19: Hard exit is awaited before restart | PC-169 |
+| G-170 | S6d/D-20: Restart retains DB/runner/recipient identity | PC-170 |
+| G-171 | S6d/D-20: Retype charge and tuple are preserved | PC-171 |
+| G-172 | S6d/D-20: Enter-only recovery never retypes body | PC-172 |
+| G-173 | S6d/D-20: Receipt recovery sends no further input | PC-173 |
+| G-174 | S6d/D-22: Manifest resume does no POST | PC-174 |
+| G-175 | S6d: Complete failure summary preserves failed run | PC-175 |
+| G-176 | S6d: Not-reached cut is never a passing case | PC-176 |
+| G-177 | S6c/D-21: Stock idle/busy cannot be replaced by fixture pass | PC-177 |
+| G-178 | S6d: Export interruption cannot create result-ready | PC-178 |
+| G-179 | S6d: No body submission uses Now to bypass queue | PC-179 |
+| G-180 | S6a/D-17: Observation uses a coherent read-only snapshot | PC-180 |
+| G-181 | S6b/D-19: Barrier records are atomic and integrity checked | PC-181 |
+| G-182 | S6c/D-21: Receipt runner target excludes Docker tools | PC-182 |
+| G-183 | S6a/D-20: Equal-body wrong transcript kind is refused | PC-183 |
+| G-184 | S6a/D-20: Stored full body is independently checked | PC-184 |
+| G-185 | S6d/D-20: Enter-only recovery retains original attempt tuple | PC-185 |
+| G-186 | S6d/D-20: New typing attempt has its own committed floor | PC-186 |
+| G-187 | S6c/D-19: Restart is controlled, not automatic container restart | PC-187 |
+| G-188 | S2/D-9: Fresh stack disables Delegation__DiagnoseEnabled | PC-188 |
+| G-189 | S2/D-9: Fresh stack disables Delegation__OutputDistillerEnabled | PC-189 |
+| G-190 | S2/D-9: Fresh stack disables Hangfire__ServerEnabled | PC-190 |
+| G-191 | S2/D-9: Fresh stack disables ZombieCensus__Enabled | PC-191 |
+| G-192 | S2/D-9: Fresh stack disables WorktreeResidue__Enabled | PC-192 |
+| G-193 | S2/D-9: Fresh stack disables Schedules__Enabled | PC-193 |
+| G-194 | S2/D-9: Fresh stack disables ChannelBridge__Enabled | PC-194 |
+| G-195 | S2/D-9: Fresh stack disables Digest__Enabled | PC-195 |
+| G-196 | S6c/D-21: Receipt server is independently socket-free | PC-196 |
+| G-197 | S6c/D-21: Receipt runner is independently socket-free | PC-197 |
+| G-198 | S1/S3/context: Runtime context denies private PEM material | PC-198 |
+| G-199 | S1/S3/context: Tests context denies private PEM material | PC-199 |
+| G-200 | S6a/D-20: Summary remains below actual inline/spill ceiling | PC-200 |
+| G-201 | S6d/D-22: Resume file belongs to owned evidence root | PC-201 |
+| G-202 | S6b/D-19: Release binds complete case/row/attempt tuple | PC-202 |
+| G-203 | S6c/D-17: Private credentials never enter argv or evidence | PC-203 |
+| G-204 | S3: Old results cannot masquerade as this run | PC-204 |
+| G-205 | S6a/D-17: Frozen queue immutable fields are rechecked | PC-205 |
+
+### Positive controls
+
+The following is the **pending post-land battery**, not a claim of reds executed in
+TestDesign. Each row breaks exactly its G-n with the stated syntactically valid defect,
+expects the named test method to fail at the stated assertion, then restores and expects
+that same method green. `Class.Method` below expands to the precise method filter
+`/*/*/Class/Method`; no class/suite filter is permitted in a PC cycle. Argument matrices
+inside that single method all run, and the decisive faulty variant must fail. Do not edit
+the test or its expected value to manufacture red. Missing test/build/fixture/zero-count
+failure is not a red control.
+
+Fixture target filenames without a directory mean
+`tests/Antiphon.DockerStack.Fixture/<filename>`; `fixture Program.cs` means that project's
+Program. Script controls invoke the actual entry/function using a recording command boundary
+under an inherited local PowerShell child; no call falls through to real Docker/SSH/HTTP.
+`Assert-LinuxTestRoster` is the S5 validator in `scripts/test-docker-container.ps1`, also
+invoked locally by `LinuxTestRosterTests`. Local observation/interceptor tests construct
+only values, files, recording connections/callbacks and response features. They never run
+fixture `serve`, WAF Program, PostgreSQL or Testcontainers. Their separate real-I/O
+qualification is V-1/V-8/V-9/V-10. New script tests carry `ParallelLimiter<ProcessSpawnLimit>`.
+
+Before every PC launch clear `ANTIPHON_C467_QUEUE_WORKER`, `ANTIPHON_C574_STARTUP_WORKER`
+and `ANTIPHON_C478_DELIVERY_WORKER`. Set `ANTIPHON_C476_PROBE` to this command's externally
+owned evidence root and require lifecycle `state=never-requested`, `create=0`, no containerId.
+Preserve the eager production-runner/Pty guards. Reject a DB-requested PC even if its
+selected assertion passes. Mutation runs on the Windows managed SourceLanding snapshot at
+exact L using only local inherited children, external evidence and source restoration;
+never commit/push, create another worktree, deploy, or expose that snapshot to server2,
+Docker, a broker, a standing executor or remote service. CARD-0598 owns future Linux custody.
+
+Use one initial discovery/green qualification of all named PC methods, then sequential
+method-scoped break/red/restore/fresh-build/green cycles. Builds are local inherited
+`dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c590-pc/`
+with `--disable-build-servers -p:UseSharedCompilation=false` and
+`MSBUILDDISABLENODEREUSE=1`; runs use `dotnet run --project tests/Antiphon.Tests --no-build
+--property:OutputPath=bin-c590-pc/ -- --treenode-filter $filter` with fresh TRX
+paths, where `$filter` is the selected row's exact Class/Method expansion defined above.
+Restore timestamps and prove fresh producer binaries. Keep full
+per-PC intended assertion, counts, tested L, mutation/restoration hashes and native custody
+records externally. No batched shared-file controls are assumed in the price below.
+
+Code writes tests and runs ordinary V/R; separate Review judges implementation/evidence and
+pending PCs before land. Mutation runs only after confirmed land and explicit SourceLanding
+commissioning. Failures needing source/test repairs return through Code/Review/new land.
+
+| PC | Compiling defect in guard target | Exact method | Expected red assertion |
+|---|---|---|---|
+| PC-1 | `Dockerfile`: Delete the server-build COPY of src. | `DockerStackContractTests.Server_project_graph_is_available` | missing referenced project list contains Antiphon.Agents.Pty.csproj. |
+| PC-2 | `Dockerfile`: Delete final COPY of client/dist. | `DockerStackContractTests.Runtime_contains_built_client` | final-stage payload lacks wwwroot/index.html. |
+| PC-3 | `.dockerignore`: Append server/Bundles/** exclusion. | `DockerStackContractTests.Runtime_contains_instruction_bundles` | required-context list contains the excluded bundle. |
+| PC-4 | `Dockerfile`: Change sdk:10.0 to sdk:9.0. | `DockerStackContractTests.Sdk_satisfies_repository_pin` | SDK major compatibility is false. |
+| PC-5 | `Dockerfile`: Replace publish RID linux-x64 with win-x64. | `DockerStackContractTests.Runtime_and_rid_match_linux_amd64` | publish RID equals linux-x64. |
+| PC-6 | `docker/session-runner-grok/Dockerfile`: Delete PtyHost apphost COPY. | `DockerStackContractTests.Runner_contains_linux_host` | native manifest missing Antiphon.PtyHost. |
+| PC-7 | `docker/session-runner-grok/Dockerfile`: Delete libporta_pty.so COPY. | `DockerStackContractTests.Runner_contains_porta_library` | native manifest missing libporta_pty.so. |
+| PC-8 | `docker/session-runner-grok/Dockerfile`: Omit host .runtimeconfig.json from copied publish payload. | `DockerStackContractTests.Runner_contains_host_runtime_payload` | native manifest missing Antiphon.PtyHost.runtimeconfig.json. |
+| PC-9 | `docker/session-runner-grok/Dockerfile`: Remove executable-bit check from the stage. | `DockerStackContractTests.Runner_requires_executable_host` | required executable validation absent. |
+| PC-10 | `Dockerfile`: Replace SourceRevisionId build property with unknown. | `DockerStackContractTests.Server_publish_has_revision` | publish revision source equals SOURCE_REVISION. |
+| PC-11 | `docker/session-runner-grok/Dockerfile`: Replace SourceRevisionId build property with unknown. | `DockerStackContractTests.Runner_publish_has_revision` | publish revision source equals SOURCE_REVISION. |
+| PC-12 | `docker/tests/Dockerfile`: Replace SourceRevisionId build property with unknown. | `DockerStackContractTests.Fixture_publish_has_revision` | publish revision source equals SOURCE_REVISION. |
+| PC-13 | `scripts/verify-docker-stack.ps1`: Remove observed-versus-expected version equality check. | `DockerStackSmokeCommandTests.Wrong_live_revision_is_refused` | wrong SHA exits nonzero and manifest.accepted is false. |
+| PC-14 | `docker-compose.yml`: Set SessionRunner__BaseUrl to http://127.0.0.1:17204. | `DockerStackContractTests.Runner_route_is_internal` | runner host equals session-runner. |
+| PC-15 | `docker-compose.yml`: Set DB Host to desktop-ktlkpif. | `DockerStackContractTests.Database_route_is_internal` | database host equals postgres. |
+| PC-16 | `docker-compose.yml`: Enable its PhoneHome/PhoneHomeRunner setting. | `DockerStackContractTests.antiphon_phone_home_is_disabled` | effective phone-home enabled is false. |
+| PC-17 | `docker-compose.yml`: Enable its PhoneHome/PhoneHomeRunner setting. | `DockerStackContractTests.session_runner_phone_home_is_disabled` | effective phone-home enabled is false. |
+| PC-18 | `docker-compose.yml`: Add ports: [18080:8080] to selected service. | `DockerStackContractTests.session_runner_port_is_private` | selected service published ports is empty. |
+| PC-19 | `docker-compose.yml`: Add ports: [18080:8080] to selected service. | `DockerStackContractTests.postgres_port_is_private` | selected service published ports is empty. |
+| PC-20 | `docker-compose.yml`: Change default bind address to 0.0.0.0. | `DockerStackContractTests.Default_server_bind_is_loopback` | default bind equals 127.0.0.1. |
+| PC-21 | `docker-compose.yml`: Change its dependency condition to service_started. | `DockerStackContractTests.postgres_must_be_healthy` | dependency condition equals service_healthy. |
+| PC-22 | `docker-compose.yml`: Change its dependency condition to service_started. | `DockerStackContractTests.session_runner_must_be_healthy` | dependency condition equals service_healthy. |
+| PC-23 | `docker-compose.yml`: Replace healthcheck command with a missing-probe executable. | `DockerStackContractTests.antiphon_health_probe_exists` | health executable belongs to stage-installed tool manifest. |
+| PC-24 | `docker-compose.yml`: Replace healthcheck command with a missing-probe executable. | `DockerStackContractTests.session_runner_health_probe_exists` | health executable belongs to stage-installed tool manifest. |
+| PC-25 | `docker-compose.yml`: Add /var/run/docker.sock mount to selected service. | `DockerStackContractTests.antiphon_base_has_no_socket` | base service Docker mounts is empty. |
+| PC-26 | `docker-compose.yml`: Add /var/run/docker.sock mount to selected service. | `DockerStackContractTests.session_runner_base_has_no_socket` | base service Docker mounts is empty. |
+| PC-27 | `docker-compose.session-testing.yml`: Delete runner socket mount. | `DockerStackContractTests.Testing_runner_has_explicit_socket` | effective test runner has exactly one socket mount. |
+| PC-28 | `scripts/test-docker.ps1`: Bypass socket-GID comparison. | `DockerTestCommandTests.Socket_gid_mismatch_refuses` | zero Docker run commands and SocketGroupMismatch. |
+| PC-29 | `docker-compose.test.yml`: Add privileged: true. | `DockerStackContractTests.Testing_services_are_unprivileged` | effective test service privileged is false. |
+| PC-30 | `docker-compose.yml`: Set runner user to 0:0. | `DockerStackContractTests.Applications_share_nonroot_identity` | UID is nonzero and equals server UID. |
+| PC-31 | `scripts/verify-docker-stack.ps1`: Replace foreign-owner refusal with acceptance. | `DockerStackSmokeCommandTests.Foreign_state_owner_refuses` | zero chown commands and zero startup commands. |
+| PC-32 | `docker-compose.yml`: Replace server workspace with C:\work. | `DockerStackContractTests.State_paths_are_linux_absolute` | invalid path list names Git__WorkspacePath. |
+| PC-33 | `docker-compose.yml`: Mount runner workspace at /other. | `DockerStackContractTests.Workspace_mount_paths_match` | both app workspace destinations equal /work. |
+| PC-34 | `docker-compose.yml`: Remove pgdata volume mapping. | `DockerStackContractTests.Reusable_state_has_named_volumes` | required state mount list names pgdata. |
+| PC-35 | `docker-compose.yml`: Set SessionRunner__PtyBackend to modern. | `DockerStackContractTests.Linux_backend_is_inbox` | both effective backend selectors equal inbox. |
+| PC-36 | `docker-compose.yml`: Set SessionRunner__Herdr__Enabled=true. | `DockerStackContractTests.Linux_herdr_is_disabled` | effective Herdr enabled is false. |
+| PC-37 | `docker-compose.yml`: Set Delegation__CheckInterpreterEnabled=true. | `DockerStackContractTests.Fresh_stack_is_inactive` | enabled unattended settings is empty. |
+| PC-38 | `scripts/verify-docker-stack.ps1`: Treat key-directory existence as managed-secret readiness. | `DockerStackSmokeCommandTests.Auto_keyring_without_protector_is_unavailable` | reported managedSecretReady is false. |
+| PC-39 | `docker-compose.yml`: Move keyring path to /app/keys. | `DockerStackContractTests.Keyring_is_private_external_state` | keyring path belongs to owned external state. |
+| PC-40 | `.dockerignore`: Append a final !.git re-include rule. | `DockerStackContractTests.Runtime_context_denies_GitPointer` | effective-context sentinel .git is absent. |
+| PC-41 | `.dockerignore`: Append a final !.antiphon/case.json re-include rule. | `DockerStackContractTests.Runtime_context_denies_AgentState` | effective-context sentinel .antiphon/case.json is absent. |
+| PC-42 | `.dockerignore`: Append a final !client/.env.local re-include rule. | `DockerStackContractTests.Runtime_context_denies_Environment` | effective-context sentinel client/.env.local is absent. |
+| PC-43 | `.dockerignore`: Append a final !scratch/auth.json re-include rule. | `DockerStackContractTests.Runtime_context_denies_Auth` | effective-context sentinel scratch/auth.json is absent. |
+| PC-44 | `.dockerignore`: Append a final !.grok/config.toml re-include rule. | `DockerStackContractTests.Runtime_context_denies_ProviderHome` | effective-context sentinel .grok/config.toml is absent. |
+| PC-45 | `.dockerignore`: Append a final !scratch/key.pfx re-include rule. | `DockerStackContractTests.Runtime_context_denies_Certificate` | effective-context sentinel scratch/key.pfx is absent. |
+| PC-46 | `.dockerignore`: Append a final !server/bin/x.dll re-include rule. | `DockerStackContractTests.Runtime_context_denies_Bin` | effective-context sentinel server/bin/x.dll is absent. |
+| PC-47 | `.dockerignore`: Append a final !server/bin-pc/x.dll re-include rule. | `DockerStackContractTests.Runtime_context_denies_AlternateBin` | effective-context sentinel server/bin-pc/x.dll is absent. |
+| PC-48 | `.dockerignore`: Append a final !server/obj/x re-include rule. | `DockerStackContractTests.Runtime_context_denies_Obj` | effective-context sentinel server/obj/x is absent. |
+| PC-49 | `.dockerignore`: Append a final !client/node_modules/x re-include rule. | `DockerStackContractTests.Runtime_context_denies_NodeModules` | effective-context sentinel client/node_modules/x is absent. |
+| PC-50 | `.dockerignore`: Append a final !workspace/owned.txt re-include rule. | `DockerStackContractTests.Runtime_context_denies_Workspace` | effective-context sentinel workspace/owned.txt is absent. |
+| PC-51 | `.dockerignore`: Append a final !logs/test.log re-include rule. | `DockerStackContractTests.Runtime_context_denies_Logs` | effective-context sentinel logs/test.log is absent. |
+| PC-52 | `docker/tests/Dockerfile.dockerignore`: Append a final !.git re-include rule. | `DockerStackContractTests.Tests_context_denies_GitPointer` | effective-context sentinel .git is absent. |
+| PC-53 | `docker/tests/Dockerfile.dockerignore`: Append a final !.antiphon/case.json re-include rule. | `DockerStackContractTests.Tests_context_denies_AgentState` | effective-context sentinel .antiphon/case.json is absent. |
+| PC-54 | `docker/tests/Dockerfile.dockerignore`: Append a final !client/.env.local re-include rule. | `DockerStackContractTests.Tests_context_denies_Environment` | effective-context sentinel client/.env.local is absent. |
+| PC-55 | `docker/tests/Dockerfile.dockerignore`: Append a final !scratch/auth.json re-include rule. | `DockerStackContractTests.Tests_context_denies_Auth` | effective-context sentinel scratch/auth.json is absent. |
+| PC-56 | `docker/tests/Dockerfile.dockerignore`: Append a final !.grok/config.toml re-include rule. | `DockerStackContractTests.Tests_context_denies_ProviderHome` | effective-context sentinel .grok/config.toml is absent. |
+| PC-57 | `docker/tests/Dockerfile.dockerignore`: Append a final !scratch/key.pfx re-include rule. | `DockerStackContractTests.Tests_context_denies_Certificate` | effective-context sentinel scratch/key.pfx is absent. |
+| PC-58 | `docker/tests/Dockerfile.dockerignore`: Append a final !server/bin/x.dll re-include rule. | `DockerStackContractTests.Tests_context_denies_Bin` | effective-context sentinel server/bin/x.dll is absent. |
+| PC-59 | `docker/tests/Dockerfile.dockerignore`: Append a final !server/bin-pc/x.dll re-include rule. | `DockerStackContractTests.Tests_context_denies_AlternateBin` | effective-context sentinel server/bin-pc/x.dll is absent. |
+| PC-60 | `docker/tests/Dockerfile.dockerignore`: Append a final !server/obj/x re-include rule. | `DockerStackContractTests.Tests_context_denies_Obj` | effective-context sentinel server/obj/x is absent. |
+| PC-61 | `docker/tests/Dockerfile.dockerignore`: Append a final !client/node_modules/x re-include rule. | `DockerStackContractTests.Tests_context_denies_NodeModules` | effective-context sentinel client/node_modules/x is absent. |
+| PC-62 | `docker/tests/Dockerfile.dockerignore`: Append a final !workspace/owned.txt re-include rule. | `DockerStackContractTests.Tests_context_denies_Workspace` | effective-context sentinel workspace/owned.txt is absent. |
+| PC-63 | `docker/tests/Dockerfile.dockerignore`: Append a final !logs/test.log re-include rule. | `DockerStackContractTests.Tests_context_denies_Logs` | effective-context sentinel logs/test.log is absent. |
+| PC-64 | `docker/tests/Dockerfile.dockerignore`: Append tests/Shared/** exclusion. | `DockerStackContractTests.Test_context_retains_linked_sources` | required-context list includes TestClassificationMetadata.cs. |
+| PC-65 | `docker/tests/Dockerfile`: Remove runtime-9 installation/copy. | `DockerStackContractTests.Test_target_has_supported_tools` | SDK10/runtime9/Node22/pwsh/Git tool contract lacks runtime9. |
+| PC-66 | `scripts/test-docker.ps1`: Continue after missing-socket preflight. | `DockerTestCommandTests.Missing_socket_fails_before_execution` | nonzero exit and zero test-container starts. |
+| PC-67 | `scripts/test-docker.ps1`: Ignore failed disposable database connection. | `DockerTestCommandTests.Unreachable_mapped_database_fails` | nonzero exit and zero test commands. |
+| PC-68 | `scripts/test-docker-container.ps1`: Unset ANTIPHON_BROKER_TESTS in messaging launch. | `DockerTestCommandTests.Broker_lane_is_enabled` | recorded child environment has ANTIPHON_BROKER_TESTS=1. |
+| PC-69 | `scripts/test-docker-container.ps1`: Pass through ANTIPHON_TG_TEST_TOKEN from harmless sentinel environment. | `DockerTestCommandTests.Live_credentials_are_removed` | captured child environment omits live token. |
+| PC-70 | `scripts/test-docker.ps1`: Set captured child exit code to zero. | `DockerTestCommandTests.Nonzero_test_exit_is_preserved` | exit remains injected 23 even with plausible success report. |
+| PC-71 | `scripts/test-docker.ps1`: Bypass expected-report existence check. | `DockerTestCommandTests.Missing_report_fails` | nonzero exit and no accepted result-ready manifest. |
+| PC-72 | `scripts/test-docker.ps1`: Allow executed=0. | `DockerTestCommandTests.Zero_execution_fails` | nonzero exit and ZeroExecuted diagnosis. |
+| PC-73 | `scripts/test-docker.ps1`: Skip executed-class-set comparison. | `DockerTestCommandTests.Missing_class_fails` | nonzero exit naming missing selected class. |
+| PC-74 | `scripts/test-docker.ps1`: Ignore skipped counter. | `DockerTestCommandTests.Unexpected_skip_fails` | nonzero exit and UnexpectedSkip diagnosis. |
+| PC-75 | `scripts/test-docker.ps1`: Trust exit zero despite report failed=1. | `DockerTestCommandTests.Exit_result_disagreement_fails` | nonzero exit and ResultExitMismatch diagnosis. |
+| PC-76 | `scripts/test-docker.ps1`: Emit container removal before docker cp. | `DockerTestCommandTests.Export_precedes_container_removal` | first remove trace index is greater than export/hash/commit indices. |
+| PC-77 | `scripts/test-docker.ps1`: Bypass copied-artifact digest equality. | `DockerTestCommandTests.Wrong_artifact_digest_fails` | nonzero exit and no result-ready acceptance. |
+| PC-78 | `scripts/test-docker-container.ps1`: Pass application runner URL to test host. | `DockerTestCommandTests.Test_environment_refuses_application_runner` | captured SessionRunner__BaseUrl equals http://127.0.0.1:1. |
+| PC-79 | `tests/Antiphon.Tests/TestHelpers/AntiphonWebAppFactory.cs`: Delete replacement registration of ISessionRunnerClient. | `DockerStackContractTests.Http_test_factory_keeps_refusing_client` | source contract includes RemoveAll and RefusingSessionRunnerClient registration. |
+| PC-80 | `scripts/test-docker.ps1`: Remove named-group allowlist check. | `DockerTestCommandTests.Unknown_group_is_refused` | unknown group exits before command invocation. |
+| PC-81 | `tests/Shared/TestAppHostPath.cs`: Return unsuffixed name for Windows. | `TestAppHostPathTests.Windows_path_has_exe_suffix` | resolved fakegrok path ends in fakegrok.exe. |
+| PC-82 | `tests/Shared/TestAppHostPath.cs`: Always append .exe. | `TestAppHostPathTests.Linux_path_has_no_exe_suffix` | resolved fakegrok path ends in fakegrok without .exe. |
+| PC-83 | `tests/Shared/TestAppHostPath.cs`: Resolve directly from baseDirectory instead of fakegrok subdirectory. | `TestAppHostPathTests.Sibling_producer_directory_is_used` | resolved path equals staged sibling path. |
+| PC-84 | `tests/Shared/TestAppHostPath.cs`: Return missing candidate without checking existence. | `TestAppHostPathTests.Missing_apphost_names_attempted_file` | FileNotFoundException.FileName equals exact attempted path. |
+| PC-85 | `tests/Antiphon.E2E/Fixtures/IsolatedSessionRunner.cs`: Restore literal Antiphon.SessionRunner.exe lookup. | `TestAppHostPathTests.E2e_runner_uses_shared_resolution` | source consumer selects TestAppHostPath for runner and diagnostic. |
+| PC-86 | `scripts/test-docker-container.ps1 / Assert-LinuxTestRoster`: Ignore discovered classes absent from roster. | `LinuxTestRosterTests.Unknown_class_is_refused` | validation errors name unknown class. |
+| PC-87 | `scripts/test-docker-container.ps1 / Assert-LinuxTestRoster`: Replace duplicate error with first-row selection. | `LinuxTestRosterTests.Duplicate_class_is_refused` | validation errors name duplicate class. |
+| PC-88 | `scripts/test-docker-container.ps1 / Assert-LinuxTestRoster`: Ignore roster entries absent from discovery. | `LinuxTestRosterTests.Stale_class_is_refused` | validation errors name stale class. |
+| PC-89 | `scripts/test-docker-container.ps1 / Assert-LinuxTestRoster`: Bypass native-boundary check. | `LinuxTestRosterTests.Native_class_is_refused` | known native class has IncludedNative error. |
+| PC-90 | `scripts/test-docker-container.ps1 / Assert-LinuxTestRoster`: Do not propagate helper spawning evidence. | `LinuxTestRosterTests.Indirect_spawner_is_refused` | WorkspaceHookRunnerTests has IncludedSpawner error. |
+| PC-91 | `scripts/test-docker-container.ps1 / Assert-LinuxTestRoster`: Allow empty exclusion reason/owner. | `LinuxTestRosterTests.Unowned_exclusion_is_refused` | validation errors include MissingExclusionOwner. |
+| PC-92 | `scripts/test-docker.ps1`: Bypass sourceLandingOperationId check. | `DockerTestCommandTests.Sourced_task_is_refused` | zero Docker calls for sourced task. |
+| PC-93 | `scripts/test-docker.ps1`: Treat task lookup failure as unbound ordinary. | `DockerTestCommandTests.Unreadable_task_binding_is_refused` | zero Docker calls and TaskBindingUnavailable. |
+| PC-94 | `scripts/test-docker.ps1`: Bypass canonical verification-root exclusion. | `DockerTestCommandTests.Verification_path_is_refused` | zero Docker calls for managed snapshot path. |
+| PC-95 | `scripts/test-docker.ps1`: Use string prefix without canonical root-boundary check. | `DockerTestCommandTests.Outside_checkout_root_is_refused` | zero Docker calls for sibling-prefix path and symlink escape. |
+| PC-96 | `scripts/verify-docker-stack.ps1`: Remove parent/child inequality check. | `DockerStackSmokeCommandTests.Parent_as_child_is_refused` | zero create/delete commands for parent-as-child. |
+| PC-97 | `scripts/verify-docker-stack.ps1`: Create child before atomic initial manifest write. | `DockerStackSmokeCommandTests.Manifest_precedes_create` | first create occurs after durable manifest write. |
+| PC-98 | `scripts/verify-docker-stack.ps1`: Accept export SHA different from selected SHA. | `DockerStackSmokeCommandTests.Wrong_context_source_is_refused` | zero image build commands and SourceMismatch. |
+| PC-99 | `scripts/verify-docker-stack.ps1`: Emit /work/test-evidence runner path as sibling bind source. | `DockerStackSmokeCommandTests.Runner_local_bind_source_is_refused` | command plan has no runner-local host bind. |
+| PC-100 | `scripts/verify-docker-stack.ps1`: Ignore inspected container ID mismatch. | `DockerStackSmokeCommandTests.Foreign_resource_id_is_refused` | zero destructive commands. |
+| PC-101 | `scripts/verify-docker-stack.ps1`: Ignore inspected run label mismatch. | `DockerStackSmokeCommandTests.Foreign_resource_label_is_refused` | zero destructive commands. |
+| PC-102 | `scripts/verify-docker-stack.ps1`: Add --volumes to ordinary deployment down. | `DockerStackSmokeCommandTests.Normal_down_retains_volumes` | normal-down argv excludes --volumes/-v. |
+| PC-103 | `scripts/verify-docker-stack.ps1`: Mark cleanup complete despite inspected surviving owned container. | `DockerDeliveryRecoveryCommandTests.Cleanup_failure_preserves_residue` | nonzero/incomplete with surviving ID in manifest. |
+| PC-104 | `scripts/verify-docker-stack.ps1`: Resume removal without fresh inspect. | `DockerDeliveryRecoveryCommandTests.Interrupted_cleanup_rechecks_identity` | zero deletes after replacement-ID observation. |
+| PC-105 | `scripts/verify-docker-stack.ps1`: Add docker system prune to cleanup plan. | `DockerStackSmokeCommandTests.Global_cleanup_is_forbidden` | trace contains no global cleanup command. |
+| PC-106 | `scripts/verify-docker-stack.ps1`: Accept health with missing marker response. | `DockerStackSmokeCommandTests.Raw_challenge_is_required` | acceptance false with RawChallengeMissing. |
+| PC-107 | `scripts/verify-docker-stack.ps1`: Accept matching marker with no terminal/exit evidence. | `DockerStackSmokeCommandTests.Raw_exit_is_required` | acceptance false with RawExitMissing. |
+| PC-108 | `scripts/verify-docker-stack.ps1`: Accept host-only command result without session/generation join. | `DockerStackSmokeCommandTests.Session_created_run_is_required` | acceptance false with SessionOriginMissing. |
+| PC-109 | `scripts/verify-docker-stack.ps1`: Invoke parent qualification from child-probe mode. | `DockerStackSmokeCommandTests.Child_probe_cannot_launch_parent` | zero parent-launch commands from child invocation. |
+| PC-110 | `docker/session-runner-grok/Dockerfile`: Make final/default target inherit receipt-probe. | `DockerStackContractTests.Default_runtime_excludes_test_payload` | default target dependency closure has no fakegrok/test tools. |
+| PC-111 | `Dockerfile`: COPY fixture publish payload into final server stage. | `DockerStackContractTests.Stock_server_excludes_fixture` | final payload has no DockerStack.Fixture/Mvc.Testing. |
+| PC-112 | `docker-compose.delivery-fixture.yml`: Mount socket into observer. | `DockerStackContractTests.Receipt_stack_is_socket_free` | all receipt server/runner/observer Docker mounts empty. |
+| PC-113 | `scripts/verify-docker-stack.ps1`: Accept VerificationCustodyV1 in Linux capabilities. | `DockerStackSmokeCommandTests.Linux_custody_advertisement_is_refused` | acceptance false with UnsupportedCustodyAdvertised. |
+| PC-114 | `DeliveryCaseIdentity.cs`: Skip project/resource owner equality. | `DockerDeliveryObservationTests.Foreign_observer_owner_is_refused` | Observe refuses with OwnerMismatch before any query. |
+| PC-115 | `fixture Program.cs observe parsing`: Accept a --connection-string argument. | `DockerDeliveryObservationTests.Observer_arguments_are_closed` | argument rejected before reader construction. |
+| PC-116 | `provision-observer.sql`: Add INSERT grant on SessionQueuedMessages. | `DockerDeliveryObservationTests.Observer_grants_are_select_only` | grant operation set equals SELECT on only three named tables. |
+| PC-117 | `QueueObservationReader.cs`: Remove AgentSessionId predicate. | `DockerDeliveryObservationTests.Query_is_bound_to_session` | recorded query requires recipient parameter; foreign-session candidate rejected. |
+| PC-118 | `QueueObservationReader.cs`: Remove Sequence > high-water predicate. | `DockerDeliveryObservationTests.Query_excludes_preexisting_rows` | old equal-body row cannot be selected. |
+| PC-119 | `QueueObservationReader.cs`: Use LIKE/Contains body matching. | `DockerDeliveryObservationTests.Query_requires_exact_body` | prefix/suffix candidate rejected; exact body selected. |
+| PC-120 | `QueueObservationReader.cs`: Add Status=Pending predicate. | `DockerDeliveryObservationTests.Query_is_status_independent` | recorded query contains no status restriction; Sent row remains observable. |
+| PC-121 | `DeliveryEvidenceValidator.cs`: Remove ordinary-origin/binding check. | `DockerDeliveryObservationTests.Non_ui_or_bound_row_is_refused` | system/task/notification/schedule/maintenance variants refused. |
+| PC-122 | `DeliveryEvidenceValidator.cs`: Take newest of duplicate candidates. | `DockerDeliveryObservationTests.Duplicate_queue_rows_are_refused` | AmbiguousQueueRows; no selected row. |
+| PC-123 | `DeliveryEvidenceValidator.cs`: Accept candidate with a different Id after freeze. | `DockerDeliveryObservationTests.Observed_row_cannot_be_replaced` | RowIdentityChanged; original Id retained. |
+| PC-124 | `DeliveryEvidenceValidator.cs`: Synthesize floor=0 and generation from session. | `DockerDeliveryObservationTests.Pending_without_attempt_keeps_nulls` | attempt file absent; exported floor/generation both null. |
+| PC-125 | `DeliveryEvidenceValidator.cs`: Accept null floor for attempts=1. | `DockerDeliveryObservationTests.Attempt_requires_committed_floor` | MissingAttemptFloor rejection. |
+| PC-126 | `DeliveryEvidenceValidator.cs`: Replace attempt-1 snapshot with attempt-2. | `DockerDeliveryObservationTests.Retype_appends_attempt_instead_of_overwrite` | both distinct tuples retained with original floor unchanged. |
+| PC-127 | `DeliveryEvidenceValidator.cs`: Use StartsWith instead of full normalized equality. | `DockerDeliveryObservationTests.Native_prompt_must_be_complete` | prefix/missing-tail records rejected. |
+| PC-128 | `DeliveryEvidenceValidator.cs`: Skip UTF8 body SHA256 verification. | `DockerDeliveryObservationTests.Expected_body_digest_must_match` | BodyDigestMismatch before receipt acceptance. |
+| PC-129 | `DeliveryEvidenceValidator.cs`: Skip parsed summary identity equality. | `DockerDeliveryObservationTests.Summary_identity_must_match` | each wrong marker variant rejected despite recomputed valid body hash. |
+| PC-130 | `DeliveryEvidenceValidator.cs`: Accept equal text with different UUID. | `DockerDeliveryObservationTests.Stored_receipt_must_join_native_uuid` | ReceiptJoinMismatch. |
+| PC-131 | `DeliveryEvidenceValidator.cs`: Change > floor to >= floor. | `DockerDeliveryObservationTests.Stored_receipt_must_exceed_attempt_floor` | equal-floor old prompt rejected. |
+| PC-132 | `DeliveryEvidenceValidator.cs`: Compare native.Sequence to floor instead of stored.Sequence. | `DockerDeliveryObservationTests.Native_sequence_cannot_satisfy_server_floor` | native=100, stored=4, floor=5 is rejected. |
+| PC-133 | `DeliveryEvidenceValidator.cs`: Take first native matching record. | `DockerDeliveryObservationTests.Duplicate_native_prompts_are_refused` | two same-body native UUIDs rejected. |
+| PC-134 | `DeliveryEvidenceValidator.cs`: Take first stored UUID/kind record. | `DockerDeliveryObservationTests.Duplicate_stored_receipts_are_refused` | duplicate stored receipt rejected. |
+| PC-135 | `DeliveryEvidenceValidator.cs`: Accept native receipt with empty persisted list. | `DockerDeliveryObservationTests.Native_only_is_not_delivery_success` | state equals native-received/server-pending; accepted=false. |
+| PC-136 | `DeliveryEvidenceValidator.cs`: Skip initial accepted-generation comparison. | `DockerDeliveryObservationTests.Initial_generation_mismatch_is_refused` | GenerationMismatch for old manifest. |
+| PC-137 | `DeliveryEvidenceValidator.cs`: Skip final accepted-generation comparison. | `DockerDeliveryObservationTests.Generation_change_during_read_is_refused` | GenerationChanged even with matching body/UUID. |
+| PC-138 | `DeliveryEvidenceValidator.cs`: Fill missing runner generation from database. | `DockerDeliveryObservationTests.Missing_generation_is_refused` | GenerationUnavailable. |
+| PC-139 | `DeliveryEvidenceValidator.cs`: Compare rounded milliseconds. | `DockerDeliveryObservationTests.Generation_uses_postgres_precision` | one-microsecond difference rejected; submicrosecond representation normalized. |
+| PC-140 | `OrdinaryDeliveryRunnerClient.cs`: Return without forwarding SendInput for foreign session. | `DockerDeliveryBarrierTests.Untargeted_runner_calls_are_forwarded` | inner trace includes identical foreign input once. |
+| PC-141 | `OrdinaryDeliveryRunnerClient.cs`: Yield selected SSE prompt while armed. | `DockerDeliveryBarrierTests.Target_sse_receipt_waits_for_release` | no selected event escapes before exact release. |
+| PC-142 | `OrdinaryDeliveryRunnerClient.cs`: Return selected transcript while armed. | `DockerDeliveryBarrierTests.Target_pull_receipt_waits_for_release` | pull remains incomplete until release; foreign transcript passes. |
+| PC-143 | `OrdinaryDeliveryRunnerClient.cs`: Forward CR before checking armed cut. | `DockerDeliveryBarrierTests.Body_is_forwarded_before_enter_cut` | before-release inner trace contains body only, no CR. |
+| PC-144 | `OrdinaryDeliveryRunnerClient.cs`: Strip bracketed paste markers. | `DockerDeliveryBarrierTests.Multiline_bytes_are_unchanged` | inner payload equals LF bracketed body and separate CR. |
+| PC-145 | `OrdinaryDeliverySaveInterceptor.cs`: Read Added entries only in SavedChangesAsync. | `DockerDeliveryBarrierTests.Save_metadata_is_captured_before_accept` | one insert snapshot emitted after simulated EF AcceptAllChanges. |
+| PC-146 | `OrdinaryDeliverySaveInterceptor.cs`: Emit reached record from SaveChangesFailedAsync. | `DockerDeliveryBarrierTests.Failed_save_never_emits_commit_ready` | reached records is empty after injected DbUpdateException. |
+| PC-147 | `OrdinaryDeliverySaveInterceptor.cs`: Trust tracked context instead of second-read result. | `DockerDeliveryBarrierTests.Invisible_commit_cannot_reach_cut` | no reached record for independent read returning absent. |
+| PC-148 | `OrdinaryDeliverySaveInterceptor.cs`: Ignore CurrentTransaction in commit qualification. | `DockerDeliveryBarrierTests.Open_transaction_cannot_reach_cut` | OpenTransaction rejection and no commit-ready file. |
+| PC-149 | `OrdinaryDeliverySaveInterceptor.cs`: Reuse last selected snapshot for an unrelated context save. | `DockerDeliveryBarrierTests.Save_metadata_cannot_cross_contexts` | foreign context emits no selected reached record. |
+| PC-150 | `OrdinaryDeliverySaveInterceptor.cs`: Exclude multi-entry batch from selected-UUID fault. | `DockerDeliveryBarrierTests.Transcript_batch_is_refused` | batch SavingChanges throws named DbUpdateException. |
+| PC-151 | `OrdinaryDeliverySaveInterceptor.cs`: Disarm after first batch failure. | `DockerDeliveryBarrierTests.Transcript_individual_retry_is_refused` | second individual SavingChanges throws same named fault. |
+| PC-152 | `OrdinaryDeliverySaveInterceptor.cs`: Require UserPrompt kind as well as UUID for fault selection. | `DockerDeliveryBarrierTests.Transcript_stub_retry_is_refused` | stub-kind save for selected UUID throws; unrelated UUID allowed. |
+| PC-153 | `OrdinaryDeliverySaveInterceptor.cs`: Hold Delivered only after successful save. | `DockerDeliveryBarrierTests.Verdict_is_held_before_commit` | save delegate call count zero while verdict barrier held. |
+| PC-154 | `DeliveryFileBarrier.cs`: Compare only cut name in arm matching. | `DockerDeliveryBarrierTests.Foreign_arm_is_not_activated` | cross-case/row/attempt arms produce no reached file. |
+| PC-155 | `DeliveryFileBarrier.cs`: Ignore host boot nonce in release matching. | `DockerDeliveryBarrierTests.Old_host_release_cannot_unblock` | blocked completion remains pending after prior-host release. |
+| PC-156 | `DeliveryFileBarrier.cs`: Do not persist consumed cut ID. | `DockerDeliveryBarrierTests.Consumed_arm_cannot_rearm_after_restart` | recreated barrier refuses same arm after restart. |
+| PC-157 | `DeliveryFileBarrier.cs`: Return success when wait cancellation fires. | `DockerDeliveryBarrierTests.Deadline_is_incomplete_not_release` | Incomplete result and zero downstream operations. |
+| PC-158 | `OrdinaryDeliveryResponseBarrier.cs`: Forward StartAsync while armed. | `DockerDeliveryBarrierTests.Held_response_cannot_start_headers` | underlying response HasStarted is false until release. |
+| PC-159 | `OrdinaryDeliveryResponseBarrier.cs`: Forward FlushAsync while armed. | `DockerDeliveryBarrierTests.Held_response_cannot_flush_body` | underlying body length/flush count remains zero. |
+| PC-160 | `OrdinaryDeliveryResponseBarrier.cs`: Drop response body on unarmed path. | `DockerDeliveryBarrierTests.Unarmed_response_is_unchanged` | exact original status/header/body received. |
+| PC-161 | `DeliveryFixtureHost.cs`: Keep the captured inner registration but omit the outer decorator registration. | `DockerDeliveryBarrierTests.Runner_registration_is_decorated_once` | resolved graph has exactly one decorator with original recording inner. |
+| PC-162 | `scripts/verify-docker-stack.ps1`: Post before expectation atomic replacement. | `DockerDeliveryRecoveryCommandTests.Expectation_is_durable_before_post` | POST index follows committed expectation with exact body hash. |
+| PC-163 | `scripts/verify-docker-stack.ps1`: Retry POST when response is lost. | `DockerDeliveryRecoveryCommandTests.Unknown_ack_never_reposts` | post count remains one across observation/resume. |
+| PC-164 | `scripts/verify-docker-stack.ps1`: Treat zero matches as definite refusal. | `DockerDeliveryRecoveryCommandTests.Live_request_absence_is_not_refusal` | incomplete state and no second POST. |
+| PC-165 | `scripts/verify-docker-stack.ps1`: Retry definite failure without checking native/input evidence. | `DockerDeliveryRecoveryCommandTests.Refused_insert_retry_requires_absence` | no second POST if any body/Enter/native prompt exists. |
+| PC-166 | `scripts/verify-docker-stack.ps1`: Issue kill before reached digest export. | `DockerDeliveryRecoveryCommandTests.Crash_requires_exported_reached_record` | kill index follows independent observation and reached export. |
+| PC-167 | `scripts/verify-docker-stack.ps1`: Use runner container ID for kill. | `DockerDeliveryRecoveryCommandTests.Crash_target_is_only_fixture_server` | kill target equals recorded fixture-server ID; runner/db untouched. |
+| PC-168 | `scripts/verify-docker-stack.ps1`: Write pending action after kill command. | `DockerDeliveryRecoveryCommandTests.Crash_action_intent_is_durable` | intent commit precedes kill; interrupted action remains reconcilable. |
+| PC-169 | `scripts/verify-docker-stack.ps1`: Start fixture before observed exit. | `DockerDeliveryRecoveryCommandTests.Server_exit_is_awaited` | restart index follows exact container exited observation. |
+| PC-170 | `scripts/verify-docker-stack.ps1`: Ignore runner container identity drift after restart. | `DockerDeliveryRecoveryCommandTests.Restart_identity_change_is_refused` | acceptance false; no adoption or replacement recipient launch. |
+| PC-171 | `scripts/verify-docker-stack.ps1`: Accept attempts=1 after fresh body retry. | `DockerDeliveryRecoveryCommandTests.Retype_recovery_charges_once` | attempt-committed case requires attempts=2 and both floor files. |
+| PC-172 | `scripts/verify-docker-stack.ps1`: Ignore extra forwarded body in body-before-enter case. | `DockerDeliveryRecoveryCommandTests.Enter_only_recovery_forbids_second_body` | duplicate body rejects recovery even if final transcript matches. |
+| PC-173 | `scripts/verify-docker-stack.ps1`: Allow one extra CR after preexisting complete receipt. | `DockerDeliveryRecoveryCommandTests.Received_recovery_requires_zero_writes` | additional forwarded body and Enter counts both zero. |
+| PC-174 | `scripts/verify-docker-stack.ps1`: Submit summary again in ResumeManifest. | `DockerDeliveryRecoveryCommandTests.Receipt_manifest_resume_is_read_only` | resume POST count equals zero; same manifest identity. |
+| PC-175 | `scripts/verify-docker-stack.ps1`: Set run success from receipt acceptance alone. | `DockerDeliveryRecoveryCommandTests.Received_failure_summary_remains_failure` | delivery=confirmed but runExit is original nonzero. |
+| PC-176 | `scripts/verify-docker-stack.ps1`: Accept case on health despite no reached record. | `DockerDeliveryRecoveryCommandTests.Missing_reached_cut_fails` | case accepted=false and CutNotReached. |
+| PC-177 | `scripts/verify-docker-stack.ps1`: Omit stock-busy requirement from final manifest validation. | `DockerDeliveryRecoveryCommandTests.Stock_receipts_are_independent_gates` | missing stock-busy rejects overall acceptance. |
+| PC-178 | `scripts/verify-docker-stack.ps1`: Commit result-ready after only first report copy. | `DockerDeliveryRecoveryCommandTests.Interrupted_export_is_incomplete` | no result-ready acknowledgement and evidence residue retained. |
+| PC-179 | `scripts/verify-docker-stack.ps1`: POST mode Now. | `DockerDeliveryRecoveryCommandTests.Receipt_probe_requires_when_idle` | captured request mode equals WhenIdle. |
+| PC-180 | `QueueObservationReader.cs`: Request ReadCommitted instead of RepeatableRead/read-only transaction. | `DockerDeliveryObservationTests.Observation_transaction_is_read_only_repeatable` | recorded transaction isolation equals RepeatableRead and readOnly=true. |
+| PC-181 | `DeliveryFileBarrier.cs`: Accept reached record with invalid observation digest. | `DockerDeliveryBarrierTests.Torn_reached_record_is_refused` | no release/kill authorization for truncated or digest-mismatched record. |
+| PC-182 | `docker/session-runner-grok/Dockerfile`: Derive receipt-probe from session-testing tool layer. | `DockerStackContractTests.Receipt_runner_has_no_docker_tools` | receipt-probe tool closure contains no docker/compose socket authority. |
+| PC-183 | `DeliveryEvidenceValidator.cs`: Accept AssistantText as native candidate. | `DockerDeliveryObservationTests.Receipt_kind_must_be_user_prompt` | wrong-kind record rejected despite exact body. |
+| PC-184 | `DeliveryEvidenceValidator.cs`: Skip stored body equality after UUID join. | `DockerDeliveryObservationTests.Stored_body_must_be_complete` | matching UUID with truncated stored text rejected. |
+| PC-185 | `scripts/verify-docker-stack.ps1`: Ignore replacement floor/generation on Enter-only outcome. | `DockerDeliveryRecoveryCommandTests.Enter_only_recovery_keeps_tuple` | body-before-enter requires original attempt=1/floor/start/generation. |
+| PC-186 | `scripts/verify-docker-stack.ps1`: Accept attempt=2 without exported attempt-2 snapshot. | `DockerDeliveryRecoveryCommandTests.Retype_requires_second_committed_tuple` | recovery rejected until second committed tuple is present. |
+| PC-187 | `docker-compose.delivery-fixture.yml`: Set restart: always on fixture server. | `DockerStackContractTests.Fixture_restart_policy_is_disabled` | restart policy equals no. |
+| PC-188 | `docker-compose.yml`: Set Delegation__DiagnoseEnabled=true. | `DockerStackContractTests.Fresh_Delegation__DiagnoseEnabled_is_disabled` | effective Delegation__DiagnoseEnabled equals false. |
+| PC-189 | `docker-compose.yml`: Set Delegation__OutputDistillerEnabled=true. | `DockerStackContractTests.Fresh_Delegation__OutputDistillerEnabled_is_disabled` | effective Delegation__OutputDistillerEnabled equals false. |
+| PC-190 | `docker-compose.yml`: Set Hangfire__ServerEnabled=true. | `DockerStackContractTests.Fresh_Hangfire__ServerEnabled_is_disabled` | effective Hangfire__ServerEnabled equals false. |
+| PC-191 | `docker-compose.yml`: Set ZombieCensus__Enabled=true. | `DockerStackContractTests.Fresh_ZombieCensus__Enabled_is_disabled` | effective ZombieCensus__Enabled equals false. |
+| PC-192 | `docker-compose.yml`: Set WorktreeResidue__Enabled=true. | `DockerStackContractTests.Fresh_WorktreeResidue__Enabled_is_disabled` | effective WorktreeResidue__Enabled equals false. |
+| PC-193 | `docker-compose.yml`: Set Schedules__Enabled=true. | `DockerStackContractTests.Fresh_Schedules__Enabled_is_disabled` | effective Schedules__Enabled equals false. |
+| PC-194 | `docker-compose.yml`: Set ChannelBridge__Enabled=true. | `DockerStackContractTests.Fresh_ChannelBridge__Enabled_is_disabled` | effective ChannelBridge__Enabled equals false. |
+| PC-195 | `docker-compose.yml`: Set Digest__Enabled=true. | `DockerStackContractTests.Fresh_Digest__Enabled_is_disabled` | effective Digest__Enabled equals false. |
+| PC-196 | `docker-compose.delivery-fixture.yml`: Mount /var/run/docker.sock into server. | `DockerStackContractTests.Receipt_server_has_no_socket` | receipt server Docker mounts is empty. |
+| PC-197 | `docker-compose.delivery-fixture.yml`: Mount /var/run/docker.sock into runner. | `DockerStackContractTests.Receipt_runner_has_no_socket` | receipt runner Docker mounts is empty. |
+| PC-198 | `.dockerignore`: Append final !scratch/key.pem re-include rule. | `DockerStackContractTests.Runtime_context_denies_Pem` | effective-context sentinel scratch/key.pem is absent. |
+| PC-199 | `docker/tests/Dockerfile.dockerignore`: Append final !scratch/key.pem re-include rule. | `DockerStackContractTests.Tests_context_denies_Pem` | effective-context sentinel scratch/key.pem is absent. |
+| PC-200 | `DeliveryCaseIdentity.cs`: Skip inline ceiling validation. | `DockerDeliveryObservationTests.Oversized_summary_is_refused` | oversized summary refused before POST; exact legal boundary accepted. |
+| PC-201 | `scripts/verify-docker-stack.ps1`: Skip canonical evidence-root containment check. | `DockerDeliveryRecoveryCommandTests.Foreign_resume_manifest_path_is_refused` | sibling-prefix/traversal/symlink path refused before observation or command. |
+| PC-202 | `DeliveryFileBarrier.cs`: Compare host boot nonce but omit attempt in release equality. | `DockerDeliveryBarrierTests.Cross_attempt_release_cannot_unblock` | same-host wrong-attempt release leaves cut blocked; exact release unblocks. |
+| PC-203 | `scripts/verify-docker-stack.ps1`: Include observer password in an exported connection diagnostic. | `DockerDeliveryRecoveryCommandTests.Private_credential_is_not_exported` | harmless secret sentinel absent from argv/logs/manifest and exported evidence. |
+| PC-204 | `scripts/test-docker.ps1`: Accept existing report whose run identity differs. | `DockerTestCommandTests.Stale_report_is_refused` | nonzero exit and StaleResult; no result-ready acceptance. |
+| PC-205 | `DeliveryEvidenceValidator.cs`: Only compare Id, omitting frozen body/sequence/session equality. | `DockerDeliveryObservationTests.Frozen_row_field_change_is_refused` | same-Id changed body/sequence/session candidate rejected. |
+
+### Out of scope
+
+- The 195 explicitly excluded backend classes retain their named native/process/opt-in
+  boundaries in the roster. Exclusion is whole-class, including partial files and transitive
+  helper calls. The one S4 Grok specification method is separately required on both platforms.
+  Existing original suite ownership and nightly policy are unchanged.
+- Linux full runs of Antiphon.Agents.Pty.Tests, Antiphon.SessionRunner.Tests and
+  Antiphon.PtyHost.Tests; Chromium/browser E2E. E2E receives only compile/staged-apphost checks.
+  The four CARD-0588 platform fixes retain their owner and are not counted as Linux coverage.
+- Live Telegram/Slack/provider credentials and real paid model turns. Small runs fake gateway
+  conformance and isolated Redpanda; no live-token leg is reported covered.
+- Linux SourceLanding custody/remote PCs (CARD-0598), native pipe repair (CARD-0594), desktop
+  deployment/activation, database migration from Windows, arm64, and full nightly parity.
+- No rewrite of production queue/outbox/runtime/DTOs or new public failpoint/admin routes.
+  If the specified interfaces cannot expose a cut, Code returns that demonstrated boundary to
+  Plan. Health/transport substitutes cannot close the native acceptance rows.
+
+### Checkpoints
+
+This is the closed **Final/Full ordinary** list. `After=all` means S1–S5 and S6a–S6d
+committed at the same frozen implementation SHA. Small rows precede Medium; both are required.
+Slices may be authored/committed separately, but no unlisted interim build/suite is silently
+added. Any necessary red repair or extra diagnostic is reported against its CP and commit.
+No full Antiphon.Tests/solution/native-assembly run is additionally commissioned.
+
+The image/client rows use the testing guide's non-TUnit exact-command form. Their Build cell
+names one isolated Docker image or client output instead of a .NET bin directory; this is the
+explicit build-kind extension for this Docker card, not permission for implicit additional
+builds. A `CP-n` cell reuses that build with no build operation. All rows share `After=all`.
+Runtime/fixture/native image publication has separate rows and separate image IDs. A row runs
+one build and one named check/filter; the controller must not rebuild every time it probes.
+
+Freeze once: `$sha = git rev-parse HEAD`, a random `$runId`, an owned clean context and private
+`$manifest` under the recorded evidence root. Windows evidence is under this task's owned
+root; server2 evidence is `/work/test-evidence/$runId`. Record these concrete values before
+execution. Tags are `antiphon-c590-$runId-{server,runner,session-testing,test-runner,
+receipt-probe,delivery-fixture,child-server,child-runner}`. The baseline context is a separate
+tracked-file export of `723ac9534fc3fce49b378e287da08b7b11095716` and never the local checkout.
+Builds inject full `SOURCE_REVISION=$sha`; .NET builds use isolated `bin-c590/`, Release,
+`SourceRevisionId=$sha`, disabled build-server/shared compilation reuse. E2E uses
+`bin-c590-e2e/`. No `dotnet test` or AppHost build. Dispose owned alternate outputs only after
+all foreground commands exit, checking resolved paths remain in the owned checkout.
+
+Code freezes these **internal verification selectors** in the existing planned scripts:
+`verify-docker-stack.ps1` with `-Case` and `-Manifest $manifest` selects only the literal cases
+in this table; `test-docker-container.ps1` with `-Checkpoint` and `-Manifest $manifest` selects the
+literal build/filter from this manifest, never arbitrary shell input. These are proposed
+selectors to implement, not currently available commands. Public `test-docker.ps1 -Group
+small|backend|all` stays as designed. A caller supplies no raw SQL/connection string/PID or
+cleanup target through these selectors. The controller derives those from owned identities.
+
+CP-6–CP-9 bootstrap the owned parent on server2. CP-10 launches and awaits the actual Raw
+test-command session running `pwsh -NoProfile -File scripts/test-docker.ps1 -Group all
+-ThrowawayStack`; that foreground session drives CP-11–CP-56, recording each row separately.
+CP-10's envelope has no second suite/build hidden inside its cost: all child work is charged
+to its subordinate rows. The child-driver performs each named build once from its own clean
+source export and joins commands/results to its accepted session generation. CP-57 performs
+final independent server2 observation after the initiating desktop CLI has disconnected.
+Never use host-side docker exec as CP-10's session origin.
+
+For a TUnit row use `scripts/run-checkpoint.ps1` where available, or its identical result
+line inside the Linux container: exact filter, fresh TRX, actual class/method roster and
+`executed/passed/failed/skipped` counts. The row's minimum is only a floor: every named class
+and every discovered selected method/argument case must execute, with zero unexplained skips.
+For Medium the exact combined filters below are also stored in the JSON roster; each operand
+has parentheses and suffix wildcard as required by pinned TUnit. Reject any unexpected
+executed class. Source counts do not excuse lost parameterized cases. Image/script rows emit
+one named case receipt per selector, retain their real child exit, and carry no TUnit claim.
+For a negative case, the verifier succeeds only when it asserts the exact expected refusal
+and preserves the failed nested run's original nonzero status. This never relabels that run
+as successful; it is a successful test of the failure behavior.
+
+CP-55/CP-56 each build one disposable context-probe image from the same owned clean export,
+using a temporary Dockerfile containing `COPY . /context` and the selected real ignore policy
+copied byte-for-byte as its Dockerfile-specific ignore. Add only harmless fixture sentinels
+for every context PC, including a top-level .git pointer and a nested .git directory. Export
+the resulting /context inventory and require every sentinel absent and every needed source
+present. This qualifies the actual Docker ignore engine independently of the local matcher.
+No actual provider/auth/certificate material is present. Remove only the recorded probe image
+and container after exporting the inventory. These two builds are ordinary session-owned
+Docker work, never part of Windows SourceLanding PCs.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min |
+|---|---|---|---|---|---|---|---|
+| CP-1 | all | tests/Antiphon.Tests -> bin-c590/ (Windows) | local-guards | `/*/*/(DockerStackContractTests*)\|(DockerTestCommandTests*)\|(TestAppHostPathTests*)\|(LinuxTestRosterTests*)\|(DockerStackSmokeCommandTests*)\|(DockerDeliveryObservationTests*)\|(DockerDeliveryBarrierTests*)\|(DockerDeliveryRecoveryCommandTests*)/*` | R-1–R-7, V-5/V-11/V-12 | all 205 named PC methods ordinary green; >=205 executed, 0 failed/skipped | 12 |
+| CP-2 | all | CP-1 | windows-queue | `/*/*/SessionQueueReceiptPlumbingTests/(C475_QueueCommitAndTransportRecovery*)\|(C475_AlreadyIdleWhenIdleHasRecipientReceipt*)\|(C475_PumpPersistsCompleteLinesOnce*)\|(C475_MultilineWritesKeepPasteMarkers*)` | R-9 | 13 expanded cases, 0 failed/skipped | 10 |
+| CP-3 | all | CP-1 | windows-apphost | `/*/*/GrokDelegateDispatchTests/the_spec_a_grok_dispatch_builds_would_spawn_the_real_fakegrok_binary` | R-3/R-10, V-5 | 1 executed, 0 failed/skipped | 3 |
+| CP-4 | all | CP-1 | phone-home-contract | `/*/*/VerifyPhoneHomeGrokScriptTests/Compose_and_dockerfile_do_not_hardcode_server_origin` | R-10 | 1 executed, 0 failed/skipped | 1 |
+| CP-5 | all | tests/Antiphon.E2E -> bin-c590-e2e/ (Windows) | e2e-consumer-compile | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case e2e-staged-apphost -Manifest $manifest` | V-5, R-3/R-10 | build succeeds; staged Windows runner apphost and shared consumer verified; 1 case | 5 |
+| CP-6 | all | baseline Dockerfile -> unique baseline image tag | old-root-build | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case baseline-build-failure -Manifest $manifest` | V-1 | captured actual old failing build step; no new-image claim, 1 case | 10 |
+| CP-7 | all | Dockerfile -> server image | server-payload | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case server-image-payload -Manifest $manifest` | V-1, R-1 | build plus real DLL/client/bundle/context/SHA checks; 1 case | 14 |
+| CP-8 | all | docker/session-runner-grok/Dockerfile --target runtime -> runner image | runner-payload | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case runner-image-payload -Manifest $manifest` | V-1/V-12, R-1/R-10 | default runtime/native/execute/no-test-payload checks; 1 case | 12 |
+| CP-9 | all | docker/session-runner-grok/Dockerfile --target session-testing -> session-testing image | testing-runner-payload | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case testing-runner-payload -Manifest $manifest` | V-1/V-12, R-1 | non-root tools/socket-GID policy/capability refusal; 1 case | 10 |
+| CP-10 | all | CP-9 | raw-and-session-envelope | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case parent-native-and-command-session -Manifest $manifest` | V-6/V-7/V-12 | Raw challenge+exit; actual command-session launch, awaited with subordinate CP receipts | 8 |
+| CP-11 | all | Dockerfile from session clean context -> child-server image | child-server-build | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case child-server-image-payload -Manifest $manifest` | V-1/V-7 | session-owned source export/SHA/image ID recorded; 1 case | 5 |
+| CP-12 | all | docker/session-runner-grok/Dockerfile --target runtime -> child-runner image | child-runner-build | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case child-runner-image-payload -Manifest $manifest` | V-1/V-7/V-12 | session builds runner; no recursive socket; 1 case | 4 |
+| CP-13 | all | docker/tests/Dockerfile --target test-runner -> test-runner image | test-image-build | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case test-image-context-and-tools -Manifest $manifest` | V-1/V-3/V-4, R-1 | linked sources/resources/tools/samples and safe actual context; 1 case | 14 |
+| CP-14 | all | docker/session-runner-grok/Dockerfile --target receipt-probe -> receipt-probe image | receipt-runner-build | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case receipt-runner-image-payload -Manifest $manifest` | V-1/V-8/V-12, R-1 | native FakeGrok payload/terminal wrapper; no Docker tools/socket; 1 case | 4 |
+| CP-15 | all | docker/tests/Dockerfile --target delivery-fixture -> delivery-fixture image | fixture-publish | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case fixture-image-payload -Manifest $manifest` | V-1/V-9/V-10, R-1/R-7 | real publish payload/health/client/bundles/same SHA; test-only image; 1 case | 10 |
+| CP-16 | all | CP-11 | deployment-state | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case deployment-state -Manifest $manifest` | V-2/V-7/V-12 | fresh migrations/UI/API/version; DB recreation/workspace/volume retention; 1 case | 8 |
+| CP-17 | all | client npm ci + npm run build -> isolated /src/client/dist | small-client-lint | `npm --prefix client run lint` | V-3 | build and lint exit 0, no warnings; 1 case | 5 |
+| CP-18 | all | CP-17 | small-client-tests | `pwsh -NoProfile -File scripts/test-client.ps1 -JsonResultPath /evidence/client.json` | V-3, R-2 | all 102 frozen Vitest files execute; >=102 tests, 0 failed/unexplained skipped | 8 |
+| CP-19 | all | tests/Antiphon.Messaging.Tests -> bin-c590/ (Linux) | small-messaging | `/*/*/*/*` | V-3, R-2 | all 24 classes, >=206 methods; broker opt-in; 0 failed/unexplained skipped | 8 |
+| CP-20 | all | tests/Antiphon.Tests -> bin-c590/ (Linux) | linux-roster-fixture | `/*/*/(TestAppHostPathTests*)\|(LinuxTestRosterTests*)\|(DockerDeliveryDatabaseTests*)/*` | V-4/V-5/V-10, R-3/R-4/R-6/R-7 | all 3 classes; 5 helper + 6 roster + 16 DB methods = >=27; 0 failed/skipped | 12 |
+| CP-21 | all | CP-20 | linux-staged-apphost | `/*/*/GrokDelegateDispatchTests/the_spec_a_grok_dispatch_builds_would_spawn_the_real_fakegrok_binary` | V-5, R-3 | 1 executed against Linux staged apphost, 0 failed/skipped | 3 |
+| CP-22 | all | CP-20 | medium-local-01 | `/*/*/(TestClassificationGuardTests*)\|(AgentTuiOperationCoordinatorTests*)\|(DollarEnvArgTests*)\|(RunnerProcessProbeRedactionTests*)\|(AgentLaunchSpecTests*)\|(AgentProtocolAdapterFactoryTests*)\|(AgentRegistryTests*)\|(AgentSessionSettingsTests*)\|(CodexResponseAnalyzerTests*)\|(CodexWorkingIndicatorTests*)\|(GrokAdapterTests*)\|(GrokCredentialStoreTests*)\|(GrokModelListParserTests*)\|(GrokSignInPromptDetectorTests*)\|(GrokTrustPromptDetectorTests*)\|(OpenCodeAdapterTests*)\|(RunnerClaudeAdapterEffortPromptTests*)\|(RunnerClaudeAdapterTrustPromptTests*)\|(RunnerClaudeAdapterVerifiedPromptTests*)\|(RunnerCodexAdapterReadyTests*)\|(RunnerCodexAdapterSubmitConfirmTests*)\|(RunnerCodexAdapterTurnCompleteTests*)\|(RunnerGrokAdapterSignInPromptTests*)\|(RunnerGrokAdapterTrustPromptTests*)\|(RunnerGrokAdapterTurnCompleteTests*)\|(RunnerTerminalSessionGenerationTests*)\|(SessionRunnerCapabilityGateTests*)\|(SessionRunnerGenerationWireTests*)\|(SessionRunnerHttpClientHerdrWireTests*)\|(TranscriptNormalizerTests*)\|(TranscriptTurnBaselineTests*)\|(AgentLaunchEnvTests*)\|(ApiKeyPlaceholderTests*)\|(ApiKeyProtectorTests*)\|(AgentContextContractTests*)\|(AgentExecutableResolverTests*)\|(AgentPinPathTests*)\|(AgentPresetsTests*)\|(AgentTaskLandVerificationEvidenceTests*)\|(AgentTaskLandingStateTests*)/*` | V-4, R-4 | all 40 frozen classes, >=286 source methods expanded; 0 failed/skipped | 8 |
+| CP-23 | all | CP-20 | medium-local-02 | `/*/*/(AgentTaskLivenessTests*)\|(ApiErrorClassifierTests*)\|(ApiErrorRetryScheduleTests*)\|(AreaMapContractTests*)\|(AreaMapLoaderTests*)\|(AwayDigestFormatterTests*)\|(BlockedQuestionTests*)\|(BoardServiceNeedsHumanReviewTests*)\|(BootWedgeContractTests*)\|(CapacityRecoveryPolicyTests*)\|(CardAliasNormalizationTests*)\|(CardFilePolicyTests*)\|(CardFilePrivacyDocumentationTests*)\|(CardIdentifierAllocatorTests*)\|(CardRankingOrderTests*)\|(CardRankingTests*)\|(CardTaskFileRendererTests*)\|(ChannelContractsTests*)\|(ChannelInboundDebouncerTests*)\|(ChannelMachineTurnMatchTests*)\|(CheckInterpretationValidatorTests*)\|(CheckScheduleBackoffTests*)\|(CheckScheduleElapsedTimesTests*)\|(CheckScheduleRoundingTests*)\|(CheckSpecialistLaunchPolicyTests*)\|(CheckpointManifestDocumentationTests*)\|(ClaudeLaunchArgsTests*)\|(CodexLaunchArgsTests*)\|(ColumnTextTests*)\|(CommitOnSettleDocumentationTests*)\|(CommitOnSettlePolicyResolverTests*)\|(CommitRecoveryObligationsTests*)\|(CompletionHeaderOverlapTests*)\|(ComplexityRoutingComposeTests*)\|(ContextCompactionSettingsTests*)\|(DelegateBindRefusalRecoveryTests*)\|(DelegationAllowedRootsFileTests*)\|(DelegationCapabilityContractTests*)\|(DelegationCostTests*)\|(DelegationDenyHookPolicyTests*)/*` | V-4, R-4 | all 40 frozen classes, >=256 source methods expanded; 0 failed/skipped | 8 |
+| CP-24 | all | CP-20 | medium-local-03 | `/*/*/(DelegationKindPricingTests*)\|(DelegationPoolDefaultsTests*)\|(DelegationQuestionDetectionTests*)\|(DelegationReportFormatterTests*)\|(DelegationScopeLeaseTests*)\|(DelegationWorkspaceBoundaryTests*)\|(DeliveryBackendCeilingsTests*)\|(DiagnosisTests*)\|(DiagnosticsRedactorTests*)\|(DirectoryBrowseServiceTests*)\|(DirectoryMatcherTests*)\|(ExternalTrackerSyncImportanceProvenanceTests*)\|(GitHubIssuesTrackerWriteTests*)\|(GitIndexLockTests*)\|(GrokDeliveryShapeTests*)\|(GrokLaunchArgsTests*)\|(GrokNativeSessionResumeTests*)\|(GrokQuestionPopupTests*)\|(GrokRulesLiveEvidenceTests*)\|(GrokRulesTransportCompatibilityTests*)\|(HerdrAgentKindMapTests*)\|(HerdrLaunchContextTitleTests*)\|(HerdrStatusDisagreementTests*)\|(InstructionBundleTests*)\|(InstructionFileStampTests*)\|(InterimVerificationReadinessTests*)\|(InternalDecisionPolicyTests*)\|(IssueTrackerAdapterTests*)\|(IssueTrackerConfigParserTests*)\|(LandFailureDiagnosticTests*)\|(LaunchModelArgumentAppenderTests*)\|(ModelAliasTests*)\|(ModelLevelAliasDisplayTests*)\|(MutationRoleContractTests*)\|(OrchestratorInvestigationDetectorTests*)\|(OrchestratorSettingsTests*)\|(OutputDistillationGateTests*)\|(OutputDistillationPolicyTests*)\|(OutputDistillationQueueTests*)\|(PipelineHandoffParseTests*)/*` | V-4, R-4 | all 40 frozen classes, >=410 source methods expanded; 0 failed/skipped | 8 |
+| CP-25 | all | CP-20 | medium-local-04 | `/*/*/(PolicyRefreshDeltaTests*)\|(PostLandMutationContractTests*)\|(PostLandMutationPublicationTests*)\|(PostLandMutationReceiptPolicyTests*)\|(ProviderCapacityNoticeTests*)\|(ProviderContractCatalogTests*)\|(PtyInlineCeilingTests*)\|(RemoteControlMenuScreenTests*)\|(RemoteControlPolicyTests*)\|(RepairSourceDocumentationTests*)\|(RestartFailureClassificationTests*)\|(ReviewEvidenceParserTests*)\|(RoutingCandidateParseTests*)\|(ScheduleRecurrenceTests*)\|(ScopeDriftTests*)\|(ScopeOverlapPolicyTests*)\|(ScopeResolverAreaTests*)\|(ScopedVerificationInstructionTests*)\|(SessionContextUsageTests*)\|(SessionReAdoptionStateTests*)\|(SessionRunnerSettingsTests*)\|(SharedWriterLeaseProjectionTests*)\|(SiblingWarningReducerTests*)\|(SlashCommandCatalogServiceTests*)\|(SlashCommandParserTests*)\|(SpecialistAttemptEvidenceTests*)\|(SpecialistFailurePolicyTests*)\|(SpecialistRoleContractTests*)\|(StandingPipelinePolicyDocumentationTests*)\|(StandingSpecialistHealthPolicyTests*)\|(SubagentNotificationTests*)\|(SubscriptionQuotaGateTests*)\|(SubscriptionUsageParserTests*)\|(TaskCompletionProgressPolicyTests*)\|(TierReasoningEffortAgreementTests*)\|(TrackerSyncSummaryFormatterTests*)\|(TranscriptLocalCommandEchoTests*)\|(TypedBodySpillTests*)\|(UnmarkedWaitingContractTests*)\|(UsageLimitWallParserTests*)/*` | V-4, R-4 | all 40 frozen classes, >=379 source methods expanded; 0 failed/skipped | 8 |
+| CP-26 | all | CP-20 | medium-local-05 | `/*/*/(VerificationRoundBriefTests*)\|(VerificationRoundInstructionTests*)\|(WorkflowEngineParsingTests*)\|(WorktreeCleanupPresentationTests*)\|(WorktreeListParsingTests*)\|(CachingChatClientTests*)\|(CardStateMachineTests*)\|(RunAttemptStateMachineTests*)\|(WorkflowStateMachineTests*)\|(AppHostBrokerSourceGuardTests*)\|(LandingIdentityControlTests*)\|(LandingRemovalPolicyControlTests*)\|(LogRetentionTests*)\|(WorktreeDeleteAccessProbeTests*)\|(WorktreeManagerSafetyTests*)\|(WorktreeManagerTests*)\|(WorktreeRemovalDefaultTests*)\|(NightlyWatchdogCoreTests*)\|(DelegationHarnessCensusTests*)\|(ProductionRunnerGuardTests*)\|(PtyBackendEnvGuardTests*)\|(SlowTestTripwireTests*)\|(TestLaneCategoryGuardTests*)/*` | V-4, R-4 | all 23 frozen classes, >=157 source methods expanded; 0 failed/skipped | 8 |
+| CP-27 | all | CP-20 | medium-database-01 | `/*/*/(AgentTuiDiscoveryTests*)\|(AgentTuiLaunchResolverTests*)\|(AgentTuiModelArgumentMigrationTests*)\|(AgentTuiSecretMigratorTests*)\|(AgentTuiPersistenceTests*)\|(AgentTuiProfileConcurrencyTests*)\|(AgentTuiProfileImporterBackfillTests*)\|(AgentTuiProfileServiceTests*)\|(ApiKeyEnvResolverTests*)\|(ApiKeyLaunchPathTests*)\|(ApiKeyStoreTests*)\|(LaunchEnvLayersIntegrationTests*)\|(AgentBundleAttachmentTests*)\|(AgentChannelServiceIntegrationTests*)\|(AgentControlServiceIntegrationTests*)\|(AgentCreateRaceTests*)\|(AgentCreateSupervisionTests*)\|(AgentNamePinTests*)\|(AgentPinnedInstructionServiceTests*)\|(AgentRemoteControlGateTests*)\|(AgentReplyStyleTests*)\|(AgentServiceIntegrationTests*)\|(AgentSessionBackendTests*)\|(AgentSessionInterruptedLaunchResumeTests*)\|(AgentSessionLaunchFailureTests*)\|(AgentSessionLaunchQueueOwnershipTests*)\|(AgentStartRecoveryTests*)\|(AgentSupervisionTests*)\|(AgentSystemPromptLaunchTests*)\|(AgentTaskAgentKindTests*)\|(AgentTaskAnswerTests*)/*` | V-4, R-4 | all 31 frozen classes, >=489 source methods expanded; 0 failed/skipped | 10 |
+| CP-28 | all | CP-20 | medium-database-02 | `/*/*/(AgentTaskAutoTitleTests*)\|(AgentTaskCallerResolutionTests*)\|(AgentTaskCardBindingTests*)\|(AgentTaskCatchUpSettlementTests*)\|(AgentTaskCheckInterpreterTests*)\|(AgentTaskCheckRemapTests*)\|(AgentTaskCheckScheduleTests*)\|(AgentTaskConcurrencyLimitTests*)\|(AgentTaskDetailBlockedContextTests*)\|(AgentTaskInternalDecisionLifecycleTests*)\|(AgentTaskInternalDecisionMigrationTests*)\|(AgentTaskLandAdmissionControlledTests*)\|(AgentTaskLandApprovalPersistenceTests*)\|(AgentTaskLandApprovalRequestTests*)\|(AgentTaskLandBoundaryControlledTests*)\|(AgentTaskLandConcurrencyControlledTests*)\|(AgentTaskLandFailureDiagnosticTests*)\|(AgentTaskLandMonitoringTests*)\|(AgentTaskLandReceiptTests*)\|(AgentTaskLandRequestTests*)\|(AgentTaskLandSourcePersistenceTests*)\|(AgentTaskLandSweepTests*)\|(AgentTaskLandingPersistenceTests*)\|(AgentTaskListStatusFilterTests*)\|(AgentTaskPipelineStatusTests*)\|(AgentTaskPoolTests*)\|(AgentTaskProjectScopeTests*)\|(AgentTaskRefineTests*)\|(AgentTaskReplyOverlayTests*)\|(AgentTaskReuseEnqueueTests*)\|(AgentTaskReviewEvidenceTests*)\|(AgentTaskScopedListTests*)\|(AgentTaskSettlementRaceTests*)\|(AgentTaskStallEscalationTests*)\|(AgentWorkspaceProvisionerTests*)\|(AlertPersistenceTests*)\|(AlertRoutingTests*)\|(ApiErrorRecoveryServiceTests*)\|(AppHostWatchdogStateAttentionServiceTests*)/*` | V-4, R-4 | all 39 frozen classes, >=430 source methods expanded; 0 failed/skipped | 10 |
+| CP-29 | all | CP-20 | medium-database-03 | `/*/*/(AttentionServiceTests*)\|(AwayDigestNotifierTests*)\|(AwayDigestProjectionTests*)\|(BlockedTaskNotifierTests*)\|(BoardProjectArchiveTests*)\|(BoardServiceIntegrationTests*)\|(BootLivenessProbeScopeTests*)\|(BootReplyWatchTests*)\|(BootReplyWatchdogTests*)\|(CapacityRecoveryAcceptanceTests*)\|(CapacityRecoveryAttentionTests*)\|(CapacityRecoveryCompatibilityTests*)\|(CapacityRecoveryGrantLivenessTests*)\|(CapacityRecoveryPersistenceTests*)\|(CapacityRecoveryQueueTests*)\|(CapacityRecoveryRefusalTests*)\|(CapacityRecoverySupervisionTests*)\|(CapacityRecoveryTaskTests*)\|(CapacityWaitOrphanSweepTests*)\|(CardCorrectionIntegrationTests*)\|(CardDiagnosisApplyTests*)\|(CardDiagnosisSweepTests*)\|(CardFilePrivacyMigrationTests*)\|(CardServiceTrackerPushTests*)\|(CardSpawnModelArgumentTests*)\|(CardWorkTransitionServiceTests*)\|(ChannelBatchingTests*)\|(ChannelBridgeTests*)\|(ChannelFollowUpAttachmentTests*)\|(ChannelIngressIncidentTests*)\|(ChannelMachineTurnTextTests*)\|(ChannelReplyDurabilityTests*)\|(ChatChannelServiceTests*)\|(CheckInterpreterProvisionerTests*)\|(CheckNoteDeliveryHandoffTests*)/*` | V-4, R-4 | all 35 frozen classes, >=495 source methods expanded; 0 failed/skipped | 10 |
+| CP-30 | all | CP-20 | medium-database-04 | `/*/*/(CodexDelegateDispatchTests*)\|(CommitOnSettlePolicyTests*)\|(CommitRecoveryObligationsLoaderTests*)\|(CompactionRecoveryTests*)\|(ComplexityAttentionTests*)\|(ComplexityChainRoleTests*)\|(ComplexityChainServiceTests*)\|(ComplexityCreateTests*)\|(ComplexityDispatcherTests*)\|(ComplexityRoutingWalkTests*)\|(ComplexityWallRerouteTests*)\|(ContextCompactionAgentTests*)\|(ContextCompactionSweepTests*)\|(DataRetentionServiceTests*)\|(DecisionCardNotifierTests*)\|(DelegateBundleLaunchTests*)\|(DelegationCapabilityTests*)\|(DelegationCostBackfillTests*)\|(DelegationRetryEventKindTests*)\|(DiagnoseProvisionerTests*)\|(DiagnosticsBundleServiceTests*)\|(DispatchHeldAttentionTests*)\|(DispatchHoldVisibilityTests*)\|(ExternalTrackerSyncIdentifierTests*)\|(ExternalTrackerSyncLandingColumnTests*)\|(GrokCredentialProbeDispatcherTests*)\|(GrokRulesChannelTests*)\|(GrokRulesCompactionRecoveryTests*)\|(GrokRulesCompactionTests*)\|(GrokRulesCompositionTests*)\|(GrokRulesFailureTests*)\|(GrokRulesInitializationTests*)\|(GrokRulesLaunchRefusalTests*)\|(GrokRulesQueueBarrierTests*)\|(GrokRulesReadyOrderingTests*)\|(GrokRulesReceiptTests*)\|(GrokRulesReplayMatrixTests*)\|(GrokRulesResumeMigrationTests*)\|(GrokRulesTransactionTests*)\|(GrokSignInIncidentTests*)/*` | V-4, R-4 | all 40 frozen classes, >=270 source methods expanded; 0 failed/skipped | 10 |
+| CP-31 | all | CP-20 | medium-database-05 | `/*/*/(HerdrLabelFollowConcurrencyTests*)\|(HerdrLabelFollowTests*)\|(HerdrLaunchContextResolverTests*)\|(HerdrPlacementPreflightTests*)\|(HerdrPlacementSettingsTests*)\|(HerdrSupervisionAttentionTests*)\|(HerdrSupervisionBackoffTests*)\|(HerdrSupervisionFailureEvidenceTests*)\|(IncidentPageNotifierTests*)\|(LandingProtocolGuardTests*)\|(LandingProtocolHarnessTests*)\|(ModelAvailabilityCreateTests*)\|(ModelAvailabilityDispatcherTests*)\|(ModelAvailabilityManualTests*)\|(ModelAvailabilityTests*)\|(MutationAdmissionTests*)\|(NamedCodexAgentLaunchTests*)\|(OrchestratorInvestigationSweepTests*)\|(OrchestratorServiceIntegrationTests*)\|(OrchestratorStateProjectionTests*)\|(OrchestratorTrackerCadenceTests*)\|(OutputDistillationAdmissionTests*)\|(OutputDistillationCleanupTests*)\|(OutputDistillationDeadlineTests*)\|(OutputDistillationMigrationTests*)\|(OutputDistillationTests*)\|(OutputDistillerProvisionerTests*)\|(ParkedMessageSweepServiceTests*)\|(PhoneHomeReconciliationTests*)\|(PinnedAgentKindTests*)\|(PinnedCodexProfileDispatchLaunchTests*)\|(PinnedProfileLaunchSpecTests*)\|(PolicyRefreshServiceTests*)\|(PolledCompletionNoteShrinkTests*)\|(PostLandMutationWorkflowTests*)\|(ProjectDeletionTests*)\|(ProjectServiceTests*)\|(ProviderSignInRequiredCreateTests*)\|(QueuedInputWatchdogTests*)\|(ReceiptFailureDeliveryTests*)/*` | V-4, R-4 | all 40 frozen classes, >=346 source methods expanded; 0 failed/skipped | 10 |
+| CP-32 | all | CP-20 | medium-database-06 | `/*/*/(RemoteControlMaintenanceQueueTests*)\|(RemoteControlModalAttentionTests*)\|(RemoteControlModalPersistenceTests*)\|(RemoteControlModalWatchTests*)\|(RemoteControlRecoveryTests*)\|(ReviewReplyDispatcherTests*)\|(RoutingPinCandidateCreateTests*)\|(RoutingPinCandidateDispatchTests*)\|(RoutingPinCandidateTests*)\|(RoutingPinCreateTests*)\|(RoutingPinDispatcherTests*)\|(RoutingPinServiceTests*)\|(RunAttemptStallDetectorTests*)\|(ScheduleCardActionTests*)\|(ScheduleSweepTests*)\|(SessionContextUsagePersistenceTests*)\|(SessionDeliveryProfileTests*)\|(SessionFinishedDuplicateTests*)\|(SessionGenerationDeliveryOverlapTests*)\|(SessionHealthTests*)\|(SessionMessageQueueBootWedgeTests*)\|(SessionMessageQueueDeliveryVerificationTests*)\|(SessionMessageQueueInterruptedAttemptTests*)\|(SessionMessageQueueServiceTests*)\|(SessionMessageQueueSpillTests*)\|(SessionMessageQueueSupervisionTests*)\|(SessionMessageQueueWedgedHeadTests*)\|(SessionReconciliationServiceTests*)\|(SessionTerminationSourcePersistenceTests*)\|(SpecialistHealthAttentionTests*)\|(SpecialistInputTransportTests*)\|(SpecialistPublicationTests*)\|(SpecialistQualificationTests*)\|(SpecialistStartIntentTests*)\|(SpecialistTaskRunnerDeadlineTests*)\|(SpecialistToolPolicyLaunchTests*)\|(StageOutcomeBackfillTests*)\|(StageOutcomeSummaryTests*)\|(StandingContinuityAttentionTests*)/*` | V-4, R-4/R-8 | all 39 frozen classes, >=496 source methods expanded; 0 failed/skipped | 10 |
+| CP-33 | all | CP-20 | medium-database-07 | `/*/*/(StandingContinuityRecoveryTests*)\|(StandingRestartAccountingTests*)\|(StandingSessionOwnershipTests*)\|(StandingSessionQueueSwitchTests*)\|(StandingSessionSelectionTests*)\|(StandingSessionSwitchConcurrencyTests*)\|(StandingSpecialistSeatTests*)\|(SubscriptionQuotaGateDispatchTests*)\|(SubscriptionUsageMonitorTests*)\|(TaskDeadlinePolicyTests*)\|(TaskProgressPolicyTests*)\|(TaskProgressStallSweepTests*)\|(TrackerBidirectionalSyncTests*)\|(TrackerCardStatePushServiceTests*)\|(TrackerSyncNotifierTests*)\|(TrackerTokenResolverTests*)\|(TranscriptBindingIncidentTests*)\|(TranscriptPromptSpanTests*)\|(WallRerouteDispatchTests*)\|(WatchdogServiceTests*)\|(WorkflowDefinitionLoaderTests*)\|(WorkflowEngineTests*)\|(WorkflowTrackerActivationTests*)\|(WorktreeCleanupJournalTests*)\|(WorktreeHealthServiceTests*)\|(DatabaseSeederTests*)\|(KanbanPersistenceTests*)\|(ZombieCensusServiceTests*)\|(CommitOnSettleMigrationTests*)\|(SmokeTests*)\|(ControlledLandingGitTests*)\|(DelegationTestServicesTests*)\|(TestDbFixtureIsolationTests*)\|(TestDbFixtureLifecycleTests*)/*` | V-4, R-4 | all 34 frozen classes, >=323 source methods expanded; 0 failed/skipped | 10 |
+| CP-34 | all | CP-20 | medium-http-01 | `/*/*/(AgentTuiApiTests*)\|(HerdrPaneDisposalHttpWireTests*)\|(PhoneHomeConnectionTests*)\|(ApiKeyApiTests*)\|(DelegationCapabilityApiTests*)\|(AgentModelLevelBindTests*)\|(AgentPinnedInstructionEndpointTests*)\|(AgentReplyStyleEndpointTests*)\|(AgentTaskDispatcherWiringTests*)\|(AgentTaskListEndpointTests*)\|(AgentTaskPipelineEndpointTests*)\|(AgentTaskRoleBindingTests*)\|(AgentTaskScopedListEndpointTests*)\|(AttentionApiTests*)\|(AuditArchiveEndpointTests*)\|(BoardCardOrderApiTests*)\|(BoardCardOrderIntegrationTests*)\|(BoardProjectArchiveApiTests*)\|(CardAliasApiTests*)\|(CardCommentApiTests*)\|(CardCorrectionApiTests*)\|(CardFilePolicyApiTests*)\|(CardFileSyncDisabledEndpointTests*)\|(CardFileSyncEndpointTests*)\|(CardIdentifierResolutionTests*)\|(CardPrivateNotesApiTests*)\|(CardReorderApiTests*)\|(CardReorderIntegrationTests*)\|(CardThreadEndpointTests*)\|(CardTrackerPushApiTests*)\|(ChannelConsumerIdentityEndpointTests*)\|(ChannelPreamblePresetEndpointTests*)\|(ComplexityChainHttpTests*)\|(ComplexityChainRoleHttpTests*)\|(DiagnosisEndpointTests*)\|(DiagnosticsBundleEndpointTests*)\|(DistillationEndpointTests*)\|(FileSystemBrowseApiTests*)\|(FileSystemBrowseMockedTests*)\|(HealthEndpointTests*)/*` | V-4, R-4 | all 40 frozen classes, >=194 source methods expanded; 0 failed/skipped | 10 |
+| CP-35 | all | CP-20 | medium-http-02 | `/*/*/(HerdrPaneDisposalApplicationTests*)\|(HerdrPaneDisposalEndpointTests*)\|(HomeTaskServiceIntegrationTests*)\|(ModelAvailabilityHttpTests*)\|(MutationPipelineTests*)\|(PhoneHomeEventPumpTests*)\|(PhoneHomeQueuedTurnTests*)\|(PhoneHomeSessionRoutingTests*)\|(PhoneHomeStandingLaunchTests*)\|(PolicyRefreshEndpointTests*)\|(ProductionRunnerIsolationTests*)\|(ResponseCompressionIntegrationTests*)\|(ScheduleEndpointsTests*)\|(StageOutcomeFindingEndpointTests*)\|(StandingSessionRecoveryHttpTests*)\|(StandingSpecialistRoutingHttpTests*)\|(StandingSpecialistRoutingMigrationTests*)\|(SubscriptionUsageHttpTests*)\|(TrackerSyncEndpointTests*)\|(HangfireStartupSafetyTests*)\|(ProgramStartupConcurrencyTests*)/*` | V-4, R-4 | all 21 frozen classes, >=122 source methods expanded; 0 failed/skipped | 10 |
+| CP-36 | all | CP-20 | medium-database-policy | `/*/Antiphon.Tests.Application/SpecialistToolPolicyTests/*` | V-4, R-4 | all 1 frozen classes, >=4 source methods expanded; 0 failed/skipped | 4 |
+| CP-37 | all | CP-13 | session-export-cleanup | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case session-result-export-and-child-cleanup -Manifest $manifest` | V-7/V-11, R-2/R-5 | all subordinate results/hash/exit linked; exact child gone, parent preserved; 1 case | 4 |
+| CP-38 | all | CP-9 | session-denied-socket | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case session-denied-socket -Manifest $manifest` | V-7/V-11/V-12, R-2/R-5 | real socket-denied test session fails before child create; 1 negative case | 4 |
+| CP-39 | all | CP-13 | interrupted-export-cleanup | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case interrupted-export-cleanup -Manifest $manifest` | V-11, R-5 | interrupted copy/action retains residue; explicit identity-checked resume; 1 case | 6 |
+| CP-40 | all | CP-14 | receipt-stock-idle | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case stock-idle -Manifest $manifest` | V-8 | 1 reached case with complete native+stored receipt and declared write/tuple counts | 4 |
+| CP-41 | all | CP-14 | receipt-stock-busy | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case stock-busy -Manifest $manifest` | V-8 | 1 reached case with complete native+stored receipt and declared write/tuple counts | 4 |
+| CP-42 | all | CP-15 | receipt-insert-refused | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case insert-refused -Manifest $manifest` | V-9/V-11 | 1 reached case with complete native+stored receipt and declared write/tuple counts | 6 |
+| CP-43 | all | CP-15 | receipt-insert-committed-idle | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case insert-committed-idle -Manifest $manifest` | V-9/V-11 | 1 reached case with complete native+stored receipt and declared write/tuple counts | 6 |
+| CP-44 | all | CP-15 | receipt-insert-committed-busy | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case insert-committed-busy -Manifest $manifest` | V-9/V-11 | 1 reached case with complete native+stored receipt and declared write/tuple counts | 6 |
+| CP-45 | all | CP-15 | receipt-attempt-committed | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case attempt-committed -Manifest $manifest` | V-9/V-11 | 1 reached case with complete native+stored receipt and declared write/tuple counts | 6 |
+| CP-46 | all | CP-15 | receipt-body-before-enter | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case body-before-enter -Manifest $manifest` | V-9/V-11 | 1 reached case with complete native+stored receipt and declared write/tuple counts | 6 |
+| CP-47 | all | CP-15 | receipt-recipient-before-ingestion | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case recipient-before-ingestion -Manifest $manifest` | V-9/V-11 | 1 reached case with complete native+stored receipt and declared write/tuple counts | 6 |
+| CP-48 | all | CP-15 | receipt-transcript-save-fails-release | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case transcript-save-fails-release -Manifest $manifest` | V-9/V-11 | 1 reached case with complete native+stored receipt and declared write/tuple counts | 6 |
+| CP-49 | all | CP-15 | receipt-transcript-save-fails-restart | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case transcript-save-fails-restart -Manifest $manifest` | V-9/V-11 | 1 reached case with complete native+stored receipt and declared write/tuple counts | 6 |
+| CP-50 | all | CP-15 | receipt-receipt-before-verdict | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case receipt-before-verdict -Manifest $manifest` | V-9/V-11 | 1 reached case with complete native+stored receipt and declared write/tuple counts | 6 |
+| CP-51 | all | CP-15 | receipt-response-before-client | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case response-before-client -Manifest $manifest` | V-9/V-11 | 1 reached case with complete native+stored receipt and declared write/tuple counts | 6 |
+| CP-52 | all | CP-15 | receipt-receipt-before-manifest | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case receipt-before-manifest -Manifest $manifest` | V-9/V-11 | 1 reached case with complete native+stored receipt and declared write/tuple counts | 6 |
+| CP-53 | all | CP-15 | receipt-changed-generation | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case changed-generation -Manifest $manifest` | V-9/V-11 | 1 exact GenerationMismatch refusal; no recovered-delivery claim | 6 |
+| CP-54 | all | CP-15 | receipt-failure-summary | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case failure-summary -Manifest $manifest` | V-9/V-11 | 1 reached case with complete native+stored receipt and declared write/tuple counts | 6 |
+| CP-55 | all | temporary context-probe Dockerfile + runtime ignore -> owned probe image | runtime-context-engine | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case runtime-context-engine -Manifest $manifest` | V-1, R-1 | actual Docker context excludes every runtime sentinel; required sources remain; 1 case | 4 |
+| CP-56 | all | temporary context-probe Dockerfile + test ignore -> owned probe image | test-context-engine | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case test-context-engine -Manifest $manifest` | V-1/V-3/V-4, R-1 | actual Docker context excludes every test sentinel; linked sources remain; 1 case | 4 |
+| CP-57 | all | CP-7 | server2-handoff | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case server2-independent-handoff -Manifest $manifest` | V-2/V-7/V-13 | after initiating desktop CLI exit: same server2 stack API+session operation, complete manifest/evidence/residue inventory; 1 case | 6 |
+
+Native timing allowance is real wall time: 60-second Pending stranded threshold; an interrupted
+Sent attempt needs 80 seconds (30 confirm + 20 grace + 30 clock tolerance), then up to the
+60-second sweep cadence, within the 60-minute eligibility window. Six minutes per cut includes
+bootstrap, reached/export/kill, 140-second worst initial recovery wait, receipt/export and cleanup.
+Healthy no-cut cases receive four minutes. A declared not-reached timeout is failed evidence,
+not an implicit release; preserve the production settings and log actual elapsed times. Polls
+wait only on recorded state, not arbitrary sleep-based guesses. The before-ingestion gate blocks
+both runtime routes; the save-failure case invokes real fallback before disarming and must export
+its barrier promptly without relaxing the server's windows.
+
+CP-20 reuses one Linux backend build for the 15 Medium shards and apphost check. Each fresh test
+host can start its own owned PostgreSQL fixture; their startup/teardown is included in that
+row's estimate. Run serially; no co-scheduling native assemblies or sharing a database between
+independent test hosts. CP-1 is reused by the three Windows regressions. All owner labels, image
+IDs, roster hash, actual filters and counts are copied into final evidence before removal.
+CP-1 through CP-57 union covers V-1–V-13 and R-1–R-10; ordinary scope has no empty row.
+
+### Cost
+
+All following minutes are **estimates**, not measured green execution. This TestDesign ran
+0 product builds, 0 product tests and 0 PC cycles; it used read-only source/census checks.
+
+- **Code ordinary V/R floor = 414 minutes**, the sum of all 57 CP Min cells.
+  This already includes each named image/client/.NET build, fresh test-host DB startup,
+  all 15 Medium exact filters (134 minutes), Small, Windows regressions, native cut waits,
+  evidence export and scoped cleanup. The CP table/JSON give the exact filters and minutes.
+- Code setup/preflight allowance = **45 minutes** (server2 identity/tools/socket/network/private
+  files/owned volumes and manifest). Implementation plus authoring allowance = **1,200 minutes**
+  (packaging/commands 300, fixture/observer/cuts 420, 205 guard methods and DB matrices 360,
+  documentation/roster/discovery integration 120). Estimated Code commissioning floor =
+  **1659 minutes**. Authoring is not hidden in the execution floor.
+- **Mutation PC floor = 826 minutes**: **6 minutes** initial local inherited isolated build,
+  discovery and DB-free baseline, plus **205 × 4 = 820 minutes**. Each PC-1–PC-205 receives
+  0.5 minute apply/restore verification, 1.5 minutes for the mutated incremental build + 0.25
+  exact-method red run, 1.5 minutes fresh restored build + 0.25 same-method green run.
+  Filter for PC-n is exactly `/*/*/` followed by its table's Class and Method segments;
+  all four minutes are per control, not per class. No remote/native/DB battery is hidden here.
+- **Combined setup/build + ordinary V/R + every PC break/red/restore/green =
+  1285 minutes** (45 + 414 + 826), excluding authoring and separate Review.
+  Including the stated authoring allowance = **2485 minutes**. Retry/repair
+  time after a real failure is additional and reported, never converted into a longer timeout.
+- Build reuse avoids **19 extra backend builds** compared with rebuilding for each of the
+  3 reused Windows and 16 reused Linux test rows; at an estimated 3 minutes each that is
+  **57 minutes estimated saved**. This is build scheduling savings, not reduced test coverage.
+  The repeated child runtime builds are explicitly priced because the actual session-created
+  source export/build is a separate acceptance obligation. **Measured savings = 0 minutes**:
+  no equivalent before/after product battery ran here. **PC batching savings = 0 minutes**:
+  most controls share scripts/fixture files, so no independence discount is assumed.
+
+Handoff audit: bodies/nearest fixtures read; **guards=205, mapped=205, missing=0,
+duplicate PC mappings=0**. All 205 controls have distinct exact methods, syntactically valid
+defects, decisive assertions and DB-free Windows-local execution ownership. The roster has
+722 baseline assembly/class entries plus 9 planned entries, no duplicate baseline identity,
+and 503 included backend classes partitioned once across 15 explicit filters. Code must
+materialize and execute this design; no unimplemented method is represented as already green.
+Native setup/dependency failures remain acceptance failures, not grounds to reopen the agreed
+receipt or SourceLanding boundaries. **Next: Code**, then ordinary Review, land, and the
+separately commissioned Windows-local post-land Mutation battery.
