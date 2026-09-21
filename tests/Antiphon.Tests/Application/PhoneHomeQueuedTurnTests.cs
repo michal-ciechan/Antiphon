@@ -372,9 +372,9 @@ public class PhoneHomeQueuedTurnTests
                     CancellationToken.None);
                 return;
             case "turn-end":
-                await h.Runtime.ObserveTranscriptAsync(
-                    Map(Entry(h.SessionId, TranscriptKinds.TurnEnd, null, seq, TranscriptKinds.StopReasons.EndTurn)),
-                    CancellationToken.None);
+                // Persist directly: ObserveTranscriptAsync would FlushIfIdle under the Mode:Now lock.
+                await h.InsertTranscriptEntryAsync(
+                    TranscriptKinds.TurnEnd, stopReason: TranscriptKinds.StopReasons.EndTurn);
                 return;
             case "assistant-text":
                 await h.Runtime.ObserveTranscriptAsync(
