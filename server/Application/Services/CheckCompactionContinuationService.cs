@@ -479,7 +479,7 @@ public sealed class CheckCompactionContinuationService
         var since = episode.StopOutcomeAt ?? episode.DetectedAt;
         var check = await _db.AgentTasks.AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId
-                && t.Role == AgentTaskRole.Check
+                && t.Role == StandingSpecialistSeatPolicy.Role
                 && t.Status == AgentTaskStatus.Succeeded
                 && t.Result != null
                 && t.Result != ""
@@ -552,7 +552,7 @@ public sealed class CheckCompactionContinuationService
         var tasks = await _db.AgentTasks
             .Where(t => t.AgentId == episode.PhysicalAgentId
                 && t.AgentSessionId == episode.SessionId
-                && t.Role == AgentTaskRole.Check
+                && t.Role == StandingSpecialistSeatPolicy.Role
                 && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working))
             .ToListAsync(ct);
         foreach (var task in tasks)
@@ -755,7 +755,7 @@ public sealed class CheckCompactionContinuationService
         var slugOnly = !StandingSpecialistSeatPolicy.IsCheck(agent)
             && StandingSpecialistSeatPolicy.IsCheck(agent, _settings);
         var correlated = await _db.AgentTasks.AsNoTracking().AnyAsync(t =>
-            t.AgentSessionId == sessionId && t.Role == AgentTaskRole.Check, ct);
+            t.AgentSessionId == sessionId && t.Role == StandingSpecialistSeatPolicy.Role, ct);
         return new CompactionScopeSnapshot
         {
             SessionId = sessionId,
@@ -769,8 +769,8 @@ public sealed class CheckCompactionContinuationService
             CheckSeat = StandingSpecialistSeatPolicy.IsCheck(agent),
             LegacySlugOnly = slugOnly,
             PositivelyCorrelatedOwningCheck = correlated,
-            OpenNonCheckAssignment = open.Any(t => t.Role != AgentTaskRole.Check),
-            PendingCardAssignment = agent.CurrentCardId is not null || open.Any(t => t.CardId is not null && t.Role != AgentTaskRole.Check),
+            OpenNonCheckAssignment = open.Any(t => t.Role != StandingSpecialistSeatPolicy.Role),
+            PendingCardAssignment = agent.CurrentCardId is not null || open.Any(t => t.CardId is not null && t.Role != StandingSpecialistSeatPolicy.Role),
             InteractiveHumanTurn = pending.Any(m => m.Origin is QueuedMessageOrigin.Ui or QueuedMessageOrigin.Channel or QueuedMessageOrigin.Scheduled),
             UnresolvedAttemptedInput = pending.Any(m =>
                 m.DeliveryAttempts != 0 || m.LastDeliveryStartedAt != null || m.LastDeliveryBaselineSequence != null
@@ -797,7 +797,7 @@ public sealed class CheckCompactionContinuationService
             .Select(t => new { t.Sequence, t.Kind, t.Text, t.Timestamp, t.CreatedAt, t.Uuid, t.ToolUseId })
             .ToListAsync(ct);
         var checkIds = await _db.AgentTasks.AsNoTracking()
-            .Where(t => t.AgentSessionId == sessionId && t.Role == AgentTaskRole.Check)
+            .Where(t => t.AgentSessionId == sessionId && t.Role == StandingSpecialistSeatPolicy.Role)
             .Select(t => t.Id)
             .ToListAsync(ct);
         var tokens = checkIds.SelectMany(id => new[] { id.ToString("D"), id.ToString("N"), DelegationReportFormatter.TaskMarker(id) }).ToArray();
@@ -838,7 +838,7 @@ public sealed class CheckCompactionContinuationService
         if (string.IsNullOrEmpty(prompt.Text))
             return null;
         var ids = await _db.AgentTasks.AsNoTracking()
-            .Where(t => t.AgentSessionId == sessionId && t.Role == AgentTaskRole.Check)
+            .Where(t => t.AgentSessionId == sessionId && t.Role == StandingSpecialistSeatPolicy.Role)
             .Select(t => t.Id)
             .ToListAsync(ct);
         foreach (var id in ids)

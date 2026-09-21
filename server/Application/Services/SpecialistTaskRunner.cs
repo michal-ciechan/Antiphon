@@ -226,7 +226,7 @@ public sealed class SpecialistTaskRunner
         if (specialist is null)
             return Finish(SpecialistRunOutcome.Disabled, started);
 
-        if (spec.Role == AgentTaskRole.Check
+        if (spec.Role == StandingSpecialistSeatPolicy.Role
             && await CheckCompactionAdmission.ClosesSeatAsync(_db, specialist.Id, ct))
         {
             return new SpecialistRun(
