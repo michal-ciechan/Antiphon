@@ -30,6 +30,7 @@ public sealed class CheckCompactionContinuationService
     private readonly SessionMessageQueueService? _queue;
     private readonly CheckCompactionBoundary _boundary;
     private readonly IEventBus? _events;
+    private readonly SubscriptionQuotaGate? _quota;
 
     public CheckCompactionContinuationService(
         AppDbContext db,
@@ -41,7 +42,8 @@ public sealed class CheckCompactionContinuationService
         ICompactionContinuationResume? resume = null,
         SessionMessageQueueService? queue = null,
         CheckCompactionBoundary? boundary = null,
-        IEventBus? events = null)
+        IEventBus? events = null,
+        SubscriptionQuotaGate? quota = null)
     {
         _db = db;
         _time = time;
@@ -53,6 +55,7 @@ public sealed class CheckCompactionContinuationService
         _queue = queue;
         _boundary = boundary ?? new CheckCompactionBoundary();
         _events = events;
+        _quota = quota;
     }
 
     public async Task<int> SweepAsync(CancellationToken ct)
@@ -879,6 +882,43 @@ public sealed class CheckCompactionContinuationService
             && StandingSpecialistSeatPolicy.IsCheck(agent, _settings);
         var correlated = await _db.AgentTasks.AsNoTracking().AnyAsync(t =>
             t.AgentSessionId == sessionId && t.Role == StandingSpecialistSeatPolicy.Role, ct);
+
+        // D-2 holds. Each is read from the state its own subsystem already writes, because a
+        // clause that is never populated is not a guard at all: it reads `false` forever and the
+        // one code path allowed to kill a live Working session loses that veto silently.
+        var now = UtcNow();
+        var alias = (ModelAlias.Normalize(agent.Kind, agent.ModelId)
+            ?? ModelLevelAliases.For(agent.Kind, agent.ModelLevel))
+            .Trim().ToLowerInvariant();
+        // Read-only twin of ModelAvailability.FindActiveAsync's live predicate (a legacy
+        // AutoDetected row with no DisabledUntil counts as held: for a kill guard, conservative
+        // is the safe direction). Discovery must not write, so the lazy normalization is skipped.
+        var modelHold = await _db.ModelAvailabilityHolds.AsNoTracking().AnyAsync(h =>
+            h.Kind == agent.Kind
+            && h.ClearedAt == null
+            && (h.ModelAlias == alias || h.ModelAlias == ModelAlias.KindWide)
+            && (h.DisabledUntil == null || h.DisabledUntil > now), ct);
+        // CARD-0412 admission clock for this execution kind: while the provider is not admitting,
+        // a restart is exactly the launch it is holding back.
+        var providerHold = await _db.CapacityRecoveryProviderStates.AsNoTracking().AnyAsync(s =>
+            s.Kind == agent.Kind && s.NextAdmissionAt != null && s.NextAdmissionAt > now, ct);
+        // CARD-0136 launch gate. Same reading a human Start would be refused on.
+        var quotaHold = _quota is not null
+            && await _quota.EvaluateAsync(agent.Kind, SubscriptionUsageKey.For(owner, agent.Kind), ct) is not null;
+        var capacityHold = await SessionMessageQueueService.HasTerminalCapacityHoldAsync(_db, sessionId, ct);
+        // CARD-0072: NeedsHuman is authentication_failed / model_not_found - the class whose whole
+        // point is that nothing automatic fixes it. Unresolved means nobody has continued past it.
+        // The CARD-0324 provider sign-in probe is Grok-only and cannot reach a seat that already
+        // has to be effective ClaudeCode, so this is the ClaudeCode half of the same refusal.
+        var authenticationRefusal = await _db.ApiErrorRecoveries.AsNoTracking().AnyAsync(r =>
+            r.AgentSessionId == sessionId
+            && r.ResolvedAt == null
+            && r.Classification == ApiErrorClassification.NeedsHuman, ct);
+        // The standing-ownership pointer, not the seat's own belief about itself: a stamped
+        // StandingAgentId that names somebody else, or ambiguous legacy ownership, means this
+        // physical seat no longer owns the conversation it is about to stop.
+        var ownership = await new StandingSessionOwnership(_db).ResolveAsync(session, ct);
+
         return new CompactionScopeSnapshot
         {
             SessionId = sessionId,
@@ -888,7 +928,7 @@ public sealed class CheckCompactionContinuationService
             PoolOwned = agent.IsPoolDelegate,
             Suspended = supervision?.Suspended == true || ownerSupervision?.Suspended == true,
             EffectiveClaudeCode = agent.Kind == AgentKind.ClaudeCode && session.AgentKind == AgentKind.ClaudeCode,
-            CurrentStandingOwnership = true,
+            CurrentStandingOwnership = ownership.Owner == seatId,
             CheckSeat = StandingSpecialistSeatPolicy.IsCheck(agent),
             LegacySlugOnly = slugOnly,
             PositivelyCorrelatedOwningCheck = correlated,
@@ -904,6 +944,11 @@ public sealed class CheckCompactionContinuationService
             LivenessHold = supervision?.LivenessLatchedAt != null || ownerSupervision?.LivenessLatchedAt != null,
             ContinuityHold = supervision?.ContinuityHeldAt != null || ownerSupervision?.ContinuityHeldAt != null,
             HerdrHold = supervision?.HerdrFailureHeldAt != null || ownerSupervision?.HerdrFailureHeldAt != null,
+            ProviderHold = providerHold,
+            QuotaHold = quotaHold,
+            CapacityHold = capacityHold,
+            ModelHold = modelHold,
+            AuthenticationRefusal = authenticationRefusal,
             Running = session.Status == SessionStatus.Running && (_runner is null || runnerRunning),
             Working = await SessionMessageQueueService.IsWorkingAsync(_db, sessionId, ct),
             GenerationTokensEqual = runnerGeneration is not null
@@ -917,13 +962,28 @@ public sealed class CheckCompactionContinuationService
         var rows = await _db.TranscriptEntries.AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId)
             .OrderBy(t => t.Sequence)
-            .Select(t => new { t.Sequence, t.Kind, t.Text, t.Timestamp, t.CreatedAt, t.Uuid, t.ToolUseId })
+            .Select(t => new { t.Sequence, t.Kind, t.Text, t.Timestamp, t.CreatedAt, t.Uuid, t.ToolUseId, t.StopReason })
             .ToListAsync(ct);
         var checkIds = await _db.AgentTasks.AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId && t.Role == StandingSpecialistSeatPolicy.Role)
             .Select(t => t.Id)
             .ToListAsync(ct);
         var tokens = checkIds.SelectMany(id => new[] { id.ToString("D"), id.ToString("N"), DelegationReportFormatter.TaskMarker(id) }).ToArray();
+        // A prompt a PERSON put in this session. The owning-prompt predicate needs it: a human who
+        // re-types or pastes a Check brief owns that turn, and its silence is a human's to break,
+        // not this mechanism's. The evidence is the delivered queue row behind the prompt - the
+        // same body match delivery itself confirms on - never the text alone.
+        var humanBodies = await _db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.AgentSessionId == sessionId
+                && m.SentAt != null
+                && (m.Origin == QueuedMessageOrigin.Ui
+                    || m.Origin == QueuedMessageOrigin.Channel
+                    || m.Origin == QueuedMessageOrigin.Scheduled))
+            .Select(m => m.Body)
+            .ToListAsync(ct);
+        // A body too short to identify makes IsCompleteIn vacuously true, which would stamp every
+        // prompt in the session as human. Only bodies that can actually be matched count.
+        var humanMatchable = humanBodies.Where(PromptSubmissionMatch.RequiresTextMatch).ToArray();
         return rows.Select(row => new CompactionTranscriptFact(
             row.Sequence,
             row.Kind,
@@ -934,7 +994,11 @@ public sealed class CheckCompactionContinuationService
             row.ToolUseId,
             IsCorrelatedCheck: row.Kind == TranscriptKinds.UserPrompt
                 && row.Text is not null
-                && tokens.Any(token => row.Text.Contains(token, StringComparison.Ordinal)))).ToArray();
+                && tokens.Any(token => row.Text.Contains(token, StringComparison.Ordinal)),
+            IsHumanOrigin: row.Kind == TranscriptKinds.UserPrompt
+                && row.Text is not null
+                && humanMatchable.Any(body => PromptSubmissionMatch.IsCompleteIn(body, row.Text)),
+            StopReason: row.StopReason)).ToArray();
     }
 
     private async Task<CompactionTailObservation?> ObserveAsync(Guid sessionId, CancellationToken ct)
