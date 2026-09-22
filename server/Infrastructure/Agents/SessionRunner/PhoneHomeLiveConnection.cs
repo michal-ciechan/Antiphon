@@ -26,7 +26,10 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         long epoch,
         WebSocket socket,
         PhoneHomeLimits limits,
-        TimeProvider clock)
+        TimeProvider clock,
+        int capacity = 1,
+        string? platform = null,
+        RunnerCapabilitiesDto? capabilities = null)
     {
         RunnerId = runnerId;
         RunnerStoreId = runnerStoreId;
@@ -35,6 +38,9 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         _socket = socket;
         _limits = limits;
         Clock = clock;
+        Capacity = capacity;
+        Platform = platform;
+        Capabilities = capabilities;
         LastHeartbeatUtc = clock.GetUtcNow();
     }
 
@@ -42,6 +48,15 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     public Guid RunnerStoreId { get; }
     public Guid ProcessBootId { get; }
     public long Epoch { get; }
+
+    /// <summary>CARD-0604 D-14: how many concurrent sessions this runner declared it can hold.</summary>
+    public int Capacity { get; }
+
+    /// <summary>What the runner reported at registration ("linux"/"windows"), for diagnostics.</summary>
+    public string? Platform { get; }
+
+    /// <summary>The capabilities DTO the runner sent with its registration, or null.</summary>
+    public RunnerCapabilitiesDto? Capabilities { get; }
     public TimeProvider Clock { get; }
     public DateTimeOffset LastHeartbeatUtc { get; private set; }
     public bool DispatchEligible { get; set; }

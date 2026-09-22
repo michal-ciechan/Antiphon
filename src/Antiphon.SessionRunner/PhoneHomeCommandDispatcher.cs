@@ -33,6 +33,12 @@ public sealed class PhoneHomeCommandDispatcher
         _settings = settings;
     }
 
+    /// <summary>
+    /// CARD-0604: the same DTO the Capabilities operation answers with, exposed so registration
+    /// can carry it. One source, so a registration can never disagree with a later probe.
+    /// </summary>
+    public RunnerCapabilitiesDto Capabilities() => _runtime.Capabilities();
+
     public async Task<PhoneHomeFrame> DispatchAsync(PhoneHomeFrame request, CancellationToken ct)
     {
         if (request.Kind != PhoneHomeFrameKind.Request || request.Operation is null)
@@ -118,7 +124,10 @@ public sealed class PhoneHomeCommandDispatcher
         lock (_mutationGate)
         {
             if (_runtime.OwnedSessionCount >= _settings.Capacity)
-                throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.Capacity, "Phone-home capacity is one session.", 409);
+                throw new PhoneHomeAdmissionException(
+                    PhoneHomeProblemTypes.Capacity,
+                    $"Phone-home capacity is {_settings.Capacity} session(s).",
+                    409);
         }
 
         return await MutateAsync(request, async () => Result(request, await _runtime.StartAsync(launch, ct)));
@@ -126,13 +135,26 @@ public sealed class PhoneHomeCommandDispatcher
 
     internal void RejectUnsupportedLaunch(RunnerLaunchRequest launch)
     {
-        if (string.IsNullOrWhiteSpace(launch.Exe)
-            || (!string.Equals(Path.GetFileName(launch.Exe), "grok", StringComparison.OrdinalIgnoreCase)
-                && !string.Equals(launch.Exe, "grok", StringComparison.OrdinalIgnoreCase)
-                && !launch.Exe.EndsWith("/grok", StringComparison.Ordinal)))
-            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Only the image-owned grok executable may launch.", 409);
-        if (!string.Equals(launch.Cwd, _settings.AllowedCwd, StringComparison.Ordinal))
-            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, $"cwd must be '{_settings.AllowedCwd}'.", 409);
+        // CARD-0604 D-2: grok, or an image-owned executable from the allow list. The runner keeps
+        // its own copy of that list: it is the image's contract, and the server telling it to run
+        // some other path is exactly what this refusal exists for.
+        var isGrok = !string.IsNullOrWhiteSpace(launch.Exe)
+            && (string.Equals(Path.GetFileName(launch.Exe), "grok", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(launch.Exe, "grok", StringComparison.OrdinalIgnoreCase)
+                || launch.Exe.EndsWith("/grok", StringComparison.Ordinal));
+        var isAllowedRaw = !string.IsNullOrWhiteSpace(launch.Exe)
+            && _settings.RawExeAllowList.Any(allowed => string.Equals(allowed, launch.Exe, StringComparison.Ordinal));
+        if (!isGrok && !isAllowedRaw)
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Only an image-owned executable may launch.", 409);
+
+        // CARD-0604 D-15: the workspace root itself, or a mirror worktree directly under it. A
+        // path that merely starts with the same characters ("/workspace") is not under "/work",
+        // and "/work/worktrees/../.." must not escape it.
+        if (!IsAdmittedCwd(launch.Cwd))
+            throw new PhoneHomeAdmissionException(
+                PhoneHomeProblemTypes.UnsupportedTarget,
+                $"cwd must be '{_settings.AllowedCwd}' or a worktree directly under '{_settings.AllowedCwd}/worktrees/'.",
+                409);
         if (!string.Equals(launch.Backend, SessionBackends.PtyHost, StringComparison.OrdinalIgnoreCase)
             && launch.Backend is not null)
             throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Herdr and unknown backends are refused.", 409);
@@ -145,6 +167,27 @@ public sealed class PhoneHomeCommandDispatcher
         if (!string.Equals(launch.TranscriptFormat, TranscriptFormats.Grok, StringComparison.OrdinalIgnoreCase)
             && launch.TranscriptFormat is not null)
             throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Only the Grok transcript format is admitted.", 409);
+    }
+
+    /// <summary>
+    /// CARD-0604 D-15/G-22. The allowed cwd, or a single-segment mirror directly under its
+    /// <c>worktrees/</c> directory. Traversal, absolute escapes and sibling prefixes are refused.
+    /// </summary>
+    internal bool IsAdmittedCwd(string? cwd)
+    {
+        if (string.IsNullOrWhiteSpace(cwd))
+            return false;
+        var root = _settings.AllowedCwd.TrimEnd('/');
+        if (string.Equals(cwd, root, StringComparison.Ordinal))
+            return true;
+        var prefix = root + "/worktrees/";
+        if (!cwd.StartsWith(prefix, StringComparison.Ordinal))
+            return false;
+        var name = cwd[prefix.Length..];
+        return name.Length > 0
+            && !name.Contains('/', StringComparison.Ordinal)
+            && name != "."
+            && name != "..";
     }
 
     private async Task<PhoneHomeFrame> MutateAsync(PhoneHomeFrame request, Func<Task<PhoneHomeFrame>> action)

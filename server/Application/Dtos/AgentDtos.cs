@@ -328,7 +328,10 @@ public sealed record CreateAgentRequest(
     string? Preset = null,
     // CARD-0384. Null/blank = default (unpinned). Trimmed; control characters / length > 256 are 422.
     string? HerdrWorkspaceLabel = null,
-    string? HerdrTabLabel = null);
+    string? HerdrTabLabel = null,
+    // CARD-0604 D-2. Null = the local runner. Only the configured PhoneHomeRunner:AllowedRunnerId
+    // is admitted (422 otherwise); a runner-bound agent's sessions launch in that container.
+    string? RunnerId = null);
 
 public sealed record DraftAgentRequest(string Description);
 

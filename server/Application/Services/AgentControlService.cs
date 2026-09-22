@@ -469,7 +469,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
             backend: agent.SessionBackend,
             kind: spec.Kind,
             customWrapper: null);
-        if (_phoneHome?.IsPinnedAgent(agent.Id) == true)
+        if (_phoneHome?.IsRunnerBound(agent) == true)
             spec = _phoneHome.Project(spec, agent);
         else
             AgentExecutableResolver.Default.EnsureSpawnable(spec.Exe);
@@ -645,9 +645,9 @@ public sealed class AgentControlService : ICompactionContinuationResume
                 EffectiveModelId = resolved.EffectiveModelId,
                 ComposedBundleStamp = composition.ComposedStamp,
                 InstructionFileStamp = composition.InstructionFileStamp,
-                RunnerId = _phoneHome?.IsPinnedAgent(agent.Id) == true ? _phoneHome.AllowedRunnerId : null,
-                RunnerStoreId = _phoneHome?.IsPinnedAgent(agent.Id) == true ? await ResolvePhoneHomeStoreIdAsync(ct) : null,
-                RunnerCwd = _phoneHome?.IsPinnedAgent(agent.Id) == true ? _phoneHome.RunnerWorkspace : null,
+                RunnerId = _phoneHome?.IsRunnerBound(agent) == true ? _phoneHome.AllowedRunnerId : null,
+                RunnerStoreId = _phoneHome?.IsRunnerBound(agent) == true ? await ResolvePhoneHomeStoreIdAsync(ct) : null,
+                RunnerCwd = _phoneHome?.IsRunnerBound(agent) == true ? _phoneHome.RunnerWorkspace : null,
             };
             _db.AgentSessions.Add(session);
             await _db.SaveChangesAsync(ct);

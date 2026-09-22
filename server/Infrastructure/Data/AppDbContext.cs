@@ -836,6 +836,10 @@ public class AppDbContext : DbContext
             entity.Property(a => a.Name).IsRequired().HasMaxLength(200);
             entity.Property(a => a.Slug).IsRequired().HasMaxLength(120);
             entity.Property(a => a.WorkingDirectory).IsRequired().HasMaxLength(1000);
+            // CARD-0604 D-2: the phone-home runner this agent is bound to. Indexed because the
+            // dispatcher resolves runner-bound agents by it on every claim.
+            entity.Property(a => a.RunnerId).HasMaxLength(64);
+            entity.HasIndex(a => a.RunnerId).HasDatabaseName("IX_Agents_RunnerId");
             entity.Property(a => a.Details).IsRequired().HasMaxLength(4000);
             entity.Property(a => a.AssignmentPolicy).IsRequired();
             entity.Property(a => a.Status).IsRequired();
@@ -1724,6 +1728,12 @@ public class AppDbContext : DbContext
             entity.Property(t => t.RepoPath).HasMaxLength(1000);
             entity.Property(t => t.WorktreePath).HasMaxLength(1000);
             entity.Property(t => t.WorktreeBranch).HasMaxLength(300);
+            // CARD-0604 D-15: routing only. WorktreePath stays the canonical desktop worktree, so
+            // landing, retirement and residue accounting never see a POSIX path.
+            entity.Property(t => t.RunnerId).HasMaxLength(64);
+            entity.Property(t => t.RemoteWorktreePath).HasMaxLength(1000);
+            entity.Property(t => t.RemoteWorktreeResidue).HasMaxLength(1000);
+            entity.HasIndex(t => t.RunnerId).HasDatabaseName("IX_AgentTasks_RunnerId");
             entity.Property(t => t.MergeTargetRef).HasMaxLength(300);
             entity.Property(t => t.AgentName).HasMaxLength(200);
             entity.Property(t => t.Scope).HasMaxLength(1000);

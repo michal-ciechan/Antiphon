@@ -91,7 +91,10 @@ public sealed class PhoneHomeConnectionService : BackgroundService
             storeId,
             OperatingSystem.IsLinux() ? "linux" : "windows",
             _settings.Capacity,
-            null), options: PhoneHomeFraming.Json);
+            // CARD-0604: the registration carries the capabilities DTO, so the server can report
+            // the runner's platform, build and custody backend from its own registration rather
+            // than from a separate Capabilities round trip the deploy row cannot make.
+            _dispatcher.Capabilities()), options: PhoneHomeFraming.Json);
         using var registered = await http.SendAsync(register, ct);
         registered.EnsureSuccessStatusCode();
         var ticket = await registered.Content.ReadFromJsonAsync<PhoneHomeRegistrationResponse>(PhoneHomeFraming.Json, ct)

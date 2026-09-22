@@ -6,9 +6,30 @@ public sealed class PhoneHomeRunnerSettings
 {
     public bool Enabled { get; set; }
     public string AllowedRunnerId { get; set; } = "grok-linux";
+
+    /// <summary>
+    /// CARD-0604 D-2/D-14: when true the runner is a bounded pool rather than one pinned agent,
+    /// so <see cref="StandingAgentId"/> becomes optional and delegated Worktree tasks may be
+    /// routed to it. Card-backed starts, OnAgent, Shared, ReadOnly and pins stay refused.
+    /// </summary>
+    public bool AllowDelegatedTasks { get; set; }
+
     public Guid StandingAgentId { get; set; }
     public string HostWorkspaceRoot { get; set; } = "";
     public string RunnerWorkspace { get; set; } = "/work";
+
+    /// <summary>The runner-side checkout the mirror worktrees are created from (CARD-0604 D-15).</summary>
+    public string RunnerRepository { get; set; } = "/work/repos/antiphon";
+
+    /// <summary>
+    /// Image-owned executables a runner-bound Raw agent may project to. Anything outside this list
+    /// (or "grok") is refused: the runner must never be told to run an arbitrary host path.
+    /// </summary>
+    public IReadOnlyList<string> RawExeAllowList { get; set; } = ["/bin/sh", "/bin/bash", "/usr/local/bin/pwsh"];
+
+    /// <summary>Upper bound on a registration's declared capacity (CARD-0604 D-14).</summary>
+    public int MaxCapacity { get; set; } = 8;
+
     public string ChildGrokHome { get; set; } = "/state/grok";
     public string CallbackOrigin { get; set; } = "";
     public string SharedSecret { get; set; } = "";
@@ -27,12 +48,21 @@ public static class PhoneHomeRunnerSettingsRules
             return failures;
         if (string.IsNullOrWhiteSpace(options.AllowedRunnerId) || options.AllowedRunnerId.Length > 64)
             failures.Add("PhoneHomeRunner:AllowedRunnerId must be a non-empty string of at most 64 characters.");
-        if (options.StandingAgentId == Guid.Empty)
-            failures.Add("PhoneHomeRunner:StandingAgentId must be set when enabled.");
+        // CARD-0604 D-14: a pinned standing agent is still required when the runner is NOT a pool.
+        // With AllowDelegatedTasks the dispatcher creates its own pool delegates, so pinning one
+        // named agent would be a second, contradictory shape rather than a safety net.
+        if (options.StandingAgentId == Guid.Empty && !options.AllowDelegatedTasks)
+            failures.Add("PhoneHomeRunner:StandingAgentId must be set when enabled unless AllowDelegatedTasks is true.");
         if (string.IsNullOrWhiteSpace(options.HostWorkspaceRoot))
             failures.Add("PhoneHomeRunner:HostWorkspaceRoot must be set when enabled.");
         if (string.IsNullOrWhiteSpace(options.RunnerWorkspace) || !options.RunnerWorkspace.StartsWith('/'))
             failures.Add("PhoneHomeRunner:RunnerWorkspace must be a POSIX absolute path.");
+        if (string.IsNullOrWhiteSpace(options.RunnerRepository) || !options.RunnerRepository.StartsWith('/'))
+            failures.Add("PhoneHomeRunner:RunnerRepository must be a POSIX absolute path.");
+        if (options.MaxCapacity <= 0)
+            failures.Add("PhoneHomeRunner:MaxCapacity must be positive.");
+        if (options.RawExeAllowList.Any(exe => string.IsNullOrWhiteSpace(exe) || !exe.StartsWith('/')))
+            failures.Add("PhoneHomeRunner:RawExeAllowList entries must be POSIX absolute paths.");
         if (string.IsNullOrWhiteSpace(options.ChildGrokHome) || !options.ChildGrokHome.StartsWith('/'))
             failures.Add("PhoneHomeRunner:ChildGrokHome must be a POSIX absolute path.");
         if (!Uri.TryCreate(options.CallbackOrigin, UriKind.Absolute, out var origin)

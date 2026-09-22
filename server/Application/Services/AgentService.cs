@@ -32,6 +32,7 @@ public sealed class AgentService
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _timeProvider;
     private readonly IDirectoryWriter _directoryWriter;
+    private readonly PhoneHomeLaunchPolicy? _phoneHome;
     private readonly ILogger<AgentService> _logger;
     private readonly AgentWorkspaceProvisioner? _workspace;
     private readonly ContextWindowSettings _contextWindow;
@@ -54,8 +55,12 @@ public sealed class AgentService
         ISessionRunnerClient? runnerClient = null,
         IOptions<SessionRunnerSettings>? runnerSettings = null,
         IOptions<SupervisionSettings>? supervision = null,
-        AgentPinnedInstructionService? pins = null)
+        AgentPinnedInstructionService? pins = null,
+        // CARD-0604 D-2: optional for the same reason the rest are - a harness without it simply
+        // cannot create a runner-bound agent, which is the safe direction.
+        PhoneHomeLaunchPolicy? phoneHome = null)
     {
+        _phoneHome = phoneHome;
         _db = db;
         _workflowRunFactory = workflowRunFactory;
         _eventBus = eventBus;
@@ -402,6 +407,12 @@ public sealed class AgentService
 
         var agentName = request.Name.Trim();
 
+        // CARD-0604 D-2: a runner id is admitted only if it is the one configured phone-home
+        // runner. Anything else is a 422 at create rather than a session that never launches.
+        var runnerId = string.IsNullOrWhiteSpace(request.RunnerId) ? null : request.RunnerId.Trim();
+        if (runnerId is not null && _phoneHome?.IsRunnerBound(runnerId) != true)
+            throw new ValidationException("runnerId", $"Unknown or disabled session runner '{runnerId}'.");
+
         // The slug, board name and project name are each picked by asking "is this taken?" and then
         // inserting, which races their unique indexes: two agents created with the same name at the
         // same moment both see it free and both insert. The loser retries, and by then the winner's
@@ -505,6 +516,7 @@ public sealed class AgentService
                 AutoCompactContextPercent = request.AutoCompactContextPercent,
                 HerdrWorkspaceLabel = NormalizeHerdrLabel(request.HerdrWorkspaceLabel, nameof(request.HerdrWorkspaceLabel)),
                 HerdrTabLabel = NormalizeHerdrLabel(request.HerdrTabLabel, nameof(request.HerdrTabLabel)),
+                RunnerId = runnerId,
                 BoardId = board.Id,
                 CreatedAt = now,
                 UpdatedAt = now

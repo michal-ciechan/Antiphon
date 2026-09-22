@@ -126,8 +126,12 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             throw new ConflictException("Unsupported phone-home protocol version.", PhoneHomeProblemTypes.ProtocolVersion);
         if (!string.Equals(request.RunnerId, _settings.AllowedRunnerId, StringComparison.Ordinal))
             throw new ConflictException("Runner id is not allowed.", PhoneHomeProblemTypes.RunnerMismatch);
-        if (request.Capacity != 1)
-            throw new ConflictException("Phone-home capacity must be one.", PhoneHomeProblemTypes.Capacity);
+        // CARD-0604 D-14: the runner is a bounded pool, not a single seat. Capacity is declared by
+        // the runner and bounded by the server, so a misconfigured runner cannot enlarge itself.
+        if (request.Capacity < 1 || request.Capacity > _settings.MaxCapacity)
+            throw new ConflictException(
+                $"Phone-home capacity must be between 1 and {_settings.MaxCapacity}.",
+                PhoneHomeProblemTypes.Capacity);
 
         lock (_gate)
         {
@@ -153,7 +157,8 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             var ticket = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
             _tickets[ticket] = new Ticket(
                 ticket, request.RunnerId, request.RunnerStoreId, request.ProcessBootId,
-                now.AddSeconds(_settings.TicketTtlSeconds));
+                now.AddSeconds(_settings.TicketTtlSeconds),
+                request.Capacity, request.Platform, request.Capabilities);
             _liveStoreId = request.RunnerStoreId;
             _liveBootId = request.ProcessBootId;
             _liveLeaseUntil = now.AddSeconds(_settings.LeaseSeconds);
@@ -184,7 +189,8 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             _live?.DisposeAsync().AsTask().GetAwaiter().GetResult();
             var epoch = ++_epoch;
             var connection = new PhoneHomeLiveConnection(
-                runnerId, ticket.RunnerStoreId, ticket.ProcessBootId, epoch, socket, _settings.Limits, _clock);
+                runnerId, ticket.RunnerStoreId, ticket.ProcessBootId, epoch, socket, _settings.Limits, _clock,
+                ticket.Capacity, ticket.Platform, ticket.Capabilities);
             _live = connection;
             _liveLeaseUntil = _clock.GetUtcNow().AddSeconds(_settings.LeaseSeconds);
             return connection;
@@ -238,8 +244,10 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             available,
             live is { DispatchEligible: true } && available,
             live?.LastHeartbeatUtc,
-            Platform: null,
-            BuildVersion: null,
+            // CARD-0604: registration carries the platform and the capabilities DTO, so the status
+            // a deploy or a restart row reads is the runner's own report, not a null placeholder.
+            Platform: live?.Platform,
+            BuildVersion: live?.Capabilities?.Version,
             DisconnectReason: available ? null : "unavailable");
     }
 
@@ -259,5 +267,13 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
         }
     }
 
-    private sealed record Ticket(string Value, string RunnerId, Guid RunnerStoreId, Guid ProcessBootId, DateTimeOffset ExpiresAtUtc);
+    private sealed record Ticket(
+        string Value,
+        string RunnerId,
+        Guid RunnerStoreId,
+        Guid ProcessBootId,
+        DateTimeOffset ExpiresAtUtc,
+        int Capacity,
+        string? Platform,
+        RunnerCapabilitiesDto? Capabilities);
 }

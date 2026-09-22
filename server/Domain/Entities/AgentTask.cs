@@ -195,6 +195,26 @@ public class AgentTask
     /// <summary>The task branch the worktree is on; what merges into <see cref="MergeTargetRef"/>.</summary>
     public string? WorktreeBranch { get; set; }
 
+    /// <summary>
+    /// CARD-0604 D-15: the phone-home runner this task runs on, or null for the desktop. It is a
+    /// routing field only. <see cref="WorktreePath"/> stays the DESKTOP worktree and stays
+    /// canonical, so landing, retirement, residue and the ~190 consumer sites are untouched.
+    /// </summary>
+    public string? RunnerId { get; set; }
+
+    /// <summary>
+    /// The POSIX path of the runner-side MIRROR of <see cref="WorktreePath"/>, created by the
+    /// runner from the branch this task pushed to origin. Null for a desktop task. The session's
+    /// cwd is this; the desktop worktree is fast-forwarded from the branch at settlement.
+    /// </summary>
+    public string? RemoteWorktreePath { get; set; }
+
+    /// <summary>
+    /// Set when retirement could not remove <see cref="RemoteWorktreePath"/> on the runner. A
+    /// mirror is never deleted on a guess: the residue is recorded for the operator's sweep.
+    /// </summary>
+    public string? RemoteWorktreeResidue { get; set; }
+
     /// <summary>Branch a Worktree task merges into. Defaults to the parent's branch; null leaves it for a human.</summary>
     public string? MergeTargetRef { get; set; }
 

@@ -169,6 +169,15 @@ public class Agent
     /// </summary>
     public bool IsPoolDelegate { get; set; }
 
+    /// <summary>
+    /// CARD-0604 D-2: the phone-home runner this agent's sessions launch on. Null is the ordinary
+    /// local runner. Only the configured <c>PhoneHomeRunner:AllowedRunnerId</c> is admitted; the
+    /// value is what makes an agent runner-bound, which is what
+    /// <see cref="Antiphon.Server.Application.Services.PhoneHomeLaunchPolicy"/> gates every
+    /// refusal and the launch projection on.
+    /// </summary>
+    public string? RunnerId { get; set; }
+
     /// <summary>Set while the delegate sits warm in the pool; null while it is working (or not pooled).</summary>
     public DateTime? PoolIdleSince { get; set; }
 
