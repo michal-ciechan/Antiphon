@@ -232,6 +232,31 @@ function Test-ReleaseGateSameInstant {
     return [string]::Equals([string]$Left, [string]$Right, [StringComparison]::OrdinalIgnoreCase)
 }
 
+function ConvertTo-ReleaseGateUtc {
+    <#
+      A timestamp read back from JSON may already be a DateTime, and casting one
+      to string renders it in the CURRENT culture - which the invariant parser
+      then rejects. Take the DateTime directly when that is what we were handed,
+      and only parse when it really is text.
+    #>
+    param($Value, [switch]$AllowEmpty)
+    if ($Value -is [datetime]) { return ([datetime]$Value).ToUniversalTime() }
+    $text = [string]$Value
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        if ($AllowEmpty) { return (Get-NightlyUtcNow) }
+        throw 'empty timestamp'
+    }
+    $parsed = [datetime]::MinValue
+    $styles = [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal
+    if ([datetime]::TryParse($text, [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$parsed)) {
+        return $parsed.ToUniversalTime()
+    }
+    if ([datetime]::TryParse($text, [System.Globalization.CultureInfo]::CurrentCulture, $styles, [ref]$parsed)) {
+        return $parsed.ToUniversalTime()
+    }
+    throw ('unparseable timestamp {0}' -f $text)
+}
+
 function New-ReleaseGateLockOwner {
     <#
       D-4: owner identity is PID + process start + run id + continuation id, so a

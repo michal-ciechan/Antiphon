@@ -64,7 +64,7 @@ function Get-ReleaseGateNotesBody {
     [void]$sb.AppendLine(('Native run: {0}' -f [string]$Manifest.nativeRunId))
     [void]$sb.AppendLine('')
     if ([string]::IsNullOrWhiteSpace($PreviousTag)) {
-        [void]$sb.AppendLine('Previous release: none - this is the first published release.')
+        [void]$sb.AppendLine('Previous release: none - there is no earlier release.')
     } else {
         [void]$sb.AppendLine(('Previous release: {0}' -f $PreviousTag))
     }
@@ -164,7 +164,7 @@ function Invoke-AntiphonPublishRelease {
 
     $publicationJournal = Join-Path $ReleaseRoot 'publications.json'
     $reservation = New-ReleaseGateTagReservation -JournalPath $publicationJournal -CandidateId $CandidateId -Sha $sha `
-        -CutUtc ([datetime]::Parse([string]$candidate.cutUtc)).ToUniversalTime()
+        -CutUtc (ConvertTo-ReleaseGateUtc -Value $candidate.cutUtc -AllowEmpty)
     $tag = $reservation.Tag
     $result.Tag = $tag
     $result.Resumed = [bool]$reservation.Reused

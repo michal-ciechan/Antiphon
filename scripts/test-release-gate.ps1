@@ -1223,9 +1223,19 @@ function Test-C599_NoActivation {
     foreach ($forbidden in @('restart-apphost', 'Stop-Process', 'taskkill', 'deploy-local')) {
         Assert-C487 -Cond ($pub -notmatch [regex]::Escape($forbidden)) -Name ('C599 NoActivation publish-release performs no {0}' -f $forbidden)
     }
-    Assert-C487 -Cond ($pub -notmatch '--force') -Name 'C599 NoActivation publish-release never force-pushes'
-    $cand = Get-Content -LiteralPath (Join-Path $here 'release-candidate.ps1') -Raw
-    Assert-C487 -Cond ($cand -notmatch '--force' -and $cand -notmatch 'force-with-lease') -Name 'C599 NoActivation release-candidate never force-pushes'
+    # Behavioural, not textual: run a real cut and a real publication and inspect
+    # the git calls they actually made. A prose mention of --force must not pass
+    # this, and a run that pushed nothing at all must not pass it either.
+    $fx = New-C599PublishFx
+    $r = Invoke-C599Publish -Fx $fx
+    Assert-C487 -Cond ([int]$r.ExitCode -eq 0 -and [bool]$r.Published) -Name 'C599 NoActivation control: the publication ran' -Detail ([string]$r.Refusal)
+    $trace = Get-Content -LiteralPath $fx.Git.Trace -Raw
+    $pushes = @(($trace -split "`n") | Where-Object { $_ -match '^GIT push' })
+    Assert-C487 -Cond ($pushes.Count -ge 1) -Name 'C599 NoActivation the publication really pushed something' -Detail ([string]$pushes.Count)
+    $forced = @($pushes | Where-Object { $_ -match '--force' -or $_ -match '--force-with-lease' -or $_ -match 'push\s+\S+\s+\+' })
+    Assert-C487 -Cond ($forced.Count -eq 0) -Name 'C599 NoActivation no observed push carried a force flag or plus refspec' -Detail ($forced -join ';')
+    $deletes = @(($trace -split "`n") | Where-Object { $_ -match 'tag -d' -or $_ -match 'push.*:refs/tags' })
+    Assert-C487 -Cond ($deletes.Count -eq 0) -Name 'C599 NoActivation no observed call deleted or re-created a tag' -Detail ($deletes -join ';')
 }
 
 # ======================================================== V-5 registration ===
@@ -1576,9 +1586,16 @@ function Test-C599_ExecutionArtifacts {
     Assert-C487 -Cond ($nativeArgs -contains '--diagnostic-output-directory') -Name 'C599 ExecutionArtifacts the executor pins the diagnostic directory'
     $filterIdx = [array]::IndexOf($nativeArgs, '--treenode-filter')
     Assert-C487 -Cond ($filterIdx -ge 0 -and ([string]$nativeArgs[$filterIdx + 1]) -match 'SmokeE2ETests' -and ([string]$nativeArgs[$filterIdx + 1]) -match 'BoardE2ETests') -Name 'C599 ExecutionArtifacts the executor launches only the eligible roster' -Detail ([string]$nativeArgs[$filterIdx + 1])
+    # The TRX filename reaching MTP must be a basename with the directory carried
+    # separately, or the runner writes the report where the census never reads it.
+    $nested = @(Get-NightlyNativeExecutionArguments -TrxPath (Join-Path (Join-Path $root 'sub') 'x.trx') -DiagnosticDirectory $diag -Classes @())
+    $nameIdx = [array]::IndexOf($nested, '--report-trx-filename')
+    $dirIdx = [array]::IndexOf($nested, '--results-directory')
+    Assert-C487 -Cond (([string]$nested[$nameIdx + 1]) -eq 'x.trx') -Name 'C599 ExecutionArtifacts the trx filename is passed as a basename' -Detail ([string]$nested[$nameIdx + 1])
+    Assert-C487 -Cond (([string]$nested[$dirIdx + 1]) -like '*sub') -Name 'C599 ExecutionArtifacts the trx directory is passed separately' -Detail ([string]$nested[$dirIdx + 1])
     $msg = ''
-    try { [void](Get-NightlyNativeExecutionArguments -TrxPath 'sub\dir\x.trx' -DiagnosticDirectory $diag -Classes @()) } catch { $msg = $_.Exception.Message }
-    Assert-C487 -Cond ($msg -match 'basename') -Name 'C599 ExecutionArtifacts a non-basename trx filename is refused' -Detail $msg
+    try { [void](Get-NightlyNativeExecutionArguments -TrxPath $trx -DiagnosticDirectory '' -Classes @()) } catch { $msg = $_.Exception.Message }
+    Assert-C487 -Cond ($msg -match 'diagnostic directory') -Name 'C599 ExecutionArtifacts a missing diagnostic directory is refused' -Detail $msg
     $impl = Get-Content -LiteralPath (Join-Path $lib 'nightly-tests-impl.ps1') -Raw
     Assert-C487 -Cond ($impl -match 'Wait-NightlyOwnedCleanup') -Name 'C599 ExecutionArtifacts the executor waits for owned cleanup'
     Assert-C487 -Cond ($impl -match 'owned-child still running') -Name 'C599 ExecutionArtifacts an unjoined owned child is an error'
