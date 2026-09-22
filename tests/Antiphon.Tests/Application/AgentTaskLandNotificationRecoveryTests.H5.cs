@@ -115,6 +115,27 @@ public sealed partial class AgentTaskLandNotificationRecoveryTests
     }
 
     [Test]
+    public async Task Legacy_adopted_note_wakes_an_already_eligible_parent()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var harness = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        var wakes = new CountingFlush();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var note = await SeedNotificationAsync(db, harness.SessionId, harness.AgentId);
+        db.SessionQueuedMessages.Add(new SessionQueuedMessage
+        {
+            Id = Guid.NewGuid(), AgentSessionId = harness.SessionId, Body = note.Body, Status = QueuedMessageStatus.Pending,
+            Origin = QueuedMessageOrigin.Check, SourceTaskId = note.TaskId, SourceLandNotificationId = note.Id,
+            ContentDigest = note.ContentDigest, DeliveryAttempts = 0, CreatedAt = DateTime.UtcNow,
+            ConversationKey = $"check:{note.TaskId:N}",
+        });
+        await db.SaveChangesAsync();
+        await new AgentTaskLandNotificationService(db, harness.Queue, wakes, harness.Runtime, TimeProvider.System)
+            .ReconcileAsync(note.Id, CancellationToken.None);
+        wakes.Count.ShouldBe(1);
+    }
+
+    [Test]
     public async Task Legacy_unavailable_parent_is_not_redirected()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();

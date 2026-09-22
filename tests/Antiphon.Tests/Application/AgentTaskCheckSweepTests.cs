@@ -861,6 +861,91 @@ public class AgentTaskCheckSweepTests
         AgentTaskCheckService.TryParseCheckConversationKey(null, out _).ShouldBeFalse();
     }
 
+    [Test]
+    public async Task Legacy_produced_note_survives_the_dispatcher_supersession_sweep()
+    {
+        await using var harness = await Harness.CreateAsync();
+        var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: 30);
+        var body = "original legacy check note for the caller";
+        var noteId = await SeedLegacyObligationAsync(harness, seed, body);
+        await harness.SettleAsync(seed.Task.Id);
+        await harness.SeedCompletionNoteAsync(seed.CallerSessionId, seed.Task.RootTaskId);
+
+        (await harness.Dispatcher.ReconcileSupersededChecksAsync(CancellationToken.None)).ShouldBe(0);
+
+        await using var verify = harness.CreateContext();
+        var stored = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == noteId);
+        stored.Status.ShouldBe(QueuedMessageStatus.Pending);
+        stored.Body.ShouldBe(body);
+    }
+
+    [Test]
+    public async Task Legacy_produced_note_survives_subject_settlement()
+    {
+        await using var harness = await Harness.CreateAsync();
+        var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: 30);
+        var body = "original legacy check note for the caller";
+        var noteId = await SeedLegacyObligationAsync(harness, seed, body);
+        await harness.SettleAsync(seed.Task.Id);
+        await harness.SeedCompletionNoteAsync(seed.CallerSessionId, seed.Task.RootTaskId);
+
+        await harness.Messages.FlushIfIdleAsync(seed.CallerSessionId, CancellationToken.None);
+
+        await using var verify = harness.CreateContext();
+        var stored = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == noteId);
+        stored.Status.ShouldBeOneOf(QueuedMessageStatus.Pending, QueuedMessageStatus.Sent);
+        stored.Body.ShouldBe(body);
+    }
+
+    [Test]
+    public async Task Legacy_produced_note_is_not_rebannered()
+    {
+        await using var harness = await Harness.CreateAsync();
+        var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: 30);
+        var body = "original legacy check note for the caller";
+        var noteId = await SeedLegacyObligationAsync(harness, seed, body);
+        await harness.SettleAsync(seed.Task.Id);
+
+        await harness.Messages.FlushIfIdleAsync(seed.CallerSessionId, CancellationToken.None);
+
+        await using var verify = harness.CreateContext();
+        var stored = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == noteId);
+        stored.Body.ShouldBe(body);
+        stored.Status.ShouldBeOneOf(QueuedMessageStatus.Pending, QueuedMessageStatus.Sent);
+    }
+
+    private static async Task<Guid> SeedLegacyObligationAsync(Harness harness, Seeded seed, string body)
+    {
+        await using var db = harness.CreateContext();
+        var eventId = Guid.NewGuid();
+        var notificationId = Guid.NewGuid();
+        var created = DateTime.UtcNow.AddMinutes(-2);
+        db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = eventId, AgentTaskId = seed.Task.Id, Type = AgentTaskEventType.Check, Detail = body, At = created,
+        });
+        db.AgentTaskLandNotifications.Add(new AgentTaskLandNotification
+        {
+            Id = notificationId, TaskId = seed.Task.Id, SourceEventId = eventId,
+            Kind = LandNotificationKind.LegacyCheckNote, ReplyTo = AgentTaskReplyTo.Session,
+            ParentSessionId = seed.CallerSessionId, Body = body, ContentDigest = "digest",
+            CreatedAt = created, NextAttemptAt = created, State = LandNotificationState.AwaitingReceipt,
+        });
+        var next = await db.SessionQueuedMessages.Where(m => m.AgentSessionId == seed.CallerSessionId)
+            .MaxAsync(m => (long?)m.Sequence) ?? 0;
+        var id = Guid.NewGuid();
+        db.SessionQueuedMessages.Add(new SessionQueuedMessage
+        {
+            Id = id, AgentSessionId = seed.CallerSessionId, Body = body, Status = QueuedMessageStatus.Pending,
+            Sequence = next + 1, Origin = QueuedMessageOrigin.Check,
+            ConversationKey = AgentTaskCheckService.ConversationKey(seed.Task.Id),
+            SourceTaskId = seed.Task.Id, SourceLandNotificationId = notificationId, ContentDigest = "digest",
+            CreatedAt = created, DeliveryAttempts = 0,
+        });
+        await db.SaveChangesAsync();
+        return id;
+    }
+
     // ---- helpers ------------------------------------------------------------------------------
 
     private static int CountOccurrences(string text, string token)
