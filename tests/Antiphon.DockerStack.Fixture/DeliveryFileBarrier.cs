@@ -45,7 +45,14 @@ public sealed class DeliveryFileBarrier
         var payload = JsonSerializer.Serialize(arm);
         var digest = Sha(payload);
         var record = JsonSerializer.Serialize(new { arm, digest });
-        await File.WriteAllTextAsync(reached, record, cancellationToken);
+        try
+        {
+            await File.WriteAllTextAsync(reached, record, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return new BarrierWait(false, "Incomplete");
+        }
         var releasePath = Path.Combine(_directory, "release-" + Sha(key) + ".json");
         while (!cancellationToken.IsCancellationRequested)
         {
