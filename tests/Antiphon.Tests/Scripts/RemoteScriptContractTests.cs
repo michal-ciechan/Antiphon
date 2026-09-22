@@ -106,9 +106,13 @@ public sealed class RemoteScriptContractTests
         // The restart case owns bringing the runner back before it refuses.
         var restart = Block(text, "case_persistent_restart");
         Order(restart, "compose_host stop", "RestartFailed").ShouldBeTrue();
+        // Two bring-ups: the one that failed, and the recovery that runs before the refusal.
         System.Text.RegularExpressions.Regex
             .Matches(restart, @"compose_host up -d --no-build").Count
-            .ShouldBeGreaterThanOrEqualTo(3, "the failure path retries the bring-up before refusing");
+            .ShouldBe(2, "the failure path brings the runner back before refusing");
+        var recovery = restart.IndexOf("compose_host up -d --no-build >> \"$CASE_DIR/command.log\" 2>&1 || true", StringComparison.Ordinal);
+        recovery.ShouldBeGreaterThan(0, "the recovery bring-up tolerates its own failure");
+        recovery.ShouldBeLessThan(restart.IndexOf("RestartFailed", StringComparison.Ordinal));
     }
 
     [Test]
