@@ -435,8 +435,8 @@ public sealed class CheckCompactionContinuationService
             episode.ResumeAcceptedStartedAt = result.AcceptedStartedAt;
             episode.LaunchOutcome = result.Outcome;
             episode.ConcurrencyToken = Guid.NewGuid();
-            await _boundary.ReachedAsync("resume-committed", episode.Id, ct);
             await _db.SaveChangesAsync(ct);
+            await _boundary.ReachedAsync("resume-committed", episode.Id, ct);
         }
 
         await PublishAsync(episode.PhysicalAgentId, ct);
