@@ -12,3 +12,15 @@ docker-compose.runner-grok.yml text eol=lf
 
 # CARD-0449 replay fixtures: real PTY byte streams. Any normalisation changes their pinned hashes.
 tests/Antiphon.Agents.Pty.Tests/golden/card-0449/*.ansi -text
+
+# CARD-0604: files the Linux runner parses byte-for-byte. A CRLF working copy on Windows reaches
+# server2 through scp/COPY and puts a stray \r in every shell token, ssh keyword and git value.
+scripts/*.sh text eol=lf
+docker/session-runner-grok/dind-entrypoint.sh text eol=lf
+docker/session-runner-grok/daemon.json text eol=lf
+docker/session-runner-grok/ssh_config text eol=lf
+docker/session-runner-grok/gitconfig text eol=lf
+docker/session-runner-grok/github_known_hosts text eol=lf
+docker/session-testing/*.sh text eol=lf
+docker/stack/*.sh text eol=lf
+docker-compose.server2-runner.yml text eol=lf
