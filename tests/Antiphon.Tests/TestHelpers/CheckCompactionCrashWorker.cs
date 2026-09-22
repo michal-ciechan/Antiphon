@@ -152,10 +152,19 @@ internal static class CheckCompactionCrashWorker
     private static async Task ReconcileAsync(CrashWorkerRequest request, CancellationToken ct)
     {
         var boundary = new HoldingBoundary(request);
-        await using var harness = await AttachAsync(request, boundary);
-        await using var scope = harness.Provider.CreateAsyncScope();
-        await scope.ServiceProvider.GetRequiredService<AgentTaskLandNotificationService>()
-            .ReconcileAsync(request.NotificationId, ct);
+        var harness = await AttachAsync(request, boundary);
+        try
+        {
+            await using var scope = harness.Provider.CreateAsyncScope();
+            await scope.ServiceProvider.GetRequiredService<AgentTaskLandNotificationService>()
+                .ReconcileAsync(request.NotificationId, ct);
+        }
+        finally
+        {
+            // Harness.DisposeAsync deletes this shared session's transcripts. The parent still
+            // has to count them, and the process exit drops the provider.
+            await harness.Provider.DisposeAsync();
+        }
     }
 
     private static ServiceProvider BuildProvider(CrashWorkerRequest request, CheckCompactionBoundary boundary)
