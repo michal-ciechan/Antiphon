@@ -1,0 +1,5 @@
+# CARD-0604 D-8. Baked at /etc/gitconfig. Non-secret: it only names where the key is.
+[core]
+	sshCommand = ssh -F /etc/antiphon/ssh_config
+[url "git@github.com:"]
+	pushInsteadOf = https://github.com/

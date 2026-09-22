@@ -1,0 +1,84 @@
+# CARD-0604 D-2: the standalone persistent server2 deployment. It is the ONLY standing Antiphon
+# process on server2 -- no server, no Postgres. The runner phones home to the desktop production
+# server and owns a nested dockerd (D-1); everything a session starts through Docker lives on that
+# nested daemon, so the host daemon never sees it and no socket is ever mounted.
+# Project name is fixed: COMPOSE_PROJECT_NAME=antiphon-runner.
+name: antiphon-runner
+
+services:
+  state-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+    user: "0:0"
+    entrypoint: ["/bin/sh", "/stack/init-state.sh"]
+    volumes:
+      - work:/work
+      - runner-state:/runner-state
+    restart: "no"
+
+  session-runner:
+    build:
+      context: .
+      dockerfile: docker/session-runner-grok/Dockerfile
+      target: session-testing
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+    image: antiphon-server2/session-testing:${SOURCE_SHA12:?SOURCE_SHA12 is required}
+    user: "0:0"
+    privileged: true
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 90s
+    tmpfs:
+      - /run/antiphon
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      PhoneHome__Enabled: "true"
+      PhoneHome__RunnerId: server2
+      PhoneHome__ServerOrigin: ${PHONE_HOME_SERVER_ORIGIN:?PHONE_HOME_SERVER_ORIGIN must be the production Antiphon origin}
+      PhoneHome__SecretPath: /run/secrets/phone-home
+      PhoneHome__StoreIdPath: /state/runner-store-id
+      PhoneHome__AllowedCwd: /work
+      PhoneHome__Capacity: "2"
+      PhoneHome__GrokHome: /state/grok
+      GROK_HOME: /state/grok
+      ANTIPHON_DEPLOY_KEY_SOURCE: /run/secrets/antiphon-deploy-key
+      SessionRunner__SessionLogPath: /state/session-runner
+      SessionRunner__PtyHostDir: /tmp/antiphon-pty-hosts
+      SessionRunner__PtyBackend: inbox
+      ANTIPHON_PTY_BACKEND: inbox
+      SessionRunner__Herdr__Enabled: "false"
+      Serilog__LogPath: /state/runner-logs
+      Agents__GrokCredentialProbeEnabled: "false"
+      TMPDIR: /tmp
+    volumes:
+      - work:/work
+      - runner-state:/state
+      - dind-data:/var/lib/docker
+    secrets:
+      - antiphon-deploy-key
+      - phone-home
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health && docker info >/dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+      start_period: 60s
+    depends_on:
+      state-init:
+        condition: service_completed_successfully
+    # No published port. The container phones home.
+
+secrets:
+  antiphon-deploy-key:
+    file: ${ANTIPHON_DEPLOY_KEY_FILE:?ANTIPHON_DEPLOY_KEY_FILE is required}
+  phone-home:
+    file: ${PHONE_HOME_SECRET_FILE:?PHONE_HOME_SECRET_FILE is required}
+
+volumes:
+  work:
+  runner-state:
+  dind-data:

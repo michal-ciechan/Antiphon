@@ -1,0 +1,13 @@
+{
+  "hosts": ["unix:///var/run/docker.sock"],
+  "group": "docker-nested",
+  "data-root": "/var/lib/docker",
+  "storage-driver": "overlay2",
+  "bip": "10.200.0.1/24",
+  "default-address-pools": [
+    { "base": "10.201.0.0/16", "size": 24 }
+  ],
+  "log-level": "warn",
+  "live-restore": false,
+  "iptables": true
+}

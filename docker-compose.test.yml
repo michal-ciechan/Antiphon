@@ -1,4 +1,8 @@
 # Foreground test containers. Not an application deployment.
+# CARD-0604 D-6: nested-only. This file is composed on the runner's NESTED daemon, from inside a
+# session, never on the server2 host daemon. It mounts no socket: the sibling lane it used to serve
+# is retired (the netns split that broke Testcontainers went with it), and anything a case needs
+# from Docker it composes on the nested daemon from the session's own shell.
 services:
   tests:
     build:
@@ -9,10 +13,6 @@ services:
         SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
     init: true
     privileged: false
-    group_add:
-      - ${DOCKER_SOCKET_GID:?DOCKER_SOCKET_GID is required}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       SessionRunner__BaseUrl: http://127.0.0.1:1
       SessionRunner__Enabled: "false"

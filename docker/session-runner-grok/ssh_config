@@ -1,0 +1,12 @@
+# CARD-0604 D-8. Baked, non-secret. The private half lives only on the /run/antiphon tmpfs,
+# materialised 0400 uid 1654 by dind-entrypoint.sh. Fetches stay anonymous HTTPS; only
+# pushes go over SSH, and only over ssh.github.com:443 (server2 egress).
+Host github.com
+    HostName ssh.github.com
+    Port 443
+    User git
+    IdentityFile /run/antiphon/deploy-key
+    IdentitiesOnly yes
+    BatchMode yes
+    StrictHostKeyChecking yes
+    UserKnownHostsFile /etc/antiphon/github_known_hosts

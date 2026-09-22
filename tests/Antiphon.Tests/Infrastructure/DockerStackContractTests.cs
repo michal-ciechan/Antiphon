@@ -139,10 +139,152 @@ public sealed class DockerStackContractTests
         Runner().Contains("docker.sock", StringComparison.Ordinal).ShouldBeFalse();
 
     [Test]
-    public void Testing_runner_has_explicit_socket()
+    public void Server2_runner_owns_its_daemon()
     {
-        var sockets = (Runner() + Override()).Split('\n').Count(line => line.Contains("docker.sock", StringComparison.Ordinal));
-        sockets.ShouldBe(1);
+        var runner = Server2Runner();
+        runner.Contains("privileged: true", StringComparison.Ordinal).ShouldBeTrue("server2 runner is privileged");
+        runner.Contains("dind-data:/var/lib/docker", StringComparison.Ordinal).ShouldBeTrue("nested store is the dind-data volume");
+        var sockets = ComposeFiles()
+            .SelectMany(file => Text(file).Replace("\r\n", "\n").Split('\n').Select(line => file + ": " + line))
+            .Where(line => line.Contains("docker.sock", StringComparison.Ordinal))
+            .ToList();
+        sockets.ShouldBeEmpty("no compose file mounts a docker socket");
+    }
+
+    [Test]
+    public void Only_the_server2_runner_is_privileged()
+    {
+        var privileged = ComposeFiles()
+            .SelectMany(file => Text(file).Replace("\r\n", "\n").Split('\n').Select(line => (file, line: line.Trim())))
+            .Where(item => item.line == "privileged: true")
+            .Select(item => item.file)
+            .ToList();
+        privileged.ShouldBe(["docker-compose.server2-runner.yml"]);
+    }
+
+    [Test]
+    public void Server2_runner_starts_as_root_and_drops()
+    {
+        Uid(Server2Runner()).ShouldBe(0);
+        Stage("docker/session-runner-grok/Dockerfile", "session-testing").Body
+            .ShouldContain("antiphon-dind-entrypoint.sh");
+        Text("docker/session-runner-grok/dind-entrypoint.sh").ShouldContain("setpriv --reuid=");
+    }
+
+    [Test]
+    public void Deploy_key_secret_is_required()
+    {
+        Text("docker-compose.server2-runner.yml").ShouldContain("ANTIPHON_DEPLOY_KEY_FILE:?");
+        DockerStackDocuments.List(Server2Runner(), "secrets").ShouldContain("antiphon-deploy-key");
+    }
+
+    [Test]
+    public void Server2_runner_requires_phone_home_origin_and_secret()
+    {
+        var text = Text("docker-compose.server2-runner.yml");
+        text.ShouldContain("PHONE_HOME_SERVER_ORIGIN:?");
+        text.ShouldContain("PHONE_HOME_SECRET_FILE:?");
+        Env(Server2Runner(), "PhoneHome__SecretPath").ShouldBe("/run/secrets/phone-home");
+        DockerStackDocuments.List(Server2Runner(), "secrets").ShouldContain("phone-home");
+    }
+
+    [Test]
+    public void Server2_runner_has_nested_store_volume()
+    {
+        Destination(Server2Runner(), "dind-data").ShouldBe("/var/lib/docker");
+        Text("docker-compose.server2-runner.yml").Replace("\r\n", "\n")
+            .Contains("\n  dind-data:", StringComparison.Ordinal).ShouldBeTrue("dind-data is a named volume");
+    }
+
+    [Test]
+    public void Server2_runner_restarts_unless_stopped() =>
+        Server2Runner().Contains("restart: unless-stopped", StringComparison.Ordinal).ShouldBeTrue();
+
+    [Test]
+    public void Server2_file_defines_only_runner_and_state_init()
+    {
+        var blocks = Text("docker-compose.server2-runner.yml")
+            .Replace("\r\n", "\n").Split('\n')
+            .Where(line => line.StartsWith("  ", StringComparison.Ordinal)
+                && !line.StartsWith("   ", StringComparison.Ordinal)
+                && line.TrimEnd().EndsWith(':'))
+            .Select(line => line.Trim().TrimEnd(':'))
+            .ToList();
+        blocks.ShouldBe(["state-init", "session-runner", "antiphon-deploy-key", "phone-home", "work", "runner-state", "dind-data"]);
+    }
+
+    [Test]
+    public void Stack_env_example_has_no_socket_gid()
+    {
+        var text = Text("docker/stack.env.example");
+        text.Contains("DOCKER_SOCKET_GID", StringComparison.Ordinal).ShouldBeFalse();
+        text.ShouldContain("COMPOSE_PROJECT_NAME=antiphon-runner");
+        text.ShouldContain("ANTIPHON_DEPLOY_KEY_FILE=");
+        text.ShouldContain("PHONE_HOME_SECRET_FILE=");
+    }
+
+    [Test]
+    public void Base_compose_keeps_phone_home_disabled()
+    {
+        False(Server(), "PhoneHomeRunner__Enabled").ShouldBeTrue();
+        False(Runner(), "PhoneHome__Enabled").ShouldBeTrue();
+    }
+
+    [Test]
+    public void Testing_stage_ships_the_engine()
+    {
+        var body = SessionTesting();
+        foreach (var binary in new[]
+                 {
+                     "docker/docker", "docker/dockerd", "docker/containerd", "docker/containerd-shim-runc-v2",
+                     "docker/runc", "docker/docker-init", "docker/docker-proxy", "docker/ctr",
+                 })
+            body.Contains(binary, StringComparison.Ordinal).ShouldBeTrue("engine tarball path " + binary + " is extracted");
+        System.Text.RegularExpressions.Regex
+            .Matches(body, @"download\.docker\.com/linux/static/stable/x86_64/docker-[0-9.]+\.tgz")
+            .Count.ShouldBe(1, "exactly one engine source");
+        body.ShouldContain("docker-27.5.1.tgz");
+    }
+
+    [Test]
+    public void Testing_stage_pins_legacy_iptables()
+    {
+        var body = SessionTesting();
+        body.ShouldContain("update-alternatives --set iptables /usr/sbin/iptables-legacy");
+        body.ShouldContain("update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy");
+        body.ShouldContain("iptables --version | grep -F 'legacy'");
+    }
+
+    [Test]
+    public void Testing_stage_has_build_toolchain()
+    {
+        var body = SessionTesting();
+        body.ShouldContain("COPY --from=build /usr/share/dotnet /usr/share/dotnet");
+        body.ShouldContain("COPY --from=node22 /usr/local /usr/local");
+        body.ShouldContain("dotnet --list-sdks");
+        body.ShouldContain("Microsoft.AspNetCore.App 9.");
+        body.ShouldContain("Microsoft.AspNetCore.App 10.");
+        body.ShouldContain("node --version");
+        body.ShouldContain("openssh-client");
+        Stage("docker/session-runner-grok/Dockerfile", "node22").From.ShouldContain("node:22");
+    }
+
+    [Test]
+    public void Testing_stage_entrypoint_is_the_dind_script()
+    {
+        var body = SessionTesting();
+        body.ShouldContain("COPY docker/session-runner-grok/dind-entrypoint.sh /usr/local/bin/antiphon-dind-entrypoint.sh");
+        body.ShouldContain("ENTRYPOINT [\"/usr/local/bin/antiphon-dind-entrypoint.sh\"]");
+        body.ShouldContain("CMD [\"dotnet\", \"Antiphon.SessionRunner.dll\"]");
+        body.ShouldContain("USER 0:0");
+    }
+
+    [Test]
+    public void Testing_stage_creates_docker_nested_group()
+    {
+        SessionTesting().ShouldContain("groupadd -g 1656 docker-nested");
+        SessionTesting().ShouldContain("getent group docker-nested");
+        Text("docker/session-runner-grok/daemon.json").ShouldContain("\"group\": \"docker-nested\"");
     }
 
     [Test]
@@ -259,6 +401,9 @@ public sealed class DockerStackContractTests
         var closure = DockerStackDocuments.Closure(stages, stages[^1].Name);
         closure.Contains("fakegrok", StringComparison.Ordinal).ShouldBeFalse();
         closure.Contains("docker-compose", StringComparison.Ordinal).ShouldBeFalse();
+        closure.Contains("dockerd", StringComparison.Ordinal).ShouldBeFalse();
+        closure.Contains("antiphon-dind-entrypoint.sh", StringComparison.Ordinal).ShouldBeFalse();
+        closure.Contains("sudo", StringComparison.Ordinal).ShouldBeFalse();
     }
 
     [Test]
@@ -283,6 +428,8 @@ public sealed class DockerStackContractTests
         var closure = DockerStackDocuments.Closure(stages, "receipt-probe");
         closure.Contains("docker-compose", StringComparison.Ordinal).ShouldBeFalse();
         closure.Contains("/usr/local/bin/docker", StringComparison.Ordinal).ShouldBeFalse();
+        closure.Contains("dockerd", StringComparison.Ordinal).ShouldBeFalse();
+        closure.Contains("sudo", StringComparison.Ordinal).ShouldBeFalse();
     }
 
     [Test]
@@ -370,7 +517,15 @@ public sealed class DockerStackContractTests
 
     private static string Postgres() => DockerStackDocuments.Service(Text("docker-compose.yml"), "postgres");
 
-    private static string Override() => DockerStackDocuments.Service(Text("docker-compose.session-testing.yml"), "session-runner");
+    private static string Server2Runner() => DockerStackDocuments.Service(Text("docker-compose.server2-runner.yml"), "session-runner");
+
+    private static string SessionTesting() => Stage("docker/session-runner-grok/Dockerfile", "session-testing").Body;
+
+    private static IReadOnlyList<string> ComposeFiles() =>
+        Directory.GetFiles(DockerStackDocuments.RepoRoot, "docker-compose*.yml")
+            .Select(path => Path.GetFileName(path)!)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToList();
 
     private static string Tests() => DockerStackDocuments.Service(Text("docker-compose.test.yml"), "tests");
 
