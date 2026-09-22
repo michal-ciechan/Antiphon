@@ -156,7 +156,7 @@ public class CheckCompactionCrashTests
             Microsoft.Extensions.Options.Options.Create(new Antiphon.Server.Application.Settings.DelegationSettings()),
             new CheckCompactionContinuationGate(),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<CheckCompactionContinuationService>.Instance);
-        await Should.ThrowAsync<InvalidOperationException>(() => service.SweepAsync(CancellationToken.None));
+        await service.SweepAsync(CancellationToken.None);
         await using var verify = NewDb(schema.ConnectionString);
         (await verify.CheckCompactionRecoveries.SingleAsync()).State.ShouldBe(CheckCompactionRecoveryState.ResumeReserved);
         (await verify.AgentTasks.CountAsync(t => t.Role == AgentTaskRole.Check && t.Status == AgentTaskStatus.Queued))
@@ -229,6 +229,7 @@ public class CheckCompactionCrashTests
         var body = "immutable failure note that was already accepted";
         var noteId = Guid.NewGuid();
         var taskId = Guid.NewGuid();
+        var eventId = Guid.NewGuid();
         await using (var db = NewDb(schema.ConnectionString))
         {
             db.AgentTasks.Add(new AgentTask
@@ -238,9 +239,14 @@ public class CheckCompactionCrashTests
                 AgentId = parent.AgentId, AgentSessionId = parent.SessionId, ParentSessionId = parent.SessionId,
                 ReplyTo = AgentTaskReplyTo.Session, WorkingDirectory = parent.TempRoot, CreatedAt = DateTime.UtcNow,
             });
+            db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = eventId, AgentTaskId = taskId, Type = AgentTaskEventType.Failed,
+                Detail = "accepted prompt lost its verdict", At = DateTime.UtcNow,
+            });
             db.AgentTaskLandNotifications.Add(new AgentTaskLandNotification
             {
-                Id = noteId, TaskId = taskId, SourceEventId = Guid.NewGuid(), Kind = LandNotificationKind.DeliveryFailure,
+                Id = noteId, TaskId = taskId, SourceEventId = eventId, Kind = LandNotificationKind.DeliveryFailure,
                 ReplyTo = AgentTaskReplyTo.Session, ParentSessionId = parent.SessionId, Body = body,
                 ContentDigest = DelegationNoteDigest.Compute(body), CreatedAt = DateTime.UtcNow,
                 NextAttemptAt = DateTime.UtcNow, State = LandNotificationState.AwaitingReceipt,
@@ -320,8 +326,10 @@ public class CheckCompactionCrashTests
             new CheckCompactionContinuationGate(),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<CheckCompactionContinuationService>.Instance,
             resume: resume);
-        await Should.ThrowAsync<InvalidOperationException>(() => service.SweepAsync(CancellationToken.None));
+        await service.SweepAsync(CancellationToken.None);
         creates.Count.ShouldBe(0);
+        await using var verify = NewDb(schema.ConnectionString);
+        (await verify.CheckCompactionRecoveries.SingleAsync()).State.ShouldBe(CheckCompactionRecoveryState.Stopped);
     }
 
     private static CrashWorkerRequest Request(CheckCompactionFixture.ConfirmedSeat seat, string root, string scenario, string hold) =>
