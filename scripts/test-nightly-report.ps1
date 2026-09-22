@@ -665,6 +665,117 @@ function Test-C487_G098 {
     Assert-True $true 'G098 T10 retained no inherited token'
 }
 
+
+# --- CARD-0599 R-4: lane-isolated incident identity -------------------------
+# The release-candidate lane files and closes its OWN incident. It must never
+# find, update or auto-close the master nightly card, and the master lane must
+# never touch an RC incident. Every row observes the actual HTTP writes.
+
+function New-C599RcSummaryObject {
+    param([string]$LogDir, [switch]$Green, [string]$Sha = 'bbbb1111rc')
+    $obj = if ($Green) { New-GreenSummaryObject -LogDir $LogDir -Sha $Sha } else { New-RedSummaryObject -LogDir $LogDir -ClientFailed 1 -Sha $Sha }
+    $obj['profile'] = 'rc'
+    $obj['candidateId'] = 'rc-20260923T083000Z'
+    return $obj
+}
+
+function Test-C487_G099 {
+    # An RC red run creates a release-gate incident, not a nightly one.
+    $dir = New-TestDir
+    Save-Summary -Object (New-C599RcSummaryObject -LogDir $dir) -Path (Join-Path $dir 'summary.json')
+    Reset-Store -Cards @()
+    $r = Invoke-Report @{ Summary = (Join-Path $dir 'summary.json') }
+    $posts = @(Get-CallsMatching -Method POST -Pattern '/api/boards/.+/cards$')
+    Assert-Eq $posts.Count 1 'G099 rc red creates exactly one card'
+    $body = $posts[0].Body | ConvertFrom-Json
+    Assert-True ($body.labels -contains 'release-gate') 'G099 rc card carries the release-gate label' (($body.labels | Out-String))
+    Assert-True ($body.labels -notcontains 'nightly') 'G099 rc card does NOT carry the nightly label' (($body.labels | Out-String))
+    Assert-True ([string]$body.title -like 'Release-candidate red*') 'G099 rc card title names the lane' ([string]$body.title)
+    Assert-True ([string]$body.title -notlike 'Nightly*') 'G099 rc card title is not a nightly title' ([string]$body.title)
+}
+
+function Test-C487_G100 {
+    # An open MASTER nightly card is invisible to the RC lane: the RC run must
+    # create its own card rather than update the nightly incident.
+    $dir = New-TestDir
+    Save-Summary -Object (New-C599RcSummaryObject -LogDir $dir) -Path (Join-Path $dir 'summary.json')
+    $nightlyCard = New-FakeCard -Identifier 'CARD-0500' -Status 'Backlog' -Labels @('nightly', 'tests') -Title 'Nightly red 2026-09-23'
+    Reset-Store -Cards @($nightlyCard)
+    $r = Invoke-Report @{ Summary = (Join-Path $dir 'summary.json') }
+    $patches = @(Get-CallsMatching -Method PATCH -Pattern '/api/cards/')
+    $posts = @(Get-CallsMatching -Method POST -Pattern '/api/boards/.+/cards$')
+    Assert-Eq $patches.Count 0 'G100 rc run issues zero PATCH against the nightly card'
+    Assert-Eq $posts.Count 1 'G100 rc run creates its own card instead'
+    $g100 = $posts[0].Body | ConvertFrom-Json
+    Assert-True ($g100.labels -contains 'release-gate') 'G100 the created card is a release-gate incident' (($g100.labels | Out-String))
+}
+
+function Test-C487_G101 {
+    # And the mirror: a MASTER run must not touch an open release-gate incident.
+    $dir = New-TestDir
+    Save-Summary -Object (New-RedSummaryObject -LogDir $dir -ClientFailed 1) -Path (Join-Path $dir 'summary.json')
+    $rcCard = New-FakeCard -Identifier 'CARD-0501' -Status 'Backlog' -Labels @('release-gate', 'tests') -Title 'Release-candidate red 2026-09-23'
+    Reset-Store -Cards @($rcCard)
+    $r = Invoke-Report @{ Summary = (Join-Path $dir 'summary.json') }
+    $patches = @(Get-CallsMatching -Method PATCH -Pattern '/api/cards/')
+    $posts = @(Get-CallsMatching -Method POST -Pattern '/api/boards/.+/cards$')
+    Assert-Eq $patches.Count 0 'G101 master run issues zero PATCH against the rc card'
+    Assert-Eq $posts.Count 1 'G101 master run creates its own nightly card'
+    $g101 = $posts[0].Body | ConvertFrom-Json
+    Assert-True ($g101.labels -contains 'nightly') 'G101 the created card is a nightly incident' (($g101.labels | Out-String))
+}
+
+function Test-C487_G102 {
+    # An RC GREEN must not auto-close the master nightly incident.
+    $dir = New-TestDir
+    Save-Summary -Object (New-C599RcSummaryObject -LogDir $dir -Green) -Path (Join-Path $dir 'summary.json')
+    $nightlyCard = New-FakeCard -Identifier 'CARD-0502' -Status 'Backlog' -Labels @('nightly', 'tests') -Title 'Nightly red 2026-09-22'
+    Reset-Store -Cards @($nightlyCard)
+    $r = Invoke-Report @{ Summary = (Join-Path $dir 'summary.json') }
+    $moves = @($script:state.Calls | Where-Object { $_.Uri -match '/api/cards/' -and ($_.Method -eq 'PATCH' -or $_.Method -eq 'POST') })
+    Assert-Eq $moves.Count 0 'G102 an rc green performs zero writes against the nightly card'
+
+    # Control: a MASTER green does close its own nightly incident, so the row
+    # above is proving lane isolation and not simply that nothing ever closes.
+    $dir2 = New-TestDir
+    Save-Summary -Object (New-GreenSummaryObject -LogDir $dir2) -Path (Join-Path $dir2 'summary.json')
+    Reset-Store -Cards @((New-FakeCard -Identifier 'CARD-0503' -Status 'Backlog' -Labels @('nightly', 'tests') -Title 'Nightly red 2026-09-22'))
+    $r2 = Invoke-Report @{ Summary = (Join-Path $dir2 'summary.json') }
+    $closes = @($script:state.Calls | Where-Object { $_.Uri -match '/api/cards/' -and $_.Method -ne 'GET' })
+    Assert-True ($closes.Count -ge 1) 'G102 control: a master green does act on its own nightly card' ([string]$closes.Count)
+}
+
+function Test-C487_G103 {
+    # Lane identity survives into the auto-close terminal reason, so one lane's
+    # marker can never be read as the other's.
+    $dir = New-TestDir
+    Save-Summary -Object (New-C599RcSummaryObject -LogDir $dir -Green) -Path (Join-Path $dir 'summary.json')
+    $rcCard = New-FakeCard -Identifier 'CARD-0504' -Status 'Backlog' -Labels @('release-gate', 'tests') -Title 'Release-candidate red 2026-09-22'
+    Reset-Store -Cards @($rcCard)
+    $r = Invoke-Report @{ Summary = (Join-Path $dir 'summary.json') }
+    $writes = @($script:state.Calls | Where-Object { $_.Uri -match '/api/cards/' -and $_.Method -ne 'GET' })
+    Assert-True ($writes.Count -ge 1) 'G103 an rc green acts on its own rc incident' ([string]$writes.Count)
+    $joined = (@($writes | ForEach-Object { [string]$_.Body }) -join ' ')
+    Assert-True ($joined -match '\[rc auto-close\]') 'G103 the rc terminal reason names the rc lane' $joined
+    Assert-True ($joined -notmatch '\[nightly auto-close\]') 'G103 the rc terminal reason is not the nightly marker' $joined
+}
+
+function Test-C487_G104 {
+    # A run with no profile at all is still the master lane: the pre-CARD-0599
+    # payload must behave exactly as before.
+    $dir = New-TestDir
+    $obj = New-RedSummaryObject -LogDir $dir -ClientFailed 1
+    Assert-True (-not $obj.Contains('profile')) 'G104 the legacy summary carries no profile' ''
+    Save-Summary -Object $obj -Path (Join-Path $dir 'summary.json')
+    Reset-Store -Cards @()
+    $r = Invoke-Report @{ Summary = (Join-Path $dir 'summary.json') }
+    $posts = @(Get-CallsMatching -Method POST -Pattern '/api/boards/.+/cards$')
+    Assert-Eq $posts.Count 1 'G104 a profile-less run still files one card'
+    $g104 = $posts[0].Body | ConvertFrom-Json
+    Assert-True ($g104.labels -contains 'nightly') 'G104 a profile-less run is still the nightly lane' (($g104.labels | Out-String))
+    Assert-True ([string]$g104.title -like 'Nightly red*') 'G104 a profile-less run keeps the nightly title' ([string]$g104.title)
+}
+
 if ($Case -and $Case -like 'C487_*') {
     & ('Test-{0}' -f $Case)
 } else {
@@ -673,6 +784,8 @@ if ($Case -and $Case -like 'C487_*') {
     Test-C487_G087; Test-C487_G088; Test-C487_G089; Test-C487_G090; Test-C487_G091
     Test-C487_G092; Test-C487_G093; Test-C487_G094; Test-C487_G095; Test-C487_G096
     Test-C487_G097; Test-C487_G098
+    Test-C487_G099; Test-C487_G100; Test-C487_G101; Test-C487_G102; Test-C487_G103
+    Test-C487_G104
 }
 
 Write-Host ''

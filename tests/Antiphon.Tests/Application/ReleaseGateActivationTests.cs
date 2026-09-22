@@ -85,15 +85,17 @@ public sealed class ReleaseGateActivationTests
 
         var rows = new (string Row, Action Change, string Expected)[]
         {
-            ("receipt-missing", () => File.Delete(state.ReceiptPath), "qualification_missing"),
+            ("receipt-missing", () => File.Delete(state.ReceiptPath), "qualification_receipt_missing"),
             ("receipt-repository", () => state.Mutate(r => r["repositoryPath"] = Path.Combine(state.Root, "elsewhere")), "qualification_repository_mismatch"),
             ("receipt-project", () => state.Mutate(r => r["projectId"] = Guid.NewGuid().ToString()), "qualification_project_mismatch"),
-            ("receipt-no-recipients", () => state.Mutate(r => r["recipientEvidenceIds"] = new JsonArray()), "qualification_recipients_missing"),
-            ("receipt-no-outage", () => state.Mutate(r => r["outageRecoveryEvidenceIds"] = new JsonArray()), "qualification_outage_missing"),
+            ("receipt-no-recipients", () => state.Mutate(r => r["recipientEvidenceIds"] = new JsonArray()), "qualification_recipient_evidence_missing"),
+            ("receipt-no-outage", () => state.Mutate(r => r["outageRecoveryEvidenceIds"] = new JsonArray()), "qualification_outage_evidence_missing"),
             ("receipt-no-watchdog", () => state.Mutate(r => r.Remove("watchdogInstanceId")), "qualification_watchdog_missing"),
             ("monitor-missing", () => File.Delete(state.MonitorPath), "monitor_missing"),
+            ("receipt-bad-schema", () => state.Mutate(r => r["schemaVersion"] = 2), "qualification_receipt_schema_unsupported"),
+            ("receipt-bad-commit", () => state.Mutate(r => r["qualificationArtifactCommitSha"] = "abc123"), "qualification_revision_invalid"),
             ("monitor-unhealthy", () => state.MutateMonitor(m => ((JsonObject)m["Health"]!)["Healthy"] = false), "monitor_unhealthy"),
-            ("monitor-not-ready", () => state.MutateMonitor(m => ((JsonObject)m["Health"]!)["ReadyForDeferral"] = false), "monitor_not_ready"),
+            ("monitor-not-ready", () => state.MutateMonitor(m => ((JsonObject)m["Health"]!)["ReadyForDeferral"] = false), "monitor_not_ready_for_deferral"),
             ("monitor-watchdog", () => state.MutateMonitor(m => ((JsonObject)m["Identity"]!)["WatchdogInstanceId"] = "wd-other"), "monitor_watchdog_mismatch"),
         };
 

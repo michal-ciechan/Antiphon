@@ -559,7 +559,7 @@ function New-NightlyTitle {
     }
     $outcome = [string]$SummaryObject.outcome
     if ($outcome -eq 'BUILD') {
-        $title = ('Nightly red {0}: BUILD FAILED' -f $date)
+        $title = ('{0} red {1}: BUILD FAILED' -f $script:laneTitle, $date)
         if ($title.Length -gt $maxTitle) { $title = $title.Substring(0, $maxTitle) }
         return $title
     }
@@ -583,7 +583,7 @@ function New-NightlyTitle {
     }
     $rest = if ($bits.Count -gt 0) { $bits -join ', ' } else { $outcome }
     if ([string]::IsNullOrWhiteSpace($rest)) { $rest = 'failed' }
-    $title = ('Nightly red {0}: {1}' -f $date, $rest)
+    $title = ('{0} red {1}: {2}' -f $script:laneTitle, $date, $rest)
     if ($title.Length -gt $maxTitle) { $title = $title.Substring(0, $maxTitle) }
     return $title
 }
@@ -645,8 +645,21 @@ if ([string]::IsNullOrWhiteSpace($sha)) { $sha = 'unknown' }
 $dateLondon = Get-LondonStamp -Utc $started
 $dateOnly = $dateLondon.Substring(0, 10)
 
+# CARD-0599 R-4: the incident identity is lane-specific. A release-candidate run
+# files and closes its OWN incident under the release-gate label; it can never
+# find, update or auto-close the master nightly card, and vice versa.
+$script:lane = 'nightly'
+$script:laneLabel = 'nightly'
+$script:laneTitle = 'Nightly'
+$profileName = ([string]$summaryObject.profile).Trim().ToLowerInvariant()
+if ($profileName -eq 'rc') {
+    $script:lane = 'rc'
+    $script:laneLabel = 'release-gate'
+    $script:laneTitle = 'Release-candidate'
+}
+
 $script:body = New-RunSection -SummaryObject $summaryObject -PreviousObject $previousObject
-$script:title = if ($succeeded) { ('Nightly green {0}' -f $dateOnly) } else { New-NightlyTitle -SummaryObject $summaryObject -Utc $started }
+$script:title = if ($succeeded) { ('{0} green {1}' -f $script:laneTitle, $dateOnly) } else { New-NightlyTitle -SummaryObject $summaryObject -Utc $started }
 
 $importance = 'Normal'
 $classLabel = 'tests'
@@ -654,7 +667,7 @@ if ($outcome -eq 'BUILD') {
     $importance = 'High'
     $classLabel = 'build'
 }
-$labels = @('nightly', $classLabel)
+$labels = @($script:laneLabel, $classLabel)
 
 $failCounts = @()
 foreach ($s in @($summaryObject.suites)) {
@@ -693,7 +706,7 @@ try {
         $truncated = $false
         if ($page -and $page.truncated) { $truncated = [bool]$page.truncated }
         $matched = @($cards | Where-Object {
-                (Test-CardHasLabel -Card $_ -Label 'nightly') -and ($null -eq $_.archivedAt -or $_.archivedAt -eq '')
+                (Test-CardHasLabel -Card $_ -Label $script:laneLabel) -and ($null -eq $_.archivedAt -or $_.archivedAt -eq '')
             })
         if ($truncated -and $matched.Count -eq 0) {
             throw ('truncated card census on status {0} cannot prove absence' -f $st)
@@ -725,7 +738,7 @@ try {
         $unassigned = ($null -eq $assigned -or $assigned -eq '') -and ($null -eq $owner -or $owner -eq '')
         $discussionBody = ('green on {0} at {1}; not closing because the card is {2}/{3}' -f $dateOnly, $sha, $status, $(if ($assigned) { $assigned } else { 'unassigned' }))
         if ($succeededForClose -and $status -eq 'Backlog' -and $unassigned -and $null -ne $terminal) {
-            $reason = ('[nightly auto-close] green on {0} at {1} - reopen if this was a flake you want tracked' -f $dateOnly, $sha)
+            $reason = ('[{0} auto-close] green on {1} at {2} - reopen if this was a flake you want tracked' -f $script:lane, $dateOnly, $sha)
             $moveBody = ConvertTo-NightlyJson @{
                 boardColumnId    = [string]$terminal.id
                 concurrencyToken = Get-CardToken $card
@@ -765,7 +778,7 @@ try {
     } else {
         $cutoff = [datetime]::UtcNow.AddDays(-7)
         $reopenable = @($doneNightly | Where-Object {
-                ([string]$_.terminalReason).StartsWith('[nightly auto-close]') -and
+                ([string]$_.terminalReason).StartsWith(('[{0} auto-close]' -f $script:lane)) -and
                 ($null -ne (ConvertTo-UtcDate $_.updatedAt)) -and
                 ((ConvertTo-UtcDate $_.updatedAt) -ge $cutoff)
             } | Sort-Object { ConvertTo-UtcDate $_.updatedAt } -Descending)
@@ -803,7 +816,7 @@ try {
             description = $script:body
             importance  = $importance
             urgency     = 'Normal'
-            labels      = @('nightly', $classLabel)
+            labels      = $labels
         }
         $createBody = ConvertTo-NightlyJson $createObj
         $script:intendedWrites += [pscustomobject]@{ Method = 'POST'; Uri = ('{0}/api/boards/{1}/cards' -f $Api, $boardId); Body = $createBody }
