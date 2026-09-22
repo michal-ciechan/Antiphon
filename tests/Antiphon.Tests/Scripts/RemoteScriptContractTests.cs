@@ -22,8 +22,12 @@ public sealed class RemoteScriptContractTests
         Executable(text, "python ").ShouldBeEmpty("nested lane invokes python");
 
         // sudo is the host lane's alone, and only inside the lane guard: the nested lane runs as
-        // uid 1654 with no sudoers rule, so a sudo outside that branch is an unconditional failure.
-        var sudoLines = Executable(text, "sudo");
+        // uid 1654 with no sudoers rule, so a sudo INVOCATION outside that branch is an
+        // unconditional failure. Merely naming the path (an assertion that the runtime image does
+        // NOT carry sudo) is the opposite of an invocation and must not trip this.
+        var sudoLines = Executable(text, "sudo")
+            .Where(line => System.Text.RegularExpressions.Regex.IsMatch(line, @"(^|[;&|(]\s*)sudo\s"))
+            .ToList();
         sudoLines.ShouldNotBeEmpty("the host lane still elevates to create its own directories");
         foreach (var line in sudoLines)
             EnsureDirsBody(text).Contains(line, StringComparison.Ordinal)
