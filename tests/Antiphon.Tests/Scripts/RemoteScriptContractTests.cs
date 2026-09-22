@@ -116,6 +116,22 @@ public sealed class RemoteScriptContractTests
     }
 
     [Test]
+    public void Retirement_is_anchored_on_the_run_scoped_prefix()
+    {
+        // D-9: the host daemon is shared with am-service, traefik, windmill and schoolrevision-*.
+        // Every retirement pattern is anchored so it can only ever name a c590 run's own leftovers.
+        var retire = Block(Remote(), "retire_c590_leftovers");
+        retire.ShouldContain("c590[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]");
+        retire.ShouldContain("'^antiphon-c590-'");
+        retire.ShouldContain("'^c590[0-9a-f]{12}_'");
+        // The inventory is written before anything is removed: an untraceable retirement is worse
+        // than a leftover.
+        Order(retire, "inventory-containers.txt", "down -v").ShouldBeTrue();
+        Order(retire, "inventory-volumes.txt", "volume rm").ShouldBeTrue();
+        retire.ShouldNotContain("prune");
+    }
+
+    [Test]
     public void Host_daemon_is_never_pruned()
     {
         // D-9: prune inside the nested daemon is permitted; prune on the host daemon is forbidden

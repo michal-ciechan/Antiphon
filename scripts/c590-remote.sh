@@ -938,6 +938,15 @@ retire_c590_leftovers() {
         printf 'retiring image %s\n' "$image" >> "$CASE_DIR/retired.txt"
         docker image rm "$image" >> "$CASE_DIR/command.log" 2>&1 || true
     done
+    # Volumes a c590 run created OUTSIDE its compose project (the node_modules and bin/obj caches
+    # the old sibling test lane made with `docker volume create`) are not removed by `down -v`.
+    # The pattern is anchored on the run-scoped project prefix, so it can never reach a foreign
+    # volume: am-service, gym-stat, schoolrevision and the rest share this daemon.
+    local volume
+    for volume in $(docker volume ls -q | grep -E '^c590[0-9a-f]{12}_' || true); do
+        printf 'retiring volume %s\n' "$volume" >> "$CASE_DIR/retired.txt"
+        docker volume rm "$volume" >> "$CASE_DIR/command.log" 2>&1 || true
+    done
     touch "$CASE_DIR/retired.txt"
 }
 
