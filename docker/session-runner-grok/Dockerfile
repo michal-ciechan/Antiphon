@@ -58,11 +58,11 @@ RUN chmod 0755 /opt/antiphon-tests/fakegrok/fakegrok /opt/antiphon-tests/fakegro
  && test -x /opt/antiphon-tests/fakegrok-linux.sh
 USER 1654:1654
 
-# CARD-0604 D-4: the persistent server2 runner owns a nested dockerd. The whole engine comes
-# from the same pinned tarball the CLI already came from (no second engine source); iptables is
-# pinned to the legacy backend because server2 is kernel 4.15 with iptables 1.6.1 and mixing
-# backends across the two layers is the classic DinD failure.
 FROM receipt-probe AS session-testing
+# CARD-0604 D-4: the persistent server2 runner owns a nested engine. The whole engine comes from
+# the same pinned tarball the CLI already came from (no second engine source); iptables is pinned
+# to the legacy backend because server2 is kernel 4.15 with iptables 1.6.1 and mixing backends
+# across the two layers is the classic DinD failure.
 USER root
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates tar gzip iptables iproute2 openssh-client sudo \
