@@ -55,7 +55,8 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 [Category("Slow")]
 [NotInParallel("MessageQueue")]
-public class CheckNoteDeliveryHandoffTests
+[ParallelLimiter<ProcessSpawnLimit>]
+public partial class CheckNoteDeliveryHandoffTests
 {
     private const string Reading =
         "On track — three commits in the last 6 minutes; tests ran green (no action needed).";

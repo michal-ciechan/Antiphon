@@ -50,6 +50,45 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
                 catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
                 { logger.LogWarning(ex, "Dispatch-base warning intent scan failed"); }
 
+                var capturedEnabled = false;
+                await using (var probe = scopes.CreateAsyncScope())
+                    capturedEnabled = probe.ServiceProvider.GetService<LegacyCheckNotePublicationService>() is not null;
+                if (capturedEnabled)
+                {
+                    Guid? capturedCursor = null;
+                    while (!stoppingToken.IsCancellationRequested)
+                    {
+                        await using var scope = scopes.CreateAsyncScope();
+                        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                        var now = DateTime.UtcNow;
+                        var capturedQuery = db.LegacyCheckNotePublications.AsNoTracking()
+                            .Where(p => p.State == LegacyCheckNoteState.Captured && p.NextAttemptAt <= now);
+                        if (capturedCursor is Guid capturedAfter)
+                            capturedQuery = capturedQuery.Where(p => p.Id.CompareTo(capturedAfter) > 0);
+                        var capturedIds = await capturedQuery.OrderBy(p => p.Id).Select(p => p.Id).Take(128)
+                            .ToListAsync(stoppingToken);
+                        foreach (var id in capturedIds)
+                        {
+                            try
+                            {
+                                await using var rowScope = scopes.CreateAsyncScope();
+                                await rowScope.ServiceProvider.GetRequiredService<LegacyCheckNotePublicationService>()
+                                    .RecoverCapturedAsync(id, stoppingToken);
+                            }
+                            catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
+                            { logger.LogWarning(ex, "Captured legacy Check publication {PublicationId} remains unresolved", id); }
+                        }
+
+                        if (capturedIds.Count < 128)
+                            break;
+                        capturedCursor = capturedIds[^1];
+                    }
+
+                    await using var capturedObservation = scopes.CreateAsyncScope();
+                    if (capturedObservation.ServiceProvider.GetService<CheckCompactionBoundary>() is { } capturedBoundary)
+                        await capturedBoundary.ReachedAsync("legacy-captured-scan", Guid.Empty, stoppingToken);
+                }
+
                 Guid? cursor = null;
                 while (!stoppingToken.IsCancellationRequested)
                 {

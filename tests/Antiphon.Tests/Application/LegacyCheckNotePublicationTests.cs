@@ -11,7 +11,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-public class LegacyCheckNotePublicationTests
+public partial class LegacyCheckNotePublicationTests
 {
     [Test]
     public async Task Legacy_production_retries_keep_the_first_body()
@@ -65,12 +65,12 @@ public class LegacyCheckNotePublicationTests
                 db, harness.Queue, new CompletionNoteFlushQueue(), harness.Runtime, TimeProvider.System));
         var subject = await db.AgentTasks.SingleAsync(t => t.Id == checkedId);
         var first = await publisher.TryPublishAsync(
-            subject, 1, "Original check note\r\nline", "event", runId, false, null, CancellationToken.None);
+            subject, 1, "Original check note\r\nline", "event", runId, false, null, CancellationToken.None, episodeId);
         first.ShouldBe(LegacyCheckNotePublicationService.PublishResult.Published);
 
         subject.Title = "changed after production";
         var second = await publisher.TryPublishAsync(
-            subject, 1, "A different body", "event", runId, false, null, CancellationToken.None);
+            subject, 1, "A different body", "event", runId, false, null, CancellationToken.None, episodeId);
         second.ShouldBe(LegacyCheckNotePublicationService.PublishResult.Published);
 
         await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
