@@ -12,6 +12,10 @@ services:
       dockerfile: Dockerfile
       args:
         SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+    # Named explicitly, like the runner: `up --no-build` against a service with only a build block
+    # derives `antiphon-runner-state-init` and tries to PULL it, which is a denied access to a
+    # repository that does not exist. The deploy builds this exact tag.
+    image: antiphon-server2/server:${SOURCE_SHA12:?SOURCE_SHA12 is required}
     user: "0:0"
     entrypoint: ["/bin/sh", "/stack/init-state.sh"]
     volumes:

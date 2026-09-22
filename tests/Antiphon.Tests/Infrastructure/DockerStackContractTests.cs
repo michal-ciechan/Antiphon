@@ -197,6 +197,21 @@ public sealed class DockerStackContractTests
     }
 
     [Test]
+    public void Server2_services_name_their_images()
+    {
+        // `up --no-build` against a service with only a build block derives a name and tries to
+        // PULL it, which fails as a denied access to a repository that does not exist. Every
+        // service in the deployment file names the tag the deploy actually builds.
+        foreach (var service in new[] { "state-init", "session-runner" })
+        {
+            var block = DockerStackDocuments.Service(Text("docker-compose.server2-runner.yml"), service);
+            block.Contains("image: antiphon-server2/", StringComparison.Ordinal)
+                .ShouldBeTrue(service + " names its image explicitly");
+            block.ShouldContain("SOURCE_SHA12:?");
+        }
+    }
+
+    [Test]
     public void Server2_runner_restarts_unless_stopped() =>
         Server2Runner().Contains("restart: unless-stopped", StringComparison.Ordinal).ShouldBeTrue();
 
