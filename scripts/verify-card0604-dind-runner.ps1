@@ -162,13 +162,18 @@ try {
     $zen = Invoke-Docker @('exec', $containerName, 'docker', 'run', '--rm', 'alpine:3.20', 'wget', '-qO-', 'https://api.github.com/zen') 'nested-egress.txt'
     $egress = if ($zen.ExitCode -eq 0 -and $zen.Output.Trim()) { 'yes' } else { 'no' }
 
-    # --- step 6: a nested mapped port answers on the runner's own loopback, as uid 1654 -------
-    $loopScript = 'id=$(docker run -d -p 127.0.0.1::80 nginx:alpine); ' +
+    # --- step 6: a nested mapped port answers on the runner's own loopback, as the app uid ----
+    # `docker exec -u 1654:1654` grants NO supplementary groups, so it cannot reach the nested
+    # socket (group docker-nested, 1656) the way a real session can - the entrypoint gives the
+    # runner that group with `setpriv --groups=1656` and every session inherits it. Running the
+    # probe as 1654:1656 is the closest credentials `docker exec` can express.
+    $loopScript = 'set -e; ' +
+    'id=$(docker run -d -p 127.0.0.1::80 nginx:alpine); ' +
     'p=$(docker port $id 80 | head -n1 | sed "s/.*://"); ' +
     'sleep 2; ' +
     'curl -fsS -o /dev/null -w %{http_code} http://127.0.0.1:$p/; ' +
-    'echo; docker rm -f $id >/dev/null'
-    $loop = Invoke-Docker @('exec', '-u', '1654:1654', $containerName, 'sh', '-c', $loopScript) 'nested-loopback.txt'
+    'echo; docker rm -f "$id" >/dev/null'
+    $loop = Invoke-Docker @('exec', '-u', '1654:1656', $containerName, 'sh', '-c', $loopScript) 'nested-loopback.txt'
     $loopMatch = [regex]::Match($loop.Output, '(?m)^(\d{3})\s*$')
     $loopback = if ($loopMatch.Success) { $loopMatch.Groups[1].Value } else { 'no' }
 
@@ -207,6 +212,10 @@ try {
     $keyState = if ($keyOk -and $sshOk) { 'ok' } else { 'no' }
 
     # --- step 9: a dead daemon takes the container down; the policy brings it back ------------
+    # The nested store is a named volume, so the images pulled above must still be there
+    # afterwards; that is what makes the restart cheap instead of a full re-pull every time.
+    $imagesBefore = Invoke-Docker @('exec', $containerName, 'docker', 'images', '-q') 'nested-images-before-restart.txt'
+    $imagesBeforeSet = ($imagesBefore.Output -split '\r?\n' | Where-Object { $_.Trim() } | Sort-Object) -join ','
     $before = Invoke-Docker @('inspect', '-f', '{{.RestartCount}}', $containerName) 'restart-count-before.txt'
     $beforeCount = 0
     [int]::TryParse($before.Output.Trim(), [ref] $beforeCount) | Out-Null
@@ -232,9 +241,12 @@ try {
             Start-Sleep -Seconds 2
         }
     }
-    $retained = Invoke-Docker @('exec', $containerName, 'docker', 'images', '-q', 'nginx:alpine') 'nested-images-after-restart.txt'
-    $restartState = if ($restarted -and $backHealthy -and $retained.Output.Trim()) { 'ok' } else { 'no' }
-    Write-Evidence 'restart-summary.txt' "restarted=$restarted backHealthy=$backHealthy imagesRetained=$($retained.Output.Trim())"
+    $retained = Invoke-Docker @('exec', $containerName, 'docker', 'images', '-q') 'nested-images-after-restart.txt'
+    $retainedSet = ($retained.Output -split '\r?\n' | Where-Object { $_.Trim() } | Sort-Object) -join ','
+    $imagesRetained = $imagesBeforeSet.Length -gt 0 -and $retainedSet -eq $imagesBeforeSet
+    $restartState = if ($restarted -and $backHealthy -and $imagesRetained) { 'ok' } else { 'no' }
+    Write-Evidence 'restart-summary.txt' ("restarted=$restarted backHealthy=$backHealthy imagesRetained=$imagesRetained`n" +
+        "before=$imagesBeforeSet`nafter=$retainedSet")
 
     # --- steps 12-15: Cut B containment (only with -Containment) -----------------------------
     if ($Containment) {
