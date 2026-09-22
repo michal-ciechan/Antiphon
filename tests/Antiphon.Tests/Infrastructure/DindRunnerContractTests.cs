@@ -49,7 +49,8 @@ public sealed class DindRunnerContractTests
 
         // And the runner is pointed at the staged copy, not at the mount it cannot read.
         text.ShouldContain("export PhoneHome__SecretPath=\"$PHONE_HOME_SECRET_TARGET\"");
-        Order(text, "install -m 0400 -o \"$APP_UID\" -g \"$APP_GID\" \"$PHONE_HOME_SECRET_SOURCE\"", "setpriv --reuid=")
+        Order(text, "install -m 0400 -o \"$APP_UID\" -g \"$APP_GID\" \"$PHONE_HOME_SECRET_SOURCE\"",
+            "--groups=\"$NESTED_SOCKET_GID\" \"$@\"")
             .ShouldBeTrue("the secret is staged before the runner is started");
     }
 
@@ -103,7 +104,8 @@ public sealed class DindRunnerContractTests
         text.ShouldContain("APP_GID=1654");
         text.ShouldContain("NESTED_SOCKET_GID=1656");
         text.ShouldContain("setpriv --reuid=\"$APP_UID\" --regid=\"$APP_GID\" --groups=\"$NESTED_SOCKET_GID\" \"$@\"");
-        Order(text, "dockerd --config-file", "setpriv --reuid=").ShouldBeTrue("the daemon is up before the runner starts");
+        Order(text, "dockerd --config-file", "--groups=\"$NESTED_SOCKET_GID\" \"$@\"")
+            .ShouldBeTrue("the daemon is up before the runner starts");
     }
 
     [Test]
