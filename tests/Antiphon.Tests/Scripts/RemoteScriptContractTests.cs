@@ -88,6 +88,30 @@ public sealed class RemoteScriptContractTests
     }
 
     [Test]
+    public void Host_compose_uses_the_deployed_tag_not_this_runs_sha()
+    {
+        var text = Remote();
+        // A case that only restarts or inspects the standing runner must compose the image that is
+        // actually deployed. Deriving the tag from this run's sha made `up -d --no-build` look for
+        // a tag that was never built, try to PULL it, and leave the runner stopped.
+        Block(text, "compose_host").ShouldContain("sha12=\"$(deployed_sha12)\"");
+        Block(text, "compose_host").ShouldNotContain("${SHA:0:12}");
+        Block(text, "deployed_sha12").ShouldContain("SERVER2_ENV");
+
+        // deploy-parent writes that file before it composes, so it deploys its own sha.
+        var deploy = Block(text, "case_deploy_parent");
+        Order(deploy, "SOURCE_SHA12=${SHA:0:12}", "compose_host up -d")
+            .ShouldBeTrue("the deploy pins the env before it composes");
+
+        // The restart case owns bringing the runner back before it refuses.
+        var restart = Block(text, "case_persistent_restart");
+        Order(restart, "compose_host stop", "RestartFailed").ShouldBeTrue();
+        System.Text.RegularExpressions.Regex
+            .Matches(restart, @"compose_host up -d --no-build").Count
+            .ShouldBeGreaterThanOrEqualTo(3, "the failure path retries the bring-up before refusing");
+    }
+
+    [Test]
     public void Host_daemon_is_never_pruned()
     {
         // D-9: prune inside the nested daemon is permitted; prune on the host daemon is forbidden

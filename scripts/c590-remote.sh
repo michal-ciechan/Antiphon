@@ -884,11 +884,29 @@ SERVER2_ENV="$SERVER2_ROOT/secrets/stack.env"
 DEPLOY_KEY="$SERVER2_ROOT/secrets/deploy_key"
 PHONE_HOME_SECRET="$SERVER2_ROOT/secrets/phone-home"
 
+# The tag the project is DEPLOYED at, which is not this run's sha: a case that only restarts or
+# inspects the standing runner must compose the image that is actually there. Deriving it from $SHA
+# made `up -d --no-build` look for a tag that was never built, try to PULL it, and leave the runner
+# stopped. deploy-parent is the one case that writes this file, and the only one that may change it.
+deployed_sha12() {
+    local from_env=""
+    if [ -f "$SERVER2_ENV" ]; then
+        from_env="$(sed -n 's/^SOURCE_SHA12=//p' "$SERVER2_ENV" | head -n 1 | tr -d '[:space:]')"
+    fi
+    if [ -n "$from_env" ]; then
+        printf '%s' "$from_env"
+    else
+        printf '%s' "${SHA:0:12}"
+    fi
+}
+
 compose_host() {
+    local sha12
+    sha12="$(deployed_sha12)"
     ANTIPHON_DEPLOY_KEY_FILE="$DEPLOY_KEY" \
     PHONE_HOME_SECRET_FILE="$PHONE_HOME_SECRET" \
     PHONE_HOME_SERVER_ORIGIN="${C604_SERVER_ORIGIN:?}" \
-    SOURCE_SHA12="${SHA:0:12}" \
+    SOURCE_SHA12="$sha12" \
     SOURCE_REVISION="$SHA" \
     COMPOSE_PROJECT_NAME="$HOST_PROJECT" \
     docker compose -p "$HOST_PROJECT" -f "$SERVER2_COMPOSE" "$@"
@@ -1074,7 +1092,12 @@ case_persistent_restart() {
     before_images="$(docker exec "$container" docker images -q | sort | tr -d '[:space:]')"
 
     compose_host stop >> "$CASE_DIR/command.log" 2>&1 || write_result false StopFailed 2
-    compose_host up -d --no-build >> "$CASE_DIR/command.log" 2>&1 || write_result false RestartFailed 2
+    if ! compose_host up -d --no-build >> "$CASE_DIR/command.log" 2>&1; then
+        # A red row must never be what takes the standing runner down: this case deliberately
+        # stopped it, so it owns bringing it back before it refuses.
+        compose_host up -d --no-build >> "$CASE_DIR/command.log" 2>&1 || true
+        write_result false RestartFailed 2
+    fi
 
     local i after_container
     for i in $(seq 1 60); do
