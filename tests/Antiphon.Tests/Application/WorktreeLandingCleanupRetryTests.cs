@@ -283,13 +283,79 @@ public sealed class WorktreeLandingCleanupRetryTests
     {
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
+        await using var caller = await BridgeQueueHarness.CreateAsync(new()
+        {
+            AlwaysOn = false,
+            ConnectionString = h.Schema.ConnectionString,
+        });
+        h.Messages = caller.Queue;
+        await using (var db = h.CreateContext())
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            task.ReplyTo = AgentTaskReplyTo.Session;
+            task.ParentSessionId = caller.SessionId;
+            await db.SaveChangesAsync();
+        }
+
+        // Busy before the insert so recovery cannot type until this caller is released.
+        await caller.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "caller is mid-turn");
         await h.AddSourceAsync();
         await h.RunAsync();
-        await using var db = h.CreateContext();
-        var rowsForOutcomeBodyAndDestination = await db.AgentTaskLandNotifications
-            .Where(n => n.TaskId == h.Fixture.TaskId && n.Kind == LandNotificationKind.Outcome)
+
+        Guid noteId;
+        string body;
+        Guid originalQueueId;
+        await using (var produced = h.CreateContext())
+        {
+            var note = await produced.AgentTaskLandNotifications.SingleAsync(n =>
+                n.TaskId == h.Fixture.TaskId && n.Kind == LandNotificationKind.Outcome);
+            note.ParentSessionId.ShouldBe(caller.SessionId);
+            note.QueueMessageId.ShouldBeNull();
+            noteId = note.Id;
+            body = note.Body;
+            var cut = new LostLinkCut();
+            await new AgentTaskLandNotificationService(produced, caller.Queue, new CompletionNoteFlushQueue(),
+                caller.Runtime, TimeProvider.System, cut).ReconcileAsync(note.Id, CancellationToken.None);
+            originalQueueId = cut.QueueId.ShouldNotBeNull();
+            var unlinked = await produced.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == noteId);
+            unlinked.QueueMessageId.ShouldBeNull("the keyed row committed before the notification link was saved");
+            var inserted = await produced.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == originalQueueId);
+            inserted.SourceLandNotificationId.ShouldBe(noteId);
+            inserted.AgentSessionId.ShouldBe(caller.SessionId);
+            inserted.Body.ShouldBe(body);
+        }
+
+        await h.RestartServicesAsync();
+        await using var restarted = h.CreateContext();
+        await restarted.AgentTaskLandNotifications.Where(n => n.Id == noteId)
+            .ExecuteUpdateAsync(s => s.SetProperty(n => n.NextAttemptAt, DateTime.UtcNow.AddMinutes(-1)));
+        var recovery = new AgentTaskLandNotificationService(restarted, caller.Queue, new CompletionNoteFlushQueue(),
+            caller.Runtime, TimeProvider.System);
+        await recovery.ReconcileAsync(noteId, CancellationToken.None);
+
+        var saved = await restarted.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == noteId);
+        var rowsForOutcomeBodyAndDestination = await restarted.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.AgentSessionId == caller.SessionId && m.Body == body)
             .ToListAsync();
-        rowsForOutcomeBodyAndDestination.ShouldHaveSingleItem();
+        var recoveredRow = rowsForOutcomeBodyAndDestination.ShouldHaveSingleItem();
+        recoveredRow.Id.ShouldBe(originalQueueId);
+        recoveredRow.SourceLandNotificationId.ShouldBe(noteId);
+        saved.QueueMessageId.ShouldBe(originalQueueId);
+        caller.Adapter.SubmittedBodies.ShouldBeEmpty();
+        await caller.Queue.FlushIfIdleAsync(caller.SessionId, CancellationToken.None);
+        caller.Adapter.SubmittedBodies.ShouldBeEmpty("a busy caller stays owed");
+
+        await caller.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: TranscriptKinds.StopReasons.EndTurn);
+        await caller.Queue.OnTurnEndAsync(caller.SessionId, CancellationToken.None);
+        var submitted = caller.Adapter.SubmittedBodies.ShouldHaveSingleItem();
+        PromptSubmissionMatch.IsCompleteIn(body, submitted).ShouldBeTrue();
+        await recovery.ReconcileAsync(noteId, CancellationToken.None);
+        var confirmed = await restarted.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == noteId);
+        confirmed.ConfirmedAt.ShouldNotBeNull(confirmed.LastErrorCode);
+        var completePrompts = await restarted.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == caller.SessionId && t.Kind == TranscriptKinds.UserPrompt && t.Text != null)
+            .ToListAsync();
+        completePrompts.Count(p => PromptSubmissionMatch.IsCompleteIn(body, p.Text)).ShouldBe(1);
     }
 
     [Test]
@@ -466,5 +532,18 @@ public sealed class WorktreeLandingCleanupRetryTests
         public bool Fail;
         public override Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct) =>
             Fail && boundary == "before-enqueue" ? Task.FromException(new IOException("owned enqueue failure")) : Task.CompletedTask;
+    }
+
+    /// <summary>Throws after the keyed queue row has committed and before the notification saves QueueMessageId.</summary>
+    private sealed class LostLinkCut : LandDeliveryBoundary
+    {
+        public Guid? QueueId { get; private set; }
+
+        public override Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
+        {
+            if (boundary != "queue-inserted") return Task.CompletedTask;
+            QueueId = identity;
+            return Task.FromException(new IOException("owned lost link after keyed insert"));
+        }
     }
 }
