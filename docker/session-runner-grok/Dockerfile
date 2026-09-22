@@ -88,7 +88,9 @@ RUN apt-get update \
 COPY --from=build /usr/share/dotnet /usr/share/dotnet
 COPY --from=node22 /usr/local /usr/local
 # Baked, non-secret git and ssh custody configuration (D-8). The private key half never enters
-# the image; dind-entrypoint.sh materialises it on the /run/antiphon tmpfs at 0400 uid 1654.
+# the image; dind-entrypoint.sh materialises it on the /run/antiphon tmpfs at 0400 uid 1654,
+# and stages the phone-home secret the same way (D-1) because a compose secret file arrives
+# owned by the host uid at 0600 and uid 1654 cannot open it.
 COPY docker/session-runner-grok/daemon.json /etc/docker/daemon.json
 COPY docker/session-runner-grok/ssh_config /etc/antiphon/ssh_config
 COPY docker/session-runner-grok/github_known_hosts /etc/antiphon/github_known_hosts

@@ -25,9 +25,74 @@ public sealed class DindRunnerContractTests
         var text = Entrypoint();
         Refusal(text, "PhoneHomeSecretMissing").ShouldBeTrue("a missing or empty phone-home secret refuses");
         Order(text, "PhoneHomeSecretMissing", "dockerd --config-file").ShouldBeTrue("the secret check precedes dockerd");
-        // The secret is read by the runner from its own path; the entrypoint must never copy it.
-        text.Contains("install -m 0400 -o \"$APP_UID\" -g \"$APP_GID\" \"$PHONE_HOME_SECRET_PATH\"", StringComparison.Ordinal)
-            .ShouldBeFalse("the phone-home secret is never copied");
+    }
+
+    // CARD-0604 D-1. This assertion used to read the other way round -- "the phone-home secret is
+    // never copied" -- and that is precisely the bug it was locking in. A compose secret file
+    // arrives owned by the HOST uid at 0600; the entrypoint drops to uid 1654, which can never
+    // open it. The standing server2 runner registered zero times in 304 attempts, every one an
+    // UnauthorizedAccessException on /run/secrets/phone-home, while the container reported
+    // healthy. The secret must be staged onto the app-owned tmpfs exactly as the deploy key is.
+    [Test]
+    public void Entrypoint_stages_the_phone_home_secret_for_the_app_uid()
+    {
+        var text = Entrypoint();
+
+        // Source and target are distinct: reading the destination as the source would stage the
+        // file onto itself and restore the unreadable original.
+        text.ShouldContain("PHONE_HOME_SECRET_SOURCE=\"${ANTIPHON_PHONE_HOME_SECRET_SOURCE:-/run/secrets/phone-home}\"");
+        text.ShouldContain("PHONE_HOME_SECRET_TARGET=\"$RUNTIME_DIR/phone-home\"");
+
+        // Staged the same way, and with the same ownership, as the deploy key already is.
+        text.ShouldContain(
+            "install -m 0400 -o \"$APP_UID\" -g \"$APP_GID\" \"$PHONE_HOME_SECRET_SOURCE\" \"$PHONE_HOME_SECRET_TARGET\"");
+
+        // And the runner is pointed at the staged copy, not at the mount it cannot read.
+        text.ShouldContain("export PhoneHome__SecretPath=\"$PHONE_HOME_SECRET_TARGET\"");
+        Order(text, "install -m 0400 -o \"$APP_UID\" -g \"$APP_GID\" \"$PHONE_HOME_SECRET_SOURCE\"", "setpriv --reuid=")
+            .ShouldBeTrue("the secret is staged before the runner is started");
+    }
+
+    // CARD-0604 D-1. Staged is not the same as readable: an ownership or mode regression must
+    // refuse at boot, not loop forever behind a green /health.
+    [Test]
+    public void Entrypoint_proves_the_app_uid_can_read_the_staged_secret()
+    {
+        var text = Entrypoint();
+        Refusal(text, "PhoneHomeSecretUnreadable").ShouldBeTrue("an unreadable staged secret is a named refusal");
+        text.ShouldContain("setpriv --reuid=\"$APP_UID\" --regid=\"$APP_GID\" --clear-groups");
+        text.ShouldContain("head -c 1 \"$1\" >/dev/null 2>&1");
+        Order(text, "PhoneHomeSecretUnreadable", "dockerd --config-file")
+            .ShouldBeTrue("the readability probe precedes dockerd");
+    }
+
+    // CARD-0604 D-1/D-2. The compose file must mount the secret at the source the entrypoint
+    // stages FROM and point the runner at the staged copy -- the two have to agree, or the
+    // runner is silently handed back the file it cannot open.
+    [Test]
+    public void Server2_compose_reads_the_staged_phone_home_secret()
+    {
+        var runner = DockerStackDocuments.Service(Server2Compose(), "session-runner");
+        DockerStackDocuments.Env(runner, "PhoneHome__SecretPath").ShouldBe("/run/antiphon/phone-home");
+        DockerStackDocuments.Env(runner, "ANTIPHON_PHONE_HOME_SECRET_SOURCE").ShouldBe("/run/secrets/phone-home");
+        DockerStackDocuments.List(runner, "tmpfs").ShouldContain("/run/antiphon");
+        DockerStackDocuments.List(runner, "secrets").ShouldContain("phone-home");
+    }
+
+    // CARD-0604 D-2. /health and `docker info` both answer yes on a runner that has never once
+    // registered. The healthcheck has to include the one thing that was actually broken.
+    [Test]
+    public void Server2_healthcheck_covers_phone_home_secret_readability()
+    {
+        var runner = DockerStackDocuments.Service(Server2Compose(), "session-runner");
+        var line = runner.Replace("\r\n", "\n").Split('\n')
+            .Select(l => l.Trim())
+            .SingleOrDefault(l => l.StartsWith("test:", StringComparison.Ordinal));
+        line.ShouldNotBeNull("the session-runner service declares exactly one healthcheck test");
+        line.ShouldContain("/health");
+        line.ShouldContain("docker info");
+        line.ShouldContain("setpriv --reuid=1654");
+        line.ShouldContain("PhoneHome__SecretPath");
     }
 
     [Test]
@@ -75,7 +140,11 @@ public sealed class DindRunnerContractTests
                 && !trimmed.StartsWith("printf", StringComparison.Ordinal)
                 && !trimmed.StartsWith("cat ", StringComparison.Ordinal))
                 continue;
-            foreach (var secret in new[] { "DEPLOY_KEY_SOURCE", "DEPLOY_KEY_TARGET", "PHONE_HOME_SECRET_PATH" })
+            foreach (var secret in new[]
+                     {
+                         "DEPLOY_KEY_SOURCE", "DEPLOY_KEY_TARGET",
+                         "PHONE_HOME_SECRET_SOURCE", "PHONE_HOME_SECRET_TARGET",
+                     })
                 trimmed.Contains(secret, StringComparison.Ordinal)
                     .ShouldBeFalse("entrypoint line prints a secret path's contents: " + trimmed);
         }
@@ -186,6 +255,8 @@ public sealed class DindRunnerContractTests
     }
 
     private static string Entrypoint() => Read("docker/session-runner-grok/dind-entrypoint.sh");
+
+    private static string Server2Compose() => Read("docker-compose.server2-runner.yml");
 
     private static string Daemon() => Read("docker/session-runner-grok/daemon.json");
 

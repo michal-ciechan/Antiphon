@@ -201,13 +201,17 @@ or any evidence directory. Names and locations only:
 | Secret | Where it is generated | Where it lives | How the runner sees it |
 |---|---|---|---|
 | Repo-scoped GitHub deploy key (ed25519, write, `michal-ciechan/Antiphon` only, titled `antiphon-server2-runner`) | `deploy-parent` on server2, with `ssh-keygen`; the private half is never copied | `/home/mc/antiphon-server2/secrets/deploy_key`, 0600, owner `mc` | Compose file secret at `/run/secrets/antiphon-deploy-key`; `dind-entrypoint.sh` installs it at `/run/antiphon/deploy-key`, 0400 uid 1654, on a **tmpfs** |
-| Phone-home shared secret | `deploy-parent` on server2, `openssl rand -hex 32` | `/home/mc/antiphon-server2/secrets/phone-home`, 0600, owner `mc` | Compose file secret at `/run/secrets/phone-home`, read by the runner process directly — never copied |
+| Phone-home shared secret | `deploy-parent` on server2, `openssl rand -hex 32` | `/home/mc/antiphon-server2/secrets/phone-home`, 0600, owner `mc` | Compose file secret at `/run/secrets/phone-home`; `dind-entrypoint.sh` installs it at `/run/antiphon/phone-home`, 0400 uid 1654, on the same **tmpfs**, and points `PhoneHome__SecretPath` there |
 
 The public half of the deploy key is exported with the run's evidence and registered on GitHub from
 the desktop bridge. The phone-home value is entered into the production server's user-secrets by the
 operator; it never crosses the SSH bridge into a desktop script. The entrypoint refuses with exit 3
 (`DeployKeyMissing` / `PhoneHomeSecretMissing`) rather than starting without either, and neither is
-ever printed, logged or hashed. Git is wired through baked, non-secret configuration
+ever printed, logged or hashed. A Compose file secret arrives owned by the **host** uid at 0600, so
+uid 1654 cannot open it: both secrets are staged onto the app-owned tmpfs, and the entrypoint proves
+uid 1654 can actually read the staged phone-home copy before dockerd starts, refusing with
+`PhoneHomeSecretUnreadable` if it cannot. Skipping that staging is what left the standing runner
+registering zero times in 304 attempts while `/health` still answered healthy (CARD-0604 D-1). Git is wired through baked, non-secret configuration
 (`/etc/gitconfig`, `/etc/antiphon/ssh_config`, pinned `github_known_hosts`): fetches stay anonymous
 HTTPS and only pushes go over SSH, on `ssh.github.com:443`.
 

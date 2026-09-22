@@ -184,7 +184,11 @@ public sealed class DockerStackContractTests
         var text = Text("docker-compose.server2-runner.yml");
         text.ShouldContain("PHONE_HOME_SERVER_ORIGIN:?");
         text.ShouldContain("PHONE_HOME_SECRET_FILE:?");
-        Env(Server2Runner(), "PhoneHome__SecretPath").ShouldBe("/run/secrets/phone-home");
+        // CARD-0604 D-1: the runner reads the copy the entrypoint stages onto the app-owned
+        // tmpfs, never the compose mount itself -- that arrives owned by the host uid at 0600
+        // and uid 1654 cannot open it. DindRunnerContractTests owns the staging contract.
+        Env(Server2Runner(), "ANTIPHON_PHONE_HOME_SECRET_SOURCE").ShouldBe("/run/secrets/phone-home");
+        Env(Server2Runner(), "PhoneHome__SecretPath").ShouldBe("/run/antiphon/phone-home");
         DockerStackDocuments.List(Server2Runner(), "secrets").ShouldContain("phone-home");
     }
 

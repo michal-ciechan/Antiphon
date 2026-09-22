@@ -197,6 +197,50 @@ public sealed class RemoteScriptContractTests
         return false;
     }
 
+    // CARD-0604 D-2. deploy-parent accepted a runner that had never once registered: /health and
+    // `docker info` were the whole verdict, and the standing runner sat green through 304
+    // consecutive phone-home failures. Both new probes must refuse, by name.
+    [Test]
+    public void Deploy_parent_probes_the_phone_home_secret_as_the_app_uid()
+    {
+        var deploy = Block(Remote(), "case_deploy_parent");
+
+        // Read as uid 1654, at whatever path the runner is actually configured to read.
+        deploy.ShouldContain("printenv PhoneHome__SecretPath");
+        deploy.ShouldContain("docker exec -u 1654:1654 \"$container\" head -c 1 \"$phone_home_secret_path\"");
+        deploy.ShouldContain("write_result false PhoneHomeSecretUnreadable 2");
+        deploy.ShouldContain("write_result false PhoneHomeSecretPathUnset 2");
+
+        // The probe's one byte goes to /dev/null: the secret is never captured into evidence.
+        Executable(deploy, "head -c 1 \"$phone_home_secret_path\"")
+            .ShouldAllBe(line => line.Contains("> /dev/null", StringComparison.Ordinal));
+
+        // It happens while the case can still refuse, not after the accept.
+        Order(deploy, "PhoneHomeSecretUnreadable", "write_result true").ShouldBeTrue();
+    }
+
+    [Test]
+    public void Deploy_parent_refuses_a_runner_whose_phone_home_keeps_failing()
+    {
+        var deploy = Block(Remote(), "case_deploy_parent");
+
+        // The window opens after the health wait (i.e. past the compose start_period), so a
+        // single cold-start reconnect is not a verdict, and it is long enough for the 15s
+        // backoff to leave more than one mark if the loop can only fail.
+        deploy.ShouldContain("phone_home_since=\"$(date -u +%Y-%m-%dT%H:%M:%S)\"");
+        deploy.ShouldContain("docker logs --since \"$phone_home_since\" \"$container\"");
+        deploy.ShouldContain("Phone-home connection ended; reconnecting");
+        deploy.ShouldContain("UnauthorizedAccessException");
+        deploy.ShouldContain("write_result false PhoneHomeUnreachable 2");
+
+        // "Repeated", not "any": one is a reconnect, two in the window is a loop that cannot win.
+        deploy.ShouldContain("-ge 2 ]");
+
+        // Runner output can carry a token; the window is scrubbed like every other evidence file.
+        deploy.ShouldContain("scrub_file \"$CASE_DIR/phone-home-window.log\"");
+        Order(deploy, "write_result false PhoneHomeUnreachable 2", "write_result true").ShouldBeTrue();
+    }
+
     private static bool Order(string text, string first, string second)
     {
         var a = text.IndexOf(first, StringComparison.Ordinal);

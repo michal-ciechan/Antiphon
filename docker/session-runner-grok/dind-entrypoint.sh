@@ -7,9 +7,10 @@
 set -euo pipefail
 
 DEPLOY_KEY_SOURCE="${ANTIPHON_DEPLOY_KEY_SOURCE:-/run/secrets/antiphon-deploy-key}"
-PHONE_HOME_SECRET_PATH="${PhoneHome__SecretPath:-/run/secrets/phone-home}"
+PHONE_HOME_SECRET_SOURCE="${ANTIPHON_PHONE_HOME_SECRET_SOURCE:-/run/secrets/phone-home}"
 RUNTIME_DIR=/run/antiphon
 DEPLOY_KEY_TARGET="$RUNTIME_DIR/deploy-key"
+PHONE_HOME_SECRET_TARGET="$RUNTIME_DIR/phone-home"
 APP_UID=1654
 APP_GID=1654
 NESTED_SOCKET_GID=1656
@@ -42,7 +43,7 @@ fi
 if [ ! -f "$DEPLOY_KEY_SOURCE" ] || [ ! -s "$DEPLOY_KEY_SOURCE" ]; then
   refuse DeployKeyMissing
 fi
-if [ ! -f "$PHONE_HOME_SECRET_PATH" ] || [ ! -s "$PHONE_HOME_SECRET_PATH" ]; then
+if [ ! -f "$PHONE_HOME_SECRET_SOURCE" ] || [ ! -s "$PHONE_HOME_SECRET_SOURCE" ]; then
   refuse PhoneHomeSecretMissing
 fi
 
@@ -50,8 +51,19 @@ mkdir -p "$RUNTIME_DIR"
 chmod 0700 "$RUNTIME_DIR"
 chown "$APP_UID:$APP_GID" "$RUNTIME_DIR"
 install -m 0400 -o "$APP_UID" -g "$APP_GID" "$DEPLOY_KEY_SOURCE" "$DEPLOY_KEY_TARGET"
-# The phone-home secret is read by the runner process directly from its own path; it is
-# never copied and never read here.
+# CARD-0604 D-1. The compose secret file is mounted with the HOST owner's uid (1000) at 0600, so
+# uid 1654 cannot open it: the runner registered zero times in 304 attempts, each one an
+# UnauthorizedAccessException reading /run/secrets/phone-home, while the container stayed
+# "healthy". The secret is staged onto the same tmpfs as the deploy key, owned by the app uid,
+# and the runner is pointed at the staged copy. It is never printed and never hashed.
+install -m 0400 -o "$APP_UID" -g "$APP_GID" "$PHONE_HOME_SECRET_SOURCE" "$PHONE_HOME_SECRET_TARGET"
+export PhoneHome__SecretPath="$PHONE_HOME_SECRET_TARGET"
+# Staged is not the same as readable: prove the app uid can actually open it before dockerd is
+# started, so an ownership regression refuses here instead of looping forever behind /health.
+if ! setpriv --reuid="$APP_UID" --regid="$APP_GID" --clear-groups \
+     /bin/sh -c 'head -c 1 "$1" >/dev/null 2>&1' antiphon-probe "$PHONE_HOME_SECRET_TARGET"; then
+  refuse PhoneHomeSecretUnreadable
+fi
 
 # --- step 3: cgroup preparation (D-3 step 3, D-17 custody root) -----------------------
 if [ -f /sys/fs/cgroup/cgroup.controllers ]; then

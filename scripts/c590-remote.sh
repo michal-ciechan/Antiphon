@@ -1018,6 +1018,40 @@ EOF
         write_result false RunnerUnhealthy 2
     fi
 
+    # --- D-2: healthy is not the same as registered -------------------------------------------
+    # /health and `docker info` both answer yes on a runner that has never once phoned home. The
+    # standing runner sat "healthy" through 304 consecutive UnauthorizedAccessException reconnects
+    # because nothing here looked at the one thing that was broken. Two probes, both refusals.
+
+    # (a) the secret the runner is configured to read must be readable AS uid 1654. A compose
+    # secret mount arrives owned by the host uid at 0600, which the app uid can never open.
+    docker exec "$container" printenv PhoneHome__SecretPath > "$CASE_DIR/phone-home-secret-path.txt" 2>/dev/null || true
+    phone_home_secret_path="$(tr -d '[:space:]' < "$CASE_DIR/phone-home-secret-path.txt")"
+    if [ -z "$phone_home_secret_path" ]; then
+        write_result false PhoneHomeSecretPathUnset 2
+    fi
+    # One byte to /dev/null: enough to prove open(2) succeeds, and nothing is ever captured.
+    if ! docker exec -u 1654:1654 "$container" head -c 1 "$phone_home_secret_path" > /dev/null 2>> "$CASE_DIR/command.log"; then
+        printf 'false\n' > "$CASE_DIR/phone-home-readable.txt"
+        compose_host logs --no-color --tail 200 >> "$CASE_DIR/command.log" 2>&1 || true
+        write_result false PhoneHomeSecretUnreadable 2
+    fi
+    printf 'true\n' > "$CASE_DIR/phone-home-readable.txt"
+
+    # (b) the connection loop itself. The window opens AFTER the compose start_period, so one cold
+    # reconnect is not a verdict; the backoff is 15s, so a loop that can only fail leaves several
+    # marks in 45 seconds while a registered runner leaves none.
+    phone_home_since="$(date -u +%Y-%m-%dT%H:%M:%S)"
+    sleep 45
+    docker logs --since "$phone_home_since" "$container" > "$CASE_DIR/phone-home-window.log" 2>&1 || true
+    scrub_file "$CASE_DIR/phone-home-window.log" || true
+    phone_home_failures="$(grep -cE 'Phone-home connection ended; reconnecting|UnauthorizedAccessException|PhoneHomeSecretUnreadable' \
+        "$CASE_DIR/phone-home-window.log" || true)"
+    printf '%s\n' "${phone_home_failures:-0}" > "$CASE_DIR/phone-home-failures.txt"
+    if [ "${phone_home_failures:-0}" -ge 2 ]; then
+        write_result false PhoneHomeUnreachable 2
+    fi
+
     # V-11: persistent, privileged, its own nested daemon, no host socket, no server, no Postgres.
     docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$container" > "$CASE_DIR/restart-policy.txt"
     if [ "$(tr -d '[:space:]' < "$CASE_DIR/restart-policy.txt")" != "unless-stopped" ]; then
