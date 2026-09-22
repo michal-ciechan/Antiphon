@@ -63,6 +63,197 @@ public class CheckCompactionAutomaticRestartTests
         (await again.CheckCompactionRecoveries.SingleAsync()).State.ShouldBe(CheckCompactionRecoveryState.ResumeReserved);
     }
 
+    // ---- D-2 holds: every clause of CheckCompactionScope.Refusal that BuildScopeAsync populates
+    // from another subsystem's state. Each case leaves every OTHER gate eligible, so the only
+    // thing between the seat and an automatic stop of a live Working session is the one hold under
+    // test; the control is One_stop_is_reconciled_without_a_second_launch, which stops this same
+    // world. A clause nothing populates reads false forever and stops anyway.
+
+    [Test]
+    public async Task Model_hold_vetoes_stop()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = await SeedConfirmedAsync(schema.ConnectionString);
+        await using (var seed = NewDb(schema.ConnectionString))
+        {
+            seed.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
+            {
+                Id = Guid.NewGuid(),
+                Kind = AgentKind.ClaudeCode,
+                ModelAlias = ModelAlias.KindWide,
+                Source = ModelAvailabilitySource.Manual,
+                HitAt = world.Now.AddMinutes(-5),
+                DisabledUntil = world.Now.AddHours(2),
+                Reason = "operator paused the kind",
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        await AssertVetoedAsync(schema.ConnectionString, world, "model");
+    }
+
+    [Test]
+    public async Task Provider_hold_vetoes_stop()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = await SeedConfirmedAsync(schema.ConnectionString);
+        await using (var seed = NewDb(schema.ConnectionString))
+        {
+            // CARD-0412 admission clock: while the provider is not admitting for this kind, a
+            // restart is precisely the launch it is holding back.
+            seed.CapacityRecoveryProviderStates.Add(new CapacityRecoveryProviderState
+            {
+                Kind = AgentKind.ClaudeCode,
+                NextAdmissionAt = world.Now.AddMinutes(30),
+                UpdatedAt = world.Now,
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        await AssertVetoedAsync(schema.ConnectionString, world, "provider");
+    }
+
+    [Test]
+    public async Task Quota_hold_vetoes_stop()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = await SeedConfirmedAsync(schema.ConnectionString);
+        await using (var seed = NewDb(schema.ConnectionString))
+        {
+            // 2% left with three days to reset trips the shipped low-with-a-day-left rule - the
+            // same reading that refuses a human Start with 409 subscription_quota_low.
+            seed.SubscriptionUsageSamples.Add(new SubscriptionUsageSample
+            {
+                Id = Guid.NewGuid(),
+                Provider = AgentKind.ClaudeCode,
+                SubscriptionKey = AgentKind.ClaudeCode.ToString(),
+                RemainingPercent = 2,
+                ResetsAt = world.Now.AddDays(3),
+                ObservedAt = world.Now.AddMinutes(-1),
+                AgentSessionId = world.SessionId,
+                SourceCommand = "/usage",
+                ParseStatus = SubscriptionUsageParseStatus.Parsed,
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        await AssertVetoedAsync(schema.ConnectionString, world, "quota");
+    }
+
+    [Test]
+    public async Task Capacity_hold_vetoes_stop()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = await SeedConfirmedAsync(schema.ConnectionString);
+        await using (var seed = NewDb(schema.ConnectionString))
+        {
+            // A terminal provider-capacity recovery newer than the last prompt: the very state
+            // SessionMessageQueueService.HasTerminalCapacityHoldAsync already holds queue rows on.
+            seed.ApiErrorRecoveries.Add(new ApiErrorRecovery
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = world.SessionId,
+                StubSequence = 14,
+                Classification = ApiErrorClassification.Wall,
+                DetectedAt = world.Now.AddMinutes(-2),
+                ResolvedAt = world.Now.AddMinutes(-2),
+                ResolvedReason = ApiErrorRecoveryReasons.WallParked,
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        await AssertVetoedAsync(schema.ConnectionString, world, "capacity");
+    }
+
+    [Test]
+    public async Task Authentication_refusal_vetoes_stop()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = await SeedConfirmedAsync(schema.ConnectionString);
+        await using (var seed = NewDb(schema.ConnectionString))
+        {
+            // NeedsHuman is authentication_failed / model_not_found: nothing automatic fixes it,
+            // and relaunching into it is the one response that class exists to forbid.
+            seed.ApiErrorRecoveries.Add(new ApiErrorRecovery
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = world.SessionId,
+                StubSequence = 14,
+                Classification = ApiErrorClassification.NeedsHuman,
+                ApiErrorClass = "authentication_failed",
+                DetectedAt = world.Now.AddMinutes(-2),
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        await AssertVetoedAsync(schema.ConnectionString, world, "authentication");
+    }
+
+    [Test]
+    public async Task Unproven_standing_owner_never_restarts()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = await SeedConfirmedAsync(schema.ConnectionString);
+        await using (var seed = NewDb(schema.ConnectionString))
+        {
+            // The standing-ownership pointer now names a different physical seat. This seat's own
+            // PersistentSessionId still points here, and that ambiguity must not read as license.
+            await seed.AgentSessions.Where(s => s.Id == world.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.StandingAgentId, Guid.NewGuid()));
+        }
+
+        await AssertVetoedAsync(schema.ConnectionString, world, "ownership");
+    }
+
+    [Test]
+    public async Task Human_turn_vetoes_automatic_restart()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = await SeedConfirmedAsync(schema.ConnectionString);
+        await using (var seed = NewDb(schema.ConnectionString))
+        {
+            // The owning prompt was delivered from a HUMAN queue row, not by the Check dispatcher.
+            // It still carries the Check task id, so correlation alone still says yes; human
+            // origin is the half that has to say no.
+            seed.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = world.SessionId,
+                Body = world.CheckPrompt,
+                Origin = QueuedMessageOrigin.Ui,
+                Status = QueuedMessageStatus.Sent,
+                CreatedAt = world.Accepted.AddMinutes(1),
+                SentAt = world.Accepted.AddMinutes(1),
+                DeliveryVerdict = DeliveryVerdict.Delivered,
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        await AssertVetoedAsync(schema.ConnectionString, world, "owning-prompt");
+    }
+
+    /// <summary>
+    /// No conditional stop, no generic kill, no resume, the live session still Running, and the
+    /// episode parked for a human with the refusing clause named. Asserting the REASON, not merely
+    /// that nothing happened, is what stops one clause's test passing on another clause's veto.
+    /// </summary>
+    private static async Task AssertVetoedAsync(string connectionString, World world, string reason)
+    {
+        await using var db = NewDb(connectionString);
+        var runner = Stopper(world);
+        var resume = new CountingResume();
+        await Service(db, world.Now, runner, resume).SweepAsync(CancellationToken.None);
+
+        runner.CompactionStops.Count.ShouldBe(0, $"'{reason}' must veto the conditional stop");
+        runner.KillCalls.ShouldBe(0);
+        resume.Calls.ShouldBe(0);
+        var episode = await db.CheckCompactionRecoveries.SingleAsync();
+        episode.State.ShouldBe(CheckCompactionRecoveryState.NeedsDecision);
+        episode.Reason.ShouldBe(reason);
+        (await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == world.SessionId)).Status
+            .ShouldBe(SessionStatus.Running, "the live session was never stopped");
+    }
+
     private static FakeSessionRunnerClient Stopper(World world) => new()
     {
         AdvertiseCompactionStop = true,
@@ -76,11 +267,22 @@ public class CheckCompactionAutomaticRestartTests
     };
 
     private static CheckCompactionContinuationService Service(
-        AppDbContext db, DateTime now, FakeSessionRunnerClient runner, CountingResume resume) =>
-        new(db, new FixedClock(now), Options.Create(new DelegationSettings()),
+        AppDbContext db, DateTime now, FakeSessionRunnerClient runner, CountingResume resume)
+    {
+        var clock = new FixedClock(now);
+        return new CheckCompactionContinuationService(
+            db, clock, Options.Create(new DelegationSettings()),
             new CheckCompactionContinuationGate(),
             NullLogger<CheckCompactionContinuationService>.Instance,
-            runner, resume);
+            runner, resume,
+            // Production always has the CARD-0136 gate behind it; with no sample it is inert, so
+            // every case below runs against the same graph the server builds.
+            quota: new SubscriptionQuotaGate(
+                new SubscriptionUsageReader(db, clock),
+                Options.Create(new SubscriptionQuotaGateSettings()),
+                clock,
+                NullLogger<SubscriptionQuotaGate>.Instance));
+    }
 
     private static AppDbContext NewDb(string connectionString) =>
         new(TestDbFixture.CreateDbContextOptions(connectionString));
@@ -186,10 +388,13 @@ public class CheckCompactionAutomaticRestartTests
                 Timestamp = promptAt.AddSeconds(4), CreatedAt = promptAt.AddSeconds(4), Uuid = "cont-1",
             });
         await db.SaveChangesAsync();
-        return new World(sessionId, accepted, now, "boundary-1", "cont-1");
+        return new World(sessionId, agentId, accepted, now, "boundary-1", "cont-1",
+            "check " + checkId.ToString("D"));
     }
 
-    private sealed record World(Guid SessionId, DateTime Accepted, DateTime Now, string Boundary, string Continuation);
+    private sealed record World(
+        Guid SessionId, Guid AgentId, DateTime Accepted, DateTime Now,
+        string Boundary, string Continuation, string CheckPrompt);
 
     private sealed class CountingResume : ICompactionContinuationResume
     {
