@@ -121,6 +121,13 @@ These are implementation decisions within the brief, not requests for a new prod
   reachability. Reject DinD, privileged services, global pruning and any SourceLanding snapshot
   access. Desktop-specific overrides remain optional. This uses the
   [Testcontainers sibling-container model](https://dotnet.testcontainers.org/dind/).
+  **Superseded 2026-09-22 by CARD-0604 D-1/D-5/D-6:** the sibling model is retired because the
+  mapped port lands in the HOST's network namespace while the test process reads its own
+  `localhost`, so the Testcontainers path it was chosen for never worked. The persistent server2
+  runner is privileged and owns its own nested `dockerd`; `docker-compose.session-testing.yml` and
+  `DOCKER_SOCKET_GID` are deleted, no Compose file mounts a socket, and the session runs the roster
+  in its own shell rather than in a sibling test container. "Reject DinD" is the one clause the
+  operator overturned; "reject privileged services" now admits exactly one, the server2 runner.
 - **D-7 — Admit tests by reviewed class roster.** Add `tests/linux-test-roster.json`: assembly,
   fully qualified class, included lane/shard or excluded reason/owner. Every discovered class is
   accounted for. Unknown, duplicate, stale, included-native or included-spawning entries fail
@@ -166,6 +173,12 @@ These are implementation decisions within the brief, not requests for a new prod
   standing runner *control plane* itself: today's Windows runner launches a fresh bound worker
   under a native original observer. Server2 currently lacks that supported producer. Do not
   reinterpret a standing session as the required fresh Worker/Mutation/Worktree.
+  **Superseded 2026-09-22 by CARD-0604 D-12/D-17:** the "server2 lacks that supported producer"
+  clause is re-aimed, not dropped. CARD-0604 Cut B builds the missing producer — a `linux-cgroup-v1`
+  custody backend with the full contract — rather than granting an exception; until that cut lands
+  and is confirmed live, this clause stands exactly as written and Mutation stays on Windows. D-14
+  below is untouched and still binding: the nested daemon never executes, reads or builds a sourced
+  snapshot.
 - **D-14 — Reject candidate (b) as a shortcut.** A per-Mutation Docker container still delegates
   execution to a pre-existing daemon and supplies neither supported admission nor native
   descendant receipts. Fresh task/worktree is necessary but insufficient. Candidate (c), a local

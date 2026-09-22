@@ -407,6 +407,10 @@ function Get-IsolatedServerEnv {
         PhoneHomeRunner__Enabled                 = 'true'
         PhoneHomeRunner__AllowedRunnerId         = [string]$generated.runnerId
         PhoneHomeRunner__StandingAgentId         = [string]$generated.standingAgentId
+        # CARD-0604: this harness is the CARD-0490 canary - one pinned cardless agent against its
+        # own isolated server, and nothing else. The delegated-task pool is the production
+        # server2 runner's shape; asserting false here keeps the two lanes from drifting together.
+        PhoneHomeRunner__AllowDelegatedTasks     = 'false'
         PhoneHomeRunner__HostWorkspaceRoot       = [string]$generated.hostWorkspaceRoot
         PhoneHomeRunner__RunnerWorkspace         = '/work'
         PhoneHomeRunner__ChildGrokHome           = '/state/grok'

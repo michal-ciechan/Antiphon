@@ -59,6 +59,9 @@ readiness or qualification alone cannot resolve a real-service outage.
 |---|---|---|
 | Every agent, with its live session | GET | `/api/agents` |
 | One agent | GET | `/api/agents/{id:guid}` |
+| Phone-home runner status (CARD-0490, CARD-0604) | GET | `/api/session-runners/{runnerId}/status` — `available`, `dispatchEligible`, `runnerStoreId`, `platform`, `buildVersion`. `available` alone is not enough to dispatch; wait for `dispatchEligible`. |
+| Create an agent bound to a runner (CARD-0604) | POST | `/api/agents` with `runnerId` — only the configured `PhoneHomeRunner:AllowedRunnerId` is admitted (422 otherwise). Its sessions launch in that container. |
+| Create a task that runs on a runner (CARD-0604) | POST | `/api/agent-tasks` with `runnerId` — Worktree + Grok only, no pin/OnAgent/Shared/ReadOnly/SourceLanding (422 otherwise). The desktop worktree stays canonical; the runner gets a mirror. |
 | Start / stop an agent | POST | `/api/agents/{id}/start`, `/api/agents/{id}/stop` — named herdr pin (`herdrTabLabel`) 409s occupancy **before** enqueue; a later runner 409 is an async Failed row. |
 | Runner named-tab preflight | POST | `:17204/herdr/placement/check` `{ sessionId, herdr }` — read-only; 200 `create`/`relaunch`/`adopt` or 409 with the launch codes. |
 | Inspect one leftover Herdr pane | POST | `/api/herdr/pane-disposals/preview` `{ paneId, expectedSessionId?, expectedNativeSessionId? }`; one exact pane and at least one full UUID. Two-minute, single-consumer preview with sanitized ownership/process evidence; standing owner must be stopped. |

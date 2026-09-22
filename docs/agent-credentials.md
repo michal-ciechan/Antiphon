@@ -193,6 +193,29 @@ interactive `--reader-login`. The deploy profile that names the host is untracke
 qualification artifact record the destination only as `sha256(chatId)[..16]`. Names and locations only:
 [nightly-watchdog.md § Custody](nightly-watchdog.md#custody).
 
+### server2 runner credentials (CARD-0604)
+
+Two secrets live only on server2 and never enter Antiphon's stores, the desktop scripts, the image
+or any evidence directory. Names and locations only:
+
+| Secret | Where it is generated | Where it lives | How the runner sees it |
+|---|---|---|---|
+| Repo-scoped GitHub deploy key (ed25519, write, `michal-ciechan/Antiphon` only, titled `antiphon-server2-runner`) | `deploy-parent` on server2, with `ssh-keygen`; the private half is never copied | `/home/mc/antiphon-server2/secrets/deploy_key`, 0600, owner `mc` | Compose file secret at `/run/secrets/antiphon-deploy-key`; `dind-entrypoint.sh` installs it 0400 uid 1654 on the `/run/antiphon` **tmpfs** |
+| Phone-home shared secret | `deploy-parent` on server2, `openssl rand -hex 32` | `/home/mc/antiphon-server2/secrets/phone-home`, 0600, owner `mc` | Compose file secret at `/run/secrets/phone-home`, read by the runner process directly — never copied |
+
+The public half of the deploy key is exported with the run's evidence and registered on GitHub from
+the desktop bridge. The phone-home value is entered into the production server's user-secrets by the
+operator; it never crosses the SSH bridge into a desktop script. The entrypoint refuses with exit 3
+(`DeployKeyMissing` / `PhoneHomeSecretMissing`) rather than starting without either, and neither is
+ever printed, logged or hashed. Git is wired through baked, non-secret configuration
+(`/etc/gitconfig`, `/etc/antiphon/ssh_config`, pinned `github_known_hosts`): fetches stay anonymous
+HTTPS and only pushes go over SSH, on `ssh.github.com:443`.
+
+Grok's OAuth store on the runner is provisioned once, interactively, inside the persistent container
+(`docker exec -it -u 1654:1654 <container> grok login`). It is never copied from the desktop and
+never baked (CARD-0575, CARD-0324); a missing or expired store is the existing 409
+`provider_sign_in_required`.
+
 ## 6. Things that have gone wrong here before
 
 - **Setting only `GROK_XAI_API_BASE_URL` and believing the CLI is redirected.** It redirects the

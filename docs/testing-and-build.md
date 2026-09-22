@@ -74,7 +74,7 @@ CARD-0452 ignored-content policy is unchanged; residue tests must not add a prod
 
 ## Fast lane (CARD-0110 / CARD-0475 S5)
 
-CARD-0590's Linux image, roster, and session-created stack are in [docker-stack.md](docker-stack.md). Those checkpoints are ordinary Docker evidence. They do not run SourceLanding Mutation.
+CARD-0590's Linux image, roster, and session-created stack are in [docker-stack.md](docker-stack.md). Those checkpoints are ordinary Docker evidence. They do not run SourceLanding Mutation. Since CARD-0604 the server2 runner owns a **nested** Docker daemon of its own, so Testcontainers works there unmodified (the mapped port and the test process share one network namespace); `scripts/verify-card0604-dind-runner.ps1` is the local harness that proves that image on Docker Desktop before server2 ever sees it.
 
 ### Default Code/Review recipe
 
@@ -159,6 +159,38 @@ Opt-in Linux Grok phone-home is `docker-compose.runner-grok.yml` plus `scripts/v
 What blocked V-7 was CARD-0594's launch deadlock, not a mount or visibility problem ([investigation](investigations/2026-09-22-card-0594-linux-pty-host-launch-deadlock.md), [plan](superpowers/plans/2026-09-22-card-0594-linux-pty-host-launch-deadlock-plan.md)). `LaunchDetachedAsync` waited for the intermediary's stdout **and** stderr EOF, which the detached host kept open through duplicate descriptors of the inherited stdio, so the runner's `Connect` only began after the host had already exited at its 30s launch timeout and then spent its 15s budget retrying `ECONNREFUSED` against the orphaned socket file (30 + 15 = the 45s the launch took). Three fixes: `PosixProcessSpawner` closes every descriptor above 2 that aliases the original 0/1/2, `PtyHostLauncher` gates on the intermediary's exit plus its pid line, and `PtyHostServer` disposes the listening stream on the cancelled accept so the socket file is unlinked. Evidence is `pwsh -NoProfile -File scripts/verify-card0594-linux-launch.ps1 -Image <tag> -Expect baseline|fixed` (Docker Desktop only, never binds 17202-17205): it grades a real `POST /sessions`, the intermediary's pipe EOF against a live host, and the orphan socket file a timed-out host leaves behind. The live V-7 turn itself is still to be re-run. Do not treat agent.Status=Running as a ready Linux host.
 
 `LinuxPtyHostLauncherTests` (and the other `RequireLinux()` classes) still have no execution lane on this Windows host until CARD-0605 gives them one, so every method in them skips; CARD-0594's Windows-executing launcher and server tests are written platform-neutral so that lane runs them unchanged.
+
+#### The production `server2` runner (CARD-0604 Cut A)
+
+The persistent deployment is `docker-compose.server2-runner.yml` (project `antiphon-runner`) on
+server2, registering with the **production** desktop server over
+`https://antiphon.desktop.codeperf.net`. It is the only standing Antiphon process there: no server
+and no Postgres, because the throwaway stack a session needs is the nested child it creates itself.
+The CARD-0490 `grok-linux` canary keeps working unchanged against its own isolated server through
+`verify-phone-home-grok.ps1`; that harness's settings block now carries `AllowDelegatedTasks=false`,
+because a canary is one pinned agent and nothing else.
+
+Turning it on is an operator step and a production change, not something a test run does. In the
+**main checkout** (`C:\src\Antiphon`, never a worktree):
+
+1. `git pull --rebase`, then set the user-secrets: `PhoneHomeRunner:Enabled=true`,
+   `AllowedRunnerId=server2`, `AllowDelegatedTasks=true`, `HostWorkspaceRoot=C:\src\Antiphon`,
+   `RunnerWorkspace=/work`, `RunnerRepository=/work/repos/antiphon`,
+   `CallbackOrigin=https://antiphon.desktop.codeperf.net`, and `SharedSecret` from the value
+   `deploy-parent` generated on server2 (see [agent-credentials.md](agent-credentials.md) §5 — it
+   never crosses the SSH bridge into a script or an evidence file).
+2. `pwsh -NoProfile -File scripts/restart-apphost.ps1`.
+3. Confirm `GET /api/version` is the SHA you just built, then
+   `GET /api/session-runners/server2/status` reports `available: true` and
+   `dispatchEligible: true` within ~120 s of the runner reconnecting. A passing `/health` is not
+   that confirmation.
+
+Once eligible, `scripts/delegate.ps1 -Runner server2 -Worktree ...` routes an ordinary Grok task
+there. The **desktop** worktree is still created and stays canonical: the branch is pushed to
+origin, the runner mirrors it at that exact commit, the session works and pushes, and settlement
+fast-forwards the desktop worktree (`--ff-only`; a divergence or a dirty desktop tree is a warning,
+never a reset). Landing, retirement and residue accounting are unchanged. Card-backed starts,
+OnAgent, Shared, ReadOnly, pins and SourceLanding are all refused at create.
 
 PC-28 through PC-31 run in an inherited QEMU/TCG guest via `scripts/test-card0490-native.ps1`. Ordinary Code uses `-Ordinary -Phase baseline` only. Sourced Mutation requires `-BindingFile` and must not downgrade to ordinary. Asset pins live in `tests/fixtures/card0490-linux/assets.lock.json`; any `pending-operator-pin` there refuses the lane with exit 4.
 

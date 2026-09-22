@@ -14,6 +14,15 @@ CARD-0490 adds an opt-in phone-home Linux Grok lane: one named cardless PtyHost 
 container, registered over an outbound WebSocket. Local Windows sessions keep `SessionRunner:BaseUrl`.
 See [testing-and-build.md](testing-and-build.md) (CARD-0490).
 
+CARD-0604 widens that lane on the production `server2` runner from one pinned agent to a bounded
+pool: **runner-bound named agents** (`POST /api/agents` with `runnerId`) may be Grok, or **Raw** with
+an image-owned executable from the allow-list (`/bin/sh`, `/bin/bash`, `/usr/local/bin/pwsh`) — the
+runner keeps that list itself and refuses any other path, including a host path that ends in the
+same name. **Runner-bound delegated Worktree tasks** (`delegate.ps1 -Runner server2`) are Grok only.
+Card-backed starts, OnAgent, Shared, ReadOnly, pins, Herdr and custom wrappers stay refused, and
+SourceLanding is refused until CARD-0604 Cut B ships the Linux custody backend. Grok is the only
+agent the image carries; Claude Code and Codex are not installed there.
+
 ## Source of truth
 
 Do not treat the tables below as authoritative when they disagree with the code. Three files own
