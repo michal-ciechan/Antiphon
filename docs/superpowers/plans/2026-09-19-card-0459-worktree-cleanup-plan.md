@@ -10,6 +10,15 @@ Status: implementation plan complete; **TestDesign is a separate next stage**.
 The PC and guard inventory below is input to that stage, not executed verification.
 This dispatch changes documentation only and performs no live cleanup or configuration change.
 
+Land status (2026-09-22): Code and Review are complete and the reviewed tip
+`2240ec35f11c5b0dde8632c2d53abb615e98e1fe` is confirmed green (Unit lane 2705/2705,
+cleanup-retry class 17/17) and ready for land. Its landing-owner task `cf214423` cannot
+issue that land -- every attempt returns a server 500 because an earlier Conflicted/Aged
+land request left an Unconfirmed operation mirror-disagreeing against a stale SHA
+(product gap CARD-0603) -- so the reviewed tip is republished unchanged on
+`feat/card-task-f87db7ff` for a fresh landing owner. Post-land SourceLanding Mutation
+still owns every PC-1..PC-108 cycle.
+
 ## Outcome and scope
 
 Make the existing daily residue job useful through two explicitly different authorities:
