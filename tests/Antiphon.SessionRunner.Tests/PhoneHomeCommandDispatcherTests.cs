@@ -67,6 +67,104 @@ public class PhoneHomeCommandDispatcherTests
         maxOwnedSessions.ShouldBe(1);
     }
 
+    // --- CARD-0604 D-2/D-15: the runner's own admission of the widened shapes. ---
+
+    [Test]
+    public async Task Raw_exe_outside_allow_list_is_refused()
+    {
+        var runtime = new RecordingRuntime();
+        var dispatcher = Dispatcher(runtime);
+
+        foreach (var exe in new[] { "/bin/sh", "/bin/bash", "/usr/local/bin/pwsh", "grok" })
+        {
+            var admitted = await dispatcher.DispatchAsync(Launch(Request(exe, "/work")), CancellationToken.None);
+            admitted.Kind.ShouldBe(PhoneHomeFrameKind.Result, exe + " is image-owned and must be admitted");
+        }
+
+        // A host path that merely ends in an allow-listed name is not the image's own executable,
+        // and neither is anything else the server might name.
+        foreach (var exe in new[] { "/usr/bin/sh", "/opt/evil/bash", "/bin/sh ", "sh", "/usr/local/bin/node" })
+        {
+            var refused = await dispatcher.DispatchAsync(Launch(Request(exe, "/work")), CancellationToken.None);
+            refused.Kind.ShouldBe(PhoneHomeFrameKind.Error, exe + " is not image-owned");
+            refused.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
+        }
+    }
+
+    [Test]
+    public async Task Cwd_outside_workspace_is_refused()
+    {
+        var dispatcher = Dispatcher(new RecordingRuntime());
+
+        // The workspace root itself, and a single-segment mirror directly under its worktrees/.
+        foreach (var cwd in new[] { "/work", "/work/worktrees/task-deadbeef" })
+        {
+            var admitted = await dispatcher.DispatchAsync(Launch(Request("grok", cwd)), CancellationToken.None);
+            admitted.Kind.ShouldBe(PhoneHomeFrameKind.Result, cwd + " is inside the runner workspace");
+        }
+
+        // Traversal, nesting, a sibling that merely shares the prefix, and the root of nothing.
+        foreach (var cwd in new[]
+                 {
+                     "/work/worktrees", "/work/worktrees/", "/work/worktrees/..",
+                     "/work/worktrees/task-deadbeef/src", "/work/worktrees/../../etc",
+                     "/workspace", "/work-other", "/", "", "C:\\src\\Antiphon",
+                 })
+        {
+            var refused = await dispatcher.DispatchAsync(Launch(Request("grok", cwd)), CancellationToken.None);
+            refused.Kind.ShouldBe(PhoneHomeFrameKind.Error, cwd + " is outside the runner workspace");
+            refused.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
+        }
+    }
+
+    [Test]
+    public async Task Capacity_is_the_configured_value()
+    {
+        // CARD-0604 D-14: the seat count is configuration, not the constant 1 CARD-0490 pinned.
+        var runtime = new RecordingRuntime { Owned = 1 };
+        var dispatcher = Dispatcher(runtime, capacity: 2);
+        var admitted = await dispatcher.DispatchAsync(Launch(Request("grok", "/work")), CancellationToken.None);
+        admitted.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+
+        var full = await dispatcher.DispatchAsync(Launch(Request("grok", "/work")), CancellationToken.None);
+        full.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+        full.ErrorCode.ShouldBe(PhoneHomeProblemTypes.Capacity);
+    }
+
+    [Test]
+    public async Task Workspace_ops_are_admitted_only_under_allowed_cwd()
+    {
+        var dispatcher = Dispatcher(new RecordingRuntime());
+        var removeOutside = await dispatcher.DispatchAsync(
+            new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.WorkspaceRemove,
+                System.Text.Json.JsonSerializer.SerializeToElement(
+                    new PhoneHomeWorkspaceRemoveRequest("/etc"), PhoneHomeFraming.Json)),
+            CancellationToken.None);
+        removeOutside.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+        removeOutside.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
+
+        // A mirror name outside task-<8 hex> never becomes a directory the runner creates.
+        var badName = await dispatcher.DispatchAsync(
+            new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.WorkspaceMirror,
+                System.Text.Json.JsonSerializer.SerializeToElement(
+                    new PhoneHomeWorkspaceMirrorRequest("main", new string('a', 40), "../escape"), PhoneHomeFraming.Json)),
+            CancellationToken.None);
+        badName.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+        badName.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
+    }
+
+    private static PhoneHomeCommandDispatcher Dispatcher(IPhoneHomeRuntimeSurface runtime, int capacity = 8) =>
+        new(runtime, new PhoneHomeSettings
+        {
+            Enabled = true,
+            AllowedCwd = "/work",
+            RunnerRepository = "/work/repos/antiphon",
+            Capacity = capacity,
+        });
+
+    private static RunnerLaunchRequest Request(string exe, string cwd) =>
+        new(Guid.NewGuid(), exe, [], new Dictionary<string, string>(), cwd, 80, 24);
+
     private static PhoneHomeFrame Launch(RunnerLaunchRequest request) =>
         new(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.Launch,
             System.Text.Json.JsonSerializer.SerializeToElement(request, PhoneHomeFraming.Json));

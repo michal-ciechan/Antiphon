@@ -639,6 +639,85 @@ public class PhoneHomeStandingLaunchTests
     private static string JsonSerializerRoundTrip(object value) =>
         System.Text.Json.JsonSerializer.Serialize(value);
 
+    // --- CARD-0604 D-2: runner-bound agents alongside the pinned one. ---
+
+    [Test]
+    public void Runner_bound_raw_agent_projects_allow_listed_exe_only()
+    {
+        var policy = PoolPolicy();
+        var agent = new Agent { Id = Guid.NewGuid(), RunnerId = "server2", WorkingDirectory = @"C:\src\Antiphon" };
+
+        var shell = new AgentLaunchSpec("/bin/sh", AgentKind.Raw, "raw-sh", [], new Dictionary<string, string>(), @"C:\src\Antiphon", 80, 24);
+        var projected = policy.Project(shell, agent);
+        projected.Exe.ShouldBe("/bin/sh");
+        projected.Cwd.ShouldBe("/work");
+        projected.VerificationBinding.ShouldBeNull("Cut A never sends a binding to the runner");
+
+        // A host path that merely ends in an allow-listed name is not the image's own executable.
+        var foreign = shell with { Exe = @"C:\tools\sh" };
+        Should.Throw<ConflictException>(() => policy.Project(foreign, agent))
+            .Code.ShouldBe("phone_home_wrapper_refused");
+
+        // Grok still projects to the bare image name, as CARD-0490 had it.
+        var grok = shell with { Exe = @"C:\tools\grok.exe", Kind = AgentKind.Grok };
+        policy.Project(grok, agent).Exe.ShouldBe("grok");
+    }
+
+    [Test]
+    public void Card_start_and_onagent_stay_refused_for_runner_bound_agent()
+    {
+        var policy = PoolPolicy();
+        var agent = new Agent { Id = Guid.NewGuid(), RunnerId = "server2", WorkingDirectory = @"C:\src\Antiphon" };
+
+        Should.Throw<ConflictException>(() => Refuse(policy, agent, cardStart: true))
+            .Code.ShouldBe("phone_home_card_refused");
+        Should.Throw<ConflictException>(() => Refuse(policy, agent, onAgent: true))
+            .Code.ShouldBe("phone_home_onagent_refused");
+        Should.Throw<ConflictException>(() => Refuse(policy, agent, customWrapper: "wrapper.cmd"))
+            .Code.ShouldBe("phone_home_wrapper_refused");
+        Should.Throw<ConflictException>(() => Refuse(policy, agent, backend: SessionBackend.Herdr))
+            .Code.ShouldBe("phone_home_backend_refused");
+
+        // A delegated task IS admitted now, but only as a Grok Worktree task without SourceLanding.
+        Refuse(policy, agent, delegatedTask: true, worktree: true, kind: AgentKind.Grok);
+        Should.Throw<ConflictException>(() => Refuse(policy, agent, delegatedTask: true, worktree: false))
+            .Code.ShouldBe("phone_home_worktree_refused");
+        Should.Throw<ConflictException>(
+                () => Refuse(policy, agent, delegatedTask: true, worktree: true, sourceLanding: true))
+            .Code.ShouldBe("phone_home_sourcelanding_refused");
+
+        // An agent bound to no runner is not this policy's business at all.
+        var local = new Agent { Id = Guid.NewGuid(), WorkingDirectory = @"C:\anywhere" };
+        Refuse(policy, local, cardStart: true);
+    }
+
+    private static void Refuse(
+        PhoneHomeLaunchPolicy policy,
+        Agent agent,
+        bool cardStart = false,
+        bool delegatedTask = false,
+        bool worktree = false,
+        bool sourceLanding = false,
+        bool onAgent = false,
+        SessionBackend backend = SessionBackend.PtyHost,
+        AgentKind kind = AgentKind.Grok,
+        string? customWrapper = null) =>
+        policy.RefuseUnsupportedStart(
+            agent, cardStart, delegatedTask, worktree, sourceLanding, onAgent, backend, kind, customWrapper);
+
+    private static PhoneHomeLaunchPolicy PoolPolicy() =>
+        new(Options.Create(new PhoneHomeRunnerSettings
+        {
+            Enabled = true,
+            AllowedRunnerId = "server2",
+            AllowDelegatedTasks = true,
+            HostWorkspaceRoot = @"C:\src\Antiphon",
+            RunnerWorkspace = "/work",
+            ChildGrokHome = "/state/grok",
+            CallbackOrigin = "https://antiphon.desktop.codeperf.net",
+            SharedSecret = "x",
+        }));
+
     private static PhoneHomeLaunchPolicy Policy() =>
         new(Options.Create(new PhoneHomeRunnerSettings
         {

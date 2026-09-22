@@ -1,0 +1,100 @@
+using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
+using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.TestHelpers;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using Shouldly;
+using TUnit.Core;
+
+namespace Antiphon.Tests.Application;
+
+// CARD-0604 D-14. The runner declares a capacity and the server bounds it, so a misconfigured or
+// tampered runner cannot enlarge its own seat count; and registration carries the capabilities DTO
+// so a deploy row can read the runner's platform and build without a second round trip.
+[Category("Unit")]
+public sealed class PhoneHomeDirectoryTests
+{
+    [Test]
+    public void Capacity_above_bound_is_refused()
+    {
+        var directory = Directory(maxCapacity: 2);
+
+        var refused = Should.Throw<ConflictException>(() => directory.Register(Registration(capacity: 3)));
+        refused.Code.ShouldBe(PhoneHomeProblemTypes.Capacity);
+
+        var zero = Should.Throw<ConflictException>(() => directory.Register(Registration(capacity: 0)));
+        zero.Code.ShouldBe(PhoneHomeProblemTypes.Capacity);
+    }
+
+    [Test]
+    public void Capacity_within_bound_is_admitted()
+    {
+        // The whole point of D-14: two is now a legal seat count, where CARD-0490 allowed only one.
+        var response = Directory(maxCapacity: 8).Register(Registration(capacity: 2));
+        response.Ticket.ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Test]
+    public void Registration_carries_capabilities()
+    {
+        var directory = Directory(maxCapacity: 8);
+        var capabilities = new RunnerCapabilitiesDto(
+            "PortaPty", "PortaPty", "linux", false,
+            Version: "cafebabe",
+            VerificationCustodyBackend: null,
+            RunnerStoreId: Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"));
+        var response = directory.Register(Registration(capacity: 2, platform: "linux", capabilities: capabilities));
+
+        // The registration's own store identity is what the ticket and the status are pinned to,
+        // and it survives the capabilities payload rather than being replaced by it.
+        response.RunnerStoreId.ShouldBe(StoreId);
+        var status = directory.Status("server2");
+        status.RunnerStoreId.ShouldBe(StoreId);
+        status.Available.ShouldBeFalse("no socket has connected yet");
+    }
+
+    [Test]
+    public void Foreign_runner_id_is_refused()
+    {
+        var refused = Should.Throw<ConflictException>(
+            () => Directory(maxCapacity: 8).Register(Registration(capacity: 1) with { RunnerId = "someone-else" }));
+        refused.Code.ShouldBe(PhoneHomeProblemTypes.RunnerMismatch);
+    }
+
+    private static readonly Guid StoreId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+
+    private static PhoneHomeRegistrationRequest Registration(
+        int capacity, string platform = "linux", RunnerCapabilitiesDto? capabilities = null) =>
+        new(
+            PhoneHomeProtocol.Version,
+            "server2",
+            Guid.Parse("22222222-2222-2222-2222-222222222222"),
+            StoreId,
+            platform,
+            capacity,
+            capabilities);
+
+    private static PhoneHomeRunnerDirectory Directory(int maxCapacity) =>
+        new(
+            new RefusingSessionRunnerClient(),
+            Options.Create(new PhoneHomeRunnerSettings
+            {
+                Enabled = true,
+                AllowedRunnerId = "server2",
+                AllowDelegatedTasks = true,
+                MaxCapacity = maxCapacity,
+                HostWorkspaceRoot = @"C:\src\Antiphon",
+                CallbackOrigin = "https://antiphon.desktop.codeperf.net",
+                SharedSecret = "x",
+            }),
+            new NoScopeFactory(),
+            TimeProvider.System);
+
+    // Registration never opens a scope: it is a pure in-memory admission decision.
+    private sealed class NoScopeFactory : IServiceScopeFactory
+    {
+        public IServiceScope CreateScope() => throw new NotSupportedException("registration takes no scope");
+    }
+}
