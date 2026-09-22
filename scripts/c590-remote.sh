@@ -487,6 +487,7 @@ case_fixture_image() {
 }
 
 case_deployment_state() {
+    require_lane nested
     ensure_child
     local live
     live="$(version_sha)"
