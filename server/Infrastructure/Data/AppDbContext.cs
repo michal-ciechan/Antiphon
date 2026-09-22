@@ -2533,7 +2533,12 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<LegacyCheckNotePublication>(entity =>
         {
-            entity.ToTable("LegacyCheckNotePublications");
+            entity.ToTable("LegacyCheckNotePublications", table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_LegacyCheckNotePublications_ProducedComplete",
+                    "\"State\" <> 1 OR (\"Body\" IS NOT NULL AND length(btrim(\"Body\")) > 0 AND \"ContentDigest\" IS NOT NULL AND \"ProducedAt\" IS NOT NULL)");
+            });
             entity.HasKey(p => p.Id);
             entity.Property(p => p.FactsSnapshotJson).IsRequired();
             entity.Property(p => p.RenderContextJson).IsRequired();

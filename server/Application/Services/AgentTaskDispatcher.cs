@@ -3185,7 +3185,7 @@ public sealed class AgentTaskDispatcher
             .Where(m => m.Status == QueuedMessageStatus.Pending
                 && m.Origin == QueuedMessageOrigin.Check
                 && m.DeliveryAttempts == 0)
-            .Select(m => new { m.Id, m.AgentSessionId, m.ConversationKey, m.CreatedAt, m.Body })
+            .Select(m => new { m.Id, m.AgentSessionId, m.ConversationKey, m.CreatedAt, m.Body, m.SourceLandNotificationId })
             .ToListAsync(ct);
         if (pending.Count == 0)
             return 0;
@@ -3196,6 +3196,10 @@ public sealed class AgentTaskDispatcher
         {
             ct.ThrowIfCancellationRequested();
 
+            if (note.SourceLandNotificationId is Guid legacyNotification
+                && await _db.AgentTaskLandNotifications.AsNoTracking().AnyAsync(
+                    n => n.Id == legacyNotification && n.Kind == LandNotificationKind.LegacyCheckNote, ct))
+                continue;
             if (!AgentTaskCheckService.TryParseCheckConversationKey(note.ConversationKey, out var taskId))
                 continue;
             var supersession = await AgentTaskCheckService.EvaluateAsync(_db, taskId, ct);

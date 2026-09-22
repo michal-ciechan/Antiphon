@@ -198,6 +198,7 @@ public sealed class CheckCompactionContinuationService
 
     private async Task AdvanceAsync(CheckCompactionRecovery episode, CancellationToken ct)
     {
+        await CancelRetiredBriefsAsync(episode, ct);
         if (await SupersededByOperatorAsync(episode, ct))
             return;
 
@@ -506,6 +507,9 @@ public sealed class CheckCompactionContinuationService
         if (!ended || check.ParentSessionId is not Guid parent)
             return;
 
+        if (await LegacyReceiptAsync(episode, sessionId, parent, ct) is not LegacyReceipt.NotApplicable)
+            return;
+
         var note = await _db.SessionQueuedMessages.AsNoTracking()
             .Where(m => m.AgentSessionId == parent
                 && m.SourceTaskId == check.Id
@@ -636,8 +640,127 @@ public sealed class CheckCompactionContinuationService
             });
         }
 
-        await _boundary.ReachedAsync("failure-committed", task.Id, ct);
         await _db.SaveChangesAsync(ct);
+        await _boundary.ReachedAsync("failure-committed", task.Id, ct);
+    }
+
+    private async Task CancelRetiredBriefsAsync(CheckCompactionRecovery episode, CancellationToken ct)
+    {
+        if (_queue is null)
+            return;
+        var retired = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.AgentId == episode.PhysicalAgentId
+                && t.AgentSessionId == episode.SessionId
+                && t.Role == StandingSpecialistSeatPolicy.Role
+                && t.Status == AgentTaskStatus.Failed
+                && (t.FailureCode == AgentTaskFailureCode.CompactionRecoveryRetiredGeneration
+                    || t.FailureCode == AgentTaskFailureCode.CompactionContinuationStalled))
+            .Select(t => t.Id)
+            .ToListAsync(ct);
+        foreach (var taskId in retired)
+        {
+            var token = taskId.ToString();
+            var messages = await _db.SessionQueuedMessages
+                .Where(m => m.AgentSessionId == episode.SessionId
+                    && m.Status == QueuedMessageStatus.Pending
+                    && m.Body.Contains(token))
+                .ToListAsync(ct);
+            foreach (var message in messages.Where(StandingQueueSwitchPolicy.NeverAttempted))
+                await _queue.CancelPendingIfUntypedAsync(episode.SessionId, message.Id, ct);
+        }
+    }
+
+    private enum LegacyReceipt { NotApplicable, Handled }
+
+    private async Task<LegacyReceipt> LegacyReceiptAsync(
+        CheckCompactionRecovery episode, Guid sessionId, Guid parent, CancellationToken ct)
+    {
+        var related = await _db.LegacyCheckNotePublications.AsNoTracking()
+            .Where(p => p.PhysicalAgentId == episode.PhysicalAgentId
+                && p.InterpreterSessionId == sessionId)
+            .ToListAsync(ct);
+        if (related.Count == 0)
+            return LegacyReceipt.NotApplicable;
+
+        var publication = related.FirstOrDefault(p =>
+            p.State == LegacyCheckNoteState.Produced
+            && p.RecoveryId == episode.Id
+            && episode.ResumeAcceptedStartedAt is DateTime generation
+            && SessionGeneration.Equal(p.InterpreterAcceptedStartedAt, generation)
+            && p.InterpretationTaskId is Guid);
+        if (publication?.InterpretationTaskId is not Guid runId || publication.Body is not { Length: > 0 } body)
+            return LegacyReceipt.Handled;
+
+        var subject = await _db.AgentTasks.AsNoTracking().FirstOrDefaultAsync(t => t.Id == publication.CheckedTaskId, ct);
+        if (subject?.DispatchedAt is not DateTime dispatched
+            || publication.CheckedTaskAttempt != subject.Attempt
+            || publication.CheckNumber != subject.CheckCount
+            || !SessionGeneration.Equal(publication.CheckedTaskDispatchedAt, SessionGeneration.Normalize(dispatched)))
+            return LegacyReceipt.Handled;
+
+        var check = await _db.AgentTasks.AsNoTracking().FirstOrDefaultAsync(t => t.Id == runId, ct);
+        if (check is null
+            || check.Status != AgentTaskStatus.Succeeded
+            || string.IsNullOrWhiteSpace(check.Result)
+            || check.CreatedAt < (episode.StopOutcomeAt ?? episode.DetectedAt))
+            return LegacyReceipt.Handled;
+
+        var marker = DelegationReportFormatter.TaskMarker(check.Id);
+        var prompt = await _db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId
+                && t.Kind == TranscriptKinds.UserPrompt
+                && t.Text != null
+                && t.Text.Contains(marker))
+            .OrderByDescending(t => t.Sequence)
+            .FirstOrDefaultAsync(ct);
+        if (prompt is null)
+            return LegacyReceipt.Handled;
+        var ended = await _db.TranscriptEntries.AsNoTracking().AnyAsync(t =>
+            t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.TurnEnd && t.Sequence > prompt.Sequence, ct);
+        if (!ended)
+            return LegacyReceipt.Handled;
+
+        var queued = await _db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.SourceLandNotificationId == publication.NotificationId)
+            .OrderByDescending(m => m.Sequence)
+            .FirstOrDefaultAsync(ct);
+        if (queued?.LastDeliveryBaselineSequence is not long floor)
+            return LegacyReceipt.Handled;
+        var receipt = (await _db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == parent
+                && t.Kind == TranscriptKinds.UserPrompt
+                && t.Text != null
+                && t.Sequence > floor)
+            .OrderBy(t => t.Sequence)
+            .ToListAsync(ct))
+            .FirstOrDefault(t => PromptSubmissionMatch.IsCompleteIn(body, t.Text!));
+        if (receipt is null)
+            return LegacyReceipt.Handled;
+
+        var notification = await _db.AgentTaskLandNotifications.FirstOrDefaultAsync(n => n.Id == publication.NotificationId, ct);
+        if (notification is not null && notification.State != LandNotificationState.Confirmed)
+        {
+            notification.State = LandNotificationState.Confirmed;
+            notification.ConfirmedAt = UtcNow();
+            notification.ConfirmingPromptSequence = receipt.Sequence;
+        }
+
+        var supervision = await GetOrCreateStateAsync(episode.PhysicalAgentId, ct);
+        episode.State = CheckCompactionRecoveryState.Recovered;
+        episode.UsefulCheckTaskId = check.Id;
+        episode.CallerReceiptNotificationId = publication.NotificationId;
+        episode.ConfirmingPromptSequence = receipt.Sequence;
+        episode.Reason = "legacy-receipt";
+        episode.ConcurrencyToken = Guid.NewGuid();
+        supervision.CompactionRestartReceiptEligible = true;
+        supervision.ActiveCompactionRecoveryId = null;
+        supervision.UpdatedAt = UtcNow();
+        AddIncident(episode.PhysicalAgentId, sessionId,
+            AgentIncidentKind.CompactionContinuationRecovered, AlertSeverity.Info,
+            $"Legacy Check publication {publication.Id:D} and caller prompt {receipt.Sequence} closed the episode.");
+        await _db.SaveChangesAsync(ct);
+        await PublishAsync(episode.PhysicalAgentId, ct);
+        return LegacyReceipt.Handled;
     }
 
     private async Task<bool> SupersededByOperatorAsync(CheckCompactionRecovery episode, CancellationToken ct)
@@ -896,6 +1019,8 @@ public sealed class CheckCompactionContinuationService
 
     private async Task PublishAsync(Guid agentId, CancellationToken ct)
     {
+        await _boundary.ReachedAsync("audit-committed", agentId, ct);
+        await _boundary.ReachedAsync("before-audit-publish", agentId, ct);
         if (_events is null)
             return;
         await _events.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), ct);

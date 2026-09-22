@@ -68,6 +68,11 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
 
         /// <summary>CARD-0412: isolated-schema tests must wire every DbContext to the clone.</summary>
         public string? ConnectionString { get; init; }
+
+        /// <summary>Reuse a session the caller already inserted. Requires <see cref="AttachAgentId"/>.</summary>
+        public Guid? AttachSessionId { get; init; }
+
+        public Guid? AttachAgentId { get; init; }
     }
 
     public static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
@@ -194,6 +199,39 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         options.ConfigureServices?.Invoke(services);
         var provider = services.BuildServiceProvider();
         var scope = provider.CreateScope();
+
+        if (options.AttachSessionId is Guid attachedSession)
+        {
+            if (options.AttachAgentId is not Guid attachedAgent)
+                throw new InvalidOperationException("AttachSessionId requires AttachAgentId.");
+            var attachedRuntime = provider.GetRequiredService<AgentSessionRuntime>();
+            var attachedAdapter = new FakeAgentProtocolAdapter();
+            var attachedStore = options.ConnectionString;
+            attachedAdapter.OnSubmitted = async submitted =>
+            {
+                await InsertEntryAsync(attachedSession, TranscriptKinds.UserPrompt, submitted,
+                    timestamp: DateTime.UtcNow, connectionString: attachedStore);
+                await InsertEntryAsync(attachedSession, TranscriptKinds.TurnEnd, stopReason: "end_turn",
+                    connectionString: attachedStore);
+            };
+            attachedRuntime.Register(attachedSession, attachedAdapter);
+            return new BridgeQueueHarness
+            {
+                Provider = provider,
+                Scope = scope,
+                TempRoot = tempRoot,
+                SessionId = attachedSession,
+                AgentId = attachedAgent,
+                Adapter = attachedAdapter,
+                EventBus = eventBus,
+                Messaging = messaging,
+                Runtime = attachedRuntime,
+                Queue = provider.GetRequiredService<SessionMessageQueueService>(),
+                Runner = runner,
+                ConnectionString = attachedStore ?? TestDbFixture.ConnectionString,
+                Delegation = options.Delegation ?? new DelegationSettings(),
+            };
+        }
 
         // A running ClaudeCode session owned by an agent (PersistentSessionId links them).
         var sessionId = Guid.NewGuid();
