@@ -136,6 +136,25 @@ public sealed partial class AgentTaskLandNotificationRecoveryTests
     }
 
     [Test]
+    public async Task Legacy_note_duplicate_workers_share_one_queue_row()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var harness = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var note = await SeedNotificationAsync(db, harness.SessionId, harness.AgentId);
+        var service = new AgentTaskLandNotificationService(db, harness.Queue, new CompletionNoteFlushQueue(), harness.Runtime, TimeProvider.System);
+        await service.ReconcileAsync(note.Id, CancellationToken.None);
+        var first = await db.SessionQueuedMessages.SingleAsync(m => m.SourceLandNotificationId == note.Id);
+        first.SourceLandNotificationId.ShouldBe(note.Id);
+        note.QueueMessageId = null;
+        note.State = LandNotificationState.Queued;
+        await db.SaveChangesAsync();
+        await service.ReconcileAsync(note.Id, CancellationToken.None);
+        (await db.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId == note.Id)).ShouldBe(1);
+        (await db.AgentTaskLandNotifications.SingleAsync()).QueueMessageId.ShouldBe(first.Id);
+    }
+
+    [Test]
     public async Task Legacy_unavailable_parent_is_not_redirected()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
