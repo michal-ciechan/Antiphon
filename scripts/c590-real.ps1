@@ -171,6 +171,15 @@ function Invoke-C590LiveCase {
     if ($names -contains 'minExecuted' -and $Manifest.minExecuted) { $minExecuted = [string]$Manifest.minExecuted }
     if ($names -contains 'checkpoint' -and $Manifest.checkpoint) { $checkpoint = [string]$Manifest.checkpoint }
     if ($names -contains 'broker' -and [bool]$Manifest.broker) { $broker = '1' }
+    # CARD-0604 D-13. The branch the runner's checkout tracks (master once this cut has landed) and
+    # the production origin the host lane probes for runner status. Both are manifest-supplied so a
+    # pre-land run can point the runner at the task branch without editing this script.
+    $c604Branch = 'master'
+    $c604Origin = 'https://antiphon.desktop.codeperf.net'
+    if ($names -contains 'c604Branch' -and $Manifest.c604Branch) { $c604Branch = [string]$Manifest.c604Branch }
+    if ($names -contains 'c604Origin' -and $Manifest.c604Origin) { $c604Origin = [string]$Manifest.c604Origin }
+    if ($c604Branch -notmatch '^[A-Za-z0-9._/-]{1,200}$') { throw 'c604 branch rejected' }
+    if ($c604Origin -notmatch '^https?://[A-Za-z0-9._:-]{1,200}$') { throw 'c604 origin rejected' }
     if ($project -notmatch '^[A-Za-z0-9./_-]*$') { throw 'project path rejected' }
     if ($checkpoint -notmatch '^[A-Za-z0-9_-]+$') { throw 'checkpoint name rejected' }
     if ($run -notmatch '^[a-z0-9]+$') { throw 'run id rejected' }
@@ -212,6 +221,11 @@ function Invoke-C590LiveCase {
             "export C590_CP='$checkpoint'"
             "export C590_BROKER='$broker'"
             "export C590_FILTER_FILE='/tmp/c590-filter-$run.txt'"
+            # CARD-0604: the branch the runner's own checkout tracks (master after land), and the
+            # production origin the host lane probes for runner status. Never a secret: the
+            # phone-home shared secret is generated on server2 and never crosses this bridge.
+            "export C604_BRANCH='$c604Branch'"
+            "export C604_SERVER_ORIGIN='$c604Origin'"
             "bash /home/mc/antiphon-c590/c590-remote.sh"
         ) -join '; '
         $code = Invoke-C590Ssh $remote
