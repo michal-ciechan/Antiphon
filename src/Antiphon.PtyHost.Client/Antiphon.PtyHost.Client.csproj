@@ -9,6 +9,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Antiphon.PtyHost.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Antiphon.PtyHost.Protocol\Antiphon.PtyHost.Protocol.csproj" />
   </ItemGroup>
 

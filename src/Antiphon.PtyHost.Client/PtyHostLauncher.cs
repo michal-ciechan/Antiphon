@@ -80,50 +80,113 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
         // Reads are not ct-gated: an already-cancelled token used to throw before stdout was
         // consumed, which is how the detached host pid was lost (CARD-0086). WaitAsync(ct) is
         // the cancel point; the drain below uses CancellationToken.None so we can still parse
-        // the pid and kill it.
-        var stdoutTask = intermediary.StandardOutput.ReadToEndAsync();
-        var stderrTask = intermediary.StandardError.ReadToEndAsync();
-        var exitTask = intermediary.WaitForExitAsync();
-        var stdout = "";
-        var stderr = "";
+        // the pid and kill it. The kill deliberately stays outside the seam.
+        var reads = BeginReads(intermediary);
 
         try
         {
-            await Task.WhenAll(stdoutTask, stderrTask, exitTask).WaitAsync(ct);
-            stdout = stdoutTask.Result;
-            stderr = stderrTask.Result;
-
-            if (intermediary.ExitCode != 0 || !int.TryParse(stdout.Trim(), out var hostPid))
-                throw new InvalidOperationException(
-                    $"pty-host spawn intermediary failed (exit {intermediary.ExitCode}): {stderr} {stdout}".Trim());
-
-            return hostPid;
+            return await AwaitPidAsync(intermediary, reads, ct);
         }
         catch
         {
-            await TryKillSpawnedHostAsync(intermediary, stdoutTask, stderrTask, exitTask, stdout);
+            await TryKillSpawnedHostAsync(reads);
             throw;
         }
     }
 
+    /// <summary>The intermediary's first stdout line, its whole stderr, and its exit.</summary>
+    internal sealed record IntermediaryReads(Task<string?> PidLine, Task<string> Stderr, Task Exit);
+
+    /// <summary>How long after the intermediary's exit to wait for a pid line it already wrote.</summary>
+    private static readonly TimeSpan PidLineGrace = TimeSpan.FromSeconds(5);
+
+    /// <summary>Best-effort budget for collecting stderr on the failure path.</summary>
+    private static readonly TimeSpan StderrDrainGrace = TimeSpan.FromSeconds(2);
+
     /// <summary>
-    /// CARD-0086: if the intermediary has started and this method is about to throw, drain
-    /// stdout/stderr and WaitForExit on <see cref="CancellationToken.None"/> (the caller's
-    /// token may already be cancelled), parse the host pid if present, and kill it. A kill
-    /// failure is swallowed so it never replaces the launch exception.
+    /// Starts reading the intermediary. Stderr is read eagerly so a chatty failure can never fill
+    /// its pipe and block the exit we gate on, but it is only ever consulted on the failure path
+    /// — see <see cref="AwaitPidAsync"/>. Both reads get a fault observer: the caller disposes the
+    /// <see cref="Process"/> on the way out, and a read that faults after that must not surface as
+    /// an unobserved task exception.
     /// </summary>
-    private static async Task TryKillSpawnedHostAsync(
-        Process intermediary,
-        Task<string> stdoutTask,
-        Task<string> stderrTask,
-        Task exitTask,
-        string stdoutAlready)
+    internal static IntermediaryReads BeginReads(Process intermediary)
+    {
+        var pidLine = intermediary.StandardOutput.ReadLineAsync();
+        var stderr = intermediary.StandardError.ReadToEndAsync();
+        Observe(pidLine);
+        Observe(stderr);
+        return new IntermediaryReads(pidLine, stderr, intermediary.WaitForExitAsync());
+    }
+
+    private static void Observe(Task task) =>
+        _ = task.ContinueWith(
+            static t => _ = t.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
+    /// <summary>
+    /// CARD-0594: success is the intermediary's exit plus a parseable pid line, never stdout or
+    /// stderr EOF. The detached host inherits the intermediary's stdio and keeps those pipes open
+    /// for its whole life on POSIX, so a gate on EOF cannot return until the host dies — which is
+    /// the launch deadlock this replaces. <see cref="Process.WaitForExitAsync"/> observes the exit
+    /// independently of stream EOF here because the streams are read directly rather than through
+    /// <c>BeginOutputReadLine</c>.
+    /// </summary>
+    internal static async Task<int> AwaitPidAsync(
+        Process intermediary, IntermediaryReads reads, CancellationToken ct)
+    {
+        await reads.Exit.WaitAsync(ct);
+
+        string? pidLine = null;
+        try
+        {
+            // The healthy intermediary writes the pid before it exits, so the line is already
+            // buffered; the grace only covers the write landing after the exit is observed.
+            pidLine = await reads.PidLine.WaitAsync(PidLineGrace, ct);
+        }
+        catch (TimeoutException)
+        {
+            // No pid line. Reported as a launch failure below, with whatever stderr says.
+        }
+
+        if (intermediary.ExitCode == 0 && int.TryParse(pidLine?.Trim(), out var hostPid) && hostPid > 0)
+            return hostPid;
+
+        var stderr = await DrainStderrAsync(reads);
+        throw new InvalidOperationException(
+            $"pty-host spawn intermediary failed (exit {intermediary.ExitCode}): {stderr} {pidLine}".Trim());
+    }
+
+    private static async Task<string> DrainStderrAsync(IntermediaryReads reads)
+    {
+        try
+        {
+            return await reads.Stderr.WaitAsync(StderrDrainGrace, CancellationToken.None);
+        }
+        catch
+        {
+            // Best effort: a stderr pipe still held open by the spawned host must not turn a
+            // launch failure into a hang.
+            return "";
+        }
+    }
+
+    /// <summary>
+    /// CARD-0086: if the intermediary has started and this method is about to throw, drain the
+    /// pid line and WaitForExit on <see cref="CancellationToken.None"/> (the caller's token may
+    /// already be cancelled), parse the host pid if present, and kill it. A kill failure is
+    /// swallowed so it never replaces the launch exception. Stderr is not drained here: it is the
+    /// stream the spawned host can hold open indefinitely.
+    /// </summary>
+    private static async Task TryKillSpawnedHostAsync(IntermediaryReads reads)
     {
         try
         {
             try
             {
-                await Task.WhenAll(stdoutTask, stderrTask, exitTask)
+                await Task.WhenAll(reads.PidLine, reads.Exit)
                     .WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
             }
             catch
@@ -132,11 +195,9 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
                 // whatever pid we already have.
             }
 
-            var stdout = stdoutAlready;
-            if (string.IsNullOrEmpty(stdout) && stdoutTask.IsCompletedSuccessfully)
-                stdout = stdoutTask.Result;
+            var stdout = reads.PidLine.IsCompletedSuccessfully ? reads.PidLine.Result : null;
 
-            if (int.TryParse(stdout.Trim(), out var hostPid) && hostPid > 0)
+            if (int.TryParse(stdout?.Trim(), out var hostPid) && hostPid > 0)
             {
                 try
                 {

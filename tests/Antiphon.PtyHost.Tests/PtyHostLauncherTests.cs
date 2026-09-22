@@ -218,6 +218,94 @@ public class PtyHostLauncherTests
         }
     }
 
+    /// <summary>
+    /// CARD-0594: the launch result is the intermediary's exit plus its pid line. A grandchild
+    /// that inherited and still holds both redirect pipes must not delay it — that wait is the
+    /// Linux launch deadlock, where the detached host held the pipes for its whole life and
+    /// LaunchDetachedAsync could not return until it died.
+    /// </summary>
+    [Test]
+    public async Task Intermediary_result_does_not_wait_for_a_grandchild_holding_its_pipes()
+    {
+        using var intermediary = StartShell(
+            windows: "echo 4242& start /b ping -n 12 127.0.0.1",
+            posix: "echo 4242; (sleep 12 &)");
+
+        var reads = PtyHostLauncher.BeginReads(intermediary);
+        var sw = Stopwatch.StartNew();
+        var pid = await PtyHostLauncher.AwaitPidAsync(intermediary, reads, CancellationToken.None);
+        sw.Stop();
+
+        pid.ShouldBe(4242);
+        sw.Elapsed.ShouldBeLessThan(
+            TimeSpan.FromSeconds(5),
+            $"the pid line was available at the intermediary's exit; waiting {sw.Elapsed} means the "
+            + "gate is still waiting for stream EOF the grandchild will not deliver for ~12s");
+        reads.Stderr.IsCompleted.ShouldBeFalse(
+            "the grandchild still holds the stderr pipe open, so a gate on EOF would still be blocked "
+            + "— if this is already complete the test proves nothing");
+    }
+
+    [Test]
+    public async Task Intermediary_failure_reports_exit_code_and_stderr()
+    {
+        using var intermediary = StartShell(
+            windows: "echo boom 1>&2& exit 3",
+            posix: "echo boom 1>&2; exit 3");
+
+        var reads = PtyHostLauncher.BeginReads(intermediary);
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() =>
+            PtyHostLauncher.AwaitPidAsync(intermediary, reads, CancellationToken.None));
+
+        ex.Message.ShouldContain("exit 3");
+        ex.Message.ShouldContain("boom");
+    }
+
+    [Test]
+    public async Task Intermediary_without_a_pid_line_fails_without_a_host()
+    {
+        using var intermediary = StartShell(windows: "exit 0", posix: "exit 0");
+
+        var reads = PtyHostLauncher.BeginReads(intermediary);
+        var sw = Stopwatch.StartNew();
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() =>
+            PtyHostLauncher.AwaitPidAsync(intermediary, reads, CancellationToken.None));
+        sw.Stop();
+
+        ex.Message.ShouldContain("exit 0");
+        sw.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5));
+    }
+
+    /// <summary>
+    /// A real shell wearing the intermediary's redirect shape, so the seam is driven by an actual
+    /// process with actual pipes rather than a simulated one.
+    /// </summary>
+    private static Process StartShell(string windows, string posix)
+    {
+        var psi = new ProcessStartInfo
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        if (OperatingSystem.IsWindows())
+        {
+            psi.FileName = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+            psi.ArgumentList.Add("/d");
+            psi.ArgumentList.Add("/c");
+            psi.ArgumentList.Add(windows);
+        }
+        else
+        {
+            psi.FileName = "/bin/sh";
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add(posix);
+        }
+
+        return Process.Start(psi) ?? throw new InvalidOperationException("Failed to start test shell.");
+    }
+
     private static async Task WaitForProcessExitAsync(int pid, TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
