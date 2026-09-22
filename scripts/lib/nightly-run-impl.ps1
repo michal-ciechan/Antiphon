@@ -27,16 +27,22 @@ function Get-NightlyStatePaths {
 }
 
 function Test-NightlyCompleteGreenPredicate {
-    param($State)
+    <#
+      CARD-0599 D-2. The predicate now names the credit kind it is being asked about.
+      Called without -CreditKind it answers the historical question - does this state
+      earn MASTER readiness credit - so every existing caller keeps its meaning and an
+      RC run can never back into master's own readiness. -CreditKind 'rc-release' asks
+      the separate release question. An unknown profile/trigger/ref combination earns
+      nothing; there is no default kind.
+    #>
+    param($State, [string]$CreditKind = 'master-scheduled')
     if (-not $State) { return $false }
-    if (-not [bool]$State.coverageComplete) { return $false }
-    if (-not [bool]$State.testsPassed) { return $false }
-    if (-not [bool]$State.reportDelivered) { return $false }
-    $ref = [string]$State.ref
-    if ($ref -ne 'master' -and $ref -ne 'origin/master') { return $false }
-    $trigger = [string]$State.trigger
-    if ($trigger -ne 'scheduled') { return $false }
-    return $true
+    $want = ([string]$CreditKind).Trim().ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($want)) { $want = 'master-scheduled' }
+    if ($script:ReleaseGateCreditKinds -notcontains $want) { return $false }
+    $verdict = Get-ReleaseGateCreditVerdict -State $State
+    if (-not $verdict.Ok) { return $false }
+    return ([string]$verdict.CreditKind -eq $want)
 }
 
 function Write-NightlyRunState {
@@ -93,6 +99,11 @@ function Invoke-AntiphonNightlyRunCore {
         [string]$StateRoot = '',
         [string]$SeamsPath = '',
         [string]$Trigger = 'scheduled',
+        [string]$Profile = 'nightly',
+        [string]$ExpectedSha = '',
+        [string]$CandidateId = '',
+        [string]$ReleaseRoot = '',
+        [string]$CoordinationRoot = '',
         [string]$RunId = '',
         [string]$ContinueRunId = '',
         [int]$ContinueParentPid = 0,
@@ -104,6 +115,8 @@ function Invoke-AntiphonNightlyRunCore {
     Import-NightlySeams -SeamsPath $SeamsPath
     if ([string]::IsNullOrWhiteSpace($StateRoot)) { $StateRoot = Get-NightlyDefaultStateRoot }
     if ([string]::IsNullOrWhiteSpace($RunId)) { $RunId = New-NightlyRunId }
+    if ([string]::IsNullOrWhiteSpace($Profile)) { $Profile = 'nightly' }
+    $Profile = $Profile.Trim().ToLowerInvariant()
     $paths = Get-NightlyStatePaths -StateRoot $StateRoot
     if ([string]::IsNullOrWhiteSpace($LogRoot)) { $LogRoot = $paths.Logs }
 
@@ -132,7 +145,10 @@ function Invoke-AntiphonNightlyRunCore {
         testsPassed = $false
         reportDelivered = $false
         trigger = $Trigger
+        profile = $Profile
         ref = $Ref
+        CreditKind = ''
+        CandidateId = $CandidateId
         StateRoot = $StateRoot
         LogDir = $null
         OwnsLock = $false
@@ -142,6 +158,49 @@ function Invoke-AntiphonNightlyRunCore {
     }
 
     try {
+        if ($script:ReleaseGateProfiles -notcontains $Profile) {
+            Write-Host ('REFUSED: unknown profile {0}.' -f $Profile)
+            $result.Refusal = 'unknown-profile'
+            $result.Phase = 'profile'
+            $result.ExitCode = 3
+            return [pscustomobject]$result
+        }
+        $lane = $(if ($Profile -eq 'rc') { 'rc' } else { 'master' })
+        if ($Profile -eq 'rc') {
+            # D-2: an RC must never be pointed at the master state root; its attempt,
+            # green, monitor and receipt files all live under its own candidate root.
+            $candidate = Test-ReleaseGateCandidateRef -Ref $Ref
+            if (-not $candidate.Ok) {
+                Write-Host ('REFUSED: rc profile needs a release/rc-<stamp> ref ({0}).' -f $candidate.Reason)
+                $result.Refusal = 'rc-ref'
+                $result.Phase = 'profile'
+                $result.ExitCode = 3
+                return [pscustomobject]$result
+            }
+            if ([string]::IsNullOrWhiteSpace($CandidateId)) { $CandidateId = $candidate.CandidateId; $result.CandidateId = $CandidateId }
+            if (-not (Test-ReleaseGateFullSha -Sha $ExpectedSha)) {
+                Write-Host 'REFUSED: rc profile needs -ExpectedSha pinned to the candidate full sha.'
+                $result.Refusal = 'rc-expected-sha'
+                $result.Phase = 'profile'
+                $result.ExitCode = 3
+                return [pscustomobject]$result
+            }
+            $masterRoot = ConvertTo-NightlyCanonicalPath -Path (Get-NightlyDefaultStateRoot)
+            $wantRoot = ConvertTo-NightlyCanonicalPath -Path $StateRoot
+            if ([string]::Equals($masterRoot, $wantRoot, [StringComparison]::OrdinalIgnoreCase)) {
+                Write-Host 'REFUSED: rc profile may not use the master state root.'
+                $result.Refusal = 'rc-master-state-root'
+                $result.Phase = 'profile'
+                $result.ExitCode = 3
+                return [pscustomobject]$result
+            }
+        } elseif ($Trigger -eq 'rc') {
+            Write-Host 'REFUSED: trigger rc requires the rc profile.'
+            $result.Refusal = 'trigger-profile-mismatch'
+            $result.Phase = 'profile'
+            $result.ExitCode = 3
+            return [pscustomobject]$result
+        }
         try {
             $CheckoutRoot = ConvertTo-NightlyResolvedPath -Path $CheckoutRoot
         } catch {
@@ -204,11 +263,52 @@ function Invoke-AntiphonNightlyRunCore {
         $result.OwnsLock = $ownsLock
         $recordAttempt = $true
 
+        # D-4: one shared verification lock across the master and RC lanes, taken in the
+        # same order by both entrypoints. A live owner is never stolen on age; a busy
+        # scheduled RC records deferred-busy and waits for its next slot.
+        $sharedOwnerPid = 0
+        $sharedOwnerStart = ''
+        if (-not [string]::IsNullOrWhiteSpace($ContinueRunId)) {
+            $sharedOwnerPid = $ContinueParentPid
+            $sharedOwnerStart = $ContinueParentStartedAt
+        }
+        $shared = Enter-ReleaseGateNativeLock -CoordinationRoot $CoordinationRoot -RunId $RunId -Lane $lane `
+            -ContinuationId $ContinueRunId -ContinueOwnerPid $sharedOwnerPid -ContinueOwnerStartedAt $sharedOwnerStart
+        if (-not $shared.Ok) {
+            Write-Host ('REFUSED: shared native lock ({0}).' -f $shared.Reason)
+            $busy = [ordered]@{
+                runId = $RunId
+                profile = $Profile
+                lane = $lane
+                ref = $Ref
+                trigger = $Trigger
+                phase = 'deferred-busy'
+                reason = [string]$shared.Reason
+                startedAt = $startedAt.ToString('o')
+                localDueDate = $localDueDate
+                coverageComplete = $false
+                testsPassed = $false
+                reportDelivered = $false
+                succeeded = $false
+                exitCode = 3
+            }
+            [void](Write-NightlyRunState -Path $paths.LastAttempt -State $busy -AllowFailure)
+            $exitCode = 3
+            $result.Refusal = [string]$shared.Reason
+            $result.Phase = 'shared-lock'
+            $result.ExitCode = $exitCode
+            return [pscustomobject]$result
+        }
+
         $stateObj = [ordered]@{
             runId = $RunId
             sha = ''
             ref = $Ref
             trigger = $Trigger
+            profile = $Profile
+            expectedSha = $ExpectedSha
+            candidateId = $CandidateId
+            lane = $lane
             phase = 'Started'
             startedAt = $startedAt.ToString('o')
             localDueDate = $localDueDate
@@ -260,6 +360,19 @@ function Invoke-AntiphonNightlyRunCore {
             $rev = Invoke-NightlyGit -WorkingDirectory $CheckoutRoot -Arguments @('rev-parse', 'HEAD')
             $sha = ([string]$rev.Output).Trim()
             $stateObj.sha = $sha
+            if (-not [string]::IsNullOrWhiteSpace($ExpectedSha) -and -not [string]::Equals($sha, $ExpectedSha, [StringComparison]::OrdinalIgnoreCase)) {
+                # D-3: a moved candidate ref fails; never retest implicitly under its old identity.
+                Write-Host ('REFUSED: candidate moved, head={0} expected={1}' -f $sha, $ExpectedSha)
+                $stateObj.phase = 'candidate-moved'
+                $stateObj.exitCode = 3
+                [void](Write-NightlyRunState -Path $paths.LastAttempt -State $stateObj -AllowFailure)
+                $exitCode = 3
+                $result.Refusal = 'candidate-moved'
+                $result.Phase = 'candidate-moved'
+                $result.Sha = $sha
+                $result.ExitCode = $exitCode
+                return [pscustomobject]$result
+            }
 
             $cloneScript = Join-Path $CheckoutRoot (Join-Path 'scripts' 'nightly-run.ps1')
             $running = $PSCommandPath
@@ -277,12 +390,18 @@ function Invoke-AntiphonNightlyRunCore {
                         '-Ref', $Ref,
                         '-StateRoot', $StateRoot,
                         '-Trigger', $Trigger,
+                        '-Profile', $Profile,
                         '-RunId', $RunId,
                         '-ContinueRunId', $RunId,
                         '-ContinueParentPid', ([string]$PID),
                         '-ContinueParentStartedAt', $startedAt.ToString('o')
                     )
                     if ($NoReport) { $pwshArgs += '-NoReport' }
+                    # D-2/D-3: profile, pinned sha and candidate identity must survive the hop.
+                    if (-not [string]::IsNullOrWhiteSpace($ExpectedSha)) { $pwshArgs += '-ExpectedSha'; $pwshArgs += $ExpectedSha }
+                    if (-not [string]::IsNullOrWhiteSpace($CandidateId)) { $pwshArgs += '-CandidateId'; $pwshArgs += $CandidateId }
+                    if (-not [string]::IsNullOrWhiteSpace($ReleaseRoot)) { $pwshArgs += '-ReleaseRoot'; $pwshArgs += $ReleaseRoot }
+                    if (-not [string]::IsNullOrWhiteSpace($CoordinationRoot)) { $pwshArgs += '-CoordinationRoot'; $pwshArgs += $CoordinationRoot }
                     if ($Suites -and $Suites.Count -gt 0) {
                         $pwshArgs += '-Suites'
                         $pwshArgs += ($Suites -join ',')
@@ -342,8 +461,13 @@ function Invoke-AntiphonNightlyRunCore {
             '-Sha', $sha,
             '-GitRef', $gitRefLabel,
             '-Trigger', $Trigger,
+            '-Profile', $Profile,
             '-RunId', $RunId
         )
+        if (-not [string]::IsNullOrWhiteSpace($ExpectedSha)) {
+            $testArgs += '-ExpectedSha'
+            $testArgs += $ExpectedSha
+        }
         if ($Suites -and $Suites.Count -gt 0) {
             $testArgs += '-Suites'
             $testArgs += ($Suites -join ',')
@@ -444,8 +568,20 @@ function Invoke-AntiphonNightlyRunCore {
         if (-not (Write-NightlyRunState -Path $paths.LastAttempt -State $stateObj -AllowFailure)) {
             if ($exitCode -eq 0) { $exitCode = 1 }
         } else {
-            if (Test-NightlyCompleteGreenPredicate -State $stateObj) {
+            # D-2: the state itself names the kind of credit it earns. Master green is the
+            # only thing that ever reaches <StateRoot>\last-complete-green.json; RC green
+            # lands in the candidate's own store and never touches master readiness.
+            $verdict = Get-ReleaseGateCreditVerdict -State $stateObj
+            $creditKind = [string]$verdict.CreditKind
+            $result.CreditKind = $creditKind
+            $stateObj.creditKind = $creditKind
+            if ($creditKind -eq 'master-scheduled') {
                 Write-NightlyRunState -Path $paths.LastGreen -State $stateObj -AllowFailure | Out-Null
+            } elseif ($creditKind -eq 'rc-release') {
+                $credit = Get-ReleaseGateStatePaths -CreditKind $creditKind -StateRoot $StateRoot -ReleaseRoot $ReleaseRoot -CandidateId $CandidateId
+                New-Item -ItemType Directory -Path $credit.Root -Force | Out-Null
+                Write-NightlyRunState -Path $credit.GreenPath -State $stateObj -AllowFailure | Out-Null
+                $result.GreenPath = $credit.GreenPath
             }
         }
     } catch {
@@ -456,6 +592,9 @@ function Invoke-AntiphonNightlyRunCore {
         $stateObj.error = $_.Exception.Message
         [void](Write-NightlyRunState -Path $paths.LastAttempt -State $stateObj -AllowFailure)
     } finally {
+        # D-4: released only after this run's owned children are accounted for, which the
+        # tests hop guarantees by waiting for its child before returning.
+        Exit-ReleaseGateNativeLock -CoordinationRoot $CoordinationRoot -RunId $RunId
         Exit-NightlyExclusiveLock -StateRoot $StateRoot -RunId $RunId
     }
 
@@ -485,6 +624,9 @@ function ConvertTo-NightlyResultRecord {
         sha = ''
         ref = ''
         trigger = ''
+        profile = ''
+        candidateId = ''
+        creditKind = ''
         localDueDate = ''
         policyHash = ''
         coverageComplete = $false
@@ -508,6 +650,9 @@ function ConvertTo-NightlyResultRecord {
         $record.sha = [string]$state.sha
         $record.ref = [string]$state.ref
         $record.trigger = [string]$state.trigger
+        $record.profile = [string]$state.profile
+        $record.candidateId = [string]$state.candidateId
+        $record.creditKind = [string]$state.creditKind
         $record.localDueDate = [string]$state.localDueDate
         $record.policyHash = [string]$state.policyHash
         $record.coverageComplete = [bool]$state.coverageComplete
@@ -520,6 +665,9 @@ function ConvertTo-NightlyResultRecord {
     $record.sha = [string]$Result.Sha
     $record.ref = [string]$Result.ref
     $record.trigger = [string]$Result.trigger
+    $record.profile = [string]$Result.profile
+    $record.candidateId = [string]$Result.CandidateId
+    $record.creditKind = [string]$Result.CreditKind
     $record.localDueDate = [string]$Result.LocalDueDate
     $record.policyHash = [string]$Result.PolicyHash
     $record.coverageComplete = [bool]$Result.coverageComplete
@@ -542,6 +690,11 @@ function Invoke-AntiphonNightlyRun {
         [string]$StateRoot = '',
         [string]$SeamsPath = '',
         [string]$Trigger = 'scheduled',
+        [string]$Profile = 'nightly',
+        [string]$ExpectedSha = '',
+        [string]$CandidateId = '',
+        [string]$ReleaseRoot = '',
+        [string]$CoordinationRoot = '',
         [string]$RunId = '',
         [string]$ContinueRunId = '',
         [int]$ContinueParentPid = 0,

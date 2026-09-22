@@ -505,8 +505,18 @@ function Test-NightlyClassAssigned {
 }
 
 function Test-NightlyDiscoveryExcluded {
-    param($Node)
+    <#
+      CARD-0599 D-5: in the default nightly lane OptIn/Explicit still excludes, which is
+      what -ProfileExclusions absent means. When a profile supplies its dispositions, the
+      raw category is preserved on the node but no longer decides: only a declared
+      class (or class+method) row excludes. An unclassified node therefore stays required
+      and fails the census rather than silently inheriting manual status.
+    #>
+    param($Node, $ProfileExclusions = $null, [switch]$ProfileAware)
     if ($null -eq $Node) { return $false }
+    if ($ProfileAware) {
+        return (Test-NightlyProfileNodeExcluded -Node $Node -Exclusions $ProfileExclusions)
+    }
     if ([bool]$Node.Excluded) { return $true }
     foreach ($c in @($Node.Categories)) {
         if ([string]$c -eq 'OptIn' -or [string]$c -eq 'Explicit') { return $true }
@@ -514,12 +524,88 @@ function Test-NightlyDiscoveryExcluded {
     return $false
 }
 
+function Get-NightlyDiscoveryDisposition {
+    <#
+      D-5: every discovery UID must resolve to exactly one disposition. Returns
+      'required' or 'excluded' carrying the declaring policy row's reason and owner, so
+      the manifest can record why a node was left out and under whose ownership.
+    #>
+    param($Node, $ProfileExclusions = $null, [switch]$ProfileAware)
+    if (-not $ProfileAware) {
+        if (Test-NightlyDiscoveryExcluded -Node $Node) {
+            return [pscustomobject]@{ Disposition = 'excluded'; Reason = 'category-optin'; Owner = 'nightly-default'; Uid = [string]$Node.Uid }
+        }
+        return [pscustomobject]@{ Disposition = 'required'; Reason = ''; Owner = ''; Uid = [string]$Node.Uid }
+    }
+    $simple = Get-NightlyClassNameFromIdentity -ClassName ([string]$Node.ClassName)
+    if ([string]::IsNullOrWhiteSpace($simple)) { $simple = [string]$Node.Type }
+    foreach ($row in @($ProfileExclusions)) {
+        $cls = [string]$row.Class
+        if ([string]::IsNullOrWhiteSpace($cls)) { continue }
+        $match = [string]::Equals($cls, $simple, [StringComparison]::OrdinalIgnoreCase) -or
+                 [string]::Equals($cls, [string]$Node.ClassName, [StringComparison]::OrdinalIgnoreCase)
+        if (-not $match) { continue }
+        $methods = @($row.Methods)
+        if ($methods.Count -eq 0) {
+            return [pscustomobject]@{ Disposition = 'excluded'; Reason = [string]$row.Reason; Owner = [string]$row.Owner; Uid = [string]$Node.Uid }
+        }
+        foreach ($m in $methods) {
+            if ([string]::Equals([string]$m, [string]$Node.Method, [StringComparison]::OrdinalIgnoreCase)) {
+                return [pscustomobject]@{ Disposition = 'excluded'; Reason = [string]$row.Reason; Owner = [string]$row.Owner; Uid = [string]$Node.Uid }
+            }
+        }
+    }
+    return [pscustomobject]@{ Disposition = 'required'; Reason = ''; Owner = ''; Uid = [string]$Node.Uid }
+}
+
+function Get-NightlyDiscoveryCensus {
+    <#
+      D-5: the expanded-UID manifest. Every discovered node gets exactly one
+      disposition; duplicates and unclassified nodes are reported, never dropped.
+    #>
+    param([object[]]$DiscoveryNodes, $ProfileExclusions = $null, [switch]$ProfileAware)
+    $required = @()
+    $excluded = @()
+    $seen = @{}
+    $duplicates = @()
+    foreach ($n in @($DiscoveryNodes)) {
+        $uid = [string]$n.Uid
+        if ([string]::IsNullOrWhiteSpace($uid)) { continue }
+        if ($seen.ContainsKey($uid)) { $duplicates += $uid; continue }
+        $seen[$uid] = $true
+        $d = Get-NightlyDiscoveryDisposition -Node $n -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware
+        $row = [ordered]@{
+            uid = $uid
+            class = [string]$n.ClassName
+            method = [string]$n.Method
+            categories = @($n.Categories)
+            disposition = $d.Disposition
+            reason = $d.Reason
+            owner = $d.Owner
+        }
+        if ($d.Disposition -eq 'required') { $required += $row } else { $excluded += $row }
+    }
+    $digest = Get-NightlySha256Text -Text (ConvertTo-NightlyCanonicalJson -Object ([ordered]@{
+        required = @(@($required) | ForEach-Object { $_.uid } | Sort-Object)
+        excluded = @(@($excluded) | ForEach-Object { $_.uid } | Sort-Object)
+    }))
+    return [pscustomobject]@{
+        Ok = ($duplicates.Count -eq 0 -and $required.Count -gt 0)
+        Required = $required
+        Excluded = $excluded
+        Duplicates = $duplicates
+        Digest = $digest
+        RequiredCount = $required.Count
+        ExcludedCount = $excluded.Count
+    }
+}
+
 function Get-NightlyRequiredDiscoveryUids {
-    param([object[]]$DiscoveryNodes, [string[]]$RequiredClasses = @())
+    param([object[]]$DiscoveryNodes, [string[]]$RequiredClasses = @(), $ProfileExclusions = $null, [switch]$ProfileAware)
     $uids = @()
     $seen = @{}
     foreach ($n in @($DiscoveryNodes)) {
-        if (Test-NightlyDiscoveryExcluded -Node $n) { continue }
+        if (Test-NightlyDiscoveryExcluded -Node $n -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware) { continue }
         if (-not (Test-NightlyClassAssigned -ClassName ([string]$n.ClassName) -TypeName ([string]$n.Type) -RequiredClasses $RequiredClasses)) {
             continue
         }
@@ -763,7 +849,9 @@ function ConvertTo-NightlyNativeSuiteVerdict {
         [string]$ExpectedRef,
         [string]$PolicyHash,
         [string]$ExpectedPolicyHash,
-        [string[]]$RequiredClasses = @()
+        [string[]]$RequiredClasses = @(),
+        $ProfileExclusions = $null,
+        [switch]$ProfileAware
     )
     $reasons = @()
     if ([string]::IsNullOrWhiteSpace($TrxPath) -or -not (Test-Path -LiteralPath $TrxPath)) {
@@ -845,7 +933,18 @@ function ConvertTo-NightlyNativeSuiteVerdict {
     if (-not $discoveryPresent) {
         $coverageComplete = $false
     } else {
-        $requiredUids = @(Get-NightlyRequiredDiscoveryUids -DiscoveryNodes $discoveryNodes -RequiredClasses $RequiredClasses)
+        $requiredUids = @(Get-NightlyRequiredDiscoveryUids -DiscoveryNodes $discoveryNodes -RequiredClasses $RequiredClasses -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware)
+        $censusCheck = Get-NightlyDiscoveryCensus -DiscoveryNodes $discoveryNodes -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware
+        if ($censusCheck.Duplicates.Count -gt 0) {
+            $coverageComplete = $false
+            $reasons += ('duplicate-discovery-uid {0}' -f ($censusCheck.Duplicates -join ','))
+        }
+        if ($ProfileAware -and $censusCheck.RequiredCount -eq 0) {
+            # D-5: a profile lane never reports green on an empty required set.
+            $coverageComplete = $false
+            $testsPassed = $false
+            $reasons += 'zero-required-uid'
+        }
         if (-not $execPresent) {
             $coverageComplete = $false
         } else {
@@ -871,7 +970,7 @@ function ConvertTo-NightlyNativeSuiteVerdict {
         } else {
             $seenClass = @{}
             foreach ($n in $discoveryNodes) {
-                if (Test-NightlyDiscoveryExcluded -Node $n) { continue }
+                if (Test-NightlyDiscoveryExcluded -Node $n -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware) { continue }
                 $t = [string]$n.Type
                 if ([string]::IsNullOrWhiteSpace($t)) { $t = Get-NightlyClassNameFromIdentity -ClassName ([string]$n.ClassName) }
                 if ([string]::IsNullOrWhiteSpace($t) -or $seenClass.ContainsKey($t)) { continue }
@@ -888,6 +987,10 @@ function ConvertTo-NightlyNativeSuiteVerdict {
             }
         }
     }
+    $censusOut = $null
+    if ($discoveryPresent) {
+        $censusOut = Get-NightlyDiscoveryCensus -DiscoveryNodes $discoveryNodes -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware
+    }
     return [pscustomobject]@{
         coverageComplete = $coverageComplete
         testsPassed = $testsPassed
@@ -895,5 +998,6 @@ function ConvertTo-NightlyNativeSuiteVerdict {
         rows = $rows
         terminalNodes = $terminalNodes
         discoveryNodes = $discoveryNodes
+        census = $censusOut
     }
 }

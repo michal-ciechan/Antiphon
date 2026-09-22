@@ -5,7 +5,63 @@
 if ($script:AntiphonNightlyTestsImplLoaded) { return }
 $script:AntiphonNightlyTestsImplLoaded = $true
 
+# CARD-0599 D-6: kept as the pre-existing nightly inventory. Native ownership is now
+# decided from the suite definition itself (Test-NightlySuiteIsNative) so a profile can
+# add e2e without a second hard-coded list drifting out of step.
 $script:NightlyNativeGroups = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging')
+
+function Test-NightlySuiteIsNative {
+    <#
+      A native suite is one that runs a built TUnit assembly: it owns its process tree,
+      serialises against every other native suite, and must produce TRX plus discovery
+      and execution diagnostics. Project + assembly is the definition; the legacy id
+      list is only a fallback for a suite that predates those fields.
+    #>
+    param($Suite, [string]$SuiteId)
+    if ($null -ne $Suite) {
+        $project = [string]$Suite.project
+        $assembly = [string]$Suite.assembly
+        if (-not [string]::IsNullOrWhiteSpace($project) -and -not [string]::IsNullOrWhiteSpace($assembly)) { return $true }
+    }
+    return ($script:NightlyNativeGroups -contains $SuiteId)
+}
+
+function Test-NightlyE2EPrerequisites {
+    <#
+      D-6: before any E2E chunk runs, the matching Playwright Chromium must be installed
+      through the generated playwright.ps1 and must actually launch headlessly. A missing
+      browser is red/incomplete, never a skip. Returns every probe's real outcome.
+    #>
+    param(
+        [string]$RepoRoot,
+        [string]$LogRoot,
+        [hashtable]$Environment = $null,
+        [string]$BundlePath = ''
+    )
+    if ($script:NightlySeams -and $script:NightlySeams.E2EPrerequisites) {
+        return $script:NightlySeams.E2EPrerequisites.Invoke($RepoRoot, $LogRoot, $Environment, $BundlePath)
+    }
+    $rows = @()
+    $ok = $true
+    $installer = Join-Path $RepoRoot (Join-Path 'tests' (Join-Path 'Antiphon.E2E' (Join-Path 'bin' (Join-Path 'Debug' (Join-Path 'net9.0' 'playwright.ps1')))))
+    if (-not (Test-Path -LiteralPath $installer)) {
+        $rows += [ordered]@{ name = 'playwright-script'; exitCode = 1; detail = ('missing {0}' -f $installer) }
+        $ok = $false
+    } else {
+        $install = Invoke-NightlyOwnedProcess -FilePath 'pwsh' `
+            -ArgumentList @('-NoProfile', '-NonInteractive', '-File', $installer, 'install', 'chromium') `
+            -WorkingDirectory $RepoRoot -TimeoutMilliseconds 900000 -Environment $Environment `
+            -LogPath (Join-Path $LogRoot 'e2e-playwright-install.log')
+        $rows += [ordered]@{ name = 'playwright-install'; exitCode = [int]$install.ExitCode; detail = '' }
+        if ([int]$install.ExitCode -ne 0) { $ok = $false }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($BundlePath)) {
+        $present = Test-Path -LiteralPath $BundlePath
+        $rows += [ordered]@{ name = 'client-bundle'; exitCode = $(if ($present) { 0 } else { 1 }); detail = $BundlePath }
+        if (-not $present) { $ok = $false }
+    }
+    return [pscustomobject]@{ Ok = $ok; Rows = $rows }
+}
 
 function Get-NightlyWatchdogMs {
     param($PolicyObject, [string]$Key, [int]$Fallback)
@@ -128,6 +184,8 @@ function Invoke-AntiphonNightlyTests {
         [string]$Sha = '',
         [string]$GitRef = 'origin/master',
         [string]$Trigger = 'scheduled',
+        [string]$Profile = 'nightly',
+        [string]$ExpectedSha = '',
         [string]$RunId = '',
         [string]$SeamsPath = '',
         [string]$PolicyPath = '',
@@ -136,6 +194,8 @@ function Invoke-AntiphonNightlyTests {
     )
 
     Import-NightlySeams -SeamsPath $SeamsPath
+    if ([string]::IsNullOrWhiteSpace($Profile)) { $Profile = 'nightly' }
+    $Profile = $Profile.Trim().ToLowerInvariant()
     if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
         $RepoRoot = Split-Path -Parent $PSScriptRoot
         if ((Split-Path -Leaf $RepoRoot) -eq 'lib') { $RepoRoot = Split-Path -Parent $RepoRoot }
@@ -179,7 +239,30 @@ function Invoke-AntiphonNightlyTests {
         }
     }
     $policyHash = $policy.Hash
-    $requiredSuites = @(Get-NightlyRequiredSuiteUniverse -PolicyObject $policy.Object)
+    # D-5: the selected profile is authoritative for required suites; defaultSuites stays
+    # the compatible nightly answer. An unknown profile, or rc asked of a v1 policy, is a
+    # hard refusal rather than a silent fall back to the nightly seven.
+    try {
+        $profileRow = Get-NightlyPolicyProfile -PolicyObject $policy.Object -Profile $Profile
+        $requiredSuites = @(Get-NightlyProfileRequiredSuites -PolicyObject $policy.Object -Profile $Profile)
+        $profileExclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile $Profile -SuiteId '')
+    } catch {
+        Write-Error $_.Exception.Message
+        return [pscustomobject]@{
+            ExitCode = 2
+            coverageComplete = $false
+            testsPassed = $false
+            Error = $_.Exception.Message
+            Profile = $Profile
+        }
+    }
+    $profileAware = ($Profile -ne 'nightly')
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedSha) -and -not [string]::IsNullOrWhiteSpace($Sha) -and
+        -not [string]::Equals($Sha, $ExpectedSha, [StringComparison]::OrdinalIgnoreCase)) {
+        $msg = ('expected-sha-mismatch sha={0} expected={1}' -f $Sha, $ExpectedSha)
+        Write-Error $msg
+        return [pscustomobject]@{ ExitCode = 2; coverageComplete = $false; testsPassed = $false; Error = $msg; Profile = $Profile }
+    }
     $universe = Test-NightlyPolicyProjectUniverse -RepoRoot $RepoRoot -PolicyObject $policy.Object
     if (-not $universe.Ok) {
         Write-Error $universe.Message
@@ -194,7 +277,7 @@ function Invoke-AntiphonNightlyTests {
 
     try {
         if ($null -eq $Suites -or @($Suites).Count -eq 0) {
-            $selectedSuites = @(Resolve-NightlySelectedSuites -PolicyObject $policy.Object -Suites @())
+            $selectedSuites = @($requiredSuites)
         } else {
             $joined = ($Suites | ForEach-Object { [string]$_ }) -join ','
             if ($joined -match '^[\s,]*$') { throw 'empty suite selection' }
@@ -307,9 +390,11 @@ function Invoke-AntiphonNightlyTests {
                 $suite = $suiteMap[$suiteId]
                 $label = [string]$suite.name
                 if ([string]::IsNullOrWhiteSpace($label)) { $label = $suiteId }
-                $isNative = $script:NightlyNativeGroups -contains $suiteId
+                $isNative = Test-NightlySuiteIsNative -Suite $suite -SuiteId $suiteId
                 $mode = [string]$suite.mode
-                if ($mode -eq 'manual') {
+                # D-6: 'manual' keeps a suite out of the nightly default lane. A suite the
+                # selected profile explicitly requires runs; it is never skipped as manual.
+                if ($mode -eq 'manual' -and ($requiredSuites -notcontains $suiteId)) {
                     $suiteResults += [ordered]@{
                         id = $suiteId; name = $label; skipped = $true; result = 'manual'; exitCode = 0
                         coverageComplete = $false; detail = 'manual exclusion'
@@ -334,6 +419,26 @@ function Invoke-AntiphonNightlyTests {
                     }
                 } else {
                     $chunks = @([pscustomobject]@{ id = 'all'; classes = @() })
+                }
+
+                if ($suiteId -eq 'e2e') {
+                    $bundle = Join-Path $RepoRoot (Join-Path 'client' (Join-Path 'dist' 'index.html'))
+                    $prereqEnv = Get-NightlySafeChildEnvironment -PolicyObject $policy.Object -SuiteId $suiteId
+                    $prereq = Test-NightlyE2EPrerequisites -RepoRoot $RepoRoot -LogRoot $LogRoot -Environment $prereqEnv -BundlePath $bundle
+                    $preflight.e2e = @($prereq.Rows)
+                    if (-not $prereq.Ok) {
+                        # D-6: a missing browser or stale bundle is red/incomplete, not a skip.
+                        $coverageComplete = $false
+                        $testsPassed = $false
+                        $overallFailed = $true
+                        Set-NightlyOutcome PREFLIGHT
+                        $reasons += 'e2e-prerequisite-failed'
+                        $suiteResults += [ordered]@{
+                            id = $suiteId; name = $label; skipped = $false; result = 'FAIL'; exitCode = 1
+                            coverageComplete = $false; detail = 'e2e-prerequisite-failed'
+                        }
+                        continue
+                    }
                 }
 
                 $chunkIndex = 0
@@ -447,7 +552,8 @@ function Invoke-AntiphonNightlyTests {
                             -ExecutionDiagnosticPath $execDiagPath `
                             -RunDirectory $LogRoot -NotBeforeUtc $startedAt -ProcessExit ([int]$run.ExitCode) `
                             -Sha $Sha -ExpectedSha $Sha -GitRef $GitRef -ExpectedRef $GitRef `
-                            -PolicyHash $policyHash -ExpectedPolicyHash $policyHash -RequiredClasses $required
+                            -PolicyHash $policyHash -ExpectedPolicyHash $policyHash -RequiredClasses $required `
+                            -ProfileExclusions $profileExclusions -ProfileAware:$profileAware
                         if ($nativeVerdict.discoveryNodes -and @($nativeVerdict.discoveryNodes).Count -gt 0 -and $suiteDiscoveryNodes.Count -eq 0) {
                             $suiteDiscoveryNodes = @($nativeVerdict.discoveryNodes)
                         }
@@ -456,6 +562,14 @@ function Invoke-AntiphonNightlyTests {
                         }
                         $row.trx = $trxPath
                         $row.evidenceReasons = @($nativeVerdict.reasons)
+                        if ($nativeVerdict.census) {
+                            # D-5: expanded-UID accounting is manifest evidence; record both
+                            # counts and the digest, plus every exclusion with its reason.
+                            $row.requiredUidCount = [int]$nativeVerdict.census.RequiredCount
+                            $row.excludedUidCount = [int]$nativeVerdict.census.ExcludedCount
+                            $row.censusDigest = [string]$nativeVerdict.census.Digest
+                            $row.exclusions = @($nativeVerdict.census.Excluded)
+                        }
                         if (-not [bool]$nativeVerdict.coverageComplete) {
                             $coverageComplete = $false
                             $row.coverageComplete = $false
@@ -494,7 +608,12 @@ function Invoke-AntiphonNightlyTests {
                     if ($run.TimedOut) { $coverageComplete = $false }
                 }
                 if ($isNative -and @($suiteDiscoveryNodes).Count -gt 0) {
-                    $union = Test-NightlySuiteUidUnion -DiscoveryNodes $suiteDiscoveryNodes -ChunkTerminalNodes $suiteTerminalNodes
+                    $unionNodes = @()
+                    foreach ($dn in @($suiteDiscoveryNodes)) {
+                        if (Test-NightlyDiscoveryExcluded -Node $dn -ProfileExclusions $profileExclusions -ProfileAware:$profileAware) { continue }
+                        $unionNodes += $dn
+                    }
+                    $union = Test-NightlySuiteUidUnion -DiscoveryNodes $unionNodes -ChunkTerminalNodes $suiteTerminalNodes
                     if (-not $union.Ok) {
                         $coverageComplete = $false
                         $overallFailed = $true
@@ -525,6 +644,9 @@ function Invoke-AntiphonNightlyTests {
         sha = $Sha
         gitRef = $GitRef
         trigger = $Trigger
+        profile = $Profile
+        expectedSha = $ExpectedSha
+        requiredSuites = $requiredSuites
         runId = $invocationId
         clone = $RepoRoot
         logDir = $LogRoot
@@ -550,6 +672,8 @@ function Invoke-AntiphonNightlyTests {
         ExitCode = $exit
         coverageComplete = $coverageComplete
         testsPassed = $testsPassed
+        Profile = $Profile
+        RequiredSuites = $requiredSuites
         SummaryPath = $summaryPath
         Selected = $selectedSuites
         NativeActiveMax = $nativeActiveMax

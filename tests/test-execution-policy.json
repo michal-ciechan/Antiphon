@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 1,
-  "policyHash": "bc2965a40854d743f4640be79a5408811caec13073c84be0e2dfc2066748a401",
+  "schemaVersion": 2,
+  "policyHash": "ba3c0d8edfb1badc0feb6245d635510b75bd1ef012dca931d9fdde93e83e896c",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -10,6 +10,484 @@
     "client",
     "scripts"
   ],
+  "profiles": {
+    "nightly": {
+      "requiredSuites": [
+        "antiphon",
+        "session-runner",
+        "pty-host",
+        "agents-pty",
+        "messaging",
+        "client",
+        "scripts"
+      ],
+      "description": "The seven unattended suites. E2E stays out; OptIn/Explicit still excludes.",
+      "exclusions": []
+    },
+    "rc": {
+      "requiredSuites": [
+        "antiphon",
+        "session-runner",
+        "pty-host",
+        "agents-pty",
+        "messaging",
+        "client",
+        "scripts",
+        "e2e"
+      ],
+      "description": "The full automated Windows profile: the seven nightly suites plus automated E2E. OptIn alone is not exclusion here; only the rows below are excluded, each with its reason and owner. Live provider, headed, distiller-approval, QEMU and Linux-only cases are named; nothing else may vanish from the census.",
+      "exclusions": [
+        {
+          "suite": "e2e",
+          "class": "DelegationPipelineE2ETests",
+          "reason": "real headed provider / distiller approval; owned by its canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "e2e",
+          "class": "DelegationSequencingE2ETests",
+          "reason": "real headed provider / distiller approval; owned by its canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "e2e",
+          "class": "OutputDistillationApplyCanaryTests",
+          "reason": "real headed provider / distiller approval; owned by its canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "Card0168InteractiveProbeTests",
+          "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "ClaudeAdapterIntegrationTests",
+          "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "ClaudeHerdrRealCliStubProxyCanaryTests",
+          "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "ClaudeRealCliStubProxyCanaryTests",
+          "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CodexAdapterIntegrationTests",
+          "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CodexBootWedgeProbeTests",
+          "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CodexCommandLengthSessionTests",
+          "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CodexHerdrRealCliStubProxyCanaryTests",
+          "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CodexRealCliStubProxyCanaryTests",
+          "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "GrokHerdrRealCliStubProxyCanaryTests",
+          "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "GrokRealCliStubProxyCanaryTests",
+          "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "SpecialistToolPolicyTests",
+          "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "GrokRulesAutoCompactionCalibrationTests",
+          "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "GrokRulesCompactionAcceptanceTests",
+          "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "GrokRulesDispatchAcceptanceTests",
+          "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "GrokRulesHerdrAcceptanceTests",
+          "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "GrokRulesLiveMappedDispatchTests",
+          "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "GrokRulesNativeReadWireTests",
+          "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "SlashCommandMenuReconciliationTests",
+          "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "ClaudeEffortPromptCanaryTests",
+          "methods": [
+            "Real_effort_picker_preserves_xhigh_and_reaches_an_empty_composer"
+          ],
+          "reason": "body invokes the live gates despite the class lacking OptIn metadata",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "TestDbFixtureLazyInitializationTests",
+          "methods": [
+            "Child_db_free_selection_touches_no_database",
+            "Child_mixed_consumers_initialize_once",
+            "Child_post_start_fault_is_terminal"
+          ],
+          "reason": "child-only case launched and asserted by its parent method",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "ClaudeAppendSystemPromptCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "ClaudeCompactionCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "ClaudeComposerCaptureProbeTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "ClaudeComposerRenderCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "ClaudeDangerousTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "ClaudeHeadedTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "ClaudeHookAdditionalContextCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "ClaudeInputProbeCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "ClaudeInteractionTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "ClaudeInterruptCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "ClaudeLocalCommandCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "ClaudeOverlayCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "ClaudePasteLossCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "ClaudeRemoteControlAtStartupCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "ClaudeRemoteControlMenuCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "ClaudeSignalCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "ClaudeSubmitConfirmCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "ClaudeSubmitContractLiveTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "ClaudeTrustPromptCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "ClaudeTuiModeTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "CodexCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "CodexComposerCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "CodexDoneDetectionCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "CodexMcpBootProbeTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "CodexOverlayCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "FakeVsRealClipParityTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "GrokCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "GrokNativeSessionCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "GrokQuestionPopupCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "GrokSignInCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "GrokSubmitWhileWorkingCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "GrokUsageOverlayCanaryTests",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "PtyInputLossExperiments",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "PtyPasteMarkerExperiments",
+          "reason": "headed or real-provider experiment owned by its own canary workflow",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "ClaudeVerifiedDeliveryTests",
+          "methods": [
+            "Evidence_appears_then_submit_completes_a_turn(claude,short)",
+            "Evidence_appears_then_submit_completes_a_turn(claude,hugeLine)",
+            "Evidence_appears_then_submit_completes_a_turn(claude,multiLine)",
+            "Evidence_appears_then_submit_completes_a_turn(claude,batch)"
+          ],
+          "reason": "live claude rows; the fakeclaude/short row stays required",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "OrchestratorWorkspaceLayoutCanaryTests",
+          "methods": [
+            "Claude_loads_parent_CLAUDE_md_from_a_nested_checkout",
+            "Claude_sibling_import_is_dropped_without_the_forward_slash_approval"
+          ],
+          "reason": "live Claude rows; the offline Codex/Grok rows stay required",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "Card0490NativeCustodyTests",
+          "reason": "QEMU/native placeholder control",
+          "owner": "CARD-0490"
+        },
+        {
+          "suite": "session-runner",
+          "class": "HerdrGrokNativeSessionLiveTests",
+          "reason": "live desktop session",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "session-runner",
+          "class": "HerdrLabelFollowLiveTests",
+          "reason": "live desktop session",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "session-runner",
+          "class": "HerdrNamedTabPlacementLiveTests",
+          "reason": "live desktop session",
+          "owner": "CARD-0599"
+        },
+        {
+          "suite": "session-runner",
+          "class": "LinuxPhoneHomeRunnerTests",
+          "reason": "Linux-only qualification; this profile is the automated Windows lane",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "pty-host",
+          "class": "LinuxPtyHostLauncherTests",
+          "reason": "Linux-only qualification; this profile is the automated Windows lane",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "pty-host",
+          "class": "ShadowCopyStoreTests",
+          "methods": [
+            "Linux_copy_preserves_execute_mode"
+          ],
+          "reason": "Linux-only qualification; this profile is the automated Windows lane",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "pty-host",
+          "class": "Card0490NativeHandoffTests",
+          "reason": "QEMU/native placeholder control",
+          "owner": "CARD-0490"
+        },
+        {
+          "suite": "pty-host",
+          "class": "Card0490NativeGuestGuardTests",
+          "reason": "QEMU/native placeholder control",
+          "owner": "CARD-0490"
+        },
+        {
+          "suite": "pty-host",
+          "class": "Card0490NativeExecutionTests",
+          "methods": [
+            "Input_reparse_is_rejected_before_write",
+            "Evidence_reparse_is_rejected_before_write",
+            "Launch_projection_is_direct_and_inherited",
+            "Missing_final_frame_invalidates_complete_prefix",
+            "Canceled_run_waits_for_owned_join"
+          ],
+          "reason": "QEMU/native placeholder control",
+          "owner": "CARD-0490"
+        }
+      ]
+    }
+  },
   "projects": [
     "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
     "tests/Antiphon.E2E/Antiphon.E2E.csproj",
@@ -65,7 +543,10 @@
       "command": "scripts/test-client.ps1",
       "mode": "unattended",
       "processGroup": "client",
-      "requires": ["client-build", "client-lint"]
+      "requires": [
+        "client-build",
+        "client-lint"
+      ]
     },
     "scripts": {
       "name": "scripts",
@@ -94,20 +575,90 @@
     "set": {}
   },
   "scriptCensus": [
-    { "id": "test-apphost-lock-age", "path": "scripts/test-apphost-lock-age.ps1", "disposition": "unattended", "wildcard": false },
-    { "id": "test-apphost-main-worktree-guard", "path": "scripts/test-apphost-main-worktree-guard.ps1", "disposition": "unattended", "wildcard": false },
-    { "id": "test-apphost-probe-class", "path": "scripts/test-apphost-probe-class.ps1", "disposition": "unattended", "wildcard": false },
-    { "id": "test-cleanup-claude-sessions", "path": "scripts/test-cleanup-claude-sessions.ps1", "disposition": "unattended", "wildcard": false },
-    { "id": "test-cleanup-codex-test-residue", "path": "scripts/test-cleanup-codex-test-residue.ps1", "disposition": "unattended", "wildcard": false },
-    { "id": "test-client", "path": "scripts/test-client.ps1", "disposition": "wrapper", "wildcard": false },
-    { "id": "test-client-mode", "path": "scripts/test-client-mode.ps1", "disposition": "unattended", "wildcard": false },
-    { "id": "test-deploy-am-service", "path": "scripts/test-deploy-am-service.ps1", "disposition": "unattended", "wildcard": false },
-    { "id": "test-deploy-nightly-watchdog", "path": "scripts/test-deploy-nightly-watchdog.ps1", "disposition": "unattended", "wildcard": false },
-    { "id": "test-duration-tripwire", "path": "scripts/test-duration-tripwire.ps1", "disposition": "argument-consumer", "wildcard": false },
-    { "id": "test-hooks", "path": "scripts/test-hooks.ps1", "disposition": "unattended", "wildcard": false },
-    { "id": "test-nightly-report", "path": "scripts/test-nightly-report.ps1", "disposition": "unattended", "wildcard": false },
-    { "id": "test-reap-zombie-agents", "path": "scripts/test-reap-zombie-agents.ps1", "disposition": "unattended", "wildcard": false },
-    { "id": "test-stage-value-report", "path": "scripts/test-stage-value-report.ps1", "disposition": "unattended", "wildcard": false }
+    {
+      "id": "test-apphost-lock-age",
+      "path": "scripts/test-apphost-lock-age.ps1",
+      "disposition": "unattended",
+      "wildcard": false
+    },
+    {
+      "id": "test-apphost-main-worktree-guard",
+      "path": "scripts/test-apphost-main-worktree-guard.ps1",
+      "disposition": "unattended",
+      "wildcard": false
+    },
+    {
+      "id": "test-apphost-probe-class",
+      "path": "scripts/test-apphost-probe-class.ps1",
+      "disposition": "unattended",
+      "wildcard": false
+    },
+    {
+      "id": "test-cleanup-claude-sessions",
+      "path": "scripts/test-cleanup-claude-sessions.ps1",
+      "disposition": "unattended",
+      "wildcard": false
+    },
+    {
+      "id": "test-cleanup-codex-test-residue",
+      "path": "scripts/test-cleanup-codex-test-residue.ps1",
+      "disposition": "unattended",
+      "wildcard": false
+    },
+    {
+      "id": "test-client",
+      "path": "scripts/test-client.ps1",
+      "disposition": "wrapper",
+      "wildcard": false
+    },
+    {
+      "id": "test-client-mode",
+      "path": "scripts/test-client-mode.ps1",
+      "disposition": "unattended",
+      "wildcard": false
+    },
+    {
+      "id": "test-deploy-am-service",
+      "path": "scripts/test-deploy-am-service.ps1",
+      "disposition": "unattended",
+      "wildcard": false
+    },
+    {
+      "id": "test-deploy-nightly-watchdog",
+      "path": "scripts/test-deploy-nightly-watchdog.ps1",
+      "disposition": "unattended",
+      "wildcard": false
+    },
+    {
+      "id": "test-duration-tripwire",
+      "path": "scripts/test-duration-tripwire.ps1",
+      "disposition": "argument-consumer",
+      "wildcard": false
+    },
+    {
+      "id": "test-hooks",
+      "path": "scripts/test-hooks.ps1",
+      "disposition": "unattended",
+      "wildcard": false
+    },
+    {
+      "id": "test-nightly-report",
+      "path": "scripts/test-nightly-report.ps1",
+      "disposition": "unattended",
+      "wildcard": false
+    },
+    {
+      "id": "test-reap-zombie-agents",
+      "path": "scripts/test-reap-zombie-agents.ps1",
+      "disposition": "unattended",
+      "wildcard": false
+    },
+    {
+      "id": "test-stage-value-report",
+      "path": "scripts/test-stage-value-report.ps1",
+      "disposition": "unattended",
+      "wildcard": false
+    }
   ],
   "watchdogs": {
     "npm-ci": 600000,

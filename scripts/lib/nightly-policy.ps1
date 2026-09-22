@@ -5,7 +5,11 @@
 if ($script:AntiphonNightlyPolicyLoaded) { return }
 $script:AntiphonNightlyPolicyLoaded = $true
 
-$script:NightlyPolicySchemaVersion = 1
+# CARD-0599 D-5: schema v2 adds profiles.nightly / profiles.rc. v1 stays readable so an
+# older checked-out policy still loads; only v2 can name an rc profile.
+$script:NightlyPolicySchemaVersion = 2
+$script:NightlyPolicySupportedSchemaVersions = @(1, 2)
+$script:NightlyPolicyProfiles = @('nightly', 'rc')
 
 function Get-NightlyRepoRootFromScript {
     param([string]$StartPath)
@@ -78,7 +82,7 @@ function Read-NightlyExecutionPolicy {
     $obj = $raw | ConvertFrom-Json
     $version = 0
     if ($obj.schemaVersion) { $version = [int]$obj.schemaVersion }
-    if ($version -ne $script:NightlyPolicySchemaVersion) {
+    if ($script:NightlyPolicySupportedSchemaVersions -notcontains $version) {
         throw ('unsupported policy schema {0}' -f $version)
     }
     $computed = Get-NightlyPolicyHash -Object $obj
@@ -292,6 +296,136 @@ function Test-NightlyCredentialLeak {
     foreach ($s in @($Sentinels)) {
         if ([string]::IsNullOrWhiteSpace($s)) { continue }
         if ($Text.Contains($s)) { return $true }
+    }
+    return $false
+}
+
+# ------------------------------------------------- CARD-0599 D-5: profiles ---
+
+function Get-NightlyPolicyProfile {
+    <#
+      The selected profile is authoritative for required suites. An unknown profile
+      name, or an rc profile asked of a schema-v1 policy, fails closed.
+    #>
+    param($PolicyObject, [string]$Profile = 'nightly')
+    $name = ([string]$Profile).Trim().ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($name)) { $name = 'nightly' }
+    if ($script:NightlyPolicyProfiles -notcontains $name) {
+        throw ('unknown profile {0}' -f $name)
+    }
+    $profiles = $null
+    if ($PolicyObject -and $PolicyObject.PSObject.Properties.Name -contains 'profiles') { $profiles = $PolicyObject.profiles }
+    if ($null -eq $profiles) {
+        if ($name -eq 'nightly') {
+            # v1 compatibility: defaultSuites is the nightly profile.
+            return [pscustomobject]@{
+                Name = 'nightly'
+                RequiredSuites = @(Get-NightlyRequiredSuiteUniverse -PolicyObject $PolicyObject)
+                Source = 'defaultSuites'
+                Exclusions = @()
+                Object = $null
+            }
+        }
+        throw ('profile {0} requires policy schema 2' -f $name)
+    }
+    $row = $profiles.$name
+    if ($null -eq $row) { throw ('profile {0} is not defined' -f $name) }
+    $required = @()
+    foreach ($id in @($row.requiredSuites)) {
+        $s = [string]$id
+        if (-not [string]::IsNullOrWhiteSpace($s)) { $required += $s }
+    }
+    if ($required.Count -eq 0) { throw ('profile {0} names no required suites' -f $name) }
+    return [pscustomobject]@{
+        Name = $name
+        RequiredSuites = $required
+        Source = 'profiles'
+        Exclusions = @($row.exclusions)
+        Object = $row
+    }
+}
+
+function Get-NightlyProfileRequiredSuites {
+    param($PolicyObject, [string]$Profile = 'nightly')
+    $p = Get-NightlyPolicyProfile -PolicyObject $PolicyObject -Profile $Profile
+    $map = @{}
+    if ($PolicyObject) { $map = Get-NightlySuiteMap -PolicyObject $PolicyObject }
+    $out = @()
+    foreach ($id in @($p.RequiredSuites)) {
+        if (-not $map.ContainsKey($id)) { throw ('profile {0} requires unknown suite {1}' -f $p.Name, $id) }
+        $out += $id
+    }
+    return $out
+}
+
+function Test-NightlyProfileSuiteRunnable {
+    <#
+      D-6: 'manual' keeps a suite out of the default nightly lane, but a suite the
+      selected profile requires is runnable in that profile. OptIn/manual is never
+      silently honoured against an explicit profile requirement.
+    #>
+    param($PolicyObject, [string]$Profile, [string]$SuiteId)
+    $required = @(Get-NightlyProfileRequiredSuites -PolicyObject $PolicyObject -Profile $Profile)
+    if ($required -contains $SuiteId) { return $true }
+    $map = Get-NightlySuiteMap -PolicyObject $PolicyObject
+    if (-not $map.ContainsKey($SuiteId)) { return $false }
+    return ([string]$map[$SuiteId].mode -ne 'manual')
+}
+
+function Get-NightlyProfileExclusions {
+    <#
+      Returns the profile's declared class/method exclusions for one suite. Each row
+      carries its own reason and owner; a row without both is rejected so an
+      exclusion can never be created silently.
+    #>
+    param($PolicyObject, [string]$Profile, [string]$SuiteId)
+    $p = Get-NightlyPolicyProfile -PolicyObject $PolicyObject -Profile $Profile
+    $rows = @()
+    foreach ($row in @($p.Exclusions)) {
+        if ($null -eq $row) { continue }
+        if (-not [string]::IsNullOrWhiteSpace($SuiteId) -and [string]$row.suite -ne $SuiteId) { continue }
+        $reason = [string]$row.reason
+        $owner = [string]$row.owner
+        if ([string]::IsNullOrWhiteSpace($reason) -or [string]::IsNullOrWhiteSpace($owner)) {
+            throw ('profile {0} exclusion for {1} needs reason and owner' -f $p.Name, ([string]$row.class))
+        }
+        $methods = @()
+        foreach ($m in @($row.methods)) {
+            $s = [string]$m
+            if (-not [string]::IsNullOrWhiteSpace($s)) { $methods += $s }
+        }
+        $rows += [pscustomobject]@{
+            Suite = [string]$row.suite
+            Class = [string]$row.class
+            Methods = $methods
+            Reason = $reason
+            Owner = $owner
+        }
+    }
+    return $rows
+}
+
+function Test-NightlyProfileNodeExcluded {
+    <#
+      D-5: in a profile lane, OptIn alone is NOT exclusion. Only a declared
+      class (or class+method) row excludes a discovery node. Raw categories are
+      preserved on the node and are reported, not consumed, here.
+    #>
+    param($Node, $Exclusions)
+    if ($null -eq $Node) { return $false }
+    $simple = Get-NightlyClassNameFromIdentity -ClassName ([string]$Node.ClassName)
+    if ([string]::IsNullOrWhiteSpace($simple)) { $simple = [string]$Node.Type }
+    foreach ($row in @($Exclusions)) {
+        $cls = [string]$row.Class
+        if ([string]::IsNullOrWhiteSpace($cls)) { continue }
+        $match = [string]::Equals($cls, $simple, [StringComparison]::OrdinalIgnoreCase) -or
+                 [string]::Equals($cls, [string]$Node.ClassName, [StringComparison]::OrdinalIgnoreCase)
+        if (-not $match) { continue }
+        $methods = @($row.Methods)
+        if ($methods.Count -eq 0) { return $true }
+        foreach ($m in $methods) {
+            if ([string]::Equals([string]$m, [string]$Node.Method, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+        }
     }
     return $false
 }

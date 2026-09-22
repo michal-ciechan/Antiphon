@@ -44,6 +44,25 @@
 
 .PARAMETER SeamsPath
     Optional injectable seams script for fixtures. Never used by the schedule.
+
+.PARAMETER Profile
+    CARD-0599 D-5: nightly (default, the seven existing suites) or rc (those seven
+    plus automated E2E). The selected profile is authoritative for required suites.
+
+.PARAMETER ExpectedSha
+    CARD-0599 D-3: the candidate's pinned full SHA. Required with -Profile rc; a
+    checkout HEAD that differs refuses rather than retesting under the old identity.
+
+.PARAMETER CandidateId
+    RC candidate identity (rc-YYYYMMDDTHHMMSSZ). Derived from -Ref when omitted.
+
+.PARAMETER ReleaseRoot
+    Producer-owned release state. Default C:\Antiphon\releases. RC green is written
+    under <ReleaseRoot>\candidates\<candidate-id>, never to the master state root.
+
+.PARAMETER CoordinationRoot
+    CARD-0599 D-4: root of the shared native-run lock both lanes acquire.
+    Default C:\Antiphon\verification. Tests inject a private root.
 #>
 param(
     [string[]]$Suites,
@@ -56,6 +75,11 @@ param(
     [string]$StateRoot = 'C:\Antiphon\nightly',
     [string]$SeamsPath = '',
     [string]$Trigger = 'scheduled',
+    [string]$Profile = 'nightly',
+    [string]$ExpectedSha = '',
+    [string]$CandidateId = '',
+    [string]$ReleaseRoot = '',
+    [string]$CoordinationRoot = '',
     [string]$RunId = '',
     [string]$ContinueRunId = '',
     [int]$ContinueParentPid = 0,
@@ -70,6 +94,7 @@ $lib = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
 . (Join-Path $lib 'nightly-policy.ps1')
 . (Join-Path $lib 'nightly-coverage.ps1')
+. (Join-Path $lib 'release-gate.ps1')
 . (Join-Path $lib 'nightly-run-impl.ps1')
 
 $invoke = @{
@@ -83,6 +108,11 @@ $invoke = @{
     StateRoot = $StateRoot
     SeamsPath = $SeamsPath
     Trigger = $Trigger
+    Profile = $Profile
+    ExpectedSha = $ExpectedSha
+    CandidateId = $CandidateId
+    ReleaseRoot = $ReleaseRoot
+    CoordinationRoot = $CoordinationRoot
     RunId = $RunId
     ContinueRunId = $ContinueRunId
     ContinueParentPid = $ContinueParentPid
