@@ -99,6 +99,23 @@ public sealed class RemoteScriptContractTests
     }
 
     [Test]
+    public void Lane_detection_separates_a_bare_host_from_the_runner()
+    {
+        var detect = Block(Remote(), "detect_lane");
+
+        // A bare host's daemon reports the HOST's own hostname, exactly as the nested daemon
+        // reports the runner container's - so "Name equals hostname" alone says nothing about
+        // which lane this is, and CP-5 self-identified as nested on server2's shell because of it.
+        detect.ShouldContain("/.dockerenv");
+        Order(detect, "!= \"$own\"", "/.dockerenv")
+            .ShouldBeTrue("a sibling daemon is ruled out before the container check");
+
+        // All four outcomes are named; a sibling is neither lane, not silently one of them.
+        foreach (var lane in new[] { "none", "sibling", "nested", "host" })
+            detect.ShouldContain("LANE=\"" + lane + "\"");
+    }
+
+    [Test]
     public void Every_case_declares_a_lane()
     {
         var text = Remote();

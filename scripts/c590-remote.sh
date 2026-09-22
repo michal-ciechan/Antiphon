@@ -25,8 +25,11 @@ CHILD_PROJECT="c604${RUN}"
 WROTE=0
 
 # --- lane -------------------------------------------------------------------------------------
-# The nested daemon reports the runner container's own hostname as its Name; the server2 host
-# daemon reports the host's. Anything else (a mounted sibling socket) is neither lane.
+# A daemon whose Name is NOT this process's hostname is a SIBLING: its containers live in another
+# network namespace, which is the shape CARD-0604 retires. That check alone cannot separate the two
+# lanes, though, because a bare host's daemon reports the host's own hostname too - so "Name equals
+# hostname" is true on server2's shell AND inside the runner. What separates them is whether this
+# process is itself in a container, and /.dockerenv is the one marker Docker writes into every one.
 LANE="unknown"
 detect_lane() {
     local daemon_name own
@@ -34,7 +37,9 @@ detect_lane() {
     own="$(hostname 2>/dev/null || true)"
     if [ -z "$daemon_name" ]; then
         LANE="none"
-    elif [ "$daemon_name" = "$own" ]; then
+    elif [ "$daemon_name" != "$own" ]; then
+        LANE="sibling"
+    elif [ -f /.dockerenv ]; then
         LANE="nested"
     else
         LANE="host"
