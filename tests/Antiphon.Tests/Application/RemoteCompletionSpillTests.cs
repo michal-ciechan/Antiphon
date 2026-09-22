@@ -181,9 +181,16 @@ public sealed class RemoteCompletionSpillTests
         delivery.SpillPath.ShouldBe(TypedBodySpill.InboxAbsolutePath(cwd!, run[0].Id.ToString("D")));
     }
 
+    /// <summary>
+    /// Binds the fixture session to a runner. CK_AgentSessions_RunnerBinding_AllOrNone means the
+    /// three columns move together, so a RunnerCwd on its own is not a state the database allows.
+    /// </summary>
     private static async Task SetRunnerCwdAsync(AppDbContext db, Guid sessionId, string runnerCwd) =>
         await db.AgentSessions.Where(s => s.Id == sessionId)
-            .ExecuteUpdateAsync(s => s.SetProperty(x => x.RunnerCwd, runnerCwd));
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(x => x.RunnerId, "server2")
+                .SetProperty(x => x.RunnerStoreId, Guid.NewGuid())
+                .SetProperty(x => x.RunnerCwd, runnerCwd));
 
     /// <summary>
     /// One queued row plus one TaskCompletion notification per logical note, with the rendering
@@ -209,9 +216,18 @@ public sealed class RemoteCompletionSpillTests
                 WorkingDirectory = Path.GetTempPath(), Status = AgentTaskStatus.Succeeded,
                 ReplyTo = AgentTaskReplyTo.Session, ParentSessionId = sessionId, CreatedAt = now,
             });
+            // The notification's SourceEventId is a real foreign key onto the settlement event.
+            var settlement = new AgentTaskEvent
+            {
+                // Detail is capped at 4000 chars and is not the rendering: the body lives on the
+                // notification, which is what a Completion obligation actually carries.
+                Id = Guid.NewGuid(), AgentTaskId = taskId, Type = AgentTaskEventType.Completed,
+                At = now, Detail = "C604 settlement",
+            };
+            db.AgentTaskEvents.Add(settlement);
             var notification = new AgentTaskLandNotification
             {
-                Id = Guid.NewGuid(), TaskId = taskId, SourceEventId = Guid.NewGuid(),
+                Id = Guid.NewGuid(), TaskId = taskId, SourceEventId = settlement.Id,
                 Kind = LandNotificationKind.TaskCompletion, ReplyTo = AgentTaskReplyTo.Session,
                 ParentSessionId = sessionId, Body = logical,
                 ContentDigest = TaskCompletionNotification.Sha256(logical),
