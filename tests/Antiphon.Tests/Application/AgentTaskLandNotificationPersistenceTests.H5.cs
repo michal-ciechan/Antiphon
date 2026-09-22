@@ -16,9 +16,10 @@ public sealed partial class AgentTaskLandNotificationPersistenceTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var episodeId = await SeedEpisodeAsync(schema.ConnectionString);
         var keyTime = DateTime.UtcNow;
-        await InsertPublicationAsync(schema.ConnectionString, episodeId, keyTime, checkNumber: 1);
+        var checkedTaskId = Guid.NewGuid();
+        await InsertPublicationAsync(schema.ConnectionString, episodeId, keyTime, checkNumber: 1, checkedTaskId: checkedTaskId);
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
-        db.LegacyCheckNotePublications.Add(Publication(episodeId, keyTime, checkNumber: 1));
+        db.LegacyCheckNotePublications.Add(Publication(episodeId, keyTime, checkNumber: 1, checkedTaskId: checkedTaskId));
         await Should.ThrowAsync<DbUpdateException>(() => db.SaveChangesAsync());
     }
 
@@ -74,17 +75,18 @@ public sealed partial class AgentTaskLandNotificationPersistenceTests
     }
 
     private static async Task InsertPublicationAsync(
-        string connectionString, Guid episodeId, DateTime dispatched, int checkNumber, Guid? runId = null)
+        string connectionString, Guid episodeId, DateTime dispatched, int checkNumber, Guid? runId = null, Guid? checkedTaskId = null)
     {
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
-        db.LegacyCheckNotePublications.Add(Publication(episodeId, dispatched, checkNumber, runId));
+        db.LegacyCheckNotePublications.Add(Publication(episodeId, dispatched, checkNumber, runId, checkedTaskId));
         await db.SaveChangesAsync();
     }
 
-    private static LegacyCheckNotePublication Publication(Guid episodeId, DateTime dispatched, int checkNumber, Guid? runId = null) =>
+    private static LegacyCheckNotePublication Publication(
+        Guid episodeId, DateTime dispatched, int checkNumber, Guid? runId = null, Guid? checkedTaskId = null) =>
         new()
         {
-            Id = Guid.NewGuid(), CheckedTaskId = Guid.NewGuid(), CheckedTaskAttempt = 1,
+            Id = Guid.NewGuid(), CheckedTaskId = checkedTaskId ?? Guid.NewGuid(), CheckedTaskAttempt = 1,
             CheckedTaskDispatchedAt = dispatched, CheckNumber = checkNumber, RecoveryId = episodeId,
             PhysicalAgentId = Guid.NewGuid(), InterpreterSessionId = Guid.NewGuid(),
             InterpreterAcceptedStartedAt = DateTime.UtcNow, ParentSessionId = Guid.NewGuid(),
