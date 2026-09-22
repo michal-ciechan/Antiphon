@@ -64,6 +64,8 @@ internal static class C590Harness
         ["runId"] = "run-1",
         ["task"] = new Dictionary<string, object?> { ["readable"] = true, ["sourceLandingOperationId"] = "" },
         ["socket"] = new Dictionary<string, object?> { ["present"] = true, ["gid"] = 999, ["groups"] = new[] { 999 } },
+        // CARD-0604 D-5: the nested daemon's own name equals the runner container's hostname.
+        ["daemon"] = new Dictionary<string, object?> { ["present"] = true, ["name"] = "runner-host", ["hostname"] = "runner-host" },
         ["dbProbeOk"] = true,
         ["childExit"] = 0,
         ["reportPresent"] = true,

@@ -1,23 +1,91 @@
 #!/bin/bash
-# CARD-0590 live cases on server2. ASCII only. No secrets in stdout.
+# CARD-0590 live cases on server2, re-aimed by CARD-0604. ASCII only. No secrets in stdout.
+#
+# Two lanes (CARD-0604 D-5, S3):
+#   host   - runs on server2's own shell over SSH, against the HOST daemon. It deploys and
+#            inspects the persistent `antiphon-runner` project and never builds or runs a test.
+#   nested - runs inside a session in the persistent runner, against the runner's own NESTED
+#            daemon. It has no sudo and no python3, its compose project is run-scoped, and every
+#            container it creates lives and dies on the nested daemon.
+# A case declares its lane; running it in the other one is `WrongLane`, refused before any command.
 set -euo pipefail
 
 CASE="${C590_CASE:?}"
 SHA="${C590_SHA:?}"
 RUN="${C590_RUN:?}"
 CHECKOUT="${C590_CHECKOUT:-/work/repos/antiphon}"
+BRANCH="${C604_BRANCH:-master}"
 EVIDENCE_ROOT="/work/test-evidence/${RUN}"
 CASE_DIR="${EVIDENCE_ROOT}/${CASE}"
 ROOT="/home/mc/antiphon-c590"
+SERVER2_ROOT="/home/mc/antiphon-server2"
 BASELINE_SHA="723ac9534fc3fce49b378e287da08b7b11095716"
-PROJECT="c590${RUN}"
+HOST_PROJECT="antiphon-runner"
+CHILD_PROJECT="c604${RUN}"
 WROTE=0
+
+# --- lane -------------------------------------------------------------------------------------
+# The nested daemon reports the runner container's own hostname as its Name; the server2 host
+# daemon reports the host's. Anything else (a mounted sibling socket) is neither lane.
+LANE="unknown"
+detect_lane() {
+    local daemon_name own
+    daemon_name="$(docker info --format '{{.Name}}' 2>/dev/null || true)"
+    own="$(hostname 2>/dev/null || true)"
+    if [ -z "$daemon_name" ]; then
+        LANE="none"
+    elif [ "$daemon_name" = "$own" ]; then
+        LANE="nested"
+    else
+        LANE="host"
+    fi
+    printf '%s\n' "$LANE"
+}
+
+require_lane() {
+    local want="$1"
+    if [ "$LANE" != "$want" ]; then
+        write_result false "WrongLane want=$want lane=$LANE" 2
+    fi
+}
 
 tag() { printf 'antiphon-c590-%s-%s' "$RUN" "$1"; }
 
 scrub_file() {
     [ -f "$1" ] || return 0
-    sed -i -E 's/gho_[A-Za-z0-9_]+/gho_REDACTED/g; s/POSTGRES_PASSWORD=[^[:space:]]+/POSTGRES_PASSWORD=REDACTED/g' "$1" || true
+    # Every GitHub token prefix, not just gho_: ghp_ (classic PAT), gho_ (OAuth), ghu_ (user-to-
+    # server), ghs_ (server-to-server), ghr_ (refresh) and the fine-grained github_pat_ form.
+    sed -i -E 's/gh[pousr]_[A-Za-z0-9_]+/gh_REDACTED/g; s/github_pat_[A-Za-z0-9_]+/github_pat_REDACTED/g; s/POSTGRES_PASSWORD=[^[:space:]]+/POSTGRES_PASSWORD=REDACTED/g; s/-----BEGIN [A-Z ]*PRIVATE KEY-----/PRIVATE_KEY_REDACTED/g' "$1" || true
+}
+
+json_escape() {
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\t/\\t/g'
+}
+
+# Shell replacement for the old python3 context sentinel check (D-6).
+context_check() {
+    local root="$1" required="$2"
+    if [ ! -f "$root/$required" ] && [ -d "$root/context" ]; then
+        root="$root/context"
+    fi
+    local missing=0
+    if [ ! -f "$root/$required" ]; then
+        printf 'missing %s\n' "$required"
+        missing=1
+    fi
+    local rel
+    for rel in .git .antiphon/case.json client/.env.local scratch/auth.json .grok/config.toml \
+        scratch/key.pfx scratch/key.pem server/bin/x.dll server/bin-pc/x.dll server/obj/x \
+        client/node_modules/x workspace/owned.txt logs/test.log nested-git/.git/HEAD git-pointer/.git; do
+        if [ -e "$root/$rel" ] || [ -L "$root/$rel" ]; then
+            printf 'present %s\n' "$rel"
+            missing=1
+        fi
+    done
+    if [ "$missing" -ne 0 ]; then
+        return 1
+    fi
+    printf 'context-ok %s\n' "$root"
 }
 
 write_result() {
@@ -29,36 +97,35 @@ write_result() {
     mkdir -p "$CASE_DIR"
     scrub_file "$CASE_DIR/build.log" || true
     scrub_file "$CASE_DIR/command.log" || true
-    C590_ACCEPTED="$accepted" C590_DIAGNOSIS="$diagnosis" C590_EXIT_CODE="$code" C590_RESULT_PATH="$CASE_DIR/c590-result.json" \
-        python3 - <<'PY'
-import json, os
-obj = {
-    "accepted": os.environ["C590_ACCEPTED"] == "true",
-    "diagnosis": os.environ["C590_DIAGNOSIS"],
-    "exit": int(os.environ["C590_EXIT_CODE"]),
-}
-with open(os.environ["C590_RESULT_PATH"], "w", encoding="ascii") as handle:
-    json.dump(obj, handle)
-PY
+    # Written in shell: the nested lane's image has no python3 (D-6, S3).
+    printf '{"accepted":%s,"diagnosis":"%s","exit":%s}' \
+        "$([ "$accepted" = "true" ] && printf 'true' || printf 'false')" \
+        "$(json_escape "$diagnosis")" \
+        "$code" > "$CASE_DIR/c590-result.json"
     printf 'DIAGNOSIS=%s\n' "$diagnosis"
     exit "$code"
 }
 
 ensure_dirs() {
-    sudo -n mkdir -p "$CASE_DIR" /work/repos "$ROOT/secrets" "$ROOT/baseline"
-    sudo -n chown -R mc:mc /work "$ROOT"
-    mkdir -p "$CASE_DIR"
+    # The nested lane runs as uid 1654 inside the runner, which owns /work already and has no
+    # sudo at all. Only the host lane's own shell may elevate.
+    if [ "$LANE" = "host" ]; then
+        sudo -n mkdir -p "$CASE_DIR" /work/repos "$ROOT/secrets" "$ROOT/baseline" "$SERVER2_ROOT/secrets"
+        sudo -n chown -R mc:mc /work "$ROOT" "$SERVER2_ROOT"
+    fi
+    mkdir -p "$CASE_DIR" "$EVIDENCE_ROOT"
     cat > /work/test-evidence/current.env <<EOF
 C590_SHA=$SHA
 C590_RUN=$RUN
 C590_REEXEC=1
 C590_CHECKOUT=$CHECKOUT
+C604_BRANCH=$BRANCH
 EOF
 }
 
 ensure_checkout() {
     if [ ! -d "$CHECKOUT/.git" ]; then
-        git clone --filter=blob:none --branch feat/card-task-dae3ad6b https://github.com/michal-ciechan/Antiphon.git "$CHECKOUT"
+        git clone --filter=blob:none --branch "$BRANCH" https://github.com/michal-ciechan/Antiphon.git "$CHECKOUT"
     fi
     local current
     current="$(git -C "$CHECKOUT" rev-parse HEAD)"
@@ -82,37 +149,37 @@ POSTGRES_PASSWORD=$password
 SOURCE_REVISION=$SHA
 ANTIPHON_BIND_ADDRESS=127.0.0.1
 ANTIPHON_BIND_PORT=5000
-DOCKER_SOCKET_GID=129
 EOF
         unset password
     fi
-    python3 - <<PY
-from pathlib import Path
-path = Path("$ROOT/secrets/stack.env")
-lines = []
-seen = False
-for line in path.read_text(encoding="ascii").splitlines():
-    if line.startswith("SOURCE_REVISION="):
-        lines.append("SOURCE_REVISION=$SHA")
-        seen = True
-    else:
-        lines.append(line)
-if not seen:
-    lines.append("SOURCE_REVISION=$SHA")
-path.write_text("\\n".join(lines) + "\\n", encoding="ascii")
-PY
+    # Shell, not python3: the nested lane has no interpreter (D-6).
+    if grep -q '^SOURCE_REVISION=' "$ROOT/secrets/stack.env"; then
+        sed -i -E "s|^SOURCE_REVISION=.*|SOURCE_REVISION=$SHA|" "$ROOT/secrets/stack.env"
+    else
+        printf 'SOURCE_REVISION=%s\n' "$SHA" >> "$ROOT/secrets/stack.env"
+    fi
+    sed -i '/^DOCKER_SOCKET_GID=/d' "$ROOT/secrets/stack.env"
 }
 
-write_runtime_override() {
+# CARD-0604 D-7: the throwaway stack is the NESTED child - the unmodified base compose file with
+# sha-tagged child images, on the nested daemon, in a run-scoped project. The child runner is the
+# socket-free `runtime` target: no engine, no SDK, no custody helpers.
+write_child_override() {
     local server runner
-    server="$(tag server)"
-    runner="$(tag session-testing)"
-    cat > "$ROOT/compose.runtime.yml" <<EOF
+    server="$(tag child-server)"
+    runner="$(tag child-runner)"
+    cat > "$ROOT/compose.child.yml" <<EOF
 services:
   state-init:
     image: ${server}
+    labels:
+      c604-run: "${RUN}"
+      c604-owner: child
   antiphon:
     image: ${server}
+    labels:
+      c604-run: "${RUN}"
+      c604-owner: child
     environment:
       GIT_CONFIG_GLOBAL: /work/gitconfig
     healthcheck:
@@ -122,17 +189,27 @@ services:
       retries: 40
   session-runner:
     image: ${runner}
+    labels:
+      c604-run: "${RUN}"
+      c604-owner: child
     environment:
       GIT_CONFIG_GLOBAL: /work/gitconfig
+  postgres:
+    labels:
+      c604-run: "${RUN}"
+      c604-owner: child
 EOF
 }
 
-compose_parent() {
-    COMPOSE_PROJECT_NAME="$PROJECT" docker compose \
+# The child project is run-scoped and can never collide with the persistent host project.
+compose_child() {
+    COMPOSE_PROJECT_NAME="$CHILD_PROJECT" \
+    ANTIPHON_BIND_PORT="${CHILD_BIND_PORT:-5000}" \
+    ANTIPHON_BIND_ADDRESS=127.0.0.1 \
+    docker compose \
         --env-file "$ROOT/secrets/stack.env" \
         -f "$CHECKOUT/docker-compose.yml" \
-        -f "$CHECKOUT/docker-compose.session-testing.yml" \
-        -f "$ROOT/compose.runtime.yml" \
+        -f "$ROOT/compose.child.yml" \
         "$@"
 }
 
@@ -186,16 +263,16 @@ EOF
 }
 
 copy_checkout_into_volume() {
-    local vol="${PROJECT}_work"
+    local vol="${CHILD_PROJECT}_work"
     local marker
-    marker="$(docker run --rm --user 0 --entrypoint /bin/sh -v "${vol}:/work" "$(tag server)" -c 'cat /work/repos/antiphon/.c590-sha 2>/dev/null || true')"
+    marker="$(docker run --rm --user 0 --entrypoint /bin/sh -v "${vol}:/work" "$(tag child-server)" -c 'cat /work/repos/antiphon/.c590-sha 2>/dev/null || true')"
     if [ "$marker" = "$SHA" ]; then
         return 0
     fi
     docker run --rm --user 0 --entrypoint /bin/sh \
         -v "$CHECKOUT:/from:ro" \
         -v "${vol}:/work" \
-        "$(tag server)" -c "
+        "$(tag child-server)" -c "
             set -eu
             mkdir -p /work/repos
             rm -rf /work/repos/antiphon
@@ -220,24 +297,32 @@ wait_url() {
     return 1
 }
 
-ensure_parent() {
+# CARD-0604 D-7: the child stack is depth one, on the NESTED daemon, in the run-scoped project.
+# Its bind port lives on the runner's own loopback, so nothing it publishes leaves the container.
+CHILD_BIND_PORT="${C604_CHILD_PORT:-5000}"
+CHILD_BASE="http://127.0.0.1:${CHILD_BIND_PORT}"
+
+ensure_child() {
+    require_lane nested
     ensure_secrets
-    build_image server "$CHECKOUT/Dockerfile" "$CHECKOUT" || write_result false ServerBuildFailed 2
-    build_image session-testing "$CHECKOUT/docker/session-runner-grok/Dockerfile" "$CHECKOUT" session-testing || write_result false SessionTestingBuildFailed 2
-    write_runtime_override
-    compose_parent up -d --no-build >> "$CASE_DIR/command.log" 2>&1 || {
-        compose_parent logs --no-color --tail 80 >> "$CASE_DIR/command.log" 2>&1 || true
-        write_result false ParentComposeFailed 2
+    build_image child-server "$CHECKOUT/Dockerfile" "$CHECKOUT" || write_result false ChildServerBuildFailed 2
+    build_image child-runner "$CHECKOUT/docker/session-runner-grok/Dockerfile" "$CHECKOUT" runtime || write_result false ChildRunnerBuildFailed 2
+    write_child_override
+    compose_child up -d --no-build >> "$CASE_DIR/command.log" 2>&1 || {
+        compose_child logs --no-color --tail 80 >> "$CASE_DIR/command.log" 2>&1 || true
+        write_result false ChildComposeFailed 2
     }
-    if ! wait_url http://127.0.0.1:5000/health; then
-        compose_parent logs --no-color --tail 120 >> "$CASE_DIR/command.log" 2>&1 || true
-        write_result false ParentUnhealthy 2
+    if ! wait_url "$CHILD_BASE/health"; then
+        compose_child logs --no-color --tail 120 >> "$CASE_DIR/command.log" 2>&1 || true
+        write_result false ChildUnhealthy 2
     fi
     copy_checkout_into_volume
 }
 
+# Shell, not python3 (D-6): the nested lane has no interpreter.
 version_sha() {
-    curl -fsS http://127.0.0.1:${1:-5000}/api/version | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])'
+    curl -fsS "${1:-$CHILD_BASE}/api/version" \
+        | tr ',' '\n' | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
 }
 
 case_baseline() {
@@ -402,34 +487,34 @@ case_fixture_image() {
 }
 
 case_deployment_state() {
-    ensure_parent
+    ensure_child
     local live
-    live="$(version_sha 5000)"
+    live="$(version_sha)"
     printf '%s\n' "$live" > "$CASE_DIR/version.txt"
     if [ "$live" != "$SHA" ]; then
         write_result false RevisionMismatch 2
     fi
-    curl -fsS http://127.0.0.1:5000/ | head -c 400 > "$CASE_DIR/index-head.txt" || write_result false UiMissing 2
+    curl -fsS "$CHILD_BASE/" | head -c 400 > "$CASE_DIR/index-head.txt" || write_result false UiMissing 2
     if ! grep -q -E 'html|script|Antiphon' "$CASE_DIR/index-head.txt"; then
         write_result false UiMissing 2
     fi
-    COMPOSE_PROJECT_NAME="$PROJECT" docker compose --env-file "$ROOT/secrets/stack.env" \
-        -f "$CHECKOUT/docker-compose.yml" -f "$ROOT/compose.runtime.yml" \
-        exec -T postgres psql -U antiphon -d antiphon -c 'CREATE TABLE IF NOT EXISTS c590_marker(id int primary key); INSERT INTO c590_marker VALUES (1) ON CONFLICT DO NOTHING;' \
+    compose_child exec -T postgres psql -U antiphon -d antiphon -c 'CREATE TABLE IF NOT EXISTS c590_marker(id int primary key); INSERT INTO c590_marker VALUES (1) ON CONFLICT DO NOTHING;' \
         >> "$CASE_DIR/command.log" 2>&1 || write_result false MarkerInsertFailed 2
-    docker run --rm --user 0 --entrypoint /bin/sh -v "${PROJECT}_work:/work" "$(tag server)" -c 'echo marker > /work/c590-workspace-marker && chown 1654:1654 /work/c590-workspace-marker'
-    compose_parent stop >> "$CASE_DIR/command.log" 2>&1
-    compose_parent up -d --no-build >> "$CASE_DIR/command.log" 2>&1
-    if ! wait_url http://127.0.0.1:5000/health; then
+    docker run --rm --user 0 --entrypoint /bin/sh -v "${CHILD_PROJECT}_work:/work" "$(tag child-server)" -c 'echo marker > /work/c590-workspace-marker && chown 1654:1654 /work/c590-workspace-marker'
+    compose_child stop >> "$CASE_DIR/command.log" 2>&1
+    compose_child up -d --no-build >> "$CASE_DIR/command.log" 2>&1
+    if ! wait_url "$CHILD_BASE/health"; then
         write_result false RestartUnhealthy 2
     fi
     local marker_count workspace
-    marker_count="$(COMPOSE_PROJECT_NAME="$PROJECT" docker compose --env-file "$ROOT/secrets/stack.env" -f "$CHECKOUT/docker-compose.yml" -f "$ROOT/compose.runtime.yml" exec -T postgres psql -U antiphon -d antiphon -tAc 'SELECT count(*) FROM c590_marker;')"
-    workspace="$(docker run --rm --user 0 --entrypoint /bin/sh -v "${PROJECT}_work:/work" "$(tag server)" -c 'cat /work/c590-workspace-marker')"
+    marker_count="$(compose_child exec -T postgres psql -U antiphon -d antiphon -tAc 'SELECT count(*) FROM c590_marker;')"
+    workspace="$(docker run --rm --user 0 --entrypoint /bin/sh -v "${CHILD_PROJECT}_work:/work" "$(tag child-server)" -c 'cat /work/c590-workspace-marker')"
     if [ "$(echo "$marker_count" | tr -d '[:space:]')" != "1" ] || [ "$workspace" != "marker" ]; then
         write_result false RetentionFailed 2
     fi
-    docker volume inspect "${PROJECT}_pgdata" >/dev/null
+    docker volume inspect "${CHILD_PROJECT}_pgdata" >/dev/null
+    # The child is torn down with its own volumes: it is the throwaway stack, not a deployment.
+    compose_child down -v --remove-orphans >> "$CASE_DIR/command.log" 2>&1 || true
     write_result true '' 0
 }
 
@@ -438,23 +523,17 @@ case_client_lint() {
     # case_test_image exits on success. Reached only if write_result did not exit.
 }
 
-client_volume() {
-    docker volume create "c590${RUN}_nodemodules" >/dev/null
-}
-
+# CARD-0604 D-6: the session's own shell runs the roster. The runner image carries SDK 10,
+# runtimes 9 and 10, Node 22 and pwsh, so there is no test container and no sibling socket; the
+# sibling test lane is retired. Testcontainers reaches the nested daemon on the default endpoint
+# and maps its ports onto this very process's loopback (D-5), unmodified.
 run_client() {
     local script="$1"
-    client_volume
-    docker run --rm --name "c590-${RUN}-client" \
-        -v "c590${RUN}_nodemodules:/src/client/node_modules" \
-        -v "$CASE_DIR:/evidence" \
-        -w /src \
-        "$(tag test-runner)" \
-        bash -lc "$script" > "$CASE_DIR/command.log" 2>&1
+    ( cd "$CHECKOUT" && bash -lc "$script" ) > "$CASE_DIR/command.log" 2>&1
 }
 
 case_client_lint_body() {
-    build_image test-runner "$CHECKOUT/docker/tests/Dockerfile" "$CHECKOUT" test-runner || write_result false TestImageBuildFailed 2
+    require_lane nested
     if ! run_client 'npm --prefix client ci && npm --prefix client run build && npm --prefix client run lint'; then
         write_result false ClientLintFailed 2
     fi
@@ -462,23 +541,19 @@ case_client_lint_body() {
 }
 
 case_client_tests_body() {
-    build_image test-runner "$CHECKOUT/docker/tests/Dockerfile" "$CHECKOUT" test-runner || write_result false TestImageBuildFailed 2
-    if ! run_client 'npm --prefix client ci && pwsh -NoProfile -File scripts/test-client.ps1 -JsonResultPath /evidence/client.json'; then
+    require_lane nested
+    if ! run_client "npm --prefix client ci && pwsh -NoProfile -File scripts/test-client.ps1 -JsonResultPath '$CASE_DIR/client.json'"; then
         write_result false ClientTestsFailed 2
     fi
     if [ ! -s "$CASE_DIR/client.json" ]; then
         write_result false ClientJsonMissing 2
     fi
-    if ! python3 - <<PY
-import json
-doc = json.load(open("$CASE_DIR/client.json", encoding="utf-8"))
-num = doc.get("numTotalTests") or doc.get("success")
-failed = doc.get("numFailedTests", 0)
-print(num, failed)
-if not num or int(num) < 102 or int(failed) != 0:
-    raise SystemExit(1)
-PY
-    then
+    # Shell, not python3 (D-6). The frozen Vitest floor is 102 files with zero failures.
+    local total failed
+    total="$(tr ',' '\n' < "$CASE_DIR/client.json" | sed -n 's/.*"numTotalTests"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' | head -n 1)"
+    failed="$(tr ',' '\n' < "$CASE_DIR/client.json" | sed -n 's/.*"numFailedTests"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' | head -n 1)"
+    printf 'total=%s failed=%s\n' "${total:-0}" "${failed:-0}" > "$CASE_DIR/client-counts.txt"
+    if [ -z "$total" ] || [ "$total" -lt 102 ] || [ "${failed:-1}" -ne 0 ]; then
         write_result false ClientTestsShort 2
     fi
     write_result true '' 0
@@ -492,35 +567,23 @@ run_dotnet() {
     if [ "$no_build" = "1" ]; then
         build_args+=(-NoBuild)
     fi
-    local volbin volobj
-    volbin="c590${RUN}_$(printf '%s' "$project" | tr '/.' '__')_bin"
-    volobj="c590${RUN}_$(printf '%s' "$project" | tr '/.' '__')_obj"
-    docker volume create "$volbin" >/dev/null
-    docker volume create "$volobj" >/dev/null
-    docker run --rm --name "c590-${RUN}-${name}" \
-        --group-add 129 \
-        --add-host=host.docker.internal:host-gateway \
-        -v /var/run/docker.sock:/var/run/docker.sock \
-        -v "${volbin}:/src/${project}/bin-c590" \
-        -v "${volobj}:/src/${project}/obj" \
-        -v "$CASE_DIR:/evidence" \
-        -e SessionRunner__BaseUrl=http://127.0.0.1:1 \
-        -e SessionRunner__Enabled=false \
-        -e MSBUILDDISABLENODEREUSE=1 \
-        -e DOTNET_CLI_TELEMETRY_OPTOUT=1 \
-        -e NUGET_PACKAGES=/src/.nuget \
-        -e ANTIPHON_BROKER_TESTS="$broker_env" \
-        -w /src \
-        "$(tag test-runner)" \
+    (
+        cd "$CHECKOUT"
+        SessionRunner__BaseUrl=http://127.0.0.1:1 \
+        SessionRunner__Enabled=false \
+        MSBUILDDISABLENODEREUSE=1 \
+        DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+        NUGET_PACKAGES=/work/.nuget \
+        ANTIPHON_BROKER_TESTS="$broker_env" \
         pwsh -NoProfile -File scripts/run-checkpoint.ps1 \
             -Name "$name" \
             -Project "$project" \
-            -OutputPath bin-c590/ \
+            -OutputPath bin-c604/ \
             -Filter "$filter" \
-            -ResultsRoot /evidence/trx \
+            -ResultsRoot "$CASE_DIR/trx" \
             -MinExecuted "$min" \
-            "${build_args[@]}" \
-        > "$CASE_DIR/command.log" 2>&1
+            "${build_args[@]}"
+    ) > "$CASE_DIR/command.log" 2>&1
 }
 
 case_dotnet() {
@@ -531,7 +594,7 @@ case_dotnet() {
     if [ -z "$filter" ]; then
         write_result false FilterMissing 2
     fi
-    build_image test-runner "$CHECKOUT/docker/tests/Dockerfile" "$CHECKOUT" test-runner || write_result false TestImageBuildFailed 2
+    require_lane nested
     local code=0
     run_dotnet "${C590_PROJECT:?}" "$filter" "${C590_NOBUILD:-0}" "${C590_MIN:-1}" "${C590_CP:-dotnet}" "${C590_BROKER:-0}" || code=$?
     if [ "$code" -ne 0 ]; then
@@ -552,91 +615,6 @@ case_messaging() {
     case_dotnet
 }
 
-case_parent_session() {
-    ensure_parent
-    local live
-    live="$(version_sha 5000)"
-    if [ "$live" != "$SHA" ]; then
-        write_result false RevisionMismatch 2
-    fi
-    python3 - <<PY
-import json, time, urllib.request, urllib.error
-base = "http://127.0.0.1:5000"
-out = r"$CASE_DIR"
-
-def call(method, path, body=None, timeout=120):
-    data = None if body is None else json.dumps(body).encode()
-    req = urllib.request.Request(base + path, data=data, method=method)
-    if data is not None:
-        req.add_header("Content-Type", "application/json")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8", "replace")
-            parsed = json.loads(raw) if raw else None
-            return resp.status, parsed, raw
-    except urllib.error.HTTPError as exc:
-        raw = exc.read().decode("utf-8", "replace")
-        return exc.code, None, raw
-
-status, project, raw = call("POST", "/api/projects", {
-    "name": "c590-$RUN",
-    "gitRepositoryUrl": "https://github.com/michal-ciechan/Antiphon",
-    "constitutionPath": None,
-    "gitHubIntegrationEnabled": False,
-    "notificationsEnabled": False,
-    "localRepositoryPath": "/work/repos/antiphon",
-    "baseBranch": "feat/card-task-dae3ad6b",
-})
-open(out + "/project.json", "w", encoding="utf-8").write(raw)
-if status >= 300 or not isinstance(project, dict) or "id" not in project:
-    raise SystemExit("project %s" % status)
-status, board, raw = call("POST", "/api/boards", {
-    "projectId": project["id"],
-    "name": "c590",
-})
-open(out + "/board.json", "w", encoding="utf-8").write(raw)
-if status >= 300 or not isinstance(board, dict) or "id" not in board:
-    raise SystemExit("board %s" % status)
-status, card, raw = call("POST", "/api/boards/%s/cards" % board["id"], {
-    "boardColumnId": None,
-    "title": "c590 raw challenge",
-})
-open(out + "/card.json", "w", encoding="utf-8").write(raw)
-if status >= 300 or not isinstance(card, dict) or "id" not in card:
-    raise SystemExit("card %s" % status)
-status, started, raw = call("POST", "/api/sessions", {
-    "cardId": card["id"],
-    "definitionName": "raw-sh",
-    "agentKind": "Raw",
-    "prompt": "echo C590_RAW_OK",
-    "cols": 120,
-    "rows": 30,
-})
-open(out + "/session.json", "w", encoding="utf-8").write(raw)
-if status >= 300 or not isinstance(started, dict) or "sessionId" not in started:
-    raise SystemExit("session %s" % status)
-session_id = started["sessionId"]
-call("POST", "/api/sessions/%s/input" % session_id, {"input": "echo C590_RAW_OK\\r"})
-seen = ""
-for _ in range(30):
-    time.sleep(2)
-    status, transcript, raw = call("GET", "/api/sessions/%s/transcript?since=0" % session_id)
-    open(out + "/transcript.json", "w", encoding="utf-8").write(raw)
-    status, _buffer, raw_buffer = call("GET", "/api/sessions/%s/buffer" % session_id)
-    open(out + "/buffer.json", "w", encoding="utf-8").write(raw_buffer)
-    seen = raw + "\\n" + raw_buffer
-    if "C590_RAW_OK" in seen:
-        open(out + "/session-id.txt", "w", encoding="ascii").write(session_id)
-        raise SystemExit(0)
-raise SystemExit("marker missing")
-PY
-    local py=$?
-    if [ "$py" -ne 0 ]; then
-        write_result false RawSessionFailed 2
-    fi
-    write_result true '' 0
-}
-
 case_denied_socket() {
     build_image test-runner "$CHECKOUT/docker/tests/Dockerfile" "$CHECKOUT" test-runner || write_result false TestImageBuildFailed 2
     set +e
@@ -651,26 +629,29 @@ case_denied_socket() {
 }
 
 case_cleanup() {
-    ensure_parent
-    local name="c590-${RUN}-child"
-    docker run -d --name "$name" --label "c590-run=$RUN" --label "c590-owner=child" alpine:3.20 sleep 600 \
+    require_lane nested
+    local name="c604-${RUN}-child"
+    docker run -d --name "$name" --label "c604-run=$RUN" --label "c604-owner=child" alpine:3.20 sleep 600 \
         >> "$CASE_DIR/command.log" 2>&1 || write_result false ChildCreateFailed 2
     local id
     id="$(docker inspect -f '{{.Id}}' "$name")"
     printf '%s\n' "$id" > "$CASE_DIR/child-id.txt"
+    # Export the run's evidence index before the child goes, so an interrupted copy is visible.
+    find "$EVIDENCE_ROOT" -maxdepth 2 -type d > "$CASE_DIR/evidence-index.txt"
     docker rm -f "$name" >> "$CASE_DIR/command.log" 2>&1
     if docker inspect "$id" >/dev/null 2>&1; then
         write_result false ChildSurvived 2
     fi
-    if ! curl -fsS http://127.0.0.1:5000/health >/dev/null; then
-        write_result false ParentLost 2
+    # The runner that owns this nested daemon must be untouched by its child's removal.
+    if ! docker info >/dev/null 2>&1; then
+        write_result false NestedDaemonLost 2
     fi
     write_result true '' 0
 }
 
 case_interrupted() {
-    local name="c590-${RUN}-residue"
-    docker run -d --name "$name" --label "c590-run=$RUN" --label "c590-owner=child" alpine:3.20 sleep 600 \
+    local name="c604-${RUN}-residue"
+    docker run -d --name "$name" --label "c604-run=$RUN" --label "c604-owner=child" alpine:3.20 sleep 600 \
         >> "$CASE_DIR/command.log" 2>&1 || write_result false ResidueCreateFailed 2
     local id
     id="$(docker inspect -f '{{.Id}}' "$name")"
@@ -680,7 +661,7 @@ case_interrupted() {
         write_result false ResidueMissing 2
     fi
     local label
-    label="$(docker inspect -f '{{index .Config.Labels "c590-owner"}}' "$id")"
+    label="$(docker inspect -f '{{index .Config.Labels "c604-owner"}}' "$id")"
     if [ "$label" != "child" ]; then
         write_result false IdentityChanged 2
     fi
@@ -752,41 +733,8 @@ EOF
     mkdir -p "$CASE_DIR/context"
     docker cp "$cid:/context" "$CASE_DIR/context-copy" >> "$CASE_DIR/command.log" 2>&1
     docker rm "$cid" >/dev/null
-    if ! python3 - <<PY > "$CASE_DIR/context-check.txt"
-import os, sys
-root = "$CASE_DIR/context-copy"
-inner = os.path.join(root, "context")
-required = "$required"
-if not os.path.isfile(os.path.join(root, required)) and os.path.isdir(inner):
-    root = inner
-missing = []
-if not os.path.isfile(os.path.join(root, required)):
-    missing.append("missing " + required)
-banned = [
-    ".git",
-    ".antiphon/case.json",
-    "client/.env.local",
-    "scratch/auth.json",
-    ".grok/config.toml",
-    "scratch/key.pfx",
-    "scratch/key.pem",
-    "server/bin/x.dll",
-    "server/bin-pc/x.dll",
-    "server/obj/x",
-    "client/node_modules/x",
-    "workspace/owned.txt",
-    "logs/test.log",
-    "nested-git/.git/HEAD",
-    "git-pointer/.git",
-]
-for rel in banned:
-    if os.path.lexists(os.path.join(root, rel)):
-        missing.append("present " + rel)
-if missing:
-    print("\n".join(missing))
-    sys.exit(1)
-print("context-ok " + root)
-PY
+    # Shell, not python3 (D-6): the nested lane's image has no interpreter.
+    if ! context_check "$CASE_DIR/context-copy" "$required" > "$CASE_DIR/context-check.txt"
     then
         docker image rm "$image" >/dev/null 2>&1 || true
         write_result false ContextSentinelLeak 2
@@ -797,35 +745,45 @@ PY
 }
 
 case_git_smoke() {
-    if [ ! -s "$ROOT/secrets/gh-token" ]; then
-        write_result false GitHubTokenMissing 2
+    # CARD-0604 D-8. The push credential is the repo-scoped deploy key that lives only on server2,
+    # materialised by the entrypoint at /run/antiphon/deploy-key (0400, uid 1654) on a tmpfs, and
+    # wired through the baked /etc/gitconfig and /etc/antiphon/ssh_config. The smoke runs in the
+    # session's own shell: there is no desktop-sourced token and no per-run secret bind any more.
+    require_lane nested
+    if [ ! -r /run/antiphon/deploy-key ]; then
+        write_result false DeployKeyUnavailable 2
     fi
-    build_image server "$CHECKOUT/Dockerfile" "$CHECKOUT" || write_result false ServerBuildFailed 2
-    cat > "$ROOT/askpass" <<'EOF'
-#!/bin/sh
-case "$1" in
-  *Username*) printf '%s\n' 'x-access-token' ;;
-  *) cat /run/secrets/gh-token ;;
-esac
-EOF
-    chmod 700 "$ROOT/askpass"
-    local branch="throwaway/c590-credential-smoke-$RUN"
-    if ! docker run --rm --user 0 --entrypoint /bin/sh \
-        -v "$ROOT/secrets/gh-token:/run/secrets/gh-token:ro" \
-        -v "$ROOT/askpass:/askpass:ro" \
-        -e GIT_ASKPASS=/askpass \
-        -e GIT_TERMINAL_PROMPT=0 \
-        "$(tag server)" -c "
-            set -eu
-            git clone --depth 1 --branch feat/card-task-dae3ad6b https://github.com/michal-ciechan/Antiphon.git /tmp/smoke
-            cd /tmp/smoke
-            git checkout -b '$branch'
-            printf 'c590 credential smoke $RUN\n' > c590-credential-smoke.txt
-            git add c590-credential-smoke.txt
-            git -c user.name=c590-smoke -c user.email=c590-smoke@localhost commit -m 'test(CARD-0590): credential smoke $RUN'
-            git push origin 'HEAD:$branch'
-            git rev-parse HEAD
-        " > "$CASE_DIR/push.txt" 2> "$CASE_DIR/command.log"; then
+    local perms
+    perms="$(stat -c '%u %a' /run/antiphon/deploy-key)"
+    printf '%s\n' "$perms" > "$CASE_DIR/deploy-key-mode.txt"
+    if [ "$perms" != "1654 400" ]; then
+        write_result false DeployKeyMode 2
+    fi
+    ssh -F /etc/antiphon/ssh_config -T git@github.com > "$CASE_DIR/ssh-banner.txt" 2>&1 || true
+    scrub_file "$CASE_DIR/ssh-banner.txt"
+    if ! grep -q 'successfully authenticated' "$CASE_DIR/ssh-banner.txt"; then
+        write_result false DeployKeyNotAuthenticated 2
+    fi
+
+    local branch="throwaway/c604-credential-smoke-$RUN"
+    local work="/tmp/c604-smoke-$RUN"
+    rm -rf "$work"
+    # Fetches stay anonymous HTTPS; only the push goes over SSH (gitconfig pushInsteadOf).
+    if ! git clone --depth 1 --branch "$BRANCH" https://github.com/michal-ciechan/Antiphon.git "$work" \
+        >> "$CASE_DIR/command.log" 2>&1; then
+        scrub_file "$CASE_DIR/command.log"
+        write_result false GitCloneFailed 2
+    fi
+    if ! (
+        set -eu
+        cd "$work"
+        git checkout -b "$branch"
+        printf 'c604 credential smoke %s\n' "$RUN" > c604-credential-smoke.txt
+        git add c604-credential-smoke.txt
+        git -c user.name=c604-smoke -c user.email=c604-smoke@localhost commit -m "test(CARD-0604): credential smoke $RUN"
+        git push origin "HEAD:$branch"
+        git rev-parse HEAD
+    ) > "$CASE_DIR/push.txt" 2>> "$CASE_DIR/command.log"; then
         scrub_file "$CASE_DIR/command.log"
         write_result false GitPushFailed 2
     fi
@@ -837,21 +795,275 @@ EOF
     if [ "${#pushed}" -ne 40 ]; then
         write_result false GitPushShaMissing 2
     fi
+
+    # The smoke owns its branch and deletes it: a throwaway/ branch left on origin is residue.
+    if ! git -C "$work" push origin --delete "$branch" >> "$CASE_DIR/command.log" 2>&1; then
+        scrub_file "$CASE_DIR/command.log"
+        write_result false SmokeBranchNotDeleted 2
+    fi
+    if git -C "$work" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+        write_result false SmokeBranchSurvived 2
+    fi
+    printf 'true\n' > "$CASE_DIR/deleted.txt"
+    rm -rf "$work"
     write_result true '' 0
 }
 
 case_handoff() {
-    if ! curl -fsS http://127.0.0.1:5000/health > "$CASE_DIR/health.txt"; then
-        write_result false HandoffUnhealthy 2
+    # CARD-0604 V-23: after the desktop CLI disconnects, the persistent runner is still up, still
+    # registered with production, and the run's evidence index is complete. Host lane: this is
+    # about the standing deployment, not about any stack this run created.
+    require_lane host
+    docker ps --filter "name=${HOST_PROJECT}-session-runner" --format '{{.Names}} {{.Status}}' > "$CASE_DIR/ps.txt"
+    if ! grep -q "$HOST_PROJECT" "$CASE_DIR/ps.txt"; then
+        write_result false RunnerNotRunning 2
     fi
-    local live
-    live="$(version_sha 5000)"
-    printf '%s\n' "$live" > "$CASE_DIR/version.txt"
-    if [ "$live" != "$SHA" ]; then
-        write_result false RevisionMismatch 2
+    if ! grep -qi 'up' "$CASE_DIR/ps.txt"; then
+        write_result false RunnerNotUp 2
     fi
-    compose_parent ps > "$CASE_DIR/ps.txt" 2>&1 || write_result false HandoffPsFailed 2
+    if ! curl -fsS "${C604_SERVER_ORIGIN:?}/api/session-runners/server2/status" > "$CASE_DIR/status.json"; then
+        write_result false RunnerStatusUnavailable 2
+    fi
+    if ! grep -q '"available"[[:space:]]*:[[:space:]]*true' "$CASE_DIR/status.json"; then
+        write_result false RunnerNotRegistered 2
+    fi
     find "$EVIDENCE_ROOT" -maxdepth 2 -type d > "$CASE_DIR/evidence-index.txt"
+    if [ ! -s "$CASE_DIR/evidence-index.txt" ]; then
+        write_result false EvidenceIndexEmpty 2
+    fi
+    write_result true '' 0
+}
+
+# =============================================================================================
+# CARD-0604 S4: the host lane. These run on server2's own shell against the HOST daemon and are
+# the only cases allowed to change standing state. They never build or run a test, never touch a
+# foreign project, and never prune the host daemon (D-9).
+# =============================================================================================
+
+SERVER2_COMPOSE="$CHECKOUT/docker-compose.server2-runner.yml"
+SERVER2_ENV="$SERVER2_ROOT/secrets/stack.env"
+DEPLOY_KEY="$SERVER2_ROOT/secrets/deploy_key"
+PHONE_HOME_SECRET="$SERVER2_ROOT/secrets/phone-home"
+
+compose_host() {
+    ANTIPHON_DEPLOY_KEY_FILE="$DEPLOY_KEY" \
+    PHONE_HOME_SECRET_FILE="$PHONE_HOME_SECRET" \
+    PHONE_HOME_SERVER_ORIGIN="${C604_SERVER_ORIGIN:?}" \
+    SOURCE_SHA12="${SHA:0:12}" \
+    SOURCE_REVISION="$SHA" \
+    COMPOSE_PROJECT_NAME="$HOST_PROJECT" \
+    docker compose -p "$HOST_PROJECT" -f "$SERVER2_COMPOSE" "$@"
+}
+
+runner_container() {
+    docker ps --filter "name=${HOST_PROJECT}-session-runner" --format '{{.Names}}' | head -n 1
+}
+
+# D-9: retire the CARD-0590 leftovers AFTER writing the inventory, and touch nothing else. The
+# host daemon is shared with am-service, traefik, windmill and schoolrevision-*; `prune` on it is
+# forbidden, here and everywhere.
+retire_c590_leftovers() {
+    docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Status}}' > "$CASE_DIR/inventory-containers.txt"
+    docker volume ls --format '{{.Name}}' > "$CASE_DIR/inventory-volumes.txt"
+    docker images --format '{{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.Size}}' > "$CASE_DIR/inventory-images.txt"
+
+    local project
+    for project in $(docker ps -a --format '{{.Label "com.docker.compose.project"}}' | sort -u); do
+        case "$project" in
+            c590[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
+                printf 'retiring project %s\n' "$project" >> "$CASE_DIR/retired.txt"
+                docker compose -p "$project" down -v --remove-orphans >> "$CASE_DIR/command.log" 2>&1 || true
+                ;;
+        esac
+    done
+    local image
+    for image in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E '^antiphon-c590-' || true); do
+        printf 'retiring image %s\n' "$image" >> "$CASE_DIR/retired.txt"
+        docker image rm "$image" >> "$CASE_DIR/command.log" 2>&1 || true
+    done
+    touch "$CASE_DIR/retired.txt"
+}
+
+case_deploy_parent() {
+    require_lane host
+    ensure_checkout
+
+    # --- D-8: both secrets are generated on server2 and never leave it. ---
+    umask 077
+    mkdir -p "$SERVER2_ROOT/secrets"
+    if [ ! -s "$DEPLOY_KEY" ]; then
+        ssh-keygen -t ed25519 -N '' -C antiphon-server2-runner -f "$DEPLOY_KEY" >> "$CASE_DIR/command.log" 2>&1 \
+            || write_result false DeployKeyGenerationFailed 2
+    fi
+    chmod 0600 "$DEPLOY_KEY"
+    if [ ! -s "$PHONE_HOME_SECRET" ]; then
+        openssl rand -hex 32 > "$PHONE_HOME_SECRET" || write_result false PhoneHomeSecretGenerationFailed 2
+    fi
+    chmod 0600 "$PHONE_HOME_SECRET"
+    # The PUBLIC half only. The private half is never copied, printed or hashed.
+    cp "$DEPLOY_KEY.pub" "$CASE_DIR/deploy_key.pub"
+    stat -c '%a' "$PHONE_HOME_SECRET" > "$CASE_DIR/phone-home-mode.txt"
+    printf 'true\n' > "$CASE_DIR/deploy-key-present.txt"
+    printf 'true\n' > "$CASE_DIR/phone-home-secret-present.txt"
+
+    retire_c590_leftovers
+
+    cat > "$SERVER2_ENV" <<EOF
+COMPOSE_PROJECT_NAME=$HOST_PROJECT
+SOURCE_REVISION=$SHA
+SOURCE_SHA12=${SHA:0:12}
+PHONE_HOME_SERVER_ORIGIN=${C604_SERVER_ORIGIN:?}
+ANTIPHON_DEPLOY_KEY_FILE=$DEPLOY_KEY
+PHONE_HOME_SECRET_FILE=$PHONE_HOME_SECRET
+EOF
+
+    docker build -f "$CHECKOUT/docker/session-runner-grok/Dockerfile" --target session-testing \
+        --build-arg "SOURCE_REVISION=$SHA" \
+        -t "antiphon-server2/session-testing:${SHA:0:12}" "$CHECKOUT" >> "$CASE_DIR/build.log" 2>&1 \
+        || write_result false RunnerBuildFailed 2
+    docker build -f "$CHECKOUT/Dockerfile" --build-arg "SOURCE_REVISION=$SHA" \
+        -t "antiphon-server2/server:${SHA:0:12}" "$CHECKOUT" >> "$CASE_DIR/build.log" 2>&1 \
+        || write_result false StateInitBuildFailed 2
+
+    compose_host up -d --no-build --remove-orphans >> "$CASE_DIR/command.log" 2>&1 || {
+        compose_host logs --no-color --tail 120 >> "$CASE_DIR/command.log" 2>&1 || true
+        write_result false HostComposeFailed 2
+    }
+
+    local container i
+    for i in $(seq 1 60); do
+        container="$(runner_container)"
+        [ -n "$container" ] && break
+        sleep 5
+    done
+    if [ -z "$container" ]; then
+        write_result false RunnerNotStarted 2
+    fi
+    printf '%s\n' "$container" > "$CASE_DIR/container.txt"
+
+    for i in $(seq 1 60); do
+        if docker exec "$container" curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1; then
+            break
+        fi
+        sleep 5
+    done
+    if ! docker exec "$container" curl -fsS http://127.0.0.1:8080/health > "$CASE_DIR/health.txt" 2>&1; then
+        compose_host logs --no-color --tail 200 >> "$CASE_DIR/command.log" 2>&1 || true
+        write_result false RunnerUnhealthy 2
+    fi
+
+    # V-11: persistent, privileged, its own nested daemon, no host socket, no server, no Postgres.
+    docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$container" > "$CASE_DIR/restart-policy.txt"
+    if [ "$(tr -d '[:space:]' < "$CASE_DIR/restart-policy.txt")" != "unless-stopped" ]; then
+        write_result false NotPersistent 2
+    fi
+    docker inspect -f '{{.HostConfig.Privileged}}' "$container" > "$CASE_DIR/privileged.txt"
+    if [ "$(tr -d '[:space:]' < "$CASE_DIR/privileged.txt")" != "true" ]; then
+        write_result false NotPrivileged 2
+    fi
+    docker inspect -f '{{range .Mounts}}{{println .Source .Destination}}{{end}}' "$container" > "$CASE_DIR/mounts.txt"
+    if grep -q 'docker\.sock' "$CASE_DIR/mounts.txt"; then
+        write_result false HostSocketMounted 2
+    fi
+    docker exec "$container" docker info --format '{{.Name}}' > "$CASE_DIR/daemon-name.txt" 2>&1 \
+        || write_result false NestedDaemonUnavailable 2
+    docker exec "$container" hostname > "$CASE_DIR/runner-hostname.txt"
+    if [ "$(tr -d '[:space:]' < "$CASE_DIR/daemon-name.txt")" != "$(tr -d '[:space:]' < "$CASE_DIR/runner-hostname.txt")" ]; then
+        write_result false SiblingDaemonRefused 2
+    fi
+    compose_host ps --format '{{.Service}}' > "$CASE_DIR/services.txt" 2>&1 || true
+    if grep -qE '^(antiphon|postgres)$' "$CASE_DIR/services.txt"; then
+        write_result false UnexpectedStandingService 2
+    fi
+
+    # V-12: the foreign neighbours on the shared host daemon are untouched.
+    docker ps --format '{{.Names}}' > "$CASE_DIR/foreign-after.txt"
+
+    # Dispatch eligibility is recorded, not asserted: CP-6a is what turns production on.
+    curl -fsS "${C604_SERVER_ORIGIN:?}/api/session-runners/server2/status" > "$CASE_DIR/status.json" 2>&1 || true
+    write_result true '' 0
+}
+
+case_nested_residue() {
+    # V-20: after a run, nothing of c604<run> survives on the nested daemon, and nothing of it
+    # ever appeared on the HOST daemon. Host lane, because only it can see the host daemon.
+    require_lane host
+    local container
+    container="$(runner_container)"
+    if [ -z "$container" ]; then
+        write_result false RunnerNotRunning 2
+    fi
+    docker ps -a --format '{{.Names}}' | grep -E "c604${RUN}|c604-${RUN}" > "$CASE_DIR/host-residue.txt" || true
+    docker volume ls --format '{{.Name}}' | grep -E "c604${RUN}" >> "$CASE_DIR/host-residue.txt" || true
+    docker network ls --format '{{.Name}}' | grep -E "c604${RUN}" >> "$CASE_DIR/host-residue.txt" || true
+    if [ -s "$CASE_DIR/host-residue.txt" ]; then
+        write_result false HostResidue 2
+    fi
+    docker exec "$container" sh -c "docker ps -a --format '{{.Names}}'; docker volume ls --format '{{.Name}}'; docker network ls --format '{{.Name}}'" \
+        > "$CASE_DIR/nested-all.txt" 2>&1 || write_result false NestedDaemonUnavailable 2
+    grep -E "c604${RUN}" "$CASE_DIR/nested-all.txt" > "$CASE_DIR/nested-residue.txt" || true
+    if [ -s "$CASE_DIR/nested-residue.txt" ]; then
+        write_result false NestedResidue 2
+    fi
+    docker exec "$container" curl -fsS http://127.0.0.1:8080/health > "$CASE_DIR/health.txt" \
+        || write_result false RunnerUnhealthy 2
+    write_result true '' 0
+}
+
+case_persistent_restart() {
+    # V-21: stop then up keeps the container name, brings the nested daemon back with its images,
+    # and re-registers with the SAME runnerStoreId. A changed or lost store id is a refusal: it
+    # would break every open verification execution bound to it.
+    require_lane host
+    local container before_store after_store before_images
+    container="$(runner_container)"
+    if [ -z "$container" ]; then
+        write_result false RunnerNotRunning 2
+    fi
+    printf '%s\n' "$container" > "$CASE_DIR/container-before.txt"
+    before_store="$(docker exec "$container" cat /state/runner-store-id 2>/dev/null | tr -d '[:space:]' || true)"
+    if [ -z "$before_store" ]; then
+        write_result false LostNestedStore 2
+    fi
+    printf '%s\n' "$before_store" > "$CASE_DIR/store-id-before.txt"
+    before_images="$(docker exec "$container" docker images -q | sort | tr -d '[:space:]')"
+
+    compose_host stop >> "$CASE_DIR/command.log" 2>&1 || write_result false StopFailed 2
+    compose_host up -d --no-build >> "$CASE_DIR/command.log" 2>&1 || write_result false RestartFailed 2
+
+    local i after_container
+    for i in $(seq 1 60); do
+        after_container="$(runner_container)"
+        if [ -n "$after_container" ] && docker exec "$after_container" curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1; then
+            break
+        fi
+        sleep 5
+    done
+    if [ -z "$after_container" ]; then
+        write_result false RunnerNotStarted 2
+    fi
+    printf '%s\n' "$after_container" > "$CASE_DIR/container-after.txt"
+    if [ "$after_container" != "$container" ]; then
+        write_result false ContainerNameChanged 2
+    fi
+    if ! docker exec "$after_container" curl -fsS http://127.0.0.1:8080/health > "$CASE_DIR/health.txt" 2>&1; then
+        write_result false RunnerUnhealthy 2
+    fi
+    if ! docker exec "$after_container" docker info >/dev/null 2>&1; then
+        write_result false NestedDaemonUnavailable 2
+    fi
+    if [ "$(docker exec "$after_container" docker images -q | sort | tr -d '[:space:]')" != "$before_images" ]; then
+        write_result false NestedImagesLost 2
+    fi
+    after_store="$(docker exec "$after_container" cat /state/runner-store-id 2>/dev/null | tr -d '[:space:]' || true)"
+    printf '%s\n' "$after_store" > "$CASE_DIR/store-id-after.txt"
+    if [ -z "$after_store" ]; then
+        write_result false LostNestedStore 2
+    fi
+    if [ "$after_store" != "$before_store" ]; then
+        write_result false ChangedStoreId 2
+    fi
+    curl -fsS "${C604_SERVER_ORIGIN:?}/api/session-runners/server2/status" > "$CASE_DIR/status.json" 2>&1 || true
     write_result true '' 0
 }
 
@@ -875,30 +1087,29 @@ case_receipt() {
 }
 
 case_throwaway() {
+    require_lane nested
     if [ -f /work/test-evidence/current.env ]; then
         # shellcheck disable=SC1091
         . /work/test-evidence/current.env
     fi
     local item code
+    # CARD-0604 S3/D-13: the nested roster. Every item is a nested-lane case; the host-lane
+    # cases (deploy, residue, restart, handoff) are never reachable from inside a session.
     local -a items=(
         child-server-image-payload
         child-runner-image-payload
-        test-image-context-and-tools
-        receipt-runner-image-payload
-        fixture-image-payload
         deployment-state
         client-lint
         client-tests
-        runtime-context-engine
-        test-context-engine
-        session-denied-socket
+        messaging-tests
+        dotnet-filter
+        git-credential-smoke
         session-result-export-and-child-cleanup
-        interrupted-export-cleanup
-        server2-independent-handoff
     )
     for item in "${items[@]}"; do
         echo "THROW $item"
         C590_CASE="$item" C590_REEXEC=1 C590_SHA="$SHA" C590_RUN="$RUN" C590_CHECKOUT="$CHECKOUT" \
+        C604_BRANCH="$BRANCH" \
             bash "$CHECKOUT/scripts/c590-remote.sh" || code=$?
         echo "THROW $item exit ${code:-0}"
         if [ "${code:-0}" -ne 0 ]; then
@@ -911,7 +1122,9 @@ case_throwaway() {
 
 trap 'ec=$?; if [ "$WROTE" != 1 ] && [ "$ec" != 0 ]; then write_result false "UnhandledExit $ec" "$ec"; fi' EXIT
 
+detect_lane > /dev/null
 ensure_dirs
+printf '%s\n' "$LANE" > "$CASE_DIR/lane.txt"
 if [ "${C590_REEXEC:-}" != "1" ]; then
     ensure_checkout
     export C590_REEXEC=1
@@ -933,13 +1146,15 @@ case "$CASE" in
     client-tests) case_client_tests_body ;;
     messaging-tests) case_messaging ;;
     dotnet-filter) case_dotnet ;;
-    parent-native-and-command-session) case_parent_session ;;
     session-denied-socket) case_denied_socket ;;
     session-result-export-and-child-cleanup) case_cleanup ;;
     interrupted-export-cleanup) case_interrupted ;;
     runtime-context-engine) context_probe "$CHECKOUT/.dockerignore" runtime-probe server/Program.cs ;;
     test-context-engine) context_probe "$CHECKOUT/docker/tests/Dockerfile.dockerignore" test-probe tests/Shared/TestClassificationMetadata.cs ;;
     server2-independent-handoff) case_handoff ;;
+    deploy-parent) case_deploy_parent ;;
+    nested-residue) case_nested_residue ;;
+    persistent-restart) case_persistent_restart ;;
     git-credential-smoke) case_git_smoke ;;
     throwaway-all) case_throwaway ;;
     stock-idle|stock-busy|insert-refused|insert-committed-idle|insert-committed-busy|attempt-committed|body-before-enter|recipient-before-ingestion|transcript-save-fails-release|transcript-save-fails-restart|receipt-before-verdict|response-before-client|receipt-before-manifest|changed-generation|failure-summary)

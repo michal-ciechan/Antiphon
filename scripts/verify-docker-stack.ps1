@@ -123,6 +123,85 @@ switch ($Case) {
         }
         Write-C590Result -EvidenceRoot $root -Accepted $true -ExitCode 0
     }
+    # --- CARD-0604 S4 boundaries. Each is the refusal the live case makes before any command. ---
+    'deploy-parent' {
+        if (-not [bool]$m.deployKeyPresent) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'DeployKeyMissing' -ExitCode 2
+        }
+        if (-not [bool]$m.phoneHomeSecretPresent) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'PhoneHomeSecretMissing' -ExitCode 2
+        }
+        if ([string]$m.restartPolicy -ne 'unless-stopped') {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'NotPersistent' -ExitCode 2
+        }
+        if ([string]$m.daemonName -ne [string]$m.runnerHostname) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'SiblingDaemonRefused' -ExitCode 2
+        }
+        Write-C590Result -EvidenceRoot $root -Accepted $true -ExitCode 0
+    }
+    'session-nested-stack' {
+        # The session cases launch through the PRODUCTION server, so a runner that is not
+        # dispatch-eligible must refuse here rather than leave a session queued forever.
+        if (-not [bool]$m.dispatchEligible) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'RunnerNotDispatchEligible' -ExitCode 2
+        }
+        if (-not [string]$m.sessionOrigin) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'SessionOriginMissing' -ExitCode 2
+        }
+        if ([string]$m.hostResidue) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'HostResidue' -ExitCode 2
+        }
+        if ([string]$m.nestedResidue) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'NestedResidue' -ExitCode 2
+        }
+        Write-C590Result -EvidenceRoot $root -Accepted $true -ExitCode 0
+    }
+    'await-nested-stack' {
+        # A session that is still running is not a result, and a dead session with no marker is
+        # incomplete: neither may be reported as an outcome.
+        if ([string]$m.sessionState -eq 'Working') {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'SessionStillRunning' -ExitCode 2
+        }
+        if (-not [bool]$m.markerSeen) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'SessionIncomplete' -ExitCode 2
+        }
+        foreach ($sub in @($m.subordinates)) {
+            if (-not [bool]$sub.accepted) {
+                Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis ('SubordinateFailed ' + [string]$sub.name) -ExitCode 2
+            }
+        }
+        Write-C590Result -EvidenceRoot $root -Accepted $true -ExitCode 0
+    }
+    'persistent-restart' {
+        if (-not [string]$m.storeIdBefore) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'LostNestedStore' -ExitCode 2
+        }
+        if ([string]$m.storeIdAfter -ne [string]$m.storeIdBefore) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'ChangedStoreId' -ExitCode 2
+        }
+        if (-not [bool]$m.imagesRetained) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'NestedImagesLost' -ExitCode 2
+        }
+        Write-C590Result -EvidenceRoot $root -Accepted $true -ExitCode 0
+    }
+    'nested-residue' {
+        if ([string]$m.hostResidue) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'HostResidue' -ExitCode 2
+        }
+        if ([string]$m.nestedResidue) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'NestedResidue' -ExitCode 2
+        }
+        Write-C590Result -EvidenceRoot $root -Accepted $true -ExitCode 0
+    }
+    'session-git-smoke' {
+        if (-not [string]$m.pushedSha -or [string]$m.pushedSha.Length -ne 40) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'GitPushShaMissing' -ExitCode 2
+        }
+        if (-not [bool]$m.branchDeleted) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'SmokeBranchNotDeleted' -ExitCode 2
+        }
+        Write-C590Result -EvidenceRoot $root -Accepted $true -ExitCode 0
+    }
     'cleanup-residue' {
         if ([string]$m.survivingId) {
             Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'CleanupIncomplete' -ExitCode 2 -Extra @{ surviving = [string]$m.survivingId }

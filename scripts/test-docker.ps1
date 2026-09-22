@@ -57,6 +57,20 @@ if (-not (Test-InsideCheckout -PathValue $source -RootValue ([string]$m.checkout
     Write-C590Result -EvidenceRoot $m.evidenceRoot -Accepted $false -Diagnosis 'OutsideCheckout' -ExitCode 2
 }
 
+# CARD-0604 D-5: the daemon this entry point drives must be the runner's OWN nested daemon.
+# A sibling daemon (the retired host-socket shape) puts every mapped port in a different network
+# namespace from the test process, so Testcontainers' localhost connection strings silently
+# resolve to nothing; refuse it by name instead of letting the run fail somewhere downstream.
+# An unreachable daemon is the tracked-session case (D-18): a Mutation session has no supplementary
+# group for the nested socket at all, and must be told that, not handed a socket diagnosis.
+$daemon = $m.daemon
+if ($null -eq $daemon -or -not [bool]$daemon.present) {
+    Write-C590Result -EvidenceRoot $m.evidenceRoot -Accepted $false -Diagnosis 'NestedDaemonUnavailable' -ExitCode 2
+}
+if ([string]$daemon.name -ne [string]$daemon.hostname) {
+    Write-C590Result -EvidenceRoot $m.evidenceRoot -Accepted $false -Diagnosis 'SiblingDaemonRefused' -ExitCode 2
+}
+
 if (-not [bool]$m.socket.present) {
     Write-C590Result -EvidenceRoot $m.evidenceRoot -Accepted $false -Diagnosis 'MissingSocket' -ExitCode 2
 }

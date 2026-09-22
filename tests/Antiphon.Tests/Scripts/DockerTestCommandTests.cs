@@ -21,6 +21,28 @@ public sealed class DockerTestCommandTests
     }
 
     [Test]
+    public async Task Sibling_daemon_is_refused()
+    {
+        var manifest = C590Harness.Happy();
+        manifest["daemon"] = new Dictionary<string, object?> { ["present"] = true, ["name"] = "server2", ["hostname"] = "runner-host" };
+        var run = await C590Harness.RunAsync("test-docker.ps1", manifest, args: ["-Group", "small"]);
+        run.ExitCode.ShouldBe(2);
+        Diagnosis(run).ShouldBe("SiblingDaemonRefused");
+        run.Commands.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Missing_nested_daemon_is_refused()
+    {
+        var manifest = C590Harness.Happy();
+        manifest["daemon"] = new Dictionary<string, object?> { ["present"] = false, ["name"] = "", ["hostname"] = "runner-host" };
+        var run = await C590Harness.RunAsync("test-docker.ps1", manifest, args: ["-Group", "small"]);
+        run.ExitCode.ShouldBe(2);
+        Diagnosis(run).ShouldBe("NestedDaemonUnavailable");
+        run.Commands.ShouldBeEmpty();
+    }
+
+    [Test]
     public async Task Missing_socket_fails_before_execution()
     {
         var manifest = C590Harness.Happy();
