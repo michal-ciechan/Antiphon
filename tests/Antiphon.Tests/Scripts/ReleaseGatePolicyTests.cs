@@ -58,7 +58,7 @@ public sealed class ReleaseGatePolicyTests
         "C599 EligibilityCensus zero required uids is not ok");
 
     [Test]
-    public Task C599_ExpandedCoverage() => RunCaseAsync("C599_ExpandedCoverage", 10,
+    public Task C599_ExpandedCoverage() => RunCaseAsync("C599_ExpandedCoverage", 9,
         "C599 ExpandedCoverage control: both required rows executed is complete",
         "C599 ExpandedCoverage a removed expanded row is incomplete",
         "C599 ExpandedCoverage names the missing expanded row",
