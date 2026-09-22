@@ -49,7 +49,7 @@ public sealed class DeliveryFileBarrier
         {
             await File.WriteAllTextAsync(reached, record, cancellationToken);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             return new BarrierWait(false, "Incomplete");
         }
@@ -71,7 +71,7 @@ public sealed class DeliveryFileBarrier
             {
                 await Task.Delay(15, cancellationToken);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 return new BarrierWait(false, "Incomplete");
             }
