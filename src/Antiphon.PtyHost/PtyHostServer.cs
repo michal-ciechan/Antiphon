@@ -26,26 +26,30 @@ public sealed class PtyHostServer(PtyHostOptions options, HostSession session, H
 
         while (!lifetime.IsCancellationRequested)
         {
-            NamedPipeServerStream pipe;
+            // CurrentUserOnly on Unix runs SO_PEERCRED after accept. In Docker that check
+            // can hang or reject the same-UID runner, so the client Connect waits out the
+            // 15s timeout while the host sits in WaitForConnection (CARD-0490 V-7). Windows
+            // keeps the ACL. Same-container Linux phone-home is already UID-isolated.
+            var pipeOptions = PipeOptions.Asynchronous;
+            if (OperatingSystem.IsWindows())
+                pipeOptions |= PipeOptions.CurrentUserOnly;
+            var pipe = new NamedPipeServerStream(
+                options.PipeName,
+                PipeDirection.InOut,
+                maxNumberOfServerInstances: 1,
+                PipeTransmissionMode.Byte,
+                pipeOptions);
             try
             {
-                // CurrentUserOnly on Unix runs SO_PEERCRED after accept. In Docker that check
-                // can hang or reject the same-UID runner, so the client Connect waits out the
-                // 15s timeout while the host sits in WaitForConnection (CARD-0490 V-7). Windows
-                // keeps the ACL. Same-container Linux phone-home is already UID-isolated.
-                var pipeOptions = PipeOptions.Asynchronous;
-                if (OperatingSystem.IsWindows())
-                    pipeOptions |= PipeOptions.CurrentUserOnly;
-                pipe = new NamedPipeServerStream(
-                    options.PipeName,
-                    PipeDirection.InOut,
-                    maxNumberOfServerInstances: 1,
-                    PipeTransmissionMode.Byte,
-                    pipeOptions);
                 await pipe.WaitForConnectionAsync(lifetime.Token);
             }
             catch (OperationCanceledException)
             {
+                // CARD-0594: the listening stream has to be disposed on the way out. Left open it
+                // holds the only allowed instance of the pipe name on Windows, and on Unix the
+                // bound socket file is never unlinked — so a runner connecting late finds a file
+                // with nothing listening and retries ECONNREFUSED for its whole connect budget.
+                await pipe.DisposeAsync();
                 break;
             }
 

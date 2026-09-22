@@ -1,3 +1,4 @@
+using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using Antiphon.PtyHost.Protocol;
 using Antiphon.SessionRunner.Contracts;
@@ -203,6 +204,43 @@ public class HostSessionPipeTests
 
         await host.RunTask.WaitAsync(TimeSpan.FromSeconds(15));
         File.Exists(host.ManifestPath).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// CARD-0594: the never-connected variant of the launch-timeout exit. The cancelled
+    /// WaitForConnection used to break out of the accept loop with the listening stream still
+    /// open, which on Windows keeps the one allowed instance of the pipe name and on Unix leaves
+    /// the bound socket file on disk for a late connect to find with nothing behind it.
+    /// </summary>
+    [Test]
+    public async Task Launch_timeout_exit_releases_the_pipe_name()
+    {
+        var pipeName = OperatingSystem.IsWindows()
+            ? null
+            : Path.Combine(Path.GetTempPath(), $"antiphon-pty-c594-{Guid.NewGuid():N}");
+        await using var host = HostHarness.Start(o =>
+        {
+            var configured = o with { LaunchTimeout = TimeSpan.FromSeconds(1) };
+            return pipeName is null ? configured : configured with { PipeName = pipeName };
+        });
+
+        // Nobody ever connects: the host self-destructs on its launch timeout.
+        await host.RunTask.WaitAsync(TimeSpan.FromSeconds(15));
+
+        Should.NotThrow(
+            () =>
+            {
+                using var second = new NamedPipeServerStream(
+                    host.Options.PipeName,
+                    PipeDirection.InOut,
+                    maxNumberOfServerInstances: 1,
+                    PipeTransmissionMode.Byte,
+                    PipeOptions.Asynchronous);
+            },
+            $"the exited host still holds '{host.Options.PipeName}' - its listening stream was never disposed");
+
+        if (!OperatingSystem.IsWindows())
+            File.Exists(host.Options.PipeName).ShouldBeFalse();
     }
 
     [Test]
