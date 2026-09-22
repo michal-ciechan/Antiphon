@@ -160,6 +160,162 @@ public partial class CheckNoteDeliveryHandoffTests
             return Task.CompletedTask;
         }, expectRecovered: false);
 
+    [Test]
+    public async Task Legacy_captured_note_survives_worker_death()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var parent = await BridgeQueueHarness.CreateAsync(new()
+        {
+            AlwaysOn = false, ConnectionString = schema.ConnectionString,
+        });
+        var body = "original legacy check note for the caller";
+        var checkedId = Guid.NewGuid();
+        var runId = Guid.NewGuid();
+        await using (var db = NewDb(schema.ConnectionString))
+        {
+            var now = DateTime.UtcNow;
+            var episodeId = Guid.NewGuid();
+            db.CheckCompactionRecoveries.Add(new CheckCompactionRecovery
+            {
+                Id = episodeId, PhysicalAgentId = parent.AgentId, SessionId = parent.SessionId,
+                AcceptedStartedAt = now, BoundaryIdentity = "captured", BoundaryCreatedAt = now,
+                ContinuationCreatedAt = now, ConfiguredThresholdMinutes = 10, DetectedAt = now,
+                State = CheckCompactionRecoveryState.AwaitingCheck,
+            });
+            db.AgentTasks.AddRange(
+                new AgentTask
+                {
+                    Id = checkedId, RootTaskId = checkedId, Title = "subject", Goal = "watch", Role = AgentTaskRole.Code,
+                    Kind = AgentTaskKind.Worker, Status = AgentTaskStatus.Working, AgentId = parent.AgentId,
+                    AgentSessionId = parent.SessionId, ParentSessionId = parent.SessionId, ReplyTo = AgentTaskReplyTo.Session,
+                    WorkingDirectory = parent.TempRoot, CreatedAt = now, DispatchedAt = now, Attempt = 1, CheckCount = 1,
+                },
+                new AgentTask
+                {
+                    Id = runId, RootTaskId = runId, Title = "read", Goal = "interpret", Role = AgentTaskRole.Check,
+                    Kind = AgentTaskKind.Worker, Status = AgentTaskStatus.Succeeded, Result = body,
+                    AgentId = parent.AgentId, AgentSessionId = parent.SessionId, WorkingDirectory = parent.TempRoot,
+                    CreatedAt = now,
+                });
+            db.LegacyCheckNotePublications.Add(new LegacyCheckNotePublication
+            {
+                Id = Guid.NewGuid(), CheckedTaskId = checkedId, CheckedTaskAttempt = 1, CheckedTaskDispatchedAt = now,
+                CheckNumber = 1, RecoveryId = episodeId, PhysicalAgentId = parent.AgentId,
+                InterpreterSessionId = parent.SessionId, InterpreterAcceptedStartedAt = now,
+                ParentSessionId = parent.SessionId, CapturedAt = now, FactsSnapshotJson = "{}", RenderContextJson = "{}",
+                InterpretationTaskId = runId, InterpretationDeadlineAt = now.AddMinutes(5),
+                State = LegacyCheckNoteState.Captured, SourceEventId = Guid.NewGuid(), NotificationId = Guid.NewGuid(),
+                NextAttemptAt = now.AddMinutes(-1),
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await using (var before = NewDb(schema.ConnectionString))
+            (await MatchingPromptsAsync(before, parent.SessionId, body)).Count.ShouldBe(0);
+
+        var root = CheckCompactionFixture.CreateRoot();
+        var scanner = CheckCompactionFixture.Start(new CrashWorkerRequest
+        {
+            Root = root, Scenario = "scan", ConnectionString = schema.ConnectionString,
+            SessionId = parent.SessionId, AgentId = parent.AgentId,
+        });
+        var prompts = new List<string>();
+        var until = DateTime.UtcNow.AddSeconds(25);
+        while (DateTime.UtcNow < until && prompts.Count == 0)
+        {
+            await using var db = NewDb(schema.ConnectionString);
+            prompts = await MatchingPromptsAsync(db, parent.SessionId, body);
+            if (prompts.Count == 0)
+                await Task.Delay(100);
+        }
+
+        prompts.Count.ShouldBe(1);
+        await using var verify = NewDb(schema.ConnectionString);
+        (await verify.LegacyCheckNotePublications.SingleAsync()).State.ShouldBe(LegacyCheckNoteState.Produced);
+        (await verify.AgentTasks.CountAsync(t => t.Role == AgentTaskRole.Check)).ShouldBe(1);
+        await File.WriteAllTextAsync(Path.Combine(root, "stop"), "stop");
+        await scanner.Process.WaitForExitAsync();
+        await CheckCompactionFixture.DrainAsync(root, scanner.Process, scanner.Output, scanner.Error);
+    }
+
+    [Test]
+    public async Task Legacy_note_recovery_runs_with_checks_disabled()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var parent = await BridgeQueueHarness.CreateAsync(new()
+        {
+            AlwaysOn = false, ConnectionString = schema.ConnectionString,
+        });
+        var body = "original legacy check note for the caller";
+        await using (var db = NewDb(schema.ConnectionString))
+        {
+            var now = DateTime.UtcNow;
+            var checkedId = Guid.NewGuid();
+            var episodeId = Guid.NewGuid();
+            var eventId = Guid.NewGuid();
+            var noteId = Guid.NewGuid();
+            db.CheckCompactionRecoveries.Add(new CheckCompactionRecovery
+            {
+                Id = episodeId, PhysicalAgentId = parent.AgentId, SessionId = parent.SessionId,
+                AcceptedStartedAt = now, BoundaryIdentity = "produced", BoundaryCreatedAt = now,
+                ContinuationCreatedAt = now, ConfiguredThresholdMinutes = 10, DetectedAt = now,
+                State = CheckCompactionRecoveryState.AwaitingCheck,
+            });
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = checkedId, RootTaskId = checkedId, Title = "subject", Goal = "watch", Role = AgentTaskRole.Code,
+                Kind = AgentTaskKind.Worker, Status = AgentTaskStatus.Working, AgentId = parent.AgentId,
+                AgentSessionId = parent.SessionId, ParentSessionId = parent.SessionId, ReplyTo = AgentTaskReplyTo.Session,
+                WorkingDirectory = parent.TempRoot, CreatedAt = now,
+            });
+            db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = eventId, AgentTaskId = checkedId, Type = AgentTaskEventType.Check, Detail = body, At = now,
+            });
+            db.LegacyCheckNotePublications.Add(new LegacyCheckNotePublication
+            {
+                Id = Guid.NewGuid(), CheckedTaskId = checkedId, CheckedTaskAttempt = 1, CheckedTaskDispatchedAt = now,
+                CheckNumber = 1, RecoveryId = episodeId, PhysicalAgentId = parent.AgentId,
+                InterpreterSessionId = parent.SessionId, InterpreterAcceptedStartedAt = now,
+                ParentSessionId = parent.SessionId, CapturedAt = now, FactsSnapshotJson = "{}", RenderContextJson = "{}",
+                InterpretationDeadlineAt = now, State = LegacyCheckNoteState.Produced, SourceEventId = eventId,
+                NotificationId = noteId, ProducedAt = now, Body = body, ContentDigest = DelegationNoteDigest.Compute(body),
+                NextAttemptAt = now,
+            });
+            db.AgentTaskLandNotifications.Add(new AgentTaskLandNotification
+            {
+                Id = noteId, TaskId = checkedId, SourceEventId = eventId, Kind = LandNotificationKind.LegacyCheckNote,
+                ReplyTo = AgentTaskReplyTo.Session, ParentSessionId = parent.SessionId, Body = body,
+                ContentDigest = DelegationNoteDigest.Compute(body), CreatedAt = now, NextAttemptAt = now,
+                State = LandNotificationState.Queued,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var root = CheckCompactionFixture.CreateRoot();
+        var scanner = CheckCompactionFixture.Start(new CrashWorkerRequest
+        {
+            Root = root, Scenario = "scan", ConnectionString = schema.ConnectionString,
+            SessionId = parent.SessionId, AgentId = parent.AgentId, ChecksDisabled = true,
+        });
+        var prompts = new List<string>();
+        var until = DateTime.UtcNow.AddSeconds(25);
+        while (DateTime.UtcNow < until && prompts.Count == 0)
+        {
+            await using var db = NewDb(schema.ConnectionString);
+            prompts = await MatchingPromptsAsync(db, parent.SessionId, body);
+            if (prompts.Count == 0)
+                await Task.Delay(100);
+        }
+
+        prompts.Count.ShouldBe(1);
+        await using var verify = NewDb(schema.ConnectionString);
+        (await verify.AgentTasks.CountAsync(t => t.Role == AgentTaskRole.Check)).ShouldBe(0);
+        await File.WriteAllTextAsync(Path.Combine(root, "stop"), "stop");
+        await scanner.Process.WaitForExitAsync();
+        await CheckCompactionFixture.DrainAsync(root, scanner.Process, scanner.Output, scanner.Error);
+    }
+
     private static async Task AssertLegacyReceiptAsync(
         Action<LegacyCheckNotePublication>? mutate, bool expectRecovered) =>
         await AssertLegacyReceiptAsync(mutate is null ? null : (publication, _) =>
