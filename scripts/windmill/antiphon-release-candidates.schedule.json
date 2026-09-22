@@ -1,0 +1,11 @@
+{
+  "path": "u/lndcobra/antiphon_release_candidates",
+  "schedule": "0 30 8,16 * * *",
+  "timezone": "Europe/London",
+  "script_path": "u/lndcobra/antiphon_release_candidates",
+  "is_flow": false,
+  "args": {},
+  "enabled": false,
+  "tag": "desktop",
+  "on_failure": null
+}

@@ -530,3 +530,124 @@ function Test-ReleaseGatePublicationGate {
     }
     return [pscustomobject]@{ Ok = ($reasons.Count -eq 0); Reasons = $reasons }
 }
+
+# ------------------------------------------------------------------- seams ---
+# Git, GitHub and Windmill are injected at the I/O boundary so the contract tests
+# drive the real production code paths. Nothing below replaces a predicate or a
+# gate: a seam may only answer for the remote, never decide whether to publish.
+
+function Import-ReleaseGateSeams {
+    param([string]$SeamsPath)
+    if ([string]::IsNullOrWhiteSpace($SeamsPath)) { return }
+    if (-not (Test-Path -LiteralPath $SeamsPath)) { throw ('missing seams {0}' -f $SeamsPath) }
+    $script:ReleaseGateSeams = $null
+    . $SeamsPath
+    if ($ReleaseGateSeams) { $script:ReleaseGateSeams = $ReleaseGateSeams }
+}
+
+function Invoke-ReleaseGateGit {
+    param([string]$WorkingDirectory, [string[]]$Arguments)
+    if ($script:ReleaseGateSeams -and $script:ReleaseGateSeams.Git) {
+        return $script:ReleaseGateSeams.Git.Invoke($WorkingDirectory, $Arguments)
+    }
+    return (Invoke-NightlyGit -WorkingDirectory $WorkingDirectory -Arguments $Arguments)
+}
+
+function Invoke-ReleaseGateGitHub {
+    <#
+      One call shape for every GitHub operation: Verb plus an argument bag. The
+      default implementation shells out to the already-authorized gh CLI; this
+      function never mints, reads or prints a credential.
+    #>
+    param([string]$Verb, [hashtable]$Arguments = @{}, [string]$WorkingDirectory = '')
+    if ($script:ReleaseGateSeams -and $script:ReleaseGateSeams.GitHub) {
+        return $script:ReleaseGateSeams.GitHub.Invoke($Verb, $Arguments, $WorkingDirectory)
+    }
+    $ghArgs = @()
+    switch ($Verb) {
+        'release-view' { $ghArgs = @('release', 'view', [string]$Arguments.tag, '--json', 'id,name,url,isDraft,tagName') }
+        'release-create' {
+            $ghArgs = @('release', 'create', [string]$Arguments.tag, '--verify-tag', '--draft',
+                        '--title', [string]$Arguments.tag, '--notes-file', [string]$Arguments.notesFile)
+        }
+        'release-upload' { $ghArgs = @('release', 'upload', [string]$Arguments.tag, [string]$Arguments.asset, '--clobber') }
+        'release-publish' { $ghArgs = @('release', 'edit', [string]$Arguments.tag, '--draft=false') }
+        default { throw ('unknown github verb {0}' -f $Verb) }
+    }
+    $start = @{ FilePath = 'gh'; ArgumentList = $ghArgs; WorkingDirectory = $WorkingDirectory; PassThru = $true; NoNewWindow = $true; Wait = $true }
+    $proc = Start-NightlyProcess -StartParams $start
+    $code = 1
+    if ($null -ne $proc) { $code = [int]$proc.ExitCode }
+    return [pscustomobject]@{ ExitCode = $code; Output = ''; Verb = $Verb }
+}
+
+function Invoke-ReleaseGateWindmill {
+    <#
+      D-7: registration uses the installed Windmill HTTP API, never a database
+      write. The token is read from an operator-placed file by the caller and is
+      passed straight into the Authorization header; it is never logged.
+    #>
+    param([string]$Method, [string]$Path, $Body = $null, [hashtable]$Context = @{})
+    if ($script:ReleaseGateSeams -and $script:ReleaseGateSeams.Windmill) {
+        return $script:ReleaseGateSeams.Windmill.Invoke($Method, $Path, $Body, $Context)
+    }
+    $baseUrl = [string]$Context.baseUrl
+    if ([string]::IsNullOrWhiteSpace($baseUrl)) { throw 'windmill base url required' }
+    $uri = ($baseUrl.TrimEnd('/') + $Path)
+    $headers = @{ Authorization = ('Bearer ' + [string]$Context.token) }
+    $params = @{ Uri = $uri; Method = $Method; Headers = $headers; ErrorAction = 'Stop' }
+    if ($null -ne $Body) {
+        $params.Body = ($Body | ConvertTo-Json -Depth 12)
+        $params.ContentType = 'application/json'
+    }
+    try {
+        $response = Invoke-RestMethod @params
+        return [pscustomobject]@{ Ok = $true; Status = 200; Body = $response }
+    } catch {
+        $status = 0
+        if ($_.Exception.Response -and $_.Exception.Response.StatusCode) { $status = [int]$_.Exception.Response.StatusCode }
+        return [pscustomobject]@{ Ok = $false; Status = $status; Body = $null; Error = $_.Exception.Message }
+    }
+}
+
+function Get-ReleaseGateTokenFromFile {
+    # The token never reaches a log line, a script payload or a preview diff.
+    param([string]$TokenFile)
+    if ([string]::IsNullOrWhiteSpace($TokenFile)) { throw 'tokenFile is required' }
+    if (-not (Test-Path -LiteralPath $TokenFile)) { throw ('token file missing: {0}' -f $TokenFile) }
+    $text = [System.IO.File]::ReadAllText($TokenFile).Trim()
+    if ([string]::IsNullOrWhiteSpace($text)) { throw ('token file empty: {0}' -f $TokenFile) }
+    return $text
+}
+
+function Write-ReleaseGateJournalStep {
+    <#
+      Durable intent before every remote write. Each completed transition is
+      persisted before the next begins, so a crash or a lost response resumes the
+      same journal instead of allocating a new identity.
+    #>
+    param([string]$Path, [string]$Step, [hashtable]$Fields = @{})
+    $journal = [ordered]@{}
+    if (Test-Path -LiteralPath $Path) {
+        try {
+            $existing = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+            foreach ($p in @($existing.PSObject.Properties)) { $journal[$p.Name] = $p.Value }
+        } catch { throw ('unreadable journal {0}: {1}' -f $Path, $_.Exception.Message) }
+    }
+    $steps = @()
+    if ($journal.Contains('steps')) { foreach ($x in @($journal['steps'])) { $steps += [string]$x } }
+    if ($steps -notcontains $Step) { $steps += $Step }
+    $journal['steps'] = $steps
+    foreach ($k in $Fields.Keys) { $journal[$k] = $Fields[$k] }
+    $journal['updatedAt'] = (Get-NightlyUtcNow).ToString('o')
+    Write-NightlyAtomicJson -Path $Path -Object $journal
+    return $journal
+}
+
+function Test-ReleaseGateJournalStep {
+    param([string]$Path, [string]$Step)
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    try { $journal = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $false }
+    foreach ($x in @($journal.steps)) { if ([string]$x -eq $Step) { return $true } }
+    return $false
+}

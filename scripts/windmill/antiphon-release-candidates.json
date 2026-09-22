@@ -1,0 +1,12 @@
+{
+  "path": "u/lndcobra/antiphon_release_candidates",
+  "summary": "Antiphon release candidates (CARD-0599). Desktop tag. 08:30 and 16:30 Europe/London. Cuts an immutable RC, runs the full rc profile, publishes on green.",
+  "description": "SSH-bridge wrapper for the RC lane. It cuts release/rc-<UTC stamp> from origin/master in the producer-owned clone at C:\\Antiphon\releases\\checkout, pins the full SHA once, then runs scripts/nightly-run.ps1 -Profile rc -Trigger rc -Ref <candidate> -ExpectedSha <sha> against the candidate's own state root, and publishes a CalVer tag plus GitHub Release only on RC complete-green. RC green earns release credit only: it never writes the master attempt, green, monitor or Interim qualification receipt, and cannot repair a failed, missing, stale or overdue scheduled master run. Trigger provenance is derived from WM_SCHEDULE_PATH, not from a caller argument. Contention on the shared native-run lock records deferred-busy and waits for the next slot. NOT REGISTERED: this definition is inert until CARD-0599 S6 applies it. Do not add a Windows Scheduled Task.",
+  "language": "bash",
+  "tag": "desktop",
+  "schema": {
+    "properties": {},
+    "required": []
+  },
+  "content": "#!/bin/bash\nset -uo pipefail\n# CARD-0599 D-7: scheduled/rc credit comes from the runner's own schedule context.\nSLOT=\"${WM_SCHEDULE_PATH:-}\"\nif [ \"$SLOT\" != \"u/lndcobra/antiphon_release_candidates\" ]; then SLOT=manual; fi\nssh -i /tmp/windmill/worker_to_windows -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes lndco@host.docker.internal \"powershell -NoProfile -ExecutionPolicy Bypass -File C:\\src\\Antiphon\\scripts\\release-cut.ps1 -ScheduleSlot $SLOT -JobId ${WM_JOB_ID:-}\"\nexit $?\n"
+}

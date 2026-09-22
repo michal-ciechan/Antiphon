@@ -1,0 +1,7 @@
+{
+  "windmillBaseUrl": "http://windmill.internal",
+  "workspace": "mc",
+  "tokenFile": "C:\\Antiphon\nightly\\windmill-token.txt",
+  "repositoryPath": "C:\\src\\Antiphon",
+  "projectId": "00000000-0000-0000-0000-000000000000"
+}
