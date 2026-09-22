@@ -12,8 +12,15 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient
 {
     private readonly PhoneHomeLiveConnection _connection;
     private readonly RunnerContractMapper _mapper = new();
+    private readonly Antiphon.Server.Application.Services.RemoteSpillCourier? _spills;
 
-    public PhoneHomeRunnerClient(PhoneHomeLiveConnection connection) => _connection = connection;
+    public PhoneHomeRunnerClient(
+        PhoneHomeLiveConnection connection,
+        Antiphon.Server.Application.Services.RemoteSpillCourier? spills = null)
+    {
+        _connection = connection;
+        _spills = spills;
+    }
 
     public async Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct)
     {
@@ -80,9 +87,47 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient
 
     public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
     {
+        // CARD-0604 G-21. A body spilled for this session travels HERE, in the Input payload, and
+        // the runner writes it inside the session's own cwd. Taking it clears it, so a retyped
+        // pointer after a composer-evidence retry does not rewrite the file.
+        if (_spills is not null && _spills.TryTake(sessionId, out var staged))
+        {
+            await SendInputWithSpillAsync(sessionId, input, staged.RunnerCwd, staged.Spill, ct);
+            return;
+        }
+
         var frame = await _connection.RequestAsync(
             PhoneHomeOperation.Input, new { sessionId, input }, ct);
         ThrowIfError(frame);
+    }
+
+    /// <summary>
+    /// CARD-0604 G-21. Input plus the body of a spilled file, written by the RUNNER inside
+    /// <paramref name="runnerCwd"/>. The desktop never writes it: the session cannot see a Windows
+    /// path, and a desktop write leaves a file no one reads behind a prompt pointing at nothing.
+    /// </summary>
+    public async Task SendInputWithSpillAsync(
+        Guid sessionId, string input, string runnerCwd, PhoneHomeInputSpill spill, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(
+            PhoneHomeOperation.Input, new { sessionId, input, runnerCwd, spill }, ct);
+        ThrowIfError(frame);
+    }
+
+    /// <summary>CARD-0604 D-15: mirror an already-pushed task branch on the runner.</summary>
+    public async Task<PhoneHomeWorkspaceMirrorResponse> MirrorWorkspaceAsync(
+        PhoneHomeWorkspaceMirrorRequest request, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.WorkspaceMirror, request, ct);
+        return Read<PhoneHomeWorkspaceMirrorResponse>(frame) ?? throw Missing("workspace-mirror");
+    }
+
+    /// <summary>CARD-0604 D-15: remove a mirror at retirement. Residue is reported, never forced away.</summary>
+    public async Task<PhoneHomeWorkspaceRemoveResponse> RemoveWorkspaceAsync(
+        PhoneHomeWorkspaceRemoveRequest request, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.WorkspaceRemove, request, ct);
+        return Read<PhoneHomeWorkspaceRemoveResponse>(frame) ?? throw Missing("workspace-remove");
     }
 
     public async Task<RunnerConditionalInputResult> SendConditionalInputAsync(

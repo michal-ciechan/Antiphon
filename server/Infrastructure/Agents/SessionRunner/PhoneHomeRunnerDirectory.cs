@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -26,13 +26,17 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
     private Guid? _liveBootId;
     private DateTimeOffset _liveLeaseUntil;
     private long _epoch;
+    private readonly Antiphon.Server.Application.Services.RemoteSpillCourier? _spills;
 
     public PhoneHomeRunnerDirectory(
         ISessionRunnerClient local,
         IOptions<PhoneHomeRunnerSettings> settings,
         IServiceScopeFactory scopes,
-        TimeProvider clock)
+        TimeProvider clock,
+        // CARD-0604 G-21: absent, a remote spill is typed whole rather than written anywhere.
+        Antiphon.Server.Application.Services.RemoteSpillCourier? spills = null)
     {
+        _spills = spills;
         _local = local;
         _settings = settings.Value;
         _scopes = scopes;
@@ -63,7 +67,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             throw new ServiceUnavailableException("Phone-home runner is unavailable.", PhoneHomeProblemTypes.Unavailable);
         if (!live.DispatchEligible)
             throw new ServiceUnavailableException("Phone-home runner has not completed recovery.", PhoneHomeProblemTypes.Unavailable);
-        return new PhoneHomeRunnerClient(live);
+        return new PhoneHomeRunnerClient(live, _spills);
     }
 
     public async Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) =>

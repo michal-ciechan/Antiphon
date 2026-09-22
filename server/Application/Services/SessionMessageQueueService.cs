@@ -40,6 +40,7 @@ public sealed partial class SessionMessageQueueService
     private readonly Settings.ChannelBridgeSettings _bridgeSettings;
     private readonly DelegationSettings _delegationSettings;
     private readonly PtyDeliveryProfile? _ptyProfile;
+    private readonly RemoteSpillCourier? _remoteSpills;
     private readonly SessionDeliveryProfile? _sessionProfile;
     private readonly ILogger<SessionMessageQueueService> _logger;
     private readonly CapacityRecoveryService? _capacityRecovery;
@@ -55,8 +56,12 @@ public sealed partial class SessionMessageQueueService
         IOptions<DelegationSettings>? delegationSettings = null,
         PtyDeliveryProfile? ptyProfile = null,
         SessionDeliveryProfile? sessionProfile = null,
-        CapacityRecoveryService? capacityRecovery = null)
+        CapacityRecoveryService? capacityRecovery = null,
+        // CARD-0604 G-21. Absent, a remote spill still never writes a desktop file; it simply
+        // types the whole body instead, which is the safe direction.
+        RemoteSpillCourier? remoteSpills = null)
     {
+        _remoteSpills = remoteSpills;
         _ptyProfile = ptyProfile;
         _sessionProfile = sessionProfile;
         _scopeFactory = scopeFactory;
@@ -120,14 +125,16 @@ public sealed partial class SessionMessageQueueService
             return body;
 
         string? cwd = null;
+        string? runnerCwd = null;
         var kind = AgentKind.ClaudeCode;
         if (db is not null)
         {
             var session = await db.AgentSessions.AsNoTracking()
                 .Where(s => s.Id == sessionId)
-                .Select(s => new { s.Cwd, s.AgentKind })
+                .Select(s => new { s.Cwd, s.AgentKind, s.RunnerCwd })
                 .FirstOrDefaultAsync(ct);
             cwd = session?.Cwd;
+            runnerCwd = session?.RunnerCwd;
             kind = session?.AgentKind ?? AgentKind.ClaudeCode;
         }
         else
@@ -136,10 +143,36 @@ public sealed partial class SessionMessageQueueService
             var scoped = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var session = await scoped.AgentSessions.AsNoTracking()
                 .Where(s => s.Id == sessionId)
-                .Select(s => new { s.Cwd, s.AgentKind })
+                .Select(s => new { s.Cwd, s.AgentKind, s.RunnerCwd })
                 .FirstOrDefaultAsync(ct);
             cwd = session?.Cwd;
+            runnerCwd = session?.RunnerCwd;
             kind = session?.AgentKind ?? AgentKind.ClaudeCode;
+        }
+
+        var relative = TypedBodySpill.InboxRelativePath(fileStem);
+
+        // CARD-0604 G-21. A REMOTE session's file is written by the RUNNER, inside the session's
+        // own cwd, and the body travels with the Input frame that types the pointer. The desktop
+        // writes nothing: its Cwd is a Windows path the session cannot see, so a desktop write
+        // would leave a file no one reads behind a prompt pointing at nothing.
+        if (!string.IsNullOrWhiteSpace(runnerCwd))
+        {
+            var fit = TypedBodySpill.Fit(new TypedBodySpill.Request(
+                Body: body,
+                CeilingBytes: ceilings.SingleWriteMaxBytes,
+                // No absolute path: nothing is written here.
+                AbsoluteSpillPath: null,
+                RelativeSpillPath: relative,
+                AgentKind: kind,
+                EnvelopePrefix: channelEnvelope,
+                // The relative path IS where the runner will put it, so the pointer is correct
+                // even though this process never touched a filesystem.
+                ApiFallback: relative,
+                Logger: _logger));
+            if (fit.Spilled)
+                _remoteSpills?.Stage(sessionId, runnerCwd!, new PhoneHomeInputSpill(relative, body));
+            return fit.ToType;
         }
 
         string? absolute = null;
@@ -150,7 +183,7 @@ public sealed partial class SessionMessageQueueService
             Body: body,
             CeilingBytes: ceilings.SingleWriteMaxBytes,
             AbsoluteSpillPath: absolute,
-            RelativeSpillPath: TypedBodySpill.InboxRelativePath(fileStem),
+            RelativeSpillPath: relative,
             AgentKind: kind,
             EnvelopePrefix: channelEnvelope,
             Logger: _logger)).ToType;

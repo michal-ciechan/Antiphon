@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
@@ -35,6 +35,7 @@ public sealed class TaskWorktreeRetirementService
     private readonly IRepositoryMutationLease? _leases;
     private readonly WorkspaceUseAdmission? _admission;
     private readonly ILogger<TaskWorktreeRetirementService> _logger;
+    private readonly RemoteWorkspaceService? _remoteWorkspace;
 
     public TaskWorktreeRetirementService(
         AppDbContext db,
@@ -48,8 +49,11 @@ public sealed class TaskWorktreeRetirementService
         IRetirementCommandJournal? commands = null,
         IWorktreeManager? worktrees = null,
         IRepositoryMutationLease? leases = null,
-        WorkspaceUseAdmission? admission = null)
+        WorkspaceUseAdmission? admission = null,
+        // CARD-0604 D-15: absent, a remote mirror is simply left for the runner-side sweep.
+        RemoteWorkspaceService? remoteWorkspace = null)
     {
+        _remoteWorkspace = remoteWorkspace;
         _db = db;
         _clock = clock;
         _settings = settings.Value;
@@ -346,10 +350,37 @@ public sealed class TaskWorktreeRetirementService
             await ReleaseClaimBeforeIntentAsync(retirement, ct, keepIntent: true);
         }
 
+        // CARD-0604 D-15: the runner-side MIRROR goes with the canonical desktop worktree. Best
+        // effort and strictly after it: the mirror holds no work the branch does not, so failing
+        // to reach the runner records residue for the operator's sweep and never blocks or
+        // reverses the retirement of the thing that actually matters.
+        await RemoveRemoteMirrorAsync(retirement.TaskId, ct);
+
         retirement.UpdatedAt = UtcNow();
         retirement.ConcurrencyToken = Guid.NewGuid();
         await _db.SaveChangesAsync(ct);
         return removed;
+    }
+
+    private async Task RemoveRemoteMirrorAsync(Guid taskId, CancellationToken ct)
+    {
+        if (_remoteWorkspace is null)
+            return;
+        var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == taskId, ct);
+        if (task is null || string.IsNullOrWhiteSpace(task.RemoteWorktreePath))
+            return;
+        try
+        {
+            var residue = await _remoteWorkspace.RemoveMirrorAsync(task, ct);
+            task.RemoteWorktreeResidue = residue;
+            if (residue is null)
+                task.RemoteWorktreePath = null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Remote mirror removal failed for task {Task}", taskId);
+            task.RemoteWorktreeResidue = task.RemoteWorktreePath;
+        }
     }
 
     private async Task<bool> ClaimAsync(TaskWorktreeRetirement retirement, TaskWorktreeRetirementAttempt attempt, CancellationToken ct)

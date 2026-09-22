@@ -128,6 +128,12 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [switch]$ReadOnly,
 
+    # CARD-0604: run this task on a phone-home session runner (e.g. -Runner server2) instead of
+    # this desktop. The desktop worktree is still created and still canonical; the runner gets a
+    # mirror of the pushed branch, and the land protocol is unchanged. Worktree + Grok only.
+    [Parameter(ParameterSetName = 'Create')]
+    [string]$Runner,
+
     # Do not arm the PreToolUse deny hook in a sub-orchestrator's worktree (it blocks direct
     # Edit/Write with "delegate this instead"). Use when the orchestrator must write a plan file.
     [Parameter(ParameterSetName = 'Create')]
@@ -896,6 +902,25 @@ switch ($PSCmdlet.ParameterSetName) {
         elseif ($Shared) { $body['workspace'] = 'Shared' }
         if ($AllowDirectEdits) { $body['denyDirectEdits'] = $false }
         if ($OnAgent) { $body['followUpOnTask'] = $OnAgent }
+        # CARD-0604 D-15. Refused locally, before any POST, for the shapes the runner has no design
+        # for: Shared/ReadOnly have no canonical desktop record to fast-forward, and -OnAgent /
+        # -Agent continue an EXISTING process that is already somewhere else.
+        if (-not [string]::IsNullOrWhiteSpace($Runner)) {
+            if ($Shared -or $ReadOnly) {
+                Write-Error '-Runner requires a Worktree workspace; -Shared and -ReadOnly are refused.'
+                exit 2
+            }
+            if ($OnAgent -or -not [string]::IsNullOrWhiteSpace($Agent)) {
+                Write-Error '-Runner cannot be combined with -OnAgent or -Agent: those continue an existing process.'
+                exit 2
+            }
+            if ($PSBoundParameters.ContainsKey('SourceLanding')) {
+                Write-Error '-Runner cannot be combined with -SourceLanding (CARD-0604 Cut B).'
+                exit 2
+            }
+            $body['runnerId'] = $Runner
+            $body['workspace'] = 'Worktree'
+        }
         if ($PSBoundParameters.ContainsKey('SourceLanding')) { $body['sourceLandingOperationId'] = $SourceLanding.ToString('D') }
         if ($PSBoundParameters.ContainsKey('RepairSource')) { $body['repairSourceTaskId'] = $RepairSource.ToString('D') }
         # CARD-0544: refused locally, before any POST, when the shape can never be admitted.

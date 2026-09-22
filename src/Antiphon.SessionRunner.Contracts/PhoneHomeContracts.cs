@@ -34,7 +34,35 @@ public enum PhoneHomeOperation
     ClearBuffer = 11,
     Resize = 12,
     KillGeneration = 13,
+
+    // CARD-0604 D-15. The runner mirrors a task branch the desktop has already pushed to origin,
+    // and removes that mirror at retirement. The DESKTOP worktree stays canonical: these two
+    // operations only ever create and destroy a working copy of a branch that already exists on
+    // origin, so nothing the runner holds is the only copy of anything.
+    WorkspaceMirror = 14,
+    WorkspaceRemove = 15,
 }
+
+/// <summary>
+/// CARD-0604 D-15. Create a mirror worktree of an already-pushed task branch. The runner fetches
+/// <paramref name="Branch"/> and refuses unless its tip is exactly <paramref name="Sha"/>: a
+/// mirror at a different commit would run the session against source the desktop never produced.
+/// </summary>
+public sealed record PhoneHomeWorkspaceMirrorRequest(string Branch, string Sha, string Name);
+
+public sealed record PhoneHomeWorkspaceMirrorResponse(string Path);
+
+/// <summary>Remove a mirror created by <see cref="PhoneHomeOperation.WorkspaceMirror"/>.</summary>
+public sealed record PhoneHomeWorkspaceRemoveRequest(string Path, bool Force = false);
+
+public sealed record PhoneHomeWorkspaceRemoveResponse(bool Removed, string? Residue);
+
+/// <summary>
+/// CARD-0604 G-21. A spilled body that travels inside the Input operation for a remote session.
+/// The desktop never writes the file: its Cwd is a Windows path the session cannot see, and a
+/// desktop write would leave a file no one reads plus a prompt pointing at nothing.
+/// </summary>
+public sealed record PhoneHomeInputSpill(string RelativePath, string Body);
 
 public enum PhoneHomeFrameKind
 {

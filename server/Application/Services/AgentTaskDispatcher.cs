@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -91,6 +91,10 @@ public sealed class AgentTaskDispatcher
     // CARD-0544 D-7. Optional; absent, a queued Interim task is held rather than launched.
     private readonly InterimVerificationPolicy? _interimPolicy;
     private readonly PhoneHomeLaunchPolicy? _phoneHome;
+    // CARD-0604 D-15. Both absent means this process cannot dispatch remotely at all, so a
+    // runner-bound task stays Queued with a warning rather than running on the desktop.
+    private readonly RemoteWorkspaceService? _remoteWorkspace;
+    private readonly ISessionRunnerDirectory? _runners;
     private readonly WorkspaceUseAdmission? _workspaceUse;
     private readonly CheckCompactionContinuationService? _compaction;
 
@@ -152,8 +156,12 @@ public sealed class AgentTaskDispatcher
         InterimVerificationPolicy? interimPolicy = null,
         PhoneHomeLaunchPolicy? phoneHome = null,
         WorkspaceUseAdmission? workspaceUse = null,
-        CheckCompactionContinuationService? compaction = null)
+        CheckCompactionContinuationService? compaction = null,
+        RemoteWorkspaceService? remoteWorkspace = null,
+        ISessionRunnerDirectory? runners = null)
     {
+        _remoteWorkspace = remoteWorkspace;
+        _runners = runners;
         _workspaceUse = workspaceUse;
         _interimPolicy = interimPolicy;
         _phoneHome = phoneHome;
@@ -3628,8 +3636,27 @@ public sealed class AgentTaskDispatcher
             }
         }
 
+        // CARD-0604 D-15. A runner-bound task needs three things before a session exists: the
+        // runner must actually be connected, the branch must be on origin, and the runner must
+        // hold a mirror of it at that exact commit. Any of those failing leaves the task QUEUED
+        // with a warning - never a silent fall back to a local launch, which would run the work
+        // on the desktop under a task the operator routed elsewhere.
+        string? remoteCwd = null;
+        if (claimed.RunnerId is { Length: > 0 } remoteRunner)
+        {
+            var prepared = await PrepareRemoteWorkspaceAsync(claimed, remoteRunner, now, ct);
+            if (prepared is null)
+            {
+                await transaction.RollbackAsync(ct);
+                _db.ChangeTracker.Clear();
+                return DispatchOneResult.NotClaimed;
+            }
+
+            remoteCwd = prepared;
+        }
+
         var agent = await ResolveAgentAsync(claimed, now, ct);
-        if (_phoneHome?.IsPinnedAgent(agent.Id) == true)
+        if (_phoneHome?.IsRunnerBound(agent) == true)
         {
             _phoneHome.RefuseUnsupportedStart(
                 agent,
@@ -3670,13 +3697,31 @@ public sealed class AgentTaskDispatcher
             // CARD-0160: snapshot from the resolved agent (pool delegate or standing).
             SessionBackend = agent.SessionBackend,
             Status = SessionStatus.Starting,
+            // CARD-0490 D-8's split, kept by CARD-0604 D-15: Cwd stays the DESKTOP worktree, which
+            // is what every landing, retirement and residue reader wants, and RunnerCwd is the
+            // mirror the session actually runs in.
             Cwd = cwd,
             Cols = _settings.DefaultCols,
             Rows = _settings.DefaultRows,
             CreatedAt = now,
             StartedAt = now,
             LastSeenAt = now,
+            RunnerId = remoteCwd is null ? null : claimed.RunnerId,
+            RunnerStoreId = remoteCwd is null ? null : _runners?.LiveStoreId,
+            RunnerCwd = remoteCwd,
         };
+        // G-20: the runner binding is all-or-none and is committed with the session row, before
+        // the launch. A session launched on a runner whose owner row was never written is one
+        // nobody can reconnect to, kill, or read a transcript from.
+        if (remoteCwd is not null && session.RunnerStoreId is null)
+        {
+            await RemoteWarnAsync(claimed, now,
+                $"Runner '{claimed.RunnerId}' has no live store identity; the task stays Queued.", ct);
+            await transaction.RollbackAsync(ct);
+            _db.ChangeTracker.Clear();
+            return DispatchOneResult.NotClaimed;
+        }
+
         _db.AgentSessions.Add(session);
 
         global::Antiphon.SessionRunner.Contracts.VerificationExecutionBinding? verificationBinding = null;
@@ -4554,6 +4599,91 @@ public sealed class AgentTaskDispatcher
         return env;
     }
 
+    /// <summary>
+    /// CARD-0604 D-15. Resolves the runner, pushes the desktop worktree's branch to origin, and
+    /// asks the runner for a mirror of it at that exact commit. Returns the runner-side POSIX
+    /// path, or null when the task must stay Queued (the caller rolls the claim back).
+    ///
+    /// There is deliberately no local fallback: routing a task to a runner is an explicit choice,
+    /// and quietly running it on the desktop instead is exactly the surprise that choice exists to
+    /// prevent.
+    /// </summary>
+    private async Task<string?> PrepareRemoteWorkspaceAsync(
+        AgentTask claimed, string runnerId, DateTime now, CancellationToken ct)
+    {
+        if (_remoteWorkspace is null || _runners is null)
+        {
+            await RemoteWarnAsync(claimed, now,
+                "Remote workspaces are unavailable in this process; the task stays Queued.", ct);
+            return null;
+        }
+
+        try
+        {
+            _runners.Resolve(runnerId);
+        }
+        catch (Exception ex) when (ex is ServiceUnavailableException or ConflictException)
+        {
+            await RemoteWarnAsync(claimed, now,
+                $"RunnerUnavailable: runner '{runnerId}' is not dispatch-eligible ({ex.Message}); the task stays Queued.", ct);
+            return null;
+        }
+
+        var push = await _remoteWorkspace.PushBranchAsync(claimed, ct);
+        if (!push.Pushed || push.Sha is null)
+        {
+            await RemoteWarnAsync(claimed, now,
+                $"The task branch could not be pushed to origin ({push.Warning}); the task stays Queued.", ct);
+            return null;
+        }
+
+        try
+        {
+            var path = await _remoteWorkspace.MirrorAsync(claimed, push.Sha, ct);
+            claimed.RemoteWorktreePath = path;
+            return path;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await RemoteWarnAsync(claimed, now,
+                $"The runner could not mirror the task branch ({ex.Message}); the task stays Queued.", ct);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Records a remote-dispatch warning on the task OUTSIDE the claim transaction, so it survives
+    /// the rollback that returns the task to Queued. A warning that rolls back with the claim is a
+    /// task that silently retries forever with nothing on the board to say why.
+    /// </summary>
+    private async Task RemoteWarnAsync(AgentTask claimed, DateTime now, string detail, CancellationToken ct)
+    {
+        if (_scopeFactory is null)
+        {
+            _logger.LogWarning("No scope factory: remote-dispatch warning for task {Task} was not recorded: {Detail}", claimed.Id, detail);
+            return;
+        }
+
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(),
+                AgentTaskId = claimed.Id,
+                Type = AgentTaskEventType.Warning,
+                Detail = detail,
+                At = now,
+            });
+            await db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not record a remote-dispatch warning for task {Task}", claimed.Id);
+        }
+    }
+
     private async Task<Agent> ResolveAgentAsync(AgentTask task, DateTime now, CancellationToken ct)
     {
         if (task.AgentId is Guid pinned)
@@ -4595,6 +4725,9 @@ public sealed class AgentTaskDispatcher
             AlwaysOn = false,
             RemoteControlEnabled = false,
             IsPoolDelegate = true,
+            // CARD-0604 D-15: a runner-bound task's delegate is born runner-bound, so the launch
+            // policy and the warm-pool predicate both see one truth about where it runs.
+            RunnerId = task.RunnerId,
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -4963,7 +5096,11 @@ public sealed class AgentTaskDispatcher
                     // Kind is as hard a match as the tier, and for a stronger reason: a tier
                     // mismatch would merely run the work on the wrong model, a kind mismatch would
                     // deliver the brief to a program that is not the one the caller chose.
-                    && a.Kind == claimed.AgentKind)
+                    && a.Kind == claimed.AgentKind
+                    // CARD-0604 D-15: a warm delegate lives where its process lives. Reusing a
+                    // desktop delegate for a runner task (or the reverse) would run the work on
+                    // the wrong machine entirely, in a directory that does not exist there.
+                    && a.RunnerId == claimed.RunnerId)
                 .ToListAsync(ct);
 
             var candidates = warm

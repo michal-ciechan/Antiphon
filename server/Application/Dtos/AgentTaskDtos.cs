@@ -184,7 +184,16 @@ public sealed record CreateAgentTaskRequest(
     /// <summary>CARD-0544 D-2. Full GUID of the full-scope delegate Review outcome the Interim is baselined on.</summary>
     Guid? VerificationBaselineOutcomeId = null,
     /// <summary>CARD-0544 D-3. Committed selection-table reference; validated against the authorized repository.</summary>
-    VerificationSelectionReference? VerificationSelection = null);
+    VerificationSelectionReference? VerificationSelection = null,
+    /// <summary>
+    /// CARD-0604 D-15. Run this task on a phone-home session runner (<c>delegate.ps1 -Runner</c>).
+    /// Null is the desktop. Only the configured <c>PhoneHomeRunner:AllowedRunnerId</c> is admitted,
+    /// and only for a Worktree workspace with a Grok kind and no pin, OnAgent, Shared, ReadOnly or
+    /// SourceLanding: everything else has no remote shape yet, and a 422 at create is better than
+    /// a task that queues forever. The desktop worktree is still created and still canonical; the
+    /// runner gets a mirror of the pushed branch.
+    /// </summary>
+    string? RunnerId = null);
 
 /// <summary>
 /// CARD-0544 D-3. A committed <c>docs/**/*.md</c> selection table: repository-relative path, full

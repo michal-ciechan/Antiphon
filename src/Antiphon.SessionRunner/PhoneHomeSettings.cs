@@ -10,6 +10,12 @@ public sealed class PhoneHomeSettings
     public string SecretPath { get; set; } = "/run/secrets/phone-home";
     public string StoreIdPath { get; set; } = "/state/runner-store-id";
     public string AllowedCwd { get; set; } = "/work";
+
+    /// <summary>
+    /// CARD-0604 D-15: the runner-side checkout mirror worktrees are created from. Fetches from it
+    /// are anonymous HTTPS; only pushes use the deploy key.
+    /// </summary>
+    public string RunnerRepository { get; set; } = "/work/repos/antiphon";
     public string GrokHome { get; set; } = "/state/grok";
 
     /// <summary>
@@ -44,6 +50,8 @@ public sealed class PhoneHomeSettings
             throw new InvalidOperationException("PhoneHome:StoreIdPath must not be empty.");
         if (string.IsNullOrWhiteSpace(AllowedCwd) || !AllowedCwd.StartsWith('/'))
             throw new InvalidOperationException("PhoneHome:AllowedCwd must be a POSIX absolute path.");
+        if (string.IsNullOrWhiteSpace(RunnerRepository) || !RunnerRepository.StartsWith('/'))
+            throw new InvalidOperationException("PhoneHome:RunnerRepository must be a POSIX absolute path.");
         if (Capacity < 1)
             throw new InvalidOperationException("PhoneHome:Capacity must be positive.");
         if (RawExeAllowList.Any(exe => string.IsNullOrWhiteSpace(exe) || !exe.StartsWith('/')))

@@ -1473,11 +1473,59 @@ public sealed class AgentTaskReplyService
     /// Blocked and a Merge-role delegate is spawned with the conflict list — never an automatic
     /// resolution. Returns the one-phrase outcome for the completion note's header.
     /// </summary>
+    /// <summary>
+    /// CARD-0604 D-15/G-24. Fast-forwards the canonical desktop worktree from the branch the
+    /// remote session pushed. Returns a workspace note when the sync did NOT happen (and the
+    /// merge-back must therefore not run on a worktree that is behind), or null on success.
+    /// </summary>
+    private static async Task<string?> SyncRemoteWorktreeAsync(
+        IServiceProvider services, AppDbContext db, AgentTask task, DateTime now, CancellationToken ct)
+    {
+        var remote = services.GetService<RemoteWorkspaceService>();
+        if (remote is null)
+            return null;
+        RemoteSyncResult sync;
+        try
+        {
+            sync = await remote.SyncAsync(task, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            sync = new RemoteSyncResult(false, null, ex.Message);
+        }
+
+        if (sync.Synced)
+        {
+            db.AgentTaskEvents.Add(NewEvent(
+                task.Id, AgentTaskEventType.Merged,
+                $"Desktop worktree fast-forwarded to the runner's pushed commit {sync.Sha ?? "(unknown)"}.", now));
+            return null;
+        }
+
+        db.AgentTaskEvents.Add(NewEvent(
+            task.Id, AgentTaskEventType.Warning,
+            $"Remote worktree sync refused: {sync.Warning}. The task keeps its report; the branch on origin is the record.",
+            now));
+        return "remote sync refused; desktop worktree untouched";
+    }
+
     private async Task<string?> MergeBackAsync(
         IServiceProvider services, AppDbContext db, AgentTask task, DateTime now, CancellationToken ct)
     {
         if (task.Role == AgentTaskRole.Mutation || task.SourceLandingOperationId is not null)
             return "verification snapshot retained";
+
+        // CARD-0604 D-15. A remote task's commits are on origin, not in the desktop worktree, so
+        // the canonical worktree is fast-forwarded from the pushed branch BEFORE anything reads
+        // or merges it. Fast-forward only: a divergence or a dirty desktop tree is a warning and
+        // the task keeps its report, because a reset here would silently discard one side.
+        if (!string.IsNullOrWhiteSpace(task.RunnerId))
+        {
+            var sync = await SyncRemoteWorktreeAsync(services, db, task, now, ct);
+            if (sync is not null)
+                return sync;
+        }
+
         DelegationWorktreeService.MergeOutcome outcome;
         try
         {

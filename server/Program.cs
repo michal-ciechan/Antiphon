@@ -264,6 +264,10 @@ try
         .Bind(builder.Configuration.GetSection("PhoneHomeRunner"))
         .ValidateOnStart();
     builder.Services.AddSingleton<PhoneHomeLaunchPolicy>();
+    // CARD-0604 D-15/G-21: the remote mirror seam and the spill courier. Both singletons: the
+    // courier holds a one-shot body per live session, and the workspace service is stateless.
+    builder.Services.AddSingleton<RemoteSpillCourier>();
+    builder.Services.AddScoped<RemoteWorkspaceService>();
     builder.Services.AddHttpClient<SessionRunnerHttpClient>((sp, client) =>
     {
         var runnerSettings = sp.GetRequiredService<IOptions<SessionRunnerSettings>>().Value;
@@ -273,7 +277,8 @@ try
         sp.GetRequiredService<SessionRunnerHttpClient>(),
         sp.GetRequiredService<IOptions<PhoneHomeRunnerSettings>>(),
         sp.GetRequiredService<IServiceScopeFactory>(),
-        sp.GetRequiredService<TimeProvider>()));
+        sp.GetRequiredService<TimeProvider>(),
+        sp.GetRequiredService<RemoteSpillCourier>()));
     builder.Services.AddSingleton<ISessionRunnerDirectory>(sp => sp.GetRequiredService<PhoneHomeRunnerDirectory>());
     builder.Services.AddSingleton<ISessionRunnerClient, RoutingSessionRunnerClient>();
     // The /events SSE stream must never hit HttpClient.Timeout (a long-lived response is not a

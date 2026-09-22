@@ -63,6 +63,7 @@ public sealed class AgentTaskService
     // Interim request is refused as unready and Final (the default) is unaffected.
     private readonly InterimVerificationPolicy? _interimPolicy;
     private readonly WorkspaceUseAdmission? _workspaceUse;
+    private readonly PhoneHomeLaunchPolicy? _phoneHome;
 
     public AgentTaskService(
         AppDbContext db,
@@ -87,8 +88,12 @@ public sealed class AgentTaskService
         ILandingGit? landingGit = null,
         GitWorkspaceService? workspaceGit = null,
         InterimVerificationPolicy? interimPolicy = null,
-        WorkspaceUseAdmission? workspaceUse = null)
+        WorkspaceUseAdmission? workspaceUse = null,
+        // CARD-0604 D-15: optional like the rest. A harness without it cannot create a
+        // runner-bound task at all, which is the safe direction.
+        PhoneHomeLaunchPolicy? phoneHome = null)
     {
+        _phoneHome = phoneHome;
         _workspaceUse = workspaceUse;
         _interimPolicy = interimPolicy;
         _areas = areas;
@@ -989,6 +994,29 @@ public sealed class AgentTaskService
                 $"'{explicitStage}' is not an orchestration stage. Use Rebase, Verify, Cleanup, Review, FollowUp, or Deploy.");
         }
 
+        // CARD-0604 D-15. A remote task is admitted only in the exact shape the runner has: the
+        // configured runner, a Worktree workspace, a Grok kind, and no pin, OnAgent, Shared,
+        // ReadOnly or SourceLanding. Everything else is refused HERE rather than queued forever,
+        // because none of those shapes has a remote design yet (SourceLanding is Cut B).
+        var remoteRunnerId = string.IsNullOrWhiteSpace(request.RunnerId) ? null : request.RunnerId.Trim();
+        if (remoteRunnerId is not null)
+        {
+            if (_phoneHome?.IsRunnerBound(remoteRunnerId) != true)
+                throw new ValidationException(nameof(request.RunnerId), $"Unknown or disabled session runner '{remoteRunnerId}'.");
+            if (!_phoneHome.AllowDelegatedTasks)
+                throw new ValidationException(nameof(request.RunnerId), "Delegated tasks are not enabled for this session runner.");
+            if (workspace != WorkspaceMode.Worktree)
+                throw new ValidationException(nameof(request.RunnerId), "A runner-bound task must use a Worktree workspace.");
+            if (agentKind != Domain.Enums.AgentKind.Grok)
+                throw new ValidationException(nameof(request.RunnerId), "A runner-bound task must be Grok.");
+            if (request.AgentId is not null || !string.IsNullOrWhiteSpace(request.Agent))
+                throw new ValidationException(nameof(request.RunnerId), "A runner-bound task cannot run on a pinned or standing agent.");
+            if (!string.IsNullOrWhiteSpace(request.FollowUpOnTask))
+                throw new ValidationException(nameof(request.RunnerId), "A runner-bound task cannot be a follow-up on an existing process.");
+            if (request.SourceLandingOperationId is not null)
+                throw new ValidationException(nameof(request.RunnerId), "SourceLanding is not supported on a session runner.");
+        }
+
         var task = new AgentTask
         {
             Id = id,
@@ -1051,6 +1079,7 @@ public sealed class AgentTaskService
             VerificationSubjectTaskId = verificationAdmission?.SubjectTaskId,
             VerificationBaselineOutcomeId = verificationAdmission?.BaselineOutcomeId,
             VerificationAdmissionJson = verificationAdmission?.Serialize(),
+            RunnerId = remoteRunnerId,
         };
 
         if (storedPolicy is not null)

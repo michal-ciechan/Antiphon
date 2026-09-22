@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.SessionRunner;
@@ -26,6 +26,7 @@ public sealed class PhoneHomeCommandDispatcher
     private readonly IPhoneHomeRuntimeSurface _runtime;
     private readonly PhoneHomeSettings _settings;
     private readonly object _mutationGate = new();
+    private RunnerWorkspaceService? _workspace;
 
     public PhoneHomeCommandDispatcher(IPhoneHomeRuntimeSurface runtime, PhoneHomeSettings settings)
     {
@@ -38,6 +39,25 @@ public sealed class PhoneHomeCommandDispatcher
     /// can carry it. One source, so a registration can never disagree with a later probe.
     /// </summary>
     public RunnerCapabilitiesDto Capabilities() => _runtime.Capabilities();
+
+    private RunnerWorkspaceService Workspace() =>
+        _workspace ??= new RunnerWorkspaceService(_settings.RunnerRepository, _settings.AllowedCwd);
+
+    private async Task WriteSpillIfPresentAsync(PhoneHomeFrame request, CancellationToken ct)
+    {
+        if (request.Payload is not { } payload
+            || payload.ValueKind != System.Text.Json.JsonValueKind.Object
+            || !payload.TryGetProperty("spill", out var raw)
+            || raw.ValueKind != System.Text.Json.JsonValueKind.Object)
+            return;
+        var spill = raw.Deserialize<PhoneHomeInputSpill>(PhoneHomeFraming.Json);
+        if (spill is null || string.IsNullOrWhiteSpace(spill.RelativePath))
+            return;
+        if (!payload.TryGetProperty("runnerCwd", out var cwd) || cwd.ValueKind != System.Text.Json.JsonValueKind.String)
+            throw new PhoneHomeAdmissionException(
+                PhoneHomeProblemTypes.UnsupportedTarget, "A spill requires the session's runner cwd.", 409);
+        await Workspace().WriteSpillAsync(cwd.GetString()!, spill, ct);
+    }
 
     public async Task<PhoneHomeFrame> DispatchAsync(PhoneHomeFrame request, CancellationToken ct)
     {
@@ -60,8 +80,24 @@ public sealed class PhoneHomeCommandDispatcher
                 {
                     var body = request.Payload?.Deserialize<RunnerInputRequest>(PhoneHomeFraming.Json)
                         ?? throw new ArgumentException("Input body is required.");
+                    // CARD-0604 G-21: a remote session's spilled body travels with the input and
+                    // is written HERE, inside the session's own cwd. The desktop never writes it:
+                    // its Cwd is a Windows path this process cannot see.
+                    await WriteSpillIfPresentAsync(request, ct);
                     await _runtime.SendInputAsync(ReadSessionId(request), body.Input, ct);
                     return Result(request, new { ok = true });
+                }),
+                PhoneHomeOperation.WorkspaceMirror => await MutateAsync(request, async () =>
+                {
+                    var body = request.Payload?.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)
+                        ?? throw new ArgumentException("Workspace mirror body is required.");
+                    return Result(request, await Workspace().MirrorAsync(body, ct));
+                }),
+                PhoneHomeOperation.WorkspaceRemove => await MutateAsync(request, async () =>
+                {
+                    var body = request.Payload?.Deserialize<PhoneHomeWorkspaceRemoveRequest>(PhoneHomeFraming.Json)
+                        ?? throw new ArgumentException("Workspace remove body is required.");
+                    return Result(request, await Workspace().RemoveAsync(body, ct));
                 }),
                 PhoneHomeOperation.ConditionalInput => await MutateAsync(request, async () =>
                 {
