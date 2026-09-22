@@ -647,7 +647,7 @@ public class PhoneHomeStandingLaunchTests
         var policy = PoolPolicy();
         var agent = new Agent { Id = Guid.NewGuid(), RunnerId = "server2", WorkingDirectory = @"C:\src\Antiphon" };
 
-        var shell = new AgentLaunchSpec("/bin/sh", AgentKind.Raw, "raw-sh", [], new Dictionary<string, string>(), @"C:\src\Antiphon", 80, 24);
+        var shell = new AgentLaunchSpec("raw-sh", AgentKind.Raw, "/bin/sh", [], new Dictionary<string, string>(), @"C:\src\Antiphon", 80, 24);
         var projected = policy.Project(shell, agent);
         projected.Exe.ShouldBe("/bin/sh");
         projected.Cwd.ShouldBe("/work");

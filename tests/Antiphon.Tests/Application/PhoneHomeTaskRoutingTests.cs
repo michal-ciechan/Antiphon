@@ -65,7 +65,7 @@ public sealed class PhoneHomeTaskRoutingTests
         var policy = Policy();
         var agent = PoolAgent();
         var spec = new Antiphon.Server.Application.Dtos.AgentLaunchSpec(
-            @"C:\tools\grok.exe", AgentKind.Grok, "grok", [], new Dictionary<string, string>(),
+            "grok", AgentKind.Grok, @"C:\tools\grok.exe", [], new Dictionary<string, string>(),
             @"C:\Antiphon\worktrees\card-task-deadbeef", 80, 24);
 
         var projected = policy.Project(spec, agent, "/work/worktrees/task-deadbeef");
