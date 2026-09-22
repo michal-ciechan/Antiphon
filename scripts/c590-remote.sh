@@ -950,6 +950,25 @@ retire_c590_leftovers() {
     touch "$CASE_DIR/retired.txt"
 }
 
+# D-5: deploy-parent builds antiphon-server2/{server,session-testing}:<sha12> on every run and
+# never removed the pair it superseded, so each round left ~2.2 GB behind on a shared host daemon
+# (the CARD-0604 rounds alone accumulated several). Retire the superseded tags once the new
+# deployment is proven, keeping the sha12 that is now running. The pattern is anchored on this
+# project's own repository names, so it can never reach am-service, windmill, gym-stat or any
+# other neighbour, and `prune` stays forbidden here as everywhere.
+retire_superseded_server2_images() {
+    local keep="$1" image
+    for image in $(docker images --format '{{.Repository}}:{{.Tag}}' \
+        | grep -E '^antiphon-server2/(server|session-testing):' || true); do
+        if [ "$image" = "antiphon-server2/server:$keep" ] \
+            || [ "$image" = "antiphon-server2/session-testing:$keep" ]; then
+            continue
+        fi
+        printf 'retiring image %s\n' "$image" >> "$CASE_DIR/retired.txt"
+        docker image rm "$image" >> "$CASE_DIR/command.log" 2>&1 || true
+    done
+}
+
 case_deploy_parent() {
     require_lane host
     ensure_checkout
@@ -1051,6 +1070,10 @@ EOF
     if [ "${phone_home_failures:-0}" -ge 2 ]; then
         write_result false PhoneHomeUnreachable 2
     fi
+
+    # The new deployment is proven: this round's own superseded build products go now (D-5).
+    retire_superseded_server2_images "${SHA:0:12}"
+    docker images --format '{{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.Size}}' > "$CASE_DIR/inventory-images-after.txt"
 
     # V-11: persistent, privileged, its own nested daemon, no host socket, no server, no Postgres.
     docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$container" > "$CASE_DIR/restart-policy.txt"

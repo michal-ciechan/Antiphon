@@ -241,6 +241,30 @@ public sealed class RemoteScriptContractTests
         Order(deploy, "write_result false PhoneHomeUnreachable 2", "write_result true").ShouldBeTrue();
     }
 
+    // CARD-0604 D-5. deploy-parent builds a ~2.2 GB image pair every round and used to leave every
+    // superseded pair on a SHARED host daemon. Its own build products must be retired, and only
+    // its own: prune stays forbidden and no foreign repository may be reachable by the pattern.
+    [Test]
+    public void Deploy_parent_retires_its_own_superseded_images()
+    {
+        var text = Remote();
+        var retire = Block(text, "retire_superseded_server2_images");
+        retire.ShouldContain("^antiphon-server2/(server|session-testing):");
+        retire.ShouldContain("docker image rm \"$image\"");
+        // The tag being deployed is kept; everything older goes.
+        retire.ShouldContain("antiphon-server2/server:$keep");
+        retire.ShouldContain("antiphon-server2/session-testing:$keep");
+        retire.ShouldNotContain("prune");
+
+        var deploy = Block(text, "case_deploy_parent");
+        deploy.ShouldContain("retire_superseded_server2_images \"${SHA:0:12}\"");
+        // Only once the new deployment is proven: an image still in use cannot be removed, and a
+        // failed deploy must leave the pair that is actually running alone.
+        Order(deploy, "compose_host up -d", "retire_superseded_server2_images").ShouldBeTrue();
+        Order(deploy, "PhoneHomeUnreachable", "retire_superseded_server2_images").ShouldBeTrue();
+        deploy.ShouldContain("inventory-images-after.txt");
+    }
+
     private static bool Order(string text, string first, string second)
     {
         var a = text.IndexOf(first, StringComparison.Ordinal);
