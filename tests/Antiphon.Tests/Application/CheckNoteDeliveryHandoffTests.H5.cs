@@ -126,7 +126,7 @@ public partial class CheckNoteDeliveryHandoffTests
                 Id = other, RootTaskId = other, Title = "other", Goal = "read", Role = AgentTaskRole.Check,
                 Kind = AgentTaskKind.Worker, Status = AgentTaskStatus.Succeeded, Result = "other useful reading",
                 AgentId = publication.PhysicalAgentId, AgentSessionId = publication.InterpreterSessionId,
-                WorkingDirectory = Path.GetTempPath(), CreatedAt = now,
+                ParentSessionId = publication.ParentSessionId, WorkingDirectory = Path.GetTempPath(), CreatedAt = now,
             });
             db.TranscriptEntries.Add(new TranscriptEntry
             {
@@ -152,9 +152,9 @@ public partial class CheckNoteDeliveryHandoffTests
         await AssertLegacyReceiptAsync((publication, db) =>
         {
             var pointer = "pointer-only-spill-not-the-original-note";
-            var row = db.SessionQueuedMessages.Single(m => m.SourceLandNotificationId == publication.NotificationId);
+            var row = db.SessionQueuedMessages.Local.Single(m => m.SourceLandNotificationId == publication.NotificationId);
             row.Body = pointer;
-            var prompt = db.TranscriptEntries.Single(t => t.AgentSessionId == publication.ParentSessionId
+            var prompt = db.TranscriptEntries.Local.Single(t => t.AgentSessionId == publication.ParentSessionId
                 && t.Kind == TranscriptKinds.UserPrompt);
             prompt.Text = pointer;
             return Task.CompletedTask;
@@ -227,16 +227,22 @@ public partial class CheckNoteDeliveryHandoffTests
             {
                 Id = runId, RootTaskId = runId, Title = "read", Goal = "interpret", Role = AgentTaskRole.Check,
                 Kind = AgentTaskKind.Worker, Status = AgentTaskStatus.Succeeded, Result = "useful reading",
-                AgentId = agentId, AgentSessionId = sessionId, WorkingDirectory = Path.GetTempPath(),
-                CreatedAt = now.AddMinutes(-5),
+                AgentId = agentId, AgentSessionId = sessionId, ParentSessionId = parentId,
+                WorkingDirectory = Path.GetTempPath(), CreatedAt = now.AddMinutes(-5),
             });
+        var eventId = Guid.NewGuid();
+        db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = eventId, AgentTaskId = subjectId, Type = AgentTaskEventType.Check,
+            Detail = body, At = now.AddMinutes(-4),
+        });
         var publication = new LegacyCheckNotePublication
         {
             Id = Guid.NewGuid(), CheckedTaskId = subjectId, CheckedTaskAttempt = 1, CheckedTaskDispatchedAt = generation,
             CheckNumber = 1, RecoveryId = episodeId, PhysicalAgentId = agentId, InterpreterSessionId = sessionId,
             InterpreterAcceptedStartedAt = generation, ParentSessionId = parentId, CapturedAt = now.AddMinutes(-4),
             FactsSnapshotJson = "{}", RenderContextJson = "{}", InterpretationTaskId = runId,
-            InterpretationDeadlineAt = now, State = LegacyCheckNoteState.Produced, SourceEventId = Guid.NewGuid(),
+            InterpretationDeadlineAt = now, State = LegacyCheckNoteState.Produced, SourceEventId = eventId,
             NotificationId = noteId, ProducedAt = now.AddMinutes(-4), Body = body,
             ContentDigest = DelegationNoteDigest.Compute(body), NextAttemptAt = now,
         };

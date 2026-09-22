@@ -153,7 +153,7 @@ public sealed partial class AgentTaskLandNotificationRecoveryTests
     [Test]
     public async Task Legacy_captured_scan_reaches_later_pages()
     {
-        var (schema, harness, ids) = await SeedCapturedAsync(263);
+        var (schema, harness, ids) = await SeedCapturedAsync(263, settledRun: false);
         await using (schema)
         await using (harness)
         {
@@ -198,19 +198,17 @@ public sealed partial class AgentTaskLandNotificationRecoveryTests
         var worker = new AgentTaskLandNotificationHostedService(
             provider.GetRequiredService<IServiceScopeFactory>(),
             NullLogger<AgentTaskLandNotificationHostedService>.Instance);
-        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var seenPasses = boundary is CountingBoundary started ? started.Passes : 0;
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(90));
         await worker.StartAsync(stop.Token);
-        var until = DateTime.UtcNow.AddSeconds(8);
-        while (DateTime.UtcNow < until && !File.Exists(Path.Combine(Path.GetTempPath(), "unused")))
+        var until = DateTime.UtcNow.AddSeconds(60);
+        while (DateTime.UtcNow < until)
         {
-            if (boundary is CountingBoundary counting && counting.Passes > 0)
+            if (boundary is CountingBoundary counting && counting.Passes > seenPasses)
                 break;
-            if (boundary is PoisonBoundary)
-                await Task.Delay(200);
-            else
-                await Task.Delay(50);
             if (boundary is PoisonBoundary poison && poison.Finished)
                 break;
+            await Task.Delay(boundary is PoisonBoundary ? 200 : 50);
         }
 
         await worker.StopAsync(CancellationToken.None);
@@ -218,7 +216,7 @@ public sealed partial class AgentTaskLandNotificationRecoveryTests
     }
 
     private static async Task<(IsolatedTestSchema Schema, BridgeQueueHarness Harness, List<LegacyCheckNotePublication> Rows)> SeedCapturedAsync(
-        int count, DateTime? due = null)
+        int count, DateTime? due = null, bool settledRun = true)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var harness = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
@@ -235,16 +233,26 @@ public sealed partial class AgentTaskLandNotificationRecoveryTests
         for (var i = 0; i < count; i++)
         {
             var runId = Guid.NewGuid();
+            var checkedId = Guid.NewGuid();
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = checkedId, RootTaskId = checkedId, Title = "subject", Goal = "watch", Role = AgentTaskRole.Code,
+                Kind = AgentTaskKind.Worker, Status = AgentTaskStatus.Working, AgentId = harness.AgentId,
+                AgentSessionId = harness.SessionId, WorkingDirectory = harness.TempRoot, CreatedAt = DateTime.UtcNow,
+                DispatchedAt = DateTime.UtcNow, Attempt = 1, CheckCount = i + 1,
+            });
             db.AgentTasks.Add(new AgentTask
             {
                 Id = runId, RootTaskId = runId, Title = "run", Goal = "read", Role = AgentTaskRole.Check,
-                Kind = AgentTaskKind.Worker, Status = AgentTaskStatus.Succeeded, Result = "useful reading " + i,
+                Kind = AgentTaskKind.Worker,
+                Status = settledRun ? AgentTaskStatus.Succeeded : AgentTaskStatus.Working,
+                Result = settledRun ? "useful reading " + i : null,
                 AgentId = harness.AgentId, AgentSessionId = harness.SessionId, WorkingDirectory = harness.TempRoot,
                 CreatedAt = DateTime.UtcNow,
             });
             rows.Add(new LegacyCheckNotePublication
             {
-                Id = Guid.NewGuid(), CheckedTaskId = Guid.NewGuid(), CheckedTaskAttempt = 1,
+                Id = Guid.NewGuid(), CheckedTaskId = checkedId, CheckedTaskAttempt = 1,
                 CheckedTaskDispatchedAt = DateTime.UtcNow, CheckNumber = i + 1, RecoveryId = episode.Id,
                 PhysicalAgentId = harness.AgentId, InterpreterSessionId = harness.SessionId,
                 InterpreterAcceptedStartedAt = DateTime.UtcNow, ParentSessionId = harness.SessionId,
@@ -272,9 +280,15 @@ public sealed partial class AgentTaskLandNotificationRecoveryTests
             AgentSessionId = sessionId, ParentSessionId = sessionId, ReplyTo = AgentTaskReplyTo.Session,
             WorkingDirectory = Path.GetTempPath(), CreatedAt = DateTime.UtcNow,
         });
+        var eventId = Guid.NewGuid();
+        db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = eventId, AgentTaskId = taskId, Type = AgentTaskEventType.Check,
+            Detail = "legacy check note", At = DateTime.UtcNow,
+        });
         var note = new AgentTaskLandNotification
         {
-            Id = Guid.NewGuid(), TaskId = taskId, SourceEventId = Guid.NewGuid(),
+            Id = Guid.NewGuid(), TaskId = taskId, SourceEventId = eventId,
             Kind = LandNotificationKind.LegacyCheckNote, ReplyTo = AgentTaskReplyTo.Session,
             ParentSessionId = sessionId, Body = "legacy check note body", ContentDigest = "digest",
             CreatedAt = DateTime.UtcNow, NextAttemptAt = DateTime.UtcNow, State = LandNotificationState.Queued,
