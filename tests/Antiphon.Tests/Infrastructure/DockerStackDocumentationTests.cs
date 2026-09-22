@@ -93,5 +93,11 @@ public sealed class DockerStackDocumentationTests
         text.ShouldContain("Grok is the only agent the image carries");
     }
 
-    private static string Read(string relative) => DockerStackDocuments.Read(relative);
+    /// <summary>
+    /// Prose wraps. Asserting a phrase against the raw bytes makes the guard fail the moment a
+    /// paragraph is rewrapped, which says nothing about whether the doc still means what it must,
+    /// so every assertion here reads the text with runs of whitespace collapsed to one space.
+    /// </summary>
+    private static string Read(string relative) =>
+        System.Text.RegularExpressions.Regex.Replace(DockerStackDocuments.Read(relative), @"\s+", " ");
 }

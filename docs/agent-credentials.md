@@ -200,7 +200,7 @@ or any evidence directory. Names and locations only:
 
 | Secret | Where it is generated | Where it lives | How the runner sees it |
 |---|---|---|---|
-| Repo-scoped GitHub deploy key (ed25519, write, `michal-ciechan/Antiphon` only, titled `antiphon-server2-runner`) | `deploy-parent` on server2, with `ssh-keygen`; the private half is never copied | `/home/mc/antiphon-server2/secrets/deploy_key`, 0600, owner `mc` | Compose file secret at `/run/secrets/antiphon-deploy-key`; `dind-entrypoint.sh` installs it 0400 uid 1654 on the `/run/antiphon` **tmpfs** |
+| Repo-scoped GitHub deploy key (ed25519, write, `michal-ciechan/Antiphon` only, titled `antiphon-server2-runner`) | `deploy-parent` on server2, with `ssh-keygen`; the private half is never copied | `/home/mc/antiphon-server2/secrets/deploy_key`, 0600, owner `mc` | Compose file secret at `/run/secrets/antiphon-deploy-key`; `dind-entrypoint.sh` installs it at `/run/antiphon/deploy-key`, 0400 uid 1654, on a **tmpfs** |
 | Phone-home shared secret | `deploy-parent` on server2, `openssl rand -hex 32` | `/home/mc/antiphon-server2/secrets/phone-home`, 0600, owner `mc` | Compose file secret at `/run/secrets/phone-home`, read by the runner process directly — never copied |
 
 The public half of the deploy key is exported with the run's evidence and registered on GitHub from
