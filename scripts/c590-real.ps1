@@ -7,6 +7,14 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $script:C590LiveCases = @(
+    # CARD-0604 S4 host-lane cases. They run on server2's own shell against the HOST daemon and are
+    # the only cases that change standing state there. Their entries in verify-docker-stack.ps1's
+    # switch are the STUB boundaries; this roster is what routes a real run to the remote instead.
+    'deploy-parent',
+    'nested-residue',
+    'persistent-restart',
+    'server2-independent-handoff',
+    'git-credential-smoke',
     'baseline-build-failure',
     'server-image-payload',
     'runner-image-payload',
@@ -42,8 +50,6 @@ $script:C590LiveCases = @(
     'failure-summary',
     'runtime-context-engine',
     'test-context-engine',
-    'server2-independent-handoff',
-    'git-credential-smoke',
     'throwaway-all'
 )
 
