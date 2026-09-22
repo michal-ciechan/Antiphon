@@ -1057,7 +1057,23 @@ EOF
     fi
     printf 'true\n' > "$CASE_DIR/phone-home-readable.txt"
 
-    # (b) the connection loop itself. The window opens AFTER the compose start_period, so one cold
+    # (b) whether the production server is even accepting registrations yet. CP-6a is what turns
+    # phone-home on there, and it runs AFTER this case, so a runner that cannot register only
+    # because the server still answers `phone_home_disabled` is a recorded pending state, not this
+    # deployment's fault. Asked with NO secret: the reply separates "disabled" (409 with that code)
+    # from "enabled, and this caller is not authenticated" (403), and changes nothing either way.
+    curl -sS -o "$CASE_DIR/register-probe.json" -w '%{http_code}' -X POST \
+        "${C604_SERVER_ORIGIN:?}/api/session-runners/register" \
+        -H 'Content-Type: application/json' \
+        -d '{"protocolVersion":1,"runnerId":"probe","processBootId":"00000000-0000-0000-0000-000000000001","runnerStoreId":"00000000-0000-0000-0000-000000000002","platform":"linux","capacity":1}' \
+        > "$CASE_DIR/register-probe-code.txt" 2>> "$CASE_DIR/command.log" || true
+    if grep -q 'phone_home_disabled' "$CASE_DIR/register-probe.json" 2>/dev/null; then
+        printf 'disabled\n' > "$CASE_DIR/phone-home-server-state.txt"
+    else
+        printf 'enabled\n' > "$CASE_DIR/phone-home-server-state.txt"
+    fi
+
+    # (c) the connection loop itself. The window opens AFTER the compose start_period, so one cold
     # reconnect is not a verdict; the backoff is 15s, so a loop that can only fail leaves several
     # marks in 45 seconds while a registered runner leaves none.
     phone_home_since="$(date -u +%Y-%m-%dT%H:%M:%S)"
@@ -1067,7 +1083,11 @@ EOF
     phone_home_failures="$(grep -cE 'Phone-home connection ended; reconnecting|UnauthorizedAccessException|PhoneHomeSecretUnreadable' \
         "$CASE_DIR/phone-home-window.log" || true)"
     printf '%s\n' "${phone_home_failures:-0}" > "$CASE_DIR/phone-home-failures.txt"
-    if [ "${phone_home_failures:-0}" -ge 2 ]; then
+    # A server that has not been switched on yet is the ONLY excused cause. A permission fault, a
+    # crash loop, a rejected secret or any other conflict still refuses -- which is the whole point
+    # of this probe, since /health and `docker info` say yes to all of them.
+    if [ "${phone_home_failures:-0}" -ge 2 ] \
+        && [ "$(tr -d '[:space:]' < "$CASE_DIR/phone-home-server-state.txt")" != "disabled" ]; then
         write_result false PhoneHomeUnreachable 2
     fi
 

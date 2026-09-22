@@ -236,6 +236,21 @@ public sealed class RemoteScriptContractTests
         // "Repeated", not "any": one is a reconnect, two in the window is a loop that cannot win.
         deploy.ShouldContain("-ge 2 ]");
 
+        // CP-6a is what enables phone-home on the production server, and it runs AFTER this case.
+        // A server still answering phone_home_disabled is therefore recorded, not blamed on the
+        // deployment -- otherwise this refusal would make the plan's own order unsatisfiable.
+        // Every other cause (a permission fault, a rejected secret, any other conflict) still
+        // refuses, which is the entire reason the probe exists.
+        deploy.ShouldContain("/api/session-runners/register");
+        deploy.ShouldContain("phone_home_disabled");
+        deploy.ShouldContain("phone-home-server-state.txt\")\" != \"disabled\" ]");
+        // The probe carries no secret: it separates "disabled" from "enabled" and nothing else.
+        Block(Remote(), "case_deploy_parent")
+            .Split('\n')
+            .Where(l => l.Contains("register-probe", StringComparison.Ordinal))
+            .ShouldAllBe(l => !l.Contains("SecretHeader", StringComparison.Ordinal)
+                && !l.Contains("PHONE_HOME_SECRET", StringComparison.Ordinal));
+
         // Runner output can carry a token; the window is scrubbed like every other evidence file.
         deploy.ShouldContain("scrub_file \"$CASE_DIR/phone-home-window.log\"");
         Order(deploy, "write_result false PhoneHomeUnreachable 2", "write_result true").ShouldBeTrue();
