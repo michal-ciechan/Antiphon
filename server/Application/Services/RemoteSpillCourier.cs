@@ -26,6 +26,23 @@ public sealed class RemoteSpillCourier
     public bool TryTake(Guid sessionId, out StagedSpill staged) =>
         _staged.TryRemove(sessionId, out staged!);
 
+    /// <summary>
+    /// CARD-0604 D-3. Look at the staged body WITHOUT clearing it. Taking it before the Input
+    /// frame is acknowledged loses it outright when the phone-home socket drops mid-request:
+    /// the body is gone from memory, the runner never wrote the file, and the retry types a
+    /// pointer at a path that does not exist. Pair this with <see cref="Ack"/>.
+    /// </summary>
+    public bool TryPeek(Guid sessionId, out StagedSpill staged) =>
+        _staged.TryGetValue(sessionId, out staged!);
+
+    /// <summary>
+    /// CARD-0604 D-3. Clear the staged body now that the runner has acknowledged writing it.
+    /// Only the body that was actually delivered is removed: a newer spill staged while the
+    /// frame was in flight stays, so it is not silently dropped by a late acknowledgement.
+    /// </summary>
+    public bool Ack(Guid sessionId, StagedSpill delivered) =>
+        _staged.TryRemove(new KeyValuePair<Guid, StagedSpill>(sessionId, delivered));
+
     public bool IsStaged(Guid sessionId) => _staged.ContainsKey(sessionId);
 
     public void Clear(Guid sessionId) => _staged.TryRemove(sessionId, out _);

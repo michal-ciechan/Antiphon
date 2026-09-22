@@ -88,11 +88,20 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient
     public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
     {
         // CARD-0604 G-21. A body spilled for this session travels HERE, in the Input payload, and
-        // the runner writes it inside the session's own cwd. Taking it clears it, so a retyped
-        // pointer after a composer-evidence retry does not rewrite the file.
-        if (_spills is not null && _spills.TryTake(sessionId, out var staged))
+        // the runner writes it inside the session's own cwd.
+        //
+        // D-3: it is cleared on the ACKNOWLEDGEMENT, never before. Removing it up front and then
+        // awaiting the request meant a phone-home WebSocket that dropped mid-send destroyed the
+        // only copy of the body: the runner never wrote the file, the dictionary no longer held
+        // it, and the retry typed a pointer at a path that does not exist. Sending twice is
+        // recoverable (the runner rewrites the same bytes at the same path); losing it is not.
+        if (_spills is not null && _spills.TryPeek(sessionId, out var staged))
         {
             await SendInputWithSpillAsync(sessionId, input, staged.RunnerCwd, staged.Spill, ct);
+            // Only past the throw. Ack removes just this body, so a newer spill staged while the
+            // frame was in flight survives, and a retyped pointer after a composer-evidence retry
+            // still does not rewrite the file.
+            _spills.Ack(sessionId, staged);
             return;
         }
 

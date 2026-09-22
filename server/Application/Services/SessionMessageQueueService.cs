@@ -1870,6 +1870,15 @@ public sealed partial class SessionMessageQueueService
             sessionId, composed, head.Id.ToString("D"), channelEnvelope, db, ct, ceilings,
             head.SpecialistInputPolicyJson);
         var spilled = committedWire is null && !ReferenceEquals(body, composed) && body != composed;
+        if (committedWire is not null)
+        {
+            // CARD-0604 D-3. A replay of a frozen Completion rendering skips SpillQueueBodyAsync
+            // entirely, and that is where a REMOTE session's body is staged for the Input frame.
+            // Without this, every retry of a spilled completion typed the frozen pointer with no
+            // body travelling behind it, so the runner wrote nothing and the agent was told to
+            // read a file that did not exist.
+            await RestageCommittedSpillAsync(db, sessionId, run, completionRows, committedWire, ct);
+        }
 
         // CARD-0340 S3 / CARD-0342: a previously typed body still standing in the composer gets
         // Enter only in the process that took the typing, with the whole head visible (CARD-0501).
@@ -2163,11 +2172,50 @@ public sealed partial class SessionMessageQueueService
     }
 
     /// <summary>
+    /// CARD-0604 D-3. Re-stage a REMOTE session's spilled body when a frozen Completion rendering
+    /// is replayed. The frozen wire text is the pointer; the body itself is reconstructed from the
+    /// members' own frozen logical notes, which is exactly what was composed and spilled on the
+    /// first attempt. A local session, an unspilled rendering or a rendering whose members are not
+    /// all frozen stages nothing.
+    /// </summary>
+    internal async Task RestageCommittedSpillAsync(
+        AppDbContext db, Guid sessionId, IReadOnlyList<SessionQueuedMessage> run,
+        IReadOnlyList<AgentTaskLandNotification> completions, string wire, CancellationToken ct)
+    {
+        if (_remoteSpills is null)
+            return;
+        var runnerCwd = await db.AgentSessions.AsNoTracking().Where(s => s.Id == sessionId)
+            .Select(s => s.RunnerCwd).FirstOrDefaultAsync(ct);
+        if (string.IsNullOrWhiteSpace(runnerCwd))
+            return;
+
+        var logicals = new List<string>(run.Count);
+        foreach (var row in run)
+        {
+            var notification = completions.FirstOrDefault(n => n.Id == row.SourceLandNotificationId);
+            if (notification is null
+                || TaskCompletionNotification.TryReadDelivery(notification.CompletionDeliveryJson) is not { } delivery)
+                return;
+            logicals.Add(delivery.LogicalNote);
+        }
+
+        var composed = logicals.Count == 1
+            ? logicals[0]
+            : ChannelPromptFormat.FormatBatch(logicals.Take(logicals.Count - 1).ToList(), logicals[^1]);
+        // The wire text IS the body when nothing was spilled; only a pointer needs a body behind it.
+        if (string.Equals(wire, composed, StringComparison.Ordinal))
+            return;
+
+        var relative = TypedBodySpill.InboxRelativePath(run[0].Id.ToString("D"));
+        _remoteSpills.Stage(sessionId, runnerCwd!, new PhoneHomeInputSpill(relative, composed));
+    }
+
+    /// <summary>
     /// CARD-0544 G-106/G-110. Freeze each Completion member's logical note, the exact composed wire
     /// text, batch membership and any spill identity. Only a still-unfrozen row is written, so a
     /// concurrent replay cannot replace a committed rendering.
     /// </summary>
-    private static async Task FreezeCompletionRenderingAsync(
+    internal static async Task FreezeCompletionRenderingAsync(
         AppDbContext db, Guid sessionId, IReadOnlyList<SessionQueuedMessage> run,
         IReadOnlyList<AgentTaskLandNotification> completions, IReadOnlyDictionary<Guid, string> logicalBodies,
         string composed, string wire, bool spilled, DateTime now, CancellationToken ct)
@@ -2176,11 +2224,21 @@ public sealed partial class SessionMessageQueueService
         string? spillSha = null;
         if (spilled)
         {
-            var cwd = await db.AgentSessions.AsNoTracking().Where(s => s.Id == sessionId)
-                .Select(s => s.Cwd).FirstOrDefaultAsync(ct);
-            if (!string.IsNullOrWhiteSpace(cwd))
+            var session = await db.AgentSessions.AsNoTracking().Where(s => s.Id == sessionId)
+                .Select(s => new { s.Cwd, s.RunnerCwd }).FirstOrDefaultAsync(ct);
+            // CARD-0604 D-4. A REMOTE session's file is written by the RUNNER, under RunnerCwd,
+            // with POSIX separators -- the same join RunnerWorkspaceService.WriteSpillAsync makes.
+            // Deriving it from the desktop Cwd froze a Windows path that exists on neither
+            // machine, so the receipt named a file nobody could ever open.
+            if (!string.IsNullOrWhiteSpace(session?.RunnerCwd))
             {
-                spillPath = TypedBodySpill.InboxAbsolutePath(cwd, run[0].Id.ToString("D"));
+                spillPath = session.RunnerCwd!.Replace('\\', '/').TrimEnd('/')
+                    + "/" + TypedBodySpill.InboxRelativePath(run[0].Id.ToString("D"));
+                spillSha = TaskCompletionNotification.Sha256(composed);
+            }
+            else if (!string.IsNullOrWhiteSpace(session?.Cwd))
+            {
+                spillPath = TypedBodySpill.InboxAbsolutePath(session.Cwd!, run[0].Id.ToString("D"));
                 spillSha = TaskCompletionNotification.Sha256(composed);
             }
         }
