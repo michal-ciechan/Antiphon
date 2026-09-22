@@ -380,7 +380,9 @@ function Test-C545_ResultLine {
     Assert-C487 -Cond (Test-C545FlagsEqualState -Run $green) -Name 'C545 ResultLine green flags equal last-run.json' -Detail $detail
 
     $refusal = Invoke-C545ResultLineRun -Row 'refusal' -UtcNow '2026-09-17T23:35:00Z' -CheckoutRoot 'C:\src\Antiphon'
-    $expected = '{"nativeRunId":"","sha":"","ref":"","trigger":"","localDueDate":"","policyHash":"","coverageComplete":false,"testsPassed":false,"reportDelivered":false,"exitCode":3,"summaryPath":""}'
+    # CARD-0599 D-2/D-7: the envelope now carries lane identity (profile, candidateId,
+    # creditKind) so an RC result can never be read back as a master nightly result.
+    $expected = '{"nativeRunId":"","sha":"","ref":"","trigger":"","profile":"","candidateId":"","creditKind":"","localDueDate":"","policyHash":"","coverageComplete":false,"testsPassed":false,"reportDelivered":false,"exitCode":3,"summaryPath":""}'
     Assert-C487 -Cond ($refusal.ExitCode -eq 3 -and $refusal.Last -ceq $expected) -Name 'C545 ResultLine refusal last line is the JSON record' -Detail ('exit={0} last={1}' -f $refusal.ExitCode, $refusal.Last)
 
     $red = Invoke-C545ResultLineRun -Row 'test-red' -UtcNow '2026-09-17T23:35:00Z' -TestExit 1 -TestsPassed $false
