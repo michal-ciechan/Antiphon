@@ -88,12 +88,12 @@ if ($Build) {
         $repoRoot)
     Push-Location $repoRoot
     try {
-        $build = Invoke-Docker $buildArgs 'docker-build.txt'
+        $buildResult = Invoke-Docker $buildArgs 'docker-build.txt'
     }
     finally {
         Pop-Location
     }
-    if ($build.ExitCode -ne 0) {
+    if ($buildResult.ExitCode -ne 0) {
         Exit-Harness 2 "docker build failed; see $script:evidenceDir/docker-build.txt"
     }
 }
