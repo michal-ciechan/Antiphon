@@ -22,6 +22,24 @@ public class TranscriptTailerObservationTests
     public async Task Unreadable_bound_file_is_unknown()
     {
         await using var world = await BoundWorld.CreateAsync(complete: true, trailingPartial: false);
+
+        // Only this test takes an exclusive handle, so only this test needs the extra wait.
+        // The tailer publishes BoundTranscriptPath *before* its first read, so CreateAsync's
+        // binding wait can still return while the tail loop holds its own read handle — and the
+        // FileShare.None open below then loses that race. Parsed entries, by contrast, are
+        // appended only after that read scope is disposed, so a full snapshot is the causal
+        // signal that no tailer handle is open. The count is this fixture's body
+        // (SilentBody(complete: true, trailingPartial: false) writes three lines, one entry
+        // each), not a property of transcripts in general; with no further appends the tail loop
+        // stops reopening the file once its offset reaches the file length.
+        const int fixtureEntryCount = 3;
+        var readyBy = DateTime.UtcNow.AddSeconds(8);
+        while (world.Tailer.Snapshot().Entries.Count < fixtureEntryCount && DateTime.UtcNow < readyBy)
+            await Task.Delay(50);
+        world.Tailer.Snapshot().Entries.Count.ShouldBe(
+            fixtureEntryCount,
+            "the tailer's initial read must have completed before the exclusive handle is taken");
+
         await using var locked = new FileStream(world.Path, FileMode.Open, FileAccess.Read, FileShare.None);
         var observation = await world.Tailer.ObserveCompactionSilenceAsync(CancellationToken.None);
         observation.IsSuccessful.ShouldBeFalse();
