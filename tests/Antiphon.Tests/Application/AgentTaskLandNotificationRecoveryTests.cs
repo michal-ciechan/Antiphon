@@ -20,7 +20,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-public sealed class AgentTaskLandNotificationRecoveryTests
+public sealed partial class AgentTaskLandNotificationRecoveryTests
 {
     [Test]
     public async Task C488_ApprovalReceiptDestinationImmutable() => await C467_V08_DestinationSnapshotsRemainOwed("destination-edit");

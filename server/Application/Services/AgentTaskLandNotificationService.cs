@@ -26,6 +26,20 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
     internal static bool IsCompletionNoteKind(LandNotificationKind kind) =>
         kind is LandNotificationKind.DeliveryFailure or LandNotificationKind.TaskCompletion;
 
+    private int MaxAttempts() => Math.Max(1,
+        (supervision?.Value ?? new SupervisionSettings()).DeliveryVerification.MaxDeliveryAttempts);
+
+    private static bool Actionable(SessionQueuedMessage row, int maxAttempts)
+    {
+        if (row.Status == QueuedMessageStatus.Canceled)
+            return false;
+        if (row.Status == QueuedMessageStatus.Pending && row.DeliveryAttempts >= maxAttempts)
+            return false;
+        if (row.Status == QueuedMessageStatus.Sent)
+            return row.DeliveryVerdict is null;
+        return row.Status == QueuedMessageStatus.Pending;
+    }
+
     public async Task ReconcileAsync(Guid id, CancellationToken ct)
     {
         var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.Id == id, ct);
@@ -64,6 +78,8 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                     if (IsCompletionNoteKind(note.Kind) && note.Kind != LandNotificationKind.LegacyCheckNote)
                         await CompletionNoteStamp.ApplyAsync(db, note.TaskId, note.ContentDigest, existing.CreatedAt, ct);
                     await db.SaveChangesAsync(ct);
+                    if (Actionable(existing, MaxAttempts()) && boundary?.DropWakeup("completion", note.Id) != true)
+                        flushes.TryEnqueue(session);
                 }
             }
             if (note.QueueMessageId is null)
@@ -141,7 +157,10 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 note.State = LandNotificationState.AwaitingReceipt;
                 note.LastErrorCode = null;
                 await db.SaveChangesAsync(ct);
-                if (boundary?.DropWakeup("completion", note.Id) != true) flushes.TryEnqueue(session);
+                var created = await db.SessionQueuedMessages.AsNoTracking()
+                    .SingleAsync(m => m.Id == note.QueueMessageId, ct);
+                if (Actionable(created, MaxAttempts()) && boundary?.DropWakeup("completion", note.Id) != true)
+                    flushes.TryEnqueue(session);
             }
             var row = await db.SessionQueuedMessages.AsNoTracking().SingleOrDefaultAsync(m => m.Id == note.QueueMessageId, ct);
             if (row is null)

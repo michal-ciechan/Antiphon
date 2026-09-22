@@ -4,12 +4,12 @@ using System.Collections.Concurrent;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>Bounded wakeups only. Persisted Pending completion notes are the recovery source.</summary>
-public sealed class CompletionNoteFlushQueue
+public class CompletionNoteFlushQueue
 {
     private readonly Channel<Guid> _channel = Channel.CreateBounded<Guid>(new BoundedChannelOptions(128)
     { FullMode = BoundedChannelFullMode.Wait, SingleReader = false });
     private readonly ConcurrentDictionary<Guid, byte> _pending = new();
-    public bool TryEnqueue(Guid sessionId)
+    public virtual bool TryEnqueue(Guid sessionId)
     {
         if (!_pending.TryAdd(sessionId, 0)) return true;
         if (_channel.Writer.TryWrite(sessionId)) return true;

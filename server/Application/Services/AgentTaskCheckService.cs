@@ -202,11 +202,28 @@ public sealed class AgentTaskCheckService
         {
             if (_legacyNotes is not null)
             {
+                Guid? recoveryId = null;
+                if (interpretation.RunTaskId is Guid runId)
+                {
+                    var interpreterSessionId = await _db.AgentTasks.AsNoTracking()
+                        .Where(t => t.Id == runId)
+                        .Select(t => t.AgentSessionId)
+                        .FirstOrDefaultAsync(ct);
+                    if (interpreterSessionId is Guid interpreterSession)
+                    {
+                        recoveryId = await _db.CheckCompactionRecoveries.AsNoTracking()
+                            .Where(r => r.State == CheckCompactionRecoveryState.AwaitingCheck
+                                && r.ResumeSessionId == interpreterSession)
+                            .Select(r => (Guid?)r.Id)
+                            .FirstOrDefaultAsync(ct);
+                    }
+                }
+
                 var published = await _legacyNotes.TryPublishAsync(
                     task, facts.Task.CheckNumber, body,
                     ComposeEventDetail(interpretation.Text, interpretation.EventLine,
                         supersededBanner is null ? digest : $"{supersededBanner}\n\n{digest}"),
-                    interpretation.RunTaskId, suppress: false, suppressionReason: null, ct);
+                    interpretation.RunTaskId, suppress: false, suppressionReason: null, ct, recoveryId);
                 if (published == LegacyCheckNotePublicationService.PublishResult.Published)
                 {
                     await _eventBus.PublishToAllAsync(

@@ -17,7 +17,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-public sealed class AgentTaskLandNotificationPersistenceTests
+public sealed partial class AgentTaskLandNotificationPersistenceTests
 {
     [Test]
     public async Task C488_ApprovalOutcomeTransactionAtomic()

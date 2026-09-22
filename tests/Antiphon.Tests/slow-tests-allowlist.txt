@@ -55,6 +55,8 @@ Antiphon.Tests.Application.SessionMessageQueueDeliveryVerificationTests
 Antiphon.Tests.Application.SessionMessageQueueWedgedHeadTests
 # CARD-0501 review F2: first harness starts/migrates PostgreSQL (35.236s measured); real check production plus two real delivery attempts.
 Antiphon.Tests.Application.CheckNoteDeliveryHandoffTests
+# CARD-0079: owned crash workers for compaction stop/resume and legacy-note recovery.
+Antiphon.Tests.Application.CheckCompactionCrashTests
 # CARD-0487: historical allowance, API error recovery.
 Antiphon.Tests.Application.ApiErrorRecoveryServiceTests
 # CARD-0487: historical allowance, workspace hook runner.
