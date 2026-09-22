@@ -253,7 +253,7 @@ public sealed class LegacyCheckNotePublicationService
             RootTaskId = runId,
             Title = "captured check",
             Goal = "interpret the captured observation",
-            Role = AgentTaskRole.Check,
+            Role = StandingSpecialistSeatPolicy.Role,
             Kind = AgentTaskKind.Worker,
             Status = AgentTaskStatus.Queued,
             AgentId = publication.PhysicalAgentId,

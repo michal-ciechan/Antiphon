@@ -331,7 +331,9 @@ public sealed class DataRetentionService
 
     /// <summary>
     /// CARD-0079. A confirmed legacy Check publication keeps its logical identity.
-    /// Payload text may age out; deleting the row would let a later capture mint a second note.
+    /// Captured facts and render context age out. The produced body, digest, and
+    /// ProducedAt stay, because a Produced row without them violates the completeness check.
+    /// Deleting the row would let a later capture mint a second note.
     /// </summary>
     public async Task RetainConfirmedPublicationIdentitiesAsync(CancellationToken ct)
     {
@@ -339,7 +341,6 @@ public sealed class DataRetentionService
             .Where(p => p.State == LegacyCheckNoteState.Produced
                 && _db.AgentTaskLandNotifications.Any(n => n.Id == p.NotificationId && n.ConfirmedAt != null))
             .ExecuteUpdateAsync(setters => setters
-                .SetProperty(p => p.Body, (string?)null)
                 .SetProperty(p => p.FactsSnapshotJson, "{}")
                 .SetProperty(p => p.RenderContextJson, "{}"), ct);
         if (updated > 0)
