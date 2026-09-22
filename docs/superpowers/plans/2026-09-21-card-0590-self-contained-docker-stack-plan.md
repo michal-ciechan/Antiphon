@@ -11,6 +11,7 @@ The ordinary observation/cut contract below supersedes that tip's missing-seam a
 The amendment is on `feat/card-task-04b55418` because the source branch is checked out in
 another worktree. Production source is unchanged. **Next: test-design**, including the full
 portable roster, independent guard/PC mapping, checkpoints and costs; Code is not admitted yet.
+Status: reviewed implementation `22f19c548374acfd44e21fd93bb6a3e096838dac` on `feat/card-task-dae3ad6b` is ready for land.
 
 ## Outcome and scope
 
