@@ -585,6 +585,10 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             await db.AgentIncidents.Where(i => i.AgentId == AgentId).ExecuteDeleteAsync();
             await db.Alerts.Where(a => a.AgentId == AgentId).ExecuteDeleteAsync();
             await db.AgentSupervisionStates.Where(s => s.AgentId == AgentId).ExecuteDeleteAsync();
+            await db.LegacyCheckNotePublications
+                .Where(p => db.CheckCompactionRecoveries.Any(r => r.Id == p.RecoveryId && r.PhysicalAgentId == AgentId))
+                .ExecuteDeleteAsync();
+            await db.CheckCompactionRecoveries.Where(r => r.PhysicalAgentId == AgentId).ExecuteDeleteAsync();
             await db.Agents.Where(a => a.Id == AgentId)
                 .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId, (string?)null));
             await db.AgentSessions.Where(s => sessionIds.Contains(s.Id)).ExecuteDeleteAsync();
