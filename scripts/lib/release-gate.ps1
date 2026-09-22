@@ -207,6 +207,31 @@ function Get-ReleaseGateNativeLockPath {
     return (Join-Path $CoordinationRoot 'native-run.lock')
 }
 
+function Test-ReleaseGateSameInstant {
+    <#
+      ConvertFrom-Json coerces an ISO-8601 string into a DateTime, so a naive
+      string compare between what was written and what was read back fails under
+      a non-invariant culture. Compare instants when both sides parse, and fall
+      back to an ordinal compare only when they do not.
+    #>
+    param($Left, $Right)
+    $leftEmpty = ($null -eq $Left) -or [string]::IsNullOrWhiteSpace([string]$Left)
+    $rightEmpty = ($null -eq $Right) -or [string]::IsNullOrWhiteSpace([string]$Right)
+    if ($leftEmpty -and $rightEmpty) { return $true }
+    if ($leftEmpty -or $rightEmpty) { return $false }
+    $l = [datetime]::MinValue
+    $r = [datetime]::MinValue
+    $styles = [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal
+    $lOk = $false
+    $rOk = $false
+    if ($Left -is [datetime]) { $l = ([datetime]$Left).ToUniversalTime(); $lOk = $true }
+    else { $lOk = [datetime]::TryParse([string]$Left, [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$l) }
+    if ($Right -is [datetime]) { $r = ([datetime]$Right).ToUniversalTime(); $rOk = $true }
+    else { $rOk = [datetime]::TryParse([string]$Right, [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$r) }
+    if ($lOk -and $rOk) { return ($l.ToUniversalTime() -eq $r.ToUniversalTime()) }
+    return [string]::Equals([string]$Left, [string]$Right, [StringComparison]::OrdinalIgnoreCase)
+}
+
 function New-ReleaseGateLockOwner {
     <#
       D-4: owner identity is PID + process start + run id + continuation id, so a
@@ -253,7 +278,7 @@ function Enter-ReleaseGateNativeLock {
         $pidOk = ([int]$existing.pid -eq $ContinueOwnerPid)
         $startOk = $true
         if (-not [string]::IsNullOrWhiteSpace($ContinueOwnerStartedAt)) {
-            $startOk = [string]::Equals([string]$existing.processStartedAt, $ContinueOwnerStartedAt, [StringComparison]::OrdinalIgnoreCase)
+            $startOk = Test-ReleaseGateSameInstant -Left $existing.processStartedAt -Right $ContinueOwnerStartedAt
         }
         $laneOk = [string]::Equals([string]$existing.lane, $Lane, [StringComparison]::OrdinalIgnoreCase)
         if (-not ($alive -and $runOk -and $pidOk -and $startOk -and $laneOk)) {
@@ -266,10 +291,17 @@ function Enter-ReleaseGateNativeLock {
     $payload = ($record | ConvertTo-Json -Compress)
     $bytes = [System.Text.Encoding]::ASCII.GetBytes($payload)
     try {
+        # CreateNew is the exclusion; the handle is closed immediately afterwards so the
+        # owner record stays READABLE. A contender must be able to say who holds the lock
+        # and prove the owner is alive - it cannot do that against a file it cannot open.
         $stream = [System.IO.File]::Open($lockPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)
-        $stream.Write($bytes, 0, $bytes.Length)
-        $stream.Flush()
-        $script:ReleaseGateNativeLockStream = $stream
+        try {
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Flush()
+        } finally {
+            $stream.Dispose()
+        }
+        $script:ReleaseGateNativeLockStream = $null
         $script:ReleaseGateNativeLockPath = $lockPath
         $script:ReleaseGateOwnsNativeLock = $true
         return [pscustomobject]@{ Ok = $true; Reason = 'acquired'; OwnsLock = $true; Record = [pscustomobject]$record; Path = $lockPath }
