@@ -217,8 +217,11 @@ try {
             Write-Host "C594 HARNESS NOTE: probe host $probePid still alive after its launch timeout window."
         }
     }
-    $socketLs = Invoke-Docker @('exec', $containerName, 'bash', '-c', 'ls -la /tmp/antiphon-pty-c594probe-* 2>&1 || true') 'probe-h3-socket.txt'
-    $orphanSocket = if ($socketLs.Output -match 'antiphon-pty-c594probe-') { 'yes' } else { 'no' }
+    # The verdict comes from the shell's own test, never from parsing ls: an unmatched glob makes
+    # ls echo the pattern back in its error message, which reads exactly like a surviving file.
+    $socketProbe = 'ls -la /tmp/antiphon-pty-c594probe-* 2>&1; if ls /tmp/antiphon-pty-c594probe-* >/dev/null 2>&1; then echo C594_SOCKET=yes; else echo C594_SOCKET=no; fi'
+    $socketLs = Invoke-Docker @('exec', $containerName, 'bash', '-c', $socketProbe) 'probe-h3-socket.txt'
+    $orphanSocket = if ($socketLs.Output -match 'C594_SOCKET=(yes|no)') { $Matches[1] } else { 'unknown' }
     Write-Host "C594 HARNESS: orphanSocket=$orphanSocket"
 
     Invoke-Docker @('logs', $containerName) 'container-logs.txt' | Out-Null
