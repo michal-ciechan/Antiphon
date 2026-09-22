@@ -335,9 +335,14 @@ Task. **Reduced dispatch verification stays inactive** until S4 qualification
 independent health monitor, and recorded notification receipt).
 
 CARD-0487 S1-S3 (landed, policy inactive): `tests/test-execution-policy.json`
-is the execution universe (schemaVersion 1 plus a recomputed `policyHash`).
+is the execution universe (now schemaVersion 2 plus a recomputed `policyHash`).
 Default unattended suites are `antiphon`, `session-runner`, `pty-host`,
-`agents-pty`, `messaging`, `client`, and `scripts`. `e2e` is a manual exception.
+`agents-pty`, `messaging`, `client`, and `scripts`. `e2e` is a manual exception
+in the nightly lane. CARD-0599 added `profiles.nightly` (those same seven) and
+`profiles.rc` (those seven **plus `e2e`**); the selected profile is authoritative
+for required suites, an unknown profile refuses, and in a profile lane `OptIn`
+alone no longer excludes a case - only a declared exclusion row with a reason and
+an owner does. Owner: [release gates](release-gates.md).
 Producer-owned `StateRoot` defaults to `C:\Antiphon\nightly` (Windows backslash
 paths). Lock acquisition is atomic (`FileMode.CreateNew`); a live owner is never
 replaced by age. `last-run.json` is the last attempt; `last-complete-green.json`
@@ -411,7 +416,11 @@ pwsh -File scripts/test-client.ps1 BoardPage.test
 
 The clone is already at the sha the card names; or pass that filter against any
 checkout of the same commit. Headed tests and `Antiphon.E2E` stay off the
-schedule (`-Suites e2e` is a manual opt-in). Per-project Slow registries are
+nightly schedule. `-Suites e2e` is **not** a way to run E2E: `nightly-tests-impl.ps1`
+skipped `mode=manual` unconditionally, so the selection was accepted and then
+dropped. Use `nightly-run.ps1 -Profile rc`, which requires E2E and runs it with
+real Playwright/bundle prerequisites - a missing browser or stale bundle is red or
+incomplete, never a skip. See [release gates](release-gates.md). Per-project Slow registries are
 `tests/<Project>/slow-tests-allowlist.txt` (FQN plus adjacent reason). Slow is
 a cost marker, never Skip. Offline harnesses: `scripts/test-nightly-run.ps1`,
 `scripts/test-nightly-tests.ps1`, `scripts/test-nightly-report.ps1`,
