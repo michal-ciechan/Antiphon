@@ -117,3 +117,5 @@ Antiphon.Tests.Application.VerificationRoundDeliveryTests
 Antiphon.Tests.Application.AgentTaskScopedListTests
 # CARD-0515: factory-cloned database per HTTP case; same isolated-store inheritance as sibling endpoint tests.
 Antiphon.Tests.Application.AgentTaskScopedListEndpointTests
+# CARD-0459: real Git land plus keyed-queue recovery. C459_QueueIdentitySurvivesLostLink measured 207.548s body time.
+Antiphon.Tests.Application.WorktreeLandingCleanupRetryTests
