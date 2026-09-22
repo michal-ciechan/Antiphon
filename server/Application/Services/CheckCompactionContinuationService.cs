@@ -507,7 +507,22 @@ public sealed class CheckCompactionContinuationService
             t.AgentSessionId == sessionId
             && t.Kind == TranscriptKinds.TurnEnd
             && t.Sequence > prompt.Sequence, ct);
-        if (!ended || check.ParentSessionId is not Guid parent)
+        if (!ended)
+            return;
+
+        // The interpretation has no caller session of its own - SpecialistTaskRunner sets
+        // ParentSessionId = null on every specialist run, deliberately. The recipient owed a
+        // reading is the CHECKED task's caller, and the publication this episode captured is
+        // where that identity is recorded. Reading it off the run alone left AwaitingCheck
+        // unable to reach Recovered for any real interpretation, which also meant
+        // CompactionRestartReceiptEligible was never set and the rolling allowance never
+        // reopened. The lookup stays bound to this episode and this run.
+        var parentSessionId = check.ParentSessionId
+            ?? await _db.LegacyCheckNotePublications.AsNoTracking()
+                .Where(p => p.RecoveryId == episode.Id && p.InterpretationTaskId == check.Id)
+                .Select(p => (Guid?)p.ParentSessionId)
+                .FirstOrDefaultAsync(ct);
+        if (parentSessionId is not Guid parent)
             return;
 
         if (await LegacyReceiptAsync(episode, sessionId, parent, ct) is not LegacyReceipt.NotApplicable)
