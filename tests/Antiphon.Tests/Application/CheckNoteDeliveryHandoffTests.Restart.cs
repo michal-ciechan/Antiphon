@@ -87,8 +87,30 @@ public partial class CheckNoteDeliveryHandoffTests
         // The real chain, on the RESUMED generation: a real check run, a real interpretation
         // dispatched to the restarted seat, and the note it produced typed into the caller.
         var taskId = await SeedCheckedDelegateAsync(h);
-        h.Adapter.SwallowSubmits = 99;
-        var (run, _) = await StartCheckAndDeliverTheBriefAsync(h, taskId);
+        await using (var db = h.CreateContext())
+        {
+            // A delegate a check is being taken on has already been checked once by the time the
+            // sweep reaches it; the publication is keyed on that check number, so state it.
+            await db.AgentTasks.Where(t => t.Id == taskId)
+                .ExecuteUpdateAsync(u => u.SetProperty(t => t.CheckCount, 1));
+        }
+
+        // No swallowed submit on either leg here: the stranded-brief recovery has its own cases in
+        // this class, and the subject of this one is whether the RESTART produces a reading at all.
+        var run = Task.Run(() => h.Resolve<AgentTaskCheckService>().RunCheckAsync(taskId, CancellationToken.None));
+        var interpretation = await WaitForInterpretationAsync(h, stalled.PriorCheckTaskId);
+        await h.Resolve<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
+
+        await using (var db = h.CreateContext())
+        {
+            var placed = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == interpretation.Id);
+            placed.Status.ShouldBe(AgentTaskStatus.Dispatched, "the real dispatcher placed it");
+            placed.AgentSessionId.ShouldBe(h.InterpreterSessionId,
+                "on the RESTARTED seat's session - no second session was launched");
+        }
+
+        await AssertRestartedBriefArrivedWholeAsync(h, interpretation.Id);
+        await SettleInterpretationAsync(h, interpretation.Id, Reading);
         (await run).ShouldBe(AgentTaskCheckService.CheckOutcome.Delivered);
 
         Guid notificationId;
@@ -102,10 +124,7 @@ public partial class CheckNoteDeliveryHandoffTests
         }
 
         await h.Resolve<AgentTaskLandNotificationService>().ReconcileAsync(notificationId, CancellationToken.None);
-        h.Adapter.SwallowSubmits = 0;
-        var typedBefore = h.Adapter.Inputs.Count(i => i != "\r");
         await h.H.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
-        h.Adapter.Inputs.Count(i => i != "\r").ShouldBe(typedBefore, "recovery never retypes the body");
 
         await AssertNoteArrivedWholeAsync(h, taskId, carries: Reading);
 
@@ -124,6 +143,29 @@ public partial class CheckNoteDeliveryHandoffTests
             "only a delivered reading earns the next automatic restart");
         supervision.ActiveCompactionRecoveryId.ShouldBeNull();
         runner.CompactionStops.Count.ShouldBe(1, "one restart, not a loop");
+    }
+
+    /// <summary>
+    /// The brief leg, asserted against a seat whose transcript already carries the stalled turn
+    /// this episode is about: exactly ONE prompt in the whole session carries the new
+    /// interpretation's marker, and it is that brief whole rather than a fragment of it.
+    /// </summary>
+    private static async Task AssertRestartedBriefArrivedWholeAsync(Handoff h, Guid interpretationId)
+    {
+        await using var db = h.CreateContext();
+        var brief = await db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.AgentSessionId == h.InterpreterSessionId)
+            .SingleAsync();
+        brief.Status.ShouldBe(QueuedMessageStatus.Sent);
+        brief.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        brief.Body.ShouldContain(DelegationReportFormatter.TaskMarker(interpretationId));
+
+        var carrying = (await h.PromptsAsync(h.InterpreterSessionId))
+            .Where(text => text.Contains(DelegationReportFormatter.TaskMarker(interpretationId), StringComparison.Ordinal))
+            .ToList();
+        carrying.Count.ShouldBe(1, "one whole brief, once, and nothing riding with it");
+        carrying[0].ReplaceLineEndings("\n").Trim()
+            .ShouldBe(brief.Body.ReplaceLineEndings("\n").Trim());
     }
 
     private static CheckCompactionContinuationService CompactionService(
@@ -255,6 +297,21 @@ public partial class CheckNoteDeliveryHandoffTests
             session.Status = SessionStatus.Running;
             session.EndedAt = null;
             session.LastSeenAt = DateTime.UtcNow;
+            // A relaunch writes the restart boundary, and that boundary is what ends the turn the
+            // old process died inside. Without it the resumed seat still reads Working and no new
+            // brief could ever be typed into it.
+            var next = ((await db.TranscriptEntries
+                .Where(t => t.AgentSessionId == sessionId)
+                .MaxAsync(t => (long?)t.Sequence, ct)) ?? 0) + 1;
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = sessionId,
+                Sequence = next,
+                Kind = TranscriptKinds.SessionRestartBoundary,
+                Timestamp = Generation2,
+                CreatedAt = Generation2,
+            });
             await db.SaveChangesAsync(ct);
             return new CompactionResumeResult(true, sessionId, Generation2, "reserved");
         }

@@ -308,14 +308,15 @@ public partial class CheckNoteDeliveryHandoffTests
     }
 
     /// <summary>The interpretation row SpecialistTaskRunner created, once it exists.</summary>
-    private static async Task<AgentTask> WaitForInterpretationAsync(Handoff h)
+    private static async Task<AgentTask> WaitForInterpretationAsync(Handoff h, Guid? excluding = null)
     {
         for (var attempt = 0; attempt < 400; attempt++)
         {
             await using (var db = h.CreateContext())
             {
                 var row = await db.AgentTasks.AsNoTracking()
-                    .Where(t => t.AgentId == h.InterpreterAgentId && t.Role == AgentTaskRole.Check)
+                    .Where(t => t.AgentId == h.InterpreterAgentId && t.Role == AgentTaskRole.Check
+                        && (excluding == null || t.Id != excluding))
                     .OrderByDescending(t => t.CreatedAt)
                     .FirstOrDefaultAsync();
                 if (row is not null)
@@ -411,14 +412,14 @@ public partial class CheckNoteDeliveryHandoffTests
     /// interpretation settles — the dispatch and the recovery happen while it waits.
     /// </summary>
     private static async Task<(Task<AgentTaskCheckService.CheckOutcome> Run, Guid Interpretation)>
-        StartCheckAndDeliverTheBriefAsync(Handoff h, Guid taskId)
+        StartCheckAndDeliverTheBriefAsync(Handoff h, Guid taskId, Guid? priorInterpretationId = null)
     {
         var run = Task.Run(() => h.Resolve<AgentTaskCheckService>().RunCheckAsync(taskId, CancellationToken.None));
 
         // The interpreter's own first submit is swallowed: the brief stands in its composer
         // unsubmitted, which is exactly the shape the stranded Check briefs were found in.
         h.InterpreterAdapter.SwallowSubmits = 99;
-        var interpretation = await WaitForInterpretationAsync(h);
+        var interpretation = await WaitForInterpretationAsync(h, priorInterpretationId);
         await h.Resolve<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
 
         await using (var db = h.CreateContext())
