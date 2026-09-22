@@ -405,18 +405,51 @@ case_testing_payload() {
     local image
     image="$(tag session-testing)"
     require_image_sha "$image"
+    # CARD-0604 V-1 (live) and R-5/G-40. Every payload the persistent runner needs is present, and
+    # the custody advertisement is still absent: Cut B is what makes this image a supported
+    # producer, and until then a VerificationCustodyV1 string here would be a false claim.
     run_sh "$image" '
         test -x /usr/local/bin/docker
         test -x /usr/local/lib/docker/cli-plugins/docker-compose
+        test -x /usr/local/bin/dockerd
+        test -x /usr/local/bin/containerd
+        test -x /usr/local/bin/containerd-shim-runc-v2
+        test -x /usr/local/bin/runc
+        test -x /usr/local/bin/docker-init
+        test -x /usr/local/bin/docker-proxy
+        test -x /usr/local/bin/ctr
         test -x /usr/local/bin/pwsh
+        test -x /usr/local/bin/antiphon-dind-entrypoint.sh
+        test -f /etc/docker/daemon.json
+        test -f /etc/antiphon/ssh_config
+        test -f /etc/antiphon/github_known_hosts
+        test -f /etc/gitconfig
         test -x /opt/antiphon-tests/fakegrok/fakegrok
         test -x /opt/antiphon-tests/fakegrok-linux.sh
+        getent group docker-nested
+        iptables --version | grep -q legacy
+        dotnet --list-sdks | grep -q "^10\."
+        dotnet --list-runtimes | grep -q "Microsoft.AspNetCore.App 9\."
+        dotnet --list-runtimes | grep -q "Microsoft.AspNetCore.App 10\."
+        node --version
+        ssh -V
         ! grep -a -q VerificationCustodyV1 /app/Antiphon.SessionRunner.dll
     ' >> "$CASE_DIR/command.log" 2>&1 || write_result false TestingPayloadMissing 2
+    # The stage ends USER 0:0 so the entrypoint can start dockerd, and drops to 1654 itself; a
+    # session still runs as 1654, which is what this asserts.
     docker run --rm --user 1654:1654 --network none --entrypoint /bin/sh "$image" -c 'id -u' > "$CASE_DIR/uid.txt"
     if [ "$(tr -d "[:space:]" < "$CASE_DIR/uid.txt")" != "1654" ]; then
         write_result false TestingNotNonRoot 2
     fi
+    # R-5: the runtime and receipt-probe targets gain none of it.
+    build_image runner "$CHECKOUT/docker/session-runner-grok/Dockerfile" "$CHECKOUT" runtime || write_result false RunnerBuildFailed 2
+    run_sh "$(tag runner)" '
+        test ! -e /usr/local/bin/docker
+        test ! -e /usr/local/bin/dockerd
+        test ! -e /usr/local/bin/antiphon-dind-entrypoint.sh
+        test ! -e /etc/docker/daemon.json
+        test ! -e /usr/bin/sudo
+    ' >> "$CASE_DIR/command.log" 2>&1 || write_result false RuntimeGainedTestPayload 2
     write_result true '' 0
 }
 
@@ -977,7 +1010,13 @@ EOF
     if [ "$(tr -d '[:space:]' < "$CASE_DIR/daemon-name.txt")" != "$(tr -d '[:space:]' < "$CASE_DIR/runner-hostname.txt")" ]; then
         write_result false SiblingDaemonRefused 2
     fi
-    compose_host ps --format '{{.Service}}' > "$CASE_DIR/services.txt" 2>&1 || true
+    # `ps --format '{{.Service}}'` is not supported by Compose 2.18 on server2 and answers with a
+    # parse error, which no grep matches - so the assertion passed vacuously. `--services` is the
+    # portable form, and an empty file is a refusal rather than a pass.
+    compose_host ps --services > "$CASE_DIR/services.txt" 2>&1 || true
+    if [ ! -s "$CASE_DIR/services.txt" ] || grep -q 'could not be parsed' "$CASE_DIR/services.txt"; then
+        write_result false ServiceListUnavailable 2
+    fi
     if grep -qE '^(antiphon|postgres)$' "$CASE_DIR/services.txt"; then
         write_result false UnexpectedStandingService 2
     fi
