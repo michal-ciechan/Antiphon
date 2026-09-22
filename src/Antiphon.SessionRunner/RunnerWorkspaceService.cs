@@ -135,8 +135,13 @@ public sealed class RunnerWorkspaceService
                     PhoneHomeProblemTypes.UnsupportedTarget, "Spill target is outside the runner workspace.", 409);
         }
 
-        var relative = (spill.RelativePath ?? "").Replace('\\', '/').TrimStart('/');
+        var relative = (spill.RelativePath ?? "").Replace('\\', '/');
+        // An ABSOLUTE path is refused rather than quietly rebased under the cwd: "/etc/passwd"
+        // silently becoming "<mirror>/etc/passwd" would be safe but is not what the caller asked
+        // for, and a spill pointer the agent is told to read must name the file that exists.
         if (relative.Length == 0
+            || relative[0] == '/'
+            || (relative.Length > 1 && relative[1] == ':')
             || relative.Split('/').Any(segment => segment is "" or "." or ".."))
             throw new PhoneHomeAdmissionException(
                 PhoneHomeProblemTypes.UnsupportedTarget, "Spill relative path is not admitted.", 409);
