@@ -91,7 +91,8 @@ public partial class CheckNoteDeliveryHandoffTests
         public FakeAgentProtocolAdapter InterpreterAdapter { get; private set; } = new();
 
         public static async Task<Handoff> CreateAsync(bool withInterpreter,
-            Action<DbContextOptionsBuilder>? configureDbContext = null)
+            Action<DbContextOptionsBuilder>? configureDbContext = null,
+            Action<IServiceCollection>? configureServices = null)
         {
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             var scratch = Directory.CreateTempSubdirectory("antiphon-c501-handoff").FullName;
@@ -127,7 +128,11 @@ public partial class CheckNoteDeliveryHandoffTests
                         services.AddScoped<DelegateCheckProbe>();
                         services.AddScoped<AgentTaskCheckService>();
                         if (!withInterpreter)
+                        {
+                            configureServices?.Invoke(services);
                             return;
+                        }
+
                         // Built by hand, without AgentControlService: the provisioner's start is
                         // best-effort, and this harness attaches the live session itself rather
                         // than launching a real one.
@@ -148,6 +153,7 @@ public partial class CheckNoteDeliveryHandoffTests
                             WorktreeBasePath = Path.Combine(scratch, "worktrees"),
                         });
                         services.AddScoped<AgentTaskDispatcher>();
+                        configureServices?.Invoke(services);
                     },
                 });
                 return new Handoff(schema, harness, scratch, slug);
