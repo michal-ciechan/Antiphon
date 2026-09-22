@@ -5,6 +5,11 @@
 if ($script:AntiphonNightlyRunImplLoaded) { return }
 $script:AntiphonNightlyRunImplLoaded = $true
 
+# CARD-0599: the run core decides credit through release-gate.ps1, so it loads it
+# itself rather than relying on every caller to remember. A caller that dot-sources
+# only this file would otherwise see an empty profile list and refuse every run.
+. (Join-Path $PSScriptRoot 'release-gate.ps1')
+
 function Get-NightlyDefaultStateRoot { return 'C:\Antiphon\nightly' }
 
 function New-NightlyRunDirectoryName {
