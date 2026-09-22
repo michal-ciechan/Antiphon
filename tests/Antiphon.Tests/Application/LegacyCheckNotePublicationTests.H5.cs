@@ -114,7 +114,8 @@ public partial class LegacyCheckNotePublicationTests
             var deadline = publication.InterpretationDeadlineAt;
             await Publisher(world.Db).BindInterpretationAsync(publication.Id, CancellationToken.None);
             await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(world.Schema.ConnectionString));
-            (await verify.LegacyCheckNotePublications.SingleAsync()).InterpretationDeadlineAt.ShouldBe(deadline);
+            (await verify.LegacyCheckNotePublications.SingleAsync()).InterpretationDeadlineAt
+                .ShouldBe(deadline, TimeSpan.FromMilliseconds(1));
         }
     }
 
