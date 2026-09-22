@@ -79,6 +79,9 @@ public sealed class RemoteScriptContractTests
         foreach (var line in text.Replace("\r\n", "\n").Split('\n'))
         {
             var trimmed = line.Trim();
+            // Comments explain the rule; only executable lines are bound by it.
+            if (trimmed.StartsWith("#", StringComparison.Ordinal))
+                continue;
             if (!trimmed.Contains("down -v", StringComparison.Ordinal))
                 continue;
             (trimmed.StartsWith("compose_child ", StringComparison.Ordinal)
