@@ -4,11 +4,13 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.SessionRunner.Tests;
 
 /// <summary>Historical class ID retained. Stock Herdr, best-effort checks, no atomicity claim.</summary>
 [ParallelLimiter<ProcessSpawnLimit>]
+[NotInParallel("Headed")]
 public sealed class HerdrPaneDisposalGuardedLiveTests
 {
     [Test] [Arguments(false)] [Arguments(true)] public async Task Isolated_backend_closes_only_reviewed_incarnation(bool occupied)
@@ -93,13 +95,31 @@ public sealed class HerdrPaneDisposalGuardedLiveTests
         public string Pane { get; private set; } = "";
         public string Sentinel { get; private set; } = "";
         public Guid Session { get; } = Guid.NewGuid();
+        /// <summary>
+        /// Both prerequisites for the live fixture, decided BEFORE any directory, config file or
+        /// process exists. A hosted runner has no per-user Herdr installation, so without this the
+        /// class fails the build's default lane on a missing binary instead of standing aside.
+        /// Stateless and side-effect free on purpose: it reads no environment and touches no
+        /// process state, so the unit tests can drive both boundaries with owned values.
+        /// </summary>
+        internal static void EnsureEligible(string? optIn, string executable)
+        {
+            if (optIn != "1")
+                throw new SkipTestException($"Set {HerdrLiveSession.EnvFlag}=1 to opt in to the installed-Herdr pane disposal tests");
+            if (!File.Exists(executable))
+                throw new SkipTestException($"installed stock Herdr binary not found at {executable}");
+        }
+
+        internal static string InstalledExecutablePath => Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Herdr", "bin", "herdr.exe");
+
         public async Task StartAsync()
         {
+            var executable = InstalledExecutablePath;
+            EnsureEligible(Environment.GetEnvironmentVariable(HerdrLiveSession.EnvFlag), executable);
             Directory.CreateDirectory(Root);
             var config = Path.Combine(Root, "config.toml");
             await File.WriteAllTextAsync(config, "onboarding = false\n[terminal]\ndefault_shell = 'pwsh.exe'\nshell_mode = 'non_login'\n[update]\nversion_check = false\nmanifest_check = false\n");
-            var executable = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Herdr", "bin", "herdr.exe");
-            File.Exists(executable).ShouldBeTrue("V-9 requires the installed stock Herdr binary");
             var start = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = Root };
             foreach (var arg in new[] { "--session", _session, "server" }) start.ArgumentList.Add(arg);
             start.Environment["APPDATA"] = Root; start.Environment["LOCALAPPDATA"] = Root;

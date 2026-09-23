@@ -260,6 +260,14 @@ public class HerdrRunnerSessionTests
         var settings = BuildSettings();
         var sessionsRoot = Path.Combine(settings.SessionLogPath, "codex-home", "sessions");
         Directory.CreateDirectory(sessionsRoot);
+        // A bare "codex.cmd" made this test depend on a Codex CLI being installed on the host:
+        // Windows launch policy now resolves the launcher before Herdr is ever contacted, so on a
+        // clean machine (hosted CI) it found nothing and the test failed. The hermetic npm fixture
+        // supplies an absolute shim, and the request PATH points at an owned EMPTY directory so
+        // nothing on the host PATH can satisfy the resolution instead.
+        using var layout = new CodexNpmLayout();
+        var emptyPathDir = Path.Combine(settings.SessionLogPath, "empty-path");
+        Directory.CreateDirectory(emptyPathDir);
         await using var runtime = new SessionRunnerRuntime(
             Options.Create(settings),
             NullLogger<SessionRunnerRuntime>.Instance,
@@ -271,9 +279,13 @@ public class HerdrRunnerSessionTests
         var dto = await runtime.StartAsync(
             new RunnerLaunchRequest(
                 sessionId,
-                "codex.cmd",
+                layout.ShimPath,
                 ["--no-alt-screen", "--dangerously-bypass-approvals-and-sandbox"],
-                new Dictionary<string, string> { ["CODEX_HOME"] = Path.Combine(settings.SessionLogPath, "codex-home") },
+                new Dictionary<string, string>
+                {
+                    ["CODEX_HOME"] = Path.Combine(settings.SessionLogPath, "codex-home"),
+                    ["PATH"] = emptyPathDir,
+                },
                 cwd,
                 Cols: 120,
                 Rows: 30,
