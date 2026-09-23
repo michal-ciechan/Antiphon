@@ -2,7 +2,8 @@
 
 Date: 2026-09-23. Stage: Plan addendum. Task: `97e91f92`.
 Inspected baseline: `25564530cd51ff9b02e5b8c9a5ac4793225d2541`.
-Next: **TestDesign**. This is a repair design, not certification of executable controls.
+Next: **Code, B1**. Round-2 TestDesign is appended below; its executable specifications
+are commissioned work, not a claim that unimplemented tests have passed.
 
 This addendum resolves A-1..A-4 from TestDesign `3c8db8ad` and the operator's
 release-card requirement. It is the controlling activation design and checkpoint
@@ -32,9 +33,9 @@ Hangfire. No production settings, schedules, cards, credentials or releases chan
 | A-3: publication already enforces pinned policy | `release-cut.ps1` supplies no required-suite/hash authority; publication accepts optional values and any passing row per suite. | Load the policy blob at the pinned SHA, freeze discovery/execution membership, validate every chunk/UID; reports confer no authority. |
 | A-4: cut/test/publish share one lock | `release-cut.ps1` cuts before `nightly-run` acquires its lock and returns early without a reporter. The runner releases the shared lock before publication. | One coordinator-owned lock and child lifetime spanning all phases, with durable outcomes even before native start. |
 | Correlation is scheduler-neutral | `release-cut.ps1` writes its JobId as `windmillJobId` and does not forward it to native execution. | Version the RC envelope and carry intent, attempt, Hangfire job, candidate and run IDs end to end. |
-| `tracker:` defines release execution stages | `docs/workflow-tracker-block.md` and `IssueTrackerConfigParser` describe external issue synchronization. `CardWorkflowRunFactory` instead creates agent/template stages and requires AgentId. | Use an internal Releases board with a release-specific state machine; neither tracker synchronization nor agent workflows execute releases. |
-| Renaming standard columns is sufficient | `BoardService.CreateAsync` creates default Code columns. `BoardColumn` can share CardStatus values, but `CardService.ApplyAutomatedMoveAsync` selects by status and ignores same-status moves. | Explicit release-board creation and column-ID transitions are required. |
-| A release card will naturally stay outside Code | `OrchestratorService` selects active columns; manual spawn/task binding and `CardWorkTransitionService` have their own paths. A hold alone can be cleared. | Add a persisted board purpose and enforce it at dispatch, binding and transition boundaries. |
+| `tracker:` defines release execution stages | `docs/workflow-tracker-block.md` and `IssueTrackerConfigParser` describe external issue synchronization. `CardWorkflowRunFactory` instead creates agent/template stages and requires AgentId. | Use a Release workflow on the existing Antiphon board; neither tracker synchronization nor agent workflows execute releases. |
+| Renaming standard columns is sufficient | `BoardService.CreateAsync` creates default Code columns. `BoardColumn` can share CardStatus values, but `CardService.ApplyAutomatedMoveAsync` selects by status and ignores same-status moves. | Explicit workflow-owned columns and column-ID transitions are required. |
+| A release card will naturally stay outside Code | `OrchestratorService` selects active columns; manual spawn/task binding and `CardWorkTransitionService` have their own paths. A hold alone can be cleared. | Add persisted card/column workflow types and enforce them at pickup, depth, concurrency, binding and transition boundaries. |
 | Failure reporting already supplies one durable release card | `nightly-report.ps1` manages lane incidents, not one immutable candidate/card relation or a transactional stage outbox. | RC outcomes project onto their exact release card; master incident behavior stays intact. |
 | Full RC fits one test invocation | Existing policy supports disjoint class chunks and expanded-UID reconciliation. TestDesign estimates 120 minutes for Antiphon.Tests versus a 60-minute per-process watchdog. | Freeze bounded chunks from discovery; never raise the watchdog or drop slow cases to fit. |
 
@@ -56,7 +57,7 @@ a new provider as part of this card. Add CLI-generated EF migrations and entitie
 
 | Durable row | Required fields / uniqueness |
 |---|---|
-| `ReleaseGateRegistration` | Id; canonical repository/root, ProjectId, ReleaseBoardId, FixBoardId; enabled-window history and scan cursor; configuration version; persisted ScheduleEnabled/AdmissionEnabled/PublicationEnabled; recurring ID, timezone/cron; last observed main host identity. Unique repository + project. |
+| `ReleaseGateRegistration` | Id; canonical repository/root, ProjectId, BoardId (release and fixes share it), ReleaseWorkflowVersion and exact stage column IDs; enabled-window history and scan cursor; configuration version; persisted ScheduleEnabled/AdmissionEnabled/PublicationEnabled; recurring ID, timezone/cron; last observed main host identity. Unique repository + project. |
 | `ReleaseGateIntent` | Id; registration; provenance (`scheduled`/`manual`); trigger key; due UTC and London local slot when scheduled; created/updated; state/version; candidate ref/id/SHA, policy authority digest, native RunId; ReleaseCardId; optional predecessor/successor; attempt owner/fence; outcome. Unique registration + trigger key, unique non-null candidate ref, unique ReleaseCardId. |
 | `ReleaseGateAttempt` | Id; intent; generation; Hangfire job ID, host boot ID, PID/start identity, named native Job Object, start/exit/cleanup facts, imported evidence digests and paths, failure. Unique intent + generation. Hangfire job IDs are correlation only. |
 | `ReleaseGateOutbox` | Id; intent; kind (`Execute`, `ProjectCard`, `FileFix`, `ReconcilePublication`); immutable sequence/body/digest; attempts, next due, last error; receipt. Unique intent + kind + sequence. |
@@ -123,18 +124,17 @@ project and board identifiers. Defaults: roots `C:\Antiphon\releases` and
 Enabled flag is the master safety gate; persisted registration flags provide
 auditable enable/disable without rewriting config. Defaults for all three flags
 are false. Do not infer main identity from localhost, environment name or port.
-Setup validates root/project/fix board first and creates the release-board association
-in the registration transaction. ReleaseBoardId is not required before that creation;
-an optional configured expected ReleaseBoardId must match once present. Operational
-admission requires the persisted association and full shape validation. Thus initial
-setup does not require inventing a board GUID or enabling scheduling to obtain one.
+Setup validates root/project/the existing Antiphon BoardId first and adds the Release
+workflow columns and registration association in one transaction. It creates no board.
+Operational admission requires the persisted workflow association and full shape
+validation; setup needs neither invented column GUIDs nor enabled scheduling.
 
 Admission validates: server worker enabled; feature enabled; git top-level resolved
 from the actual server ContentRootPath equals the configured canonical main checkout
 after resolved-path/reparse checks (not a root supplied by an API caller);
 not a linked worktree; expected remote repository; configured project owns that
-repository; release and fix boards belong to that project, with different GUIDs and
-correct purposes. Resolve actual IDs during setup, never use a board ID as ProjectId.
+repository; the shared board belongs to that project, with disjoint Code and Release
+column identities. Resolve actual IDs during setup, never use a board ID as ProjectId.
 Record code/configuration version and host boot ID. Recheck gates at dequeue, before
 each new native phase and before each GitHub write. The production child receives
 no inherited task token, live-test approvals or production runner override.
@@ -144,7 +144,7 @@ Add the following explicit front doors, using existing HTTP exception/DTO patter
 | Route | Contract |
 |---|---|
 | `GET /api/release-gates` | Effective gates, identities, recurring-job readback, last scanned slots and pending counts; no credentials. |
-| `POST /api/release-gates/setup` | Preview by default; `apply=true` plus expected configuration version creates the internal release board/registration. Never converts an existing Code board. Same matching setup is idempotent; foreign name/shape collision refuses. |
+| `POST /api/release-gates/setup` | Preview by default; `apply=true` plus expected configuration version adds Release workflow columns/registration to the existing board. Never converts Code columns. Same matching setup is idempotent; foreign name/shape collision refuses. |
 | `POST /api/release-gates/control` | Versioned admission/schedule/publication changes with reason. Returns persisted state and actual registration readback. Removing a recurrence is distinct from disabling new admission. |
 | `POST /api/release-gates/runs` | Manual request with requestId and optional predecessor intent; returns durable intent/card IDs. No arbitrary script/command/root/ref/SHA overrides. |
 | `GET /api/release-gates/runs/{id}` | Intent, attempts, card, evidence/report/publication statuses and fix links. |
@@ -166,13 +166,21 @@ restart held work; explicit resume is recorded for both provenances. Missed sche
 missed. Graceful shutdown cancels the owned native job and joins it; a forced shutdown
 is covered by D-16. Disabling never deletes journals, releases or pending reports.
 
-### D-13: One internal Releases board, with coordinator-owned columns
+### D-13: Release workflow on the same Antiphon board (operator correction)
 
-Choose a separate **Antiphon Releases** board in the same project, with
-`TrackerKind.Internal`, no external tracker block, no active agent workflow and
-`SyncCardFiles=false`. Add `BoardPurpose` (`Code=0`, `Release=1`); existing boards
-migrate to Code. Only setup creates Release boards. This small discriminator makes
-ownership structural instead of relying on a name, label or cleared dispatch hold.
+Release cards and normal fix cards share the existing **Antiphon** BoardId and its
+identifier allocator. Add `CardWorkflowKind` (`Code=0`, `Release=1`) persisted on
+`Card.WorkflowKind` and `BoardColumn.WorkflowKind`, exposed as `workflowKind` in
+card/column DTOs. Existing rows migrate to Code. A release card's type is immutable;
+only the coordinator can create Release cards. No `BoardPurpose` or second board.
+These workflow types are distinct from agent `CardWorkflowRun` and tracker YAML.
+
+Setup adds Release columns with namespaced StateKeys (`release-cut`,
+`release-full-test`, `release-fix`, `release-publish`, `release-released`,
+`release-closed`); the short keys in the table below are stage keys. Registration
+persists their exact IDs and workflow version. Code columns, tracker settings and
+active agent workflow definitions remain unchanged. Release cards use existing
+`CardFileVisibility.Private`; setup does not change board-wide export settings.
 
 | StateKey / column | Existing CardStatus | IsActive / IsTerminal | Release meaning |
 |---|---|---|---|
@@ -209,18 +217,27 @@ after commit. Replaying an event creates no second revision.
 Set StartedAt on first Full test entry explicitly: these columns are deliberately
 not agent-active, so the generic IsActive-based timestamp rule is insufficient.
 
-Block release-board card creation/content/stage edits through generic card APIs;
+Block Release card creation/content/stage/type edits through generic card APIs;
 discussion remains available. Move/reopen/spawn/assign/enqueue, scheduled card actions,
 task binding (including inherited/title binding) and agent workflows refuse the release
-board with `release_coordinator_owned`. Orchestrator eligibility, card-work transitions
-and tracker synchronization skip it defensively. No task gets bound to a release card:
-the fix card is the Code pipeline identity. Guard release board deletion/archive or
-workflow changes while a registration/evidence relation exists. Do not silently cascade
-release history. No agents or terminal sessions are launched by a release-card move.
+card with `release_coordinator_owned`. Code pickup explicitly requires both card and
+column WorkflowKind=Code, even if a release hold is cleared or a column is marked
+active. Code pipeline depth and per-stage concurrency projections filter Code cards;
+release intents/jobs never create AgentTask roles or occupy a Code stage slot. Code
+candidate/status-column queries, transition/retry sweeps and tracker synchronization
+all filter the workflow, not the board. Generic move targets must match the card's
+workflow. Task binding checks explicit GUID/identifier, inherited and title paths;
+no task gets bound to a Release card. Fix cards are Code/Backlog on this same board.
+Physical process/provider limits still count real running sessions, including corrupt
+legacy bindings; workflow isolation must not weaken resource safety. Ordinary unbound
+delegates retain their existing capacity rules.
 
-Reject a same-board lane because generic status-based automation and identifier
-resolution would mix two owners; reject tracker YAML because it controls external
-issue sync; reject CardWorkflowRun because it assumes an agent/executor lifecycle.
+Guard release-column edits/deletion and shared-board deletion/archive while a
+registration/evidence relation exists; ordinary Code workflow edits remain possible.
+Never cascade release history. No agent/session starts from a release-card move.
+Reject a label-only lane because status-based automation would mix owners; reject
+tracker YAML because it controls issue sync; reject CardWorkflowRun because it
+assumes an agent/executor lifecycle.
 No new general workflow engine, release agent role or frontend route is needed.
 The existing board renders columns and descriptions; read-only release-specific API
 facts are linked from the generated description. UI mutations may receive the clear
@@ -245,7 +262,7 @@ retain unmapped commits explicitly. A textual CARD-nnnn reference without its bo
 is not an authoritative included-card link. Non-ancestor previous release means the
 range is unknown and requires explicit disposition, not a guessed changelog.
 
-`FileFix` creates normal Backlog cards on the configured **Antiphon Code board**,
+`FileFix` creates normal Code-workflow Backlog cards on the same **Antiphon board**,
 without spawn/assignment/Release. Each failure group gets a stable fingerprint from
 suite + class/method or infrastructure cause + failure kind, within that intent.
 Persist the fix link with card creation in one transaction, guarded by unique keys
@@ -476,8 +493,8 @@ No live registration/publication inside these rounds. No all-round CP replay per
 |---|---|---|
 | B1 / 75 min | A-3 authority and all-chunk gate: `scripts/publish-release.ps1`, `scripts/lib/release-gate.ps1`, `nightly-policy.ps1`, `nightly-coverage.ps1`; new `scripts/lib/release-authority.ps1`; extend `scripts/test-release-gate.ps1`. | New `Scripts/ReleaseGateAuthorityContractTests.cs` (ordinary); `ReleaseGatePublicationAuthorityTests.C599A_PinnedPolicy` (full matrix). Missing authority cannot write remotely; legacy candidates refuse. |
 | B2 / 85 min | A-2 real stdout/JSON/binary adapter and immutable upload/recovery: `scripts/lib/release-gate.ps1`, new `release-github.ps1`, `scripts/publish-release.ps1`, process-boundary fixture under `scripts/fixtures/release-gate/`. | New `Scripts/ReleaseGateRecipientContractTests.cs` (ordinary); `ReleaseGatePublicationAuthorityTests.C599A_GitHubReadback/C599A_AssetReadback` plus inherited recovery methods. Valid real process output accepted, missing receipt/unequal bytes refuse. |
-| B3 / 85 min | D-11 durable entities/outbox/claims and atomic initial Cut-card allocation; new Domain release entities/enums, `Application/Services/ReleaseGateIntentService.cs`, `ReleaseGateOutboxDispatcher.cs` with a queue I/O boundary, `Infrastructure/Data/AppDbContext.cs`, CLI-generated migration. Add the persisted board-purpose field with Code default here. | New `Infrastructure/ReleaseGateIntentTests.cs` (ordinary); persistence/restart cases in `ReleaseGateQueueTests`. Seed an isolated valid release board until B4 adds setup. DB constraints and commit-before-enqueue; no production worker enabled. |
-| B4 / 85 min | D-13 board creation/stage projector and dispatch boundaries: new `ReleaseGateBoardService.cs`, `ReleaseGateCardProjector.cs`; `BoardService`, `CardService`, `CardWorkTransitionService`, `OrchestratorService`, `AgentTaskService`, `ScheduleService`/scheduled-action boundary, `WorkflowDefinitionLoader`, `ExternalTrackerSyncService`; related DTOs. | New `Application/ReleaseGateBoardTests.cs` (ordinary), full guards in `ReleaseGateBoardBoundaryTests.cs`. Same-status column moves and generic Code isolation; regular Code board behavior retained. |
+| B3 / 85 min | D-11 durable entities/outbox/claims and atomic initial Cut-card allocation; new Domain release entities/enums, `Application/Services/ReleaseGateIntentService.cs`, `ReleaseGateOutboxDispatcher.cs` with a queue I/O boundary, `Infrastructure/Data/AppDbContext.cs`, CLI-generated migration. Add persisted card/column WorkflowKind with Code defaults here. | New `Infrastructure/ReleaseGateIntentTests.cs` (ordinary); persistence/restart cases in `ReleaseGateQueueTests`. Seed an isolated shared board with Code and Release columns until B4 adds setup. DB constraints and commit-before-enqueue; no production worker enabled. |
+| B4 / 85 min | D-13 shared-board workflow setup/stage projector and dispatch boundaries: new `ReleaseGateBoardService.cs`, `ReleaseGateCardProjector.cs`; `BoardService`, `CardService`, `CardWorkTransitionService`, `OrchestratorService`, `AgentTaskService`, `ScheduleService`/scheduled-action boundary, `WorkflowDefinitionLoader`, `ExternalTrackerSyncService`; related DTOs. | New `Application/ReleaseGateBoardTests.cs` (ordinary), full guards in `ReleaseGateBoardBoundaryTests.cs`. Same-status column moves and generic Code isolation; regular Code board behavior retained. |
 | B5 / 85 min | D-14 outcome delivery/fix links: new `ReleaseGateReportService.cs`, `ReleaseGateFixService.cs`, outbox consumers; `scripts/nightly-report.ps1` RC routing; generated body/changelog; fix/link DTOs. | New `Application/ReleaseGateReportContractTests.cs` (ordinary); update `E2E/ReleaseGateReportDeliveryTests.C599A_QueuedReportRecovery`. Pre-native failure, idempotent fix creation, pre/post-publish receipts; master incident untouched. |
 | B6 / 85 min | D-16 phase coordinator and owned native lifetime: new `Application/Services/ReleaseGateCoordinator.cs`, `Application/Interfaces/IReleaseGateNativeProcess.cs`, `Infrastructure/Releases/ReleaseGateNativeProcess.cs` and lock adapter; `release-cut.ps1`, `release-candidate.ps1`, `nightly-run.ps1`, `lib/nightly-run-impl.ps1`, `release-gate.ps1`. | New `Infrastructure/ReleaseGateOwnershipContractTests.cs` (ordinary); `ReleaseGateQueueTests.C599A_LockScope/C599A_DisableAndShutdown/C599A_HandoffRecovery`. Own short native child, no production runner; lock before cut through join/publish. |
 | B7 / 85 min | Main-instance Hangfire/admission and API: new `ReleaseGatesSettings`/validator, `ReleaseGateSlotJob`, `ReleaseGateRecoveryJob`, `ReleaseGateExecutionJob`; `HangfireConfiguration`, `Program`, `appsettings.json`; new `Api/Endpoints/ReleaseGateEndpoints.cs`, `scripts/release-gates.ps1`. | `Infrastructure/ReleaseGateSchedulerTests` five existing commissioned names (ordinary); queue ReadyAndBusy/restart matrix. One dedicated worker, durable recovery and false defaults. Normal test Program never launches it. |
@@ -519,14 +536,14 @@ Update the old matrices as follows:
   same-transaction writes rather than legacy incident POST as implementation authority.
   API outage/readback tests still use the real GET boundary. Test pre-native null IDs,
   busy worker, response loss, wrong card/body, assigned legacy incident preservation,
-  two distinct RCs, successor/fix links and Code board untouched by stage projection.
-- New V-17: complete release-board path plus failed/abandoned path, exactly one card
+  two distinct RCs, successor/fix links and Code cards/columns on the shared board untouched by stage projection.
+- New V-17: complete shared-board release-workflow path plus failed/abandoned path, exactly one card
   per candidate, zero agent tasks/sessions, no tracker/tick mutation, normal fix Backlog
   admission, explicit failed verdict, PublishedAwaitingReport recovery without republish.
 
-### Checkpoints
+### Historical checkpoint proposal (superseded below)
 
-**Proposed closed manifests for B1..B8; TestDesign must certify before Code.** Each
+**Historical proposal. The appended Verification design owns the final CP-19..26 manifest.** Each
 round runs only its own row. CP-19's former single scheduler-only manifest is replaced
 by CP-19..26 below; historical CP-1..18 remain historical. One isolated build and one
 exact filter per row. All listed methods must execute, with zero failures/skips.
@@ -537,7 +554,7 @@ Methods perform small decisive matrices; internal rows are not TUnit execution c
 | CP-19 | B1 committed | `tests/Antiphon.Tests -> bin-c599b1/` | authority | `/*/*/ReleaseGateAuthorityContractTests/C599B_*` | A-3 / V-12 | `C599B_PinnedPolicy`, `C599B_AllChunks`; 2 passed | 2 | 3 |
 | CP-20 | B2 committed | `tests/Antiphon.Tests -> bin-c599b2/` | recipient | `/*/*/ReleaseGateRecipientContractTests/C599B_*` | A-2 / V-13, V-14 | `C599B_ProcessReceipt`, `C599B_AssetBytes`; 2 passed | 2 | 3 |
 | CP-21 | B3 committed | `tests/Antiphon.Tests -> bin-c599b3/` | durable-intent | `/*/*/ReleaseGateIntentTests/C599B_*` | A-1 / DL-6 | `C599B_AtomicIntent`, `C599B_RecoverQueueLoss`; 2 passed | 2 | 3 |
-| CP-22 | B4 committed | `tests/Antiphon.Tests -> bin-c599b4/` | release-board | `/*/*/ReleaseGateBoardTests/C599B_*` | V-17 ownership/stages | `C599B_StageMoves`, `C599B_CodeIsolation`; 2 passed | 2 | 3 |
+| CP-22 | B4 committed | `tests/Antiphon.Tests -> bin-c599b4/` | release-workflow | `/*/*/ReleaseGateBoardTests/C599B_*` | V-17 ownership/stages | `C599B_StageMoves`, `C599B_CodeIsolation`; 2 passed | 2 | 3 |
 | CP-23 | B5 committed | `tests/Antiphon.Tests -> bin-c599b5/` | report-receipts | `/*/*/ReleaseGateReportContractTests/C599B_*` | A-4 / DL-8, V-15 | `C599B_PreNativeReport`, `C599B_FixAndFinalReceipt`; 2 passed | 2 | 3 |
 | CP-24 | B6 committed | `tests/Antiphon.Tests -> bin-c599b6/` | owned-coordinator | `/*/*/ReleaseGateOwnershipContractTests/C599B_*` | A-4 / V-11 lock/join | `C599B_LockBeforeCut`, `C599B_JoinBeforeRelease`; 2 passed | 2 | 3 |
 | CP-25 | B7 committed | `tests/Antiphon.Tests -> bin-c599b7/` | scheduler | `/*/*/ReleaseGateSchedulerTests/C599A_*` | V-10 / R-5, R-6 | `C599A_Admission`, `C599A_Slots`, `C599A_Provenance`, `C599A_DisabledReentry`, `C599A_RepairDisposition`; 5 passed | 5 | 3 |
@@ -564,7 +581,7 @@ rounds. Accepted reviewed Code is not operational qualification or S5 acceptance
 
 | Q | Concrete operation / required receipt |
 |---|---|
-| Q-1 setup | Confirm landing/canonical checkout/running `/api/version`; place operator configuration and verify actual roots, project, remote and authorized GitHub identity without printing credentials. Run `release-gates.ps1 setup -Profile <operator-json>` preview, then `-Apply` with expected version. Read back one internal Release board, correct columns, disabled admission/schedule/publication, and actual worker/recurrence registration. Repeat setup to prove no duplicates. Check no enabled Windmill RC/Scheduled Task. |
+| Q-1 setup | Confirm landing/canonical checkout/running `/api/version`; place operator configuration and verify actual roots, project, remote and authorized GitHub identity without printing credentials. Run `release-gates.ps1 setup -Profile <operator-json>` preview, then `-Apply` with expected version. Read back the existing Antiphon BoardId, typed Code/Release columns, disabled admission/schedule/publication, and actual worker/recurrence registration. Repeat setup to prove no duplicates. Check no enabled Windmill RC/Scheduled Task. |
 | Q-2 rehearsal | At the landed SHA run certified exact-method queue/ownership/authority/board-delivery matrices in isolated stores/processes. Include abrupt host death, both unavailable and available recipients, all ambiguous-write cuts, guard negatives and normal Code regressions. TestDesign supplies the executable matrix and updated cost; old 20-minute estimate is not presumed sufficient. |
 | Q-3 manual | Via versioned `control`, enable admission/publication but leave ScheduleEnabled=false. `release-gates.ps1 run -RequestId <guid>` creates a manual intent/card through real Hangfire. Require all eight suites, accepted reports, remote tag/release and both downloaded asset digests. Read the release card's complete history, included cards, exact SHA and Released verdict. Measure chunk costs and capacity. No fixture seams/subset/NoReport/live approvals. |
 | Q-4 scheduled | Enable ScheduleEnabled with version/reason and read back `30 8,16 * * *` London and recovery recurrence. Observe both actual slots; each has a durable outcome/card or missed-slot record. At least one real scheduled full green with strict publication and Released card is required. A second no-new-SHA/busy observation supplies no green. Wait for genuine reviewed master changes, never manufacture a commit for a release. |
@@ -597,6 +614,6 @@ review, and document/diff consistency checks only. No builds/tests or live actio
 performed. TestDesign must certify methods/fixtures/controls and costs before B1.
 
 --- next stage ---
-next: test-design
-handoff: Certify A-1..A-4 and release-card controls against D-11..D-18: PostgreSQL outbox, main-instance Hangfire, owned phase/lock recovery, pinned policy/UID authority, strict GitHub byte receipts and internal release board. Finalize CP-19..26 at about three minutes per bounded B1..B8 Code round; keep live Q and S5 separate.
+next: code
+handoff: Implement B1 only: pinned policy and full chunk/UID publication authority plus its commissioned tests. Run CP-19 from the appended Verification design; ship disabled, commit/push and obtain separate Review. D-13 now uses typed Release cards on the same Antiphon board. Q and S5 remain separate.
 artifact: docs/superpowers/plans/2026-09-23-card-0599-release-recovery-and-cards-plan.md
