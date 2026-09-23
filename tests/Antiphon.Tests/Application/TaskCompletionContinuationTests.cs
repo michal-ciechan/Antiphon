@@ -1,4 +1,4 @@
-﻿using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -560,6 +560,74 @@ public class TaskCompletionContinuationTests
         only.Origin.ShouldBe(ProgressOrigin.PrimaryRemote);
         only.Complete.ShouldBeFalse();
         ev.Evidence.Sources!.ShouldNotContain(s => s.Reason == "primary_commit_predates_dispatch");
+        ev.AllowsAutomaticWorkspaceMutation.ShouldBeFalse();
+    }
+
+    // ---- R-10 / G-23 -----------------------------------------------------------------------
+
+    [Test]
+    [Arguments("baseline_remote_unavailable")]
+    [Arguments("source_remote_unreadable")]
+    [Arguments("baseline_lineage_broken")]
+    [Arguments("local-arm-lineage-broken")]
+    public async Task C613_DivergentNegativeNeverOverridesIncompleteObservation(string shape)
+    {
+        // D-6/D-8, third review pass. The own ref was reset into a divergent lineage, so the
+        // divergent alternate arm produces a COMPLETE NEGATIVE. The arm that actually qualifies
+        // the CLAIM - looking at evidence the divergent arm never saw - answers Indeterminate.
+        // A complete negative must never override that: the pre-card base fell through to the
+        // same QualifyClaimAsync call and settled Indeterminate, and only a complete negative
+        // settles a working delegate Failed.
+        var localArm = shape == "local-arm-lineage-broken";
+        var remoteTip = shape switch
+        {
+            "source_remote_unreadable" => E,   // the claim sits below a later remote tip
+            _ when localArm => Bl,             // remote did NOT move: the LOCAL claim arm decides
+            _ => D,                            // the claimed commit IS the observed remote tip
+        };
+        var w = World(
+            headRef: ExpectedRef, headSha: C, expectedTip: C, remoteTip: remoteTip,
+            remoteState: shape == "baseline_remote_unavailable"
+                ? ProgressRemoteState.Unavailable
+                : ProgressRemoteState.Present);
+        // The live remote is READABLE in every shape; only the BASELINE remote can be unavailable,
+        // which is exactly what D-6 requires to fail open instead of failing the delegate.
+        w.Git.RemoteRefs[ExpectedRef] = remoteTip;
+        w.Git.AddCommit(D, Root);              // force-pushed off the captured baseline lineage
+        w.Git.AddCommit(E, D);
+        // Divergent own tip: the captured local baseline Bl is not reachable from C. Off the local
+        // arm the claim is unreachable from C too, so the divergent arm's negative is complete.
+        if (localArm)
+        {
+            w.Git.AddCommit(C, D);
+            w.Git.CommitTimes[D] = BeforeCapture;  // the divergent arm's own complete negative
+        }
+        else
+        {
+            w.Git.AddCommit(C, Root);
+            w.Git.CommitTimes[D] = AfterCapture;
+        }
+        if (shape == "source_remote_unreadable")
+            w.Git.AncestryUnknown.Add($"{D}:{E}");  // the reachability read itself cannot answer
+
+        var ev = await w.Svc.EvaluateAsync(w.Task, Claim(w.Task.Id, D), default);
+
+        var expectedReason = localArm ? "baseline_lineage_broken" : shape;
+        ev.Assessment.ShouldBe(CompletionProgressAssessment.Indeterminate);
+        ev.Assessment.ShouldNotBe(CompletionProgressAssessment.NoAttributedProgress);
+        ev.Reason.ShouldBe(expectedReason);
+        var only = ev.Evidence.Sources!.Single();
+        only.Origin.ShouldBe(localArm ? ProgressOrigin.Primary : ProgressOrigin.PrimaryRemote);
+        only.Reason.ShouldBe(expectedReason);
+        only.ClaimedSha.ShouldBe(D);
+        only.LocalObserved.ShouldBe(C);
+        only.RemoteObserved.ShouldBe(remoteTip);
+        only.Complete.ShouldBe(expectedReason == "baseline_lineage_broken");
+        // The divergent arm's own complete negative must never have become the verdict.
+        only.Reason.ShouldNotBe(localArm ? "primary_commit_predates_dispatch" : "claimed_commit_unreachable");
+        ev.Evidence.Sources!.ShouldNotContain(s => s.Assessment == CompletionProgressAssessment.NoAttributedProgress);
+        ev.Evidence.Sources!.ShouldNotContain(s => s.Origin == ProgressOrigin.PrimaryAlternate);
+        ev.PrimaryDirectProgress.ShouldBeFalse();
         ev.AllowsAutomaticWorkspaceMutation.ShouldBeFalse();
     }
 

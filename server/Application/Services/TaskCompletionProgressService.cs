@@ -1,4 +1,4 @@
-﻿using System.Text.RegularExpressions;
+using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain;
@@ -655,6 +655,11 @@ public sealed class TaskCompletionProgressService
         // false complete negatives: a divergent own tip whose claim is reachable from the remote
         // but not locally (base: PrimaryRemote positive), and a divergent own tip with an
         // unreadable remote observation (base: Indeterminate, fail-open per D-6/D-8).
+        //
+        // CARD-0613 review fix, third pass. Keeping it only on a POSITIVE was still not enough:
+        // every arm below was then overridden whenever the divergent arm produced a COMPLETE
+        // NEGATIVE, so an Indeterminate PrimaryRemote verdict lost to it and the delegate settled
+        // Failed again. `PreferLeastCommittal` is what decides between them now.
         CompletionProgressSource? divergent = null;
         if (localNovel == CommitNovelty.Divergent)
         {
@@ -672,24 +677,51 @@ public sealed class TaskCompletionProgressService
         if (remoteTip is not null && remoteTip != source.Remote.Sha && remoteTip != source.LocalSha)
         {
             if (string.IsNullOrEmpty(claim))
-                return divergent ?? Arm(originRemote, CompletionProgressAssessment.NoAttributedProgress, "unclaimed_or_unmatched_commit", true, source, localTip, remoteTip);
-            var viaRemote = await QualifyClaimAsync(repo, source, claim, localTip, remoteTip, remote, originRemote, ct);
-            if (divergent is null || viaRemote.Assessment == CompletionProgressAssessment.ProgressObserved)
-                return viaRemote;
-            return divergent;
+                return PreferLeastCommittal(
+                    Arm(originRemote, CompletionProgressAssessment.NoAttributedProgress, "unclaimed_or_unmatched_commit", true, source, localTip, remoteTip),
+                    divergent);
+            return PreferLeastCommittal(
+                await QualifyClaimAsync(repo, source, claim, localTip, remoteTip, remote, originRemote, ct),
+                divergent);
         }
+
+        if (!string.IsNullOrEmpty(claim))
+            return PreferLeastCommittal(
+                await QualifyClaimAsync(repo, source, claim, localTip, remoteTip, remote, originLocal, ct),
+                divergent);
 
         // Nothing else qualified: the divergent alternate verdict is the D-6 answer for this tip.
         if (divergent is not null) return divergent;
-
-        if (!string.IsNullOrEmpty(claim))
-            return await QualifyClaimAsync(repo, source, claim, localTip, remoteTip, remote, originLocal, ct);
 
         if (localTip != source.LocalSha)
             return Arm(originLocal, CompletionProgressAssessment.NoAttributedProgress, "unclaimed_or_unmatched_commit", true, source, localTip, remoteTip);
 
         return Arm(originLocal, CompletionProgressAssessment.NoAttributedProgress, "no_movement", true, source, localTip, remoteTip);
     }
+
+    /// <summary>
+    /// CARD-0613 D-6/D-8. The divergent alternate verdict is a FALLBACK, never an override: it
+    /// speaks only when the arm that actually qualified the claim is ITSELF a complete negative.
+    /// A positive, an Indeterminate, or an incomplete observation is strictly less committal than
+    /// a complete negative, and only a complete negative settles a working delegate Failed.
+    /// <para>
+    /// Without this, the divergent arm's own `claimed_commit_unreachable` - reached because it
+    /// only ever looks at the LOCAL tip - overrode an Indeterminate PrimaryRemote verdict
+    /// (`baseline_remote_unavailable`, `source_remote_unreadable` or `baseline_lineage_broken`)
+    /// and reintroduced a false Failed against the pre-card base, which fell through to the same
+    /// <see cref="QualifyClaimAsync"/> call and answered Indeterminate. D-6 requires an
+    /// unavailable baseline remote to fail open; D-8 requires complete applicable observations
+    /// before any negative.
+    /// </para>
+    /// </summary>
+    private static CompletionProgressSource PreferLeastCommittal(
+        CompletionProgressSource qualified,
+        CompletionProgressSource? divergentFallback) =>
+        divergentFallback is not null
+        && qualified.Assessment == CompletionProgressAssessment.NoAttributedProgress
+        && qualified.Complete
+            ? divergentFallback
+            : qualified;
 
     private async Task<CompletionProgressSource> EvaluateClaimedOrUnclaimedAsync(
         string repo,

@@ -181,11 +181,20 @@ internal sealed class FakeTaskProgressGit : ITaskProgressGit
         return Task.FromResult(new ProgressRemoteObservation(ProgressRemoteState.Present, sha, EndpointFingerprint));
     }
 
+    /// <summary>
+    /// CARD-0613 G-23. Ancestor/descendant pairs whose <c>merge-base --is-ancestor</c> cannot
+    /// answer, keyed <c>"&lt;ancestor&gt;:&lt;descendant&gt;"</c>. An UNKNOWN read is distinct
+    /// from <c>false</c>: it is the incomplete observation D-8 forbids turning into a negative.
+    /// </summary>
+    public HashSet<string> AncestryUnknown { get; } = new(StringComparer.OrdinalIgnoreCase);
+
     public Task<bool?> IsAncestorAsync(string repository, string ancestorSha, string descendantSha, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         Trace.Add(["merge-base", "--is-ancestor", ancestorSha, descendantSha]);
         ThrowIfInjected("merge-base", ["merge-base", "--is-ancestor", ancestorSha, descendantSha]);
+        if (AncestryUnknown.Contains($"{ancestorSha}:{descendantSha}"))
+            return Task.FromResult<bool?>(null);
         if (string.Equals(ancestorSha, descendantSha, StringComparison.OrdinalIgnoreCase))
             return Task.FromResult<bool?>(true);
         return Task.FromResult<bool?>(Reachable(descendantSha, ancestorSha));

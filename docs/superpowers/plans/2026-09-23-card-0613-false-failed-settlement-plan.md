@@ -336,6 +336,7 @@ separate outcome assertions and descriptive case labels.
 | R-7 | entire existing `TaskCompletionProgressPolicyTests` and `RepairSourceSettlementTests` | Repair claims still need lineage and explicit claim; remote-only claims still need exact expected-ref corroboration; no other-ref scanning, no future-dated baseline rescue, legacy baseline omission unchanged; Failed/Blocked bypass probing. |
 | R-8 | `ContinuationSettlementTests.C613_NoWorkStillFails`; V-9/V-10 replay assertions | On expected or alternate HEAD, complete quiet observations still persist Failed/CompletedWithoutProgress and one incident; corrected success does not mint that incident. Duplicate settlement does not duplicate events, obligations, accepted notes, or mutation. |
 | R-9 | `TaskCompletionContinuationTests.C613_DivergentOwnTipWithUnreadableRemoteStaysIndeterminate` | Review follow-up. Divergent own tip whose candidate fails the D-6 lower time bound, with the remote observation unreadable, claimed and unclaimed: Indeterminate `source_remote_unreadable` on an incomplete PrimaryRemote arm, never `primary_commit_predates_dispatch` or any other complete negative, and no mutation authority. The divergent arm must fall through to the remote-unavailable check exactly as D-5's off-branch arm does. |
+| R-10 | `TaskCompletionContinuationTests.C613_DivergentNegativeNeverOverridesIncompleteObservation` | Review follow-up, third pass. A divergent own tip whose divergent-arm verdict is a COMPLETE NEGATIVE, with the arm that actually qualifies the claim answering Indeterminate: `baseline_remote_unavailable` (baseline remote unavailable, live remote readable), `source_remote_unreadable` (the reachability read cannot answer) and `baseline_lineage_broken` (the claimed commit IS the observed remote tip, force-pushed off the baseline lineage), plus the same collision on the LOCAL claim arm with an unmoved remote. Every case is Indeterminate on that arm's own origin with the divergent negative absent from the evidence, never `claimed_commit_unreachable`/`primary_commit_predates_dispatch`, and no mutation authority. |
 
 Use fixed baseline/evaluation times and explicit `GIT_AUTHOR_DATE`/
 `GIT_COMMITTER_DATE` in real Git fixture commands. Do not sleep to move across the
@@ -345,7 +346,7 @@ with real Git; a chain B -> C cannot reproduce this incident.
 
 ### Guard inventory
 
-G-1..G-22 below enumerate the independently bypassable guards affected by this plan
+G-1..G-23 below enumerate the independently bypassable guards affected by this plan
 and their distinct PCs. Existing untouched repair/remote algorithms receive ordinary
 R-7 coverage plus PC-18 for the newly introduced fallback's scope boundary. Queue
 implementation guards are unchanged; V-10 exercises their handoffs, and PC-20 checks
@@ -384,6 +385,7 @@ For parameterized methods all argument cases may run, but no class-wide PC filte
 | G-20 Correct classification reaches recipient (D-8) | PC-20 | Make the alternate positive result a complete `no_movement` negative at the classification boundary. | `ContinuationSettlementTests/C613_CompletionReceipt`: received succeeded header assertion fails; require assertion failure, not missing fixture/timeout/build error. |
 | G-21 Divergent arm does not swallow remote corroboration (D-5/D-6) | PC-21 | Return the divergent alternate result unconditionally again, before the remote arms. | `TaskCompletionContinuationTests/C613_DivergentOwnTipStillReachesRemoteClaim`: the PrimaryRemote positive becomes a `claimed_commit_unreachable` negative. |
 | G-22 Divergent arm does not swallow the fail-open remote read (D-6/D-8) | PC-22 | Return the divergent alternate result before the `remote.State == Unavailable` check. | `TaskCompletionContinuationTests/C613_DivergentOwnTipWithUnreadableRemoteStaysIndeterminate`: Indeterminate `source_remote_unreadable` becomes a complete `primary_commit_predates_dispatch` negative. |
+| G-23 A divergent complete negative never overrides an incomplete observation (D-6/D-8) | PC-23 | Restore the `viaRemote.Assessment == ProgressObserved` / `divergent is not null` preference so the divergent complete negative wins over an Indeterminate qualified arm (equivalently: delete `PreferLeastCommittal`'s `qualified.Complete`/`NoAttributedProgress` test and return the fallback whenever it exists). | `TaskCompletionContinuationTests/C613_DivergentNegativeNeverOverridesIncompleteObservation`: the Indeterminate assertion fails as `NoAttributedProgress` with reason `claimed_commit_unreachable` (remote shapes) or `primary_commit_predates_dispatch` (the local-arm shape). |
 
 Audit: guards=22, mapped PCs=22, missing=0, duplicate PC mappings=0. Metadata parser
 failure variants are part of G-17; separate lower/upper predicates have distinct PCs.
