@@ -47,6 +47,9 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
     /// </summary>
     public TimeProvider ProgressClock { get; set; } = TimeProvider.System;
 
+    /// <summary>CARD-0644. An optional phone-home policy, so runner-bound admission is reachable.</summary>
+    public PhoneHomeLaunchPolicy? PhoneHome { get; init; }
+
     public RepairSourceWorld()
     {
         Repo = new ScratchGitRepo("card0499-repair");
@@ -55,13 +58,15 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
     }
 
     public static async Task<RepairSourceWorld> CreateAsync(
-        bool explicitIntegration = false, bool ordinaryCodeTask = false, bool createTaskThroughService = false)
+        bool explicitIntegration = false, bool ordinaryCodeTask = false, bool createTaskThroughService = false,
+        PhoneHomeLaunchPolicy? phoneHome = null)
     {
         var world = new RepairSourceWorld
         {
             ExplicitIntegration = explicitIntegration,
             OrdinaryCodeTask = ordinaryCodeTask,
             CreateTaskThroughService = createTaskThroughService,
+            PhoneHome = phoneHome,
         };
         await world.InitializeAsync();
         return world;
@@ -164,12 +169,12 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
     /// request. Everything downstream - validation, persistence, dispatch, provisioning - is then
     /// the production path rather than a fixture's idea of it.
     /// </summary>
-    public async Task<AgentTask> CreateTaskAsync(CreateAgentTaskRequest request)
+    public async Task<AgentTask> CreateTaskAsync(CreateAgentTaskRequest request, string? callerDirectory = null)
     {
         await using var scope = Services.CreateAsyncScope();
         var service = scope.ServiceProvider.GetRequiredService<AgentTaskService>();
         var created = await service.CreateAsync(
-            request, new AgentTaskService.Caller(null, CallerSessionId, Repo.Path), CancellationToken.None);
+            request, new AgentTaskService.Caller(null, CallerSessionId, callerDirectory ?? Repo.Path), CancellationToken.None);
         await using var db = CreateContext();
         Repair = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
         return Repair;
@@ -217,6 +222,8 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
             o.UseNpgsql(Schema.ConnectionString);
             o.AddInterceptors(Fault);
         });
+        if (PhoneHome is not null)
+            services.AddSingleton(PhoneHome);
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentTaskDispatcher>();
         services.AddScoped<AgentReviewCheckpointService>();
