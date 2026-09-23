@@ -15,11 +15,18 @@ FROM node:22-bookworm AS node22
 
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime-base
 ARG SOURCE_REVISION=unknown
+# CARD-0628 D-2: Claude Code's native linux-x64 binary, pinned by version AND published SHA-256.
+# A re-published 2.1.280 fails the build at sha256sum -c; the remedy is a new pinned pair, never
+# dropping the check.
+ARG CLAUDE_CODE_VERSION=2.1.280
+ARG CLAUDE_CODE_SHA256=1e08503dbdf3c2cb0d706d32f3408277388d1c76ef108673e8fe42c1b322925b
 LABEL org.opencontainers.image.revision="${SOURCE_REVISION}"
 WORKDIR /app
 # Phone-home stays off until compose/launch injects PhoneHome__Enabled and PhoneHome__ServerOrigin.
 # Do not bake a ServerOrigin URL into the image.
-# Do not COPY OAuth credential files or any GROK_HOME contents (CARD-0575).
+# Do not COPY OAuth credential files or any GROK_HOME or CLAUDE_CONFIG_DIR contents (CARD-0575,
+# CARD-0628). Claude's credential is CLAUDE_CODE_OAUTH_TOKEN injected by the deploy environment,
+# or an interactive login on the runner-state volume -- never a layer of this image.
 USER root
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates bash git \
@@ -30,7 +37,13 @@ RUN apt-get update \
  && ln -sf grok /usr/local/bin/agent \
  && /usr/local/bin/grok --version \
  && /usr/local/bin/grok --version | grep -F '1.0.40' \
- && rm -rf /tmp/grok-install
+ && rm -rf /tmp/grok-install \
+ && mkdir -p /tmp/claude-install \
+ && curl -fsSL -o /tmp/claude-install/claude "https://downloads.claude.ai/claude-code-releases/${CLAUDE_CODE_VERSION}/linux-x64/claude" \
+ && echo "${CLAUDE_CODE_SHA256}  /tmp/claude-install/claude" | sha256sum -c - \
+ && install -m 0755 /tmp/claude-install/claude /usr/local/bin/claude \
+ && env HOME=/tmp/claude-install CLAUDE_CONFIG_DIR=/tmp/claude-install/cfg DISABLE_AUTOUPDATER=1 /usr/local/bin/claude --version | grep -F "${CLAUDE_CODE_VERSION}" \
+ && rm -rf /tmp/claude-install
 COPY --from=build /out/runner/ /app/
 COPY --from=build /out/ptyhost/ /tmp/ptyhost/
 RUN cp /tmp/ptyhost/Antiphon.PtyHost /app/Antiphon.PtyHost \
@@ -127,6 +140,8 @@ RUN chmod 0755 /usr/local/bin/antiphon-dind-entrypoint.sh \
  && dotnet --list-runtimes | grep -F 'Microsoft.AspNetCore.App 9.' \
  && dotnet --list-runtimes | grep -F 'Microsoft.AspNetCore.App 10.' \
  && node --version \
+ && env HOME=/tmp/claude-probe CLAUDE_CONFIG_DIR=/tmp/claude-probe DISABLE_AUTOUPDATER=1 claude --version | grep -F '2.1.280' \
+ && rm -rf /tmp/claude-probe \
  && ssh -V \
  && sudo --version \
  && setpriv --help | grep -F -- '--no-new-privs' \

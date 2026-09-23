@@ -387,6 +387,78 @@ public sealed class DockerStackContractTests
     [Test] public void Tests_context_denies_Logs() => Deny("docker/tests/Dockerfile.dockerignore", "logs/test.log");
     [Test] public void Tests_context_denies_Pem() => Deny("docker/tests/Dockerfile.dockerignore", "scratch/key.pem");
 
+    // CARD-0628 G-5: a checkout's Claude settings/skills and any credential file never enter a build context.
+    [Test] public void Runtime_context_denies_ClaudeHome() => Deny(".dockerignore", ".claude/settings.json");
+    [Test] public void Runtime_context_denies_ClaudeCredentials() => Deny(".dockerignore", "scratch/.credentials.json");
+    [Test] public void Tests_context_denies_ClaudeHome() => Deny("docker/tests/Dockerfile.dockerignore", ".claude/settings.json");
+    [Test] public void Tests_context_denies_ClaudeCredentials() => Deny("docker/tests/Dockerfile.dockerignore", "scratch/.credentials.json");
+
+    [Test]
+    public void Tests_context_retains_claude_skill_docs_only()
+    {
+        // Source-inspection tests in the Linux lane read .claude/skills; nothing else under .claude,
+        // and no credential file even inside skills, may follow them in.
+        var ignore = Text("docker/tests/Dockerfile.dockerignore");
+        DockerStackDocuments.Excluded(ignore, ".claude/skills/antiphon-delegate/SKILL.md").ShouldBeFalse();
+        DockerStackDocuments.Excluded(ignore, ".claude/settings.local.json").ShouldBeTrue();
+        DockerStackDocuments.Excluded(ignore, ".claude/skills/x/.credentials.json").ShouldBeTrue();
+    }
+
+    // CARD-0628 G-1 (D-2): the native binary, pinned by version and published digest, verified
+    // before install, smoke-run with a throwaway HOME/store, and the temp tree gone in the same layer.
+    [Test]
+    public void Runner_pins_claude_by_version_and_digest()
+    {
+        var body = RunnerBody();
+        body.ShouldContain("ARG CLAUDE_CODE_VERSION=2.1.280");
+        System.Text.RegularExpressions.Regex.IsMatch(body, @"ARG CLAUDE_CODE_SHA256=1e08503dbdf3c2cb0d706d32f3408277388d1c76ef108673e8fe42c1b322925b\s")
+            .ShouldBeTrue("the published 64-hex digest is pinned");
+        body.ShouldContain("https://downloads.claude.ai/claude-code-releases/${CLAUDE_CODE_VERSION}/linux-x64/claude");
+        body.ShouldContain("echo \"${CLAUDE_CODE_SHA256}  /tmp/claude-install/claude\" | sha256sum -c -");
+        body.ShouldContain("install -m 0755 /tmp/claude-install/claude /usr/local/bin/claude");
+        body.ShouldContain("env HOME=/tmp/claude-install CLAUDE_CONFIG_DIR=/tmp/claude-install/cfg DISABLE_AUTOUPDATER=1 /usr/local/bin/claude --version | grep -F \"${CLAUDE_CODE_VERSION}\"");
+        body.ShouldContain("rm -rf /tmp/claude-install");
+        Order(body, "sha256sum -c -", "install -m 0755 /tmp/claude-install/claude").ShouldBeTrue("verify before install");
+        Order(body, "/usr/local/bin/claude --version", "rm -rf /tmp/claude-install").ShouldBeTrue("the temp tree is removed last");
+        body.ShouldContain("any GROK_HOME or CLAUDE_CONFIG_DIR contents");
+        body.Contains("install.sh | bash -s 2.1.280", StringComparison.Ordinal).ShouldBeFalse("no moving-bootstrap installer");
+        Text("docker/session-runner-grok/Dockerfile").Contains("ENV CLAUDE_CODE_OAUTH_TOKEN", StringComparison.Ordinal)
+            .ShouldBeFalse("the token is never an image layer");
+    }
+
+    // CARD-0628 G-2: the node22 COPY merges /usr/local, so the inventory re-asserts claude after it.
+    [Test]
+    public void Testing_stage_asserts_claude_after_node_merge()
+    {
+        var body = SessionTesting();
+        const string probe = "claude --version | grep -F '2.1.280'";
+        body.ShouldContain(probe);
+        Order(body, "COPY --from=node22 /usr/local /usr/local", probe).ShouldBeTrue("asserted after the merge");
+        body.ShouldContain("rm -rf /tmp/claude-probe");
+    }
+
+    // CARD-0628 G-3 (D-6): one Claude store in three places, and the setup-token passed through
+    // from the deploy environment with no value written anywhere in the repository.
+    [Test]
+    public void Server2_compose_projects_claude_config_dir()
+    {
+        var runner = Server2Runner();
+        Env(runner, "CLAUDE_CONFIG_DIR").ShouldBe("/state/claude");
+        Env(runner, "PhoneHome__ClaudeHome").ShouldBe(Env(runner, "CLAUDE_CONFIG_DIR"));
+        new global::Antiphon.Server.Application.Settings.PhoneHomeRunnerSettings().ChildClaudeHome
+            .ShouldBe(Env(runner, "CLAUDE_CONFIG_DIR"), "the server projects the store the runner process reads");
+        new global::Antiphon.SessionRunner.PhoneHomeSettings().ClaudeHome
+            .ShouldBe(Env(runner, "CLAUDE_CONFIG_DIR"), "the auth probe targets the same store");
+        Destination(runner, "runner-state").ShouldBe("/state");
+
+        Env(runner, "CLAUDE_CODE_OAUTH_TOKEN").ShouldBe("", "passed through from the deploy environment, never a literal");
+        foreach (var name in new[] { "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN" })
+            Text("docker-compose.server2-runner.yml").Contains(name, StringComparison.Ordinal)
+                .ShouldBeFalse(name + " is never a runner fallback");
+        System.Text.RegularExpressions.Regex.IsMatch(Text("docker/stack.env.example"), @"(?m)^\s*CLAUDE_CODE_OAUTH_TOKEN\s*=")
+            .ShouldBeFalse("the env example never carries a token assignment");
+    }
+
     [Test]
     public void Test_context_retains_linked_sources()
     {
@@ -498,6 +570,13 @@ public sealed class DockerStackContractTests
     public void Receipt_runner_has_no_socket() =>
         DockerStackDocuments.Service(Text("docker-compose.delivery-fixture.yml"), "session-runner")
             .Contains("docker.sock", StringComparison.Ordinal).ShouldBeFalse();
+
+    private static bool Order(string text, string first, string second)
+    {
+        var a = text.IndexOf(first, StringComparison.Ordinal);
+        var b = text.IndexOf(second, StringComparison.Ordinal);
+        return a >= 0 && b >= 0 && a < b;
+    }
 
     private static void Deny(string ignore, string path) =>
         DockerStackDocuments.Excluded(Text(ignore), path).ShouldBeTrue("effective-context sentinel " + path + " is absent");

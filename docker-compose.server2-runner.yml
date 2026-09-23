@@ -54,6 +54,16 @@ services:
       PhoneHome__Capacity: "2"
       PhoneHome__GrokHome: /state/grok
       GROK_HOME: /state/grok
+      # CARD-0628 D-6: one Claude store in three places. CLAUDE_CONFIG_DIR is the runner process's
+      # own (TranscriptTailer reads it), PhoneHome__ClaudeHome is the auth probe's target, and the
+      # server projects the same value as PhoneHomeRunner:ChildClaudeHome onto every launch.
+      CLAUDE_CONFIG_DIR: /state/claude
+      PhoneHome__ClaudeHome: /state/claude
+      # CARD-0628 D-1: the `claude setup-token` OAuth token, passed through from the deploy
+      # environment (injected from the vault at deploy time) and inherited by every pty child. No
+      # value here and never an image layer; unset, the runner falls back to an interactive
+      # `claude auth login` under /state/claude. ANTHROPIC_API_KEY is never a fallback.
+      CLAUDE_CODE_OAUTH_TOKEN:
       ANTIPHON_DEPLOY_KEY_SOURCE: /run/secrets/antiphon-deploy-key
       SessionRunner__SessionLogPath: /state/session-runner
       SessionRunner__PtyHostDir: /tmp/antiphon-pty-hosts

@@ -4,6 +4,12 @@
 **/.gitignore
 **/.antiphon
 **/.grok
+# CARD-0628 D-10: Claude state and credential files never enter a build context.
+**/.claude
+# The Linux test lane inspects the repo's own skill docs; settings and credentials stay out.
+!.claude/skills
+!.claude/skills/**
+**/.credentials.json
 **/.env
 **/.env.*
 client/.env*

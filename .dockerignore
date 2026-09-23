@@ -4,6 +4,9 @@
 **/.gitignore
 **/.antiphon
 **/.grok
+# CARD-0628 D-10: Claude state and credential files never enter a build context.
+**/.claude
+**/.credentials.json
 **/.env
 **/.env.*
 client/.env*

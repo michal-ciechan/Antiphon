@@ -6,7 +6,8 @@ gid=1654
 for d in \
   /state /state/logs /state/keyring /state/check-interpreter /state/diagnose \
   /work /work/repos /work/worktrees \
-  /runner-state /runner-state/session-runner /runner-state/pty-hosts /runner-state/logs /runner-state/grok
+  /runner-state /runner-state/session-runner /runner-state/pty-hosts /runner-state/logs /runner-state/grok \
+  /runner-state/claude
 do
   mkdir -p "$d"
 done

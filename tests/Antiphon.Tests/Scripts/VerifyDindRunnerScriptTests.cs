@@ -110,6 +110,26 @@ public sealed class VerifyDindRunnerScriptTests
         script.ShouldNotContain("ls -1 /sys/fs/cgroup/antiphon-custody");
     }
 
+    // CARD-0628 G-4: step 7b probes the pinned claude as the app uid against a fresh store it
+    // created, grades the signed-out verdict, and hands the CLI no credential of any kind.
+    [Test]
+    public void Harness_probes_claude_as_the_app_uid_and_expects_logged_out()
+    {
+        var script = Read("scripts/verify-card0604-dind-runner.ps1");
+        script.ShouldContain("'-e', 'CLAUDE_CONFIG_DIR=/tmp/state/claude'");
+        script.ShouldContain("'-e', 'PhoneHome__ClaudeHome=/tmp/state/claude'");
+        script.ShouldContain("mkdir -p /tmp/state/claude && chown 1654:1654 /tmp/state/claude");
+        script.ShouldContain("$claudeEnv = @('-u', '1654:1654', '-e', 'HOME=/home/app', '-e', 'CLAUDE_CONFIG_DIR=/tmp/state/claude'");
+        script.ShouldContain("@($containerName, 'claude', '--version')");
+        script.ShouldContain("@($containerName, 'claude', 'auth', 'status', '--json')");
+        script.ShouldContain("$claudeStatus.ExitCode -eq 1 -and $claudeStatus.Output -match '\"loggedIn\"\\s*:\\s*false'");
+        script.ShouldContain("claude   = $claudeVersion -eq '2.1.280'");
+        script.ShouldContain("claudeAuth = $claudeAuth -eq 'logged-out'");
+        script.ShouldContain("claude={9} claudeAuth={10}");
+        foreach (var name in new[] { "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "credentials.json" })
+            script.Contains(name, StringComparison.Ordinal).ShouldBeFalse("the harness never passes " + name);
+    }
+
     private static string Read(string relative) =>
         File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, relative.Replace('/', Path.DirectorySeparatorChar)));
 
