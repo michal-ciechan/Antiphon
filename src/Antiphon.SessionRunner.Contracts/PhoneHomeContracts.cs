@@ -112,6 +112,12 @@ public static class PhoneHomeProblemTypes
 
     /// <summary>CARD-0628 D-7: the provider CLI is not signed in on the runner.</summary>
     public const string ProviderSignInRequired = "provider_sign_in_required";
+
+    /// <summary>
+    /// CARD-0631 D-2: a runner fault no typed admission covers. The reply still carries the
+    /// request's epoch, id and operation, so the server's waiter completes instead of timing out.
+    /// </summary>
+    public const string RunnerInternalError = "runner_internal_error";
 }
 
 public sealed record PhoneHomeLimits(

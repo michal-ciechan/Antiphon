@@ -295,6 +295,63 @@ public class PhoneHomeCommandDispatcherTests
         unknownDto.Error.ShouldBe("probe_unavailable");
     }
 
+    // --- CARD-0631 D-2/D-5: every handler fault still answers the request. ---
+
+    [Test]
+    public async Task Dispatch_replies_with_error_frame_when_handler_throws_unexpected_exception()
+    {
+        var faults = new (PhoneHomeOperation Op, Exception Fault)[]
+        {
+            (PhoneHomeOperation.Get, new System.ComponentModel.Win32Exception(2, "No such file or directory")),
+            (PhoneHomeOperation.Health, new IOException("disk went away")),
+            (PhoneHomeOperation.Get, new UnauthorizedAccessException("access to /work/repos denied")),
+            (PhoneHomeOperation.Health, new JsonException("bad json from a child")),
+        };
+        foreach (var (op, fault) in faults)
+        {
+            var runtime = new RecordingRuntime { Fault = () => fault };
+            var request = SessionRequest(op, epoch: 7);
+            var reply = await Dispatcher(runtime).DispatchAsync(request, CancellationToken.None);
+
+            var what = fault.GetType().Name;
+            reply.Kind.ShouldBe(PhoneHomeFrameKind.Error, what + " must be answered, not escape");
+            reply.ErrorCode.ShouldBe(PhoneHomeProblemTypes.RunnerInternalError, what);
+            reply.StatusCode.ShouldBe(500, what);
+            reply.Epoch.ShouldBe(request.Epoch, what);
+            reply.RequestId.ShouldBe(request.RequestId, what);
+            reply.Operation.ShouldBe(request.Operation, what);
+            reply.ErrorDetail.ShouldNotBeNull();
+            reply.ErrorDetail.ShouldStartWith(what + ": ");
+            reply.ErrorDetail.ShouldContain(fault.Message);
+            reply.ErrorDetail.ShouldNotContain("   at ");
+            runtime.Mutations.ShouldBeEmpty();
+        }
+
+        // An oversized diagnostic is bounded under the default budget...
+        var huge = new string('x', 200_000);
+        var bounded = await Dispatcher(new RecordingRuntime { Fault = () => new IOException(huge) })
+            .DispatchAsync(SessionRequest(PhoneHomeOperation.Get, epoch: 7), CancellationToken.None);
+        bounded.ErrorCode.ShouldBe(PhoneHomeProblemTypes.RunnerInternalError);
+        bounded.ErrorDetail!.Length.ShouldBeLessThan(2048);
+        bounded.ErrorDetail.ShouldStartWith("IOException: ");
+
+        // ...and a tight message budget still yields a frame that fits, rather than one the
+        // writer must refuse and the server never sees.
+        const int budget = 600;
+        var tightRequest = SessionRequest(PhoneHomeOperation.Get, epoch: 7);
+        var tight = await Dispatcher(new RecordingRuntime { Fault = () => new IOException(huge) }, maxMessageUtf8Bytes: budget)
+            .DispatchAsync(tightRequest, CancellationToken.None);
+        tight.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+        tight.ErrorCode.ShouldBe(PhoneHomeProblemTypes.RunnerInternalError);
+        tight.RequestId.ShouldBe(tightRequest.RequestId);
+        tight.ErrorDetail!.ShouldStartWith("IOException");
+        JsonSerializer.SerializeToUtf8Bytes(tight, PhoneHomeFraming.Json).Length.ShouldBeLessThanOrEqualTo(budget);
+    }
+
+    private static PhoneHomeFrame SessionRequest(PhoneHomeOperation operation, long epoch) =>
+        new(PhoneHomeFrameKind.Request, epoch, Guid.NewGuid(), operation,
+            JsonSerializer.SerializeToElement(new { sessionId = Guid.NewGuid() }, PhoneHomeFraming.Json));
+
     private static PhoneHomeFrame ProviderAuth(string provider) =>
         new(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.ProviderAuth,
             System.Text.Json.JsonSerializer.SerializeToElement(new PhoneHomeProviderAuthRequest(provider), PhoneHomeFraming.Json));
@@ -313,7 +370,8 @@ public class PhoneHomeCommandDispatcherTests
     }
 
     private static PhoneHomeCommandDispatcher Dispatcher(
-        IPhoneHomeRuntimeSurface runtime, int capacity = 8, IProviderAuthProbe? probe = null, bool claudeAuthProbeEnabled = true) =>
+        IPhoneHomeRuntimeSurface runtime, int capacity = 8, IProviderAuthProbe? probe = null, bool claudeAuthProbeEnabled = true,
+        int maxMessageUtf8Bytes = PhoneHomeProtocol.DefaultMaxMessageUtf8Bytes) =>
         new(runtime, new PhoneHomeSettings
         {
             Enabled = true,
@@ -321,6 +379,7 @@ public class PhoneHomeCommandDispatcherTests
             RunnerRepository = "/work/repos/antiphon",
             Capacity = capacity,
             ClaudeAuthProbeEnabled = claudeAuthProbeEnabled,
+            Limits = new PhoneHomeLimits(MaxMessageUtf8Bytes: maxMessageUtf8Bytes),
         }, probe);
 
     private static RunnerLaunchRequest Request(string exe, string cwd) =>
@@ -334,13 +393,16 @@ public class PhoneHomeCommandDispatcherTests
     {
         public int Owned { get; set; }
         public List<string> Mutations { get; } = [];
+
+        /// <summary>CARD-0631: a runtime fault Health and Get throw, standing in for an escaping handler.</summary>
+        public Func<Exception>? Fault { get; set; }
         public int OwnedSessionCount => Owned;
         public RunnerCapabilitiesDto Capabilities() =>
             new("InboxConhost", "inbox", "test", false, Features: [], VerificationCustodyBackend: null);
-        public string Health() => "Healthy";
+        public string Health() => Fault is { } fault ? throw fault() : "Healthy";
         public IReadOnlyList<RunnerSessionDto> List() => [];
         public Task<RunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
-            throw new KeyNotFoundException();
+            throw (Fault?.Invoke() ?? new KeyNotFoundException());
         public Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct)
         {
             Mutations.Add("start");

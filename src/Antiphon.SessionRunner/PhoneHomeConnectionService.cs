@@ -124,9 +124,10 @@ public sealed class PhoneHomeConnectionService : BackgroundService
             },
             connectionCts.Token);
 
-        var receive = ReceiveLoopAsync(ws, epoch, connectionCts.Token);
-        var heartbeat = HeartbeatLoopAsync(ws, epoch, connectionCts.Token);
-        var events = EventLoopAsync(ws, epoch, reader, connectionCts.Token);
+        var writer = new PhoneHomeConnectionWriter(ws, _settings.Limits.MaxMessageUtf8Bytes);
+        var receive = ReceiveLoopAsync(writer, epoch, connectionCts.Token);
+        var heartbeat = HeartbeatLoopAsync(writer, epoch, connectionCts.Token);
+        var events = EventLoopAsync(writer, epoch, reader, connectionCts.Token);
         try
         {
             await Task.WhenAny(receive, heartbeat, events);
@@ -144,8 +145,13 @@ public sealed class PhoneHomeConnectionService : BackgroundService
             throw new PhoneHomeTransportException(PhoneHomeProblemTypes.EventOverflow, "Event hub overflow.");
     }
 
-    private async Task ReceiveLoopAsync(WebSocket ws, long epoch, CancellationToken ct)
+    /// <summary>
+    /// CARD-0631: the receive pump for one connection. Reads frames from the writer's socket and
+    /// hands each accepted request to <see cref="DispatchAndReplyAsync"/> off the read loop.
+    /// </summary>
+    internal async Task ReceiveLoopAsync(PhoneHomeConnectionWriter writer, long epoch, CancellationToken ct)
     {
+        var ws = writer.Socket;
         while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
         {
             var frame = await PhoneHomeFraming.ReadFrameAsync(ws, _settings.Limits.MaxMessageUtf8Bytes, ct);
@@ -169,11 +175,7 @@ public sealed class PhoneHomeConnectionService : BackgroundService
                     or PhoneHomeOperation.ConditionalInput or PhoneHomeOperation.ClearBuffer
                     or PhoneHomeOperation.Resize or PhoneHomeOperation.KillGeneration)
             {
-                await PhoneHomeFraming.WriteFrameAsync(ws, new PhoneHomeFrame(
-                    PhoneHomeFrameKind.Error, epoch, frame.RequestId, frame.Operation,
-                    ErrorCode: PhoneHomeProblemTypes.RequestLimit,
-                    ErrorDetail: "In-flight request limit reached.",
-                    StatusCode: 429), _settings.Limits.MaxMessageUtf8Bytes, ct);
+                await SendRequestLimitAsync(writer, epoch, frame, ct);
                 continue;
             }
 
@@ -182,14 +184,7 @@ public sealed class PhoneHomeConnectionService : BackgroundService
             {
                 try
                 {
-                    var result = await _dispatcher.DispatchAsync(frame with { Epoch = epoch }, ct);
-                    if (IsMutation(frame.Operation))
-                        _sentMutations.Add(frame);
-                    await PhoneHomeFraming.WriteFrameAsync(ws, result, _settings.Limits.MaxMessageUtf8Bytes, ct);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.LogWarning(ex, "Phone-home command {Operation} failed", frame.Operation);
+                    await DispatchAndReplyAsync(writer, frame, epoch, ct);
                 }
                 finally
                 {
@@ -199,27 +194,54 @@ public sealed class PhoneHomeConnectionService : BackgroundService
         }
     }
 
-    private async Task HeartbeatLoopAsync(WebSocket ws, long epoch, CancellationToken ct)
+    /// <summary>CARD-0631: dispatch one request and send its reply through the connection's writer.</summary>
+    internal async Task DispatchAndReplyAsync(PhoneHomeConnectionWriter writer, PhoneHomeFrame frame, long epoch, CancellationToken ct)
+    {
+        try
+        {
+            var result = await _dispatcher.DispatchAsync(frame with { Epoch = epoch }, ct);
+            if (IsMutation(frame.Operation))
+                _sentMutations.Add(frame);
+            await writer.SendAsync(result, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Phone-home command {Operation} failed", frame.Operation);
+        }
+    }
+
+    internal Task SendRequestLimitAsync(PhoneHomeConnectionWriter writer, long epoch, PhoneHomeFrame request, CancellationToken ct) =>
+        writer.SendAsync(new PhoneHomeFrame(
+            PhoneHomeFrameKind.Error, epoch, request.RequestId, request.Operation,
+            ErrorCode: PhoneHomeProblemTypes.RequestLimit,
+            ErrorDetail: "In-flight request limit reached.",
+            StatusCode: 429), ct);
+
+    internal Task SendHeartbeatAsync(PhoneHomeConnectionWriter writer, long epoch, CancellationToken ct) =>
+        writer.SendAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Heartbeat, epoch, Guid.NewGuid()), ct);
+
+    internal Task SendEventAsync(PhoneHomeConnectionWriter writer, long epoch, RunnerServerSentEvent evt, CancellationToken ct)
+    {
+        var payload = JsonSerializer.Deserialize<JsonElement>(evt.Json, PhoneHomeFraming.Json);
+        return writer.SendAsync(new PhoneHomeFrame(
+            PhoneHomeFrameKind.Event, epoch, Guid.Empty, EventName: evt.EventName, Payload: payload), ct);
+    }
+
+    private async Task HeartbeatLoopAsync(PhoneHomeConnectionWriter writer, long epoch, CancellationToken ct)
     {
         var period = TimeSpan.FromSeconds(_settings.HeartbeatSeconds);
-        while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
+        while (!ct.IsCancellationRequested && writer.Socket.State == WebSocketState.Open)
         {
-            await PhoneHomeFraming.WriteFrameAsync(ws, new PhoneHomeFrame(
-                PhoneHomeFrameKind.Heartbeat, epoch, Guid.NewGuid()), _settings.Limits.MaxMessageUtf8Bytes, ct);
+            await SendHeartbeatAsync(writer, epoch, ct);
             await Task.Delay(period, _clock, ct);
         }
     }
 
     private async Task EventLoopAsync(
-        WebSocket ws, long epoch, System.Threading.Channels.ChannelReader<RunnerServerSentEvent> reader, CancellationToken ct)
+        PhoneHomeConnectionWriter writer, long epoch, System.Threading.Channels.ChannelReader<RunnerServerSentEvent> reader, CancellationToken ct)
     {
         await foreach (var evt in reader.ReadAllAsync(ct))
-        {
-            var payload = JsonSerializer.Deserialize<JsonElement>(evt.Json, PhoneHomeFraming.Json);
-            await PhoneHomeFraming.WriteFrameAsync(ws, new PhoneHomeFrame(
-                PhoneHomeFrameKind.Event, epoch, Guid.Empty, EventName: evt.EventName, Payload: payload),
-                _settings.Limits.MaxMessageUtf8Bytes, ct);
-        }
+            await SendEventAsync(writer, epoch, evt, ct);
     }
 
     private void CancelWaiters(long epoch)
