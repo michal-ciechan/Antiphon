@@ -10,6 +10,7 @@ namespace Antiphon.SessionRunner.Tests;
 // canonical, so everything here operates on a commit that already exists on the "origin" the
 // scratch repo stands in for.
 [Category("Integration")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RunnerWorkspaceServiceTests
 {
     [Test]
@@ -32,16 +33,209 @@ public sealed class RunnerWorkspaceServiceTests
     public async Task Mirror_refuses_sha_mismatch()
     {
         using var scratch = Scratch.Create();
-        var service = new RunnerWorkspaceService(scratch.Clone, scratch.Work);
 
         // G-27. The branch tip is whatever the desktop pushed; a mirror at some OTHER commit would
-        // silently run the session against source the desktop never produced.
-        var refused = await Should.ThrowAsync<PhoneHomeAdmissionException>(() => service.MirrorAsync(
-            new PhoneHomeWorkspaceMirrorRequest(Scratch.Branch, new string('b', 40), "task-deadbeef"),
-            CancellationToken.None));
-        refused.Code.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
-        Directory.Exists(Path.Combine(scratch.Work, "worktrees", "task-deadbeef")).ShouldBeFalse();
+        // silently run the session against source the desktop never produced. CARD-0631 R-2: the
+        // other commit is a REAL one the repository holds (the published tip), so only the
+        // fetched-tip equality check stands between it and a worktree -- an unknown sha would be
+        // refused later by worktree add and hide that check's absence. Run against both an
+        // existing checkout and one the service has to clone first.
+        var existing = new RunnerWorkspaceService(scratch.Clone, scratch.Work);
+        var absent = scratch.Service(Path.Combine(scratch.Root, "absent-repo"));
+        foreach (var service in new[] { existing, absent })
+        {
+            foreach (var sha in new[] { scratch.PublishedSha, new string('b', 40) })
+            {
+                var refused = await Should.ThrowAsync<PhoneHomeAdmissionException>(() => service.MirrorAsync(
+                    new PhoneHomeWorkspaceMirrorRequest(Scratch.Branch, sha, "task-deadbeef"),
+                    CancellationToken.None));
+                refused.Code.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
+                refused.Message.ShouldContain("Fetched tip");
+                Directory.Exists(Path.Combine(scratch.Work, "worktrees", "task-deadbeef")).ShouldBeFalse();
+            }
+        }
     }
+
+    // ---- CARD-0631 D-6/D-7/D-8: the runner provisions its own repository --------------------
+
+    [Test]
+    public async Task Mirror_clones_repository_when_absent()
+    {
+        using var scratch = Scratch.Create();
+        var request = new PhoneHomeWorkspaceMirrorRequest(Scratch.Branch, scratch.Sha, "task-deadbeef");
+
+        // A fresh volume: nothing at the runner repository path at all.
+        var repository = Path.Combine(scratch.Root, "runner", "repos", "antiphon");
+        var starts = new List<ProcessStartInfo>();
+        var service = scratch.Service(repository, starts);
+
+        var mirror = (await service.MirrorAsync(request, CancellationToken.None)).Path;
+
+        Directory.Exists(Path.Combine(repository, ".git")).ShouldBeTrue();
+        Scratch.Git(repository, "remote", "get-url", "origin").Trim().ShouldBe(scratch.Origin);
+        Scratch.Git(mirror, "rev-parse", "HEAD").Trim().ShouldBe(scratch.Sha);
+        Scratch.Git(mirror, "rev-parse", "--abbrev-ref", "HEAD").Trim().ShouldBe(Scratch.Branch);
+        File.ReadAllText(Path.Combine(mirror, "task.txt")).ShouldBe("task work");
+
+        // Pinned argv: a blobless, no-checkout clone of the runner-owned source into the repository
+        // path, from its parent, with no interactive prompt possible.
+        var clone = starts.Single(IsClone);
+        clone.ArgumentList.ToArray().ShouldBe(
+            new[] { "clone", "--filter=blob:none", "--no-checkout", scratch.Origin, repository });
+        clone.WorkingDirectory.ShouldBe(Path.GetDirectoryName(repository));
+        clone.Environment["GIT_TERMINAL_PROMPT"].ShouldBe("0");
+
+        // A same-sha replay is the existing mirror; a second mirror reuses the repository. Neither
+        // clones again.
+        (await service.MirrorAsync(request, CancellationToken.None)).Path.ShouldBe(mirror);
+        var second = (await service.MirrorAsync(
+            new PhoneHomeWorkspaceMirrorRequest(Scratch.Branch, scratch.Sha, "task-cafef00d"), CancellationToken.None)).Path;
+        Scratch.Git(second, "rev-parse", "HEAD").Trim().ShouldBe(scratch.Sha);
+        starts.Count(IsClone).ShouldBe(1);
+
+        // An EMPTY destination directory is a valid clone target too.
+        var empty = Path.Combine(scratch.Root, "empty-repo");
+        Directory.CreateDirectory(empty);
+        var emptyStarts = new List<ProcessStartInfo>();
+        var fromEmpty = await scratch.Service(empty, emptyStarts, work: "work-empty")
+            .MirrorAsync(request, CancellationToken.None);
+        Scratch.Git(fromEmpty.Path, "rev-parse", "HEAD").Trim().ShouldBe(scratch.Sha);
+        emptyStarts.Count(IsClone).ShouldBe(1);
+
+        // A populated directory without .git is someone else's data: refused, never overwritten,
+        // deleted or reset, and no git process runs in it.
+        var populated = Path.Combine(scratch.Root, "populated-repo");
+        Directory.CreateDirectory(populated);
+        File.WriteAllText(Path.Combine(populated, "sentinel.txt"), "keep me");
+        var populatedStarts = new List<ProcessStartInfo>();
+        var refused = await Should.ThrowAsync<PhoneHomeAdmissionException>(() => scratch
+            .Service(populated, populatedStarts, work: "work-populated").MirrorAsync(request, CancellationToken.None));
+        refused.Code.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
+        refused.StatusCode.ShouldBe(409);
+        File.ReadAllText(Path.Combine(populated, "sentinel.txt")).ShouldBe("keep me");
+        Directory.EnumerateFileSystemEntries(populated).Count().ShouldBe(1);
+        populatedStarts.ShouldBeEmpty();
+        Directory.Exists(Path.Combine(scratch.Root, "work-populated", "worktrees", "task-deadbeef")).ShouldBeFalse();
+
+        // An unreachable clone source is a 409 admission, never a successful mirror.
+        var unavailableStarts = new List<ProcessStartInfo>();
+        var unavailable = scratch.Service(Path.Combine(scratch.Root, "unavailable-repo"), unavailableStarts,
+            work: "work-unavailable", cloneSource: Path.Combine(scratch.Root, "no-such-origin"));
+        var failed = await Should.ThrowAsync<PhoneHomeAdmissionException>(
+            () => unavailable.MirrorAsync(request, CancellationToken.None));
+        failed.Code.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
+        failed.StatusCode.ShouldBe(409);
+        failed.Message.ShouldContain("clone");
+        unavailableStarts.Count(IsClone).ShouldBe(1);
+        Directory.Exists(Path.Combine(scratch.Root, "work-unavailable", "worktrees", "task-deadbeef")).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Mirror_failure_is_admission_error_not_crash()
+    {
+        using var scratch = Scratch.Create();
+        var request = new PhoneHomeWorkspaceMirrorRequest(Scratch.Branch, scratch.Sha, "task-deadbeef");
+        var mirrorPath = Path.Combine(scratch.Work, "worktrees", "task-deadbeef");
+
+        // A git that cannot start -- missing binary, unreadable cwd, access denial, or no process
+        // at all -- is a named workspace admission the server can answer, not an escaped fault.
+        var faults = new Func<Exception?>[]
+        {
+            () => new System.ComponentModel.Win32Exception(2, "No such file or directory"),
+            () => new IOException("disk gone"),
+            () => new UnauthorizedAccessException("denied"),
+            () => null,
+        };
+        foreach (var fault in faults)
+        {
+            foreach (var repository in new[] { scratch.Clone, Path.Combine(scratch.Root, "absent-repo") })
+            {
+                var service = new RunnerWorkspaceService(repository, scratch.Work, scratch.Origin,
+                    _ =>
+                    {
+                        if (fault() is { } ex)
+                            throw ex;
+                        return null;
+                    });
+                var refused = await Should.ThrowAsync<PhoneHomeAdmissionException>(
+                    () => service.MirrorAsync(request, CancellationToken.None));
+                refused.Code.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
+                refused.StatusCode.ShouldBe(409);
+                refused.Message.ShouldContain(repository == scratch.Clone ? "git fetch" : "git clone");
+                if (fault() is { } expected)
+                    refused.Message.ShouldContain(expected.GetType().Name);
+                Directory.Exists(mirrorPath).ShouldBeFalse();
+            }
+        }
+
+        // Validation precedes every filesystem and process effect: an invalid request against an
+        // absent repository starts nothing and creates nothing.
+        var absent = Path.Combine(scratch.Root, "never-created", "repo");
+        var invalidStarts = 0;
+        var strict = new RunnerWorkspaceService(absent, scratch.Work, scratch.Origin,
+            psi => { invalidStarts++; return Process.Start(psi); });
+        foreach (var invalid in new[]
+                 {
+                     new PhoneHomeWorkspaceMirrorRequest(Scratch.Branch, scratch.Sha, "../escape"),
+                     new PhoneHomeWorkspaceMirrorRequest(Scratch.Branch, "HEAD", "task-deadbeef"),
+                     new PhoneHomeWorkspaceMirrorRequest("bad..branch", scratch.Sha, "task-deadbeef"),
+                 })
+        {
+            await Should.ThrowAsync<PhoneHomeAdmissionException>(() => strict.MirrorAsync(invalid, CancellationToken.None));
+        }
+        invalidStarts.ShouldBe(0);
+        Directory.Exists(Path.Combine(scratch.Root, "never-created")).ShouldBeFalse();
+
+        // Caller cancellation stays cancellation, and the operation's own git child is killed and
+        // reaped before MirrorAsync returns. The held child is a real git reading a stdin that is
+        // never closed, so only the kill can end it. The fixture keeps its own handle and reaps
+        // the child even when an assertion fails.
+        Process? observer = null;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var held = new RunnerWorkspaceService(scratch.Clone, scratch.Work, scratch.Origin, psi =>
+        {
+            var hold = new ProcessStartInfo
+            {
+                FileName = "git",
+                WorkingDirectory = psi.WorkingDirectory,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            hold.ArgumentList.Add("hash-object");
+            hold.ArgumentList.Add("--stdin");
+            var child = Process.Start(hold)!;
+            observer = Process.GetProcessById(child.Id);
+            started.TrySetResult();
+            return child;
+        });
+        try
+        {
+            using var cts = new CancellationTokenSource();
+            var mirror = held.MirrorAsync(request, cts.Token);
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            cts.Cancel();
+            Exception? thrown = null;
+            try { await mirror.WaitAsync(TimeSpan.FromSeconds(30)); }
+            catch (Exception ex) { thrown = ex; }
+            thrown.ShouldBeAssignableTo<OperationCanceledException>();
+            observer!.HasExited.ShouldBeTrue();
+            Directory.Exists(mirrorPath).ShouldBeFalse();
+        }
+        finally
+        {
+            if (observer is not null)
+            {
+                try { if (!observer.HasExited) observer.Kill(entireProcessTree: true); }
+                catch (InvalidOperationException) { /* already gone */ }
+                observer.WaitForExit();
+                observer.Dispose();
+            }
+        }
+    }
+
+    private static bool IsClone(ProcessStartInfo psi) => psi.ArgumentList.FirstOrDefault() == "clone";
 
     [Test]
     public async Task Mirror_refuses_a_name_or_sha_it_did_not_shape()
@@ -311,6 +505,28 @@ public sealed class RunnerWorkspaceServiceTests
                 Root = root, Origin = origin, Clone = clone, Work = work.Replace('\\', '/'),
                 Sha = sha, PublishedSha = publishedSha,
             };
+        }
+
+        /// <summary>
+        /// CARD-0631: a service whose clone source is this scratch origin (or a named stand-in) and
+        /// whose git processes see neither the user's nor the system's git configuration, so no
+        /// credential helper or URL rewrite reaches outside the scratch root. Every start is recorded.
+        /// </summary>
+        public RunnerWorkspaceService Service(string repository, List<ProcessStartInfo>? starts = null,
+            string work = "work", string? cloneSource = null)
+        {
+            var emptyConfig = Path.Combine(Root, "empty.gitconfig");
+            if (!File.Exists(emptyConfig))
+                File.WriteAllText(emptyConfig, "");
+            var workPath = Path.Combine(Root, work).Replace('\\', '/');
+            Directory.CreateDirectory(workPath);
+            return new RunnerWorkspaceService(repository, workPath, cloneSource ?? Origin, psi =>
+            {
+                psi.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+                psi.Environment["GIT_CONFIG_GLOBAL"] = emptyConfig;
+                starts?.Add(psi);
+                return Process.Start(psi);
+            });
         }
 
         public void Dispose()

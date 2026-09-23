@@ -30,10 +30,27 @@ public sealed partial class RunnerWorkspaceService
     // CARD-0604 D-19: the published branch a verification sha must be reachable from. Production
     // is master; it is a parameter only so the runner-side tests can stand up a scratch repo.
     private readonly string _publishedBranch;
+    // CARD-0631 D-6: runner-owned, never request-controlled. Anonymous HTTPS reads work without the
+    // deploy key, so a fresh volume is provisioned by the first mirror rather than at boot.
+    internal const string DefaultCloneSource = "https://github.com/michal-ciechan/Antiphon.git";
+    private readonly string _cloneSource;
+    private readonly Func<ProcessStartInfo, Process?> _startProcess;
 
     public RunnerWorkspaceService(string repository, string allowedCwd, TimeSpan? timeout = null,
         string publishedBranch = "master")
+        : this(repository, allowedCwd, DefaultCloneSource, Process.Start, timeout, publishedBranch)
     {
+    }
+
+    /// <summary>
+    /// CARD-0631 D-6/D-8 test seam: a local bare origin stands in for GitHub, and the process-start
+    /// delegate lets a test fail or hold a git start without touching PATH or the installed git.
+    /// </summary>
+    internal RunnerWorkspaceService(string repository, string allowedCwd, string cloneSource,
+        Func<ProcessStartInfo, Process?> startProcess, TimeSpan? timeout = null, string publishedBranch = "master")
+    {
+        _cloneSource = cloneSource;
+        _startProcess = startProcess;
         _repository = repository;
         _worktreeRoot = allowedCwd.TrimEnd('/') + "/worktrees";
         _verificationMetadataRoot = allowedCwd.TrimEnd('/') + "/verification-creations";
@@ -191,7 +208,7 @@ public sealed partial class RunnerWorkspaceService
         // credential and it is BatchMode.
         psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
 
-        using var process = Process.Start(psi)
+        using var process = _startProcess(psi)
             ?? throw new InvalidOperationException("git did not start");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(_timeout);
