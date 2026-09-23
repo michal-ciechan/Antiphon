@@ -13,7 +13,7 @@ namespace Antiphon.SessionRunner;
 /// Every git process is a direct child of the runner process, started through
 /// <see cref="ProcessStartInfo.ArgumentList"/> (no shell, no quoting), as the runner's own uid.
 /// </summary>
-public sealed class RunnerWorkspaceService
+public sealed partial class RunnerWorkspaceService
 {
     // A mirror name is the dispatcher's own task-<short> form and nothing else: it becomes a
     // directory name the runner creates, so an unconstrained name is a path-traversal primitive.
@@ -23,12 +23,16 @@ public sealed class RunnerWorkspaceService
 
     private readonly string _repository;
     private readonly string _worktreeRoot;
+    // CARD-0604 D-19: schema-2 creation metadata lives beside the worktree root, never inside a
+    // snapshot -- the snapshot is the thing being removed, and its own record cannot go with it.
+    private readonly string _verificationMetadataRoot;
     private readonly TimeSpan _timeout;
 
     public RunnerWorkspaceService(string repository, string allowedCwd, TimeSpan? timeout = null)
     {
         _repository = repository;
         _worktreeRoot = allowedCwd.TrimEnd('/') + "/worktrees";
+        _verificationMetadataRoot = allowedCwd.TrimEnd('/') + "/verification-creations";
         _timeout = timeout ?? TimeSpan.FromMinutes(10);
     }
 

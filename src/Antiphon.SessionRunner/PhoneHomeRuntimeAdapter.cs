@@ -27,14 +27,32 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
             RunnerCapabilityFeatures.SessionGenerationV1,
             RunnerCapabilityFeatures.ConditionalMaintenanceInputV1,
         ];
-        // Phone-home never advertises Windows custody, even if the host binary could.
+        // CARD-0604 D-17 (Cut B). Phone-home advertises the LINUX custody backend, and only
+        // when the runner's live probe passed. It never advertises windows-job-v1: a Windows
+        // answer reaching the server over this lane is precisely how a Linux execution would be
+        // admitted with a receipt method it could not honestly produce (R-5, G-28). Cut A had
+        // nothing to advertise at all, so this read `null` unconditionally.
+        var custody = _runtime.VerificationCustodyBackend == VerificationCustodyBackends.LinuxCgroup
+            ? VerificationCustodyBackends.LinuxCgroup : null;
+        if (custody is not null)
+            features = [.. features, RunnerCapabilityFeatures.VerificationCustodyV1];
         return new RunnerCapabilitiesDto(
             decision.Backend.ToString(), decision.Requested, decision.Reason, decision.FellBack,
             SessionRunnerRuntime.SupportedTranscriptFormats, _build, backends,
             Version: _build.CommitSha ?? "unknown",
-            Features: features, VerificationCustodyBackend: null,
+            Features: features, VerificationCustodyBackend: custody,
             RunnerStoreId: _runtime.RunnerStoreId);
     }
+
+    public string? VerificationCustodyBackend =>
+        _runtime.VerificationCustodyBackend == VerificationCustodyBackends.LinuxCgroup
+            ? VerificationCustodyBackends.LinuxCgroup : null;
+
+    public Guid RunnerStoreId => _runtime.RunnerStoreId;
+
+    public Task<VerificationCustodyStatus> ReadCustodyAsync(
+        VerificationExecutionBinding binding, bool seal, CancellationToken ct) =>
+        _runtime.ReadCustodyAsync(binding, seal, ct);
 
     public string Health() => "Healthy";
     public IReadOnlyList<RunnerSessionDto> List() => _runtime.List();

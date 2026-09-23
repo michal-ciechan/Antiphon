@@ -33,6 +33,7 @@ public sealed class DelegationWorktreeService
     private readonly SourceLandingAdmission? _sourceLanding;
     private readonly GitSettings? _gitSettings;
     private readonly AppDbContext? _db;
+    private readonly IVerificationWorkspaceDirectory? _verificationWorkspaces;
 
     public DelegationWorktreeService(
         IWorktreeManager worktrees,
@@ -43,8 +44,10 @@ public sealed class DelegationWorktreeService
         SourceLandingAdmission? sourceLanding = null,
         IOptions<GitSettings>? gitSettings = null,
         AppDbContext? db = null,
-        GatedCommitService? gatedCommit = null)
+        GatedCommitService? gatedCommit = null,
+        IVerificationWorkspaceDirectory? verificationWorkspaces = null)
     {
+        _verificationWorkspaces = verificationWorkspaces;
         _leases = leases;
         _sourceLanding = sourceLanding;
         _landingGit = landingGit;
@@ -276,6 +279,28 @@ public sealed class DelegationWorktreeService
             if (_sourceLanding is null) throw new ConflictException("verification_source_admission_unavailable");
             var source = await _sourceLanding.RequireSourceAsync(task, ct);
             await _sourceLanding.RequireSupportAsync(task.RunnerId, ct);
+            // CARD-0604 D-19 (Cut B). A Mutation bound to a remote runner gets its snapshot
+            // created THERE, at the exact published sha, by the runner's own git. Creating a
+            // desktop worktree for it and then launching on server2 would hand the session a
+            // path it cannot see, and leave the receipt with nothing to be about.
+            if (task.RunnerId is not null)
+            {
+                if (_verificationWorkspaces is null)
+                    throw new ConflictException("verification_source_admission_unavailable");
+                var remote = _verificationWorkspaces.Resolve(task.RunnerId);
+                var created = await remote.CreateAsync(repoPath, identifier, source.VerifiedSourceSha!, ct);
+                task.WorktreePath = created.Coordinates.WorktreePath;
+                task.WorktreeBranch = created.Coordinates.Branch;
+                task.WorktreeBaseSha = source.VerifiedSourceSha;
+                var validation = await remote.ValidateAsync(created.Coordinates, source.VerifiedSourceSha!, ct);
+                if (!validation.Valid)
+                    throw new ConflictException(validation.Reason ?? "verification_creation_identity_mismatch");
+                var remoteJson = System.Text.Json.JsonSerializer.Serialize(created.Coordinates);
+                if (task.VerificationCreationJson is not null && task.VerificationCreationJson != remoteJson)
+                    throw new ConflictException("verification_creation_identity_mismatch");
+                task.VerificationCreationJson = remoteJson;
+                return null;
+            }
             var snapshot = await _worktrees.CreateVerificationAsync(repoPath, identifier, source.VerifiedSourceSha!, lease, ct);
             task.WorktreePath = snapshot.Path;
             task.WorktreeBranch = snapshot.Branch;

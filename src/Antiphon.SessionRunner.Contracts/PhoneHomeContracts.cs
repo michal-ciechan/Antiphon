@@ -41,7 +41,66 @@ public enum PhoneHomeOperation
     // origin, so nothing the runner holds is the only copy of anything.
     WorkspaceMirror = 14,
     WorkspaceRemove = 15,
+
+    // CARD-0604 D-19 (Cut B). Custody and the verification snapshot for a Mutation bound to a
+    // remote runner. The desktop is not a participant in any of these: the receipt, the
+    // restoration record and the snapshot itself all live where the producer wrote them, and
+    // reading them from the desktop filesystem would be reading nothing at all (G-38).
+    // Every one is a typed operation with a fixed body; no shell string crosses the socket.
+    ReadCustody = 16,
+    VerificationWorkspaceCreate = 17,
+    VerificationWorkspaceValidate = 18,
+    VerificationWorkspaceInspect = 19,
+    VerificationWorkspaceReadRestoration = 20,
+    VerificationWorkspaceRemove = 21,
 }
+
+/// <summary>CARD-0604: read (and optionally seal) a tracked execution's custody on the runner.</summary>
+public sealed record PhoneHomeReadCustodyRequest(VerificationExecutionBinding Binding, bool Seal);
+
+/// <summary>
+/// CARD-0604 D-19. Create the verification snapshot on the runner at the EXACT published sha.
+/// The runner refuses unless <paramref name="Sha"/> is reachable from origin/master at that
+/// moment -- a Mutation must run on what was actually published, not on a branch tip that has
+/// since moved.
+/// </summary>
+public sealed record PhoneHomeVerificationCreateRequest(string Identifier, string Sha, string Branch);
+
+/// <summary>
+/// Schema-2 creation metadata plus the coordinates, mirrored from the desktop WorktreeManager so
+/// the same equality checks apply to both. All paths are POSIX and rooted under the runner's
+/// repository (G-32).
+/// </summary>
+public sealed record PhoneHomeVerificationCreateResponse(
+    VerificationCreationCoordinates Coordinates, string InitialSha);
+
+/// <summary>Re-run the creation checks against what is on disk now.</summary>
+public sealed record PhoneHomeVerificationValidateRequest(VerificationCreationCoordinates Coordinates, string Sha);
+
+public sealed record PhoneHomeVerificationValidateResponse(bool Valid, string? Reason);
+
+/// <summary>Read the snapshot's creation metadata and git state without changing anything.</summary>
+public sealed record PhoneHomeVerificationInspectRequest(string WorktreePath);
+
+public sealed record PhoneHomeVerificationInspectResponse(
+    Guid? CreationId, string? InitialSha, string? Branch, string? RepositoryPath,
+    string? WorktreePath, string? GitDirectory, string? Head, bool Registered, bool Clean, bool Locked);
+
+/// <summary>Read `restoration.json` from the runner's own evidence root.</summary>
+public sealed record PhoneHomeVerificationReadRestorationRequest(
+    string CommonGitDirectory, Guid SourceOperationId, Guid TaskId);
+
+public sealed record PhoneHomeVerificationReadRestorationResponse(byte[]? Restoration);
+
+/// <summary>
+/// Guarded removal, mirroring GuardedVerificationRemoval's rules: no force, no recursion, an
+/// unknown file or a dirty tree refuses, and only the exact listed outputs may be present.
+/// </summary>
+public sealed record PhoneHomeVerificationRemoveRequest(
+    VerificationCreationCoordinates Coordinates, string ExpectedSha, IReadOnlyList<string> Outputs);
+
+public sealed record PhoneHomeVerificationRemoveResponse(
+    bool Unregistered, bool DirectoryGone, bool BranchDeleted, string? Residue);
 
 /// <summary>
 /// CARD-0604 D-15. Create a mirror worktree of an already-pushed task branch. The runner fetches

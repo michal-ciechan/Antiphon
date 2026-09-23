@@ -12,8 +12,9 @@ using Microsoft.EntityFrameworkCore;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>Explicit cleanup seals launch admission; it never stops or kills a process.</summary>
-public sealed class VerificationCleanupService(AppDbContext db, ISessionRunnerClient runner,
-    IRepositoryMutationLease leases, IWorktreeManager worktrees, TimeProvider clock)
+public sealed class VerificationCleanupService(AppDbContext db, ISessionRunnerDirectory runners,
+    IRepositoryMutationLease leases, IWorktreeManager worktrees, TimeProvider clock,
+    IVerificationWorkspaceDirectory? workspaces = null)
 {
     public async Task<WorktreeRemoval> CleanupAsync(Guid taskId, CancellationToken ct)
     {
@@ -54,7 +55,10 @@ public sealed class VerificationCleanupService(AppDbContext db, ISessionRunnerCl
                     new VerificationReceiptPolicy().ValidateImported(execution, binding);
                     continue;
                 }
-                var status = await runner.ReadVerificationCustodyAsync(binding, seal: true, ct);
+                // CARD-0604 G-33: custody is read from the runner this task is BOUND to. Reading
+                // it from the local client would ask a machine that never held this execution,
+                // and get a confident "unsupported backend" back.
+                var status = await runners.Resolve(task.RunnerId).ReadVerificationCustodyAsync(binding, seal: true, ct);
                 if (status.Binding != binding || status.Receipt is null || status.Host is null)
                 {
                     var unknown = status.Reason ?? status.State.ToString();
@@ -85,6 +89,30 @@ public sealed class VerificationCleanupService(AppDbContext db, ISessionRunnerCl
                 await MarkUnknownAsync(executionId, "verification_custody_unavailable", ct);
                 return await ResidueAsync(task, $"{executionId:D}: verification_custody_unavailable ({ex.GetType().Name})", ct);
             }
+        }
+
+        // CARD-0604 D-19: a remote task's snapshot is on the runner, so its removal goes through
+        // the workspace seam. There is no desktop repository to lease and no desktop directory to
+        // remove; TryRemoveAsync here would report a clean removal of nothing.
+        if (task.RunnerId is not null && workspaces is not null)
+        {
+            var workspace = workspaces.Resolve(task.RunnerId);
+            // The exact expected-output list comes from the producer's own restoration record,
+            // read on the runner (G-38). No record means no authority to remove anything.
+            var restorationBytes = await workspace.ReadRestorationAsync(seal.Creation.CommonGitDirectory,
+                task.SourceLandingOperationId!.Value, task.Id, ct);
+            var restoration = restorationBytes is null ? null
+                : JsonSerializer.Deserialize<VerificationRestoration>(restorationBytes, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            if (restoration is null || !restoration.Restored || restoration.CreationId != seal.Creation.CreationId)
+                return await ResidueAsync(task, "verification_restoration_missing_or_mismatched", ct);
+            var removal = await workspace.RemoveAsync(seal.Creation, task.SourceLandingSha!,
+                restoration.Outputs.Select(o => o.RelativePath).ToArray(), ct);
+            task.VerificationDirectoryRemoved |= removal.DirectoryGone;
+            task.VerificationRegistrationRemoved |= removal.Unregistered;
+            task.VerificationBranchRemoved |= removal.BranchDeleted;
+            task.VerificationCleanupResidue = removal.Residue;
+            await db.SaveChangesAsync(ct);
+            return new(removal.Unregistered, removal.DirectoryGone, removal.BranchDeleted, removal.Residue);
         }
 
         await using var lease = await leases.TryAcquireAsync(seal.Creation.RepositoryPath, ct);
