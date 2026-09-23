@@ -121,7 +121,12 @@ Schema:
 | `Filter` | The exact `--treenode-filter` (CARD-0403 combined-class syntax), or the exact command for a non-TUnit group. |
 | `Covers` | The V-n/R-n IDs this row is evidence for; the union of all rows is the whole ordinary scope. |
 | `Expect` | Roster rule: `all listed, 0 failed` (default) or `>= N executed, 0 failed` for a lane. |
-| `Min` | Estimated minutes including the build when the row builds; Cost's ordinary floor is the sum. |
+| `Min` | The integer passed to `-MinExecuted`: a floor on **TUnit executed test results**, and nothing else. `n/a` for a non-TUnit row, which states its own success/assertion count in `Expect` instead. |
+| `EstimatedMinutes` | Estimated wall-clock **minutes** for the row, including its build when the row builds; Cost's ordinary floor is the sum of this column. |
+
+`Min` is a count and `EstimatedMinutes` is a time; neither is derived from the other, and a row carries both. A TUnit method that performs 12 internal assertions still contributes **one** execution unless the runner reports separately parameterized results; an argument-expanded test contributes its reported result count, so a six-argument `[Arguments]` method is 6. Internal assertion rows, harness `PASS` lines, matrix combinations, loop iterations, unique source methods and elapsed minutes are separate evidence and are never a `-MinExecuted` floor. `-Expect` checks names; it does not turn assertions or minutes into executed tests.
+
+**Legacy plans.** Before CARD-0617 the `Min` column meant estimated minutes, so plans written then (CARD-0459, CARD-0585, CARD-0590, CARD-0599, CARD-0607, CARD-0610) legitimately hold minute values under `Min`. Do not reinterpret those numbers as counts and do not relabel their historical evidence. Before reusing such a plan, rename its time column to `EstimatedMinutes` and derive any execution floor from its own roster or TRX, never by copying the old number across.
 
 Rules:
 
@@ -132,23 +137,24 @@ Rules:
 5. Review checks the report's lines against the table: a missing row, zero count, unlisted build/test run without a reason, or a broad run without a named invariant and cost is a defect.
 6. Nothing in the table is skipped to save time; splitting a row that exceeds one foreground window is done by the classes/methods it already names.
 
-Worked example (three rows of CARD-0459's plan at `484fb214`, one build shared by two groups):
+Illustrative example — the class, group and path names below are invented to show the two columns, not lifted from any plan:
 
-| CP | After | Build | Group | Filter | Covers | Expect | Min |
-|---|---|---|---|---|---|---|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c459/` | disposition-surface | `/*/*/(TaskWorktreeRetirementTests*)\|(WorktreeResidueEndpointTests*)\|(WorktreeResidueScriptTests*)/*` | V-2, R-2 | all listed, 0 failed | 12 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c459/` | workspace-races | `/*/*/WorktreeRetirementRaceTests/*` | V-4 | all listed, 0 failed | 25 |
-| CP-3 | S2 | CP-2 | settled-removal | `/*/*/SettledWorktreeRemovalTests/*` | V-3 | all listed, 0 failed | 25 |
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-ex/` | sample-surface | `/*/*/ExampleSurfaceTests/*` | V-1, R-1 | all 3 methods, 0 failed/skipped (between them they assert 12 named rows) | 3 | 9 |
+| CP-2 | S2 | n/a | client-lint | `pwsh -File scripts/test-client.ps1 -Lint` | V-2 | 0 errors, 0 warnings | n/a | 2 |
 
-Running one row:
+`Min` on CP-1 is **3** because three TUnit methods execute — not 12, which is how many assertions they make, and not 9, which is how many minutes the row is budgeted. CP-2 runs no TUnit at all, so its `Min` is `n/a` and its whole success criterion lives in `Expect`. Cost's ordinary floor for this pair is 9 + 2 = 11 minutes.
+
+Running one row (same illustrative names; add `-NoBuild` to reuse an earlier row's output):
 
 ```powershell
-pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-3 -Project tests/Antiphon.Tests -OutputPath bin-c459/ -NoBuild -Filter '/*/*/SettledWorktreeRemovalTests/*' -Expect SettledWorktreeRemovalTests -ResultsRoot .antiphon/c459-checkpoints
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-1 -Project tests/Antiphon.Tests -OutputPath bin-ex/ -Filter '/*/*/ExampleSurfaceTests/*' -MinExecuted 3 -Expect ExampleSurfaceTests -ResultsRoot .antiphon/ex-checkpoints
 ```
 
-The script builds unless `-NoBuild`, runs the one filter into a fresh results directory, parses the TRX counters and the executed `Class.Method` roster (from `TestDefinitions/UnitTest/TestMethod@className`, never the display name), then prints the `CHECKPOINT` line, one `FAILED <Class.Method>` line per failure, up to 300 `EXECUTED <Class.Method>` lines and a `CHECKPOINT <Name> EXIT CODE: <n>` trailer — so no delegate opens the TRX. Exit codes: **0** green, **1** one or more failed tests, **2** invalid input (a non-`bin-x/` `OutputPath`, a results directory that already exists), a failed build or no TRX written, **3** fewer than `-MinExecuted` executed tests or an `-Expect` token that matches no executed name. It never deletes anything, never edits a filter and never calls `--list-tests`. Give several `-Expect` tokens as one comma-separated value (`-Expect A,B`): `pwsh -File` binds every argument as a string, so a repeated `-Expect` fails to bind there.
+The script builds unless `-NoBuild`, runs the one filter into a fresh results directory, parses the TRX counters and the executed `Class.Method` roster (from `TestDefinitions/UnitTest/TestMethod@className`, never the display name), then prints the `CHECKPOINT` line, one `FAILED <Class.Method>` line per failure, up to 300 `EXECUTED <Class.Method>` lines and a `CHECKPOINT <Name> EXIT CODE: <n>` trailer — so no delegate opens the TRX. Exit codes: **0** green, **1** one or more failed tests, **2** invalid input (a non-`bin-x/` `OutputPath`, a results directory that already exists), a failed build or no TRX written, **3** fewer than `-MinExecuted` executed tests or an `-Expect` token that matches no executed name. It never deletes anything, never edits a filter and never calls `--list-tests`. Give several `-Expect` tokens as one comma-separated value (`-Expect A,B`): `pwsh -File` binds every argument as a string, so a repeated `-Expect` fails to bind there. Quote characters around the tokens are tolerated (CARD-0615) — `-Expect "'A','B'"` and `-Expect '"A","B"'` match exactly as `-Expect A,B` does, because each split token has its leading and trailing quotes stripped. Only the edges: a quote inside a token stays part of the name and will miss.
 
-The `### Cost` block's ordinary Code floor is the sum of the table's `Min` column, and `-ExpectAbout` for a Code dispatch is that sum plus authoring time. The Code brief points at the table with one line, `checkpoints: <plan artifact path>@<full plan commit sha> section "### Checkpoints"` — the shape the server already renders for an Interim `selection:`.
+The `### Cost` block's ordinary Code floor is the sum of the table's `EstimatedMinutes` column — a time, never the `Min` counts — and `-ExpectAbout` for a Code dispatch is that sum plus authoring time. The Code brief points at the table with one line, `checkpoints: <plan artifact path>@<full plan commit sha> section "### Checkpoints"` — the shape the server already renders for an Interim `selection:`.
 
 ### CARD-0490 phone-home runner and native PC-28–31
 

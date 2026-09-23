@@ -28,7 +28,7 @@ public sealed class CheckpointManifestDocumentationTests
     public void the_checkpoint_phrases_are_pinned_in_every_copy()
     {
         var doc = ReadCollapsed("docs", "testing-and-build.md");
-        foreach (var phrase in new[] { "### Checkpoint manifest (CARD-0585)", "CP-n", "run-checkpoint.ps1", "closed list" })
+        foreach (var phrase in new[] { "### Checkpoint manifest (CARD-0585)", "CP-n", "run-checkpoint.ps1", "closed list", "EstimatedMinutes", "-MinExecuted" })
             doc.ShouldContain(phrase, Case.Insensitive, DocRelativePath);
 
         var loop = ReadCollapsed("docs", "orchestration-loop.md");
@@ -48,7 +48,7 @@ public sealed class CheckpointManifestDocumentationTests
             code.ShouldContain(phrase, Case.Insensitive, "server/Bundles/stage-code.md");
 
         ReadCollapsed("server", "Bundles", "stage-test-design.md")
-            .ShouldContain("| CP | After | Build | Group | Filter | Covers | Expect | Min |", Case.Insensitive,
+            .ShouldContain("| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |", Case.Insensitive,
                 "server/Bundles/stage-test-design.md");
 
         var review = ReadCollapsed("server", "Bundles", "stage-review.md");
@@ -71,11 +71,11 @@ public sealed class CheckpointManifestDocumentationTests
     {
         var skill = ReadCollapsed(".claude", "skills", "antiphon-delegate", "SKILL.md");
         skill.ShouldContain("checkpoints: <plan artifact path>@<full plan commit sha> section", Case.Insensitive);
-        skill.ShouldContain("-ExpectAbout <cp-min-sum+authoring>", Case.Insensitive);
+        skill.ShouldContain("-ExpectAbout <cp-estimated-minutes-sum+authoring>", Case.Insensitive);
 
         var loop = ReadCollapsed("docs", "orchestration-loop.md");
         loop.ShouldContain("sum of its", Case.Insensitive);
-        loop.ShouldContain("`Min` column", Case.Insensitive);
+        loop.ShouldContain("`EstimatedMinutes` column", Case.Insensitive);
     }
 
     [Test]

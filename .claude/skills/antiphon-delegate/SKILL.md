@@ -77,7 +77,7 @@ brief must additionally carry: the **previous stage's `handoff:` line, verbatim*
 next brief is built from), its `artifact:` path, and — for a Plan dispatch on a `complexity:easy`
 card — the sentence "the test-design stage is folded into this dispatch; the `## Verification
 design` section is required." `-ExpectAbout` for Code is the ordinary V/R floor from the plan's
-`## Verification design` → `### Checkpoints` table — the sum of its `Min` column — plus authoring
+`## Verification design` → `### Checkpoints` table — the sum of its `EstimatedMinutes` column, a time budget and not the `Min` execution counts — plus authoring
 time, not a guess (`feedback_estimate_as_verification_floor_plus_authoring`); the `### Cost` block
 states that same sum as its ordinary Code floor. A Code dispatch also carries the pointer line
 `checkpoints: <plan artifact path>@<full plan commit sha> section "### Checkpoints"`.
@@ -92,8 +92,8 @@ pwsh -NoProfile -File scripts/delegate.ps1 -Role Plan -Card CARD-nnnn -Title "pl
 # TestDesign — separate dispatch (hard/medium); read the landed plan doc first
 pwsh -NoProfile -File scripts/delegate.ps1 -Role TestDesign -Card CARD-nnnn -Title "verification design <card>" -Worktree -Goal "write ## Verification design for <plan artifact path>"
 
-# Code — runs the plan's ### Checkpoints table as a closed list; -ExpectAbout is the Min sum + authoring
-pwsh -NoProfile -File scripts/delegate.ps1 -Role Code -Card CARD-nnnn -Title "build <card>" -Worktree -ExpectAbout <cp-min-sum+authoring> -Goal "execute <plan artifact path> and its verification section; checkpoints: <plan artifact path>@<full plan commit sha> section \"### Checkpoints\"; handoff from test-design/plan: '<verbatim>'"
+# Code — runs the plan's ### Checkpoints table as a closed list; -ExpectAbout is the EstimatedMinutes sum + authoring
+pwsh -NoProfile -File scripts/delegate.ps1 -Role Code -Card CARD-nnnn -Title "build <card>" -Worktree -ExpectAbout <cp-estimated-minutes-sum+authoring> -Goal "execute <plan artifact path> and its verification section; checkpoints: <plan artifact path>@<full plan commit sha> section \"### Checkpoints\"; handoff from test-design/plan: '<verbatim>'"
 
 # Review -- ordinary pre-land review of the retained Code worktree
 $reviewGoal = Get-Content -LiteralPath '<review-brief-file>' -Raw

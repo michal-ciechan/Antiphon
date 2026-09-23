@@ -1,6 +1,6 @@
 Design verification for the landed plan. Append this structure; do not rewrite the fix design.
-Every guard that protects a safety-critical assertion gets a PC-n positive control.
-Read touched tests and fixtures/helpers before naming cases, the nearest fixture for new files. Record missing setup; cover boundary combinations or justify exclusion.
+Every safety-critical guard gets a PC-n positive control.
+Read touched tests/fixtures/helpers before naming cases, the nearest fixture for new files. Record missing setup; cover boundary combinations or justify exclusion.
 
 ## Verification design
 ### Inspection
@@ -16,14 +16,14 @@ For each new/changed async outcome-delivery path enumerate producer, destination
 Inventory every safety-critical guard, incl. untested; split independently bypassable guards. Map each 1:1 to a distinct PC-n. Justify none.
 ### Positive controls
 - PC-1: break <G-1> by <compiling defect>; expect <exact method> red at <assertion>.
-  Mutation runs break/red/restore/green after land; Code writes tests and runs V/R; Review judges before land.
+  Mutation runs break/red/restore/green after land; Code runs V/R; Review judges before land.
 ### Out of scope
 - <exclusion and reason>
 ### Checkpoints
-| CP | After | Build | Group | Filter | Covers | Expect | Min |
-One isolated build + one exact filter per row; After = plan slice; Covers = V/R IDs; union = whole ordinary scope. Schema in docs/testing-and-build.md.
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+One isolated build + one exact filter per row; union = whole ordinary scope. Min=-MinExecuted (TUnit executions; n/a for non-TUnit). EstimatedMinutes=time. Schema: docs/testing-and-build.md.
 ### Cost
-- Separate ordinary V/R floor (Code) = sum of CP Min, and PC floor (Mutation), with filters and minutes. Total = setup/build + V/R + every PC red/restore/green; label estimated/measured. Quantify savings; justify zero.
+- Separate floors: ordinary V/R (Code) = sum of CP EstimatedMinutes; PC (Mutation). Name filters and minutes. Total = setup/build + V/R + each PC red/restore/green; label estimated/measured; quantify savings or justify zero.
 
 Before handoff: bodies read; guards=N, mapped=N, missing=0, duplicate PC mappings=0; all PCs executable; numeric Cost. No placeholders/TBD.
 next: code only when complete; plan for an unverifiable seam; decide for a human choice. Commit and push the plan doc.
