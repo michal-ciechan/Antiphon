@@ -21,6 +21,12 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public class DispatcherSweepLifetimeTests
 {
+    // Graph.Create reads TestDbFixture.ConnectionString synchronously; warming the store first keeps
+    // this class's tests from each parking a pool thread on the bootstrap, which starved the
+    // wall-clock waits of PhoneHomeConnectionTests running beside them in CP-1.
+    [Before(Class)]
+    public static Task WarmSharedStoreAsync() => TestDbFixture.Lifecycle.EnsureReadyAsync();
+
     [Test]
     public async Task Abandoned_sweep_runs_on_its_own_scope_and_that_scope_is_disposed_after_it_ends()
     {
