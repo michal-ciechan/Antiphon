@@ -688,6 +688,45 @@ public class PhoneHomeStandingLaunchTests
     }
 
     [Test]
+    public async Task Runner_bound_named_claude_create_and_patch_refuse_remote_control()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var workspace = Directory.CreateTempSubdirectory("antiphon-remote-rc").FullName;
+        try
+        {
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+            var service = new AgentService(
+                db, new CardWorkflowRunFactory(db, TimeProvider.System), new MockEventBus(),
+                TimeProvider.System, new StubDirectoryWriter(),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentService>.Instance,
+                phoneHome: PoolPolicy());
+            var name = "Remote Claude " + Guid.NewGuid().ToString("N")[..8];
+            var create = new CreateAgentRequest(name, workspace, RunnerId: "server2",
+                RemoteControlEnabled: true);
+            var refusedCreate = await Should.ThrowAsync<ConflictException>(() =>
+                service.CreateAsync(create, CancellationToken.None));
+            refusedCreate.Code.ShouldBe("phone_home_remote_control_refused");
+
+            var created = await service.CreateAsync(create with { RemoteControlEnabled = false },
+                CancellationToken.None);
+            var patch = new UpdateAgentRequest(name, workspace, null, null,
+                AgentAssignmentPolicy.AutoPick, RemoteControlEnabled: true);
+            var refused = await Should.ThrowAsync<ConflictException>(() =>
+                service.UpdateAsync(created.Id, patch, CancellationToken.None));
+            refused.Code.ShouldBe("phone_home_remote_control_refused");
+        }
+        finally
+        {
+            Directory.Delete(workspace, recursive: true);
+        }
+    }
+
+    private sealed class StubDirectoryWriter : IDirectoryWriter
+    {
+        public void CreateDirectory(string path) { }
+    }
+
+    [Test]
     public void Card_start_and_onagent_stay_refused_for_runner_bound_agent()
     {
         var policy = PoolPolicy();
