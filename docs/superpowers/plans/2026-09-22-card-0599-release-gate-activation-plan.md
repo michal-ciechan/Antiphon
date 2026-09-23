@@ -545,7 +545,7 @@ renumbering them or assuming their landed implementations were operationally qua
 Plan validation: source tracing and live card read only. No build/test counts or live activation
 success are claimed. TestDesign owns the final verification design and checkpoint manifest.
 
-## Verification design
+## Historical S1-S4 verification design
 
 TestDesign: 2026-09-22, task 292f5645, inspected plan commit
 4c4f8951fcd081533485f3ccc26079d1c4b6a634. This section supersedes the provisional
@@ -1217,7 +1217,7 @@ in the commissioned external evidence root and restore every mutation; no snapsh
   classes, production-script contracts and real isolated recipient/browser checks. A smoke
   pass never substitutes for the later full RC profile or published-release receipt.
 
-### Checkpoints
+### Historical S1-S4 checkpoints
 
 This is the closed ordinary Code manifest, replacing the provisional CP-1..CP-12. Every row
 runs after S1-S4 commits exist, on one unchanged source identity; no editing during a run.
@@ -1278,7 +1278,7 @@ Never broaden filters, retries or timeouts to get green. Run Antiphon.Tests, E2E
 assemblies sequentially. Remove only exact owned bin-c599 directories after verifying
 resolved paths remain inside this worktree. TestDesign created no such build output.
 
-### Cost
+### Historical S1-S4 cost
 
 All figures are estimates, not measurements or permission to widen timeouts.
 
@@ -1324,7 +1324,486 @@ in a checkpoint filter. Ordinary CP sum=178; all-PC sum=982. No build, test exec
 live registration, credential change or release occurred in TestDesign. Source/fixture
 inspection, census and document consistency checks are the evidence for this stage.
 
+Historical S1-S4 handoff (superseded for activation by the addendum below): implement
+S1-S4 and 42 C599 methods using CP-1..18, with Review before land and method-scoped
+Mutation after land. S5/S6 operational acceptance was still outstanding at that handoff.
+
+## Verification design
+
+Activation addendum, 2026-09-23, TestDesign task `3c8db8ad`; inspected checkout
+`68d4383c`. This section supersedes the historical verification dispatch above for
+**activation only**; it does not rewrite D-1..D-10 or the landed S1-S4 implementation.
+The brief's `4c4f8951` is the original 589-line Windmill plan, also the fetched tip of
+`origin/feat/card-task-5e5aaedb`; it is not a Hangfire activation design. The checkout
+already contains the subsequent S1-S4 verification design and release implementation.
+
+The operator's newer instructions take precedence: RC scheduling belongs to **Hangfire
+on the main instance**, and ordinary per-change verification targets **three minutes**.
+Do not run the historical 178-minute CP table as this activation's ordinary scope, enable
+the Windmill RC definition, or create a Scheduled Task. Existing master/readiness
+Windmill behavior is a separate inherited contract; this task does not migrate it.
+`InterimVerification.Enabled` remains false until its separate S5 receipts exist.
+The three-minute selection is an explicitly reduced verification scope, not proof that
+Interim is operational, and not release credit or permission to bypass the Final latch.
+
+**Handoff is Plan, not activation Code.** Inspection found the following concrete seams
+that must be designed/repaired before this verification contract can authorize Code:
+
+| Finding | Observed implementation | Required planning output |
+|---|---|---|
+| A-1: no durable Hangfire RC handoff | `server/Program.cs` uses `UseInMemoryStorage`; `HangfireConfiguration` registers census/residue only. History disappears on restart. | Select the durable slot/run-intent owner and its atomic enqueue/recovery boundary, main-instance admission identity, bounded native child ownership, and disable/restart behavior. Hangfire remains the trigger; an in-memory job id alone cannot be the durable identity. |
+| A-2: publisher has no trustworthy real GitHub receipt | `Invoke-ReleaseGateGitHub` returns `ExitCode`, empty `Output`, and `Verb`, never the `Body` supplied by the test seam. Final readback initializes `stillDraft=false`, so missing body/nonzero readback can still journal `published` with empty id/URL. Upload steps hash local files; no remote bytes are downloaded. | Specify the real process-output adapter, strict release identity/readback schema, both remote asset digest checks and ambiguous-write recovery. Add a process-boundary fixture; the present GitHub function replacement cannot verify this adapter. |
+| A-3: publication authority can come from the report | `release-cut.ps1` passes neither `ExpectedPolicyHash` nor `RequiredSuites`; publisher falls back to `summary.requiredSuites`. Its guard only compares a hash when one was supplied, and accepts any passing row per suite. | Pin publication authority to the candidate policy and all required chunks/UIDs, independently of summary claims. Missing authority must refuse. |
+| A-4: coordinator lifecycle is outside current tests | Cut occurs before `nightly-run` acquires the shared native lock; `release-cut` has no outer lock. Its early cut refusal returns without invoking the board reporter. Job id is stored as `windmillJobId` in the returned record but not passed to the native run. | Specify lock ownership from before clone/cut through publication and child join, scheduler-neutral correlation, pre-native failure reporting, and recovery without a fresh candidate. |
+
+These are source findings, not claimed test failures. No live qualification or mutation
+was run. The new tests below are exact acceptance specifications for those repairs;
+they do not yet exist. Routing to Plan is intentional under the stage rule for an
+unverifiable seam. No credential or scheduling preference needs to be guessed.
+
+### Inspection
+
+- `tests/Antiphon.Tests/Infrastructure/HangfireStartupSafetyTests.cs` (all nine bodies),
+  `Application/WorktreeResidueRegistrationTests.cs` (all three, including real
+  `BackgroundJobClient`/`BackgroundJobServer`, `ScopeJobActivator`, `EmptyWorktrees`),
+  `TestHelpers/AntiphonWebAppFactory.cs` configuration/disposal, and
+  `ProductionRunnerGuard.cs` | worker disabled/enabled, private storage, DI registration,
+  real queued execution and restart -> V-10, V-11, R-5, R-6. The residue test's run row
+  is useful recipient evidence; its in-memory storage does not prove restart recovery.
+- `Scripts/ReleaseGatePolicyTests.cs`, `ReleaseGateRunTests.cs`,
+  `ReleaseGatePublicationTests.cs`, `ReleaseGateE2EEvidenceTests.cs` and
+  `Scripts/ScriptHarness.cs`; matching `scripts/test-release-gate.ps1` policy/census,
+  credit, run, lock, candidate, publication and prerequisite cases and their
+  `New-C599Policy`, `New-C599RcGreen`, Git/GitHub file-store helpers | existing smaller
+  fixture profiles, missing E2E, partial selection, string booleans, pinning, push loss,
+  draft/asset/publish loss -> V-12..V-14, R-7. Harness assertion counts are not TUnit
+  execution counts. Source-string parameter/cleanup checks cannot prove real execution.
+- `tests/Antiphon.E2E/ReleaseGateReportDeliveryTests.cs` setup, both methods,
+  `WriteSummary`, `RunReportAsync`, `ListCardsAsync`; `ReleaseGateIsolationTests.cs`
+  all three methods; `Fixtures/AntiphonAppFixture.cs` startup, configured owned runner,
+  HTTP host, disposal; `PlaywrightFixture.InitializeAsync`/`NewPageAsync` and
+  `SharedApp.cs` | real board row versus accepted write, unavailable recipient,
+  lane isolation, headless browser and teardown -> V-15, V-16. Existing report tests
+  assert titles/labels/counts, not full candidate/run/body identity; extend that seam.
+  `C599_CleanupEvidence` checks the live fixture before disposal, so qualification
+  must retain the actual after-disposal verdict too.
+- `scripts/release-{candidate,cut}.ps1`, `publish-release.ps1`,
+  `lib/release-gate.ps1` credit/publication/adapter bodies,
+  `lib/nightly-tests-impl.ps1` selection/prerequisites, entire policy JSON,
+  `server/Program.cs` Hangfire registration and `HangfireConfiguration`,
+  `HangfireSettings`, `WorktreeResidueJob` | A-1..A-4 above; no existing RC Hangfire
+  implementation to qualify. `AutomaticRetry(Attempts=0)` on residue is the nearest
+  example, not evidence that RC has the same policy.
+- Owners: `docs/release-gates.md`, checkpoint schema and isolation/clock/process rules
+  in `docs/testing-and-build.md`, orchestration stage/land rules, project conventions,
+  bootstrap Hangfire behavior | scope and evidence contracts below. Historical
+  G-1..G-206/PC-1..PC-206 remain recorded, not re-certified by this inspection.
+
+Missing fixture setup is explicit: new fast tests belong in
+`tests/Antiphon.Tests/Infrastructure/ReleaseGateSchedulerTests.cs`; real queue tests
+in adjacent `ReleaseGateQueueTests.cs`; script adapter tests in
+`tests/Antiphon.Tests/Scripts/ReleaseGatePublicationAuthorityTests.cs` using a new
+`C599A` case prefix in `scripts/test-release-gate.ps1`; add
+`C599A_QueuedReportRecovery` to `ReleaseGateReportDeliveryTests.cs`.
+The queue fixture must use a real private Hangfire storage/worker and the eventual
+production durable intent store across **fresh host instances**. Use a unique test
+schema if that store uses Postgres, real-clock-offset timing, an owned scratch clone,
+a local bare Git remote, and a process-boundary `gh` fixture that returns actual stdout,
+exit code and downloaded asset bytes. Substitute only external I/O, never the gate.
+Use `NotInParallel` for global Hangfire configuration and the assembly-local
+`ParallelLimiter<ProcessSpawnLimit>` for child-spawning classes. Await every worker
+and owned child. Keep the normal Program factory's worker and production runner guards
+off; construct the explicitly isolated worker separately. No live provider credentials.
+
+#### Lane inventory and the three-minute boundary
+
+The authoritative source is `tests/test-execution-policy.json` at the **candidate SHA**,
+schema 2. Inspected hash:
+`ba3c0d8edfb1badc0feb6245d635510b75bd1ef012dca931d9fdde93e83e896c`.
+Recompute/record it at qualification; do not copy this hash across a policy change.
+`reducedDispatchPolicy` is currently `inactive`; a small CP selection does not flip it.
+
+| Lane | Exact selection | Explicitly absent / evidence limit |
+|---|---|---|
+| Ordinary activation change | CP-19 only: the five `ReleaseGateSchedulerTests.C599A_*` methods specified below, isolated build plus fresh TRX | No full Unit assembly, unrelated Integration, Slow/native, messaging broker, client suite or E2E. Broad inherited CP-1..18 are not rerun per change. This is the operator's newer limit; the owner docs must describe that exception when the activation repair is implemented. |
+| Master scheduled backstop | `profiles.nightly.requiredSuites`: `antiphon, session-runner, pty-host, agents-pty, messaging, client, scripts` | E2E absent; default OptIn/Explicit exclusions retained. It earns only master readiness. This existing contract is retained independently of RC activation. |
+| RC qualification and every publishable RC | `profiles.rc.requiredSuites`: exactly those seven **plus `e2e`**, with every discovered eligible expanded UID in every native suite | No `-Suites` subset, category cap, smoke substitution, duration-based omission, or blanket OptIn exclusion. Slow/native automated cases are required. All new activation queue/adapter/report cases run here even though ordinary CP-19 excludes them. |
+
+| RC suite | Inventory and execution evidence | Estimated run minutes |
+|---|---|---:|
+| `antiphon` | All eligible expanded UIDs in `tests/Antiphon.Tests`; Unit, Integration, Slow, including new queue/authority cases; disjoint class chunks reconciled to one discovery roster | 120 |
+| `session-runner` | All eligible UIDs in `tests/Antiphon.SessionRunner.Tests`, including native/direct-process/pty-host coverage | 20 |
+| `pty-host` | All eligible UIDs in `tests/Antiphon.PtyHost.Tests` | 20 |
+| `agents-pty` | All eligible UIDs in `tests/Antiphon.Agents.Pty.Tests`, including FakeClaude and the eligible mixed-class rows | 20 |
+| `messaging` | All eligible UIDs in `tests/Antiphon.Messaging.Tests`; `ANTIPHON_BROKER_TESTS=1` with disposable broker | 15 |
+| `client` | Fresh npm ci/build/lint, then unfiltered `pwsh -NoProfile -File scripts/test-client.ps1`; retain wrapper exit and Vitest counts | 8 |
+| `scripts` | Every `scriptCensus` unattended row, plus project/census validation and duration-tripwire consumer evidence | 20 |
+| `e2e` | All eligible UIDs in `tests/Antiphon.E2E`, generated Chromium installer, headless browser, current bundle, isolated app/DB/random runner, real after-disposal census | 60 |
+
+Native projects execute sequentially; no Antiphon.Tests/FakeClaude co-scheduling. The
+**283-minute** execution estimate is a capacity reservation, not an observed duration
+or a timeout increase. In particular Antiphon.Tests' 120 minutes exceeds the policy's
+60-minute watchdog: A-1's repair plan must define bounded disjoint chunks using the
+existing discovery/union evidence before qualification, or explicitly report capacity
+failure. Do not silently raise the watchdog. The old 25.5-minute total is not current.
+
+The exact excluded inventory is the 70 policy rows: 21 `antiphon`, 37 `agents-pty`,
+4 `session-runner`, 5 `pty-host`, 3 `e2e`. These are exclusion **rows**, not UID counts.
+Persist the candidate's complete policy file plus expanded `census.json`, including
+suite/class/method/reason/owner; that is the exact versioned roster, not a hand-maintained
+second list. E2E excludes only `DelegationPipelineE2ETests`,
+`DelegationSequencingE2ETests`, `OutputDistillationApplyCanaryTests` (live/headed/approval).
+Other exclusions name live providers, child-only entrypoints, Linux-only CARD-0590
+coverage and CARD-0490 QEMU controls. Mixed classes exclude only their listed methods;
+for example FakeClaude `ClaudeVerifiedDeliveryTests` and offline workspace-layout rows
+remain required. A new discovered case without an exclusion remains required.
+
+The script census has 12 unattended entries:
+`test-apphost-lock-age`, `test-apphost-main-worktree-guard`, `test-apphost-probe-class`,
+`test-cleanup-claude-sessions`, `test-cleanup-codex-test-residue`, `test-client-mode`,
+`test-deploy-am-service`, `test-deploy-nightly-watchdog`, `test-hooks`,
+`test-nightly-report`, `test-reap-zombie-agents`, `test-stage-value-report`.
+`test-client` is a wrapper, `test-duration-tripwire` an argument consumer. The native
+script-wrapper tests also execute the release-gate harness. New standalone harnesses
+must receive an explicit census disposition rather than vanish from policy validation.
+
+### Delivery inventory
+
+Each path below is joined by durable identity, not a log message or a successful request.
+There is no new agent-session input or Telegram delivery in this activation scope.
+If a later design adds session notification, it must add a real SessionMessageQueue
+producer-to-recipient test and a matching **complete UserPrompt transcript** before
+claiming delivery; board persistence cannot substitute for that.
+
+| Path | Producer -> destination | Persistence / recovery | Observable recipient receipt |
+|---|---|---|---|
+| DL-6 | Main-instance recurring trigger -> real Hangfire queue -> native RC worker | Durable identity = repository + recurring id + London local slot/UTC instant + intent id; join Hangfire job attempts to it. Persist before enqueue; reconstruct after enqueue exception or lost in-memory queue. Never allocate a second candidate for the same recovered intent. A-1 must choose the store. | Worker-start receipt and native terminal evidence bearing the same intent, job, candidate id/ref/SHA, run id and policy hash. An enqueued or Succeeded Hangfire state alone proves neither native execution nor release. V-11. |
+| DL-7 | Worker -> `release-cut` -> candidate remote -> native executor -> publisher | Intent joins candidate journal, native state and publication journal. Cut/push and all native/publish handoffs restart from disk; lost response triggers recipient read before another write. Test failure is terminal, publication recovery does not rerun tests. | Independent bare-remote/GitHub observation plus native complete evidence; candidate/tag peeled SHA and both downloaded assets match. V-12..V-14. |
+| DL-8 | Pre-native/native/publication failure -> durable report obligation -> real queue -> board API | Identity = repository/project/board + lane=rc + intent + candidate if allocated + run if started + report body digest. Preserve pending obligation on exception, restart or response loss; recover same incident/revision. | GET of stored card and revision contains complete intended body, identities and failure. Busy/unavailable and already eligible recipient both tested. Board record is visible to the operator/orchestrator; it is not a claim that a human read it. V-15. |
+
+`ReleaseGateQueueTests.C599A_ReadyAndBusy` enqueues via the production producer, first
+with an already-running free worker, then with that worker held by an owned blocking job.
+Before release, assert no native receipt and no success; after release require the joined
+terminal native receipt. `C599A_HandoffRecovery` reconstructs a fresh producer/worker at
+each cut: before durable intent commit; after commit/before enqueue; enqueue throws;
+enqueue commits but response is lost; host loses the queue before dequeue; dequeue before
+native start; child starts before start-ack; native receipt exists before queue ack.
+For each committed intent, recover one logical candidate and one terminal outcome;
+uncommitted intent may be retried but has produced no side effect. Include both a free
+and a busy recipient. Repeat each post-cut state twice to expose duplicate recovery.
+
+`C599A_QueuedReportRecovery` exercises all three failure producers through the real queue
+against the real isolated Program API: before report-intent commit, commit-before-enqueue,
+enqueue exception, queue loss, API unavailable, API commit-before-response, GET failure,
+and GET-success-before-local-ack. Seed one nightly incident and one assigned RC incident;
+require correct refusal/preservation on assignment rather than unauthorized closure.
+After recovery read the complete body and revision by id, including digest/intent/run.
+Test a foreign body with the same title and an accepted response without a stored card.
+
+Substitutes: an owned short native probe establishes worker/process/receipt wiring,
+not full-suite success; local bare Git establishes ref behavior, not GitHub authorization;
+process-boundary `gh` fixtures establish stdout/JSON/exit/asset handling, not real GitHub
+availability; a private Hangfire store establishes queue/restart behavior, not production
+configuration. Existing function-level Git/GitHub doubles cover journal logic but bypass
+the real adapter. Only Q-3/Q-4 below establish live recipient delivery and publication.
+
+### Proves it works now
+
+Names below are commissioned test methods, not assertions that they already pass.
+
+- V-10: main-instance admission and two local-time slots | ordinary, new
+  `ReleaseGateSchedulerTests.C599A_Admission`, `C599A_Slots`, `C599A_Provenance`,
+  `C599A_DisabledReentry`, `C599A_RepairDisposition` | all five run through production
+  registration/admission/outcome decisions; no mocked decision predicates. Admission
+  covers all enabled x worker-enabled combinations and one wrong root/repository/project/
+  board at a time. Slots use Hangfire's five-field `30 8,16 * * *`, Europe/London:
+  Sep 23 07:30/15:30 UTC; Oct 25 08:30/16:30 UTC, both just-before/exact/just-after;
+  repeated tick keeps one intent. Manual trigger has a separate identity and never
+  manufactures scheduled master credit. Failed RC -> master repair/new cut; failed
+  publication -> same tested candidate recovery; no-new-SHA/busy are not release success.
+- V-11: delivery, recovery and ownership | RC, new `ReleaseGateQueueTests` methods
+  `C599A_ReadyAndBusy`, `C599A_HandoffRecovery`, `C599A_LockScope`,
+  `C599A_DisableAndShutdown` | DL-6/DL-7 receipts; concurrent manual/scheduled attempts
+  respect one shared lock before clone, through publish and owned child join; no stealing
+  a live old owner. Disable after enqueue prevents new native starts. Host restart
+  recovers owned work or records a joined terminal failure, without killing foreign work.
+- V-12: authoritative eight-suite evidence | RC, new
+  `ReleaseGatePublicationAuthorityTests.C599A_PinnedPolicy` | production publisher
+  called without optional authority arguments reads pinned policy itself; empty/shrunken
+  summary required set, stale hash, each absent suite, failed sibling chunk, required skip,
+  stale/missing/zero/duplicate UID evidence refuse before any remote write. A valid full
+  profile control succeeds. Existing policy tests' four-suite fixture cannot prove this.
+- V-13: real adapter returns strict recipient identity | RC, new
+  `ReleaseGatePublicationAuthorityTests.C599A_GitHubReadback` | exercise actual
+  `Invoke-ReleaseGateGitHub` process boundary; valid stdout parsed, nonzero exit,
+  malformed/empty JSON, missing body/id, draft=true/missing/string-false, wrong repo/tag
+  or foreign URL all refuse and leave published journal unset. Positive control has
+  nonempty id/URL and boolean draft=false for the expected repository/tag.
+- V-14: publication receipt and restart | RC, new
+  `ReleaseGatePublicationAuthorityTests.C599A_AssetReadback` and existing
+  `ReleaseGatePublicationTests.C599_CutRecovery`, `C599_TagRecovery`,
+  `C599_DraftRecovery`, `C599_AssetRecovery`, `C599_PublishRecovery` | independently
+  download manifest and summary; absent/wrong bytes or digest refuse publication.
+  Existing unequal asset is preserved, not clobbered. For each remote operation test
+  before-write and commit-then-response-loss; same tag/SHA/manifest resumes one release.
+- V-15: failure reaches its board recipient | RC, augmented
+  `ReleaseGateReportDeliveryTests.C599A_QueuedReportRecovery` | DL-8 matrix, exact body
+  readback, one logical incident, pending obligation survives recipient outage. A-4's
+  cut-before-native failure must reach this same path; job failure alone is insufficient.
+- V-16: operating qualification | post-land Q-1..Q-4 below | one real manual full RC
+  and one actual scheduled full RC published, both scheduled slots observed; policy,
+  counts, tag, assets and recipient readbacks agree. No fixture run earns this credit.
+
+### Guards the regression
+
+- R-5: ordinary Program test boots and shipped dormant RC configuration never start
+  the RC worker | `ReleaseGateSchedulerTests.C599A_Admission` (ordinary) and existing
+  `HangfireStartupSafetyTests.Assembly_guard_and_factory_override_disable_the_Hangfire_worker`
+  (RC); decisive zero native starts with either enable gate false.
+- R-6: disable/duplicate/restart do not create a second candidate or orphan native work |
+  `C599A_DisabledReentry` (ordinary) plus `ReleaseGateQueueTests` (RC); decisive one
+  durable intent/candidate and no unowned live child at terminal completion.
+- R-7: master credit/state, default nightly exclusions and immutable publication survive |
+  `ReleaseGateRunTests.C599_CreditIdentity`, `C599_CreditVerdicts`,
+  `C599_MasterStateIsolation`, `C599_SharedLock`, `C599_Continuation`,
+  `ReleaseGatePolicyTests` and `ReleaseGatePublicationTests` (RC);
+  RC success/failure leaves the four master state files byte-identical. Prior controls
+  G-1..G-206 are inherited obligations, not replaced by the new fast lane.
+- R-8: RC failure/recovery cannot close a nightly or assigned incident |
+  `ReleaseGateReportDeliveryTests.C599_ReportReadback`, `C599_ReportRecovery`,
+  `C599A_QueuedReportRecovery` (RC); decisive original nightly id/revision/body unchanged
+  and assigned RC incident preserved on refused update.
+
+### Guard inventory
+
+This is the activation delta, continuing the historical numbering. Each independently
+bypassable guard has its own PC; no untested guard is hidden. A-1..A-4 are plan-gap
+references, D/S references refer to the unchanged fix design. Pure fixture safety from
+the historical inventory remains inherited, including transcript requirements if used.
+
+| Guard | Plan reference and safety-critical invariant | Positive control |
+|---|---|---|
+| G-207 | A-1: RC enabled gate before admission | PC-207 |
+| G-208 | A-1: Hangfire worker-enabled gate before registration | PC-208 |
+| G-209 | A-1/D-3: canonical main-instance root identity | PC-209 |
+| G-210 | A-1/D-3: repository identity match | PC-210 |
+| G-211 | A-1/D-7: project identity match | PC-211 |
+| G-212 | A-1/D-7: board belongs to configured project | PC-212 |
+| G-213 | D-3: two London slots mapped to their UTC instants | PC-213 |
+| G-214 | A-1/D-7: manual invocation never claims a scheduled slot | PC-214 |
+| G-215 | A-1: duplicate slot maps to one durable intent | PC-215 |
+| G-216 | A-1: intent durable before enqueue | PC-216 |
+| G-217 | A-1: committed intent recovers after enqueue failure/queue loss | PC-217 |
+| G-218 | A-1/D-3: lost native acknowledgement reuses candidate/run identity | PC-218 |
+| G-219 | D-3: failed test run is terminal; repair through master/new RC | PC-219 |
+| G-220 | A-4/D-4: shared lock precedes clone/cut | PC-220 |
+| G-221 | D-4: no age-based stealing of a live lock owner | PC-221 |
+| G-222 | A-4/D-4: lock retained through publication and owned-child join | PC-222 |
+| G-223 | A-1/D-4: host shutdown leaves each child joined or durably owned | PC-223 |
+| G-224 | A-3/D-5: required suites come from candidate policy, never report claims | PC-224 |
+| G-225 | A-3/D-5: expected policy hash comes from pinned candidate policy | PC-225 |
+| G-226 | A-3/D-5: every required chunk/UID must pass; one passing row cannot hide a failed sibling | PC-226 |
+| G-227 | A-2/D-8: production adapter parses actual recipient stdout | PC-227 |
+| G-228 | A-2/D-8: nonzero final readback refuses publication credit | PC-228 |
+| G-229 | A-2/D-8: missing/malformed final body refuses credit | PC-229 |
+| G-230 | A-2/D-8: only boolean draft=false is published | PC-230 |
+| G-231 | A-2/D-8: nonempty remote release id required | PC-231 |
+| G-232 | A-2/D-8: release repository/URL origin equals intended repository | PC-232 |
+| G-233 | A-2/D-8: release tag equals reserved tag | PC-233 |
+| G-234 | A-2/D-8: downloaded manifest digest equals journaled manifest | PC-234 |
+| G-235 | A-2/D-8: downloaded summary digest equals journaled summary | PC-235 |
+| G-236 | A-2/D-8: conflicting existing remote asset cannot be overwritten | PC-236 |
+| G-237 | A-4/S6: report obligation durable before queue/send | PC-237 |
+| G-238 | S6: only matching complete board GET acknowledges report delivery | PC-238 |
+| G-239 | S6: ambiguous report write reconciles same incident before another create | PC-239 |
+| G-240 | S6: RC reporting cannot update/close the nightly lane | PC-240 |
+| G-241 | A-1: queued work rechecks disabled admission before native start | PC-241 |
+| G-242 | A-1: queue acceptance cannot become native-complete/release success | PC-242 |
+
+### Positive controls
+
+Run these **after repair, ordinary Review and land**, each as break/red/restore/green.
+Code runs V/R; Review judges the tests before land. Never mutate while the full RC is
+running. TUnit filter for each row is exactly `/*/*/<Class>/<Method>` using the class
+and method printed in that row; no whole-class mutation run. The test must name its
+decisive assertion `C599A G-n` and exercise the production decision. Each defect below
+is a compiling constant/branch omission or valid PowerShell expression change, not a
+fixture failure, syntax error, zero-test run or assertion rewrite. Refresh restored
+source mtimes/rebuild so restored-green cannot reuse a mutated DLL.
+
+| PC | Break the mapped guard by | Exact method expected red | Decisive assertion | Cycle minutes |
+|---|---|---|---|---:|
+| PC-207 | Remove RC enabled condition | `ReleaseGateSchedulerTests.C599A_Admission` | G-207: disabled yields zero admissions | 3 |
+| PC-208 | Remove worker-enabled condition | `ReleaseGateSchedulerTests.C599A_Admission` | G-208: disabled worker has zero RC recurring jobs | 3 |
+| PC-209 | Accept a linked-worktree root as canonical | `ReleaseGateSchedulerTests.C599A_Admission` | G-209: foreign root yields zero admissions | 3 |
+| PC-210 | Omit repository comparison | `ReleaseGateSchedulerTests.C599A_Admission` | G-210: foreign repository refused | 3 |
+| PC-211 | Omit project comparison | `ReleaseGateSchedulerTests.C599A_Admission` | G-211: foreign project refused | 3 |
+| PC-212 | Omit board ownership comparison | `ReleaseGateSchedulerTests.C599A_Admission` | G-212: foreign-project board refused | 3 |
+| PC-213 | Use UTC instead of London when registering cron | `ReleaseGateSchedulerTests.C599A_Slots` | G-213: September first fire is 07:30 UTC | 3 |
+| PC-214 | Label manual trigger as scheduled | `ReleaseGateSchedulerTests.C599A_Provenance` | G-214: manual invocation has no scheduled-slot credit | 3 |
+| PC-215 | Allocate a new intent id for a repeated slot | `ReleaseGateSchedulerTests.C599A_Slots` | G-215: repeated slot returns the same intent | 3 |
+| PC-216 | Enqueue before committing intent | `ReleaseGateQueueTests.C599A_HandoffRecovery` | G-216: worker never observes a missing intent | 6 |
+| PC-217 | Skip pending-intent reconciliation on restart | `ReleaseGateQueueTests.C599A_HandoffRecovery` | G-217: same committed intent has a terminal native receipt after queue loss | 6 |
+| PC-218 | Clear saved candidate/run on lost acknowledgement | `ReleaseGateQueueTests.C599A_HandoffRecovery` | G-218: before/after candidate and run ids equal | 6 |
+| PC-219 | Convert terminal test failure into automatic retry | `ReleaseGateSchedulerTests.C599A_RepairDisposition` | G-219: one failure yields no automatic rerun; route is master repair/new candidate | 3 |
+| PC-220 | Move shared-lock acquisition after candidate cut | `ReleaseGateQueueTests.C599A_LockScope` | G-220: contended run has zero clone/fetch/push calls | 6 |
+| PC-221 | Treat a live old owner as stale | `ReleaseGateQueueTests.C599A_LockScope` | G-221: live owner remains and contender is deferred-busy | 6 |
+| PC-222 | Release lock after tests, before publication/join | `ReleaseGateQueueTests.C599A_LockScope` | G-222: contender has zero starts while publication or owned child is held | 6 |
+| PC-223 | Return completed on shutdown without join or retained ownership | `ReleaseGateQueueTests.C599A_DisableAndShutdown` | G-223: no live unowned child after shutdown receipt | 6 |
+| PC-224 | Use summary.requiredSuites as authority | `ReleaseGatePublicationAuthorityTests.C599A_PinnedPolicy` | G-224: seven-suite report cannot publish an eight-suite policy | 3 |
+| PC-225 | Pass empty ExpectedPolicyHash to the publication guard | `ReleaseGatePublicationAuthorityTests.C599A_PinnedPolicy` | G-225: old hash refuses before a remote write | 3 |
+| PC-226 | Mark suite complete on its first passing chunk | `ReleaseGatePublicationAuthorityTests.C599A_PinnedPolicy` | G-226: passing plus failing sibling chunk publishes nothing | 3 |
+| PC-227 | Return empty Output and omit parsed Body from real gh adapter | `ReleaseGatePublicationAuthorityTests.C599A_GitHubReadback` | G-227: valid process stdout yields the fixture's nonempty release id | 3 |
+| PC-228 | Ignore nonzero final gh exit | `ReleaseGatePublicationAuthorityTests.C599A_GitHubReadback` | G-228: nonzero readback leaves published journal unset | 3 |
+| PC-229 | Default an absent body to an accepted receipt | `ReleaseGatePublicationAuthorityTests.C599A_GitHubReadback` | G-229: empty/malformed body leaves published unset | 3 |
+| PC-230 | Coerce missing draft flag to false | `ReleaseGatePublicationAuthorityTests.C599A_GitHubReadback` | G-230: missing draft flag refuses | 3 |
+| PC-231 | Remove release-id nonempty check | `ReleaseGatePublicationAuthorityTests.C599A_GitHubReadback` | G-231: empty id refuses | 3 |
+| PC-232 | Remove expected repository comparison | `ReleaseGatePublicationAuthorityTests.C599A_GitHubReadback` | G-232: foreign-repository release refuses | 3 |
+| PC-233 | Remove reserved-tag comparison | `ReleaseGatePublicationAuthorityTests.C599A_GitHubReadback` | G-233: different tag refuses | 3 |
+| PC-234 | Replace manifest remote/local digest equality with true | `ReleaseGatePublicationAuthorityTests.C599A_AssetReadback` | G-234: corrupt remote manifest prevents publish | 3 |
+| PC-235 | Replace summary remote/local digest equality with true | `ReleaseGatePublicationAuthorityTests.C599A_AssetReadback` | G-235: corrupt remote summary prevents publish | 3 |
+| PC-236 | Allow upload --clobber after mismatched remote digest | `ReleaseGatePublicationAuthorityTests.C599A_AssetReadback` | G-236: original conflicting remote bytes remain unchanged | 3 |
+| PC-237 | Queue report before committing its obligation | `ReleaseGateReportDeliveryTests.C599A_QueuedReportRecovery` | G-237: queue consumer always finds the committed report identity | 8 |
+| PC-238 | Acknowledge report on POST acceptance alone | `ReleaseGateReportDeliveryTests.C599A_QueuedReportRecovery` | G-238: missing/foreign complete GET body leaves obligation pending | 8 |
+| PC-239 | Create again after a committed write's response is lost | `ReleaseGateReportDeliveryTests.C599A_QueuedReportRecovery` | G-239: exactly one matching card id after recovery | 8 |
+| PC-240 | Select nightly label for RC incident lookup | `ReleaseGateReportDeliveryTests.C599A_QueuedReportRecovery` | G-240: seeded nightly revision/body unchanged | 8 |
+| PC-241 | Omit worker's post-enqueue enabled reread | `ReleaseGateSchedulerTests.C599A_DisabledReentry` | G-241: disabled queued item has zero native starts | 3 |
+| PC-242 | Mark native-complete when enqueue returns | `ReleaseGateQueueTests.C599A_ReadyAndBusy` | G-242: busy worker has no native-complete receipt before release | 6 |
+
+G-232 uses a response whose tag/id/draft are otherwise valid; the separate URL-only
+foreign-origin row must also fail. G-226 invalidates one UID/chunk at a time while all
+other identity fields stay valid. This prevents a different guard from masking the
+control. Existing publication credit tests still independently control booleans,
+candidate/run/SHA identity and NoReport/diagnostic/seamed inputs (historical inventory).
+
+### Out of scope
+
+- Moving master/readiness from Windmill, enabling Interim, or replacing its watchdog
+  provenance is not RC activation. Keep S5 acceptance open; never mint a master receipt
+  from Hangfire RC evidence. No new Windows Scheduled Task or Windmill RC schedule.
+- Live/headed/distiller, Linux and QEMU lanes retain the exact versioned policy exclusions
+  and owners above. The release describes itself as automated Windows coverage.
+- GitHub Actions repair remains CARD-0610. A local client/build/test red still blocks the
+  RC; the absence of a green Actions badge is not a substitute test result.
+- User-session and external-chat notifications are excluded: the intended recipients here
+  are the native worker, GitHub and the board. Adding a session/chat channel needs its own
+  durable receipt design, busy/eligible tests and complete transcript/reader evidence.
+- Re-running every historical S1-S4 PC on each change is excluded from the ordinary
+  three-minute lane. Historical mutation obligations remain separately trackable; the
+  activation delta below neither claims they ran nor waives them.
+
+### Checkpoints
+
+This is the revised **ordinary activation** manifest under the new operator limit.
+CP-1..18 above are historical implementation evidence only. CP-19 is a proposed Code
+manifest, withheld until A-1..A-4 have an approved executable repair design. One isolated
+build and one exact filter; Min counts TUnit methods, not matrix rows or minutes.
+All five method names are mandatory in the executed roster. V-11..V-16/R-7/R-8 are
+explicit RC qualification scope, not missing ordinary rows. They may not be described
+as passed by CP-19. No broad ordinary run is silently added.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-19 | A-1..A-4 repair committed | `tests/Antiphon.Tests -> bin-c599a/` | activation-contract | `/*/*/ReleaseGateSchedulerTests/C599A_*` | V-10, R-5 ordinary, R-6 ordinary | Exact five named methods; 5 passed, 0 failed/skipped; all declared admission/slot/provenance/disable/repair rows asserted | 5 | 3 |
+
+Executable CP command after those tests exist:
+
+```powershell
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-19 -Project tests/Antiphon.Tests -OutputPath bin-c599a/ -Filter '/*/*/ReleaseGateSchedulerTests/C599A_*' -MinExecuted 5 -Expect C599A_Admission,C599A_Slots,C599A_Provenance,C599A_DisabledReentry,C599A_RepairDisposition -ResultsRoot .antiphon/c599a-checkpoints
+```
+
+The three minutes include an estimated 1.5-minute incremental build and 1.5-minute test
+execution. Cold restore/build may exceed that: report the actual time and source, stop
+expanding the ordinary scope, and revise the budget/fixture cost through Plan. Never
+kill a valid test at 180 seconds or call omitted assertions passed. The cap changes
+selection, not test timeouts. Each later repair follows its own small closed manifest.
+Delete only verified producer-owned `bin-c599a` outputs at completion.
+
+#### Activation and live qualification checkpoints (not ordinary CP rows)
+
+These are sequential post-land acceptance obligations for the activation dispatch,
+not actions authorized for this TestDesign. Record results in
+`docs/investigations/2026-09-23-card-0599-release-gate-qualification.md` and keep raw
+evidence under `C:\Antiphon\releases\qualification\card-0599`. Native/script hashes,
+full SHAs, run/candidate/job/slot ids, per-suite/UID counts, remote asset digests, board
+revision and release id/URL are mandatory. Never commit credentials or raw transcripts.
+
+| Q | Operation and pass/fail criteria | Estimated active/run minutes |
+|---|---|---:|
+| Q-1 | Main checkout contains reviewed repair; `/api/version` equals that checkout after any required canonical activation. Validate effective main-instance settings, owned release/coordination roots, actual project/board and Git remote identities, GitHub authorization without printing credentials, Docker, Node/npm/.NET/PowerShell/Chromium. Read back RC registration twice: exactly one disabled Hangfire recurring job, five-field cron and London timezone. Verify no enabled competing Windmill RC schedule or RC Scheduled Task; if found, hold cut until reconciled. | 20 |
+| Q-2 | Isolated real-queue and process-adapter rehearsal at the landed SHA: the 4 new Queue methods, 3 new Authority methods and 1 new report method, exact method filters, with fresh receipts/TRX. Complete all restart, contention and readback negatives before allowing real publication. This is a one-time activation prerequisite in addition to their inclusion in every full RC. | 20 |
+| Q-3 | With recurring RC scheduling disabled, invoke one manual RC through the actual Hangfire entrypoint. It calls production `release-cut.ps1` on an owned clone, pins current `origin/master` once, runs all eight suites with no overrides/seams/NoReport, and publishes only after strict recipient receipts. Read candidate ref and peeled CalVer tag remotely; download both assets independently; compare SHA/policy/digests/counts; read board outcome and `release-status.ps1`. Any red/incomplete/readback failure leaves qualification unaccepted. | 313 |
+| Q-4 | Enable only the RC Hangfire recurrence, read back, and observe both 08:30/16:30 London slots. Each produces a durable cut/no-new-SHA/deferred-busy/red outcome. At least one **actual scheduled** full-profile green and published release is required; manual trigger cannot substitute. A second no-new-SHA slot is valid observation but supplies no new green. If Q-3 published the current SHA, wait for a genuine reviewed master change; do not manufacture a commit or bypass no-new-SHA. Capture job/native/recipient correlation and capacity versus master 00:30. No firing or overlapping native work fails acceptance. | 318 |
+
+Q-3's exact native entrypoint already exists:
+`pwsh -NoProfile -File scripts/release-cut.ps1 -ReleaseRoot C:\Antiphon\releases -CoordinationRoot C:\Antiphon\verification`.
+The new Hangfire adapter must invoke it with durable slot/job/candidate identity and
+the corrected policy/readback authority; do not manually invoke this command during
+TestDesign. Q-1/Q-3's enable/trigger commands cannot honestly be supplied until A-1
+defines the absent settings/entrypoint. That specific missing seam is why next=plan.
+
+#### Failure routing and notification
+
+An RC test/build/coverage/prerequisite failure freezes that candidate's evidence and
+publishes nothing. The board gets one `release-gate` incident with intent/job/slot,
+candidate ref/SHA, native run, failed test/chunk or setup cause, policy hash, evidence
+path and required next action. The operator and CARD-0599's orchestrator consume that
+board incident and Hangfire failure state. This scope sends no email/chat message and
+does not claim independent scheduler-outage alerting. If the main server is down, its
+absence is visible only to external observation; next startup must reconcile durable
+intent and report the missed/unfinished attempt.
+
+Fix source through a normal task branch -> focused Code/Review -> master, then cut a
+**new** RC and run all eight suites from scratch. Never patch/cherry-pick the tested
+candidate or reuse its partial green. Reproduce an alleged inherited red with the exact
+failing case at the base before attribution; keep failure counts and do not loosen
+timeouts/assertions. Link failed candidate to repair and successor. A publication/network
+failure after a valid full green instead resumes the same journal/tag/candidate after
+readback. Missing report recipient evidence remains pending/non-green, with a local
+durable obligation, even if every test passed. Disable new admission to roll back
+scheduling; retain journals, remote refs/releases and ownership of any running native
+child. RC outcomes never update/close the master-nightly incident.
+
+### Cost
+
+All times are **estimated**, no measured savings or green test result is claimed here.
+
+- Ordinary Code floor = sum CP EstimatedMinutes = **3 minutes** (CP-19 exact filter
+  above), comprising 1.5 build + 1.5 V/R. It replaces the historical 178-minute ordinary
+  scope for this operator-directed activation: **175 estimated minutes avoided per
+  change**, with broad assurance explicitly deferred to the release gate, not erased.
+- Mutation delta = **152 minutes**: 24 PCs x 3 (fast scheduler and script-authority
+  exact methods), 8 queue PCs x 6, 4 report PCs x 8. Each row includes break/red/restore/
+  green. Budget split: 48 build/setup + 104 mutation execution/restoration minutes.
+  Per-PC filters/minutes are the class/method and Cycle columns above. No broad PC run.
+- Ordinary plus this delta = **155 minutes** = 49.5 setup/build + 1.5 ordinary V/R +
+  104 mutation execution/restoration. The earlier 982-minute historical PC inventory
+  is not included or claimed complete; if its evidence is missing it is a separate
+  retained obligation, not a reason to call these 36 controls sufficient for all S1-S4.
+- Activation qualification floor = **671 minutes**, sum Q rows (20 + 20 + 313 + 318).
+  Each full RC allocates 20 setup/build + 283 suite execution + 10 recipient/publication
+  review = 313; Q-4 adds 5 registration/readback minutes. Q-2 budgets 6 queue + 4 authority
+  + 8 report + 2 isolated build minutes. Total this activation delta including ordinary,
+  Mutation and qualification = **826 minutes**. Both actual slots and a subsequent
+  eligible scheduled green require at least one calendar day, often longer if SHA is
+  unchanged, busy or red. Waiting for slots and repair authoring are additional.
+- Three minutes versus 178 is a scope change, not a measured speed improvement. Zero
+  dollars measured. Qualification's full RC remains the cost of release assurance;
+  no savings are claimed by skipping E2E or slow/native. Cold builds and the unmeasured
+  full suite are explicit estimate risks, not permission to widen watchdogs.
+
+Pre-handoff audit: test/fixture bodies above read; activation delta **guards=36,
+mapped=36, missing=0, duplicate PC maps=0**. All 36 PC prescriptions name a specific
+compiling defect, exact test method and decisive assertion; the 13 new method contracts
+are accounted for (5 ordinary, 4 queue, 3 authority, 1 report). **Executable-PC readiness
+is not yet satisfied**: the new methods/production Hangfire adapter do not exist, and
+A-2/A-3 expose already-missing guards that first need a repair baseline. No claim of
+all-PC executability or Code readiness is made. Plan must resolve A-1..A-4, then return
+to TestDesign to bind these contracts to actual seams and certify that gate. Numeric
+ordinary/PC/qualification costs are 3/152/671. No builds, tests, credentials, scheduling,
+RC cuts or releases were performed by this TestDesign.
+
 --- next stage ---
-next: code
-handoff: Implement S1-S4 and 42 C599 methods using CP-1..18. Preserve master/RC separation and exact Final/Full before land. Review before land; method-scoped Mutation after land. S5 actual Windmill/master qualification/pilot and S6 both real RC slots with at least one scheduled full green published release remain required.
+next: plan
+handoff: Resolve A-1..A-4: main-instance Hangfire RC durable intent/queue/restart and lock ownership, strict real GitHub release/assets readback, pinned eight-suite policy authority, and pre-native board reporting. Preserve the operator's 3-minute ordinary scope; return to TestDesign to certify executable PCs before activation Code.
 artifact: docs/superpowers/plans/2026-09-22-card-0599-release-gate-activation-plan.md
