@@ -602,6 +602,16 @@ public sealed class DelegationSettings
     public int SweepAbandonGraceSeconds { get; set; } = 30;
 
     /// <summary>
+    /// CARD-0633 D-6: the first remote-preparation retry delay for a runner-bound task. The n-th
+    /// consecutive failure holds the task for base * 2^(n-1), capped at
+    /// <see cref="RemotePrepBackoffMaxSeconds"/>. Default 30, floor 1.
+    /// </summary>
+    public int RemotePrepBackoffBaseSeconds { get; set; } = 30;
+
+    /// <summary>CARD-0633 D-6: the remote-preparation backoff cap. Default 900; at least the base.</summary>
+    public int RemotePrepBackoffMaxSeconds { get; set; } = 900;
+
+    /// <summary>
     /// Started-and-interrupted git attempts on one land request before the sweep refuses
     /// (CARD-0331). Held passes do not count. Floor 1, ceiling 10.
     /// </summary>
@@ -1124,6 +1134,9 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
             failures.Add("Delegation dispatch-held thresholds must be positive and Error must exceed Warning.");
         if (options.SweepBudgetSeconds <= 0 || options.SweepAbandonGraceSeconds <= 0)
             failures.Add("Delegation:SweepBudgetSeconds and Delegation:SweepAbandonGraceSeconds must be positive.");
+        if (options.RemotePrepBackoffBaseSeconds < 1
+            || options.RemotePrepBackoffMaxSeconds < options.RemotePrepBackoffBaseSeconds)
+            failures.Add("Delegation:RemotePrepBackoffBaseSeconds must be at least 1 and Delegation:RemotePrepBackoffMaxSeconds at least the base.");
         if (options.CheckInterpreterFirstAttemptSeconds is { } firstAttempt
             && (firstAttempt <= 0 || firstAttempt > options.CheckInterpreterWaitSeconds))
             failures.Add("Delegation:CheckInterpreterFirstAttemptSeconds must be positive and no greater than CheckInterpreterWaitSeconds, or null.");

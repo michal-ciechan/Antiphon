@@ -99,6 +99,7 @@ public sealed class AgentTaskDispatcher
     private readonly WorkspaceUseAdmission? _workspaceUse;
     private readonly CheckCompactionContinuationService? _compaction;
     private readonly SweepInFlightState? _sweepInFlight;
+    private readonly RemoteWorkspacePreparer? _remotePrep;
 
     /// <summary>This instance's context, so a test can tell an owned-scope sweep's context apart.</summary>
     internal AppDbContext Db => _db;
@@ -167,9 +168,13 @@ public sealed class AgentTaskDispatcher
         IAgentTaskLaunchSink? taskLaunchSink = null,
         // CARD-0633 D-3. Absent (every predating harness), sweeps run on this instance and are
         // always awaited; present together with scopeFactory, each sweep gets its own scope.
-        SweepInFlightState? sweepInFlight = null)
+        SweepInFlightState? sweepInFlight = null,
+        // CARD-0633 D-4/D-5. Absent, a runner-bound task that still needs its mirror stays Queued
+        // with a warning: this process has no way to prepare it off the tick.
+        RemoteWorkspacePreparer? remotePrep = null)
     {
         _sweepInFlight = sweepInFlight;
+        _remotePrep = remotePrep;
         _taskLaunchSink = taskLaunchSink;
         _remoteWorkspace = remoteWorkspace;
         _runners = runners;
@@ -254,11 +259,12 @@ public sealed class AgentTaskDispatcher
         int ResumedRoutingBlocked = 0,
         int SkippedCapacityWait = 0);
 
-    private enum DispatchOneResult { Dispatched, HeldOnLease, HeldForAgent, NotClaimed }
+    private enum DispatchOneResult { Dispatched, HeldOnLease, HeldForAgent, HeldForRemotePrep, NotClaimed }
 
     private enum HoldKind
     {
         Scope, RoutingPin, ModelHeld, CapacityWait, RepairSourceLanding, SiblingLanding, Lease, ConcurrencyCap, PinnedAgent,
+        RemotePrep, RemotePrepBackoff, RunnerUnavailable,
     }
 
     private sealed class QueuedHoldIndex

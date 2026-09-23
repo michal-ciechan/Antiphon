@@ -1733,6 +1733,8 @@ public class AppDbContext : DbContext
             entity.Property(t => t.RunnerId).HasMaxLength(64);
             entity.Property(t => t.RemoteWorktreePath).HasMaxLength(1000);
             entity.Property(t => t.RemoteWorktreeResidue).HasMaxLength(1000);
+            // CARD-0633 D-7: remote-prep backoff state, written only by RemoteWorkspacePreparer.
+            entity.Property(t => t.RemotePrepFailures).IsRequired().HasDefaultValue(0);
             entity.HasIndex(t => t.RunnerId).HasDatabaseName("IX_AgentTasks_RunnerId");
             entity.Property(t => t.MergeTargetRef).HasMaxLength(300);
             entity.Property(t => t.AgentName).HasMaxLength(200);
