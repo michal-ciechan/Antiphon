@@ -38,6 +38,13 @@ public sealed class PhoneHomeRunnerSettings
     public int TicketTtlSeconds { get; set; } = 30;
     public int HeartbeatSeconds { get; set; } = PhoneHomeProtocol.DefaultHeartbeatSeconds;
     public int LeaseSeconds { get; set; } = PhoneHomeProtocol.DefaultLeaseSeconds;
+
+    /// <summary>
+    /// CARD-0633 D-2: after a catch-up List fails or times out, the recovery pump waits this long
+    /// (on the live connection's clock) before asking again. The runner stays dispatch-ineligible
+    /// meanwhile; without the delay a fast-failing List would be re-sent every 50 ms.
+    /// </summary>
+    public int CatchUpRetrySeconds { get; set; } = 5;
     public PhoneHomeLimits Limits { get; set; } = new();
 }
 
@@ -80,6 +87,8 @@ public static class PhoneHomeRunnerSettingsRules
             failures.Add("PhoneHomeRunner:HeartbeatSeconds must be positive.");
         if (options.LeaseSeconds <= 0)
             failures.Add("PhoneHomeRunner:LeaseSeconds must be positive.");
+        if (options.CatchUpRetrySeconds < 1)
+            failures.Add("PhoneHomeRunner:CatchUpRetrySeconds must be at least 1.");
         try { options.Limits.Validate("PhoneHomeRunner:Limits"); }
         catch (InvalidOperationException ex) { failures.Add(ex.Message); }
         return failures;

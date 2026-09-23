@@ -43,21 +43,7 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
         {
             try
             {
-                var live = _directory.SnapshotLive();
-                if (live is null || !live.SocketOpen)
-                {
-                    _recovered = null;
-                    await Task.Delay(50, stoppingToken);
-                    continue;
-                }
-
-                if (!ReferenceEquals(_recovered, live))
-                {
-                    await CatchUpAsync(live, stoppingToken);
-                    _directory.MarkRecovered(live);
-                    _recovered = live;
-                    _ = PumpEventsAsync(live, stoppingToken);
-                }
+                await RunCycleAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -72,7 +58,33 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
         }
     }
 
-    internal async Task CatchUpAsync(PhoneHomeLiveConnection live, CancellationToken ct)
+    /// <summary>How many owned sessions' transcripts failed in the last catch-up that listed.</summary>
+    internal int LastCatchUpTranscriptFailures { get; private set; }
+
+    /// <summary>
+    /// One recovery step for the current live connection. Returns true when this cycle marked it
+    /// dispatch-eligible.
+    /// </summary>
+    internal async Task<bool> RunCycleAsync(CancellationToken ct)
+    {
+        var live = _directory.SnapshotLive();
+        if (live is null || !live.SocketOpen)
+        {
+            _recovered = null;
+            return false;
+        }
+
+        if (ReferenceEquals(_recovered, live))
+            return false;
+
+        await CatchUpAsync(live, ct);
+        _directory.MarkRecovered(live);
+        _recovered = live;
+        _ = PumpEventsAsync(live, ct);
+        return true;
+    }
+
+    internal async Task<bool> CatchUpAsync(PhoneHomeLiveConnection live, CancellationToken ct)
     {
         if (CatchUpHold is { } hold)
             await hold.Task.WaitAsync(ct);
@@ -86,9 +98,14 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogDebug(ex, "Phone-home catch-up list failed");
-            return;
+            return false;
         }
 
+        LastCatchUpTranscriptFailures = 0;
+        if (sessions.Count == 0)
+            return true;
+
+        var complete = true;
         await using var scope = _scopes.CreateAsyncScope();
         var runtime = scope.ServiceProvider.GetRequiredService<AgentSessionRuntime>();
         foreach (var session in sessions)
@@ -104,8 +121,11 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogDebug(ex, "Phone-home catch-up failed for {SessionId}", session.SessionId);
+                complete = false;
             }
         }
+
+        return complete;
     }
 
     internal async Task PumpEventsAsync(PhoneHomeLiveConnection live, CancellationToken ct)
