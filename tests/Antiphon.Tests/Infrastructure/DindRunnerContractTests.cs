@@ -6,7 +6,8 @@ namespace Antiphon.Tests.Infrastructure;
 // CARD-0604 S1. Text guards over the files the persistent server2 runner boots from: the
 // fail-together entrypoint (D-3), the nested daemon configuration (D-4) and the baked, non-secret
 // git/ssh custody configuration (D-8). None of these are exercised by a build; they are only ever
-// read by a root process on server2, so the guard is the file's own text.
+// read by a root process on server2, so the guard is the file's own text. The runner's git
+// identity is not baked (CARD-0631): it is a mounted server2 file, guarded below.
 [Category("Unit")]
 public sealed class DindRunnerContractTests
 {
@@ -243,6 +244,46 @@ public sealed class DindRunnerContractTests
         // insteadOf (without "push") would send anonymous fetches over SSH too.
         text.Replace("pushInsteadOf", "", StringComparison.Ordinal)
             .Contains("insteadOf", StringComparison.Ordinal).ShouldBeFalse("fetches stay anonymous HTTPS");
+    }
+
+    // CARD-0631 V-6, D-9 as amended by the operator: the runner's commit identity is a FILE on
+    // server2, mounted read-only and named by GIT_CONFIG_GLOBAL for uid 1654. It is never baked
+    // into the image, where changing it would need a rebuild and every image would carry it.
+    [Test]
+    public void Gitconfig_sets_runner_identity_from_the_mounted_file()
+    {
+        // Never baked: the image's system gitconfig has no identity (comments excluded) and does not
+        // include the mount either -- a system-level include would lose to any user-level stopgap.
+        var baked = GitConfig().Replace("\r\n", "\n").Split('\n')
+            .Select(line => line.Trim())
+            .Where(line => line.Length > 0 && line[0] != '#' && line[0] != ';')
+            .ToList();
+        baked.ShouldNotContain("[user]", "no identity section is baked into /etc/gitconfig");
+        baked.Any(line => line.StartsWith("name", StringComparison.Ordinal) || line.StartsWith("email", StringComparison.Ordinal))
+            .ShouldBeFalse("no user.name/user.email key is baked");
+        baked.Any(line => line.StartsWith("[include", StringComparison.Ordinal)).ShouldBeFalse();
+        var dockerfile = Read("docker/session-runner-grok/Dockerfile");
+        foreach (var token in new[] { "user.name", "user.email", "GIT_CONFIG_GLOBAL", "GIT_AUTHOR_", "GIT_COMMITTER_" })
+            dockerfile.Contains(token, StringComparison.Ordinal).ShouldBeFalse("the Dockerfile bakes " + token);
+
+        // Mounted: compose requires the host file and binds it read-only where the entrypoint looks.
+        var runner = DockerStackDocuments.Service(Server2Compose(), "session-runner");
+        DockerStackDocuments.List(runner, "volumes")
+            .ShouldContain("${RUNNER_GIT_IDENTITY_FILE:?RUNNER_GIT_IDENTITY_FILE is required}:/run/antiphon/gitconfig:ro");
+        DockerStackDocuments.Env(runner, "GIT_CONFIG_GLOBAL").ShouldBe("/run/antiphon/gitconfig",
+            "docker exec probes resolve the same identity the runner does");
+
+        // Pointed at: the entrypoint refuses a missing or unusable file, then exports it for the runner.
+        var text = Entrypoint();
+        text.ShouldContain("GIT_IDENTITY_SOURCE=\"$RUNTIME_DIR/gitconfig\"");
+        text.ShouldContain("RUNTIME_DIR=/run/antiphon");
+        Refusal(text, "GitIdentityMissing").ShouldBeTrue("a missing or empty identity file refuses");
+        Refusal(text, "GitIdentityUnusable").ShouldBeTrue("an identity uid 1654 cannot read, or without both keys, refuses");
+        text.ShouldContain("git config --file \"$1\" --get user.name >/dev/null && git config --file \"$1\" --get user.email >/dev/null");
+        Order(text, "GitIdentityUnusable", "export GIT_CONFIG_GLOBAL=\"$GIT_IDENTITY_SOURCE\"").ShouldBeTrue();
+        Order(text, "export GIT_CONFIG_GLOBAL=\"$GIT_IDENTITY_SOURCE\"", "--groups=\"$NESTED_SOCKET_GID\" \"$@\"")
+            .ShouldBeTrue("exported before the runner starts");
+        Order(text, "GitIdentityMissing", "dockerd --config-file").ShouldBeTrue("the identity check precedes dockerd");
     }
 
     [Test]

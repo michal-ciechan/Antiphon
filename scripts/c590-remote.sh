@@ -896,6 +896,15 @@ PHONE_HOME_SECRET="$SERVER2_ROOT/secrets/phone-home"
 # CARD-0628 D-1: the Claude setup-token file. The desktop bridge streams it from the vault over SSH
 # stdin before this script runs; nothing here ever reads its contents.
 CLAUDE_OAUTH_TOKEN_PATH="$SERVER2_ROOT/secrets/claude_oauth_token"
+# CARD-0631 D-9 (amended): the runner's git identity, a non-secret file beside the secrets it boots
+# with. Created from stack.env's RUNNER_GIT_USER_NAME/EMAIL (or these defaults) only when missing.
+GIT_IDENTITY_PATH="$SERVER2_ROOT/secrets/gitconfig"
+GIT_IDENTITY_DEFAULT_NAME="antiphon-server2-runner"
+GIT_IDENTITY_DEFAULT_EMAIL="antiphon-server2-runner@users.noreply.github.com"
+GIT_IDENTITY_MOUNT="/run/antiphon/gitconfig"
+# CARD-0631 D-10: the anonymous origin RunnerWorkspaceService clones from.
+RUNNER_CHECKOUT_ORIGIN="https://github.com/michal-ciechan/Antiphon.git"
+RUNNER_CHECKOUT_DEFAULT="/work/repos/antiphon"
 
 # The tag the project is DEPLOYED at, which is not this run's sha: a case that only restarts or
 # inspects the standing runner must compose the image that is actually there. Deriving it from $SHA
@@ -919,6 +928,7 @@ compose_host() {
     ANTIPHON_DEPLOY_KEY_FILE="$DEPLOY_KEY" \
     PHONE_HOME_SECRET_FILE="$PHONE_HOME_SECRET" \
     CLAUDE_OAUTH_TOKEN_FILE="$CLAUDE_OAUTH_TOKEN_PATH" \
+    RUNNER_GIT_IDENTITY_FILE="$GIT_IDENTITY_PATH" \
     PHONE_HOME_SERVER_ORIGIN="${C604_SERVER_ORIGIN:?}" \
     SOURCE_SHA12="$sha12" \
     SOURCE_REVISION="$SHA" \
@@ -983,6 +993,108 @@ retire_superseded_server2_images() {
     done
 }
 
+# One KEY=value line of the deployed stack.env, read BEFORE deploy-parent rewrites the file.
+stack_env_value() {
+    if [ -f "$SERVER2_ENV" ]; then
+        sed -n "s/^$1=//p" "$SERVER2_ENV" | head -n 1
+    fi
+}
+
+# CARD-0631 D-9 (amended). The runner's git identity is a FILE on server2, mounted read-only at
+# $GIT_IDENTITY_MOUNT and named by GIT_CONFIG_GLOBAL; nothing is baked into the image. It is
+# created only when missing, from stack.env's RUNNER_GIT_USER_NAME/EMAIL or the defaults. An
+# existing file is the operator's and is never rewritten. It must exist before compose, or the
+# bind mount would create a directory in its place; an EMPTY directory such a mount left behind is
+# removed, anything else refuses. Non-secret, so its values are evidence.
+ensure_runner_git_identity() {
+    local name email
+    if [ -d "$GIT_IDENTITY_PATH" ]; then
+        rmdir "$GIT_IDENTITY_PATH" 2>> "$CASE_DIR/command.log" || write_result false GitIdentityPathIsDirectory 2
+    fi
+    name="$(stack_env_value RUNNER_GIT_USER_NAME)"
+    email="$(stack_env_value RUNNER_GIT_USER_EMAIL)"
+    RUNNER_GIT_USER_NAME="${name:-$GIT_IDENTITY_DEFAULT_NAME}"
+    RUNNER_GIT_USER_EMAIL="${email:-$GIT_IDENTITY_DEFAULT_EMAIL}"
+    if [ ! -e "$GIT_IDENTITY_PATH" ]; then
+        rm -f "$GIT_IDENTITY_PATH.tmp"
+        { git config --file "$GIT_IDENTITY_PATH.tmp" user.name "$RUNNER_GIT_USER_NAME" \
+            && git config --file "$GIT_IDENTITY_PATH.tmp" user.email "$RUNNER_GIT_USER_EMAIL" \
+            && mv -n "$GIT_IDENTITY_PATH.tmp" "$GIT_IDENTITY_PATH"; } 2>> "$CASE_DIR/command.log" \
+            || write_result false GitIdentityCreateFailed 2
+        rm -f "$GIT_IDENTITY_PATH.tmp"
+        printf 'created\n' > "$CASE_DIR/git-identity-state.txt"
+    else
+        printf 'kept\n' > "$CASE_DIR/git-identity-state.txt"
+    fi
+    # uid 1654 reads the bind mount itself, so the file is world-readable (it holds no secret).
+    chmod 0644 "$GIT_IDENTITY_PATH"
+    git config --file "$GIT_IDENTITY_PATH" --get user.name > "$CASE_DIR/git-identity.txt" 2>> "$CASE_DIR/command.log" \
+        || write_result false GitIdentityIncomplete 2
+    git config --file "$GIT_IDENTITY_PATH" --get user.email >> "$CASE_DIR/git-identity.txt" 2>> "$CASE_DIR/command.log" \
+        || write_result false GitIdentityIncomplete 2
+}
+
+# CARD-0631 D-9 (amended). The mounted file must be the identity uid 1654 actually commits with:
+# its origin must be the mount, so no system file or leftover stopgap is what git resolved.
+verify_runner_git_identity() {
+    local container="$1" where="$2" expected
+    expected="$(printf 'file:%s\t%s' "$GIT_IDENTITY_MOUNT" "$(sed -n 2p "$CASE_DIR/git-identity.txt")")"
+    docker exec -u 1654:1654 "$container" git -C "$where" config --show-origin --get user.email \
+        > "$CASE_DIR/runner-git-identity.txt" 2>> "$CASE_DIR/command.log" \
+        || write_result false GitIdentityNotEffective 2
+    if [ "$(cat "$CASE_DIR/runner-git-identity.txt")" != "$expected" ]; then
+        write_result false GitIdentityNotEffective 2
+    fi
+}
+
+# CARD-0631 D-10. Verify, never seed: RunnerWorkspaceService clones lazily on the first mirror,
+# and a second writer here would race it. Everything runs INSIDE the runner as uid 1654 against
+# the repository the runner is configured with -- never the host's identically named checkout and
+# never a child volume. A fresh volume therefore refuses Missing until the first mirror (or a
+# uid-1654 anonymous seed while no mirror is in flight) creates it; deploy is then rerun.
+verify_runner_checkout() {
+    local container="$1" repo top origin fetched
+    repo="$(docker exec "$container" sh -c 'printf "%s" "${PhoneHome__RunnerRepository:-}"' 2>> "$CASE_DIR/command.log")" \
+        || write_result false RunnerCheckoutInvalid 2
+    repo="${repo:-$RUNNER_CHECKOUT_DEFAULT}"
+    printf '%s\n' "$repo" > "$CASE_DIR/runner-checkout-path.txt"
+    if ! docker exec -u 1654:1654 "$container" test -e "$repo/.git"; then
+        write_result false RunnerCheckoutMissing 2
+    fi
+    top="$(docker exec -u 1654:1654 "$container" git -C "$repo" rev-parse --show-toplevel 2>> "$CASE_DIR/command.log")" \
+        || write_result false RunnerCheckoutInvalid 2
+    if [ "$top" != "$repo" ]; then
+        write_result false RunnerCheckoutInvalid 2
+    fi
+    origin="$(docker exec -u 1654:1654 "$container" git -C "$repo" remote get-url origin 2>> "$CASE_DIR/command.log")" \
+        || write_result false RunnerCheckoutOriginMismatch 2
+    if [ "$origin" != "$RUNNER_CHECKOUT_ORIGIN" ]; then
+        write_result false RunnerCheckoutOriginMismatch 2
+    fi
+    docker exec -u 1654:1654 -e GIT_TERMINAL_PROMPT=0 "$container" \
+        timeout --kill-after=5s 120s git -C "$repo" fetch --no-tags origin "$BRANCH" \
+        >> "$CASE_DIR/command.log" 2>&1 \
+        || write_result false RunnerCheckoutFetchFailed 2
+    fetched="$(docker exec -u 1654:1654 "$container" git -C "$repo" rev-parse FETCH_HEAD 2>> "$CASE_DIR/command.log")" \
+        || write_result false RunnerCheckoutFetchFailed 2
+
+    # A repository-local identity outranks the mounted file for this checkout and every task
+    # worktree of it: that is where a stopgap identity would win. Remove it, record that it was
+    # there, and prove the mount is what git now resolves inside the checkout.
+    if docker exec -u 1654:1654 "$container" git -C "$repo" config --local --get-regexp '^user\.(name|email)$' \
+        > "$CASE_DIR/runner-checkout-local-identity.txt" 2>/dev/null; then
+        docker exec -u 1654:1654 "$container" sh -c \
+            'for k in user.name user.email; do if git -C "$1" config --local --get "$k" >/dev/null; then git -C "$1" config --local --unset-all "$k" || exit 1; fi; done' \
+            antiphon-identity "$repo" 2>> "$CASE_DIR/command.log" \
+            || write_result false GitIdentityOverrideNotRemoved 2
+        printf 'removed\n' > "$CASE_DIR/runner-checkout-local-identity-state.txt"
+    fi
+    verify_runner_git_identity "$container" "$repo"
+
+    printf 'path=%s\norigin=%s\nbranch=%s\nfetch_head=%s\n' "$repo" "$origin" "$BRANCH" "$fetched" \
+        > "$CASE_DIR/runner-checkout.txt"
+}
+
 case_deploy_parent() {
     require_lane host
     ensure_checkout
@@ -1021,6 +1133,8 @@ case_deploy_parent() {
         printf 'WARN ClaudeOAuthTokenAbsent: the runner will report claudeAuth=logged-out\n' \
             | tee -a "$CASE_DIR/command.log" >&2
     fi
+    # CARD-0631: before compose binds it, and before stack.env is rewritten below.
+    ensure_runner_git_identity
 
     retire_c590_leftovers
 
@@ -1032,6 +1146,9 @@ PHONE_HOME_SERVER_ORIGIN=${C604_SERVER_ORIGIN:?}
 ANTIPHON_DEPLOY_KEY_FILE=$DEPLOY_KEY
 PHONE_HOME_SECRET_FILE=$PHONE_HOME_SECRET
 CLAUDE_OAUTH_TOKEN_FILE=$CLAUDE_OAUTH_TOKEN_PATH
+RUNNER_GIT_IDENTITY_FILE=$GIT_IDENTITY_PATH
+RUNNER_GIT_USER_NAME=$RUNNER_GIT_USER_NAME
+RUNNER_GIT_USER_EMAIL=$RUNNER_GIT_USER_EMAIL
 EOF
 
     docker build -f "$CHECKOUT/docker/session-runner-grok/Dockerfile" --target session-testing \
@@ -1122,6 +1239,11 @@ EOF
         && [ "$(tr -d '[:space:]' < "$CASE_DIR/phone-home-server-state.txt")" != "disabled" ]; then
         write_result false PhoneHomeUnreachable 2
     fi
+
+    # --- CARD-0631: the identity uid 1654 commits with, and the checkout it mirrors from ------
+    # Both refuse before anything is retired or accepted.
+    verify_runner_git_identity "$container" /
+    verify_runner_checkout "$container"
 
     # The new deployment is proven: this round's own superseded build products go now (D-5).
     retire_superseded_server2_images "${SHA:0:12}"

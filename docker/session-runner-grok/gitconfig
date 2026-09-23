@@ -1,4 +1,7 @@
 # CARD-0604 D-8. Baked at /etc/gitconfig. Non-secret: it only names where the key is.
+# CARD-0631 D-9 (amended): no commit identity is baked here. The runner's identity is a file on
+# server2 that compose mounts read-only at /run/antiphon/gitconfig and the entrypoint names as
+# GIT_CONFIG_GLOBAL, which outranks this system file for every uid-1654 git.
 [core]
 	sshCommand = ssh -F /etc/antiphon/ssh_config
 [url "git@github.com:"]

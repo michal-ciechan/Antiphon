@@ -68,6 +68,10 @@ services:
       Serilog__LogPath: /state/runner-logs
       Agents__GrokCredentialProbeEnabled: "false"
       TMPDIR: /tmp
+      # CARD-0631 D-9 (amended): the runner's git identity is the mounted file below. The
+      # entrypoint exports the same path for the runner; naming it here as well gives every
+      # `docker exec` (deploy-parent's probes, an operator shell) the identity the runner uses.
+      GIT_CONFIG_GLOBAL: /run/antiphon/gitconfig
     volumes:
       - work:/work
       - runner-state:/state
@@ -79,6 +83,10 @@ services:
       # child inherits. Empty, the runner falls back to an interactive `claude auth login` under
       # /state/claude. An Anthropic API key is never a fallback.
       - ${CLAUDE_OAUTH_TOKEN_FILE:?CLAUDE_OAUTH_TOKEN_FILE is required}:/run/antiphon/claude-oauth-token:ro
+      # CARD-0631 D-9 (amended): the runner's git identity ([user] name/email), a non-secret file
+      # deploy-parent creates on server2 when missing and never overwrites. Never baked into the
+      # image. Read-only: a session cannot rewrite the identity every later commit uses.
+      - ${RUNNER_GIT_IDENTITY_FILE:?RUNNER_GIT_IDENTITY_FILE is required}:/run/antiphon/gitconfig:ro
     secrets:
       - antiphon-deploy-key
       - phone-home

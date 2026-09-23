@@ -104,6 +104,9 @@ if (-not (Test-Path -LiteralPath $keyPath)) {
 }
 $randomSecret = -join ((1..32) | ForEach-Object { '{0:x2}' -f (Get-Random -Minimum 0 -Maximum 256) })
 Set-Content -LiteralPath $secretPath -Value $randomSecret -Encoding ascii -NoNewline
+# CARD-0631: the runner git identity is a mounted file the entrypoint refuses to boot without.
+$identityPath = Join-Path $script:evidenceDir 'throwaway_gitconfig'
+Set-Content -LiteralPath $identityPath -Value "[user]`n`tname = c604-harness`n`temail = c604-harness@localhost`n" -Encoding ascii -NoNewline
 $volume = Invoke-Docker @('volume', 'create', $volumeName) 'volume-create.txt'
 if ($volume.ExitCode -ne 0) {
     Exit-Harness 2 'docker volume create failed.'
@@ -122,6 +125,7 @@ try {
         '--tmpfs', '/run/antiphon',
         '-v', "${keyPath}:/run/secrets/antiphon-deploy-key:ro",
         '-v', "${secretPath}:/run/secrets/phone-home:ro",
+        '-v', "${identityPath}:/run/antiphon/gitconfig:ro",
         '-e', 'ANTIPHON_DEPLOY_KEY_SOURCE=/run/secrets/antiphon-deploy-key',
         '-e', 'PhoneHome__SecretPath=/run/secrets/phone-home',
         '-e', 'ANTIPHON_DOCKERD_LOG_DIR=/tmp/state/logs',
@@ -343,7 +347,7 @@ finally {
         Invoke-Docker @('rm', '-f', $containerName) 'docker-rm.txt' | Out-Null
     }
     Invoke-Docker @('volume', 'rm', '-f', $volumeName) 'volume-rm.txt' | Out-Null
-    foreach ($throwaway in @($keyPath, ($keyPath + '.pub'), $secretPath)) {
+    foreach ($throwaway in @($keyPath, ($keyPath + '.pub'), $secretPath, $identityPath)) {
         if (Test-Path -LiteralPath $throwaway) { Remove-Item -LiteralPath $throwaway -Force }
     }
 }

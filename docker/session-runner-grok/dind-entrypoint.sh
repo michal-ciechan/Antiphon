@@ -12,6 +12,7 @@ RUNTIME_DIR=/run/antiphon
 DEPLOY_KEY_TARGET="$RUNTIME_DIR/deploy-key"
 PHONE_HOME_SECRET_TARGET="$RUNTIME_DIR/phone-home"
 CLAUDE_OAUTH_TOKEN_SOURCE="$RUNTIME_DIR/claude-oauth-token"
+GIT_IDENTITY_SOURCE="$RUNTIME_DIR/gitconfig"
 APP_UID=1654
 APP_GID=1654
 NESTED_SOCKET_GID=1656
@@ -65,6 +66,23 @@ if ! setpriv --reuid="$APP_UID" --regid="$APP_GID" --clear-groups \
      /bin/sh -c 'head -c 1 "$1" >/dev/null 2>&1' antiphon-probe "$PHONE_HOME_SECRET_TARGET"; then
   refuse PhoneHomeSecretUnreadable
 fi
+
+# --- step 2b: the runner's git identity (CARD-0631 D-9, amended) ----------------------
+# Not baked into the image: deploy-parent keeps it as a file on server2 and compose mounts it
+# read-only here. GIT_CONFIG_GLOBAL, not an [include] from /etc/gitconfig: global outranks the
+# system file, and it REPLACES ~/.gitconfig and the XDG file, so no identity left in a home
+# directory or a volume can shadow the mounted one. Only a repository's own config outranks it,
+# and deploy-parent removes an identity it finds there. Missing, empty or incomplete refuses:
+# a runner that cannot commit would only fail later, inside a task. Non-secret.
+if [ ! -f "$GIT_IDENTITY_SOURCE" ] || [ ! -s "$GIT_IDENTITY_SOURCE" ]; then
+  refuse GitIdentityMissing
+fi
+if ! setpriv --reuid="$APP_UID" --regid="$APP_GID" --clear-groups \
+     /bin/sh -c 'git config --file "$1" --get user.name >/dev/null && git config --file "$1" --get user.email >/dev/null' \
+     antiphon-probe "$GIT_IDENTITY_SOURCE"; then
+  refuse GitIdentityUnusable
+fi
+export GIT_CONFIG_GLOBAL="$GIT_IDENTITY_SOURCE"
 
 # --- step 3: cgroup preparation (D-3 step 3, D-17 custody root) -----------------------
 if [ -f /sys/fs/cgroup/cgroup.controllers ]; then

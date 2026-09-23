@@ -400,6 +400,165 @@ public sealed class RemoteScriptContractTests
         deploy.ShouldContain("inventory-images-after.txt");
     }
 
+    // CARD-0631 D-9 (amended). The runner's git identity is a file on server2 beside the deploy
+    // key and the Claude token. deploy-parent creates it when missing, from stack.env's values or
+    // the defaults, and never rewrites one that exists: the operator may have edited it.
+    [Test]
+    public void Deploy_parent_creates_the_git_identity_file_without_overwriting()
+    {
+        var text = Remote();
+        text.ShouldContain("GIT_IDENTITY_PATH=\"$SERVER2_ROOT/secrets/gitconfig\"");
+        text.ShouldContain("GIT_IDENTITY_DEFAULT_NAME=\"antiphon-server2-runner\"");
+        text.ShouldContain("GIT_IDENTITY_DEFAULT_EMAIL=\"antiphon-server2-runner@users.noreply.github.com\"");
+        text.ShouldContain("GIT_IDENTITY_MOUNT=\"/run/antiphon/gitconfig\"");
+        Block(text, "compose_host").ShouldContain("RUNNER_GIT_IDENTITY_FILE=\"$GIT_IDENTITY_PATH\" \\");
+
+        var ensure = Block(text, "ensure_runner_git_identity");
+        ensure.ShouldContain("name=\"$(stack_env_value RUNNER_GIT_USER_NAME)\"");
+        ensure.ShouldContain("email=\"$(stack_env_value RUNNER_GIT_USER_EMAIL)\"");
+        ensure.ShouldContain("RUNNER_GIT_USER_NAME=\"${name:-$GIT_IDENTITY_DEFAULT_NAME}\"");
+        ensure.ShouldContain("RUNNER_GIT_USER_EMAIL=\"${email:-$GIT_IDENTITY_DEFAULT_EMAIL}\"");
+
+        // Create only when missing: every write to the path sits inside the `! -e` branch, and the
+        // final move cannot clobber a file that appeared meanwhile.
+        const string create = "if [ ! -e \"$GIT_IDENTITY_PATH\" ]; then";
+        var lines = Commands(ensure);
+        var open = lines.FindIndex(line => line == create);
+        open.ShouldBeGreaterThanOrEqualTo(0, "the file is created only when it does not exist");
+        var close = lines.FindIndex(open + 1, line => line == "else" || line == "fi");
+        close.ShouldBeGreaterThan(open);
+        var writes = lines
+            .Select((line, index) => (line, index))
+            .Where(item => item.line.Contains("$GIT_IDENTITY_PATH", StringComparison.Ordinal))
+            .Where(item => !item.line.Contains("--get", StringComparison.Ordinal)
+                && !item.line.StartsWith("if [ -d ", StringComparison.Ordinal)
+                && !item.line.StartsWith("rmdir ", StringComparison.Ordinal)
+                && !item.line.StartsWith("chmod 0644 ", StringComparison.Ordinal)
+                && item.line != create)
+            .ToList();
+        writes.ShouldNotBeEmpty();
+        writes.ShouldAllBe(item => item.index > open && item.index < close,
+            "an existing identity file is never rewritten");
+        ensure.ShouldContain("mv -n \"$GIT_IDENTITY_PATH.tmp\" \"$GIT_IDENTITY_PATH\"");
+        ensure.ShouldContain("git config --file \"$GIT_IDENTITY_PATH.tmp\" user.name \"$RUNNER_GIT_USER_NAME\"");
+        ensure.ShouldContain("git config --file \"$GIT_IDENTITY_PATH.tmp\" user.email \"$RUNNER_GIT_USER_EMAIL\"");
+        // uid 1654 reads the bind mount itself; an incomplete file refuses rather than booting blind.
+        ensure.ShouldContain("chmod 0644 \"$GIT_IDENTITY_PATH\"");
+        ensure.ShouldContain("write_result false GitIdentityIncomplete 2");
+        // A directory a premature bind mount left behind is removed only when empty.
+        ensure.ShouldContain("rmdir \"$GIT_IDENTITY_PATH\"");
+        ensure.ShouldNotContain("rm -rf");
+
+        var deploy = Block(text, "case_deploy_parent");
+        // Before compose binds it, and before stack.env (its seed values' source) is rewritten.
+        Order(deploy, "ensure_runner_git_identity", "cat > \"$SERVER2_ENV\"").ShouldBeTrue();
+        Order(deploy, "ensure_runner_git_identity", "compose_host up -d").ShouldBeTrue();
+        deploy.ShouldContain("RUNNER_GIT_IDENTITY_FILE=$GIT_IDENTITY_PATH\n");
+        deploy.ShouldContain("RUNNER_GIT_USER_NAME=$RUNNER_GIT_USER_NAME\n");
+        deploy.ShouldContain("RUNNER_GIT_USER_EMAIL=$RUNNER_GIT_USER_EMAIL\n");
+
+        // And the mounted file is what uid 1654 resolves, before anything is retired or accepted.
+        var effective = Block(text, "verify_runner_git_identity");
+        effective.ShouldContain("docker exec -u 1654:1654 \"$container\" git -C \"$where\" config --show-origin --get user.email");
+        effective.ShouldContain("file:%s\\t%s' \"$GIT_IDENTITY_MOUNT\"");
+        effective.ShouldContain("write_result false GitIdentityNotEffective 2");
+        deploy.ShouldContain("verify_runner_git_identity \"$container\" /");
+        Order(deploy, "verify_runner_git_identity", "retire_superseded_server2_images").ShouldBeTrue();
+        Order(deploy, "verify_runner_git_identity", "write_result true").ShouldBeTrue();
+    }
+
+    // CARD-0631 V-7, D-10. deploy-parent accepted a runner whose repository did not exist, so the
+    // first mirror crashed with Win32Exception(2). It now verifies -- never seeds, which would race
+    // the runner's own lazy clone -- the checkout the runner is configured with, as uid 1654,
+    // INSIDE the container, and every failure refuses by name before acceptance.
+    [Test]
+    public void Deploy_parent_seeds_or_verifies_runner_checkout()
+    {
+        var text = Remote();
+        var verify = Block(text, "verify_runner_checkout");
+        var commands = Commands(verify);
+
+        // The runner's own repository setting, with the runner's own default and clone source.
+        verify.ShouldContain("${PhoneHome__RunnerRepository:-}");
+        verify.ShouldContain("repo=\"${repo:-$RUNNER_CHECKOUT_DEFAULT}\"");
+        text.ShouldContain("RUNNER_CHECKOUT_DEFAULT=\"" + new global::Antiphon.SessionRunner.PhoneHomeSettings().RunnerRepository + "\"");
+        text.ShouldContain("RUNNER_CHECKOUT_ORIGIN=\"" + global::Antiphon.SessionRunner.RunnerWorkspaceService.DefaultCloneSource + "\"");
+
+        // Every probe of the checkout runs in the container as the runner uid.
+        var probes = commands.Where(line => line.Contains("\"$repo", StringComparison.Ordinal)
+            && line.Contains("docker exec", StringComparison.Ordinal)).ToList();
+        probes.Count.ShouldBeGreaterThanOrEqualTo(5);
+        probes.ShouldAllBe(line => line.Contains("docker exec -u 1654:1654 ", StringComparison.Ordinal));
+        // Never the host's identically named checkout, never a child project or volume.
+        verify.ShouldNotContain("$CHECKOUT");
+        verify.ShouldNotContain("CHILD_PROJECT");
+        verify.ShouldNotContain("docker volume");
+        commands.Where(line => line.Contains("git -C", StringComparison.Ordinal))
+            .ShouldAllBe(line => line.Contains("docker exec -u 1654:1654 ", StringComparison.Ordinal));
+
+        // Missing, invalid, foreign origin and a failed anonymous fetch each refuse by name.
+        Refuses(commands, "test -e \"$repo/.git\"", "RunnerCheckoutMissing");
+        Refuses(commands, "rev-parse --show-toplevel", "RunnerCheckoutInvalid");
+        verify.ShouldContain("if [ \"$top\" != \"$repo\" ]; then");
+        Refuses(commands, "remote get-url origin", "RunnerCheckoutOriginMismatch");
+        verify.ShouldContain("if [ \"$origin\" != \"$RUNNER_CHECKOUT_ORIGIN\" ]; then");
+        var fetch = commands.Single(line => line.Contains(" fetch ", StringComparison.Ordinal));
+        fetch.ShouldContain("-e GIT_TERMINAL_PROMPT=0");
+        fetch.ShouldContain("timeout --kill-after=5s 120s git -C \"$repo\" fetch --no-tags origin \"$BRANCH\"");
+        fetch.ShouldContain("|| write_result false RunnerCheckoutFetchFailed 2");
+        Refuses(commands, "rev-parse FETCH_HEAD", "RunnerCheckoutFetchFailed");
+        verify.ShouldNotContain("|| true");
+        Executable(verify, "write_result").ShouldAllBe(line => line.Contains("write_result false ", StringComparison.Ordinal));
+
+        // A repository-local identity (a stopgap) would outrank the mounted file: it is removed,
+        // and the mount is then proven effective inside the checkout itself.
+        verify.ShouldContain("config --local --unset-all \"$k\"");
+        verify.ShouldContain("write_result false GitIdentityOverrideNotRemoved 2");
+        verify.ShouldContain("verify_runner_git_identity \"$container\" \"$repo\"");
+
+        // The receipt: the verified path and FETCH_HEAD, no credentials.
+        verify.ShouldContain("fetch_head=%s");
+        verify.ShouldContain("runner-checkout.txt");
+
+        var deploy = Block(text, "case_deploy_parent");
+        deploy.ShouldContain("verify_runner_checkout \"$container\"");
+        Order(deploy, "RunnerUnhealthy", "verify_runner_checkout").ShouldBeTrue("the runner is up before it is probed");
+        Order(deploy, "verify_runner_checkout", "retire_superseded_server2_images").ShouldBeTrue();
+        Order(deploy, "verify_runner_checkout", "write_result true").ShouldBeTrue();
+    }
+
+    private static void Refuses(IReadOnlyList<string> commands, string probe, string diagnosis)
+    {
+        var line = commands.Single(command => command.Contains(probe, StringComparison.Ordinal));
+        (line.Contains("write_result false " + diagnosis + " 2", StringComparison.Ordinal)
+            || commands.SkipWhile(command => command != line).Skip(1).FirstOrDefault()
+                == "write_result false " + diagnosis + " 2")
+            .ShouldBeTrue(probe + " refuses with " + diagnosis);
+    }
+
+    // Executable lines with backslash continuations joined, comments dropped.
+    private static List<string> Commands(string text)
+    {
+        var commands = new List<string>();
+        var pending = "";
+        foreach (var raw in text.Replace("\r\n", "\n").Split('\n'))
+        {
+            var line = raw.Trim();
+            if (pending.Length == 0 && (line.Length == 0 || line[0] == '#'))
+                continue;
+            if (line.EndsWith('\\'))
+            {
+                pending += line[..^1].TrimEnd() + " ";
+                continue;
+            }
+
+            commands.Add(pending + line);
+            pending = "";
+        }
+
+        return commands;
+    }
+
     private static bool Order(string text, string first, string second)
     {
         var a = text.IndexOf(first, StringComparison.Ordinal);
