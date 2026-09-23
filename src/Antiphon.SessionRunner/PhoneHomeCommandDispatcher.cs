@@ -259,13 +259,16 @@ public sealed class PhoneHomeCommandDispatcher
     }
 
     /// <summary>
-    /// CARD-0628 D-5: the image's own <c>claude</c>, by bare name or a POSIX path ending in it.
-    /// A Windows path, a <c>claude.exe</c> or a name with trailing characters is not this image's.
+    /// CARD-0628 D-5: the image's own <c>claude</c>, by bare name or the exact path the runner
+    /// Dockerfile installs it to. Any other path, even one ending in <c>/claude</c>
+    /// (<c>/opt/evil/claude</c>, a <c>..</c> escape, a relative <c>./claude</c>), is not this image's.
     /// </summary>
     internal static bool IsClaudeExe(string? exe) =>
-        !string.IsNullOrWhiteSpace(exe)
-        && (string.Equals(exe, "claude", StringComparison.Ordinal)
-            || (exe.StartsWith('/') && exe.EndsWith("/claude", StringComparison.Ordinal)));
+        string.Equals(exe, "claude", StringComparison.Ordinal)
+        || string.Equals(exe, ImageClaudePath, StringComparison.Ordinal);
+
+    /// <summary>Where <c>docker/session-runner-grok/Dockerfile</c> installs Claude Code.</summary>
+    internal const string ImageClaudePath = "/usr/local/bin/claude";
 
     internal void RejectUnsupportedLaunch(RunnerLaunchRequest launch)
     {

@@ -4084,10 +4084,14 @@ public sealed class AgentTaskDispatcher
         // is the OLD session's rather than the literal "codex" — a Grok relaunch that could not
         // resolve a program must not come back wearing Codex's name. Where the program resolves
         // (every production path) this changes nothing.
-        var previousDefinition = await _db.AgentSessions.AsNoTracking()
+        // Review be0f8640: a runner-bound task's relaunch stays on its runner. The binding is the
+        // old session's, all-or-none, exactly as dispatch committed it (G-20); a relaunch that
+        // dropped it would re-run the brief on the desktop under a task routed to server2.
+        var previous = await _db.AgentSessions.AsNoTracking()
             .Where(s => s.Id == oldSessionId)
-            .Select(s => s.DefinitionName)
+            .Select(s => new { s.DefinitionName, s.RunnerId, s.RunnerStoreId, s.RunnerCwd })
             .FirstOrDefaultAsync(ct);
+        var previousDefinition = previous?.DefinitionName;
         var session = new AgentSession
         {
             Id = Guid.NewGuid(),
@@ -4104,6 +4108,9 @@ public sealed class AgentTaskDispatcher
             CreatedAt = now,
             StartedAt = now,
             LastSeenAt = now,
+            RunnerId = previous?.RunnerId,
+            RunnerStoreId = previous?.RunnerStoreId,
+            RunnerCwd = previous?.RunnerCwd,
         };
         _db.AgentSessions.Add(session);
 
@@ -4145,6 +4152,10 @@ public sealed class AgentTaskDispatcher
                         ct);
                 }
 
+                // The same projection the first dispatch applied: without it the retry spec keeps
+                // the desktop exe, cwd and environment.
+                if (_phoneHome?.IsRunnerBound(agent) == true)
+                    spec = _phoneHome.Project(spec, agent, session.RunnerCwd);
                 deferRulesBrief = spec.GrokRulesPayload is not null;
                 if (_taskLaunchSink is not null)
                     _taskLaunchSink.Enqueue(session.Id, agent.Id, session.StartedAt, spec);
