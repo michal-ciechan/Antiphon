@@ -118,8 +118,21 @@ switch ($Case) {
         Write-C590Result -EvidenceRoot $root -Accepted $true -ExitCode 0
     }
     'linux-custody' {
-        if ([string]$m.capabilities -match 'VerificationCustodyV1') {
+        # CARD-0604 D-17 (Cut B), V-29/R-5. The persistent runner is now a supported producer,
+        # so this case inverts: it REQUIRES verificationCustodyV1 with backend linux-cgroup-v1
+        # and a store id, and refuses the Windows backend outright. A Linux runner advertising
+        # windows-job-v1 is the exact fabrication CARD-0598 asked to be made impossible.
+        if ([string]$m.capabilities -notmatch 'VerificationCustodyV1') {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'CustodyNotAdvertised' -ExitCode 2
+        }
+        if ([string]$m.verificationCustodyBackend -eq 'windows-job-v1') {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'WindowsBackendAdvertisedOnLinux' -ExitCode 2
+        }
+        if ([string]$m.verificationCustodyBackend -ne 'linux-cgroup-v1') {
             Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'UnsupportedCustodyAdvertised' -ExitCode 2
+        }
+        if (-not [string]$m.runnerStoreId) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'RunnerStoreIdMissing' -ExitCode 2
         }
         Write-C590Result -EvidenceRoot $root -Accepted $true -ExitCode 0
     }

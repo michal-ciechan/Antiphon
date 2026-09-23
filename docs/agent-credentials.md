@@ -202,6 +202,12 @@ or any evidence directory. Names and locations only:
 |---|---|---|---|
 | Repo-scoped GitHub deploy key (ed25519, write, `michal-ciechan/Antiphon` only, titled `antiphon-server2-runner`) | `deploy-parent` on server2, with `ssh-keygen`; the private half is never copied | `/home/mc/antiphon-server2/secrets/deploy_key`, 0600, owner `mc` | Compose file secret at `/run/secrets/antiphon-deploy-key`; `dind-entrypoint.sh` installs it at `/run/antiphon/deploy-key`, 0400 uid 1654, on a **tmpfs** |
 | Phone-home shared secret | `deploy-parent` on server2, `openssl rand -hex 32` | `/home/mc/antiphon-server2/secrets/phone-home`, 0600, owner `mc` | Compose file secret at `/run/secrets/phone-home`; `dind-entrypoint.sh` installs it at `/run/antiphon/phone-home`, 0400 uid 1654, on the same **tmpfs**, and points `PhoneHome__SecretPath` there |
+| Grok OAuth session for the runner's agent | the operator runs `grok login` **once** inside the running container (CARD-0604 D-16) | `GROK_HOME/auth.json` on the `runner-state` volume, so it survives `compose stop`/`up` and container replacement | read by the Grok sessions the runner launches; never copied to the desktop, never printed |
+
+The `runner-state` volume also carries the verification custody store at
+`/state/session-runner/verification-custody` (CARD-0604 D-17). It is outside every verification
+snapshot by construction, which is what lets a receipt survive the removal of the snapshot it is
+about. It holds no secret -- bindings, intents, host identities and receipts only.
 
 The public half of the deploy key is exported with the run's evidence and registered on GitHub from
 the desktop bridge. The phone-home value is entered into the production server's user-secrets by the
