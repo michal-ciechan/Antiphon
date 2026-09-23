@@ -65,14 +65,18 @@ public class ReleaseGateIsolationTests
         // And the database is a real one that persists: write, then read back by id.
         var project = await client.PostAsJsonAsync("/api/projects", new
         {
-            name = "c599-isolation-" + Guid.NewGuid().ToString("N")[..8],
+            name = "c599 isolation " + Guid.NewGuid().ToString("N")[..8],
+            gitRepositoryUrl = "https://github.com/example/c599-isolation.git",
+            localRepositoryPath = (string?)null,
+            baseBranch = "main",
+            constitutionPath = (string?)null,
             gitHubIntegrationEnabled = false,
             notificationsEnabled = false,
         }, JsonOptions);
         project.EnsureSuccessStatusCode();
         var projectId = (await project.Content.ReadFromJsonAsync<JsonElement>(JsonOptions)).GetProperty("id").GetGuid();
 
-        var board = await client.PostAsJsonAsync("/api/boards", new { projectId, name = "c599-board" }, JsonOptions);
+        var board = await client.PostAsJsonAsync("/api/boards", new { projectId, name = "c599 board" }, JsonOptions);
         board.EnsureSuccessStatusCode();
         var boardId = (await board.Content.ReadFromJsonAsync<JsonElement>(JsonOptions)).GetProperty("id").GetGuid();
 

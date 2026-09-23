@@ -38,14 +38,18 @@ public class ReleaseGateReportDeliveryTests
         using var client = _app.CreateClient();
         var project = await client.PostAsJsonAsync("/api/projects", new
         {
-            name = "c599-report-" + Guid.NewGuid().ToString("N")[..8],
+            name = "c599 report " + Guid.NewGuid().ToString("N")[..8],
+            gitRepositoryUrl = "https://github.com/example/c599-report.git",
+            localRepositoryPath = (string?)null,
+            baseBranch = "main",
+            constitutionPath = (string?)null,
             gitHubIntegrationEnabled = false,
             notificationsEnabled = false,
         }, JsonOptions);
         project.EnsureSuccessStatusCode();
         var projectId = (await project.Content.ReadFromJsonAsync<JsonElement>(JsonOptions)).GetProperty("id").GetGuid();
 
-        _boardName = "c599-lane-" + Guid.NewGuid().ToString("N")[..8];
+        _boardName = "c599 lane " + Guid.NewGuid().ToString("N")[..8];
         var board = await client.PostAsJsonAsync("/api/boards", new { projectId, name = _boardName }, JsonOptions);
         board.EnsureSuccessStatusCode();
         _boardId = (await board.Content.ReadFromJsonAsync<JsonElement>(JsonOptions)).GetProperty("id").GetGuid();
