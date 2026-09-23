@@ -2566,6 +2566,65 @@ public sealed class AgentTaskDispatcher
         return true;
     }
 
+    private async Task<bool> TryFailClaudeCredentialProbeAsync(AgentTask claimed, CancellationToken ct)
+    {
+        if (_runners is null || _phoneHome is null || claimed.RunnerId is null)
+            return false;
+
+        Antiphon.Server.Application.Dtos.RunnerProviderAuthDto? answer;
+        try
+        {
+            answer = await _runners.Resolve(claimed.RunnerId).GetProviderAuthAsync("claude", ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Claude credential probe unavailable for runner {RunnerId}", claimed.RunnerId);
+            return false;
+        }
+        if (answer?.LoggedIn != false)
+            return false;
+
+        var reason = $"Claude Code is not signed in on runner '{claimed.RunnerId}' "
+            + $"(CLAUDE_CONFIG_DIR={_phoneHome.ChildClaudeHome}). On server2 run "
+            + "`docker exec -it -u 1654:1654 -e HOME=/home/app "
+            + $"-e CLAUDE_CONFIG_DIR={_phoneHome.ChildClaudeHome} "
+            + "antiphon-runner-session-runner-1 claude auth login`, then re-dispatch.";
+        var episodeKey = $"claude-home:{claimed.RunnerId}:{_phoneHome.ChildClaudeHome}";
+        try
+        {
+            AgentSupervisorService? supervisor = null;
+            if (_scopeFactory is not null)
+            {
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                supervisor = scope.ServiceProvider.GetService<AgentSupervisorService>();
+                if (supervisor is not null)
+                {
+                    var scopedDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    if (!await scopedDb.AgentIncidents.AsNoTracking().AnyAsync(i =>
+                        i.Kind == AgentIncidentKind.ProviderSignInRequired && i.FailureReason == episodeKey, ct))
+                    {
+                        await ProviderSignInIncident.RecordAsync(scopedDb, supervisor,
+                            claimed.AgentId, sessionId: null, episodeKey, reason, ct);
+                        await scopedDb.SaveChangesAsync(ct);
+                    }
+                }
+            }
+            if (supervisor is null && !await _db.AgentIncidents.AsNoTracking().AnyAsync(i =>
+                i.Kind == AgentIncidentKind.ProviderSignInRequired && i.FailureReason == episodeKey, ct))
+                await ProviderSignInIncident.RecordAsync(_db, null, claimed.AgentId,
+                    sessionId: null, episodeKey, reason, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not record Claude provider-sign-in incident for task {ShortId}",
+                DelegationReportFormatter.Short(claimed.Id));
+        }
+
+        await FailAndNotifyAsync(claimed, reason, "claude-credential-probe", ct,
+            AgentTaskFailureCode.AuthenticationRequired);
+        return true;
+    }
+
     private Dictionary<string, string> MergeRegistryGrokProbeEnv(AgentTask claimed, DelegateProgram program)
     {
         var env = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -3560,6 +3619,14 @@ public sealed class AgentTaskDispatcher
             return DispatchOneResult.NotClaimed;
         }
 
+        if (claimed.RunnerId is not null && program.Kind == AgentKind.ClaudeCode
+            && _phoneHome?.ClaudeAuthProbeEnabled == true
+            && await TryFailClaudeCredentialProbeAsync(claimed, ct))
+        {
+            await transaction.CommitAsync(ct);
+            return DispatchOneResult.NotClaimed;
+        }
+
         // Isolation is real, not declarative: a Worktree task gets its own `git worktree add`
         // BEFORE the session exists, and the delegate runs inside it. Branching from the merge
         // target keeps the eventual rebase-back linear.
@@ -3667,7 +3734,8 @@ public sealed class AgentTaskDispatcher
                 onAgent: false,
                 backend: agent.SessionBackend,
                 kind: program.Kind,
-                customWrapper: null);
+                customWrapper: null,
+                remoteControl: false);
         }
         // A pool delegate's environment is fixed for the life of its process. Record the task
         // scope at every cold launch (including a deliberate relaunch of an existing pool row),
@@ -3830,6 +3898,8 @@ public sealed class AgentTaskDispatcher
                 $"task {DelegationReportFormatter.Short(claimed.Id)} on agent '{agent.Name}'",
                 ct);
         }
+        if (_phoneHome?.IsRunnerBound(agent) == true)
+            spec = _phoneHome.Project(spec, agent, remoteCwd);
         GrokLaunchArgs.EnsureWindowsRulesArgv(spec.Args, session.AgentKind, session.SessionBackend,
             spec.Env, $"Session {session.Id}");
         _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, session.StartedAt, spec, remoteControlName: null, notes: null);

@@ -70,6 +70,24 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
         return new PhoneHomeRunnerClient(live, _spills);
     }
 
+    public async Task<RunnerProviderAuthDto?> RequestProviderAuthAsync(
+        string runnerId, string provider, CancellationToken ct)
+    {
+        try
+        {
+            return await Resolve(runnerId).GetProviderAuthAsync(provider, ct);
+        }
+        catch (ServiceUnavailableException)
+        {
+            throw new ConflictException("Phone-home runner is unavailable.", PhoneHomeProblemTypes.Unavailable);
+        }
+        catch (ConflictException ex) when (ex.Code == PhoneHomeProblemTypes.UnsupportedOperation)
+        {
+            throw new ConflictException("The runner does not support provider authentication probes.",
+                PhoneHomeProblemTypes.UnsupportedOperation);
+        }
+    }
+
     public async Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) =>
         await GetBindingAsync(sessionId, ct) is SessionRunnerBinding.Remote remote ? remote.Owner : null;
 

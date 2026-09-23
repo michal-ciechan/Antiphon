@@ -468,7 +468,8 @@ public sealed class AgentControlService : ICompactionContinuationResume
             onAgent: false,
             backend: agent.SessionBackend,
             kind: spec.Kind,
-            customWrapper: null);
+            customWrapper: null,
+            remoteControl: remoteControl);
         if (_phoneHome?.IsRunnerBound(agent) == true)
             spec = _phoneHome.Project(spec, agent);
         else

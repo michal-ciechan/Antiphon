@@ -1040,8 +1040,8 @@ public sealed class AgentTaskService
                 throw new ValidationException(nameof(request.RunnerId), "Delegated tasks are not enabled for this session runner.");
             if (workspace != WorkspaceMode.Worktree)
                 throw new ValidationException(nameof(request.RunnerId), "A runner-bound task must use a Worktree workspace.");
-            if (agentKind != Domain.Enums.AgentKind.Grok)
-                throw new ValidationException(nameof(request.RunnerId), "A runner-bound task must be Grok.");
+            if (!PhoneHomeLaunchPolicy.IsAdmittedKind(agentKind))
+                throw new ValidationException(nameof(request.RunnerId), "A runner-bound task must be Grok or Claude Code.");
             if (request.AgentId is not null || !string.IsNullOrWhiteSpace(request.Agent))
                 throw new ValidationException(nameof(request.RunnerId), "A runner-bound task cannot run on a pinned or standing agent.");
             if (!string.IsNullOrWhiteSpace(request.FollowUpOnTask))

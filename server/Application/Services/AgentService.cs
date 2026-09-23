@@ -535,6 +535,7 @@ public sealed class AgentService
             // Re-check after the profile may have changed Kind (Herdr is Claude/Grok/Codex only).
             ValidateSessionBackendPairing(agent.SessionBackend, agent.Kind);
             RemoteControlPolicy.Require(agent.Kind, agent.RemoteControlEnabled, $"agent '{agent.Name}'");
+            RefuseRunnerClaudeRemoteControl(agent.RunnerId, agent.Kind, agent.RemoteControlEnabled);
             _db.Agents.Add(agent);
             if (applied.BundleKeys is { } createBundles)
                 await AgentBundleAttachments.SetAsync(_db, agent, createBundles, now, ct);
@@ -619,6 +620,8 @@ public sealed class AgentService
             finalKind,
             request.RemoteControlEnabled ?? agent.RemoteControlEnabled,
             $"agent '{agent.Name}'");
+        RefuseRunnerClaudeRemoteControl(agent.RunnerId, finalKind,
+            request.RemoteControlEnabled ?? agent.RemoteControlEnabled);
 
         var previousCwd = agent.WorkingDirectory;
         agent.Name = request.Name.Trim();
@@ -1673,6 +1676,13 @@ public sealed class AgentService
     }
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
+
+    private void RefuseRunnerClaudeRemoteControl(string? runnerId, AgentKind kind, bool enabled)
+    {
+        if (enabled && kind == AgentKind.ClaudeCode && _phoneHome?.IsRunnerBound(runnerId) == true)
+            throw new ConflictException("Remote control is refused for runner-bound Claude Code.",
+                "phone_home_remote_control_refused");
+    }
 
     /// <summary>
     /// Bindings for the generated CLAUDE.md channel section (CARD-0250). Empty at create almost

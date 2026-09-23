@@ -29,6 +29,14 @@ public static class SessionRunnerEndpoints
             PhoneHomeRunnerDirectory directory) =>
             Results.Ok(directory.Status(runnerId))).WithTags("SessionRunners");
 
+        app.MapGet("/api/session-runners/{runnerId}/provider-auth/{provider}", async (
+            string runnerId,
+            string provider,
+            PhoneHomeRunnerDirectory directory,
+            CancellationToken ct) =>
+            Results.Ok(await directory.RequestProviderAuthAsync(runnerId, provider, ct)))
+            .WithTags("SessionRunners");
+
         app.MapGet("/api/session-runners/{runnerId}/connect", async (
             string runnerId,
             HttpContext http,

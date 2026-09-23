@@ -40,6 +40,9 @@ public sealed class PhoneHomeLaunchPolicy
     public string RunnerRepository => _settings.RunnerRepository;
     public bool AllowDelegatedTasks => _settings.Enabled && _settings.AllowDelegatedTasks;
     public IReadOnlyList<string> RawExeAllowList => _settings.RawExeAllowList;
+    public bool ClaudeAuthProbeEnabled => _settings.ClaudeAuthProbeEnabled;
+    public string ChildClaudeHome => _settings.ChildClaudeHome;
+    public static bool IsAdmittedKind(AgentKind kind) => kind is AgentKind.Grok or AgentKind.ClaudeCode;
 
     public void RefuseUnsupportedStart(
         Agent agent,
@@ -50,7 +53,8 @@ public sealed class PhoneHomeLaunchPolicy
         bool onAgent,
         SessionBackend backend,
         AgentKind kind,
-        string? customWrapper)
+        string? customWrapper,
+        bool remoteControl = false)
     {
         if (!IsRunnerBound(agent))
             return;
@@ -70,6 +74,8 @@ public sealed class PhoneHomeLaunchPolicy
             throw new ConflictException("Custom wrappers are refused for the phone-home projection.", "phone_home_wrapper_refused");
         if (backend != SessionBackend.PtyHost)
             throw new ConflictException("A runner-bound agent must use PtyHost.", "phone_home_backend_refused");
+        if (kind == AgentKind.ClaudeCode && remoteControl)
+            throw new ConflictException("Remote control is refused for runner-bound Claude Code.", "phone_home_remote_control_refused");
 
         if (pinned)
         {
@@ -96,8 +102,8 @@ public sealed class PhoneHomeLaunchPolicy
                 throw new ConflictException("Delegated tasks are not enabled for the phone-home runner.", "phone_home_task_refused");
             if (!worktree)
                 throw new ConflictException("A runner-bound task must use a Worktree workspace.", "phone_home_worktree_refused");
-            if (kind != AgentKind.Grok)
-                throw new ConflictException("A runner-bound task must be Grok.", "phone_home_kind_refused");
+            if (!IsAdmittedKind(kind))
+                throw new ConflictException("A runner-bound task must be Grok or Claude Code.", "phone_home_kind_refused");
             // SourceLanding on the runner is Cut B (CARD-0604 D-19): until the Linux custody
             // backend exists, a tracked task here would have no receipt to seal.
             if (sourceLanding)
@@ -109,8 +115,8 @@ public sealed class PhoneHomeLaunchPolicy
 
         // A runner-bound NAMED agent: Grok, or Raw with an image-owned executable (D-2). This is
         // the shape the server2 acceptance cases use.
-        if (kind is not (AgentKind.Grok or AgentKind.Raw))
-            throw new ConflictException("A runner-bound named agent must be Grok or Raw.", "phone_home_kind_refused");
+        if (!IsAdmittedKind(kind) && kind != AgentKind.Raw)
+            throw new ConflictException("A runner-bound named agent must be Grok, Claude Code or Raw.", "phone_home_kind_refused");
         if (worktree)
             throw new ConflictException("A runner-bound named agent cannot use worktrees.", "phone_home_worktree_refused");
         if (sourceLanding)
@@ -143,9 +149,19 @@ public sealed class PhoneHomeLaunchPolicy
         if (pinned)
             EnsureExactHostRoot(agent.WorkingDirectory);
 
+        if (spec.Kind == AgentKind.ClaudeCode)
+        {
+            foreach (var name in new[] { "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "CCR_OAUTH_TOKEN_FILE" })
+            {
+                if (spec.Env.Keys.Any(key => string.Equals(key, name, StringComparison.OrdinalIgnoreCase)))
+                    throw new ConflictException($"Credential environment name {name} is refused for runner-bound Claude Code.", "phone_home_env_refused");
+            }
+        }
+
         var env = new Dictionary<string, string>(spec.Env, StringComparer.Ordinal)
         {
             ["GROK_HOME"] = _settings.ChildGrokHome,
+            ["CLAUDE_CONFIG_DIR"] = _settings.ChildClaudeHome,
             ["ANTIPHON_API"] = _settings.CallbackOrigin,
         };
 
@@ -174,6 +190,9 @@ public sealed class PhoneHomeLaunchPolicy
         if (string.Equals(fileName, "grok.exe", StringComparison.OrdinalIgnoreCase)
             || string.Equals(fileName, "grok", StringComparison.OrdinalIgnoreCase))
             return "grok";
+        if (!pinned && (string.Equals(fileName, "claude.exe", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(fileName, "claude", StringComparison.OrdinalIgnoreCase)))
+            return "claude";
         if (pinned)
             throw new ConflictException("Only the standard grok.exe definition may project to Linux.", "phone_home_wrapper_refused");
 
