@@ -59,10 +59,28 @@ public sealed class WorktreeRemovalEvidence(IServiceScopeFactory scopes) : IWork
             var op = await db.AgentTaskLandings.AsNoTracking().SingleOrDefaultAsync(o => o.Id == operationId, ct);
             if (op is null || !new AgentTaskLandingState().HasPublication(op) || op.VerifiedSourceSha != task.SourceLandingSha
                 || !SamePath(op.CommonDirectory, creation.CommonGitDirectory)) return null;
-            var metadata = await manager.ReadVerificationCreationAsync(creation.WorktreePath, ct);
-            if (metadata is null || metadata.CreationId != creation.CreationId || metadata.InitialSha != task.SourceLandingSha
-                || metadata.Branch != creation.Branch || !SamePath(metadata.RepositoryPath, creation.RepositoryPath)
-                || !SamePath(metadata.WorktreePath, creation.WorktreePath) || !SamePath(metadata.GitDirectory, creation.WorktreeGitDirectory)) return null;
+            // CARD-0604 D-19 / G-38. For a task bound to a remote runner the snapshot, its
+            // metadata and its restoration record are all on that runner. Every read below goes
+            // through the workspace seam, and the desktop filesystem is never consulted -- a
+            // local read here would answer "absent" about a snapshot that exists and is intact.
+            var remote = task.RunnerId is null ? null
+                : scope.ServiceProvider.GetService<IVerificationWorkspaceDirectory>()?.Resolve(task.RunnerId);
+            if (remote is not null)
+            {
+                var inspection = await remote.InspectAsync(creation.WorktreePath, ct);
+                if (inspection.CreationId != creation.CreationId || inspection.InitialSha != task.SourceLandingSha
+                    || !string.Equals(inspection.Branch, creation.Branch, StringComparison.Ordinal)
+                    || !string.Equals(inspection.RepositoryPath, creation.RepositoryPath, StringComparison.Ordinal)
+                    || !string.Equals(inspection.WorktreePath, creation.WorktreePath, StringComparison.Ordinal)
+                    || !string.Equals(inspection.GitDirectory, creation.WorktreeGitDirectory, StringComparison.Ordinal)) return null;
+            }
+            else
+            {
+                var metadata = await manager.ReadVerificationCreationAsync(creation.WorktreePath, ct);
+                if (metadata is null || metadata.CreationId != creation.CreationId || metadata.InitialSha != task.SourceLandingSha
+                    || metadata.Branch != creation.Branch || !SamePath(metadata.RepositoryPath, creation.RepositoryPath)
+                    || !SamePath(metadata.WorktreePath, creation.WorktreePath) || !SamePath(metadata.GitDirectory, creation.WorktreeGitDirectory)) return null;
+            }
             var executions = await db.VerificationExecutions.AsNoTracking().Where(e => e.TaskId == task.Id).ToListAsync(ct);
             if (executions.Count != seal.Revision || !executions.Select(e => e.Id).Order().SequenceEqual(seal.Executions.Order())
                 || executions.Count == 0 && !seal.NeverReserved) return null;
@@ -94,13 +112,26 @@ public sealed class WorktreeRemovalEvidence(IServiceScopeFactory scopes) : IWork
                 if (DelegationWorkspaceResolver.IsWithinRoot(path, creation.WorktreePath)) return null;
                 if (Directory.Exists(path) && DelegationWorkspaceResolver.IsWithinRoot(await git.CanonicalDirectoryAsync(path, ct), creation.WorktreePath)) return null;
             }
-            var root = Path.Combine(creation.CommonGitDirectory, "antiphon", "verification", operationId.ToString("N"), task.Id.ToString("N"));
-            var canonicalRoot = await git.CanonicalDirectoryAsync(root, ct);
-            if (!SamePath(root, canonicalRoot) || canonicalRoot.StartsWith(creation.WorktreePath + Path.DirectorySeparatorChar,
-                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) return null;
-            var evidencePath = Path.Combine(root, "restoration.json");
-            if ((File.GetAttributes(evidencePath) & FileAttributes.ReparsePoint) != 0) return null;
-            var restoration = JsonSerializer.Deserialize<VerificationRestoration>(await File.ReadAllBytesAsync(evidencePath, ct), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            byte[] evidenceBytes;
+            if (remote is not null)
+            {
+                // The runner applies the identical common-git-dir rule and symlink refusal on its
+                // own side; what arrives here is bytes or nothing.
+                if (await remote.ReadRestorationAsync(creation.CommonGitDirectory, operationId, task.Id, ct)
+                    is not { } bytes) return null;
+                evidenceBytes = bytes;
+            }
+            else
+            {
+                var root = Path.Combine(creation.CommonGitDirectory, "antiphon", "verification", operationId.ToString("N"), task.Id.ToString("N"));
+                var canonicalRoot = await git.CanonicalDirectoryAsync(root, ct);
+                if (!SamePath(root, canonicalRoot) || canonicalRoot.StartsWith(creation.WorktreePath + Path.DirectorySeparatorChar,
+                        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) return null;
+                var evidencePath = Path.Combine(root, "restoration.json");
+                if ((File.GetAttributes(evidencePath) & FileAttributes.ReparsePoint) != 0) return null;
+                evidenceBytes = await File.ReadAllBytesAsync(evidencePath, ct);
+            }
+            var restoration = JsonSerializer.Deserialize<VerificationRestoration>(evidenceBytes, new JsonSerializerOptions(JsonSerializerDefaults.Web));
             if (restoration is null || restoration.SchemaVersion != 1 || !restoration.Restored
                 || restoration.Source != new VerificationSourceIdentity(task.Id, operationId, task.SourceLandingSha!)
                 || restoration.CreationId != creation.CreationId || string.IsNullOrWhiteSpace(restoration.Disposition)

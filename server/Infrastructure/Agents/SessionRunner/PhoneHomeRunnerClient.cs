@@ -131,6 +131,54 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient
         return Read<PhoneHomeWorkspaceMirrorResponse>(frame) ?? throw Missing("workspace-mirror");
     }
 
+    /// <summary>
+    /// CARD-0604 D-19 (Cut B). Custody lives on the producer. The desktop asks the bound runner
+    /// for it and imports the exact bytes; it never reconstructs a status from anything local.
+    /// </summary>
+    public async Task<VerificationCustodyStatus> ReadVerificationCustodyAsync(
+        VerificationExecutionBinding binding, bool seal, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.ReadCustody,
+            new PhoneHomeReadCustodyRequest(binding, seal), ct);
+        return Read<VerificationCustodyStatus>(frame) ?? throw Missing("read-custody");
+    }
+
+    /// <summary>CARD-0604 D-19: managed verification creation on the runner, at the exact published sha.</summary>
+    public async Task<PhoneHomeVerificationCreateResponse> CreateVerificationWorkspaceAsync(
+        PhoneHomeVerificationCreateRequest request, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.VerificationWorkspaceCreate, request, ct);
+        return Read<PhoneHomeVerificationCreateResponse>(frame) ?? throw Missing("verification-create");
+    }
+
+    public async Task<PhoneHomeVerificationValidateResponse> ValidateVerificationWorkspaceAsync(
+        PhoneHomeVerificationValidateRequest request, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.VerificationWorkspaceValidate, request, ct);
+        return Read<PhoneHomeVerificationValidateResponse>(frame) ?? throw Missing("verification-validate");
+    }
+
+    public async Task<PhoneHomeVerificationInspectResponse> InspectVerificationWorkspaceAsync(
+        PhoneHomeVerificationInspectRequest request, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.VerificationWorkspaceInspect, request, ct);
+        return Read<PhoneHomeVerificationInspectResponse>(frame) ?? throw Missing("verification-inspect");
+    }
+
+    public async Task<PhoneHomeVerificationReadRestorationResponse> ReadVerificationRestorationAsync(
+        PhoneHomeVerificationReadRestorationRequest request, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.VerificationWorkspaceReadRestoration, request, ct);
+        return Read<PhoneHomeVerificationReadRestorationResponse>(frame) ?? throw Missing("verification-restoration");
+    }
+
+    public async Task<PhoneHomeVerificationRemoveResponse> RemoveVerificationWorkspaceAsync(
+        PhoneHomeVerificationRemoveRequest request, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.VerificationWorkspaceRemove, request, ct);
+        return Read<PhoneHomeVerificationRemoveResponse>(frame) ?? throw Missing("verification-remove");
+    }
+
     /// <summary>CARD-0604 D-15: remove a mirror at retirement. Residue is reported, never forced away.</summary>
     public async Task<PhoneHomeWorkspaceRemoveResponse> RemoveWorkspaceAsync(
         PhoneHomeWorkspaceRemoveRequest request, CancellationToken ct)

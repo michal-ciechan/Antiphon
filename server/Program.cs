@@ -338,6 +338,12 @@ try
     builder.Services.AddScoped<InterimVerificationPolicy>();
     builder.Services.AddScoped<AgentTaskService>();
     builder.Services.AddScoped<SourceLandingAdmission>();
+    // CARD-0604 D-19 (Cut B): where a Mutation's verification snapshot physically lives. The
+    // directory resolves by the TASK's runner id, so a server2-bound Mutation never has its
+    // custody, restoration or removal answered by the desktop filesystem (G-33, G-38).
+    builder.Services.AddScoped<IVerificationWorkspace, Antiphon.Server.Infrastructure.Git.LocalVerificationWorkspace>();
+    builder.Services.AddScoped<IVerificationWorkspaceDirectory,
+        Antiphon.Server.Infrastructure.Agents.SessionRunner.VerificationWorkspaceDirectory>();
     builder.Services.AddScoped<VerificationExecutionService>();
     builder.Services.AddScoped<VerificationCleanupService>();
     builder.Services.AddScoped<AgentTaskPipelineStatusService>();

@@ -19,6 +19,17 @@ public interface IPhoneHomeRuntimeSurface
     Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct);
     Task<RunnerKillGenerationResult> KillGenerationAsync(Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct);
     int OwnedSessionCount { get; }
+
+    // CARD-0604 D-19 (Cut B). The custody surface the phone-home lane needs: which mechanism
+    // this runner actually advertises, which custody store is its own, and a read/seal of a
+    // tracked execution. Defaults keep every existing fake compiling AND refusing: a fake that
+    // has not opted in advertises nothing, so no binding can be admitted through it.
+    string? VerificationCustodyBackend => null;
+    Guid RunnerStoreId => Guid.Empty;
+    Task<VerificationCustodyStatus> ReadCustodyAsync(
+        VerificationExecutionBinding binding, bool seal, CancellationToken ct) =>
+        throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
+            "This runner cannot read verification custody.", 409);
 }
 
 public sealed class PhoneHomeCommandDispatcher
@@ -98,6 +109,40 @@ public sealed class PhoneHomeCommandDispatcher
                     var body = request.Payload?.Deserialize<PhoneHomeWorkspaceRemoveRequest>(PhoneHomeFraming.Json)
                         ?? throw new ArgumentException("Workspace remove body is required.");
                     return Result(request, await Workspace().RemoveAsync(body, ct));
+                }),
+                // CARD-0604 D-19 (Cut B). Custody and the verification snapshot for a Mutation
+                // bound to this runner. Each is a typed body; nothing here takes a shell string.
+                PhoneHomeOperation.ReadCustody => await MutateAsync(request, async () =>
+                {
+                    var body = request.Payload?.Deserialize<PhoneHomeReadCustodyRequest>(PhoneHomeFraming.Json)
+                        ?? throw new ArgumentException("Read-custody body is required.");
+                    return Result(request, await _runtime.ReadCustodyAsync(body.Binding, body.Seal, ct));
+                }),
+                PhoneHomeOperation.VerificationWorkspaceCreate => await MutateAsync(request, async () =>
+                {
+                    var body = request.Payload?.Deserialize<PhoneHomeVerificationCreateRequest>(PhoneHomeFraming.Json)
+                        ?? throw new ArgumentException("Verification create body is required.");
+                    return Result(request, await Workspace().CreateVerificationAsync(body, ct));
+                }),
+                PhoneHomeOperation.VerificationWorkspaceValidate => await MutateAsync(request, async () =>
+                {
+                    var body = request.Payload?.Deserialize<PhoneHomeVerificationValidateRequest>(PhoneHomeFraming.Json)
+                        ?? throw new ArgumentException("Verification validate body is required.");
+                    return Result(request, await Workspace().ValidateVerificationAsync(body, ct));
+                }),
+                PhoneHomeOperation.VerificationWorkspaceInspect => Result(request,
+                    await Workspace().InspectVerificationAsync(
+                        request.Payload?.Deserialize<PhoneHomeVerificationInspectRequest>(PhoneHomeFraming.Json)
+                        ?? throw new ArgumentException("Verification inspect body is required."), ct)),
+                PhoneHomeOperation.VerificationWorkspaceReadRestoration => Result(request,
+                    await Workspace().ReadVerificationRestorationAsync(
+                        request.Payload?.Deserialize<PhoneHomeVerificationReadRestorationRequest>(PhoneHomeFraming.Json)
+                        ?? throw new ArgumentException("Verification restoration body is required."), ct)),
+                PhoneHomeOperation.VerificationWorkspaceRemove => await MutateAsync(request, async () =>
+                {
+                    var body = request.Payload?.Deserialize<PhoneHomeVerificationRemoveRequest>(PhoneHomeFraming.Json)
+                        ?? throw new ArgumentException("Verification remove body is required.");
+                    return Result(request, await Workspace().RemoveVerificationAsync(body, ct));
                 }),
                 PhoneHomeOperation.ConditionalInput => await MutateAsync(request, async () =>
                 {
@@ -196,8 +241,23 @@ public sealed class PhoneHomeCommandDispatcher
             throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Herdr and unknown backends are refused.", 409);
         if (launch.Herdr is not null)
             throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Herdr launches are refused.", 409);
-        if (launch.VerificationBinding is not null)
-            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Verification custody is refused.", 409);
+        // CARD-0604 D-19 / G-37 (Cut B). A verification binding is admitted only when this
+        // runner actually advertises a custody backend AND the binding names that exact backend
+        // and this runner's own store. Cut A refused every binding outright because the runner
+        // had no containment at all; refusing on capability rather than on principle is what
+        // makes a Linux SourceLanding possible without ever fabricating a Windows receipt.
+        if (launch.VerificationBinding is { } binding)
+        {
+            if (_runtime.VerificationCustodyBackend is not { } advertised)
+                throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
+                    "This runner advertises no verification custody backend.", 409);
+            if (!VerificationCustodyBackends.IsSupported(binding.Backend) || binding.Backend != advertised)
+                throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
+                    "verification_custody_invalid_binding", 409);
+            if (binding.RunnerStoreId != _runtime.RunnerStoreId)
+                throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.StoreMismatch,
+                    "verification_custody_invalid_binding", 409);
+        }
         if (launch.MemoryLimitMb != 0)
             throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Memory limit must be zero.", 409);
         if (!string.Equals(launch.TranscriptFormat, TranscriptFormats.Grok, StringComparison.OrdinalIgnoreCase)
