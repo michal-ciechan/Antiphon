@@ -255,6 +255,34 @@ public class PhoneHomeCommandDispatcherTests
     }
 
     [Test]
+    public async Task Claude_exe_is_only_the_bare_name_or_the_image_install_path()
+    {
+        // Review be0f8640: a POSIX path merely ending in "/claude" is not the image's binary.
+        // The Dockerfile installs exactly /usr/local/bin/claude; nothing else may launch as Claude.
+        var runtime = new RecordingRuntime();
+        var dispatcher = Dispatcher(runtime);
+
+        foreach (var exe in new[] { "/opt/evil/claude", "/usr/local/bin/claude/../../tmp/claude", "./claude", "/tmp/claude" })
+        {
+            PhoneHomeCommandDispatcher.IsClaudeExe(exe).ShouldBeFalse(exe);
+            var refused = await dispatcher.DispatchAsync(Launch(Request(exe, "/work")), CancellationToken.None);
+            refused.Kind.ShouldBe(PhoneHomeFrameKind.Error, exe + " is not the image's claude");
+            refused.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
+        }
+
+        runtime.Mutations.ShouldBeEmpty();
+
+        foreach (var exe in new[] { "claude", "/usr/local/bin/claude" })
+        {
+            PhoneHomeCommandDispatcher.IsClaudeExe(exe).ShouldBeTrue(exe);
+            var admitted = await dispatcher.DispatchAsync(Launch(Request(exe, "/work")), CancellationToken.None);
+            admitted.Kind.ShouldBe(PhoneHomeFrameKind.Result, exe + " is the image's claude and must be admitted");
+        }
+
+        runtime.Mutations.Count.ShouldBe(2);
+    }
+
+    [Test]
     public async Task Transcript_format_null_grok_and_claude_admitted_codex_refused()
     {
         var runtime = new RecordingRuntime();

@@ -71,6 +71,56 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         session.Cwd.ShouldBe(workspace.Path);
     }
 
+    [Test]
+    public async Task Runner_bound_boot_wedge_relaunch_keeps_the_runner_binding_and_projection()
+    {
+        // Review be0f8640: the boot-wedge relaunch built a desktop-shaped session and an
+        // unprojected spec, so a server2 task's retry could route to the desktop.
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        await using var peer = await host.ConnectPeerAsync();
+        host.Directory.MarkRecovered(await host.WaitLiveAsync());
+        const string mirror = "/work/worktrees/task-remote";
+        peer.Reply = frame => frame.Operation switch
+        {
+            PhoneHomeOperation.WorkspaceMirror => Result(frame,
+                new PhoneHomeWorkspaceMirrorResponse(mirror)),
+            PhoneHomeOperation.ProviderAuth => Result(frame,
+                new RunnerProviderAuthDto("claude", true, "claude.ai", "max", DateTimeOffset.UtcNow, null)),
+            _ => null,
+        };
+        using var workspace = new TempWorkspace();
+        var taskId = await SeedAsync(schema, workspace.Path, host.AllowedRunnerId, AgentKind.ClaudeCode);
+        var sink = new RecordingLaunchSink();
+        var dispatcher = CreateDispatcher(schema, host, sink);
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        Guid firstSessionId;
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+            firstSessionId = (await db.AgentTasks.SingleAsync(t => t.Id == taskId)).AgentSessionId!.Value;
+
+        await dispatcher.RelaunchWedgedAsync(taskId, firstSessionId, CancellationToken.None);
+
+        sink.Specs.Count.ShouldBe(2);
+        var relaunch = sink.Specs[1];
+        relaunch.Cwd.ShouldBe(mirror);
+        relaunch.Exe.ShouldBe("claude");
+        relaunch.Env["ANTIPHON_API"].ShouldBe("https://antiphon.desktop.codeperf.net");
+        relaunch.Env["CLAUDE_CONFIG_DIR"].ShouldBe("/state/claude");
+
+        await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var task = await verify.AgentTasks.SingleAsync(t => t.Id == taskId);
+        task.BootWedgeRelaunchCount.ShouldBe(1);
+        task.AgentSessionId.ShouldNotBe(firstSessionId);
+        var first = await verify.AgentSessions.SingleAsync(s => s.Id == firstSessionId);
+        var session = await verify.AgentSessions.SingleAsync(s => s.Id == task.AgentSessionId);
+        session.RunnerId.ShouldBe(host.AllowedRunnerId);
+        session.RunnerCwd.ShouldBe(mirror);
+        session.RunnerStoreId.ShouldNotBeNull();
+        session.RunnerStoreId.ShouldBe(first.RunnerStoreId);
+        session.Cwd.ShouldBe(workspace.Path);
+    }
+
     private static PhoneHomeFrame Result(PhoneHomeFrame request, object payload) =>
         new(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
             JsonSerializer.SerializeToElement(payload, PhoneHomeFraming.Json));
