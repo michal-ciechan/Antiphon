@@ -71,8 +71,8 @@ public class CheckCompactionContinuationTests
             ? new CompactionTailObservation(
                 CompactionObservationStatuses.Success, true, 80, "bind-1", 3, 4, "boundary-1", "cont-1")
             : CompactionTailObservation.Unavailable(),
-        CompactionStopResult = new CompactionContinuationStopResult(
-            world.SessionId, Guid.NewGuid(), true, CompactionStopOutcomes.Exited, world.Accepted),
+        CompactionStopResultFor = request => new CompactionContinuationStopResult(
+            world.SessionId, request.AttemptId, true, CompactionStopOutcomes.Exited, world.Accepted),
     };
 
     private static CheckCompactionContinuationService Service(

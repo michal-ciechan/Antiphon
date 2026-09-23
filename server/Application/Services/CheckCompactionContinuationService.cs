@@ -365,6 +365,16 @@ public sealed class CheckCompactionContinuationService
             return;
         }
 
+        // CARD-0606 D-3: a response is proof only for the attempt it answers. A success crossing
+        // in from an earlier restart attempt at this same generation would otherwise authorize
+        // this attempt's stopped-session write, retirement and resume. The already-spent allowance
+        // stays spent; nothing is retried automatically.
+        if (result.AttemptId != attempt)
+        {
+            await TransitionAsync(episode, CheckCompactionRecoveryState.NeedsDecision, "stop-attempt-mismatch", ct);
+            return;
+        }
+
         if (!result.ConfirmsExit
             || !SessionGeneration.Equal(result.AcceptedStartedAt, episode.AcceptedStartedAt))
         {
@@ -510,42 +520,74 @@ public sealed class CheckCompactionContinuationService
         if (!ended)
             return;
 
-        // The interpretation has no caller session of its own - SpecialistTaskRunner sets
-        // ParentSessionId = null on every specialist run, deliberately. The recipient owed a
-        // reading is the CHECKED task's caller, and the publication this episode captured is
-        // where that identity is recorded. Reading it off the run alone left AwaitingCheck
-        // unable to reach Recovered for any real interpretation, which also meant
-        // CompactionRestartReceiptEligible was never set and the rolling allowance never
-        // reopened. The lookup stays bound to this episode and this run.
-        var parentSessionId = check.ParentSessionId
-            ?? await _db.LegacyCheckNotePublications.AsNoTracking()
-                .Where(p => p.RecoveryId == episode.Id && p.InterpretationTaskId == check.Id)
-                .Select(p => (Guid?)p.ParentSessionId)
-                .FirstOrDefaultAsync(ct);
-        if (parentSessionId is not Guid parent)
+        // Legacy evidence is asked about THIS candidate interpretation, and it answers for it: a
+        // publication that belongs to this run owns the verdict even when it is captured,
+        // suppressed, stale or malformed, so invalid legacy evidence withholds recovery rather
+        // than falling through to the weaker modern/queue check. A publication for some OTHER run
+        // in the same seat and session is simply not applicable - retained history must not
+        // permanently veto a later, properly correlated modern receipt (CARD-0606 D-2).
+        if (await LegacyReceiptAsync(episode, sessionId, check, ct) is not LegacyReceipt.NotApplicable)
             return;
 
-        if (await LegacyReceiptAsync(episode, sessionId, parent, ct) is not LegacyReceipt.NotApplicable)
-            return;
+        await ModernReceiptAsync(episode, sessionId, check, ct);
+    }
 
-        var note = await _db.SessionQueuedMessages.AsNoTracking()
-            .Where(m => m.AgentSessionId == parent
-                && m.SourceTaskId == check.Id
-                && m.Status == QueuedMessageStatus.Sent
-                && m.Body != ""
-                && m.LastDeliveryBaselineSequence != null)
-            .OrderByDescending(m => m.Sequence)
+    /// <summary>
+    /// CARD-0606 D-1. The interpretation has no caller session of its own - SpecialistTaskRunner
+    /// sets ParentSessionId = null on every specialist run, deliberately - so the recipient owed a
+    /// reading is reached through the run's own PRODUCER: the winning specialist attempt, its
+    /// request, the checked task that request was taken on, and the exact caller message that
+    /// request published. Reading the checked-task identity off the interpretation instead left
+    /// AwaitingCheck unable to reach Recovered for any real modern interpretation, which also meant
+    /// CompactionRestartReceiptEligible was never set and the rolling allowance never reopened.
+    /// </summary>
+    private async Task ModernReceiptAsync(
+        CheckCompactionRecovery episode, Guid sessionId, AgentTask check, CancellationToken ct)
+    {
+        var correlated = await (
+            from attempt in _db.SpecialistAttempts.AsNoTracking()
+            join request in _db.SpecialistRequests.AsNoTracking() on attempt.RequestId equals request.Id
+            where attempt.TaskId == check.Id
+                && request.WinnerAttemptId == attempt.Id
+                && request.Purpose == SpecialistRequestPurpose.Check
+                && request.CheckedTaskId != null
+                && request.CallerMessageId != null
+            select new { Attempt = attempt, Request = request })
             .FirstOrDefaultAsync(ct);
-        if (note?.Body is null)
+        // The winning attempt is the one whose reading the caller was actually sent; a losing or
+        // superseded run of the same request never earned that receipt. Its accepted generation is
+        // the resumed one this episode reserved, not merely the same session id.
+        if (correlated is null
+            || !SessionGeneration.Equal(correlated.Attempt.SessionStartedAt, episode.ResumeAcceptedStartedAt))
             return;
-        var receipt = await _db.TranscriptEntries.AsNoTracking()
+
+        var subject = await _db.AgentTasks.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.Id == correlated.Request.CheckedTaskId, ct);
+        if (subject is null
+            || subject.ReplyTo != AgentTaskReplyTo.Session
+            || subject.ParentSessionId is not Guid parent)
+            return;
+
+        // The exact row the publication committed, not the latest Check note for this subject:
+        // another Check on the same delegate would otherwise lend this episode its receipt.
+        var note = await _db.SessionQueuedMessages.AsNoTracking()
+            .FirstOrDefaultAsync(m => m.Id == correlated.Request.CallerMessageId
+                && m.AgentSessionId == parent
+                && m.Origin == QueuedMessageOrigin.Check
+                && m.SourceTaskId == subject.Id
+                && m.Status == QueuedMessageStatus.Sent
+                && m.Body != "", ct);
+        if (note?.LastDeliveryBaselineSequence is not long floor)
+            return;
+
+        var receipt = (await _db.TranscriptEntries.AsNoTracking()
             .Where(t => t.AgentSessionId == parent
                 && t.Kind == TranscriptKinds.UserPrompt
                 && t.Text != null
-                && t.Text.Contains(note.Body)
-                && t.Sequence > note.LastDeliveryBaselineSequence)
+                && t.Sequence > floor)
             .OrderBy(t => t.Sequence)
-            .FirstOrDefaultAsync(ct);
+            .ToListAsync(ct))
+            .FirstOrDefault(t => PromptSubmissionMatch.IsCompleteIn(note.Body, t.Text!));
         if (receipt is null)
             return;
 
@@ -565,7 +607,6 @@ public sealed class CheckCompactionContinuationService
         await _db.SaveChangesAsync(ct);
         await PublishAsync(episode.PhysicalAgentId, ct);
     }
-
     private async Task ReleaseOccupantsAsync(CheckCompactionRecovery episode, bool afterStop, CancellationToken ct)
     {
         var now = UtcNow();
@@ -691,11 +732,17 @@ public sealed class CheckCompactionContinuationService
     private enum LegacyReceipt { NotApplicable, Handled }
 
     private async Task<LegacyReceipt> LegacyReceiptAsync(
-        CheckCompactionRecovery episode, Guid sessionId, Guid parent, CancellationToken ct)
+        CheckCompactionRecovery episode, Guid sessionId, AgentTask candidate, CancellationToken ct)
     {
+        // Applicability is per INTERPRETATION, not per seat history (CARD-0606 D-2). A retained
+        // publication for some earlier run in this same seat and session says nothing about the
+        // candidate and must not permanently veto a properly correlated modern receipt; one that
+        // does belong to the candidate owns the verdict, so invalid evidence withholds recovery
+        // instead of falling through to the weaker modern/queue check.
         var related = await _db.LegacyCheckNotePublications.AsNoTracking()
             .Where(p => p.PhysicalAgentId == episode.PhysicalAgentId
-                && p.InterpreterSessionId == sessionId)
+                && p.InterpreterSessionId == sessionId
+                && p.InterpretationTaskId == candidate.Id)
             .ToListAsync(ct);
         if (related.Count == 0)
             return LegacyReceipt.NotApplicable;
@@ -708,6 +755,9 @@ public sealed class CheckCompactionContinuationService
             && p.InterpretationTaskId is Guid);
         if (publication?.InterpretationTaskId is not Guid runId || publication.Body is not { Length: > 0 } body)
             return LegacyReceipt.Handled;
+
+        // The matched publication's OWN recipient, never another run's parent.
+        var parent = publication.ParentSessionId;
 
         var subject = await _db.AgentTasks.AsNoTracking().FirstOrDefaultAsync(t => t.Id == publication.CheckedTaskId, ct);
         if (subject?.DispatchedAt is not DateTime dispatched
@@ -977,7 +1027,7 @@ public sealed class CheckCompactionContinuationService
         var rows = await _db.TranscriptEntries.AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId)
             .OrderBy(t => t.Sequence)
-            .Select(t => new { t.Sequence, t.Kind, t.Text, t.Timestamp, t.CreatedAt, t.Uuid, t.ToolUseId, t.StopReason })
+            .Select(t => new { t.Sequence, t.Kind, t.Text, t.Timestamp, t.CreatedAt, t.Uuid, t.ToolUseId })
             .ToListAsync(ct);
         var checkIds = await _db.AgentTasks.AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId && t.Role == StandingSpecialistSeatPolicy.Role)
@@ -1012,8 +1062,7 @@ public sealed class CheckCompactionContinuationService
                 && tokens.Any(token => row.Text.Contains(token, StringComparison.Ordinal)),
             IsHumanOrigin: row.Kind == TranscriptKinds.UserPrompt
                 && row.Text is not null
-                && humanMatchable.Any(body => PromptSubmissionMatch.IsCompleteIn(body, row.Text)),
-            StopReason: row.StopReason)).ToArray();
+                && humanMatchable.Any(body => PromptSubmissionMatch.IsCompleteIn(body, row.Text)))).ToArray();
     }
 
     private async Task<CompactionTailObservation?> ObserveAsync(Guid sessionId, CancellationToken ct)

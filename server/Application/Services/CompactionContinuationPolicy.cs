@@ -329,8 +329,7 @@ public readonly record struct CompactionTranscriptFact(
     string? NativeId = null,
     string? ToolUseId = null,
     bool IsCorrelatedCheck = false,
-    bool IsHumanOrigin = false,
-    string? StopReason = null);
+    bool IsHumanOrigin = false);
 
 public sealed record CompactionScopeSnapshot
 {

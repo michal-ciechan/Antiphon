@@ -262,8 +262,10 @@ public class CheckCompactionAutomaticRestartTests
             AcceptedStartedAt: world.Accepted)),
         CompactionObservation = new CompactionTailObservation(
             CompactionObservationStatuses.Success, true, 1, "bind-1", 1, 1, world.Boundary, world.Continuation),
-        CompactionStopResult = new CompactionContinuationStopResult(
-            world.SessionId, Guid.NewGuid(), true, CompactionStopOutcomes.Exited, world.Accepted),
+        // The real runner answers about the attempt it was asked about; echoing it keeps this
+        // success fake honest against the CARD-0606 attempt fence.
+        CompactionStopResultFor = request => new CompactionContinuationStopResult(
+            world.SessionId, request.AttemptId, true, CompactionStopOutcomes.Exited, world.Accepted),
     };
 
     private static CheckCompactionContinuationService Service(

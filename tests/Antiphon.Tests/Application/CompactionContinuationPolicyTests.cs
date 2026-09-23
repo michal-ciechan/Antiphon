@@ -202,8 +202,8 @@ public class CompactionContinuationPolicyTests
         [
             Line(1254, TranscriptKinds.TurnEnd, null, old),
             Line(1255, TranscriptKinds.UserPrompt, "check the board", old.AddSeconds(1), check: true),
-            new(1256, TranscriptKinds.CompactBoundary, "Context compacted (auto)", old, old, "b", null, false, false, null),
-            new(1257, TranscriptKinds.UserPrompt, Continuation(), old, now.AddMinutes(-1), "c", null, false, false, null),
+            new(1256, TranscriptKinds.CompactBoundary, "Context compacted (auto)", old, old, "b", null, false, false),
+            new(1257, TranscriptKinds.UserPrompt, Continuation(), old, now.AddMinutes(-1), "c", null, false, false),
         ];
         var verdict = CompactionContinuationPolicy.Evaluate(scope, freshArrival, 10, now);
         verdict.Overdue.ShouldBeFalse();

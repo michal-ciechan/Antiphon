@@ -229,8 +229,8 @@ internal static class CheckCompactionCrashWorker
         GetOverride = (sessionId, _) => Task.FromResult(new SessionRunnerSessionDto(
             sessionId, 1, request.Accepted, "Running", null, AgentExitReason.Unknown, 1,
             AcceptedStartedAt: request.Accepted)),
-        CompactionStopResult = new CompactionContinuationStopResult(
-            request.SessionId, Guid.NewGuid(), true, CompactionStopOutcomes.Exited, request.Accepted),
+        CompactionStopResultFor = stop => new CompactionContinuationStopResult(
+            request.SessionId, stop.AttemptId, true, CompactionStopOutcomes.Exited, request.Accepted),
     };
 
     private sealed class CountingResume(CrashWorkerRequest request) : ICompactionContinuationResume

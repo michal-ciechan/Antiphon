@@ -36,6 +36,14 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
     public CompactionTailObservation? CompactionObservation { get; set; }
     public List<CompactionContinuationStopRequest> CompactionStops { get; } = [];
     public CompactionContinuationStopResult? CompactionStopResult { get; set; }
+
+    /// <summary>
+    /// CARD-0606: a stop result computed FROM the request, so an ordinary success fake echoes the
+    /// attempt the coordinator actually asked about instead of inventing a fresh id. An explicitly
+    /// supplied <see cref="CompactionStopResult"/> still wins, which is how a crossed-response test
+    /// hands back a prior attempt's success on purpose.
+    /// </summary>
+    public Func<CompactionContinuationStopRequest, CompactionContinuationStopResult>? CompactionStopResultFor { get; set; }
     public int KillCalls { get; private set; }
     public List<(Guid SessionId, DateTime Expected)> KillGenerationCalls { get; } = [];
     public List<(Guid SessionId, RunnerConditionalInputRequest Request)> ConditionalInputCalls { get; } = [];
@@ -139,8 +147,10 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
     {
         ct.ThrowIfCancellationRequested();
         CompactionStops.Add(request);
-        return Task.FromResult(CompactionStopResult ?? new CompactionContinuationStopResult(
-            sessionId, request.AttemptId, false, CompactionStopOutcomes.Unsupported, null));
+        return Task.FromResult(CompactionStopResult
+            ?? CompactionStopResultFor?.Invoke(request)
+            ?? new CompactionContinuationStopResult(
+                sessionId, request.AttemptId, false, CompactionStopOutcomes.Unsupported, null));
     }
 
     public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct)

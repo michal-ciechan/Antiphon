@@ -184,8 +184,8 @@ public partial class CheckNoteDeliveryHandoffTests
             AcceptedStartedAt: generation)),
         CompactionObservation = new CompactionTailObservation(
             CompactionObservationStatuses.Success, true, 64, "bind-1", 2, 2, "boundary-1", "cont-1"),
-        CompactionStopResult = new CompactionContinuationStopResult(
-            sessionId, Guid.NewGuid(), true, CompactionStopOutcomes.Exited, generation),
+        CompactionStopResultFor = request => new CompactionContinuationStopResult(
+            sessionId, request.AttemptId, true, CompactionStopOutcomes.Exited, generation),
     };
 
     /// <summary>
