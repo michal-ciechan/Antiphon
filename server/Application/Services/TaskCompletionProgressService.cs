@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain;
@@ -648,12 +648,22 @@ public sealed class TaskCompletionProgressService
         // lineage the baseline is not part of. Before this card the divergent tip fell through to
         // `unclaimed_or_unmatched_commit` and settled a delegate that had done real work as
         // Failed. Qualify the exact commit by time instead, with alternate authority only.
+        //
+        // CARD-0613 review fix. The alternate result is kept only when it is POSITIVE, exactly as
+        // EvaluateOffExpectedRefAsync does for D-5. Returning it unconditionally swallowed the two
+        // arms below that the pre-card code still reached for this same input, reintroducing two
+        // false complete negatives: a divergent own tip whose claim is reachable from the remote
+        // but not locally (base: PrimaryRemote positive), and a divergent own tip with an
+        // unreadable remote observation (base: Indeterminate, fail-open per D-6/D-8).
+        CompletionProgressSource? divergent = null;
         if (localNovel == CommitNovelty.Divergent)
         {
             var candidate = string.IsNullOrEmpty(claim) ? localTip : claim;
-            return await QualifyPrimaryAlternateAsync(
+            divergent = await QualifyPrimaryAlternateAsync(
                 repo, source, baseline, now, candidate, localTip, "primary_divergent_commit",
                 claim, observation, localTip, remoteTip, ct);
+            if (divergent.Assessment == CompletionProgressAssessment.ProgressObserved)
+                return divergent;
         }
 
         if (remote.State == ProgressRemoteState.Unavailable)
@@ -662,9 +672,15 @@ public sealed class TaskCompletionProgressService
         if (remoteTip is not null && remoteTip != source.Remote.Sha && remoteTip != source.LocalSha)
         {
             if (string.IsNullOrEmpty(claim))
-                return Arm(originRemote, CompletionProgressAssessment.NoAttributedProgress, "unclaimed_or_unmatched_commit", true, source, localTip, remoteTip);
-            return await QualifyClaimAsync(repo, source, claim, localTip, remoteTip, remote, originRemote, ct);
+                return divergent ?? Arm(originRemote, CompletionProgressAssessment.NoAttributedProgress, "unclaimed_or_unmatched_commit", true, source, localTip, remoteTip);
+            var viaRemote = await QualifyClaimAsync(repo, source, claim, localTip, remoteTip, remote, originRemote, ct);
+            if (divergent is null || viaRemote.Assessment == CompletionProgressAssessment.ProgressObserved)
+                return viaRemote;
+            return divergent;
         }
+
+        // Nothing else qualified: the divergent alternate verdict is the D-6 answer for this tip.
+        if (divergent is not null) return divergent;
 
         if (!string.IsNullOrEmpty(claim))
             return await QualifyClaimAsync(repo, source, claim, localTip, remoteTip, remote, originLocal, ct);

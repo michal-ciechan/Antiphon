@@ -1,4 +1,4 @@
-using Antiphon.Server.Application.Dtos;
+﻿using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -496,6 +496,71 @@ public class TaskCompletionContinuationTests
         ev.Reason.ShouldBe("baseline_lineage_broken");
         ev.Assessment.ShouldNotBe(CompletionProgressAssessment.ProgressObserved);
         ev.Evidence.Sources!.ShouldNotContain(s => s.Origin == ProgressOrigin.PrimaryAlternate);
+    }
+
+    // ---- V-11 / R-9 ------------------------------------------------------------------------
+
+    [Test]
+    [Arguments("claim-is-remote-tip")]
+    [Arguments("claim-behind-remote-tip")]
+    public async Task C613_DivergentOwnTipStillReachesRemoteClaim(string shape)
+    {
+        // The own branch was reset into a divergent lineage (C), but the delegate's real commit is
+        // on the EXPECTED REMOTE ref (D, possibly with E above it) and is reachable from the
+        // remote only. The divergent alternate arm cannot qualify it - the claim is unreachable
+        // from the local tip - so it must NOT short-circuit: before CARD-0613 this same input
+        // settled PrimaryRemote-positive and Succeeded.
+        var remoteTip = shape == "claim-behind-remote-tip" ? E : D;
+        var w = World(headRef: ExpectedRef, headSha: C, expectedTip: C, remoteTip: remoteTip);
+        w.Git.AddCommit(C, Root);   // divergent: the captured baseline Bl is not reachable from C
+        w.Git.AddCommit(D, Bl);     // the real work, pushed to the expected remote ref
+        w.Git.AddCommit(E, D);
+        w.Git.CommitTimes[D] = AfterCapture;
+
+        var ev = await w.Svc.EvaluateAsync(w.Task, Claim(w.Task.Id, D), default);
+
+        ev.Assessment.ShouldBe(CompletionProgressAssessment.ProgressObserved);
+        var positive = ev.Evidence.Sources!.Single(s => s.Assessment == CompletionProgressAssessment.ProgressObserved);
+        positive.Origin.ShouldBe(ProgressOrigin.PrimaryRemote);
+        positive.VerifiedSha.ShouldBe(D);
+        positive.ClaimedSha.ShouldBe(D);
+        positive.RemoteObserved.ShouldBe(remoteTip);
+        positive.LocalObserved.ShouldBe(C);
+        // The divergent arm's own negative must not have become the verdict.
+        ev.Evidence.Sources!.ShouldNotContain(s => s.Reason == "claimed_commit_unreachable");
+        ev.Evidence.Sources!.ShouldNotContain(s => s.Assessment == CompletionProgressAssessment.NoAttributedProgress);
+        // Remote-only corroboration has never authorized merge-back.
+        ev.PrimaryDirectProgress.ShouldBeFalse();
+        ev.AllowsAutomaticWorkspaceMutation.ShouldBeFalse();
+    }
+
+    [Test]
+    [Arguments("no-claim")]
+    [Arguments("claimed-tip")]
+    public async Task C613_DivergentOwnTipWithUnreadableRemoteStaysIndeterminate(string shape)
+    {
+        // Divergent own tip whose candidate fails the D-6 lower time bound, with the remote
+        // observation UNREADABLE. Half the evidence is missing, so the graph cannot say "nothing
+        // happened": Indeterminate, fail-open per D-6/D-8, never the complete negative that would
+        // settle a working delegate Failed.
+        var w = World(headRef: ExpectedRef, headSha: C, expectedTip: C);
+        w.Git.AddCommit(C, Root);
+        w.Git.CommitTimes[C] = BeforeCapture;
+        w.Git.BeforeCommand = (_, args) => args[0] == "ls-remote"
+            ? new LandingGitResult(128, "", "fatal: could not read from remote repository")
+            : null;
+
+        var body = shape == "claimed-tip" ? Claim(w.Task.Id, C) : "reset the branch, then committed.";
+        var ev = await w.Svc.EvaluateAsync(w.Task, body, default);
+
+        ev.Assessment.ShouldBe(CompletionProgressAssessment.Indeterminate);
+        ev.Reason.ShouldBe("source_remote_unreadable");
+        ev.Assessment.ShouldNotBe(CompletionProgressAssessment.NoAttributedProgress);
+        var only = ev.Evidence.Sources!.Single();
+        only.Origin.ShouldBe(ProgressOrigin.PrimaryRemote);
+        only.Complete.ShouldBeFalse();
+        ev.Evidence.Sources!.ShouldNotContain(s => s.Reason == "primary_commit_predates_dispatch");
+        ev.AllowsAutomaticWorkspaceMutation.ShouldBeFalse();
     }
 
     // ---- helpers ---------------------------------------------------------------------------
