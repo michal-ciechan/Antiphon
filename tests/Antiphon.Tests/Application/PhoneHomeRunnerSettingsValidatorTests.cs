@@ -60,6 +60,15 @@ public sealed class PhoneHomeRunnerSettingsValidatorTests
         settings.MaxCapacity.ShouldBe(8);
         settings.RawExeAllowList.ShouldBe(["/bin/sh", "/bin/bash", "/usr/local/bin/pwsh"]);
         settings.AllowDelegatedTasks.ShouldBeFalse("delegated tasks are opt-in, not a default");
+        settings.ChildClaudeHome.ShouldBe("/state/claude");
+        settings.ClaudeAuthProbeEnabled.ShouldBeTrue();
+    }
+
+    [Test]
+    public void Child_claude_home_must_be_posix_absolute()
+    {
+        PhoneHomeRunnerSettingsRules.Validate(Settings(s => s.ChildClaudeHome = "state/claude"))
+            .ShouldContain(m => m.Contains("ChildClaudeHome", StringComparison.Ordinal));
     }
 
     private static PhoneHomeRunnerSettings Settings(Action<PhoneHomeRunnerSettings> mutate)

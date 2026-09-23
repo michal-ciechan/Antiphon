@@ -31,6 +31,8 @@ public sealed class PhoneHomeRunnerSettings
     public int MaxCapacity { get; set; } = 8;
 
     public string ChildGrokHome { get; set; } = "/state/grok";
+    public string ChildClaudeHome { get; set; } = "/state/claude";
+    public bool ClaudeAuthProbeEnabled { get; set; } = true;
     public string CallbackOrigin { get; set; } = "";
     public string SharedSecret { get; set; } = "";
     public int TicketTtlSeconds { get; set; } = 30;
@@ -65,6 +67,8 @@ public static class PhoneHomeRunnerSettingsRules
             failures.Add("PhoneHomeRunner:RawExeAllowList entries must be POSIX absolute paths.");
         if (string.IsNullOrWhiteSpace(options.ChildGrokHome) || !options.ChildGrokHome.StartsWith('/'))
             failures.Add("PhoneHomeRunner:ChildGrokHome must be a POSIX absolute path.");
+        if (string.IsNullOrWhiteSpace(options.ChildClaudeHome) || !options.ChildClaudeHome.StartsWith('/'))
+            failures.Add("PhoneHomeRunner:ChildClaudeHome must be a POSIX absolute path.");
         if (!Uri.TryCreate(options.CallbackOrigin, UriKind.Absolute, out var origin)
             || (origin.Scheme != Uri.UriSchemeHttp && origin.Scheme != Uri.UriSchemeHttps))
             failures.Add("PhoneHomeRunner:CallbackOrigin must be an absolute http(s) URI.");

@@ -664,6 +664,30 @@ public class PhoneHomeStandingLaunchTests
     }
 
     [Test]
+    public void Runner_bound_named_claude_agent_is_admitted_and_projects()
+    {
+        var policy = PoolPolicy();
+        var agent = new Agent { Id = Guid.NewGuid(), RunnerId = "server2", WorkingDirectory = @"C:\src\Antiphon" };
+        Refuse(policy, agent, kind: AgentKind.ClaudeCode);
+        var spec = new AgentLaunchSpec("claude", AgentKind.ClaudeCode, @"C:\tools\claude.exe", [],
+            new Dictionary<string, string>(), @"C:\src\Antiphon", 80, 24);
+        var projected = policy.Project(spec, agent);
+        projected.Exe.ShouldBe("claude");
+        projected.Cwd.ShouldBe("/work");
+        projected.Env["CLAUDE_CONFIG_DIR"].ShouldBe("/state/claude");
+    }
+
+    [Test]
+    public void Runner_bound_claude_remote_control_is_refused()
+    {
+        var policy = PoolPolicy();
+        var agent = new Agent { Id = Guid.NewGuid(), RunnerId = "server2", WorkingDirectory = @"C:\src\Antiphon" };
+        Should.Throw<ConflictException>(() => Refuse(policy, agent, kind: AgentKind.ClaudeCode,
+            remoteControl: true)).Code.ShouldBe("phone_home_remote_control_refused");
+        Refuse(policy, new Agent { Id = Guid.NewGuid() }, kind: AgentKind.ClaudeCode, remoteControl: true);
+    }
+
+    [Test]
     public void Card_start_and_onagent_stay_refused_for_runner_bound_agent()
     {
         var policy = PoolPolicy();
@@ -701,9 +725,11 @@ public class PhoneHomeStandingLaunchTests
         bool onAgent = false,
         SessionBackend backend = SessionBackend.PtyHost,
         AgentKind kind = AgentKind.Grok,
-        string? customWrapper = null) =>
+        string? customWrapper = null,
+        bool remoteControl = false) =>
         policy.RefuseUnsupportedStart(
-            agent, cardStart, delegatedTask, worktree, sourceLanding, onAgent, backend, kind, customWrapper);
+            agent, cardStart, delegatedTask, worktree, sourceLanding, onAgent, backend, kind, customWrapper,
+            remoteControl);
 
     private static PhoneHomeLaunchPolicy PoolPolicy() =>
         new(Options.Create(new PhoneHomeRunnerSettings

@@ -21,6 +21,9 @@ public interface ISessionRunnerClient
     Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct) =>
         Task.FromResult<RunnerCapabilitiesDto?>(null);
 
+    Task<RunnerProviderAuthDto?> GetProviderAuthAsync(string provider, CancellationToken ct) =>
+        Task.FromResult<RunnerProviderAuthDto?>(null);
+
     /// <summary>
     /// Body of the runner's <c>GET /health</c> (CARD-0179). Null means this client cannot say —
     /// the diagnostics bundle records that in errors.txt rather than failing the zip.

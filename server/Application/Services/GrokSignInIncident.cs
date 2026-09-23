@@ -29,30 +29,8 @@ internal static class GrokSignInIncident
         if (await HasOpenEpisodeAsync(db, grokHome, ct))
             return;
 
-        if (supervisor is not null)
-        {
-            await supervisor.RecordIncidentAsync(
-                agentId,
-                sessionId,
-                AgentIncidentKind.ProviderSignInRequired,
-                AlertSeverity.Critical,
-                reason,
-                failureReason: EpisodeKey(grokHome),
-                ct: ct);
-            return;
-        }
-
-        db.AgentIncidents.Add(new AgentIncident
-        {
-            Id = Guid.NewGuid(),
-            AgentId = agentId,
-            SessionId = sessionId,
-            Kind = AgentIncidentKind.ProviderSignInRequired,
-            Severity = AlertSeverity.Critical,
-            Message = ColumnText.Clip(reason, AgentIncident.MessageMaxLength),
-            FailureReason = ColumnText.ClipOrNull(EpisodeKey(grokHome), AgentIncident.FailureReasonMaxLength),
-            CreatedAt = DateTime.UtcNow,
-        });
+        await ProviderSignInIncident.RecordAsync(
+            db, supervisor, agentId, sessionId, EpisodeKey(grokHome), reason, ct);
     }
 
     public static async Task<bool> HasOpenEpisodeAsync(

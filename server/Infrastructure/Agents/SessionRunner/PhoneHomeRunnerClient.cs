@@ -28,6 +28,14 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient
         return Read<RunnerCapabilitiesDto>(frame);
     }
 
+    public async Task<RunnerProviderAuthDto?> GetProviderAuthAsync(string provider, CancellationToken ct)
+    {
+        // Operation 16 is reserved for ProviderAuth by CARD-0628 S4. The named
+        // contracts enum is added by that round; the wire number is already fixed.
+        var frame = await _connection.RequestAsync((PhoneHomeOperation)16, new { provider }, ct);
+        return Read<RunnerProviderAuthDto>(frame);
+    }
+
     public async Task<string?> GetHealthAsync(CancellationToken ct)
     {
         var frame = await _connection.RequestAsync(PhoneHomeOperation.Health, null, ct);

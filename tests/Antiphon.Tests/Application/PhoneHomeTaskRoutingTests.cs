@@ -41,10 +41,10 @@ public sealed class PhoneHomeTaskRoutingTests
     }
 
     [Test]
-    public void Only_grok_runs_a_runner_bound_task()
+    public void Only_grok_and_claude_run_a_runner_bound_task()
     {
         var policy = Policy();
-        foreach (var kind in new[] { AgentKind.ClaudeCode, AgentKind.Codex, AgentKind.Raw })
+        foreach (var kind in new[] { AgentKind.Codex, AgentKind.OpenCode, AgentKind.Raw })
         {
             Should.Throw<Antiphon.Server.Application.Exceptions.ConflictException>(() =>
                     policy.RefuseUnsupportedStart(PoolAgent(), false, delegatedTask: true, worktree: true, false, false,
@@ -52,9 +52,48 @@ public sealed class PhoneHomeTaskRoutingTests
                 .Code.ShouldBe("phone_home_kind_refused");
         }
 
-        // Grok is admitted, and is the only kind the image carries.
-        policy.RefuseUnsupportedStart(PoolAgent(), false, delegatedTask: true, worktree: true, false, false,
-            SessionBackend.PtyHost, AgentKind.Grok, null);
+        foreach (var kind in new[] { AgentKind.Grok, AgentKind.ClaudeCode })
+            policy.RefuseUnsupportedStart(PoolAgent(), false, delegatedTask: true, worktree: true, false, false,
+                SessionBackend.PtyHost, kind, null);
+    }
+
+    [Test]
+    public void Task_session_projects_claude_exe_and_config_dir()
+    {
+        var spec = new Antiphon.Server.Application.Dtos.AgentLaunchSpec(
+            "claude", AgentKind.ClaudeCode, @"C:\Users\x\.local\bin\claude.exe", [],
+            new Dictionary<string, string>
+            {
+                ["DISABLE_AUTOUPDATER"] = "1",
+                ["CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"] = "1",
+            }, @"C:\Antiphon\worktrees\card-task-deadbeef", 80, 24);
+        var projected = Policy().Project(spec, PoolAgent(), "/work/worktrees/task-deadbeef");
+        projected.Exe.ShouldBe("claude");
+        projected.Cwd.ShouldBe("/work/worktrees/task-deadbeef");
+        projected.Env["CLAUDE_CONFIG_DIR"].ShouldBe("/state/claude");
+        projected.Env["GROK_HOME"].ShouldBe("/state/grok");
+        projected.Env["ANTIPHON_API"].ShouldBe("https://antiphon.desktop.codeperf.net");
+        projected.Env["DISABLE_AUTOUPDATER"].ShouldBe("1");
+        projected.Env["CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"].ShouldBe("1");
+    }
+
+    [Test]
+    public void Runner_bound_claude_launch_refuses_anthropic_credential_names()
+    {
+        foreach (var name in new[] { "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+            "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "CCR_OAUTH_TOKEN_FILE" })
+        {
+            var spec = new Antiphon.Server.Application.Dtos.AgentLaunchSpec(
+                "claude", AgentKind.ClaudeCode, "claude.exe", [],
+                new Dictionary<string, string> { [name] = "secret-sentinel" }, "/work", 80, 24);
+            var exception = Should.Throw<Antiphon.Server.Application.Exceptions.ConflictException>(() =>
+                Policy().Project(spec, PoolAgent()));
+            exception.Code.ShouldBe("phone_home_env_refused");
+            exception.Message.ShouldContain(name);
+            exception.Message.ShouldNotContain("secret-sentinel");
+            Policy().Project(spec with { Kind = AgentKind.Grok, Exe = "grok.exe" }, PoolAgent())
+                .Env[name].ShouldBe("secret-sentinel");
+        }
     }
 
     [Test]
