@@ -98,6 +98,10 @@ public sealed class AgentTaskDispatcher
     private readonly IAgentTaskLaunchSink? _taskLaunchSink;
     private readonly WorkspaceUseAdmission? _workspaceUse;
     private readonly CheckCompactionContinuationService? _compaction;
+    private readonly SweepInFlightState? _sweepInFlight;
+
+    /// <summary>This instance's context, so a test can tell an owned-scope sweep's context apart.</summary>
+    internal AppDbContext Db => _db;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -160,8 +164,12 @@ public sealed class AgentTaskDispatcher
         CheckCompactionContinuationService? compaction = null,
         RemoteWorkspaceService? remoteWorkspace = null,
         ISessionRunnerDirectory? runners = null,
-        IAgentTaskLaunchSink? taskLaunchSink = null)
+        IAgentTaskLaunchSink? taskLaunchSink = null,
+        // CARD-0633 D-3. Absent (every predating harness), sweeps run on this instance and are
+        // always awaited; present together with scopeFactory, each sweep gets its own scope.
+        SweepInFlightState? sweepInFlight = null)
     {
+        _sweepInFlight = sweepInFlight;
         _taskLaunchSink = taskLaunchSink;
         _remoteWorkspace = remoteWorkspace;
         _runners = runners;
@@ -268,7 +276,9 @@ public sealed class AgentTaskDispatcher
         if (_compaction is not null)
         {
             sweepFailures += await RunSweepAsync(
-                "compaction continuation", _compaction.SweepAsync, ct);
+                "compaction continuation",
+                (d, ct2) => d._compaction?.SweepAsync(ct2) ?? Task.FromResult(0),
+                ct);
         }
 
         if (!_settings.Enabled)
@@ -284,63 +294,63 @@ public sealed class AgentTaskDispatcher
         // Remap them before anything else so the attention feed and notifier see Succeeded.
         sweepFailures += await RunSweepAsync(
             "remap blocked check interpretations",
-            ct2 => AgentTaskCheckService.RemapBlockedInterpretationsAsync(_db, _timeProvider, ct2),
+            (d, ct2) => AgentTaskCheckService.RemapBlockedInterpretationsAsync(d._db, d._timeProvider, ct2),
             ct);
 
         // Before dispatching new work, deal with running work that has gone quiet — IF any role
         // still carries both EscalateTo and EscalateAfterMinutes. Shipped defaults disarm the
         // auto-trigger (CARD-0158); the sweep short-circuits to zero queries when nothing is armed.
         // Manual /escalate still uses EscalateTo alone via AgentTaskService.ResolveEscalationTarget.
-        sweepFailures += await RunSweepAsync("auto-escalate stalled", AutoEscalateStalledAsync, ct);
+        sweepFailures += await RunSweepAsync("auto-escalate stalled", (d, ct2) => d.AutoEscalateStalledAsync(ct2), ct);
 
         // And with work that never STARTED — no turn prompt after dispatch means the boot prompt
         // was lost, which is categorically different from slow progress and must fail loudly,
         // never escalate (a bigger model can't fix an undelivered brief).
-        sweepFailures += await RunSweepAsync("delivery watchdog", FailNeverStartedAsync, ct);
+        sweepFailures += await RunSweepAsync("delivery watchdog", (d, ct2) => d.FailNeverStartedAsync(ct2), ct);
 
         // And with work whose SESSION died under it (CARD-0021). Distinct from the watchdog above,
         // which only ever asks whether a Dispatched task started: a Working task is outside its
         // query altogether, and a task whose session wrote a transcript and then died passes its
         // "did it start" test forever. Three zombies sat open for hours on 2026-08-09 that way.
-        sweepFailures += await RunSweepAsync("dead-session reconciler", FailDeadSessionTasksAsync, ct);
+        sweepFailures += await RunSweepAsync("dead-session reconciler", (d, ct2) => d.FailDeadSessionTasksAsync(ct2), ct);
 
         // And with work that started, never stopped, and has now run past a deadline (CARD-0020).
         // The three clocks above all ask a question about DELIVERY or LIVENESS; a task whose brief
         // landed, whose session is alive and which is simply never going to finish answered every
         // one of them for as long as it ran. RolePolicyEntry.TimeoutMinutes was declared for this
         // and read nowhere, so until now there was no deadline on a working task at all.
-        sweepFailures += await RunSweepAsync("overdue-task deadline", FailOverdueTasksAsync, ct);
+        sweepFailures += await RunSweepAsync("overdue-task deadline", (d, ct2) => d.FailOverdueTasksAsync(ct2), ct);
 
         // And with work that is still writing rows but none of them is new (CARD-0153). After the
         // overdue deadline on purpose: a task that clock is about to fail does not need a stall
         // row on top. Detection only — this sweep never fails, kills, or escalates.
-        sweepFailures += await RunSweepAsync("progress stall", DetectStalledProgressAsync, ct);
+        sweepFailures += await RunSweepAsync("progress stall", (d, ct2) => d.DetectStalledProgressAsync(ct2), ct);
 
         // And with warm delegates that have sat idle too long — the pool trades memory for
         // startup latency, and the janitor is what keeps that trade bounded.
-        sweepFailures += await RunSweepAsync("retire idle warm agents", RetireIdleWarmAgentsAsync, ct);
+        sweepFailures += await RunSweepAsync("retire idle warm agents", (d, ct2) => d.RetireIdleWarmAgentsAsync(ct2), ct);
 
         // And with settlements deferred waiting for a turn-ending response's own text (CARD-0046).
         // Nothing re-triggers a response that never writes text, so the grace needs a clock, and
         // this is the one that already runs on a 5 s cadence before the early return below.
-        sweepFailures += await RunSweepAsync("settle deferred reports", SettleDeferredReportsAsync, ct);
+        sweepFailures += await RunSweepAsync("settle deferred reports", (d, ct2) => d.SettleDeferredReportsAsync(ct2), ct);
 
         // And with running work that is DUE A LOOK (CARD-0047). This is where every other
         // "running-work-gone-quiet" clock already lives, and check-due times have minute
         // granularity, so a 5 s cadence is two orders of magnitude finer than needed. It CLAIMS AND
         // HANDS OFF only — see RunScheduledChecksAsync for why the tick must never run a check.
-        sweepFailures += await RunSweepAsync("scheduled checks", RunScheduledChecksAsync, ct);
+        sweepFailures += await RunSweepAsync("scheduled checks", (d, ct2) => d.RunScheduledChecksAsync(ct2), ct);
 
         // And with a task that Failed before it was ever dispatched, whose caller has not yet
         // heard (CARD-0231). Same NextCheckAt ramp as a check, but it only re-sends the failure
         // note — nothing to probe, no interpreter, no session.
-        sweepFailures += await RunSweepAsync("unacknowledged failure reminders", RemindUnacknowledgedFailuresAsync, ct);
+        sweepFailures += await RunSweepAsync("unacknowledged failure reminders", (d, ct2) => d.RemindUnacknowledgedFailuresAsync(ct2), ct);
 
         // And with check notes still Pending whose task has since settled (CARD-0074). The
         // interpreter window is closed in RunCheckAsync; this is the queue window — WhenIdle
         // notes that sat while the task finished. Mark, never suppress; the amend goes through
         // the queue's per-session lock so it cannot race a flush mid-type.
-        sweepFailures += await RunSweepAsync("superseded check notes", ReconcileSupersededChecksAsync, ct);
+        sweepFailures += await RunSweepAsync("superseded check notes", (d, ct2) => d.ReconcileSupersededChecksAsync(ct2), ct);
 
         // The cap bounds concurrent Claude PROCESSES, so interpretation tasks are outside it both
         // ways — they neither consume a slot nor wait for one. A Check task is pinned to the
@@ -351,7 +361,7 @@ public sealed class AgentTaskDispatcher
         var resumedRoutingBlocked = 0;
         sweepFailures += await RunSweepAsync(
             "resume routing-blocked",
-            async ct2 => resumedRoutingBlocked = await ResumeRoutingBlockedAsync(ct2),
+            async (d, ct2) => resumedRoutingBlocked = await d.ResumeRoutingBlockedAsync(ct2),
             ct);
 
         var active = await _db.AgentTasks
@@ -1278,12 +1288,12 @@ public sealed class AgentTaskDispatcher
     /// <see cref="OperationCanceledException"/> is a timeout wearing the same type (an HttpClient
     /// timeout is a TaskCanceledException) and is a transient failure like any other.</para>
     /// </summary>
-    private async Task<int> RunSweepAsync(
-        string name, Func<CancellationToken, Task<int>> sweep, CancellationToken ct)
+    internal async Task<int> RunSweepAsync(
+        string name, Func<AgentTaskDispatcher, CancellationToken, Task<int>> sweep, CancellationToken ct)
     {
         try
         {
-            await sweep(ct);
+            await sweep(this, ct);
             return 0;
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)

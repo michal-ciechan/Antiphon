@@ -588,6 +588,20 @@ public sealed class DelegationSettings
     public int DispatchHeldErrorSeconds { get; set; } = 900;
 
     /// <summary>
+    /// CARD-0633 D-3: each dispatcher sweep's token is cancelled once the sweep has run this long.
+    /// A sweep that finishes after its budget counts as a sweep failure. Default 60.
+    /// </summary>
+    public int SweepBudgetSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// CARD-0633 D-3: how long past <see cref="SweepBudgetSeconds"/> a sweep that ignores its
+    /// cancelled token is still awaited before it is abandoned. Abandonment happens only when the
+    /// sweep runs on its own service scope; a sweep on the tick's own context is always awaited.
+    /// Default 30.
+    /// </summary>
+    public int SweepAbandonGraceSeconds { get; set; } = 30;
+
+    /// <summary>
     /// Started-and-interrupted git attempts on one land request before the sweep refuses
     /// (CARD-0331). Held passes do not count. Floor 1, ceiling 10.
     /// </summary>
@@ -1108,6 +1122,8 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
         if (options.DispatchHeldWarningSeconds <= 0
             || options.DispatchHeldErrorSeconds <= options.DispatchHeldWarningSeconds)
             failures.Add("Delegation dispatch-held thresholds must be positive and Error must exceed Warning.");
+        if (options.SweepBudgetSeconds <= 0 || options.SweepAbandonGraceSeconds <= 0)
+            failures.Add("Delegation:SweepBudgetSeconds and Delegation:SweepAbandonGraceSeconds must be positive.");
         if (options.CheckInterpreterFirstAttemptSeconds is { } firstAttempt
             && (firstAttempt <= 0 || firstAttempt > options.CheckInterpreterWaitSeconds))
             failures.Add("Delegation:CheckInterpreterFirstAttemptSeconds must be positive and no greater than CheckInterpreterWaitSeconds, or null.");
