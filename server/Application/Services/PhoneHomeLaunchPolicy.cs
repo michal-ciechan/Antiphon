@@ -160,9 +160,11 @@ public sealed class PhoneHomeLaunchPolicy
             MemoryLimitMb = 0,
             Backend = SessionBackend.PtyHost,
             Herdr = null,
-            // Cut B (D-19) is what teaches the runner to hold a binding. Until then a projected
-            // launch carries none, and the runner refuses one that does.
-            VerificationBinding = null,
+            // CARD-0604 D-19 (Cut B). The runner now holds a binding, so a projected launch keeps
+            // the one the reservation made. It is not re-created or adjusted here: the runner
+            // admits it only when its backend and store are the runner's own (G-37), and a
+            // projection that quietly dropped it would turn a tracked Mutation into an untracked
+            // session with a reserved execution nothing can resolve.
         };
     }
 
