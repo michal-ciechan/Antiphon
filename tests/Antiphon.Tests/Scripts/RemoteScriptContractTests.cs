@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -431,9 +433,9 @@ public sealed class RemoteScriptContractTests
             .Select((line, index) => (line, index))
             .Where(item => item.line.Contains("$GIT_IDENTITY_PATH", StringComparison.Ordinal))
             .Where(item => !item.line.Contains("--get", StringComparison.Ordinal)
+                && !item.line.StartsWith("if [ -L ", StringComparison.Ordinal)
                 && !item.line.StartsWith("if [ -d ", StringComparison.Ordinal)
                 && !item.line.StartsWith("rmdir ", StringComparison.Ordinal)
-                && !item.line.StartsWith("chmod 0644 ", StringComparison.Ordinal)
                 && item.line != create)
             .ToList();
         writes.ShouldNotBeEmpty();
@@ -442,8 +444,10 @@ public sealed class RemoteScriptContractTests
         ensure.ShouldContain("mv -n \"$GIT_IDENTITY_PATH.tmp\" \"$GIT_IDENTITY_PATH\"");
         ensure.ShouldContain("git config --file \"$GIT_IDENTITY_PATH.tmp\" user.name \"$RUNNER_GIT_USER_NAME\"");
         ensure.ShouldContain("git config --file \"$GIT_IDENTITY_PATH.tmp\" user.email \"$RUNNER_GIT_USER_EMAIL\"");
-        // uid 1654 reads the bind mount itself; an incomplete file refuses rather than booting blind.
-        ensure.ShouldContain("chmod 0644 \"$GIT_IDENTITY_PATH\"");
+        // uid 1654 reads the bind mount itself, so a NEW file is made readable -- on the temporary
+        // file, never the destination; an incomplete file refuses rather than booting blind.
+        ensure.ShouldContain("&& chmod 0644 \"$GIT_IDENTITY_PATH.tmp\" \\");
+        Executable(ensure, "chmod").ShouldAllBe(line => line.Contains("\"$GIT_IDENTITY_PATH.tmp\"", StringComparison.Ordinal));
         ensure.ShouldContain("write_result false GitIdentityIncomplete 2");
         // A directory a premature bind mount left behind is removed only when empty.
         ensure.ShouldContain("rmdir \"$GIT_IDENTITY_PATH\"");
@@ -468,9 +472,9 @@ public sealed class RemoteScriptContractTests
     }
 
     // CARD-0631 V-7, D-10. deploy-parent accepted a runner whose repository did not exist, so the
-    // first mirror crashed with Win32Exception(2). It now verifies -- never seeds, which would race
-    // the runner's own lazy clone -- the checkout the runner is configured with, as uid 1654,
-    // INSIDE the container, and every failure refuses by name before acceptance.
+    // first mirror crashed with Win32Exception(2). It now verifies the checkout the runner is
+    // configured with, as uid 1654, INSIDE the container, and every failure refuses by name before
+    // acceptance. (The fresh-volume seed that precedes it is guarded separately below.)
     [Test]
     public void Deploy_parent_seeds_or_verifies_runner_checkout()
     {
@@ -525,6 +529,230 @@ public sealed class RemoteScriptContractTests
         Order(deploy, "RunnerUnhealthy", "verify_runner_checkout").ShouldBeTrue("the runner is up before it is probed");
         Order(deploy, "verify_runner_checkout", "retire_superseded_server2_images").ShouldBeTrue();
         Order(deploy, "verify_runner_checkout", "write_result true").ShouldBeTrue();
+    }
+
+    // CARD-0631 Review 012e6357 (1). A first deploy on an empty work volume always refused
+    // RunnerCheckoutMissing: phone-home may still be disabled on the server at that gate, so the
+    // runner's lazy clone never runs. The checkout is now seeded before the runner starts (no
+    // mirror can be in flight), as uid 1654, anonymously, with RunnerWorkspaceService's command,
+    // and only into an absent or empty destination; the named verification still follows.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void Deploy_parent_seeds_a_fresh_runner_checkout_before_starting_the_runner()
+    {
+        var text = Remote();
+        var seed = Block(text, "seed_runner_checkout");
+        var commands = Commands(seed);
+
+        // state-init owns the fresh volume for uid 1654 first, then a one-off of the runner image.
+        var init = commands.Single(line => line.Contains("run --rm --no-deps -T state-init", StringComparison.Ordinal));
+        init.ShouldContain("|| write_result false StateInitFailed 2");
+        var clone = commands.Single(line => line.Contains(" clone ", StringComparison.Ordinal));
+        clone.ShouldStartWith("compose_host run --rm --no-deps -T --user 1654:1654 -e GIT_TERMINAL_PROMPT=0 --entrypoint /bin/sh session-runner -c '");
+        commands.IndexOf(init).ShouldBeLessThan(commands.IndexOf(clone));
+        seed.ShouldContain("git clone --filter=blob:none --no-checkout \"$2\" \"$repo\"");
+        seed.ShouldContain("antiphon-seed \"$RUNNER_CHECKOUT_DEFAULT\" \"$RUNNER_CHECKOUT_ORIGIN\"");
+        seed.ShouldContain("|| write_result false RunnerCheckoutSeedFailed 2");
+        // Never the host's checkout, never a credential.
+        seed.ShouldNotContain("$CHECKOUT");
+        seed.ShouldNotContain("ssh");
+        seed.ShouldNotContain("|| true");
+
+        // Before the runner exists, after both images exist, and still verified by name.
+        var deploy = Block(text, "case_deploy_parent");
+        deploy.ShouldContain("\n    seed_runner_checkout\n");
+        Order(deploy, "StateInitBuildFailed", "seed_runner_checkout").ShouldBeTrue("the images are built first");
+        Order(deploy, "seed_runner_checkout", "compose_host up -d").ShouldBeTrue("seeded before the runner starts");
+        Order(deploy, "compose_host up -d", "verify_runner_checkout \"$container\"").ShouldBeTrue();
+
+        // The in-container body, run for real: an empty volume is seeded from the given origin and
+        // an existing or occupied destination is never touched.
+        var body = System.Text.RegularExpressions.Regex.Match(seed, "-c '(?<body>[^']*)'").Groups["body"].Value;
+        body.ShouldContain("repo=\"${PhoneHome__RunnerRepository:-$1}\"");
+        var output = LinuxShell("SEED='" + body + "'\n" + """
+            root="$(mktemp -d)"
+            trap 'rm -rf "$root"' EXIT
+            git init -q "$root/origin"
+            git -C "$root/origin" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+            seed() { sh -c "$SEED" antiphon-seed "$1" "$root/origin" 2>/dev/null; echo "exit=$?"; }
+            unset PhoneHome__RunnerRepository
+            printf 'fresh %s\n' "$(seed "$root/work/repos/antiphon" | tr '\n' ' ')"
+            printf 'origin=%s\n' "$(git -C "$root/work/repos/antiphon" remote get-url origin | sed "s#^$root#ROOT#")"
+            printf 'again %s\n' "$(seed "$root/work/repos/antiphon" | tr '\n' ' ')"
+            mkdir -p "$root/occupied" && touch "$root/occupied/x"
+            printf 'occupied %s\n' "$(seed "$root/occupied" | tr '\n' ' ')"
+            [ -e "$root/occupied/.git" ] || echo occupied-untouched
+            export PhoneHome__RunnerRepository="$root/configured"
+            printf 'configured %s\n' "$(seed "$root/ignored" | sed "s#$root#ROOT#" | tr '\n' ' ')"
+            [ -e "$root/configured/.git" ] && [ ! -e "$root/ignored" ] && echo configured-used
+            """);
+        output.ShouldContain("fresh seeded path=");
+        output.ShouldContain("origin=ROOT/origin\n");
+        output.ShouldContain("again present path=");
+        output.ShouldContain("occupied occupied path=");
+        output.ShouldContain("occupied-untouched");
+        output.ShouldContain("configured seeded path=ROOT/configured exit=0");
+        output.ShouldContain("configured-used");
+    }
+
+    // CARD-0631 Review 012e6357 (2). persistent-restart stopped a runner deployed before the
+    // identity mount existed; the start and the recovery then both failed on the new required
+    // mount and the standing runner stayed down. The file is ensured while the runner is still up.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void Persistent_restart_ensures_the_identity_file_before_stopping_an_older_runner()
+    {
+        var text = Remote();
+        var restart = Block(text, "case_persistent_restart");
+        Order(restart, "ensure_runner_git_identity", "compose_host stop").ShouldBeTrue();
+
+        // The migration case, run for real: an older stack.env with no identity values and no
+        // file. The compose stub refuses `up` exactly as the required bind mount would.
+        var output = LinuxShell(IdentityHarness(text, "case_persistent_restart") + """
+            C604_SERVER_ORIGIN=http://127.0.0.1:9
+            printf 'SOURCE_SHA12=0123456789ab\n' > "$SERVER2_ENV"
+            require_lane() { :; }
+            runner_container() { echo antiphon-runner-session-runner-1; }
+            sleep() { :; }
+            curl() { return 0; }
+            docker() {
+                case "$*" in
+                    *runner-store-id*) echo store-1 ;;
+                    *"images -q"*) echo image-1 ;;
+                esac
+                return 0
+            }
+            compose_host() {
+                case "$1" in
+                    stop)
+                        if [ -f "$GIT_IDENTITY_PATH" ]; then echo "stop identity=present"; else echo "stop identity=missing"; fi >> "$CASE_DIR/calls.txt"
+                        ;;
+                    up)
+                        if [ ! -f "$GIT_IDENTITY_PATH" ] || [ -L "$GIT_IDENTITY_PATH" ]; then echo "up mount-missing" >> "$CASE_DIR/calls.txt"; return 1; fi
+                        echo "up ok" >> "$CASE_DIR/calls.txt"
+                        ;;
+                esac
+            }
+            ( set -euo pipefail; case_persistent_restart )
+            echo "exit=$?"
+            cat "$CASE_DIR/calls.txt"
+            stat -c 'identity=%a %F' "$GIT_IDENTITY_PATH"
+            git config --file "$GIT_IDENTITY_PATH" --get user.name
+            """);
+        output.ShouldContain("stop identity=present");
+        output.ShouldNotContain("up mount-missing");
+        output.ShouldContain("up ok");
+        output.ShouldContain("RESULT accepted=true diagnosis=\n");
+        output.ShouldContain("exit=0");
+        output.ShouldContain("identity=644 regular file");
+        output.ShouldContain("antiphon-server2-runner\n");
+    }
+
+    // CARD-0631 Review 012e6357 (3). `chmod 0644` on the identity path followed an existing
+    // symlink and made its target -- possibly an adjacent 0600 secret -- world-readable. A symlink
+    // now refuses before anything touches it, and 0644 is applied only to a newly created file.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void Deploy_parent_refuses_a_git_identity_symlink_and_leaves_its_target_mode()
+    {
+        var text = Remote();
+        var ensure = Commands(Block(text, "ensure_runner_git_identity"));
+        ensure[2].ShouldBe("if [ -L \"$GIT_IDENTITY_PATH\" ]; then", "a symlink refuses before the path is touched");
+        ensure[3].ShouldBe("write_result false GitIdentityPathIsSymlink 2");
+
+        var output = LinuxShell(IdentityHarness(text) + """
+            secret="$SERVER2_ROOT/secrets/phone-home"
+            printf 'secret-bytes\n' > "$secret"
+            chmod 0600 "$secret"
+            ln -s phone-home "$GIT_IDENTITY_PATH"
+            ( set -euo pipefail; ensure_runner_git_identity )
+            echo "symlink exit=$?"
+            stat -c 'target=%a' "$secret"
+            printf 'target-content=%s\n' "$(cat "$secret")"
+            [ -L "$GIT_IDENTITY_PATH" ] && echo link-left
+
+            rm "$GIT_IDENTITY_PATH"
+            umask 077
+            ( set -euo pipefail; ensure_runner_git_identity )
+            echo "fresh exit=$?"
+            stat -c 'created=%a %F' "$GIT_IDENTITY_PATH"
+
+            chmod 0600 "$GIT_IDENTITY_PATH"
+            ( set -euo pipefail; ensure_runner_git_identity )
+            echo "existing exit=$?"
+            stat -c 'kept=%a' "$GIT_IDENTITY_PATH"
+            """);
+        output.ShouldContain("RESULT accepted=false diagnosis=GitIdentityPathIsSymlink\nsymlink exit=2");
+        output.ShouldContain("target=600\n");
+        output.ShouldContain("target-content=secret-bytes\n");
+        output.ShouldContain("link-left");
+        output.ShouldContain("fresh exit=0");
+        output.ShouldContain("created=644 regular file");
+        output.ShouldContain("existing exit=0");
+        output.ShouldContain("kept=600\n", customMessage: "an operator's existing file keeps its mode");
+    }
+
+    // The real identity variables and functions, over a throwaway server2 root, with write_result
+    // reduced to a printed verdict. Extra functions are extracted from the script verbatim.
+    private static string IdentityHarness(string text, params string[] functions)
+    {
+        var variables = text.Replace("\r\n", "\n").Split('\n')
+            .Where(line => line.StartsWith("GIT_IDENTITY_", StringComparison.Ordinal));
+        return string.Join('\n', new[]
+        {
+            "root=\"$(mktemp -d)\"",
+            "trap 'rm -rf \"$root\"' EXIT",
+            "CASE_DIR=\"$root/case\"; mkdir -p \"$CASE_DIR\"",
+            "SERVER2_ROOT=\"$root/server2\"; mkdir -p \"$SERVER2_ROOT/secrets\"",
+            "SERVER2_ENV=\"$SERVER2_ROOT/stack.env\"",
+            "write_result() { printf 'RESULT accepted=%s diagnosis=%s\\n' \"$1\" \"$2\"; exit \"$3\"; }",
+        }
+            .Concat(variables)
+            .Concat(new[] { "stack_env_value", "ensure_runner_git_identity" }.Concat(functions).Select(f => Block(text, f))))
+            + "\n";
+    }
+
+    // The remote script only ever runs under Linux bash, and these defects are behaviour (a
+    // symlink's target mode, a restart's ordering), not text. On Windows the Linux shell is WSL:
+    // Git Bash can neither create a symlink without privilege nor keep a 0600 mode.
+    private static string LinuxShell(string script)
+    {
+        ProcessStartInfo start;
+        if (OperatingSystem.IsWindows())
+        {
+            var wsl = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "wsl.exe");
+            if (!File.Exists(wsl))
+                Skip.Test("No Linux shell: wsl.exe is not installed, and c590-remote.sh only runs under Linux bash.");
+            start = new ProcessStartInfo(wsl) { ArgumentList = { "-e", "bash", "-s" } };
+        }
+        else
+        {
+            start = new ProcessStartInfo("bash") { ArgumentList = { "-s" } };
+        }
+
+        start.RedirectStandardInput = true;
+        start.RedirectStandardOutput = true;
+        start.RedirectStandardError = true;
+        start.UseShellExecute = false;
+        start.StandardInputEncoding = new UTF8Encoding(false);
+        start.StandardOutputEncoding = Encoding.UTF8;
+        start.StandardErrorEncoding = Encoding.UTF8;
+        using var process = Process.Start(start)!;
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        process.StandardInput.Write(script.Replace("\r\n", "\n"));
+        process.StandardInput.Close();
+        if (!process.WaitForExit(60_000))
+        {
+            process.Kill(entireProcessTree: true);
+            throw new TimeoutException("the Linux shell harness did not finish in 60s");
+        }
+
+        process.WaitForExit();
+        var output = stdout.Result;
+        Console.WriteLine(output);
+        Console.WriteLine(stderr.Result);
+        return output;
     }
 
     private static void Refuses(IReadOnlyList<string> commands, string probe, string diagnosis)

@@ -115,6 +115,15 @@ tests**, not seven tests already executed. No build, test, deployment or live ta
   complete lazy initialization through an ordinary mirror, or a separately commissioned uid-1654
   anonymous seed while no mirror is in flight, then rerun deploy verification. Document this
   bootstrap condition explicitly rather than accepting a false green.
+  **Amended by Review 012e6357:** phone-home may be disabled at that gate, so the lazy clone can
+  never bootstrap a first deploy. `seed_runner_checkout` runs before `compose up` starts the
+  runner (no mirror can be in flight): `state-init` once, then a one-off runner-image container
+  as uid 1654 clones anonymously (`--filter=blob:none --no-checkout`, the RunnerWorkspaceService
+  source) into the configured repository only when it is absent or empty (`StateInitFailed`,
+  `RunnerCheckoutSeedFailed`). Verification and its named refusals are unchanged. The same review
+  moved `ensure_runner_git_identity` ahead of `persistent-restart`'s stop (an older runner would
+  otherwise be stopped into an unbindable mount) and made a symlink at the identity path refuse
+  `GitIdentityPathIsSymlink`, with 0644 applied only to the newly created temporary file.
 - **D-11 — The GitHub key is an operator live-E2E precondition only.** Register the existing
   `antiphon-server2-runner` public deploy key for this repository with write access, using the
   credential owner procedure. No key is copied/printed by this work. Code, Review, local git
@@ -282,8 +291,11 @@ No mutation reaches production, a foreign repository, a shared volume or live Gi
 | PC-15 | Mask checkout fetch exit with `|| true` | V-7: fetch failure must be checked and refuse |
 | PC-16 | Remove ErrorDetail truncation/minimal-frame fallback | V-1 oversized subcase: expected serialized frame within budget exceeds it |
 | PC-17 | Skip child kill/reap on caller cancellation | V-5 cancellation subcase: owned git must have exited when MirrorAsync completes; fixture then reaps it |
+| PC-18 | Remove the `seed_runner_checkout` call from `case_deploy_parent` (variant: move it after `compose_host up -d`) | Review 012e6357 (1): `Deploy_parent_seeds_a_fresh_runner_checkout_before_starting_the_runner` order assertion |
+| PC-19 | Move `ensure_runner_git_identity` after `compose_host stop` in `case_persistent_restart` (variant: remove it) | Review 012e6357 (2): `Persistent_restart_ensures_the_identity_file_before_stopping_an_older_runner` (`stop identity=present`, `up ok`) |
+| PC-20 | Delete the leading `-L` refusal in `ensure_runner_git_identity` (variant: restore `chmod 0644 "$GIT_IDENTITY_PATH"` after the branch) | Review 012e6357 (3): `Deploy_parent_refuses_a_git_identity_symlink_and_leaves_its_target_mode` (`target=600`; variant `kept=600`) |
 
-Guard census: 17 guards, 17 distinct controls, missing=0, duplicate mappings=0. Each control
+Guard census: 17 guards, 17 distinct controls (plus PC-18..PC-20 for the Review 012e6357 repairs), missing=0, duplicate mappings=0. Each control
 uses the exact method above with `/*/*/<Class>/<Method>`; V references resolve through the
 seven-method table. Variants for per-producer send-gate bypasses use V-3 separately if Mutation
 finds independently bypassable call sites; do not widen to a full class for those cycles.
@@ -325,7 +337,7 @@ only the seven new methods and the named affected regressions.
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1-S2, after 0628 Round B | `tests/Antiphon.SessionRunner.Tests -> bin-c631-a/` | reply-contract | `/*/*/(PhoneHomeCommandDispatcherTests*)\|(PhoneHomeConnectionServiceTests*)/*` | V-1..V-3, R-1 | All 17 methods: 11+1 dispatcher and 3+2 connection; 0 failed/skipped | 17 | 3 |
 | CP-2 | S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c631-b/` | lazy-mirror | `/*/*/RunnerWorkspaceServiceTests/*` | V-4,V-5,R-2 | All 8 methods: 6 existing + 2 new; 0 failed/skipped | 8 | 3 |
-| CP-3 | S4-S5 | `tests/Antiphon.Tests -> bin-c631-c/` | provisioning-contract | `/*/*/(DindRunnerContractTests*)\|(RemoteScriptContractTests*)/(Gitconfig_sets_runner_identity*)\|(Gitconfig_pushes_over_ssh_only*)\|(Deploy_parent*)\|(Child_project_is_run_scoped_and_distinct*)\|(Host_compose_uses_the_deployed_tag_not_this_runs_sha*)` | V-6,V-7,R-3 | All 9 methods: 2 gitconfig + 5 Deploy_parent (amended D-9 adds one) + 2 project/tag guards; 0 failed/skipped | 9 | 3 |
+| CP-3 | S4-S5 | `tests/Antiphon.Tests -> bin-c631-c/` | provisioning-contract | `/*/*/(DindRunnerContractTests*)\|(RemoteScriptContractTests*)/(Gitconfig_sets_runner_identity*)\|(Gitconfig_pushes_over_ssh_only*)\|(Deploy_parent*)\|(Persistent_restart*)\|(Child_project_is_run_scoped_and_distinct*)\|(Host_compose_uses_the_deployed_tag_not_this_runs_sha*)` | V-6,V-7,R-3 | All 12 methods: 2 gitconfig + 7 Deploy_parent (amended D-9 adds one, Review 012e6357 adds two) + 1 Persistent_restart + 2 project/tag guards; 0 failed/skipped | 12 | 3 |
 
 ## Checkpoint execution and reporting
 
@@ -337,7 +349,7 @@ roster/count and preserve the named floors; never infer a pass from exit zero al
 ```powershell
 pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-1 -Project tests/Antiphon.SessionRunner.Tests -OutputPath bin-c631-a/ -Filter '/*/*/(PhoneHomeCommandDispatcherTests*)|(PhoneHomeConnectionServiceTests*)/*' -MinExecuted 17 -Expect Dispatch_replies_with_error_frame_when_handler_throws_unexpected_exception,Receive_loop_writes_error_frame_when_dispatch_throws,Concurrent_reply_and_heartbeat_never_drop_a_reply,Claude_launch_is_refused_when_the_probe_says_logged_out,Provider_auth_operation_answers_the_probe_and_refuses_unknown_providers -ResultsRoot .antiphon/c631-checkpoints
 pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-2 -Project tests/Antiphon.SessionRunner.Tests -OutputPath bin-c631-b/ -Filter '/*/*/RunnerWorkspaceServiceTests/*' -MinExecuted 8 -Expect Mirror_clones_repository_when_absent,Mirror_failure_is_admission_error_not_crash,Mirror_refuses_sha_mismatch -ResultsRoot .antiphon/c631-checkpoints
-pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-3 -Project tests/Antiphon.Tests -OutputPath bin-c631-c/ -Filter '/*/*/(DindRunnerContractTests*)|(RemoteScriptContractTests*)/(Gitconfig_sets_runner_identity*)|(Gitconfig_pushes_over_ssh_only*)|(Deploy_parent*)|(Child_project_is_run_scoped_and_distinct*)|(Host_compose_uses_the_deployed_tag_not_this_runs_sha*)' -MinExecuted 9 -Expect Gitconfig_sets_runner_identity_from_the_mounted_file,Gitconfig_pushes_over_ssh_only,Deploy_parent_seeds_or_verifies_runner_checkout,Deploy_parent_creates_the_git_identity_file_without_overwriting,Deploy_parent_probes_the_phone_home_secret_as_the_app_uid,Deploy_parent_refuses_a_runner_whose_phone_home_keeps_failing,Deploy_parent_retires_its_own_superseded_images,Child_project_is_run_scoped_and_distinct,Host_compose_uses_the_deployed_tag_not_this_runs_sha -ResultsRoot .antiphon/c631-checkpoints
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-3 -Project tests/Antiphon.Tests -OutputPath bin-c631-c/ -Filter '/*/*/(DindRunnerContractTests*)|(RemoteScriptContractTests*)/(Gitconfig_sets_runner_identity*)|(Gitconfig_pushes_over_ssh_only*)|(Deploy_parent*)|(Persistent_restart*)|(Child_project_is_run_scoped_and_distinct*)|(Host_compose_uses_the_deployed_tag_not_this_runs_sha*)' -MinExecuted 12 -Expect Deploy_parent_seeds_a_fresh_runner_checkout_before_starting_the_runner,Persistent_restart_ensures_the_identity_file_before_stopping_an_older_runner,Deploy_parent_refuses_a_git_identity_symlink_and_leaves_its_target_mode,Gitconfig_sets_runner_identity_from_the_mounted_file,Gitconfig_pushes_over_ssh_only,Deploy_parent_seeds_or_verifies_runner_checkout,Deploy_parent_creates_the_git_identity_file_without_overwriting,Deploy_parent_probes_the_phone_home_secret_as_the_app_uid,Deploy_parent_refuses_a_runner_whose_phone_home_keeps_failing,Deploy_parent_retires_its_own_superseded_images,Child_project_is_run_scoped_and_distinct,Host_compose_uses_the_deployed_tag_not_this_runs_sha -ResultsRoot .antiphon/c631-checkpoints
 ```
 
 Report `CHECKPOINT CP-n commit=<sha> build=<ok|reused|failed> filter=<filter> executed=N

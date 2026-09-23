@@ -1005,9 +1005,15 @@ stack_env_value() {
 # created only when missing, from stack.env's RUNNER_GIT_USER_NAME/EMAIL or the defaults. An
 # existing file is the operator's and is never rewritten. It must exist before compose, or the
 # bind mount would create a directory in its place; an EMPTY directory such a mount left behind is
-# removed, anything else refuses. Non-secret, so its values are evidence.
+# removed, anything else refuses. Non-secret, so its values are evidence. A symlink at the path
+# refuses before anything touches it: a write or chmod through it would land on its target, which
+# may be an adjacent 0600 secret. Only a file created here is made world-readable; an operator's
+# existing file keeps the mode they gave it.
 ensure_runner_git_identity() {
     local name email
+    if [ -L "$GIT_IDENTITY_PATH" ]; then
+        write_result false GitIdentityPathIsSymlink 2
+    fi
     if [ -d "$GIT_IDENTITY_PATH" ]; then
         rmdir "$GIT_IDENTITY_PATH" 2>> "$CASE_DIR/command.log" || write_result false GitIdentityPathIsDirectory 2
     fi
@@ -1017,8 +1023,12 @@ ensure_runner_git_identity() {
     RUNNER_GIT_USER_EMAIL="${email:-$GIT_IDENTITY_DEFAULT_EMAIL}"
     if [ ! -e "$GIT_IDENTITY_PATH" ]; then
         rm -f "$GIT_IDENTITY_PATH.tmp"
+        # uid 1654 reads the bind mount itself, so the NEW file is world-readable (it holds no
+        # secret). The mode goes on the regular temporary file this branch just wrote, never on
+        # the destination path.
         { git config --file "$GIT_IDENTITY_PATH.tmp" user.name "$RUNNER_GIT_USER_NAME" \
             && git config --file "$GIT_IDENTITY_PATH.tmp" user.email "$RUNNER_GIT_USER_EMAIL" \
+            && chmod 0644 "$GIT_IDENTITY_PATH.tmp" \
             && mv -n "$GIT_IDENTITY_PATH.tmp" "$GIT_IDENTITY_PATH"; } 2>> "$CASE_DIR/command.log" \
             || write_result false GitIdentityCreateFailed 2
         rm -f "$GIT_IDENTITY_PATH.tmp"
@@ -1026,8 +1036,9 @@ ensure_runner_git_identity() {
     else
         printf 'kept\n' > "$CASE_DIR/git-identity-state.txt"
     fi
-    # uid 1654 reads the bind mount itself, so the file is world-readable (it holds no secret).
-    chmod 0644 "$GIT_IDENTITY_PATH"
+    if [ -L "$GIT_IDENTITY_PATH" ]; then
+        write_result false GitIdentityPathIsSymlink 2
+    fi
     git config --file "$GIT_IDENTITY_PATH" --get user.name > "$CASE_DIR/git-identity.txt" 2>> "$CASE_DIR/command.log" \
         || write_result false GitIdentityIncomplete 2
     git config --file "$GIT_IDENTITY_PATH" --get user.email >> "$CASE_DIR/git-identity.txt" 2>> "$CASE_DIR/command.log" \
@@ -1047,11 +1058,34 @@ verify_runner_git_identity() {
     fi
 }
 
-# CARD-0631 D-10. Verify, never seed: RunnerWorkspaceService clones lazily on the first mirror,
-# and a second writer here would race it. Everything runs INSIDE the runner as uid 1654 against
-# the repository the runner is configured with -- never the host's identically named checkout and
-# never a child volume. A fresh volume therefore refuses Missing until the first mirror (or a
-# uid-1654 anonymous seed while no mirror is in flight) creates it; deploy is then rerun.
+# CARD-0631 D-10 (amended by Review 012e6357). A first deploy on an empty work volume cannot wait
+# for the runner's lazy clone: phone-home may still be disabled on the server at this gate, so no
+# mirror would ever arrive and every fresh deploy refused Missing. deploy-parent therefore seeds
+# the checkout BEFORE it starts the runner, so no lazy mirror can be in flight: state-init owns the
+# fresh volume for uid 1654, then a one-off container of the runner image clones anonymously as
+# uid 1654 with RunnerWorkspaceService's exact command, at the repository the runner is configured
+# with. Only an absent or empty destination is cloned into (git itself refuses a non-empty one);
+# anything else is left untouched for verify_runner_checkout to judge by name.
+seed_runner_checkout() {
+    compose_host run --rm --no-deps -T state-init >> "$CASE_DIR/command.log" 2>&1 \
+        || write_result false StateInitFailed 2
+    compose_host run --rm --no-deps -T --user 1654:1654 -e GIT_TERMINAL_PROMPT=0 \
+        --entrypoint /bin/sh session-runner -c '
+            repo="${PhoneHome__RunnerRepository:-$1}"
+            if [ -e "$repo/.git" ]; then echo "present path=$repo"; exit 0; fi
+            if [ -d "$repo" ] && [ -n "$(ls -A "$repo")" ]; then echo "occupied path=$repo"; exit 0; fi
+            mkdir -p "$(dirname "$repo")" || exit 1
+            timeout --kill-after=5s 300s git clone --filter=blob:none --no-checkout "$2" "$repo" 1>&2 || exit 1
+            echo "seeded path=$repo"' \
+        antiphon-seed "$RUNNER_CHECKOUT_DEFAULT" "$RUNNER_CHECKOUT_ORIGIN" \
+        > "$CASE_DIR/runner-checkout-seed.txt" 2>> "$CASE_DIR/command.log" \
+        || write_result false RunnerCheckoutSeedFailed 2
+}
+
+# CARD-0631 D-10. Everything runs INSIDE the runner as uid 1654 against the repository the runner
+# is configured with -- never the host's identically named checkout and never a child volume. The
+# seed above never replaces what is there, so a foreign, broken or occupied checkout still refuses
+# here by name.
 verify_runner_checkout() {
     local container="$1" repo top origin fetched
     repo="$(docker exec "$container" sh -c 'printf "%s" "${PhoneHome__RunnerRepository:-}"' 2>> "$CASE_DIR/command.log")" \
@@ -1158,6 +1192,9 @@ EOF
     docker build -f "$CHECKOUT/Dockerfile" --build-arg "SOURCE_REVISION=$SHA" \
         -t "antiphon-server2/server:${SHA:0:12}" "$CHECKOUT" >> "$CASE_DIR/build.log" 2>&1 \
         || write_result false StateInitBuildFailed 2
+
+    # CARD-0631 D-10: a fresh work volume gets its checkout before the runner exists.
+    seed_runner_checkout
 
     compose_host up -d --no-build --remove-orphans >> "$CASE_DIR/command.log" 2>&1 || {
         compose_host logs --no-color --tail 120 >> "$CASE_DIR/command.log" 2>&1 || true
@@ -1387,6 +1424,11 @@ case_persistent_restart() {
     fi
     printf '%s\n' "$before_store" > "$CASE_DIR/store-id-before.txt"
     before_images="$(docker exec "$container" docker images -q | sort | tr -d '[:space:]')"
+
+    # CARD-0631: the runner now requires the identity mount. A runner deployed before that mount
+    # existed would stop here and then fail both the start and the recovery below, so the file is
+    # ensured (created when missing, refused when unusable) while the old runner is still up.
+    ensure_runner_git_identity
 
     compose_host stop >> "$CASE_DIR/command.log" 2>&1 || write_result false StopFailed 2
     if ! compose_host up -d --no-build >> "$CASE_DIR/command.log" 2>&1; then
