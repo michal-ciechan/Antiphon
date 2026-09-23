@@ -109,8 +109,8 @@ public sealed class DelegateScriptWorkspaceDefaultTests
     [Test]
     public async Task InterimCodeAcceptsOmittedWorktree()
     {
-        using var temp = new TempDir();
-        var selectionFile = Path.Combine(temp.Path, "c644-selection.json");
+        var temp = Directory.CreateTempSubdirectory("c644-selection").FullName;
+        var selectionFile = Path.Combine(temp, "c644-selection.json");
         await File.WriteAllTextAsync(selectionFile,
             $$"""{"artifactPath":"docs/plans/c644.md","artifactCommitSha":"{{FullSha}}","section":"S1"}""");
         string[] interim =
@@ -141,6 +141,8 @@ public sealed class DelegateScriptWorkspaceDefaultTests
             refused.Output.ShouldContain("verification_round_role", Case.Sensitive, row);
             refusing.RequestCount.ShouldBe(0, row);
         }
+
+        try { Directory.Delete(temp, recursive: true); } catch (IOException) { }
     }
 
     [Test]
