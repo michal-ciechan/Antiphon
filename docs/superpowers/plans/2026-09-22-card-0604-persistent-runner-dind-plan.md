@@ -1140,8 +1140,9 @@ Cut B (V-28 to V-33):
 - G-38: remote restoration read never touches the desktop filesystem | PC-38
 - G-39: kill helper validates the execution path | PC-39
 - G-40: runtime/receipt images carry no custody helpers or sudo | PC-40
+- G-41: runner adopts the server-minted epoch (minted at Register, carried on the ticket) | PC-41
 
-guards=40, mapped=40, missing=0, duplicate PC mappings=0. The child runner's socket-freedom (V-16)
+guards=41, mapped=41, missing=0, duplicate PC mappings=0. The child runner's socket-freedom (V-16)
 and the live containment measurements (V-28) are live evidence, not PCs: their only seams are
 heredocs and shell.
 
@@ -1236,6 +1237,10 @@ PC-9, PC-29 on server2 as V-31's battery). Code implements the tests and runs V/
   `CustodyHelperContractTests.Kill_helper_validates_execution_path` red.
 - PC-40: `COPY` the helpers into `runtime-base`; expect
   `DockerStackContractTests.Default_runtime_excludes_custody_helpers` red.
+- PC-41: in `PhoneHomeConnectionService`, restore the local `Interlocked.Increment(ref _epoch)` in
+  place of the registration-supplied epoch; expect
+  `PhoneHomeEpochAgreementTests.A_real_runner_heartbeat_lands_when_the_server_counter_is_ahead` red
+  (already measured RED 1/0/1, GREEN 2/2/0 at `52bda1e8`).
 
 Filters: `--treenode-filter "/*/*/<Class>/<method>"`; restore and rebuild before each green.
 `Antiphon.SessionRunner.Tests` and `Antiphon.PtyHost.Tests` rows build their own project.
@@ -1550,10 +1555,10 @@ production registration are the least predictable items.
 Cut B authoring: S9 150, S10 300, S11 300, S12 60 = 810. `-ExpectAbout 1010`, band (900-1,300).
 
 Post-land Mutation floors (Windows, method-scoped): Cut A PC-1..PC-27 = 27 x 4 + 6 = **114**;
-Cut B PC-28..PC-40 = 13 x 4 + 6 = **58**, plus CP-18's server2 fixture battery (PC-1, PC-9, PC-29:
+Cut B PC-28..PC-41 = 14 x 4 + 6 = **62**, plus CP-18's server2 fixture battery (PC-1, PC-9, PC-29:
 3 x 6 in-runner build cycles = 18, inside CP-18's 60).
 
-Handoff audit: bodies read; guards=40, mapped=40, missing=0, duplicate PC mappings=0; every PC is
+Handoff audit: bodies read; guards=41, mapped=41, missing=0, duplicate PC mappings=0; every PC is
 a compiling text, script or unit defect with an exact method and assertion; numeric Cost above.
 
 ## Risks
