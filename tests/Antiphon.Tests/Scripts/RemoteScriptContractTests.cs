@@ -550,7 +550,7 @@ public sealed class RemoteScriptContractTests
         var oneOff = commands.Single(line => line.StartsWith("compose_host run --rm --no-deps -T --user ", StringComparison.Ordinal));
         oneOff.ShouldBe("compose_host run --rm --no-deps -T --user 1654:1654 -e GIT_TERMINAL_PROMPT=0 --entrypoint /bin/sh session-runner -c '");
         commands.IndexOf(init).ShouldBeLessThan(commands.IndexOf(oneOff));
-        Order(seed, oneOff, "git clone").ShouldBeTrue("the clone runs inside the uid-1654 one-off");
+        Order(seed, "--user 1654:1654", "git clone").ShouldBeTrue("the clone runs inside the uid-1654 one-off");
         seed.ShouldContain("git clone --filter=blob:none --no-checkout \"$2\" \"$repo\"");
         seed.ShouldContain("antiphon-seed \"$RUNNER_CHECKOUT_DEFAULT\" \"$RUNNER_CHECKOUT_ORIGIN\"");
         seed.ShouldContain("|| write_result false RunnerCheckoutSeedFailed 2");
