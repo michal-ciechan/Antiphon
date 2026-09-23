@@ -57,7 +57,7 @@ public sealed class ClaudeCredentialProbeDispatcherTests
 
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
-        task.Status.ShouldBe(AgentTaskStatus.Queued);
+        task.Status.ShouldBe(AgentTaskStatus.Queued, task.FailureReason);
         task.FailureCode.ShouldBeNull();
         probe.Requests.ShouldBe(0);
     }

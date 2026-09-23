@@ -2525,7 +2525,8 @@ public sealed class AgentTaskDispatcher
     /// Returns true when the task was failed (caller must not enqueue).
     /// </summary>
     private async Task<bool> TryFailGrokCredentialProbeAsync(
-        AgentTask claimed, DelegateProgram program, CancellationToken ct)
+        AgentTask claimed, DelegateProgram program, Func<CancellationToken, Task> commitBeforeNotify,
+        CancellationToken ct)
     {
         var env = MergeRegistryGrokProbeEnv(claimed, program);
         var grokHome = GrokCredentialStore.ResolveGrokHome(env);
@@ -2562,11 +2563,13 @@ public sealed class AgentTaskDispatcher
         }
 
         await FailAndNotifyAsync(
-            claimed, reason, "grok-credential-probe", ct, AgentTaskFailureCode.AuthenticationRequired);
+            claimed, reason, "grok-credential-probe", ct, AgentTaskFailureCode.AuthenticationRequired,
+            commitBeforeNotify: commitBeforeNotify);
         return true;
     }
 
-    private async Task<bool> TryFailClaudeCredentialProbeAsync(AgentTask claimed, CancellationToken ct)
+    private async Task<bool> TryFailClaudeCredentialProbeAsync(
+        AgentTask claimed, Func<CancellationToken, Task> commitBeforeNotify, CancellationToken ct)
     {
         if (_runners is null || _phoneHome is null || claimed.RunnerId is null)
             return false;
@@ -2621,7 +2624,7 @@ public sealed class AgentTaskDispatcher
         }
 
         await FailAndNotifyAsync(claimed, reason, "claude-credential-probe", ct,
-            AgentTaskFailureCode.AuthenticationRequired);
+            AgentTaskFailureCode.AuthenticationRequired, commitBeforeNotify: commitBeforeNotify);
         return true;
     }
 
@@ -2673,7 +2676,8 @@ public sealed class AgentTaskDispatcher
     private async Task FailAndNotifyAsync(
         AgentTask task, string reason, string sweep, CancellationToken ct,
         AgentTaskFailureCode? failureCode = null,
-        IReadOnlyList<CommitRecoveryObligations.Pending>? orphaned = null)
+        IReadOnlyList<CommitRecoveryObligations.Pending>? orphaned = null,
+        Func<CancellationToken, Task>? commitBeforeNotify = null)
     {
         // CARD-0547 D-3: an unresolved commit-recovery obligation is closed by name in the same
         // transaction as the failure, and the reason, the parent's note and its git= bit carry it.
@@ -2699,6 +2703,10 @@ public sealed class AgentTaskDispatcher
         if (task.DispatchedAt is null)
             ArmFailureReminder(task, task.CompletedAt ?? UtcNow());
         await _db.SaveChangesAsync(ct);
+        // A completion note uses a separate DbContext and stamps this task. Commit the
+        // pre-flight claim first or its row lock blocks that stamp until command timeout.
+        if (commitBeforeNotify is not null)
+            await commitBeforeNotify(ct);
 
         if (task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is Guid parentSession)
         {
@@ -3613,17 +3621,17 @@ public sealed class AgentTaskDispatcher
         if (program.ProfileId is null
             && program.Kind == AgentKind.Grok
             && _agentRegistry.Settings.GrokCredentialProbeEnabled
-            && await TryFailGrokCredentialProbeAsync(claimed, program, ct))
+            && await TryFailGrokCredentialProbeAsync(claimed, program,
+                token => transaction.CommitAsync(token), ct))
         {
-            await transaction.CommitAsync(ct);
             return DispatchOneResult.NotClaimed;
         }
 
         if (claimed.RunnerId is not null && program.Kind == AgentKind.ClaudeCode
             && _phoneHome?.ClaudeAuthProbeEnabled == true
-            && await TryFailClaudeCredentialProbeAsync(claimed, ct))
+            && await TryFailClaudeCredentialProbeAsync(claimed,
+                token => transaction.CommitAsync(token), ct))
         {
-            await transaction.CommitAsync(ct);
             return DispatchOneResult.NotClaimed;
         }
 
