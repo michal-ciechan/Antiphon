@@ -34,6 +34,11 @@ public sealed class ClaudeCredentialProbeDispatcherTests
         task.Status.ShouldBe(AgentTaskStatus.Failed);
         task.FailureCode.ShouldBe(AgentTaskFailureCode.AuthenticationRequired);
         task.FailureReason.ShouldContain("claude auth login");
+        // CARD-0628 D-1: the setup-token is the primary remedy, the interactive login the fallback.
+        var reason = task.FailureReason!;
+        reason.IndexOf("CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`)", StringComparison.Ordinal)
+            .ShouldBeInRange(0, reason.IndexOf("claude auth login", StringComparison.Ordinal));
+        reason.ShouldContain("ANTHROPIC_API_KEY is never used");
         task.AgentSessionId.ShouldBeNull();
         task.WorktreePath.ShouldBeNull();
         (await db.AgentIncidents.CountAsync(i => i.Kind == AgentIncidentKind.ProviderSignInRequired

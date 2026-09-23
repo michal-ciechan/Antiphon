@@ -140,7 +140,7 @@ param(
 
     # CARD-0604: run this task on a phone-home session runner (e.g. -Runner server2) instead of
     # this desktop. The desktop worktree is still created and still canonical; the runner gets a
-    # mirror of the pushed branch, and the land protocol is unchanged. Worktree + Grok only.
+    # mirror of the pushed branch, and the land protocol is unchanged. Worktree + Grok or Claude Code (CARD-0628).
     [Parameter(ParameterSetName = 'Create')]
     [string]$Runner,
 
