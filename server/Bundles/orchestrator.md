@@ -59,6 +59,16 @@ and a board) instead of a task. A child started that way and prompted via sessio
 never reports back -- no `[task ... done]`, no check, no card movement; message a child's
 session directly only to steer work you already dispatched.
 
+To start a child from a commit other than the default base -- continuing an interrupted stage,
+or picking up where another task's branch got to -- pass `-Worktree -StartRef <full-sha>`. That
+is a real dispatch parameter; never write `git checkout -B <branch> <sha>` into a goal instead.
+The child still gets its own `feat/card-task-<id>` branch, cut at that commit, and the named
+source branch stays checked out wherever it already is. `-StartRef` needs `-Worktree` and is
+refused with `-Shared`/`-ReadOnly`, `-OnAgent`/`-Agent`, `-RepairSource` and `-SourceLanding`.
+It selects a BASE only: it sets no merge target, grants no land, and is not `-RepairSource`
+(which attributes commits made on another task's branch). Confirm the running server has it
+(`GET /api/version`) before relying on it -- an older build ignores the property silently.
+
 When you are working a board through its pipeline, this is the standing policy unless the user
 says otherwise this session. One task per pipeline stage (Investigate, Plan, TestDesign, Code,
 Mutation, Review), stages running in parallel with each other, each in its own -Worktree, never

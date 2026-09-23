@@ -327,6 +327,30 @@ be an authorized Code/Worktree task in the same project and git common directory
 (`assessment`, `reason`, `sources[].origin` / `ownerTaskId` / `commit`). Land on a repair task
 returns 409 `repair_source_landing_owner_required`.
 
+`POST /api/agent-tasks` accepts optional `worktreeBaseRequestedRef` (CARD-0613), exposed by
+`delegate.ps1 -StartRef`. It is the commit-ish the task's OWN fresh worktree branch is cut at:
+a branch, a remote-tracking ref, a commit tag or a SHA that the server's repository can already
+resolve locally (no fetch is performed, and no remote URL is accepted) - prefer a full SHA for a
+reproducible continuation. It requires an explicitly requested Worktree and is refused 422
+`worktree_start_ref_mode` alongside `Shared`/`ReadOnly`/an omitted workspace, an agent pin
+(`agentId`/`agent`), `followUpOnTask`, `repairSourceTaskId` or `sourceLandingOperationId` - the
+last two already carry authoritative structured bases. Blank, outer whitespace, a control
+character, a leading `-` or more than 300 characters is 422 `worktree_start_ref_invalid`; the
+value is never truncated or normalized. A selector that names no commit refuses provisioning and
+fails the task, never falling back to master. `GET /api/agent-tasks/{id}` exposes
+`worktreeBaseRequestedRef` alongside the recorded `worktreeBaseRef`, `worktreeBaseSource`
+(`Explicit`) and `worktreeBaseSha`; the requested value is the caller's ask and the recorded ones
+are what provisioning actually used, so a reuse cannot relabel the first decision. StartRef never
+sets `mergeTargetRef` and never takes over the named branch, which stays checked out wherever it
+already is.
+
+`GET /api/agent-tasks/{id}`'s `progressEvidence.sources[]` adds `origin: "PrimaryAlternate"` and
+`observedRef` (CARD-0613). That origin means post-dispatch work was proved in the task's own
+registered checkout while it was off its expected ref, detached, or on a branch reset into a
+divergent lineage; `observedRef` is the ref it was actually on, or null for a detached HEAD.
+An alternate positive prevents a false `CompletedWithoutProgress` settlement and authorizes
+nothing else - it never merges the branch back, and landing stays the explicit `-Land` path.
+
 `POST /api/agent-tasks` answers 400 `…could not be converted… Path: $.role` only for a name the served build's enum lacks; on master every scripted role binds (`AgentTaskRoleBindingTests`), so that 400 means the served build predates the value: check `GET /api/version` against HEAD and restart (CARD-0493).
 
 CARD-0544 (dormant: `InterimVerification:Enabled=false`, every card `FullOnly`): `POST /api/agent-tasks`

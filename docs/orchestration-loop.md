@@ -83,6 +83,34 @@ ref. `-RepairSource` alone sets no merge target and grants no Land: a repair tas
 (or an explicit merge target equal to the owner's branch). Historical Failed tasks are not
 backfilled; prose-only "work in that other worktree" is still unsupported.
 
+**Continuing a sibling's work (CARD-0613).** To start a delegate from a commit other than the
+default base - continuing an interrupted stage, or picking up where another task's branch got to -
+pass the base as a DISPATCH PARAMETER, never as `git checkout -B ...` prose in the goal:
+
+```
+pwsh -NoProfile -File scripts/delegate.ps1 -Role Code -Worktree -StartRef <full-sha> -Goal <work>
+```
+
+(For a long brief, read the file yourself and pass the resulting string to `-Goal`; the script has
+no `-GoalFile`.) The task still gets its own `feat/card-task-<id>`, cut at that commit; the named
+source branch is untouched and can stay checked out in its own worktree. `-StartRef` accepts a
+branch, remote-tracking ref, commit tag or SHA the server's repository can already resolve locally
+- prefer a full SHA. It requires `-Worktree` and is refused alongside `-Shared`/`-ReadOnly`,
+`-OnAgent`/`-Agent`, `-RepairSource` and `-SourceLanding`. It is distinct from `-RepairSource`:
+that one attributes work committed on ANOTHER task's branch and refuses `-Land`; `-StartRef` only
+chooses where this task's own branch starts, sets no merge target, and changes nothing about
+landing. Before relying on it, confirm the running build has it (`GET /api/version`) and that the
+task detail shows both the requested ref and the recorded base - an older server silently ignores
+an unknown optional JSON property.
+
+A delegate that nonetheless ends up off its own branch is no longer settled as a false failure.
+Antiphon reads the registered checkout's actual HEAD and accepts a task-scoped claim line
+(`[antiphon-progress:<full-guid> commit=<full-sha>]`, on its own unquoted line) reachable from it,
+or a task branch reset into a divergent lineage, as `PrimaryAlternate` progress. That prevents the
+wrong verdict and NOTHING else: the branch is left for review, nothing merges back, and the
+completion note says `progress=primary-alternate`. Integrating that work is still an explicit,
+human-ordered step.
+
 **Post-land server activation check (CARD-0495).** A land confirms publication, not
 server activation. Before relying on newly landed server behavior, record the landing
 receipt's verified commit, confirm the canonical checkout contains it, and check the
