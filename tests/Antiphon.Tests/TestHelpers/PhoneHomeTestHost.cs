@@ -199,10 +199,32 @@ internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
     public List<RunnerSessionDto> Sessions { get; } = [];
     public int HeldLaunches { get; set; }
     private readonly TaskCompletionSource _held = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<PhoneHomeOperation, byte> _silent = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<PhoneHomeOperation, int> _requestCounts = new();
     private CancellationTokenSource? _cts;
     private Task? _loop;
 
     public void ReleaseHeld() => _held.TrySetResult();
+
+    /// <summary>
+    /// CARD-0633: never answer <paramref name="operation"/> (a silent runner for that one request
+    /// kind); every other request keeps its scripted or default reply. <see cref="Speak"/> undoes it.
+    /// </summary>
+    public PhoneHomeScriptedPeer SilentFor(PhoneHomeOperation operation)
+    {
+        _silent[operation] = 0;
+        return this;
+    }
+
+    public PhoneHomeScriptedPeer Speak(PhoneHomeOperation operation)
+    {
+        _silent.TryRemove(operation, out _);
+        return this;
+    }
+
+    /// <summary>Request frames of <paramref name="operation"/> received so far (thread-safe).</summary>
+    public int RequestCount(PhoneHomeOperation operation) =>
+        _requestCounts.TryGetValue(operation, out var count) ? count : 0;
 
     public void Start()
     {
@@ -252,7 +274,9 @@ internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
                     Launches.Add(frame);
                 if (frame.Operation == PhoneHomeOperation.Input)
                     Inputs.Add(frame);
-                if (!AutoReply)
+                if (frame.Operation is { } op)
+                    _requestCounts.AddOrUpdate(op, 1, (_, n) => n + 1);
+                if (!AutoReply || (frame.Operation is { } silent && _silent.ContainsKey(silent)))
                     continue;
                 if (frame.Operation == PhoneHomeOperation.Launch && HeldLaunches > 0)
                 {
