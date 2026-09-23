@@ -155,7 +155,12 @@ export function stagePinLabel(stage: AgentTaskPipelineStageDto): string | null {
   return routingPinChip(stage.routingPin)
 }
 
-/** Drops only the `gpt-5.6-` prefix so a Codex cell stays inside ~14 characters. */
+/**
+ * Drops only the `gpt-5.6-` prefix so a Codex cell stays inside ~14 characters. The `gpt-6-`
+ * slugs are already short enough to survive whole (`gpt-6-astra` is 11, `gpt-6-sol` 9), which is
+ * why Frontier has always rendered unstripped and why CARD-0611's High bump to `gpt-6-sol` needs
+ * no new arm here — only a wider rule would, and that would silently rewrite Frontier's cell too.
+ */
 export function compactAlias(level: AgentModelLevel, kind: AgentKind): string {
   const alias = tierAlias(level, kind)
   return alias.startsWith('gpt-5.6-') ? alias.slice('gpt-5.6-'.length) : alias
