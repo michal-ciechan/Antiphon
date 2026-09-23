@@ -320,6 +320,22 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
         Repair = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == Repair.Id);
     }
 
+    /// <summary>
+    /// CARD-0613. The same turn-end reaching the reply service a second time, on a freshly built
+    /// service provider. Settlement is idempotent or it is not settled: a duplicate must not mint a
+    /// second incident, note or merge.
+    /// </summary>
+    public async Task ReplayTurnEndAsync()
+    {
+        var sessionId = Repair.AgentSessionId ?? throw new InvalidOperationException("not dispatched");
+        var previous = Services;
+        BuildServices();
+        await previous.DisposeAsync();
+        await Services.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await using var db = CreateContext();
+        Repair = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == Repair.Id);
+    }
+
     public async Task<string> CommitInOwnerTreeAsync(string message, bool push)
     {
         var path = Owner.WorktreePath!;
