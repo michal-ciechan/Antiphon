@@ -36,19 +36,20 @@ export function CardRow({ card, boardId, columns, now, onOpen, layout = 'row', r
   // the live board" without becoming unreadable — the row is still the record.
   const archived = !!card.archivedAt
   const showHandle = reorderable && !archived
-  const sortable = useSortable({ id: card.id, disabled: !showHandle })
+  const { setNodeRef, setActivatorNodeRef, listeners, attributes, transform, transition } =
+    useSortable({ id: card.id, disabled: !showHandle })
   const sortableStyle = {
-    transform: CSS.Transform.toString(sortable.transform),
-    transition: sortable.transition,
+    transform: CSS.Transform.toString(transform),
+    transition,
   }
 
   const identifier = (
     <Group gap={4} wrap="nowrap" style={{ flex: 'none' }}>
       {showHandle && (
         <ActionIcon
-          ref={sortable.setActivatorNodeRef}
-          {...sortable.listeners}
-          {...sortable.attributes}
+          ref={setActivatorNodeRef}
+          {...listeners}
+          {...attributes}
           variant="subtle"
           size="sm"
           color="gray"
@@ -136,7 +137,7 @@ export function CardRow({ card, boardId, columns, now, onOpen, layout = 'row', r
 
   return (
     <Box
-      ref={sortable.setNodeRef}
+      ref={setNodeRef}
       role="article"
       aria-label={`${card.identifier} ${card.title}`}
       data-testid={`card-row-${card.identifier}`}

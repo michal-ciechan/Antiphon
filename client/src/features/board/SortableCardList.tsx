@@ -9,7 +9,6 @@ import {
   useSensors,
 } from '@dnd-kit/core'
 import {
-  arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
@@ -21,23 +20,7 @@ import type { BoardColumnDto, CardDto } from '../../api/boards'
 import { usePlaceCard } from '../../api/boards'
 import { getApiErrorMessage } from '../../api/client'
 import { CardRow } from './CardRow'
-
-export function placementFromReorder(cards: CardDto[], oldIndex: number, newIndex: number) {
-  const next = arrayMove(cards, oldIndex, newIndex)
-  const moved = next[newIndex]
-  return {
-    cardId: moved.id,
-    concurrencyToken: moved.concurrencyToken,
-    before: next[newIndex + 1]?.identifier,
-    after: next[newIndex - 1]?.identifier,
-    orderedIds: next.map((card) => card.id),
-    previous: cards[oldIndex],
-    previousNeighbour: oldIndex > 0 ? cards[oldIndex - 1] : undefined,
-    previousNext: oldIndex + 1 < cards.length ? cards[oldIndex + 1] : undefined,
-    nextBefore: next[newIndex + 1],
-    nextAfter: next[newIndex - 1],
-  }
-}
+import { placementFromReorder } from './placementFromReorder'
 
 interface SortableCardListProps {
   cards: CardDto[]

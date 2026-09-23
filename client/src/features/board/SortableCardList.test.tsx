@@ -5,7 +5,8 @@ import { Notifications } from '@mantine/notifications'
 import type { BoardColumnDto, CardDto } from '../../api/boards'
 import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
-import { placementFromReorder, SortableCardList } from './SortableCardList'
+import { placementFromReorder } from './placementFromReorder'
+import { SortableCardList } from './SortableCardList'
 
 const NOW = new Date('2026-08-13T12:00:00Z')
 

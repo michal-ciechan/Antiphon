@@ -1,7 +1,7 @@
 import { Alert, Button, Group, Stack, Switch, Text, TextInput } from '@mantine/core'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { getApiErrorMessage } from '../../api/client'
-import { useRevalidateSpecialistRouting, useSaveSpecialistRouting, useSpecialistRouting, type SpecialistPair } from '../../api/specialistRouting'
+import { useRevalidateSpecialistRouting, useSaveSpecialistRouting, useSpecialistRouting, type SpecialistPair, type SpecialistRouting } from '../../api/specialistRouting'
 
 export function SpecialistRoutingPanel({ agentId }: { agentId: string }) {
   const query = useSpecialistRouting(agentId)
@@ -12,13 +12,20 @@ export function SpecialistRoutingPanel({ agentId }: { agentId: string }) {
   const [token, setToken] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  useEffect(() => {
-    if (!query.data || dirty) return
-    const data = query.data
-    setPairs((data.candidates.length ? data.candidates : [{ agentKind: data.primaryKind, modelLevel: data.primaryLevel }]).map(p => `${p.agentKind}/${p.modelLevel}`).join(', '))
-    setEnabled(data.enabled ?? true)
-    setToken(data.concurrencyToken)
-  }, [query.data, dirty])
+  // Seed the form from the server's copy — adjusted during render rather than in an effect, so a
+  // freshly loaded routing never flashes the empty form first. BOTH inputs are recorded even when
+  // dirty: react-query hands back the same cached object after a Reload of unchanged data, so a
+  // data-only marker would miss the dirty-to-clean transition that Reload and Save produce.
+  const [prevInputs, setPrevInputs] = useState<{ data: SpecialistRouting | undefined; dirty: boolean } | null>(null)
+  if (!prevInputs || query.data !== prevInputs.data || dirty !== prevInputs.dirty) {
+    setPrevInputs({ data: query.data, dirty })
+    if (query.data && !dirty) {
+      const data = query.data
+      setPairs((data.candidates.length ? data.candidates : [{ agentKind: data.primaryKind, modelLevel: data.primaryLevel }]).map(p => `${p.agentKind}/${p.modelLevel}`).join(', '))
+      setEnabled(data.enabled ?? true)
+      setToken(data.concurrencyToken)
+    }
+  }
   async function persist() {
     const values = pairs.split(',').map(p => p.trim())
     if (values.length < 1 || values.length > 3 || values.some(p => !/^(ClaudeCode|Codex)\/(Frontier|High|Medium|Low)$/.test(p))) {

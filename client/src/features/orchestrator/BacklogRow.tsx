@@ -38,19 +38,20 @@ export function BacklogRow({
   const stacked = layout === 'stacked'
   const age = ageInDays(card.createdAt, now)
   const open = () => navigate(`/boards/${card.boardId}?card=${card.id}`)
-  const sortable = useSortable({ id: card.id, disabled: !reorderable })
+  const { setNodeRef, setActivatorNodeRef, listeners, attributes, transform, transition } =
+    useSortable({ id: card.id, disabled: !reorderable })
   const sortableStyle = {
-    transform: CSS.Transform.toString(sortable.transform),
-    transition: sortable.transition,
+    transform: CSS.Transform.toString(transform),
+    transition,
   }
 
   const identifier = (
     <Group gap={4} wrap="nowrap" style={{ flex: 'none' }}>
       {reorderable && (
         <ActionIcon
-          ref={sortable.setActivatorNodeRef}
-          {...sortable.listeners}
-          {...sortable.attributes}
+          ref={setActivatorNodeRef}
+          {...listeners}
+          {...attributes}
           variant="subtle"
           size="sm"
           color="gray"
@@ -97,7 +98,7 @@ export function BacklogRow({
 
   return (
     <Box
-      ref={sortable.setNodeRef}
+      ref={setNodeRef}
       role="article"
       aria-label={`${card.identifier} ${card.title}`}
       data-testid={`backlog-row-${card.identifier}`}
