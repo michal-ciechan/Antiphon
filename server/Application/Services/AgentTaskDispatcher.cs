@@ -1275,7 +1275,39 @@ public sealed class AgentTaskDispatcher
     /// <see cref="OperationCanceledException"/> is a timeout wearing the same type (an HttpClient
     /// timeout is a TaskCanceledException) and is a transient failure like any other.</para>
     /// </summary>
+    // CARD-0629: an unbounded await here means one hung sweep freezes this tick, and therefore
+    // every later sweep AND the dispatch loop below, forever — the loop never throws, never logs,
+    // and never advances, so it looks identical to "stopped" from the outside and survives a
+    // process restart if the hang is triggered by reproducible data. Bound every sweep so a hang
+    // becomes a logged, isolated failure instead of a silent fleet-wide outage.
+    private static readonly TimeSpan SweepTimeout = TimeSpan.FromSeconds(60);
+
     private async Task<int> RunSweepAsync(
+        string name, Func<CancellationToken, Task<int>> sweep, CancellationToken ct)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(SweepTimeout);
+        var sweepTask = RunAndCatchAsync(name, sweep, timeoutCts.Token);
+        var winner = await Task.WhenAny(sweepTask, Task.Delay(Timeout.Infinite, timeoutCts.Token)
+            .ContinueWith(_ => 1, TaskScheduler.Default));
+        if (winner != sweepTask)
+        {
+            // The inner task ignored (or never checked) the linked token and is still running.
+            // Abandoning it here — not awaiting, not observing its eventual result or exception —
+            // is deliberate: this tick must proceed regardless. If sweepTask later throws, that
+            // exception is swallowed by RunAndCatchAsync's own try/catch, never unobserved.
+            _logger.LogError(
+                "Delegation sweep '{Sweep}' did not complete within {TimeoutSeconds}s and was "
+                + "abandoned (still running in the background); the remaining sweeps and "
+                + "dispatching continue this tick. If this recurs for the same sweep, that sweep "
+                + "is hanging on an unbounded external call that ignores cancellation and needs "
+                + "its own timeout at the source.", name, SweepTimeout.TotalSeconds);
+            return 1;
+        }
+        return await sweepTask;
+    }
+
+    private async Task<int> RunAndCatchAsync(
         string name, Func<CancellationToken, Task<int>> sweep, CancellationToken ct)
     {
         try
@@ -1288,6 +1320,10 @@ public sealed class AgentTaskDispatcher
             _logger.LogError(
                 ex, "Delegation sweep '{Sweep}' failed and did nothing this tick; "
                 + "the remaining sweeps and dispatching continue", name);
+            return 1;
+        }
+        catch (OperationCanceledException)
+        {
             return 1;
         }
     }
