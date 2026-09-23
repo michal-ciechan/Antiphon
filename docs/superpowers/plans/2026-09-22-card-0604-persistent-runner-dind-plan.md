@@ -1332,6 +1332,7 @@ Cut A:
 | CP-5 | all A | server2 host daemon: session-testing image at HEAD | server2-deploy | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case deploy-parent -Manifest $manifest` | V-11, V-12 | 1 case accepted; inventory, `.pub`, secret presence, status probe in evidence | 30 |
 | CP-6 | all A | CP-5 | server2-testing-payload | `... -Case testing-runner-payload ...` | V-1 (live), R-5 | 1 case accepted | 4 |
 | CP-6a | S7 | production server at HEAD (`git pull --rebase` in `C:\src\Antiphon`, user-secrets, `pwsh -NoProfile -File scripts/restart-apphost.ps1`) | production-enable | `curl https://antiphon.desktop.codeperf.net/api/version` = HEAD; `curl .../api/session-runners/server2/status` | V-13 | `dispatchEligible: true` within 120 s of the restart; version sha = HEAD | 15 |
+| CP-6b | S7 | `tests/Antiphon.Tests -> bin-c604/` (Windows) | epoch-agreement-guard | `/*/*/PhoneHomeEpochAgreementTests/*` | G-41 | 2 executed, 0 failed | 4 |
 | CP-7 | all A | CP-6a | server2-raw-session | `pwsh -NoProfile -File scripts/c590-real.ps1 -Case parent-native-and-command-session` | V-14 | 1 case accepted; marker within 60 s | 5 |
 | CP-8 | all A | CP-6a | server2-session-nested-stack | `... -Case session-nested-stack` then `... -Case await-nested-stack` repeated until not `SessionStillRunning` (each call under 9 minutes, at least 60 s apart; count the calls) | V-15..V-19 | launch accepted; final await accepted plus 9 subordinate receipts `accepted: true`; `db-fixture` TRX `failed=0` | 75 |
 | CP-9 | all A | CP-5 | server2-nested-residue | `... verify-docker-stack.ps1 -Case nested-residue ...` | V-20, R-4 | 1 case accepted | 3 |
@@ -1443,6 +1444,59 @@ the two sides ship separately:
    the old runner-local counter;
 3. then re-run CP-6a.
 Until step 2, server2 keeps stamping `1` and V-13 cannot go green no matter what the server does.
+
+#### CP-6a result (2026-09-23, third run) - GREEN. V-13 MET.
+
+The epoch fix (`9acac1c4`+`52bda1e8`) landed as `6d90c6fc` on `master` and is live on production
+(`GET /api/version` = `6d90c6fcf46e214721a665d94f5cddb61d75804a`). Step 2 of the second run's
+handoff - rebuilding server2's runner image so BOTH sides carry the fix - is what this run did,
+and V-13 went green immediately afterwards.
+
+**CP-5 rerun at `6d90c6fc`** (`pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case
+deploy-parent -Manifest .antiphon/c604-checkpoints/manifest-cp5.json`): `accepted: true`,
+`exit 0`, diagnosis empty. The remote checkout detached to `6d90c6fc`,
+`antiphon-server2/{server,session-testing}:6d90c6fcf46e` built, `compose up -d --no-build`
+replaced the runner, and D-5 retired the superseded `965703e65aa4` pair. The D-2 probes all pass
+rather than being excused: `phone-home-secret-path` readable as uid 1654
+(`phone-home-readable=true`), server state `enabled`, and **`phone-home-failures = 0`** in the
+45 s window - where the enablement round had a 15 s failure loop. V-11/V-12 re-confirmed at the
+new sha: `restart-policy=unless-stopped`, `privileged=true`, no `docker.sock` in `mounts.txt`,
+nested `docker info` `Name` = container hostname (`649394c67e04`), `services` = `session-runner`
+only, and all 32 foreign neighbours (`am-service`, `schoolrevision-*`, `windmill-*`, `gym-stat-*`,
+`traefik-*`, `antiphon-messaging_*`) still up in `foreign-after.txt`.
+
+**V-13, measured.** 12 samples 30 s apart from the desktop over 5 m 33 s - 3.7x the 90 s lease,
+the window in which the old build's `available` decayed:
+
+| field | every sample, 13:05:56 -> 13:11:29 UTC |
+|---|---|
+| `available` | `true` (never decayed) |
+| `dispatchEligible` | **`true`** (was permanently false) |
+| `platform` | `linux` |
+| `runnerStoreId` | `f519bd08-e53a-47d1-adb1-2ab33475446f` - the custody-store id, **unchanged across the image replacement** |
+| `lastHeartbeatUtc` | advancing on a clean 30 s cadence: `13:05:50 -> 13:06:20 -> 13:06:50 -> ... -> 13:11:20`, never frozen |
+| `buildVersion` | `6d90c6fcf46e214721a665d94f5cddb61d75804a` |
+| `disconnectReason` | `null` |
+| `epoch` / `processBootId` | constant at `2` / `7edbedda-...` - ONE connection held for the whole window, not a reconnect loop wearing a healthy face |
+
+The constant `epoch`/`processBootId` is the non-vacuity guard on this measurement: a runner that
+was silently dropping frames and reconnecting would churn both. It did neither, and
+`docker logs --since 15m` on the runner matched `reconnect|Unauthorized|epoch|error|exception`
+**0 times**.
+
+V-13's second leg - "the same status from the desktop and from server2's host" - holds: three
+probes run from server2's own shell (13:11:37, 13:12:12, 13:12:47 UTC) return byte-identical
+fields with the heartbeat still advancing. Container:
+`antiphon-runner-session-runner-1  antiphon-server2/session-testing:6d90c6fcf46e  Up 8 minutes (healthy)`.
+
+**CP-6b** was added to the table in this run. `52bda1e8` created
+`PhoneHomeEpochAgreementTests` but the manifest carried no row for it, so the guard on the very
+defect CP-6a proves had no checkpoint. G-41 is that guard: the real `PhoneHomeConnectionService`
+over a real socket against a server whose counter has been advanced past a fresh runner's, with
+the `live.Epoch > 1` non-vacuity assertion.
+
+CP-6a is closed. CP-7, CP-8, CP-11 and CP-12, all of which were blocked on `dispatchEligible`,
+are now unblocked.
 
 Rules: TUnit rows are `run-checkpoint.ps1` rows into `.antiphon/c604-checkpoints/`; the others are
 the non-TUnit exact-command form, one case receipt each. CP-5, CP-6a and CP-15 change standing
