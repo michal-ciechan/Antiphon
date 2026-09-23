@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -50,6 +51,55 @@ public sealed class RemoteCompletionSpillTests
             .ShouldBeTrue("a replayed remote completion must carry its body to the runner again");
         staged.RunnerCwd.ShouldBe(RunnerCwd);
         staged.Spill.Body.ShouldBe(logical, "the body is the composed text, not the pointer that replaced it");
+        staged.Spill.RelativePath.ShouldBe(TypedBodySpill.InboxRelativePath(run[0].Id.ToString("D")),
+            "the retry must point at the same file the first attempt named");
+    }
+
+    /// <summary>
+    /// CARD-0604 D-3b. The guard on the CALL SITE, not just the method. Every test above drives
+    /// <see cref="SessionMessageQueueService.RestageCommittedSpillAsync"/> directly, so deleting
+    /// the one line in the flush that invokes it leaves them all green while the reported defect
+    /// is fully back: a remote retry types the frozen pointer and nothing travels behind it. This
+    /// one runs the real flush end to end and asserts the body is staged for the runner.
+    /// </summary>
+    [Test]
+    public async Task A_replayed_completion_flush_stages_the_body_behind_the_pointer_it_types()
+    {
+        var courier = new RemoteSpillCourier();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            AlwaysOn = false,
+            ConnectionString = schema.ConnectionString,
+            ConfigureServices = s => s.AddSingleton(courier),
+        });
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        await SetRunnerCwdAsync(db, h.SessionId, RunnerCwd);
+
+        var logical = "the whole completion report\n" + new string('z', 4096);
+        var (run, _, wire) = await SeedFrozenRenderingAsync(db, h.SessionId, [logical]);
+
+        // Exactly what the first typed attempt left behind: the row rewritten to the POINTER, one
+        // attempt charged, and the generation still the one that typed it — i.e. a redelivery of a
+        // committed rendering, which is the only state that reaches the committedWire branch.
+        var generation = SessionGeneration.Normalize(await db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == h.SessionId).Select(s => s.StartedAt).SingleAsync());
+        run[0].Body = wire;
+        run[0].DeliveryAttempts = 1;
+        run[0].LastDeliveryStartedAt = DateTime.UtcNow.AddMinutes(-4);
+        run[0].LastDeliveryGeneration = generation;
+        run[0].LastDeliveryBaselineSequence = 0;
+        await db.SaveChangesAsync();
+
+        await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.SubmittedBodies.ShouldHaveSingleItem().ShouldBe(wire,
+            "a frozen rendering is replayed verbatim: the retry types the same pointer, never a recomposed body");
+        courier.TryPeek(h.SessionId, out var staged).ShouldBeTrue(
+            "the flush that typed the pointer must also stage the body, or the runner writes no file "
+            + "and the agent is told to read one that does not exist");
+        staged.RunnerCwd.ShouldBe(RunnerCwd);
+        staged.Spill.Body.ShouldBe(logical, "the body behind the pointer is the composed text");
         staged.Spill.RelativePath.ShouldBe(TypedBodySpill.InboxRelativePath(run[0].Id.ToString("D")),
             "the retry must point at the same file the first attempt named");
     }
