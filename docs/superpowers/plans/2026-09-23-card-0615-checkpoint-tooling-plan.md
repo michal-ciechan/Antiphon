@@ -114,6 +114,38 @@ count. `-Expect` checks names; it does not turn assertions or elapsed minutes in
 executed tests. Keep runtime `-MinExecuted` behavior unchanged. Commit/push S2,
 then run the closed checkpoint list against that unchanged source identity.
 
+### S3 - restore the pinned bundle phrases S2 trimmed (CARD-0617 repair)
+
+S2's prose shortening of `server/Bundles/stage-test-design.md` deleted three
+phrases that existing bundle-contract tests pin verbatim, turning six Unit tests
+red. Restore all three exactly and pay for them out of **non-pinned** prose in the
+same file, because the bundle must stay `<=2,500` LF-normalized ASCII characters.
+
+| Pinned phrase | Pinning tests |
+|---|---|
+| `Every guard that protects a safety-critical assertion gets a PC-n positive control` (line 2, whole sentence) | `InstructionBundleTests.stage_bundle_invariants_are_pinned_by_substring`, `ScopedVerificationInstructionTests.C487_G131`, `ScopedVerificationInstructionTests.C487_G135` |
+| `ordinary V/R floor (Code)` (Cost line) | `InstructionBundleTests.C470_composed_roles_separate_vr_from_pc`, `ScopedVerificationInstructionTests.C487_G139` |
+| `PC floor (Mutation)` (Cost line) | `InstructionBundleTests.C470_composed_roles_separate_vr_from_pc`, `ScopedVerificationInstructionTests.C487_G139`, `PostLandMutationContractTests.C478_G175_CostInventory` |
+
+Do not touch the pinned phrases, the `### Checkpoints` header row, the delivery
+inventory field names (`producer`, `destination`, `persistence boundary`,
+`recovery`, `observable receipt`, `durable identity`, `busy`, `already eligible`,
+`crash/enqueue-failure`, `matching complete UserPrompt`, `Declare substitutes`,
+`named positive control`), `### Positive controls` or `do not rewrite the fix
+design`. The characters are freed from connective wording only: `outcome-delivery
+path` -> `delivery path`, `transport ack` -> `ack`, `through the real queue` ->
+`via the real queue`, `Reject a design that stops` -> `Reject a design stopping`,
+`Every safety-critical delivery/recovery guard` -> `Each ...`, `Inventory every
+safety-critical guard` -> `List every ...`, `n/a for non-TUnit` -> `n/a
+non-TUnit`, `Name filters and minutes.` -> `Name filters/minutes.`, `duplicate PC
+mappings=0` -> `duplicate PC maps=0`. No safety, delivery or checkpoint
+requirement is removed. Measured result: **2,489** characters, 0 non-ASCII.
+
+The verification gap this exposed is the second half of S3: CP-3 covered only the
+size-cap method, so every other pin in the same class went unrun. CP-3 widens to
+the whole `InstructionBundleTests` class and a new CP-4 covers the two other
+classes that pin this bundle. CP-5 runs the whole Unit lane once at the end.
+
 ## Verification design
 
 ### Inspection and boundaries
@@ -164,6 +196,12 @@ worked example for units; static substring checks alone cannot prove clarity.
 six argument cases pass, including the edited `stage-test-design` bundle. Review
 that trimming its checkpoint/Cost prose preserved adjacent safety/delivery text.
 
+**V-4 - the whole bundle contract, not just its size** (S3): every executed method
+of `InstructionBundleTests`, `ScopedVerificationInstructionTests` and
+`PostLandMutationContractTests` passes against the edited bundle. The six tests
+S2 turned red are named explicitly in CP-3/CP-4 `-Expect` so a silent
+non-discovery cannot read as green.
+
 ### Guards the regression
 
 - **R-1:** All original 10 `RunCheckpointScriptTests` methods stay green: unquoted
@@ -173,6 +211,12 @@ that trimming its checkpoint/Cost prose preserved adjacent safety/delivery text.
   weaken legitimate miss detection; V-1 supplies two such negative variants.
 - **R-2:** Existing documentation pointer/table tests retain their checks; only
   obsolete time-column/header expectations change. No weakening of the bundle cap.
+- **R-3:** (S3) Editing `server/Bundles/stage-test-design.md` can never again
+  delete a pinned phrase unnoticed: the checkpoint list now runs every class that
+  pins it, so a trim that breaks a substring assertion is red at CP-3 or CP-4
+  rather than at nightly. The cap assertion is unchanged and still enforced at
+  `<=2,500`; the restored phrases were paid for from non-pinned prose, never by
+  raising the cap.
 
 ### Guard inventory and positive controls
 
@@ -195,14 +239,17 @@ confirming its repo-root resolution points at the commissioned snapshot.
 ### Cost and execution procedure
 
 Estimates, not measurements: CP-1 **6 minutes** (isolated build 4, script tests 2),
-CP-2 **1 minute**, CP-3 **1 minute**; ordinary Code V/R **8 minutes**, plus
-approximately **30 minutes** authoring/commit/cleanup (`-ExpectAbout 38`).
+CP-2 **1 minute**, CP-3 **2 minutes**, CP-4 **2 minutes**, CP-5 **5 minutes**;
+ordinary Code V/R **16 minutes**, plus approximately
+**30 minutes** authoring/commit/cleanup (`-ExpectAbout 46`).
 Post-land Mutation: setup/build **4 minutes**, two sequential PC cycles at
 **2 minutes** each, total **8 minutes**. Combined verification estimate is
-**16 minutes**. No measured time saving is claimed; the named groups avoid an
-unrelated full-assembly run. `Min` sums are counts, never these time estimates.
+**24 minutes**. No measured time saving is claimed; CP-5 is the whole Unit lane
+required by this round's Final profile, and CP-3/CP-4 keep the named-class
+evidence fast enough to iterate on. `Min` sums are counts, never these time
+estimates.
 
-Each row executes after S1 and S2 commits, against the same unchanged SHA. Use
+Each row executes after S1, S2 and S3 commits, against the same unchanged SHA. Use
 `scripts/run-checkpoint.ps1` with the table's exact filter, `-MinExecuted` equal
 to `Min`, one comma-separated `-Expect` argument, and fresh results under
 `.antiphon/c615-checkpoints`. CP-2/3 specify `-NoBuild` and reuse CP-1 output.
@@ -214,7 +261,17 @@ pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-1 -Project tests/Antip
 ```
 
 For CP-2, Expect=`CheckpointManifestDocumentationTests`; for CP-3,
-Expect=`each_stage_bundle_is_ascii_and_under_the_size_cap`. Require every listed
+Expect=`each_stage_bundle_is_ascii_and_under_the_size_cap,stage_bundle_invariants_are_pinned_by_substring,C470_composed_roles_separate_vr_from_pc`;
+for CP-4, Expect=`C487_G131,C487_G135,C487_G139,C478_G175_CostInventory`; for
+CP-5, Expect=`stage_bundle_invariants_are_pinned_by_substring,C470_composed_roles_separate_vr_from_pc,C487_G131,C487_G135,C487_G139,C478_G175_CostInventory`.
+CP-4's filter contains a literal `|`; the table escapes it for Markdown only. The
+argument as passed is:
+
+```text
+/*/*/(ScopedVerificationInstructionTests*)|(PostLandMutationContractTests*)/*
+```
+
+Require every listed
 method/argument case, zero failures/skips and exit 0, not only a satisfied floor.
 Report each CHECKPOINT line with SHA, counters, fresh TRX and reruns. A missing
 roster or zero count is red. Extra builds/tests require an explicit reason;
@@ -233,11 +290,13 @@ the assigned worktree. Do not restart the stack. After ordinary success, report
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1-S2 | `tests/Antiphon.Tests -> bin-c615/` | checkpoint-runner | `/*/*/RunCheckpointScriptTests/*` | V-1, R-1 | All 11 methods, including new `C585_QuotedExpect`; 0 failed/skipped; quoted multi-token outer Expect | 11 | 6 |
 | CP-2 | S1-S2 | CP-1 | checkpoint-doctrine | `/*/*/CheckpointManifestDocumentationTests/*` | V-2, R-2 | All 4 existing methods, 0 failed/skipped | 4 | 1 |
-| CP-3 | S1-S2 | CP-1 | bundle-cap | `/*/*/InstructionBundleTests/each_stage_bundle_is_ascii_and_under_the_size_cap` | V-3, R-2 | All 6 argument cases of this method, 0 failed/skipped | 6 | 1 |
+| CP-3 | S1-S3 | CP-1 | bundle-contract | `/*/*/InstructionBundleTests/*` | V-3, V-4, R-2, R-3 | Whole class incl. all 6 argument cases of `each_stage_bundle_is_ascii_and_under_the_size_cap`, `stage_bundle_invariants_are_pinned_by_substring` and `C470_composed_roles_separate_vr_from_pc`; 0 failed/skipped | 57 | 2 |
+| CP-4 | S1-S3 | CP-1 | bundle-pins | `/*/*/(ScopedVerificationInstructionTests*)\|(PostLandMutationContractTests*)/*` | V-4, R-3 | Both classes incl. `C487_G131`, `C487_G135`, `C487_G139`, `C478_G175_CostInventory`; 0 failed/skipped | 47 | 2 |
+| CP-5 | S1-S3 | CP-1 | unit-lane | `/*/*/*/*[Category=Unit]` | V-1..V-4, R-1..R-3 | Whole Unit lane of `Antiphon.Tests` green; 0 failed; the six previously-red methods all executed | 1900 | 5 |
 
 ## Handoff
 
-Implement S1-S2 and execute CP-1..CP-3. The plan itself changes no production code.
+Implement S1-S3 and execute CP-1..CP-5. The plan itself changes no production code.
 The CARD-0617 premise is correct as an authoring gap; the discovered historical
 definition is accounted for explicitly, so no further investigation or decision
 stage is required. Keep script count logic unchanged. Ordinary Review follows
