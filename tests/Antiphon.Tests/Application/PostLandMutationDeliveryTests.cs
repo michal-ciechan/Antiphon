@@ -1538,6 +1538,10 @@ public sealed class PostLandMutationDeliveryTests
             services.AddSingleton<ILandingGit>(world.Host.Fixture.Git);
             services.AddDelegationWorktreeGraph(new GitSettings { WorktreeBasePath = Path.Combine(world.Host.Fixture.Root, "trees") });
             services.AddSingleton(world.Runner);
+            // CARD-0604 D-19: custody support, custody reads and verification removal now
+            // resolve through the TASK's runner id, so the world needs a directory, not a
+            // bare client. This one has a single runner and everything resolves to it.
+            services.AddSingleton<ISessionRunnerDirectory>(new SingleRunnerDirectory(world.Runner));
             services.AddScoped<SourceLandingAdmission>();
             services.AddScoped<VerificationExecutionService>();
             services.AddScoped<AgentTaskService>();
