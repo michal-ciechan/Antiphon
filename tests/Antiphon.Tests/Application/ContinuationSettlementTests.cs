@@ -269,7 +269,9 @@ public class ContinuationSettlementTests
 
             await AssertReceivedOnceAsync(rig, taskId, sha, row);
             (await rig.NotificationAsync(taskId))!.Id.ShouldBe(note.Id, row + ": same notification identity");
-            (await rig.RowsAsync(taskId)).Count.ShouldBe(1, row + ": one keyed queue row");
+            // The brief row shares this task id; the COMPLETION obligation must still key exactly one.
+            (await rig.RowsAsync(taskId)).Count(m => m.SourceLandNotificationId == note.Id)
+                .ShouldBe(1, row + ": one keyed completion row");
         }
     }
 
