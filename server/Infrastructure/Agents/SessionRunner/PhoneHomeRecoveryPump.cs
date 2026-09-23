@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -18,6 +19,7 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
     private readonly IServiceScopeFactory _scopes;
     private readonly ILogger<PhoneHomeRecoveryPump> _logger;
     private PhoneHomeLiveConnection? _recovered;
+    private (PhoneHomeLiveConnection Live, DateTimeOffset At)? _nextCatchUp;
 
     public PhoneHomeRecoveryPump(
         PhoneHomeRunnerDirectory directory,
@@ -71,13 +73,27 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
         if (live is null || !live.SocketOpen)
         {
             _recovered = null;
+            _nextCatchUp = null;
             return false;
         }
 
         if (ReferenceEquals(_recovered, live))
             return false;
 
-        await CatchUpAsync(live, ct);
+        // CARD-0633 D-2: a failed catch-up is retried after CatchUpRetrySeconds on the connection's
+        // own clock, not on the next 50 ms turn of the loop.
+        if (_nextCatchUp is { } next && ReferenceEquals(next.Live, live) && live.Clock.GetUtcNow() < next.At)
+            return false;
+
+        // Dispatch-eligible only after the owner inventory was actually read. A List that failed or
+        // timed out used to be swallowed here and the runner marked recovered anyway (CARD-0629).
+        if (!await CatchUpAsync(live, ct))
+        {
+            _nextCatchUp = (live, live.Clock.GetUtcNow() + TimeSpan.FromSeconds(_settings.CatchUpRetrySeconds));
+            return false;
+        }
+
+        _nextCatchUp = null;
         _directory.MarkRecovered(live);
         _recovered = live;
         _ = PumpEventsAsync(live, ct);
@@ -97,7 +113,10 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogDebug(ex, "Phone-home catch-up list failed");
+            _logger.LogWarning(
+                ex, "Phone-home catch-up List for runner {RunnerId} failed ({Code}); the runner stays "
+                + "dispatch-ineligible and catch-up retries in {RetrySeconds}s",
+                live.RunnerId, ProblemCode(ex), _settings.CatchUpRetrySeconds);
             return false;
         }
 
@@ -105,7 +124,10 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
         if (sessions.Count == 0)
             return true;
 
-        var complete = true;
+        // One unreadable session is a Warning, not a fence: List is the owner inventory, and
+        // without it owner matching is blind, but a single dead transcript must not keep the whole
+        // runner ineligible forever.
+        var failures = 0;
         await using var scope = _scopes.CreateAsyncScope();
         var runtime = scope.ServiceProvider.GetRequiredService<AgentSessionRuntime>();
         foreach (var session in sessions)
@@ -120,13 +142,23 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger.LogDebug(ex, "Phone-home catch-up failed for {SessionId}", session.SessionId);
-                complete = false;
+                failures++;
+                _logger.LogWarning(
+                    ex, "Phone-home catch-up transcript for session {SessionId} on runner {RunnerId} failed ({Code})",
+                    session.SessionId, live.RunnerId, ProblemCode(ex));
             }
         }
 
-        return complete;
+        LastCatchUpTranscriptFailures = failures;
+        return true;
     }
+
+    private static string ProblemCode(Exception ex) => ex switch
+    {
+        PhoneHomeTransportException transport => transport.Code,
+        HttpException { Code: { } code } => code,
+        _ => ex.GetType().Name,
+    };
 
     internal async Task PumpEventsAsync(PhoneHomeLiveConnection live, CancellationToken ct)
     {
