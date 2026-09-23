@@ -203,15 +203,28 @@ public sealed partial class RunnerWorkspaceService
         // verification snapshot is evidence about what ran there, and deleting it destroys the
         // only copy of something nobody chose to keep.
         var untracked = await GitAsync(path, ct, "status", "--porcelain", "--untracked-files=all");
-        var unknown = untracked.ExitCode != 0 ? ["status unavailable"] : untracked.Stdout.Replace("\r\n", "\n").Split('\n')
+        if (untracked.ExitCode != 0)
+            return new(false, false, false, path + " (status unavailable)");
+        var present = untracked.Stdout.Replace("\r\n", "\n").Split('\n')
             .Where(line => line.StartsWith("?? ", StringComparison.Ordinal))
             .Select(line => line[3..].Trim().Trim('"'))
-            .Where(name => !(request.Outputs ?? []).Contains(name, StringComparer.Ordinal))
             .ToArray();
+        var unknown = present.Where(name => !(request.Outputs ?? []).Contains(name, StringComparer.Ordinal)).ToArray();
         if (unknown.Length != 0)
             return new(false, false, false, path + " (unexpected files: " + string.Join(", ", unknown.Take(5)) + ")");
 
-        // No --force. If git objects to the removal, that objection is the answer.
+        // Only the entries git itself just reported, each already proven to be one of the exact
+        // expected outputs. Nothing is matched by glob and no caller-supplied string is ever used
+        // as a path, so a doctored Outputs list can at worst permit a file git says is there.
+        // Removing them is what lets `git worktree remove` succeed without --force.
+        foreach (var output in present)
+        {
+            var full = path.TrimEnd('/') + "/" + output.TrimEnd('/');
+            if (Directory.Exists(full)) Directory.Delete(full, recursive: true);
+            else if (File.Exists(full)) File.Delete(full);
+        }
+
+        // No --force. If git objects to the removal even now, that objection is the answer.
         var remove = await GitAsync(_repository, ct, "worktree", "remove", path);
         if (remove.ExitCode != 0 && Directory.Exists(path))
             return new(false, false, false, path + " (" + Tail(remove.Stderr) + ")");

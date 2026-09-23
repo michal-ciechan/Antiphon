@@ -135,9 +135,17 @@ public sealed class RunnerCustodyLedger
         // Linux adds the probed cgroup backend. Either way the runtime's advertised backend must
         // be non-null AND equal the binding's -- and a refusal still writes unsupported.json, so
         // the reserved row resolves to UnsupportedBackend instead of hanging.
-        var platformOk = OperatingSystem.IsWindows()
-            ? PtyBackendPolicy.Resolve(ptyBackend).Backend == PtyBackend.ModernConPty
-            : runtimeBackend == VerificationCustodyBackends.LinuxCgroup;
+        // The platform must match the MECHANISM, not merely be a platform. A Windows runner that
+        // somehow advertised linux-cgroup-v1 has no cgroup to place anything in, and a Linux one
+        // claiming windows-job-v1 has no job object; either would run the child with no
+        // containment at all and then seal it as though it had.
+        var platformOk = runtimeBackend switch
+        {
+            VerificationCustodyBackends.WindowsJob => OperatingSystem.IsWindows()
+                && PtyBackendPolicy.Resolve(ptyBackend).Backend == PtyBackend.ModernConPty,
+            VerificationCustodyBackends.LinuxCgroup => !OperatingSystem.IsWindows(),
+            _ => false,
+        };
         if (request.Backend is not (null or SessionBackends.PtyHost)
             || runtimeBackend is null || binding.Backend != runtimeBackend || !platformOk)
         {
