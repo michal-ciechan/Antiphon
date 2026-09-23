@@ -27,7 +27,7 @@ tests**, not seven tests already executed. No build, test, deployment or live ta
 | Runner git can commit | Baked `docker/session-runner-grok/gitconfig` has SSH/push rewriting only; Dockerfile already copies it to `/etc/gitconfig` | Add a system identity; no Dockerfile change is needed |
 | Deploy proves mirror readiness | `case_deploy_parent` tests health, secrets and phone-home failures, but never probes the runner repository | Verify the repository in the container as uid 1654 before acceptance/image retirement |
 | Server waits forever | `PhoneHomeLiveConnection.RequestTimeoutFor` already gives mirror/remove five minutes; runner git defaults to ten minutes per command | Retain the server bound; timeout alignment is recorded outside this fix |
-| CARD-0628 is still uncommitted | Round B branch `feat/card-task-cb060b4e` is clean at `f9b3d11a7dd96014c778286c639758c8dc205361`; its preceding `cfab8b26` adds op 16, probe and backstop | Base Code on the landed Round B change, or rebase after it before Review/land |
+| CARD-0628 is still uncommitted | Round B branch `feat/card-task-cb060b4e` is clean at `f9b3d11a7dd96014c778286c639758c8dc205361`; its preceding `cfab8b26` adds ProviderAuth, probe and backstop. Rebased onto CARD-0604 Cut B at `7ef9effb`, where ProviderAuth is operation 22 (Cut B owns 16-21) | Base Code on the landed Round B change, or rebase after it before Review/land |
 | The deploy key must be fixed before coding | Investigation proved anonymous fetch works; only write authentication fails | GitHub registration is a precondition only of the live push/settlement proof |
 
 ## Decisions
@@ -126,8 +126,8 @@ Those are branch observations, not a claim that master or production contains th
 
 | Shared file / area | 0628 Round B | 0631 | Merge rule |
 |---|---|---|---|
-| `src/Antiphon.SessionRunner/PhoneHomeCommandDispatcher.cs` | Optional probe constructor argument, ProviderAuth switch arm, Claude admission/backstop | Final catch and shared internal error factory | Preserve constructor/probe, op 16, signed-out 409 and unknown-auth admission |
-| `src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs` | ProviderAuth = 16 and shared auth DTOs/problem type | One new error-code constant | Add beside existing constants; never renumber operations or duplicate/move auth DTOs |
+| `src/Antiphon.SessionRunner/PhoneHomeCommandDispatcher.cs` | Optional probe constructor argument, ProviderAuth switch arm, Claude admission/backstop | Final catch and shared internal error factory | Preserve constructor/probe, ProviderAuth (op 22 after Cut B), signed-out 409 and unknown-auth admission |
+| `src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs` | ProviderAuth (= 22 after CARD-0604 Cut B took 16-21) and shared auth DTOs/problem type | One new error-code constant | Add beside existing constants; never renumber an operation already on master or duplicate/move auth DTOs |
 | `tests/Antiphon.SessionRunner.Tests/PhoneHomeCommandDispatcherTests.cs` | Five new auth/Claude methods | Unexpected-exception test and runtime fault seam | Keep all 11 Round B methods; CP-1 executes them |
 | `PhoneHomeSettings.cs`, `Program.cs`, `ClaudeAuthProbe.cs` | Auth settings, DI and probe | Read dependencies only in this design | Do not replace from the old base or remove the optional probe argument |
 | `PhoneHomeConnectionService.cs` and its tests | Included in Round B verification, not changed by its implementation commit | S1/S2 edits | Recheck the settled diff if Round B receives a follow-up |
@@ -208,7 +208,7 @@ coverage. The contract tests are source/configuration guards, not an assertion t
   `Claude_launch_is_refused_when_the_probe_says_logged_out`,
   `Claude_launch_is_admitted_when_the_probe_is_unknown_or_absent`, and
   `Provider_auth_operation_answers_the_probe_and_refuses_unknown_providers`. Existing admission
-  codes and 0628 operation 16 continue to work. Also keep all three existing connection methods:
+  codes and the 0628 ProviderAuth operation (22 after Cut B) continue to work. Also keep all three existing connection methods:
   adoption precedes registration, event overflow recovery, and held commands allow Health progress.
 - **R-2:** CP-2 includes all six existing workspace methods: exact branch/SHA, SHA mismatch,
   invalid name/SHA, dirty removal refusal, outside-root removal refusal and bounded spill writes.
