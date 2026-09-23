@@ -75,6 +75,16 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [guid]$RepairSource,
 
+    # CARD-0613. Cut this task's OWN fresh worktree branch at this commit-ish instead of the
+    # default base - the structured way to continue a sibling's work. Prefer a full SHA already in
+    # the server's repository; a branch or commit tag resolves when the checkout is created. It
+    # never sets -Into and never takes over the named branch: the task still gets its own
+    # feat/card-task-<id>, and landing is still the explicit -Land path. Requires -Worktree, and
+    # refuses -Shared/-ReadOnly, -OnAgent/-Agent, -RepairSource and -SourceLanding, each of which
+    # already carries its own authoritative base.
+    [Parameter(ParameterSetName = 'Create')]
+    [string]$StartRef,
+
     # CARD-0544. Ordinary-verification round for Code/Review only. Omitted means Final, the full
     # affected sweep. Interim is an explicit repair round: the card's role policy must permit it,
     # and it needs -VerificationSubject (original landing owner), -VerificationBaselineOutcome (a
@@ -923,6 +933,28 @@ switch ($PSCmdlet.ParameterSetName) {
         }
         if ($PSBoundParameters.ContainsKey('SourceLanding')) { $body['sourceLandingOperationId'] = $SourceLanding.ToString('D') }
         if ($PSBoundParameters.ContainsKey('RepairSource')) { $body['repairSourceTaskId'] = $RepairSource.ToString('D') }
+        # CARD-0613. Mirrored locally, before any POST, for the combinations the server can never
+        # admit. The selector itself goes over VERBATIM - the server validates and refuses it, and
+        # a value this script quietly trimmed would be a base the caller did not ask for.
+        if ($PSBoundParameters.ContainsKey('StartRef')) {
+            if (-not $Worktree) {
+                Write-Error 'worktree_start_ref_mode: -StartRef requires -Worktree; it selects the base for a fresh task worktree.'
+                exit 2
+            }
+            if ($Shared -or $ReadOnly) {
+                Write-Error 'worktree_start_ref_mode: -StartRef cannot be combined with -Shared or -ReadOnly.'
+                exit 2
+            }
+            if ($OnAgent -or -not [string]::IsNullOrWhiteSpace($Agent)) {
+                Write-Error 'worktree_start_ref_mode: -StartRef cannot be combined with -OnAgent or -Agent: those continue an existing checkout.'
+                exit 2
+            }
+            if ($PSBoundParameters.ContainsKey('RepairSource') -or $PSBoundParameters.ContainsKey('SourceLanding')) {
+                Write-Error 'worktree_start_ref_mode: -StartRef cannot be combined with -RepairSource or -SourceLanding; those already carry a structured base.'
+                exit 2
+            }
+            $body['worktreeBaseRequestedRef'] = $StartRef
+        }
         # CARD-0544: refused locally, before any POST, when the shape can never be admitted.
         $verificationFields = @('VerificationSubject', 'VerificationBaselineOutcome', 'VerificationSelectionFile') |
             Where-Object { $PSBoundParameters.ContainsKey($_) }

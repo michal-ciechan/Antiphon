@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using Antiphon.Server.Application.Dtos;
@@ -165,6 +166,38 @@ public class TaskProgressGit : LandingGit, ITaskProgressGit
             _ => null,
         };
     }
+
+    /// <summary>
+    /// CARD-0613 D-6. <c>git show -s --format=%ct &lt;sha&gt; --</c> through an argument list, on the
+    /// exact object id. The trailing <c>--</c> stops a ref/path ambiguity; the full-object-id check
+    /// stops a prefix or a name from resolving to something else. Exactly one parseable
+    /// Unix-seconds value in range is an answer; everything else is unavailable, because an
+    /// unreadable clock must never read as 'this commit is old'.
+    /// </summary>
+    public async Task<ProgressCommitTime> CommitTimeAsync(string repository, string sha, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (!GitObjectId.IsFull(sha))
+            return new(false, null, "commit_time_invalid_object");
+
+        var result = await RunAsync(repository, ["show", "-s", "--format=%ct", sha, "--"], ct);
+        if (!result.Succeeded)
+            return new(false, null, "commit_time_unavailable");
+
+        var lines = result.Output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        if (lines.Length != 1)
+            return new(false, null, "commit_time_unavailable");
+        if (!long.TryParse(lines[0].Trim(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var seconds))
+            return new(false, null, "commit_time_unavailable");
+        if (seconds < UnixSecondsFloor || seconds > UnixSecondsCeiling)
+            return new(false, null, "commit_time_unavailable");
+
+        return new(true, DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime, null);
+    }
+
+    /// <summary>1970-01-01 .. 9999-12-31, the range <see cref="DateTimeOffset"/> can carry.</summary>
+    private const long UnixSecondsFloor = 0;
+    private const long UnixSecondsCeiling = 253_402_300_799;
 
     public async Task<ProgressPinResult> PinBaselineAsync(string repository, Guid taskId, string name, string sha, CancellationToken ct)
     {

@@ -193,7 +193,19 @@ public sealed record CreateAgentTaskRequest(
     /// a task that queues forever. The desktop worktree is still created and still canonical; the
     /// runner gets a mirror of the pushed branch.
     /// </summary>
-    string? RunnerId = null);
+    string? RunnerId = null,
+    /// <summary>
+    /// CARD-0613 D-1. The commit-ish this task's OWN fresh worktree branch is cut at
+    /// (<c>delegate.ps1 -StartRef</c>). Continuing a sibling's work is a dispatch parameter, not
+    /// free-text <c>git checkout -B</c> prose in a goal. Requires an explicitly requested Worktree
+    /// with no agent pin, follow-up, <see cref="RepairSourceTaskId"/> or
+    /// <see cref="SourceLandingOperationId"/> — those already carry authoritative structured bases.
+    /// Recorded as <see cref="Domain.Entities.AgentTask.WorktreeBaseRequestedRef"/> and resolved
+    /// once, at provisioning; it never sets <see cref="MergeTargetRef"/> and never takes over the
+    /// sibling's branch. At most 300 characters, no outer whitespace, control characters or a
+    /// leading <c>-</c>; anything else is 422 <c>worktree_start_ref_invalid</c>.
+    /// </summary>
+    string? WorktreeBaseRequestedRef = null);
 
 /// <summary>
 /// CARD-0544 D-3. A committed <c>docs/**/*.md</c> selection table: repository-relative path, full

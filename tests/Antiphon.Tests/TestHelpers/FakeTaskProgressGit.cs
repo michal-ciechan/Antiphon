@@ -12,6 +12,34 @@ internal sealed class FakeTaskProgressGit : ITaskProgressGit
     public Dictionary<string, string> RemoteRefs { get; } = new(StringComparer.Ordinal);
     public Dictionary<string, HashSet<string>> Parents { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, string> SymbolicHeads { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// CARD-0613. Paths whose HEAD is DETACHED. A path here has no symbolic ref, which is a valid
+    /// alternate candidate, distinct from a failed read.
+    /// </summary>
+    public HashSet<string> DetachedHeads { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// CARD-0613. What each checkout's HEAD resolves to, keyed by path. Falls back to
+    /// <c>LocalRefs["HEAD"]</c>, so existing worlds keep their single-checkout behaviour.
+    /// </summary>
+    public Dictionary<string, string> HeadsByPath { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// CARD-0613. Explicit committer times per commit. A commit with NO entry here is
+    /// UNAVAILABLE, never 'now' - an absent fake clock must not manufacture a positive.
+    /// </summary>
+    public Dictionary<string, DateTime> CommitTimes { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>CARD-0613. Commits whose metadata read fails outright (nonzero exit / malformed).</summary>
+    public HashSet<string> CommitTimeFaults { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>CARD-0613. Per-path git common directory; falls back to <see cref="CommonDirectory"/>.</summary>
+    public Dictionary<string, string> CommonDirectoriesByPath { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>CARD-0613. Runs once after the Nth HEAD observation, to move the checkout mid-evaluation.</summary>
+    public Action<FakeTaskProgressGit, int>? OnHeadObserved { get; set; }
+    public int HeadObservations { get; private set; }
     public List<string[]> Trace { get; } = [];
     public List<string> Fetches { get; } = [];
     public string? EndpointFingerprint { get; set; } = new string('a', 64);
@@ -50,7 +78,22 @@ internal sealed class FakeTaskProgressGit : ITaskProgressGit
     {
         ct.ThrowIfCancellationRequested();
         ThrowIfInjected("rev-parse", ["rev-parse", "--git-common-dir"]);
-        return Task.FromResult(CommonDirectory);
+        return Task.FromResult(
+            CommonDirectoriesByPath.TryGetValue(repository, out var scoped) ? scoped : CommonDirectory);
+    }
+
+    public Task<ProgressCommitTime> CommitTimeAsync(string repository, string sha, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        Trace.Add(["show", "-s", "--format=%ct", sha, "--"]);
+        ThrowIfInjected("show", ["show", "-s", "--format=%ct", sha]);
+        if (!GitObjectId.IsFull(sha))
+            return Task.FromResult(new ProgressCommitTime(false, null, "commit_time_invalid_object"));
+        if (CommitTimeFaults.Contains(sha))
+            return Task.FromResult(new ProgressCommitTime(false, null, "commit_time_unavailable"));
+        if (!CommitTimes.TryGetValue(sha, out var when))
+            return Task.FromResult(new ProgressCommitTime(false, null, "commit_time_unavailable"));
+        return Task.FromResult(new ProgressCommitTime(true, DateTime.SpecifyKind(when, DateTimeKind.Utc), null));
     }
 
     public Task<IReadOnlyList<LandingRegistration>> RegistrationsAsync(string repository, CancellationToken ct)
@@ -62,6 +105,13 @@ internal sealed class FakeTaskProgressGit : ITaskProgressGit
         Trace.Add(["rev-parse", "--verify", revision]);
         ThrowIfInjected("rev-parse", ["rev-parse", "--verify", revision]);
         var key = revision.Replace("^{commit}", "", StringComparison.Ordinal);
+        if (key is "HEAD")
+        {
+            HeadObservations++;
+            OnHeadObserved?.Invoke(this, HeadObservations);
+            if (HeadsByPath.TryGetValue(repository, out var scopedHead))
+                return Task.FromResult(new ProgressRevParse(true, scopedHead, null));
+        }
         if (LocalRefs.TryGetValue(key, out var sha))
             return Task.FromResult(new ProgressRevParse(true, sha, null));
         if (key is "HEAD" && LocalRefs.TryGetValue("HEAD", out sha))
@@ -76,6 +126,8 @@ internal sealed class FakeTaskProgressGit : ITaskProgressGit
         ct.ThrowIfCancellationRequested();
         Trace.Add(["symbolic-ref", "-q", "HEAD"]);
         ThrowIfInjected("symbolic-ref", ["symbolic-ref"]);
+        if (DetachedHeads.Contains(repository))
+            return Task.FromResult(new ProgressSymbolicHead(true, null, "detached_head"));
         if (SymbolicHeads.TryGetValue(repository, out var full) || SymbolicHeads.TryGetValue("HEAD", out full))
             return Task.FromResult(new ProgressSymbolicHead(true, full, null));
         return Task.FromResult(new ProgressSymbolicHead(true, LocalRefs.Keys.FirstOrDefault(k => k.StartsWith("refs/heads/")), null));

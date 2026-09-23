@@ -24,6 +24,17 @@ public enum ProgressOrigin
     PrimaryRemote = 1,
     RepairSource = 2,
     RepairSourceRemote = 3,
+
+    /// <summary>
+    /// CARD-0613 D-7. Post-baseline work proved in the task's OWN registered checkout, but not on
+    /// the expected ref with descendant history: an off-branch or detached HEAD carrying a valid
+    /// task-scoped claim, a task branch reset into a divergent lineage, or uncommitted files in
+    /// either of those states. It prevents a false no-progress failure and NOTHING else — it is
+    /// deliberately absent from <see cref="Services.TaskCompletionProgressService.AllowsAutomaticWorkspaceMutation"/>,
+    /// so landing still goes through the explicit path. Appended, never renumbered: old stored
+    /// evidence keeps its meaning.
+    /// </summary>
+    PrimaryAlternate = 4,
 }
 
 public sealed record ProgressBaselineSnapshot(
@@ -66,7 +77,13 @@ public sealed record CompletionProgressSource(
     string? RemoteObserved = null,
     string? RegisteredPath = null,
     string? Reason = null,
-    bool Complete = true);
+    bool Complete = true,
+    /// <summary>
+    /// CARD-0613 D-7. The symbolic ref the registered checkout was actually on when observed.
+    /// Null alongside an alternate reason denotes a detached HEAD. Additive: absent on evidence
+    /// written before this card, which still round-trips at schema version 1.
+    /// </summary>
+    string? ObservedRef = null);
 
 public sealed record ProgressEvidenceDto(
     CompletionProgressAssessment Assessment,
@@ -80,7 +97,8 @@ public sealed record ProgressEvidenceSourceDto(
     string? LocalObserved = null,
     string? RemoteObserved = null,
     string? RegisteredPath = null,
-    string? Reason = null);
+    string? Reason = null,
+    string? ObservedRef = null);
 
 public sealed record ProgressRevParse(bool Succeeded, string? Sha, string? Reason);
 public sealed record ProgressSymbolicHead(bool Succeeded, string? FullRef, string? Reason);
@@ -91,6 +109,13 @@ public sealed record ProgressRemoteObservation(
     string? Reason = null,
     string? ObservationRef = null);
 public sealed record ProgressPinResult(bool Succeeded, string? RefName = null, string? Reason = null);
+
+/// <summary>
+/// CARD-0613 D-6. The committer timestamp of ONE exact commit object, in UTC. An unreadable,
+/// missing, malformed or out-of-range answer is <see cref="Available"/> false — never 'now', and
+/// never an absence that could be read as a complete negative.
+/// </summary>
+public sealed record ProgressCommitTime(bool Available, DateTime? CommitterUtc, string? Reason);
 
 public sealed record ProgressClaimParse(
     string? Sha,
@@ -140,6 +165,7 @@ public static class TaskProgressJson
                     s.LocalObserved,
                     s.RemoteObserved,
                     s.RegisteredPath,
-                    s.Reason)).ToArray());
+                    s.Reason,
+                    s.ObservedRef)).ToArray());
     }
 }

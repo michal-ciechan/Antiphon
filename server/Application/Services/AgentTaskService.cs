@@ -234,6 +234,28 @@ public sealed class AgentTaskService
                 "RepairSource requires a fresh Worker/Code Worktree without an agent pin, follow-up or SourceLanding.",
                 "repair_source_mode");
 
+        // CARD-0613 D-1/D-2. Syntax BEFORE mode, and both before any admission that can create a
+        // row, launch a process or touch the repository: an invalid selector that only refuses at
+        // provisioning is a queued task nobody asked for. A start ref never competes with the
+        // authoritative structured bases (Repair, SourceLanding) and never moves an existing
+        // checkout, so it needs a freshly requested Worktree of its own.
+        var startRef = request.WorktreeBaseRequestedRef;
+        if (startRef is not null)
+        {
+            RequireValidStartRef(startRef);
+            if (request.Workspace != WorkspaceMode.Worktree
+                || request.AgentId is not null || !string.IsNullOrWhiteSpace(request.Agent)
+                || !string.IsNullOrWhiteSpace(request.FollowUpOnTask)
+                || request.RepairSourceTaskId is not null
+                || request.SourceLandingOperationId is not null)
+            {
+                throw new ValidationException(nameof(request.WorktreeBaseRequestedRef),
+                    "A start ref requires an explicitly requested fresh Worktree without an agent pin, "
+                    + "follow-up, RepairSource or SourceLanding.",
+                    "worktree_start_ref_mode");
+            }
+        }
+
         if (request.SourceLandingOperationId is not null
             && (request.Kind != AgentTaskKind.Worker || request.Role != AgentTaskRole.Mutation
                 || request.Workspace != WorkspaceMode.Worktree || request.MergeTargetRef is not null
@@ -505,6 +527,17 @@ public sealed class AgentTaskService
             throw new ValidationException(nameof(request.RepairSourceTaskId),
                 "RepairSource requires a fresh Worker/Code Worktree without an agent pin, follow-up or SourceLanding.",
                 "repair_source_mode");
+        }
+
+        // CARD-0613 D-2. The request asked for Worktree above; a live follow-up or the workspace
+        // resolver could still have turned it into something else. Recheck the RESOLVED answer —
+        // a base ref for a checkout that is never cut is a silently ignored selector.
+        if (startRef is not null && workspace != WorkspaceMode.Worktree)
+        {
+            throw new ValidationException(nameof(request.WorktreeBaseRequestedRef),
+                "A start ref requires an explicitly requested fresh Worktree without an agent pin, "
+                + "follow-up, RepairSource or SourceLanding.",
+                "worktree_start_ref_mode");
         }
 
         var storedPolicy = InternalDecisionPolicy.Normalize(
@@ -1080,6 +1113,10 @@ public sealed class AgentTaskService
             VerificationBaselineOutcomeId = verificationAdmission?.BaselineOutcomeId,
             VerificationAdmissionJson = verificationAdmission?.Serialize(),
             RunnerId = remoteRunnerId,
+            // CARD-0613 D-1/D-3. Stored verbatim as what the CALLER asked for. Provisioning
+            // resolves it once and records the base it actually used separately, so a reuse can
+            // never relabel the first recorded decision.
+            WorktreeBaseRequestedRef = startRef,
         };
 
         if (storedPolicy is not null)
@@ -1537,6 +1574,30 @@ public sealed class AgentTaskService
         }
 
         return owner;
+    }
+
+    /// <summary>
+    /// CARD-0613 D-1. A supplied start ref is refused, never truncated or normalized: a selector
+    /// the caller asked for and silently did not get is worse than none. The 300-character ceiling
+    /// is the stored column's; the rest mirrors the worktree manager's defensive input handling,
+    /// where a leading <c>-</c> would reach Git as an option rather than a revision.
+    /// </summary>
+    private static void RequireValidStartRef(string value)
+    {
+        const string code = "worktree_start_ref_invalid";
+        void Refuse(string why) =>
+            throw new ValidationException(nameof(CreateAgentTaskRequest.WorktreeBaseRequestedRef), why, code);
+
+        if (value.Length == 0 || string.IsNullOrWhiteSpace(value))
+            Refuse("A start ref must name a commit-ish; blank is not a selector. Omit it instead.");
+        if (value.Length > 300)
+            Refuse($"A start ref must not exceed 300 characters (got {value.Length}).");
+        if (value != value.Trim())
+            Refuse("A start ref must not carry leading or trailing whitespace.");
+        if (value.Any(char.IsControl))
+            Refuse("A start ref must not contain control characters.");
+        if (value.StartsWith('-'))
+            Refuse("A start ref must not start with '-'; that reaches git as an option, not a revision.");
     }
 
     private static string? NormalizedRepairMergeTarget(string? requested, AgentTask? owner)

@@ -16,6 +16,13 @@ public interface ITaskProgressGit
     Task<ProgressRemoteObservation> ObserveExactRefAsync(
         string repository, string fullRef, string? expectedFingerprint, Guid taskId, CancellationToken ct);
     Task<bool?> IsAncestorAsync(string repository, string ancestorSha, string descendantSha, CancellationToken ct);
+
+    /// <summary>
+    /// CARD-0613 D-6. The COMMITTER time of one exact full object id, in UTC. Never the author
+    /// date, never a scan of recent history, and never a substitute for ancestry: it is the
+    /// operational lower/upper bound on a candidate whose lineage left the baseline.
+    /// </summary>
+    Task<ProgressCommitTime> CommitTimeAsync(string repository, string sha, CancellationToken ct);
     Task<ProgressPinResult> PinBaselineAsync(string repository, Guid taskId, string name, string sha, CancellationToken ct);
     Task<IReadOnlyList<string>> ListProgressPinsAsync(string repository, Guid taskId, CancellationToken ct);
 }

@@ -16,12 +16,45 @@ public sealed class TaskCompletionProgressService
 
     private readonly ITaskProgressGit _git;
     private readonly IWorkspaceProgressProbe? _files;
+    private readonly TimeProvider _clock;
 
-    public TaskCompletionProgressService(ITaskProgressGit git, IWorkspaceProgressProbe? files = null)
+    public TaskCompletionProgressService(
+        ITaskProgressGit git, IWorkspaceProgressProbe? files = null, TimeProvider? clock = null)
     {
         _git = git;
         _files = files;
+        _clock = clock ?? TimeProvider.System;
     }
+
+    /// <summary>
+    /// CARD-0613 D-6. What the candidate tip is, relative to the captured baseline. Distinguishing
+    /// 'left the baseline lineage' from 'no progress' is the whole fix: the old boolean answered
+    /// false to both, and a task branch reset into a divergent lineage settled as a false failure.
+    /// </summary>
+    private enum CommitNovelty
+    {
+        /// <summary>Equal to, or already contained in, a captured baseline history.</summary>
+        Contained,
+
+        /// <summary>Descends from the captured local baseline — ordinary, decisive progress.</summary>
+        Descendant,
+
+        /// <summary>Post-baseline work whose ancestry left the base branch. Qualified by D-6 time.</summary>
+        Divergent,
+
+        /// <summary>A required ancestry query could not be answered. Never a negative.</summary>
+        Unknown,
+    }
+
+    /// <summary>
+    /// CARD-0613 D-4. What the task's OWN registered checkout is actually on right now — not what
+    /// its recorded branch says. Read from the registered path only, never from prose in a report
+    /// and never by scanning sibling refs. A null <see cref="ObservedRef"/> on a succeeded
+    /// observation is a detached HEAD, which is a valid alternate candidate; a failed read is
+    /// unknown, which is neither detached nor 'nothing moved'.
+    /// </summary>
+    private sealed record PrimaryObservation(
+        bool Succeeded, string? Reason, string? ObservedRef, string? ObservedSha);
 
     public sealed record Evaluation(
         CompletionProgressAssessment Assessment,
@@ -46,11 +79,14 @@ public sealed class TaskCompletionProgressService
         if (baseline is null)
             return await EvaluateLegacyAsync(task, claim, ct);
 
+        // CARD-0613 D-6. ONE evaluation instant for the whole assessment, so two arms cannot
+        // disagree about whether a candidate is in the future.
+        var now = _clock.GetUtcNow().UtcDateTime;
         var sources = new List<CompletionProgressSource>();
         var primary = await EvaluateSourceAsync(
-            task, baseline.Primary, baseline, claim.Sha, isRepair: false, sources, ct);
+            task, baseline.Primary, baseline, now, claim.Sha, isRepair: false, sources, ct);
         if (baseline.RepairSource is { } repair)
-            await EvaluateSourceAsync(task, repair, baseline, claim.Sha, isRepair: true, sources, ct);
+            await EvaluateSourceAsync(task, repair, baseline, now, claim.Sha, isRepair: true, sources, ct);
 
         return Aggregate(task, claim, sources);
     }
@@ -134,6 +170,16 @@ public sealed class TaskCompletionProgressService
             var sha = repair.VerifiedSha ?? repair.ClaimedSha ?? "";
             return $"progress=repair-source; owner={owner}; commit={sha}";
         }
+        // CARD-0613 D-7. Attribution the caller can act on: the work is real, but it is not on the
+        // ref this task's branch names, so nothing merged itself back.
+        var alternate = evidence.Sources?.FirstOrDefault(IsAlternateProgress);
+        if (alternate is not null)
+        {
+            var where = alternate.ObservedRef ?? "detached HEAD";
+            var commit = alternate.VerifiedSha ?? alternate.ClaimedSha ?? "";
+            return $"progress=primary-alternate; reason={alternate.Reason ?? "unknown"}; at={where}"
+                + (commit.Length == 0 ? "" : $"; commit={commit}");
+        }
         var remote = evidence.Sources?.FirstOrDefault(s =>
             s.Assessment == CompletionProgressAssessment.ProgressObserved
             && s.Origin == ProgressOrigin.PrimaryRemote);
@@ -204,6 +250,7 @@ public sealed class TaskCompletionProgressService
         AgentTask task,
         ProgressSourceBaseline source,
         ProgressBaselineSnapshot baseline,
+        DateTime now,
         string? claim,
         bool isRepair,
         List<CompletionProgressSource> sink,
@@ -230,12 +277,16 @@ public sealed class TaskCompletionProgressService
             return failed;
         }
 
-        var symbolic = isRepair
-            ? new ProgressSymbolicHead(true, source.FullRef, null)
-            : await ReadPrimaryHeadAsync(source, ct);
-        if (!symbolic.Succeeded && !isRepair)
+        // CARD-0613 D-4. Observe the registered checkout itself: its repository identity, the ref
+        // it is on (possibly none), and the commit HEAD names. The recorded branch is what the
+        // task was GIVEN; this is where its delegate actually worked.
+        var observation = isRepair
+            ? new PrimaryObservation(true, null, source.FullRef, null)
+            : await ObservePrimaryCheckoutAsync(source, ct);
+        if (!observation.Succeeded && !isRepair)
         {
-            var failed = Arm(originLocal, CompletionProgressAssessment.Indeterminate, "source_ref_changed", false, source, null, null);
+            var failed = Arm(originLocal, CompletionProgressAssessment.Indeterminate,
+                observation.Reason ?? "source_ref_changed", false, source, null, null);
             sink.Add(failed);
             return failed;
         }
@@ -278,7 +329,12 @@ public sealed class TaskCompletionProgressService
             }
         }
 
-        var primaryOnExpectedBranch = isRepair || string.Equals(symbolic.FullRef, source.FullRef, StringComparison.Ordinal);
+        // CARD-0613 D-5. The unclaimed expected-ref fast path needs BOTH: the checkout is on that
+        // ref, and its HEAD agrees with the ref tip. A ref that moved while the checkout sat
+        // somewhere else cannot bypass the off-branch claim requirement.
+        var onExpectedRef = isRepair || string.Equals(observation.ObservedRef, source.FullRef, StringComparison.Ordinal);
+        var stableOnExpectedRef = isRepair
+            || (onExpectedRef && string.Equals(observation.ObservedSha, local.Sha, StringComparison.OrdinalIgnoreCase));
         var localTip = local.Sha!;
         var remoteTip = remote.State == ProgressRemoteState.Present ? remote.Sha : null;
 
@@ -290,7 +346,19 @@ public sealed class TaskCompletionProgressService
         var fileUnavailable = !isRepair && files is { Available: false } && files.LastFileChangeAt is null && files.LastCommitAt is null;
         var statusUnavailable = !isRepair && files is { Available: false };
 
-        if (!isRepair && filePositive && primaryOnExpectedBranch)
+        // CARD-0613 D-5. Only a STABLE expected-ref observation whose local history is equal to or
+        // descends from the baseline confers Primary file authority; everything else still counts
+        // as progress, with alternate authority, further down.
+        var primaryFileAuthority = false;
+        if (!isRepair && filePositive && stableOnExpectedRef)
+        {
+            var fileLineage = string.Equals(localTip, source.LocalSha, StringComparison.OrdinalIgnoreCase)
+                ? true
+                : await _git.IsAncestorAsync(repo, source.LocalSha, localTip, ct);
+            primaryFileAuthority = fileLineage == true;
+        }
+
+        if (!isRepair && filePositive && primaryFileAuthority)
         {
             var fileArm = Arm(ProgressOrigin.Primary, CompletionProgressAssessment.ProgressObserved, null, true, source, localTip, remoteTip);
             sink.Add(fileArm);
@@ -302,11 +370,14 @@ public sealed class TaskCompletionProgressService
         if (isRepair)
             result = await EvaluateClaimedOrUnclaimedAsync(
                 repo, source, claimed, localTip, remoteTip, remote, originLocal, originRemote, requireClaim: true, ct);
-        else if (!primaryOnExpectedBranch)
-            result = Arm(originLocal, CompletionProgressAssessment.NoAttributedProgress, "no_movement", true, source, localTip, remoteTip);
+        else if (!stableOnExpectedRef)
+            result = await ConfirmStableObservationAsync(source, observation, await EvaluateOffExpectedRefAsync(
+                repo, source, baseline, now, claimed, localTip, remoteTip, remote, observation,
+                originLocal, originRemote, ct), ct);
         else
-            result = await EvaluatePrimaryGraphAsync(
-                repo, source, claimed, localTip, remoteTip, remote, originLocal, originRemote, ct);
+            result = await ConfirmStableObservationAsync(source, observation, await EvaluatePrimaryGraphAsync(
+                repo, source, baseline, now, claimed, localTip, remoteTip, remote, observation,
+                originLocal, originRemote, ct), ct);
 
         if (statusUnavailable && result.Assessment == CompletionProgressAssessment.NoAttributedProgress)
         {
@@ -318,9 +389,15 @@ public sealed class TaskCompletionProgressService
         if (result.Assessment == CompletionProgressAssessment.ProgressObserved)
             return result;
 
+        // CARD-0613 D-5. The independent dirty-file rescue survives a graph negative OR an
+        // unavailable graph, off branch and on a divergent own tip alike. Reaching here means the
+        // Primary-authority arm above did not fire, so this evidence is alternate: it prevents a
+        // false failure and confers no merge-back authority.
         if (!isRepair && filePositive)
         {
-            var fileArm = Arm(ProgressOrigin.Primary, CompletionProgressAssessment.ProgressObserved, null, true, source, localTip, remoteTip);
+            var fileArm = AlternateArm(CompletionProgressAssessment.ProgressObserved,
+                "primary_off_branch_files", true, source, observation, localTip, remoteTip,
+                claim: null, verified: null);
             sink.Add(fileArm);
             return fileArm;
         }
@@ -328,19 +405,234 @@ public sealed class TaskCompletionProgressService
         return result;
     }
 
-    private async Task<CompletionProgressSource> EvaluatePrimaryGraphAsync(
+    /// <summary>
+    /// CARD-0613 D-4. HEAD as the registered checkout itself reports it. The common-directory
+    /// comparison is what stops a replaced or re-created directory at the same path from lending
+    /// its history to this task.
+    /// </summary>
+    private async Task<PrimaryObservation> ObservePrimaryCheckoutAsync(
+        ProgressSourceBaseline source, CancellationToken ct)
+    {
+        var path = string.IsNullOrWhiteSpace(source.RegisteredCheckout)
+            ? source.CanonicalRepository
+            : source.RegisteredCheckout;
+
+        if (!string.IsNullOrWhiteSpace(source.RegisteredCheckout))
+        {
+            try
+            {
+                var common = await _git.CommonDirectoryAsync(path, ct);
+                if (!PathsEqual(common, source.CanonicalCommonDirectory))
+                    return new(false, "primary_checkout_identity_changed", null, null);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return new(false, "primary_checkout_identity_changed", null, null);
+            }
+        }
+
+        var symbolic = await _git.SymbolicHeadAsync(path, ct);
+        if (!symbolic.Succeeded)
+            return new(false, "source_ref_changed", null, null);
+
+        var head = await _git.RevParseCommitAsync(path, "HEAD", ct);
+        if (!head.Succeeded || head.Sha is null)
+            return new(false, "primary_head_unreadable", null, null);
+
+        return new(true, symbolic.Reason, symbolic.FullRef, head.Sha);
+    }
+
+    /// <summary>
+    /// CARD-0613 D-4. A positive is only as good as the snapshot it was read from. Re-read the ref
+    /// and SHA; a checkout that moved underneath the evaluation is Indeterminate, not a verdict.
+    /// An independent arm (files, or ordinary ancestry) is evaluated separately and still stands.
+    /// </summary>
+    private async Task<CompletionProgressSource> ConfirmStableObservationAsync(
+        ProgressSourceBaseline source,
+        PrimaryObservation first,
+        CompletionProgressSource result,
+        CancellationToken ct)
+    {
+        if (result.Assessment != CompletionProgressAssessment.ProgressObserved) return result;
+
+        var again = await ObservePrimaryCheckoutAsync(source, ct);
+        if (again.Succeeded
+            && string.Equals(again.ObservedRef, first.ObservedRef, StringComparison.Ordinal)
+            && string.Equals(again.ObservedSha, first.ObservedSha, StringComparison.OrdinalIgnoreCase))
+            return result;
+
+        return result with
+        {
+            Assessment = CompletionProgressAssessment.Indeterminate,
+            Reason = "primary_head_changed",
+            Complete = false,
+        };
+    }
+
+    /// <summary>
+    /// CARD-0613 D-5. The checkout is off its expected ref, or detached. A valid task-scoped claim
+    /// reachable from the ACTUAL HEAD can prevent a false failure; unrelated branch movement with
+    /// no claim still earns nothing. Whatever qualifies here is alternate evidence: it never
+    /// authorizes merge-back, and it never changes the task's recorded branch or base.
+    /// </summary>
+    private async Task<CompletionProgressSource> EvaluateOffExpectedRefAsync(
         string repo,
         ProgressSourceBaseline source,
+        ProgressBaselineSnapshot baseline,
+        DateTime now,
         string? claim,
         string localTip,
         string? remoteTip,
         ProgressRemoteObservation remote,
+        PrimaryObservation observation,
         ProgressOrigin originLocal,
         ProgressOrigin originRemote,
         CancellationToken ct)
     {
-        var localNovel = await IsNovelCommitAsync(repo, localTip, source, ct);
-        if (localNovel == true && localTip != source.LocalSha)
+        var observedHead = observation.ObservedSha!;
+
+        if (!string.IsNullOrEmpty(claim))
+        {
+            var alternate = await QualifyPrimaryAlternateAsync(
+                repo, source, baseline, now, claim, observedHead, "primary_off_branch_claim",
+                claim, observation, localTip, remoteTip, ct);
+            if (alternate.Assessment == CompletionProgressAssessment.ProgressObserved)
+                return alternate;
+
+            // The local checkout changed branch; the EXPECTED ref's remote observation keeps its
+            // own exact-ref corroboration rules unchanged.
+            if (remote.State != ProgressRemoteState.Unavailable
+                && remoteTip is not null && remoteTip != source.Remote.Sha && remoteTip != source.LocalSha)
+            {
+                var viaRemote = await QualifyClaimAsync(
+                    repo, source, claim, localTip, remoteTip, remote, originRemote, ct);
+                if (viaRemote.Assessment == CompletionProgressAssessment.ProgressObserved)
+                    return viaRemote;
+            }
+
+            return alternate;
+        }
+
+        var moved = !string.Equals(observedHead, source.LocalSha, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(localTip, source.LocalSha, StringComparison.OrdinalIgnoreCase);
+        return AlternateArm(
+            CompletionProgressAssessment.NoAttributedProgress,
+            moved ? "unclaimed_or_unmatched_commit" : "no_movement",
+            true, source, observation, localTip, remoteTip, claim: null, verified: null);
+    }
+
+    /// <summary>
+    /// CARD-0613 D-6/D-9. The shared primary-local qualifier for a candidate whose ancestry left
+    /// the captured baseline: reachable from what was actually observed, absent from BOTH present
+    /// baseline histories, and committed strictly after capture and no later than this
+    /// evaluation's single clock reading. Committer time is an operational bound, not proof of
+    /// authorship - D-7 is what keeps it from granting integration authority. Every unknown is
+    /// Indeterminate; there is no skew allowance and no retry that manufactures a positive.
+    /// </summary>
+    private async Task<CompletionProgressSource> QualifyPrimaryAlternateAsync(
+        string repo,
+        ProgressSourceBaseline source,
+        ProgressBaselineSnapshot baseline,
+        DateTime now,
+        string candidate,
+        string reachableFrom,
+        string reason,
+        string? claim,
+        PrimaryObservation observation,
+        string localTip,
+        string? remoteTip,
+        CancellationToken ct)
+    {
+        CompletionProgressSource Result(
+            CompletionProgressAssessment assessment, string? why, bool complete, string? verified = null) =>
+            AlternateArm(assessment, why, complete, source, observation, localTip, remoteTip, claim, verified);
+
+        if (!GitObjectId.IsFull(candidate))
+            return Result(CompletionProgressAssessment.NoAttributedProgress, "claimed_commit_unreachable", true);
+
+        var reachable = await _git.IsAncestorAsync(repo, candidate, reachableFrom, ct);
+        if (reachable is null)
+            return Result(CompletionProgressAssessment.Indeterminate, "primary_log_unavailable", false);
+        if (reachable == false)
+            return Result(CompletionProgressAssessment.NoAttributedProgress, "claimed_commit_unreachable", true);
+
+        foreach (var baselineTip in PresentBaselineTips(source))
+        {
+            var contained = await _git.IsAncestorAsync(repo, candidate, baselineTip, ct);
+            if (contained is null)
+                return Result(CompletionProgressAssessment.Indeterminate, "primary_log_unavailable", false);
+            if (contained == true)
+                return Result(CompletionProgressAssessment.NoAttributedProgress, "claimed_commit_not_novel", true);
+        }
+
+        var when = await _git.CommitTimeAsync(repo, candidate, ct);
+        if (!when.Available || when.CommitterUtc is not DateTime committed)
+            return Result(CompletionProgressAssessment.Indeterminate, "primary_commit_time_unavailable", false);
+
+        // Git records whole seconds, so a stamp inside the capture second cannot be ordered
+        // against it. Unknown ordering is Indeterminate, never a verdict either way.
+        var stamp = WholeSecond(committed);
+        var captured = WholeSecond(baseline.CapturedAt);
+        if (stamp > WholeSecond(now))
+            return Result(CompletionProgressAssessment.Indeterminate, "primary_commit_time_unavailable", false);
+        if (stamp == captured)
+            return Result(CompletionProgressAssessment.Indeterminate, "primary_commit_time_overlaps_capture", false);
+        if (stamp < captured)
+            return Result(CompletionProgressAssessment.NoAttributedProgress, "primary_commit_predates_dispatch", true);
+
+        return Result(CompletionProgressAssessment.ProgressObserved, reason, true, candidate);
+    }
+
+    private static DateTime WholeSecond(DateTime value) =>
+        new(value.Ticks - value.Ticks % TimeSpan.TicksPerSecond, DateTimeKind.Utc);
+
+    /// <summary>
+    /// CARD-0613 D-7. Alternate evidence carries the verified candidate, the checkout's ACTUAL
+    /// HEAD and ref, the registered path, and a reason naming which alternate route qualified it.
+    /// A positive is <see cref="ProgressOrigin.PrimaryAlternate"/>, which
+    /// <see cref="AllowsAutomaticWorkspaceMutation"/> deliberately does not accept; anything short
+    /// of a positive keeps the ordinary Primary origin so the aggregate reads unchanged.
+    /// </summary>
+    private static CompletionProgressSource AlternateArm(
+        CompletionProgressAssessment assessment,
+        string? reason,
+        bool complete,
+        ProgressSourceBaseline source,
+        PrimaryObservation observation,
+        string localTip,
+        string? remoteTip,
+        string? claim,
+        string? verified) =>
+        new(assessment == CompletionProgressAssessment.ProgressObserved
+                ? ProgressOrigin.PrimaryAlternate
+                : ProgressOrigin.Primary,
+            assessment,
+            source.OwnerTaskId,
+            claim,
+            verified,
+            observation.ObservedSha ?? localTip,
+            remoteTip,
+            source.RegisteredCheckout,
+            reason,
+            complete,
+            observation.ObservedRef);
+
+    private async Task<CompletionProgressSource> EvaluatePrimaryGraphAsync(
+        string repo,
+        ProgressSourceBaseline source,
+        ProgressBaselineSnapshot baseline,
+        DateTime now,
+        string? claim,
+        string localTip,
+        string? remoteTip,
+        ProgressRemoteObservation remote,
+        PrimaryObservation observation,
+        ProgressOrigin originLocal,
+        ProgressOrigin originRemote,
+        CancellationToken ct)
+    {
+        var localNovel = await ClassifyNoveltyAsync(repo, localTip, source, ct);
+        if (localNovel == CommitNovelty.Descendant && localTip != source.LocalSha)
         {
             var lineage = await LineageHoldsAsync(repo, source.LocalSha, localTip, ct);
             if (lineage == false)
@@ -349,8 +641,20 @@ public sealed class TaskCompletionProgressService
                 return Arm(originLocal, CompletionProgressAssessment.Indeterminate, "primary_log_unavailable", false, source, localTip, remoteTip);
             return Arm(originLocal, CompletionProgressAssessment.ProgressObserved, null, true, source, localTip, remoteTip, verified: localTip);
         }
-        if (localNovel is null)
+        if (localNovel == CommitNovelty.Unknown)
             return Arm(originLocal, CompletionProgressAssessment.Indeterminate, "primary_log_unavailable", false, source, localTip, remoteTip);
+
+        // CARD-0613 D-6. The task is on its own expected ref, but that ref was reset into a
+        // lineage the baseline is not part of. Before this card the divergent tip fell through to
+        // `unclaimed_or_unmatched_commit` and settled a delegate that had done real work as
+        // Failed. Qualify the exact commit by time instead, with alternate authority only.
+        if (localNovel == CommitNovelty.Divergent)
+        {
+            var candidate = string.IsNullOrEmpty(claim) ? localTip : claim;
+            return await QualifyPrimaryAlternateAsync(
+                repo, source, baseline, now, candidate, localTip, "primary_divergent_commit",
+                claim, observation, localTip, remoteTip, ct);
+        }
 
         if (remote.State == ProgressRemoteState.Unavailable)
             return Arm(originRemote, CompletionProgressAssessment.Indeterminate, remote.Reason ?? "source_remote_unreadable", false, source, localTip, null);
@@ -452,27 +756,32 @@ public sealed class TaskCompletionProgressService
         return Arm(origin, CompletionProgressAssessment.ProgressObserved, null, true, source, localTip, remoteTip, claim, claim);
     }
 
-    private async Task<bool?> IsNovelCommitAsync(string repo, string tip, ProgressSourceBaseline source, CancellationToken ct)
+    /// <summary>
+    /// CARD-0613 D-6. Containment in EACH present baseline history is excluded first, so a
+    /// re-dated commit that was already there can never reach the time fallback. Only after both
+    /// exclusions does a failed descendant check mean 'divergent' rather than 'not new'.
+    /// </summary>
+    private async Task<CommitNovelty> ClassifyNoveltyAsync(
+        string repo, string tip, ProgressSourceBaseline source, CancellationToken ct)
     {
-        if (tip == source.LocalSha) return false;
+        if (tip == source.LocalSha) return CommitNovelty.Contained;
         foreach (var baselineTip in PresentBaselineTips(source))
         {
             var contained = await _git.IsAncestorAsync(repo, tip, baselineTip, ct);
-            if (contained is null) return null;
-            if (contained == true) return false;
+            if (contained is null) return CommitNovelty.Unknown;
+            if (contained == true) return CommitNovelty.Contained;
         }
         var fromLocal = await _git.IsAncestorAsync(repo, source.LocalSha, tip, ct);
-        return fromLocal;
+        return fromLocal switch
+        {
+            true => CommitNovelty.Descendant,
+            false => CommitNovelty.Divergent,
+            _ => CommitNovelty.Unknown,
+        };
     }
 
     private async Task<bool?> LineageHoldsAsync(string repo, string baseline, string tip, CancellationToken ct) =>
         await _git.IsAncestorAsync(repo, baseline, tip, ct);
-
-    private async Task<ProgressSymbolicHead> ReadPrimaryHeadAsync(ProgressSourceBaseline source, CancellationToken ct)
-    {
-        var path = source.RegisteredCheckout ?? source.CanonicalRepository;
-        return await _git.SymbolicHeadAsync(path, ct);
-    }
 
     private async Task PinIfPossible(string repo, Guid taskId, string name, string? sha, CancellationToken ct)
     {
@@ -499,6 +808,15 @@ public sealed class TaskCompletionProgressService
         string? claim = null,
         string? verified = null) =>
         new(origin, assessment, source.OwnerTaskId, claim, verified, local, remote, source.RegisteredCheckout, reason, complete);
+
+    /// <summary>
+    /// CARD-0613 D-7. A stored alternate positive must not become Primary after a reload, and a
+    /// negative or unknown arm is never alternate. One predicate, used by the evidence projection
+    /// and by the tests that reload persisted JSON.
+    /// </summary>
+    public static bool IsAlternateProgress(CompletionProgressSource source) =>
+        source.Origin == ProgressOrigin.PrimaryAlternate
+        && source.Assessment == CompletionProgressAssessment.ProgressObserved;
 
     private static Evaluation Aggregate(AgentTask task, ProgressClaimParse claim, List<CompletionProgressSource> sources)
     {

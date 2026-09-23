@@ -219,8 +219,10 @@ public class AgentTask
     public string? MergeTargetRef { get; set; }
 
     /// <summary>
-    /// CARD-0508. The base the caller asked for (<c>-BaseRef</c>). Written at create, never by
-    /// the server. Null in S1/S2; S4 is deferred.
+    /// CARD-0508. The base the caller asked for. Written at create, never by the server.
+    /// CARD-0613 filled the missing path: <c>delegate.ps1 -StartRef</c> ->
+    /// <c>CreateAgentTaskRequest.WorktreeBaseRequestedRef</c> -> here, validated at create and
+    /// resolved once at provisioning. Null means the ordinary MergeTarget/default precedence.
     /// </summary>
     public string? WorktreeBaseRequestedRef { get; set; }
 
