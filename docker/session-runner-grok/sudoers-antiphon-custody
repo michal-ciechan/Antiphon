@@ -1,0 +1,18 @@
+# CARD-0604 D-17 / G-35: the only sudo grant that exists inside the persistent server2 runner.
+#
+# uid 1654 (the session runner and every session it holds) may run exactly the two root-owned
+# custody helpers and nothing else. There is no ALL command, no second user, no second target
+# uid and no password prompt to answer. This file is CONTAINER-internal: it constrains the
+# uid-1654 test/mutation process inside an already-privileged container and has nothing to do
+# with server2's own host sudoers.
+#
+# Note for anyone widening this: a tracked child cannot use it anyway. antiphon-custody-enter
+# execs the child under PR_SET_NO_NEW_PRIVS, which makes sudo -- and every other setuid binary
+# -- inert for the whole descendant tree. Only the observing pty-host, which lives outside the
+# tree, can call these.
+#
+# ASCII only. Installed 0440 root:root; `visudo -c` runs at image build time.
+
+Defaults:#1654 env_reset
+
+#1654 ALL=(root) NOPASSWD: /usr/local/bin/antiphon-custody-enter, /usr/local/bin/antiphon-custody-kill

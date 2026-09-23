@@ -425,6 +425,30 @@ public sealed class DockerStackContractTests
         closure.Contains("sudo", StringComparison.Ordinal).ShouldBeFalse();
     }
 
+    // CARD-0604 G-40 (Cut B). The custody mechanism is a sudo grant plus two root-owned helpers.
+    // It belongs to exactly one image -- the privileged persistent server2 runner -- because
+    // that is the only place a tracked Mutation execution ever runs. The default runtime and the
+    // receipt-probe target boot unprivileged with no dockerd and no custody root, so carrying
+    // the helpers there would be a sudo grant with nothing to constrain and everything to lose.
+    [Test]
+    public void Default_runtime_excludes_custody_helpers()
+    {
+        var stages = DockerStackDocuments.Stages(Text("docker/session-runner-grok/Dockerfile"));
+        foreach (var target in new[] { stages[^1].Name, "receipt-probe" })
+        {
+            var closure = DockerStackDocuments.Closure(stages, target);
+            closure.Contains("antiphon-custody", StringComparison.Ordinal).ShouldBeFalse(target + " carries a custody helper");
+            closure.Contains("sudoers", StringComparison.Ordinal).ShouldBeFalse(target + " carries a sudoers drop-in");
+            closure.Contains("no-new-privs", StringComparison.Ordinal).ShouldBeFalse(target + " references the custody shim");
+        }
+
+        // And they are present exactly where they belong.
+        var testing = DockerStackDocuments.Closure(stages, "session-testing");
+        testing.Contains("/usr/local/bin/antiphon-custody-enter", StringComparison.Ordinal).ShouldBeTrue();
+        testing.Contains("/usr/local/bin/antiphon-custody-kill", StringComparison.Ordinal).ShouldBeTrue();
+        testing.Contains("/etc/sudoers.d/antiphon-custody", StringComparison.Ordinal).ShouldBeTrue();
+    }
+
     [Test]
     public void Stock_server_excludes_fixture()
     {
