@@ -62,11 +62,12 @@ public sealed partial class RunnerWorkspaceService
         // The Mutation targets the sha that was actually PUBLISHED. Reachability from
         // origin/master at this moment is the check: a sha that only exists on some other branch,
         // or was force-pushed away, must not become a verification snapshot.
-        var fetch = await GitAsync(_repository, ct, "fetch", "origin", "master");
+        var fetch = await GitAsync(_repository, ct, "fetch", "origin", _publishedBranch);
         if (fetch.ExitCode != 0) throw Refuse("Verification fetch failed: " + Tail(fetch.Stderr));
-        var reachable = await GitAsync(_repository, ct, "merge-base", "--is-ancestor", request.Sha!, "origin/master");
+        var reachable = await GitAsync(_repository, ct, "merge-base", "--is-ancestor",
+            request.Sha!, "origin/" + _publishedBranch);
         if (reachable.ExitCode != 0)
-            throw Refuse($"{request.Sha} is not reachable from origin/master on this runner.");
+            throw Refuse($"{request.Sha} is not reachable from origin/{_publishedBranch} on this runner.");
 
         Directory.CreateDirectory(_worktreeRoot);
         Directory.CreateDirectory(_verificationMetadataRoot);

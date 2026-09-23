@@ -8,7 +8,7 @@ using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
-public sealed class PhoneHomeRunnerClient : ISessionRunnerClient
+public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationWorkspaceTransport
 {
     private readonly PhoneHomeLiveConnection _connection;
     private readonly RunnerContractMapper _mapper = new();
@@ -144,35 +144,35 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient
     }
 
     /// <summary>CARD-0604 D-19: managed verification creation on the runner, at the exact published sha.</summary>
-    public async Task<PhoneHomeVerificationCreateResponse> CreateVerificationWorkspaceAsync(
+    public async Task<PhoneHomeVerificationCreateResponse> CreateAsync(
         PhoneHomeVerificationCreateRequest request, CancellationToken ct)
     {
         var frame = await _connection.RequestAsync(PhoneHomeOperation.VerificationWorkspaceCreate, request, ct);
         return Read<PhoneHomeVerificationCreateResponse>(frame) ?? throw Missing("verification-create");
     }
 
-    public async Task<PhoneHomeVerificationValidateResponse> ValidateVerificationWorkspaceAsync(
+    public async Task<PhoneHomeVerificationValidateResponse> ValidateAsync(
         PhoneHomeVerificationValidateRequest request, CancellationToken ct)
     {
         var frame = await _connection.RequestAsync(PhoneHomeOperation.VerificationWorkspaceValidate, request, ct);
         return Read<PhoneHomeVerificationValidateResponse>(frame) ?? throw Missing("verification-validate");
     }
 
-    public async Task<PhoneHomeVerificationInspectResponse> InspectVerificationWorkspaceAsync(
+    public async Task<PhoneHomeVerificationInspectResponse> InspectAsync(
         PhoneHomeVerificationInspectRequest request, CancellationToken ct)
     {
         var frame = await _connection.RequestAsync(PhoneHomeOperation.VerificationWorkspaceInspect, request, ct);
         return Read<PhoneHomeVerificationInspectResponse>(frame) ?? throw Missing("verification-inspect");
     }
 
-    public async Task<PhoneHomeVerificationReadRestorationResponse> ReadVerificationRestorationAsync(
+    public async Task<PhoneHomeVerificationReadRestorationResponse> ReadRestorationAsync(
         PhoneHomeVerificationReadRestorationRequest request, CancellationToken ct)
     {
         var frame = await _connection.RequestAsync(PhoneHomeOperation.VerificationWorkspaceReadRestoration, request, ct);
         return Read<PhoneHomeVerificationReadRestorationResponse>(frame) ?? throw Missing("verification-restoration");
     }
 
-    public async Task<PhoneHomeVerificationRemoveResponse> RemoveVerificationWorkspaceAsync(
+    public async Task<PhoneHomeVerificationRemoveResponse> RemoveAsync(
         PhoneHomeVerificationRemoveRequest request, CancellationToken ct)
     {
         var frame = await _connection.RequestAsync(PhoneHomeOperation.VerificationWorkspaceRemove, request, ct);

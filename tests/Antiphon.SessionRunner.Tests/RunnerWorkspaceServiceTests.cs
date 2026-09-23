@@ -126,15 +126,155 @@ public sealed class RunnerWorkspaceServiceTests
             "/tmp", new PhoneHomeInputSpill("brief.md", "x"), CancellationToken.None));
     }
 
+    // ---- CARD-0604 D-19 (Cut B): the verification snapshot, not the mirror -------------------
+    //
+    // The distinction matters: a mirror is a disposable copy of a branch that also exists on
+    // origin, so forcing its removal costs nothing. A verification snapshot is a tracked
+    // execution's only workspace and its removal is what a custody receipt is exchanged for, so
+    // every surprise here is residue the operator sees rather than something to delete.
+
+    [Test]
+    public async Task Verification_create_refuses_sha_not_on_origin_master()
+    {
+        using var scratch = Scratch.Create();
+        var service = Verification(scratch);
+
+        // The task branch's tip is a real commit in this repository -- and it is NOT published.
+        // A Mutation must run on what was actually landed, never on a branch tip that merely
+        // exists somewhere on the remote.
+        var refused = await Should.ThrowAsync<PhoneHomeAdmissionException>(() => service.CreateVerificationAsync(
+            new PhoneHomeVerificationCreateRequest("task-1234abcd", scratch.Sha, "feat/card-task-1234abcd"),
+            CancellationToken.None));
+
+        refused.Code.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
+        refused.Message.ShouldContain("not reachable");
+        Directory.Exists(Path.Combine(scratch.Work, "worktrees", "task-1234abcd")).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Verification_create_writes_schema_2_metadata()
+    {
+        using var scratch = Scratch.Create();
+        var service = Verification(scratch);
+
+        var created = await service.CreateVerificationAsync(
+            new PhoneHomeVerificationCreateRequest("task-1234abcd", scratch.PublishedSha, "feat/card-task-1234abcd"),
+            CancellationToken.None);
+
+        created.InitialSha.ShouldBe(scratch.PublishedSha);
+        created.Coordinates.Branch.ShouldBe("feat/card-task-1234abcd");
+        created.Coordinates.CreationId.ShouldNotBe(Guid.Empty);
+        created.Coordinates.WorktreePath.ShouldBe(scratch.Work + "/worktrees/task-1234abcd");
+        Scratch.Git(created.Coordinates.WorktreePath, "rev-parse", "HEAD").Trim().ShouldBe(scratch.PublishedSha);
+
+        // Schema 2 with CreationComplete and a GitDirectory, exactly as the desktop manager
+        // writes it -- the equality checks on both sides read the same fields.
+        using var metadata = System.Text.Json.JsonDocument.Parse(
+            File.ReadAllText(Path.Combine(scratch.Work, "verification-creations", "task-1234abcd.json")));
+        metadata.RootElement.GetProperty("schemaVersion").GetInt32().ShouldBe(2);
+        metadata.RootElement.GetProperty("creationComplete").GetBoolean().ShouldBeTrue();
+        metadata.RootElement.GetProperty("gitDirectory").GetString().ShouldBe(created.Coordinates.WorktreeGitDirectory);
+
+        // And it validates against itself.
+        var validation = await service.ValidateVerificationAsync(
+            new PhoneHomeVerificationValidateRequest(created.Coordinates, scratch.PublishedSha), CancellationToken.None);
+        validation.Valid.ShouldBeTrue(validation.Reason ?? "");
+
+        // An exact redispatch is idempotent; a different sha for the same identifier is not.
+        (await service.CreateVerificationAsync(
+                new PhoneHomeVerificationCreateRequest("task-1234abcd", scratch.PublishedSha, "feat/card-task-1234abcd"),
+                CancellationToken.None))
+            .Coordinates.ShouldBe(created.Coordinates);
+        await Should.ThrowAsync<PhoneHomeAdmissionException>(() => service.CreateVerificationAsync(
+            new PhoneHomeVerificationCreateRequest("task-1234abcd", scratch.Sha, "feat/card-task-1234abcd"),
+            CancellationToken.None));
+    }
+
+    [Test]
+    public async Task Verification_remove_refuses_unknown_files()
+    {
+        using var scratch = Scratch.Create();
+        var service = Verification(scratch);
+        var created = await service.CreateVerificationAsync(
+            new PhoneHomeVerificationCreateRequest("task-1234abcd", scratch.PublishedSha, "feat/card-task-1234abcd"),
+            CancellationToken.None);
+
+        File.WriteAllText(created.Coordinates.WorktreePath + "/report.md", "expected output");
+        File.WriteAllText(created.Coordinates.WorktreePath + "/surprise.bin", "nobody chose to keep this");
+
+        var refused = await service.RemoveVerificationAsync(
+            new PhoneHomeVerificationRemoveRequest(created.Coordinates, scratch.PublishedSha, ["report.md"]),
+            CancellationToken.None);
+
+        refused.DirectoryGone.ShouldBeFalse();
+        refused.Residue.ShouldNotBeNull();
+        refused.Residue.ShouldContain("surprise.bin");
+        Directory.Exists(created.Coordinates.WorktreePath).ShouldBeTrue();
+
+        // A tracked change refuses too: that work was never pushed anywhere.
+        File.Delete(created.Coordinates.WorktreePath + "/surprise.bin");
+        File.WriteAllText(created.Coordinates.WorktreePath + "/README.md", "edited");
+        var dirty = await service.RemoveVerificationAsync(
+            new PhoneHomeVerificationRemoveRequest(created.Coordinates, scratch.PublishedSha, ["report.md"]),
+            CancellationToken.None);
+        dirty.Residue.ShouldNotBeNull();
+        dirty.Residue.ShouldContain("tracked changes present");
+
+        // With only the exact expected outputs present, the removal proceeds and takes the
+        // branch and the creation metadata with it.
+        Scratch.Git(created.Coordinates.WorktreePath, "checkout", "--", "README.md");
+        var removed = await service.RemoveVerificationAsync(
+            new PhoneHomeVerificationRemoveRequest(created.Coordinates, scratch.PublishedSha, ["report.md"]),
+            CancellationToken.None);
+        removed.DirectoryGone.ShouldBeTrue();
+        removed.Unregistered.ShouldBeTrue();
+        removed.BranchDeleted.ShouldBeTrue();
+        removed.Residue.ShouldBeNull();
+        File.Exists(Path.Combine(scratch.Work, "verification-creations", "task-1234abcd.json")).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Verification_reads_the_restoration_only_under_the_runner_repository()
+    {
+        using var scratch = Scratch.Create();
+        var service = Verification(scratch);
+        var common = Path.Combine(scratch.Clone, ".git").Replace('\\', '/');
+        var operationId = Guid.NewGuid();
+        var taskId = Guid.NewGuid();
+        var root = Path.Combine(scratch.Clone, ".git", "antiphon", "verification",
+            operationId.ToString("N"), taskId.ToString("N"));
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "restoration.json"), "{\"schemaVersion\":1}");
+
+        var response = await service.ReadVerificationRestorationAsync(
+            new PhoneHomeVerificationReadRestorationRequest(common, operationId, taskId), CancellationToken.None);
+        System.Text.Encoding.UTF8.GetString(response.Restoration!).ShouldContain("schemaVersion");
+
+        // An evidence root outside this runner's repository is refused rather than read: the
+        // record must be where the producer was required to write it.
+        await Should.ThrowAsync<PhoneHomeAdmissionException>(() => service.ReadVerificationRestorationAsync(
+            new PhoneHomeVerificationReadRestorationRequest("/etc/antiphon", operationId, taskId),
+            CancellationToken.None));
+    }
+
+    private static RunnerWorkspaceService Verification(Scratch scratch) =>
+        new(scratch.Clone, scratch.Work, publishedBranch: Scratch.Published);
+
     private sealed class Scratch : IDisposable
     {
         public const string Branch = "feat/card-task-deadbeef";
+
+        /// <summary>The scratch repository's stand-in for master: what "published" means here.</summary>
+        public const string Published = "main";
 
         public required string Root { get; init; }
         public required string Origin { get; init; }
         public required string Clone { get; init; }
         public required string Work { get; init; }
         public required string Sha { get; init; }
+
+        /// <summary>Tip of the published branch. Reachable from origin/main; Sha is not.</summary>
+        public required string PublishedSha { get; init; }
 
         public static Scratch Create()
         {
@@ -156,13 +296,21 @@ public sealed class RunnerWorkspaceServiceTests
             Git(origin, "add", "task.txt");
             Git(origin, "commit", "-m", "task");
             var sha = Git(origin, "rev-parse", "HEAD").Trim();
-            Git(origin, "checkout", "main");
+            Git(origin, "checkout", Published);
+            File.WriteAllText(Path.Combine(origin, "published.txt"), "landed");
+            Git(origin, "add", "published.txt");
+            Git(origin, "commit", "-m", "land");
+            var publishedSha = Git(origin, "rev-parse", "HEAD").Trim();
 
             Git(root, "clone", origin, clone);
             Git(clone, "config", "user.email", "c604@localhost");
             Git(clone, "config", "user.name", "c604");
 
-            return new Scratch { Root = root, Origin = origin, Clone = clone, Work = work.Replace('\\', '/'), Sha = sha };
+            return new Scratch
+            {
+                Root = root, Origin = origin, Clone = clone, Work = work.Replace('\\', '/'),
+                Sha = sha, PublishedSha = publishedSha,
+            };
         }
 
         public void Dispose()

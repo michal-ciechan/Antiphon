@@ -54,3 +54,17 @@ public interface IVerificationWorkspaceDirectory
 {
     IVerificationWorkspace Resolve(string? runnerId);
 }
+
+/// <summary>
+/// CARD-0604 D-19. The five typed phone-home calls <see cref="IVerificationWorkspace"/>'s remote
+/// half makes, as a seam. Separating it is what lets the rooting and ordinal-comparison rules be
+/// tested for what they refuse, rather than only observed on a live runner.
+/// </summary>
+public interface IVerificationWorkspaceTransport
+{
+    Task<PhoneHomeVerificationCreateResponse> CreateAsync(PhoneHomeVerificationCreateRequest request, CancellationToken ct);
+    Task<PhoneHomeVerificationValidateResponse> ValidateAsync(PhoneHomeVerificationValidateRequest request, CancellationToken ct);
+    Task<PhoneHomeVerificationInspectResponse> InspectAsync(PhoneHomeVerificationInspectRequest request, CancellationToken ct);
+    Task<PhoneHomeVerificationReadRestorationResponse> ReadRestorationAsync(PhoneHomeVerificationReadRestorationRequest request, CancellationToken ct);
+    Task<PhoneHomeVerificationRemoveResponse> RemoveAsync(PhoneHomeVerificationRemoveRequest request, CancellationToken ct);
+}

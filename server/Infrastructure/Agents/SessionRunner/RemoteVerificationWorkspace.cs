@@ -16,14 +16,14 @@ namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 /// returned coordinates ordinally with the ones the reservation recorded.
 /// </summary>
 public sealed class RemoteVerificationWorkspace(
-    PhoneHomeRunnerClient client, string runnerRepository, string runnerWorkspaceRoot)
+    IVerificationWorkspaceTransport client, string runnerRepository, string runnerWorkspaceRoot)
     : IVerificationWorkspace
 {
     public async Task<VerificationWorkspaceCreation> CreateAsync(
         string repositoryPath, string identifier, string landedSha, CancellationToken ct)
     {
         var branch = "feat/card-" + identifier;
-        var response = await client.CreateVerificationWorkspaceAsync(new(identifier, landedSha, branch), ct);
+        var response = await client.CreateAsync(new(identifier, landedSha, branch), ct);
         RequireRooted(response.Coordinates);
         if (response.InitialSha != landedSha || response.Coordinates.Branch != branch
             || response.Coordinates.CreationId == Guid.Empty)
@@ -35,7 +35,7 @@ public sealed class RemoteVerificationWorkspace(
         VerificationCreationCoordinates coordinates, string landedSha, CancellationToken ct)
     {
         RequireRooted(coordinates);
-        var response = await client.ValidateVerificationWorkspaceAsync(new(coordinates, landedSha), ct);
+        var response = await client.ValidateAsync(new(coordinates, landedSha), ct);
         if (!response.Valid) return new(false, response.Reason ?? "verification_creation_identity_mismatch");
         // The runner answered "valid" about SOME coordinates; the ones that matter are these.
         // Comparing them ordinally is what makes the answer about this execution's snapshot.
@@ -53,7 +53,7 @@ public sealed class RemoteVerificationWorkspace(
     public async Task<VerificationWorkspaceInspection> InspectAsync(string worktreePath, CancellationToken ct)
     {
         RequireUnderWorkspace(worktreePath);
-        var r = await client.InspectVerificationWorkspaceAsync(new(worktreePath), ct);
+        var r = await client.InspectAsync(new(worktreePath), ct);
         return new(r.CreationId, r.InitialSha, r.Branch, r.RepositoryPath, r.WorktreePath,
             r.GitDirectory, r.Head, r.Registered, r.Clean, r.Locked);
     }
@@ -62,7 +62,7 @@ public sealed class RemoteVerificationWorkspace(
         string commonGitDirectory, Guid sourceOperationId, Guid taskId, CancellationToken ct)
     {
         RequireUnderRepository(commonGitDirectory);
-        var response = await client.ReadVerificationRestorationAsync(
+        var response = await client.ReadRestorationAsync(
             new(commonGitDirectory, sourceOperationId, taskId), ct);
         return response.Restoration;
     }
@@ -72,7 +72,7 @@ public sealed class RemoteVerificationWorkspace(
         IReadOnlyList<string> expectedOutputs, CancellationToken ct)
     {
         RequireRooted(coordinates);
-        var r = await client.RemoveVerificationWorkspaceAsync(
+        var r = await client.RemoveAsync(
             new(coordinates, expectedSha, expectedOutputs ?? []), ct);
         return new(r.Unregistered, r.DirectoryGone, r.BranchDeleted, r.Residue);
     }

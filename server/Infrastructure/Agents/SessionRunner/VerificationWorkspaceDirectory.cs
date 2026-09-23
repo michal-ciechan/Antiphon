@@ -25,7 +25,7 @@ public sealed class VerificationWorkspaceDirectory(
         // Resolve() throws ServiceUnavailableException for an unavailable or not-yet-recovered
         // remote runner. That 503 is the answer; it is never converted into a local read.
         var client = runners.Resolve(runnerId);
-        if (client is not PhoneHomeRunnerClient phoneHome)
+        if (client is not IVerificationWorkspaceTransport phoneHome)
             throw new Application.Exceptions.ServiceUnavailableException(
                 "The bound runner cannot host a verification workspace.", PhoneHomeProblemTypes.Unavailable);
         var options = settings.Value;

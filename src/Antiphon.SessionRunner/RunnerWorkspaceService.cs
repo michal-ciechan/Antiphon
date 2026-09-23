@@ -27,13 +27,18 @@ public sealed partial class RunnerWorkspaceService
     // snapshot -- the snapshot is the thing being removed, and its own record cannot go with it.
     private readonly string _verificationMetadataRoot;
     private readonly TimeSpan _timeout;
+    // CARD-0604 D-19: the published branch a verification sha must be reachable from. Production
+    // is master; it is a parameter only so the runner-side tests can stand up a scratch repo.
+    private readonly string _publishedBranch;
 
-    public RunnerWorkspaceService(string repository, string allowedCwd, TimeSpan? timeout = null)
+    public RunnerWorkspaceService(string repository, string allowedCwd, TimeSpan? timeout = null,
+        string publishedBranch = "master")
     {
         _repository = repository;
         _worktreeRoot = allowedCwd.TrimEnd('/') + "/worktrees";
         _verificationMetadataRoot = allowedCwd.TrimEnd('/') + "/verification-creations";
         _timeout = timeout ?? TimeSpan.FromMinutes(10);
+        _publishedBranch = publishedBranch;
     }
 
     public string WorktreeRoot => _worktreeRoot;
