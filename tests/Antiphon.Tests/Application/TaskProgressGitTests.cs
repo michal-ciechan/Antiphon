@@ -111,6 +111,68 @@ public class TaskProgressGitTests
         git.Trace.Any(a => a.Length > 0 && a[0] == "update-ref").ShouldBeFalse();
     }
 
+    /// <summary>
+    /// CARD-0613 V-3. The committer timestamp of ONE exact object, against real git. The author
+    /// date is deliberately different: a fallback that read the author date could be backdated by
+    /// anyone rebasing. Every unreadable shape is unavailable, never a usable time.
+    /// </summary>
+    [Test]
+    public async Task C613_ExactCommitterTime()
+    {
+        using var repo = new ScratchGitRepo("c613-ct");
+        var authored = new DateTimeOffset(2020, 1, 2, 3, 4, 5, TimeSpan.Zero);
+        var committed = new DateTimeOffset(2026, 9, 23, 11, 22, 33, TimeSpan.Zero);
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "README.md"), "base\n");
+        await repo.GitAsync("add", ".");
+        (await ScratchGitRepo.GitInAsync(repo.Path, new Dictionary<string, string>
+        {
+            ["GIT_AUTHOR_DATE"] = authored.ToString("o"),
+            ["GIT_COMMITTER_DATE"] = committed.ToString("o"),
+        }, "commit", "-m", "dated")).Ok.ShouldBeTrue();
+        var sha = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        sha.Length.ShouldBeOneOf(40, 64);
+
+        var git = new ControlledTaskProgressGit();
+        var exact = await git.CommitTimeAsync(repo.Path, sha, default);
+        exact.Available.ShouldBeTrue();
+        exact.CommitterUtc.ShouldNotBeNull().ShouldBe(committed.UtcDateTime);
+        exact.CommitterUtc!.Value.Kind.ShouldBe(DateTimeKind.Utc);
+        exact.CommitterUtc.Value.ShouldNotBe(authored.UtcDateTime);
+        git.Trace.ShouldContain(a => a.Length >= 4 && a[0] == "show" && a[1] == "-s"
+            && a[2] == "--format=%ct" && a[3] == sha);
+        git.Trace.ShouldNotContain(a => a.Any(x => x.StartsWith("-50", StringComparison.Ordinal)));
+
+        // A missing object: git exits nonzero. Not an absence, not a time.
+        var absent = new string('b', sha.Length);
+        (await git.CommitTimeAsync(repo.Path, absent, default)).Available.ShouldBeFalse();
+
+        // Typed validation refuses anything that is not a FULL object id of either length, so a
+        // prefix or a ref name can never resolve to a different commit behind our back.
+        foreach (var bad in new[] { "HEAD", sha[..12], sha + "0", "", "--format=%ct", new string('z', 40) })
+            (await git.CommitTimeAsync(repo.Path, bad, default)).Available.ShouldBeFalse();
+        (await git.CommitTimeAsync(repo.Path, new string('a', 64), default)).Available.ShouldBeFalse();
+
+        // Nonzero exit, malformed output, several values, and an out-of-range value.
+        foreach (var bogus in new[] { "not-a-number", "1700000000\n1700000001", "-1", "99999999999999" })
+        {
+            var faulted = new ControlledTaskProgressGit
+            {
+                BeforeCommand = (_, args) => Task.FromResult<LandingGitResult?>(
+                    args.Count > 0 && args[0] == "show" ? new LandingGitResult(0, bogus, "") : null),
+            };
+            (await faulted.CommitTimeAsync(repo.Path, sha, default)).Available.ShouldBeFalse();
+        }
+        var failing = new ControlledTaskProgressGit
+        {
+            BeforeCommand = (_, args) => Task.FromResult<LandingGitResult?>(
+                args.Count > 0 && args[0] == "show" ? new LandingGitResult(128, "", "fatal") : null),
+        };
+        var broken = await failing.CommitTimeAsync(repo.Path, sha, default);
+        broken.Available.ShouldBeFalse();
+        broken.CommitterUtc.ShouldBeNull();
+        broken.Reason.ShouldBe("commit_time_unavailable");
+    }
+
     [Test]
     public async Task C499_V33_FetchIntoTaskObservationRefAndAnswerAncestry()
     {

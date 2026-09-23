@@ -33,6 +33,20 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
     public bool ExplicitIntegration { get; init; }
     public bool OrdinaryCodeTask { get; init; }
 
+    /// <summary>
+    /// CARD-0613. Do not seed <see cref="Repair"/> as a hand-built row; the test creates it through
+    /// the REAL <see cref="AgentTaskService"/> with <see cref="CreateTaskAsync"/>. A seeded row
+    /// proves nothing about request admission, validation or persistence.
+    /// </summary>
+    public bool CreateTaskThroughService { get; init; }
+
+    /// <summary>
+    /// CARD-0613. The clock <see cref="TaskCompletionProgressService"/> reads for its single
+    /// evaluation instant. Real time by default; a test that makes commits at explicit
+    /// GIT_COMMITTER_DATEs sets a fixed one so the D-6 window is decided, not raced.
+    /// </summary>
+    public TimeProvider ProgressClock { get; set; } = TimeProvider.System;
+
     public RepairSourceWorld()
     {
         Repo = new ScratchGitRepo("card0499-repair");
@@ -41,12 +55,13 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
     }
 
     public static async Task<RepairSourceWorld> CreateAsync(
-        bool explicitIntegration = false, bool ordinaryCodeTask = false)
+        bool explicitIntegration = false, bool ordinaryCodeTask = false, bool createTaskThroughService = false)
     {
         var world = new RepairSourceWorld
         {
             ExplicitIntegration = explicitIntegration,
             OrdinaryCodeTask = ordinaryCodeTask,
+            CreateTaskThroughService = createTaskThroughService,
         };
         await world.InitializeAsync();
         return world;
@@ -137,8 +152,34 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
             Status = AgentTaskStatus.Queued,
             CreatedAt = DateTime.UtcNow,
         };
-        db.AgentTasks.Add(Repair);
-        await db.SaveChangesAsync();
+        if (!CreateTaskThroughService)
+        {
+            db.AgentTasks.Add(Repair);
+            await db.SaveChangesAsync();
+        }
+    }
+
+    /// <summary>
+    /// CARD-0613. Create this world's task the way a caller does: through the real service, from a
+    /// request. Everything downstream - validation, persistence, dispatch, provisioning - is then
+    /// the production path rather than a fixture's idea of it.
+    /// </summary>
+    public async Task<AgentTask> CreateTaskAsync(CreateAgentTaskRequest request)
+    {
+        await using var scope = Services.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<AgentTaskService>();
+        var created = await service.CreateAsync(
+            request, new AgentTaskService.Caller(null, CallerSessionId, Repo.Path), CancellationToken.None);
+        await using var db = CreateContext();
+        Repair = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
+        return Repair;
+    }
+
+    /// <summary>CARD-0613. Refusals must leave NO row behind, not a queued task nobody asked for.</summary>
+    public async Task<int> TaskCountAsync()
+    {
+        await using var db = CreateContext();
+        return await db.AgentTasks.CountAsync(t => t.Id != Owner.Id);
     }
 
     private void BuildServices()
@@ -181,7 +222,10 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
         services.AddScoped<AgentReviewCheckpointService>();
         services.AddScoped<AgentFilesService>();
         services.AddScoped<IWorkspaceProgressProbe>(sp => sp.GetRequiredService<AgentFilesService>());
-        services.AddScoped<TaskCompletionProgressService>();
+        services.AddScoped(sp => new TaskCompletionProgressService(
+            sp.GetRequiredService<ITaskProgressGit>(),
+            sp.GetRequiredService<IWorkspaceProgressProbe>(),
+            ProgressClock));
         services.AddSingleton<CapacityRecoveryService>();
         services.AddScoped<ModelAvailability>();
         services.AddSingleton(Options.Create(new DeliverablesSettings
