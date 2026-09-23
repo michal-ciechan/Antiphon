@@ -4,6 +4,14 @@ Date: 2026-09-22. Stage: Plan. Task: `ba1a4d22`.
 Source baseline: `b4c0cf16e6e3ce5915f66a2c10f20814e44df50d`.
 Next: **TestDesign**, before Code. Verification design was not folded into this dispatch.
 
+> **Activation supersession, 2026-09-23, Plan task `97e91f92`:** the controlling
+> [recovery and release-card addendum](2026-09-23-card-0599-release-recovery-and-cards-plan.md)
+> resolves A-1..A-4, selects a separate internal Releases board, and replaces the RC
+> Windmill instructions with main-instance Hangfire. Its D-11..D-18, bounded B1..B8
+> rounds and proposed CP-19..26 replace the earlier activation manifest below.
+> Return to TestDesign for certification; neither this history nor the addendum
+> authorizes live activation. S5 master/Interim acceptance remains separate.
+
 Activate the existing qualified nightly backstop and CARD-0544's bounded Interim rounds;
 extend the nightly executor with an explicit RC profile that includes automated E2E;
 publish an immutable tag and GitHub Release only for the exact fully tested candidate.
@@ -1328,7 +1336,12 @@ Historical S1-S4 handoff (superseded for activation by the addendum below): impl
 S1-S4 and 42 C599 methods using CP-1..18, with Review before land and method-scoped
 Mutation after land. S5/S6 operational acceptance was still outstanding at that handoff.
 
-## Verification design
+## Historical activation verification design (TestDesign 3c8db8ad)
+
+Retained as the guard inventory and evidence requirements that led to A-1..A-4.
+Its Plan handoff has been answered by the linked 2026-09-23 addendum. Statements
+below about unresolved design and CP-19-only scope describe that earlier inspection;
+use the addendum's decisions and current proposed checkpoint table for the next stage.
 
 Activation addendum, 2026-09-23, TestDesign task `3c8db8ad`; inspected checkout
 `68d4383c`. This section supersedes the historical verification dispatch above for
@@ -1692,32 +1705,15 @@ candidate/run/SHA identity and NoReport/diagnostic/seamed inputs (historical inv
   three-minute lane. Historical mutation obligations remain separately trackable; the
   activation delta below neither claims they ran nor waives them.
 
-### Checkpoints
+### Superseded activation checkpoints
 
-This is the revised **ordinary activation** manifest under the new operator limit.
-CP-1..18 above are historical implementation evidence only. CP-19 is a proposed Code
-manifest, withheld until A-1..A-4 have an approved executable repair design. One isolated
-build and one exact filter; Min counts TUnit methods, not matrix rows or minutes.
-All five method names are mandatory in the executed roster. V-11..V-16/R-7/R-8 are
-explicit RC qualification scope, not missing ordinary rows. They may not be described
-as passed by CP-19. No broad ordinary run is silently added.
-
-| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
-|---|---|---|---|---|---|---|---:|---:|
-| CP-19 | A-1..A-4 repair committed | `tests/Antiphon.Tests -> bin-c599a/` | activation-contract | `/*/*/ReleaseGateSchedulerTests/C599A_*` | V-10, R-5 ordinary, R-6 ordinary | Exact five named methods; 5 passed, 0 failed/skipped; all declared admission/slot/provenance/disable/repair rows asserted | 5 | 3 |
-
-Executable CP command after those tests exist:
-
-```powershell
-pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-19 -Project tests/Antiphon.Tests -OutputPath bin-c599a/ -Filter '/*/*/ReleaseGateSchedulerTests/C599A_*' -MinExecuted 5 -Expect C599A_Admission,C599A_Slots,C599A_Provenance,C599A_DisabledReentry,C599A_RepairDisposition -ResultsRoot .antiphon/c599a-checkpoints
-```
-
-The three minutes include an estimated 1.5-minute incremental build and 1.5-minute test
-execution. Cold restore/build may exceed that: report the actual time and source, stop
-expanding the ordinary scope, and revise the budget/fixture cost through Plan. Never
-kill a valid test at 180 seconds or call omitted assertions passed. The cap changes
-selection, not test timeouts. Each later repair follows its own small closed manifest.
-Delete only verified producer-owned `bin-c599a` outputs at completion.
+The former CP-19 scheduler-only manifest is retired. The current proposed table is
+[CP-19..26 in the addendum](2026-09-23-card-0599-release-recovery-and-cards-plan.md#checkpoints):
+one isolated build and one exact filter per bounded Code round, approximately three
+minutes per change. Its 19 named TUnit methods across eight rounds are not a full
+recovery-suite claim. TestDesign must certify that table before Code. CP-1..18 above
+remain historical. The Q/cost/control text below is retained input to that certification,
+not a second current manifest or a measured cost for the new release-board scope.
 
 #### Activation and live qualification checkpoints (not ordinary CP rows)
 
@@ -1804,6 +1800,6 @@ ordinary/PC/qualification costs are 3/152/671. No builds, tests, credentials, sc
 RC cuts or releases were performed by this TestDesign.
 
 --- next stage ---
-next: plan
-handoff: Resolve A-1..A-4: main-instance Hangfire RC durable intent/queue/restart and lock ownership, strict real GitHub release/assets readback, pinned eight-suite policy authority, and pre-native board reporting. Preserve the operator's 3-minute ordinary scope; return to TestDesign to certify executable PCs before activation Code.
-artifact: docs/superpowers/plans/2026-09-22-card-0599-release-gate-activation-plan.md
+next: test-design
+handoff: Certify the 2026-09-23 recovery/release-card addendum: A-1..A-4 now have PostgreSQL intent/outbox, owned phase/lock, pinned policy and strict GitHub receipt designs; separate internal Releases board owns stage moves. Finalize CP-19..26 for eight bounded Code rounds at about three minutes per change, with full qualification separate.
+artifact: docs/superpowers/plans/2026-09-23-card-0599-release-recovery-and-cards-plan.md
