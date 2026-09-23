@@ -121,3 +121,7 @@ Antiphon.Tests.Application.AgentTaskScopedListTests
 Antiphon.Tests.Application.AgentTaskScopedListEndpointTests
 # CARD-0459: real Git land plus keyed-queue recovery. C459_QueueIdentitySurvivesLostLink measured 207.548s body time.
 Antiphon.Tests.Application.WorktreeLandingCleanupRetryTests
+# CARD-0613: real dispatcher tick, real Git worktree and occupied sibling branch per start-ref case.
+Antiphon.Tests.Application.WorktreeStartRefDispatchTests
+# CARD-0613: real dispatch, real divergent Git history, settlement and a 12-row delivery-recovery matrix.
+Antiphon.Tests.Application.ContinuationSettlementTests
