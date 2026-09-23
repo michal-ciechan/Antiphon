@@ -1287,20 +1287,127 @@ public sealed class AgentTaskDispatcher
     /// <para>A cancellation that is OUR cancellation is shutdown and rethrown. Every other
     /// <see cref="OperationCanceledException"/> is a timeout wearing the same type (an HttpClient
     /// timeout is a TaskCanceledException) and is a transient failure like any other.</para>
+    /// <para>CARD-0633 D-3: each sweep also runs under a cooperative budget
+    /// (<see cref="DelegationSettings.SweepBudgetSeconds"/>); overrunning it is a failure. With a
+    /// scope factory AND the <see cref="SweepInFlightState"/> singleton (production), the sweep
+    /// runs on a fresh dispatcher from its own <see cref="AsyncServiceScope"/>, so one that ignores
+    /// its cancelled token can be abandoned after <see cref="DelegationSettings.SweepAbandonGraceSeconds"/>
+    /// more without anything else touching its DbContext; the scope is disposed when the sweep
+    /// finally ends, and until then the next tick skips that sweep by name. Without either (most
+    /// harnesses), the sweep runs on this instance and is always awaited: abandoning a sweep on the
+    /// tick's shared context is the defect 912b195e shipped and 587fd147 reverted.</para>
     /// </summary>
     internal async Task<int> RunSweepAsync(
         string name, Func<AgentTaskDispatcher, CancellationToken, Task<int>> sweep, CancellationToken ct)
     {
+        var budget = TimeSpan.FromSeconds(_settings.SweepBudgetSeconds);
+        if (_scopeFactory is null || _sweepInFlight is null)
+            return await RunAwaitedSweepAsync(name, this, sweep, budget, ct);
+
+        var now = UtcNow();
+        if (!_sweepInFlight.TryBegin(name, now, out var runningSince))
+        {
+            _logger.LogError(
+                "Delegation sweep '{Sweep}' is still running from an earlier tick ({AgeSeconds:0}s) "
+                + "and was skipped this tick", name, (now - runningSince).TotalSeconds);
+            return 1;
+        }
+
+        var scope = _scopeFactory.CreateAsyncScope();
+        AgentTaskDispatcher? owned;
         try
         {
-            await sweep(this, ct);
-            return 0;
+            owned = scope.ServiceProvider.GetService<AgentTaskDispatcher>();
+        }
+        catch (Exception ex)
+        {
+            await scope.DisposeAsync();
+            _sweepInFlight.End(name);
+            _logger.LogError(ex, "Delegation sweep '{Sweep}' could not build its own scope and did nothing this tick", name);
+            return 1;
+        }
+
+        if (owned is null || ReferenceEquals(owned, this))
+        {
+            await scope.DisposeAsync();
+            _sweepInFlight.End(name);
+            return await RunAwaitedSweepAsync(name, this, sweep, budget, ct);
+        }
+
+        owned.CatchUpOverride = CatchUpOverride;
+        owned.ProgressStallSweepFault = ProgressStallSweepFault;
+        owned.ReuseEnqueueOverride = ReuseEnqueueOverride;
+
+        var budgetCts = new CancellationTokenSource(budget, _timeProvider);
+        var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, budgetCts.Token);
+        var run = ObserveSweepAsync(name, owned, sweep, budgetCts, linked.Token, ct);
+        var inFlight = _sweepInFlight;
+        var released = run.ContinueWith(async _ =>
+        {
+            linked.Dispose();
+            budgetCts.Dispose();
+            await scope.DisposeAsync();
+            inFlight.End(name);
+        }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default).Unwrap();
+
+        using var graceCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var grace = TimeSpan.FromSeconds(_settings.SweepAbandonGraceSeconds);
+        var deadline = Task.Delay(budget + grace, _timeProvider, graceCts.Token);
+        if (await Task.WhenAny(run, deadline) == run)
+        {
+            await graceCts.CancelAsync();
+            await released;
+            return await run;
+        }
+
+        ct.ThrowIfCancellationRequested();
+        _logger.LogError(
+            "Delegation sweep '{Sweep}' ignored its {BudgetSeconds}s budget and was abandoned after a further "
+            + "{GraceSeconds}s on its own scope; that scope is disposed when the sweep ends, and the sweep "
+            + "is skipped until then", name, budget.TotalSeconds, grace.TotalSeconds);
+        return 1;
+    }
+
+    /// <summary>The fallback: budget-cancelled, but always awaited on <paramref name="target"/>.</summary>
+    private async Task<int> RunAwaitedSweepAsync(
+        string name, AgentTaskDispatcher target, Func<AgentTaskDispatcher, CancellationToken, Task<int>> sweep,
+        TimeSpan budget, CancellationToken ct)
+    {
+        using var budgetCts = new CancellationTokenSource(budget, _timeProvider);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, budgetCts.Token);
+        return await ObserveSweepAsync(name, target, sweep, budgetCts, linked.Token, ct);
+    }
+
+    /// <summary>0 when the sweep finished inside its budget, 1 (logged at Error) otherwise; rethrows only shutdown.</summary>
+    private async Task<int> ObserveSweepAsync(
+        string name, AgentTaskDispatcher target, Func<AgentTaskDispatcher, CancellationToken, Task<int>> sweep,
+        CancellationTokenSource budget, CancellationToken token, CancellationToken ct)
+    {
+        try
+        {
+            await sweep(target, token);
+            if (!budget.IsCancellationRequested)
+                return 0;
+            _logger.LogError(
+                "Delegation sweep '{Sweep}' finished but overran its {BudgetSeconds}s budget", name,
+                _settings.SweepBudgetSeconds);
+            return 1;
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            _logger.LogError(
-                ex, "Delegation sweep '{Sweep}' failed and did nothing this tick; "
-                + "the remaining sweeps and dispatching continue", name);
+            if (budget.IsCancellationRequested)
+            {
+                _logger.LogError(
+                    ex, "Delegation sweep '{Sweep}' was cancelled at its {BudgetSeconds}s budget and did nothing "
+                    + "more this tick; the remaining sweeps and dispatching continue", name, _settings.SweepBudgetSeconds);
+            }
+            else
+            {
+                _logger.LogError(
+                    ex, "Delegation sweep '{Sweep}' failed and did nothing this tick; "
+                    + "the remaining sweeps and dispatching continue", name);
+            }
+
             return 1;
         }
     }

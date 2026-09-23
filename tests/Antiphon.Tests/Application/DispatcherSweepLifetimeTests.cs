@@ -57,7 +57,7 @@ public class DispatcherSweepLifetimeTests
         (await bodyDone.Task.WaitAsync(TimeSpan.FromSeconds(10))).ShouldBeTrue(
             "the abandoned sweep's own scope must still be alive while it runs");
         await g.InFlight.WhenReleasedAsync("probe").WaitAsync(TimeSpan.FromSeconds(5));
-        Should.Throw<ObjectDisposedException>(() => _ = seen.Db.ChangeTracker);
+        await Should.ThrowAsync<ObjectDisposedException>(() => seen.Db.AgentTasks.AnyAsync());
     }
 
     [Test]
