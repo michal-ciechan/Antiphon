@@ -4629,6 +4629,24 @@ public sealed class AgentTaskDispatcher
             return null;
         }
 
+        // CARD-0604 D-19 (Cut B). A SourceLanding Mutation has no mirror: its verification
+        // snapshot was created ON the runner at the exact landed sha by the managed-creation
+        // seam, and WorktreePath is already that runner-side POSIX path. Pushing a branch and
+        // mirroring it here would create a SECOND runner-side worktree at a commit the custody
+        // binding does not name, and the launch would then run outside the snapshot the receipt
+        // is about.
+        if (claimed.SourceLandingOperationId is not null)
+        {
+            if (claimed.WorktreePath is not { Length: > 0 } snapshot)
+            {
+                await RemoteWarnAsync(claimed, now,
+                    "The remote verification snapshot was not created; the task stays Queued.", ct);
+                return null;
+            }
+            claimed.RemoteWorktreePath = snapshot;
+            return snapshot;
+        }
+
         var push = await _remoteWorkspace.PushBranchAsync(claimed, ct);
         if (!push.Pushed || push.Sha is null)
         {

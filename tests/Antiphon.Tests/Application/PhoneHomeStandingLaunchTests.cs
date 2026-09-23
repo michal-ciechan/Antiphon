@@ -651,7 +651,21 @@ public class PhoneHomeStandingLaunchTests
         var projected = policy.Project(shell, agent);
         projected.Exe.ShouldBe("/bin/sh");
         projected.Cwd.ShouldBe("/work");
-        projected.VerificationBinding.ShouldBeNull("Cut A never sends a binding to the runner");
+        // CARD-0604 D-19 (Cut B). The projection neither invents a binding nor drops one: an
+        // untracked launch stays untracked, and a tracked one keeps the exact binding the
+        // reservation made. Dropping it would turn a tracked Mutation into an ordinary session
+        // with a reserved execution nothing could ever resolve.
+        projected.VerificationBinding.ShouldBeNull("an untracked launch gains no binding");
+
+        var now = DateTime.UtcNow;
+        var binding = new Antiphon.SessionRunner.Contracts.VerificationExecutionBinding(
+            Guid.NewGuid(), new(Guid.NewGuid(), Guid.NewGuid(), new string('a', 40)),
+            new(Guid.NewGuid(), new DateTime(now.Ticks - now.Ticks % 10, DateTimeKind.Utc)),
+            new("/work/repos/antiphon", "/work/repos/antiphon/.git", "/work/worktrees/task-12345678",
+                "/work/repos/antiphon/.git/worktrees/task-12345678", "feat/card-task-12345678", Guid.NewGuid()),
+            Antiphon.SessionRunner.Contracts.VerificationCustodyBackends.LinuxCgroup, Guid.NewGuid());
+        policy.Project(shell with { VerificationBinding = binding }, agent)
+            .VerificationBinding.ShouldBe(binding);
 
         // A host path that merely ends in an allow-listed name is not the image's own executable.
         var foreign = shell with { Exe = @"C:\tools\sh" };
