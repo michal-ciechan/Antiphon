@@ -126,7 +126,7 @@ Schema:
 
 `Min` is a count and `EstimatedMinutes` is a time; neither is derived from the other, and a row carries both. A TUnit method that performs 12 internal assertions still contributes **one** execution unless the runner reports separately parameterized results; an argument-expanded test contributes its reported result count, so a six-argument `[Arguments]` method is 6. Internal assertion rows, harness `PASS` lines, matrix combinations, loop iterations, unique source methods and elapsed minutes are separate evidence and are never a `-MinExecuted` floor. `-Expect` checks names; it does not turn assertions or minutes into executed tests.
 
-**Legacy plans.** Before CARD-0617 the `Min` column meant estimated minutes, so plans written then (CARD-0459, CARD-0585, CARD-0590, CARD-0599, CARD-0607, CARD-0610) legitimately hold minute values under `Min`. Do not reinterpret those numbers as counts and do not relabel their historical evidence. Before reusing such a plan, rename its time column to `EstimatedMinutes` and derive any execution floor from its own roster or TRX, never by copying the old number across.
+**Legacy plans.** Before CARD-0617 the `Min` column meant estimated minutes, so plans written then (CARD-0585, CARD-0590, CARD-0594, CARD-0599, CARD-0604, CARD-0606, CARD-0607, CARD-0610) legitimately hold minute values under `Min`. Do not reinterpret those numbers as counts and do not relabel their historical evidence. Before reusing such a plan, rename its time column to `EstimatedMinutes` and derive any execution floor from its own roster or TRX, never by copying the old number across.
 
 Rules:
 
