@@ -210,6 +210,18 @@ public class AgentTask
     public string? RemoteWorktreePath { get; set; }
 
     /// <summary>
+    /// CARD-0633 D-6/D-7: consecutive failed remote preparations (branch push + runner mirror) for
+    /// this task. Reset to zero when a mirror is recorded.
+    /// </summary>
+    public int RemotePrepFailures { get; set; }
+
+    /// <summary>
+    /// CARD-0633 D-6/D-7: the dispatcher holds this Queued task until this instant. Written by the
+    /// remote preparer's backoff; generic so a later hold class can reuse it. Null means no hold.
+    /// </summary>
+    public DateTime? DispatchNotBeforeAt { get; set; }
+
+    /// <summary>
     /// Set when retirement could not remove <see cref="RemoteWorktreePath"/> on the runner. A
     /// mirror is never deleted on a guess: the residue is recorded for the operator's sweep.
     /// </summary>

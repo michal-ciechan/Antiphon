@@ -501,6 +501,8 @@ try
     // CARD-0633 D-3: which sweeps are still running on an abandoned owned scope. Its presence is
     // also what arms owned-scope sweeps (and abandonment) at all; see RunSweepAsync.
     builder.Services.AddSingleton<SweepInFlightState>();
+    // CARD-0633 D-4: runner-bound remote preparation runs here, off the serial dispatch tick.
+    builder.Services.AddSingleton<RemoteWorkspacePreparer>();
     // CARD-0299 S2: skip FailDeadSessionTasksAsync while a boot-wedge relaunch is in flight.
     builder.Services.AddSingleton<BootWedgeRelaunchState>();
     // CARD-0248: the deferred-report sweep's re-hand watermark. Same reason as the dead-session
