@@ -51,7 +51,12 @@ public sealed class VerificationExecutionService(AppDbContext db, SourceLandingA
             .Where(t => t.AgentSessionId == session.Id && t.SourceLandingOperationId != null).Select(t => (Guid?)t.Id).FirstOrDefaultAsync(ct);
         var snapshots = await db.AgentTasks.AsNoTracking().Where(t => t.SourceLandingOperationId != null && t.WorktreePath != null)
             .Select(t => new { t.Id, t.WorktreePath }).ToListAsync(ct);
-        if (snapshots.Count != 0)
+        // CARD-0645: the containment scan protects DESKTOP snapshot worktrees from a process whose
+        // cwd sits inside one. A runner session's spec.Cwd is a runner-side POSIX path; the process
+        // runs on the runner's filesystem and cannot reach a desktop snapshot, and canonicalizing
+        // that path here resolves it against the desktop (C:\work\...) and fails. The custody
+        // checks below still apply to runner sessions.
+        if (snapshots.Count != 0 && session.RunnerId is null)
         {
             var cwd = await git.CanonicalDirectoryAsync(spec.Cwd, ct);
             foreach (var snapshot in snapshots)

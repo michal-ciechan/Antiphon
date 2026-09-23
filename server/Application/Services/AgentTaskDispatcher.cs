@@ -3719,6 +3719,26 @@ public sealed class AgentTaskDispatcher
             }
         }
 
+        // CARD-0645: the launch policy refuses BEFORE remote prep, so a refused task never pushes
+        // its branch or leaves a mirror on the runner. cardStart is false: a card-bound delegated
+        // task is not a card start (its session has no CardId and runs in the task worktree); the
+        // card-start refusal belongs to a standing agent's card spawn (AgentControlService).
+        var agent = await ResolveAgentAsync(claimed, now, ct);
+        if (_phoneHome?.IsRunnerBound(agent) == true)
+        {
+            _phoneHome.RefuseUnsupportedStart(
+                agent,
+                cardStart: false,
+                delegatedTask: true,
+                worktree: claimed.Workspace == WorkspaceMode.Worktree,
+                sourceLanding: claimed.SourceLandingOperationId is not null,
+                onAgent: false,
+                backend: agent.SessionBackend,
+                kind: program.Kind,
+                customWrapper: null,
+                remoteControl: false);
+        }
+
         // CARD-0604 D-15. A runner-bound task needs three things before a session exists: the
         // runner must actually be connected, the branch must be on origin, and the runner must
         // hold a mirror of it at that exact commit. Any of those failing leaves the task QUEUED
@@ -3738,21 +3758,6 @@ public sealed class AgentTaskDispatcher
             remoteCwd = prepared;
         }
 
-        var agent = await ResolveAgentAsync(claimed, now, ct);
-        if (_phoneHome?.IsRunnerBound(agent) == true)
-        {
-            _phoneHome.RefuseUnsupportedStart(
-                agent,
-                cardStart: claimed.CardId is not null,
-                delegatedTask: true,
-                worktree: claimed.Workspace == WorkspaceMode.Worktree,
-                sourceLanding: claimed.SourceLandingOperationId is not null,
-                onAgent: false,
-                backend: agent.SessionBackend,
-                kind: program.Kind,
-                customWrapper: null,
-                remoteControl: false);
-        }
         // A pool delegate's environment is fixed for the life of its process. Record the task
         // scope at every cold launch (including a deliberate relaunch of an existing pool row),
         // so the warm-pool predicate can never hand that process work from another scope.
