@@ -89,6 +89,7 @@ public static class PhoneHomeProblemTypes
     public const string RequestLimit = "phone_home_request_limit";
     public const string EventOverflow = "phone_home_event_overflow";
     public const string StaleEpoch = "phone_home_stale_epoch";
+    public const string RequestTimeout = "phone_home_request_timeout";
 }
 
 public sealed record PhoneHomeLimits(

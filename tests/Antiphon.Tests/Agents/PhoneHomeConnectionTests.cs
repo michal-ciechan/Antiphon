@@ -213,6 +213,30 @@ public class PhoneHomeConnectionTests
         health.ShouldNotBeNull();
     }
 
+    // CARD-0629: a runner that never replies must not hold the caller forever. Live on 2026-09-23 a
+    // silent WorkspaceMirror reply froze the serial dispatcher tick for hours, fleet-wide.
+    [Test]
+    public async Task Unanswered_request_times_out_instead_of_waiting_forever()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var host = await PhoneHomeTestHost.StartAsync(clock);
+        await using var peer = await host.ConnectPeerAsync(autoReply: false);
+        var live = await host.WaitLiveAsync();
+        host.Directory.MarkRecovered(live);
+        var client = new PhoneHomeRunnerClient(live);
+
+        var pending = client.GetHealthAsync(CancellationToken.None);
+        await peer.WaitForAsync(PhoneHomeOperation.Health);
+        clock.Advance(PhoneHomeLiveConnection.RequestTimeoutFor(PhoneHomeOperation.Health) - TimeSpan.FromSeconds(1));
+        await Task.Delay(100);
+        pending.IsCompleted.ShouldBeFalse("the request must still be waiting just inside its budget");
+
+        clock.Advance(TimeSpan.FromSeconds(2));
+        var ex = await Should.ThrowAsync<PhoneHomeTransportException>(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)));
+        ex.Code.ShouldBe(PhoneHomeProblemTypes.RequestTimeout);
+        live.InFlight.ShouldBe(0);
+    }
+
     [Test]
     public async Task Unanswered_mutation_is_not_replayed()
     {

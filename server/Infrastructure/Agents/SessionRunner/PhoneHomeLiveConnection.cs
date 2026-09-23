@@ -72,6 +72,15 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     public bool IsLeaseExpired(TimeSpan lease) =>
         Clock.GetUtcNow() - LastHeartbeatUtc > lease;
 
+    // A mirror fetches a branch from origin and adds a worktree on the runner, so it gets far more
+    // room than a control request; everything else is an in-memory runner operation.
+    internal static TimeSpan RequestTimeoutFor(PhoneHomeOperation operation) => operation switch
+    {
+        PhoneHomeOperation.WorkspaceMirror or PhoneHomeOperation.WorkspaceRemove => TimeSpan.FromMinutes(5),
+        PhoneHomeOperation.Launch => TimeSpan.FromMinutes(2),
+        _ => TimeSpan.FromSeconds(60),
+    };
+
     public async Task<PhoneHomeFrame> RequestAsync(PhoneHomeOperation operation, object? payload, CancellationToken ct)
     {
         if (!DispatchEligible && operation is PhoneHomeOperation.Launch or PhoneHomeOperation.Input
@@ -100,12 +109,21 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
                 _send.Release();
             }
 
+            // CARD-0629: this used to wait on Timeout.Infinite. A runner that never answers one
+            // request (seen live on 2026-09-23: a WorkspaceMirror to server2) then froze the caller
+            // forever — and the dispatcher's tick is serial, so one silent reply stopped dispatch
+            // fleet-wide for hours while holding a claim transaction open. Bound every request.
+            var timeout = RequestTimeoutFor(operation);
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            var completed = await Task.WhenAny(waiter.Task, Task.Delay(Timeout.Infinite, linked.Token));
+            var completed = await Task.WhenAny(waiter.Task, Task.Delay(timeout, Clock, linked.Token));
+            linked.Cancel(); // release the delay timer on the success path
             if (completed != waiter.Task)
             {
                 _waiters.TryRemove(id, out _);
-                throw new OperationCanceledException(ct);
+                ct.ThrowIfCancellationRequested();
+                throw new PhoneHomeTransportException(
+                    PhoneHomeProblemTypes.RequestTimeout,
+                    $"Runner did not reply to {operation} within {timeout.TotalSeconds:0}s.");
             }
 
             var result = await waiter.Task;
