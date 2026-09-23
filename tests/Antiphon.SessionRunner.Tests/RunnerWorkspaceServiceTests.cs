@@ -85,11 +85,13 @@ public sealed class RunnerWorkspaceServiceTests
         clone.WorkingDirectory.ShouldBe(Path.GetDirectoryName(repository));
         clone.Environment["GIT_TERMINAL_PROMPT"].ShouldBe("0");
 
-        // A same-sha replay is the existing mirror; a second mirror (another branch: git never
-        // checks one branch out twice) reuses the repository. Neither clones again.
+        // A same-sha replay is the existing mirror; a second mirror reuses the repository. Neither
+        // clones again. The second is another task branch, as every mirror is: git never checks one
+        // branch out twice, and the clone's own HEAD still holds its default branch.
         (await service.MirrorAsync(request, CancellationToken.None)).Path.ShouldBe(mirror);
+        Scratch.Git(scratch.Origin, "branch", "feat/card-task-cafef00d", scratch.PublishedSha);
         var second = (await service.MirrorAsync(
-            new PhoneHomeWorkspaceMirrorRequest(Scratch.Published, scratch.PublishedSha, "task-cafef00d"),
+            new PhoneHomeWorkspaceMirrorRequest("feat/card-task-cafef00d", scratch.PublishedSha, "task-cafef00d"),
             CancellationToken.None)).Path;
         Scratch.Git(second, "rev-parse", "HEAD").Trim().ShouldBe(scratch.PublishedSha);
         starts.Count(IsClone).ShouldBe(1);
