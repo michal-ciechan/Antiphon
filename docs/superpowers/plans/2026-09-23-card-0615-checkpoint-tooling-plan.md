@@ -311,6 +311,12 @@ CP-5's one skip is the pre-existing environment-conditional
 `Restored_key_file_symlink_is_rejected_without_mutating_target`, unrelated to this
 card. CP-5's `Min` is a floor, not a census; the measured lane is 2,803 cases.
 
+CP-2 was rerun once at `f1ffe3e4412396dc93b1fc645d3a29691b45c73d` after the
+`Legacy plans.` enumeration in `docs/testing-and-build.md` was corrected (CARD-0459
+dropped; CARD-0594, CARD-0604, CARD-0606 added): 4 executed, 4 passed, 0 failed,
+0 skipped, exit 0, trx `.antiphon/checkpoints/CP-2-20260923-063526-b4de/run.trx`.
+No other row changed, so no other row was rerun.
+
 ## Handoff
 
 Implement S1-S3 and execute CP-1..CP-5. The plan itself changes no production code.
