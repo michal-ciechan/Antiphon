@@ -57,7 +57,7 @@ public class ModelLevelAliasDisplayTests
 
     [Test]
     [Arguments(AgentModelLevel.Frontier, "gpt-6-astra")]
-    [Arguments(AgentModelLevel.High, "gpt-5.6-sol")]
+    [Arguments(AgentModelLevel.High, "gpt-6-sol")]
     [Arguments(AgentModelLevel.Medium, "gpt-5.6-terra")]
     [Arguments(AgentModelLevel.Low, "gpt-5.6-luna")]
     public void the_codex_ladder_answers_for_the_codex_kind(AgentModelLevel level, string expected)
@@ -74,7 +74,7 @@ public class ModelLevelAliasDisplayTests
     {
         // routing-pin.ps1 -Candidates sends Kind/Level tokens; the server alias is ModelLevelAliases.For.
         RoutingPinService.FormatHead(new RoutingCandidate(AgentKind.Codex, AgentModelLevel.High))
-            .ShouldBe("Codex/High (gpt-5.6-sol)");
+            .ShouldBe("Codex/High (gpt-6-sol)");
         RoutingPinService.FormatHead(new RoutingCandidate(AgentKind.Codex, AgentModelLevel.Medium))
             .ShouldBe("Codex/Medium (gpt-5.6-terra)");
         RoutingPinService.FormatHead(new RoutingCandidate(AgentKind.Codex, AgentModelLevel.Frontier))
@@ -140,7 +140,7 @@ public class ModelLevelAliasDisplayTests
 
         var handoff = DelegationReportFormatter.BuildHandoff(task).ShouldNotBeNull();
 
-        handoff.ShouldContain("at gpt-5.6-terra, escalated to gpt-5.6-sol");
+        handoff.ShouldContain("at gpt-5.6-terra, escalated to gpt-6-sol");
         handoff.ShouldNotContain("sonnet");
         handoff.ShouldNotContain("opus");
     }

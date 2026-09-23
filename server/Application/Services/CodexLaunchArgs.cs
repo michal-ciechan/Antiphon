@@ -41,18 +41,20 @@ public static class CodexLaunchArgs
 
     /// <summary>
     /// Reasoning effort, set EXPLICITLY on every launch (plan §4 S3). Codex's per-model defaults are
-    /// wrong for a delegate at both ends: <c>gpt-6-astra</c> and <c>gpt-5.6-sol</c> both default to
-    /// <c>low</c>, so a Frontier or High delegate left alone would reason at the shallowest setting
-    /// those slugs have, while the operator's <c>~/.codex/config.toml</c> here says <c>xhigh</c>
-    /// and would be inherited by a Low-tier delegate. Neither default tracks the tier the caller
-    /// asked for, so the tier sets it — and the launch stops depending on a config file nothing in
-    /// this repo owns. High stays at <c>high</c>: that effort is in Sol's catalog
-    /// (low/medium/high/xhigh/max/ultra on 0.153.4).
+    /// wrong for a delegate at both ends: <c>gpt-6-astra</c> defaults to <c>low</c> and
+    /// <c>gpt-6-sol</c> to <c>medium</c>, so a Frontier or High delegate left alone would reason
+    /// below the tier it was dispatched at, while the operator's <c>~/.codex/config.toml</c> here
+    /// says <c>xhigh</c> and would be inherited by a Low-tier delegate. Neither default tracks the
+    /// tier the caller asked for, so the tier sets it — and the launch stops depending on a config
+    /// file nothing in this repo owns. High stays at <c>high</c>: that effort is in
+    /// <c>gpt-6-sol</c>'s catalog too (low/medium/high/xhigh/max/ultra, read 2026-09-23 on
+    /// 0.156.1), so the CARD-0611 bump changed the slug and nothing else here.
     ///
     /// <para>Every value is in the catalog's <c>supported_reasoning_levels</c> for the slug
-    /// <see cref="ModelLevelAliases.ForCodex"/> pairs it with (read 2026-09-05 on 0.153.4: astra, sol
-    /// and terra support low/medium/high/xhigh/max/ultra, luna all but ultra). Frontier stays at
-    /// <c>xhigh</c>; do not wire <c>ultra</c> without an explicit ask.</para>
+    /// <see cref="ModelLevelAliases.ForCodex"/> pairs it with (read 2026-09-05 on 0.153.4 and
+    /// re-read 2026-09-23 on 0.156.1: astra, gpt-6-sol, gpt-5.6-sol and terra support
+    /// low/medium/high/xhigh/max/ultra, luna all but ultra). Frontier stays at <c>xhigh</c>; do not
+    /// wire <c>ultra</c> without an explicit ask.</para>
     /// </summary>
     public static string ReasoningEffort(AgentModelLevel level) => level switch
     {

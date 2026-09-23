@@ -243,7 +243,7 @@ public sealed class AgentTuiLaunchResolverTests
             new AgentLaunchOptions(ModelTier: AgentModelLevel.High));
 
         grokLaunch.Spec.Args.TakeLast(2).ShouldBe(["--model", "grok-4.7"]);
-        codexLaunch.Spec.Args.TakeLast(2).ShouldBe(["--model", "gpt-5.6-sol"]);
+        codexLaunch.Spec.Args.TakeLast(2).ShouldBe(["--model", "gpt-6-sol"]);
         rawLaunch.Spec.Args.ShouldNotContain("--model");
         rawLaunch.ModelArgument.ShouldBe(LaunchModelArgument.None);
     }

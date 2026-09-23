@@ -110,7 +110,7 @@ public class NamedCodexAgentLaunchTests
         await StartAsync(h);
 
         var args = Factory(h).Created.ShouldHaveSingleItem().StartedArgs.ToList();
-        args[args.IndexOf("--model") + 1].ShouldBe("gpt-5.6-sol");
+        args[args.IndexOf("--model") + 1].ShouldBe("gpt-6-sol");
         ConfigValue(args, "model_reasoning_effort").ShouldBe("high");
         args.ShouldNotContain("--append-system-prompt");
         args.ShouldNotContain("--name");

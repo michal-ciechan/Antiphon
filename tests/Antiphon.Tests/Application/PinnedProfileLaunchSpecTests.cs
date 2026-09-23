@@ -77,7 +77,7 @@ public sealed class PinnedProfileLaunchSpecTests
             sourceDefinitionName: "codex",
             executable: exe,
             arguments: ["--no-alt-screen"],
-            models: ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol"]);
+            models: ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-sol"]);
         var (dispatcher, db) = DispatcherOf(provider);
         var cwd = Directory.CreateTempSubdirectory("antiphon-t8").FullName;
         try
@@ -98,7 +98,7 @@ public sealed class PinnedProfileLaunchSpecTests
                 tierTask, tierAgent, tierSession, tierProgram, null, CancellationToken.None))
                 .Args.ToList();
             tierArgs.Count(a => a == "--model").ShouldBe(1);
-            tierArgs[tierArgs.IndexOf("--model") + 1].ShouldBe("gpt-5.6-sol");
+            tierArgs[tierArgs.IndexOf("--model") + 1].ShouldBe("gpt-6-sol");
             tierArgs.ShouldNotContain("opus");
 
             var queued = await SeedQueuedPinnedAsync(
@@ -110,6 +110,7 @@ public sealed class PinnedProfileLaunchSpecTests
                 .SingleAsync();
             detail.ShouldContain("gpt-5.6-luna");
             detail.ShouldContain("agent ModelId");
+            detail.ShouldNotContain("gpt-6-sol");
             detail.ShouldNotContain("gpt-5.6-sol");
         }
         finally

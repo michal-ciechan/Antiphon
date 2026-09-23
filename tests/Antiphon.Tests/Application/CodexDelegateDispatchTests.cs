@@ -49,7 +49,7 @@ public class CodexDelegateDispatchTests
 
         args.ShouldNotContain("--name", customMessage:
             "Codex has no --name flag at all; the launch would die on an unknown argument");
-        args[args.IndexOf("--model") + 1].ShouldBe("gpt-5.6-sol");
+        args[args.IndexOf("--model") + 1].ShouldBe("gpt-6-sol");
         args.ShouldNotContain("--append-system-prompt", customMessage:
             "Codex's standing-instruction channel is a -c config override, not Claude's flag");
         args.ShouldNotContain("--rules", customMessage: "--rules is Grok's flag");
@@ -84,7 +84,7 @@ public class CodexDelegateDispatchTests
 
     [Test]
     [Arguments(AgentModelLevel.Frontier, "gpt-6-astra", "xhigh")]
-    [Arguments(AgentModelLevel.High, "gpt-5.6-sol", "high")]
+    [Arguments(AgentModelLevel.High, "gpt-6-sol", "high")]
     [Arguments(AgentModelLevel.Medium, "gpt-5.6-terra", "medium")]
     [Arguments(AgentModelLevel.Low, "gpt-5.6-luna", "low")]
     public void every_tier_pins_a_full_slug_and_names_its_own_reasoning_effort(

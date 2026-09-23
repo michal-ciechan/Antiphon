@@ -183,7 +183,7 @@ Antiphon dispatches at a *tier* (`Frontier` / `High` / `Medium` / `Low`), not a 
 | Tier | Claude | Grok | Codex |
 |---|---|---|---|
 | `Frontier` | `fable` | `grok-4.7` | `gpt-6-astra` |
-| `High` (default) | `opus` | `grok-4.7` | `gpt-5.6-sol` |
+| `High` (default) | `opus` | `grok-4.7` | `gpt-6-sol` |
 | `Medium` | `sonnet` | `grok-4.7` | `gpt-5.6-terra` |
 | `Low` | `haiku` | `grok-4.7` | `gpt-5.6-luna` |
 
@@ -221,8 +221,12 @@ Three things worth knowing about that table:
   not a same-alias fresh-context note. **Frontier Codex requires global `codex-cli` 0.153.4+**
   (CARD-0396): older installs HTTP 400 `gpt-6-astra` with "requires a newer version of Codex",
   so a fresh checkout on an older CLI breaks every Frontier Codex dispatch. High is
-  `gpt-5.6-sol` (Sol's catalog includes `high` reasoning; Sol's own default is `low`, so the
-  launch still sets effort from the tier).
+  `gpt-6-sol` (CARD-0611 bump from `gpt-5.6-sol`, 2026-09-23, after codex-cli here went
+  0.155.1 → 0.156.1; `gpt-6-sol` is catalog priority 2 and `gpt-5.6-sol` dropped to 4).
+  `gpt-6-sol`'s catalog includes `high` reasoning; its own default is `medium`, so the launch
+  still sets effort from the tier. `gpt-5.6-sol` stays a selectable profile model and is only
+  gone from the ladder new dispatches resolve through. The Medium rung is still `gpt-5.6-terra`
+  — whether it moves to `gpt-6-luna` is an open product decision, not part of that bump.
 
 `ModelLevelAliases.For(kind, level)` is what every *human-facing* string goes through — task
 events, escalation notes, the check digest, completion-note headers. Launch arguments deliberately
@@ -383,7 +387,7 @@ synthetic `/api-key` credential hit. See the [measurement record](investigations
 ## 6. Codex (OpenAI codex-cli)
 
 **Launch.** `codex.cmd --no-alt-screen --dangerously-bypass-approvals-and-sandbox
-[--model gpt-5.6-sol] -c model_reasoning_effort=<level> -c disable_paste_burst=true
+[--model gpt-6-sol] -c model_reasoning_effort=<level> -c disable_paste_burst=true
 [-c developer_instructions=<text>]`
 — **and no session-identity argument**, because `SessionResume` is `Unknown` for Codex and
 `BuildSessionIdentityArgs` only fires for kinds whose resume contract is `Supported`.

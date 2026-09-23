@@ -19,6 +19,7 @@ public static class ModelAlias
     public const string Grok47 = "grok-4.7";
     public const string Grok46 = "grok-4.6";
     public const string Gpt6Astra = "gpt-6-astra";
+    public const string Gpt6Sol = "gpt-6-sol";
     public const string Gpt56Sol = "gpt-5.6-sol";
     public const string Gpt56Terra = "gpt-5.6-terra";
     public const string Gpt56Luna = "gpt-5.6-luna";
@@ -35,7 +36,7 @@ public static class ModelAlias
         (AgentKind.ClaudeCode, Haiku),
         (AgentKind.Grok, Grok47),
         (AgentKind.Codex, Gpt6Astra),
-        (AgentKind.Codex, Gpt56Sol),
+        (AgentKind.Codex, Gpt6Sol),
         (AgentKind.Codex, Gpt56Terra),
         (AgentKind.Codex, Gpt56Luna),
     ];
@@ -91,6 +92,7 @@ public static class ModelAlias
         if (IsGrok47(folded)) return Grok47;
         if (IsGrok46(folded)) return Grok46;
         if (IsAstra(folded)) return Gpt6Astra;
+        if (IsSol6(folded)) return Gpt6Sol;
         if (IsSol(folded)) return Gpt56Sol;
         if (IsTerra(folded)) return Gpt56Terra;
         if (IsLuna(folded)) return Gpt56Luna;
@@ -169,8 +171,14 @@ public static class ModelAlias
     private static bool IsAstra(string folded) =>
         folded is "gpt 6 astra" or "gpt6 astra" or "astra";
 
+    // CARD-0611: the High rung is gpt-6-sol, so bare "sol" resolves there — the same move
+    // CARD-0169's bump made for bare "grok". gpt-5.6-sol keeps its own explicit arm because it
+    // is still a live catalog model (priority 4) and old hold rows name it.
+    private static bool IsSol6(string folded) =>
+        folded is "gpt 6 sol" or "gpt6 sol" or "sol";
+
     private static bool IsSol(string folded) =>
-        folded is "gpt 5 6 sol" or "gpt 56 sol" or "sol";
+        folded is "gpt 5 6 sol" or "gpt 56 sol";
 
     private static bool IsTerra(string folded) =>
         folded is "gpt 5 6 terra" or "gpt 56 terra" or "terra";
