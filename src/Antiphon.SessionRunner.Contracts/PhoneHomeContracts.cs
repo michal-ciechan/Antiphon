@@ -53,6 +53,10 @@ public enum PhoneHomeOperation
     VerificationWorkspaceInspect = 19,
     VerificationWorkspaceReadRestoration = 20,
     VerificationWorkspaceRemove = 21,
+
+    // CARD-0628 D-7. Ask the runner whether a provider's CLI is signed in inside its own state.
+    // Read-only: the runner reports names and booleans, never a credential value.
+    ProviderAuth = 22,
 }
 
 /// <summary>CARD-0604: read (and optionally seal) a tracked execution's custody on the runner.</summary>
@@ -102,6 +106,22 @@ public sealed record PhoneHomeVerificationRemoveRequest(
 public sealed record PhoneHomeVerificationRemoveResponse(
     bool Unregistered, bool DirectoryGone, bool BranchDeleted, string? Residue);
 
+/// <summary>CARD-0628 D-7. Request body for <see cref="PhoneHomeOperation.ProviderAuth"/>.</summary>
+public sealed record PhoneHomeProviderAuthRequest(string Provider);
+
+/// <summary>
+/// CARD-0628 D-7. The runner's answer for one provider. <paramref name="LoggedIn"/> is null when
+/// the probe could not tell (timeout, missing binary, unparseable output); <paramref name="Error"/>
+/// is then a one-word class. It never carries an email, an organisation or a token.
+/// </summary>
+public sealed record RunnerProviderAuthDto(
+    string Provider,
+    bool? LoggedIn,
+    string? AuthMethod,
+    string? SubscriptionType,
+    DateTimeOffset CheckedAtUtc,
+    string? Error);
+
 /// <summary>
 /// CARD-0604 D-15. Create a mirror worktree of an already-pushed task branch. The runner fetches
 /// <paramref name="Branch"/> and refuses unless its tip is exactly <paramref name="Sha"/>: a
@@ -149,6 +169,9 @@ public static class PhoneHomeProblemTypes
     public const string EventOverflow = "phone_home_event_overflow";
     public const string StaleEpoch = "phone_home_stale_epoch";
     public const string RequestTimeout = "phone_home_request_timeout";
+
+    /// <summary>CARD-0628 D-7: the provider CLI is not signed in on the runner.</summary>
+    public const string ProviderSignInRequired = "provider_sign_in_required";
 }
 
 public sealed record PhoneHomeLimits(

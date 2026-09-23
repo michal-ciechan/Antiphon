@@ -2577,7 +2577,7 @@ public sealed class AgentTaskDispatcher
         if (_runners is null || _phoneHome is null || claimed.RunnerId is null)
             return false;
 
-        Antiphon.Server.Application.Dtos.RunnerProviderAuthDto? answer;
+        Antiphon.SessionRunner.Contracts.RunnerProviderAuthDto? answer;
         try
         {
             answer = await _runners.Resolve(claimed.RunnerId).GetProviderAuthAsync("claude", ct);

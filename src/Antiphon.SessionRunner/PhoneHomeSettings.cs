@@ -19,6 +19,19 @@ public sealed class PhoneHomeSettings
     public string GrokHome { get; set; } = "/state/grok";
 
     /// <summary>
+    /// CARD-0628 D-6: Claude Code's <c>CLAUDE_CONFIG_DIR</c> on the runner, the store the auth probe
+    /// inspects. The same value as the server's <c>PhoneHomeRunner:ChildClaudeHome</c> and the
+    /// compose <c>CLAUDE_CONFIG_DIR</c>.
+    /// </summary>
+    public string ClaudeHome { get; set; } = "/state/claude";
+
+    /// <summary>
+    /// CARD-0628 D-7: refuse a <c>claude</c> launch with <c>provider_sign_in_required</c> when the
+    /// probe says Claude is signed out. An unknown answer always admits.
+    /// </summary>
+    public bool ClaudeAuthProbeEnabled { get; set; } = true;
+
+    /// <summary>
     /// CARD-0604 D-14: how many concurrent sessions this runner will hold. The server bounds it
     /// again at registration (<c>PhoneHomeRunner:MaxCapacity</c>), so a runner cannot enlarge
     /// itself past what the control plane allows.
@@ -52,6 +65,8 @@ public sealed class PhoneHomeSettings
             throw new InvalidOperationException("PhoneHome:AllowedCwd must be a POSIX absolute path.");
         if (string.IsNullOrWhiteSpace(RunnerRepository) || !RunnerRepository.StartsWith('/'))
             throw new InvalidOperationException("PhoneHome:RunnerRepository must be a POSIX absolute path.");
+        if (string.IsNullOrWhiteSpace(ClaudeHome) || !ClaudeHome.StartsWith('/'))
+            throw new InvalidOperationException("PhoneHome:ClaudeHome must be a POSIX absolute path.");
         if (Capacity < 1)
             throw new InvalidOperationException("PhoneHome:Capacity must be positive.");
         if (RawExeAllowList.Any(exe => string.IsNullOrWhiteSpace(exe) || !exe.StartsWith('/')))
