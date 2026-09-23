@@ -250,6 +250,68 @@ public sealed class DockerStackSmokeCommandTests
         Accepted(run).ShouldBeFalse();
     }
 
+    // --- CARD-0604 S9 / CP-15. The containment measurement is a routed case with its own
+    // ordered boundary, not the default arm's "RealCasePending". ---
+
+    [Test]
+    public async Task Containment_refuses_a_runner_that_does_not_advertise_the_linux_backend()
+    {
+        var run = await Run("custody-containment", Containment(c => c["verificationCustodyBackend"] = "windows-job-v1"));
+        Diagnosis(run).ShouldBe("CustodyNotAdvertised");
+        Accepted(run).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Containment_refuses_helpers_that_are_not_root_owned()
+    {
+        var run = await Run("custody-containment", Containment(c => c["custodyHelpersRootOwned"] = false));
+        Diagnosis(run).ShouldBe("CustodyHelpersNotRootOwned");
+        Accepted(run).ShouldBeFalse();
+    }
+
+    // The whole point of running this on server2 rather than only on Docker Desktop is the v1
+    // freezer path. A v2 reading accepted here would leave that half unmeasured for ever.
+    [Test]
+    public async Task Containment_refuses_a_v2_reading_on_the_server2_row()
+    {
+        var run = await Run("custody-containment", Containment(c => c["cgroupVersion"] = "v2"));
+        Diagnosis(run).ShouldBe("ExpectedCgroupV1");
+        Accepted(run).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Containment_refuses_a_surviving_cgroup()
+    {
+        var run = await Run("custody-containment", Containment(c => c["custodyResidue"] = 2));
+        Diagnosis(run).ShouldBe("CustodyResidue");
+        Accepted(run).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Containment_accepts_a_measured_v1_run()
+    {
+        var run = await Run("custody-containment", Containment(_ => { }));
+        Accepted(run).ShouldBeTrue();
+        // A routed case never reaches the default arm, which is what CP-15 would otherwise report.
+        Diagnosis(run).ShouldNotContain("RealCasePending");
+    }
+
+    private static Dictionary<string, object?> Containment(Action<Dictionary<string, object?>> mutate)
+    {
+        var extra = new Dictionary<string, object?>
+        {
+            ["runnerRunning"] = true,
+            ["verificationCustodyBackend"] = "linux-cgroup-v1",
+            ["windowsBackendAdvertised"] = false,
+            ["custodyHelpersRootOwned"] = true,
+            ["containment"] = "ok",
+            ["cgroupVersion"] = "v1",
+            ["custodyResidue"] = 0,
+        };
+        mutate(extra);
+        return extra;
+    }
+
     private static Dictionary<string, object?> Deploy(Action<Dictionary<string, object?>> mutate)
     {
         var extra = new Dictionary<string, object?>

@@ -101,6 +101,32 @@ public sealed class RemoteScriptContractTests
             StringComparison.Ordinal).ShouldBeFalse("the probe must be run as uid 1654");
     }
 
+    // CP-15 dispatches `verify-docker-stack.ps1 -Case custody-containment`, which reaches the
+    // remote ONLY if the case is in c590-real.ps1's live roster. Omitted, it falls through to the
+    // default arm and reports "RealCasePending" -- a red checkpoint for a routing reason, with
+    // the v1 freezer path never measured and nothing on server2 touched.
+    [Test]
+    public void Custody_containment_is_routed_to_the_remote_and_not_left_pending()
+    {
+        var live = System.IO.File.ReadAllText(System.IO.Path.Combine(
+            Infrastructure.DockerStackDocuments.RepoRoot, "scripts", "c590-real.ps1"));
+        var stack = System.IO.File.ReadAllText(System.IO.Path.Combine(
+            Infrastructure.DockerStackDocuments.RepoRoot, "scripts", "verify-docker-stack.ps1"));
+
+        live.ShouldContain("'custody-containment'");
+        // The stub boundary exists too, and refuses the same things the remote refuses first.
+        stack.ShouldContain("'custody-containment' {");
+        stack.ShouldContain("ExpectedCgroupV1");
+        stack.ShouldContain("CustodyHelpersNotRootOwned");
+        stack.ShouldContain("CustodyResidue");
+        // Every host-lane case the remote script implements must be routed, or the row is a stub.
+        var remote = Remote();
+        foreach (var hostCase in new[] { "custody-containment", "deploy-parent", "nested-residue" })
+            live.Contains("'" + hostCase + "'", StringComparison.Ordinal)
+                .ShouldBeTrue(hostCase + " is implemented in c590-remote.sh but never routed there");
+        remote.ShouldContain("custody-containment) case_custody_containment");
+    }
+
     // V-29 / R-5 on the live runner: the linux-custody case REQUIRES the Linux backend and a
     // store id, and names the Windows backend only to refuse it.
     [Test]

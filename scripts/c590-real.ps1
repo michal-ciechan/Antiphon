@@ -19,6 +19,10 @@ $script:C590LiveCases = @(
     'server-image-payload',
     'runner-image-payload',
     'testing-runner-payload',
+    # CARD-0604 S9/CP-15. The host-lane containment measurement (V-28 on cgroup v1).
+    # Without this entry the case falls through to verify-docker-stack.ps1's default arm and
+    # reports 'RealCasePending' -- a red row for a routing reason, not a measured one.
+    'custody-containment',
     'parent-native-and-command-session',
     'child-server-image-payload',
     'child-runner-image-payload',
