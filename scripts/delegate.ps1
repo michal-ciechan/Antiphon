@@ -924,8 +924,12 @@ switch ($PSCmdlet.ParameterSetName) {
                 Write-Error '-Runner cannot be combined with -OnAgent or -Agent: those continue an existing process.'
                 exit 2
             }
-            if ($PSBoundParameters.ContainsKey('SourceLanding')) {
-                Write-Error '-Runner cannot be combined with -SourceLanding (CARD-0604 Cut B).'
+            # CARD-0604 Cut B: -SourceLanding on a runner IS supported now -- the runner has a
+            # real custody backend and creates the verification snapshot itself. It is still a
+            # Mutation and nothing else; the server re-checks this and also asks that runner
+            # whether it can actually perform custody.
+            if ($PSBoundParameters.ContainsKey('SourceLanding') -and $Role -ne 'Mutation') {
+                Write-Error '-Runner with -SourceLanding requires -Role Mutation (CARD-0604 D-19).'
                 exit 2
             }
             $body['runnerId'] = $Runner

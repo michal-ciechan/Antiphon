@@ -248,10 +248,55 @@ try {
     Write-Evidence 'restart-summary.txt' ("restarted=$restarted backHealthy=$backHealthy imagesRetained=$imagesRetained`n" +
         "before=$imagesBeforeSet`nafter=$retainedSet")
 
-    # --- steps 12-15: Cut B containment (only with -Containment) -----------------------------
+    # --- steps 12-15: Cut B containment, V-28 (only with -Containment) ------------------------
+    #
+    # Docker Desktop is cgroup v2, so this half of V-28 measures the `cgroup.kill` path; server2
+    # measures the v1 freezer path through the same probe (CP-15). Both must pass before the
+    # backend is trusted, which is why the harness grades this rather than merely logging it.
     if ($Containment) {
-        $containmentState = 'unsupported'
-        Write-Evidence 'containment.txt' 'Cut B (D-17) is not implemented in this cut; -Containment is a no-op here.'
+        if (-not $started) {
+            $containmentState = 'no'
+            Write-Evidence 'containment.txt' 'the container never started; containment was not measured'
+        }
+        else {
+            # Step 12: the runner must advertise the Linux backend at all. An unadvertised
+            # backend means the probe inside the image failed, and nothing below would be
+            # measuring the mechanism the server would actually bind to.
+            $capabilities = Invoke-Docker @('exec', '--user', '1654:1654', $containerName,
+                'curl', '-fsS', 'http://127.0.0.1:8080/capabilities') 'containment-capabilities.txt'
+
+            # Step 13: the helpers are root-owned and the sudo grant is exactly two commands.
+            $custody = Invoke-Docker @('exec', '--user', '1654:1654', $containerName, '/bin/sh', '-c',
+                'stat -c %U:%G:%a /usr/local/bin/antiphon-custody-enter /usr/local/bin/antiphon-custody-kill /etc/sudoers.d/antiphon-custody; sudo -n -l') 'containment-custody.txt'
+
+            # Step 14: the four measurements themselves, as uid 1654 against the real helpers.
+            $probe = Invoke-Docker @('exec', '--user', '1654:1654', $containerName,
+                '/usr/local/bin/antiphon-custody-containment-probe') 'containment-probe.txt'
+
+            # Step 15: nothing is left behind. A surviving cgroup would make the next execution's
+            # "exists and is empty" precondition fail for a reason nobody could see.
+            $residue = Invoke-Docker @('exec', '--user', '1654:1654', $containerName, '/bin/sh', '-c',
+                'ls -1 /sys/fs/cgroup/antiphon-custody 2>/dev/null | wc -l') 'containment-residue.txt'
+
+            $ownershipOk = $custody.Output -match 'root:root:755' -and $custody.Output -match 'root:root:440'
+            $grantOk = $custody.Output -match 'antiphon-custody-enter' -and $custody.Output -match 'antiphon-custody-kill'
+            $advertised = $capabilities.Output -match 'linux-cgroup-v1' -and $capabilities.Output -notmatch 'windows-job-v1'
+            $probeOk = $probe.ExitCode -eq 0 -and $probe.Output -match 'containment=ok'
+            $residueOk = ($residue.Output -replace '\s', '') -eq '0'
+
+            if ($advertised -and $ownershipOk -and $grantOk -and $probeOk -and $residueOk) {
+                $containmentState = 'ok'
+            }
+            else {
+                $containmentState = 'no'
+            }
+            Write-Evidence 'containment.txt' (@(
+                "advertised=$advertised",
+                "ownership=$ownershipOk",
+                "grant=$grantOk",
+                "probe=$probeOk",
+                "residue=$residueOk") -join "`n")
+        }
     }
 }
 finally {

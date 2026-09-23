@@ -79,6 +79,29 @@ public sealed class VerifyDindRunnerScriptTests
         script.ShouldContain("[int] $Port = 18298");
     }
 
+    // CARD-0604 S9 / V-28 (cgroup v2 half). -Containment is no longer a no-op: it runs the same
+    // in-image probe the server2 case runs on v1, as uid 1654, and it is GRADED -- an
+    // unmeasured containment must fail the harness, not quietly pass it.
+    [Test]
+    public void Containment_switch_grades_the_v2_measurements()
+    {
+        var script = Read("scripts/verify-card0604-dind-runner.ps1");
+
+        script.ShouldContain("[switch] $Containment");
+        script.ShouldContain("antiphon-custody-containment-probe");
+        script.ShouldContain("'--user', '1654:1654'");
+        script.ShouldContain("$graded['containment'] = $containmentState -eq 'ok'");
+        script.ShouldContain("containment-probe.txt");
+        script.ShouldContain("containment-residue.txt");
+        script.ShouldContain("linux-cgroup-v1");
+        script.ShouldContain("windows-job-v1");
+
+        // The Cut A placeholder is gone; leaving it would grade an unimplemented measurement.
+        script.Contains("is not implemented in this cut", StringComparison.Ordinal)
+            .ShouldBeFalse("the -Containment no-op placeholder is superseded by Cut B");
+        script.Contains("$containmentState = 'unsupported'", StringComparison.Ordinal).ShouldBeFalse();
+    }
+
     private static string Read(string relative) =>
         File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, relative.Replace('/', Path.DirectorySeparatorChar)));
 
