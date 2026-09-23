@@ -220,7 +220,8 @@ public class VerificationCustodyStoreTests
             Binding = new(Guid.NewGuid(), new(Guid.NewGuid(), Guid.NewGuid(), new string('a', 40)),
                 new(Guid.NewGuid(), new DateTime(now.Ticks - now.Ticks % 10, DateTimeKind.Utc)),
                 new(_root, Path.Combine(_root, ".git"), Path.Combine(_root, "snapshot"),
-                    Path.Combine(_root, ".git", "worktrees", "snapshot"), "feat/test", Guid.NewGuid()), RunnerStoreId: Store.StoreId);
+                    Path.Combine(_root, ".git", "worktrees", "snapshot"), "feat/test", Guid.NewGuid()),
+                VerificationCustodyBackends.WindowsJob, RunnerStoreId: Store.StoreId);
             Store.Reserve(Binding);
             Receipt = new(1, Binding, new(Store.StoreId, Guid.NewGuid(), Guid.NewGuid(), Environment.ProcessId, now),
                 4, now, now, "JobObjectBasicAccountingInformation", 0, true, VerificationCustodyState.Exited, 1234, now);

@@ -280,7 +280,8 @@ public class HostCustodyTests
             new(Guid.NewGuid(), Guid.NewGuid(), new string('a', 40)),
             new(host.SessionId, new DateTime(now.Ticks - now.Ticks % 10, DateTimeKind.Utc)),
             new(host.TempDir, Path.Combine(host.TempDir, ".git"), snapshot,
-                Path.Combine(host.TempDir, ".git", "worktrees", "snapshot"), "feat/custody-test", Guid.NewGuid()), RunnerStoreId: store.StoreId);
+                Path.Combine(host.TempDir, ".git", "worktrees", "snapshot"), "feat/custody-test", Guid.NewGuid()),
+            VerificationCustodyBackends.WindowsJob, RunnerStoreId: store.StoreId);
         store.Reserve(binding);
         store.WriteRecord(binding, "runner-start-intent.json", new CustodyStamp(1, DateTime.UtcNow));
         return (store, binding);

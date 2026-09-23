@@ -53,7 +53,8 @@ public sealed class CustodyHelperContractTests
     public void Shim_validates_guid_and_empty_cgroup()
     {
         var text = Enter();
-        text.ShouldContain(GuidPattern, "the execution id is validated as a GUID before it becomes a path component");
+        // The execution id is validated as a GUID before it ever becomes a path component.
+        text.ShouldContain(GuidPattern);
         text.ShouldContain("refuse InvalidExecutionId");
         text.ShouldContain("require_guid \"$EXECUTION_ID\"");
         text.ShouldContain("refuse CustodyTreeNotEmpty");
@@ -143,7 +144,8 @@ public sealed class CustodyHelperContractTests
     {
         foreach (var text in new[] { Enter(), Kill() })
         {
-            text.ShouldContain("[ -f /sys/fs/cgroup/cgroup.controllers ]", "v2 is detected by the unified root's controllers file");
+            // v2 is detected by the unified root's own controllers file.
+            text.ShouldContain("[ -f /sys/fs/cgroup/cgroup.controllers ]");
             text.ShouldContain("V2_ROOT=\"/sys/fs/cgroup/$CUSTODY_ROOT\"");
             text.ShouldContain("V1_PIDS_ROOT=\"/sys/fs/cgroup/pids/$CUSTODY_ROOT\"");
             text.ShouldContain("V1_FREEZER_ROOT=\"/sys/fs/cgroup/freezer/$CUSTODY_ROOT\"");

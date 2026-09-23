@@ -215,7 +215,7 @@ public class AgentSessionLaunchFailureTests
             new(fixture.SessionId, now.AddMinutes(1)),
             new(@"C:\repo", @"C:\repo\.git", @"C:\trees\snapshot", @"C:\repo\.git\worktrees\snapshot",
                 "feat/card-task-12345678", Guid.NewGuid()),
-            RunnerStoreId: Guid.NewGuid());
+            VerificationCustodyBackends.WindowsJob, RunnerStoreId: Guid.NewGuid());
         var spec = new AgentLaunchSpec(
             "fake", AgentKind.ClaudeCode, "fake", [], new Dictionary<string, string>(),
             fixture.Workspace, 120, 30, VerificationBinding: binding);
