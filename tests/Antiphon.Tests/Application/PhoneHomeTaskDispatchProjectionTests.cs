@@ -47,8 +47,12 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         using var workspace = new TempWorkspace();
         var taskId = await SeedAsync(schema, workspace.Path, host.AllowedRunnerId, kind);
         var sink = new RecordingLaunchSink();
-        var dispatcher = CreateDispatcher(schema, host, sink);
+        var (dispatcher, preparer) = CreateDispatcher(schema, host, sink);
 
+        // CARD-0633 D-12: the first tick commits the claim and hands the push + mirror to the
+        // preparer (HeldForRemotePrep); the launch happens on the tick after the mirror is recorded.
+        await dispatcher.TickAsync(CancellationToken.None);
+        await preparer.WhenIdleAsync();
         await dispatcher.TickAsync(CancellationToken.None);
 
         var launch = sink.Specs.Single();
@@ -92,7 +96,9 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         using var workspace = new TempWorkspace();
         var taskId = await SeedAsync(schema, workspace.Path, host.AllowedRunnerId, AgentKind.ClaudeCode);
         var sink = new RecordingLaunchSink();
-        var dispatcher = CreateDispatcher(schema, host, sink);
+        var (dispatcher, preparer) = CreateDispatcher(schema, host, sink);
+        await dispatcher.TickAsync(CancellationToken.None);
+        await preparer.WhenIdleAsync();
         await dispatcher.TickAsync(CancellationToken.None);
 
         Guid firstSessionId;
@@ -144,7 +150,7 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         return id;
     }
 
-    private static AgentTaskDispatcher CreateDispatcher(
+    private static (AgentTaskDispatcher Dispatcher, RemoteWorkspacePreparer Preparer) CreateDispatcher(
         IsolatedTestSchema schema, PhoneHomeTestHost host, RecordingLaunchSink sink)
     {
         var services = new ServiceCollection();
@@ -193,11 +199,13 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         services.AddSingleton<ISessionRunnerDirectory>(host.Directory);
         services.AddSingleton<ILandingGit, PushGit>();
         services.AddSingleton<RemoteWorkspaceService>();
+        services.AddSingleton<RemoteWorkspacePreparer>();
         services.AddSingleton<IAgentTaskLaunchSink>(sink);
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentTaskDispatcher>();
-        return services.BuildServiceProvider().CreateScope().ServiceProvider
-            .GetRequiredService<AgentTaskDispatcher>();
+        var provider = services.BuildServiceProvider();
+        return (provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>(),
+            provider.GetRequiredService<RemoteWorkspacePreparer>());
     }
 
     private sealed class RecordingLaunchSink : IAgentTaskLaunchSink
