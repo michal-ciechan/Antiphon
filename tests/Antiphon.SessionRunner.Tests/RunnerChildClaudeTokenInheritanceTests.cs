@@ -33,7 +33,7 @@ public class RunnerChildClaudeTokenInheritanceTests
         var outFile = Path.Combine(Path.GetTempPath(), $"c628-token-{Guid.NewGuid():N}.txt");
         var settings = new SessionRunnerSettings
         {
-            SessionLogPath = TestSessionLogRoot.Create("claude-token-inherit"),
+            SessionLogPath = TestSessionLogRoot.Create("c628-token"),
             PtyHostLingerHours = 0.02,
             PtyBackend = "inbox",
         };
