@@ -136,6 +136,36 @@ switch ($Case) {
         }
         Write-C590Result -EvidenceRoot $root -Accepted $true -ExitCode 0
     }
+    'custody-containment' {
+        # CARD-0604 S9, CP-15 / V-28 on cgroup v1. The live half runs the four measurements inside
+        # the persistent runner through `docker exec -u 1654`; this is the same ordered set of
+        # refusals, so a manifest that already knows the answer never reaches the remote. Every
+        # one of them is a refusal the remote makes BEFORE it runs the probe.
+        if (-not [bool]$m.runnerRunning) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'RunnerNotRunning' -ExitCode 2
+        }
+        if ([string]$m.verificationCustodyBackend -ne 'linux-cgroup-v1') {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'CustodyNotAdvertised' -ExitCode 2
+        }
+        if ([bool]$m.windowsBackendAdvertised) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'WindowsBackendAdvertisedOnLinux' -ExitCode 2
+        }
+        if (-not [bool]$m.custodyHelpersRootOwned) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'CustodyHelpersNotRootOwned' -ExitCode 2
+        }
+        if ([string]$m.containment -ne 'ok') {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'ContainmentFailed' -ExitCode 2
+        }
+        # server2 is kernel 4.15. A v2 reading means the freezer path went unmeasured, which is
+        # the half the Windows lane can say nothing about.
+        if ([string]$m.cgroupVersion -ne 'v1') {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'ExpectedCgroupV1' -ExitCode 2
+        }
+        if ([int]$m.custodyResidue -ne 0) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'CustodyResidue' -ExitCode 2
+        }
+        Write-C590Result -EvidenceRoot $root -Accepted $true -ExitCode 0
+    }
     # --- CARD-0604 S4 boundaries. Each is the refusal the live case makes before any command. ---
     'deploy-parent' {
         if (-not [bool]$m.deployKeyPresent) {
