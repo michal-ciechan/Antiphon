@@ -547,9 +547,10 @@ public sealed class RemoteScriptContractTests
         // state-init owns the fresh volume for uid 1654 first, then a one-off of the runner image.
         var init = commands.Single(line => line.Contains("run --rm --no-deps -T state-init", StringComparison.Ordinal));
         init.ShouldContain("|| write_result false StateInitFailed 2");
-        var clone = commands.Single(line => line.Contains(" clone ", StringComparison.Ordinal));
-        clone.ShouldStartWith("compose_host run --rm --no-deps -T --user 1654:1654 -e GIT_TERMINAL_PROMPT=0 --entrypoint /bin/sh session-runner -c '");
-        commands.IndexOf(init).ShouldBeLessThan(commands.IndexOf(clone));
+        var oneOff = commands.Single(line => line.StartsWith("compose_host run --rm --no-deps -T --user ", StringComparison.Ordinal));
+        oneOff.ShouldBe("compose_host run --rm --no-deps -T --user 1654:1654 -e GIT_TERMINAL_PROMPT=0 --entrypoint /bin/sh session-runner -c '");
+        commands.IndexOf(init).ShouldBeLessThan(commands.IndexOf(oneOff));
+        Order(seed, oneOff, "git clone").ShouldBeTrue("the clone runs inside the uid-1654 one-off");
         seed.ShouldContain("git clone --filter=blob:none --no-checkout \"$2\" \"$repo\"");
         seed.ShouldContain("antiphon-seed \"$RUNNER_CHECKOUT_DEFAULT\" \"$RUNNER_CHECKOUT_ORIGIN\"");
         seed.ShouldContain("|| write_result false RunnerCheckoutSeedFailed 2");
@@ -572,6 +573,7 @@ public sealed class RemoteScriptContractTests
         var output = LinuxShell("SEED='" + body + "'\n" + """
             root="$(mktemp -d)"
             trap 'rm -rf "$root"' EXIT
+            cd "$root"
             git init -q "$root/origin"
             git -C "$root/origin" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
             seed() { sh -c "$SEED" antiphon-seed "$1" "$root/origin" 2>/dev/null; echo "exit=$?"; }
@@ -702,6 +704,9 @@ public sealed class RemoteScriptContractTests
         {
             "root=\"$(mktemp -d)\"",
             "trap 'rm -rf \"$root\"' EXIT",
+            // Not the inherited cwd: under WSL that is this worktree, whose .git names a C:/ path
+            // Linux git cannot resolve, so every git call there would fail for the wrong reason.
+            "cd \"$root\"",
             "CASE_DIR=\"$root/case\"; mkdir -p \"$CASE_DIR\"",
             "SERVER2_ROOT=\"$root/server2\"; mkdir -p \"$SERVER2_ROOT/secrets\"",
             "SERVER2_ENV=\"$SERVER2_ROOT/stack.env\"",
