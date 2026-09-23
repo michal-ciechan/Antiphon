@@ -1381,59 +1381,103 @@ public sealed class AgentTaskDispatcher
             return 1;
         }
 
-        var scope = _scopeFactory.CreateAsyncScope();
-        AgentTaskDispatcher? owned;
+        // The claim is released exactly once on every path: here when the owned scope could not be
+        // built or is not used, and by the run's continuation once the handed-off sweep really ends.
+        // Scope creation or disposal throwing must never strand it (Review 9e27ec79): a stranded
+        // claim skips that sweep forever.
+        var inFlight = _sweepInFlight;
+        AsyncServiceScope? scope = null;
+        var claimHeld = true;
+        async Task ReleaseClaimAsync()
+        {
+            if (!claimHeld)
+                return;
+            claimHeld = false;
+            try
+            {
+                if (scope is { } s)
+                    await s.DisposeAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Delegation sweep '{Sweep}' could not dispose its own scope", name);
+            }
+            finally
+            {
+                inFlight.End(name);
+            }
+        }
+
         try
         {
-            owned = scope.ServiceProvider.GetService<AgentTaskDispatcher>();
-        }
-        catch (Exception ex)
-        {
-            await scope.DisposeAsync();
-            _sweepInFlight.End(name);
-            _logger.LogError(ex, "Delegation sweep '{Sweep}' could not build its own scope and did nothing this tick", name);
+            AgentTaskDispatcher? owned;
+            try
+            {
+                scope = _scopeFactory.CreateAsyncScope();
+                owned = scope.Value.ServiceProvider.GetService<AgentTaskDispatcher>();
+            }
+            catch (Exception ex)
+            {
+                await ReleaseClaimAsync();
+                _logger.LogError(ex, "Delegation sweep '{Sweep}' could not build its own scope and did nothing this tick", name);
+                return 1;
+            }
+
+            if (owned is null || ReferenceEquals(owned, this))
+            {
+                await ReleaseClaimAsync();
+                return await RunAwaitedSweepAsync(name, this, sweep, budget, ct);
+            }
+
+            owned.CatchUpOverride = CatchUpOverride;
+            owned.ProgressStallSweepFault = ProgressStallSweepFault;
+            owned.ReuseEnqueueOverride = ReuseEnqueueOverride;
+
+            var budgetCts = new CancellationTokenSource(budget, _timeProvider);
+            var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, budgetCts.Token);
+            var run = ObserveSweepAsync(name, owned, sweep, budgetCts, linked.Token, ct);
+            var ownedScope = scope.Value;
+            var logger = _logger;
+            var released = run.ContinueWith(async _ =>
+            {
+                try
+                {
+                    linked.Dispose();
+                    budgetCts.Dispose();
+                    await ownedScope.DisposeAsync();
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Delegation sweep '{Sweep}' could not dispose its own scope", name);
+                }
+                finally
+                {
+                    inFlight.End(name);
+                }
+            }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default).Unwrap();
+            claimHeld = false; // the continuation above owns the release from here
+
+            using var graceCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var grace = TimeSpan.FromSeconds(_settings.SweepAbandonGraceSeconds);
+            var deadline = Task.Delay(budget + grace, _timeProvider, graceCts.Token);
+            if (await Task.WhenAny(run, deadline) == run)
+            {
+                await graceCts.CancelAsync();
+                await released;
+                return await run;
+            }
+
+            ct.ThrowIfCancellationRequested();
+            _logger.LogError(
+                "Delegation sweep '{Sweep}' ignored its {BudgetSeconds}s budget and was abandoned after a further "
+                + "{GraceSeconds}s on its own scope; that scope is disposed when the sweep ends, and the sweep "
+                + "is skipped until then", name, budget.TotalSeconds, grace.TotalSeconds);
             return 1;
         }
-
-        if (owned is null || ReferenceEquals(owned, this))
+        finally
         {
-            await scope.DisposeAsync();
-            _sweepInFlight.End(name);
-            return await RunAwaitedSweepAsync(name, this, sweep, budget, ct);
+            await ReleaseClaimAsync();
         }
-
-        owned.CatchUpOverride = CatchUpOverride;
-        owned.ProgressStallSweepFault = ProgressStallSweepFault;
-        owned.ReuseEnqueueOverride = ReuseEnqueueOverride;
-
-        var budgetCts = new CancellationTokenSource(budget, _timeProvider);
-        var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, budgetCts.Token);
-        var run = ObserveSweepAsync(name, owned, sweep, budgetCts, linked.Token, ct);
-        var inFlight = _sweepInFlight;
-        var released = run.ContinueWith(async _ =>
-        {
-            linked.Dispose();
-            budgetCts.Dispose();
-            await scope.DisposeAsync();
-            inFlight.End(name);
-        }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default).Unwrap();
-
-        using var graceCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var grace = TimeSpan.FromSeconds(_settings.SweepAbandonGraceSeconds);
-        var deadline = Task.Delay(budget + grace, _timeProvider, graceCts.Token);
-        if (await Task.WhenAny(run, deadline) == run)
-        {
-            await graceCts.CancelAsync();
-            await released;
-            return await run;
-        }
-
-        ct.ThrowIfCancellationRequested();
-        _logger.LogError(
-            "Delegation sweep '{Sweep}' ignored its {BudgetSeconds}s budget and was abandoned after a further "
-            + "{GraceSeconds}s on its own scope; that scope is disposed when the sweep ends, and the sweep "
-            + "is skipped until then", name, budget.TotalSeconds, grace.TotalSeconds);
-        return 1;
     }
 
     /// <summary>The fallback: budget-cancelled, but always awaited on <paramref name="target"/>.</summary>
