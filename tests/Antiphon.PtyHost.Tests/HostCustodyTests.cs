@@ -102,7 +102,11 @@ public class HostCustodyTests
         RequireModern();
         var files = new FailingHostFiles("tracking.json");
         await using var host = HostHarness.Start(o => o with
-        { PtyBackend = "modern", CustodyStoreRoot = Path.Combine(Path.GetDirectoryName(o.ManifestDir)!, "custody") }, files);
+        { PtyBackend = "modern", CustodyStoreRoot = Path.Combine(Path.GetDirectoryName(o.ManifestDir)!, "custody"),
+          // CARD-0604 D-17: production always states the backend on the host command line;
+          // a host that was not told which mechanism to perform advertises none and
+          // refuses every binding.
+          CustodyBackend = VerificationCustodyBackends.WindowsJob }, files);
         var (store, binding) = Reserve(host);
         try
         {
@@ -123,7 +127,11 @@ public class HostCustodyTests
         RequireModern();
         var files = new FailingHostFiles("producer-receipt.json");
         await using var host = HostHarness.Start(o => o with
-        { PtyBackend = "modern", CustodyStoreRoot = Path.Combine(Path.GetDirectoryName(o.ManifestDir)!, "custody") }, files);
+        { PtyBackend = "modern", CustodyStoreRoot = Path.Combine(Path.GetDirectoryName(o.ManifestDir)!, "custody"),
+          // CARD-0604 D-17: production always states the backend on the host command line;
+          // a host that was not told which mechanism to perform advertises none and
+          // refuses every binding.
+          CustodyBackend = VerificationCustodyBackends.WindowsJob }, files);
         var (store, binding) = Reserve(host);
         await using var client = await PtyHostClient.ConnectAsync(host.Options.PipeName, TimeSpan.FromSeconds(10), CancellationToken.None);
         await client.LaunchAsync(Launch(host, store, binding, "echo durable-output", "exit /b 0"), CancellationToken.None);
@@ -268,7 +276,8 @@ public class HostCustodyTests
     }
 
     private static HostHarness CreateHost(string backend = "modern") => HostHarness.Start(o => o with
-    { PtyBackend = backend, CustodyStoreRoot = Path.Combine(Path.GetDirectoryName(o.ManifestDir)!, "custody") });
+    { PtyBackend = backend, CustodyStoreRoot = Path.Combine(Path.GetDirectoryName(o.ManifestDir)!, "custody"),
+      CustodyBackend = VerificationCustodyBackends.WindowsJob });
 
     internal static (VerificationCustodyStore Store, VerificationExecutionBinding Binding) Reserve(HostHarness host)
     {
