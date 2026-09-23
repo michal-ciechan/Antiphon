@@ -387,7 +387,7 @@ For parameterized methods all argument cases may run, but no class-wide PC filte
 | G-22 Divergent arm does not swallow the fail-open remote read (D-6/D-8) | PC-22 | Return the divergent alternate result before the `remote.State == Unavailable` check. | `TaskCompletionContinuationTests/C613_DivergentOwnTipWithUnreadableRemoteStaysIndeterminate`: Indeterminate `source_remote_unreadable` becomes a complete `primary_commit_predates_dispatch` negative. |
 | G-23 A divergent complete negative never overrides an incomplete observation (D-6/D-8) | PC-23 | Restore the `viaRemote.Assessment == ProgressObserved` / `divergent is not null` preference so the divergent complete negative wins over an Indeterminate qualified arm (equivalently: delete `PreferLeastCommittal`'s `qualified.Complete`/`NoAttributedProgress` test and return the fallback whenever it exists). | `TaskCompletionContinuationTests/C613_DivergentNegativeNeverOverridesIncompleteObservation`: the Indeterminate assertion fails as `NoAttributedProgress` with reason `claimed_commit_unreachable` (remote shapes) or `primary_commit_predates_dispatch` (the local-arm shape). |
 
-Audit: guards=22, mapped PCs=22, missing=0, duplicate PC mappings=0. Metadata parser
+Audit: guards=23, mapped PCs=23, missing=0, duplicate PC mappings=0. Metadata parser
 failure variants are part of G-17; separate lower/upper predicates have distinct PCs.
 All PC-19/20 fixture assertions must be arranged to reach the decisive predicate or
 recipient check, without an earlier redundant success assertion masking it.
