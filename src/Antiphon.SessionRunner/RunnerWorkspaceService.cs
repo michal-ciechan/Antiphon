@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -87,6 +88,8 @@ public sealed partial class RunnerWorkspaceService
                 409);
         }
 
+        await EnsureRepositoryAsync(ct);
+
         var fetch = await GitAsync(_repository, ct, "fetch", "origin", request.Branch!);
         if (fetch.ExitCode != 0)
             throw new PhoneHomeAdmissionException(
@@ -101,7 +104,7 @@ public sealed partial class RunnerWorkspaceService
                 $"Fetched tip of {request.Branch} is not {request.Sha}.",
                 409);
 
-        Directory.CreateDirectory(_worktreeRoot);
+        Filesystem("create the worktree root", () => Directory.CreateDirectory(_worktreeRoot));
         var add = await GitAsync(_repository, ct, "worktree", "add", "-B", request.Branch!, path, request.Sha!);
         if (add.ExitCode != 0)
             throw new PhoneHomeAdmissionException(
@@ -113,6 +116,38 @@ public sealed partial class RunnerWorkspaceService
                 PhoneHomeProblemTypes.UnsupportedTarget, "Mirror HEAD is not the requested sha.", 409);
 
         return new PhoneHomeWorkspaceMirrorResponse(path);
+    }
+
+    /// <summary>
+    /// CARD-0631 D-6/D-7. A fresh runner volume has no repository at all, so the first mirror
+    /// provisions it with an anonymous blobless clone of the runner-owned source. Anything already
+    /// holding a <c>.git</c> (directory or gitfile) is the repository and git validates it on fetch;
+    /// it is never recloned because HEAD moved. Only an absent or empty destination is cloned into:
+    /// a file, or a directory with someone else's content in it, is refused and left exactly as
+    /// found. The dispatcher's mutation lock already serializes mirrors, so no second lock here.
+    /// </summary>
+    private async Task EnsureRepositoryAsync(CancellationToken ct)
+    {
+        var dotGit = Path.Combine(_repository, ".git");
+        if (Directory.Exists(dotGit) || File.Exists(dotGit))
+            return;
+        if (File.Exists(_repository))
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
+                $"Runner repository {_repository} is a file, not a checkout; it was left untouched.", 409);
+        if (Directory.Exists(_repository)
+            && Filesystem("inspect the runner repository", () => Directory.EnumerateFileSystemEntries(_repository).Any()))
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
+                $"Runner repository {_repository} is not empty and has no .git; it was left untouched.", 409);
+
+        var parent = Path.GetDirectoryName(Path.GetFullPath(_repository))
+            ?? throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
+                $"Runner repository {_repository} has no parent directory to clone from.", 409);
+        Filesystem("create the runner repository parent", () => Directory.CreateDirectory(parent));
+
+        var clone = await GitAsync(parent, ct, "clone", "--filter=blob:none", "--no-checkout", _cloneSource, _repository);
+        if (clone.ExitCode != 0)
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
+                "Runner repository clone failed: " + Tail(clone.Stderr), 409);
     }
 
     public async Task<PhoneHomeWorkspaceRemoveResponse> RemoveAsync(
@@ -208,8 +243,23 @@ public sealed partial class RunnerWorkspaceService
         // credential and it is BatchMode.
         psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
 
-        using var process = _startProcess(psi)
-            ?? throw new InvalidOperationException("git did not start");
+        // CARD-0631 D-8: a git that cannot start (missing binary, missing or unreadable cwd, access
+        // denial, no process at all) is a named workspace admission the server can answer.
+        var stage = "git " + args[0];
+        Process? started;
+        try
+        {
+            started = _startProcess(psi);
+        }
+        catch (Exception ex) when (ex is Win32Exception or IOException or UnauthorizedAccessException
+                                       or InvalidOperationException)
+        {
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
+                $"{stage} could not start: {Cause(ex)}", 409);
+        }
+        using var process = started
+            ?? throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
+                $"{stage} could not start: no process was created.", 409);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(_timeout);
         var stdout = process.StandardOutput.ReadToEndAsync(timeout.Token);
@@ -218,14 +268,47 @@ public sealed partial class RunnerWorkspaceService
         {
             await process.WaitForExitAsync(timeout.Token);
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
+            // Timeout or caller cancellation: either way this operation's own git child is killed
+            // and reaped, and its redirected readers observed, before the operation lets go of it.
             try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
+            try { await process.WaitForExitAsync(CancellationToken.None); } catch { /* reaped or gone */ }
+            try { await Task.WhenAll(stdout, stderr); } catch { /* cancelled with the operation */ }
+            if (ct.IsCancellationRequested)
+                throw;
             throw new PhoneHomeAdmissionException(
                 PhoneHomeProblemTypes.UnsupportedTarget, "git " + string.Join(' ', args) + " timed out.", 409);
         }
 
         return (process.ExitCode, await stdout, await stderr);
+    }
+
+    /// <summary>
+    /// CARD-0631 D-8: a filesystem failure while preparing the workspace is an admission naming the
+    /// stage, not an escaped fault.
+    /// </summary>
+    private static T Filesystem<T>(string stage, Func<T> action)
+    {
+        try
+        {
+            return action();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
+                $"Could not {stage}: {Cause(ex)}", 409);
+        }
+    }
+
+    // The type always, and a bounded message: never a stack trace, environment or payload.
+    private static string Cause(Exception ex)
+    {
+        const int MaxMessage = 200;
+        var message = ex.Message.Replace('\r', ' ').Replace('\n', ' ');
+        if (message.Length > MaxMessage)
+            message = message[..MaxMessage] + "...";
+        return ex.GetType().Name + ": " + message;
     }
 
     private static string Tail(string text)
