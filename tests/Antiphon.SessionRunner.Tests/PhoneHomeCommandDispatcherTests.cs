@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
@@ -153,14 +154,174 @@ public class PhoneHomeCommandDispatcherTests
         badName.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
     }
 
-    private static PhoneHomeCommandDispatcher Dispatcher(IPhoneHomeRuntimeSurface runtime, int capacity = 8) =>
+    // --- CARD-0628 D-5/D-7: Claude on the runner. ---
+
+    [Test]
+    public async Task Claude_exe_is_image_owned()
+    {
+        var runtime = new RecordingRuntime();
+        var dispatcher = Dispatcher(runtime);
+
+        foreach (var exe in new[] { "claude", "/usr/local/bin/claude" })
+        {
+            var admitted = await dispatcher.DispatchAsync(Launch(Request(exe, "/work")), CancellationToken.None);
+            admitted.Kind.ShouldBe(PhoneHomeFrameKind.Result, exe + " is the image's claude and must be admitted");
+        }
+
+        runtime.Mutations.Count.ShouldBe(2);
+
+        // A trailing space, a Windows binary name, and a Windows path that merely ends in "claude".
+        foreach (var exe in new[] { "/opt/evil/claude ", "claude.exe", "C:\\tools\\claude", "Claude", "claude-code" })
+        {
+            var refused = await dispatcher.DispatchAsync(Launch(Request(exe, "/work")), CancellationToken.None);
+            refused.Kind.ShouldBe(PhoneHomeFrameKind.Error, exe + " is not the image's claude");
+            refused.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
+        }
+
+        runtime.Mutations.Count.ShouldBe(2);
+    }
+
+    [Test]
+    public async Task Transcript_format_null_grok_and_claude_admitted_codex_refused()
+    {
+        var runtime = new RecordingRuntime();
+        var dispatcher = Dispatcher(runtime);
+
+        foreach (var format in new string?[] { null, TranscriptFormats.Grok, TranscriptFormats.Claude })
+        {
+            var admitted = await dispatcher.DispatchAsync(
+                Launch(Request("claude", "/work") with { TranscriptFormat = format }), CancellationToken.None);
+            admitted.Kind.ShouldBe(PhoneHomeFrameKind.Result, (format ?? "null") + " must be admitted");
+        }
+
+        foreach (var format in new[] { "codex", "opencode", "" })
+        {
+            var refused = await dispatcher.DispatchAsync(
+                Launch(Request("claude", "/work") with { TranscriptFormat = format }), CancellationToken.None);
+            refused.Kind.ShouldBe(PhoneHomeFrameKind.Error, format + " has no tailer on this runner");
+            refused.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
+            refused.ErrorDetail.ShouldBe("Only the Grok and Claude transcript formats are admitted.");
+        }
+
+        runtime.Mutations.Count.ShouldBe(3);
+    }
+
+    [Test]
+    public async Task Claude_launch_is_refused_when_the_probe_says_logged_out()
+    {
+        var runtime = new RecordingRuntime();
+        var probe = new RecordingProbe(false);
+        var dispatcher = Dispatcher(runtime, probe: probe);
+
+        var refused = await dispatcher.DispatchAsync(Launch(Request("claude", "/work")), CancellationToken.None);
+
+        refused.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+        refused.ErrorCode.ShouldBe(PhoneHomeProblemTypes.ProviderSignInRequired);
+        refused.ErrorCode.ShouldBe("provider_sign_in_required");
+        refused.StatusCode.ShouldBe(409);
+        refused.ErrorDetail.ShouldNotBeNull();
+        refused.ErrorDetail.ShouldContain("CLAUDE_CODE_OAUTH_TOKEN");
+        refused.ErrorDetail.ShouldContain("claude auth login");
+        refused.ErrorDetail.ShouldContain("/state/claude");
+        probe.Calls.ShouldBe(["claude"]);
+        runtime.Mutations.ShouldBeEmpty();
+
+        // The setting is the kill switch: off, the same signed-out answer is never asked for.
+        var disabledProbe = new RecordingProbe(false);
+        var disabled = Dispatcher(runtime, probe: disabledProbe, claudeAuthProbeEnabled: false);
+        var admitted = await disabled.DispatchAsync(Launch(Request("claude", "/work")), CancellationToken.None);
+        admitted.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        disabledProbe.Calls.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Claude_launch_is_admitted_when_the_probe_is_unknown_or_absent()
+    {
+        foreach (var loggedIn in new bool?[] { null, true })
+        {
+            var runtime = new RecordingRuntime();
+            var probe = new RecordingProbe(loggedIn);
+            var admitted = await Dispatcher(runtime, probe: probe)
+                .DispatchAsync(Launch(Request("claude", "/work")), CancellationToken.None);
+            admitted.Kind.ShouldBe(PhoneHomeFrameKind.Result, $"loggedIn={loggedIn?.ToString() ?? "null"} must admit");
+            probe.Calls.ShouldBe(["claude"]);
+            runtime.Mutations.ShouldBe(["start"]);
+        }
+
+        var noProbe = await Dispatcher(new RecordingRuntime())
+            .DispatchAsync(Launch(Request("claude", "/work")), CancellationToken.None);
+        noProbe.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+
+        // A grok launch never asks about Claude, even on a signed-out runner.
+        var grokProbe = new RecordingProbe(false);
+        var grok = await Dispatcher(new RecordingRuntime(), probe: grokProbe)
+            .DispatchAsync(Launch(Request("grok", "/work")), CancellationToken.None);
+        grok.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        grokProbe.Calls.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Provider_auth_operation_answers_the_probe_and_refuses_unknown_providers()
+    {
+        var runtime = new RecordingRuntime();
+        var probe = new RecordingProbe(true, authMethod: "claude.ai", subscriptionType: "max");
+        var dispatcher = Dispatcher(runtime, probe: probe);
+
+        var answered = await dispatcher.DispatchAsync(ProviderAuth("claude"), CancellationToken.None);
+        answered.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        answered.Operation.ShouldBe(PhoneHomeOperation.ProviderAuth);
+        var dto = answered.Payload!.Value.Deserialize<RunnerProviderAuthDto>(PhoneHomeFraming.Json);
+        dto.ShouldNotBeNull();
+        dto.Provider.ShouldBe("claude");
+        dto.LoggedIn.ShouldBe(true);
+        dto.AuthMethod.ShouldBe("claude.ai");
+        dto.SubscriptionType.ShouldBe("max");
+        probe.Calls.ShouldBe(["claude"]);
+
+        var codex = await dispatcher.DispatchAsync(ProviderAuth("codex"), CancellationToken.None);
+        codex.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+        codex.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
+        codex.StatusCode.ShouldBe(400);
+        probe.Calls.Count.ShouldBe(1);
+        runtime.Mutations.ShouldBeEmpty();
+
+        // The wire number the server already sends (CARD-0628 Round A) is the named operation.
+        ((int)PhoneHomeOperation.ProviderAuth).ShouldBe(16);
+
+        // A runner without a probe cannot tell, and says so rather than guessing.
+        var unknown = await Dispatcher(runtime).DispatchAsync(ProviderAuth("claude"), CancellationToken.None);
+        var unknownDto = unknown.Payload!.Value.Deserialize<RunnerProviderAuthDto>(PhoneHomeFraming.Json)!;
+        unknownDto.LoggedIn.ShouldBeNull();
+        unknownDto.Error.ShouldBe("probe_unavailable");
+    }
+
+    private static PhoneHomeFrame ProviderAuth(string provider) =>
+        new(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.ProviderAuth,
+            System.Text.Json.JsonSerializer.SerializeToElement(new PhoneHomeProviderAuthRequest(provider), PhoneHomeFraming.Json));
+
+    private sealed class RecordingProbe(bool? loggedIn, string? authMethod = null, string? subscriptionType = null)
+        : IProviderAuthProbe
+    {
+        public List<string> Calls { get; } = [];
+
+        public Task<RunnerProviderAuthDto> ProbeAsync(string provider, CancellationToken ct)
+        {
+            Calls.Add(provider);
+            return Task.FromResult(new RunnerProviderAuthDto(
+                provider, loggedIn, authMethod, subscriptionType, DateTimeOffset.UtcNow, loggedIn is null ? "timeout" : null));
+        }
+    }
+
+    private static PhoneHomeCommandDispatcher Dispatcher(
+        IPhoneHomeRuntimeSurface runtime, int capacity = 8, IProviderAuthProbe? probe = null, bool claudeAuthProbeEnabled = true) =>
         new(runtime, new PhoneHomeSettings
         {
             Enabled = true,
             AllowedCwd = "/work",
             RunnerRepository = "/work/repos/antiphon",
             Capacity = capacity,
-        });
+            ClaudeAuthProbeEnabled = claudeAuthProbeEnabled,
+        }, probe);
 
     private static RunnerLaunchRequest Request(string exe, string cwd) =>
         new(Guid.NewGuid(), exe, [], new Dictionary<string, string>(), cwd, 80, 24);

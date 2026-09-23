@@ -25,13 +25,16 @@ public sealed class PhoneHomeCommandDispatcher
 {
     private readonly IPhoneHomeRuntimeSurface _runtime;
     private readonly PhoneHomeSettings _settings;
+    private readonly IProviderAuthProbe? _authProbe;
     private readonly object _mutationGate = new();
     private RunnerWorkspaceService? _workspace;
 
-    public PhoneHomeCommandDispatcher(IPhoneHomeRuntimeSurface runtime, PhoneHomeSettings settings)
+    public PhoneHomeCommandDispatcher(
+        IPhoneHomeRuntimeSurface runtime, PhoneHomeSettings settings, IProviderAuthProbe? authProbe = null)
     {
         _runtime = runtime;
         _settings = settings;
+        _authProbe = authProbe;
     }
 
     /// <summary>
@@ -73,6 +76,7 @@ public sealed class PhoneHomeCommandDispatcher
                 PhoneHomeOperation.List => Result(request, _runtime.List()),
                 PhoneHomeOperation.Get => Result(request, await _runtime.GetAsync(ReadSessionId(request), ct)),
                 PhoneHomeOperation.Launch => await LaunchAsync(request, ct),
+                PhoneHomeOperation.ProviderAuth => Result(request, await ProviderAuthAsync(request, ct)),
                 PhoneHomeOperation.Buffer => Result(request, _runtime.GetBuffer(ReadSessionId(request))),
                 PhoneHomeOperation.Snapshot => Result(request, _runtime.GetSnapshot(ReadSessionId(request))),
                 PhoneHomeOperation.Transcript => Result(request, _runtime.GetTranscript(ReadSessionId(request))),
@@ -166,12 +170,61 @@ public sealed class PhoneHomeCommandDispatcher
                     409);
         }
 
+        await RejectSignedOutClaudeAsync(launch, ct);
         return await MutateAsync(request, async () => Result(request, await _runtime.StartAsync(launch, ct)));
     }
 
+    /// <summary>
+    /// CARD-0628 D-7. Read-only: the probe's DTO for a provider this runner can measure. An unknown
+    /// provider is <see cref="PhoneHomeProblemTypes.UnsupportedTarget"/>; a runner built without a
+    /// probe answers "cannot tell" rather than guessing.
+    /// </summary>
+    private async Task<RunnerProviderAuthDto> ProviderAuthAsync(PhoneHomeFrame request, CancellationToken ct)
+    {
+        var body = request.Payload?.Deserialize<PhoneHomeProviderAuthRequest>(PhoneHomeFraming.Json);
+        if (body is null || !string.Equals(body.Provider, ClaudeAuthProbe.ProviderName, StringComparison.OrdinalIgnoreCase))
+            throw new PhoneHomeAdmissionException(
+                PhoneHomeProblemTypes.UnsupportedTarget,
+                $"Provider '{body?.Provider}' has no auth probe on this runner; only '{ClaudeAuthProbe.ProviderName}' is measured.",
+                400);
+        if (_authProbe is null)
+            return new RunnerProviderAuthDto(ClaudeAuthProbe.ProviderName, null, null, null, DateTimeOffset.UtcNow, "probe_unavailable");
+        return await _authProbe.ProbeAsync(ClaudeAuthProbe.ProviderName, ct);
+    }
+
+    /// <summary>
+    /// CARD-0628 D-7 backstop. The server's pre-flight should already have failed a task bound to
+    /// a signed-out runner; this is the runner refusing to start Claude onto its sign-in screen
+    /// when that pre-flight did not run (an older server, the setting off, a named agent). Only a
+    /// definite "signed out" refuses: an unknown answer, or no probe, admits.
+    /// </summary>
+    private async Task RejectSignedOutClaudeAsync(RunnerLaunchRequest launch, CancellationToken ct)
+    {
+        if (!_settings.ClaudeAuthProbeEnabled || _authProbe is null || !IsClaudeExe(launch.Exe))
+            return;
+        var answer = await _authProbe.ProbeAsync(ClaudeAuthProbe.ProviderName, ct);
+        if (answer.LoggedIn != false)
+            return;
+        throw new PhoneHomeAdmissionException(
+            PhoneHomeProblemTypes.ProviderSignInRequired,
+            $"Claude Code is not signed in on runner '{_settings.RunnerId}' (CLAUDE_CONFIG_DIR={_settings.ClaudeHome}). "
+            + $"Provision {ClaudeAuthProbe.OAuthTokenVariable} (from `claude setup-token`) in the runner's environment, "
+            + $"or run `claude auth login` as uid 1654 with CLAUDE_CONFIG_DIR={_settings.ClaudeHome}, then re-dispatch.",
+            409);
+    }
+
+    /// <summary>
+    /// CARD-0628 D-5: the image's own <c>claude</c>, by bare name or a POSIX path ending in it.
+    /// A Windows path, a <c>claude.exe</c> or a name with trailing characters is not this image's.
+    /// </summary>
+    internal static bool IsClaudeExe(string? exe) =>
+        !string.IsNullOrWhiteSpace(exe)
+        && (string.Equals(exe, "claude", StringComparison.Ordinal)
+            || (exe.StartsWith('/') && exe.EndsWith("/claude", StringComparison.Ordinal)));
+
     internal void RejectUnsupportedLaunch(RunnerLaunchRequest launch)
     {
-        // CARD-0604 D-2: grok, or an image-owned executable from the allow list. The runner keeps
+        // CARD-0604 D-2 / CARD-0628 D-5: grok, claude, or an image-owned executable from the allow list. The runner keeps
         // its own copy of that list: it is the image's contract, and the server telling it to run
         // some other path is exactly what this refusal exists for.
         var isGrok = !string.IsNullOrWhiteSpace(launch.Exe)
@@ -180,7 +233,8 @@ public sealed class PhoneHomeCommandDispatcher
                 || launch.Exe.EndsWith("/grok", StringComparison.Ordinal));
         var isAllowedRaw = !string.IsNullOrWhiteSpace(launch.Exe)
             && _settings.RawExeAllowList.Any(allowed => string.Equals(allowed, launch.Exe, StringComparison.Ordinal));
-        if (!isGrok && !isAllowedRaw)
+        var isClaude = IsClaudeExe(launch.Exe);
+        if (!isGrok && !isClaude && !isAllowedRaw)
             throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Only an image-owned executable may launch.", 409);
 
         // CARD-0604 D-15: the workspace root itself, or a mirror worktree directly under it. A
@@ -200,9 +254,12 @@ public sealed class PhoneHomeCommandDispatcher
             throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Verification custody is refused.", 409);
         if (launch.MemoryLimitMb != 0)
             throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Memory limit must be zero.", 409);
-        if (!string.Equals(launch.TranscriptFormat, TranscriptFormats.Grok, StringComparison.OrdinalIgnoreCase)
-            && launch.TranscriptFormat is not null)
-            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Only the Grok transcript format is admitted.", 409);
+        // CARD-0628 D-5: the two agents this image carries. Anything else (codex) has no tailer here.
+        if (launch.TranscriptFormat is not null
+            && !string.Equals(launch.TranscriptFormat, TranscriptFormats.Grok, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(launch.TranscriptFormat, TranscriptFormats.Claude, StringComparison.OrdinalIgnoreCase))
+            throw new PhoneHomeAdmissionException(
+                PhoneHomeProblemTypes.UnsupportedTarget, "Only the Grok and Claude transcript formats are admitted.", 409);
     }
 
     /// <summary>
