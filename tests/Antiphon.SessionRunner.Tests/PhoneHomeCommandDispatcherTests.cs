@@ -154,6 +154,78 @@ public class PhoneHomeCommandDispatcherTests
         badName.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
     }
 
+    // CARD-0604 D-19 / G-37 (Cut B). Cut A refused EVERY verification binding here, because the
+    // runner had no containment at all. Cut B refuses on capability instead: a binding is admitted
+    // only when this runner advertises a backend AND the binding names that exact backend and this
+    // runner's own store. The three refusals below are the whole of that gate.
+    [Test]
+    public async Task Binding_without_custody_backend_is_refused()
+    {
+        var runtime = new RecordingRuntime();
+        var dispatcher = Dispatcher(runtime);
+
+        var frame = await dispatcher.DispatchAsync(
+            Launch(TrackedRequest(VerificationCustodyBackends.LinuxCgroup, runtime.RunnerStoreId)), CancellationToken.None);
+
+        frame.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+        frame.ErrorDetail.ShouldContain("advertises no verification custody backend");
+        runtime.Mutations.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Foreign_backend_binding_is_refused_by_the_dispatcher()
+    {
+        var runtime = new RecordingRuntime { CustodyBackend = VerificationCustodyBackends.LinuxCgroup };
+        var dispatcher = Dispatcher(runtime);
+
+        var frame = await dispatcher.DispatchAsync(
+            Launch(TrackedRequest(VerificationCustodyBackends.WindowsJob, runtime.RunnerStoreId)), CancellationToken.None);
+
+        frame.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+        frame.ErrorDetail.ShouldBe("verification_custody_invalid_binding");
+        runtime.Mutations.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Binding_with_foreign_store_is_refused()
+    {
+        var runtime = new RecordingRuntime { CustodyBackend = VerificationCustodyBackends.LinuxCgroup };
+        var dispatcher = Dispatcher(runtime);
+
+        var frame = await dispatcher.DispatchAsync(
+            Launch(TrackedRequest(VerificationCustodyBackends.LinuxCgroup, Guid.NewGuid())), CancellationToken.None);
+
+        frame.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+        frame.ErrorCode.ShouldBe(PhoneHomeProblemTypes.StoreMismatch);
+        runtime.Mutations.ShouldBeEmpty();
+    }
+
+    // The positive half: with an advertised backend, a matching binding and this runner's own
+    // store, the launch reaches the runtime. Without this the three refusals above would pass
+    // just as well if the gate refused everything.
+    [Test]
+    public async Task Matching_backend_and_store_admits_the_tracked_launch()
+    {
+        var runtime = new RecordingRuntime { CustodyBackend = VerificationCustodyBackends.LinuxCgroup };
+        var dispatcher = Dispatcher(runtime);
+
+        var frame = await dispatcher.DispatchAsync(
+            Launch(TrackedRequest(VerificationCustodyBackends.LinuxCgroup, runtime.RunnerStoreId)), CancellationToken.None);
+
+        frame.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        runtime.Mutations.ShouldContain("start");
+    }
+
+    private static RunnerLaunchRequest TrackedRequest(string backend, Guid storeId) =>
+        new(Guid.NewGuid(), "grok", [], new Dictionary<string, string>(), "/work", 80, 24,
+            VerificationBinding: new VerificationExecutionBinding(
+                Guid.NewGuid(),
+                new VerificationSourceIdentity(Guid.NewGuid(), Guid.NewGuid(), new string('a', 40)),
+                new VerificationSessionGeneration(Guid.NewGuid(), DateTime.UtcNow),
+                new VerificationCreationCoordinates("/work/repos/antiphon", "/work/repos/antiphon/.git",
+                    "/work", "/work/repos/antiphon/.git/worktrees/w", "feat/card-task-12345678", Guid.NewGuid()),
+                backend, storeId));
+
     private static PhoneHomeCommandDispatcher Dispatcher(IPhoneHomeRuntimeSurface runtime, int capacity = 8) =>
         new(runtime, new PhoneHomeSettings
         {
@@ -175,8 +247,14 @@ public class PhoneHomeCommandDispatcherTests
         public int Owned { get; set; }
         public List<string> Mutations { get; } = [];
         public int OwnedSessionCount => Owned;
+
+        /// <summary>Null (the default) is a runner that advertises no custody at all.</summary>
+        public string? CustodyBackend { get; init; }
+        public string? VerificationCustodyBackend => CustodyBackend;
+        public Guid RunnerStoreId { get; } = Guid.NewGuid();
+
         public RunnerCapabilitiesDto Capabilities() =>
-            new("InboxConhost", "inbox", "test", false, Features: [], VerificationCustodyBackend: null);
+            new("InboxConhost", "inbox", "test", false, Features: [], VerificationCustodyBackend: CustodyBackend);
         public string Health() => "Healthy";
         public IReadOnlyList<RunnerSessionDto> List() => [];
         public Task<RunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
