@@ -49,7 +49,8 @@ public sealed class PhoneHomeTaskCreateTests
         var refused = await Should.ThrowAsync<ValidationException>(() =>
             service.CreateAsync(request with { Goal = "run Codex", AgentKind = AgentKind.Codex },
                 caller, CancellationToken.None));
-        refused.Message.ShouldContain("Grok or Claude Code");
+        refused.Errors[nameof(CreateAgentTaskRequest.RunnerId)].Single()
+            .ShouldContain("Grok or Claude Code");
     }
 
     private static string RepoRoot()
