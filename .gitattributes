@@ -24,3 +24,6 @@ docker/session-runner-grok/github_known_hosts text eol=lf
 docker/session-testing/*.sh text eol=lf
 docker/stack/*.sh text eol=lf
 docker-compose.server2-runner.yml text eol=lf
+docker/session-runner-grok/antiphon-custody-enter.sh text eol=lf
+docker/session-runner-grok/antiphon-custody-kill.sh text eol=lf
+docker/session-runner-grok/sudoers-antiphon-custody text eol=lf
