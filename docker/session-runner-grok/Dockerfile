@@ -96,7 +96,19 @@ COPY docker/session-runner-grok/ssh_config /etc/antiphon/ssh_config
 COPY docker/session-runner-grok/github_known_hosts /etc/antiphon/github_known_hosts
 COPY docker/session-runner-grok/gitconfig /etc/gitconfig
 COPY docker/session-runner-grok/dind-entrypoint.sh /usr/local/bin/antiphon-dind-entrypoint.sh
+# CARD-0604 D-17 (Cut B): the custody mechanism. Both helpers are root-owned 0755 and the
+# sudoers drop-in is root-owned 0440; uid 1654 may run exactly these two commands and nothing
+# else (G-35, G-40). They exist only in this stage -- the default runtime and receipt-probe
+# targets must never carry them, which is what Default_runtime_excludes_custody_helpers guards.
+COPY docker/session-runner-grok/antiphon-custody-enter.sh /usr/local/bin/antiphon-custody-enter
+COPY docker/session-runner-grok/antiphon-custody-kill.sh /usr/local/bin/antiphon-custody-kill
+COPY docker/session-runner-grok/sudoers-antiphon-custody /etc/sudoers.d/antiphon-custody
 RUN chmod 0755 /usr/local/bin/antiphon-dind-entrypoint.sh \
+ && chown 0:0 /usr/local/bin/antiphon-custody-enter /usr/local/bin/antiphon-custody-kill \
+ && chmod 0755 /usr/local/bin/antiphon-custody-enter /usr/local/bin/antiphon-custody-kill \
+ && chown 0:0 /etc/sudoers.d/antiphon-custody \
+ && chmod 0440 /etc/sudoers.d/antiphon-custody \
+ && visudo -c \
  && chmod 0644 /etc/docker/daemon.json /etc/antiphon/ssh_config /etc/antiphon/github_known_hosts /etc/gitconfig \
  && mkdir -p /home/app \
  && chown 1654:1654 /home/app \
@@ -112,6 +124,7 @@ RUN chmod 0755 /usr/local/bin/antiphon-dind-entrypoint.sh \
  && node --version \
  && ssh -V \
  && sudo --version \
+ && setpriv --help | grep -F -- '--no-new-privs' \
  && getent group docker-nested \
  && pwsh -NoProfile -Command "Write-Output ok"
 # The container starts as root so dind-entrypoint.sh can run dockerd; it drops the runner to
