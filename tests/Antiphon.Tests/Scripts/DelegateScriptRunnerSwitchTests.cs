@@ -22,7 +22,13 @@ public sealed class DelegateScriptRunnerSwitchTests
         block.ShouldContain("-Runner requires a Worktree workspace");
         block.ShouldContain("$OnAgent -or -not [string]::IsNullOrWhiteSpace($Agent)");
         block.ShouldContain("continue an existing process");
+        // CARD-0604 Cut B: -SourceLanding on a runner is supported now, but only as a Mutation.
+        // Any other role would reserve an execution the remote lane has no design for.
         block.ShouldContain("SourceLanding");
+        block.ShouldContain("$Role -ne 'Mutation'");
+        block.ShouldContain("-Runner with -SourceLanding requires -Role Mutation");
+        block.Contains("-Runner cannot be combined with -SourceLanding", StringComparison.Ordinal)
+            .ShouldBeFalse("the Cut A blanket refusal is superseded by Cut B");
         // Every refusal is a hard exit before the body is posted.
         System.Text.RegularExpressions.Regex.Matches(block, @"exit 2").Count.ShouldBeGreaterThanOrEqualTo(3);
     }

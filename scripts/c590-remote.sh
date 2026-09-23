@@ -1143,6 +1143,63 @@ EOF
     write_result true '' 0
 }
 
+case_custody_containment() {
+    # CARD-0604 V-28 (cgroup v1 half). The SAME four measurements the Docker Desktop harness runs
+    # on cgroup v2 (CP-14), executed inside the persistent runner on server2, which is kernel 4.15
+    # and therefore the freezer+SIGKILL path. Both versions must pass before the backend is
+    # trusted: the two code paths in the helpers are genuinely different, so measuring one says
+    # nothing about the other.
+    #
+    # Run as uid 1654 through `docker exec -u 1654`, which is exactly how a pty-host reaches the
+    # helpers. Running it as root would measure a mechanism nobody uses.
+    require_lane host
+    local container
+    container="$(runner_container)"
+    if [ -z "$container" ]; then
+        write_result false RunnerNotRunning 2
+    fi
+
+    # The runner must advertise the Linux backend before anything below is worth measuring, and
+    # must never advertise the Windows one.
+    docker exec -u 1654 "$container" curl -fsS http://127.0.0.1:8080/capabilities \
+        > "$CASE_DIR/capabilities.json" 2>&1 || write_result false CapabilitiesUnavailable 2
+    if ! grep -q 'linux-cgroup-v1' "$CASE_DIR/capabilities.json"; then
+        write_result false CustodyNotAdvertised 2
+    fi
+    if grep -q 'windows-job-v1' "$CASE_DIR/capabilities.json"; then
+        write_result false WindowsBackendAdvertisedOnLinux 2
+    fi
+
+    # Root-owned helpers, 0440 sudoers, and a grant of exactly the two commands.
+    docker exec -u 1654 "$container" sh -c \
+        'stat -c %U:%G:%a /usr/local/bin/antiphon-custody-enter /usr/local/bin/antiphon-custody-kill /etc/sudoers.d/antiphon-custody; sudo -n -l' \
+        > "$CASE_DIR/custody-grant.txt" 2>&1 || write_result false CustodyGrantUnavailable 2
+    if ! grep -q 'root:root:755' "$CASE_DIR/custody-grant.txt" || ! grep -q 'root:root:440' "$CASE_DIR/custody-grant.txt"; then
+        write_result false CustodyHelpersNotRootOwned 2
+    fi
+
+    docker exec -u 1654 "$container" /usr/local/bin/antiphon-custody-containment-probe \
+        > "$CASE_DIR/containment.txt" 2>&1 || write_result false ContainmentFailed 2
+    if ! grep -q 'containment=ok' "$CASE_DIR/containment.txt"; then
+        write_result false ContainmentFailed 2
+    fi
+    if ! grep -q 'cgroup_version=v1' "$CASE_DIR/containment.txt"; then
+        # server2 is kernel 4.15. A v2 reading here means this case measured the wrong half and
+        # the v1 freezer path is still unmeasured.
+        write_result false ExpectedCgroupV1 2
+    fi
+
+    # Nothing is left behind: a surviving cgroup fails the next execution's "exists and is empty"
+    # precondition for a reason nobody would be able to see.
+    docker exec -u 1654 "$container" sh -c \
+        'ls -1 /sys/fs/cgroup/pids/antiphon-custody 2>/dev/null | wc -l; ls -1 /sys/fs/cgroup/freezer/antiphon-custody 2>/dev/null | wc -l' \
+        > "$CASE_DIR/custody-residue.txt" 2>&1 || true
+    if grep -qvE '^0$' "$CASE_DIR/custody-residue.txt"; then
+        write_result false CustodyResidue 2
+    fi
+    write_result true '' 0
+}
+
 case_nested_residue() {
     # V-20: after a run, nothing of c604<run> survives on the nested daemon, and nothing of it
     # ever appeared on the HOST daemon. Host lane, because only it can see the host daemon.
@@ -1317,6 +1374,7 @@ case "$CASE" in
     test-context-engine) context_probe "$CHECKOUT/docker/tests/Dockerfile.dockerignore" test-probe tests/Shared/TestClassificationMetadata.cs ;;
     server2-independent-handoff) case_handoff ;;
     deploy-parent) case_deploy_parent ;;
+    custody-containment) case_custody_containment ;;
     nested-residue) case_nested_residue ;;
     persistent-restart) case_persistent_restart ;;
     git-credential-smoke) case_git_smoke ;;

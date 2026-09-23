@@ -27,3 +27,4 @@ docker-compose.server2-runner.yml text eol=lf
 docker/session-runner-grok/antiphon-custody-enter.sh text eol=lf
 docker/session-runner-grok/antiphon-custody-kill.sh text eol=lf
 docker/session-runner-grok/sudoers-antiphon-custody text eol=lf
+docker/session-runner-grok/custody-containment-probe.sh text eol=lf

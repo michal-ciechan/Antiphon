@@ -64,6 +64,29 @@ public sealed class RemoteScriptContractTests
             .ShouldBeFalse("the no-custody assertion is superseded by Cut B");
     }
 
+    // CARD-0604 V-28 (cgroup v1 half). The measurement is a case, not a comment: it runs the
+    // same probe the Docker Desktop harness runs on v2, as uid 1654 through docker exec, and
+    // refuses if it reads v2 -- which would mean the freezer path is still unmeasured.
+    [Test]
+    public void Custody_containment_case_measures_the_v1_path_as_the_app_uid()
+    {
+        var block = Block(Remote(), "case_custody_containment");
+
+        block.ShouldContain("docker exec -u 1654");
+        block.ShouldContain("antiphon-custody-containment-probe");
+        block.ShouldContain("containment=ok");
+        block.ShouldContain("cgroup_version=v1");
+        block.ShouldContain("ExpectedCgroupV1");
+        block.ShouldContain("CustodyNotAdvertised");
+        block.ShouldContain("WindowsBackendAdvertisedOnLinux");
+        block.ShouldContain("CustodyHelpersNotRootOwned");
+        block.ShouldContain("CustodyResidue");
+        // Never as root: running the probe as root would measure a mechanism nobody uses.
+        block.Contains("docker exec -u 0", StringComparison.Ordinal).ShouldBeFalse();
+        block.Contains("docker exec \"$container\" /usr/local/bin/antiphon-custody-containment-probe",
+            StringComparison.Ordinal).ShouldBeFalse("the probe must be run as uid 1654");
+    }
+
     // V-29 / R-5 on the live runner: the linux-custody case REQUIRES the Linux backend and a
     // store id, and names the Windows backend only to refuse it.
     [Test]
@@ -217,7 +240,8 @@ public sealed class RemoteScriptContractTests
         text.ShouldContain("detect_lane > /dev/null");
         text.ShouldContain("WrongLane want=$want lane=$LANE");
         // The three cases that change standing state are host-lane, and the nested roster is not.
-        foreach (var name in new[] { "case_deploy_parent", "case_nested_residue", "case_persistent_restart", "case_handoff" })
+        foreach (var name in new[] { "case_deploy_parent", "case_nested_residue", "case_persistent_restart",
+                     "case_handoff", "case_custody_containment" })
             Block(text, name).ShouldContain("require_lane host");
         foreach (var name in new[] { "case_throwaway", "case_deployment_state", "case_git_smoke", "case_dotnet", "case_client_tests_body" })
             Block(text, name).ShouldContain("require_lane nested");
