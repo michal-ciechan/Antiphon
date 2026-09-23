@@ -20,12 +20,12 @@ public sealed class PhoneHomeTaskCreateTests
     public async Task Runner_bound_create_admits_claude_and_refuses_codex()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        using var workspace = new TempWorkspace();
+        var repoRoot = RepoRoot();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var service = new AgentTaskService(
             db,
             new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
-            Options.Create(new DelegationSettings { AllowedRoots = [workspace.Path] }),
+            Options.Create(new DelegationSettings { AllowedRoots = [repoRoot] }),
             new MockEventBus(),
             new RecordingSessionStopper(),
             TimeProvider.System,
@@ -33,10 +33,10 @@ public sealed class PhoneHomeTaskCreateTests
             phoneHome: new PhoneHomeLaunchPolicy(Options.Create(new PhoneHomeRunnerSettings
             {
                 Enabled = true, AllowedRunnerId = "server2", AllowDelegatedTasks = true,
-                HostWorkspaceRoot = workspace.Path, CallbackOrigin = "https://antiphon.desktop.codeperf.net",
+                HostWorkspaceRoot = repoRoot, CallbackOrigin = "https://antiphon.desktop.codeperf.net",
                 SharedSecret = "x",
             })));
-        var caller = new AgentTaskService.Caller(null, null, workspace.Path);
+        var caller = new AgentTaskService.Caller(null, null, repoRoot);
         var request = new CreateAgentTaskRequest("do remote work", Kind: AgentTaskKind.Worker,
             Role: AgentTaskRole.Code, AgentKind: AgentKind.ClaudeCode,
             Workspace: WorkspaceMode.Worktree, RunnerId: "server2");
@@ -52,9 +52,11 @@ public sealed class PhoneHomeTaskCreateTests
         refused.Message.ShouldContain("Grok or Claude Code");
     }
 
-    private sealed class TempWorkspace : IDisposable
+    private static string RepoRoot()
     {
-        public string Path { get; } = Directory.CreateTempSubdirectory("antiphon-remote-create").FullName;
-        public void Dispose() => Directory.Delete(Path, recursive: true);
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Antiphon.sln")))
+            dir = dir.Parent;
+        return dir?.FullName ?? throw new DirectoryNotFoundException("Antiphon.sln was not found.");
     }
 }
