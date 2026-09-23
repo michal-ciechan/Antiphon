@@ -5,7 +5,9 @@ Plan, 2026-09-23, on `feat/card-task-a6db58bc` over the investigation at `d43c1a
 into this plan (the brief asked for a full plan with a `### Checkpoints` table and `next: code`).
 
 Operator decisions recorded on the card (2026-09-23) and honoured throughout: **no
-`ANTHROPIC_API_KEY` fallback** (subscription `claude auth login` only); **one Max subscription serves
+`ANTHROPIC_API_KEY` fallback** (subscription credentials only; amended by the operator's auth
+decision below: a `claude setup-token` token in the runner container's `CLAUDE_CODE_OAUTH_TOKEN` is
+primary and `claude auth login` is the fallback); **one Max subscription serves
 the desktop and server2** (quota contention is watched reactively); **both security findings are in
 scope** (`.dockerignore` gap, missing credential probe).
 
@@ -79,17 +81,27 @@ remote-task defects in "Not done, noted".
 
 ## Decisions
 
-### D-1. Auth is the subscription login, provisioned once inside the persistent container
+### D-1. Auth is a subscription credential: the setup-token is primary, the login the fallback
 
-`docker exec -it -u 1654:1654 -e HOME=/home/app -e CLAUDE_CONFIG_DIR=/state/claude
-antiphon-runner-session-runner-1 claude auth login --claudeai`. The credential lands in
-`/state/claude/.credentials.json` on the `runner-state` volume, full-scope and self-refreshing. It
-is never copied from the desktop, never baked, never an env value, never a Compose secret.
+**Amended 2026-09-23 (operator auth decision, applied in Code Round C).** Primary: a `claude
+setup-token` OAuth token for the operator's Max subscription, held in the vault and injected into
+the deploy environment at deploy time; `docker-compose.server2-runner.yml` passes
+`CLAUDE_CODE_OAUTH_TOKEN` through with no value in the file, so the runner process has it and every
+pty child inherits it (runner → detached PtyHost → child; guarded by
+`RunnerChildClaudeTokenInheritanceTests`). It is never baked, never in an env file, never a Compose
+secret, never copied from the desktop's own login. A **launch** env still cannot carry it: D-4's
+refusal of `CLAUDE_CODE_OAUTH_TOKEN` on a runner-bound Claude launch stands, so the container's own
+environment is the only source. The token's known limits (inference-only scope, no self-refresh, a
+redeploy on expiry) are accepted by the operator.
+
+Fallback: `docker exec -it -u 1654:1654 -e HOME=/home/app -e CLAUDE_CONFIG_DIR=/state/claude
+antiphon-runner-session-runner-1 claude auth login --claudeai`, which lands a full-scope,
+self-refreshing `/state/claude/.credentials.json` on the `runner-state` volume.
 
 Rejected: `ANTHROPIC_API_KEY` (operator decision 1: it moves every server2 turn onto metered Console
-billing); `claude setup-token` / `CLAUDE_CODE_OAUTH_TOKEN` (inference-only scope, no self-refresh,
-an env value to redeploy on expiry); the CCR file-descriptor / token-file sources (host-injected,
-unrefreshable, and the PtyHost launch path passes no inherited fd).
+billing; the probe strips it and counts an API-key sign-in as signed out); the CCR file-descriptor /
+token-file sources (host-injected, unrefreshable, and the PtyHost launch path passes no inherited
+fd).
 
 ### D-2. The image carries the native binary, pinned by version and digest
 
@@ -232,7 +244,10 @@ Code proves, with no login on the store:
   not yet logged in when CP-9 runs — otherwise V-11 is recorded as "provisioned before measurement"
   and G-13 stands as its evidence).
 
-The operator does, once, on server2, and it is a live interactive action Code cannot perform:
+The operator does, once. **Primary (amended D-1):** generate the token with `claude setup-token`
+on the desktop, store it in the vault, and redeploy the runner with `CLAUDE_CODE_OAUTH_TOKEN` in the
+deploy environment (CP-6, which waits on the token and CARD-0631); then step 3 and step 4 below.
+**Fallback**, a live interactive action Code cannot perform, on server2:
 
 1. `docker exec -it -u 1654:1654 -e HOME=/home/app -e CLAUDE_CONFIG_DIR=/state/claude
    antiphon-runner-session-runner-1 claude auth login --claudeai` → open the printed URL in the
@@ -289,7 +304,9 @@ post-land Code follow-up; they are listed here so the table stays the closed lis
 
 ### D-13. Defaults this plan is written under
 
-- D-1: subscription login only; no API-key opt-in on the runner (card decision 1).
+- D-1: subscription credentials only — the `claude setup-token` `CLAUDE_CODE_OAUTH_TOKEN` in the
+  runner container's deploy environment is primary, `claude auth login` the fallback; no API-key
+  opt-in on the runner (card decision 1).
 - D-2: version 2.1.280 and its published digest; `runtime-base` placement.
 - D-3: the literal admitted pair, not a setting; the pinned agent stays Grok-only.
 - D-4: refusal, not stripping, of Anthropic credential names on a runner-bound Claude launch.

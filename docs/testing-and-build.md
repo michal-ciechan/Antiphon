@@ -197,8 +197,10 @@ Bash - MSYS rewrites a bare `/work` argument into `C:/Program Files/Git/work` (C
    `dispatchEligible: true` within ~120 s of the runner reconnecting. A passing `/health` is not
    that confirmation.
 
-Once eligible, `scripts/delegate.ps1 -Runner server2 -Worktree ...` routes an ordinary Grok task
-there. The **desktop** worktree is still created and stays canonical: the branch is pushed to
+Once eligible, `scripts/delegate.ps1 -Runner server2 -Worktree ...` routes an ordinary Grok or
+Claude task there (Claude needs the runner's `CLAUDE_CODE_OAUTH_TOKEN` or the fallback login first;
+see [agent-credentials.md](agent-credentials.md) §5 and `GET
+/api/session-runners/server2/provider-auth/claude`). The **desktop** worktree is still created and stays canonical: the branch is pushed to
 origin, the runner mirrors it at that exact commit, the session works and pushes, and settlement
 fast-forwards the desktop worktree (`--ff-only`; a divergence or a dirty desktop tree is a warning,
 never a reset). Landing, retirement and residue accounting are unchanged. Card-backed starts,

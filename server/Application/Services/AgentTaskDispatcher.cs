@@ -2590,11 +2590,16 @@ public sealed class AgentTaskDispatcher
         if (answer?.LoggedIn != false)
             return false;
 
+        // CARD-0628 D-1 (operator decision): the `claude setup-token` OAuth token in the runner
+        // container's CLAUDE_CODE_OAUTH_TOKEN is primary; an interactive login on the store is the
+        // fallback; an Anthropic API key is never offered.
         var reason = $"Claude Code is not signed in on runner '{claimed.RunnerId}' "
-            + $"(CLAUDE_CONFIG_DIR={_phoneHome.ChildClaudeHome}). On {claimed.RunnerId} run "
+            + $"(CLAUDE_CONFIG_DIR={_phoneHome.ChildClaudeHome}). Provide CLAUDE_CODE_OAUTH_TOKEN "
+            + "(from `claude setup-token`) to the runner container through the deploy environment and redeploy it; "
+            + $"or, as the fallback, on {claimed.RunnerId} run "
             + "`docker exec -it -u 1654:1654 -e HOME=/home/app "
             + $"-e CLAUDE_CONFIG_DIR={_phoneHome.ChildClaudeHome} "
-            + "antiphon-runner-session-runner-1 claude auth login`, then re-dispatch.";
+            + "antiphon-runner-session-runner-1 claude auth login`. ANTHROPIC_API_KEY is never used. Then re-dispatch.";
         var episodeKey = $"claude-home:{claimed.RunnerId}:{_phoneHome.ChildClaudeHome}";
         try
         {

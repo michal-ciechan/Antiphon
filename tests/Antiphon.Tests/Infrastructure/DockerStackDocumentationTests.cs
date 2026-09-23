@@ -28,6 +28,9 @@ public sealed class DockerStackDocumentationTests
         text.ShouldContain("windows-job-v1");
         text.ShouldContain("linux-cgroup-v1");
         text.ShouldContain("not a custody receipt");
+        // CARD-0628 G-17c.
+        text.ShouldContain("Claude Code 2.1.280");
+        text.ShouldContain("1e08503d");
     }
 
     // CARD-0604 S12, R-6 (Cut B). The docs name the second custody backend and what it actually
@@ -134,7 +137,46 @@ public sealed class DockerStackDocumentationTests
         var text = Read("docs/agent-kinds.md");
         text.ShouldContain("runner-bound");
         text.ShouldContain("/usr/local/bin/pwsh");
-        text.ShouldContain("Grok is the only agent the image carries");
+        // CARD-0628 G-17a: the sentence changes with the image, and the old one is gone.
+        text.ShouldContain("Grok and Claude Code are the agents the image carries");
+        text.ShouldContain("Codex is not installed there and stays refused");
+        text.ShouldContain("are Grok or Claude Code (CARD-0628)");
+        text.Contains("Grok is the only agent the image carries", StringComparison.Ordinal)
+            .ShouldBeFalse("the superseded sentence is not left standing");
+        text.ShouldContain("phone_home_env_refused");
+        text.ShouldContain("phone_home_remote_control_refused");
+    }
+
+    // CARD-0628 G-17: the operator's auth decision in names and locations only -- the setup-token
+    // is primary, the interactive login the fallback, an API key never -- and no secret-shaped text.
+    [Test]
+    public void Credentials_doc_names_the_claude_login()
+    {
+        var text = Read("docs/agent-credentials.md");
+        text.ShouldContain("CLAUDE_CODE_OAUTH_TOKEN");
+        text.ShouldContain("claude setup-token");
+        text.ShouldContain("/state/claude");
+        text.ShouldContain("claude auth login");
+        text.ShouldContain("provider_sign_in_required");
+        text.ShouldContain("phone_home_env_refused");
+        text.ShouldContain("`ANTHROPIC_API_KEY` is never a fallback");
+        text.IndexOf("**Primary:** `CLAUDE_CODE_OAUTH_TOKEN`", StringComparison.Ordinal)
+            .ShouldBeInRange(0, text.IndexOf("**Fallback:** interactive login store", StringComparison.Ordinal));
+        text.Contains("sk-ant-", StringComparison.Ordinal).ShouldBeFalse("no Anthropic key or token fragment");
+        System.Text.RegularExpressions.Regex.IsMatch(text, @"\b[0-9a-f]{64}\b")
+            .ShouldBeFalse("the Claude digest lives in the Dockerfile and docker-stack.md, never here");
+    }
+
+    // CARD-0628 G-17b.
+    [Test]
+    public void Ops_http_names_provider_auth()
+    {
+        var text = Read("docs/ops-http.md");
+        text.ShouldContain("/api/session-runners/{runnerId}/provider-auth/{provider}");
+        text.ShouldContain("phone_home_unavailable");
+        text.ShouldContain("phone_home_unsupported_operation");
+        text.ShouldContain("Worktree + Grok or Claude Code");
+        text.Contains("Worktree + Grok only", StringComparison.Ordinal).ShouldBeFalse();
     }
 
     /// <summary>

@@ -226,6 +226,25 @@ Grok's OAuth store on the runner is provisioned once, interactively, inside the 
 never baked (CARD-0575, CARD-0324); a missing or expired store is the existing 409
 `provider_sign_in_required`.
 
+Claude Code on the runner (CARD-0628) signs in with a subscription credential, never an API key.
+Names and locations only:
+
+| Credential | Where it comes from | Where it lives | How the runner sees it |
+|---|---|---|---|
+| **Primary:** `CLAUDE_CODE_OAUTH_TOKEN`, a `claude setup-token` OAuth token for the operator's Max subscription | Generated once on the desktop with `claude setup-token`; stored in the vault | The vault only; injected into the deploy environment at deploy time | `docker-compose.server2-runner.yml` passes `CLAUDE_CODE_OAUTH_TOKEN` through from that environment with no value in the file; the runner process and every pty child inherit it |
+| **Fallback:** interactive login store | `docker exec -it -u 1654:1654 -e HOME=/home/app -e CLAUDE_CONFIG_DIR=/state/claude antiphon-runner-session-runner-1 claude auth login` on server2 | `/state/claude/.credentials.json` on the `runner-state` volume, owner uid 1654 (`init-state.sh` creates `/state/claude`) | `CLAUDE_CONFIG_DIR=/state/claude`, projected onto every runner-bound launch |
+
+The token is never written to the repository, the image, an env file, a card or a log, and it is
+never copied from the desktop's own login. A launch env cannot carry it: the server refuses
+`CLAUDE_CODE_OAUTH_TOKEN` (and `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and the token-file
+variables) on a runner-bound Claude launch with `phone_home_env_refused`, so the only source is the
+container's own environment. `ANTHROPIC_API_KEY` is never a fallback (it would move every server2
+turn onto metered billing): the runner's auth probe strips it and counts an API-key sign-in as
+signed out. The probe (`GET /api/session-runners/{runnerId}/provider-auth/claude`) reports only
+`loggedIn`, `authMethod` and `subscriptionType`. With neither credential present, a runner-bound
+Claude task fails at dispatch with `AuthenticationRequired` before any worktree is cut, and the
+runner itself refuses a Claude launch with 409 `provider_sign_in_required`.
+
 ## 6. Things that have gone wrong here before
 
 - **Setting only `GROK_XAI_API_BASE_URL` and believing the CLI is redirected.** It redirects the

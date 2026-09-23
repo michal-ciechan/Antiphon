@@ -15,13 +15,23 @@ container, registered over an outbound WebSocket. Local Windows sessions keep `S
 See [testing-and-build.md](testing-and-build.md) (CARD-0490).
 
 CARD-0604 widens that lane on the production `server2` runner from one pinned agent to a bounded
-pool: **runner-bound named agents** (`POST /api/agents` with `runnerId`) may be Grok, or **Raw** with
-an image-owned executable from the allow-list (`/bin/sh`, `/bin/bash`, `/usr/local/bin/pwsh`) — the
-runner keeps that list itself and refuses any other path, including a host path that ends in the
-same name. **Runner-bound delegated Worktree tasks** (`delegate.ps1 -Runner server2`) are Grok only.
-Card-backed starts, OnAgent, Shared, ReadOnly, pins, Herdr and custom wrappers stay refused, and
-SourceLanding is refused until CARD-0604 Cut B ships the Linux custody backend. Grok is the only
-agent the image carries; Claude Code and Codex are not installed there.
+pool: **runner-bound named agents** (`POST /api/agents` with `runnerId`) may be Grok, Claude Code, or
+**Raw** with an image-owned executable from the allow-list (`/bin/sh`, `/bin/bash`,
+`/usr/local/bin/pwsh`) — the runner keeps that list itself and refuses any other path, including a
+host path that ends in the same name. **Runner-bound delegated Worktree tasks** (`delegate.ps1
+-Runner server2`) are Grok or Claude Code (CARD-0628). Card-backed starts, OnAgent, Shared,
+ReadOnly, pins, Herdr and custom wrappers stay refused, and SourceLanding is refused until CARD-0604
+Cut B ships the Linux custody backend. Grok and Claude Code are the agents the image carries (Claude
+Code 2.1.280, pinned by SHA-256); Codex is not installed there and stays refused.
+
+A runner-bound Claude launch is projected to the image's `claude` with
+`CLAUDE_CONFIG_DIR=/state/claude`. Its credential is the runner container's own
+`CLAUDE_CODE_OAUTH_TOKEN` (a `claude setup-token` token, inherited by every pty child), with an
+interactive `claude auth login` on `/state/claude` as the fallback; a launch env that names
+`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` or another Anthropic
+credential variable is refused `phone_home_env_refused` — a caller never supplies the credential.
+Remote control is refused for runner-bound Claude (`phone_home_remote_control_refused`). See
+[agent-credentials.md](agent-credentials.md) §5.
 
 ## Source of truth
 
