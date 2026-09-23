@@ -241,6 +241,18 @@ public sealed class DindRunnerContractTests
         lines.All(line => line.Split(' ').Length == 3).ShouldBeTrue("every entry is host, type, key");
     }
 
+    // CARD-0628 G-3a. The interactive-login fallback needs a writable store owned by the app uid
+    // before the runner starts; init-state is the only root step that can chown it.
+    [Test]
+    public void Init_state_creates_the_claude_home()
+    {
+        var text = Read("docker/stack/init-state.sh").Replace("\r\n", "\n");
+        var loop = text[text.IndexOf("for d in \\", StringComparison.Ordinal)..text.IndexOf("\ndo\n", StringComparison.Ordinal)];
+        loop.Split([' ', '\n', '\\'], StringSplitOptions.RemoveEmptyEntries)
+            .ShouldContain("/runner-state/claude", "the mkdir loop names the Claude store");
+        text.ShouldContain("chown -R \"$uid:$gid\" /state /work /runner-state");
+    }
+
     private static bool Refusal(string text, string diagnosis)
     {
         var lines = text.Replace("\r\n", "\n").Split('\n');

@@ -33,6 +33,8 @@ $launchMs = -1
 $keyState = 'unknown'
 $restartState = 'unknown'
 $refusalState = 'unknown'
+$claudeVersion = 'unknown'
+$claudeAuth = 'unknown'
 $containmentState = if ($Containment) { 'unknown' } else { 'skipped' }
 
 function Write-Evidence([string] $name, [string] $text) {
@@ -50,8 +52,8 @@ function Invoke-Docker([string[]] $dockerArgs, [string] $evidenceName) {
 
 function Exit-Harness([int] $code, [string] $reason) {
     if ($reason) { Write-Host "C604 HARNESS NOTE: $reason" }
-    Write-Host ("C604 HARNESS: image={0} nested={1} egress={2} loopback={3} launchMs={4} key={5} restart={6} refusal={7} containment={8}" -f `
-            $Image, $nested, $egress, $loopback, $launchMs, $keyState, $restartState, $refusalState, $containmentState)
+    Write-Host ("C604 HARNESS: image={0} nested={1} egress={2} loopback={3} launchMs={4} key={5} restart={6} refusal={7} containment={8} claude={9} claudeAuth={10}" -f `
+            $Image, $nested, $egress, $loopback, $launchMs, $keyState, $restartState, $refusalState, $containmentState, $claudeVersion, $claudeAuth)
     Write-Host "C604 HARNESS EXIT CODE: $code"
     exit $code
 }
@@ -126,6 +128,8 @@ try {
         '-e', 'SessionRunner__SessionLogPath=/tmp/state/session-runner',
         '-e', 'SessionRunner__PtyHostDir=/tmp/antiphon-pty-hosts',
         '-e', 'Serilog__LogPath=/tmp/state/runner-logs',
+        '-e', 'CLAUDE_CONFIG_DIR=/tmp/state/claude',
+        '-e', 'PhoneHome__ClaudeHome=/tmp/state/claude',
         '-e', 'PhoneHome__Enabled=false',
         '-e', 'SessionRunner__Herdr__Enabled=false',
         '-e', 'TMPDIR=/tmp',
@@ -199,6 +203,18 @@ try {
         Write-Evidence 'post-sessions.txt' ("elapsedMs=$($sw.ElapsedMilliseconds)`n" + $_.Exception.Message)
     }
     $launchMs = [int]$sw.ElapsedMilliseconds
+
+    # --- step 7b: CARD-0628 - the pinned claude runs as the app uid against a fresh store -------
+    # No credential of any kind is passed: the harness proves the binary and the signed-out
+    # verdict only. `docker exec` does not see the entrypoint's exports, so HOME and the store are
+    # named explicitly, exactly as the operator's provisioning commands do.
+    Invoke-Docker @('exec', $containerName, 'sh', '-c', 'mkdir -p /tmp/state/claude && chown 1654:1654 /tmp/state/claude') 'claude-store-create.txt' | Out-Null
+    $claudeEnv = @('-u', '1654:1654', '-e', 'HOME=/home/app', '-e', 'CLAUDE_CONFIG_DIR=/tmp/state/claude', '-e', 'DISABLE_AUTOUPDATER=1')
+    $claudeVer = Invoke-Docker (@('exec') + $claudeEnv + @($containerName, 'claude', '--version')) 'claude-version.txt'
+    $claudeVerMatch = [regex]::Match($claudeVer.Output, '(\d+\.\d+\.\d+)')
+    $claudeVersion = if ($claudeVer.ExitCode -eq 0 -and $claudeVerMatch.Success) { $claudeVerMatch.Groups[1].Value } else { 'no' }
+    $claudeStatus = Invoke-Docker (@('exec') + $claudeEnv + @($containerName, 'claude', 'auth', 'status', '--json')) 'claude-auth-status.txt'
+    $claudeAuth = if ($claudeStatus.ExitCode -eq 1 -and $claudeStatus.Output -match '"loggedIn"\s*:\s*false') { 'logged-out' } else { 'unexpected' }
 
     # --- step 8: the deploy key is materialised for the app uid, and ssh resolves the config --
     $stat = Invoke-Docker @('exec', '-u', '1654:1654', $containerName, 'stat', '-c', '%u %a', '/run/antiphon/deploy-key') 'deploy-key-stat.txt'
@@ -295,6 +311,8 @@ $graded = @{
     key      = $keyState -eq 'ok'
     restart  = $restartState -eq 'ok'
     refusal  = $refusalState -eq 'ok'
+    claude   = $claudeVersion -eq '2.1.280'
+    claudeAuth = $claudeAuth -eq 'logged-out'
 }
 if ($Containment) { $graded['containment'] = $containmentState -eq 'ok' }
 Write-Evidence 'graded.txt' (($graded.GetEnumerator() | Sort-Object Name | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join "`n")
