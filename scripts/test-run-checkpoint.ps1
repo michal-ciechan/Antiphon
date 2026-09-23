@@ -174,6 +174,54 @@ function Test-C585_RosterMiss {
     Assert-C487 -Cond ($mm.Exit -eq 3 -and $mm.Text -match 'ROSTER MISS NotInRoster') -Name 'C585 RosterMiss one bad token in a comma-separated value is still red' -Detail ('exit={0} {1}' -f $mm.Exit, $mm.Text)
 }
 
+function Test-C585_QuotedExpect {
+    # CARD-0615: a roster written -Expect 'A','B' reaches this child as one string that still holds
+    # its literal quote characters, because `pwsh -File` binds every argument as a string. Those
+    # edge quotes are wrapper syntax and must not be matched against executed names; an interior
+    # quote must still count, and a genuinely absent token must still refuse the checkpoint.
+    $dq = [string][char]34
+    $counters = 'executed=3 passed=3 failed=0 skipped=0'
+
+    function Get-C585Misses { param($Result) return @($Result.Lines | Where-Object { $_ -match '^ROSTER MISS ' }) }
+
+    $single = New-C585Case -Name 'quoted-single'
+    $r1 = Invoke-C585Runner -Fx $single -Trx $script:GreenTrx -MinExecuted 3 -Expect @("'C585SampleTests','C585OtherTests'")
+    Assert-C487 -Cond ($r1.Exit -eq 0 -and (Get-C585Misses -Result $r1).Count -eq 0 -and ([string]($r1.Checkpoint | Select-Object -First 1)) -match $counters) `
+        -Name 'C585 QuotedExpect single quotes match' -Detail ('exit={0} {1}' -f $r1.Exit, $r1.Text)
+
+    $double = New-C585Case -Name 'quoted-double'
+    $doubleExpect = ($dq + 'C585SampleTests' + $dq + ',' + $dq + 'C585OtherTests' + $dq)
+    $r2 = Invoke-C585Runner -Fx $double -Trx $script:GreenTrx -MinExecuted 3 -Expect @($doubleExpect)
+    Assert-C487 -Cond ($r2.Exit -eq 0 -and (Get-C585Misses -Result $r2).Count -eq 0 -and ([string]($r2.Checkpoint | Select-Object -First 1)) -match $counters) `
+        -Name 'C585 QuotedExpect double quotes match' -Detail ('expect={0} exit={1} {2}' -f $doubleExpect, $r2.Exit, $r2.Text)
+
+    $mixed = New-C585Case -Name 'quoted-mixed'
+    $mixedExpect = ("  ' C585SampleTests ' , " + $dq + ' C585OtherTests ' + $dq + '  ')
+    $r3 = Invoke-C585Runner -Fx $mixed -Trx $script:GreenTrx -MinExecuted 3 -Expect @($mixedExpect)
+    Assert-C487 -Cond ($r3.Exit -eq 0 -and (Get-C585Misses -Result $r3).Count -eq 0 -and ([string]($r3.Checkpoint | Select-Object -First 1)) -match $counters) `
+        -Name 'C585 QuotedExpect mixed quotes and whitespace match' -Detail ('expect={0} exit={1} {2}' -f $mixedExpect, $r3.Exit, $r3.Text)
+
+    $miss = New-C585Case -Name 'quoted-miss'
+    $missExpect = ("'C585SampleTests'," + $dq + 'NotInRoster' + $dq)
+    $r4 = Invoke-C585Runner -Fx $miss -Trx $script:GreenTrx -MinExecuted 3 -Expect @($missExpect)
+    # Re-wrap: a one-element return unrolls to a bare string, whose [0] would be its first character.
+    $r4Misses = @(Get-C585Misses -Result $r4)
+    Assert-C487 -Cond ($r4.Exit -eq 3 -and $r4Misses.Count -eq 1 -and $r4Misses[0] -eq 'ROSTER MISS NotInRoster' -and ([string]($r4.Checkpoint | Select-Object -First 1)) -match $counters) `
+        -Name 'C585 QuotedExpect missing token stays red' -Detail ('expect={0} exit={1} misses={2} {3}' -f $missExpect, $r4.Exit, ($r4Misses -join ' | '), $r4.Text)
+
+    $interior = New-C585Case -Name 'quoted-interior'
+    $r5 = Invoke-C585Runner -Fx $interior -Trx $script:GreenTrx -MinExecuted 3 -Expect @("'C585Sam'pleTests','C585OtherTests'")
+    $r5Misses = @(Get-C585Misses -Result $r5)
+    Assert-C487 -Cond ($r5.Exit -eq 3 -and $r5Misses.Count -eq 1 -and $r5Misses[0] -eq ("ROSTER MISS C585Sam" + [char]39 + "pleTests") -and ([string]($r5.Checkpoint | Select-Object -First 1)) -match $counters) `
+        -Name 'C585 QuotedExpect interior quote stays significant' -Detail ('exit={0} misses={1} {2}' -f $r5.Exit, ($r5Misses -join ' | '), $r5.Text)
+
+    $empty = New-C585Case -Name 'quoted-empty'
+    $emptyExpect = ("'','C585SampleTests'," + $dq + $dq + ",'C585OtherTests'")
+    $r6 = Invoke-C585Runner -Fx $empty -Trx $script:GreenTrx -MinExecuted 3 -Expect @($emptyExpect)
+    Assert-C487 -Cond ($r6.Exit -eq 0 -and (Get-C585Misses -Result $r6).Count -eq 0 -and ([string]($r6.Checkpoint | Select-Object -First 1)) -match $counters) `
+        -Name 'C585 QuotedExpect empty quoted tokens retain compatibility' -Detail ('expect={0} exit={1} {2}' -f $emptyExpect, $r6.Exit, $r6.Text)
+}
+
 function Test-C585_BadOutputPath {
     $variants = @('bin-x\', 'bin-x/ ', 'x/')
     foreach ($variant in $variants) {
@@ -239,7 +287,7 @@ function Test-C585_AsciiOnly {
     Assert-C487 -Cond ($harnessBytes.Count -eq 0) -Name 'C585 AsciiOnly the harness is ASCII-only' -Detail ([string]$harnessBytes.Count)
 }
 
-$script:C585ExpectedRows = 40
+$script:C585ExpectedRows = 46
 
 if (-not (Test-Path -LiteralPath $script:Runner)) { throw ('missing ' + $script:Runner) }
 

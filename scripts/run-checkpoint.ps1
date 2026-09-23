@@ -190,7 +190,10 @@ if ($executedNames.Count -gt $shown) {
 $rosterMisses = New-Object 'System.Collections.Generic.List[string]'
 # Split on commas too: `pwsh -File` binds every argument as a string, so -Expect A,B arrives as
 # one element there and as two when the script is dot-sourced or called in-process.
-$expectTokens = @(@($Expect) | ForEach-Object { ([string]$_).Split(',') } | ForEach-Object { $_.Trim() })
+# Then strip the edge quote characters a quoted roster carries (CARD-0615): written -Expect 'A','B'
+# those quotes survive that same string binding as literal data, and they are wrapper syntax, never
+# part of the name to match. Only leading/trailing quotes go; an interior quote stays significant.
+$expectTokens = @(@($Expect) | ForEach-Object { ([string]$_).Split(',') } | ForEach-Object { $_.Trim().Trim([char[]]@([char]39, [char]34)).Trim() })
 foreach ($token in $expectTokens) {
     if ([string]::IsNullOrWhiteSpace($token)) { continue }
     $hit = $false

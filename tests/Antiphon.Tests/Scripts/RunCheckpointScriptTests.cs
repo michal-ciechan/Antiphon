@@ -41,6 +41,16 @@ public sealed class RunCheckpointScriptTests
         "C585 RosterMiss a comma-separated -Expect value splits into tokens",
         "C585 RosterMiss one bad token in a comma-separated value is still red");
 
+    /// <summary>CARD-0615 V-1: quoted comma-separated <c>-Expect</c> rosters normalize at their edges only.</summary>
+    [Test]
+    public Task C585_QuotedExpect() => RunCaseAsync("C585_QuotedExpect", 6,
+        "C585 QuotedExpect single quotes match",
+        "C585 QuotedExpect double quotes match",
+        "C585 QuotedExpect mixed quotes and whitespace match",
+        "C585 QuotedExpect missing token stays red",
+        "C585 QuotedExpect interior quote stays significant",
+        "C585 QuotedExpect empty quoted tokens retain compatibility");
+
     [Test]
     public Task C585_BadOutputPath() => RunCaseAsync("C585_BadOutputPath", 10,
         @"C585 BadOutputPath 'bin-x\' exit code 2",
