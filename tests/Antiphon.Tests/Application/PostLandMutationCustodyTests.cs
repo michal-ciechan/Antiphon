@@ -857,6 +857,16 @@ internal sealed class PostLandMutationWorld : IAsyncDisposable
             var path = await EvidencePathAsync(); Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             await File.WriteAllTextAsync(path, JsonSerializer.Serialize(restoration, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         }
+        /// <summary>
+        /// CARD-0604 D-19: the exact restoration bytes a REMOTE runner would return from its own
+        /// evidence root. Written locally too, so a test can compare the two reads.
+        /// </summary>
+        public async Task<byte[]> RestorationBytesAsync(params VerificationOutput[] outputs)
+        {
+            await WriteRestorationAsync(outputs);
+            return await File.ReadAllBytesAsync(await EvidencePathAsync());
+        }
+
         public async Task TerminalAsync(Guid? sessionId = null)
         {
             await using var db = Host.CreateContext();
