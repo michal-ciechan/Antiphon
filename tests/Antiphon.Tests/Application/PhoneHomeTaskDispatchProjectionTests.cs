@@ -48,8 +48,12 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         using var workspace = new TempWorkspace();
         var taskId = await SeedAsync(schema, workspace.Path, host.AllowedRunnerId, kind);
         var sink = new RecordingLaunchSink();
-        var dispatcher = CreateDispatcher(schema, host, sink);
+        var (dispatcher, preparer) = CreateDispatcher(schema, host, sink);
 
+        // CARD-0633 D-12: the first tick commits the claim and hands the push + mirror to the
+        // preparer (HeldForRemotePrep); the launch happens on the tick after the mirror is recorded.
+        await dispatcher.TickAsync(CancellationToken.None);
+        await preparer.WhenIdleAsync();
         await dispatcher.TickAsync(CancellationToken.None);
 
         var launch = sink.Specs.Single();
@@ -93,7 +97,9 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         using var workspace = new TempWorkspace();
         var taskId = await SeedAsync(schema, workspace.Path, host.AllowedRunnerId, AgentKind.ClaudeCode);
         var sink = new RecordingLaunchSink();
-        var dispatcher = CreateDispatcher(schema, host, sink);
+        var (dispatcher, preparer) = CreateDispatcher(schema, host, sink);
+        await dispatcher.TickAsync(CancellationToken.None);
+        await preparer.WhenIdleAsync();
         await dispatcher.TickAsync(CancellationToken.None);
 
         Guid firstSessionId;
@@ -146,8 +152,11 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         var taskId = await SeedAsync(schema, workspace.Path, host.AllowedRunnerId, AgentKind.Grok);
         await SeedSourcedTaskAsync(schema, snapshot.Path);
         var sink = new RecordingLaunchSink();
-        var dispatcher = CreateDispatcher(schema, host, sink);
+        var (dispatcher, preparer) = CreateDispatcher(schema, host, sink);
 
+        // CARD-0633 D-12: the mirror is recorded between ticks; the launch is the second tick.
+        await dispatcher.TickAsync(CancellationToken.None);
+        await preparer.WhenIdleAsync();
         await dispatcher.TickAsync(CancellationToken.None);
 
         var launch = sink.Specs.Single();
@@ -186,8 +195,11 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         var taskId = await SeedAsync(schema, workspace.Path, host.AllowedRunnerId, AgentKind.Grok);
         await BindCardAsync(schema, taskId);
         var sink = new RecordingLaunchSink();
-        var dispatcher = CreateDispatcher(schema, host, sink);
+        var (dispatcher, preparer) = CreateDispatcher(schema, host, sink);
 
+        // CARD-0633 D-12: card-bound delegated tasks still prepare the mirror off the claim, then launch.
+        await dispatcher.TickAsync(CancellationToken.None);
+        await preparer.WhenIdleAsync();
         await dispatcher.TickAsync(CancellationToken.None);
 
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
@@ -219,7 +231,7 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         var taskId = await SeedAsync(schema, workspace.Path, host.AllowedRunnerId, AgentKind.Grok);
         var sink = new RecordingLaunchSink();
         var git = new PushGit();
-        var dispatcher = CreateDispatcher(schema, host, sink, git, allowDelegatedTasks: false);
+        var (dispatcher, _) = CreateDispatcher(schema, host, sink, git, allowDelegatedTasks: false);
 
         await dispatcher.TickAsync(CancellationToken.None);
 
@@ -320,7 +332,7 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         return id;
     }
 
-    private static AgentTaskDispatcher CreateDispatcher(
+    private static (AgentTaskDispatcher Dispatcher, RemoteWorkspacePreparer Preparer) CreateDispatcher(
         IsolatedTestSchema schema, PhoneHomeTestHost host, RecordingLaunchSink sink,
         PushGit? git = null, bool allowDelegatedTasks = true)
     {
@@ -370,11 +382,13 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         services.AddSingleton<ISessionRunnerDirectory>(host.Directory);
         services.AddSingleton<ILandingGit>(git ?? new PushGit());
         services.AddSingleton<RemoteWorkspaceService>();
+        services.AddSingleton<RemoteWorkspacePreparer>();
         services.AddSingleton<IAgentTaskLaunchSink>(sink);
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentTaskDispatcher>();
-        return services.BuildServiceProvider().CreateScope().ServiceProvider
-            .GetRequiredService<AgentTaskDispatcher>();
+        var provider = services.BuildServiceProvider();
+        return (provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>(),
+            provider.GetRequiredService<RemoteWorkspacePreparer>());
     }
 
     private sealed class RecordingLaunchSink : IAgentTaskLaunchSink

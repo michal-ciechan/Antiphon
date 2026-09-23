@@ -669,6 +669,22 @@ public sealed class AgentTaskDispatcher
                 siblingObservation = siblingGuard;
             }
 
+            // CARD-0633 D-5: a runner-bound task holds cheaply BEFORE any claim - a backoff after a
+            // failed preparation, a preparation still in flight, or a runner that cannot take work.
+            // Each is one deduplicated Held trace, never a Warning per tick.
+            if (RemoteHoldFor(task) is { } remoteHold)
+            {
+                heldThisTick.Add((task.Id, remoteHold.Kind));
+                if (await TraceHeldAsync(task, remoteHold.Detail, lastHeld, ct))
+                {
+                    _logger.LogInformation(
+                        "Task {ShortId} held: {Detail}",
+                        DelegationReportFormatter.Short(task.Id), remoteHold.Detail);
+                }
+
+                continue;
+            }
+
             try
             {
                 if (_capacityRecovery is { IsEnabled: true }
@@ -699,6 +715,23 @@ public sealed class AgentTaskDispatcher
                         _logger.LogInformation(
                             "Task {ShortId} held: {Detail}",
                             DelegationReportFormatter.Short(task.Id), leaseDetail);
+                    }
+
+                    continue;
+                }
+
+                if (outcome == DispatchOneResult.HeldForRemotePrep)
+                {
+                    // The claim is committed and the preparer owns the network work; the task
+                    // stays Queued and a later tick launches into the recorded mirror.
+                    var since = _remotePrep!.IsInFlight(task.Id, out var began) ? began : UtcNow();
+                    var prepDetail = DispatchHoldDetails.RemoteMirrorRequested(task.RunnerId!, since);
+                    heldThisTick.Add((task.Id, HoldKind.RemotePrep));
+                    if (await TraceHeldAsync(task, prepDetail, lastHeld, ct))
+                    {
+                        _logger.LogInformation(
+                            "Task {ShortId} held: {Detail}",
+                            DelegationReportFormatter.Short(task.Id), prepDetail);
                     }
 
                     continue;
@@ -812,6 +845,35 @@ public sealed class AgentTaskDispatcher
         return new TickResult(
             queued.Count, dispatched, skippedConcurrency, skippedScope, failures, sweepFailures,
             skippedModelAvailability, skippedRoutingPin, blockedRoutingExhausted, resumedRoutingBlocked, skippedCapacityWait);
+    }
+
+    /// <summary>
+    /// CARD-0633 D-5 gates (a)-(c) for a runner-bound task, in that order. Null means claim as
+    /// usual. Without a runner directory the claim path's "unavailable in this process" warning
+    /// still applies, so this stays silent.
+    /// </summary>
+    private (HoldKind Kind, string Detail)? RemoteHoldFor(AgentTask task)
+    {
+        if (_runners is null || task.RunnerId is not { Length: > 0 } runnerId)
+            return null;
+        if (task.DispatchNotBeforeAt is { } notBefore && notBefore > UtcNow())
+        {
+            return (HoldKind.RemotePrepBackoff,
+                DispatchHoldDetails.RemotePrepBackoff(runnerId, task.RemotePrepFailures, notBefore));
+        }
+
+        if (_remotePrep is not null && _remotePrep.IsInFlight(task.Id, out var since))
+            return (HoldKind.RemotePrep, DispatchHoldDetails.RemoteMirrorRequested(runnerId, since));
+        try
+        {
+            _runners.Resolve(runnerId);
+        }
+        catch (Exception ex) when (ex is ServiceUnavailableException or ConflictException)
+        {
+            return (HoldKind.RunnerUnavailable, DispatchHoldDetails.RunnerUnavailable(runnerId, ex.Message));
+        }
+
+        return null;
     }
 
     private async Task<bool> TraceHeldAsync(
@@ -3865,11 +3927,25 @@ public sealed class AgentTaskDispatcher
         // CARD-0604 D-15. A runner-bound task needs three things before a session exists: the
         // runner must actually be connected, the branch must be on origin, and the runner must
         // hold a mirror of it at that exact commit. Any of those failing leaves the task QUEUED
-        // with a warning - never a silent fall back to a local launch, which would run the work
-        // on the desktop under a task the operator routed elsewhere.
+        // - never a silent fall back to a local launch, which would run the work on the desktop
+        // under a task the operator routed elsewhere.
         string? remoteCwd = null;
         if (claimed.RunnerId is { Length: > 0 } remoteRunner)
         {
+            // CARD-0633 D-5: the push and mirror are network work and never run inside this
+            // transaction (a silent runner held the row lock and the serial tick for the whole
+            // mirror budget, CARD-0629). Commit the claim with the task still Queued - the desktop
+            // worktree is recorded exactly once - and hand the network work to the preparer.
+            if (claimed.RemoteWorktreePath is null && claimed.SourceLandingOperationId is null
+                && _remotePrep is not null && _remoteWorkspace is not null)
+            {
+                claimed.ConcurrencyToken = Guid.NewGuid();
+                await _db.SaveChangesAsync(ct);
+                await transaction.CommitAsync(ct);
+                _remotePrep.TryBegin(claimed.Id);
+                return DispatchOneResult.HeldForRemotePrep;
+            }
+
             var prepared = await PrepareRemoteWorkspaceAsync(claimed, remoteRunner, now, ct);
             if (prepared is null)
             {
@@ -4831,9 +4907,10 @@ public sealed class AgentTaskDispatcher
     }
 
     /// <summary>
-    /// CARD-0604 D-15. Resolves the runner, pushes the desktop worktree's branch to origin, and
-    /// asks the runner for a mirror of it at that exact commit. Returns the runner-side POSIX
-    /// path, or null when the task must stay Queued (the caller rolls the claim back).
+    /// CARD-0604 D-15 / CARD-0633 D-5. Resolves the runner and returns the runner-side POSIX path
+    /// the session runs in: the mirror <see cref="RemoteWorkspacePreparer"/> already recorded, or
+    /// a SourceLanding snapshot. It performs no network work - the branch push and mirror happen
+    /// off the tick. Null when the task must stay Queued (the caller rolls the claim back).
     ///
     /// There is deliberately no local fallback: routing a task to a runner is an explicit choice,
     /// and quietly running it on the desktop instead is exactly the surprise that choice exists to
@@ -4842,7 +4919,8 @@ public sealed class AgentTaskDispatcher
     private async Task<string?> PrepareRemoteWorkspaceAsync(
         AgentTask claimed, string runnerId, DateTime now, CancellationToken ct)
     {
-        if (_remoteWorkspace is null || _runners is null)
+        if (_remoteWorkspace is null || _runners is null
+            || (_remotePrep is null && claimed.SourceLandingOperationId is null && claimed.RemoteWorktreePath is null))
         {
             await RemoteWarnAsync(claimed, now,
                 "Remote workspaces are unavailable in this process; the task stays Queued.", ct);
@@ -4878,26 +4956,13 @@ public sealed class AgentTaskDispatcher
             return snapshot;
         }
 
-        var push = await _remoteWorkspace.PushBranchAsync(claimed, ct);
-        if (!push.Pushed || push.Sha is null)
-        {
-            await RemoteWarnAsync(claimed, now,
-                $"The task branch could not be pushed to origin ({push.Warning}); the task stays Queued.", ct);
-            return null;
-        }
+        if (claimed.RemoteWorktreePath is { Length: > 0 } recorded)
+            return recorded;
 
-        try
-        {
-            var path = await _remoteWorkspace.MirrorAsync(claimed, push.Sha, ct);
-            claimed.RemoteWorktreePath = path;
-            return path;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            await RemoteWarnAsync(claimed, now,
-                $"The runner could not mirror the task branch ({ex.Message}); the task stays Queued.", ct);
-            return null;
-        }
+        // Unreachable while DispatchOneAsync hands unprepared tasks to the preparer first.
+        await RemoteWarnAsync(claimed, now,
+            "The remote workspace has not been prepared yet; the task stays Queued.", ct);
+        return null;
     }
 
     /// <summary>
