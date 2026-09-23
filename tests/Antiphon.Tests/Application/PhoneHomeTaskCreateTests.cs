@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -41,8 +42,9 @@ public sealed class PhoneHomeTaskCreateTests
             Workspace: WorkspaceMode.Worktree, RunnerId: "server2");
 
         var created = await service.CreateAsync(request, caller, CancellationToken.None);
-        created.RunnerId.ShouldBe("server2");
-        created.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+        var stored = await db.AgentTasks.SingleAsync(t => t.Id == created.Id);
+        stored.RunnerId.ShouldBe("server2");
+        stored.AgentKind.ShouldBe(AgentKind.ClaudeCode);
 
         var refused = await Should.ThrowAsync<ValidationException>(() =>
             service.CreateAsync(request with { Goal = "run Codex", AgentKind = AgentKind.Codex },

@@ -90,7 +90,7 @@ public sealed class PhoneHomeDirectoryTests
         var auth = await response.Content.ReadFromJsonAsync<RunnerProviderAuthDto>(PhoneHomeFraming.Json);
         auth.ShouldNotBeNull();
         auth.Provider.ShouldBe("claude");
-        auth.LoggedIn.ShouldBeTrue();
+        auth.LoggedIn.ShouldBe(true);
         auth.SubscriptionType.ShouldBe("max");
         (await peer.WaitForAsync((PhoneHomeOperation)16)).Payload!.Value.GetProperty("provider")
             .GetString().ShouldBe("claude");
