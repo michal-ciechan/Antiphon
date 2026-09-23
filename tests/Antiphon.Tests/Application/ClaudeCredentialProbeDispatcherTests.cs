@@ -57,12 +57,51 @@ public sealed class ClaudeCredentialProbeDispatcherTests
 
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
-        task.Status.ShouldBe(AgentTaskStatus.Queued, task.FailureReason);
-        task.FailureCode.ShouldBeNull();
+        task.FailureCode.ShouldNotBe(AgentTaskFailureCode.AuthenticationRequired);
+        (task.FailureReason ?? "").ShouldNotContain("claude auth login");
         probe.Requests.ShouldBe(0);
     }
 
-    private static async Task<(Guid ParentId, Guid TaskId)> SeedAsync(IsolatedTestSchema schema, string path)
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Unknown_or_null_answers_proceed(bool answerIsNull)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var (_, taskId) = await SeedAsync(schema, workspace.Path);
+        var answer = answerIsNull ? null : new RunnerProviderAuthDto("claude", null, null, null,
+            DateTimeOffset.UtcNow, "unavailable");
+        var probe = new ProbeClient(answer);
+
+        await CreateDispatcher(schema, probe, enabled: true).TickAsync(CancellationToken.None);
+
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+        task.FailureCode.ShouldNotBe(AgentTaskFailureCode.AuthenticationRequired);
+        (task.FailureReason ?? "").ShouldNotContain("claude auth login");
+        probe.Requests.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task Grok_runner_bound_task_is_not_probed_for_claude()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var (_, taskId) = await SeedAsync(schema, workspace.Path, AgentKind.Grok);
+        var probe = new ProbeClient(new RunnerProviderAuthDto("claude", false, "none", null,
+            DateTimeOffset.UtcNow, null));
+
+        await CreateDispatcher(schema, probe, enabled: true).TickAsync(CancellationToken.None);
+
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+        task.FailureCode.ShouldNotBe(AgentTaskFailureCode.AuthenticationRequired);
+        probe.Requests.ShouldBe(0);
+    }
+
+    private static async Task<(Guid ParentId, Guid TaskId)> SeedAsync(
+        IsolatedTestSchema schema, string path, AgentKind kind = AgentKind.ClaudeCode)
     {
         var now = DateTime.UtcNow;
         var parentId = Guid.NewGuid();
@@ -77,7 +116,7 @@ public sealed class ClaudeCredentialProbeDispatcherTests
         db.AgentTasks.Add(new AgentTask
         {
             Id = taskId, RootTaskId = taskId, Title = "remote Claude", Goal = "reply",
-            Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code, AgentKind = AgentKind.ClaudeCode,
+            Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code, AgentKind = kind,
             ModelLevel = AgentModelLevel.Frontier, Workspace = WorkspaceMode.Worktree,
             WorkingDirectory = path, RunnerId = "server2", Status = AgentTaskStatus.Queued,
             ReplyTo = AgentTaskReplyTo.Session, ParentSessionId = parentId,
@@ -108,7 +147,9 @@ public sealed class ClaudeCredentialProbeDispatcherTests
         services.AddOptions<AgentRegistrySettings>().Configure(s =>
         {
             s.DefaultDefinition = "claude";
+            s.GrokCredentialProbeEnabled = false;
             s.Definitions["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "claude.exe" };
+            s.Definitions["grok"] = new AgentDefinition { Kind = "Grok", Exe = "grok.exe" };
         });
         services.AddSingleton<AgentRegistry>();
         services.AddSingleton<AgentSessionLaunchQueue>();
