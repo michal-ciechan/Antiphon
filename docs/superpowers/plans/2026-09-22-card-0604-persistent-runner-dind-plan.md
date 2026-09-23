@@ -1379,6 +1379,71 @@ returned 409 `phone_home_invalid_ticket` for the same upgrade, against 17203's r
 one-line change is the whole gap. **CP-6a must be re-run after that commit lands** and the main
 checkout's client is rebuilt/restarted; only then is V-13 answerable.
 
+#### CP-6a result (2026-09-23, second run) - STILL RED on V-13; new root cause found and fixed
+
+The 17203 proxy gap from the first run is **closed and live**: `8724e763` is in the running server
+(`/api/version` = `19b380d3` = main-checkout HEAD), and a WebSocket upgrade through
+`https://antiphon.desktop.codeperf.net/api/session-runners/server2/connect` now reaches Kestrel
+intact - it is refused on the *ticket*, not with `phone_home_websocket_required`. server2's runner
+completes the handshake: the server holds a live connection with `platform: linux`,
+`runnerStoreId=f519bd08-e53a-47d1-adb1-2ab33475446f` and a per-boot `processBootId`.
+
+V-13 still fails, on a **second, independent defect** underneath the first. `available` decays to
+false within the 90 s lease and `dispatchEligible` is never true, because **the two sides numbered
+the connection epoch independently**. Every frame carries an `Epoch`, and BOTH receive loops
+`continue` past any frame whose epoch does not match their own:
+`PhoneHomeLiveConnection.ReceiveLoopAsync` and `PhoneHomeConnectionService.ReceiveLoopAsync`. The
+server counted accepts since *server* boot (`++_epoch` in `AcceptConnect`); the runner counted
+successful connects since *runner* boot (`Interlocked.Increment(ref _epoch)` after `ConnectAsync`).
+Nothing on the wire carried the server's number to the runner. The counters therefore agreed only
+when each process happened to have made the same number of connections since its own boot, and a
+restart of either one alone desynchronised them for good.
+
+The failure is completely silent. The socket opens and stays open, nothing is logged on either
+side, and:
+- heartbeats are discarded, so `LastHeartbeatUtc` freezes at the accept instant and `available`
+  decays on the lease;
+- the recovery pump's catch-up `List` request is discarded by the runner, so `MarkRecovered` never
+  runs and `dispatchEligible` stays false forever;
+- the runner never errors, so it never reconnects - it simply sits there looking healthy.
+
+Measured live against the production server on 2026-09-23, same code path, only the stamped epoch
+differing (server counter at 9 / 11, a freshly-booted runner stamping 1):
+
+| epoch stamped | available | dispatchEligible | lastHeartbeatUtc |
+|---|---|---|---|
+| `1` (what the deployed runner sends) | true, decaying | **false** | frozen at accept |
+| the server's own epoch | true | **true** | advancing |
+
+Ruled out on the way: Caddy (`reverse_proxy host.docker.internal:17203`, WebSocket-native) and the
+Vite proxy. A scratch echo server behind both `vite preview` (the mode 17203 actually serves in)
+and `vite` dev round-tripped WebSocket *frames*, and the defect reproduces identically straight to
+Kestrel on 17202 with Caddy and Vite out of the path entirely. server2's own `/proc/net/dev`
+confirmed the runner really does send a heartbeat every 15 s and that the desktop TCP-ACKs them -
+they were being dropped in the server's receive loop, not lost in transit.
+
+Fix: `9acac1c4`. The epoch is minted in `Register` (not `AcceptConnect`), carried on the ticket,
+returned to the runner as `PhoneHomeRegistrationResponse.Epoch`, and adopted by the runner in place
+of its local counter. The server stays the single authority and every existing epoch check keeps
+its meaning instead of holding by coincidence.
+
+Why no test caught it: `PhoneHomeTestHost.ConnectPeerAsync` sets `peer.Epoch = live.Epoch`, reading
+the server's epoch through an in-process back door the real runner does not have, so every scripted
+peer agreed with the server by construction. `52bda1e8` adds
+`tests/Antiphon.Tests/Agents/PhoneHomeEpochAgreementTests.cs`, which drives the real
+`PhoneHomeConnectionService` over a real socket against a server whose counter has been advanced
+past a fresh runner's, with a non-vacuity guard (`live.Epoch > 1`) so it cannot pass by coincidence.
+Red/restore/green recorded against the runner's stamping line: RED 1/0/1, GREEN 2/2/0.
+
+**CP-6a stays RED and is NOT answerable from a Code stage.** V-13 needs the fix on BOTH sides, and
+the two sides ship separately:
+1. land `9acac1c4`+`52bda1e8`, `git pull --rebase` in `C:\src\Antiphon`, `restart-apphost.ps1`;
+2. rebuild and redeploy server2's runner image at that sha - `c590-real.ps1 -Case deploy-parent`
+   (CP-5), because the deployed image `antiphon-server2/session-testing:965703e65aa4` still carries
+   the old runner-local counter;
+3. then re-run CP-6a.
+Until step 2, server2 keeps stamping `1` and V-13 cannot go green no matter what the server does.
+
 Rules: TUnit rows are `run-checkpoint.ps1` rows into `.antiphon/c604-checkpoints/`; the others are
 the non-TUnit exact-command form, one case receipt each. CP-5, CP-6a and CP-15 change standing
 state (server2, production) and run once per frozen sha; a red server2 row is fixed and rerun as
