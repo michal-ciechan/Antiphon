@@ -25,8 +25,9 @@ WORKDIR /app
 # Phone-home stays off until compose/launch injects PhoneHome__Enabled and PhoneHome__ServerOrigin.
 # Do not bake a ServerOrigin URL into the image.
 # Do not COPY OAuth credential files or any GROK_HOME or CLAUDE_CONFIG_DIR contents (CARD-0575,
-# CARD-0628). Claude's credential is CLAUDE_CODE_OAUTH_TOKEN injected by the deploy environment,
-# or an interactive login on the runner-state volume -- never a layer of this image.
+# CARD-0628). Claude's credential is CLAUDE_CODE_OAUTH_TOKEN, exported by dind-entrypoint.sh from
+# the deploy's read-only token file mount, or an interactive login on the runner-state volume --
+# never a layer of this image.
 USER root
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates bash git \

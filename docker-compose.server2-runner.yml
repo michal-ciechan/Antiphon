@@ -59,11 +59,6 @@ services:
       # server projects the same value as PhoneHomeRunner:ChildClaudeHome onto every launch.
       CLAUDE_CONFIG_DIR: /state/claude
       PhoneHome__ClaudeHome: /state/claude
-      # CARD-0628 D-1: the `claude setup-token` OAuth token, passed through from the deploy
-      # environment (injected from the vault at deploy time) and inherited by every pty child. No
-      # value here and never an image layer; unset, the runner falls back to an interactive
-      # `claude auth login` under /state/claude. An Anthropic API key is never a fallback.
-      CLAUDE_CODE_OAUTH_TOKEN:
       ANTIPHON_DEPLOY_KEY_SOURCE: /run/secrets/antiphon-deploy-key
       SessionRunner__SessionLogPath: /state/session-runner
       SessionRunner__PtyHostDir: /tmp/antiphon-pty-hosts
@@ -77,6 +72,13 @@ services:
       - work:/work
       - runner-state:/state
       - dind-data:/var/lib/docker
+      # CARD-0628 D-1: the `claude setup-token` OAuth token, as a FILE and never an environment
+      # entry (an environment entry is readable by anyone who can `docker inspect`). deploy-parent
+      # writes it from the vault to the host file (0600, always present, empty when the vault had
+      # nothing) and dind-entrypoint.sh exports it into the runner process alone, which every pty
+      # child inherits. Empty, the runner falls back to an interactive `claude auth login` under
+      # /state/claude. An Anthropic API key is never a fallback.
+      - ${CLAUDE_OAUTH_TOKEN_FILE:?CLAUDE_OAUTH_TOKEN_FILE is required}:/run/antiphon/claude-oauth-token:ro
     secrets:
       - antiphon-deploy-key
       - phone-home

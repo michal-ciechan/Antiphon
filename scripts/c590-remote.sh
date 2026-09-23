@@ -893,6 +893,9 @@ SERVER2_COMPOSE="$CHECKOUT/docker-compose.server2-runner.yml"
 SERVER2_ENV="$SERVER2_ROOT/secrets/stack.env"
 DEPLOY_KEY="$SERVER2_ROOT/secrets/deploy_key"
 PHONE_HOME_SECRET="$SERVER2_ROOT/secrets/phone-home"
+# CARD-0628 D-1: the Claude setup-token file. The desktop bridge streams it from the vault over SSH
+# stdin before this script runs; nothing here ever reads its contents.
+CLAUDE_OAUTH_TOKEN_PATH="$SERVER2_ROOT/secrets/claude_oauth_token"
 
 # The tag the project is DEPLOYED at, which is not this run's sha: a case that only restarts or
 # inspects the standing runner must compose the image that is actually there. Deriving it from $SHA
@@ -915,6 +918,7 @@ compose_host() {
     sha12="$(deployed_sha12)"
     ANTIPHON_DEPLOY_KEY_FILE="$DEPLOY_KEY" \
     PHONE_HOME_SECRET_FILE="$PHONE_HOME_SECRET" \
+    CLAUDE_OAUTH_TOKEN_FILE="$CLAUDE_OAUTH_TOKEN_PATH" \
     PHONE_HOME_SERVER_ORIGIN="${C604_SERVER_ORIGIN:?}" \
     SOURCE_SHA12="$sha12" \
     SOURCE_REVISION="$SHA" \
@@ -1000,6 +1004,23 @@ case_deploy_parent() {
     stat -c '%a' "$PHONE_HOME_SECRET" > "$CASE_DIR/phone-home-mode.txt"
     printf 'true\n' > "$CASE_DIR/deploy-key-present.txt"
     printf 'true\n' > "$CASE_DIR/phone-home-secret-present.txt"
+    # CARD-0628 D-1: the token file must EXIST before compose, or the bind mount would create a
+    # directory in its place. Absent from the vault is not a failure: the file stays empty, the
+    # deploy warns and the runner reports claudeAuth=logged-out. Only its presence is recorded.
+    if [ -d "$CLAUDE_OAUTH_TOKEN_PATH" ]; then
+        write_result false ClaudeOAuthTokenPathIsDirectory 2
+    fi
+    if [ ! -e "$CLAUDE_OAUTH_TOKEN_PATH" ]; then
+        : > "$CLAUDE_OAUTH_TOKEN_PATH"
+    fi
+    chmod 0600 "$CLAUDE_OAUTH_TOKEN_PATH"
+    if [ -s "$CLAUDE_OAUTH_TOKEN_PATH" ]; then
+        printf 'true\n' > "$CASE_DIR/claude-oauth-token-present.txt"
+    else
+        printf 'false\n' > "$CASE_DIR/claude-oauth-token-present.txt"
+        printf 'WARN ClaudeOAuthTokenAbsent: the runner will report claudeAuth=logged-out\n' \
+            | tee -a "$CASE_DIR/command.log" >&2
+    fi
 
     retire_c590_leftovers
 
@@ -1010,6 +1031,7 @@ SOURCE_SHA12=${SHA:0:12}
 PHONE_HOME_SERVER_ORIGIN=${C604_SERVER_ORIGIN:?}
 ANTIPHON_DEPLOY_KEY_FILE=$DEPLOY_KEY
 PHONE_HOME_SECRET_FILE=$PHONE_HOME_SECRET
+CLAUDE_OAUTH_TOKEN_FILE=$CLAUDE_OAUTH_TOKEN_PATH
 EOF
 
     docker build -f "$CHECKOUT/docker/session-runner-grok/Dockerfile" --target session-testing \
