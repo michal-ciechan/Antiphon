@@ -199,6 +199,12 @@ public sealed class PhoneHomeCommandDispatcher
         {
             return Error(request, PhoneHomeProblemTypes.UnsupportedTarget, ex.Message, 400);
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // CARD-0631 D-2: any other handler fault (a git start failure, IO, JSON) still answers
+            // this request. Cancellation stays cancellation; the receive pump decides what it means.
+            return PhoneHomeErrorFrames.Internal(request, ex, _settings.Limits.MaxMessageUtf8Bytes);
+        }
     }
 
     private async Task<PhoneHomeFrame> LaunchAsync(PhoneHomeFrame request, CancellationToken ct)
