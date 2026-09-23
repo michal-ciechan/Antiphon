@@ -243,6 +243,24 @@ public sealed class RemoteCompletionSpillTests
                 .SetProperty(x => x.RunnerCwd, runnerCwd));
 
     /// <summary>
+    /// The settlement snapshot every profiled Completion obligation carries, in the shape
+    /// <c>AgentTaskReplyService</c> writes it: a Final profile-v1 session reply whose raw result is
+    /// the logical note. Only its PRESENCE is load-bearing here — the committedWire branch replays
+    /// the frozen delivery and never re-renders from the snapshot — but a row without one is a
+    /// different kind of note entirely and the flush's query skips it.
+    /// </summary>
+    private static string SnapshotJson(Guid taskId, Guid settlementEventId, Guid sessionId, string raw) =>
+        System.Text.Json.JsonSerializer.Serialize(
+            new TaskCompletionNotification.Snapshot(
+                TaskCompletionNotification.SnapshotVersion, taskId, taskId, settlementEventId, null,
+                sessionId, AgentTaskStatus.Succeeded, raw, TaskCompletionNotification.Sha256(raw),
+                TaskCompletionNotification.Sha256(raw), 1, VerificationRound.Final,
+                VerificationScope.Full, null, null, null, false, null, null,
+                "Delegate report", raw, null, null, null, null, Path.GetTempPath(), null,
+                false, OutputDistillerMode.Shadow, null, null),
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+
+    /// <summary>
     /// One queued row plus one TaskCompletion notification per logical note, with the rendering
     /// already frozen (unless <paramref name="freeze"/> is false) exactly as a first typed attempt
     /// would have committed it.
@@ -282,7 +300,11 @@ public sealed class RemoteCompletionSpillTests
                 ParentSessionId = sessionId, Body = logical,
                 ContentDigest = TaskCompletionNotification.Sha256(logical),
                 CreatedAt = now, NextAttemptAt = now, State = LandNotificationState.AwaitingReceipt,
-                CompletionSnapshotJson = null,
+                // A profiled Completion obligation ALWAYS carries its settlement snapshot, and the
+                // flush's own query is `Kind == TaskCompletion && CompletionSnapshotJson != null`
+                // (TaskCompletionNotification.IsProfiled). A snapshot-less row is CARD-0527's
+                // legacy note, which never reaches the committedWire branch at all.
+                CompletionSnapshotJson = SnapshotJson(taskId, settlement.Id, sessionId, logical),
             };
             db.AgentTaskLandNotifications.Add(notification);
             completions.Add(notification);
