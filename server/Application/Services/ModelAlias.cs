@@ -146,8 +146,11 @@ public static class ModelAlias
     private static bool IsFable(string folded) =>
         folded is "fable" or "fable 5" or "claude fable" or "claude fable 5";
 
+    // "opus 5 5" / "claude opus 5 5" are what Fold() makes of an "Opus 5.5" usage-limit hold
+    // line (and of "claude-opus-5-5"); without them the CARD-0022/0309 hold path had no alias.
     private static bool IsOpus(string folded) =>
-        folded is "opus" or "opus 5" or "claude opus" or "claude opus 5";
+        folded is "opus" or "opus 5" or "opus 5 5"
+            or "claude opus" or "claude opus 5" or "claude opus 5 5";
 
     private static bool IsSonnet(string folded) =>
         folded is "sonnet" or "sonnet 5" or "claude sonnet" or "claude sonnet 5";
