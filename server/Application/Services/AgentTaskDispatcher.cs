@@ -2591,7 +2591,7 @@ public sealed class AgentTaskDispatcher
             return false;
 
         var reason = $"Claude Code is not signed in on runner '{claimed.RunnerId}' "
-            + $"(CLAUDE_CONFIG_DIR={_phoneHome.ChildClaudeHome}). On server2 run "
+            + $"(CLAUDE_CONFIG_DIR={_phoneHome.ChildClaudeHome}). On {claimed.RunnerId} run "
             + "`docker exec -it -u 1654:1654 -e HOME=/home/app "
             + $"-e CLAUDE_CONFIG_DIR={_phoneHome.ChildClaudeHome} "
             + "antiphon-runner-session-runner-1 claude auth login`, then re-dispatch.";

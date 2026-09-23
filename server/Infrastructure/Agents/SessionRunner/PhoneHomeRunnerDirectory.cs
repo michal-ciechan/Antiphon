@@ -73,6 +73,8 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
     public async Task<RunnerProviderAuthDto?> RequestProviderAuthAsync(
         string runnerId, string provider, CancellationToken ct)
     {
+        if (!_settings.Enabled || !string.Equals(runnerId, _settings.AllowedRunnerId, StringComparison.Ordinal))
+            throw new ConflictException("Phone-home runner is unavailable.", PhoneHomeProblemTypes.Unavailable);
         try
         {
             return await Resolve(runnerId).GetProviderAuthAsync(provider, ct);
