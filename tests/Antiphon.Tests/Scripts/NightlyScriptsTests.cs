@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.RegularExpressions;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -59,6 +60,31 @@ public sealed class NightlyScriptsTests
         var text = File.ReadAllText(path, Encoding.UTF8);
         text.ShouldContain(@"C:\Antiphon\nightly\checkout");
         text.ShouldContain("origin/master");
+    }
+
+    /// <summary>
+    /// CARD-0616 — the offline run harness must give every fixture a private coordination
+    /// root. Without one the run core falls back to the machine-global
+    /// <c>C:\Antiphon\verification\native-run.lock</c>, so ~91 harness rows contend with a
+    /// real nightly or RC run (and with each other) over a shared lock they do not own.
+    /// </summary>
+    [Test]
+    public void Offline_run_harness_gives_every_fixture_a_private_coordination_root()
+    {
+        var path = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "test-nightly-run.ps1");
+        var text = File.ReadAllText(path, Encoding.UTF8);
+
+        // The fixture owns a coordination root under its own result root.
+        text.ShouldContain("Coordination = (Join-Path $root 'coord')");
+        // In-process runs receive it.
+        text.ShouldContain("CoordinationRoot = $Fx.Coordination");
+        // It is never the machine-global verification root.
+        text.ShouldNotContain(@"C:\Antiphon\verification");
+
+        // Every out-of-process nightly-run.ps1 launch passes one too.
+        var launches = Regex.Matches(text, @"'-File',\s*\$runPs1").Count;
+        launches.ShouldBeGreaterThan(0);
+        Regex.Matches(text, @"'-CoordinationRoot'").Count.ShouldBe(launches);
     }
 
     [Test]

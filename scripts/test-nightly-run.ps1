@@ -26,7 +26,14 @@ function New-RunFx {
     $trace = Join-Path $root 'trace.log'
     $seams = Join-Path $root 'seams.ps1'
     Write-C487Seams -Path $seams -TracePath $trace
-    return [pscustomobject]@{ Root = $root; State = $state; Clone = $clone; Trace = $trace; Seams = $seams }
+    # CARD-0616: every fixture owns a private coordination root, so the shared native-run
+    # lock the run core takes is this fixture's own file and never the machine-global
+    # verification lock a real nightly or RC run holds. Matches New-C599RunFx in
+    # test-release-gate.ps1.
+    return [pscustomobject]@{
+        Root = $root; State = $state; Clone = $clone; Trace = $trace; Seams = $seams
+        Coordination = (Join-Path $root 'coord')
+    }
 }
 
 function Invoke-FxRun {
@@ -39,6 +46,7 @@ function Invoke-FxRun {
         NoReport = $true
         Trigger = 'scheduled'
         Ref = 'master'
+        CoordinationRoot = $Fx.Coordination
         PassThru = $true
     }
     if ($Extra) { foreach ($k in $Extra.Keys) { $args[$k] = $Extra[$k] } }
@@ -117,9 +125,9 @@ function Test-C487_G006 {
     $fx = New-RunFx
     $barrier = Join-Path $fx.Root 'release.barrier'
     Write-C487Seams -Path $fx.Seams -TracePath $fx.Trace -WaitGitSubcommand 'fetch' -WaitFile $barrier
-    $a = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile','-NonInteractive','-File',$runPs1,'-CheckoutRoot',$fx.Clone,'-StateRoot',$fx.State,'-SeamsPath',$fx.Seams,'-NoReport','-LogRoot',(Join-Path $fx.State 'logs')) -PassThru -WindowStyle Hidden
+    $a = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile','-NonInteractive','-File',$runPs1,'-CheckoutRoot',$fx.Clone,'-StateRoot',$fx.State,'-SeamsPath',$fx.Seams,'-NoReport','-LogRoot',(Join-Path $fx.State 'logs'),'-CoordinationRoot',$fx.Coordination) -PassThru -WindowStyle Hidden
     Start-Sleep -Milliseconds 400
-    $b = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile','-NonInteractive','-File',$runPs1,'-CheckoutRoot',$fx.Clone,'-StateRoot',$fx.State,'-SeamsPath',$fx.Seams,'-NoReport','-LogRoot',(Join-Path $fx.State 'logs-b')) -PassThru -WindowStyle Hidden
+    $b = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile','-NonInteractive','-File',$runPs1,'-CheckoutRoot',$fx.Clone,'-StateRoot',$fx.State,'-SeamsPath',$fx.Seams,'-NoReport','-LogRoot',(Join-Path $fx.State 'logs-b'),'-CoordinationRoot',$fx.Coordination) -PassThru -WindowStyle Hidden
     $b.WaitForExit(20000) | Out-Null
     Set-Content -LiteralPath $barrier -Value 'go' -Encoding ASCII
     $a.WaitForExit(20000) | Out-Null
@@ -336,7 +344,8 @@ function Invoke-C545ResultLineRun {
     $checkout = $fx.Clone
     if ($CheckoutRoot) { $checkout = $CheckoutRoot }
     $argList = @('-NoProfile', '-NonInteractive', '-File', $runPs1, '-NoSync', '-CheckoutRoot', $checkout, '-StateRoot', $fx.State,
-        '-LogRoot', (Join-Path $fx.State 'logs'), '-SeamsPath', $fx.Seams, '-Trigger', 'scheduled', '-Ref', 'master', '-RunId', $runId)
+        '-LogRoot', (Join-Path $fx.State 'logs'), '-SeamsPath', $fx.Seams, '-Trigger', 'scheduled', '-Ref', 'master', '-RunId', $runId,
+        '-CoordinationRoot', $fx.Coordination)
     if ($NoReport) { $argList += '-NoReport' }
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = 'pwsh'

@@ -54,12 +54,16 @@ public sealed class ReleaseGateRegistrationTests
         "C599 Concurrency concurrent timezone drift refuses");
 
     [Test]
-    public Task C599_ScheduleProvenance() => RunCaseAsync("C599_ScheduleProvenance", 14,
+    public Task C599_ScheduleProvenance() => RunCaseAsync("C599_ScheduleProvenance", 16,
         "C599 ScheduleProvenance the master wrapper reads WM_SCHEDULE_PATH",
         "C599 ScheduleProvenance the master wrapper defaults to manual",
         "C599 ScheduleProvenance the master wrapper checks its OWN schedule path",
         "C599 ScheduleProvenance the rc wrapper never claims scheduled master credit",
         "C599 ScheduleProvenance the checked-in rc schedule payload is disabled",
+        // CARD-0616: a raw \r escape in the rc definition's description misread the
+        // producer-owned clone path; both prose pins must stay in the roster.
+        "C599 ScheduleProvenance no definition summary or description carries a control character",
+        "C599 ScheduleProvenance the rc description reads the producer-owned clone path intact",
         "C599 ScheduleProvenance a pre-enabled rc payload refuses",
         "C599 ScheduleProvenance a non-mc workspace refuses",
         "C599 ScheduleProvenance an inline token in the profile refuses",

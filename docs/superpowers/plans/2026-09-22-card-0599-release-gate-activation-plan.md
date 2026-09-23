@@ -1232,6 +1232,15 @@ non-TUnit install command and emit the corresponding checkpoint evidence. Each o
 non-TUnit row has one exact command. Table backslash-escaped pipes are Markdown only; actual
 filters use plain pipes. -NoBuild reuse is allowed only from the named CP at this same SHA.
 
+TUnit accepts parenthesised alternation only in the class segment, never in the method
+segment, so CP-7 selects its three methods with a single `C544_CompletionRe*` prefix.
+`--property:OutputPath=bin-c599/` flattens the per-TFM subfolder, so the CP-14 generated
+install script is at `tests/Antiphon.E2E/bin-c599/playwright.ps1`, not under `net9.0/`.
+The CP-8/CP-9/CP-10 -ResultsDirectory values must be out of the repository tree:
+`Test-NightlySharedTree` refuses any path under `C:\src\Antiphon` or
+`C:\Antiphon\worktrees`, so an in-tree `.antiphon/...` results root false-refuses the
+owned-clone cases when the harness runs from a linked worktree (CARD-0616).
+
 | CP | After | Build | Group | Filter | Covers | Expect | Min |
 |---|---|---|---|---|---|---|---|
 | CP-1 | S1-S4 | `tests/Antiphon.Tests -> bin-c599/` | unit | `/*/*/*/*[Category=Unit]` | R-1, R-2 | all Unit, >= 1 executed, 0 failed; expanded roster | 10 |
@@ -1240,14 +1249,14 @@ filters use plain pipes. -NoBuild reuse is allowed only from the named CP at thi
 | CP-4 | S1-S4 | `CP-1` | external-contracts | `/*/*/(ReleaseGateRegistrationTests*)\|(ReleaseGatePublicationTests*)\|(ReleaseGateStatusTests*)/*` | V-5, V-6, V-7 | 14 C599 methods, all internal rows, 0 failed/skipped | 20 |
 | CP-5 | S1-S4 | `CP-1` | nightly-regression | `/*/*/(NightlyScriptsTests*)\|(NightlyVerificationContractTests*)\|(NightlyWatchdogCoreTests*)/*` | R-1 | all listed existing methods and harness rows, 0 failed | 25 |
 | CP-6 | S1-S4 | `CP-1` | interim-boundary | `/*/*/(InterimVerificationReadinessTests*)\|(InterimVerificationPolicyTests*)\|(InterimVerificationLandGuardTests*)\|(InterimVerificationLandGitTests*)\|(VerificationRoundDispatchTests*)\|(ReleaseGateActivationTests*)/*` | R-2 | all existing plus 7 C599 methods and all rows, 0 failed | 20 |
-| CP-7 | S1-S4 | `CP-1` | completion-receipts | `/*/*/VerificationRoundDeliveryTests/(C544_CompletionReceipt)\|(C544_CompletionRecovery)\|(C544_CompletionReceiptWholeWire)` | R-2 | 3 methods; receipt 8, recovery 36, whole-wire 3 internal rows | 18 |
-| CP-8 | S1-S4 | `none (PowerShell harness)` | run-regression | `pwsh -NoProfile -File scripts/test-nightly-run.ps1 -ResultsDirectory .antiphon/c599-cp8` | R-1 | complete declared harness inventory and C599 cases, 0 failed | 3 |
-| CP-9 | S1-S4 | `none (harness owns isolated probe build)` | coverage-regression | `pwsh -NoProfile -File scripts/test-nightly-tests.ps1 -ResultsDirectory .antiphon/c599-cp9` | R-1, V-1, V-4 | complete declared inventory, actual probe UID roster, 0 failed | 5 |
-| CP-10 | S1-S4 | `none (PowerShell harness)` | report-regression | `pwsh -NoProfile -File scripts/test-nightly-report.ps1 -ResultsDirectory .antiphon/c599-cp10` | R-4 | all existing/new lane cases, 0 failed; stubs not receipt evidence | 3 |
+| CP-7 | S1-S4 | `CP-1` | completion-receipts | `/*/*/VerificationRoundDeliveryTests/C544_CompletionRe*` | R-2 | 3 methods; receipt 8, recovery 36, whole-wire 3 internal rows | 18 |
+| CP-8 | S1-S4 | `none (PowerShell harness)` | run-regression | `pwsh -NoProfile -File scripts/test-nightly-run.ps1 -ResultsDirectory C:\Antiphon\checkpoints\c599-cp8` | R-1 | complete declared harness inventory and C599 cases, 0 failed | 3 |
+| CP-9 | S1-S4 | `none (harness owns isolated probe build)` | coverage-regression | `pwsh -NoProfile -File scripts/test-nightly-tests.ps1 -ResultsDirectory C:\Antiphon\checkpoints\c599-cp9` | R-1, V-1, V-4 | complete declared inventory, actual probe UID roster, 0 failed | 5 |
+| CP-10 | S1-S4 | `none (PowerShell harness)` | report-regression | `pwsh -NoProfile -File scripts/test-nightly-report.ps1 -ResultsDirectory C:\Antiphon\checkpoints\c599-cp10` | R-4 | all existing/new lane cases, 0 failed; stubs not receipt evidence | 3 |
 | CP-11 | S1-S4 | `none` | client-install | `npm --prefix client ci` | V-4, R-3 | exit 0 at committed SHA | 3 |
 | CP-12 | S1-S4 | `client/dist only` | client-build | `npm --prefix client run build` | V-4, R-3 | exit 0; run/SHA/bundle digest receipt | 2 |
 | CP-13 | S1-S4 | `none` | client-lint | `npm --prefix client run lint` | V-4, R-3 | exit 0, no lint red waiver | 2 |
-| CP-14 | S1-S4 | `tests/Antiphon.E2E -> bin-c599/` | browser-install | `pwsh -NoProfile -File tests/Antiphon.E2E/bin-c599/net9.0/playwright.ps1 install chromium` | V-4, R-3 | isolated build and generated matching install exit 0 | 5 |
+| CP-14 | S1-S4 | `tests/Antiphon.E2E -> bin-c599/` | browser-install | `pwsh -NoProfile -File tests/Antiphon.E2E/bin-c599/playwright.ps1 install chromium` | V-4, R-3 | isolated build and generated matching install exit 0 | 5 |
 | CP-15 | S1-S4 | `CP-14` | e2e-metadata | `/*/*/(PtyBackendEnvGuardTests*)\|(TestClassificationGuardTests*)/*` | V-1, V-4, R-3 | 2 methods, 2 passed, before SharedApp in a fresh process | 2 |
 | CP-16 | S1-S4 | `CP-14` | browser-smoke | `/*/*/SmokeE2ETests/*` | R-3 | 2 methods, 2 passed, 0 skipped | 8 |
 | CP-17 | S1-S4 | `CP-14` | fixture-isolation | `/*/*/(ReleaseGateIsolationTests*)\|(IsolatedSessionRunnerTeardownTests*)/*` | V-4, R-3 | 3 C599 and 2 teardown methods, all rows, 0 failed/skipped | 12 |

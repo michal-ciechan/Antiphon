@@ -1493,6 +1493,21 @@ function Test-C599_ScheduleProvenance {
     Assert-C487 -Cond (-not [bool]$rcSched.enabled) -Name 'C599 ScheduleProvenance the checked-in rc schedule payload is disabled'
     Assert-C487 -Cond ([string]$rcSched.schedule -eq '0 30 8,16 * * *') -Name 'C599 ScheduleProvenance the rc payload carries the two-slot cron' -Detail ([string]$rcSched.schedule)
 
+    # CARD-0616: a raw JSON escape in a definition's human-facing prose (a Windows path
+    # whose \releases became a carriage return) survives registration and misreads the
+    # producer-owned clone path in the Windmill UI. Every checked-in definition's summary
+    # and description must be free of control characters.
+    $dirtyProse = @()
+    foreach ($def in (Get-ChildItem -LiteralPath (Join-Path $here 'windmill') -Filter '*.json' -File)) {
+        $obj = Get-Content -LiteralPath $def.FullName -Raw | ConvertFrom-Json
+        foreach ($field in @('summary', 'description')) {
+            $val = [string]$obj.$field
+            if ($val -match '[\x00-\x1f]') { $dirtyProse += ('{0}:{1}' -f $def.Name, $field) }
+        }
+    }
+    Assert-C487 -Cond ($dirtyProse.Count -eq 0) -Name 'C599 ScheduleProvenance no definition summary or description carries a control character' -Detail ($dirtyProse -join ',')
+    Assert-C487 -Cond ([string]$rc.description -match 'C:\\Antiphon\\releases\\checkout') -Name 'C599 ScheduleProvenance the rc description reads the producer-owned clone path intact' -Detail ([string]$rc.description)
+
     # A pre-enabled rc payload is refused rather than registered.
     $fx = New-C599WindmillFx
     $defs = Join-Path $fx.Root 'defs'
