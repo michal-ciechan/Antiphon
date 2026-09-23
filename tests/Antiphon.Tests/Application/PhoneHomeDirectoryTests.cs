@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
@@ -6,6 +7,9 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Shouldly;
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
@@ -61,6 +65,35 @@ public sealed class PhoneHomeDirectoryTests
         var refused = Should.Throw<ConflictException>(
             () => Directory(maxCapacity: 8).Register(Registration(capacity: 1) with { RunnerId = "someone-else" }));
         refused.Code.ShouldBe(PhoneHomeProblemTypes.RunnerMismatch);
+    }
+
+    [Test]
+    public async Task Provider_auth_endpoint_routes_to_the_live_runner_and_409s_when_absent()
+    {
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        var path = $"/api/session-runners/{host.AllowedRunnerId}/provider-auth/claude";
+        using (var absent = await host.Http.GetAsync(path))
+            absent.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+        host.Directory.MarkRecovered(live);
+        peer.Reply = request => request.Operation == (PhoneHomeOperation)16
+            ? new PhoneHomeFrame(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId,
+                request.Operation, JsonSerializer.SerializeToElement(
+                    new RunnerProviderAuthDto("claude", true, "claude.ai", "max", DateTimeOffset.UtcNow, null),
+                    PhoneHomeFraming.Json))
+            : null;
+
+        using var response = await host.Http.GetAsync(path);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var auth = await response.Content.ReadFromJsonAsync<RunnerProviderAuthDto>(PhoneHomeFraming.Json);
+        auth.ShouldNotBeNull();
+        auth.Provider.ShouldBe("claude");
+        auth.LoggedIn.ShouldBeTrue();
+        auth.SubscriptionType.ShouldBe("max");
+        (await peer.WaitForAsync((PhoneHomeOperation)16)).Payload!.Value.GetProperty("provider")
+            .GetString().ShouldBe("claude");
     }
 
     private static readonly Guid StoreId = Guid.Parse("11111111-1111-1111-1111-111111111111");

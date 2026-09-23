@@ -95,6 +95,7 @@ public sealed class AgentTaskDispatcher
     // runner-bound task stays Queued with a warning rather than running on the desktop.
     private readonly RemoteWorkspaceService? _remoteWorkspace;
     private readonly ISessionRunnerDirectory? _runners;
+    private readonly IAgentTaskLaunchSink? _taskLaunchSink;
     private readonly WorkspaceUseAdmission? _workspaceUse;
     private readonly CheckCompactionContinuationService? _compaction;
 
@@ -158,8 +159,10 @@ public sealed class AgentTaskDispatcher
         WorkspaceUseAdmission? workspaceUse = null,
         CheckCompactionContinuationService? compaction = null,
         RemoteWorkspaceService? remoteWorkspace = null,
-        ISessionRunnerDirectory? runners = null)
+        ISessionRunnerDirectory? runners = null,
+        IAgentTaskLaunchSink? taskLaunchSink = null)
     {
+        _taskLaunchSink = taskLaunchSink;
         _remoteWorkspace = remoteWorkspace;
         _runners = runners;
         _workspaceUse = workspaceUse;
@@ -3910,7 +3913,10 @@ public sealed class AgentTaskDispatcher
             spec = _phoneHome.Project(spec, agent, remoteCwd);
         GrokLaunchArgs.EnsureWindowsRulesArgv(spec.Args, session.AgentKind, session.SessionBackend,
             spec.Env, $"Session {session.Id}");
-        _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, session.StartedAt, spec, remoteControlName: null, notes: null);
+        if (_taskLaunchSink is not null)
+            _taskLaunchSink.Enqueue(session.Id, agent.Id, session.StartedAt, spec);
+        else
+            _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, session.StartedAt, spec, remoteControlName: null, notes: null);
         await MaybeWarnOrchestratorWorkspaceAsync(claimed, agent, session.Id, ct);
 
         // The brief goes through the message QUEUE, never straight to the pty: that is the only path
@@ -4135,7 +4141,10 @@ public sealed class AgentTaskDispatcher
                 }
 
                 deferRulesBrief = spec.GrokRulesPayload is not null;
-                _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, session.StartedAt, spec, remoteControlName: null, notes: null);
+                if (_taskLaunchSink is not null)
+                    _taskLaunchSink.Enqueue(session.Id, agent.Id, session.StartedAt, spec);
+                else
+                    _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, session.StartedAt, spec, remoteControlName: null, notes: null);
                 await MaybeWarnOrchestratorWorkspaceAsync(task, agent, session.Id, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

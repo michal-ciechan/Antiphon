@@ -1,0 +1,58 @@
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Tests.TestHelpers;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Shouldly;
+using TUnit.Core;
+
+namespace Antiphon.Tests.Application;
+
+[Category("Integration")]
+public sealed class PhoneHomeTaskCreateTests
+{
+    [Test]
+    public async Task Runner_bound_create_admits_claude_and_refuses_codex()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var service = new AgentTaskService(
+            db,
+            new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+            Options.Create(new DelegationSettings { AllowedRoots = [workspace.Path] }),
+            new MockEventBus(),
+            new RecordingSessionStopper(),
+            TimeProvider.System,
+            NullLogger<AgentTaskService>.Instance,
+            phoneHome: new PhoneHomeLaunchPolicy(Options.Create(new PhoneHomeRunnerSettings
+            {
+                Enabled = true, AllowedRunnerId = "server2", AllowDelegatedTasks = true,
+                HostWorkspaceRoot = workspace.Path, CallbackOrigin = "https://antiphon.desktop.codeperf.net",
+                SharedSecret = "x",
+            })));
+        var caller = new AgentTaskService.Caller(null, null, workspace.Path);
+        var request = new CreateAgentTaskRequest("do remote work", Kind: AgentTaskKind.Worker,
+            Role: AgentTaskRole.Code, AgentKind: AgentKind.ClaudeCode,
+            Workspace: WorkspaceMode.Worktree, RunnerId: "server2");
+
+        var created = await service.CreateAsync(request, caller, CancellationToken.None);
+        created.RunnerId.ShouldBe("server2");
+        created.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+
+        var refused = await Should.ThrowAsync<ValidationException>(() =>
+            service.CreateAsync(request with { Goal = "run Codex", AgentKind = AgentKind.Codex },
+                caller, CancellationToken.None));
+        refused.Message.ShouldContain("Grok or Claude Code");
+    }
+
+    private sealed class TempWorkspace : IDisposable
+    {
+        public string Path { get; } = Directory.CreateTempSubdirectory("antiphon-remote-create").FullName;
+        public void Dispose() => Directory.Delete(Path, recursive: true);
+    }
+}
