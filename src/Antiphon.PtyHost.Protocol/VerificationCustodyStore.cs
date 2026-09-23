@@ -208,11 +208,11 @@ public sealed class VerificationCustodyStore
             || host.HostStartTimeUtc == default)
             throw new VerificationCustodyException("verification_custody_identity_mismatch");
         var exited = receipt.Disposition == VerificationCustodyState.Exited
-            && receipt.ObservationMethod == "JobObjectBasicAccountingInformation"
+            && receipt.ObservationMethod == VerificationCustodyBackends.ObservationMethodFor(binding.Backend)
             && receipt.ActiveProcesses == 0 && receipt.RootPid > 0
             && receipt.RootStartTimeUtc is { Kind: DateTimeKind.Utc };
         var neverStarted = receipt.Disposition == VerificationCustodyState.NeverStarted
-            && receipt.ObservationMethod == "sealed-before-native-start-intent"
+            && receipt.ObservationMethod == VerificationCustodyBackends.NeverStartedMethod
             && receipt.ActiveProcesses is null && receipt.RootPid is null && receipt.RootStartTimeUtc is null;
         if (!exited && !neverStarted)
             throw new VerificationCustodyException("verification_custody_invalid_receipt");
@@ -226,7 +226,12 @@ public sealed class VerificationCustodyStore
         return Path.Combine(Root, executionId.ToString("N"), name);
     }
 
-    public void ValidateBinding(VerificationExecutionBinding binding)
+    /// <summary>
+    /// CARD-0604 D-19. Membership is not enough on its own: a runner that accepted any supported
+    /// backend would happily execute a Windows binding it can never honour. When the caller knows
+    /// which backend this store's runner advertises, it passes it and the binding must equal it.
+    /// </summary>
+    public void ValidateBinding(VerificationExecutionBinding binding, string? expectedBackend = null)
     {
         RequireStoreIdentity();
         if (binding.RunnerStoreId != StoreId)
@@ -236,7 +241,8 @@ public sealed class VerificationCustodyStore
             || binding.Source.LandedSha is not { Length: 40 } sha || !sha.All(Uri.IsHexDigit)
             || binding.Generation.SessionId == Guid.Empty || binding.Generation.AcceptedStartedAt.Kind != DateTimeKind.Utc
             || binding.Generation.AcceptedStartedAt == default || binding.Generation.AcceptedStartedAt.Ticks % 10 != 0
-            || binding.CustodyContractVersion != 1 || binding.Backend != "windows-job-v1"
+            || binding.CustodyContractVersion != 1 || !VerificationCustodyBackends.IsSupported(binding.Backend)
+            || expectedBackend is not null && binding.Backend != expectedBackend
             || binding.Creation.CreationId == Guid.Empty || string.IsNullOrWhiteSpace(binding.Creation.Branch))
             throw new VerificationCustodyException("verification_custody_invalid_binding");
         foreach (var path in new[] { binding.Creation.RepositoryPath, binding.Creation.CommonGitDirectory,

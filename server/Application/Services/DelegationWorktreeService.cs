@@ -275,7 +275,7 @@ public sealed class DelegationWorktreeService
         {
             if (_sourceLanding is null) throw new ConflictException("verification_source_admission_unavailable");
             var source = await _sourceLanding.RequireSourceAsync(task, ct);
-            await _sourceLanding.RequireSupportAsync(ct);
+            await _sourceLanding.RequireSupportAsync(task.RunnerId, ct);
             var snapshot = await _worktrees.CreateVerificationAsync(repoPath, identifier, source.VerifiedSourceSha!, lease, ct);
             task.WorktreePath = snapshot.Path;
             task.WorktreeBranch = snapshot.Branch;

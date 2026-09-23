@@ -17,6 +17,7 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
 
     public VerificationExecutionBinding Binding { get; }
     public VerificationHostIdentity Identity { get; }
+    public Guid ContainerId => Identity.ContainerId;
 
     public HostCustodyJournal(VerificationCustodyStore store, VerificationExecutionBinding binding,
         Guid hostInstanceId)
@@ -43,6 +44,10 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
 
     public void RecordTracking(int processId)
     {
+        // Process.StartTime is available on both platforms; on Linux it is derived from
+        // /proc/<pid>/stat's start field against btime, which is exactly the pair D-17 names as
+        // the identity of the tracked root. Reading it here, inside the host that spawned the
+        // pid, is what stops a later pid reuse from looking like the same root.
         using var root = Process.GetProcessById(processId);
         var tracking = new CustodyRoot(2, processId, root.StartTime.ToUniversalTime(), Identity.ContainerId);
         _store.WriteRecord(Binding, "tracking.json", tracking);
@@ -86,7 +91,8 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
                 return new(Binding, VerificationCustodyState.Unknown, _failure, Identity);
             RecordSeal();
             return Persist(new(1, Binding, Identity, 4, _seal!.AtUtc, DateTime.UtcNow,
-                "sealed-before-native-start-intent", null, true, VerificationCustodyState.NeverStarted, null, null));
+                VerificationCustodyBackends.NeverStartedMethod, null, true,
+                VerificationCustodyState.NeverStarted, null, null));
         }
         if (!seal && _seal is null)
             return new(Binding, VerificationCustodyState.Tracking, null, Identity);
@@ -103,8 +109,11 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
                 || _store.ReadRecord<CustodyStamp>(Binding, "native-start-intent.json") is not { Revision: 1 })
                 throw new VerificationCustodyException("verification_custody_corrupt_store");
             var termination = runner.CustodyTermination;
+            // CARD-0604 D-19 / G-30: the method is derived from the binding's backend, so a
+            // Linux producer can never emit a Windows method and vice versa.
             return Persist(new(1, Binding, Identity, 4, _seal.AtUtc, DateTime.UtcNow,
-                "JobObjectBasicAccountingInformation", observation.ActiveProcesses, true,
+                VerificationCustodyBackends.ObservationMethodFor(Binding.Backend),
+                observation.ActiveProcesses, true,
                 VerificationCustodyState.Exited, _root.Pid, _root.StartTimeUtc,
                 termination?.Succeeded, termination?.ErrorCode));
         }

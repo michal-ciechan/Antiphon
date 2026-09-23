@@ -21,11 +21,19 @@ public sealed class VerificationReceiptPolicy
             || host.RunnerStoreId == Guid.Empty || host.HostInstanceId == Guid.Empty || host.ContainerId == Guid.Empty
             || host.HostPid <= 0 || host.HostStartTimeUtc == default || host.HostStartTimeUtc.Kind != DateTimeKind.Utc)
             throw new VerificationCustodyException("verification_custody_identity_mismatch");
+        // CARD-0604 D-19 / G-30. The observation method is derived from the binding's backend,
+        // never accepted as whichever of the two the receipt happens to claim. A cgroup method on
+        // a Windows binding (or the reverse) is a fabricated receipt, which is exactly what
+        // CARD-0598 asked this boundary to make impossible.
+        if (!VerificationCustodyBackends.IsSupported(expected.Backend))
+            throw new VerificationCustodyException("verification_custody_unsupported_backend");
         var exited = receipt.Disposition == VerificationCustodyState.Exited && receipt.ActiveProcesses == 0
-            && receipt.ObservationMethod == "JobObjectBasicAccountingInformation" && receipt.RootPid > 0
+            && receipt.ObservationMethod == VerificationCustodyBackends.ObservationMethodFor(expected.Backend)
+            && receipt.RootPid > 0
             && receipt.RootStartTimeUtc is { Kind: DateTimeKind.Utc };
         var noStart = receipt.Disposition == VerificationCustodyState.NeverStarted && receipt.ActiveProcesses is null
-            && receipt.ObservationMethod == "sealed-before-native-start-intent" && receipt.RootPid is null && receipt.RootStartTimeUtc is null;
+            && receipt.ObservationMethod == VerificationCustodyBackends.NeverStartedMethod
+            && receipt.RootPid is null && receipt.RootStartTimeUtc is null;
         if (!exited && !noStart) throw new VerificationCustodyException("verification_custody_invalid_receipt");
         return receipt;
     }

@@ -70,7 +70,11 @@ public sealed class WorktreeRemovalEvidence(IServiceScopeFactory scopes) : IWork
             {
                 var binding = JsonSerializer.Deserialize<VerificationExecutionBinding>(row.BindingJson)!;
                 if (binding.Source != new VerificationSourceIdentity(task.Id, operationId, task.SourceLandingSha!)
-                    || binding.Creation != creation || binding.CustodyContractVersion != 1 || binding.Backend != "windows-job-v1") return null;
+                    || binding.Creation != creation || binding.CustodyContractVersion != 1
+                    // CARD-0604 D-19: membership, not a Windows literal. Which backend this
+                    // particular execution had to use is settled at reservation against the
+                    // runner that produced it, not re-guessed while reading its restoration.
+                    || !VerificationCustodyBackends.IsSupported(binding.Backend)) return null;
                 new VerificationReceiptPolicy().ValidateImported(row, binding);
             }
             var sessionIds = executions.Select(e => e.SessionId).ToList();

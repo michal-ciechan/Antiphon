@@ -8,9 +8,42 @@ public sealed record VerificationExecutionBinding(
     [property: JsonRequired] VerificationSourceIdentity Source,
     [property: JsonRequired] VerificationSessionGeneration Generation,
     [property: JsonRequired] VerificationCreationCoordinates Creation,
-    [property: JsonRequired] int CustodyContractVersion = 1,
-    [property: JsonRequired] string Backend = "windows-job-v1",
-    [property: JsonRequired] Guid RunnerStoreId = default);
+    // CARD-0604 D-19: no default. A binding that did not say which custody mechanism produced it
+    // is not a binding -- the whole point of the second backend is that "the field was absent"
+    // must never silently mean "Windows job object".
+    [property: JsonRequired] string Backend,
+    [property: JsonRequired] Guid RunnerStoreId,
+    [property: JsonRequired] int CustodyContractVersion = 1);
+
+/// <summary>
+/// CARD-0604 D-19. The closed set of custody mechanisms and the observation method each one can
+/// honestly produce. Before this existed, six call sites pinned the literal "windows-job-v1",
+/// which is exactly the shape that makes a second backend arrive either as a fabricated Windows
+/// receipt or as a flag that skips validation. Membership and equality are different questions
+/// and both are asked: a binding's backend must be one of these AND must equal the backend the
+/// runner that will execute it advertised when the execution was reserved.
+/// </summary>
+public static class VerificationCustodyBackends
+{
+    public const string WindowsJob = "windows-job-v1";
+    public const string LinuxCgroup = "linux-cgroup-v1";
+
+    /// <summary>Windows: the job object's own accounting. Linux: the cgroup's own procs file.</summary>
+    public const string JobObjectAccounting = "JobObjectBasicAccountingInformation";
+    public const string CgroupProcsEmpty = "CgroupProcsEmpty";
+
+    /// <summary>Backend-independent: sealed before any native start intent was recorded.</summary>
+    public const string NeverStartedMethod = "sealed-before-native-start-intent";
+
+    public static bool IsSupported(string? backend) => backend is WindowsJob or LinuxCgroup;
+
+    public static string ObservationMethodFor(string? backend) => backend switch
+    {
+        WindowsJob => JobObjectAccounting,
+        LinuxCgroup => CgroupProcsEmpty,
+        _ => throw new VerificationCustodyException("verification_custody_unsupported_backend"),
+    };
+}
 
 public sealed record VerificationSourceIdentity([property: JsonRequired] Guid TaskId,
     [property: JsonRequired] Guid SourceOperationId, [property: JsonRequired] string LandedSha);

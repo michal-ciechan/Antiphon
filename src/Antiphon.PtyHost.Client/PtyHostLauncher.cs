@@ -47,6 +47,7 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
         int? ringCapChars = null,
         string? ptyBackend = null,
         string? custodyStoreRoot = null,
+        string? custodyBackend = null,
         CancellationToken ct = default)
     {
         var exe = Path.Combine(CurrentShadowDir, HostExeName);
@@ -72,6 +73,13 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
         {
             psi.ArgumentList.Add("--custody-store");
             psi.ArgumentList.Add(Path.GetFullPath(custodyStoreRoot));
+            // CARD-0604 D-17: the runner's own probe result travels with the store root. A host
+            // never decides for itself which mechanism it can perform.
+            if (custodyBackend is not null)
+            {
+                psi.ArgumentList.Add("--custody-backend");
+                psi.ArgumentList.Add(custodyBackend);
+            }
         }
 
         using var intermediary = Process.Start(psi)

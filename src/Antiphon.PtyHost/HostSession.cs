@@ -119,6 +119,12 @@ public sealed class HostSession : IAsyncDisposable
                 if (_options.CustodyStoreRoot is null || launch.RunnerStoreId is not { } storeId)
                     throw new VerificationCustodyException("verification_custody_missing_store");
                 var store = new VerificationCustodyStore(_options.CustodyStoreRoot, storeId, _custodyFiles);
+                // CARD-0604 D-17 / G-37: a host performs exactly the backend it was launched
+                // with. A binding naming any other mechanism is refused here rather than being
+                // executed and sealed with a receipt this host could not honestly produce.
+                if (_options.CustodyBackend is null || binding.Backend != _options.CustodyBackend)
+                    throw new VerificationCustodyException("verification_custody_invalid_binding");
+                store.ValidateBinding(binding, _options.CustodyBackend);
                 if (binding.Generation.SessionId != _options.SessionId || binding.Creation.WorktreePath != launch.Cwd)
                     throw new VerificationCustodyException("verification_custody_identity_mismatch");
                 foreach (var path in new[] { Environment.CurrentDirectory, _options.ManifestDir,
@@ -293,11 +299,19 @@ public sealed class HostSession : IAsyncDisposable
         }
     }
 
+    // CARD-0604 D-17. Windows keeps its exact precondition. Linux advertises custody when the
+    // runner handed this host a probed backend, because on Linux the containment is the cgroup
+    // the shim placed the child in, not the pseudoconsole implementation.
     public HelloAckMessage GetHelloAck(string hostVersion) =>
         new(PtyHostProtocol.Version, hostVersion, _options.SessionId, Status,
-            _options.CustodyStoreRoot is not null
+            AdvertisesCustody ? ["verificationCustodyV1"] : [], _hostInstanceId);
+
+    private bool AdvertisesCustody => _options.CustodyStoreRoot is not null
+        && _options.CustodyBackend is { } backend
+        && (OperatingSystem.IsWindows()
+            ? backend == VerificationCustodyBackends.WindowsJob
                 && PtyBackendPolicy.Resolve(_options.PtyBackend).Backend == PtyBackend.ModernConPty
-                ? ["verificationCustodyV1"] : [], _hostInstanceId);
+            : backend == VerificationCustodyBackends.LinuxCgroup);
 
     public Task<VerificationCustodyStatus> GetCustodyAsync(VerificationExecutionBinding binding,
         CancellationToken ct) => GetCustodyAsync(binding, false, ct);

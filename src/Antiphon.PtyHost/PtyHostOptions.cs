@@ -10,6 +10,15 @@ public sealed record PtyHostOptions
     public string? LogFile { get; init; }
     public string? CustodyStoreRoot { get; init; }
 
+    /// <summary>
+    /// CARD-0604 D-17. Which custody mechanism this host is being asked to perform, carried on
+    /// the command line rather than inferred from the platform. The runner probed for it once at
+    /// startup (Windows: modern ConPTY + job object; Linux: the cgroup helpers), and a host that
+    /// inferred it again could disagree with the binding the server already reserved. Null means
+    /// this host advertises no custody at all.
+    /// </summary>
+    public string? CustodyBackend { get; init; }
+
     /// <summary>Self-destruct if no Launch arrives within this window (runner died mid-start).</summary>
     public TimeSpan LaunchTimeout { get; init; } = TimeSpan.FromSeconds(30);
 
@@ -45,6 +54,7 @@ public sealed record PtyHostOptions
         var lingerTtl = TimeSpan.FromHours(24);
         var ringCap = 1_000_000;
         string? ptyBackend = null;
+        string? custodyBackend = null;
 
         for (var i = 0; i < args.Length - 1; i++)
         {
@@ -62,6 +72,7 @@ public sealed record PtyHostOptions
                     break;
                 case "--ring-cap-chars": ringCap = int.Parse(args[++i]); break;
                 case "--pty-backend": ptyBackend = args[++i]; break;
+                case "--custody-backend": custodyBackend = args[++i]; break;
             }
         }
 
@@ -77,6 +88,7 @@ public sealed record PtyHostOptions
             ManifestDir = manifestDir,
             LogFile = logFile,
             CustodyStoreRoot = custodyStoreRoot,
+            CustodyBackend = custodyBackend,
             LaunchTimeout = launchTimeout,
             LingerTtl = lingerTtl,
             RingCapChars = ringCap,

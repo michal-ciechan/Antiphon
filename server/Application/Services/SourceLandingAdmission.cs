@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>The operation supplies source identity, never authorization or a capacity bucket.</summary>
-public sealed class SourceLandingAdmission(AppDbContext db, ILandingGit git, ISessionRunnerClient runner)
+public sealed class SourceLandingAdmission(AppDbContext db, ILandingGit git, ISessionRunnerDirectory runners)
 {
     public async Task RequireAuthorizedDirectoryAsync(string directory, string parentDirectory,
         IReadOnlyList<string> allowedRoots, CancellationToken ct)
@@ -49,14 +49,21 @@ public sealed class SourceLandingAdmission(AppDbContext db, ILandingGit git, ISe
         return op;
     }
 
-    public async Task<Guid> RequireSupportAsync(CancellationToken ct)
+    /// <summary>
+    /// CARD-0604 D-19 / G-31. Custody support is a property of the runner that will actually
+    /// execute this task, not of whatever runner happens to be local. Asking the local runner on
+    /// behalf of a task bound to server2 is how a Windows answer ends up authorising a Linux
+    /// execution; an unavailable remote runner is the existing phone-home 503, never a silent
+    /// fallback to local.
+    /// </summary>
+    public async Task<VerificationCustodySupport> RequireSupportAsync(string? runnerId, CancellationToken ct)
     {
-        var capabilities = await runner.GetCapabilitiesAsync(ct);
+        var capabilities = await runners.Resolve(runnerId).GetCapabilitiesAsync(ct);
         if (capabilities?.Features?.Contains(RunnerCapabilityFeatures.VerificationCustodyV1) != true
-            || capabilities.VerificationCustodyBackend != "windows-job-v1"
+            || !VerificationCustodyBackends.IsSupported(capabilities.VerificationCustodyBackend)
             || capabilities.RunnerStoreId is not Guid id || id == Guid.Empty)
             throw new ConflictException("The selected runner does not support verification custody.", "verification_custody_unsupported_backend");
-        return id;
+        return new(id, capabilities.VerificationCustodyBackend!);
     }
 
     public async Task RequireUniqueOpenAsync(Guid operationId, CancellationToken ct)
@@ -76,3 +83,6 @@ public sealed class SourceLandingAdmission(AppDbContext db, ILandingGit git, ISe
         Path.TrimEndingDirectorySeparator(left), Path.TrimEndingDirectorySeparator(right),
         OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 }
+
+/// <summary>CARD-0604 D-19: which store and which mechanism the bound runner actually offers.</summary>
+public sealed record VerificationCustodySupport(Guid RunnerStoreId, string Backend);

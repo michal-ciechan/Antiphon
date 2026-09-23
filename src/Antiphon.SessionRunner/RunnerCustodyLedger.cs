@@ -95,7 +95,13 @@ public sealed class RunnerCustodyLedger
     }
 
     /// <returns>False for an exact replay. An accepted intent is never a request to create again.</returns>
-    public bool PrepareStart(RunnerLaunchRequest request, string? ptyBackend)
+    /// <param name="runtimeBackend">
+    /// CARD-0604 D-19 / G-29: the custody mechanism THIS runner advertises, or null when it
+    /// advertises none. The binding must equal it. Membership alone would let a Windows binding
+    /// through on the Linux runner and vice versa -- and the resulting execution could only ever
+    /// end in a fabricated receipt or no receipt at all.
+    /// </param>
+    public bool PrepareStart(RunnerLaunchRequest request, string? ptyBackend, string? runtimeBackend)
     {
         var reservations = Store.ReadReservations().ToArray();
         var sameSession = reservations.Where(b => b.Generation.SessionId == request.SessionId).ToArray();
@@ -105,6 +111,9 @@ public sealed class RunnerCustodyLedger
                 throw new VerificationCustodyException("verification_custody_binding_required");
             return true;
         }
+        // Membership only here. The equality check that G-29 is about lives below, after the
+        // reservation, so that a foreign-backend binding leaves an unsupported.json the server
+        // can resolve instead of an unexplained invalid-binding throw with no row state.
         Store.ValidateBinding(binding);
         if (binding.Generation.SessionId != request.SessionId || binding.Creation.WorktreePath != request.Cwd)
             throw new VerificationCustodyException("verification_custody_identity_mismatch");
@@ -122,8 +131,15 @@ public sealed class RunnerCustodyLedger
                 throw new VerificationCustodyException("verification_custody_session_fenced");
         }
         Store.Reserve(binding);
+        // CARD-0604 D-19. Windows keeps its exact precondition (modern ConPTY, nothing else);
+        // Linux adds the probed cgroup backend. Either way the runtime's advertised backend must
+        // be non-null AND equal the binding's -- and a refusal still writes unsupported.json, so
+        // the reserved row resolves to UnsupportedBackend instead of hanging.
+        var platformOk = OperatingSystem.IsWindows()
+            ? PtyBackendPolicy.Resolve(ptyBackend).Backend == PtyBackend.ModernConPty
+            : runtimeBackend == VerificationCustodyBackends.LinuxCgroup;
         if (request.Backend is not (null or SessionBackends.PtyHost)
-            || !OperatingSystem.IsWindows() || PtyBackendPolicy.Resolve(ptyBackend).Backend != PtyBackend.ModernConPty)
+            || runtimeBackend is null || binding.Backend != runtimeBackend || !platformOk)
         {
             Store.WriteRecord(binding, "unsupported.json",
                 new CustodyFailure("verification_custody_unsupported_backend", DateTime.UtcNow));

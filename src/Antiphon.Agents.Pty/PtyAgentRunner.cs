@@ -32,8 +32,19 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     private volatile bool _custodyInputClosed;
     private Task? _custodyDrainTask;
     private IOException? _custodyReadFailure;
+    private IPtyCustodyContainment? _containment;
+    private PtyTerminationObservation? _linuxTermination;
     internal IPtyCustodyNative? CustodyNative { get; init; }
-    public PtyTerminationObservation? CustodyTermination => (_conn as ModernConPtyConnection)?.LastTermination;
+
+    /// <summary>
+    /// CARD-0604 D-17 test seam: the Linux containment this runner should use for a tracked
+    /// launch. Production leaves it null and builds a <see cref="LinuxCgroupContainment"/> over
+    /// the journal's container id.
+    /// </summary>
+    internal IPtyCustodyContainment? CustodyContainment { get; init; }
+
+    public PtyTerminationObservation? CustodyTermination =>
+        _linuxTermination ?? (_conn as ModernConPtyConnection)?.LastTermination;
 
     public RingBuffer<string> Output { get; } = new(4096);
 
@@ -129,8 +140,22 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         // before CARD-0037, ceilings and all.
         var backend = PtyBackendPolicy.Resolve(backendOverride);
         Backend = backend;
-        if (custody is not null && backend.Backend != PtyBackend.ModernConPty)
+        // CARD-0604 D-17. Windows containment IS the modern-ConPTY spawn job, so the two are
+        // inseparable there and the old precondition stands unchanged. Linux containment is the
+        // root-owned cgroup the shim places the child in, which is independent of the
+        // pseudoconsole -- so on Linux a tracked launch is permitted on the ordinary Porta path,
+        // with the argument vector rewritten through the shim before anything spawns.
+        if (custody is not null && OperatingSystem.IsWindows() && backend.Backend != PtyBackend.ModernConPty)
             throw new PlatformNotSupportedException("verification_custody_unsupported_backend");
+        if (custody is not null && !OperatingSystem.IsWindows())
+        {
+            _containment = CustodyContainment ?? new LinuxCgroupContainment(custody.ContainerId);
+            var placed = _containment.Place(new PtyTrackedLaunch(app, commandLine));
+            options.App = placed.App;
+            options.CommandLine = placed.CommandLine.ToArray();
+            app = placed.App;
+            commandLine = options.CommandLine;
+        }
         _custody = custody;
 
         // CARD-0101: aa1c8f1 corrected the escaping in ModernConPtyConnection only. Porta's own
@@ -160,9 +185,21 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
             options.VerbatimCommandLine = true;
         }
 
-        _conn = backend.Backend == PtyBackend.ModernConPty
-            ? ModernConPtyConnection.Spawn(backend.ConPtyDllPath!, options, custody, CustodyNative, ct)
-            : new PortaPtySession(await PtyProvider.SpawnAsync(options, ct));
+        if (custody is not null && _containment is not null)
+        {
+            // The Windows spawn records these inside its suspended-launch critical section. On
+            // Linux the equivalent boundary is "immediately before the fork that the shim will
+            // place", and the tracked pid is the shim's own pid, which is what it execs into.
+            custody.RecordStartIntent();
+            _conn = new PortaPtySession(await PtyProvider.SpawnAsync(options, ct));
+            custody.RecordTracking(_conn.Pid);
+        }
+        else
+        {
+            _conn = backend.Backend == PtyBackend.ModernConPty
+                ? ModernConPtyConnection.Spawn(backend.ConPtyDllPath!, options, custody, CustodyNative, ct)
+                : new PortaPtySession(await PtyProvider.SpawnAsync(options, ct));
+        }
         void HandleExit(int exitCode)
         {
             if (_custody is not null) _custodyInputClosed = true;
@@ -442,7 +479,7 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         await _writeGate.WaitAsync(ct);
         try
         {
-            if (_custody is null || _conn is not ModernConPtyConnection modern)
+            if (_custody is null || (_conn is not ModernConPtyConnection && _containment is null))
                 throw new PlatformNotSupportedException("verification_custody_unsupported_backend");
             if (!_custodySealed)
             {
@@ -451,6 +488,19 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
                 _custody.RecordSeal();
                 _custodySealed = true;
             }
+            if (_containment is { } containment)
+            {
+                // CARD-0604 D-17. The seal is what terminates on Linux: the cgroup is emptied by
+                // the root-owned helper and the tree's own procs file is then re-read. A tree
+                // that is still populated is Draining, never a fabricated zero.
+                _linuxTermination = containment.Terminate();
+                var population = containment.ReadActive();
+                if (population.Count != 0) return new(population.Count, false);
+                _custodyDrainTask ??= DrainCustodyOutputAsync(null);
+                await _custodyDrainTask.WaitAsync(ct);
+                return new(containment.ReadActive().Count, true);
+            }
+            var modern = (ModernConPtyConnection)_conn!;
             var active = modern.QueryActiveProcesses();
             if (active != 0) return new(active, false);
             // ClosePseudoConsole can wait for its output consumer. Own that native wait as
@@ -462,9 +512,12 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         finally { _writeGate.Release(); }
     }
 
-    private async Task DrainCustodyOutputAsync(ModernConPtyConnection modern)
+    private async Task DrainCustodyOutputAsync(ModernConPtyConnection? modern)
     {
-        await Task.Run(modern.CloseConsoleForDrain);
+        // Windows must close the pseudoconsole to release its output consumer. The Porta lane has
+        // no equivalent handle: the tree is already empty at this point, so the reader ends on
+        // its own and awaiting the read task below is the whole drain.
+        if (modern is not null) await Task.Run(modern.CloseConsoleForDrain);
         if (_readTask is not null) await _readTask;
         // OnData callbacks and audit recording execute on the awaited read task.
         if (_audit is not null)

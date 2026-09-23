@@ -14,5 +14,12 @@
 # ASCII only. Installed 0440 root:root; `visudo -c` runs at image build time.
 
 Defaults:#1654 env_reset
+# The shim must be reached by exec, not by a forked sudo: the pid Porta spawned has to be the
+# pid that ends up inside the cgroup, and it must keep the pty it was given. sudo 1.9.14+ turns
+# use_pty on by default, which would put the tracked child behind a second pty; a PAM session
+# would make sudo fork so it can close that session afterwards. Both are turned off for this one
+# grant so `sudo -n antiphon-custody-enter ...` is a plain exec.
+Defaults:#1654 !use_pty
+Defaults:#1654 !pam_session
 
 #1654 ALL=(root) NOPASSWD: /usr/local/bin/antiphon-custody-enter, /usr/local/bin/antiphon-custody-kill
