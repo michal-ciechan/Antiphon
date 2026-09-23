@@ -101,6 +101,18 @@ public sealed class RemoteScriptContractTests
             StringComparison.Ordinal).ShouldBeFalse("the probe must be run as uid 1654");
     }
 
+    [Test]
+    public void Custody_residue_counts_subdirectories_only()
+    {
+        var block = Block(Remote(), "case_custody_containment");
+        foreach (var controller in new[] { "pids", "freezer" })
+        {
+            var root = "/sys/fs/cgroup/" + controller + "/antiphon-custody";
+            block.ShouldContain("find " + root + " -mindepth 1 -maxdepth 1 -type d");
+            block.ShouldNotContain("ls -1 " + root);
+        }
+    }
+
     // CP-15 dispatches `verify-docker-stack.ps1 -Case custody-containment`, which reaches the
     // remote ONLY if the case is in c590-real.ps1's live roster. Omitted, it falls through to the
     // default arm and reports "RealCasePending" -- a red checkpoint for a routing reason, with

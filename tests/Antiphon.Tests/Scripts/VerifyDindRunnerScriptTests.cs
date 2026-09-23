@@ -102,6 +102,14 @@ public sealed class VerifyDindRunnerScriptTests
         script.Contains("$containmentState = 'unsupported'", StringComparison.Ordinal).ShouldBeFalse();
     }
 
+    [Test]
+    public void Containment_residue_counts_subdirectories_only()
+    {
+        var script = Read("scripts/verify-card0604-dind-runner.ps1");
+        script.ShouldContain("find /sys/fs/cgroup/antiphon-custody -mindepth 1 -maxdepth 1 -type d");
+        script.ShouldNotContain("ls -1 /sys/fs/cgroup/antiphon-custody");
+    }
+
     private static string Read(string relative) =>
         File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, relative.Replace('/', Path.DirectorySeparatorChar)));
 

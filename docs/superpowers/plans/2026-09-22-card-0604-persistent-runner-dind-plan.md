@@ -1088,7 +1088,7 @@ Cut B (V-28 to V-33):
 - R-11 (CARD-0598): generation/identity mismatch is refused at every boundary | ledger, host,
   dispatcher tests | CP-19.
 - R-12 (CARD-0598): the seal is irreversible; a sealed execution cannot relaunch | `Second_seal_is_idempotent`,
-  `Sealed_execution_refuses_relaunch` | CP-17, CP-19.
+  `RunnerCustodyTests.Durable_seal_beats_delayed_launch_and_fences_legacy_and_herdr_requests` | CP-17, CP-22.
 - R-13 (CARD-0598): receipts are exact persisted bytes, imported unchanged with a digest |
   `Receipt_bytes_round_trip_for_both_backends`, V-31 | CP-19, CP-18.
 - R-14 (CARD-0598): drained output and zero descendants are both required for `Exited` |
@@ -1332,7 +1332,7 @@ Cut A:
 | CP-2 | S3-S4 | CP-1 | command-guards | `/*/*/(DockerTestCommandTests*)\|(DockerStackSmokeCommandTests*)\|(RemoteScriptContractTests*)/*` | V-3, R-2, R-4, R-5 | all listed, 0 failed (>= 55 executed) | 8 |
 | CP-2a | S7-S8 | CP-1 | phone-home-guards | `/*/*/(PhoneHomeStandingLaunchTests*)\|(PhoneHomeSessionRoutingTests*)\|(PhoneHomeDirectoryTests*)\|(PhoneHomeTaskRoutingTests*)\|(RemoteWorktreeMirrorTests*)\|(PhoneHomeSpillTests*)\|(PhoneHomeRunnerSettingsValidatorTests*)\|(VerifyPhoneHomeGrokScriptTests*)/*` | V-27 (create refusal), R-2a, G-18..G-21, G-24..G-26 | all listed, 0 failed (>= 30 executed) | 10 |
 | CP-2b | S7-S8 | `tests/Antiphon.SessionRunner.Tests -> bin-c604/` | runner-guards | `/*/*/(PhoneHomeCommandDispatcherTests*)\|(RunnerWorkspaceServiceTests*)\|(PhoneHomeConnectionServiceTests*)/*` | G-22, G-23, G-27, R-2a | all listed, 0 failed (>= 12 executed) | 8 |
-| CP-3 | S5 | CP-1 | harness-contract | `/*/*/VerifyDindRunnerScriptTests/*` | R-3 | 4 executed, 0 failed | 3 |
+| CP-3 | S5 | CP-1 | harness-contract | `/*/*/VerifyDindRunnerScriptTests/*` | R-3, D-1 residue guard | 6 executed, 0 failed | 3 |
 | CP-4 | S1, S2, S5 | Docker Desktop image from HEAD | dind-local | `pwsh -NoProfile -File scripts/verify-card0604-dind-runner.ps1 -Image antiphon-session-testing:c604-<sha12> -Build` | V-4..V-10 | `C604 HARNESS EXIT CODE: 0` | 25 |
 | CP-5 | all A | server2 host daemon: session-testing image at HEAD | server2-deploy | `pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case deploy-parent -Manifest $manifest` | V-11, V-12 | 1 case accepted; inventory, `.pub`, secret presence, status probe in evidence | 30 |
 | CP-6 | all A | CP-5 | server2-testing-payload | `... -Case testing-runner-payload ...` | V-1 (live), R-5 | 1 case accepted | 4 |
@@ -1357,7 +1357,9 @@ Cut B:
 | CP-17 | S10 | CP-15 | server2-linux-custody-shard | `... c590-real.ps1 -Case session-linux-custody` (a Raw session running the `linux-custody` `dotnet-filter` shard) plus `await` | V-30, R-8..R-12 | shard receipt `accepted: true`, all listed methods executed, 0 failed | 30 |
 | CP-18 | all B, landed | production at Cut B L, Grok store provisioned | server2-mutation-roundtrip | `... c590-real.ps1 -Case mutation-roundtrip` (commissions a SourceLanding Mutation with `-Runner server2` against L with the fixture PC set, awaits settlement, runs `-CleanupVerification`) | V-31, V-32, R-13..R-15 | task settled with the fixture battery green; receipt imported `Exited`/`CgroupProcsEmpty`/0; cleanup `residue: null`; `docker info` denied inside | 60 |
 | CP-19 | S10-S11 | `Antiphon.Tests`, `Antiphon.SessionRunner.Tests`, `Antiphon.PtyHost.Tests` -> `bin-c604/` | custody-guards | `/*/*/(SourceLandingAdmissionTests*)\|(VerificationCleanupServiceTests*)\|(RemoteVerificationWorkspaceTests*)\|(VerificationReceiptPolicyTests*)\|(CustodyHelperContractTests*)/*`; `/*/*/(RunnerCustodyLedgerBackendTests*)\|(LinuxCustodyProbeTests*)\|(PhoneHomeCommandDispatcherTests*)\|(RunnerWorkspaceServiceTests*)/*`; `/*/*/CustodyReceiptBackendTests/*` | V-33 (local), R-11, R-12, R-16, G-28..G-40 | all listed, 0 failed (>= 40 executed across the three) | 20 |
-| CP-20 | S12 | CP-19 | docs-and-fence-guards | `/*/*/(DockerStackDocumentationTests*)\|(RemoteScriptContractTests*)/*` | R-6 | all listed, 0 failed | 3 |
+| CP-20 | S12 | CP-19 | docs-and-fence-guards | `/*/*/(DockerStackDocumentationTests*)\|(RemoteScriptContractTests*)/*` | R-6, D-1 residue guard | all listed, 0 failed | 3 |
+| CP-21 | S9 | `tests/Antiphon.Agents.Pty.Tests -> bin-c604/` | containment-seam | `/*/*/LinuxCgroupContainmentTests/*` | V-30 (Windows seam), R-8 | all listed, 0 failed | 4 |
+| CP-22 | S10 | `tests/Antiphon.SessionRunner.Tests -> bin-c604/` | durable-seal | `/*/*/RunnerCustodyTests/Durable_seal_beats_delayed_launch_and_fences_legacy_and_herdr_requests` | R-12 | 1 executed, 0 failed | 8 |
 
 #### CP-6a result (2026-09-23, first run) - RED, V-13 not met
 
@@ -1509,8 +1511,8 @@ state (server2, production) and run once per frozen sha; a red server2 row is fi
 the same row. CP-18 runs only after Cut B is landed and CP-6a re-run at L (the Mutation targets L).
 If a combined class filter does not select on the pinned TUnit, split the row sharing the build.
 Delete every `bin-c604` directory, the harness container and volume, and no server2 resource
-other than the run's `c604<run>` residue, before settling. `Antiphon.Tests` rows here need no
-Postgres.
+other than the run's `c604<run>` residue, before settling. CP-19's
+`VerificationCleanupServiceTests` starts Testcontainers Postgres; Docker must be available.
 
 ### Cost
 
@@ -1550,7 +1552,9 @@ production registration are the least predictable items.
 | CP-18 mutation-roundtrip (post-land) | 60 |
 | CP-19 custody-guards (three builds) | 20 |
 | CP-20 docs guards | 3 |
-| **Cut B V/R** | **203** |
+| CP-21 containment seam | 4 |
+| CP-22 durable seal | 8 |
+| **Cut B V/R** | **215** |
 
 Cut B authoring: S9 150, S10 300, S11 300, S12 60 = 810. `-ExpectAbout 1010`, band (900-1,300).
 

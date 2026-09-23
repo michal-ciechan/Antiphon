@@ -316,8 +316,10 @@ public class LinuxCgroupCustodyTests
         public string Scratch { get; }
         public int RootPid { get; private set; }
 
+        private Guid? TrackedContainerId => Store.ReadRecord<CustodyRoot>(Binding, "tracking.json")?.ContainerId;
+
         public IPtyCustodyContainment Containment => new LinuxCgroupContainment(
-            Store.ReadRecord<CustodyRoot>(Binding, "tracking.json")!.ContainerId);
+            TrackedContainerId ?? throw new InvalidOperationException("The host has not recorded tracking.json."));
 
         public static Task<CustodyWorld> StartAsync()
         {
@@ -380,7 +382,9 @@ public class LinuxCgroupCustodyTests
 
         public Task<IReadOnlyList<int>> ReadTreeAsync()
         {
-            var procs = Path.Combine(CustodyRoot(), Binding.ExecutionId.ToString("D"), "tree", "cgroup.procs");
+            var procs = Path.Combine(CustodyRoot(),
+                (TrackedContainerId ?? throw new InvalidOperationException("The host has not recorded tracking.json.")).ToString("D"),
+                "tree", "cgroup.procs");
             if (!File.Exists(procs)) return Task.FromResult<IReadOnlyList<int>>([]);
             return Task.FromResult<IReadOnlyList<int>>(File.ReadAllLines(procs)
                 .Where(line => line.Length != 0).Select(int.Parse).ToArray());
@@ -418,14 +422,18 @@ public class LinuxCgroupCustodyTests
             // precondition would refuse for a reason nobody could see.
             try
             {
-                using var kill = Process.Start(new ProcessStartInfo(LinuxCgroupContainment.SudoExe)
+                var containerId = TrackedContainerId;
+                if (containerId is not null)
                 {
-                    ArgumentList = { "-n", KillHelper, Binding.ExecutionId.ToString("D") },
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                });
-                kill?.WaitForExit(45_000);
+                    using var kill = Process.Start(new ProcessStartInfo(LinuxCgroupContainment.SudoExe)
+                    {
+                        ArgumentList = { "-n", KillHelper, containerId.Value.ToString("D") },
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                    });
+                    kill?.WaitForExit(45_000);
+                }
             }
             catch
             {

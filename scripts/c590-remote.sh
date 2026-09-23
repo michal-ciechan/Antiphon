@@ -1192,7 +1192,7 @@ case_custody_containment() {
     # Nothing is left behind: a surviving cgroup fails the next execution's "exists and is empty"
     # precondition for a reason nobody would be able to see.
     docker exec -u 1654 "$container" sh -c \
-        'ls -1 /sys/fs/cgroup/pids/antiphon-custody 2>/dev/null | wc -l; ls -1 /sys/fs/cgroup/freezer/antiphon-custody 2>/dev/null | wc -l' \
+        'find /sys/fs/cgroup/pids/antiphon-custody -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l; find /sys/fs/cgroup/freezer/antiphon-custody -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l' \
         > "$CASE_DIR/custody-residue.txt" 2>&1 || true
     if grep -qvE '^0$' "$CASE_DIR/custody-residue.txt"; then
         write_result false CustodyResidue 2

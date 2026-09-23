@@ -276,7 +276,7 @@ try {
             # Step 15: nothing is left behind. A surviving cgroup would make the next execution's
             # "exists and is empty" precondition fail for a reason nobody could see.
             $residue = Invoke-Docker @('exec', '--user', '1654:1654', $containerName, '/bin/sh', '-c',
-                'ls -1 /sys/fs/cgroup/antiphon-custody 2>/dev/null | wc -l') 'containment-residue.txt'
+                'find /sys/fs/cgroup/antiphon-custody -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l') 'containment-residue.txt'
 
             $ownershipOk = $custody.Output -match 'root:root:755' -and $custody.Output -match 'root:root:440'
             $grantOk = $custody.Output -match 'antiphon-custody-enter' -and $custody.Output -match 'antiphon-custody-kill'
