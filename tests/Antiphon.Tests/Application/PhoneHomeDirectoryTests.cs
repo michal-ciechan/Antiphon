@@ -80,7 +80,7 @@ public sealed class PhoneHomeDirectoryTests
         await using var peer = await host.ConnectPeerAsync();
         var live = await host.WaitLiveAsync();
         host.Directory.MarkRecovered(live);
-        peer.Reply = request => request.Operation == (PhoneHomeOperation)16
+        peer.Reply = request => request.Operation == PhoneHomeOperation.ProviderAuth
             ? new PhoneHomeFrame(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId,
                 request.Operation, JsonSerializer.SerializeToElement(
                     new RunnerProviderAuthDto("claude", true, "claude.ai", "max", DateTimeOffset.UtcNow, null),
@@ -94,7 +94,7 @@ public sealed class PhoneHomeDirectoryTests
         auth.Provider.ShouldBe("claude");
         auth.LoggedIn.ShouldBe(true);
         auth.SubscriptionType.ShouldBe("max");
-        (await peer.WaitForAsync((PhoneHomeOperation)16)).Payload!.Value.GetProperty("provider")
+        (await peer.WaitForAsync(PhoneHomeOperation.ProviderAuth)).Payload!.Value.GetProperty("provider")
             .GetString().ShouldBe("claude");
     }
 

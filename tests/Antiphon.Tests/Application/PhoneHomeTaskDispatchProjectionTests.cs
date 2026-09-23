@@ -40,7 +40,7 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         {
             PhoneHomeOperation.WorkspaceMirror => Result(frame,
                 new PhoneHomeWorkspaceMirrorResponse(mirror)),
-            (PhoneHomeOperation)16 => Result(frame,
+            PhoneHomeOperation.ProviderAuth => Result(frame,
                 new RunnerProviderAuthDto("claude", true, "claude.ai", "max", DateTimeOffset.UtcNow, null)),
             _ => null,
         };
