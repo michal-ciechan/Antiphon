@@ -63,6 +63,95 @@ public class CheckCompactionAutomaticRestartTests
         (await again.CheckCompactionRecoveries.SingleAsync()).State.ShouldBe(CheckCompactionRecoveryState.ResumeReserved);
     }
 
+    // ---- CARD-0606 D-3 / V-3: exit proof is proof only for the attempt it answers. Both cases
+    // start from a committed StopRequested attempt, so the only thing under test is what the
+    // coordinator does with the response it gets back. One_stop_is_reconciled_without_a_second_launch
+    // is the matched-attempt, matched-generation positive control for both.
+
+    [Test]
+    public async Task Crossed_stop_attempt_cannot_confirm_exit()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = await SeedConfirmedAsync(schema.ConnectionString);
+        var attempt = await ArmStopRequestedAsync(schema.ConnectionString, world);
+
+        // A success from a PRIOR restart attempt, at this very generation and confirming exit:
+        // everything the old check looked at says yes, and only the attempt says no.
+        var crossed = Responder(world, Guid.NewGuid());
+        await AssertCrossedAsync(schema.ConnectionString, world, crossed, "stop-attempt-mismatch");
+
+        await using var verify = NewDb(schema.ConnectionString);
+        (await verify.CheckCompactionRecoveries.SingleAsync()).AttemptId.ShouldBe(attempt,
+            "the committed attempt is untouched; nothing is retried automatically");
+    }
+
+    [Test]
+    public async Task Crossed_stop_generation_cannot_confirm_exit()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = await SeedConfirmedAsync(schema.ConnectionString);
+        var attempt = await ArmStopRequestedAsync(schema.ConnectionString, world);
+
+        // The attempt matches; the generation does not. The new attempt fence must not conceal
+        // the accepted-generation fence that was already there.
+        var crossed = Responder(world, attempt, world.Accepted.AddMinutes(7));
+        await AssertCrossedAsync(schema.ConnectionString, world, crossed, CompactionStopOutcomes.Exited);
+    }
+
+    /// <summary>
+    /// Commits the attempt the coordinator will ask about, and spends the rolling allowance the
+    /// way BeginStopAsync does, so a refusal below can be shown not to refund it.
+    /// </summary>
+    private static async Task<Guid> ArmStopRequestedAsync(string connectionString, World world)
+    {
+        var attempt = Guid.NewGuid();
+        await using var db = NewDb(connectionString);
+        var episode = await db.CheckCompactionRecoveries.SingleAsync();
+        episode.State = CheckCompactionRecoveryState.StopRequested;
+        episode.AttemptId = attempt;
+        episode.StopRequestedAt = world.Now;
+        episode.Reason = "stop-requested";
+        var supervision = await db.AgentSupervisionStates.SingleAsync(s => s.AgentId == world.AgentId);
+        supervision.LastAutomaticCompactionRestartAt = world.Now;
+        supervision.CompactionRestartReceiptEligible = false;
+        await db.SaveChangesAsync();
+        return attempt;
+    }
+
+    private static FakeSessionRunnerClient Responder(World world, Guid answeredAttempt, DateTime? generation = null)
+    {
+        var runner = Stopper(world);
+        runner.CompactionStopResult = new CompactionContinuationStopResult(
+            world.SessionId, answeredAttempt, true, CompactionStopOutcomes.Exited,
+            generation ?? world.Accepted);
+        return runner;
+    }
+
+    private static async Task AssertCrossedAsync(
+        string connectionString, World world, FakeSessionRunnerClient runner, string reason)
+    {
+        var resume = new CountingResume();
+        await using (var db = NewDb(connectionString))
+            await Service(db, world.Now.AddMinutes(1), runner, resume).SweepAsync(CancellationToken.None);
+
+        runner.CompactionStops.Count.ShouldBe(1, "the stop was asked exactly once");
+        runner.KillCalls.ShouldBe(0, "a refused proof never falls back to /kill");
+        resume.Calls.ShouldBe(0, "no resume follows an unproven exit");
+
+        await using var db2 = NewDb(connectionString);
+        var episode = await db2.CheckCompactionRecoveries.SingleAsync();
+        episode.State.ShouldBe(CheckCompactionRecoveryState.NeedsDecision);
+        episode.Reason.ShouldBe(reason);
+        episode.StopOutcomeAt.ShouldBeNull("no stop outcome was recorded");
+        var session = await db2.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == world.SessionId);
+        session.Status.ShouldBe(SessionStatus.Running, "the live session was never written off");
+        session.EndedAt.ShouldBeNull();
+        session.TerminationSource.ShouldNotBe(SessionTerminationSource.CompactionContinuationRecovery);
+        var supervision = await db2.AgentSupervisionStates.AsNoTracking().SingleAsync(s => s.AgentId == world.AgentId);
+        supervision.LastAutomaticCompactionRestartAt.ShouldNotBeNull("the allowance stays spent");
+        supervision.CompactionRestartReceiptEligible.ShouldBeFalse();
+    }
+
     // ---- D-2 holds: every clause of CheckCompactionScope.Refusal that BuildScopeAsync populates
     // from another subsystem's state. Each case leaves every OTHER gate eligible, so the only
     // thing between the seat and an automatic stop of a live Working session is the one hold under
