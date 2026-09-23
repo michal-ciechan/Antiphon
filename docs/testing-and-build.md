@@ -279,6 +279,23 @@ snapshots never commit/push amendments; keep evidence externally and request sep
 Use local inherited execution only; never grant snapshot access to an external executor, broker,
 remote service or pre-existing process.
 
+There are two supported producers (CARD-0604 D-17/D-19). Windows local inherited execution is
+`windows-job-v1`. The persistent server2 runner is `linux-cgroup-v1`: `delegate.ps1 -Role Mutation
+-Runner server2 -Worktree -SourceLanding <operation>` creates the verification snapshot **on the
+runner** at the exact landed sha, runs the battery inside a root-owned cgroup the session cannot
+leave, and writes `restoration.json` to the runner's own evidence root under
+`/work/repos/antiphon/.git/antiphon/verification/<operation>/<task>/`. The desktop filesystem is
+never consulted for such a task: its custody read, its restoration read and its worktree removal
+all go through the bound runner. Neither backend is a substitute for the other -- a binding whose
+backend is not the one the executing runner advertised is refused at the runner, and a receipt
+whose observation method is not the one that backend produces is refused at the server.
+
+A Mutation dispatched to server2 can still fail to start for a reason that is not about custody at
+all: `provider_sign_in_required` means the runner's Grok store has no usable session (the operator
+runs `grok login` once inside the container, D-16). That is a launch refusal to report, not a
+reason to reroute the Mutation to another runner or to the local lane -- the execution is bound to
+the runner whose store the reservation named.
+
 Each PC-n still needs red-then-green evidence: apply the planned mutation, observe the
 expected assertion failure, restore the fixed source, and observe green. Scope **both** runs
 to only that PC's specific test method with a precise filter, for example:

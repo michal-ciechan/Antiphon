@@ -339,6 +339,14 @@ Code owns implementation and ordinary V/R; ordinary Review follows before land. 
 Mutation owns all deliberate PCs/variants and missing-control discovery in an independent
 snapshot, freeing the Code role slot for another card.
 
+There are two supported Mutation producers (CARD-0604 D-17/D-19). The default is Windows local
+inherited execution (`windows-job-v1`). The persistent server2 runner is the other:
+`delegate.ps1 -Role Mutation -Runner server2 -Worktree -SourceLanding <operation>` creates the
+verification snapshot on the runner at the exact landed sha and runs the battery inside a
+root-owned cgroup the session cannot leave (`linux-cgroup-v1`). The nested Docker daemon inside
+that runner is still never an executor: the placement shim clears the tracked tree's supplementary
+groups, so a Mutation session cannot reach the nested socket at all.
+
 ### Commit on settle
 
 A Succeeded Shared task's own footprint is committed in-process at settle through `GatedCommitService`

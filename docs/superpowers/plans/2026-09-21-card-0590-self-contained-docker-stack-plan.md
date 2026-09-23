@@ -185,6 +185,11 @@ These are implementation decisions within the brief, not requests for a new prod
   Linux observer with proven non-escaping containment and complete receipts, belongs to CARD-0598.
   Even that backend would not automatically authorize Docker siblings; any such extension needs
   its own custody/contract review. Do not rename a Linux backend `windows-job-v1` or remove guards.
+  **Superseded 2026-09-22 by CARD-0604 D-13/D-17/D-19 (Cut B):** that separately qualified Linux
+  backend now exists as `linux-cgroup-v1` -- a root-owned cgroup entered through a setuid-inert
+  shim, advertised only when a live probe passes, and validated as a distinct backend at every
+  boundary. The rule this paragraph states is unchanged and still binding: nothing is renamed
+  `windows-job-v1`, and no guard was removed to make the Linux lane pass.
 - **D-15 — Keep session orchestration concrete and foreground.** S3/S6 provide a committed
   script entry point a launched test session executes, with a persisted run manifest, fresh child
   project and evidence export. No new scheduler, result broker or background worker is introduced.

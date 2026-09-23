@@ -1046,8 +1046,14 @@ public sealed class AgentTaskService
                 throw new ValidationException(nameof(request.RunnerId), "A runner-bound task cannot run on a pinned or standing agent.");
             if (!string.IsNullOrWhiteSpace(request.FollowUpOnTask))
                 throw new ValidationException(nameof(request.RunnerId), "A runner-bound task cannot be a follow-up on an existing process.");
-            if (request.SourceLandingOperationId is not null)
-                throw new ValidationException(nameof(request.RunnerId), "SourceLanding is not supported on a session runner.");
+            // CARD-0604 D-19 (Cut B). SourceLanding on a session runner is now supported -- the
+            // runner has a real custody backend, a managed verification workspace and its own
+            // evidence root. Admission still asks THAT runner whether it can perform custody
+            // (RequireSupportAsync below, G-31); what is refused here is only the shape the
+            // remote lane cannot express.
+            if (request.SourceLandingOperationId is not null && request.Role != AgentTaskRole.Mutation)
+                throw new ValidationException(nameof(request.RunnerId),
+                    "A runner-bound SourceLanding task must be a Mutation.");
         }
 
         var task = new AgentTask

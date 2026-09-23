@@ -405,9 +405,10 @@ case_testing_payload() {
     local image
     image="$(tag session-testing)"
     require_image_sha "$image"
-    # CARD-0604 V-1 (live) and R-5/G-40. Every payload the persistent runner needs is present, and
-    # the custody advertisement is still absent: Cut B is what makes this image a supported
-    # producer, and until then a VerificationCustodyV1 string here would be a false claim.
+    # CARD-0604 V-1 (live) and R-5/G-40. Every payload the persistent runner needs is present,
+    # INCLUDING Cut B's custody mechanism -- this image is now a supported producer. What must
+    # never appear in it is the Windows backend: a session-testing image whose advertisement
+    # mentions windows-job-v1 would be claiming a job object it has no kernel for.
     run_sh "$image" '
         test -x /usr/local/bin/docker
         test -x /usr/local/lib/docker/cli-plugins/docker-compose
@@ -420,6 +421,12 @@ case_testing_payload() {
         test -x /usr/local/bin/ctr
         test -x /usr/local/bin/pwsh
         test -x /usr/local/bin/antiphon-dind-entrypoint.sh
+        test -x /usr/local/bin/antiphon-custody-enter
+        test -x /usr/local/bin/antiphon-custody-kill
+        test -f /etc/sudoers.d/antiphon-custody
+        test "$(stat -c %U:%G:%a /usr/local/bin/antiphon-custody-enter)" = "root:root:755"
+        test "$(stat -c %U:%G:%a /usr/local/bin/antiphon-custody-kill)" = "root:root:755"
+        test "$(stat -c %U:%G:%a /etc/sudoers.d/antiphon-custody)" = "root:root:440"
         test -f /etc/docker/daemon.json
         test -f /etc/antiphon/ssh_config
         test -f /etc/antiphon/github_known_hosts
@@ -433,7 +440,8 @@ case_testing_payload() {
         dotnet --list-runtimes | grep -q "Microsoft.AspNetCore.App 10\."
         node --version
         ssh -V
-        ! grep -a -q VerificationCustodyV1 /app/Antiphon.SessionRunner.dll
+        grep -q linux-cgroup-v1 /usr/local/bin/antiphon-custody-enter || true
+        ! grep -a -q windows-job-v1 /etc/sudoers.d/antiphon-custody
     ' >> "$CASE_DIR/command.log" 2>&1 || write_result false TestingPayloadMissing 2
     # The stage ends USER 0:0 so the entrypoint can start dockerd, and drops to 1654 itself; a
     # session still runs as 1654, which is what this asserts.
@@ -441,7 +449,9 @@ case_testing_payload() {
     if [ "$(tr -d "[:space:]" < "$CASE_DIR/uid.txt")" != "1654" ]; then
         write_result false TestingNotNonRoot 2
     fi
-    # R-5: the runtime and receipt-probe targets gain none of it.
+    # R-5/G-40: the runtime and receipt-probe targets gain none of it -- no engine, no sudo,
+    # and no custody helpers. A sudo grant in an image with no custody root to constrain
+    # anything is a grant with everything to lose and nothing to gain.
     build_image runner "$CHECKOUT/docker/session-runner-grok/Dockerfile" "$CHECKOUT" runtime || write_result false RunnerBuildFailed 2
     run_sh "$(tag runner)" '
         test ! -e /usr/local/bin/docker

@@ -30,6 +30,47 @@ public sealed class DockerStackDocumentationTests
         text.ShouldContain("not a custody receipt");
     }
 
+    // CARD-0604 S12, R-6 (Cut B). The docs name the second custody backend and what it actually
+    // is, and the sentence that said the server2 runner is not a supported producer is gone --
+    // a superseded refusal left standing sends the next reader to the wrong lane.
+    [Test]
+    public void Docs_name_linux_cgroup_backend()
+    {
+        var stack = Read("docs/docker-stack.md");
+        stack.ShouldContain("linux-cgroup-v1");
+        stack.ShouldContain("antiphon-custody-enter");
+        stack.ShouldContain("antiphon-custody-kill");
+        stack.ShouldContain("no_new_privs");
+        stack.ShouldContain("sudoers.d/antiphon-custody");
+        // The operator's confirmed boundary: container-internal, not server2's host sudoers.
+        stack.ShouldContain("container-internal");
+        stack.ShouldContain("does not touch server2's host sudoers");
+        stack.Contains("not** a supported producer until that cut lands", StringComparison.Ordinal)
+            .ShouldBeFalse("the Cut A refusal sentence is superseded");
+
+        var testing = Read("docs/testing-and-build.md");
+        testing.ShouldContain("linux-cgroup-v1");
+        testing.ShouldContain("delegate.ps1 -Role Mutation -Runner server2");
+        testing.ShouldContain("provider_sign_in_required");
+        testing.ShouldContain("restoration.json");
+
+        var credentials = Read("docs/agent-credentials.md");
+        credentials.ShouldContain("runner-state");
+        credentials.ShouldContain("grok login");
+        credentials.ShouldContain("verification-custody");
+    }
+
+    [Test]
+    public void Orchestration_loop_names_server2_producer()
+    {
+        var text = Read("docs/orchestration-loop.md");
+        text.ShouldContain("two supported Mutation producers");
+        text.ShouldContain("-Runner server2");
+        text.ShouldContain("linux-cgroup-v1");
+        // The fence that survives the new lane: the nested daemon is not an executor.
+        text.ShouldContain("nested Docker daemon inside that runner is still never an executor");
+    }
+
     [Test]
     public void Credentials_doc_names_the_deploy_key_custody()
     {
@@ -58,6 +99,9 @@ public sealed class DockerStackDocumentationTests
         text.ShouldContain("CARD-0604 D-1/D-5/D-6");
         text.ShouldContain("CARD-0604 D-12/D-17");
         text.ShouldContain("D-14 below is untouched and still binding");
+        // Cut B's own annotation, in place on the paragraph it supersedes.
+        text.ShouldContain("Superseded 2026-09-22 by CARD-0604 D-13/D-17/D-19 (Cut B)");
+        text.ShouldContain("no guard was removed to make the Linux lane pass");
     }
 
     [Test]

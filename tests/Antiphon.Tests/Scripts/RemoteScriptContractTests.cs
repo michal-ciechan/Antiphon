@@ -35,6 +35,50 @@ public sealed class RemoteScriptContractTests
         EnsureDirsBody(text).ShouldContain("if [ \"$LANE\" = \"host\" ]; then");
     }
 
+    // CARD-0604 S12 / R-5, G-40 (Cut B). The fence inverts with the cut: the session-testing
+    // image IS now a supported producer, so the payload case must prove the custody mechanism is
+    // present and root-owned -- and must still refuse any trace of the WINDOWS backend, which on
+    // a Linux image could only ever be a fabricated claim. The runtime and receipt-probe targets
+    // keep carrying none of it.
+    [Test]
+    public void Testing_payload_expects_linux_backend_never_windows()
+    {
+        var payload = Block(Remote(), "case_testing_payload");
+
+        payload.ShouldContain("test -x /usr/local/bin/antiphon-custody-enter");
+        payload.ShouldContain("test -x /usr/local/bin/antiphon-custody-kill");
+        payload.ShouldContain("test -f /etc/sudoers.d/antiphon-custody");
+
+        // Root-owned and 0755/0440, checked on the real image rather than trusted from the
+        // Dockerfile: a COPY whose ownership is wrong hands uid 1654 the shim itself.
+        payload.ShouldContain("stat -c %U:%G:%a /usr/local/bin/antiphon-custody-enter)\" = \"root:root:755");
+        payload.ShouldContain("stat -c %U:%G:%a /usr/local/bin/antiphon-custody-kill)\" = \"root:root:755");
+        payload.ShouldContain("stat -c %U:%G:%a /etc/sudoers.d/antiphon-custody)\" = \"root:root:440");
+
+        // The Windows backend must not appear anywhere the runner would read it.
+        payload.ShouldContain("! grep -a -q windows-job-v1 /etc/sudoers.d/antiphon-custody");
+
+        // And the Cut A claim that this image advertises NO custody at all is gone: leaving it
+        // standing would fail the moment the cut it is guarding actually lands.
+        payload.Contains("! grep -a -q VerificationCustodyV1", StringComparison.Ordinal)
+            .ShouldBeFalse("the no-custody assertion is superseded by Cut B");
+    }
+
+    // V-29 / R-5 on the live runner: the linux-custody case REQUIRES the Linux backend and a
+    // store id, and names the Windows backend only to refuse it.
+    [Test]
+    public void Linux_custody_case_requires_the_linux_backend()
+    {
+        var text = System.IO.File.ReadAllText(System.IO.Path.Combine(
+            Infrastructure.DockerStackDocuments.RepoRoot, "scripts", "verify-docker-stack.ps1"));
+
+        text.ShouldContain("'linux-custody'");
+        text.ShouldContain("CustodyNotAdvertised");
+        text.ShouldContain("WindowsBackendAdvertisedOnLinux");
+        text.ShouldContain("RunnerStoreIdMissing");
+        text.ShouldContain("-ne 'linux-cgroup-v1'");
+    }
+
     [Test]
     public void Scrub_covers_github_token_prefixes()
     {
