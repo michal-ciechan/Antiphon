@@ -74,6 +74,8 @@ public sealed class PhoneHomeDirectoryTests
         var path = $"/api/session-runners/{host.AllowedRunnerId}/provider-auth/claude";
         using (var absent = await host.Http.GetAsync(path))
             absent.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        using (var local = await host.Http.GetAsync("/api/session-runners/local/provider-auth/claude"))
+            local.StatusCode.ShouldBe(HttpStatusCode.Conflict);
 
         await using var peer = await host.ConnectPeerAsync();
         var live = await host.WaitLiveAsync();
