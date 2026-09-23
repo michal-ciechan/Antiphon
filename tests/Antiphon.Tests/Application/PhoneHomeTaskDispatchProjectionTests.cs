@@ -7,6 +7,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Git;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -121,6 +122,181 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         session.Cwd.ShouldBe(workspace.Path);
     }
 
+    [Test]
+    public async Task Runner_bound_task_launch_reaches_runner_start_with_a_sourced_task_on_record()
+    {
+        // CARD-0645 item 1: one SourceLanding row anywhere in the database made every runner
+        // launch canonicalize the runner cwd on the desktop filesystem (path_missing_or_inaccessible).
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+        host.Directory.MarkRecovered(live);
+        const string mirror = "/work/worktrees/task-remote";
+        peer.Reply = frame => frame.Operation switch
+        {
+            PhoneHomeOperation.WorkspaceMirror => Result(frame,
+                new PhoneHomeWorkspaceMirrorResponse(mirror)),
+            PhoneHomeOperation.ProviderAuth => Result(frame,
+                new RunnerProviderAuthDto("claude", true, "claude.ai", "max", DateTimeOffset.UtcNow, null)),
+            _ => null,
+        };
+        using var workspace = new TempWorkspace();
+        using var snapshot = new TempWorkspace();
+        var taskId = await SeedAsync(schema, workspace.Path, host.AllowedRunnerId, AgentKind.Grok);
+        await SeedSourcedTaskAsync(schema, snapshot.Path);
+        var sink = new RecordingLaunchSink();
+        var dispatcher = CreateDispatcher(schema, host, sink);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        var launch = sink.Specs.Single();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == task.AgentSessionId);
+        var git = new LandingGit();
+        var verification = new VerificationExecutionService(
+            db, new SourceLandingAdmission(db, git, host.Directory), TimeProvider.System, git);
+        var prepared = await verification.PrepareLaunchAsync(session, launch, CancellationToken.None);
+        await new PhoneHomeRunnerClient(live).StartAsync(session.Id, prepared, CancellationToken.None);
+
+        var started = peer.Launches.ShouldHaveSingleItem().Payload!.Value
+            .Deserialize<RunnerLaunchRequest>(PhoneHomeFraming.Json)!;
+        started.SessionId.ShouldBe(session.Id);
+        started.Cwd.ShouldBe(mirror);
+    }
+
+    [Test]
+    public async Task Card_bound_runner_worktree_task_dispatches()
+    {
+        // CARD-0645 item 2: a card-bound delegated task is not a card start. Its session has no
+        // CardId and runs in the runner mirror, so the card-start refusal must not apply.
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        await using var peer = await host.ConnectPeerAsync();
+        host.Directory.MarkRecovered(await host.WaitLiveAsync());
+        const string mirror = "/work/worktrees/task-remote";
+        peer.Reply = frame => frame.Operation switch
+        {
+            PhoneHomeOperation.WorkspaceMirror => Result(frame,
+                new PhoneHomeWorkspaceMirrorResponse(mirror)),
+            _ => null,
+        };
+        using var workspace = new TempWorkspace();
+        var taskId = await SeedAsync(schema, workspace.Path, host.AllowedRunnerId, AgentKind.Grok);
+        await BindCardAsync(schema, taskId);
+        var sink = new RecordingLaunchSink();
+        var dispatcher = CreateDispatcher(schema, host, sink);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+        task.Status.ShouldBe(AgentTaskStatus.Dispatched, task.FailureReason);
+        task.CardId.ShouldNotBeNull();
+        sink.Specs.ShouldHaveSingleItem().Cwd.ShouldBe(mirror);
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == task.AgentSessionId);
+        session.CardId.ShouldBeNull();
+        session.RunnerCwd.ShouldBe(mirror);
+    }
+
+    [Test]
+    public async Task Refused_runner_task_leaves_no_pushed_branch_or_mirror()
+    {
+        // CARD-0645 item 3: the launch policy refuses before remote prep, so a refused task never
+        // pushes its branch to origin or asks the runner for a mirror.
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        await using var peer = await host.ConnectPeerAsync();
+        host.Directory.MarkRecovered(await host.WaitLiveAsync());
+        peer.Reply = frame => frame.Operation switch
+        {
+            PhoneHomeOperation.WorkspaceMirror => Result(frame,
+                new PhoneHomeWorkspaceMirrorResponse("/work/worktrees/task-remote")),
+            _ => null,
+        };
+        using var workspace = new TempWorkspace();
+        var taskId = await SeedAsync(schema, workspace.Path, host.AllowedRunnerId, AgentKind.Grok);
+        var sink = new RecordingLaunchSink();
+        var git = new PushGit();
+        var dispatcher = CreateDispatcher(schema, host, sink, git, allowDelegatedTasks: false);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+        task.Status.ShouldBe(AgentTaskStatus.Failed);
+        task.FailureReason.ShouldNotBeNull().ShouldContain("Delegated tasks are not enabled");
+        sink.Specs.ShouldBeEmpty();
+        git.Pushes.ShouldBe(0);
+        peer.Incoming.ShouldNotContain(f => f.Operation == PhoneHomeOperation.WorkspaceMirror);
+        task.RemoteWorktreePath.ShouldBeNull();
+    }
+
+    private static async Task SeedSourcedTaskAsync(IsolatedTestSchema schema, string snapshotPath)
+    {
+        var now = DateTime.UtcNow;
+        var sourceId = Guid.NewGuid();
+        var sourcedId = Guid.NewGuid();
+        var landingId = Guid.NewGuid();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = sourceId, RootTaskId = sourceId, Title = "landed source", Goal = "code",
+            Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code, AgentKind = AgentKind.ClaudeCode,
+            ModelLevel = AgentModelLevel.Frontier, Workspace = WorkspaceMode.Worktree,
+            WorkingDirectory = snapshotPath, Status = AgentTaskStatus.Succeeded,
+            ReplyTo = AgentTaskReplyTo.None, CreatedAt = now, ConcurrencyToken = Guid.NewGuid(),
+        });
+        db.AgentTaskLandings.Add(new AgentTaskLanding
+        {
+            Id = landingId, TaskId = sourceId, CreatedAt = now, UpdatedAt = now,
+        });
+        await db.SaveChangesAsync();
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = sourcedId, RootTaskId = sourcedId, Title = "historical mutation", Goal = "mutate",
+            Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Mutation, AgentKind = AgentKind.ClaudeCode,
+            ModelLevel = AgentModelLevel.Frontier, Workspace = WorkspaceMode.Worktree,
+            WorkingDirectory = snapshotPath, WorktreePath = snapshotPath,
+            SourceLandingOperationId = landingId, SourceLandingSha = new string('2', 40),
+            Status = AgentTaskStatus.Succeeded,
+            ReplyTo = AgentTaskReplyTo.None, CreatedAt = now, ConcurrencyToken = Guid.NewGuid(),
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task BindCardAsync(IsolatedTestSchema schema, Guid taskId)
+    {
+        var now = DateTime.UtcNow;
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var project = new Project
+        {
+            Id = Guid.NewGuid(), Name = $"card0645-{Guid.NewGuid():N}",
+            GitRepositoryUrl = "https://example.test/card0645.git", CreatedAt = now, UpdatedAt = now,
+        };
+        var board = new Board
+        {
+            Id = Guid.NewGuid(), ProjectId = project.Id, Name = $"CARD-0645 {Guid.NewGuid():N}",
+            MaxConcurrentSessions = 1, CreatedAt = now, UpdatedAt = now,
+        };
+        var column = new BoardColumn
+        {
+            Id = Guid.NewGuid(), BoardId = board.Id, StateKey = "backlog", Name = "Backlog",
+            ColumnOrder = 0, CardStatus = CardStatus.Backlog, CreatedAt = now, UpdatedAt = now,
+        };
+        var card = new Card
+        {
+            Id = Guid.NewGuid(), BoardId = board.Id, BoardColumnId = column.Id, Identifier = "CARD-9645",
+            Title = "runner card", Description = "CARD-0645.", CreatedAt = now, UpdatedAt = now,
+        };
+        db.AddRange(project, board, column, card);
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+        task.CardId = card.Id;
+        task.ProjectId = project.Id;
+        await db.SaveChangesAsync();
+    }
+
     private static PhoneHomeFrame Result(PhoneHomeFrame request, object payload) =>
         new(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
             JsonSerializer.SerializeToElement(payload, PhoneHomeFraming.Json));
@@ -145,7 +321,8 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
     }
 
     private static AgentTaskDispatcher CreateDispatcher(
-        IsolatedTestSchema schema, PhoneHomeTestHost host, RecordingLaunchSink sink)
+        IsolatedTestSchema schema, PhoneHomeTestHost host, RecordingLaunchSink sink,
+        PushGit? git = null, bool allowDelegatedTasks = true)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -185,13 +362,13 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         });
         services.AddSingleton(Options.Create(new PhoneHomeRunnerSettings
         {
-            Enabled = true, AllowedRunnerId = host.AllowedRunnerId, AllowDelegatedTasks = true,
+            Enabled = true, AllowedRunnerId = host.AllowedRunnerId, AllowDelegatedTasks = allowDelegatedTasks,
             HostWorkspaceRoot = @"C:\src\Antiphon", CallbackOrigin = "https://antiphon.desktop.codeperf.net",
             SharedSecret = "x", ClaudeAuthProbeEnabled = true,
         }));
         services.AddSingleton<PhoneHomeLaunchPolicy>();
         services.AddSingleton<ISessionRunnerDirectory>(host.Directory);
-        services.AddSingleton<ILandingGit, PushGit>();
+        services.AddSingleton<ILandingGit>(git ?? new PushGit());
         services.AddSingleton<RemoteWorkspaceService>();
         services.AddSingleton<IAgentTaskLaunchSink>(sink);
         services.AddScoped<AgentTaskService>();
@@ -215,13 +392,20 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
 
     private sealed class PushGit : ILandingGit
     {
-        public Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct) =>
-            Task.FromResult(arguments[0] switch
+        private int _pushes;
+        public int Pushes => Volatile.Read(ref _pushes);
+
+        public Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
+        {
+            if (arguments[0] == "push")
+                Interlocked.Increment(ref _pushes);
+            return Task.FromResult(arguments[0] switch
             {
                 "rev-parse" => new LandingGitResult(0, new string('1', 40), ""),
                 "push" => new LandingGitResult(0, "", ""),
                 _ => throw new NotSupportedException(arguments[0]),
             });
+        }
         public Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments, Func<int, long, CancellationToken, Task> started, CancellationToken ct) => throw new NotSupportedException();
         public Task<bool?> IsProcessAliveAsync(int processId, long startTicks, CancellationToken ct) => throw new NotSupportedException();
         public Task<string> CanonicalDirectoryAsync(string path, CancellationToken ct) => throw new NotSupportedException();
