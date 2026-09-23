@@ -107,9 +107,12 @@ internal sealed class FakeTaskProgressGit : ITaskProgressGit
         var key = revision.Replace("^{commit}", "", StringComparison.Ordinal);
         if (key is "HEAD")
         {
+            // Resolve FIRST, then let the hook move the checkout: the point is that this answer
+            // was true when read and stale by the time it is used.
+            HeadsByPath.TryGetValue(repository, out var scopedHead);
             HeadObservations++;
             OnHeadObserved?.Invoke(this, HeadObservations);
-            if (HeadsByPath.TryGetValue(repository, out var scopedHead))
+            if (scopedHead is not null)
                 return Task.FromResult(new ProgressRevParse(true, scopedHead, null));
         }
         if (LocalRefs.TryGetValue(key, out var sha))
