@@ -106,7 +106,12 @@ public sealed class PhoneHomeConnectionService : BackgroundService
         var wsScheme = origin.Scheme == Uri.UriSchemeHttps ? "wss" : "ws";
         var connect = new Uri($"{wsScheme}://{origin.Authority}/api/session-runners/{Uri.EscapeDataString(_settings.RunnerId)}/connect");
         await ws.ConnectAsync(connect, ct);
-        var epoch = Interlocked.Increment(ref _epoch);
+        // CARD-0604 CP-6a: the SERVER owns the epoch and handed it to us in the registration
+        // response. Numbering our own connections here desynchronised the two counters the moment
+        // either process restarted alone, and both receive loops silently dropped every frame that
+        // did not match - the socket stayed open while heartbeats, requests and replies vanished.
+        var epoch = ticket.Epoch;
+        Interlocked.Exchange(ref _epoch, epoch);
         using var connectionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var overflow = false;
         var reader = _runtime.SubscribeBounded(

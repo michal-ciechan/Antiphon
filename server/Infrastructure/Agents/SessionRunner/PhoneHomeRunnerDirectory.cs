@@ -159,15 +159,20 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             }
 
             var ticket = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+            // CARD-0604 CP-6a: the epoch is minted HERE, not at AcceptConnect, so the registration
+            // response can hand the runner the same number the server will stamp on its own frames.
+            // A runner that numbers its own connections desynchronises the moment either process
+            // restarts alone, and both receive loops then drop every frame in silence.
+            var epoch = ++_epoch;
             _tickets[ticket] = new Ticket(
                 ticket, request.RunnerId, request.RunnerStoreId, request.ProcessBootId,
                 now.AddSeconds(_settings.TicketTtlSeconds),
-                request.Capacity, request.Platform, request.Capabilities);
+                request.Capacity, request.Platform, request.Capabilities, epoch);
             _liveStoreId = request.RunnerStoreId;
             _liveBootId = request.ProcessBootId;
             _liveLeaseUntil = now.AddSeconds(_settings.LeaseSeconds);
             return new PhoneHomeRegistrationResponse(
-                ticket, now.AddSeconds(_settings.TicketTtlSeconds), request.RunnerStoreId, request.ProcessBootId);
+                ticket, now.AddSeconds(_settings.TicketTtlSeconds), request.RunnerStoreId, request.ProcessBootId, epoch);
         }
     }
 
@@ -191,7 +196,8 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             ValidateTicket(runnerId, ticket);
 
             _live?.DisposeAsync().AsTask().GetAwaiter().GetResult();
-            var epoch = ++_epoch;
+            // The ticket already carries the epoch the runner was told at registration.
+            var epoch = ticket.Epoch;
             var connection = new PhoneHomeLiveConnection(
                 runnerId, ticket.RunnerStoreId, ticket.ProcessBootId, epoch, socket, _settings.Limits, _clock,
                 ticket.Capacity, ticket.Platform, ticket.Capabilities);
@@ -279,5 +285,6 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
         DateTimeOffset ExpiresAtUtc,
         int Capacity,
         string? Platform,
-        RunnerCapabilitiesDto? Capabilities);
+        RunnerCapabilitiesDto? Capabilities,
+        long Epoch);
 }

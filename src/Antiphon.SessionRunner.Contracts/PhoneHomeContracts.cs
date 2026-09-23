@@ -119,11 +119,21 @@ public sealed record PhoneHomeRegistrationRequest(
     int Capacity,
     RunnerCapabilitiesDto? Capabilities);
 
+/// <summary>
+/// CARD-0604 CP-6a. <paramref name="Epoch"/> is the SERVER's connection epoch for the connection
+/// this ticket opens, and it is the only epoch either side may stamp on a frame. Both receive
+/// loops drop a frame whose epoch does not match their own, so when the runner numbered its own
+/// connections the two counters agreed only by coincidence - a server restart or a runner restart
+/// desynchronised them and every heartbeat, request and reply was then dropped in silence: the
+/// socket stayed open, `available` decayed on the lease and `dispatchEligible` never turned true.
+/// Measured live against server2 on 2026-09-23 (runner epoch 1 vs server epoch 9).
+/// </summary>
 public sealed record PhoneHomeRegistrationResponse(
     string Ticket,
     DateTimeOffset ExpiresAtUtc,
     Guid RunnerStoreId,
-    Guid ProcessBootId);
+    Guid ProcessBootId,
+    long Epoch);
 
 public sealed record PhoneHomeFrame(
     PhoneHomeFrameKind Kind,
