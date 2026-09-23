@@ -122,6 +122,46 @@ public class DispatcherSweepLifetimeTests
         ReferenceEquals(seenB, g.Tick).ShouldBeTrue();
     }
 
+    [Test]
+    [Arguments(ScopeFault.CreateThrows)]
+    [Arguments(ScopeFault.ResolveAndDisposeThrow)]
+    [Arguments(ScopeFault.DisposeThrowsAfterSweep)]
+    public async Task A_failing_owned_scope_still_releases_the_sweep_claim(ScopeFault fault)
+    {
+        await using var g = Graph.Create(scopeFactory: true, fault: fault);
+        var calls = 0;
+        Func<AgentTaskDispatcher, CancellationToken, Task<int>> body = (_, _) =>
+        {
+            Interlocked.Increment(ref calls);
+            return Task.FromResult(0);
+        };
+
+        var result = await g.Tick.RunSweepAsync("probe", body, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+
+        g.InFlight.IsRunning("probe").ShouldBeFalse("a scope that failed to build or dispose must not strand the sweep's claim");
+        if (fault == ScopeFault.DisposeThrowsAfterSweep)
+        {
+            result.ShouldBe(0, "the sweep itself succeeded; only its scope's disposal failed");
+            Volatile.Read(ref calls).ShouldBe(1);
+        }
+        else
+        {
+            result.ShouldBe(1, "a sweep that could not get its own scope is one sweep failure");
+            Volatile.Read(ref calls).ShouldBe(0);
+        }
+
+        g.Logger.Entries.ShouldContain(e => e.Level == LogLevel.Error && e.Message.Contains("probe"));
+        g.Logger.Entries.ShouldNotContain(e => e.Message.Contains("still running"));
+    }
+
+    public enum ScopeFault
+    {
+        None,
+        CreateThrows,
+        ResolveAndDisposeThrow,
+        DisposeThrowsAfterSweep,
+    }
+
     private sealed class Graph : IAsyncDisposable
     {
         public required ServiceProvider Provider { get; init; }
@@ -132,7 +172,7 @@ public class DispatcherSweepLifetimeTests
         public required RecordingLogger<AgentTaskDispatcher> Logger { get; init; }
         public required DelegationSettings Settings { get; init; }
 
-        public static Graph Create(bool scopeFactory)
+        public static Graph Create(bool scopeFactory, ScopeFault fault = ScopeFault.None)
         {
             var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
             var settings = new DelegationSettings();
@@ -159,7 +199,10 @@ public class DispatcherSweepLifetimeTests
             services.AddScoped<AgentTaskService>();
             services.AddSingleton<SweepInFlightState>();
             services.AddSingleton<ILogger<AgentTaskDispatcher>>(logger);
-            if (scopeFactory)
+            if (scopeFactory && fault != ScopeFault.None)
+                services.AddScoped(sp => ActivatorUtilities.CreateInstance<AgentTaskDispatcher>(
+                    new WithFaultyScopeFactory(sp, new FaultyScopeFactory(sp.GetRequiredService<IServiceScopeFactory>(), fault))));
+            else if (scopeFactory)
                 services.AddScoped<AgentTaskDispatcher>();
             else
                 services.AddScoped(sp => ActivatorUtilities.CreateInstance<AgentTaskDispatcher>(new WithoutScopeFactory(sp)));
@@ -192,5 +235,50 @@ public class DispatcherSweepLifetimeTests
             serviceType == typeof(IServiceScopeFactory) || serviceType == typeof(IServiceProviderIsService)
                 ? null
                 : inner.GetService(serviceType);
+    }
+
+    /// <summary>Hands the dispatcher <paramref name="factory"/> in place of the real scope factory.</summary>
+    private sealed class WithFaultyScopeFactory(IServiceProvider inner, IServiceScopeFactory factory) : IServiceProvider
+    {
+        public object? GetService(Type serviceType) =>
+            serviceType == typeof(IServiceScopeFactory) ? factory : inner.GetService(serviceType);
+    }
+
+    /// <summary>A scope factory whose scopes fail to build, resolve or dispose, per <see cref="ScopeFault"/>.</summary>
+    private sealed class FaultyScopeFactory(IServiceScopeFactory inner, ScopeFault fault) : IServiceScopeFactory
+    {
+        public IServiceScope CreateScope()
+        {
+            if (fault == ScopeFault.CreateThrows)
+                throw new InvalidOperationException("scope creation failed");
+            return new FaultyScope(inner.CreateScope(), fault);
+        }
+    }
+
+    private sealed class FaultyScope(IServiceScope inner, ScopeFault fault) : IServiceScope, IAsyncDisposable
+    {
+        public IServiceProvider ServiceProvider { get; } = fault == ScopeFault.ResolveAndDisposeThrow
+            ? new ThrowingProvider()
+            : inner.ServiceProvider;
+
+        public void Dispose()
+        {
+            inner.Dispose();
+            throw new InvalidOperationException("scope disposal failed");
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            if (inner is IAsyncDisposable a)
+                await a.DisposeAsync();
+            else
+                inner.Dispose();
+            throw new InvalidOperationException("scope disposal failed");
+        }
+    }
+
+    private sealed class ThrowingProvider : IServiceProvider
+    {
+        public object? GetService(Type serviceType) => throw new InvalidOperationException("resolve failed");
     }
 }
