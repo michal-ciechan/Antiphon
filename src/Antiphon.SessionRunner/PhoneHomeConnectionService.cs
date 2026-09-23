@@ -136,7 +136,9 @@ public sealed class PhoneHomeConnectionService : BackgroundService
         {
             connectionCts.Cancel();
             CancelWaiters(epoch);
-            try { await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, overflow ? PhoneHomeProblemTypes.EventOverflow : "disconnect", CancellationToken.None); }
+            // CARD-0631 D-4: the close handshake goes through the writer's gate, so it never
+            // overlaps a reply or heartbeat that is still being written.
+            try { await writer.CloseAsync(WebSocketCloseStatus.NormalClosure, overflow ? PhoneHomeProblemTypes.EventOverflow : "disconnect"); }
             catch { /* closing a dropped socket */ }
             ws.Dispose();
         }
@@ -180,33 +182,67 @@ public sealed class PhoneHomeConnectionService : BackgroundService
             }
 
             Interlocked.Increment(ref _inFlight);
+            // CARD-0631 D-3: no scheduling token. A task cancelled before it starts would never
+            // run its finally, and the increment above would leak for the life of the process.
             _ = Task.Run(async () =>
             {
                 try
                 {
                     await DispatchAndReplyAsync(writer, frame, epoch, ct);
                 }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Phone-home request {RequestId} ({Operation}) ended without a reply", frame.RequestId, frame.Operation);
+                }
                 finally
                 {
                     Interlocked.Decrement(ref _inFlight);
                 }
-            }, ct);
+            }, CancellationToken.None);
         }
     }
 
-    /// <summary>CARD-0631: dispatch one request and send its reply through the connection's writer.</summary>
+    /// <summary>
+    /// CARD-0631 D-2/D-3: dispatch one request and send exactly one reply through the
+    /// connection's writer. A dispatch that throws - including a cancellation the connection did
+    /// not ask for - is answered with the shared internal Error. Cancellation of the connection
+    /// itself sends nothing: there is no one left to answer. A reply that cannot be sent is never
+    /// followed by a second Error on the same transport; the connection is aborted instead, so
+    /// the server observes the failure rather than a healthy socket that lost a reply.
+    /// </summary>
     internal async Task DispatchAndReplyAsync(PhoneHomeConnectionWriter writer, PhoneHomeFrame frame, long epoch, CancellationToken ct)
     {
+        var request = frame with { Epoch = epoch };
+        PhoneHomeFrame reply;
         try
         {
-            var result = await _dispatcher.DispatchAsync(frame with { Epoch = epoch }, ct);
+            reply = await _dispatcher.DispatchAsync(request, ct);
             if (IsMutation(frame.Operation))
                 _sentMutations.Add(frame);
-            await writer.SendAsync(result, ct);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            _logger.LogWarning(ex, "Phone-home command {Operation} failed", frame.Operation);
+            _logger.LogDebug("Phone-home request {RequestId} ({Operation}) cancelled with its connection", frame.RequestId, frame.Operation);
+            return;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Phone-home request {RequestId} ({Operation}) failed in dispatch; replying with an error", frame.RequestId, frame.Operation);
+            reply = PhoneHomeErrorFrames.Internal(request, ex, writer.MaxUtf8Bytes);
+        }
+
+        try
+        {
+            await writer.SendAsync(reply, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _logger.LogDebug("Phone-home reply for {RequestId} ({Operation}) dropped: its connection ended", frame.RequestId, frame.Operation);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Phone-home reply for {RequestId} ({Operation}) could not be sent; aborting the connection", frame.RequestId, frame.Operation);
+            writer.Abort();
         }
     }
 
