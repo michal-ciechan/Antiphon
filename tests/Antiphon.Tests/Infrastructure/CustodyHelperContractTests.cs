@@ -84,7 +84,7 @@ public sealed class CustodyHelperContractTests
         // grant every command or target a user other than uid 1654.
         foreach (var line in Rules(text))
         {
-            foreach (var command in Regex.Matches(line, @"/\S+").Select(m => m.Value))
+            foreach (var command in Regex.Matches(line, @"/[^\s,]+").Select(m => m.Value))
                 command.ShouldBeOneOf("/usr/local/bin/antiphon-custody-enter", "/usr/local/bin/antiphon-custody-kill");
             line.ShouldNotContain("NOPASSWD: ALL");
             line.ShouldNotContain("(ALL)");
@@ -126,8 +126,10 @@ public sealed class CustodyHelperContractTests
         text.ShouldContain("kill -KILL \"$pid\"");
         Occurrences(text, "kill -KILL").ShouldBe(1, "exactly one signalling site");
 
+        // Case-sensitive: these are lowercase binary and flag spellings, and a case-insensitive
+        // match collides with refusal tokens like CgroupKillUnavailable.
         foreach (var forbidden in new[] { "pkill", "killall", "kill -9 -1", "kill -KILL -1", "kill -- -", "-KILL -1" })
-            text.ShouldNotContain(forbidden);
+            text.Contains(forbidden, StringComparison.Ordinal).ShouldBeFalse(forbidden + " must not appear");
 
         // An unreadable or missing procs file is unknown, never an empty tree: the caller must
         // see Draining rather than a fabricated zero.
