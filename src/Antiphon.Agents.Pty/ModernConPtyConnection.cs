@@ -358,6 +358,9 @@ internal sealed class ModernConPtyConnection : IPtySession
         }
     }
 
+    /// <summary>CARD-0604 D-17: the Windows half of <see cref="IPtyCustodyContainment.Terminate"/>.</summary>
+    internal void TerminateCustodyJob() => TryTerminateJob();
+
     private void TryTerminateJob()
     {
         if (_job.IsInvalid || _job.IsClosed)

@@ -1138,7 +1138,7 @@ public sealed class AgentTaskService
                     caller.CapabilityId is not null ? caller.ExtraAllowedRoots ?? [] : _settings.AllowedRoots, ct);
                 await _sourceLanding.RequireUniqueOpenAsync(sourceOperation, ct);
                 task.SourceLandingSha = (await _sourceLanding.RequireSourceAsync(task, ct)).VerifiedSourceSha;
-                await _sourceLanding.RequireSupportAsync(ct);
+                await _sourceLanding.RequireSupportAsync(task.RunnerId, ct);
             }
             if (gateCreate)
                 openSnapshot = await _openGate!.EnsureCanCreateAsync(

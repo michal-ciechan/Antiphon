@@ -6,6 +6,13 @@ namespace Antiphon.Agents.Pty;
 /// </summary>
 public interface IPtyCustodyJournal
 {
+    /// <summary>
+    /// CARD-0604 D-17: the container the tracked tree lives in, chosen by the host before the
+    /// child exists and carried unchanged onto the receipt. On Linux it is also the cgroup's
+    /// directory name, so the placement shim and the receipt name the same thing.
+    /// </summary>
+    Guid ContainerId { get; }
+
     void RecordStartIntent();
     void RecordTracking(int processId);
     void RecordSeal();

@@ -22,11 +22,15 @@ public sealed class VerificationExecutionService(AppDbContext db, SourceLandingA
             throw new ConflictException("verification_reservation_refused");
         if (await db.VerificationExecutions.AnyAsync(e => e.TaskId == task.Id && e.ReceiptBytes == null, ct))
             throw new ConflictException("Previous verification execution has unresolved custody.", "verification_custody_unresolved");
-        var store = await admission.RequireSupportAsync(ct);
+        // CARD-0604 D-19: the binding records the backend AND the store of the runner this task
+        // is bound to. Both travel with the reservation so every later boundary can ask equality
+        // instead of membership.
+        var support = await admission.RequireSupportAsync(task.RunnerId, ct);
         session.StartedAt = new DateTime(session.StartedAt.Ticks - session.StartedAt.Ticks % 10, DateTimeKind.Utc);
         var binding = new VerificationExecutionBinding(Guid.NewGuid(), new(task.Id, operation, task.SourceLandingSha),
             new(session.Id, session.StartedAt), JsonSerializer.Deserialize<VerificationCreationCoordinates>(task.VerificationCreationJson)
-                ?? throw new ConflictException("verification_creation_identity_mismatch"), RunnerStoreId: store);
+                ?? throw new ConflictException("verification_creation_identity_mismatch"),
+            Backend: support.Backend, RunnerStoreId: support.RunnerStoreId);
         db.VerificationExecutions.Add(new()
         {
             Id = binding.ExecutionId, TaskId = task.Id, SourceLandingOperationId = operation,
@@ -68,7 +72,8 @@ public sealed class VerificationExecutionService(AppDbContext db, SourceLandingA
             ?? throw new ConflictException("verification_binding_required");
         if (binding.ExecutionId != execution.Id || binding.Source.TaskId != task.Id
             || binding.Generation != new VerificationSessionGeneration(session.Id, execution.AcceptedStartedAt)
-            || binding.CustodyContractVersion != 1 || binding.Backend != "windows-job-v1" || binding.RunnerStoreId == Guid.Empty
+            || binding.CustodyContractVersion != 1 || !VerificationCustodyBackends.IsSupported(binding.Backend)
+            || binding.RunnerStoreId == Guid.Empty
             || task.VerificationCleanupSealJson is not null || task.Status is not (AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
             || task.AgentSessionId != session.Id || current.StartedAt != binding.Generation.AcceptedStartedAt
             || current.Status is not (SessionStatus.Starting or SessionStatus.Running)

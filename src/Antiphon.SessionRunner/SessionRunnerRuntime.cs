@@ -43,8 +43,24 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     private readonly HerdrPlacementCoordinator _placement = new();
     private readonly HerdrNamedTabResolver _namedTabs = new(HerdrNamedTabResolver.HostLabelComparer);
     private readonly Lazy<RunnerCustodyLedger> _custody;
-    public string? VerificationCustodyBackend => OperatingSystem.IsWindows()
-        && PtyBackendPolicy.Resolve(_settings.PtyBackend).Backend == PtyBackend.ModernConPty ? "windows-job-v1" : null;
+    private readonly Lazy<string?> _custodyBackend;
+
+    /// <summary>
+    /// CARD-0604 D-17. Windows is unchanged: modern ConPTY, job object, windows-job-v1. Linux
+    /// advertises linux-cgroup-v1 only when the live probe passes -- custody root present for
+    /// this kernel's cgroup version, both root-owned helpers reachable through sudo -n, and this
+    /// process not already under no_new_privs. Probed once: the answer is a property of the
+    /// container, and a per-call sudo would put two subprocesses on every capabilities read.
+    /// </summary>
+    public string? VerificationCustodyBackend => _custodyBackend.Value;
+
+    private string? DetectCustodyBackend() => OperatingSystem.IsWindows()
+        ? PtyBackendPolicy.Resolve(_settings.PtyBackend).Backend == PtyBackend.ModernConPty
+            ? VerificationCustodyBackends.WindowsJob : null
+        : LinuxCgroupCustodyProbe.Detect(CustodyEnvironment);
+
+    /// <summary>Test seam for the Linux probe. Production leaves it null and probes for real.</summary>
+    internal ILinuxCustodyEnvironment? CustodyEnvironment { get; init; }
     public Guid RunnerStoreId => _custody.Value.Store.StoreId;
     private bool HasCustodyLedger => _custody.IsValueCreated
         || Directory.Exists(Path.Combine(_settings.SessionLogPath, "verification-custody"))
@@ -102,6 +118,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     {
         _settings = settings.Value;
         _custody = new(() => new RunnerCustodyLedger(Path.Combine(_settings.SessionLogPath, "verification-custody")));
+        _custodyBackend = new(DetectCustodyBackend);
         _logger = logger;
         _startup = startupDiagnostics ?? new RunnerStartupDiagnostics(logger);
         _herdrClient = herdrClient;
@@ -229,7 +246,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 return await StartCoreAsync(request, ct);
             }
             using var custodyLease = _custody.Value.AcquireSession(request.SessionId);
-            if (!_custody.Value.PrepareStart(request, _settings.PtyBackend))
+            if (!_custody.Value.PrepareStart(request, _settings.PtyBackend, VerificationCustodyBackend))
             {
                 if (_sessions.TryGetValue(request.SessionId, out var existing)
                     && existing.VerificationBinding == request.VerificationBinding)
@@ -2153,6 +2170,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     // whatever the test process had inherited.
                     ptyBackend: _settings.PtyBackend,
                     custodyStoreRoot: _custodyLedger?.Store.Root,
+                    // CARD-0604 D-17: the runner's probe result, which PrepareStart has already
+                    // required to equal this binding's backend -- so the binding is the same
+                    // answer, reachable from inside the per-session state.
+                    custodyBackend: VerificationBinding?.Backend,
                     ct: ct);
 
                 _client = await PtyHostClient.ConnectAsync(
