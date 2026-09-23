@@ -40,7 +40,8 @@ public sealed class PostLandMutationReceiptPolicyTests
         var now = new DateTime(2026, 9, 11, 12, 0, 0, DateTimeKind.Utc);
         var binding = new VerificationExecutionBinding(Guid.NewGuid(), new(Guid.NewGuid(), Guid.NewGuid(), new string('a', 40)),
             new(Guid.NewGuid(), now), new(@"C:\repo", @"C:\repo\.git", @"C:\trees\snapshot", @"C:\repo\.git\worktrees\snapshot",
-                "feat/card-task-12345678", Guid.NewGuid()), RunnerStoreId: Guid.NewGuid());
+                "feat/card-task-12345678", Guid.NewGuid()),
+            VerificationCustodyBackends.WindowsJob, RunnerStoreId: Guid.NewGuid());
         var host = new VerificationHostIdentity(binding.RunnerStoreId, Guid.NewGuid(), Guid.NewGuid(), 123, now);
         var valid = new VerificationCustodyReceipt(1, binding, host, 3, now, now, "JobObjectBasicAccountingInformation", 0, true,
             VerificationCustodyState.Exited, 124, now);

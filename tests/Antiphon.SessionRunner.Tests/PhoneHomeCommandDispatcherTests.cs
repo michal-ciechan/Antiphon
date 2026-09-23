@@ -34,7 +34,8 @@ public class PhoneHomeCommandDispatcherTests
                 Guid.NewGuid(),
                 new VerificationSourceIdentity(Guid.NewGuid(), Guid.NewGuid(), "deadbeef"),
                 new VerificationSessionGeneration(Guid.NewGuid(), DateTime.UtcNow),
-                new VerificationCreationCoordinates("r", "g", "w", "wg", "main", Guid.NewGuid())))), CancellationToken.None);
+                new VerificationCreationCoordinates("r", "g", "w", "wg", "main", Guid.NewGuid()),
+                VerificationCustodyBackends.WindowsJob, Guid.NewGuid()))), CancellationToken.None);
         custody.Kind.ShouldBe(PhoneHomeFrameKind.Error);
 
         var wrongCwd = await dispatcher.DispatchAsync(Launch(new RunnerLaunchRequest(

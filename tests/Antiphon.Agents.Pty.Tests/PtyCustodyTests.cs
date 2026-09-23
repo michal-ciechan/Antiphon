@@ -482,6 +482,7 @@ public class PtyCustodyTests
     {
         public bool Started { get; private set; }
         public bool Sealed { get; private set; }
+        public Guid ContainerId { get; } = Guid.NewGuid();
         public void RecordStartIntent() => Started = true;
         public void RecordTracking(int processId) => tracking(processId);
         public void RecordSeal() => Sealed = true;
