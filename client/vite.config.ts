@@ -31,9 +31,18 @@ const sharedServerConfig = {
   // in addition to localhost. The leading dot matches the domain and all its subdomains.
   allowedHosts: ['.laptop.codeperf.net', '.desktop.codeperf.net', '.localhost.codeperf.net'],
   proxy: {
+    // ws:true is NOT only for /hubs. The phone-home control plane (CARD-0604) reaches the
+    // server as GET /api/session-runners/{runnerId}/connect, a WebSocket upgrade under /api,
+    // and antiphon.<machine>.codeperf.net fronts 17203 rather than 17202 — so a remote runner's
+    // upgrade arrives here first. Without ws:true this proxy forwards the request with the
+    // hop-by-hop Upgrade headers dropped, Kestrel sees a plain GET and refuses it with
+    // "WebSocket upgrade is required" (409 phone_home_websocket_required) while POST
+    // /api/session-runners/register keeps succeeding — the runner then registers forever and
+    // never becomes available. Found by CARD-0604 CP-6a against the live server2 runner.
     '/api': {
       target: serverUrl,
       changeOrigin: true,
+      ws: true,
     },
     '/hubs': {
       target: serverUrl,
