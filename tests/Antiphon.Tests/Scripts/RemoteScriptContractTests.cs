@@ -21,18 +21,32 @@ public sealed class RemoteScriptContractTests
         Executable(text, "python3").ShouldBeEmpty("nested lane invokes python3");
         Executable(text, "python ").ShouldBeEmpty("nested lane invokes python");
 
-        // sudo is the host lane's alone, and only inside the lane guard: the nested lane runs as
-        // uid 1654 with no sudoers rule, so a sudo INVOCATION outside that branch is an
-        // unconditional failure. Merely naming the path (an assertion that the runtime image does
-        // NOT carry sudo) is the opposite of an invocation and must not trip this.
+        // sudo is the host lane's alone: the nested lane runs as uid 1654, whose ONLY sudo grant
+        // is the two custody helpers (CARD-0604 D-17), so a general sudo invocation from nested
+        // shell would fail anyway and a new one is an unconditional failure here. Merely naming
+        // the path (an assertion that the runtime image does NOT carry sudo) is the opposite of
+        // an invocation and must not trip this.
+        //
+        // Two places may invoke it. `ensure_dirs`' host branch elevates on the server2 HOST to
+        // create its own directories. `case_custody_containment` is a host-lane case whose sudo
+        // is inside a `docker exec -u 1654` payload -- it is executed by the container as the app
+        // uid, against the allow-listed grant, which is the very thing that case measures.
         var sudoLines = Executable(text, "sudo")
             .Where(line => System.Text.RegularExpressions.Regex.IsMatch(line, @"(^|[;&|(]\s*)sudo\s"))
             .ToList();
         sudoLines.ShouldNotBeEmpty("the host lane still elevates to create its own directories");
+        var containment = Block(text, "case_custody_containment");
         foreach (var line in sudoLines)
-            EnsureDirsBody(text).Contains(line, StringComparison.Ordinal)
-                .ShouldBeTrue("sudo outside ensure_dirs' host branch: " + line);
+            (EnsureDirsBody(text).Contains(line, StringComparison.Ordinal)
+                || containment.Contains(line, StringComparison.Ordinal))
+                .ShouldBeTrue("sudo outside ensure_dirs' host branch or the containment case: " + line);
         EnsureDirsBody(text).ShouldContain("if [ \"$LANE\" = \"host\" ]; then");
+
+        // And the containment case's sudo only READS the grant; it never runs a helper directly
+        // (the probe does that, as uid 1654) and never elevates anything else.
+        foreach (var line in sudoLines.Where(l => containment.Contains(l, StringComparison.Ordinal)))
+            line.ShouldContain("sudo -n -l");
+        containment.ShouldContain("docker exec -u 1654");
     }
 
     // CARD-0604 S12 / R-5, G-40 (Cut B). The fence inverts with the cut: the session-testing
