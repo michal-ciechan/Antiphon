@@ -1353,6 +1353,32 @@ Cut B:
 | CP-19 | S10-S11 | `Antiphon.Tests`, `Antiphon.SessionRunner.Tests`, `Antiphon.PtyHost.Tests` -> `bin-c604/` | custody-guards | `/*/*/(SourceLandingAdmissionTests*)\|(VerificationCleanupServiceTests*)\|(RemoteVerificationWorkspaceTests*)\|(VerificationReceiptPolicyTests*)\|(CustodyHelperContractTests*)/*`; `/*/*/(RunnerCustodyLedgerBackendTests*)\|(LinuxCustodyProbeTests*)\|(PhoneHomeCommandDispatcherTests*)\|(RunnerWorkspaceServiceTests*)/*`; `/*/*/CustodyReceiptBackendTests/*` | V-33 (local), R-11, R-12, R-16, G-28..G-40 | all listed, 0 failed (>= 40 executed across the three) | 20 |
 | CP-20 | S12 | CP-19 | docs-and-fence-guards | `/*/*/(DockerStackDocumentationTests*)\|(RemoteScriptContractTests*)/*` | R-6 | all listed, 0 failed | 3 |
 
+#### CP-6a result (2026-09-23, first run) - RED, V-13 not met
+
+Production enablement itself is **done and live**: the ten `PhoneHomeRunner:*` keys are set in the
+desktop `antiphon-server` user-secrets store (NOT the AppHost store - the AppHost forwards only
+`AntiphonMessaging:BootstrapServers`, so `PhoneHomeRunner:*` there would have been inert), the
+`SharedSecret` matches server2's `secrets/phone-home` by digest, and `restart-apphost.ps1` returned
+exit 0 at `a808bcfc` with `/api/version` equal to HEAD. Server2 now completes the **registration**
+leg: `POST /api/session-runners/register` returns 200 and the directory records
+`runnerStoreId=f519bd08-...`, `processBootId` per container boot, where before enablement it was a
+15 s 409 `phone_home_disabled` loop.
+
+V-13 still fails at the **connect** leg: `available`/`dispatchEligible` stay false. Root cause is
+outside `PhoneHomeRunner` settings - `antiphon.desktop.codeperf.net` reverse-proxies to
+`host.docker.internal:17203` (the Vite client), not 17202, and `client/vite.config.ts` set `ws: true`
+on `/hubs` only. `GET /api/session-runners/{id}/connect` therefore reached Kestrel stripped of its
+hop-by-hop upgrade headers and was refused 409 `phone_home_websocket_required` ("WebSocket upgrade
+is required"), while the same request straight to `http://localhost:17202` returned 409
+`phone_home_invalid_ticket` - i.e. the upgrade was recognised. D-2's "Caddy passes the upgrade"
+measurement was taken against a path that does not include 17203.
+
+Fix committed as `8ef1c647` (`ws: true` on the `/api` proxy, plus
+`client/src/viteProxyConfig.test.ts`, 6/6). A scratch Vite on 17293 carrying the patched config
+returned 409 `phone_home_invalid_ticket` for the same upgrade, against 17203's refusal - so the
+one-line change is the whole gap. **CP-6a must be re-run after that commit lands** and the main
+checkout's client is rebuilt/restarted; only then is V-13 answerable.
+
 Rules: TUnit rows are `run-checkpoint.ps1` rows into `.antiphon/c604-checkpoints/`; the others are
 the non-TUnit exact-command form, one case receipt each. CP-5, CP-6a and CP-15 change standing
 state (server2, production) and run once per frozen sha; a red server2 row is fixed and rerun as

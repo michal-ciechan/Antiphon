@@ -179,6 +179,12 @@ because a canary is one pinned agent and nothing else.
 Turning it on is an operator step and a production change, not something a test run does. In the
 **main checkout** (`C:\src\Antiphon`, never a worktree):
 
+The user-secrets go in the **`antiphon-server`** store (`dotnet user-secrets set <key> <value>
+--id antiphon-server`), not the AppHost's. The AppHost forwards exactly one key
+(`AntiphonMessaging:BootstrapServers`) to the server process; a `PhoneHomeRunner:*` key set against
+`--project Antiphon.AppHost` is silently inert. Set the POSIX-path values from PowerShell, not Git
+Bash - MSYS rewrites a bare `/work` argument into `C:/Program Files/Git/work` (CARD-0604 CP-6a).
+
 1. `git pull --rebase`, then set the user-secrets: `PhoneHomeRunner:Enabled=true`,
    `AllowedRunnerId=server2`, `AllowDelegatedTasks=true`, `HostWorkspaceRoot=C:\src\Antiphon`,
    `RunnerWorkspace=/work`, `RunnerRepository=/work/repos/antiphon`,
