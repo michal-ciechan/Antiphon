@@ -2,8 +2,10 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
@@ -203,6 +205,146 @@ public class ContinuationSettlementTests
         (await after.AgentIncidents.CountAsync(i => i.Kind == AgentIncidentKind.DelegateCompletedWithoutProgress))
             .ShouldBe(1);
         (await after.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == task.Id)).ShouldBe(1);
+    }
+
+    /// <summary>
+    /// CARD-0613 V-10. The corrected verdict has to cross the real queue and land in the caller's
+    /// terminal as one complete UserPrompt - through every persistence cut on the completion path,
+    /// for a busy caller and an eligible one. The delegate's work is off its own branch, so the
+    /// note the caller receives is the alternate-attribution one, not a no-progress failure.
+    /// </summary>
+    [Test]
+    [Timeout(600_000)]
+    public async Task C613_CompletionDeliveryRecovery()
+    {
+        var cuts = new[]
+        {
+            "obligation-insert", "settled-committed", "note-insert", "note-committed",
+            "wakeup-dropped", "prompt-accepted",
+        };
+        foreach (var cut in cuts)
+        foreach (var busy in new[] { false, true })
+        {
+            var row = $"{cut} busy={busy}";
+            await using var rig = await C544DeliveryRig.CreateAsync(busy);
+            if (cut == "wakeup-dropped") rig.Boundary.DropCompletionWakeup = true;
+            else if (cut != "prompt-accepted") rig.Fault.Cut = cut;
+
+            var (taskId, sha) = await SettleContinuationAsync(rig);
+
+            if (cut == "obligation-insert")
+            {
+                rig.Fault.Throws.ShouldBe(1, row);
+                (await rig.NotificationAsync(taskId)).ShouldBeNull(row + ": no obligation without its settlement");
+                (await rig.World.TaskAsync(taskId)).Status.ShouldBe(AgentTaskStatus.Dispatched, row + ": rolled back");
+                await rig.RestartAsync();
+                var session = (await rig.World.TaskAsync(taskId)).AgentSessionId!.Value;
+                await rig.World.Services.GetRequiredService<AgentTaskReplyService>()
+                    .OnTurnEndAsync(session, CancellationToken.None);
+            }
+
+            var note = (await rig.NotificationAsync(taskId)).ShouldNotBeNull(row + ": committed obligation");
+            (await rig.World.TaskAsync(taskId)).Status.ShouldBe(AgentTaskStatus.Succeeded, row);
+
+            if (cut == "prompt-accepted")
+            {
+                rig.Fault.TaskId = taskId;
+                rig.Fault.Cut = cut;
+                try
+                {
+                    if (busy) await rig.EndCallerTurnAsync();
+                    else await rig.FlushAsync();
+                    await rig.ScanAsync();
+                }
+                catch (IOException e) when (e.Message.StartsWith("c544 completion persistence cut", StringComparison.Ordinal)) { }
+                rig.Fault.Throws.ShouldBe(1, row + ": cut reached");
+            }
+
+            await rig.RestartAsync();
+            rig.World.Clock.Advance(TimeSpan.FromMinutes(10));
+            await rig.ScanAsync();
+            if (rig.Busy) await rig.EndCallerTurnAsync();
+            await rig.FlushAsync();
+            await rig.ScanAsync();
+
+            await AssertReceivedOnceAsync(rig, taskId, sha, row);
+            (await rig.NotificationAsync(taskId))!.Id.ShouldBe(note.Id, row + ": same notification identity");
+            (await rig.RowsAsync(taskId)).Count.ShouldBe(1, row + ": one keyed queue row");
+        }
+    }
+
+    /// <summary>
+    /// Exactly one complete UserPrompt in the caller's own transcript, carrying the corrected
+    /// succeeded verdict and the alternate attribution - never a no-progress failure sentence.
+    /// The receipt is the fake adapter's actual OnSubmitted write; nothing is inserted for it.
+    /// </summary>
+    private static async Task AssertReceivedOnceAsync(
+        C544DeliveryRig rig, Guid taskId, string sha, string row)
+    {
+        var note = (await rig.NotificationAsync(taskId)).ShouldNotBeNull(row);
+        var delivery = TaskCompletionNotification.TryReadDelivery(note.CompletionDeliveryJson)
+            .ShouldNotBeNull(row + ": rendered wire text");
+        var prompts = await rig.CallerPromptsAsync();
+        var matching = prompts
+            .Where(p => PromptSubmissionMatch.IsCompleteIn(delivery.WireText, p.Text!))
+            .ToList();
+        matching.Count.ShouldBe(1, row + ": exactly one complete prompt");
+        var received = matching[0].Text!;
+        received.ShouldContain(DelegationReportFormatter.Short(taskId), customMessage: row);
+        received.ShouldContain("succeeded", customMessage: row);
+        received.ShouldContain("progress=primary-alternate", customMessage: row);
+        received.ShouldContain(sha, customMessage: row);
+        received.ShouldContain("left for review", customMessage: row);
+        received.ShouldNotContain("no attributable post-dispatch progress", customMessage: row);
+        note.State.ShouldBe(LandNotificationState.Confirmed, row);
+    }
+
+    /// <summary>
+    /// A real profile-v1 Code/Worktree task, provisioned and baselined by the REAL dispatcher tick,
+    /// whose delegate then commits on a sibling branch that left the baseline lineage and claims it.
+    /// </summary>
+    private static async Task<(Guid TaskId, string Sha)> SettleContinuationAsync(C544DeliveryRig rig)
+    {
+        var created = await rig.World.CreateTaskAsync(new CreateAgentTaskRequest(
+            "Continue the sibling's work.", Title: "CARD-0613 continuation", Kind: AgentTaskKind.Worker,
+            Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree,
+            WorkingDirectory: rig.World.RepositoryPath, Card: rig.World.Card.Id.ToString()));
+
+        await using (var scope = rig.World.Services.CreateAsyncScope())
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
+
+        var task = await rig.World.TaskAsync(created.Id);
+        task.Status.ShouldBe(AgentTaskStatus.Dispatched, task.FailureReason);
+        var baseline = TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson)
+            .ShouldNotBeNull("the real dispatcher captures a baseline; a marked-dispatched row does not");
+
+        var path = task.WorktreePath!;
+        (await ScratchGitRepo.GitInAsync(path, "checkout", "-b", "c613-sibling", rig.World.BaseSha)).Ok.ShouldBeTrue();
+        await File.WriteAllTextAsync(Path.Combine(path, "continuation.md"), "continued work\n");
+        (await ScratchGitRepo.GitInAsync(path, "add", "continuation.md")).Ok.ShouldBeTrue();
+        var stamp = new DateTimeOffset(baseline.CapturedAt.AddSeconds(5), TimeSpan.Zero).ToString("o");
+        var env = new Dictionary<string, string> { ["GIT_AUTHOR_DATE"] = stamp, ["GIT_COMMITTER_DATE"] = stamp };
+        (await ScratchGitRepo.GitInAsync(path, env, "commit", "-m", "continued work")).Ok.ShouldBeTrue();
+        var sha = (await ScratchGitRepo.GitInAsync(path, "rev-parse", "HEAD")).StdOut.Trim();
+        (await ScratchGitRepo.GitInAsync(rig.World.Repo.Path, "merge-base", "--is-ancestor",
+            baseline.Primary.LocalSha, sha)).Ok.ShouldBeFalse("the continuation must NOT descend from the baseline");
+
+        // The evaluation clock is the world's; move it past the commit so the D-6 upper bound is met.
+        rig.World.Clock.Advance(TimeSpan.FromMinutes(10));
+
+        var session = task.AgentSessionId!.Value;
+        var report = $"""
+            Continued the sibling's work.
+
+            [antiphon-progress:{created.Id:D} commit={sha}]
+            --- next stage ---
+            next: review
+            handoff: C613 fixture handoff.
+            """;
+        await rig.World.SeedTurnAsync(session, created.Id, report);
+        await rig.World.Services.GetRequiredService<AgentTaskReplyService>()
+            .OnTurnEndAsync(session, CancellationToken.None);
+        return (created.Id, sha);
     }
 
     // ---- fixture ---------------------------------------------------------------------------
