@@ -294,6 +294,23 @@ the assigned worktree. Do not restart the stack. After ordinary success, report
 | CP-4 | S1-S3 | CP-1 | bundle-pins | `/*/*/(ScopedVerificationInstructionTests*)\|(PostLandMutationContractTests*)/*` | V-4, R-3 | Both classes incl. `C487_G131`, `C487_G135`, `C487_G139`, `C478_G175_CostInventory`; 0 failed/skipped | 47 | 2 |
 | CP-5 | S1-S3 | CP-1 | unit-lane | `/*/*/*/*[Category=Unit]` | V-1..V-4, R-1..R-3 | Whole Unit lane of `Antiphon.Tests` green; 0 failed; the six previously-red methods all executed | 1900 | 5 |
 
+### Execution record
+
+All five rows ran once, in order, at commit `94dd6df9ac2d4ca51c130144eead7ecba8a5ad25`
+(S3), results under `.antiphon/c615-checkpoints/`. No reruns, no unlisted runs.
+
+| CP | executed | passed | failed | skipped | exit |
+|---|---:|---:|---:|---:|---:|
+| CP-1 | 11 | 11 | 0 | 0 | 0 |
+| CP-2 | 4 | 4 | 0 | 0 | 0 |
+| CP-3 | 57 | 57 | 0 | 0 | 0 |
+| CP-4 | 47 | 47 | 0 | 0 | 0 |
+| CP-5 | 2802 | 2802 | 0 | 1 | 0 |
+
+CP-5's one skip is the pre-existing environment-conditional
+`Restored_key_file_symlink_is_rejected_without_mutating_target`, unrelated to this
+card. CP-5's `Min` is a floor, not a census; the measured lane is 2,803 cases.
+
 ## Handoff
 
 Implement S1-S3 and execute CP-1..CP-5. The plan itself changes no production code.
