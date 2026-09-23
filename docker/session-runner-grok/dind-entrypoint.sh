@@ -11,6 +11,7 @@ PHONE_HOME_SECRET_SOURCE="${ANTIPHON_PHONE_HOME_SECRET_SOURCE:-/run/secrets/phon
 RUNTIME_DIR=/run/antiphon
 DEPLOY_KEY_TARGET="$RUNTIME_DIR/deploy-key"
 PHONE_HOME_SECRET_TARGET="$RUNTIME_DIR/phone-home"
+CLAUDE_OAUTH_TOKEN_SOURCE="$RUNTIME_DIR/claude-oauth-token"
 APP_UID=1654
 APP_GID=1654
 NESTED_SOCKET_GID=1656
@@ -108,6 +109,20 @@ while [ "$waited" -lt "$DOCKERD_WAIT_SECONDS" ]; do
 done
 if ! docker info >/dev/null 2>&1; then
   refuse NestedDaemonUnavailable
+fi
+
+# --- step 5b: the Claude setup-token (CARD-0628 D-1) ---------------------------------
+# Compose mounts the deploy's token file read-only; it is never a compose environment entry, so
+# `docker inspect` never shows it. Exported here, after dockerd has started, so only the runner
+# (and through it every pty child) carries it. The file is the only source. Missing or empty is
+# not a refusal: the runner reports Claude as signed out. Never printed, logged or hashed.
+unset CLAUDE_CODE_OAUTH_TOKEN
+if [ -f "$CLAUDE_OAUTH_TOKEN_SOURCE" ] && [ -s "$CLAUDE_OAUTH_TOKEN_SOURCE" ]; then
+  claude_oauth_token="$(tr -d '[:space:]' < "$CLAUDE_OAUTH_TOKEN_SOURCE")"
+  if [ -n "$claude_oauth_token" ]; then
+    export CLAUDE_CODE_OAUTH_TOKEN="$claude_oauth_token"
+  fi
+  unset claude_oauth_token
 fi
 
 # --- step 6: the runner, as the app uid ----------------------------------------------

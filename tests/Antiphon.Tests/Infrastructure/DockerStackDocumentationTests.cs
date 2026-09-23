@@ -31,6 +31,9 @@ public sealed class DockerStackDocumentationTests
         // CARD-0628 G-17c.
         text.ShouldContain("Claude Code 2.1.280");
         text.ShouldContain("1e08503d");
+        // CARD-0628 Round D.
+        text.ShouldContain("CLAUDE_OAUTH_TOKEN_FILE");
+        text.ShouldContain("/run/antiphon/claude-oauth-token");
     }
 
     [Test]
@@ -118,6 +121,12 @@ public sealed class DockerStackDocumentationTests
         text.ShouldContain("`ANTHROPIC_API_KEY` is never a fallback");
         text.IndexOf("**Primary:** `CLAUDE_CODE_OAUTH_TOKEN`", StringComparison.Ordinal)
             .ShouldBeInRange(0, text.IndexOf("**Fallback:** interactive login store", StringComparison.Ordinal));
+        // Round D: the file-mount custody, and the superseded environment pass-through is gone.
+        text.ShouldContain("antiphon/server2/claude-oauth-token");
+        text.ShouldContain("/home/mc/antiphon-server2/secrets/claude_oauth_token");
+        text.ShouldContain("/run/antiphon/claude-oauth-token");
+        text.Contains("passes `CLAUDE_CODE_OAUTH_TOKEN` through from that environment", StringComparison.Ordinal)
+            .ShouldBeFalse("the compose environment pass-through is superseded");
         text.Contains("sk-ant-", StringComparison.Ordinal).ShouldBeFalse("no Anthropic key or token fragment");
         System.Text.RegularExpressions.Regex.IsMatch(text, @"\b[0-9a-f]{64}\b")
             .ShouldBeFalse("the Claude digest lives in the Dockerfile and docker-stack.md, never here");

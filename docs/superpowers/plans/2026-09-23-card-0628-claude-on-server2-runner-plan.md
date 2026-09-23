@@ -83,13 +83,20 @@ remote-task defects in "Not done, noted".
 
 ### D-1. Auth is a subscription credential: the setup-token is primary, the login the fallback
 
-**Amended 2026-09-23 (operator auth decision, applied in Code Round C).** Primary: a `claude
-setup-token` OAuth token for the operator's Max subscription, held in the vault and injected into
-the deploy environment at deploy time; `docker-compose.server2-runner.yml` passes
-`CLAUDE_CODE_OAUTH_TOKEN` through with no value in the file, so the runner process has it and every
-pty child inherits it (runner → detached PtyHost → child; guarded by
-`RunnerChildClaudeTokenInheritanceTests`). It is never baked, never in an env file, never a Compose
-secret, never copied from the desktop's own login. A **launch** env still cannot carry it: D-4's
+**Amended 2026-09-23 (operator auth decision, applied in Code Round C; injection re-amended in
+Round D to the operator-approved file-mount design).** Primary: a `claude setup-token` OAuth token
+for the operator's Max subscription, held in the vault item `antiphon/server2/claude-oauth-token`
+(login password). At deploy, `scripts/c590-real.ps1` reads it through the relay session and streams
+it over SSH stdin (never argv, never echoed) to `/home/mc/antiphon-server2/secrets/claude_oauth_token`
+at 0600; `deploy-parent` guarantees the file exists (empty when the vault had nothing, which is a
+warning and `claudeAuth=logged-out`, not a failed deploy). `docker-compose.server2-runner.yml`
+mounts it read-only at `/run/antiphon/claude-oauth-token` and `dind-entrypoint.sh` exports
+`CLAUDE_CODE_OAUTH_TOKEN` from it after dockerd starts and just before the runner, so the runner
+process has it and every pty child inherits it (runner → detached PtyHost → child; guarded by
+`RunnerChildClaudeTokenInheritanceTests`). Round C's valueless compose `environment:` pass-through
+is gone: it showed in `docker inspect` and nothing wired it from the vault;
+`Compose_never_lists_the_claude_token_under_environment` guards it. It is never baked, never in an
+env file, never a compose environment entry, never copied from the desktop's own login. A **launch** env still cannot carry it: D-4's
 refusal of `CLAUDE_CODE_OAUTH_TOKEN` on a runner-bound Claude launch stands, so the container's own
 environment is the only source. The token's known limits (inference-only scope, no self-refresh, a
 redeploy on expiry) are accepted by the operator.
@@ -245,8 +252,10 @@ Code proves, with no login on the store:
   and G-13 stands as its evidence).
 
 The operator does, once. **Primary (amended D-1):** generate the token with `claude setup-token`
-on the desktop, store it in the vault, and redeploy the runner with `CLAUDE_CODE_OAUTH_TOKEN` in the
-deploy environment (CP-6, which waits on the token and CARD-0631); then step 3 and step 4 below.
+on the desktop, store it in the vault item `antiphon/server2/claude-oauth-token` (login password),
+unlock the vault through the relay, and redeploy the runner; `deploy-parent` delivers the token file
+and the entrypoint exports it (amended D-1; CP-6, which waits on the token and CARD-0631); then step
+3 and step 4 below.
 **Fallback**, a live interactive action Code cannot perform, on server2:
 
 1. `docker exec -it -u 1654:1654 -e HOME=/home/app -e CLAUDE_CONFIG_DIR=/state/claude
@@ -304,8 +313,9 @@ post-land Code follow-up; they are listed here so the table stays the closed lis
 
 ### D-13. Defaults this plan is written under
 
-- D-1: subscription credentials only — the `claude setup-token` `CLAUDE_CODE_OAUTH_TOKEN` in the
-  runner container's deploy environment is primary, `claude auth login` the fallback; no API-key
+- D-1: subscription credentials only — the `claude setup-token` `CLAUDE_CODE_OAUTH_TOKEN`,
+  delivered from the vault as a read-only file mount and exported into the runner process by the
+  entrypoint, is primary, `claude auth login` the fallback; no API-key
   opt-in on the runner (card decision 1).
 - D-2: version 2.1.280 and its published digest; `runtime-base` placement.
 - D-3: the literal admitted pair, not a setting; the pinned agent stays Grok-only.
@@ -567,8 +577,17 @@ eleven classes touched or created.
 - G-2 | `session-testing` body contains `claude --version | grep -F '2.1.280'` **after**
   `COPY --from=node22` (order asserted) | `Testing_stage_asserts_claude_after_node_merge`.
 - G-3 | server2 compose `CLAUDE_CONFIG_DIR` == `PhoneHome__ClaudeHome` == `/state/claude` ==
-  `new PhoneHomeRunnerSettings().ChildClaudeHome` == `new PhoneHomeSettings().ClaudeHome` |
-  `Server2_compose_projects_claude_config_dir`.
+  `new PhoneHomeRunnerSettings().ChildClaudeHome` == `new PhoneHomeSettings().ClaudeHome`, and
+  (Round D) the token file mounted read-only at `/run/antiphon/claude-oauth-token` on the
+  `/run/antiphon` tmpfs | `Server2_compose_projects_claude_config_dir`.
+- G-3b (Round D) | no compose file lists `CLAUDE_CODE_OAUTH_TOKEN` under any `environment:` |
+  `Compose_never_lists_the_claude_token_under_environment`.
+- G-3c (Round D) | the bridge reads the vault item and pipes it to `ssh` stdin, never argv or
+  `Write-*`; `deploy-parent` creates the file at 0600 before compose and never reads it |
+  `Server2_deploy_streams_the_claude_token_file`.
+- G-3d (Round D) | the entrypoint exports the token from the file after dockerd and before the
+  runner, unsets any inherited value, never refuses on its absence, never prints it |
+  `Entrypoint_exports_the_claude_token_from_the_mounted_file`, `Entrypoint_never_prints_the_key`.
 - G-3a | `init-state.sh` lists `/runner-state/claude` in its mkdir loop |
   `Init_state_creates_the_claude_home`.
 - G-4 | the harness text runs `claude auth status --json` with `-u 1654:1654`, `HOME=/home/app`,

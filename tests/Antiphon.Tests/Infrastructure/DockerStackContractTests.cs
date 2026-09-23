@@ -437,8 +437,8 @@ public sealed class DockerStackContractTests
         body.ShouldContain("rm -rf /tmp/claude-probe");
     }
 
-    // CARD-0628 G-3 (D-6): one Claude store in three places, and the setup-token passed through
-    // from the deploy environment with no value written anywhere in the repository.
+    // CARD-0628 G-3 (D-6, amended D-1): one Claude store in three places, and the setup-token
+    // arriving as a read-only FILE mount on the /run/antiphon tmpfs, never an environment entry.
     [Test]
     public void Server2_compose_projects_claude_config_dir()
     {
@@ -451,12 +451,88 @@ public sealed class DockerStackContractTests
             .ShouldBe(Env(runner, "CLAUDE_CONFIG_DIR"), "the auth probe targets the same store");
         Destination(runner, "runner-state").ShouldBe("/state");
 
-        Env(runner, "CLAUDE_CODE_OAUTH_TOKEN").ShouldBe("", "passed through from the deploy environment, never a literal");
+        DockerStackDocuments.List(runner, "volumes")
+            .ShouldContain("${CLAUDE_OAUTH_TOKEN_FILE:?CLAUDE_OAUTH_TOKEN_FILE is required}:/run/antiphon/claude-oauth-token:ro",
+                "the deploy's token file, read-only, at the path the entrypoint reads");
+        DockerStackDocuments.List(runner, "tmpfs").ShouldContain("/run/antiphon");
+        Text("docker/session-runner-grok/dind-entrypoint.sh")
+            .ShouldContain("CLAUDE_OAUTH_TOKEN_SOURCE=\"$RUNTIME_DIR/claude-oauth-token\"");
+        Text("docker/stack.env.example")
+            .ShouldContain("CLAUDE_OAUTH_TOKEN_FILE=/home/mc/antiphon-server2/secrets/claude_oauth_token");
         foreach (var name in new[] { "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN" })
             Text("docker-compose.server2-runner.yml").Contains(name, StringComparison.Ordinal)
                 .ShouldBeFalse(name + " is never a runner fallback");
         System.Text.RegularExpressions.Regex.IsMatch(Text("docker/stack.env.example"), @"(?m)^\s*CLAUDE_CODE_OAUTH_TOKEN\s*=")
             .ShouldBeFalse("the env example never carries a token assignment");
+    }
+
+    // CARD-0628 D-1 (Round D): an environment entry, even a valueless pass-through, is printed by
+    // `docker inspect`. No compose file may name the token under any service's environment.
+    [Test]
+    public void Compose_never_lists_the_claude_token_under_environment()
+    {
+        foreach (var file in ComposeFiles())
+        {
+            var lines = Text(file).Replace("\r\n", "\n").Split('\n');
+            var envIndent = -1;
+            foreach (var raw in lines)
+            {
+                var trimmed = raw.Trim();
+                if (trimmed.Length == 0 || trimmed.StartsWith('#'))
+                    continue;
+                var indent = raw.Length - raw.TrimStart().Length;
+                if (envIndent >= 0 && indent <= envIndent)
+                    envIndent = -1;
+                if (trimmed == "environment:")
+                {
+                    envIndent = indent;
+                    continue;
+                }
+
+                if (envIndent < 0)
+                    continue;
+                var entry = trimmed.StartsWith("- ", StringComparison.Ordinal) ? trimmed[2..].TrimStart() : trimmed;
+                entry.StartsWith("CLAUDE_CODE_OAUTH_TOKEN", StringComparison.Ordinal)
+                    .ShouldBeFalse(file + " lists the Claude token under environment: " + trimmed);
+            }
+        }
+    }
+
+    // CARD-0628 D-1 (Round D): the deploy reads the vault item and streams it over SSH stdin; the
+    // host lane only guarantees the file exists at 0600 and records presence, never content.
+    [Test]
+    public void Server2_deploy_streams_the_claude_token_file()
+    {
+        var bridge = Text("scripts/c590-real.ps1");
+        bridge.ShouldContain("$script:C628ClaudeTokenItem = 'antiphon/server2/claude-oauth-token'");
+        bridge.ShouldContain("& bw get password $script:C628ClaudeTokenItem --nointeraction");
+        bridge.ShouldContain("$token | & ssh -o BatchMode=yes");
+        bridge.ShouldContain("cat > '$target.tmp' && chmod 0600 '$target.tmp'");
+        bridge.ShouldContain("if ($Case -eq 'deploy-parent') {");
+        bridge.ShouldContain("ClaudeOAuthTokenUnavailable");
+        foreach (var line in bridge.Replace("\r\n", "\n").Split('\n').Where(line => line.Contains("$token", StringComparison.Ordinal)))
+        {
+            line.Contains("Write-", StringComparison.Ordinal).ShouldBeFalse("the token is never written out: " + line.Trim());
+            System.Text.RegularExpressions.Regex.IsMatch(line, @"ssh[^|]*\$token")
+                .ShouldBeFalse("the token is never an ssh argument: " + line.Trim());
+        }
+
+        var remote = Text("scripts/c590-remote.sh").Replace("\r\n", "\n");
+        remote.ShouldContain("CLAUDE_OAUTH_TOKEN_PATH=\"$SERVER2_ROOT/secrets/claude_oauth_token\"");
+        remote.ShouldContain("CLAUDE_OAUTH_TOKEN_FILE=\"$CLAUDE_OAUTH_TOKEN_PATH\" \\");
+        remote.ShouldContain("CLAUDE_OAUTH_TOKEN_FILE=$CLAUDE_OAUTH_TOKEN_PATH\n");
+        remote.ShouldContain(": > \"$CLAUDE_OAUTH_TOKEN_PATH\"");
+        remote.ShouldContain("chmod 0600 \"$CLAUDE_OAUTH_TOKEN_PATH\"");
+        remote.ShouldContain("WARN ClaudeOAuthTokenAbsent");
+        Order(remote, "chmod 0600 \"$CLAUDE_OAUTH_TOKEN_PATH\"", "compose_host up -d --no-build")
+            .ShouldBeTrue("the file exists before compose binds it");
+        foreach (var line in remote.Replace("\r\n", "\n").Split('\n').Where(line => line.Contains("CLAUDE_OAUTH_TOKEN_PATH", StringComparison.Ordinal)))
+        {
+            var trimmed = line.Trim();
+            (trimmed.StartsWith("cat ", StringComparison.Ordinal) || trimmed.Contains("< \"$CLAUDE_OAUTH_TOKEN_PATH\"", StringComparison.Ordinal)
+                || trimmed.StartsWith("cp ", StringComparison.Ordinal))
+                .ShouldBeFalse("the host lane never reads the token: " + trimmed);
+        }
     }
 
     [Test]

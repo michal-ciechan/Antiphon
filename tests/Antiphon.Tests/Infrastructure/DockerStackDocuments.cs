@@ -142,7 +142,8 @@ internal static class DockerStackDocuments
                 continue;
             }
 
-            if (trimmed.Length == 0)
+            // A YAML comment between items is not the end of the list.
+            if (trimmed.Length == 0 || trimmed.StartsWith('#'))
                 continue;
             break;
         }

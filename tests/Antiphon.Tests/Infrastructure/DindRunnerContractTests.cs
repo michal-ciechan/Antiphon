@@ -108,6 +108,24 @@ public sealed class DindRunnerContractTests
             .ShouldBeTrue("the daemon is up before the runner starts");
     }
 
+    // CARD-0628 D-1 (Round D): the token file is the only source. Exported after dockerd starts so
+    // only the runner (and its pty children) inherit it; missing or empty is not a refusal.
+    [Test]
+    public void Entrypoint_exports_the_claude_token_from_the_mounted_file()
+    {
+        var text = Entrypoint();
+        text.ShouldContain("CLAUDE_OAUTH_TOKEN_SOURCE=\"$RUNTIME_DIR/claude-oauth-token\"");
+        text.ShouldContain("unset CLAUDE_CODE_OAUTH_TOKEN");
+        text.ShouldContain("if [ -f \"$CLAUDE_OAUTH_TOKEN_SOURCE\" ] && [ -s \"$CLAUDE_OAUTH_TOKEN_SOURCE\" ]; then");
+        text.ShouldContain("claude_oauth_token=\"$(tr -d '[:space:]' < \"$CLAUDE_OAUTH_TOKEN_SOURCE\")\"");
+        text.ShouldContain("export CLAUDE_CODE_OAUTH_TOKEN=\"$claude_oauth_token\"");
+        Order(text, "dockerd --config-file", "unset CLAUDE_CODE_OAUTH_TOKEN")
+            .ShouldBeTrue("dockerd never inherits the token");
+        Order(text, "export CLAUDE_CODE_OAUTH_TOKEN=", "--groups=\"$NESTED_SOCKET_GID\" \"$@\"")
+            .ShouldBeTrue("exported before the runner starts");
+        Refusal(text, "ClaudeOAuthTokenMissing").ShouldBeFalse("an absent token is signed out, not a refusal");
+    }
+
     [Test]
     public void Entrypoint_exits_when_either_process_exits()
     {
@@ -146,6 +164,7 @@ public sealed class DindRunnerContractTests
                      {
                          "DEPLOY_KEY_SOURCE", "DEPLOY_KEY_TARGET",
                          "PHONE_HOME_SECRET_SOURCE", "PHONE_HOME_SECRET_TARGET",
+                         "CLAUDE_OAUTH_TOKEN_SOURCE", "CLAUDE_CODE_OAUTH_TOKEN", "claude_oauth_token",
                      })
                 trimmed.Contains(secret, StringComparison.Ordinal)
                     .ShouldBeFalse("entrypoint line prints a secret path's contents: " + trimmed);

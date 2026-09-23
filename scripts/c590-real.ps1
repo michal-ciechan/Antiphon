@@ -98,6 +98,50 @@ function Invoke-C590Ssh {
     return $LASTEXITCODE
 }
 
+# CARD-0628 D-1. deploy-parent's Claude setup-token: read from the vault item
+# antiphon/server2/claude-oauth-token (login.password) through the approved relay session
+# (BW_SESSION, else the ~/.bw-session pickup file the relay unlock writes) and streamed over SSH
+# STDIN into the server2 token file at 0600. Never argv, never echoed, never written to a desktop
+# file. A locked vault or a missing item is a warning, not a failure: any previously delivered file
+# is left as it was, and deploy-parent creates an empty one if none exists, so the runner reports
+# claudeAuth=logged-out. Returns whether a token was delivered.
+$script:C628ClaudeTokenItem = 'antiphon/server2/claude-oauth-token'
+$script:C628ClaudeTokenRemote = '/home/mc/antiphon-server2/secrets/claude_oauth_token'
+
+function Send-C628ClaudeOAuthToken {
+    $session = $env:BW_SESSION
+    if (-not $session) {
+        $pickup = Join-Path $HOME '.bw-session'
+        if (Test-Path -LiteralPath $pickup) { $session = (Get-Content -Raw -LiteralPath $pickup).Trim() }
+    }
+    if (-not $session -or -not (Get-Command bw -ErrorAction SilentlyContinue)) {
+        Write-Warning 'C628 ClaudeOAuthTokenUnavailable: vault locked or bw missing; the runner will report claudeAuth=logged-out'
+        return $false
+    }
+    $previous = $env:BW_SESSION
+    $token = ''
+    try {
+        $env:BW_SESSION = $session
+        $token = (& bw get password $script:C628ClaudeTokenItem --nointeraction 2>$null | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $token) {
+            Write-Warning ('C628 ClaudeOAuthTokenUnavailable: vault item ' + $script:C628ClaudeTokenItem + ' not readable; the runner will report claudeAuth=logged-out')
+            return $false
+        }
+        $target = $script:C628ClaudeTokenRemote
+        $remote = "umask 077 && mkdir -p /home/mc/antiphon-server2/secrets && cat > '$target.tmp' && chmod 0600 '$target.tmp' && mv -f '$target.tmp' '$target'"
+        $token | & ssh -o BatchMode=yes -o ConnectTimeout=30 mc@server2 $remote
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning 'C628 ClaudeOAuthTokenNotDelivered: the SSH write failed; the previous token file, if any, is unchanged'
+            return $false
+        }
+        return $true
+    }
+    finally {
+        $token = ''
+        $env:BW_SESSION = $previous
+    }
+}
+
 function New-C590ManifestFile {
     param(
         [string]$EvidenceRoot,
@@ -193,6 +237,10 @@ function Invoke-C590LiveCase {
 
     $tokenCopied = $false
     try {
+        if ($Case -eq 'deploy-parent') {
+            [void](Send-C628ClaudeOAuthToken)
+        }
+
         if ($Case -eq 'git-credential-smoke') {
             $token = (& gh auth token | Out-String).Trim()
             if (-not $token -or $token.Length -lt 10) {
