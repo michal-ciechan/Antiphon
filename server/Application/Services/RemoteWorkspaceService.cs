@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
@@ -26,16 +27,28 @@ public sealed class RemoteWorkspaceService
     private readonly ISessionRunnerDirectory _runners;
     private readonly ILandingGit _git;
     private readonly ILogger<RemoteWorkspaceService> _logger;
+    private readonly ITaskProgressGit? _progressGit;
+    private readonly IRepositoryMutationLease? _leases;
+    private readonly IWorkspaceReservationJournal? _reservations;
 
     public RemoteWorkspaceService(
         ISessionRunnerDirectory runners,
         ILandingGit git,
-        ILogger<RemoteWorkspaceService> logger)
+        ILogger<RemoteWorkspaceService> logger,
+        ITaskProgressGit? progressGit = null,
+        IRepositoryMutationLease? leases = null,
+        IWorkspaceReservationJournal? reservations = null)
     {
         _runners = runners;
         _git = git;
         _logger = logger;
+        _progressGit = progressGit;
+        _leases = leases;
+        _reservations = reservations;
     }
+
+    /// <summary>CARD-0657 D-3. The whole settlement sync attempt's deadline.</summary>
+    public TimeSpan SyncBudget { get; init; } = TimeSpan.FromSeconds(45);
 
     /// <summary>The mirror directory name for a task: the dispatcher's own short form.</summary>
     public static string MirrorName(Guid taskId) => "task-" + taskId.ToString("N")[..8];
@@ -78,41 +91,29 @@ public sealed class RemoteWorkspaceService
     /// Settlement sync: bring the canonical desktop worktree up to whatever the session pushed.
     /// Fast-forward only, and never on a dirty tree.
     /// </summary>
-    public async Task<RemoteSyncResult> SyncAsync(AgentTask task, CancellationToken ct)
+    public async Task<RemoteSettlementSyncResult> SyncAsync(AgentTask task, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(task.WorktreePath) || string.IsNullOrWhiteSpace(task.WorktreeBranch))
-            return new RemoteSyncResult(false, null, "the task has no desktop worktree or branch");
+            return new(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.IdentityMismatch);
 
         var status = await _git.RunAsync(
             task.WorktreePath, ["status", "--porcelain", "--untracked-files=all"], ct);
         if (status.ExitCode != 0)
-            return new RemoteSyncResult(false, null, "could not read the desktop worktree status");
+            return new(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable);
         if (status.Output.Trim().Length > 0)
-        {
-            // Something is in the desktop tree that the runner did not put there. Fast-forwarding
-            // over it could lose it, so this is reported and left exactly as found.
-            return new RemoteSyncResult(
-                false, null,
-                "the desktop worktree has uncommitted changes; it was left untouched and is behind the pushed branch");
-        }
+            return new(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.Dirty);
 
         var fetch = await _git.RunAsync(task.WorktreePath, ["fetch", "origin", task.WorktreeBranch], ct);
         if (fetch.ExitCode != 0)
-            return new RemoteSyncResult(false, null, "git fetch failed: " + Tail(fetch.Diagnostic));
+            return new(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.FetchUnavailable);
 
         var merge = await _git.RunAsync(task.WorktreePath, ["merge", "--ff-only", "FETCH_HEAD"], ct);
         if (merge.ExitCode != 0)
-        {
-            return new RemoteSyncResult(
-                false, null,
-                "the desktop worktree and the pushed branch have diverged; a non-fast-forward sync was refused: "
-                + Tail(merge.Diagnostic));
-        }
+            return new(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.Diverged);
 
         var head = await _git.RunAsync(task.WorktreePath, ["rev-parse", "HEAD"], ct);
-        return head.ExitCode == 0
-            ? new RemoteSyncResult(true, head.Output.Trim(), null)
-            : new RemoteSyncResult(true, null, null);
+        return new(RemoteSettlementSyncState.Synchronized,
+            DesktopAfterSha: head.ExitCode == 0 ? head.Output.Trim() : null);
     }
 
     /// <summary>
@@ -152,4 +153,3 @@ public sealed class RemoteWorkspaceService
 
 public sealed record RemotePushResult(bool Pushed, string? Sha, string? Warning);
 
-public sealed record RemoteSyncResult(bool Synced, string? Sha, string? Warning);
