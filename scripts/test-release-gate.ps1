@@ -18,6 +18,7 @@ $lib = Join-Path $here 'lib'
 . (Join-Path $lib 'nightly-policy.ps1')
 . (Join-Path $lib 'nightly-coverage.ps1')
 . (Join-Path $lib 'release-gate.ps1')
+. (Join-Path $lib 'release-authority.ps1')
 . (Join-Path $lib 'nightly-run-impl.ps1')
 . (Join-Path $lib 'nightly-tests-impl.ps1')
 . (Join-Path $lib 'c487-harness.ps1')
@@ -248,6 +249,186 @@ function New-C599RcGreen {
     })
     return $root
 }
+
+# ============================================ CARD-0599 D-15 authority fixture ===
+# A real scratch git repository holds the policy at a real commit; the authority is
+# frozen by the PRODUCTION New-ReleaseGateAuthority / New-ReleaseGateExecutionPlan,
+# and the chunk evidence is real TRX read back by the production TRX reader. Every
+# negative below starts from this valid control and changes exactly one thing.
+
+$script:C599RepoPolicyPath = Join-Path $repoRoot (Join-Path 'tests' 'test-execution-policy.json')
+$script:C599IntentId = 'intent-20260923T083000Z'
+$script:C599RunId = 'rc-run-1'
+$script:C599NativeSuites = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging', 'e2e')
+$script:C599Rosters = @{ client = @('lint', 'build', 'vitest'); scripts = @('test-release-gate.ps1', 'test-nightly.ps1') }
+
+function Invoke-C599RealGit {
+    param([string]$Repo, [string[]]$Arguments)
+    $r = Invoke-ReleaseAuthorityGit -RepositoryRoot $Repo -Arguments $Arguments
+    if ([int]$r.ExitCode -ne 0) { throw ('fixture git {0} failed: {1}' -f ($Arguments -join ' '), $r.Error) }
+    return $r.Text.Trim()
+}
+
+function New-C599PolicyCheckout {
+    <#
+      The owned release clone as a REAL git repository: the policy is committed and
+      its commit SHA is the candidate SHA. PolicyBytes defaults to the live policy.
+    #>
+    param([string]$Root, [byte[]]$PolicyBytes = $null)
+    $clone = Join-Path $Root 'checkout'
+    New-Item -ItemType Directory -Path (Join-Path $clone 'tests') -Force | Out-Null
+    if ($null -eq $PolicyBytes) { $PolicyBytes = [System.IO.File]::ReadAllBytes($script:C599RepoPolicyPath) }
+    [System.IO.File]::WriteAllBytes((Join-Path $clone (Join-Path 'tests' 'test-execution-policy.json')), $PolicyBytes)
+    [void](Invoke-C599RealGit -Repo $clone -Arguments @('init', '-q'))
+    [void](Invoke-C599RealGit -Repo $clone -Arguments @('config', 'core.autocrlf', 'false'))
+    [void](Invoke-C599RealGit -Repo $clone -Arguments @('remote', 'add', 'origin', 'https://github.com/michal-ciechan/Antiphon'))
+    [void](Invoke-C599RealGit -Repo $clone -Arguments @('add', '--', 'tests/test-execution-policy.json'))
+    [void](Invoke-C599RealGit -Repo $clone -Arguments @('-c', 'user.name=c599', '-c', 'user.email=c599@example.invalid', 'commit', '-q', '-m', 'policy'))
+    $sha = Invoke-C599RealGit -Repo $clone -Arguments @('rev-parse', 'HEAD')
+    Write-NightlyAtomicJson -Path (Join-Path $clone '.antiphon-release-owned') -Object ([ordered]@{ kind = 'release-clone' })
+    return [pscustomobject]@{ Path = $clone; Sha = $sha }
+}
+
+function Get-C599Discovery {
+    # Two classes per native suite (antiphon three chunks) plus one pinned-excluded node.
+    $d = @{}
+    foreach ($suite in $script:C599NativeSuites) {
+        $tag = ($suite -replace '[^a-z]', '')
+        $nodes = @(
+            @{ uid = ('{0}-u1' -f $suite); class = ('{0}AlphaTests' -f $tag); method = 'One' },
+            @{ uid = ('{0}-u2' -f $suite); class = ('{0}AlphaTests' -f $tag); method = 'Two' },
+            @{ uid = ('{0}-u3' -f $suite); class = ('{0}BetaTests' -f $tag); method = 'Three(1)' }
+        )
+        if ($suite -eq 'antiphon') {
+            $nodes += @{ uid = 'antiphon-u4'; class = 'antiphonGammaTests'; method = 'Four' }
+            $nodes += @{ uid = 'antiphon-x1'; class = 'ClaudeAdapterIntegrationTests'; method = 'Live' }
+        }
+        if ($suite -eq 'e2e') { $nodes += @{ uid = 'e2e-x1'; class = 'DelegationPipelineE2ETests'; method = 'Live' } }
+        $d[$suite] = $nodes
+    }
+    return $d
+}
+
+function Get-C599AuthorityDir {
+    param($Fx)
+    return (Get-ReleaseAuthorityDir -CandidateRoot (Get-ReleaseGateCandidateRoot -ReleaseRoot $Fx.ReleaseRoot -CandidateId $CandidateId))
+}
+
+function Update-C599Json {
+    param([string]$Path, [scriptblock]$Mutate)
+    $obj = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+    & $Mutate $obj
+    Write-NightlyAtomicJson -Path $Path -Object $obj
+}
+
+function Update-C599Ledger {
+    # Mutate the ledger (or plan) and keep every OTHER binding valid, so the one
+    # changed field is the only thing a guard can refuse on.
+    param($Fx, [scriptblock]$Ledger = $null, [scriptblock]$Plan = $null)
+    $dir = Get-C599AuthorityDir -Fx $Fx
+    if ($Plan) { Update-C599Json -Path (Join-Path $dir 'execution-plan.json') -Mutate $Plan }
+    Update-C599Json -Path (Join-Path $dir 'ledger.json') -Mutate {
+        param($l)
+        $l.executionPlanDigest = (Get-NightlyFileSha256 -Path (Join-Path $dir 'execution-plan.json'))
+        if ($Ledger) { & $Ledger $l }
+    }
+}
+
+function Set-C599TrxOutcome {
+    # Rewrite one chunk's real TRX and re-bind its digest and counts, so only the
+    # UID outcome differs from the valid control.
+    param($Fx, [string]$Chunk, [string]$Uid, [string]$Outcome)
+    $dir = Get-C599AuthorityDir -Fx $Fx
+    $ledger = Get-Content -LiteralPath (Join-Path $dir 'ledger.json') -Raw | ConvertFrom-Json
+    $row = @($ledger.chunks | Where-Object { [string]$_.chunk -eq $Chunk })[0]
+    $trx = Join-Path (Split-Path -Parent $dir) ([string]$row.trx)
+    $rows = @(Read-NightlyTrxIdentities -TrxPath $trx | ForEach-Object {
+        $o = [string]$_.Outcome
+        if ([string]$_.TestId -eq $Uid) { $o = $Outcome }
+        [pscustomobject]@{ Id = [string]$_.TestId; ClassName = [string]$_.ClassName; MethodName = [string]$_.MethodName; Outcome = $o } })
+    Write-C487Trx -Path $trx -Rows $rows
+    Update-C599Ledger -Fx $Fx -Ledger {
+        param($l)
+        foreach ($c in @($l.chunks)) {
+            if ([string]$c.chunk -ne $Chunk) { continue }
+            $c.trxSha256 = (Get-NightlyFileSha256 -Path $trx)
+            $c.passed = @($rows | Where-Object { $_.Outcome -eq 'Passed' }).Count
+            $c.failed = @($rows | Where-Object { $_.Outcome -eq 'Failed' }).Count
+            $c.skipped = @($rows | Where-Object { $_.Outcome -ne 'Passed' -and $_.Outcome -ne 'Failed' }).Count
+        }
+    }
+}
+
+function New-C599Authority {
+    <#
+      Freeze a complete valid authority + plan + ledger for the candidate through
+      the production functions, then lay down one real TRX per frozen chunk.
+    #>
+    param([string]$ReleaseRoot, [string]$Checkout, [string]$Sha)
+    $root = Get-ReleaseGateCandidateRoot -ReleaseRoot $ReleaseRoot -CandidateId $CandidateId
+    $auth = New-ReleaseGateAuthority -RepositoryRoot $Checkout -CandidateRoot $root -Sha $Sha -Repository 'michal-ciechan/Antiphon' `
+        -CandidateId $CandidateId -CandidateRef $CandidateRef -IntentId $script:C599IntentId -CreatedUtc ([datetime]'2026-09-23T08:30:30Z')
+    $discovery = Get-C599Discovery
+    $plan = New-ReleaseGateExecutionPlan -CandidateRoot $root -Discovery $discovery -Rosters $script:C599Rosters
+    $dir = Get-ReleaseAuthorityDir -CandidateRoot $root
+    $byUid = @{}
+    foreach ($suite in $discovery.Keys) { foreach ($n in $discovery[$suite]) { $byUid[[string]$n.uid] = $n } }
+    $chunks = @()
+    $minute = 0
+    foreach ($suite in @($plan.suites)) {
+        if ([string]$suite.kind -ne 'native') { continue }
+        foreach ($c in @($suite.chunks)) {
+            $minute++
+            $rel = ('evidence/{0}.trx' -f [string]$c.id)
+            $trx = Join-Path $root $rel
+            $rows = @($c.uids | ForEach-Object { $n = $byUid[[string]$_]; [pscustomobject]@{ Id = [string]$_; ClassName = [string]$n.class; MethodName = [string]$n.method; Outcome = 'Passed' } })
+            Write-C487Trx -Path $trx -Rows $rows
+            $start = ([datetime]'2026-09-23T08:31:00Z').AddMinutes($minute)
+            $chunks += [ordered]@{
+                suite = [string]$suite.id; chunk = [string]$c.id
+                intentId = $script:C599IntentId; candidateId = $CandidateId; sha = $Sha; runId = $script:C599RunId
+                exitCode = 0; startedAt = $start.ToString('o'); completedAt = $start.AddSeconds(30).ToString('o')
+                trx = $rel; trxSha256 = (Get-NightlyFileSha256 -Path $trx)
+                executed = $rows.Count; passed = $rows.Count; failed = 0; skipped = 0
+            }
+        }
+    }
+    $rosters = @()
+    foreach ($id in @('client', 'scripts')) {
+        $rosters += [ordered]@{
+            suite = $id; intentId = $script:C599IntentId; candidateId = $CandidateId; sha = $Sha; runId = $script:C599RunId
+            exitCode = 0; startedAt = '2026-09-23T09:30:00Z'; completedAt = '2026-09-23T09:35:00Z'
+            entries = @($script:C599Rosters[$id] | ForEach-Object { [ordered]@{ id = $_; outcome = 'passed' } })
+        }
+    }
+    Write-NightlyAtomicJson -Path (Join-Path $dir 'ledger.json') -Object ([ordered]@{
+        schemaVersion = 1
+        intentId = $script:C599IntentId; candidateId = $CandidateId; candidateRef = $CandidateRef; sha = $Sha; runId = $script:C599RunId
+        authorityDigest = (Get-NightlyFileSha256 -Path (Join-Path $dir 'authority.json'))
+        executionPlanDigest = (Get-NightlyFileSha256 -Path (Join-Path $dir 'execution-plan.json'))
+        startedAt = '2026-09-23T08:31:00Z'; completedAt = '2026-09-23T09:50:00Z'
+        teardownSucceeded = $true; seamed = $false; noReport = $false; diagnostic = $false; selection = 'full'; reportAccepted = $true
+        buildHash = 'build-1'; bundleHash = 'bundle-1'
+        prerequisites = @(
+            [ordered]@{ id = 'build'; exitCode = 0; succeeded = $true },
+            [ordered]@{ id = 'client-bundle'; exitCode = 0; succeeded = $true },
+            [ordered]@{ id = 'script-census'; exitCode = 0; succeeded = $true })
+        chunks = $chunks
+        rosters = $rosters
+    })
+    return $auth
+}
+
+function Test-C599NoRemoteWrite {
+    # Observer reads of both recipients: no release stored and no git push/tag attempted.
+    param($Fx)
+    $trace = ''
+    if (Test-Path -LiteralPath $Fx.Git.Trace) { $trace = Get-Content -LiteralPath $Fx.Git.Trace -Raw }
+    $writes = @(($trace -split "`n") | Where-Object { $_ -match '^GIT (push|tag)' })
+    $db = Get-Content -LiteralPath $Fx.Gh.StorePath -Raw | ConvertFrom-Json
+    return ($writes.Count -eq 0 -and @($db.releases).Count -eq 0)
+}
+
 
 function New-C599GitHubSeams {
     <#
@@ -887,17 +1068,29 @@ function Test-C599_ReportLane {
 # ======================================================= V-6 publication lane ===
 
 function New-C599PublishFx {
-    param([string]$Head = '')
-    if ([string]::IsNullOrWhiteSpace($Head)) { $Head = $ShaB }
+    <#
+      CARD-0599 D-15: the release clone is a real git repository whose commit holds
+      the policy, so the candidate SHA is real and the publisher re-reads the pinned
+      blob itself. The remote/GitHub stay file-backed recipients behind the seams.
+    #>
+    param([byte[]]$PolicyBytes = $null, [switch]$NoAuthority)
     $root = New-C599Root
+    $co = New-C599PolicyCheckout -Root $root -PolicyBytes $PolicyBytes
+    $Head = $co.Sha
     $git = New-C599GitSeams -Root $root -HeadSha $Head
     $gitText = Get-Content -LiteralPath $git.Path -Raw
     $gh = New-C599GitHubSeams -Root $root -GitSeamsText $gitText
     $gh | Add-Member -NotePropertyName RemotePath -NotePropertyValue $git.RemotePath -Force
     $gh | Add-Member -NotePropertyName FailGitPath -NotePropertyValue $git.FailPath -Force
     $releaseRoot = Join-Path $root 'releases'
-    $checkout = New-C599OwnedReleaseClone -Root $root
-    [void](New-C599RcGreen -ReleaseRoot $releaseRoot -Sha $Head -CandidateId $CandidateId -Ref $CandidateRef)
+    $checkout = $co.Path
+    $policyHash = ''
+    if (-not $NoAuthority) {
+        $auth = New-C599Authority -ReleaseRoot $releaseRoot -Checkout $checkout -Sha $Head
+        $policyHash = [string]$auth.policyHash
+    }
+    if ($NoAuthority) { $policyHash = 'policy-1' }
+    [void](New-C599RcGreen -ReleaseRoot $releaseRoot -Sha $Head -CandidateId $CandidateId -Ref $CandidateRef -PolicyHash $policyHash)
     # The remote holds the candidate at the tested sha.
     $state = [ordered]@{ ('release_rc_20260923T083000Z') = $Head }
     Write-NightlyAtomicJson -Path $git.RemotePath -Object $state
@@ -913,7 +1106,6 @@ function Invoke-C599Publish {
         CandidateId = $CandidateId
         CheckoutRoot = $Fx.Checkout
         SeamsPath = $Fx.Gh.Path
-        RequiredSuites = @('antiphon', 'e2e')
         PassThru = $true
     }
     if ($Extra) { foreach ($k in $Extra.Keys) { $splat[$k] = $Extra[$k] } }
@@ -1039,12 +1231,10 @@ function Test-C599_PublicationGate {
     $unresolved = Invoke-C599Publish -Fx $fx4
     Assert-C487 -Cond (([int]$unresolved.ExitCode -ne 0) -and ([string]$unresolved.Refusal -match 'remote-candidate-unresolved')) -Name 'C599 PublicationGate an unresolved remote candidate refuses' -Detail ([string]$unresolved.Refusal)
 
-    # A required suite that did not pass refuses.
+    # A required suite absent from the frozen plan refuses (D-15: the pinned policy
+    # names it; the summary is not consulted at all).
     $fx5 = New-C599PublishFx
-    $sp = Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $fx5.ReleaseRoot -CandidateId $CandidateId) 'summary.json'
-    $s = Get-Content -LiteralPath $sp -Raw | ConvertFrom-Json
-    $s.suites = @($s.suites | Where-Object { [string]$_.id -ne 'e2e' })
-    $s | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $sp -Encoding UTF8
+    Update-C599Ledger -Fx $fx5 -Plan { param($p) $p.suites = @($p.suites | Where-Object { [string]$_.id -ne 'e2e' }) }
     $missingSuite = Invoke-C599Publish -Fx $fx5
     Assert-C487 -Cond (([int]$missingSuite.ExitCode -ne 0) -and ([string]$missingSuite.Refusal -match 'required-suite-missing:e2e')) -Name 'C599 PublicationGate a missing required e2e suite refuses' -Detail ([string]$missingSuite.Refusal)
 
@@ -1615,6 +1805,92 @@ function Test-C599_ExecutionArtifacts {
     Assert-C487 -Cond ($impl -match 'Wait-NightlyOwnedCleanup') -Name 'C599 ExecutionArtifacts the executor waits for owned cleanup'
     Assert-C487 -Cond ($impl -match 'owned-child still running') -Name 'C599 ExecutionArtifacts an unjoined owned child is an error'
     Assert-C487 -Cond ($impl -match 'requiredUidCount' -and $impl -match 'censusDigest') -Name 'C599 ExecutionArtifacts the suite row records the expanded census'
+}
+
+# ================================================= CARD-0599 D-15 authority (B1) ===
+
+function Test-C599B_PinnedPolicy {
+    # V-18 / R-9 ordinary contract: the pinned policy blob, not the report, decides.
+    $fx = New-C599PublishFx
+    $ok = Invoke-C599Publish -Fx $fx
+    $rel = Get-C599Release -Gh $fx.Gh -Tag ([string]$ok.Tag)
+    Assert-C487 -Cond ([int]$ok.ExitCode -eq 0 -and [bool]$ok.Published) -Name 'C599 V-18: a valid eight-suite pinned authority publishes' -Detail ([string]$ok.Refusal)
+    Assert-C487 -Cond ($null -ne $rel -and -not [bool]$rel.isDraft) -Name 'C599 V-18: the recipient holds a published non-draft release'
+    $root = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId
+    $manifest = Get-Content -LiteralPath (Join-Path $root 'release-manifest.json') -Raw | ConvertFrom-Json
+    $ids = @($manifest.suites | ForEach-Object { [string]$_.id })
+    Assert-C487 -Cond ($ids.Count -eq 8 -and ([string]$manifest.sha -eq $fx.Head)) -Name 'C599 V-18: the manifest names all eight pinned suites at the tested sha' -Detail ($ids -join ',')
+
+    # A shrunken summary alone confers nothing: it is not read, the eight stay required.
+    $fxS = New-C599PublishFx
+    Update-C599Json -Path (Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $fxS.ReleaseRoot -CandidateId $CandidateId) 'summary.json') -Mutate {
+        param($s) $s.requiredSuites = @('antiphon'); $s.suites = @($s.suites | Where-Object { [string]$_.id -eq 'antiphon' }) }
+    $shrunk = Invoke-C599Publish -Fx $fxS
+    $sm = Get-Content -LiteralPath (Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $fxS.ReleaseRoot -CandidateId $CandidateId) 'release-manifest.json') -Raw | ConvertFrom-Json
+    Assert-C487 -Cond ([bool]$shrunk.Published -and @($sm.suites).Count -eq 8) -Name 'C599 V-18: a shrunken summary is not a source of required suites' -Detail ([string]$shrunk.Refusal)
+
+    # G-224: a seven-suite report (plan, ledger and summary agree on seven) cannot
+    # publish against the eight-suite pinned policy.
+    $fx7 = New-C599PublishFx
+    Update-C599Ledger -Fx $fx7 -Plan { param($p) $p.suites = @($p.suites | Where-Object { [string]$_.id -ne 'e2e' }) } `
+        -Ledger { param($l) $l.chunks = @($l.chunks | Where-Object { [string]$_.suite -ne 'e2e' }) }
+    Update-C599Json -Path (Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $fx7.ReleaseRoot -CandidateId $CandidateId) 'summary.json') -Mutate {
+        param($s) $s.requiredSuites = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging', 'client', 'scripts') }
+    $seven = Invoke-C599Publish -Fx $fx7
+    Assert-C487 -Cond (([string]$seven.Refusal -match 'required-suite-missing:e2e') -and (Test-C599NoRemoteWrite -Fx $fx7)) -Name 'C599 G-224: seven-suite report cannot publish eight-suite policy' -Detail ([string]$seven.Refusal)
+
+    # G-225: a stale pinned hash in the frozen authority blocks before any remote write.
+    $fxH = New-C599PublishFx
+    Update-C599Json -Path (Join-Path (Get-C599AuthorityDir -Fx $fxH) 'authority.json') -Mutate { param($a) $a.policyHash = ('0' * 64) }
+    $stale = Invoke-C599Publish -Fx $fxH
+    Assert-C487 -Cond (([string]$stale.Refusal -match 'policy-hash-mismatch') -and (Test-C599NoRemoteWrite -Fx $fxH)) -Name 'C599 G-225: wrong pinned hash blocks before any remote write' -Detail ([string]$stale.Refusal)
+
+    # Stale blob identity: the recorded blob is not the one at the pinned commit.
+    $fxB = New-C599PublishFx
+    Update-C599Json -Path (Join-Path (Get-C599AuthorityDir -Fx $fxB) 'authority.json') -Mutate { param($a) $a.policyBlobId = ('1' * 40) }
+    $blob = Invoke-C599Publish -Fx $fxB
+    Assert-C487 -Cond (([string]$blob.Refusal -match 'policy-blob-id-mismatch') -and (Test-C599NoRemoteWrite -Fx $fxB)) -Name 'C599 V-18: a stale pinned blob id blocks before any remote write' -Detail ([string]$blob.Refusal)
+
+    # R-9: a legacy candidate with no authority cannot publish; nothing is synthesized.
+    $fxL = New-C599PublishFx -NoAuthority
+    $legacy = Invoke-C599Publish -Fx $fxL
+    Assert-C487 -Cond (([string]$legacy.Refusal -match 'missing-authority') -and -not [bool]$legacy.Published) -Name 'C599 R-9: a legacy candidate with no authority refuses' -Detail ([string]$legacy.Refusal)
+    Assert-C487 -Cond (Test-C599NoRemoteWrite -Fx $fxL) -Name 'C599 R-9: the legacy refusal made zero remote writes'
+    Assert-C487 -Cond (-not (Test-Path -LiteralPath (Join-Path (Get-C599AuthorityDir -Fx $fxL) 'authority.json'))) -Name 'C599 R-9: no authority was synthesized for the legacy candidate'
+}
+
+function Test-C599B_AllChunks {
+    # V-18 / R-9 ordinary contract: every frozen chunk and every required UID.
+    $fx = New-C599PublishFx
+    $plan = Get-Content -LiteralPath (Join-Path (Get-C599AuthorityDir -Fx $fx) 'execution-plan.json') -Raw | ConvertFrom-Json
+    $antiphon = @(@($plan.suites | Where-Object { [string]$_.id -eq 'antiphon' })[0].chunks)
+    Assert-C487 -Cond ($antiphon.Count -eq 3 -and (@($antiphon | ForEach-Object { @($_.uids) }) -notcontains 'antiphon-x1')) -Name 'C599 V-18: the frozen plan chunks one class each and omits pinned exclusions' -Detail ([string]$antiphon.Count)
+    $ok = Invoke-C599Publish -Fx $fx
+    Assert-C487 -Cond ([int]$ok.ExitCode -eq 0 -and [bool]$ok.Published -and $null -ne (Get-C599Release -Gh $fx.Gh -Tag ([string]$ok.Tag))) -Name 'C599 V-18: a complete multi-chunk ledger publishes' -Detail ([string]$ok.Refusal)
+
+    # G-226: a passing sibling (antiphon-001/002 pass) cannot hide a failed chunk.
+    $fxF = New-C599PublishFx
+    Set-C599TrxOutcome -Fx $fxF -Chunk 'antiphon-003' -Uid 'antiphon-u4' -Outcome 'Failed'
+    $failed = Invoke-C599Publish -Fx $fxF
+    Assert-C487 -Cond (([string]$failed.Refusal -match 'uid-not-passed:antiphon-u4') -and (Test-C599NoRemoteWrite -Fx $fxF)) -Name 'C599 G-226: passing sibling cannot hide failed chunk' -Detail ([string]$failed.Refusal)
+
+    # G-290: a deleted chunk record blocks authority.
+    $fxM = New-C599PublishFx
+    Update-C599Ledger -Fx $fxM -Ledger { param($l) $l.chunks = @($l.chunks | Where-Object { [string]$_.chunk -ne 'antiphon-002' }) }
+    $missing = Invoke-C599Publish -Fx $fxM
+    Assert-C487 -Cond (([string]$missing.Refusal -match 'chunk-missing:antiphon-002') -and (Test-C599NoRemoteWrite -Fx $fxM)) -Name 'C599 G-290: deleted or extra chunk blocks authority' -Detail ([string]$missing.Refusal)
+
+    # G-292: a skipped required UID with passing siblings refuses.
+    $fxK = New-C599PublishFx
+    Set-C599TrxOutcome -Fx $fxK -Chunk 'messaging-001' -Uid 'messaging-u2' -Outcome 'NotExecuted'
+    $skipped = Invoke-C599Publish -Fx $fxK
+    Assert-C487 -Cond (([string]$skipped.Refusal -match 'uid-not-passed:messaging-u2') -and (Test-C599NoRemoteWrite -Fx $fxK)) -Name 'C599 G-292: required skip unknown missing and stale rows refuse' -Detail ([string]$skipped.Refusal)
+
+    # A client roster entry that did not pass refuses by its own declared roster.
+    $fxR = New-C599PublishFx
+    Update-C599Ledger -Fx $fxR -Ledger { param($l) foreach ($r in @($l.rosters)) { if ([string]$r.suite -eq 'client') { $r.entries[2].outcome = 'failed' } } }
+    $roster = Invoke-C599Publish -Fx $fxR
+    Assert-C487 -Cond (([string]$roster.Refusal -match 'roster-entry-not-passed:client:vitest') -and (Test-C599NoRemoteWrite -Fx $fxR)) -Name 'C599 V-18: a failed client roster entry blocks before any remote write' -Detail ([string]$roster.Refusal)
 }
 
 # ====================================================================== run ===
