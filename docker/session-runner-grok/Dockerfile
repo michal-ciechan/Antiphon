@@ -76,6 +76,30 @@ RUN apt-get update \
  && install -m 0755 /tmp/claude-install/claude /usr/local/bin/claude \
  && env HOME=/tmp/claude-install CLAUDE_CONFIG_DIR=/tmp/claude-install/cfg DISABLE_AUTOUPDATER=1 /usr/local/bin/claude --version | grep -F "${CLAUDE_CODE_VERSION}" \
  && rm -rf /tmp/claude-install
+# CARD-0660 D-1/D-2: codex-cli's native linux-x64 platform package, pinned by version AND npm's
+# published SHA-512 (dist.integrity sha512-2ePo0wgOcnONKsuzp8vBjOmNY+IdsKaouaDDIdiKq9HOWNuV/GI22OeXft2A/1GaoL71ictO0/pLAsCEnQ6wew==
+# in hex). The archive is hashed before tar runs; a re-published tarball fails the build and the
+# remedy is a new reviewed pair, never a refreshed digest. The WHOLE package is kept: the binary
+# finds codex-code-mode-host, codex-path/rg and codex-resources/bwrap through codex-package.json
+# in its package root, so a binary-only copy is not an install. Root-owned, not writable by 1654.
+# No CODEX_HOME, credential file or credential name is ever a layer: the runner's home lives on
+# the runner-state volume (docker/stack/init-state.sh), signed in there by the operator.
+ARG CODEX_VERSION=0.156.1
+ARG CODEX_SHA512=d9e3e8d3080e72738d2acbb3a7cbc18ce98d63e21db0a6a8b9a0c321d88aabd1ce58db95fc6236d8e7977edd80ff519aa0bef589cb4ed3fa4b02c0849d0eb07b
+RUN mkdir -p /opt/codex-download "/opt/codex/${CODEX_VERSION}" /opt/codex-probe/home \
+ && curl -fsSL -o /opt/codex-download/codex.tgz "https://registry.npmjs.org/@openai/codex/-/codex-${CODEX_VERSION}-linux-x64.tgz" \
+ && echo "${CODEX_SHA512}  /opt/codex-download/codex.tgz" | sha512sum -c - \
+ && tar --no-same-owner -xzf /opt/codex-download/codex.tgz -C /opt/codex/${CODEX_VERSION} \
+ && chown -R 0:0 /opt/codex \
+ && chmod -R go-w /opt/codex \
+ && test -x /opt/codex/${CODEX_VERSION}/package/vendor/x86_64-unknown-linux-musl/bin/codex \
+ && test -x /opt/codex/${CODEX_VERSION}/package/vendor/x86_64-unknown-linux-musl/bin/codex-code-mode-host \
+ && test -x /opt/codex/${CODEX_VERSION}/package/vendor/x86_64-unknown-linux-musl/codex-path/rg \
+ && test -x /opt/codex/${CODEX_VERSION}/package/vendor/x86_64-unknown-linux-musl/codex-resources/bwrap \
+ && test -f /opt/codex/${CODEX_VERSION}/package/vendor/x86_64-unknown-linux-musl/codex-package.json \
+ && ln -s /opt/codex/${CODEX_VERSION}/package/vendor/x86_64-unknown-linux-musl/bin/codex /usr/local/bin/codex \
+ && test "$(env HOME=/opt/codex-probe CODEX_HOME=/opt/codex-probe/home /usr/local/bin/codex --version)" = "codex-cli ${CODEX_VERSION}" \
+ && rm -rf /opt/codex-download /opt/codex-probe
 # CARD-0661: the pinned Git (see git-build) replaces Debian's 2.39.5; no apt git is installed.
 COPY --from=git-build /opt/git-root/usr/local/ /usr/local/
 RUN test "$(command -v git)" = /usr/local/bin/git \

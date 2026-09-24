@@ -9,7 +9,7 @@ for d in \
   /state /state/logs /state/keyring /state/check-interpreter /state/diagnose \
   /work /work/repos /work/worktrees \
   /runner-state /runner-state/session-runner /runner-state/pty-hosts /runner-state/logs /runner-state/grok \
-  /runner-state/claude
+  /runner-state/claude /runner-state/codex
 do
   mkdir -p "$d"
 done
@@ -20,5 +20,32 @@ for d in /state /work /runner-state; do
     exit 42
   fi
 done
+# CARD-0660 D-3/D-4: the runner's Codex home (the runner names it as CODEX_HOME and mounts
+# this volume at /state). The non-secret config is seeded only when absent -- an existing file or
+# link is never replaced -- and credentials and conversation state are never touched. Trust is keyed
+# on the repository root, which covers every linked runner worktree; sign-in stays the operator's.
+codex_home=/runner-state/codex
+codex_config="$codex_home/config.toml"
+chmod 0700 "$codex_home"
+if [ ! -e "$codex_config" ] && [ ! -L "$codex_config" ]; then
+  codex_seed="$codex_home/.config.toml.state-init"
+  rm -f "$codex_seed"
+  saved_umask=$(umask)
+  umask 077
+  cat > "$codex_seed" <<'CODEX_CONFIG'
+check_for_update_on_startup = false
+cli_auth_credentials_store = "file"
+forced_login_method = "chatgpt"
+
+[projects."/work/repos/antiphon"]
+trust_level = "trusted"
+CODEX_CONFIG
+  umask "$saved_umask"
+  chown "$uid:$gid" "$codex_seed"
+  chmod 0600 "$codex_seed"
+  ln "$codex_seed" "$codex_config"
+  rm -f "$codex_seed"
+  echo "state-init seeded codex config"
+fi
 chown -R "$uid:$gid" /state /work /runner-state
 echo "state-init owned uid=$uid"
