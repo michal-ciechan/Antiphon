@@ -21,6 +21,10 @@ services:
     volumes:
       - work:/work
       - runner-state:/runner-state
+      # CARD-0660 (amended): the runner's Codex home, a DIRECTORY on the server2 host that
+      # deploy-parent creates for uid 1654 at 0700. state-init seeds the non-secret config.toml
+      # into it (only when absent) and owns the directory itself, never its contents.
+      - ${RUNNER_CODEX_HOME_DIR:?RUNNER_CODEX_HOME_DIR is required}:/codex-home
     restart: "no"
 
   session-runner:
@@ -59,9 +63,10 @@ services:
       # server projects the same value as PhoneHomeRunner:ChildClaudeHome onto every launch.
       CLAUDE_CONFIG_DIR: /state/claude
       PhoneHome__ClaudeHome: /state/claude
-      # CARD-0660 D-3: one Codex store, seeded by init-state at /runner-state/codex (this same
-      # volume). CODEX_HOME is the CLI's and the transcript tailer's, PhoneHome__CodexHome the
-      # auth probe's; the server projects PhoneHomeRunner:ChildCodexHome with the same value.
+      # CARD-0660 D-3 (amended): one Codex store, the host directory RUNNER_CODEX_HOME_DIR bound at
+      # /state/codex below (state-init seeds it). CODEX_HOME is the CLI's and the transcript
+      # tailer's, PhoneHome__CodexHome the auth probe's; the server projects
+      # PhoneHomeRunner:ChildCodexHome with the same value.
       # Subscription sign-in only: no API key or access token is ever configured here.
       CODEX_HOME: /state/codex
       PhoneHome__CodexHome: /state/codex
@@ -93,6 +98,12 @@ services:
       # deploy-parent creates on server2 when missing and never overwrites. Never baked into the
       # image. Read-only: a session cannot rewrite the identity every later commit uses.
       - ${RUNNER_GIT_IDENTITY_FILE:?RUNNER_GIT_IDENTITY_FILE is required}:/run/antiphon/gitconfig:ro
+      # CARD-0660 (amended): the Codex home, where the operator's ChatGPT sign-in lives. A host
+      # DIRECTORY (secrets/codex, uid 1654, 0700, created by deploy-parent), read-write and never a
+      # single-file mount: Codex rewrites its credential file by rename on every token refresh,
+      # which a file bind mount cannot survive. Nested under the runner-state mount at /state, so
+      # it shadows the volume's old /state/codex; see docs/docker-stack.md for the one-time move.
+      - ${RUNNER_CODEX_HOME_DIR:?RUNNER_CODEX_HOME_DIR is required}:/state/codex
     secrets:
       - antiphon-deploy-key
       - phone-home

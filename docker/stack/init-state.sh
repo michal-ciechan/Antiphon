@@ -9,7 +9,7 @@ for d in \
   /state /state/logs /state/keyring /state/check-interpreter /state/diagnose \
   /work /work/repos /work/worktrees \
   /runner-state /runner-state/session-runner /runner-state/pty-hosts /runner-state/logs /runner-state/grok \
-  /runner-state/claude /runner-state/codex
+  /runner-state/claude
 do
   mkdir -p "$d"
 done
@@ -20,13 +20,28 @@ for d in /state /work /runner-state; do
     exit 42
   fi
 done
-# CARD-0660 D-3/D-4: the runner's Codex home (the runner names it as CODEX_HOME and mounts
-# this volume at /state). The non-secret config is seeded only when absent -- an existing file or
-# link is never replaced -- and credentials and conversation state are never touched. Trust is keyed
-# on the repository root, which covers every linked runner worktree; sign-in stays the operator's.
-codex_home=/runner-state/codex
-codex_config="$codex_home/config.toml"
+# CARD-0660 D-3/D-4, amended: the runner's Codex home is a DIRECTORY on the server2 host
+# (RUNNER_CODEX_HOME_DIR), bind-mounted read-write here and at CODEX_HOME in the runner, never a
+# volume directory. deploy-parent creates it for uid 1654 at 0700; a mount Docker had to create
+# itself is root-owned and is taken over, any other owner refuses. Only the directory itself is
+# chowned -- never recursively and never its contents, which hold the operator's sign-in. A missing
+# mount refuses: a seed into a plain container directory would vanish with the container.
+codex_home=/codex-home
+if [ -L "$codex_home" ] || [ ! -d "$codex_home" ]; then
+  echo "CodexHomeNotMounted path=$codex_home" >&2
+  exit 43
+fi
+owner=$(stat -c %u "$codex_home")
+if [ "$owner" != "0" ] && [ "$owner" != "$uid" ]; then
+  echo "ForeignStateOwner path=$codex_home uid=$owner" >&2
+  exit 42
+fi
+chown "$uid:$gid" "$codex_home"
 chmod 0700 "$codex_home"
+# The non-secret config is seeded only when absent -- an existing file or link is never replaced --
+# and credentials and conversation state are never touched. Trust is keyed on the repository root,
+# which covers every linked runner worktree; sign-in stays the operator's.
+codex_config="$codex_home/config.toml"
 if [ ! -e "$codex_config" ] && [ ! -L "$codex_config" ]; then
   codex_seed="$codex_home/.config.toml.state-init"
   rm -f "$codex_seed"

@@ -5,7 +5,9 @@
 # privileged, and only this run's own volumes. session-testing's DinD entrypoint is overridden
 # so no credential-dependent entrypoint boots. The production init-state script runs read-only
 # from this checkout, mounted as state-init mounts it, and the runner-side rows observe the same
-# volume at /state. No external provider is contacted and no real CODEX_HOME is touched.
+# volume at /state, with a throwaway volume standing in for the host Codex home at /codex-home
+# (state-init) and /state/codex (runner). No external provider is contacted and no real CODEX_HOME
+# is touched.
 #
 # Rows: (1) version (2) layout (3) install-readonly (4) no-baked-auth (5) fresh-home (6) trust
 # (7) preserve (8) config-accepted.
@@ -27,6 +29,9 @@ $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
 $owner = "c660q-$stamp-" + [guid]::NewGuid().ToString('N').Substring(0, 6)
 $stateVolume = "$owner-state"
 $workVolume = "$owner-work"
+# CARD-0660 (amended): stands in for the server2 host directory RUNNER_CODEX_HOME_DIR, mounted where
+# docker-compose.server2-runner.yml binds it: /codex-home in state-init, /state/codex in the runner.
+$codexVolume = "$owner-codex"
 $rows = [ordered]@{
     'version' = 'unknown'; 'layout' = 'unknown'; 'install-readonly' = 'unknown'; 'no-baked-auth' = 'unknown'
     'fresh-home' = 'unknown'; 'trust' = 'unknown'; 'preserve' = 'unknown'; 'config-accepted' = 'unknown'
@@ -51,7 +56,7 @@ function Invoke-Docker([string[]] $dockerArgs, [string] $evidenceName) {
 
 function Exit-Qualification([int] $code, [string] $reason) {
     if ($script:volumesCreated) {
-        foreach ($volume in @($stateVolume, $workVolume)) { & docker volume rm -f $volume 2>&1 | Out-Null }
+        foreach ($volume in @($stateVolume, $workVolume, $codexVolume)) { & docker volume rm -f $volume 2>&1 | Out-Null }
     }
     $okCount = @($rows.Values | Where-Object { $_ -eq 'ok' }).Count
     $summary = @()
@@ -96,7 +101,7 @@ if ($build.ExitCode -ne 0) { Exit-Qualification 2 'docker build failed; see buil
 $imageId = (Invoke-Docker @('image', 'inspect', '--format', '{{.Id}}', $Image) 'image-id.txt').Output.Trim()
 
 # --- throwaway volumes and probes -------------------------------------------------------------
-foreach ($volume in @($stateVolume, $workVolume)) {
+foreach ($volume in @($stateVolume, $workVolume, $codexVolume)) {
     if ((Invoke-Docker @('volume', 'create', '--label', "antiphon.c660.owner=$owner", $volume) $null).ExitCode -ne 0) {
         Exit-Qualification 2 "cannot create volume $volume"
     }
@@ -111,6 +116,7 @@ function Invoke-Init([string] $evidenceName) {
     $initArgs = @('run', '--rm', '--network', 'none', '--user', '0:0', '--entrypoint', '/bin/sh',
         '--mount', "type=volume,source=$workVolume,target=/work",
         '--mount', "type=volume,source=$stateVolume,target=/runner-state",
+        '--mount', "type=volume,source=$codexVolume,target=/codex-home",
         '--mount', "type=bind,source=$initScript,target=/stack/init-state.sh,readonly",
         $Image, '/stack/init-state.sh')
     return (Invoke-Docker $initArgs $evidenceName).ExitCode
@@ -121,6 +127,7 @@ function Invoke-Probe([string] $row, [string] $user, [string[]] $extra) {
         '--tmpfs', '/c660-home:uid=1654,gid=1654,mode=0700',
         '--mount', "type=volume,source=$workVolume,target=/work",
         '--mount', "type=volume,source=$stateVolume,target=/state",
+        '--mount', "type=volume,source=$codexVolume,target=/state/codex",
         '--mount', "type=bind,source=$probeScript,target=/c660/verify-codex-image.sh,readonly",
         $Image, '/c660/verify-codex-image.sh', $row) + $extra
     $result = Invoke-Docker $probeArgs "row-$row.txt"
