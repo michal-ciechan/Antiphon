@@ -7,6 +7,9 @@ deliberately short and it is not the route map — [antiphon-api.md](antiphon-ap
 both. Cards are worked through `scripts/card.ps1` (`server/Bundles/board-api.md` for the raw card
 API); nothing here replaces that.
 
+For process logs, Hangfire history, server2 container output, deployment-evidence gaps and
+transcript retention, see the authoritative [log-source inventory](logs.md).
+
 **Do not grep `MapGet` to find a route.** The one route this page cannot give you is a route this
 page says does not exist.
 
