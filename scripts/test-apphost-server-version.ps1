@@ -243,6 +243,8 @@ function New-C495Fixture {
     if (-not $NoCommit) {
         & git -C $root add scripts README.md dev-aspire.ps1 verify-dev-stack.ps1 | Out-Null
         & git -C $root commit -qm 'c495 scripts' | Out-Null
+        # CARD-0644: admission defaults to refs/remotes/origin/master; the fixture's HEAD is that commit.
+        & git -C $root update-ref refs/remotes/origin/master HEAD | Out-Null
     }
     Write-C495Seams -Root $root -Config $Config | Out-Null
     $head = $null
@@ -531,11 +533,16 @@ function Test-T18 {
     try {
         & git -C $fx.Root worktree add --detach $linked $fx.Head 2>&1 | Out-Null
         if ($LASTEXITCODE -eq 0) { $added = $true }
+        # CARD-0644: a linked worktree AT origin/master is admitted, so this refusal case needs an
+        # unlanded commit; without seams, an admitted run here would reach the real stack.
+        Add-Content -LiteralPath (Join-Path $linked 'README.md') 'unlanded' -Encoding ASCII
+        & git -C $linked add README.md | Out-Null
+        & git -C $linked commit -qm 'c495 unlanded linked commit' | Out-Null
         $prev = $env:ANTIPHON_APPHOST_TEST_SEAMS
         Remove-Item Env:ANTIPHON_APPHOST_TEST_SEAMS -ErrorAction SilentlyContinue
         $output = @(& pwsh -NoProfile -File (Join-Path $linked 'scripts\restart-apphost.ps1') -NoBuild -TimeoutSec 1 2>&1 | ForEach-Object { $_.ToString() })
         $text = $output -join "`n"
-        Assert-True ($LASTEXITCODE -eq 3) 'T18 linked worktree exit 3' $text
+        Assert-True ($LASTEXITCODE -eq 3) 'T18 unlanded linked worktree exit 3' $text
         Assert-True ($text -notmatch 'TEST SEAMS ACTIVE') 'T18 no TEST SEAMS ACTIVE' $text
         if ($null -ne $prev) { $env:ANTIPHON_APPHOST_TEST_SEAMS = $prev }
     } finally {

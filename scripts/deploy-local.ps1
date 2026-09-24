@@ -34,7 +34,8 @@
 param(
     [switch]$NoBuild,
     [int]$TimeoutSec = 150,
-    [switch]$AllowWorktree
+    [switch]$AllowWorktree,
+    [string]$ExpectedSha
 )
 
 $ErrorActionPreference = 'Stop'
@@ -113,6 +114,12 @@ function Format-FailureDetail {
     $detail = $ErrorRecord.Exception.Message -replace '\s+', ' '
     if ([string]::IsNullOrWhiteSpace($detail)) { return 'unknown error' }
     $detail.Trim()
+}
+
+$appHostTestSeams = $env:ANTIPHON_APPHOST_TEST_SEAMS
+if (-not [string]::IsNullOrWhiteSpace($appHostTestSeams) -and (Test-Path -LiteralPath $appHostTestSeams)) {
+    . $appHostTestSeams
+    Write-Host 'TEST SEAMS ACTIVE'
 }
 
 $failure = $null

@@ -10,12 +10,19 @@
 .PARAMETER NoBuild    Skip dotnet restore/build before starting.
 .PARAMETER NoBrowser  Do not open the dashboard in a browser (used by the logon auto-start).
 .PARAMETER AllowWorktree  Intentionally allow a linked worktree to control the shared local stack.
+.PARAMETER ExpectedSha    Full commit SHA the source root HEAD must equal.
+.PARAMETER RestartOwnerPid  Set by restart-apphost.ps1 for the child it launches under its restart lock.
 #>
-param([switch]$NoBuild, [switch]$NoBrowser, [switch]$AllowWorktree)
+param([switch]$NoBuild, [switch]$NoBrowser, [switch]$AllowWorktree, [string]$ExpectedSha, [int]$RestartOwnerPid)
 
 $ErrorActionPreference = 'Stop'
 $root         = $PSScriptRoot
 . (Join-Path $root 'scripts\apphost-common.ps1')
+$appHostTestSeams = $env:ANTIPHON_APPHOST_TEST_SEAMS
+if (-not [string]::IsNullOrWhiteSpace($appHostTestSeams) -and (Test-Path -LiteralPath $appHostTestSeams)) {
+    . $appHostTestSeams
+    Write-Host 'TEST SEAMS ACTIVE'
+}
 
 $worktree = Get-AppHostWorktreeClassification -SourceRoot $root
 if (-not $worktree.Verified -or (-not $worktree.IsMainWorktree -and -not $AllowWorktree)) {
@@ -36,6 +43,13 @@ $launchLock = Join-Path $root 'logs\apphost.launch.lock'
 New-Item -ItemType Directory -Force (Split-Path $launchLock) | Out-Null
 ('{0} {1}' -f $PID, [datetime]::UtcNow.ToString('o')) | Set-Content -LiteralPath $launchLock
 try {
+
+# CARD-0644 test seam: an inert fixture records the admitted launch here instead of
+# touching Docker, npm, dotnet or processes. Only defined when test seams are loaded.
+if (Get-Command Invoke-AppHostDevLaunchSeam -ErrorAction SilentlyContinue) {
+    Invoke-AppHostDevLaunchSeam -Root $root -LaunchLock $launchLock -Bound $PSBoundParameters
+    return
+}
 
 if (-not (Test-Path $settingsFile)) {
     Write-Error "server\appsettings.json not found. Copy appsettings.json.example first."

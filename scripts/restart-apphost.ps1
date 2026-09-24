@@ -52,7 +52,7 @@ param(
     [int]$TimeoutSec = 150,
     [int]$LockMaxAgeMinutes,
     [switch]$AllowWorktree,
-    [string]$ExpectedServerSha
+    [Alias('ExpectedServerSha')][string]$ExpectedSha
 )
 
 $ErrorActionPreference = 'Stop'
@@ -135,31 +135,31 @@ try {
     $sourceHead = Get-AppHostSourceHead -SourceRoot $root
     if (-not $sourceHead) {
         Write-Host "REFUSED: could not read a full HEAD SHA from source root $root" -ForegroundColor Yellow
-        if ($PSBoundParameters.ContainsKey('ExpectedServerSha') -and -not [string]::IsNullOrWhiteSpace($ExpectedServerSha)) {
-            Write-Host "  supplied -ExpectedServerSha: $ExpectedServerSha" -ForegroundColor DarkGray
+        if ($PSBoundParameters.ContainsKey('ExpectedSha') -and -not [string]::IsNullOrWhiteSpace($ExpectedSha)) {
+            Write-Host "  supplied -ExpectedServerSha: $ExpectedSha" -ForegroundColor DarkGray
         }
         Write-Host "  Update the canonical checkout, then re-run." -ForegroundColor DarkGray
         Write-Host "  Nothing was killed." -ForegroundColor DarkGray
         exit 3
     }
-    $expectedSha = $sourceHead
-    if ($PSBoundParameters.ContainsKey('ExpectedServerSha') -and -not [string]::IsNullOrWhiteSpace($ExpectedServerSha)) {
-        if (-not (Test-AppHostBuildShaFormat $ExpectedServerSha)) {
-            Write-Host "REFUSED: -ExpectedServerSha is not a full 40- or 64-character SHA: $ExpectedServerSha" -ForegroundColor Yellow
+    $frozenSha = $sourceHead
+    if ($PSBoundParameters.ContainsKey('ExpectedSha') -and -not [string]::IsNullOrWhiteSpace($ExpectedSha)) {
+        if (-not (Test-AppHostBuildShaFormat $ExpectedSha)) {
+            Write-Host "REFUSED: -ExpectedServerSha is not a full 40- or 64-character SHA: $ExpectedSha" -ForegroundColor Yellow
             Write-Host "  source root: $root" -ForegroundColor DarkGray
             Write-Host "  HEAD: $sourceHead" -ForegroundColor DarkGray
             Write-Host "  Update the canonical checkout, then re-run." -ForegroundColor DarkGray
             Write-Host "  Nothing was killed." -ForegroundColor DarkGray
             exit 3
         }
-        if ($ExpectedServerSha.ToLowerInvariant() -ne $sourceHead) {
-            Write-Host "REFUSED: -ExpectedServerSha $ExpectedServerSha does not match source-root HEAD $sourceHead" -ForegroundColor Yellow
+        if ($ExpectedSha.ToLowerInvariant() -ne $sourceHead) {
+            Write-Host "REFUSED: -ExpectedServerSha $ExpectedSha does not match source-root HEAD $sourceHead" -ForegroundColor Yellow
             Write-Host "  source root: $root" -ForegroundColor DarkGray
             Write-Host "  Update the canonical checkout, then re-run." -ForegroundColor DarkGray
             Write-Host "  Nothing was killed." -ForegroundColor DarkGray
             exit 3
         }
-        $expectedSha = $ExpectedServerSha.ToLowerInvariant()
+        $frozenSha = $ExpectedSha.ToLowerInvariant()
     }
     if (Test-AppHostTrackedEdits -SourceRoot $root) {
         Write-Host "NOTE: source checkout has tracked edits; SHA equality does not prove uncommitted behavior is loaded. Probe the changed feature directly." -ForegroundColor Yellow
@@ -249,8 +249,8 @@ try {
         $versionProbe = Invoke-AppHostVersionProbe
         $ident = Resolve-AppHostLoadedIdentity -Probe $versionProbe
         $freshHeadNow = Get-AppHostSourceHead -SourceRoot $root
-        $moved = (-not $freshHeadNow) -or ($freshHeadNow -ne $expectedSha)
-        $shaOk = $ident.Ok -and ($ident.Sha.ToLowerInvariant() -eq $expectedSha)
+        $moved = (-not $freshHeadNow) -or ($freshHeadNow -ne $frozenSha)
+        $shaOk = $ident.Ok -and ($ident.Sha.ToLowerInvariant() -eq $frozenSha)
         if ($shaOk -and -not $moved) {
             $identityVerified = $true
             $identityObserved = $ident.Sha
@@ -276,11 +276,11 @@ try {
         $observedText = $identityObserved
         if ([string]::IsNullOrWhiteSpace($observedText)) { $observedText = $identityReason }
         Write-Host "REFUSED: server build unverified (exit 5)." -ForegroundColor Yellow
-        Write-Host "  expected SHA: $expectedSha" -ForegroundColor DarkGray
+        Write-Host "  expected SHA: $frozenSha" -ForegroundColor DarkGray
         Write-Host "  observed SHA: $observedText" -ForegroundColor DarkGray
         Write-Host "  reason: $identityReason" -ForegroundColor DarkGray
         if ($identityReason -eq 'checkout moved') {
-            Write-Host "  checkout moved: expected $expectedSha, HEAD now $freshHeadNow" -ForegroundColor DarkGray
+            Write-Host "  checkout moved: expected $frozenSha, HEAD now $freshHeadNow" -ForegroundColor DarkGray
         }
         Write-Host "  source root: $root" -ForegroundColor DarkGray
         Write-Host "  lock: $restartLock" -ForegroundColor DarkGray
