@@ -382,6 +382,68 @@ public sealed class RunnerSettlementSyncTests
         (await world.HeadAsync()).ShouldBe(s);
     }
 
+    /// <summary>
+    /// Liveness guard only: how long the test lets a sync run after its slice is spent before
+    /// calling it stuck. A sync that ignores the slice waits on the controlled clock forever.
+    /// </summary>
+    internal static readonly TimeSpan SliceReturnGuard = TimeSpan.FromSeconds(30);
+
+    [Test]
+    public async Task Sustained_lease_contention_waits_one_slice_per_sweep_and_blocks_after_the_budget()
+    {
+        await using var world = await SyncWorld.CreateAsync();
+        var s = await world.RunnerPushAsync("work.txt", "runner");
+        var held = await world.Leases.TryAcquireAsync(world.Desktop, CancellationToken.None);
+        held.ShouldNotBeNull();
+        world.Git.Clear();
+        var clock = new FakeTimeProvider();
+        // The defaults the timeline below is written against: a 120 s budget, a 10 s slice.
+        world.Service(clock).SyncBudget.ShouldBe(TimeSpan.FromSeconds(120));
+        world.Service(clock).LeaseWaitSlice.ShouldBe(TimeSpan.FromSeconds(10));
+        static TimeSpan Seconds(int n) => TimeSpan.FromSeconds(n);
+
+        // One attempt per dispatcher sweep, each on a fresh service as each sweep's scope builds it.
+        // The lease is found busy, the test spends `wait` on the sync's clock, and the attempt must
+        // then return on its own: holding the sweep until the whole budget is the defect.
+        async Task<RemoteSettlementSyncResult> SweepAsync(TimeSpan wait, string row)
+        {
+            var busy = new LeaseBusySignal();
+            var sync = world.Service(clock, leaseBusy: busy.Observe).SyncAsync(world.Task, CancellationToken.None);
+            (await System.Threading.Tasks.Task.WhenAny(busy.First, sync)).ShouldBe(busy.First,
+                row + ": the sync must meet the busy lease");
+            clock.Advance(wait);
+            return await sync.WaitAsync(SliceReturnGuard);
+        }
+
+        void Waiting(RemoteSettlementSyncResult result, string row)
+        {
+            result.State.ShouldBe(RemoteSettlementSyncState.Unavailable, row);
+            result.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseWaiting, row);
+        }
+
+        // Cumulative wait since the lease was first seen busy, in brackets.
+        Waiting(await SweepAsync(Seconds(10), "sweep 1 [10 s]"), "sweep 1");
+        clock.Advance(Seconds(50));
+        Waiting(await SweepAsync(Seconds(10), "sweep 2 [70 s]"), "sweep 2");
+        clock.Advance(Seconds(35));
+        Waiting(await SweepAsync(Seconds(10), "sweep 3 [115 s]"), "sweep 3: the budget is not yet spent");
+
+        // Only 5 s of the budget is left, so the attempt waits only that long; the cumulative wait
+        // reaching the budget is lease-busy.
+        var blocked = await SweepAsync(Seconds(5), "sweep 4 [120 s]");
+        blocked.State.ShouldBe(RemoteSettlementSyncState.Unavailable);
+        blocked.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+
+        // A blocked sync has spent its wait: the next attempt (after a reply) starts a fresh one.
+        Waiting(await SweepAsync(Seconds(10), "after the block [10 s]"), "after the block");
+
+        world.Git.Commands.ShouldNotContain(c => c.StartsWith("fetch", StringComparison.Ordinal)
+            || c.Contains("merge --ff-only", StringComparison.Ordinal) || c.StartsWith("update-ref", StringComparison.Ordinal));
+        (await world.HeadAsync()).ShouldBe(world.Baseline);
+        (await world.HasObjectAsync(s)).ShouldBeFalse();
+        await held!.DisposeAsync();
+    }
+
     [Test]
     public async Task Sync_budget_is_the_runner_sync_budget_setting()
     {
@@ -417,15 +479,20 @@ public sealed class RunnerSettlementSyncTests
     internal sealed class LeaseBusySignal
     {
         private readonly TaskCompletionSource _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private TaskCompletionSource _next = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _count;
 
         public System.Threading.Tasks.Task First => _first.Task;
         public int Count => Volatile.Read(ref _count);
 
+        /// <summary>Completes on the first busy lease observed after this call.</summary>
+        public System.Threading.Tasks.Task Next() => Volatile.Read(ref _next).Task;
+
         public void Observe()
         {
             Interlocked.Increment(ref _count);
             _first.TrySetResult();
+            Interlocked.Exchange(ref _next, new(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
         }
     }
 

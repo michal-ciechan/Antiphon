@@ -63,6 +63,13 @@ public static class RemoteSettlementSyncReasons
     public const string FetchUnavailable = "runner_sync_fetch_unavailable";
     public const string Timeout = "runner_sync_timeout";
     public const string LeaseBusy = "runner_sync_lease_busy";
+
+    /// <summary>
+    /// Not a verdict: the lease was still busy when this attempt's wait slice ran out, and the
+    /// cumulative wait since the sync first found it busy is still inside the budget. Settlement
+    /// leaves the task open for the next sweep's attempt; only <see cref="LeaseBusy"/> blocks.
+    /// </summary>
+    public const string LeaseWaiting = "runner_sync_lease_waiting";
     public const string RetirementReserved = "runner_sync_retirement_reserved";
     public const string InspectionUnavailable = "runner_sync_inspection_unavailable";
     public const string ChangedDuringValidation = "runner_sync_changed_during_validation";

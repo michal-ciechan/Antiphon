@@ -428,6 +428,65 @@ public sealed class RunnerTaskSettlementTests
     }
 
     [Test]
+    public async Task Sustained_lease_contention_spans_sweeps_without_holding_up_other_settlements()
+    {
+        // The real deferred-report sweep re-hands the runner task's marked report while the lease
+        // stays busy across several sweeps. Each attempt waits one slice, not the whole budget, so
+        // the same sweep settles the other task's report; the runner task stays open (not Blocked)
+        // until the cumulative wait reaches Delegation:RunnerSyncBudgetSeconds, then blocks lease-busy.
+        await using var world = await RunnerSettlementWorld.CreateAsync(controlledSyncClock: true);
+        await world.Git.RunnerPushAsync("work.txt", "runner work");
+        await world.SeedReportAsync(RunnerSettlementWorld.Report("Implemented and pushed."));
+        var other = await world.AddLocalReportedTaskAsync(RunnerSettlementWorld.Report("Investigated.", next: "none"));
+        new DelegationSettings().RunnerSyncBudgetSeconds.ShouldBe(120);
+        RemoteWorkspaceService.DefaultLeaseWaitSlice.ShouldBe(TimeSpan.FromSeconds(10));
+        static TimeSpan Seconds(int n) => TimeSpan.FromSeconds(n);
+
+        async System.Threading.Tasks.Task SweepAsync(TimeSpan wait, string row)
+        {
+            var busy = world.LeaseBusy.Next();
+            var sweep = world.SweepDeferredReportsAsync();
+            (await System.Threading.Tasks.Task.WhenAny(busy, sweep)).ShouldBe(busy,
+                row + ": the sweep must re-hand the runner report into the busy lease");
+            world.SyncClock!.Advance(wait);
+            await sweep.WaitAsync(RunnerSettlementSyncTests.SliceReturnGuard);
+        }
+
+        async System.Threading.Tasks.Task StillOpenAsync(string row)
+        {
+            world.Task.Status.ShouldBe(AgentTaskStatus.Working, row + " " + Why(world));
+            (await world.EventsAsync()).ShouldNotContain(e => e.Type == AgentTaskEventType.Blocked, row);
+        }
+
+        await using (var held = await world.Git.Leases.TryAcquireAsync(world.Git.Desktop, CancellationToken.None))
+        {
+            held.ShouldNotBeNull();
+
+            // Cumulative wait since the lease was first seen busy, in brackets.
+            await SweepAsync(Seconds(10), "sweep 1 [10 s]");
+            (await world.StatusOfAsync(other)).ShouldBe(AgentTaskStatus.Succeeded,
+                "the other report settles in the same sweep");
+            await StillOpenAsync("sweep 1");
+            world.SyncClock!.Advance(Seconds(50));
+            await SweepAsync(Seconds(10), "sweep 2 [70 s]");
+            await StillOpenAsync("sweep 2");
+            world.SyncClock.Advance(Seconds(35));
+            await SweepAsync(Seconds(10), "sweep 3 [115 s]");
+            await StillOpenAsync("sweep 3: the budget is not yet spent");
+            await SweepAsync(Seconds(5), "sweep 4 [120 s]");
+        }
+
+        world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world));
+        world.Task.FailureCode.ShouldBeNull();
+        world.Task.NextStage.ShouldBe(PipelineHandoffKind.Decide);
+        world.Task.Result!.ShouldContain("Implemented and pushed.");
+        world.Evidence()!.RemoteSync!.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        (await world.EventsAsync()).Count(e => e.Type == AgentTaskEventType.Blocked).ShouldBe(1);
+        (await world.NoProgressIncidentsAsync()).ShouldBe(0);
+        (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+    }
+
+    [Test]
     public async Task Refused_sync_never_autosaves_or_releases_workspace()
     {
         // Dirt on the desktop checkout.
