@@ -439,6 +439,54 @@ public sealed class TestDbFixtureLifecycleTests
         await lifecycle.DisposeAsync();
     }
 
+    [Test]
+    public void Default_store_reachability_includes_direct_async_and_helper_calls()
+    {
+        SharedStoreWarmup.ReachesDefaultStore(Sample(nameof(StoreSamples.ReadStore))).ShouldBeTrue();
+        SharedStoreWarmup.ReachesDefaultStore(Sample(nameof(StoreSamples.ReadStoreAsync))).ShouldBeTrue();
+        SharedStoreWarmup.ReachesDefaultStore(Sample(nameof(StoreSamples.ThroughHelper))).ShouldBeTrue();
+        SharedStoreWarmup.ReachesDefaultStore(Sample(nameof(StoreSamples.Clone))).ShouldBeTrue();
+        SharedStoreWarmup.ReachesDefaultStore(Sample(nameof(StoreSamples.Inert))).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Probe_payload_defers_shared_store_warmup_unless_mode_is_mixed()
+    {
+        SharedStoreWarmup.ProbeDefersWarmup(null).ShouldBeFalse();
+        SharedStoreWarmup.ProbeDefersWarmup("").ShouldBeFalse();
+        SharedStoreWarmup.ProbeDefersWarmup("{").ShouldBeTrue();
+        SharedStoreWarmup.ProbeDefersWarmup("""{"depth":1}""").ShouldBeTrue();
+        SharedStoreWarmup.ProbeDefersWarmup("""{"mode":"db-free"}""").ShouldBeTrue();
+        SharedStoreWarmup.ProbeDefersWarmup("""{"mode":"fault"}""").ShouldBeTrue();
+        SharedStoreWarmup.ProbeDefersWarmup("""{"mode":"mixed"}""").ShouldBeFalse();
+    }
+
+    private static System.Reflection.MethodInfo Sample(string name) =>
+        typeof(StoreSamples).GetMethod(name, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+        ?? throw new InvalidOperationException(name);
+
+    private static class StoreSamples
+    {
+        public static string ReadStore() => TestDbFixture.ConnectionString;
+
+        public static async Task<string> ReadStoreAsync()
+        {
+            await Task.Yield();
+            return TestDbFixture.ConnectionString;
+        }
+
+        public static string ThroughHelper() => StoreHelper.Read();
+
+        public static Task<IsolatedTestSchema> Clone() => TestDbFixture.CreateIsolatedSchemaAsync();
+
+        public static TestDbFixture Inert() => new();
+    }
+
+    private static class StoreHelper
+    {
+        public static string Read() => TestDbFixture.ConnectionString;
+    }
+
     private static async Task Invoke(TestDbFixtureLifecycle lifecycle, string kind)
     {
         switch (kind)
