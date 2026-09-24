@@ -182,6 +182,12 @@ public static class PhoneHomeProblemTypes
     public const string StaleEpoch = "phone_home_stale_epoch";
     public const string RequestTimeout = "phone_home_request_timeout";
 
+    /// <summary>
+    /// CARD-0679 D-9: a Launch for a session id the runner already holds live under a different
+    /// generation. The same generation is not refused: it is answered with the existing session.
+    /// </summary>
+    public const string SessionAlreadyRunning = "phone_home_session_already_running";
+
     /// <summary>CARD-0628 D-7: the provider CLI is not signed in on the runner.</summary>
     public const string ProviderSignInRequired = "provider_sign_in_required";
 

@@ -91,6 +91,62 @@ public sealed class PhoneHomeCommandDispatcher
 
     public async Task<PhoneHomeFrame> DispatchAsync(PhoneHomeFrame request, CancellationToken ct)
     {
+        var trace = new DispatchTrace();
+        var reply = await DispatchCoreAsync(request, trace, ct);
+        LogSessionMutation(request, reply, trace);
+        return reply;
+    }
+
+    /// <summary>
+    /// CARD-0679 D-4: one Information line per Launch, KillGeneration and ReleaseSlot, so the
+    /// runner's default log answers whether a launch or kill arrived and what became of it. Ids,
+    /// the executable's base name and generations only: never argv, env, cwd or prompt text.
+    /// </summary>
+    private void LogSessionMutation(PhoneHomeFrame request, PhoneHomeFrame reply, DispatchTrace trace)
+    {
+        if (request.Operation is not (PhoneHomeOperation.Launch or PhoneHomeOperation.KillGeneration or PhoneHomeOperation.ReleaseSlot))
+            return;
+        var payload = request.Payload is { ValueKind: JsonValueKind.Object } body ? body : (JsonElement?)null;
+        var sessionId = ReadString(payload, "sessionId") ?? "unknown";
+        var outcome = reply.Kind == PhoneHomeFrameKind.Error
+            ? $"refused:{reply.ErrorCode}"
+            : trace.Outcome ?? ReadString(reply.Payload, "outcome") ?? ReadString(reply.Payload, "status") ?? "ok";
+        switch (request.Operation)
+        {
+            case PhoneHomeOperation.Launch:
+                var exe = ReadString(payload, "exe");
+                _logger.LogInformation(
+                    "Phone-home Launch {RequestId} session={SessionId} exe={Exe} acceptedStartedAt={AcceptedStartedAt} outcome={Outcome}",
+                    request.RequestId, sessionId, exe is null ? "unknown" : Path.GetFileName(exe),
+                    ReadString(payload, "acceptedStartedAt") ?? "none", outcome);
+                break;
+            case PhoneHomeOperation.KillGeneration:
+                _logger.LogInformation(
+                    "Phone-home KillGeneration {RequestId} session={SessionId} expectedGeneration={ExpectedGeneration} outcome={Outcome}",
+                    request.RequestId, sessionId, ReadString(payload, "expectedAcceptedStartedAt") ?? "none", outcome);
+                break;
+            default:
+                _logger.LogInformation(
+                    "Phone-home ReleaseSlot {RequestId} session={SessionId} outcome={Outcome}",
+                    request.RequestId, sessionId, outcome);
+                break;
+        }
+    }
+
+    private static string? ReadString(JsonElement? element, string property) =>
+        element is { ValueKind: JsonValueKind.Object } obj
+        && obj.TryGetProperty(property, out var value)
+        && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+
+    private sealed class DispatchTrace
+    {
+        public string? Outcome { get; set; }
+    }
+
+    private async Task<PhoneHomeFrame> DispatchCoreAsync(PhoneHomeFrame request, DispatchTrace trace, CancellationToken ct)
+    {
         if (request.Kind != PhoneHomeFrameKind.Request || request.Operation is null)
             return Error(request, PhoneHomeProblemTypes.UnsupportedOperation, "Frame is not a request.", 400);
 
@@ -102,7 +158,7 @@ public sealed class PhoneHomeCommandDispatcher
                 PhoneHomeOperation.Health => Result(request, new { status = _runtime.Health() }),
                 PhoneHomeOperation.List => Result(request, _runtime.List()),
                 PhoneHomeOperation.Get => Result(request, await _runtime.GetAsync(ReadSessionId(request), ct)),
-                PhoneHomeOperation.Launch => await LaunchAsync(request, ct),
+                PhoneHomeOperation.Launch => await LaunchAsync(request, trace, ct),
                 PhoneHomeOperation.ProviderAuth => Result(request, await ProviderAuthAsync(request, ct)),
                 PhoneHomeOperation.Buffer => Result(request, _runtime.GetBuffer(ReadSessionId(request))),
                 PhoneHomeOperation.Snapshot => Result(request, _runtime.GetSnapshot(ReadSessionId(request))),
@@ -243,7 +299,7 @@ public sealed class PhoneHomeCommandDispatcher
         }
     }
 
-    private async Task<PhoneHomeFrame> LaunchAsync(PhoneHomeFrame request, CancellationToken ct)
+    private async Task<PhoneHomeFrame> LaunchAsync(PhoneHomeFrame request, DispatchTrace trace, CancellationToken ct)
     {
         var launch = request.Payload?.Deserialize<RunnerLaunchRequest>(PhoneHomeFraming.Json)
             ?? throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Launch body is required.", 400);
@@ -254,12 +310,34 @@ public sealed class PhoneHomeCommandDispatcher
         // lets two launches both pass while neither has recorded a session yet.
         return await MutateAsync(request, async () =>
         {
+            // CARD-0679 D-9: a Launch retried after its ack was lost in a reconnect. The same
+            // generation is the same launch: answer with the session already running, and do it
+            // before capacity, which that very session occupies. Any other generation is a typed
+            // refusal the desktop can match on, not the runtime's untyped "already running".
+            var existing = _runtime.List().FirstOrDefault(session =>
+                session.SessionId == launch.SessionId && session.Status != "Exited");
+            if (existing is not null)
+            {
+                if (SessionGeneration.Equal(existing.AcceptedStartedAt, launch.AcceptedStartedAt))
+                {
+                    trace.Outcome = "duplicate-ack";
+                    return Result(request, existing);
+                }
+
+                throw new PhoneHomeAdmissionException(
+                    PhoneHomeProblemTypes.SessionAlreadyRunning,
+                    $"Session '{launch.SessionId}' is already running under another generation.",
+                    409);
+            }
+
             if (_runtime.OwnedSessionCount >= _settings.Capacity)
                 throw new PhoneHomeAdmissionException(
                     PhoneHomeProblemTypes.Capacity,
                     $"Phone-home capacity is {_settings.Capacity} session(s).",
                     409);
-            return Result(request, await _runtime.StartAsync(launch, ct));
+            var started = await _runtime.StartAsync(launch, ct);
+            trace.Outcome = "started";
+            return Result(request, started);
         });
     }
 
