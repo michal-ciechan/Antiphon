@@ -126,18 +126,25 @@ public sealed partial class SessionMessageQueueService
                     AttemptCommitted: true);
             }
 
-            // Submitted: Enter went out, so the body left the composer as far as this call can tell.
-            // Its echo stays in the rendered conversation, where the composer hold cannot tell it
-            // from a standing body, so only Enter-withheld outcomes may hold (review D1).
+            // The hold follows the evidence each verdict carries. Submitted (no hold) needs a
+            // submitted-prompt record carrying the body: whole past no floor, or Truncated. Its echo
+            // stays in the conversation, where the screen hold cannot tell it from a standing body
+            // (review D1). NoSubmitOutput, NoTranscriptRecord and a screen-only verdict are not
+            // evidence the body left the composer: a swallowed Enter redraws too, and a working
+            // caller already shows Working (review R1). Those hold until a record shows the prompt,
+            // the body is gone from the screen, or the generation changes, and they page the operator.
             return outcome.Verdict switch
             {
                 DeliveryVerdict.Delivered when outcome.ConfirmedBy == DeliveryConfirmedBy.Transcript && baseline.Observable =>
                     new ExpectationSendResult(ExpectationSendOutcome.Confirmed, "transcript", true, UtcNow()),
+                DeliveryVerdict.Delivered when outcome.ConfirmedBy == DeliveryConfirmedBy.Transcript =>
+                    new ExpectationSendResult(ExpectationSendOutcome.Unconfirmed, "no_observable_baseline", true, Submitted: true),
                 DeliveryVerdict.Delivered =>
-                    new ExpectationSendResult(ExpectationSendOutcome.Unconfirmed,
-                        baseline.Observable ? "no_transcript_receipt" : "no_observable_baseline", true, Submitted: true),
-                DeliveryVerdict.Truncated or DeliveryVerdict.NoTranscriptRecord or DeliveryVerdict.NoSubmitOutput =>
+                    new ExpectationSendResult(ExpectationSendOutcome.Unconfirmed, "screen_only_submit", true),
+                DeliveryVerdict.Truncated =>
                     new ExpectationSendResult(ExpectationSendOutcome.Unconfirmed, Describe(outcome.Verdict), true, Submitted: true),
+                DeliveryVerdict.NoTranscriptRecord or DeliveryVerdict.NoSubmitOutput =>
+                    new ExpectationSendResult(ExpectationSendOutcome.Unconfirmed, Describe(outcome.Verdict), true),
                 DeliveryVerdict.ModalBlocked or DeliveryVerdict.ForbiddenBody or DeliveryVerdict.SpillBodyMissing =>
                     new ExpectationSendResult(ExpectationSendOutcome.Refused, Describe(outcome.Verdict), true),
                 DeliveryVerdict.BackendUnreachable =>
@@ -153,10 +160,14 @@ public sealed partial class SessionMessageQueueService
 
     /// <summary>
     /// True when an unconfirmed watchdog attempt of this generation may still stand in the
-    /// composer: Attempting, Uncertain, or Unconfirmed with Enter withheld. A Submitted attempt
-    /// never holds. Same release rules as <see cref="HeldBackTypingBlocksTheComposer"/>: a full
-    /// late receipt (the row becomes Confirmed), the body no longer visible whole, or a new
-    /// generation. An unreadable snapshot holds.
+    /// composer: Attempting, Uncertain, or Unconfirmed (Enter withheld, NoSubmitOutput,
+    /// NoTranscriptRecord or a screen-only verdict). A Submitted attempt never holds. Release is
+    /// positive evidence only, never time: a submitted-prompt record carrying the body past the
+    /// attempt's floor (a full late receipt, or a partial one, since either means the composer
+    /// was submitted), the body no longer visible whole, or a new generation. With no floor the
+    /// transcript was empty when the attempt was committed, so every record is later than it. An
+    /// echo left in the conversation keeps the screen arm holding, so the record is the release
+    /// for a prompt that lands late. An unreadable snapshot holds.
     /// </summary>
     private async Task<bool> ExpectationBodyBlocksComposerAsync(
         AppDbContext db, Guid sessionId, DateTime generation, CancellationToken ct)
@@ -166,7 +177,7 @@ public sealed partial class SessionMessageQueueService
                 && (n.AttemptState == ExpectationAttemptState.Attempting
                     || n.AttemptState == ExpectationAttemptState.Uncertain
                     || n.AttemptState == ExpectationAttemptState.Unconfirmed))
-            .Select(n => new { n.Id, n.Body, n.DestinationGeneration })
+            .Select(n => new { n.Id, n.Body, n.DestinationGeneration, n.BaselineSequence })
             .ToListAsync(ct);
         var current = attempts
             .Where(n => n.DestinationGeneration is { } typed && SessionGeneration.Equal(typed, generation))
@@ -174,22 +185,33 @@ public sealed partial class SessionMessageQueueService
         if (current.Count == 0)
             return false;
 
+        var unrecorded = new List<(Guid Id, string Body)>();
+        foreach (var attempt in current)
+        {
+            var record = await TryFindConfirmingRecordAsync(
+                db, sessionId, attempt.Body.Trim(), attempt.BaselineSequence ?? long.MinValue, ct);
+            if (!record.Identity)
+                unrecorded.Add((attempt.Id, attempt.Body));
+        }
+        if (unrecorded.Count == 0)
+            return false;
+
         if (!_runtime.TryGetLiveSnapshot(sessionId, out var snapshot))
         {
             _logger.LogInformation(
                 "Holding input to session {SessionId}: {Count} unconfirmed expectation prompt(s) of this "
-                + "generation and no rendered snapshot to show the composer empty",
-                sessionId, current.Count);
+                + "generation, no transcript record of them, and no rendered snapshot to show the composer empty",
+                sessionId, unrecorded.Count);
             return true;
         }
 
-        var standing = current.FirstOrDefault(n => ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(
+        var standing = unrecorded.FirstOrDefault(n => ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(
             snapshot.RenderedScreen, PtyInputEncoding.NormalizeBody(n.Body.Trim())));
         if (standing is null)
             return false;
         _logger.LogWarning(
-            "Holding input to session {SessionId}: expectation nudge {NudgeId} is unconfirmed and still "
-            + "standing whole in the composer",
+            "Holding input to session {SessionId}: expectation nudge {NudgeId} is unconfirmed, has no "
+            + "transcript record, and is still visible whole on screen",
             sessionId, standing.Id);
         return true;
     }

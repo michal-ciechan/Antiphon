@@ -10,8 +10,9 @@ public enum ExpectationSendOutcome
     Confirmed = 0,
 
     /// <summary>
-    /// The attempt finished without a receipt. <see cref="ExpectationSendResult.Submitted"/> says
-    /// whether Enter went out (the body left the composer) or was withheld (it may still stand there).
+    /// The attempt finished without a receipt. <see cref="ExpectationSendResult.Submitted"/> is true
+    /// only when a submitted-prompt record carries the body (it left the composer); otherwise the
+    /// body may still stand there, whether Enter was withheld, swallowed or only redrew the screen.
     /// </summary>
     Unconfirmed = 1,
 
