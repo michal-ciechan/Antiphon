@@ -2980,8 +2980,8 @@ public sealed class AgentTaskReplyService
         // pushed movement fails as no-progress instead of settling Succeeded on a confirmed S.
         remote.Result = await PrepareRemoteAsync(services, task, ct);
         if (remote.Result is { State: not RemoteSettlementSyncState.NotApplicable }
-            && await TryClassifyCompletedWithoutProgressAsync(services, task, body, remote.Result, ct) is { } noProgress)
-            return (noProgress.Status, evidence, noProgress.Body, noProgress.FailureReason);
+            && await TryClassifyCompletedWithoutProgressAsync(services, task, body, remote.Result, ct) is { } unmarkedNoProgress)
+            return (unmarkedNoProgress.Status, evidence, unmarkedNoProgress.Body, unmarkedNoProgress.FailureReason);
         return (AgentTaskStatus.Succeeded, evidence, body, null);
     }
 
