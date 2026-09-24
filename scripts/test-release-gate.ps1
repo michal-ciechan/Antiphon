@@ -414,7 +414,7 @@ function New-C599Authority {
         authorityDigest = (Get-NightlyFileSha256 -Path (Join-Path $dir 'authority.json'))
         executionPlanDigest = (Get-NightlyFileSha256 -Path (Join-Path $dir 'execution-plan.json'))
         startedAt = '2026-09-23T08:31:00Z'; completedAt = '2026-09-23T09:50:00Z'
-        teardownSucceeded = $true; seamed = $false; noReport = $false; diagnostic = $false; selection = 'full'; reportAccepted = $true
+        teardownSucceeded = $true; seamed = $false; noReport = $false; diagnostic = $false; selection = 'full'
         prepublicationReceipt = [ordered]@{
             kind = 'prepublication'
             recipient = [ordered]@{ kind = 'release-card'; cardId = $script:C599ReleaseCardId; revision = 4 }
@@ -2114,7 +2114,8 @@ function Set-C599APinnedPolicy {
     <#
       Commit PolicyBytes on the real checkout and re-pin the whole candidate to that
       commit: journal, green, remote, authority blob identity/digests/hash, private
-      copy, plan, ledger and every chunk/roster row. Only the policy content differs.
+      copy, plan, ledger, every chunk/roster row and the receipt correlation. Only the
+      policy content differs.
     #>
     param($Fx, [byte[]]$PolicyBytes)
     [System.IO.File]::WriteAllBytes((Join-Path $Fx.Checkout (Join-Path 'tests' 'test-execution-policy.json')), $PolicyBytes)
@@ -2141,6 +2142,7 @@ function Set-C599APinnedPolicy {
         $l.sha = $pinSha; $l.authorityDigest = $pinDigest
         foreach ($c in @($l.chunks)) { $c.sha = $pinSha }
         foreach ($r in @($l.rosters)) { $r.sha = $pinSha }
+        $l.prepublicationReceipt.correlation.sha = $pinSha
     }
 }
 

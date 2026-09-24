@@ -406,11 +406,12 @@ function Get-ReleaseGateReservedTag {
     return $null
 }
 
-function New-ReleaseGateTagReservation {
+function Get-ReleaseGateTagProposal {
     <#
-      Reserve the next daily sequence, or return the existing reservation for this
-      candidate. Reservation is idempotent by candidate id; a different SHA under
-      the same candidate id is a hard refusal (D-3 immutability).
+      The reservation New-ReleaseGateTagReservation would make, computed read-only:
+      the existing row for this candidate, or the next free daily sequence. It never
+      writes, so publish -WhatIf can report the proposed tag without reserving it.
+      A different SHA under the same candidate id is a hard refusal (D-3).
     #>
     param(
         [Parameter(Mandatory = $true)][string]$JournalPath,
@@ -429,7 +430,7 @@ function New-ReleaseGateTagReservation {
         if (-not [string]::Equals([string]$existing.sha, $Sha, [StringComparison]::OrdinalIgnoreCase)) {
             throw ('candidate {0} already reserved for sha {1}' -f $CandidateId, $existing.sha)
         }
-        return [pscustomobject]@{ Tag = [string]$existing.tag; Sequence = [int]$existing.sequence; Reused = $true; Row = $existing }
+        return [pscustomobject]@{ Tag = [string]$existing.tag; Sequence = [int]$existing.sequence; Reused = $true; Row = $existing; Journal = $journal }
     }
     $day = $CutUtc.ToUniversalTime().ToString('yyyy.MM.dd')
     $used = @()
@@ -439,7 +440,28 @@ function New-ReleaseGateTagReservation {
     }
     $next = 1
     while ($used -contains $next) { $next++ }
-    $tag = New-ReleaseGateTag -CutUtc $CutUtc -Sequence $next
+    return [pscustomobject]@{ Tag = (New-ReleaseGateTag -CutUtc $CutUtc -Sequence $next); Sequence = $next; Reused = $false; Row = $null; Journal = $journal }
+}
+
+function New-ReleaseGateTagReservation {
+    <#
+      Reserve the next daily sequence, or return the existing reservation for this
+      candidate. Reservation is idempotent by candidate id; a different SHA under
+      the same candidate id is a hard refusal (D-3 immutability).
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$JournalPath,
+        [Parameter(Mandatory = $true)][string]$CandidateId,
+        [Parameter(Mandatory = $true)][string]$Sha,
+        [datetime]$CutUtc
+    )
+    $proposal = Get-ReleaseGateTagProposal -JournalPath $JournalPath -CandidateId $CandidateId -Sha $Sha -CutUtc $CutUtc
+    if ($proposal.Reused) {
+        return [pscustomobject]@{ Tag = $proposal.Tag; Sequence = $proposal.Sequence; Reused = $true; Row = $proposal.Row }
+    }
+    $journal = $proposal.Journal
+    $tag = $proposal.Tag
+    $next = $proposal.Sequence
     $rows = @()
     foreach ($row in @($journal.reservations)) { $rows += $row }
     $rows += [ordered]@{
@@ -600,9 +622,10 @@ function Test-ReleaseGatePublicationGate {
 }
 
 # ------------------------------------------------------------------- seams ---
-# Git, GitHub and Windmill are injected at the I/O boundary so the contract tests
-# drive the real production code paths. Nothing below replaces a predicate or a
-# gate: a seam may only answer for the remote, never decide whether to publish.
+# Git, GitHub, Windmill and the publisher's clock are injected at the I/O boundary
+# so the contract tests drive the real production code paths. Nothing below
+# replaces a predicate or a gate: a seam may only answer for the remote or the
+# time, never decide whether to publish.
 
 function Import-ReleaseGateSeams {
     param([string]$SeamsPath)
@@ -611,6 +634,17 @@ function Import-ReleaseGateSeams {
     $script:ReleaseGateSeams = $null
     . $SeamsPath
     if ($ReleaseGateSeams) { $script:ReleaseGateSeams = $ReleaseGateSeams }
+}
+
+function Get-ReleaseGateUtcNow {
+    # D-15: the clock evidence timestamps are bounded by. Tests inject it; production
+    # reads the nightly clock (wall clock unless a nightly seam answers).
+    if ($script:ReleaseGateSeams -and $script:ReleaseGateSeams.UtcNow) {
+        $value = @($script:ReleaseGateSeams.UtcNow.Invoke())
+        if ($value.Count -gt 0 -and $value[0] -is [datetime]) { return ([datetime]$value[0]).ToUniversalTime() }
+        throw 'release-gate clock seam returned no instant'
+    }
+    return (Get-NightlyUtcNow).ToUniversalTime()
 }
 
 function Invoke-ReleaseGateGit {

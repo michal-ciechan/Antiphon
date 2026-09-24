@@ -156,7 +156,10 @@ function Invoke-AntiphonPublishRelease {
 
     # D-15: the authority is re-verified on every attempt, recovery included. It
     # never reads summary.json; the pinned blob and the ledger are the only inputs.
-    $authority = Test-ReleaseGateAuthority -CandidateRoot $paths.Root -RepositoryRoot $CheckoutRoot -Green $green -Candidate $candidate
+    # Repository is the publication destination (it must equal the frozen value and
+    # the checkout's origin); evidence may not post-date the publisher's clock.
+    $authority = Test-ReleaseGateAuthority -CandidateRoot $paths.Root -RepositoryRoot $CheckoutRoot -Green $green -Candidate $candidate `
+        -Repository $Repository -NowUtc (Get-ReleaseGateUtcNow)
     $gate = Test-ReleaseGatePublicationGate -Green $green -Candidate $candidate -RemoteSha $remoteSha `
         -Authority $authority -ExpectedPolicyHash $ExpectedPolicyHash -RequiredSuites $RequiredSuites
     if (-not $gate.Ok) {
@@ -177,8 +180,14 @@ function Invoke-AntiphonPublishRelease {
     }
 
     $publicationJournal = Join-Path $ReleaseRoot 'publications.json'
-    $reservation = New-ReleaseGateTagReservation -JournalPath $publicationJournal -CandidateId $CandidateId -Sha $sha `
-        -CutUtc (ConvertTo-ReleaseGateUtc -Value $candidate.cutUtc -AllowEmpty)
+    $cutUtc = ConvertTo-ReleaseGateUtc -Value $candidate.cutUtc -AllowEmpty
+    if ($WhatIf) {
+        # Read-only: -WhatIf reports the proposed tag and never reserves it, so
+        # publications.json is untouched (not created, not rewritten).
+        $reservation = Get-ReleaseGateTagProposal -JournalPath $publicationJournal -CandidateId $CandidateId -Sha $sha -CutUtc $cutUtc
+    } else {
+        $reservation = New-ReleaseGateTagReservation -JournalPath $publicationJournal -CandidateId $CandidateId -Sha $sha -CutUtc $cutUtc
+    }
     $tag = $reservation.Tag
     $result.Tag = $tag
     $result.Resumed = [bool]$reservation.Reused
