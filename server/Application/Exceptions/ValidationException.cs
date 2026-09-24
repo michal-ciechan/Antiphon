@@ -23,7 +23,16 @@ public class ValidationException : HttpException
     }
 
     public ValidationException(string field, string error, string code)
-        : base(422, "One or more validation errors occurred.", code)
+        : this(field, error, code, "One or more validation errors occurred.")
+    {
+    }
+
+    /// <summary>
+    /// CARD-0666. For a failure whose only consumer may be <c>ex.Message</c> (a dispatch report),
+    /// where the generic text would hide which value failed and why.
+    /// </summary>
+    public ValidationException(string field, string error, string code, string message)
+        : base(422, message, code)
     {
         Errors = new Dictionary<string, string[]>
         {
