@@ -36,6 +36,12 @@ public class SessionQueuedMessage
     /// <summary>The text delivered into the agent's terminal (a carriage return is appended on send).</summary>
     public string Body { get; set; } = string.Empty;
 
+    /// <summary>The remote file bytes owned by this queue identity, retained through delivery retries.</summary>
+    public string? RemoteSpillBody { get; set; }
+
+    /// <summary>The runner-relative file named by <see cref="Id"/> in the queued pointer.</summary>
+    public string? RemoteSpillRelativePath { get; set; }
+
     public QueuedMessageStatus Status { get; set; } = QueuedMessageStatus.Pending;
 
     /// <summary>FIFO ordering key — monotonic per session in enqueue order.</summary>
