@@ -64,7 +64,7 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
   const [kind, setKind] = useState<AgentTaskKind>('Worker')
   const [role, setRole] = useState<AgentTaskRole>('Code')
   const [goal, setGoal] = useState(prefill?.goal ?? '')
-  const [workspace, setWorkspace] = useState<WorkspaceMode>('Shared')
+  const [workspace, setWorkspace] = useState<WorkspaceMode>('Worktree')
   const [directory, setDirectory] = useState(prefill?.workingDirectory ?? '')
   const [scope, setScope] = useState(prefill?.scope ?? '')
   const [level, setLevel] = useState<AgentModelLevel | null>(null)
@@ -118,10 +118,9 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
           onChange={(value) => {
             const next = value as AgentTaskKind
             setKind(next)
-            // A sub-orchestrator's job is to decompose, so Plan is its default role — and it fans
-            // out writers, so it defaults to its own worktree. Both stay overridable.
+            // A sub-orchestrator's job is to decompose, so Plan is its default role. Workspace is
+            // the caller's own choice — Worktree to start — and a kind change does not reset it.
             setRole(next === 'Orchestrator' ? 'Plan' : 'Code')
-            setWorkspace(next === 'Orchestrator' ? 'Worktree' : 'Shared')
           }}
           data={[
             { label: 'Worker', value: 'Worker' },
@@ -213,9 +212,9 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
           {kind === 'Orchestrator' && workspace === 'Shared'
             ? 'An orchestrator fans out writers — sharing its caller’s directory means its delegates and its caller can overwrite each other. The server will warn.'
             : workspace === 'Shared'
-              ? 'Runs directly in the directory, like you would yourself. The right default for a worker.'
+              ? 'Runs in the caller’s directory. Explicit: commit-on-settle, when it applies, commits only this task’s footprint.'
               : workspace === 'Worktree'
-                ? 'Isolated on its own branch and merged back when it finishes. The default for a sub-orchestrator — it fans out writers, so it owns its integration branch.'
+                ? 'Own branch and checkout. This is the default. Finishing does not merge the branch back; landing is a separate step.'
                 : 'Shared directory, but the brief says don’t write. For reviews and coverage audits.'}
         </Text>
       </Stack>

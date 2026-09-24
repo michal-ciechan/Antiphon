@@ -256,6 +256,9 @@ public sealed class LegacyCheckNotePublicationService
             Role = StandingSpecialistSeatPolicy.Role,
             Kind = AgentTaskKind.Worker,
             Status = AgentTaskStatus.Queued,
+            // CARD-0644 D-9. The captured interpreter stays on its standing seat. Workspace is
+            // explicit Shared so a fresh Worktree default cannot move this row.
+            Workspace = WorkspaceMode.Shared,
             AgentId = publication.PhysicalAgentId,
             AgentSessionId = publication.InterpreterSessionId,
             WorkingDirectory = "",

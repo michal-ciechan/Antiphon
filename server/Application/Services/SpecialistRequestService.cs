@@ -229,6 +229,7 @@ public sealed partial class SpecialistRequestService(AppDbContext db, IOptions<D
             SpecialistModelAlias = selected.ModelAlias, SpecialistModelId = seat.ModelId,
             SpecialistEffectiveModelId = session.EffectiveModelId, SpecialistSessionId = session.Id,
             SpecialistSessionStartedAt = session.StartedAt, SpecialistProfileRevisionId = session.TuiProfileRevisionId,
+            // CARD-0644 D-9. Explicit Shared on the standing seat. A fresh Worktree default must not move this run.
             Workspace = WorkspaceMode.Shared, WorkingDirectory = seat.WorkingDirectory, AgentId = seat.Id, AgentName = seat.Name,
             Ephemeral = false, ReplyTo = AgentTaskReplyTo.None, Status = AgentTaskStatus.Queued, CreatedAt = now, ExecutionDeadlineAt = deadline,
             SpecialistInputPolicyJson = new SpecialistInputPolicy(1, taskId, session.Id, session.StartedAt, seat.Kind,

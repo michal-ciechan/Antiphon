@@ -2824,6 +2824,7 @@ public sealed class AgentTaskService
     /// cap still applies: a run at its limit gets the Blocked task and no fixer, stated in events.
     /// It is a CHILD of the conflicted task (the tree records that this work needed a merge hand)
     /// and reports to the same parent session, working directly in the conflicted worktree.
+    /// CARD-0644 D-9: Workspace is explicit Shared. This child is not a fresh Worktree.
     /// </summary>
     internal async Task<AgentTask?> CreateMergeTaskAsync(
         AgentTask conflicted, IReadOnlyList<string> conflictFiles, CancellationToken ct,
@@ -2918,6 +2919,7 @@ public sealed class AgentTaskService
     /// <summary>
     /// CARD-0527 D-7. Spawn a Commit-role child to judge and commit the settled task's leftover
     /// dirty paths through the gated endpoint. Same shape as <see cref="CreateMergeTaskAsync"/>.
+    /// CARD-0644 D-9: Workspace is explicit Shared, and the directory is the settled checkout.
     /// </summary>
     internal async Task<AgentTask?> CreateCommitTaskAsync(
         AgentTask settled, string reason, IReadOnlyList<string> dirtyPaths, string? headSha,

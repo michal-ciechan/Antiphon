@@ -212,6 +212,8 @@ public static class DelegationReportFormatter
         if (VerificationProfileBlock(task) is { } profile)
             sb.AppendLine(profile).AppendLine();
 
+        // CARD-0644 D-9. Only an explicit Shared task is told to commit. A Worktree task keeps the
+        // separate landing contract and is not instructed to commit and push when it finishes.
         if (task.Workspace == WorkspaceMode.ReadOnly)
             sb.AppendLine("Do NOT modify any files. This is a read-only task — report findings only.").AppendLine();
         else if (task.Workspace == WorkspaceMode.Shared && task.Role == AgentTaskRole.Commit
