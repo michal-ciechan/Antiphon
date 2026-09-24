@@ -34,6 +34,11 @@ public sealed class WorktreeCleanupSettingsValidatorTests
             { RetainedIgnored = [bad] });
             retained.Failed.ShouldBeTrue("retained pattern must be refused: '" + bad + "'");
             retained.FailureMessage.ShouldContain("WorktreeCleanup:RetainedIgnored");
+
+            var protectedNames = new WorktreeCleanupSettingsValidator().Validate(null, new WorktreeCleanupSettings
+            { ProtectedIgnored = [bad] });
+            protectedNames.Failed.ShouldBeTrue("protected pattern must be refused: '" + bad + "'");
+            protectedNames.FailureMessage.ShouldContain("WorktreeCleanup:ProtectedIgnored");
         }
     }
 
