@@ -4,7 +4,8 @@
 .DESCRIPTION
     Preview is the default. Execute requires an explicit confirmation that surviving
     descendants of the recorded children have exited. A dead/reused root PID alone
-    cannot prove that. Live or ambiguous records are always retained. No process is
+    cannot prove that, nor can a completed record (its root exited before its start
+    identity was read). Live or ambiguous records are always retained. No process is
     killed and no Git lock, worktree or landing evidence is removed.
     Exit 0: no retained records; exit 3: busy, retained or unconfirmed evidence.
 #>
@@ -20,12 +21,19 @@ Set-StrictMode -Version Latest
 
 function Get-ChildState($Record, [string]$Common) {
     if ($Record.SchemaVersion -ne 1 -or
-        $null -eq $Record.ProcessId -or $null -eq $Record.StartTicks -or
-        $Record.ProcessId -le 0 -or $Record.StartTicks -le 0 -or
+        $null -eq $Record.ProcessId -or $Record.ProcessId -le 0 -or
         -not [string]::Equals([IO.Path]::GetFullPath($Record.CommonDirectory).TrimEnd('\', '/'),
             $Common.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase)) {
         return 'unknown'
     }
+    # CARD-0661: the owner saw this child's exact handle exit before it could read a start
+    # identity, then died before draining output. The root is gone; its PID may be reused and
+    # is never looked up. Only descendants remain in question, as for a dead record.
+    $completed = $Record.PSObject.Properties['Completed']
+    if ($null -eq $Record.StartTicks -and $null -ne $completed -and $completed.Value -is [bool] -and $completed.Value) {
+        return 'completed'
+    }
+    if ($null -eq $Record.StartTicks -or $Record.StartTicks -le 0) { return 'unknown' }
     $recordedProcess = $null
     try {
         try { $recordedProcess = [Diagnostics.Process]::GetProcessById($Record.ProcessId) }
@@ -61,7 +69,7 @@ try {
                     $record = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
                     $state = Get-ChildState $record $common
                 }
-                if ($state -in @('dead', 'reused') -and $Execute -and $ConfirmDescendantsExited) {
+                if ($state -in @('dead', 'reused', 'completed') -and $Execute -and $ConfirmDescendantsExited) {
                     Remove-Item -LiteralPath $file.FullName -Force
                     Write-Output "recovered ($state): $($file.FullName)"
                     continue
@@ -72,7 +80,7 @@ try {
         }
     }
     if ($retained -gt 0) {
-        Write-Output 'After inspecting descendants, use -Execute -ConfirmDescendantsExited to recover only dead/reused records.'
+        Write-Output 'After inspecting descendants, use -Execute -ConfirmDescendantsExited to recover only dead/reused/completed records.'
         exit 3
     }
     exit 0
