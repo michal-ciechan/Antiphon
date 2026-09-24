@@ -4,9 +4,14 @@
     CARD-0599 D-8: publish one CalVer tag and GitHub Release for the exact tested SHA.
 
     Runs only on an RC complete-green. It validates the immutable candidate
-    journal, the profile/policy hash, every required suite result, report
-    delivery and the remote candidate SHA before it writes anything, and refuses
-    diagnostic / NoReport / seam-driven runs outright.
+    journal, the remote candidate SHA and - CARD-0599 D-15 - the pinned authority
+    before it writes anything: the policy blob re-read through git at the pinned
+    SHA, the exact eight-suite rc set, the frozen chunk plan and the full
+    execution ledger (every chunk, every required expanded UID, every declared
+    client/script roster entry, one intent/candidate/SHA/RunId). Diagnostic /
+    NoReport / seam-driven runs refuse outright. A summary or report is an output
+    of that validation, never a source of required suites or success; a legacy
+    candidate with no authority cannot publish and must be recut.
 
     Publication sequence, each transition journalled before the next begins:
       1. reserve tag vYYYY.MM.DD.N in the publication journal
@@ -43,7 +48,10 @@ $ErrorActionPreference = 'Continue'
 
 $lib = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
+. (Join-Path $lib 'nightly-policy.ps1')
+. (Join-Path $lib 'nightly-coverage.ps1')
 . (Join-Path $lib 'release-gate.ps1')
+. (Join-Path $lib 'release-authority.ps1')
 
 function Write-PublishLine { param([string]$Message) Write-Host ('[publish-release] {0}' -f $Message) }
 
@@ -146,20 +154,26 @@ function Invoke-AntiphonPublishRelease {
         if (-not [string]::IsNullOrWhiteSpace($line)) { $remoteSha = ($line -split '\s+')[0].Trim() }
     }
 
-    $suiteResults = $null
-    $summary = $null
-    if (-not [string]::IsNullOrWhiteSpace([string]$green.summaryPath) -and (Test-Path -LiteralPath ([string]$green.summaryPath))) {
-        try { $summary = Get-Content -LiteralPath ([string]$green.summaryPath) -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $summary = $null }
-    }
-    if ($summary) { $suiteResults = @($summary.suites) }
-    $wantSuites = @($RequiredSuites)
-    if ($wantSuites.Count -eq 0 -and $summary -and $summary.requiredSuites) { $wantSuites = @($summary.requiredSuites) }
-
+    # D-15: the authority is re-verified on every attempt, recovery included. It
+    # never reads summary.json; the pinned blob and the ledger are the only inputs.
+    $authority = Test-ReleaseGateAuthority -CandidateRoot $paths.Root -RepositoryRoot $CheckoutRoot -Green $green -Candidate $candidate
     $gate = Test-ReleaseGatePublicationGate -Green $green -Candidate $candidate -RemoteSha $remoteSha `
-        -ExpectedPolicyHash $ExpectedPolicyHash -RequiredSuites $wantSuites -SuiteResults $suiteResults
+        -Authority $authority -ExpectedPolicyHash $ExpectedPolicyHash -RequiredSuites $RequiredSuites
     if (-not $gate.Ok) {
         Write-PublishLine ('REFUSED: publication gate ({0}).' -f ($gate.Reasons -join ','))
         $result.Refusal = ($gate.Reasons -join ','); $result.ExitCode = 3; return [pscustomobject]$result
+    }
+    $pinned = $authority.Pinned.Authority
+    $ledgerDoc = Read-ReleaseAuthorityJson -Path (Join-Path (Get-ReleaseAuthorityDir -CandidateRoot $paths.Root) 'ledger.json')
+    $sanitizedSuites = @($authority.Suites)
+    $sanitizedExclusions = @($pinned.exclusions | ForEach-Object {
+        [ordered]@{ suite = [string]$_.suite; class = [string]$_.class; reason = [string]$_.reason; owner = [string]$_.owner } })
+    $summaryDigest = Get-NightlySha256Text -Text (ConvertTo-NightlyCanonicalJson -Object ([ordered]@{
+        profile = 'rc'; policyHash = [string]$pinned.policyHash; suites = $sanitizedSuites; exclusions = $sanitizedExclusions }))
+    $pubAuthority = New-ReleaseGatePublicationAuthority -CandidateRoot $paths.Root -Pinned $authority.Pinned -SummaryDigest $summaryDigest
+    if (-not $pubAuthority.Ok) {
+        Write-PublishLine ('REFUSED: {0}.' -f $pubAuthority.Reason)
+        $result.Refusal = $pubAuthority.Reason; $result.ExitCode = 3; return [pscustomobject]$result
     }
 
     $publicationJournal = Join-Path $ReleaseRoot 'publications.json'
@@ -180,23 +194,16 @@ function Invoke-AntiphonPublishRelease {
         scheduleSlot = [string]$candidate.scheduleSlot
         startedAt = [string]$green.startedAt
         completedAt = [string]$green.completedAt
-        policyHash = [string]$green.policyHash
-        profile = [string]$green.profile
-        scriptHashes = $(if ($summary) { $summary.scriptHashes } else { $null })
-        buildHash = $(if ($summary) { [string]$summary.buildHash } else { '' })
-        bundleHash = $(if ($summary) { [string]$summary.bundleHash } else { '' })
-        suites = $(if ($summary) { @($summary.suites | ForEach-Object {
-            [ordered]@{
-                id = [string]$_.id
-                chunk = [string]$_.chunk
-                result = [string]$_.result
-                required = [int]$_.requiredUidCount
-                excluded = [int]$_.excludedUidCount
-                censusDigest = [string]$_.censusDigest
-            } }) } else { @() })
-        exclusions = $(if ($summary) { @($summary.suites | ForEach-Object { @($_.exclusions) }) | ForEach-Object { $_ } } else { @() })
-        summaryDigest = $(if ($summary) { Get-NightlySha256Text -Text (ConvertTo-NightlyCanonicalJson -Object $summary) } else { '' })
+        policyHash = [string]$pinned.policyHash
+        profile = 'rc'
+        scriptHashes = $pinned.scriptHashes
+        buildHash = [string]$ledgerDoc.buildHash
+        bundleHash = [string]$ledgerDoc.bundleHash
+        suites = $sanitizedSuites
+        exclusions = $sanitizedExclusions
+        summaryDigest = $summaryDigest
         capabilities = $(if ($green.capabilities) { @($green.capabilities) } else { @() })
+        publicationAuthorityDigest = $pubAuthority.Digest
     }
     $allow = Test-ReleaseGateManifestAllowlist -Manifest $manifest
     if (-not $allow.Ok) {
@@ -209,7 +216,7 @@ function Invoke-AntiphonPublishRelease {
     $publishJournal = $paths.PublishJournalPath
     if (Test-Path -LiteralPath $publishJournal) {
         $prior = Get-Content -LiteralPath $publishJournal -Raw -Encoding UTF8 | ConvertFrom-Json
-        foreach ($pair in @(@('tag', $tag), @('sha', $sha), @('manifestDigest', $manifestDigest))) {
+        foreach ($pair in @(@('tag', $tag), @('sha', $sha), @('manifestDigest', $manifestDigest), @('publicationAuthorityDigest', $pubAuthority.Digest))) {
             $have = [string]$prior.($pair[0])
             if (-not [string]::IsNullOrWhiteSpace($have) -and -not [string]::Equals($have, [string]$pair[1], [StringComparison]::OrdinalIgnoreCase)) {
                 Write-PublishLine ('REFUSED: {0} changed since the journal ({1} -> {2}).' -f $pair[0], $have, $pair[1])
@@ -227,6 +234,7 @@ function Invoke-AntiphonPublishRelease {
     New-Item -ItemType Directory -Path $paths.Root -Force | Out-Null
     [void](Write-ReleaseGateJournalStep -Path $publishJournal -Step 'intent' -Fields @{
         candidateId = $CandidateId; tag = $tag; sha = $sha; manifestDigest = $manifestDigest; repository = $Repository
+        publicationAuthorityDigest = $pubAuthority.Digest
     })
 
     $manifestPath = $paths.ManifestPath
@@ -310,8 +318,8 @@ function Invoke-AntiphonPublishRelease {
         schemaVersion = 1
         tag = $tag
         sha = $sha
-        profile = [string]$green.profile
-        policyHash = [string]$green.policyHash
+        profile = 'rc'
+        policyHash = [string]$pinned.policyHash
         suites = $manifest.suites
         exclusions = $manifest.exclusions
     })
