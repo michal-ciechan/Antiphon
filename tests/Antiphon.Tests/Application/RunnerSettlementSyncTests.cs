@@ -7,7 +7,10 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
+using Antiphon.Server.Infrastructure.Data;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -142,6 +145,11 @@ public sealed class RunnerSettlementSyncTests
     {
         var cases = new (string Name, Func<SyncWorld, Task> Arrange, string Reason)[]
         {
+            ("submodule", async w =>
+            {
+                await w.RunAsync(w.Worktree, "-c", "protocol.file.allow=always", "submodule", "update", "--init");
+                File.WriteAllText(Path.Combine(w.Worktree, "sub", "lib.txt"), "edited inside the submodule");
+            }, RemoteSettlementSyncReasons.Dirty),
             ("index", async w =>
             {
                 File.WriteAllText(Path.Combine(w.Worktree, "README.md"), "staged edit");
@@ -166,7 +174,7 @@ public sealed class RunnerSettlementSyncTests
 
         foreach (var (name, arrange, reason) in cases)
         {
-            await using var world = await SyncWorld.CreateAsync();
+            await using var world = await SyncWorld.CreateAsync(withSubmodule: name == "submodule");
             await world.RunnerPushAsync("work.txt", "runner");
             await arrange(world);
             var statusBefore = await world.StatusAsync();
@@ -374,9 +382,16 @@ public sealed class RunnerSettlementSyncTests
         {
             await world.RunnerPushAsync("work.txt", "runner");
             world.Git.BlockOn = args => args.Contains("--ff-only");
+            var clock = new FakeTimeProvider();
+            var service = world.Service(clock);
 
-            var service = world.Service(budget: TimeSpan.FromSeconds(3));
-            var result = await service.SyncAsync(world.Task, CancellationToken.None);
+            // The budget is measured on a controlled clock, so however slow process start is, the
+            // sync reaches and is held in the merge child before any of it elapses. Only then does
+            // the whole budget run out.
+            var sync = service.SyncAsync(world.Task, CancellationToken.None);
+            (await System.Threading.Tasks.Task.WhenAny(world.Git.Entered, sync)).ShouldBe(world.Git.Entered);
+            clock.Advance(service.SyncBudget);
+            var result = await sync;
 
             result.State.ShouldBe(RemoteSettlementSyncState.Unavailable);
             result.Reason.ShouldBe(RemoteSettlementSyncReasons.Timeout);
@@ -400,6 +415,47 @@ public sealed class RunnerSettlementSyncTests
             world.Git.InFlight.ShouldBe(0);
             (await world.HeadAsync()).ShouldBe(world.Baseline);
         }
+    }
+
+    [Test]
+    public async Task Competing_retirement_is_fenced_for_the_whole_sync()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var services = new ServiceCollection();
+        services.AddScoped(_ => new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)));
+        await using var provider = services.BuildServiceProvider();
+        var journal = new WorkspaceReservationJournal(provider.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System);
+
+        await using var world = await SyncWorld.CreateAsync();
+        var s = await world.RunnerPushAsync("work.txt", "runner");
+        // Retirement's own coordinates: worktree path, source full ref, repository path.
+        var retirement = new WorkspaceReservationCommand(
+            WorkspaceReservationKey.For(world.Task.WorktreePath, world.FullRef, world.Task.RepoPath),
+            WorkspaceReservationKind.Retirement, world.TaskId, RetirementId: Guid.NewGuid());
+        world.Git.BlockOn = args => args.Contains("--ff-only");
+
+        // Retirement races the sync after every check and before the fast-forward.
+        var sync = world.Service(reservations: journal).SyncAsync(world.Task, CancellationToken.None);
+        (await System.Threading.Tasks.Task.WhenAny(world.Git.Entered, sync)).ShouldBe(world.Git.Entered);
+        var during = await journal.TryClaimRetirementAsync(retirement, CancellationToken.None);
+        world.Git.OpenGate();
+        var result = await sync;
+
+        during.Accepted.ShouldBeFalse();
+        during.Reason.ShouldBe("workspace_in_use");
+        result.State.ShouldBe(RemoteSettlementSyncState.Synchronized);
+        (await world.HeadAsync()).ShouldBe(s);
+
+        // The consumer ends with the sync, so retirement is then admitted...
+        (await journal.TryClaimRetirementAsync(retirement, CancellationToken.None)).Accepted.ShouldBeTrue();
+
+        // ...and a sync that finds the workspace claimed refuses before reading the checkout.
+        world.Git.BlockOn = null;
+        world.Git.Clear();
+        var refused = await world.Service(reservations: journal).SyncAsync(world.Task, CancellationToken.None);
+        refused.State.ShouldBe(RemoteSettlementSyncState.Refused);
+        refused.Reason.ShouldBe(RemoteSettlementSyncReasons.RetirementReserved);
+        world.Git.Commands.ShouldBeEmpty();
     }
 
     [Test]
@@ -505,7 +561,8 @@ public sealed class RunnerSettlementSyncTests
             Git = new RecordingGit(Leases);
         }
 
-        public static async Task<SyncWorld> CreateAsync(bool pushBranch = true, bool extraMasterCommit = false)
+        public static async Task<SyncWorld> CreateAsync(
+            bool pushBranch = true, bool extraMasterCommit = false, bool withSubmodule = false)
         {
             var world = new SyncWorld();
             Directory.CreateDirectory(world.Root);
@@ -521,6 +578,20 @@ public sealed class RunnerSettlementSyncTests
                 File.WriteAllText(Path.Combine(world.Desktop, "second.txt"), "second\n");
                 await world.RunAsync(world.Desktop, "add", "second.txt");
                 await world.RunAsync(world.Desktop, "commit", "-m", "second");
+            }
+            if (withSubmodule)
+            {
+                // Part of baseline B; left uninitialized (clean) in the task worktree until a case uses it.
+                var sub = Path.Combine(world.Root, "sub");
+                Directory.CreateDirectory(sub);
+                await world.RunAsync(sub, "init", "-b", "master");
+                await world.ConfigureAsync(sub);
+                File.WriteAllText(Path.Combine(sub, "lib.txt"), "lib\n");
+                await world.RunAsync(sub, "add", "lib.txt");
+                await world.RunAsync(sub, "commit", "-m", "lib");
+                await world.RunAsync(world.Desktop, "-c", "protocol.file.allow=always",
+                    "submodule", "add", sub.Replace('\\', '/'), "sub");
+                await world.RunAsync(world.Desktop, "commit", "-m", "submodule");
             }
             await world.RunAsync(world.Desktop, "remote", "add", "origin", world.Origin);
             await world.RunAsync(world.Desktop, "push", "origin", "master");
@@ -560,10 +631,10 @@ public sealed class RunnerSettlementSyncTests
             return world;
         }
 
-        public RemoteWorkspaceService Service(TimeSpan? budget = null) =>
-            new(new UnusedDirectory(), Git, NullLogger<RemoteWorkspaceService>.Instance, Git, Leases)
+        public RemoteWorkspaceService Service(TimeProvider? clock = null, IWorkspaceReservationJournal? reservations = null) =>
+            new(new UnusedDirectory(), Git, NullLogger<RemoteWorkspaceService>.Instance, Git, Leases, reservations)
             {
-                SyncBudget = budget ?? TimeSpan.FromSeconds(45),
+                Clock = clock ?? TimeProvider.System,
             };
 
         public AgentTask TaskWith(Action<AgentTask> shape)
@@ -731,6 +802,8 @@ public sealed class RunnerSettlementSyncTests
     internal sealed class RecordingGit(IRepositoryMutationLease? leases) : TaskProgressGit(leases)
     {
         private readonly ConcurrentQueue<string> _commands = new();
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _inFlight;
         private int _blocked;
         private bool _merged;
@@ -741,6 +814,12 @@ public sealed class RunnerSettlementSyncTests
         public Func<IReadOnlyList<string>, bool>? BlockOn { get; set; }
         public Action? OnBlocked { get; set; }
         public bool FailFirstAfterMerge { get; set; }
+
+        /// <summary>Completes when the sync has reached, and is held in, the blocked command.</summary>
+        public System.Threading.Tasks.Task Entered => _entered.Task;
+
+        /// <summary>Lets the held command run for real.</summary>
+        public void OpenGate() => _gate.TrySetResult();
 
         public void Clear()
         {
@@ -757,10 +836,16 @@ public sealed class RunnerSettlementSyncTests
                 if (BlockOn?.Invoke(arguments) == true)
                 {
                     Interlocked.Increment(ref _blocked);
+                    _entered.TrySetResult();
                     OnBlocked?.Invoke();
-                    // Bounded so a sync that ignores its own deadline fails this test instead of hanging it.
-                    await System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(10), ct);
-                    return new LandingGitResult(1, "", "blocked_without_cancellation");
+                    // Held until the gate opens or the token ends. Bounded so a sync that ignores its
+                    // own deadline fails this test instead of hanging it.
+                    var bound = System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(10), ct);
+                    if (await System.Threading.Tasks.Task.WhenAny(_gate.Task, bound) == bound)
+                    {
+                        await bound;
+                        return new LandingGitResult(1, "", "blocked_without_cancellation");
+                    }
                 }
 
                 if (FailFirstAfterMerge && _merged)
