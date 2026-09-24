@@ -4081,13 +4081,21 @@ public sealed class AgentTaskDispatcher
         if (claimed.SourceLandingOperationId is not null)
             await _worktrees.ValidateVerificationAsync(claimed, repositoryLease!, ct);
 
+        // CARD-0657 D-3: every ordinary runner-bound Worktree role needs the same source identity,
+        // because its settlement synchronizes against it. Code keeps its existing capture rule.
         if (claimed.Workspace == WorkspaceMode.Worktree
-            && claimed.Role == AgentTaskRole.Code
+            && (claimed.Role == AgentTaskRole.Code || RemoteWorkspaceService.IsEligible(claimed))
             && string.IsNullOrEmpty(claimed.ProgressBaselineJson)
             && _progressGit is not null)
         {
             var capture = await CaptureProgressBaselineAsync(claimed, now, ct);
-            if (capture.FailureReason is not null)
+            if (capture.FailureReason is not null && claimed.Role != AgentTaskRole.Code)
+            {
+                // A non-Code runner task is not failed for this: its settlement blocks with
+                // runner_sync_baseline_unavailable instead, and the report is kept.
+                (repairWarnings ??= []).Add($"progress=unavailable; reason={capture.FailureReason}");
+            }
+            else if (capture.FailureReason is not null)
             {
                 await FailAsync(claimed, capture.FailureReason, ct);
                 await transaction.CommitAsync(ct);

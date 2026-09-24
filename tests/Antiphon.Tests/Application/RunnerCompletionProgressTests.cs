@@ -54,7 +54,7 @@ public sealed class RunnerCompletionProgressTests
         evaluated.Evidence.ClaimedSha.ShouldBe(c);
         evaluated.Evidence.RemoteSync!.ConfirmedSha.ShouldBe(s);
         (await world.HasObjectAsync(c)).ShouldBeFalse();
-        world.Git.Commands.ShouldNotContain(x => x.Contains(c, StringComparison.Ordinal));
+        world.Git.Commands.ShouldNotContain(x => IsSyncCommand(x) && x.Contains(c, StringComparison.Ordinal));
     }
 
     [Test]
