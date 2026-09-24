@@ -1224,7 +1224,7 @@ case_deploy_parent() {
     fi
     # CARD-0631: before compose binds it, and before stack.env is rewritten below.
     ensure_runner_git_identity
-    # CARD-0660: before state-init (seed_runner_checkout) or the runner binds it.
+    # CARD-0660: before state-init runs (checkout seed, below) or the runner binds it.
     ensure_runner_codex_home
 
     retire_c590_leftovers
