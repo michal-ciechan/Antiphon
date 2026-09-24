@@ -367,6 +367,183 @@ public sealed class ExpectationSnapshotTests
         (await fresh.ExpectationNudges.CountAsync()).ShouldBe(0);
     }
 
+    [Test]
+    public async Task C650_Persisted_lands_and_cap_occupants_decide_the_stalled_pipeline_episode()
+    {
+        var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = isolated;
+        var world = await World.CreateAsync(schema.ConnectionString);
+        var now = world.Now;
+        var heldSince = now.AddHours(-5);
+        var holder = Guid.NewGuid();
+        var landedEarlier = Guid.NewGuid();
+        var landQueued = Guid.NewGuid();
+        var capQueued = Guid.NewGuid();
+        var firstOccupant = Guid.NewGuid();
+        var secondOccupant = Guid.NewGuid();
+        var firstSession = Guid.NewGuid();
+        var secondSession = Guid.NewGuid();
+        var remoteRunning = Guid.NewGuid();
+        var retainedRunning = Guid.NewGuid();
+        var specialistRunning = Guid.NewGuid();
+        var request = Guid.NewGuid();
+        var landDetail = DispatchHoldDetails.LeaseHeldByLand(
+            holder.ToString("N")[..8], "land the card", request.ToString("N")[..8], heldSince);
+        var capDetail = DispatchHoldDetails.ConcurrencyCap(2);
+
+        await using (var db = new AppDbContext(world.Options))
+        {
+            db.AgentTasks.Add(NewTask(holder, world.CardId, world.ProjectId, AgentTaskStatus.Succeeded, AgentTaskRole.Code, null, heldSince));
+            db.AgentTasks.Add(NewTask(landedEarlier, world.CardId, world.ProjectId, AgentTaskStatus.Succeeded, AgentTaskRole.Code, null, heldSince));
+            db.AgentTasks.Add(NewTask(landQueued, world.CardId, world.ProjectId, AgentTaskStatus.Queued, AgentTaskRole.Code, null, heldSince));
+            db.AgentTasks.Add(NewTask(capQueued, world.CardId, world.ProjectId, AgentTaskStatus.Queued, AgentTaskRole.Code, null, heldSince));
+            db.AgentTaskEvents.Add(Event(landQueued, AgentTaskEventType.Held, heldSince, landDetail));
+            db.AgentTaskEvents.Add(Event(capQueued, AgentTaskEventType.Held, heldSince, capDetail));
+            db.AgentTaskLandRequests.Add(Land(request, holder, LandRequestState.Running, pending: true, now.AddMinutes(-1)));
+            db.AgentTaskLandRequests.Add(Land(Guid.NewGuid(), landedEarlier, LandRequestState.Completed, pending: false, now.AddMinutes(-1)));
+
+            // The dispatcher's local cap population: two live, recently dispatched occupants. A
+            // runner-bound task, a capacity-wait retained task and a specialist are not counted.
+            db.AgentSessions.Add(Session(firstSession, null, now.AddMinutes(-2), status: SessionStatus.Running));
+            db.AgentSessions.Add(Session(secondSession, null, now.AddMinutes(-2), status: SessionStatus.Running));
+            var first = NewTask(firstOccupant, world.CardId, world.ProjectId, AgentTaskStatus.Working, AgentTaskRole.Code, null, now.AddMinutes(-2));
+            first.AgentSessionId = firstSession;
+            var second = NewTask(secondOccupant, world.CardId, world.ProjectId, AgentTaskStatus.Dispatched, AgentTaskRole.Code, null, now.AddMinutes(-2));
+            second.AgentSessionId = secondSession;
+            var retained = NewTask(retainedRunning, world.CardId, world.ProjectId, AgentTaskStatus.Working, AgentTaskRole.Code, null, now.AddMinutes(-2));
+            retained.CapacityWaitRetained = true;
+            db.AgentTasks.AddRange(first, second, retained);
+            db.AgentTasks.Add(NewTask(remoteRunning, world.CardId, world.ProjectId, AgentTaskStatus.Working, AgentTaskRole.Code, "server2", now.AddMinutes(-2)));
+            db.AgentTasks.Add(NewTask(specialistRunning, world.CardId, world.ProjectId, AgentTaskStatus.Working, AgentTaskRole.Check, null, now.AddMinutes(-2)));
+            await db.SaveChangesAsync();
+        }
+
+        async Task<(ExpectationSnapshot Snapshot, ExpectationEvaluation Evaluation)> ReadAsync()
+        {
+            await using var db = new AppDbContext(world.Options);
+            var snapshot = await new ExpectationSnapshotReader(db).ReadAsync(
+                world.Directive, world.Digest, now, ExpectationProbeInput.None, CancellationToken.None);
+            return (snapshot, ExpectationWatchdogPolicy.Evaluate(snapshot, world.Directive));
+        }
+
+        async Task ChangeAsync(Func<AppDbContext, Task> change)
+        {
+            await using var db = new AppDbContext(world.Options);
+            await change(db);
+            await db.SaveChangesAsync();
+        }
+
+        async Task PagesOnlyAsync(Guid stalled, string why)
+        {
+            var (_, evaluation) = await ReadAsync();
+            var episode = evaluation.StalledPipelines.ShouldHaveSingleItem(why);
+            episode.Kind.ShouldBe(ExpectationEpisodeKind.StalledPipeline, why);
+            episode.IsDue.ShouldBeTrue(why);
+            episode.AffectedTaskIds.ShouldBe([stalled], why);
+        }
+
+        // Current evidence about both holds themselves: the named land moved within the land
+        // monitor window, and the cap of 2 is full of live, progressing occupants.
+        var (quiet, quietEvaluation) = await ReadAsync();
+        var land = quiet.Lands.ShouldHaveSingleItem();
+        land.RequestId.ShouldBe(request);
+        land.TaskId.ShouldBe(holder);
+        land.State.ShouldBe(LandRequestState.Running);
+        land.LastProgressAt.Kind.ShouldBe(DateTimeKind.Utc);
+        land.LastProgressAt.ShouldBe(now.AddMinutes(-1), TimeSpan.FromMilliseconds(1));
+        quiet.LandProgressWindow.ShouldBe(TimeSpan.FromSeconds(300));
+        quiet.CapOccupantCount.ShouldBe(2);
+        quiet.CapOccupants.Select(occupant => occupant.TaskId).OrderBy(id => id)
+            .ShouldBe(new[] { firstOccupant, secondOccupant }.OrderBy(id => id));
+        quiet.CapOccupants.ShouldAllBe(occupant =>
+            occupant.SessionState == ExpectationSessionState.Live && occupant.ProgressStall == null);
+        quietEvaluation.StalledPipelines.ShouldBeEmpty();
+
+        var clock = new FakeTimeProvider(new DateTimeOffset(now, TimeSpan.Zero));
+        await using (var db = new AppDbContext(world.Options))
+        {
+            var scan = await new ExpectationWatchdogService(db, new ExpectationLedger(db, clock, new QuietBus()), clock)
+                .ScanAsync(world.Directive, ExpectationProbeInput.None, CancellationToken.None);
+            scan.Evaluation.StalledPipelines.ShouldBeEmpty();
+        }
+
+        await using (var db = new AppDbContext(world.Options))
+            (await db.ExpectationEpisodes.CountAsync(row => row.Kind == ExpectationEpisodeKind.StalledPipeline)).ShouldBe(0);
+
+        await ChangeAsync(async db =>
+            (await db.AgentTaskLandRequests.SingleAsync(row => row.Id == request)).LastProgressAt = now.AddMinutes(-6));
+        await PagesOnlyAsync(landQueued, "the named land has not moved within the land monitor window");
+
+        await ChangeAsync(async db =>
+        {
+            var row = await db.AgentTaskLandRequests.SingleAsync(found => found.Id == request);
+            row.LastProgressAt = now.AddMinutes(-1);
+            row.State = LandRequestState.Held;
+        });
+        await PagesOnlyAsync(landQueued, "the named land is held");
+
+        await ChangeAsync(async db =>
+        {
+            var row = await db.AgentTaskLandRequests.SingleAsync(found => found.Id == request);
+            row.State = LandRequestState.Completed;
+            row.IsPending = false;
+        });
+        await PagesOnlyAsync(landQueued, "the named land is no longer pending");
+
+        await ChangeAsync(async db =>
+        {
+            var row = await db.AgentTaskLandRequests.SingleAsync(found => found.Id == request);
+            row.State = LandRequestState.Running;
+            row.IsPending = true;
+        });
+        (await ReadAsync()).Evaluation.StalledPipelines.ShouldBeEmpty();
+
+        await ChangeAsync(async db =>
+            (await db.AgentSessions.SingleAsync(row => row.Id == secondSession)).Status = SessionStatus.Stopped);
+        await PagesOnlyAsync(capQueued, "a cap occupant's session has ended");
+
+        await ChangeAsync(async db =>
+        {
+            (await db.AgentSessions.SingleAsync(row => row.Id == secondSession)).Status = SessionStatus.Running;
+            var finished = await db.AgentTasks.SingleAsync(row => row.Id == secondOccupant);
+            finished.Status = AgentTaskStatus.Succeeded;
+            finished.Result = "done";
+        });
+        var (open, _) = await ReadAsync();
+        open.CapOccupantCount.ShouldBe(1);
+        await PagesOnlyAsync(capQueued, "the cap is no longer full");
+
+        await using (var db = new AppDbContext(world.Options))
+        {
+            var scan = await new ExpectationWatchdogService(db, new ExpectationLedger(db, clock, new QuietBus()), clock)
+                .ScanAsync(world.Directive, ExpectationProbeInput.None, CancellationToken.None);
+            scan.Evaluation.StalledPipelines.ShouldHaveSingleItem().AffectedTaskIds.ShouldBe([capQueued]);
+        }
+
+        await using (var db = new AppDbContext(world.Options))
+        {
+            var episode = await db.ExpectationEpisodes
+                .SingleAsync(row => row.Kind == ExpectationEpisodeKind.StalledPipeline);
+            episode.DirectiveId.ShouldBe(world.Directive.Id);
+            episode.SubjectKey.ShouldBe(ExpectationSubjects.Pipeline(
+                world.Directive.Id, ExpectationRepository.For(null, world.BoardId)));
+            episode.ResolvedAt.ShouldBeNull();
+        }
+    }
+
+    private static AgentTaskLandRequest Land(
+        Guid id, Guid taskId, LandRequestState state, bool pending, DateTime lastProgressAt) => new()
+    {
+        Id = id,
+        TaskId = taskId,
+        RequestedAt = lastProgressAt.AddHours(-6),
+        StartedAt = lastProgressAt.AddHours(-6),
+        LastEvaluatedAt = lastProgressAt,
+        LastProgressAt = lastProgressAt,
+        State = state,
+        IsPending = pending,
+    };
+
     private static void Classify(string detail, ExpectationHoldClass expected)
     {
         var classified = DispatchHoldDetails.Classify(detail);
