@@ -374,7 +374,7 @@ public sealed class RunnerSettlementSyncTests
             await world.RunnerPushAsync("work.txt", "runner");
             world.Git.BlockOn = args => args.Contains("--ff-only");
 
-            var service = world.Service(budget: TimeSpan.FromMilliseconds(500));
+            var service = world.Service(budget: TimeSpan.FromSeconds(3));
             var result = await service.SyncAsync(world.Task, CancellationToken.None);
 
             result.State.ShouldBe(RemoteSettlementSyncState.Unavailable);
