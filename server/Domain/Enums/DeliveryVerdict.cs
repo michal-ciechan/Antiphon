@@ -23,4 +23,10 @@ public enum DeliveryVerdict
     /// charge, park, or kill.
     /// </summary>
     ModalBlocked = 9,
+
+    /// <summary>
+    /// CARD-0647: the typed text is a runner spill pointer and the row has no file bytes to send.
+    /// The message is canceled; retrying it would point the agent at a file nobody can write.
+    /// </summary>
+    SpillBodyMissing = 10,
 }
