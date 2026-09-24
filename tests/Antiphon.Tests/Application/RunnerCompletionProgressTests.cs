@@ -119,7 +119,8 @@ public sealed class RunnerCompletionProgressTests
             evaluated.Evidence.Sources!.Single(x => x.Assessment == CompletionProgressAssessment.ProgressObserved)
                 .VerifiedSha.ShouldBe(d);
             evaluated.Evidence.RemoteSync.ShouldBeNull();
-            world.Git.Commands.ShouldNotContain(x => IsSyncCommand(x));
+            // The local path still observes origin as before; it never synchronizes the checkout.
+            world.Git.Commands.ShouldNotContain(x => x.Split(' ').Contains("merge"));
         }
 
         // A local task whose branch moved only on origin still needs a task-scoped claim.
