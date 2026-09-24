@@ -3090,6 +3090,19 @@ public sealed partial class SessionMessageQueueService
         // pre-send snapshot. A generic "looks like a modal" match is refused (CARD-0047).
         // At most one Esc per delivery — if this arm fires, S5 must not send another.
         var overlayDismissed = false;
+        if (!overlayRecovery && kind is { } guardKind)
+        {
+            // CARD-0650 D-7: no Esc arm, so a detected overlay is a modal refusal before any byte.
+            var guardScreen = verify ? before.RenderedScreen
+                : _runtime.TryGetLiveSnapshot(sessionId, out var guardSnap) ? guardSnap.RenderedScreen : null;
+            if (guardScreen is not null && ShowsTerminalOverlay(guardKind, guardScreen))
+            {
+                _logger.LogWarning(
+                    "Refusing a no-Escape delivery to session {SessionId}: a terminal overlay or question popup is showing",
+                    sessionId);
+                return DeliveryOutcome.Of(DeliveryVerdict.ModalBlocked, "terminal-overlay");
+            }
+        }
         if (overlayRecovery && verify && kind is { } overlayKind)
         {
             // CARD-0241 S4: the question popup's body is the answer. Do not Esc — DetectFragments
@@ -4911,6 +4924,9 @@ public sealed partial class SessionMessageQueueService
             {
                 return new LocalCommandPollResult.Skipped("pending messages");
             }
+            // CARD-0650 D-7: an unconfirmed watchdog body may stand in the composer; no Esc, command or Enter on top.
+            if (await ExpectationBodyBlocksCurrentGenerationAsync(db, sessionId, ct))
+                return new LocalCommandPollResult.Skipped("unconfirmed expectation prompt");
 
             var forbidden = ProviderContractCatalog.For(poll.Kind).LocalCommands.Forbidden;
             foreach (var (body, reason) in forbidden)

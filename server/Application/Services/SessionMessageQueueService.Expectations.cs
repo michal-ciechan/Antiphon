@@ -126,13 +126,18 @@ public sealed partial class SessionMessageQueueService
                     AttemptCommitted: true);
             }
 
+            // Submitted: Enter went out, so the body left the composer as far as this call can tell.
+            // Its echo stays in the rendered conversation, where the composer hold cannot tell it
+            // from a standing body, so only Enter-withheld outcomes may hold (review D1).
             return outcome.Verdict switch
             {
                 DeliveryVerdict.Delivered when outcome.ConfirmedBy == DeliveryConfirmedBy.Transcript && baseline.Observable =>
                     new ExpectationSendResult(ExpectationSendOutcome.Confirmed, "transcript", true, UtcNow()),
                 DeliveryVerdict.Delivered =>
                     new ExpectationSendResult(ExpectationSendOutcome.Unconfirmed,
-                        baseline.Observable ? "no_transcript_receipt" : "no_observable_baseline", true),
+                        baseline.Observable ? "no_transcript_receipt" : "no_observable_baseline", true, Submitted: true),
+                DeliveryVerdict.Truncated or DeliveryVerdict.NoTranscriptRecord or DeliveryVerdict.NoSubmitOutput =>
+                    new ExpectationSendResult(ExpectationSendOutcome.Unconfirmed, Describe(outcome.Verdict), true, Submitted: true),
                 DeliveryVerdict.ModalBlocked or DeliveryVerdict.ForbiddenBody or DeliveryVerdict.SpillBodyMissing =>
                     new ExpectationSendResult(ExpectationSendOutcome.Refused, Describe(outcome.Verdict), true),
                 DeliveryVerdict.BackendUnreachable =>
@@ -148,9 +153,10 @@ public sealed partial class SessionMessageQueueService
 
     /// <summary>
     /// True when an unconfirmed watchdog attempt of this generation may still stand in the
-    /// composer. Same release rules as <see cref="HeldBackTypingBlocksTheComposer"/>: a full late
-    /// receipt (the row becomes Confirmed), the body no longer visible whole, or a new generation.
-    /// An unreadable snapshot holds.
+    /// composer: Attempting, Uncertain, or Unconfirmed with Enter withheld. A Submitted attempt
+    /// never holds. Same release rules as <see cref="HeldBackTypingBlocksTheComposer"/>: a full
+    /// late receipt (the row becomes Confirmed), the body no longer visible whole, or a new
+    /// generation. An unreadable snapshot holds.
     /// </summary>
     private async Task<bool> ExpectationBodyBlocksComposerAsync(
         AppDbContext db, Guid sessionId, DateTime generation, CancellationToken ct)
@@ -192,14 +198,31 @@ public sealed partial class SessionMessageQueueService
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        if (await ExpectationBodyBlocksCurrentGenerationAsync(db, sessionId, ct))
+            throw new ConflictException(UnconfirmedExpectationBodyReason, "expectation_prompt_unconfirmed");
+    }
+
+    /// <summary><see cref="ExpectationBodyBlocksComposerAsync"/> at the session's current generation.</summary>
+    private async Task<bool> ExpectationBodyBlocksCurrentGenerationAsync(
+        AppDbContext db, Guid sessionId, CancellationToken ct)
+    {
         var startedAt = await db.AgentSessions.AsNoTracking()
             .Where(s => s.Id == sessionId)
             .Select(s => (DateTime?)s.StartedAt)
             .FirstOrDefaultAsync(ct);
-        if (startedAt is { } started
-            && await ExpectationBodyBlocksComposerAsync(db, sessionId, SessionGeneration.Normalize(started), ct))
-            throw new ConflictException(UnconfirmedExpectationBodyReason, "expectation_prompt_unconfirmed");
+        return startedAt is { } started
+            && await ExpectationBodyBlocksComposerAsync(db, sessionId, SessionGeneration.Normalize(started), ct);
     }
+
+    /// <summary>
+    /// CARD-0650 review D2. With both overlay arms off there is no Escape to clear a measured overlay
+    /// or question popup, so the watchdog must not type into one: its body would be discarded, or
+    /// become the answer to a live question. Detection only, never a key.
+    /// </summary>
+    private static bool ShowsTerminalOverlay(AgentKind kind, string renderedScreen) =>
+        GrokQuestionPopup.IsPresent(renderedScreen)
+        || ProviderContractCatalog.For(kind).TerminalOverlay.DetectFragments.Any(f =>
+            ComposerDeliveryEvidence.FragmentIsVisible(renderedScreen, f));
 }
 
 /// <summary>Adapter from the watchdog's I/O seam to the real queue service.</summary>
