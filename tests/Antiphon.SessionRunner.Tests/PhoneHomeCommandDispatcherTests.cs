@@ -69,6 +69,23 @@ public class PhoneHomeCommandDispatcherTests
         maxOwnedSessions.ShouldBe(1);
     }
 
+    [Test]
+    public async Task Concurrent_launches_at_capacity_admit_exactly_capacity()
+    {
+        const int capacity = 2;
+        var runtime = new RecordingRuntime();
+        var dispatcher = Dispatcher(runtime, capacity, new GateProbe(capacity + 1));
+        var launches = Enumerable.Range(0, capacity + 1)
+            .Select(_ => dispatcher.DispatchAsync(Launch(Request("grok", "/work")), CancellationToken.None))
+            .ToArray();
+        var results = await Task.WhenAll(launches);
+        results.Count(frame => frame.Kind == PhoneHomeFrameKind.Result).ShouldBe(capacity);
+        results.Count(frame => frame.Kind == PhoneHomeFrameKind.Error
+            && frame.ErrorCode == PhoneHomeProblemTypes.Capacity).ShouldBe(1);
+        runtime.Mutations.Count(mutation => mutation == "start").ShouldBe(capacity);
+        runtime.Owned.ShouldBe(capacity);
+    }
+
     // --- CARD-0604 D-2/D-15: the runner's own admission of the widened shapes. ---
 
     [Test]
@@ -489,6 +506,24 @@ public class PhoneHomeCommandDispatcherTests
     private static PhoneHomeFrame ProviderAuth(string provider) =>
         new(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.ProviderAuth,
             System.Text.Json.JsonSerializer.SerializeToElement(new PhoneHomeProviderAuthRequest(provider), PhoneHomeFraming.Json));
+
+    /// <summary>
+    /// Holds every probe until <paramref name="expected"/> launches are inside it, so they all
+    /// pass any capacity check that runs before the mutation lock.
+    /// </summary>
+    private sealed class GateProbe(int expected) : IProviderAuthProbe
+    {
+        private int _entered;
+        private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<RunnerProviderAuthDto> ProbeAsync(string provider, CancellationToken ct)
+        {
+            if (Interlocked.Increment(ref _entered) >= expected)
+                _gate.TrySetResult();
+            await _gate.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+            return new RunnerProviderAuthDto(provider, true, "test", null, DateTimeOffset.UtcNow, null);
+        }
+    }
 
     private sealed class RecordingProbe(bool? loggedIn, string? authMethod = null, string? subscriptionType = null)
         : IProviderAuthProbe
