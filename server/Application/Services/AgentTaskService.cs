@@ -2240,6 +2240,9 @@ public sealed class AgentTaskService
         task.ConcurrencyToken = Guid.NewGuid();
         AddEvent(task.Id, AgentTaskEventType.Canceled, null, "Canceled.", now);
         await _db.SaveChangesAsync(ct);
+        // CARD-0664 D-2/D-3: best-effort, after the Canceled commit.
+        if (_workspaceUse is not null)
+            await _workspaceUse.ReleaseTaskConsumersAsync(task.Id, CancellationToken.None);
         await _eventBus.PublishToAllAsync("AgentTaskChanged", new { taskId = id, rootId = task.RootTaskId }, ct);
 
         return await SummaryOfAsync(task, ct);

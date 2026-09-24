@@ -296,86 +296,97 @@ public sealed class AgentTaskReplyService
 
         var task = await db.AgentTasks.FirstOrDefaultAsync(t => t.Id == taskId, ct)
             ?? throw new NotFoundException(nameof(AgentTask), taskId);
-        await AdmitWorkspaceAsync(scope.ServiceProvider, task, ct);
-
-        if (task.Status == AgentTaskStatus.Blocked)
+        var admitted = await AdmitWorkspaceAsync(scope.ServiceProvider, task, ct);
+        var saved = false;
+        try
         {
-            if (task.AgentSessionId is not Guid blockedSessionId)
-                throw new ConflictException("The delegate's session is no longer available.");
-
-            var blockCount = await db.AgentTaskEvents.AsNoTracking()
-                .CountAsync(
-                    e => e.AgentTaskId == taskId
-                        && (e.Type == AgentTaskEventType.Blocked || e.Type == AgentTaskEventType.Conflicted),
-                    ct);
-            var currentRound = blockCount == 0 ? 1 : blockCount;
-            if (round is int requested && requested != currentRound)
+            if (task.Status == AgentTaskStatus.Blocked)
             {
-                throw new ConflictException(
-                    $"Task {DelegationReportFormatter.Short(taskId)} has moved on: it asked a new question (round {currentRound}) since the one you are answering (round {requested}).");
+                if (task.AgentSessionId is not Guid blockedSessionId)
+                    throw new ConflictException("The delegate's session is no longer available.");
+
+                var blockCount = await db.AgentTaskEvents.AsNoTracking()
+                    .CountAsync(
+                        e => e.AgentTaskId == taskId
+                            && (e.Type == AgentTaskEventType.Blocked || e.Type == AgentTaskEventType.Conflicted),
+                        ct);
+                var currentRound = blockCount == 0 ? 1 : blockCount;
+                if (round is int requested && requested != currentRound)
+                {
+                    throw new ConflictException(
+                        $"Task {DelegationReportFormatter.Short(taskId)} has moved on: it asked a new question (round {currentRound}) since the one you are answering (round {requested}).");
+                }
+
+                var now = UtcNow();
+                var watermark = await db.TranscriptEntries.AsNoTracking()
+                    .Where(t => t.AgentSessionId == blockedSessionId)
+                    .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
+                task.Status = AgentTaskStatus.Working;
+                task.RepliedAt = now;
+                task.RepliedAtSequence = watermark;
+                task.ConcurrencyToken = Guid.NewGuid();
+                var repliedDetail = BlockedQuestion.RepliedEventDetail(origin, currentRound, message.Trim());
+                if (!string.IsNullOrEmpty(repliedDetailPrefix))
+                    repliedDetail = repliedDetailPrefix + repliedDetail;
+                db.AgentTaskEvents.Add(NewEvent(
+                    taskId,
+                    AgentTaskEventType.Replied,
+                    repliedDetail,
+                    now));
+                await db.SaveChangesAsync(ct);
+                saved = true;
+
+                // The marker rides the answer so the delegate's NEXT turn correlates back to this task.
+                var blockedBody = $"{DelegationReportFormatter.TaskMarker(taskId)}\n\n{message.Trim()}";
+                await queue.EnqueueAsync(blockedSessionId, blockedBody, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
+
+                await PublishAsync(task, ct);
+                var blockedFamily = await db.AgentTasks.AsNoTracking().Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
+                return await scope.ServiceProvider.GetRequiredService<AgentTaskService>().GetSummaryAsync(task, blockedFamily);
             }
 
-            var now = UtcNow();
-            var watermark = await db.TranscriptEntries.AsNoTracking()
-                .Where(t => t.AgentSessionId == blockedSessionId)
-                .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
-            task.Status = AgentTaskStatus.Working;
-            task.RepliedAt = now;
-            task.RepliedAtSequence = watermark;
-            task.ConcurrencyToken = Guid.NewGuid();
-            var repliedDetail = BlockedQuestion.RepliedEventDetail(origin, currentRound, message.Trim());
-            if (!string.IsNullOrEmpty(repliedDetailPrefix))
-                repliedDetail = repliedDetailPrefix + repliedDetail;
-            db.AgentTaskEvents.Add(NewEvent(
-                taskId,
-                AgentTaskEventType.Replied,
-                repliedDetail,
-                now));
-            await db.SaveChangesAsync(ct);
-
-            // The marker rides the answer so the delegate's NEXT turn correlates back to this task.
-            var blockedBody = $"{DelegationReportFormatter.TaskMarker(taskId)}\n\n{message.Trim()}";
-            await queue.EnqueueAsync(blockedSessionId, blockedBody, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
-
-            await PublishAsync(task, ct);
-            var blockedFamily = await db.AgentTasks.AsNoTracking().Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
-            return await scope.ServiceProvider.GetRequiredService<AgentTaskService>().GetSummaryAsync(task, blockedFamily);
-        }
-
-        if (task.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
-        {
-            if (task.AgentSessionId is not Guid sessionId)
-                throw new ConflictException("The delegate's session is no longer available.");
-
-            var runtime = scope.ServiceProvider.GetRequiredService<AgentSessionRuntime>();
-            await runtime.CatchUpTranscriptAsync(sessionId, ct);
-            if (!await HasOpenQuestionToolAsync(db, sessionId, ct))
+            if (task.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
             {
-                throw new ConflictException(
-                    $"Task {DelegationReportFormatter.Short(taskId)} is not waiting for an answer. "
-                    + "Refine a running task (WhenIdle) to steer it between turns; "
-                    + "reply while Blocked to answer a question; "
-                    + "or reply while an ask_user_question popup is open to answer in-turn.");
+                if (task.AgentSessionId is not Guid sessionId)
+                    throw new ConflictException("The delegate's session is no longer available.");
+
+                var runtime = scope.ServiceProvider.GetRequiredService<AgentSessionRuntime>();
+                await runtime.CatchUpTranscriptAsync(sessionId, ct);
+                if (!await HasOpenQuestionToolAsync(db, sessionId, ct))
+                {
+                    throw new ConflictException(
+                        $"Task {DelegationReportFormatter.Short(taskId)} is not waiting for an answer. "
+                        + "Refine a running task (WhenIdle) to steer it between turns; "
+                        + "reply while Blocked to answer a question; "
+                        + "or reply while an ask_user_question popup is open to answer in-turn.");
+                }
+
+                var now = UtcNow();
+                task.RepliedAt = now;
+                db.AgentTaskEvents.Add(NewEvent(
+                    taskId, AgentTaskEventType.Replied,
+                    "Caller answered an in-turn question-tool popup.", now));
+                await db.SaveChangesAsync(ct);
+                saved = true;
+
+                // Same turn as the brief: type the answer only. Prefixing the task marker would fail
+                // option matching and appear inside the completed ToolResult, not as a UserPrompt.
+                await queue.EnqueueDeliveringNowAsync(
+                    sessionId, message.Trim(), ct, QueuedMessageOrigin.Delegation);
+
+                await PublishAsync(task, ct);
+                var family = await db.AgentTasks.AsNoTracking().Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
+                return await scope.ServiceProvider.GetRequiredService<AgentTaskService>().GetSummaryAsync(task, family);
             }
 
-            var now = UtcNow();
-            task.RepliedAt = now;
-            db.AgentTaskEvents.Add(NewEvent(
-                taskId, AgentTaskEventType.Replied,
-                "Caller answered an in-turn question-tool popup.", now));
-            await db.SaveChangesAsync(ct);
-
-            // Same turn as the brief: type the answer only. Prefixing the task marker would fail
-            // option matching and appear inside the completed ToolResult, not as a UserPrompt.
-            await queue.EnqueueDeliveringNowAsync(
-                sessionId, message.Trim(), ct, QueuedMessageOrigin.Delegation);
-
-            await PublishAsync(task, ct);
-            var family = await db.AgentTasks.AsNoTracking().Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
-            return await scope.ServiceProvider.GetRequiredService<AgentTaskService>().GetSummaryAsync(task, family);
+            throw new ConflictException($"Task {DelegationReportFormatter.Short(taskId)} is not waiting for an answer.");
         }
-
-        throw new ConflictException($"Task {DelegationReportFormatter.Short(taskId)} is not waiting for an answer.");
+        catch when (!saved)
+        {
+            // CARD-0664 D-5: an answer refused after admission must not leave its Launch row behind.
+            await ReleaseAdmittedAsync(scope.ServiceProvider, admitted);
+            throw;
+        }
     }
 
     /// <summary>
@@ -482,56 +493,68 @@ public sealed class AgentTaskReplyService
 
         var task = await db.AgentTasks.FirstOrDefaultAsync(t => t.Id == taskId, ct)
             ?? throw new NotFoundException(nameof(AgentTask), taskId);
-        await AdmitWorkspaceAsync(scope.ServiceProvider, task, ct);
+        var admitted = await AdmitWorkspaceAsync(scope.ServiceProvider, task, ct);
 
-        var now = UtcNow();
-        var trimmed = message.Trim();
-
-        switch (task.Status)
+        var saved = false;
+        try
         {
-            case AgentTaskStatus.Queued:
-                // Nothing is running yet, so there is nobody to message — fold the refinement into
-                // the goal, which is what BuildBrief types verbatim at dispatch.
-                task.Goal = $"{task.Goal.TrimEnd()}\n\nREFINEMENT (added by the caller before dispatch):\n{trimmed}";
-                task.ConcurrencyToken = Guid.NewGuid();
-                db.AgentTaskEvents.Add(NewEvent(
-                    taskId, AgentTaskEventType.Refined,
-                    $"Caller refined the brief before dispatch: {trimmed}", now));
-                await db.SaveChangesAsync(ct);
-                break;
+            var now = UtcNow();
+            var trimmed = message.Trim();
 
-            case AgentTaskStatus.Dispatched:
-            case AgentTaskStatus.Working:
-                if (task.AgentSessionId is not Guid sessionId)
-                    throw new ConflictException("The delegate's session is no longer available.");
+            switch (task.Status)
+            {
+                case AgentTaskStatus.Queued:
+                    // Nothing is running yet, so there is nobody to message — fold the refinement into
+                    // the goal, which is what BuildBrief types verbatim at dispatch.
+                    task.Goal = $"{task.Goal.TrimEnd()}\n\nREFINEMENT (added by the caller before dispatch):\n{trimmed}";
+                    task.ConcurrencyToken = Guid.NewGuid();
+                    db.AgentTaskEvents.Add(NewEvent(
+                        taskId, AgentTaskEventType.Refined,
+                        $"Caller refined the brief before dispatch: {trimmed}", now));
+                    await db.SaveChangesAsync(ct);
+                    saved = true;
+                    break;
 
-                // The event is saved BEFORE the enqueue: if delivery fails the timeline still shows
-                // what the caller tried to say, which is the record a diverging report is judged by.
-                db.AgentTaskEvents.Add(NewEvent(
-                    taskId, AgentTaskEventType.Refined,
-                    $"Caller refined the running task: {trimmed}", now));
-                await db.SaveChangesAsync(ct);
+                case AgentTaskStatus.Dispatched:
+                case AgentTaskStatus.Working:
+                    if (task.AgentSessionId is not Guid sessionId)
+                        throw new ConflictException("The delegate's session is no longer available.");
 
-                var queue = scope.ServiceProvider.GetRequiredService<SessionMessageQueueService>();
-                // Whose composer this is typed into decides whether it may be typed at all
-                // (CARD-0084 S1) — a Grok session joins every line, so its refinement spills.
-                var agentKind = await db.AgentSessions.AsNoTracking()
-                    .Where(s => s.Id == sessionId)
-                    .Select(s => (AgentKind?)s.AgentKind)
-                    .FirstOrDefaultAsync(ct) ?? AgentKind.ClaudeCode;
-                var body = FitRefinementForTyping(task, trimmed, now, agentKind);
-                await queue.EnqueueAsync(sessionId, body, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
-                break;
+                    // The event is saved BEFORE the enqueue: if delivery fails the timeline still shows
+                    // what the caller tried to say, which is the record a diverging report is judged by.
+                    db.AgentTaskEvents.Add(NewEvent(
+                        taskId, AgentTaskEventType.Refined,
+                        $"Caller refined the running task: {trimmed}", now));
+                    await db.SaveChangesAsync(ct);
+                    saved = true;
 
-            case AgentTaskStatus.Blocked:
-                throw new ConflictException(
-                    $"Task {DelegationReportFormatter.Short(taskId)} is waiting for an ANSWER — "
-                    + "reply to its question instead (the reply verb), so it resumes.");
+                    var queue = scope.ServiceProvider.GetRequiredService<SessionMessageQueueService>();
+                    // Whose composer this is typed into decides whether it may be typed at all
+                    // (CARD-0084 S1) — a Grok session joins every line, so its refinement spills.
+                    var agentKind = await db.AgentSessions.AsNoTracking()
+                        .Where(s => s.Id == sessionId)
+                        .Select(s => (AgentKind?)s.AgentKind)
+                        .FirstOrDefaultAsync(ct) ?? AgentKind.ClaudeCode;
+                    var body = FitRefinementForTyping(task, trimmed, now, agentKind);
+                    await queue.EnqueueAsync(sessionId, body, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
+                    break;
 
-            default:
-                throw new ConflictException(
-                    $"Task {DelegationReportFormatter.Short(taskId)} has already settled "
-                    + $"({task.Status}) — there is nothing left to refine.");
+                case AgentTaskStatus.Blocked:
+                    throw new ConflictException(
+                        $"Task {DelegationReportFormatter.Short(taskId)} is waiting for an ANSWER — "
+                        + "reply to its question instead (the reply verb), so it resumes.");
+
+                default:
+                    throw new ConflictException(
+                        $"Task {DelegationReportFormatter.Short(taskId)} has already settled "
+                        + $"({task.Status}) — there is nothing left to refine.");
+            }
+        }
+        catch when (!saved)
+        {
+            // CARD-0664 D-5: a refinement refused after admission must not leave its Launch row behind.
+            await ReleaseAdmittedAsync(scope.ServiceProvider, admitted);
+            throw;
         }
 
         await PublishAsync(task, ct);
@@ -1878,6 +1901,12 @@ public sealed class AgentTaskReplyService
                 "Settlement of task {ShortId} raced on a later row; the task is already {Status} (CARD-0319)",
                 DelegationReportFormatter.Short(task.Id), task.Status);
         }
+
+        // CARD-0664 D-2/D-3: the settlement is committed; give back the task's Launch rows.
+        // Best-effort, and never on Blocked (the owner is still live).
+        if (task.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled
+            && services.GetService<WorkspaceUseAdmission>() is { } workspaceUse)
+            await workspaceUse.ReleaseTaskConsumersAsync(task.Id, CancellationToken.None);
 
         if (services.GetService<LandDeliveryBoundary>() is { } saved)
             await saved.ReachedAsync("settlement-saved", task.Id, task.Id, ct);
@@ -4230,17 +4259,35 @@ public sealed class AgentTaskReplyService
             At = at,
         };
 
-    private static async Task AdmitWorkspaceAsync(IServiceProvider services, AgentTask task, CancellationToken ct)
+    /// <summary>Admits the task's workspace use; returns the reservation (null when admission is not wired).</summary>
+    private static async Task<WorkspaceReservationSnapshot?> AdmitWorkspaceAsync(IServiceProvider services, AgentTask task, CancellationToken ct)
     {
         var admission = services.GetService<WorkspaceUseAdmission>();
-        if (admission is null) return;
+        if (admission is null) return null;
         var path = task.WorktreePath ?? task.WorkingDirectory;
-        if (string.IsNullOrWhiteSpace(path)) return;
-        await admission.RequireConsumerAsync(new WorkspaceReservationCommand(
+        if (string.IsNullOrWhiteSpace(path)) return null;
+        var admitted = await admission.RequireConsumerAsync(new WorkspaceReservationCommand(
             WorkspaceReservationKey.ForTask(task.WorktreePath, task.WorkingDirectory, task.WorktreeBranch, task.RepoPath),
             WorkspaceReservationKind.Launch, task.Id), ct);
-        await admission.InvalidateReleaseAsync(task.Id, ct);
+        try
+        {
+            await admission.InvalidateReleaseAsync(task.Id, ct);
+        }
+        catch
+        {
+            await admission.ReleaseAsync(admitted, CancellationToken.None);
+            throw;
+        }
+
+        return admitted;
     }
+
+    /// <summary>
+    /// CARD-0664 D-5: release a reservation whose admitting operation threw before its own save.
+    /// Not bound to the caller's token, so a canceled request still gives its row back.
+    /// </summary>
+    private static Task ReleaseAdmittedAsync(IServiceProvider services, WorkspaceReservationSnapshot? admitted) =>
+        services.GetService<WorkspaceUseAdmission>()?.ReleaseAsync(admitted, CancellationToken.None) ?? Task.CompletedTask;
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
 }
