@@ -28,6 +28,13 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     public string PromptOutput { get; set; } = string.Empty;
     public string? RenderedScreenOverride { get; set; }
 
+    /// <summary>
+    /// CARD-0650 S4 repair 5: rendered frames served one per <see cref="SnapshotRenderedScreen"/>
+    /// call, ahead of <see cref="RenderedScreenOverride"/>. The last frame stays on screen once the
+    /// others are used. Models a ghost frame that shows for one snapshot and is gone at the next.
+    /// </summary>
+    public Queue<string> RenderedScreenFrames { get; } = new();
+
     // Composer simulation for delivery verification (ComposerDeliveryEvidence): typed input is
     // echoed into the rendered screen like a real TUI composer, and a lone "\r" clears it and
     // emits SubmitAck (advancing the output sequence, like a real submit redraw). Turn either off
@@ -492,7 +499,13 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
         if (RemoteControlMenuOpen)
             return RemoteControlMenuScreenText;
 
-        var screen = RenderedScreenOverride ?? _rawOutput.ToString();
+        string? frame = null;
+        lock (RenderedScreenFrames)
+        {
+            if (RenderedScreenFrames.Count > 0)
+                frame = RenderedScreenFrames.Count > 1 ? RenderedScreenFrames.Dequeue() : RenderedScreenFrames.Peek();
+        }
+        var screen = frame ?? RenderedScreenOverride ?? _rawOutput.ToString();
         var composer = _composer.ToString();
         if (_emptyComposerSnapshotsRemaining > 0)
         {
