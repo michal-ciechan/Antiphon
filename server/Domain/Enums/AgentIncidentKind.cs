@@ -622,4 +622,11 @@ public enum AgentIncidentKind
     /// names the runner, the session and the required reason.
     /// </summary>
     RunnerSlotForceReleased = 74,
+
+    /// <summary>
+    /// CARD-0653: a force-release was saved before the runner call. <c>FailureReason</c> is
+    /// <c>pending:{runnerId}</c> until the desktop audit commits, then <c>reconciled</c>.
+    /// A save that fails after the runner has already released is finished from this row.
+    /// </summary>
+    RunnerSlotReleaseIntent = 75,
 }

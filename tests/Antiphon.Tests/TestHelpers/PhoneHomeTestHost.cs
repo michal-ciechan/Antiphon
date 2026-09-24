@@ -33,6 +33,9 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
     public string AllowedRunnerId { get; } = "grok-linux";
     public RecordingLocalClient Local { get; } = new();
 
+    /// <summary>When set, the next requests are seen as coming from this address.</summary>
+    public IPAddress? ClientAddress { get; set; }
+
     public static async Task<PhoneHomeTestHost> StartAsync(
         TimeProvider? clock = null,
         string? connectionString = null,
@@ -74,6 +77,12 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         host.Directory = host.App.Services.GetRequiredService<PhoneHomeRunnerDirectory>();
         host.App.UseWebSockets();
         host.App.UseMiddleware<ExceptionMiddleware>();
+        host.App.Use(async (context, next) =>
+        {
+            if (host.ClientAddress is { } address)
+                context.Connection.RemoteIpAddress = address;
+            await next(context);
+        });
         host.App.MapSessionRunnerEndpoints();
         await host.App.StartAsync();
         var url = host.App.Urls.Single();
