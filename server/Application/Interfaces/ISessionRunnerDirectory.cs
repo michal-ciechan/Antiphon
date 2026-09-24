@@ -35,4 +35,10 @@ public interface ISessionRunnerDirectory
     Task<RunnerInventory> GetInventoryAsync(string? runnerId, CancellationToken ct);
     IReadOnlyList<string> KnownRunnerIds { get; }
     Guid? LiveStoreId { get; }
+
+    /// <summary>
+    /// CARD-0653: seats the connected runner declared, or null when this directory cannot say.
+    /// A null answer does not hold; an unavailable runner is a separate gate.
+    /// </summary>
+    int? DeclaredCapacity(string runnerId) => null;
 }

@@ -101,6 +101,13 @@ public interface ISessionRunnerClient
     Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct);
 
     /// <summary>
+    /// CARD-0653: free one runner seat. The reason is audited on the runner. Default is
+    /// <see cref="KillAsync"/> so a local runner still stops the process.
+    /// </summary>
+    Task<SessionRunnerSessionDto> ReleaseSlotAsync(Guid sessionId, string reason, CancellationToken ct) =>
+        KillAsync(sessionId, ct);
+
+    /// <summary>
     /// CARD-0502: kill only the runner object whose accepted generation matches.
     /// Default returns an explicit non-kill so untouched fakes never fall through to
     /// <see cref="KillAsync"/>. Production posts <c>POST /sessions/{id}/kill-generation</c>.

@@ -33,7 +33,8 @@ public sealed record SessionRunnerSessionDto(
     string? HerdrOrigin = null,
     global::Antiphon.SessionRunner.Contracts.GrokRulesReceipt? GrokRulesReceipt = null,
     DateTime? AcceptedStartedAt = null,
-    global::Antiphon.SessionRunner.Contracts.HerdrLabelObservation? LabelObservation = null);
+    global::Antiphon.SessionRunner.Contracts.HerdrLabelObservation? LabelObservation = null,
+    global::Antiphon.SessionRunner.Contracts.VerificationExecutionBinding? VerificationBinding = null);
 
 public sealed record SessionRunnerBufferDto(
     Guid SessionId,

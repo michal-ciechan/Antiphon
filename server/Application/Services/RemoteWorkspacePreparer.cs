@@ -33,7 +33,7 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
     private readonly CancellationTokenSource _stopping;
     private readonly ConcurrentDictionary<Guid, InFlight> _inFlight = new();
 
-    private sealed record InFlight(DateTime Since, TaskCompletionSource Done);
+    private sealed record InFlight(string? RunnerId, DateTime Since, TaskCompletionSource Done);
 
     public RemoteWorkspacePreparer(
         IServiceScopeFactory scopes,
@@ -68,17 +68,22 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
     /// Starts preparing <paramref name="taskId"/> unless an operation for it is already running in
     /// this process. Never awaits the operation. Returns whether a new operation started.
     /// </summary>
-    public bool TryBegin(Guid taskId)
+    public bool TryBegin(Guid taskId, string? runnerId = null)
     {
         if (_stopping.IsCancellationRequested)
             return false;
-        var entry = new InFlight(_clock.GetUtcNow().UtcDateTime,
+        var entry = new InFlight(runnerId, _clock.GetUtcNow().UtcDateTime,
             new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
         if (!_inFlight.TryAdd(taskId, entry))
             return false;
         _ = Task.Run(() => RunAsync(taskId, entry), CancellationToken.None);
         return true;
     }
+
+    /// <summary>CARD-0653: mirrors already asked of this runner, excluding the task being gated.</summary>
+    public int InFlightCount(string runnerId, Guid exceptTaskId) =>
+        _inFlight.Count(pair => pair.Key != exceptTaskId
+            && string.Equals(pair.Value.RunnerId, runnerId, StringComparison.Ordinal));
 
     public bool IsInFlight(Guid taskId, out DateTime since)
     {
