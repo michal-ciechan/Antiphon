@@ -1,9 +1,11 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
@@ -159,6 +161,8 @@ public sealed class ExpectationDirectDeliveryTests
         (await f.DeliverAsync(noEvidence.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Unconfirmed);
         adapter.EchoTypedInputToScreen = true;
         adapter.Inputs.ShouldBe([noEvidence.Body], "one body write, no Escape, no retype, no Enter");
+        (await f.ReloadAsync(noEvidence.Id)).AttemptState.ShouldBe(ExpectationAttemptState.Unconfirmed,
+            "Enter was withheld, so the body may still stand in the composer");
 
         // Every Enter swallowed: no transcript record by the deadline.
         adapter.SwallowSubmits = 99;
@@ -166,6 +170,8 @@ public sealed class ExpectationDirectDeliveryTests
         (await f.DeliverAsync(swallowed.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Unconfirmed);
         adapter.Inputs.Count(i => i == swallowed.Body).ShouldBe(1, "the body is typed once; retries are Enter-only");
         adapter.Inputs.ShouldNotContain("\u001b");
+        (await f.ReloadAsync(swallowed.Id)).AttemptState.ShouldBe(ExpectationAttemptState.Submitted,
+            "Enter went out: no receipt, but no composer hold either");
 
         adapter.KillCount.ShouldBe(0);
         adapter.Killed.ShouldBeFalse();
@@ -228,11 +234,23 @@ public sealed class ExpectationDirectDeliveryTests
     {
         await using var f = await ExpectationDeliveryFixture.CreateAsync();
         var adapter = f.Harness.Adapter;
-        adapter.SwallowSubmits = 99;
+        // No composer evidence inside the window, so Enter is withheld; the terminal then renders
+        // the body late and it stands whole in the composer.
+        adapter.EchoTypedInputToScreen = false;
         var stranded = await f.NudgeAsync();
         (await f.DeliverAsync(stranded.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Unconfirmed);
-        adapter.SwallowSubmits = 0;
+        (await f.ReloadAsync(stranded.Id)).AttemptState.ShouldBe(ExpectationAttemptState.Unconfirmed);
+        adapter.EchoTypedInputToScreen = true;
+        adapter.PrimeComposer(stranded.Body);
         var writes = adapter.Inputs.Count;
+
+        // The idle local-command poll (Codex /status, Grok /usage) must not type on top of it.
+        var poll = await f.Harness.Queue.TryPollLocalCommandAsync(
+            f.SessionId,
+            new LocalCommandPoll(AgentKind.Codex, "/status", [], OpensOverlay: false, OverlaySettleMs: 0, PanelTimeoutSeconds: 1),
+            CancellationToken.None);
+        poll.ShouldBeOfType<LocalCommandPollResult.Skipped>().Reason.ShouldBe("unconfirmed expectation prompt");
+        adapter.Inputs.Count.ShouldBe(writes, "the poll sent no Escape, command or Enter");
 
         // Ordinary WhenIdle flush on an idle session must not append to the stranded body.
         await f.Harness.Queue.EnqueueAsync(f.SessionId, "ordinary caller note", MessageSendMode.WhenIdle, CancellationToken.None);
@@ -262,5 +280,98 @@ public sealed class ExpectationDirectDeliveryTests
         await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
         adapter.SubmittedBodies.ShouldContain("ordinary caller note");
         adapter.KillCount.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C650_Submitted_prompt_left_on_screen_does_not_hold_ordinary_input()
+    {
+        // No transcript floor: the prompt is submitted and recorded but can never be confirmed.
+        // Its echo stays in the rendered conversation, as it does on an idle caller.
+        await using var f = await ExpectationDeliveryFixture.CreateAsync(observable: false);
+        var adapter = f.Harness.Adapter;
+        var record = adapter.OnSubmitted!;
+        Func<string, Task> echoThenRecord = async submitted =>
+        {
+            adapter.Emit("\n> " + submitted + "\n");
+            await record(submitted);
+        };
+        adapter.OnSubmitted = echoThenRecord;
+
+        var unbased = await f.NudgeAsync();
+        (await f.DeliverAsync(unbased.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Unconfirmed, "no floor, no receipt");
+        (await f.ReloadAsync(unbased.Id)).AttemptState.ShouldBe(ExpectationAttemptState.Submitted);
+        adapter.SnapshotRenderedScreen().Contains(unbased.Body, StringComparison.Ordinal)
+            .ShouldBeTrue("sanity: the submitted echo is still on screen");
+
+        // WhenIdle, Now and SendNow all proceed.
+        await f.Harness.Queue.EnqueueAsync(f.SessionId, "land note for CARD-0641", MessageSendMode.WhenIdle, CancellationToken.None);
+        await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
+        adapter.SubmittedBodies.ShouldContain("land note for CARD-0641");
+        await f.Harness.Queue.EnqueueAsync(f.SessionId, "operator send now", MessageSendMode.Now, CancellationToken.None);
+        adapter.SubmittedBodies.ShouldContain("operator send now");
+        await f.Harness.MarkWorkingAsync();
+        var held = await f.Harness.Queue.EnqueueAsync(
+            f.SessionId, "forced past the working turn", MessageSendMode.WhenIdle, CancellationToken.None);
+        var heldId = held.Messages.Single(m => m.Body == "forced past the working turn").Id;
+        await f.Harness.Queue.SendNowAsync(f.SessionId, heldId, CancellationToken.None);
+        adapter.SubmittedBodies.ShouldContain("forced past the working turn");
+
+        // A Truncated verdict: Enter went out and only a partial prompt was recorded.
+        var id = Guid.NewGuid();
+        var longBody = $"Expectation nudge {id:D}: "
+            + string.Join(' ', Enumerable.Repeat("queue held past its age limit", 12))
+            + $" Reply {ExpectationPromptFormatter.AckMarker(id)}";
+        var truncated = await f.NudgeAsync(body: longBody);
+        adapter.OnSubmitted = async submitted =>
+        {
+            adapter.Emit("\n> " + submitted + "\n");
+            await BridgeQueueHarness.InsertEntryAsync(f.SessionId, TranscriptKinds.UserPrompt, submitted[..240],
+                timestamp: DateTime.UtcNow, connectionString: f.Schema.ConnectionString);
+            await BridgeQueueHarness.InsertEntryAsync(f.SessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn",
+                connectionString: f.Schema.ConnectionString);
+        };
+        (await f.DeliverAsync(truncated.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Unconfirmed);
+        (await f.ReloadAsync(truncated.Id)).AttemptState.ShouldBe(ExpectationAttemptState.Submitted);
+        adapter.OnSubmitted = echoThenRecord;
+
+        // Both echoes still stand on screen; the next nudge and a later note still go through.
+        var screen = adapter.SnapshotRenderedScreen();
+        screen.Contains(unbased.Body, StringComparison.Ordinal).ShouldBeTrue();
+        screen.Contains(longBody[..80], StringComparison.Ordinal).ShouldBeTrue();
+        var later = await f.NudgeAsync();
+        (await f.DeliverAsync(later.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Confirmed);
+        await f.Harness.Queue.EnqueueAsync(f.SessionId, "the next caller note", MessageSendMode.Now, CancellationToken.None);
+        adapter.SubmittedBodies.ShouldBe([
+            unbased.Body, "land note for CARD-0641", "operator send now", "forced past the working turn",
+            longBody, later.Body, "the next caller note"]);
+        adapter.KillCount.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C650_Terminal_overlay_refuses_before_any_byte()
+    {
+        await using var f = await ExpectationDeliveryFixture.CreateAsync();
+        var adapter = f.Harness.Adapter;
+        await using (var db = f.Db())
+        {
+            await db.AgentSessions.Where(s => s.Id == f.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.AgentKind, AgentKind.Grok));
+        }
+
+        // Grok's measured /usage overlay is open. The watchdog has no Escape arm, so it refuses.
+        adapter.OverlayOpen = true;
+        var blocked = await f.NudgeAsync();
+        (await f.DeliverAsync(blocked.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Refused);
+        adapter.Inputs.ShouldBeEmpty("no Escape and no body reached the overlay");
+        adapter.OverlayOpen.ShouldBeTrue();
+        var stored = await f.ReloadAsync(blocked.Id);
+        stored.AttemptState.ShouldBe(ExpectationAttemptState.Refused);
+        stored.OperatorOutboxState.ShouldBe(ExpectationOperatorOutboxState.Due, "a modal screen routes to the operator");
+
+        // Control: with the overlay closed the same session takes the next nudge.
+        adapter.OverlayOpen = false;
+        var control = await f.NudgeAsync();
+        (await f.DeliverAsync(control.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Confirmed);
+        adapter.Inputs.ShouldBe([control.Body, "\r"]);
     }
 }

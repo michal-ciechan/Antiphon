@@ -134,13 +134,13 @@ public sealed class ExpectationReceiptTests
         f.Harness.Adapter.SubmittedBodies.ShouldBe([nudge.Body], "the body was typed once");
         result.Outcome.ShouldBe(ExpectationSendOutcome.Unconfirmed);
         var stored = await f.ReloadAsync(nudge.Id);
-        stored.AttemptState.ShouldBe(ExpectationAttemptState.Unconfirmed);
+        stored.AttemptState.ShouldBe(ExpectationAttemptState.Submitted, "submitted, never confirmed");
         stored.BaselineSequence.ShouldBeNull();
         stored.ReceiptAt.ShouldBeNull();
 
         // A later pass still has no floor to judge a matching row against.
-        await f.DeliverAsync(nudge.Id);
-        (await f.ReloadAsync(nudge.Id)).AttemptState.ShouldBe(ExpectationAttemptState.Unconfirmed);
+        (await f.DeliverAsync(nudge.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Unconfirmed);
+        (await f.ReloadAsync(nudge.Id)).AttemptState.ShouldBe(ExpectationAttemptState.Submitted);
         f.Harness.Adapter.SubmittedBodies.Count.ShouldBe(1);
     }
 
