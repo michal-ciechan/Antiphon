@@ -9,7 +9,10 @@ public enum ExpectationSendOutcome
     /// <summary>A complete submitted prompt past the committed floor, in the destination session.</summary>
     Confirmed = 0,
 
-    /// <summary>The attempt finished without a receipt. The body may still stand in the composer.</summary>
+    /// <summary>
+    /// The attempt finished without a receipt. <see cref="ExpectationSendResult.Submitted"/> says
+    /// whether Enter went out (the body left the composer) or was withheld (it may still stand there).
+    /// </summary>
     Unconfirmed = 1,
 
     /// <summary>The transport failed mid-attempt, or the attempt was interrupted. Never resent.</summary>
@@ -26,7 +29,8 @@ public sealed record ExpectationSendResult(
     ExpectationSendOutcome Outcome,
     string Reason,
     bool AttemptCommitted,
-    DateTime? ReceiptAt = null)
+    DateTime? ReceiptAt = null,
+    bool Submitted = false)
 {
     public static ExpectationSendResult Refuse(string reason) => new(ExpectationSendOutcome.Refused, reason, false);
 }

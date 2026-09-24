@@ -93,7 +93,7 @@ public sealed class ExpectationNudgeDeliveryService
         }
 
         // The outcome write must not be lost to the send's own cancellation.
-        await RecordAsync(nudgeId, ExpectationAttemptState.Attempting, result.Outcome, result.ReceiptAt, CancellationToken.None);
+        await RecordAsync(nudgeId, ExpectationAttemptState.Attempting, StateFor(result), result.ReceiptAt, CancellationToken.None);
         return new ExpectationDeliveryResult(nudgeId, result.Outcome, result.Reason);
     }
 
@@ -109,7 +109,7 @@ public sealed class ExpectationNudgeDeliveryService
 
         if (state == ExpectationAttemptState.Attempting)
         {
-            await RecordAsync(nudge.Id, ExpectationAttemptState.Attempting, ExpectationSendOutcome.Uncertain, null, ct);
+            await RecordAsync(nudge.Id, ExpectationAttemptState.Attempting, ExpectationAttemptState.Uncertain, null, ct);
             state = ExpectationAttemptState.Uncertain;
         }
 
@@ -131,7 +131,7 @@ public sealed class ExpectationNudgeDeliveryService
         if (receipt is null)
             return new ExpectationDeliveryResult(nudge.Id, Outcome(state), "no_receipt");
 
-        await RecordAsync(nudge.Id, state, ExpectationSendOutcome.Confirmed, receipt, ct);
+        await RecordAsync(nudge.Id, state, ExpectationAttemptState.Confirmed, receipt, ct);
         return new ExpectationDeliveryResult(nudge.Id, ExpectationSendOutcome.Confirmed, "late_receipt");
     }
 
@@ -156,7 +156,7 @@ public sealed class ExpectationNudgeDeliveryService
 
     private async Task<ExpectationDeliveryResult> RefuseUnclaimedAsync(Guid nudgeId, string reason, CancellationToken ct)
     {
-        await RecordAsync(nudgeId, ExpectationAttemptState.None, ExpectationSendOutcome.Refused, null, ct);
+        await RecordAsync(nudgeId, ExpectationAttemptState.None, ExpectationAttemptState.Refused, null, ct);
         return new ExpectationDeliveryResult(nudgeId, ExpectationSendOutcome.Refused, reason);
     }
 
@@ -165,16 +165,9 @@ public sealed class ExpectationNudgeDeliveryService
     /// Every non-receipt outcome is operator debt due now; a receipt never clears existing debt.
     /// </summary>
     private async Task RecordAsync(
-        Guid nudgeId, ExpectationAttemptState from, ExpectationSendOutcome outcome, DateTime? receiptAt, CancellationToken ct)
+        Guid nudgeId, ExpectationAttemptState from, ExpectationAttemptState to, DateTime? receiptAt, CancellationToken ct)
     {
         var now = _time.GetUtcNow().UtcDateTime;
-        var to = outcome switch
-        {
-            ExpectationSendOutcome.Confirmed => ExpectationAttemptState.Confirmed,
-            ExpectationSendOutcome.Unconfirmed => ExpectationAttemptState.Unconfirmed,
-            ExpectationSendOutcome.Uncertain => ExpectationAttemptState.Uncertain,
-            _ => ExpectationAttemptState.Refused,
-        };
         var rows = _db.ExpectationNudges.Where(n => n.Id == nudgeId && n.AttemptState == from);
         if (to == ExpectationAttemptState.Confirmed)
         {
@@ -196,10 +189,19 @@ public sealed class ExpectationNudgeDeliveryService
             .SetProperty(n => n.ConcurrencyToken, Guid.NewGuid()), ct);
     }
 
+    /// <summary>Submitted keeps the Unconfirmed receipt verdict; only the composer hold differs.</summary>
+    private static ExpectationAttemptState StateFor(ExpectationSendResult result) => result.Outcome switch
+    {
+        ExpectationSendOutcome.Confirmed => ExpectationAttemptState.Confirmed,
+        ExpectationSendOutcome.Unconfirmed => result.Submitted ? ExpectationAttemptState.Submitted : ExpectationAttemptState.Unconfirmed,
+        ExpectationSendOutcome.Uncertain => ExpectationAttemptState.Uncertain,
+        _ => ExpectationAttemptState.Refused,
+    };
+
     private static ExpectationSendOutcome? Outcome(ExpectationAttemptState state) => state switch
     {
         ExpectationAttemptState.Confirmed => ExpectationSendOutcome.Confirmed,
-        ExpectationAttemptState.Unconfirmed => ExpectationSendOutcome.Unconfirmed,
+        ExpectationAttemptState.Unconfirmed or ExpectationAttemptState.Submitted => ExpectationSendOutcome.Unconfirmed,
         ExpectationAttemptState.Uncertain => ExpectationSendOutcome.Uncertain,
         ExpectationAttemptState.Refused => ExpectationSendOutcome.Refused,
         _ => null,
