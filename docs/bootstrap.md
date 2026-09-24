@@ -421,7 +421,7 @@ Migrations run automatically on startup. The server also seeds initial data.
 **Always stop the server before creating a migration** — the running Aspire process holds file locks.
 
 1. Stop: `.\stop-server.ps1`
-2. Create migration: `dotnet ef migrations add <MigrationName> --project server`
+2. Create migration: `dotnet tool restore` (repo-pinned dotnet-ef, CARD-0677), then `dotnet ef migrations add <MigrationName> --project server`
 3. Restart & verify: `.\restart-server.ps1`
 4. Check `C:\MavLog\Antiphon\antiphon-YYYYMMDD.log` — confirm migration applied with no `[ERR]`/`[FTL]` entries
 
