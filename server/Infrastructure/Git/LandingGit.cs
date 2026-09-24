@@ -12,6 +12,9 @@ public class LandingGit : ILandingGit
 {
     protected virtual void ConfigureProcess(ProcessStartInfo start) { }
 
+    /// <summary>Test seam for the one call that creates the git child.</summary>
+    protected virtual Process? StartProcess(ProcessStartInfo start) => Process.Start(start);
+
     public virtual async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
         => await ExecuteAsync(repository, arguments, null, ct);
 
@@ -51,7 +54,7 @@ public class LandingGit : ILandingGit
             or "add" or "remove" or "commit" or "checkout" or "checkout-index" or "restore" or "reset");
         var journal = mutating ? await RepositoryChildJournal.BeginAsync(repository, ct) : null;
         Process? child = null;
-        try { child = Process.Start(start); }
+        try { child = StartProcess(start); }
         finally { if (child is null) journal?.NotStarted(); } // Start threw or returned no process: no child exists.
         using var process = child ?? throw new IOException("git_start_failed");
         var output = process.StandardOutput.ReadToEndAsync();

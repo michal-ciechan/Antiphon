@@ -472,6 +472,59 @@ public sealed class RepositoryMutationLeaseTests
     }
 
     [Test]
+    [Arguments("io-after-create")]
+    [Arguments("win32-unclassified")]
+    public async Task C666_AmbiguousGitStartFailureKeepsTheStandingFence(string failure)
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var git = new AmbiguousStartGit(failure);
+        try
+        {
+            // Process.Start can throw after the native child exists (Windows builds the redirected
+            // streams after CreateProcess). Only a definite pre-creation failure may drop the record.
+            Exception? thrown = null;
+            try { await git.RunAsync(fixture.Repository, ["update-ref", "refs/heads/c666-ambiguous", "HEAD"], CancellationToken.None); }
+            catch (Exception ex) { thrown = ex; }
+            if (failure == "io-after-create") thrown.ShouldBeOfType<IOException>();
+            else thrown.ShouldBeOfType<System.ComponentModel.Win32Exception>();
+
+            var common = await fixture.Git.CommonDirectoryAsync(fixture.Repository, CancellationToken.None);
+            Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children"), "*.json").ShouldHaveSingleItem(
+                "an ambiguous start may have left a live child, so its start record must stand");
+            await using var fenced = await new RepositoryMutationLease(fixture.Git).TryAcquireAsync(fixture.Repository, CancellationToken.None);
+            fenced.ShouldBeNull("the retained start record fences admission until explicit recovery");
+        }
+        finally
+        {
+            if (git.Child is { } child)
+            {
+                using var exit = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                await child.WaitForExitAsync(exit.Token);
+                child.Dispose();
+            }
+        }
+        await fixture.AssertRemoteSourceAsync();
+    }
+
+    /// <summary>Creates the real child (or not), then fails the way an ambiguous Process.Start can.</summary>
+    private sealed class AmbiguousStartGit(string failure) : LandingGit
+    {
+        public Process? Child { get; private set; }
+
+        protected override Process? StartProcess(ProcessStartInfo start)
+        {
+            if (failure == "io-after-create")
+            {
+                Child = Process.Start(start);
+                throw new IOException("fixture: redirected stream setup failed after the child was created");
+            }
+            // A Win32 error that is not a known pre-creation CreateProcess/exec failure code.
+            throw new System.ComponentModel.Win32Exception(4660);
+        }
+    }
+
+    [Test]
     public async Task C448_V13_LeaseUsesCommonRepositoryIdentity()
     {
         await using var fixture = new LandingGitFixture();
