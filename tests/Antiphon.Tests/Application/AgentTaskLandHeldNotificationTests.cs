@@ -63,7 +63,7 @@ public sealed class AgentTaskLandHeldNotificationTests
         await h.InitializeAsync();
         var a = await AddWriterAsync(h, "A");
         var steps = variant == "unknown-first"
-            ? new[] { Observation.Untagged, Observation.Writer, Observation.Untagged, Observation.Foreign, Observation.Writer }
+            ? new[] { Observation.Untagged, Observation.Writer, Observation.Foreign, Observation.Writer, Observation.Untagged }
             : new[] { Observation.Writer, Observation.Foreign, Observation.Writer, Observation.Untagged, Observation.Writer };
         var anchors = new List<string?>();
         foreach (var step in steps)
@@ -148,8 +148,14 @@ public sealed class AgentTaskLandHeldNotificationTests
         await h.InitializeAsync();
         var a = await AddWriterAsync(h, "A");
         await h.RequestAsync();
-        var runs = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => Task.Run(h.RunAsync)));
-        runs.ShouldAllBe(r => r == LandRunResult.Held);
+        // A holds the real lease for every racer, so no racer's own land acquisition names itself.
+        await using (var held = await h.Services.GetRequiredService<IRepositoryMutationLease>().TryAcquireAsync(
+            h.Fixture.Repository, new RepositoryLeaseOwnerTag(a, RepositoryLeasePurposes.Dispatch), CancellationToken.None))
+        {
+            held.ShouldNotBeNull();
+            var runs = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => Task.Run(h.RunAsync)));
+            runs.ShouldAllBe(r => r == LandRunResult.Held);
+        }
 
         var request = await RequestAsync(h);
         request.HoldNotificationOwnerKey.ShouldBe(Key(a));
@@ -195,9 +201,18 @@ public sealed class AgentTaskLandHeldNotificationTests
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
         var a = await AddWriterAsync(h, "A");
+        await h.RequestAsync();
+        await using (var db = h.CreateContext())
+        {
+            // An owed caller destination, so the pre-upgrade note is real delivery debt.
+            await db.AgentTaskLandRequests.Where(r => r.TaskId == h.Fixture.TaskId).ExecuteUpdateAsync(s => s
+                .SetProperty(r => r.ReplyTo, AgentTaskReplyTo.Session)
+                .SetProperty(r => r.ParentSessionId, Guid.NewGuid()));
+        }
+
         await HoldAsync(h, Observation.Writer);
         var request = await RequestAsync(h);
-        var debt = (await HeldNotesAsync(h, request.Id)).ShouldHaveSingleItem();
+        var debt =(await HeldNotesAsync(h, request.Id)).ShouldHaveSingleItem();
         debt.State.ShouldBe(LandNotificationState.Queued, "the pre-upgrade note is still undelivered debt");
 
         await using (var db = h.CreateContext())
