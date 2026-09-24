@@ -18,9 +18,6 @@ namespace Antiphon.Tests.Application;
 [NotInParallel]
 public sealed class HerdrPaneDisposalApplicationTests
 {
-    [Before(Class)]
-    public static Task WarmSharedStoreAsync() => TestDbFixture.Lifecycle.EnsureReadyAsync();
-
     private static async Task CurrentOwner(bool suspended, bool launching, bool active)
     {
         await using var f = new StandingRecoveryFixture(); await f.SeedAsync();
