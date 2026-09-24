@@ -104,7 +104,7 @@ A `[Category=X]` predicate works in `--treenode-filter` (measured; a single cate
 pwsh -File scripts/test-duration-tripwire.ps1 -Trx path\to\run.trx
 ```
 
-The allowlist is `tests/Antiphon.Tests/slow-tests-allowlist.txt` (exact simple or fully-qualified class names, case-insensitive). Every test class is tagged `Unit` xor `Integration` (`TestLaneCategoryGuardTests`).
+The allowlist is `tests/Antiphon.Tests/slow-tests-allowlist.txt` (exact simple or fully-qualified class names, case-insensitive). A class marked `Slow` must be registered there by fully-qualified name when it is added: `TestClassificationGuardTests.Registry_matches_compiled_metadata` fails with a first line `missing classes:` that names every Slow class absent from that file. A row for a class that is not Slow is `unmarked-registered` and fails the same guard. Every test class is tagged `Unit` xor `Integration` (`TestLaneCategoryGuardTests`).
 
 ### Checkpoint manifest (CARD-0585)
 

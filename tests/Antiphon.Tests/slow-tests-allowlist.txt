@@ -125,3 +125,7 @@ Antiphon.Tests.Application.WorktreeLandingCleanupRetryTests
 Antiphon.Tests.Application.WorktreeStartRefDispatchTests
 # CARD-0613: real dispatch, real divergent Git history, settlement and a 12-row delivery-recovery matrix.
 Antiphon.Tests.Application.ContinuationSettlementTests
+# CARD-0644: real Git fresh-worktree admission and dispatcher provisioning; 120s case budget.
+Antiphon.Tests.Application.WorktreeDefaultAdmissionTests
+# CARD-0644: real Git retired-worktree continuation at a frozen tip; 120s case budget.
+Antiphon.Tests.Application.WorktreeDefaultContinuationTests

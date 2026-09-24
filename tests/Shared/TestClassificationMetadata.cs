@@ -218,8 +218,17 @@ public static class TestClassificationMetadata
         if (errors.Count == 0)
             return "";
         var sb = new StringBuilder();
-        foreach (var e in errors)
-            sb.AppendLine(e);
+        const string unregistered = "unregistered-marked ";
+        var missing = new List<string>();
+        foreach (var error in errors)
+        {
+            if (error.StartsWith(unregistered, StringComparison.Ordinal))
+                missing.Add(error[unregistered.Length..]);
+        }
+        if (missing.Count > 0)
+            sb.Append("missing classes: ").AppendLine(string.Join(", ", missing));
+        foreach (var error in errors)
+            sb.AppendLine(error);
         return sb.ToString();
     }
 }

@@ -22,6 +22,23 @@ public sealed class TestClassificationPolicyTests
     }
 
     [Test]
+    public void Missing_slow_class_is_named()
+    {
+        const string dropped = "Antiphon.Tests.Application.WorktreeDefaultAdmissionTests";
+        var assembly = typeof(TestClassificationPolicyTests).Assembly;
+        var real = TestClassificationMetadata.FindRegistryPath(assembly);
+        var kept = File.ReadAllLines(real)
+            .Where(line => !string.Equals(line.Trim(), dropped, StringComparison.Ordinal))
+            .ToArray();
+        kept.ShouldNotContain(dropped);
+        var path = WriteTempRegistry(string.Join("\n", kept) + "\n");
+        var errors = TestClassificationMetadata.AssertRegistryMatches(assembly, path, repositoryMode: true);
+        errors.ShouldContain("missing classes: ");
+        errors.ShouldContain(dropped);
+        errors.ShouldContain("unregistered-marked " + dropped);
+    }
+
+    [Test]
     public void C487_G060()
     {
         var assembly = typeof(TestClassificationPolicyTests).Assembly;

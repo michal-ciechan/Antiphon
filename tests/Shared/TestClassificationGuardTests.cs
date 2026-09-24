@@ -23,6 +23,8 @@ public sealed class TestClassificationGuardTests
 
         var path = TestClassificationMetadata.FindRegistryPath(assembly);
         var errors = TestClassificationMetadata.AssertRegistryMatches(assembly, path, repositoryMode: true);
-        errors.ShouldBeEmpty(errors);
+        // string.ShouldBeEmpty enumerates characters, so a long mismatch truncates before the class names.
+        var lines = errors.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+        lines.ShouldBeEmpty(errors);
     }
 }
