@@ -222,25 +222,37 @@ public sealed class PhoneHomeCommandDispatcher
         }
 
         await RejectSignedOutClaudeAsync(launch, ct);
+        await RejectSignedOutGrokAsync(launch, ct);
         return await MutateAsync(request, async () => Result(request, await _runtime.StartAsync(launch, ct)));
     }
 
     /// <summary>
-    /// CARD-0628 D-7. Read-only: the probe's DTO for a provider this runner can measure. An unknown
-    /// provider is <see cref="PhoneHomeProblemTypes.UnsupportedTarget"/>; a runner built without a
-    /// probe answers "cannot tell" rather than guessing.
+    /// CARD-0628 D-7 / CARD-0647. Read-only: the probe's DTO for a provider this runner can measure.
+    /// An unknown provider is <see cref="PhoneHomeProblemTypes.UnsupportedTarget"/>; a runner built
+    /// without a probe answers "cannot tell" rather than guessing.
     /// </summary>
     private async Task<RunnerProviderAuthDto> ProviderAuthAsync(PhoneHomeFrame request, CancellationToken ct)
     {
         var body = request.Payload?.Deserialize<PhoneHomeProviderAuthRequest>(PhoneHomeFraming.Json);
-        if (body is null || !string.Equals(body.Provider, ClaudeAuthProbe.ProviderName, StringComparison.OrdinalIgnoreCase))
+        var provider = CanonicalAuthProvider(body?.Provider);
+        if (provider is null)
             throw new PhoneHomeAdmissionException(
                 PhoneHomeProblemTypes.UnsupportedTarget,
-                $"Provider '{body?.Provider}' has no auth probe on this runner; only '{ClaudeAuthProbe.ProviderName}' is measured.",
+                $"Provider '{body?.Provider}' has no auth probe on this runner; only "
+                + $"'{ClaudeAuthProbe.ProviderName}' and '{GrokAuthProbe.ProviderName}' are measured.",
                 400);
         if (_authProbe is null)
-            return new RunnerProviderAuthDto(ClaudeAuthProbe.ProviderName, null, null, null, DateTimeOffset.UtcNow, "probe_unavailable");
-        return await _authProbe.ProbeAsync(ClaudeAuthProbe.ProviderName, ct);
+            return new RunnerProviderAuthDto(provider, null, null, null, DateTimeOffset.UtcNow, "probe_unavailable");
+        return await _authProbe.ProbeAsync(provider, ct);
+    }
+
+    private static string? CanonicalAuthProvider(string? provider)
+    {
+        if (string.Equals(provider, ClaudeAuthProbe.ProviderName, StringComparison.OrdinalIgnoreCase))
+            return ClaudeAuthProbe.ProviderName;
+        if (string.Equals(provider, GrokAuthProbe.ProviderName, StringComparison.OrdinalIgnoreCase))
+            return GrokAuthProbe.ProviderName;
+        return null;
     }
 
     /// <summary>
@@ -265,6 +277,30 @@ public sealed class PhoneHomeCommandDispatcher
     }
 
     /// <summary>
+    /// CARD-0647. Same backstop for Grok: only a definite "signed out" (no <c>auth.json</c>) refuses.
+    /// The probe never opens the file, so this message never carries its contents.
+    /// </summary>
+    private async Task RejectSignedOutGrokAsync(RunnerLaunchRequest launch, CancellationToken ct)
+    {
+        if (!_settings.GrokAuthProbeEnabled || _authProbe is null || !IsGrokExe(launch.Exe))
+            return;
+        var answer = await _authProbe.ProbeAsync(GrokAuthProbe.ProviderName, ct);
+        if (answer.LoggedIn != false)
+            return;
+        throw new PhoneHomeAdmissionException(
+            PhoneHomeProblemTypes.ProviderSignInRequired,
+            $"Grok is not signed in on runner '{_settings.RunnerId}' (GROK_HOME={_settings.GrokHome}). "
+            + $"Run `grok login` as uid 1654 with GROK_HOME={_settings.GrokHome}, then re-dispatch.",
+            409);
+    }
+
+    internal static bool IsGrokExe(string? exe) =>
+        !string.IsNullOrWhiteSpace(exe)
+        && (string.Equals(Path.GetFileName(exe), "grok", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(exe, "grok", StringComparison.OrdinalIgnoreCase)
+            || exe.EndsWith("/grok", StringComparison.Ordinal));
+
+    /// <summary>
     /// CARD-0628 D-5: the image's own <c>claude</c>, by bare name or the exact path the runner
     /// Dockerfile installs it to. Any other path, even one ending in <c>/claude</c>
     /// (<c>/opt/evil/claude</c>, a <c>..</c> escape, a relative <c>./claude</c>), is not this image's.
@@ -281,10 +317,7 @@ public sealed class PhoneHomeCommandDispatcher
         // CARD-0604 D-2 / CARD-0628 D-5: grok, claude, or an image-owned executable from the allow list. The runner keeps
         // its own copy of that list: it is the image's contract, and the server telling it to run
         // some other path is exactly what this refusal exists for.
-        var isGrok = !string.IsNullOrWhiteSpace(launch.Exe)
-            && (string.Equals(Path.GetFileName(launch.Exe), "grok", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(launch.Exe, "grok", StringComparison.OrdinalIgnoreCase)
-                || launch.Exe.EndsWith("/grok", StringComparison.Ordinal));
+        var isGrok = IsGrokExe(launch.Exe);
         var isAllowedRaw = !string.IsNullOrWhiteSpace(launch.Exe)
             && _settings.RawExeAllowList.Any(allowed => string.Equals(allowed, launch.Exe, StringComparison.Ordinal));
         var isClaude = IsClaudeExe(launch.Exe);

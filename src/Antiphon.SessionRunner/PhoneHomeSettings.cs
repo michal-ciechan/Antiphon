@@ -32,6 +32,12 @@ public sealed class PhoneHomeSettings
     public bool ClaudeAuthProbeEnabled { get; set; } = true;
 
     /// <summary>
+    /// CARD-0647: refuse a <c>grok</c> launch with <c>provider_sign_in_required</c> when
+    /// <c>GROK_HOME/auth.json</c> is absent. An unknown answer always admits.
+    /// </summary>
+    public bool GrokAuthProbeEnabled { get; set; } = true;
+
+    /// <summary>
     /// CARD-0604 D-14: how many concurrent sessions this runner will hold. The server bounds it
     /// again at registration (<c>PhoneHomeRunner:MaxCapacity</c>), so a runner cannot enlarge
     /// itself past what the control plane allows.

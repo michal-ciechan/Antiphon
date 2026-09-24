@@ -8,6 +8,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Git;
+using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -245,6 +246,96 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         task.RemoteWorktreePath.ShouldBeNull();
     }
 
+    [Test]
+    public async Task Runner_bound_grok_brief_spills_under_the_runner_cwd()
+    {
+        const string goal = "runner-brief-sentinel-0647";
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+        host.Directory.MarkRecovered(live);
+        var root = Path.Combine(Path.GetTempPath(), "c647-spill-" + Guid.NewGuid().ToString("N")).Replace('\\', '/');
+        var mirror = root + "/worktrees/task-remote";
+        Directory.CreateDirectory(mirror);
+        var writer = new BriefSpillWriter(root);
+        peer.Reply = frame => frame.Operation switch
+        {
+            PhoneHomeOperation.WorkspaceMirror => Result(frame, new PhoneHomeWorkspaceMirrorResponse(mirror)),
+            PhoneHomeOperation.ProviderAuth => Result(frame, new RunnerProviderAuthDto(
+                "grok", true, "auth_file", null, DateTimeOffset.UtcNow, null)),
+            PhoneHomeOperation.Input => writer.Answer(frame),
+            _ => null,
+        };
+        using var workspace = new TempWorkspace();
+        using var grokHome = new TempWorkspace();
+        var taskId = await SeedAsync(schema, workspace.Path, host.AllowedRunnerId, AgentKind.Grok, goal);
+        var sink = new RecordingLaunchSink();
+        var courier = new RemoteSpillCourier();
+        var graph = CreateDispatcher(schema, host, sink, grokCredentialProbe: true, grokHome: grokHome.Path, spills: courier);
+
+        try
+        {
+            await graph.Dispatcher.TickAsync(CancellationToken.None);
+            await graph.Preparer.WhenIdleAsync();
+            await graph.Dispatcher.TickAsync(CancellationToken.None);
+
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+            task.Status.ShouldBe(AgentTaskStatus.Dispatched, task.FailureReason);
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == task.AgentSessionId);
+            session.RunnerCwd.ShouldBe(mirror);
+            var desktopSpill = Path.Combine(workspace.Path, ".antiphon",
+                $"task-{DelegationReportFormatter.Short(task.Id)}-brief.md");
+            File.Exists(desktopSpill).ShouldBeFalse();
+
+            if (!await db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == session.Id
+                && m.Origin == QueuedMessageOrigin.Delegation))
+            {
+                var refresh = new GrokRulesRefreshService(
+                    graph.Services.GetRequiredService<IServiceScopeFactory>(),
+                    TimeProvider.System, Options.Create(new GrokRulesSettings()));
+                await refresh.QueueLaunchBriefAsync(
+                    db, session, graph.Services.GetRequiredService<SessionMessageQueueService>(), CancellationToken.None);
+            }
+
+            var pointer = await db.SessionQueuedMessages.AsNoTracking()
+                .Where(m => m.AgentSessionId == session.Id && m.Origin == QueuedMessageOrigin.Delegation)
+                .Select(m => m.Body)
+                .SingleAsync();
+            var relative = ".antiphon/task-" + DelegationReportFormatter.Short(task.Id) + "-brief.md";
+            pointer.ShouldContain(mirror + "/" + relative);
+            pointer.ShouldNotContain(workspace.Path);
+            // The observed runner prompt lost its heading line. Keep a marker beside the
+            // instruction that survives that loss, before the spilled path is read.
+            pointer.ShouldContain(DelegationReportFormatter.TaskMarker(task.Id)
+                + " YOUR BRIEF IS NOT IN THIS MESSAGE");
+
+            courier.TryPeek(session.Id, out var staged).ShouldBeTrue();
+            staged.RunnerCwd.ShouldBe(mirror);
+            staged.Spill.RelativePath.ShouldBe(relative);
+            staged.Spill.Body.ShouldContain(goal);
+
+            await new PhoneHomeRunnerClient(live, courier).SendInputAsync(session.Id, pointer, CancellationToken.None);
+
+            var written = Path.Combine(mirror, ".antiphon", $"task-{DelegationReportFormatter.Short(task.Id)}-brief.md");
+            File.Exists(written).ShouldBeTrue();
+            (await File.ReadAllTextAsync(written)).ShouldBe(staged.Spill.Body);
+            courier.IsStaged(session.Id).ShouldBeFalse();
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(root))
+                    Directory.Delete(root, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+
     private static async Task SeedSourcedTaskAsync(IsolatedTestSchema schema, string snapshotPath)
     {
         var now = DateTime.UtcNow;
@@ -314,14 +405,14 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
             JsonSerializer.SerializeToElement(payload, PhoneHomeFraming.Json));
 
     private static async Task<Guid> SeedAsync(
-        IsolatedTestSchema schema, string path, string runnerId, AgentKind kind)
+        IsolatedTestSchema schema, string path, string runnerId, AgentKind kind, string goal = "reply")
     {
         var now = DateTime.UtcNow;
         var id = Guid.NewGuid();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         db.AgentTasks.Add(new AgentTask
         {
-            Id = id, RootTaskId = id, Title = "remote task", Goal = "reply",
+            Id = id, RootTaskId = id, Title = "remote task", Goal = goal,
             Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Custom, AgentKind = kind,
             ModelLevel = AgentModelLevel.Frontier, Workspace = WorkspaceMode.Worktree,
             WorkingDirectory = path, WorktreePath = path, WorktreeBranch = "feat/test-remote",
@@ -332,9 +423,12 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         return id;
     }
 
-    private static (AgentTaskDispatcher Dispatcher, RemoteWorkspacePreparer Preparer) CreateDispatcher(
+    private sealed record DispatchGraph(AgentTaskDispatcher Dispatcher, RemoteWorkspacePreparer Preparer, ServiceProvider Services);
+
+    private static DispatchGraph CreateDispatcher(
         IsolatedTestSchema schema, PhoneHomeTestHost host, RecordingLaunchSink sink,
-        PushGit? git = null, bool allowDelegatedTasks = true)
+        PushGit? git = null, bool allowDelegatedTasks = true,
+        bool grokCredentialProbe = false, string? grokHome = null, RemoteSpillCourier? spills = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -355,16 +449,21 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         services.AddOptions<AgentRegistrySettings>().Configure(s =>
         {
             s.DefaultDefinition = "claude";
-            s.GrokCredentialProbeEnabled = false;
+            s.GrokCredentialProbeEnabled = grokCredentialProbe;
             s.Definitions["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "claude.exe" };
             s.Definitions["grok"] = new AgentDefinition
             {
                 Kind = "Grok", Exe = "grok.exe", ArgsTemplate = ["--always-approve", "--no-alt-screen"],
+                Env = grokHome is null
+                    ? new Dictionary<string, string>()
+                    : new Dictionary<string, string> { ["GROK_HOME"] = grokHome },
             };
         });
         services.AddSingleton<AgentRegistry>();
         services.AddSingleton<AgentSessionLaunchQueue>();
         services.AddSingleton<AgentSessionRuntime>();
+        if (spills is not null)
+            services.AddSingleton(spills);
         services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
         services.AddSingleton<DelegationWorkspaceResolver>();
@@ -387,8 +486,10 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentTaskDispatcher>();
         var provider = services.BuildServiceProvider();
-        return (provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>(),
-            provider.GetRequiredService<RemoteWorkspacePreparer>());
+        return new DispatchGraph(
+            provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>(),
+            provider.GetRequiredService<RemoteWorkspacePreparer>(),
+            provider);
     }
 
     private sealed class RecordingLaunchSink : IAgentTaskLaunchSink
@@ -434,5 +535,51 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         public Task<LandingGitResult> PushAsync(string repository, LandingDestination destination, string sha, CancellationToken ct) => throw new NotSupportedException();
         public Task<LandingGitResult> PushOwnedAsync(string repository, LandingDestination destination, string sha, Func<int, long, CancellationToken, Task> started, CancellationToken ct) => throw new NotSupportedException();
         public Task<LandingIndexLockObservation> InspectIndexLockAsync(string checkout, CancellationToken ct) => throw new NotSupportedException();
+    }
+
+    /// <summary>The real runner write path for one spilled Input frame.</summary>
+    private sealed class BriefSpillWriter
+    {
+        private readonly PhoneHomeCommandDispatcher _dispatcher;
+
+        public BriefSpillWriter(string root)
+        {
+            _dispatcher = new PhoneHomeCommandDispatcher(
+                new SilentRuntime(),
+                new PhoneHomeSettings { AllowedCwd = root, RunnerRepository = root + "/repo" });
+        }
+
+        public PhoneHomeFrame Answer(PhoneHomeFrame frame) =>
+            _dispatcher.DispatchAsync(frame, CancellationToken.None).GetAwaiter().GetResult();
+
+        private sealed class SilentRuntime : IPhoneHomeRuntimeSurface
+        {
+            public RunnerCapabilitiesDto Capabilities() =>
+                new("InboxConhost", "inbox", "test", false, Features: [], VerificationCustodyBackend: null);
+            public string Health() => "Healthy";
+            public IReadOnlyList<RunnerSessionDto> List() => [];
+            public Task<RunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
+                Task.FromResult(Session(sessionId));
+            public Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct) =>
+                Task.FromResult(Session(request.SessionId));
+            public RunnerBufferDto GetBuffer(Guid sessionId) => new(sessionId, "", 0);
+            public RunnerSnapshotDto GetSnapshot(Guid sessionId) => new(sessionId, "", "", 0, DateTime.UtcNow);
+            public RunnerTranscriptDto GetTranscript(Guid sessionId) => new(sessionId, [], 0);
+            public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) => Task.CompletedTask;
+            public Task<RunnerConditionalInputResult> SendConditionalInputAsync(
+                Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct) =>
+                Task.FromResult(new RunnerConditionalInputResult(
+                    sessionId, ConditionalInputOutcomes.Written, DateTime.UtcNow, 1));
+            public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) => Task.CompletedTask;
+            public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) => Task.CompletedTask;
+            public Task<RunnerKillGenerationResult> KillGenerationAsync(
+                Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct) =>
+                Task.FromResult(new RunnerKillGenerationResult(
+                    sessionId, true, KillGenerationOutcomes.Killed, DateTime.UtcNow));
+            public int OwnedSessionCount => 0;
+
+            private static RunnerSessionDto Session(Guid id) =>
+                new(id, 1, DateTime.UtcNow, "Running", null, "", 0, AcceptedStartedAt: DateTime.UtcNow);
+        }
     }
 }

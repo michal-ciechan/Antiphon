@@ -2806,7 +2806,87 @@ public sealed class AgentTaskDispatcher
     /// when the runner never answers. Timeout and transport failure match the old catch: the task
     /// is not failed.
     /// </summary>
-    private static readonly TimeSpan ClaudeCredentialProbeBudget = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan RunnerCredentialProbeBudget = TimeSpan.FromSeconds(5);
+
+    private async Task<Antiphon.SessionRunner.Contracts.RunnerProviderAuthDto?> ReadGrokProviderAuthBeforeClaimAsync(
+        AgentTask task, CancellationToken ct)
+    {
+        if (_runners is null
+            || !_agentRegistry.Settings.GrokCredentialProbeEnabled
+            || string.IsNullOrWhiteSpace(task.RunnerId)
+            || task.AgentKind != AgentKind.Grok)
+            return null;
+
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        budget.CancelAfter(RunnerCredentialProbeBudget);
+        try
+        {
+            return await _runners.Resolve(task.RunnerId).GetProviderAuthAsync("grok", budget.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                "Grok credential probe timed out for runner {RunnerId}; the claim was not opened",
+                task.RunnerId);
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Grok credential probe unavailable for runner {RunnerId}", task.RunnerId);
+            return null;
+        }
+    }
+
+    private async Task<bool> TryFailRunnerGrokCredentialProbeAsync(
+        AgentTask claimed,
+        Antiphon.SessionRunner.Contracts.RunnerProviderAuthDto? answer,
+        Func<CancellationToken, Task> commitBeforeNotify,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(claimed.RunnerId) || answer?.LoggedIn != false)
+            return false;
+
+        var home = _phoneHome?.ChildGrokHome ?? "/state/grok";
+        var reason = $"provider_sign_in_required: Grok is not signed in on runner '{claimed.RunnerId}' "
+            + $"(GROK_HOME={home}). On {claimed.RunnerId} run "
+            + "`docker exec -it -u 1654:1654 -e HOME=/home/app "
+            + $"-e GROK_HOME={home} antiphon-runner-session-runner-1 grok login`, then re-dispatch.";
+        var episodeKey = $"grok-home:{claimed.RunnerId}:{home}";
+        try
+        {
+            AgentSupervisorService? supervisor = null;
+            if (_scopeFactory is not null)
+            {
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                supervisor = scope.ServiceProvider.GetService<AgentSupervisorService>();
+                if (supervisor is not null)
+                {
+                    var scopedDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    if (!await scopedDb.AgentIncidents.AsNoTracking().AnyAsync(i =>
+                        i.Kind == AgentIncidentKind.ProviderSignInRequired && i.FailureReason == episodeKey, ct))
+                    {
+                        await ProviderSignInIncident.RecordAsync(scopedDb, supervisor,
+                            claimed.AgentId, sessionId: null, episodeKey, reason, ct);
+                        await scopedDb.SaveChangesAsync(ct);
+                    }
+                }
+            }
+
+            if (supervisor is null && !await _db.AgentIncidents.AsNoTracking().AnyAsync(i =>
+                i.Kind == AgentIncidentKind.ProviderSignInRequired && i.FailureReason == episodeKey, ct))
+                await ProviderSignInIncident.RecordAsync(_db, null, claimed.AgentId,
+                    sessionId: null, episodeKey, reason, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not record Grok provider-sign-in incident for task {ShortId}",
+                DelegationReportFormatter.Short(claimed.Id));
+        }
+
+        await FailAndNotifyAsync(claimed, reason, "grok-credential-probe", ct,
+            AgentTaskFailureCode.AuthenticationRequired, commitBeforeNotify: commitBeforeNotify);
+        return true;
+    }
 
     private async Task<Antiphon.SessionRunner.Contracts.RunnerProviderAuthDto?> ReadClaudeProviderAuthBeforeClaimAsync(
         AgentTask task, CancellationToken ct)
@@ -2816,7 +2896,7 @@ public sealed class AgentTaskDispatcher
             return null;
 
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        budget.CancelAfter(ClaudeCredentialProbeBudget);
+        budget.CancelAfter(RunnerCredentialProbeBudget);
         try
         {
             return await _runners.Resolve(task.RunnerId).GetProviderAuthAsync("claude", budget.Token);
@@ -3748,9 +3828,10 @@ public sealed class AgentTaskDispatcher
     private async Task<DispatchOneResult> DispatchOneAsync(
         AgentTask task, CancellationToken ct, SiblingBaseGuard? siblingObservation = null)
     {
-        // Runner RPC before any row lock. A pinned profile cannot change the task's kind, so the
-        // pre-claim answer is the one the claim applies.
+        // Runner RPCs share one budget and run before any row lock. A pinned profile cannot
+        // change the task's kind, so the pre-claim answer is the one the claim applies.
         var claudeAuth = await ReadClaudeProviderAuthBeforeClaimAsync(task, ct);
+        var grokAuth = await ReadGrokProviderAuthBeforeClaimAsync(task, ct);
 
         // Admission and landing read running claims under the same common-directory lease.
         // Hold through commit of the claim, including warm-agent and follow-up paths.
@@ -3884,11 +3965,15 @@ public sealed class AgentTaskDispatcher
 
         // CARD-0324: registry-path Grok only. Profiles (gkp) authenticate differently.
         // Before the worktree so a missing store does not cut a throwaway checkout.
+        // CARD-0647: a runner-bound task uses the pre-claim runner answer, not the desktop store.
         if (program.ProfileId is null
             && program.Kind == AgentKind.Grok
             && _agentRegistry.Settings.GrokCredentialProbeEnabled
-            && await TryFailGrokCredentialProbeAsync(claimed, program,
-                token => transaction.CommitAsync(token), ct))
+            && (string.IsNullOrWhiteSpace(claimed.RunnerId)
+                ? await TryFailGrokCredentialProbeAsync(claimed, program,
+                    token => transaction.CommitAsync(token), ct)
+                : await TryFailRunnerGrokCredentialProbeAsync(claimed, grokAuth,
+                    token => transaction.CommitAsync(token), ct)))
         {
             return DispatchOneResult.NotClaimed;
         }
@@ -4209,7 +4294,7 @@ public sealed class AgentTaskDispatcher
         // off the session is what makes a Grok delegate spill instead of arriving run-on.
         if (spec.GrokRulesPayload is null)
         {
-        var brief = FitBriefForTyping(claimed, _settings, _ptyProfile?.Ceilings, _logger, session.AgentKind);
+        var brief = FitBriefForSession(claimed, session);
         try
         {
             await _queue.EnqueueAsync(
@@ -4449,7 +4534,7 @@ public sealed class AgentTaskDispatcher
         }
 
         if (deferRulesBrief) return;
-        var brief = FitBriefForTyping(task, _settings, _ptyProfile?.Ceilings, _logger, session.AgentKind);
+        var brief = FitBriefForSession(task, session);
         try
         {
             await _queue.EnqueueAsync(
@@ -4573,6 +4658,11 @@ public sealed class AgentTaskDispatcher
     /// except ClaudeCode</b> (CARD-0099 S2): measured for Grok, assumed for Codex and anything else
     /// whose composer nobody has put a canary on. Every production call site passes the session's
     /// own kind; the default keeps every test that predates this rendering byte-identical.</para>
+    ///
+    /// <para><paramref name="runnerCwd"/> is the mirror a runner-bound session actually runs in
+    /// (CARD-0647). A spill then names that path and, via <paramref name="stageRemoteSpill"/>,
+    /// travels in the Input frame so the runner writes it. The desktop
+    /// <see cref="AgentTask.WorkingDirectory"/> is not written: the session cannot see it.</para>
     /// </summary>
     internal static string FitBriefForTyping(
         AgentTask task,
@@ -4580,7 +4670,9 @@ public sealed class AgentTaskDispatcher
         PtyDeliveryCeilings? ceilings = null,
         ILogger? logger = null,
         AgentKind agentKind = AgentKind.ClaudeCode,
-        bool refocus = false)
+        bool refocus = false,
+        string? runnerCwd = null,
+        Action<PhoneHomeInputSpill>? stageRemoteSpill = null)
     {
         var limits = (ceilings ?? settings.CeilingsFor(PtyBackend.InboxConhost, "no pty profile — assuming the default backend"))
             .ForAgentKind(agentKind);
@@ -4598,22 +4690,40 @@ public sealed class AgentTaskDispatcher
             return brief;
 
         string? spillPath = null;
-        try
+        if (!string.IsNullOrWhiteSpace(runnerCwd))
         {
-            var absolute = Path.Combine(
-                task.WorkingDirectory,
-                ".antiphon",
-                $"task-{DelegationReportFormatter.Short(task.Id)}-brief.md");
-            Directory.CreateDirectory(Path.GetDirectoryName(absolute)!);
-            File.WriteAllText(absolute, brief);
-            spillPath = absolute;
+            var relative = ".antiphon/task-" + DelegationReportFormatter.Short(task.Id) + "-brief.md";
+            spillPath = runnerCwd.Replace('\\', '/').TrimEnd('/') + "/" + relative;
+            try
+            {
+                stageRemoteSpill?.Invoke(new PhoneHomeInputSpill(relative, brief));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger?.LogWarning(
+                    ex, "Task {ShortId}: could not stage the runner brief spill; the pointer still names the runner path",
+                    DelegationReportFormatter.Short(task.Id));
+            }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        else
         {
-            // Not fatal: the API pointer needs no filesystem at all.
-            logger?.LogWarning(
-                ex, "Task {ShortId}: could not write the brief spill file; pointing at the API instead",
-                DelegationReportFormatter.Short(task.Id));
+            try
+            {
+                var absolute = Path.Combine(
+                    task.WorkingDirectory,
+                    ".antiphon",
+                    $"task-{DelegationReportFormatter.Short(task.Id)}-brief.md");
+                Directory.CreateDirectory(Path.GetDirectoryName(absolute)!);
+                File.WriteAllText(absolute, brief);
+                spillPath = absolute;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Not fatal: the API pointer needs no filesystem at all.
+                logger?.LogWarning(
+                    ex, "Task {ShortId}: could not write the brief spill file; pointing at the API instead",
+                    DelegationReportFormatter.Short(task.Id));
+            }
         }
 
         logger?.LogInformation(
@@ -4623,6 +4733,14 @@ public sealed class AgentTaskDispatcher
 
         return DelegationReportFormatter.BuildBriefPointer(task, settings, spillPath, brief.Length, agentKind);
     }
+
+    private string FitBriefForSession(AgentTask task, AgentSession session, bool refocus = false) =>
+        FitBriefForTyping(
+            task, _settings, _ptyProfile?.Ceilings, _logger, session.AgentKind, refocus,
+            runnerCwd: session.RunnerCwd,
+            stageRemoteSpill: string.IsNullOrWhiteSpace(session.RunnerCwd)
+                ? null
+                : spill => _queue.StageRemoteSpill(session.Id, session.RunnerCwd, spill));
 
     /// <summary>
     /// Which program a cold launch will start (CARD-0140 S2). For a pinned standing agent with a
@@ -5780,10 +5898,11 @@ public sealed class AgentTaskDispatcher
         // so a kind that does not implement /compact as housekeeping never receives one. A missing
         // session row is not evidence and sends nothing; the brief's own rendering keeps the
         // existing ?? ClaudeCode default so no current rendering changes.
-        var sessionKind = await _db.AgentSessions.AsNoTracking()
+        var sessionRow = await _db.AgentSessions.AsNoTracking()
             .Where(s => s.Id == session)
-            .Select(s => (AgentKind?)s.AgentKind)
+            .Select(s => new { s.AgentKind, s.RunnerCwd })
             .FirstOrDefaultAsync(ct);
+        var sessionKind = sessionRow?.AgentKind;
 
         // A specialist task NEVER compacts its session. Every run is its own root, so the
         // "unrelated work" test is true of every single one — and it is exactly wrong here: the
@@ -5813,7 +5932,11 @@ public sealed class AgentTaskDispatcher
         var briefKind = sessionKind ?? AgentKind.ClaudeCode;
         var brief = FitBriefForTyping(
             task, _settings, _ptyProfile?.Ceilings, _logger, briefKind,
-            refocus: unrelated && !compactSupported);
+            refocus: unrelated && !compactSupported,
+            runnerCwd: sessionRow?.RunnerCwd,
+            stageRemoteSpill: string.IsNullOrWhiteSpace(sessionRow?.RunnerCwd)
+                ? null
+                : spill => _queue.StageRemoteSpill(session, sessionRow!.RunnerCwd!, spill));
         await TryEnqueueReuseAsync(task, session, brief, "brief", ct);
     }
 

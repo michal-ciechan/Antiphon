@@ -806,7 +806,7 @@ public static class DelegationReportFormatter
         sb.AppendLine($"""
             {task.Title.Trim()}
 
-            YOUR BRIEF IS NOT IN THIS MESSAGE. It is {fullLength:N0} characters — too long to type
+            {TaskMarker(task.Id)} YOUR BRIEF IS NOT IN THIS MESSAGE. It is {fullLength:N0} characters — too long to type
             into a terminal without the transport dropping part of it, so it was written out
             instead. Read it in full before you do anything else:
 

@@ -101,6 +101,17 @@ public sealed partial class SessionMessageQueueService
     /// ceiling, or if the file cannot be written (empty cwd, IO error), the original is
     /// returned so <see cref="DeliverAsync"/>'s tripwire still fires.
     /// </summary>
+    /// <summary>
+    /// CARD-0647. Stage a brief the dispatcher already fitted for a runner session. The Input
+    /// frame that types the pointer writes the body inside <paramref name="runnerCwd"/>.
+    /// </summary>
+    internal void StageRemoteSpill(Guid sessionId, string runnerCwd, PhoneHomeInputSpill spill)
+    {
+        if (_remoteSpills is null || string.IsNullOrWhiteSpace(runnerCwd) || string.IsNullOrWhiteSpace(spill.RelativePath))
+            return;
+        _remoteSpills.Stage(sessionId, runnerCwd, spill);
+    }
+
     internal async Task<string> SpillQueueBodyAsync(
         Guid sessionId,
         string body,
