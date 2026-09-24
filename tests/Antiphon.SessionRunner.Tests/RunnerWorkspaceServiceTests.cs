@@ -323,6 +323,61 @@ public sealed class RunnerWorkspaceServiceTests
             "/tmp", new PhoneHomeInputSpill("brief.md", "x"), CancellationToken.None));
     }
 
+    [Test]
+    public async Task Spill_write_refuses_a_symlink_that_escapes_the_mirror()
+    {
+        using var scratch = Scratch.Create();
+        var service = new RunnerWorkspaceService(scratch.Clone, scratch.Work);
+        var mirror = (await service.MirrorAsync(
+            new PhoneHomeWorkspaceMirrorRequest(Scratch.Branch, scratch.Sha, "task-deadbeef"),
+            CancellationToken.None)).Path;
+        var outside = Path.Combine(Path.GetTempPath(), "c647-escape-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outside);
+        var link = Path.Combine(mirror, "escape");
+        try
+        {
+            CreateDirectoryLink(link, outside);
+            var refused = await Should.ThrowAsync<PhoneHomeAdmissionException>(() => service.WriteSpillAsync(
+                mirror, new PhoneHomeInputSpill("escape/inbox/note.md", "secret"), CancellationToken.None));
+            refused.Message.ShouldContain("escapes the mirror");
+            File.Exists(Path.Combine(outside, "inbox", "note.md")).ShouldBeFalse();
+            Directory.Exists(Path.Combine(outside, "inbox")).ShouldBeFalse();
+        }
+        finally
+        {
+            if (Directory.Exists(link))
+                Directory.Delete(link);
+            if (Directory.Exists(outside))
+                Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    private static void CreateDirectoryLink(string linkPath, string targetPath)
+    {
+        try
+        {
+            Directory.CreateSymbolicLink(linkPath, targetPath);
+            return;
+        }
+        catch (IOException) when (OperatingSystem.IsWindows())
+        {
+        }
+
+        var commandInterpreter = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
+        using var process = Process.Start(new ProcessStartInfo
+        {
+            FileName = commandInterpreter,
+            Arguments = $"/d /c mklink /J \"{linkPath}\" \"{targetPath}\"",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        }) ?? throw new InvalidOperationException("Could not start mklink for the junction test.");
+        process.WaitForExit();
+        if (process.ExitCode != 0)
+            throw new IOException($"Could not create the test junction (exit code {process.ExitCode}).");
+    }
+
     // ---- CARD-0604 D-19 (Cut B): the verification snapshot, not the mirror -------------------
     //
     // The distinction matters: a mirror is a disposable copy of a branch that also exists on

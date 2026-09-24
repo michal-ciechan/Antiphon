@@ -135,6 +135,37 @@ public sealed partial class SessionMessageQueueService
         _remoteSpills.Ack(sessionId, staged);
     }
 
+    /// <summary>
+    /// A spill pointer with no stored bytes is recovered from the source text when that text is
+    /// still here, or the row is canceled. False means the pointer must not be typed.
+    /// </summary>
+    private async Task<bool> HoldSpillBodyForDeliveryAsync(
+        AppDbContext db, Guid sessionId, SessionQueuedMessage row, string wire, CancellationToken ct)
+    {
+        if (!string.IsNullOrEmpty(row.RemoteSpillBody) || !IsOwnedSpillPointer(wire, row.Id))
+            return true;
+        string? staged = null;
+        if (_remoteSpills is not null && _remoteSpills.TryPeek(sessionId, wire, out var peek))
+            staged = peek.Spill.Body;
+        var repair = RemoteSpillCourier.Inspect(row, staged);
+        if (repair.Kind == SpillBodyRepairKind.Recovered)
+        {
+            row.RemoteSpillBody = repair.Body;
+            row.RemoteSpillRelativePath ??= TypedBodySpill.InboxRelativePath(row.Id.ToString("D"));
+            return true;
+        }
+
+        if (repair.Kind != SpillBodyRepairKind.Undeliverable)
+            return true;
+        RemoteSpillCourier.MarkUndeliverable(row, UtcNow());
+        await db.SaveChangesAsync(ct);
+        return false;
+    }
+
+    private static bool IsOwnedSpillPointer(string? body, Guid messageId) =>
+        !string.IsNullOrEmpty(body)
+        && body.Contains(TypedBodySpill.InboxRelativePath(messageId.ToString("D")), StringComparison.Ordinal);
+
     internal async Task<string> SpillQueueBodyAsync(
         Guid sessionId,
         string body,
@@ -655,6 +686,8 @@ public sealed partial class SessionMessageQueueService
             if (!ReferenceEquals(nowBody, trimmed) && nowBody != trimmed)
                 row.Body = nowBody;
             BindGeneratedSpill(sessionId, row, nowBody);
+            if (!await HoldSpillBodyForDeliveryAsync(db, sessionId, row, nowBody, ct))
+                throw new ConflictException(RemoteSpillUndeliverableException.MissingBodyReason);
 
             nowBaseline = _verification.TranscriptConfirmEnabled
                 ? await CaptureTranscriptBaselineAsync(db, sessionId, ct)
@@ -701,6 +734,8 @@ public sealed partial class SessionMessageQueueService
                     $"Agent session '{sessionId}' cannot accept input because herdr is unreachable; try again when it is back.");
             }
 
+            if (outcome.Verdict == DeliveryVerdict.SpillBodyMissing)
+                throw new ConflictException(RemoteSpillUndeliverableException.MissingBodyReason);
             if (outcome.Verdict == DeliveryVerdict.Delivered)
             {
                 StampAttemptVerdict([row], DeliveryVerdict.Delivered, UtcNow());
@@ -1053,6 +1088,9 @@ public sealed partial class SessionMessageQueueService
                 db, ct, specialistInputPolicyJson: message.SpecialistInputPolicyJson);
             if (sendNowBody != message.Body)
                 message.Body = sendNowBody;
+            BindGeneratedSpill(sessionId, message, sendNowBody);
+            if (!await HoldSpillBodyForDeliveryAsync(db, sessionId, message, sendNowBody, ct))
+                throw new ConflictException(RemoteSpillUndeliverableException.MissingBodyReason);
             if (await CancelExpiredBriefsAsync(db, [message], ct))
                 return await BuildQueueDtoAsync(db, sessionId, MaxAttempts, ct);
             message.Status = QueuedMessageStatus.Sent;
@@ -1077,6 +1115,8 @@ public sealed partial class SessionMessageQueueService
                 await CancelJustClaimedExpiredBriefsAsync(db, [message], ct);
                 return await BuildQueueDtoAsync(db, sessionId, MaxAttempts, ct);
             }
+            if (outcome.Verdict == DeliveryVerdict.SpillBodyMissing)
+                throw new ConflictException(RemoteSpillUndeliverableException.MissingBodyReason);
             if (outcome.Verdict == DeliveryVerdict.ForbiddenBody)
             {
                 await HandleForbiddenBodyAsync(sessionId, [message.Id], sendNowBody, outcome.RecordText, ct);
@@ -1911,6 +1951,8 @@ public sealed partial class SessionMessageQueueService
             sessionId, composed, head.Id.ToString("D"), channelEnvelope, db, ct, ceilings,
             head.SpecialistInputPolicyJson);
         BindGeneratedSpill(sessionId, head, body);
+        if (!await HoldSpillBodyForDeliveryAsync(db, sessionId, head, body, ct))
+            return FlushResult.Failed;
         var spilled = committedWire is null && !ReferenceEquals(body, composed) && body != composed;
         if (committedWire is not null && head.RemoteSpillBody is null)
             await RestageCommittedSpillAsync(db, sessionId, run, completionRows, committedWire, ct);
@@ -2025,6 +2067,9 @@ public sealed partial class SessionMessageQueueService
             await db.SaveChangesAsync(ct);
             return FlushResult.Delivered;
         }
+
+        if (outcome.Verdict == DeliveryVerdict.SpillBodyMissing)
+            return FlushResult.Failed;
 
         if (outcome.Verdict == DeliveryVerdict.BackendUnreachable)
         {
@@ -2152,6 +2197,7 @@ public sealed partial class SessionMessageQueueService
             m.SentAt = UtcNow();
             m.DeliveryVerdict = DeliveryVerdict.LateConfirmed;
             m.DeliveryVerdictAt = m.SentAt;
+            m.RemoteSpillBody = null;
             confirmed++;
             confirmedMessageIds.Add(m.Id);
             if (m.Origin == QueuedMessageOrigin.Channel)
@@ -2496,6 +2542,7 @@ public sealed partial class SessionMessageQueueService
                 message.SentAt ??= now;
                 message.DeliveryVerdict = DeliveryVerdict.Delivered;
                 message.DeliveryVerdictAt = now;
+                message.RemoteSpillBody = null;
             }
 
             await ArmBootReplyWatchAsync(db, sessionId, ct);
@@ -2762,6 +2809,7 @@ public sealed partial class SessionMessageQueueService
         DeliveryVerdict.LocalCommandNotAccepted => "the local TUI command was not accepted by the composer",
         DeliveryVerdict.BackendUnreachable => "herdr is unreachable",
         DeliveryVerdict.LateConfirmed => "late-confirmed by a matching UserPrompt",
+        DeliveryVerdict.SpillBodyMissing => RemoteSpillUndeliverableException.MissingBodyReason,
         _ => "delivered",
     };
 
@@ -2787,6 +2835,8 @@ public sealed partial class SessionMessageQueueService
         {
             message.DeliveryVerdict = verdict;
             message.DeliveryVerdictAt = at;
+            if (verdict is DeliveryVerdict.Delivered or DeliveryVerdict.LateConfirmed)
+                message.RemoteSpillBody = null;
         }
     }
 
@@ -3018,6 +3068,10 @@ public sealed partial class SessionMessageQueueService
         {
             return DeliveryOutcome.Of(DeliveryVerdict.BackendUnreachable);
         }
+        catch (RemoteSpillUndeliverableException)
+        {
+            return DeliveryOutcome.Of(DeliveryVerdict.SpillBodyMissing);
+        }
 
         if (verify && !await WaitForComposerEvidenceAsync(sessionId, before.RenderedScreen, trimmed, ct))
         {
@@ -3032,7 +3086,14 @@ public sealed partial class SessionMessageQueueService
             {
                 if (_runtime.TryGetLiveSnapshot(sessionId, out var recoveredSnap))
                     before = recoveredSnap;
-                await _runtime.SendInputAsync(sessionId, payload, ct);
+                try
+                {
+                    await _runtime.SendInputAsync(sessionId, payload, ct);
+                }
+                catch (RemoteSpillUndeliverableException)
+                {
+                    return DeliveryOutcome.Of(DeliveryVerdict.SpillBodyMissing);
+                }
                 recovered = await WaitForComposerEvidenceAsync(
                     sessionId, before.RenderedScreen, trimmed, ct);
                 if (recovered)

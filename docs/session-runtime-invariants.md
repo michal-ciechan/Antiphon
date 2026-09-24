@@ -2,9 +2,13 @@
 
 - **A queued runner spill is owned by its message row (CARD-0647 follow-up).** The row
   persists the exact file body and a runner-relative path derived from its Id before
-  the first Input. An Input frame carries that Id with the body. The runner checks the
-  path against the Id and writes the same bytes to the same file on retries. A fresh
-  server process reads the row; another spill for the same busy session cannot replace it.
+  the first Input, including SendNow. The bytes stay until a complete matching UserPrompt
+  is recorded, then the body column is cleared. A pointer with no stored bytes is re-spilled
+  from the source message when that text is still available, or the message is canceled as
+  undeliverable. The runner resolves the mirror and refuses a symlink that leaves it. An
+  Input frame carries that Id with the body. The runner checks the path against the Id and
+  writes the same bytes to the same file on retries. A fresh server process reads the row;
+  another spill for the same busy session cannot replace it.
 
 - **Phone-home Grok (CARD-0490) is transcript-confirmed.** Registration, heartbeat and screen PONG
   are not delivery. The complete matching UserPrompt past the attempt floor is the receipt. Local
