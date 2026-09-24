@@ -4595,6 +4595,17 @@ public sealed class AgentTaskDispatcher
                     _logger.LogWarning(
                         ex, "Task {ShortId}: boot-wedge relaunch refused an unbound session {SessionId}",
                         DelegationReportFormatter.Short(task.Id), session.Id);
+                    // The rollback also discarded the relaunch event, so record why the old
+                    // session stays attached; its later dead-session failure is otherwise unexplained.
+                    _db.AgentTaskEvents.Add(new AgentTaskEvent
+                    {
+                        Id = Guid.NewGuid(),
+                        AgentTaskId = task.Id,
+                        Type = AgentTaskEventType.Warning,
+                        Detail = $"boot-wedge relaunch refused: {ex.Message}",
+                        At = now,
+                    });
+                    await _db.SaveChangesAsync(ct);
                     return;
                 }
 
