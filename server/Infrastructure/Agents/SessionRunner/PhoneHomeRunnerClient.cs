@@ -102,7 +102,15 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
         // only copy of the body: the runner never wrote the file, the dictionary no longer held
         // it, and the retry typed a pointer at a path that does not exist. Sending twice is
         // recoverable (the runner rewrites the same bytes at the same path); losing it is not.
-        if (_spills is not null && _spills.TryPeek(sessionId, out var staged))
+        // The queue row is the source of truth. It survives a server restart, and its Id is
+        // carried to the runner in the same Input frame as its own body and pointer.
+        var durable = _spills is null ? null : await _spills.FindDurableAsync(sessionId, input, ct);
+        if (durable is not null)
+        {
+            await SendInputWithSpillAsync(sessionId, input, durable.RunnerCwd, durable.Spill, ct);
+            return;
+        }
+        if (_spills is not null && _spills.TryPeek(sessionId, input, out var staged))
         {
             await SendInputWithSpillAsync(sessionId, input, staged.RunnerCwd, staged.Spill, ct);
             // Only past the throw. Ack removes just this body, so a newer spill staged while the
