@@ -273,6 +273,16 @@ public sealed class ExpectationSnapshotReader
 
         var backlog = await ReadBacklogAsync(board.Id, ct);
         var inFlight = await ReadInFlightAsync(throughput.Select(task => task.Row).ToList(), asOf, probes, ct);
+        var reasons = queued
+            .Where(task => task.HoldClass == ExpectationHoldClass.OrdinaryWait)
+            .Select(task => DispatchHoldDetails.Reason(task.HoldDetail))
+            .ToList();
+        var lands = reasons.Any(reason => DispatchHoldDetails.LandHolder(reason) is not null)
+            ? await ReadLandsAsync(ct)
+            : Array.Empty<ExpectationLandProgress>();
+        var (capCount, capOccupants) = reasons.Any(reason => DispatchHoldDetails.ConcurrencyCapLimit(reason) is not null)
+            ? await ReadCapOccupantsAsync(asOf, probes, ct)
+            : (0, Array.Empty<ExpectationInFlightTask>());
         var notes = await ReadNotesAsync(directive.AgentId, ct);
         return new ExpectationSnapshot
         {
@@ -291,6 +301,10 @@ public sealed class ExpectationSnapshotReader
             OpenEpisodes = episodes,
             InFlight = inFlight,
             Notes = notes,
+            Lands = lands,
+            LandProgressWindow = TimeSpan.FromSeconds(_delegation.LandWarningSeconds),
+            CapOccupantCount = capCount,
+            CapOccupants = capOccupants,
         };
     }
 
@@ -422,6 +436,53 @@ public sealed class ExpectationSnapshotReader
         }
 
         return results;
+    }
+
+    /// <summary>Every pending land request with its own progress clock. Few rows; matched in the policy.</summary>
+    private async Task<IReadOnlyList<ExpectationLandProgress>> ReadLandsAsync(CancellationToken ct)
+    {
+        var rows = await _db.AgentTaskLandRequests.AsNoTracking()
+            .Where(request => request.IsPending)
+            .Select(request => new { request.Id, request.TaskId, request.State, request.LastProgressAt })
+            .ToListAsync(ct);
+        return rows
+            .Select(request => new ExpectationLandProgress
+            {
+                RequestId = request.Id,
+                TaskId = request.TaskId,
+                State = request.State,
+                LastProgressAt = SpecifyUtc(request.LastProgressAt),
+            })
+            .ToList();
+    }
+
+    /// <summary>
+    /// The dispatcher's counted local cap population (AgentTaskDispatcher's <c>active</c> query),
+    /// board-wide because the cap is, with the same progress facts as scoped in-flight work.
+    /// </summary>
+    private async Task<(int Count, IReadOnlyList<ExpectationInFlightTask> Occupants)> ReadCapOccupantsAsync(
+        DateTime asOf, ExpectationProbeInput probes, CancellationToken ct)
+    {
+        var rows = await _db.AgentTasks.AsNoTracking()
+            .Where(AgentTaskRoles.NotSpecialist)
+            .Where(task => (task.Status == AgentTaskStatus.Dispatched || task.Status == AgentTaskStatus.Working)
+                && !task.CapacityWaitRetained
+                && (task.RunnerId == null || task.RunnerId == ""))
+            .Select(task => new TaskRow(
+                task.Id,
+                task.CardId,
+                task.ProjectId,
+                task.ParentSessionId,
+                task.Status,
+                task.Role,
+                task.RunnerId,
+                task.RepoPath,
+                task.CreatedAt,
+                task.AgentSessionId,
+                task.DispatchedAt,
+                task.Result != null || task.ResultFilePath != null))
+            .ToListAsync(ct);
+        return (rows.Count, await ReadInFlightAsync(rows, asOf, probes, ct));
     }
 
     private static void WorkspaceProgressArmOrNull(

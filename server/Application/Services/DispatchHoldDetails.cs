@@ -137,6 +137,56 @@ public static class DispatchHoldDetails
         return new ExpectationHoldClassification(ExpectationHoldClass.Unknown, evidence);
     }
 
+    /// <summary>The hold sentence itself, unwrapped from a <see cref="Escalation"/> row when it is one.</summary>
+    public static string Reason(string? detail)
+    {
+        var text = detail ?? string.Empty;
+        return ExtractEscalationReason(text) ?? text;
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex LandHolderPattern = new(
+        @"land of task (?<task>[0-9a-f]{8})\b(?:.*?land request (?<request>[0-9a-f]{8})\b)?"
+        + @"|\(task (?<task>[0-9a-f]{8})\) is landing"
+        + @"|^(?<task>[0-9a-f]{8}) is landing",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// CARD-0650: the land a <see cref="LeaseHeldByLand"/>, repair-source or kept-branch hold waits
+    /// on, as the short task id (and short land request id when the sentence names one). Null for
+    /// any other hold.
+    /// </summary>
+    public static (string TaskShort, string? RequestShort)? LandHolder(string reason)
+    {
+        if (!reason.Contains("repository mutation lease is held by the land", StringComparison.Ordinal)
+            && !reason.Contains("is landing", StringComparison.Ordinal))
+            return null;
+        var match = LandHolderPattern.Match(reason);
+        if (!match.Success)
+            return null;
+        var request = match.Groups["request"];
+        return (match.Groups["task"].Value, request.Success ? request.Value : null);
+    }
+
+    /// <summary>CARD-0650: the cap a <see cref="ConcurrencyCap"/> hold names. Null for any other hold.</summary>
+    public static int? ConcurrencyCapLimit(string reason)
+    {
+        const string marker = "concurrency cap reached (";
+        var start = reason.IndexOf(marker, StringComparison.Ordinal);
+        if (start < 0)
+            return null;
+        start += marker.Length;
+        var end = start;
+        while (end < reason.Length && char.IsAsciiDigit(reason[end]))
+            end++;
+        return end > start && int.TryParse(
+                reason[start..end],
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var cap)
+            ? cap
+            : null;
+    }
+
     private static string? ExtractEscalationReason(string text)
     {
         const string marker = "reason=";
