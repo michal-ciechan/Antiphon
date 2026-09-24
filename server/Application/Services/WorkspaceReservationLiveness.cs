@@ -19,6 +19,12 @@ public static class WorkspaceReservationLiveness
         public static OwnerFacts None { get; } = new(false, null, false, false, null);
     }
 
+    private static readonly AgentTaskStatus[] LiveTaskStatuses =
+        [AgentTaskStatus.Queued, AgentTaskStatus.Dispatched, AgentTaskStatus.Working, AgentTaskStatus.Blocked];
+
+    private static readonly SessionStatus[] LiveSessionStatuses =
+        [SessionStatus.Created, SessionStatus.Starting, SessionStatus.Running, SessionStatus.Stopping];
+
     public static bool Blocks(
         WorkspaceReservationKind kind, Guid? rowRetirementId, Guid? claimRetirementId,
         DateTime createdAt, DateTime now, TimeSpan grace,
@@ -28,7 +34,10 @@ public static class WorkspaceReservationLiveness
             return rowRetirementId != claimRetirementId;
         if (kind != WorkspaceReservationKind.Launch)
             return true;
-        // Red stub: every Launch row blocks.
-        return true;
+        if (now - createdAt < grace)
+            return true;
+        if (owner.TaskFound && (owner.LandPending || owner.TaskStatus is { } task && LiveTaskStatuses.Contains(task)))
+            return true;
+        return owner.SessionFound && owner.SessionStatus is { } session && LiveSessionStatuses.Contains(session);
     }
 }

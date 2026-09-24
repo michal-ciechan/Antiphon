@@ -7,6 +7,13 @@ public interface IWorkspaceReservationJournal
 {
     Task<IReadOnlyList<WorkspaceReservationSnapshot>> ReadActiveAsync(WorkspaceReservationKey key, CancellationToken ct);
 
+    /// <summary>
+    /// CARD-0664 D-1: active rows at <paramref name="key"/>; with <paramref name="liveOwnersOnly"/>,
+    /// orphaned <c>Launch</c> rows (owner ended or missing, past grace) are left out. Read-only.
+    /// </summary>
+    Task<IReadOnlyList<WorkspaceReservationSnapshot>> ReadActiveAsync(
+        WorkspaceReservationKey key, bool liveOwnersOnly, CancellationToken ct);
+
     Task<WorkspaceReservationCommitResult> TryAdmitConsumerAsync(WorkspaceReservationCommand command, CancellationToken ct);
 
     Task<WorkspaceReservationCommitResult> TryClaimRetirementAsync(WorkspaceReservationCommand command, CancellationToken ct);

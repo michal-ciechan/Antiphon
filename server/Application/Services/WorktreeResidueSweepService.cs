@@ -138,6 +138,7 @@ public sealed class WorktreeResidueSweepService
     private async Task<WorktreeResidueRunDto> PersistRunAsync(
         bool execute, bool preview, Guid? projectId, Guid? boardId, CancellationToken ct)
     {
+        await ReconcileReservationsAsync(ct);
         var now = _clock.GetUtcNow().UtcDateTime;
         var run = new Domain.Entities.WorktreeResidueRun
         {
@@ -333,6 +334,26 @@ public sealed class WorktreeResidueSweepService
         {
             cursor.LastEvaluatedAt = _clock.GetUtcNow().UtcDateTime;
             cursor.NotBefore = due;
+        }
+    }
+
+    /// <summary>
+    /// CARD-0664 D-8: release orphaned workspace-use <c>Launch</c> rows before classifying, on
+    /// daily and preview runs alike (<c>Execute</c> gates actions, not this hygiene write).
+    /// Best-effort: a failed reconcile never fails the run.
+    /// </summary>
+    private async Task ReconcileReservationsAsync(CancellationToken ct)
+    {
+        if (_reservations is null) return;
+        try
+        {
+            var released = await _reservations.ReleaseOrphanedConsumersAsync(ct);
+            if (released > 0)
+                _logger.LogInformation("Workspace reservations reconciled: released {Count} orphaned Launch rows", released);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Workspace reservation reconcile failed before the worktree-residue run");
         }
     }
 

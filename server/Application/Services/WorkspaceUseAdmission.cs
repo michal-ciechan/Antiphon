@@ -11,13 +11,45 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>Shared workspace-use fence. Callers pass coordinates; this never holds a row lock across Git.</summary>
 public sealed class WorkspaceUseAdmission(
     IWorkspaceReservationJournal journal,
-    AppDbContext db)
+    AppDbContext db,
+    ILogger<WorkspaceUseAdmission>? logger = null)
 {
-    public async Task RequireConsumerAsync(WorkspaceReservationCommand command, CancellationToken ct)
+    /// <summary>Admits one consumer and returns its reservation (CARD-0664: callers may release it).</summary>
+    public async Task<WorkspaceReservationSnapshot> RequireConsumerAsync(WorkspaceReservationCommand command, CancellationToken ct)
     {
         var result = await journal.TryAdmitConsumerAsync(command, ct);
         if (!result.Accepted)
             throw new ConflictException(result.Reason ?? "Workspace is reserved for retirement.", "workspace_reserved");
+        return result.Snapshot!;
+    }
+
+    /// <summary>
+    /// CARD-0664 D-3/D-4: release one admitted reservation (an admitting operation threw after
+    /// admission). Best-effort: a failed release is logged and never replaces the caller's error.
+    /// </summary>
+    public Task ReleaseAsync(WorkspaceReservationSnapshot? snapshot, CancellationToken ct) =>
+        snapshot is null
+            ? Task.CompletedTask
+            : BestEffortAsync(() => journal.ReleaseConsumerAsync(snapshot.Id, snapshot.Generation, ct), "reservation", snapshot.Id);
+
+    /// <summary>CARD-0664 D-2/D-3: best-effort owner-end release after the task's terminal commit.</summary>
+    public Task ReleaseTaskConsumersAsync(Guid taskId, CancellationToken ct) =>
+        BestEffortAsync(() => journal.ReleaseTaskConsumersAsync(taskId, ct), "task", taskId);
+
+    /// <summary>CARD-0664 D-2/D-3: best-effort owner-end release after the session's terminal commit.</summary>
+    public Task ReleaseSessionConsumersAsync(Guid sessionId, CancellationToken ct) =>
+        BestEffortAsync(() => journal.ReleaseSessionConsumersAsync(sessionId, ct), "session", sessionId);
+
+    private async Task BestEffortAsync(Func<Task> release, string owner, Guid id)
+    {
+        try
+        {
+            await release();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger?.LogWarning(ex, "Workspace reservation release failed for {Owner} {OwnerId}", owner, id);
+        }
     }
 
     public async Task InvalidateReleaseAsync(Guid taskId, CancellationToken ct) =>
@@ -31,7 +63,7 @@ public sealed class WorkspaceUseAdmission(
     public async Task<IReadOnlyList<WorkspaceReservationSnapshot>> FindLiveConsumersAsync(
         WorkspaceReservationKey key, Guid retiringTaskId, CancellationToken ct)
     {
-        var active = await journal.ReadActiveAsync(key, ct);
+        var active = await journal.ReadActiveAsync(key, liveOwnersOnly: true, ct);
         return active.Where(s => s.Kind != WorkspaceReservationKind.Retirement
             && s.RetirementId != retiringTaskId).ToList();
     }

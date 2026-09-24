@@ -824,6 +824,18 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
         var llmSettings = scope.ServiceProvider.GetRequiredService<IOptions<LlmSettings>>().Value;
         dbContext.Database.Migrate();
         await DatabaseSeeder.SeedAsync(dbContext, llmSettings, CancellationToken.None);
+        // CARD-0664 D-8: one-time backfill of the orphaned workspace-use Launch backlog, repeated
+        // harmlessly on every start. Best-effort: a failed reconcile never blocks startup.
+        try
+        {
+            var released = await scope.ServiceProvider.GetRequiredService<IWorkspaceReservationJournal>()
+                .ReleaseOrphanedConsumersAsync(CancellationToken.None);
+            Log.Information("Workspace reservations reconciled: released {Count} orphaned Launch rows", released);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Workspace reservation reconcile failed at startup; continuing");
+        }
         var agentTuiMetrics = scope.ServiceProvider.GetRequiredService<AgentTuiMetrics>();
         var profileImport = new Antiphon.Server.Application.Dtos.AgentTuiImportResultDto(0, 0);
         if (scope.ServiceProvider.GetRequiredService<IOptions<AgentTuiSettings>>()
