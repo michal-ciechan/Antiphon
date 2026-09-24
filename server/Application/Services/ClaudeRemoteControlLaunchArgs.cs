@@ -19,6 +19,14 @@ public static class ClaudeRemoteControlLaunchArgs
     public const string SettingsFlag = "--settings";
     public const string OffFileName = "claude-remote-control-off.json";
     public const string OffSettingsJson = "{\"remoteControlAtStartup\":false}";
+
+    /// <summary>
+    /// The same one-key file, baked into the runner image. A runner-bound launch must pass
+    /// this path: <see cref="OffSettingsPath"/> is the desktop assembly directory, and Claude
+    /// on Linux exits 1 when <c>--settings</c> names that Windows path.
+    /// </summary>
+    public const string RunnerOffSettingsPath = "/opt/antiphon/claude-remote-control-off.json";
+
     internal const string MergedFilePrefix = "claude-remote-control-off-merged-";
 
     private static readonly JsonSerializerOptions CompactJson = new() { WriteIndented = false };
@@ -31,11 +39,19 @@ public static class ClaudeRemoteControlLaunchArgs
     public static string OffSettingsPath =>
         Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, OffFileName));
 
-    public static IReadOnlyList<string> ApplyOff(AgentKind kind, IReadOnlyList<string> args)
+    public static IReadOnlyList<string> ApplyOff(
+        AgentKind kind,
+        IReadOnlyList<string> args,
+        string? offSettingsPath = null)
     {
         ArgumentNullException.ThrowIfNull(args);
         if (kind != AgentKind.ClaudeCode)
             return args;
+
+        // The runner image owns this file. Do not merge into a desktop path the container
+        // cannot open, and do not require the Linux path to exist on the server.
+        if (!string.IsNullOrWhiteSpace(offSettingsPath))
+            return ApplyFixedOff(args, offSettingsPath);
 
         var offPath = EnsureOffSettingsFile();
         if (FindSettings(args) is not { } existing)
@@ -60,6 +76,28 @@ public static class ClaudeRemoteControlLaunchArgs
             File.WriteAllText(path, OffSettingsJson);
             return path;
         }
+    }
+
+    private static IReadOnlyList<string> ApplyFixedOff(IReadOnlyList<string> args, string path)
+    {
+        var stripped = new List<string>(args.Count);
+        for (var i = 0; i < args.Count; i++)
+        {
+            if (!IsSettingsFlag(args[i]))
+            {
+                stripped.Add(args[i]);
+                continue;
+            }
+
+            if (!args[i].StartsWith(SettingsFlag + "=", StringComparison.Ordinal)
+                && i + 1 < args.Count
+                && !args[i + 1].StartsWith('-'))
+            {
+                i++;
+            }
+        }
+
+        return AppendSettings(stripped, path);
     }
 
     private static IReadOnlyList<string> AppendSettings(IReadOnlyList<string> args, string path)

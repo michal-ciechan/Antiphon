@@ -139,6 +139,8 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     // that precedes the work prompt. SentPrompt still holds the last prompt for older tests.
     public IReadOnlyList<string> Prompts => _prompts;
     public IReadOnlyList<string> StartedArgs { get; private set; } = [];
+    public string? StartedCwd { get; private set; }
+    public string? StartedExe { get; private set; }
     public HerdrLaunchOptions? StartedHerdr { get; private set; }
     public IReadOnlyDictionary<string, string> StartedEnv { get; private set; } =
         new Dictionary<string, string>();
@@ -191,6 +193,8 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
         StartedAcceptedGeneration = spec.AcceptedStartedAt;
         AcceptedStartedAt = spec.AcceptedStartedAt;
         StartedArgs = spec.Args.ToArray();
+        StartedCwd = spec.Cwd;
+        StartedExe = spec.Exe;
         StartedHerdr = spec.Herdr;
         StartedEnv = new Dictionary<string, string>(spec.Env, StringComparer.Ordinal);
         StartedSessionId = spec.SessionId;

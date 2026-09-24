@@ -84,6 +84,19 @@ if ! setpriv --reuid="$APP_UID" --regid="$APP_GID" --clear-groups \
 fi
 export GIT_CONFIG_GLOBAL="$GIT_IDENTITY_SOURCE"
 
+# --- step 2c: Claude onboarding and worktree trust (CARD-0628) ------------------------
+# A fresh /state/claude has no hasCompletedOnboarding and no project trust, so the first
+# task in /work/worktrees/* stops on those dialogs. The CLI (2.1.280 / 2.1.281) reads
+# hasCompletedOnboarding and projects[<path>].hasTrustDialogAccepted. ah() maps a linked
+# worktree to its canonical git root, and ub() walks parents up to that root. Merge as
+# uid 1654 before dockerd so a failure refuses without leaving a daemon behind. The script
+# never writes .credentials.json.
+if ! setpriv --reuid="$APP_UID" --regid="$APP_GID" --clear-groups \
+     env HOME=/home/app CLAUDE_CONFIG_DIR=/state/claude \
+     node /usr/local/bin/antiphon-seed-claude-onboarding.mjs; then
+  refuse ClaudeOnboardingSeedFailed
+fi
+
 # --- step 3: cgroup preparation (D-3 step 3, D-17 custody root) -----------------------
 if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
   # cgroup v2 (Docker Desktop). Block attributed to the upstream docker:dind entrypoint:

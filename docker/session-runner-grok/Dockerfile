@@ -57,6 +57,11 @@ RUN cp /tmp/ptyhost/Antiphon.PtyHost /app/Antiphon.PtyHost \
  && test -f /app/libporta_pty.so \
  && test -f /app/Antiphon.PtyHost.runtimeconfig.json \
  && rm -rf /tmp/ptyhost
+# CARD-0628: the one-key remote-control overlay Claude is launched with. The server constant
+# ClaudeRemoteControlLaunchArgs.RunnerOffSettingsPath must stay this path, and the file bytes
+# (trimmed) must stay OffSettingsJson. A runner-bound --settings value is this path.
+COPY server/Runtime/claude-remote-control-off.json /opt/antiphon/claude-remote-control-off.json
+RUN chmod 0644 /opt/antiphon/claude-remote-control-off.json
 ENV PhoneHome__Enabled=false
 ENV ASPNETCORE_URLS=http://+:8080
 HEALTHCHECK CMD curl -fsS http://127.0.0.1:8080/health || exit 1
@@ -110,6 +115,7 @@ COPY docker/session-runner-grok/ssh_config /etc/antiphon/ssh_config
 COPY docker/session-runner-grok/github_known_hosts /etc/antiphon/github_known_hosts
 COPY docker/session-runner-grok/gitconfig /etc/gitconfig
 COPY docker/session-runner-grok/dind-entrypoint.sh /usr/local/bin/antiphon-dind-entrypoint.sh
+COPY docker/session-runner-grok/seed-claude-onboarding.mjs /usr/local/bin/antiphon-seed-claude-onboarding.mjs
 # CARD-0604 D-17 (Cut B): the custody mechanism. Both helpers are root-owned 0755 and the
 # sudoers drop-in is root-owned 0440; uid 1654 may run exactly these two commands and nothing
 # else (G-35, G-40). They exist only in this stage -- the default runtime and receipt-probe

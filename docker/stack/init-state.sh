@@ -3,6 +3,8 @@
 set -eu
 uid=1654
 gid=1654
+# Onboarding and /work/worktrees trust are merged by the runner entrypoint
+# (antiphon-seed-claude-onboarding.mjs), which sees this directory as /state/claude.
 for d in \
   /state /state/logs /state/keyring /state/check-interpreter /state/diagnose \
   /work /work/repos /work/worktrees \

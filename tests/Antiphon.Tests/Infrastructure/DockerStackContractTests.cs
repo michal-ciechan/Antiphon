@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Services;
 using Shouldly;
 using TUnit.Core;
 
@@ -424,6 +425,19 @@ public sealed class DockerStackContractTests
         body.Contains("install.sh | bash -s 2.1.280", StringComparison.Ordinal).ShouldBeFalse("no moving-bootstrap installer");
         Text("docker/session-runner-grok/Dockerfile").Contains("ENV CLAUDE_CODE_OAUTH_TOKEN", StringComparison.Ordinal)
             .ShouldBeFalse("the token is never an image layer");
+    }
+
+    // CARD-0628: the --settings file Claude is given on a runner-bound launch is this image
+    // path, and its bytes are the server's one-key constant.
+    [Test]
+    public void Runner_image_ships_the_off_settings_file_at_the_server_constant()
+    {
+        var path = ClaudeRemoteControlLaunchArgs.RunnerOffSettingsPath;
+        path.ShouldBe("/opt/antiphon/claude-remote-control-off.json");
+        var body = RunnerBody();
+        body.ShouldContain($"COPY server/Runtime/claude-remote-control-off.json {path}");
+        Text("server/Runtime/claude-remote-control-off.json").Trim()
+            .ShouldBe(ClaudeRemoteControlLaunchArgs.OffSettingsJson);
     }
 
     // CARD-0628 G-2: the node22 COPY merges /usr/local, so the inventory re-asserts claude after it.
