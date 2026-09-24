@@ -277,12 +277,13 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 await RecheckSourceAsync(op, op.VerifiedSourceSha!, ct);
                 var current = await CommitAsync(op.RepositoryPath, op.TargetFullRef, ct);
                 Require(current == op.TargetBeforeSha || current == op.VerifiedSourceSha, "target_changed");
-                // CARD-0642 R1: the checkout behind update-ref/merge comes from a fresh listing, never the
-                // land's cache; another process can switch an existing worktree onto the target unseen.
-                var checkout = await CheckTargetAsync(op, current, live: true, ct);
                 if (current != op.VerifiedSourceSha)
                 {
                     Require(await IsAncestorAsync(op.RepositoryPath, current, op.VerifiedSourceSha!, ct), "target_not_fast_forward");
+                    // CARD-0642 R1: the checkout behind update-ref/merge comes from a fresh listing, never the
+                    // land's cache, and that listing is the last check before the advance: another process can
+                    // switch an existing worktree onto the target unseen, including during the ancestry check.
+                    var checkout = await CheckLiveTargetAsync(op, current, ct);
                     LandingGitResult advanced;
                     if (checkout is null)
                     {
@@ -531,10 +532,17 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     }
 
     private Task CheckTargetAsync(AgentTaskLanding op, string expected, CancellationToken ct)
-        => CheckTargetAsync(op, expected, live: false, ct);
+        => VerifiedTargetCheckoutAsync(op, expected, live: false, ct);
+
+    /// <summary>
+    /// The target check from a fresh worktree listing. A distinct name rather than an overload: the
+    /// target-decision tests find CheckTargetAsync by reflection (review d36aeec1 D1).
+    /// </summary>
+    private Task<string?> CheckLiveTargetAsync(AgentTaskLanding op, string expected, CancellationToken ct)
+        => VerifiedTargetCheckoutAsync(op, expected, live: true, ct);
 
     /// <summary>Returns the verified target checkout, or null when the target is not checked out.</summary>
-    private async Task<string?> CheckTargetAsync(AgentTaskLanding op, string expected, bool live, CancellationToken ct)
+    private async Task<string?> VerifiedTargetCheckoutAsync(AgentTaskLanding op, string expected, bool live, CancellationToken ct)
     {
         Require(await CommitAsync(op.RepositoryPath, op.TargetFullRef, ct) == expected, "target_changed");
         var checkout = await TargetCheckoutAsync(op, live, ct);
