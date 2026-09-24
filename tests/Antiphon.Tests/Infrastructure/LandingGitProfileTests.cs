@@ -71,4 +71,36 @@ public sealed class LandingGitProfileTests
         profile.Inspections.ShouldBe(10_000);
         profile.GitSeconds.ShouldBe(TimeSpan.FromTicks(100_000).TotalSeconds, 1e-9);
     }
+
+    [Test]
+    public void C642_GlobalOptionsDoNotHideTheSubcommand()
+    {
+        var profile = new LandingGitProfile();
+        profile.Record(["-c", "http.extraHeader=x", "push", "origin", "HEAD"], TimeSpan.FromTicks(1));
+        profile.Record(["-C", "/repo", "worktree", "list", "--porcelain"], TimeSpan.FromTicks(1));
+        profile.RemoteRoundTrips.ShouldBe(1);
+        profile.WorktreeLists.ShouldBe(1);
+    }
+
+    [Test]
+    [Arguments("-c|merge.autoStash=false|merge|--ff-only|abc", true, false)]
+    [Arguments("-c|rebase.autoStash=false|-c|rebase.updateRefs=false|rebase|abc", true, false)]
+    [Arguments("commit|--allow-empty|-m|m", true, false)]
+    [Arguments("worktree|remove|/x", true, true)]
+    [Arguments("worktree|list|--porcelain|-z", false, false)]
+    [Arguments("-c|core.x=y|worktree|list", false, false)]
+    [Arguments("update-ref|refs/antiphon/land/t/o/source|abc|000", false, false)]
+    [Arguments("update-ref|-d|refs/heads/feat/x|abc", true, false)]
+    [Arguments("symbolic-ref|-q|HEAD", false, false)]
+    [Arguments("symbolic-ref|HEAD|refs/heads/x", true, false)]
+    [Arguments("fetch|--no-tags|origin|refs/heads/x:refs/antiphon/land/p", false, false)]
+    [Arguments("-c|x=y|rev-parse|HEAD", false, false)]
+    [Arguments("read-tree|HEAD", true, false)]
+    [Arguments("gc|--auto", true, true)]
+    public void C642_OwnMutationClassifierFindsTheSubcommand(string command, bool invalidates, bool topology)
+    {
+        // The land's own rebase and ff-merge run behind `-c` options; missing them left a stale HEAD cached.
+        Antiphon.Server.Infrastructure.Git.LandingGit.ChangesRegistrations(command.Split('|'), out var drops).ShouldBe(invalidates);
+        drops.ShouldBe(topology);
+    }
 }
