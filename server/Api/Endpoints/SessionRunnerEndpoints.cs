@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Mvc;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
@@ -35,7 +36,7 @@ public static class SessionRunnerEndpoints
         app.MapGet("/api/session-runners/{runnerId}/slots", async (
             string runnerId,
             PhoneHomeRunnerDirectory directory,
-            AppDbContext db,
+            [FromServices] AppDbContext db,
             CancellationToken ct) =>
             Results.Ok(await RunnerSlotService.ListAsync(directory, db, runnerId, ct)))
             .WithTags("SessionRunners");
@@ -45,7 +46,7 @@ public static class SessionRunnerEndpoints
             Guid sessionId,
             RunnerSlotReleaseRequest body,
             PhoneHomeRunnerDirectory directory,
-            AppDbContext db,
+            [FromServices] AppDbContext db,
             CancellationToken ct) =>
             Results.Ok(await RunnerSlotService.ReleaseAsync(directory, db, runnerId, sessionId, body.Reason, ct)))
             .WithTags("SessionRunners");
@@ -54,7 +55,7 @@ public static class SessionRunnerEndpoints
             string runnerId,
             RunnerSlotReleaseRequest body,
             PhoneHomeRunnerDirectory directory,
-            AppDbContext db,
+            [FromServices] AppDbContext db,
             CancellationToken ct) =>
             Results.Ok(await RunnerSlotService.ReleaseOrphansAsync(directory, db, runnerId, body.Reason, ct)))
             .WithTags("SessionRunners");
