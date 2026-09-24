@@ -25,7 +25,7 @@ public class TestDbFixture
 	internal static string MaintenanceConnectionString => Lifecycle.MaintenanceConnectionString;
 
 	[Before(Assembly)]
-	public static async Task InitializeAsync()
+	public static async Task InitializeAsync(AssemblyHookContext context)
 	{
 		if (Environment.GetEnvironmentVariable(CodexStartupDeliveryWorker.Marker) is { } startup)
 		{
@@ -40,6 +40,13 @@ public class TestDbFixture
 			catch (Exception ex) { Console.Error.WriteLine(ex.GetType().Name + ": " + ex.StackTrace); Environment.Exit(1); }
 			return;
 		}
+
+		// CARD-0646: one awaited startup before tests, only when this selection reaches the store.
+		if (SharedStoreWarmup.ProbeDefersWarmup(Environment.GetEnvironmentVariable(ProbeMarker)))
+			return;
+		if (!SharedStoreWarmup.SelectionNeedsSharedStore(context.AllTests))
+			return;
+		await Lifecycle.EnsureReadyAsync().ConfigureAwait(false);
 	}
 
 	[After(Assembly)]
