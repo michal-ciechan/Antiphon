@@ -1,4 +1,4 @@
-using System.Reflection;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -186,7 +186,7 @@ public sealed class RepositoryMutationLeaseOwnerTests
         var inner = new RepositoryMutationLease(git);
         var spy = new OwnerSpy(inner, git);
         var service = new DelegationWorktreeService(
-            Unused<IWorktreeManager>(),
+            new UnusedWorktrees(),
             new GitService(NullLogger<GitService>.Instance),
             NullLogger<DelegationWorktreeService>.Instance,
             new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance),
@@ -390,14 +390,6 @@ public sealed class RepositoryMutationLeaseOwnerTests
         return new World(provider, scope, scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>());
     }
 
-    private static T Unused<T>() where T : class => DispatchProxy.Create<T, UnusedProxy>();
-
-    private sealed class UnusedProxy : DispatchProxy
-    {
-        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args) =>
-            throw new InvalidOperationException("not used: " + targetMethod?.Name);
-    }
-
     private sealed class OwnerSpy(RepositoryMutationLease inner, ILandingGit git) : IRepositoryMutationLease
     {
         public RepositoryLeaseOwner? Observed { get; private set; }
@@ -450,4 +442,22 @@ public sealed class RepositoryMutationLeaseOwnerTests
             await provider.DisposeAsync();
         }
     }
+}
+
+file sealed class UnusedWorktrees : IWorktreeManager
+{
+    public Task<WorktreeInfo> CreateAsync(string repoPath, string cardId, string baseRef, CancellationToken ct) =>
+        throw new InvalidOperationException("not used");
+
+    public Task<IReadOnlyList<WorktreeInfo>> ListAsync(string repoPath, CancellationToken ct) =>
+        throw new InvalidOperationException("not used");
+
+    public Task RemoveAsync(string repoPath, string worktreePath, CancellationToken ct) =>
+        throw new InvalidOperationException("not used");
+
+    public Task TouchAsync(string worktreePath, CancellationToken ct) =>
+        throw new InvalidOperationException("not used");
+
+    public Task<int> PruneStaleAsync(CancellationToken ct) =>
+        throw new InvalidOperationException("not used");
 }
