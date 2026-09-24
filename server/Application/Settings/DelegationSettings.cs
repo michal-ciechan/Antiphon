@@ -611,6 +611,9 @@ public sealed class DelegationSettings
     /// <summary>CARD-0633 D-6: the remote-preparation backoff cap. Default 900; at least the base.</summary>
     public int RemotePrepBackoffMaxSeconds { get; set; } = 900;
 
+    /// <summary>CARD-0657: the whole runner settlement sync attempt's budget. Default 120.</summary>
+    public int RunnerSyncBudgetSeconds { get; set; } = 120;
+
     /// <summary>
     /// Started-and-interrupted git attempts on one land request before the sweep refuses
     /// (CARD-0331). Held passes do not count. Floor 1, ceiling 10.

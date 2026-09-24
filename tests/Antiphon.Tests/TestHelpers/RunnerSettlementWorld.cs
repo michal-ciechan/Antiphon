@@ -6,10 +6,13 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Git;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
+using LeaseBusySignal = Antiphon.Tests.Application.RunnerSettlementSyncTests.LeaseBusySignal;
 using SyncWorld = Antiphon.Tests.Application.RunnerSettlementSyncTests.SyncWorld;
 
 namespace Antiphon.Tests.TestHelpers;
@@ -30,22 +33,32 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
     public AgentTask Task { get; private set; } = null!;
     public Guid TaskId => Git.TaskId;
 
+    /// <summary>The settlement sync's budget clock when created with a controlled clock; else null.</summary>
+    public FakeTimeProvider? SyncClock { get; }
+
+    /// <summary>Every time the settlement sync finds the repository lease busy and waits for it.</summary>
+    public LeaseBusySignal LeaseBusy { get; } = new();
+
     private readonly bool _fenced;
 
-    private RunnerSettlementWorld(SyncWorld git, bool fenced)
+    private RunnerSettlementWorld(SyncWorld git, bool fenced, bool controlledSyncClock)
     {
         Git = git;
         _fenced = fenced;
+        SyncClock = controlledSyncClock ? new FakeTimeProvider() : null;
     }
 
     /// <param name="fenced">Give settlement sync the real workspace reservation journal (the
     /// production fence), so a competing retirement claim can be raced against it.</param>
     /// <param name="profiled">Commission the task under verification profile v1 (Final), so its
     /// settlement owes the caller the CARD-0544 D-9 durable completion obligation.</param>
+    /// <param name="controlledSyncClock">Measure the settlement sync's budget on <see cref="SyncClock"/>,
+    /// so a lease-busy wait ends only when the test advances it.</param>
     public static async Task<RunnerSettlementWorld> CreateAsync(
-        AgentTaskRole role = AgentTaskRole.Code, bool pushBranch = true, bool fenced = false, bool profiled = false)
+        AgentTaskRole role = AgentTaskRole.Code, bool pushBranch = true, bool fenced = false, bool profiled = false,
+        bool controlledSyncClock = false)
     {
-        var world = new RunnerSettlementWorld(await SyncWorld.CreateAsync(pushBranch), fenced);
+        var world = new RunnerSettlementWorld(await SyncWorld.CreateAsync(pushBranch), fenced, controlledSyncClock);
         world.Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         world.BuildServices();
 
@@ -150,10 +163,11 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
         {
             services.AddScoped<IWorkspaceReservationJournal>(sp => new WorkspaceReservationJournal(
                 sp.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System));
-            services.AddScoped(sp => Git.Service(reservations: sp.GetRequiredService<IWorkspaceReservationJournal>()));
+            services.AddScoped(sp => Git.Service(
+                SyncClock, sp.GetRequiredService<IWorkspaceReservationJournal>(), LeaseBusy.Observe));
         }
         else
-            services.AddScoped(_ => Git.Service());
+            services.AddScoped(_ => Git.Service(SyncClock, leaseBusy: LeaseBusy.Observe));
         services.AddScoped<IRemoteSettlementSync>(sp => sp.GetRequiredService<RemoteWorkspaceService>());
         services.AddScoped(sp => new TaskCompletionProgressService(
             sp.GetRequiredService<ITaskProgressGit>(),
@@ -165,6 +179,14 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
         services.AddSingleton<AgentTaskReplyService>();
         services.AddSingleton<AgentTaskLandQueue>();
         services.AddScoped<AgentTaskLandService>();
+        // CARD-0085 bind-refusal recovery as the dispatcher's watchdog runs it. The desktop's Claude
+        // projects root is an empty directory: a runner session's transcript is never on this box.
+        services.AddSingleton<GitWorkspaceService>();
+        services.AddSingleton(Options.Create(new DelegateBindRefusalRecoverySettings
+        {
+            ClaudeProjectsRoot = Path.Combine(Git.Root, "desktop-claude-projects"),
+        }));
+        services.AddSingleton<DelegateBindRefusalRecovery>();
         Services = services.BuildServiceProvider();
     }
 
@@ -198,20 +220,57 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
     }
 
     /// <summary>
-    /// A Claude transcript file whose closing assistant text is this task's done report: the
-    /// shape bind-refusal recovery's JSONL arm hands over as <see cref="DelegateBindRefusalEvidence.JsonlPath"/>.
+    /// The delivery watchdog's real bind-refusal path, from the dispatcher down. The task is still
+    /// Dispatched past the delivery timeout and its session ingested no prompt. The watchdog's pull of
+    /// the runner's own transcript view lands the delegate's closing <c>done</c> report and a TurnEnd,
+    /// with no prompt row, so the ordinary completion path cannot correlate it. With
+    /// <paramref name="reportBody"/> null the pull lands nothing. The real
+    /// <see cref="AgentTaskDispatcher.FailNeverStartedAsync"/> then asks
+    /// <see cref="DelegateBindRefusalRecovery"/> for evidence before it would fail the task.
     /// </summary>
-    public string WriteReportedTranscript(string body)
+    public async Task RecoverThroughWatchdogAsync(string? reportBody)
     {
-        var path = Path.Combine(Git.Root, "transcript-" + Guid.NewGuid().ToString("N")[..8] + ".jsonl");
-        var text = body + "\n" + DelegationReportFormatter.ReportToken(TaskId, "done");
-        var assistant = System.Text.Json.JsonSerializer.Serialize(new
+        await using (var db = CreateContext())
         {
-            type = "assistant",
-            message = new { content = new object[] { new { type = "text", text } } },
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == TaskId);
+            row.Status = AgentTaskStatus.Dispatched;
+            await db.SaveChangesAsync();
+        }
+
+        await using (var scope = Services.CreateAsyncScope())
+        {
+            var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+            dispatcher.CatchUpOverride = async (session, _) =>
+            {
+                if (session == SessionId && reportBody is not null)
+                    await SeedRunnerReportAsync(reportBody);
+            };
+            await dispatcher.FailNeverStartedAsync(CancellationToken.None);
+        }
+        await ReloadAsync();
+    }
+
+    /// <summary>The runner's transcript rows for a done report whose prompt row never arrived.</summary>
+    private async Task SeedRunnerReportAsync(string body)
+    {
+        await using var db = CreateContext();
+        var seq = await db.TranscriptEntries.Where(t => t.AgentSessionId == SessionId)
+            .MaxAsync(t => (long?)t.Sequence) ?? 0;
+        var now = DateTime.UtcNow;
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(), AgentSessionId = SessionId, Sequence = ++seq,
+            Kind = TranscriptKinds.AssistantText, Role = "assistant",
+            Text = Report(body) + DelegationReportFormatter.ReportToken(TaskId, "done"),
+            Timestamp = now, CreatedAt = now,
         });
-        File.WriteAllText(path, assistant + "\n");
-        return path;
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(), AgentSessionId = SessionId, Sequence = ++seq,
+            Kind = TranscriptKinds.TurnEnd, StopReason = TranscriptKinds.StopReasons.EndTurn,
+            Timestamp = now, CreatedAt = now,
+        });
+        await db.SaveChangesAsync();
     }
 
     /// <summary>The CARD-0544 D-9 completion obligation(s) committed for this task.</summary>

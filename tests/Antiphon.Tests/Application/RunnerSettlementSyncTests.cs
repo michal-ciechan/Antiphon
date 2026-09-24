@@ -2,12 +2,14 @@ using System.Collections.Concurrent;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
 using Antiphon.Server.Infrastructure.Data;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
@@ -326,15 +328,105 @@ public sealed class RunnerSettlementSyncTests
         await using var held = await world.Leases.TryAcquireAsync(world.Desktop, CancellationToken.None);
         held.ShouldNotBeNull();
         world.Git.Clear();
+        var clock = new FakeTimeProvider();
+        var busy = new LeaseBusySignal();
+        var service = world.Service(clock, leaseBusy: busy.Observe);
 
-        var result = await world.Service().SyncAsync(world.Task, CancellationToken.None);
+        // The lease stays held for the whole budget: the sync waits for it inside the budget, and
+        // only when the budget runs out does it report the contention. Nothing mutates meanwhile.
+        var sync = service.SyncAsync(world.Task, CancellationToken.None);
+        (await System.Threading.Tasks.Task.WhenAny(busy.First, sync)).ShouldBe(busy.First,
+            "the sync must wait for a busy lease within its budget, not give up at once");
+        clock.Advance(service.SyncBudget);
+        var result = await sync;
 
         result.State.ShouldBe(RemoteSettlementSyncState.Unavailable);
         result.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
         world.Git.Commands.ShouldNotContain(c => c.StartsWith("fetch", StringComparison.Ordinal)
             || c.Contains("merge --ff-only", StringComparison.Ordinal) || c.StartsWith("update-ref", StringComparison.Ordinal));
+        world.Git.InFlight.ShouldBe(0);
         (await world.HeadAsync()).ShouldBe(world.Baseline);
         (await world.HasObjectAsync(s)).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Lease_busy_retries_within_the_budget()
+    {
+        await using var world = await SyncWorld.CreateAsync();
+        var s = await world.RunnerPushAsync("work.txt", "runner");
+        var held = await world.Leases.TryAcquireAsync(world.Desktop, CancellationToken.None);
+        held.ShouldNotBeNull();
+        var clock = new FakeTimeProvider();
+        var busy = new LeaseBusySignal();
+        var service = world.Service(clock, leaseBusy: busy.Observe);
+
+        var sync = service.SyncAsync(world.Task, CancellationToken.None);
+        (await System.Threading.Tasks.Task.WhenAny(busy.First, sync)).ShouldBe(busy.First,
+            "the sync must wait for a busy lease within its budget, not give up at once");
+        busy.Count.ShouldBeGreaterThanOrEqualTo(1);
+
+        // The other holder lets go well inside the budget; the next retry takes the lease.
+        await held!.DisposeAsync();
+        var advanced = TimeSpan.Zero;
+        while (!sync.IsCompleted && advanced + service.LeaseRetryInterval < service.SyncBudget)
+        {
+            clock.Advance(service.LeaseRetryInterval);
+            advanced += service.LeaseRetryInterval;
+            await System.Threading.Tasks.Task.WhenAny(sync, System.Threading.Tasks.Task.Delay(50));
+        }
+        var result = await sync;
+
+        result.State.ShouldBe(RemoteSettlementSyncState.Synchronized, "reason=" + result.Reason);
+        result.DesktopAfterSha.ShouldBe(s);
+        advanced.ShouldBeLessThan(service.SyncBudget);
+        (await world.HeadAsync()).ShouldBe(s);
+    }
+
+    [Test]
+    public async Task Sync_budget_is_the_runner_sync_budget_setting()
+    {
+        new DelegationSettings().RunnerSyncBudgetSeconds.ShouldBe(120);
+        var validator = new DelegationSettingsValidator();
+        validator.Validate(null, new DelegationSettings()).Succeeded.ShouldBeTrue();
+        (validator.Validate(null, new DelegationSettings { RunnerSyncBudgetSeconds = 0 }).FailureMessage ?? "")
+            .ShouldContain("Delegation:RunnerSyncBudgetSeconds");
+
+        // Production wiring: Delegation:RunnerSyncBudgetSeconds reaches the DI-built service.
+        foreach (var (configured, expected) in new (string?, int)[] { (null, 120), ("7", 7) })
+        {
+            var values = new Dictionary<string, string?>();
+            if (configured is not null)
+                values["Delegation:RunnerSyncBudgetSeconds"] = configured;
+            var configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(values).Build();
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.Configure<DelegationSettings>(configuration.GetSection("Delegation"));
+            services.AddSingleton<ISessionRunnerDirectory, UnusedDirectory>();
+            services.AddSingleton<ILandingGit, LandingGit>();
+            services.AddScoped<RemoteWorkspaceService>();
+            await using var provider = services.BuildServiceProvider();
+            await using var scope = provider.CreateAsyncScope();
+
+            scope.ServiceProvider.GetRequiredService<RemoteWorkspaceService>().SyncBudget
+                .ShouldBe(TimeSpan.FromSeconds(expected), configured ?? "default");
+        }
+    }
+
+    /// <summary>Counts the sync's lease-busy waits; <see cref="First"/> completes on the first.</summary>
+    internal sealed class LeaseBusySignal
+    {
+        private readonly TaskCompletionSource _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _count;
+
+        public System.Threading.Tasks.Task First => _first.Task;
+        public int Count => Volatile.Read(ref _count);
+
+        public void Observe()
+        {
+            Interlocked.Increment(ref _count);
+            _first.TrySetResult();
+        }
     }
 
     [Test]
@@ -632,10 +724,12 @@ public sealed class RunnerSettlementSyncTests
             return world;
         }
 
-        public RemoteWorkspaceService Service(TimeProvider? clock = null, IWorkspaceReservationJournal? reservations = null) =>
+        public RemoteWorkspaceService Service(
+            TimeProvider? clock = null, IWorkspaceReservationJournal? reservations = null, Action? leaseBusy = null) =>
             new(new UnusedDirectory(), Git, NullLogger<RemoteWorkspaceService>.Instance, Git, Leases, reservations)
             {
                 Clock = clock ?? TimeProvider.System,
+                LeaseBusyObserved = leaseBusy,
             };
 
         public AgentTask TaskWith(Action<AgentTask> shape)
