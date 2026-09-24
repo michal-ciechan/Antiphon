@@ -1484,27 +1484,30 @@ public sealed class AgentTaskReplyService
         var remote = services.GetService<RemoteWorkspaceService>();
         if (remote is null)
             return null;
-        RemoteSyncResult sync;
+        RemoteSettlementSyncResult sync;
         try
         {
             sync = await remote.SyncAsync(task, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            sync = new RemoteSyncResult(false, null, ex.Message);
+            sync = new RemoteSettlementSyncResult(
+                RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable);
         }
 
-        if (sync.Synced)
+        if (sync.State == RemoteSettlementSyncState.NotApplicable)
+            return null;
+        if (sync.Confirmed)
         {
             db.AgentTaskEvents.Add(NewEvent(
                 task.Id, AgentTaskEventType.Merged,
-                $"Desktop worktree fast-forwarded to the runner's pushed commit {sync.Sha ?? "(unknown)"}.", now));
+                $"Desktop worktree confirmed at the runner's pushed commit {sync.DesktopAfterSha}.", now));
             return null;
         }
 
         db.AgentTaskEvents.Add(NewEvent(
             task.Id, AgentTaskEventType.Warning,
-            $"Remote worktree sync refused: {sync.Warning}. The task keeps its report; the branch on origin is the record.",
+            $"Remote worktree sync {sync.State.ToString().ToLowerInvariant()}: {sync.Reason}. The task keeps its report; the branch on origin is the record.",
             now));
         return "remote sync refused; desktop worktree untouched";
     }
