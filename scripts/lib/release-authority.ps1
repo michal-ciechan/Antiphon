@@ -786,7 +786,7 @@ function Test-ReleaseGateAuthority {
       publication destination; NowUtc is the publisher's clock (Get-ReleaseGateUtcNow).
       Returns Ok, Reasons, the pinned required suites and the validated suite rows.
     #>
-    param([string]$CandidateRoot, [string]$RepositoryRoot, $Green, $Candidate, [string]$Repository = '', [datetime]$NowUtc = [datetime]::MinValue)
+    param([string]$CandidateRoot, [string]$RepositoryRoot, $Green, $Candidate, [string]$Repository = '', [datetime]$NowUtc = [datetime]::MinValue, [string]$CardApiBaseUrl = '')
     $pinned = Test-ReleaseGatePinnedAuthority -CandidateRoot $CandidateRoot -RepositoryRoot $RepositoryRoot `
         -Sha ([string]$Candidate.sha) -CandidateId ([string]$Candidate.candidateId) -CandidateRef ([string]$Candidate.ref) -Repository $Repository
     if ($null -eq $pinned.Authority) {

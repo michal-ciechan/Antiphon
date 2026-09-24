@@ -40,6 +40,7 @@ param(
     [string]$ExpectedPolicyHash = '',
     [string[]]$RequiredSuites = @(),
     [string]$SeamsPath = '',
+    [string]$AntiphonApiUrl = '',
     [switch]$WhatIf,
     [switch]$PassThru
 )
