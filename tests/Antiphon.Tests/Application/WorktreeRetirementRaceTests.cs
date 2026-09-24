@@ -832,6 +832,44 @@ public sealed class WorktreeRetirementRaceTests
         claim.Accepted.ShouldBeTrue();
     }
 
+    [Test]
+    public async Task C664_CredentialProbeFailAfterAdmission_LeavesNoActiveLaunch()
+    {
+        // Review 42bbf9fc: the credential-probe fail paths commit the claim through
+        // commitBeforeNotify, and FailAsync skips its release inside that transaction.
+        var probe = new LoggedOutClaudeRunnerClient();
+        await using var world = await RaceWorld.CreateAsync(services =>
+        {
+            services.AddSingleton(Options.Create(new PhoneHomeRunnerSettings
+            {
+                Enabled = true, AllowedRunnerId = "server2", AllowDelegatedTasks = true,
+                HostWorkspaceRoot = @"C:\src\Antiphon", CallbackOrigin = "https://antiphon.desktop.codeperf.net",
+                SharedSecret = "x", ClaudeAuthProbeEnabled = true,
+            }));
+            services.AddSingleton<PhoneHomeLaunchPolicy>();
+            services.AddSingleton<ISessionRunnerDirectory>(new SingleRunnerDirectory(probe, "server2"));
+        });
+        // The dispatch lease resolves the repository's common directory, so the path is a real repo.
+        (await ScratchGitRepo.GitInAsync(world.Path, "init", "-b", "master")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(world.Path, "-c", "user.email=test@antiphon.local", "-c", "user.name=C664",
+            "commit", "--allow-empty", "-m", "base")).Ok.ShouldBeTrue();
+        var queued = await world.SeedQueuedTaskAsync(WorkspaceMode.Worktree, runnerId: "server2");
+
+        await world.Dispatcher.TickAsync(CancellationToken.None);
+
+        probe.Requests.ShouldBe(1);
+        await using (var db = world.CreateDb())
+        {
+            var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == queued.Id);
+            stored.Status.ShouldBe(AgentTaskStatus.Failed);
+            stored.FailureCode.ShouldBe(AgentTaskFailureCode.AuthenticationRequired, stored.FailureReason);
+            (await db.WorkspaceUseReservations.AsNoTracking().CountAsync(r =>
+                r.TaskId == queued.Id && r.Kind == WorkspaceReservationKind.Launch))
+                .ShouldBe(1, "the claim admitted the task's Launch row before the probe failed it");
+        }
+        (await world.ActiveLaunchIdsAsync(queued.Id)).ShouldBeEmpty("the probe failure releases the task's Launch rows");
+    }
+
     private sealed class RaceWorld : IAsyncDisposable
     {
         public required IsolatedTestSchema Schema { get; init; }
@@ -853,7 +891,7 @@ public sealed class WorktreeRetirementRaceTests
         public Guid RetirementId { get; } = Guid.NewGuid();
         public WorkspaceReservationKey Key => WorkspaceReservationKey.For(Path, "", Path);
 
-        public static async Task<RaceWorld> CreateAsync()
+        public static async Task<RaceWorld> CreateAsync(Action<IServiceCollection>? configure = null)
         {
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             var path = Directory.CreateTempSubdirectory("c459-race-").FullName;
@@ -901,6 +939,7 @@ public sealed class WorktreeRetirementRaceTests
             services.AddSingleton(new AgentTaskLandQueue());
             services.AddScoped<AgentTaskLandService>();
             services.AddSingleton(adapter);
+            configure?.Invoke(services);
             var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
             var scope = provider.CreateScope();
             var journal = (WorkspaceReservationJournal)scope.ServiceProvider.GetRequiredService<IWorkspaceReservationJournal>();
@@ -958,7 +997,7 @@ public sealed class WorktreeRetirementRaceTests
             new("fake", AgentKind.ClaudeCode, "fake", [], new Dictionary<string, string>(),
                 Path, 120, 30, SessionId: sessionId);
 
-        public async Task<AgentTask> SeedQueuedTaskAsync(WorkspaceMode workspace)
+        public async Task<AgentTask> SeedQueuedTaskAsync(WorkspaceMode workspace, string? runnerId = null)
         {
             await using var db = CreateDb();
             var id = Guid.NewGuid();
@@ -969,7 +1008,7 @@ public sealed class WorktreeRetirementRaceTests
                 ModelLevel = AgentModelLevel.Medium, Workspace = workspace,
                 WorkingDirectory = Path, WorktreePath = Path, RepoPath = Path,
                 WorktreeBranch = "feat/card-task-race", Status = AgentTaskStatus.Queued,
-                ReplyTo = AgentTaskReplyTo.None, CreatedAt = DateTime.UtcNow,
+                ReplyTo = AgentTaskReplyTo.None, CreatedAt = DateTime.UtcNow, RunnerId = runnerId,
             };
             db.AgentTasks.Add(row);
             await db.SaveChangesAsync();
@@ -1221,6 +1260,35 @@ public sealed class WorktreeRetirementRaceTests
             await Provider.DisposeAsync();
             await Schema.DisposeAsync();
             try { Directory.Delete(Path, true); } catch (IOException) { }
+        }
+    }
+
+    /// <summary>CARD-0664: a runner that answers the Claude credential probe as signed out.</summary>
+    private sealed class LoggedOutClaudeRunnerClient : ISessionRunnerClient
+    {
+        public int Requests { get; private set; }
+
+        public Task<RunnerProviderAuthDto?> GetProviderAuthAsync(string provider, CancellationToken ct)
+        {
+            provider.ShouldBe("claude");
+            Requests++;
+            return Task.FromResult<RunnerProviderAuthDto?>(
+                new RunnerProviderAuthDto("claude", false, "none", null, DateTimeOffset.UtcNow, null));
+        }
+        public Task<SessionRunnerSessionDto> StartAsync(Guid id, AgentLaunchSpec spec, CancellationToken ct) => throw new NotSupportedException();
+        public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
+        public Task<SessionRunnerSessionDto> GetAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
+        public Task<SessionRunnerBufferDto> GetBufferAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
+        public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
+        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
+        public Task SendInputAsync(Guid id, string input, CancellationToken ct) => throw new NotSupportedException();
+        public Task ClearLiveBufferAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
+        public Task ResizeAsync(Guid id, int cols, int rows, CancellationToken ct) => throw new NotSupportedException();
+        public Task<SessionRunnerSessionDto> KillAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
+        public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(CancellationToken ct)
+        {
+            await Task.CompletedTask;
+            yield break;
         }
     }
 
