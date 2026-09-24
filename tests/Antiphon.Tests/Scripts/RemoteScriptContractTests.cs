@@ -273,6 +273,11 @@ public sealed class RemoteScriptContractTests
             var trimmed = line.Trim();
             if (trimmed.StartsWith("#", StringComparison.Ordinal))
                 continue;
+            // CARD-0660: `find ... -prune` (ensure_dirs skipping the Codex home) is a filesystem
+            // walk, not a daemon. Only that exact primary on a find line is set aside; every other
+            // occurrence of the word still fails.
+            if (trimmed.StartsWith("sudo -n find ", StringComparison.Ordinal))
+                trimmed = trimmed.Replace(" -prune -o ", " ", StringComparison.Ordinal);
             trimmed.Contains("prune", StringComparison.Ordinal)
                 .ShouldBeFalse("remote script prunes a daemon: " + trimmed);
         }
@@ -618,7 +623,7 @@ public sealed class RemoteScriptContractTests
 
         // The migration case, run for real: an older stack.env with no identity values and no
         // file. The compose stub refuses `up` exactly as the required bind mount would.
-        var output = LinuxShell(IdentityHarness(text, "case_persistent_restart") + """
+        var output = LinuxShell(IdentityHarness(text, "case_persistent_restart", "ensure_runner_codex_home") + CodexHomeLines(text) + """
             C604_SERVER_ORIGIN=http://127.0.0.1:9
             printf 'SOURCE_SHA12=0123456789ab\n' > "$SERVER2_ENV"
             require_lane() { :; }
@@ -636,6 +641,7 @@ public sealed class RemoteScriptContractTests
                 case "$1" in
                     stop)
                         if [ -f "$GIT_IDENTITY_PATH" ]; then echo "stop identity=present"; else echo "stop identity=missing"; fi >> "$CASE_DIR/calls.txt"
+                        if [ -d "$CODEX_HOME_PATH" ] && [ "$(stat -c %a "$CODEX_HOME_PATH")" = 700 ]; then echo "stop codex-home=present"; else echo "stop codex-home=missing"; fi >> "$CASE_DIR/calls.txt"
                         ;;
                     up)
                         if [ ! -f "$GIT_IDENTITY_PATH" ] || [ -L "$GIT_IDENTITY_PATH" ]; then echo "up mount-missing" >> "$CASE_DIR/calls.txt"; return 1; fi
@@ -650,6 +656,7 @@ public sealed class RemoteScriptContractTests
             git config --file "$GIT_IDENTITY_PATH" --get user.name
             """);
         output.ShouldContain("stop identity=present");
+        output.ShouldContain("stop codex-home=present", customMessage: "the Codex home is ensured before the older runner stops");
         output.ShouldNotContain("up mount-missing");
         output.ShouldContain("up ok");
         output.ShouldContain("RESULT accepted=true diagnosis=\n");
@@ -767,7 +774,7 @@ public sealed class RemoteScriptContractTests
     {
         var text = Remote();
         var output = LinuxShell(CodexHomeHarness(text) + """
-            ( set -euo pipefail; ensure_runner_codex_home )
+            ( set -euo pipefail; ensure_runner_codex_home ) 2>&1
             echo "fresh exit=$?"
             [ "$(stat -c '%u:%g' "$CODEX_HOME_PATH")" = "$CODEX_HOME_OWNER" ] && echo fresh-owner-ok
             stat -c 'fresh=%a %F' "$CODEX_HOME_PATH"
@@ -786,6 +793,8 @@ public sealed class RemoteScriptContractTests
             grep -rq c660-sentinel "$CASE_DIR" || echo evidence-holds-no-contents
 
             mv "$CODEX_HOME_PATH" "$root/elsewhere"
+            chmod 0755 "$root/elsewhere"
+            chmod 0755 "$root/elsewhere"
             ln -s "$root/elsewhere" "$CODEX_HOME_PATH"
             ( set -euo pipefail; ensure_runner_codex_home )
             echo "symlink exit=$?"
@@ -858,19 +867,27 @@ public sealed class RemoteScriptContractTests
     // The real Codex-home variables and function over a throwaway server2 root. sudo is a plain
     // call and the owner is the current uid, so the harness needs no privilege.
     private static string CodexHomeHarness(string text) =>
-        string.Join('\n', new[]
+        string.Join('\n',
+            "root=\"$(mktemp -d)\"",
+            "trap 'rm -rf \"$root\"' EXIT",
+            "cd \"$root\"",
+            "CASE_DIR=\"$root/case\"; mkdir -p \"$CASE_DIR\"",
+            "SERVER2_ROOT=\"$root/server2\"; mkdir -p \"$SERVER2_ROOT/secrets\"",
+            "write_result() { printf 'RESULT accepted=%s diagnosis=%s\\n' \"$1\" \"$2\"; exit \"$3\"; }",
+            Block(text, "ensure_runner_codex_home"))
+        + "\n" + CodexHomeLines(text);
+
+    // The script's own CODEX_HOME_ variables (after SERVER2_ROOT), then the host lane, a plain
+    // sudo and the current uid as owner.
+    private static string CodexHomeLines(string text) =>
+        string.Join('\n', text.Replace("\r\n", "\n").Split('\n')
+            .Where(line => line.StartsWith("CODEX_HOME_", StringComparison.Ordinal))
+            .Concat(new[]
             {
-                "root=\"$(mktemp -d)\"",
-                "trap 'rm -rf \"$root\"' EXIT",
-                "cd \"$root\"",
-                "CASE_DIR=\"$root/case\"; mkdir -p \"$CASE_DIR\"",
-                "SERVER2_ROOT=\"$root/server2\"; mkdir -p \"$SERVER2_ROOT/secrets\"",
                 "LANE=host",
-                "write_result() { printf 'RESULT accepted=%s diagnosis=%s\\n' \"$1\" \"$2\"; exit \"$3\"; }",
                 "sudo() { if [ \"$1\" = -n ]; then shift; fi; \"$@\"; }",
-            }
-            .Concat(text.Replace("\r\n", "\n").Split('\n').Where(line => line.StartsWith("CODEX_HOME_", StringComparison.Ordinal)))
-            .Concat(new[] { "CODEX_HOME_OWNER=\"$(id -u):$(id -g)\"", Block(text, "ensure_runner_codex_home") }))
+                "CODEX_HOME_OWNER=\"$(id -u):$(id -g)\"",
+            }))
         + "\n";
 
     // The real identity variables and functions, over a throwaway server2 root, with write_result
