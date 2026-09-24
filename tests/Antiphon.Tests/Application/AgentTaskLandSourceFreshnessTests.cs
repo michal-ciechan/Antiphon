@@ -724,8 +724,8 @@ public sealed class AgentTaskLandSourceFreshnessTests
         await h.RunAsync();
 
         h.Verifier.Calls.ShouldBe(1);
-        h.Fixture.Git.Trace.ShouldNotContain(a => a.Length > 0 && a[0] == "update-ref" && a.Contains(h.Fixture.TargetRef),
-            "update-ref must never move a target another worktree has checked out");
+        h.Fixture.Git.Trace.Where(a => a.Length > 0 && a[0] == "update-ref" && a.Contains(h.Fixture.TargetRef))
+            .Select(a => string.Join(' ', a)).ShouldBeEmpty("update-ref must never move a target another worktree has checked out");
         (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(targetBefore);
         (await outsider.RunAsync(other, ["symbolic-ref", "-q", "HEAD"], CancellationToken.None)).Output.Trim().ShouldBe(h.Fixture.TargetRef);
         (await outsider.RunAsync(other, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], CancellationToken.None))
@@ -734,7 +734,7 @@ public sealed class AgentTaskLandSourceFreshnessTests
         op.LastReason.ShouldBe("target_checkout_changed");
         op.LocalTargetAfterSha.ShouldBeNull();
         op.RemoteConfirmedAt.ShouldBeNull();
-        h.Fixture.Git.Trace.ShouldNotContain(a => a.Length > 0 && a[0] == "push");
+        h.Fixture.Git.Trace.Where(a => a.Length > 0 && a[0] == "push").Select(a => string.Join(' ', a)).ShouldBeEmpty();
         await h.Fixture.AssertRemoteSourceAsync();
     }
 }
