@@ -102,6 +102,9 @@ public class AppDbContext : DbContext
     public DbSet<AgentPinProjection> AgentPinProjections => Set<AgentPinProjection>();
     public DbSet<AgentPinOperation> AgentPinOperations => Set<AgentPinOperation>();
     public DbSet<AgentPinCleanupRecord> AgentPinCleanupRecords => Set<AgentPinCleanupRecord>();
+    public DbSet<ExpectationWatchState> ExpectationWatchStates => Set<ExpectationWatchState>();
+    public DbSet<ExpectationEpisode> ExpectationEpisodes => Set<ExpectationEpisode>();
+    public DbSet<ExpectationNudge> ExpectationNudges => Set<ExpectationNudge>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -2584,6 +2587,70 @@ public class AppDbContext : DbContext
             entity.HasOne(p => p.Recovery)
                 .WithMany()
                 .HasForeignKey(p => p.RecoveryId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<ExpectationWatchState>(entity =>
+        {
+            entity.ToTable("ExpectationWatchStates");
+            entity.HasKey(s => s.Id);
+            entity.Property(s => s.DirectiveId).IsRequired().HasMaxLength(100);
+            entity.Property(s => s.ConfigDigest).IsRequired().HasMaxLength(64);
+            entity.Property(s => s.LastObservationError).HasMaxLength(400);
+            entity.Property(s => s.UpdatedAt).IsRequired();
+            entity.Property(s => s.ConcurrencyToken).IsConcurrencyToken();
+            entity.HasIndex(s => s.DirectiveId)
+                .IsUnique()
+                .HasDatabaseName("IX_ExpectationWatchStates_DirectiveId");
+        });
+
+        modelBuilder.Entity<ExpectationEpisode>(entity =>
+        {
+            entity.ToTable("ExpectationEpisodes");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.DirectiveId).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.SubjectKey).IsRequired().HasMaxLength(400);
+            entity.Property(e => e.Evidence).IsRequired().HasMaxLength(2000);
+            entity.Property(e => e.ConfigDigest).IsRequired().HasMaxLength(64);
+            entity.Property(e => e.FirstObservedAt).IsRequired();
+            entity.Property(e => e.LastObservedAt).IsRequired();
+            entity.Property(e => e.ConcurrencyToken).IsConcurrencyToken();
+            entity.HasIndex(e => new { e.DirectiveId, e.Kind, e.SubjectKey })
+                .IsUnique()
+                .HasFilter("\"ResolvedAt\" IS NULL")
+                .HasDatabaseName("IX_ExpectationEpisodes_Open");
+            entity.HasIndex(e => new { e.DirectiveId, e.ResolvedAt })
+                .HasDatabaseName("IX_ExpectationEpisodes_Directive_Resolved");
+        });
+
+        modelBuilder.Entity<ExpectationNudge>(entity =>
+        {
+            entity.ToTable("ExpectationNudges", table =>
+            {
+                table.HasCheckConstraint("CK_ExpectationNudges_Ordinal", "\"Ordinal\" >= 1");
+                table.HasCheckConstraint(
+                    "CK_ExpectationNudges_Body",
+                    "length(btrim(\"Body\")) > 0 AND length(\"BodyDigest\") = 64");
+            });
+            entity.HasKey(n => n.Id);
+            entity.Property(n => n.DirectiveId).IsRequired().HasMaxLength(100);
+            entity.Property(n => n.EpisodeIdsJson).IsRequired().HasColumnType("text");
+            entity.Property(n => n.EvidenceSnapshot).IsRequired().HasMaxLength(2000);
+            entity.Property(n => n.Body).IsRequired().HasMaxLength(8000);
+            entity.Property(n => n.BodyDigest).IsRequired().HasMaxLength(64);
+            entity.Property(n => n.OperatorLastError).HasMaxLength(400);
+            entity.Property(n => n.CheckEventIdsJson).IsRequired().HasColumnType("text");
+            entity.Property(n => n.CreatedAt).IsRequired();
+            entity.Property(n => n.ConcurrencyToken).IsConcurrencyToken();
+            entity.HasIndex(n => new { n.DirectiveId, n.Ordinal })
+                .IsUnique()
+                .HasDatabaseName("IX_ExpectationNudges_Directive_Ordinal");
+            entity.HasIndex(n => new { n.OperatorOutboxState, n.OperatorNextAttemptAt })
+                .HasFilter("\"OperatorOutboxState\" = 1")
+                .HasDatabaseName("IX_ExpectationNudges_PendingDelivery");
+            entity.HasOne<CardComment>()
+                .WithMany()
+                .HasForeignKey(n => n.AuditCommentId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
