@@ -1,0 +1,104 @@
+using System.Runtime.Versioning;
+using System.Security.AccessControl;
+using System.Security.Cryptography;
+using System.Security.Principal;
+using System.Text;
+
+namespace Antiphon.Server.Infrastructure.Security;
+
+/// <summary>
+/// CARD-0653: the credential behind the operator-only force-release routes. A random value in a
+/// file only the operator's own account can read (Windows: owner-only ACL, set at creation; else
+/// mode 0600). The server creates it; <c>scripts/runner-slots.ps1</c> reads it and sends it as
+/// <see cref="Header"/>. A loopback address is not a credential: the public vhost reaches Kestrel
+/// through Caddy and Vite as a loopback connection. The value is never logged or echoed.
+/// </summary>
+public static class OperatorTokenFile
+{
+    public const string Header = "X-Antiphon-Operator-Token";
+
+    /// <summary>The configured path, or <see cref="DefaultPath"/> when none is set.</summary>
+    public static string ResolvePath(string? configured) =>
+        string.IsNullOrWhiteSpace(configured) ? DefaultPath() : configured;
+
+    public static string DefaultPath()
+    {
+        if (OperatingSystem.IsWindows())
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Antiphon",
+                "operator-token");
+        var dataHome = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+        if (string.IsNullOrWhiteSpace(dataHome))
+            dataHome = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
+        return Path.Combine(dataHome, "antiphon", "operator-token");
+    }
+
+    /// <summary>Read the token, creating it with a fresh random value on first use.</summary>
+    public static string ReadOrCreate(string path)
+    {
+        var existing = TryRead(path);
+        if (existing is not null)
+            return existing;
+
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        try
+        {
+            using var stream = CreateOwnerOnly(path);
+            stream.Write(Encoding.ASCII.GetBytes(token));
+            stream.Flush(flushToDisk: true);
+            return token;
+        }
+        catch (IOException) when (File.Exists(path))
+        {
+            // Another caller created it first; theirs is the token.
+            return TryRead(path) ?? throw new InvalidOperationException("The operator token file is empty.");
+        }
+    }
+
+    /// <summary>Constant-time comparison. An empty expectation never matches.</summary>
+    public static bool Matches(string expected, string? provided)
+    {
+        if (string.IsNullOrEmpty(expected) || string.IsNullOrEmpty(provided))
+            return false;
+        var left = SHA256.HashData(Encoding.UTF8.GetBytes(expected));
+        var right = SHA256.HashData(Encoding.UTF8.GetBytes(provided));
+        return CryptographicOperations.FixedTimeEquals(left, right);
+    }
+
+    private static string? TryRead(string path)
+    {
+        if (!File.Exists(path))
+            return null;
+        var text = File.ReadAllText(path).Trim();
+        return text.Length == 0 ? null : text;
+    }
+
+    private static FileStream CreateOwnerOnly(string path)
+    {
+        if (OperatingSystem.IsWindows())
+            return CreateWindowsOwnerOnly(path);
+        return new FileStream(path, new FileStreamOptions
+        {
+            Mode = FileMode.CreateNew,
+            Access = FileAccess.Write,
+            Share = FileShare.None,
+            UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+        });
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static FileStream CreateWindowsOwnerOnly(string path)
+    {
+        using var identity = WindowsIdentity.GetCurrent(TokenAccessLevels.Query);
+        var user = identity.User ?? throw new InvalidOperationException("The current Windows account has no SID.");
+        var security = new FileSecurity();
+        security.SetOwner(user);
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        security.AddAccessRule(new FileSystemAccessRule(user, FileSystemRights.FullControl, AccessControlType.Allow));
+        return new FileInfo(path).Create(
+            FileMode.CreateNew, FileSystemRights.Write | FileSystemRights.ReadData, FileShare.None, 4096,
+            FileOptions.None, security);
+    }
+}

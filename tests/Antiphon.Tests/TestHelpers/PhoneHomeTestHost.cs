@@ -11,6 +11,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Security;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -33,6 +34,10 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
     public string AllowedRunnerId { get; } = "grok-linux";
     public RecordingLocalClient Local { get; } = new();
 
+    /// <summary>CARD-0653: the owner-only operator token file this host's force-release routes read.</summary>
+    public string OperatorTokenPath { get; } =
+        Path.Combine(Path.GetTempPath(), "antiphon-operator-" + Guid.NewGuid().ToString("N"), "operator-token");
+
     /// <summary>When set, the next requests are seen as coming from this address.</summary>
     public IPAddress? ClientAddress { get; set; }
 
@@ -54,6 +59,7 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
             SharedSecret = host.Secret,
             LeaseSeconds = 90,
             TicketTtlSeconds = 30,
+            OperatorTokenPath = host.OperatorTokenPath,
             Limits = limits ?? new PhoneHomeLimits(),
         });
         if (connectionString is not null)
@@ -132,11 +138,28 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         return peer;
     }
 
+    /// <summary>POST as the operator: with the token when <paramref name="token"/> is set.</summary>
+    public async Task<HttpResponseMessage> PostOperatorAsync<T>(string path, T body, string? token)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, path);
+        if (token is not null)
+            request.Headers.TryAddWithoutValidation(OperatorTokenFile.Header, token);
+        request.Content = JsonContent.Create(body, options: new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        return await Http.SendAsync(request);
+    }
+
     public async ValueTask DisposeAsync()
     {
         Http?.Dispose();
         if (App is not null)
             await App.DisposeAsync();
+        try
+        {
+            System.IO.Directory.Delete(Path.GetDirectoryName(OperatorTokenPath)!, recursive: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+        }
     }
 
     private sealed class EmptyScopeFactory : IServiceScopeFactory

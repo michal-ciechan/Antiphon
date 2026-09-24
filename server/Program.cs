@@ -28,6 +28,7 @@ using Antiphon.Server.Infrastructure.GitHub;
 using Antiphon.Server.Infrastructure.IssueTrackers;
 using Antiphon.Server.Infrastructure.Orchestration;
 using Antiphon.Server.Infrastructure.Realtime;
+using Antiphon.Server.Infrastructure.Security;
 using Antiphon.Server.Infrastructure.Supervision;
 using Antiphon.Server.Infrastructure.WorkspaceHooks;
 using Antiphon.Server.Infrastructure.WorkflowDefinitions;
@@ -462,6 +463,7 @@ try
     builder.Services.AddScoped<ZombieCensusJob>();
     builder.Services.AddScoped<WorktreeResidueSweepService>();
     builder.Services.AddScoped<WorktreeResidueJob>();
+    builder.Services.AddScoped<RunnerSlotReconcileJob>();
     builder.Services.AddScoped<IWorkspaceReservationJournal, WorkspaceReservationJournal>();
     builder.Services.AddScoped<IRetirementCommandJournal, RetirementCommandJournal>();
     builder.Services.AddScoped<WorkspaceUseAdmission>();
@@ -866,6 +868,22 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
                 HangfireConfiguration.AddOrUpdateCensusJob(recurringJobManager, census);
             if (residue.Enabled)
                 HangfireConfiguration.AddOrUpdateWorktreeResidueJob(recurringJobManager, residue);
+            // CARD-0653: finish pending slot-release intents at startup and on a schedule.
+            var phoneHome = scope.ServiceProvider.GetRequiredService<IOptions<PhoneHomeRunnerSettings>>().Value;
+            if (phoneHome.Enabled)
+                HangfireConfiguration.AddOrUpdateRunnerSlotReconcileJob(recurringJobManager, phoneHome);
+        }
+
+        // CARD-0653: create the operator token now so scripts/runner-slots.ps1 can read it before
+        // the first force-release. Never logs the value.
+        try
+        {
+            var runnerSettings = scope.ServiceProvider.GetRequiredService<IOptions<PhoneHomeRunnerSettings>>().Value;
+            OperatorTokenFile.ReadOrCreate(OperatorTokenFile.ResolvePath(runnerSettings.OperatorTokenPath));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            Log.Warning(ex, "Operator token file could not be created; force-release will retry on first use");
         }
     }
 
