@@ -36,7 +36,8 @@ public sealed class RunnerSettlementSyncTests
 
         var result = await world.Service().SyncAsync(world.Task, CancellationToken.None);
 
-        result.State.ShouldBe(RemoteSettlementSyncState.Synchronized);
+        // The reason names which rule refused or which step was unavailable when this goes red.
+        result.State.ShouldBe(RemoteSettlementSyncState.Synchronized, "reason=" + result.Reason);
         result.Reason.ShouldBeNull();
         result.FullRef.ShouldBe(world.FullRef);
         result.BaselineSha.ShouldBe(world.Baseline);
