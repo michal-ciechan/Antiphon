@@ -23,18 +23,22 @@ internal sealed class RepositoryChildJournal
         return journal;
     }
 
-    public async Task StartedAsync(Process child, CancellationToken ct)
+    public Task StartedAsync(Process child, CancellationToken ct)
+        => StartedAsync(child.Id, TryStartTicks(child, out var startTicks) ? startTicks : null, ct);
+
+    /// <summary>Records the child, or with no start identity records its already-exited root.</summary>
+    internal async Task StartedAsync(int processId, long? startTicks, CancellationToken ct)
     {
-        if (TryStartTicks(child, out var startTicks))
+        if (startTicks is { } ticks)
         {
-            await StartedAsync(child.Id, startTicks, ct);
+            await StartedAsync(processId, ticks, ct);
             return;
         }
         // CARD-0661: a fast child exited (and on Linux was reaped, taking its /proc start
         // identity with it) before we read it. Its own handle has exited, so record it as
         // completed rather than failing the command. The file still fences admission until
         // Exited removes it after the streams drain, exactly as a started record does.
-        _record = _record with { ProcessId = child.Id, Completed = true };
+        _record = _record with { ProcessId = processId, Completed = true };
         await SaveAsync(ct);
     }
 
@@ -100,6 +104,9 @@ internal sealed class RepositoryChildJournal
             foreach (var path in Directory.EnumerateFiles(directory))
             {
                 // A torn/unacknowledged start or PID save is ambiguous and fences admission too.
+                // So does a Completed record (CARD-0661): its root exited, but a crash before the
+                // streams drained leaves descendants unproven. There is no startup auto-clear; the
+                // explicit script recovers it after descendant inspection, as for a dead root.
                 if (!path.EndsWith(".json", StringComparison.Ordinal)) return true;
                 using var stream = File.OpenRead(path);
                 var record = await JsonSerializer.DeserializeAsync<ChildRecord>(stream, cancellationToken: ct);

@@ -12,6 +12,11 @@ public class LandingGit : ILandingGit
 {
     protected virtual void ConfigureProcess(ProcessStartInfo start) { }
 
+    /// <summary>The started child's start identity, or false once it has exited and the platform
+    /// can no longer report it (CARD-0661). A test seam: Windows always reads it through the handle.</summary>
+    protected virtual bool TryReadStartIdentity(Process child, out long startTicks)
+        => RepositoryChildJournal.TryStartTicks(child, out startTicks);
+
     public virtual async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
         => await ExecuteAsync(repository, arguments, null, ct);
 
@@ -55,11 +60,17 @@ public class LandingGit : ILandingGit
         var error = process.StandardError.ReadToEndAsync();
         try
         {
-            if (journal is not null) await journal.StartedAsync(process, ct);
-            // CARD-0661: a child that already exited has no start identity left to record; the
-            // caller's unknown-identity state is the conservative one and we await its exit below.
-            if (started is not null && RepositoryChildJournal.TryStartTicks(process, out var startTicks))
-                await started(process.Id, startTicks, ct);
+            if (journal is not null || started is not null)
+            {
+                // One identity read serves the journal and the caller, so they cannot disagree.
+                // CARD-0661: a child that already exited may have no start identity left to read;
+                // the journal records its root as completed and the caller's unknown-identity
+                // state is the conservative one. We await its exit below either way.
+                var identified = TryReadStartIdentity(process, out var startTicks);
+                if (!identified && !process.HasExited) throw new InvalidOperationException("owned_child_identity_unavailable");
+                if (journal is not null) await journal.StartedAsync(process.Id, identified ? startTicks : null, ct);
+                if (started is not null && identified) await started(process.Id, startTicks, ct);
+            }
             await process.WaitForExitAsync(budget.Token);
         }
         catch

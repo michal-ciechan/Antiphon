@@ -255,6 +255,66 @@ public sealed class RepositoryMutationLeaseTests
         after.ShouldNotBeNull();
     }
 
+    // CARD-0661 (review c09b17c8 #2). A real mutating Git child exits before RunOwnedAsync reads its
+    // start identity, which the platform can no longer report (Linux after reaping; the seam makes
+    // that deterministic on Windows, which still reads it through the handle). The command succeeds
+    // and the started callback is skipped, so the caller's persisted child state stays unknown:
+    // after a crash here landing recovery refuses with interrupted_process_requires_inspection
+    // rather than trusting a fabricated identity. The owner still clears its own journal on return.
+    [Test]
+    public async Task C661_FastExitingOwnedChildLeavesTheCallersChildStateUnknown()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var git = new IdentityLostGit(Path.Combine(fixture.Root, "home"), fixture.TaskId);
+        // The caller's shape (AgentTaskLandingProtocol.OwnedAsync): persist intent with no identity,
+        // let the callback persist the identity, clear only after the command returns.
+        var op = new Antiphon.Server.Domain.Entities.AgentTaskLanding { TaskId = fixture.TaskId, ChildOperation = "commit" };
+        var saves = new List<(string? Operation, int? ProcessId, long? StartTicks)>();
+        void Save() => saves.Add((op.ChildOperation, op.ChildProcessId, op.ChildProcessStartTicks));
+        Save();
+
+        var result = await git.RunOwnedAsync(fixture.Source, ["commit", "--allow-empty", "-m", "fast exit"],
+            (pid, ticks, _) =>
+            {
+                op.ChildProcessId = pid;
+                op.ChildProcessStartTicks = ticks;
+                Save();
+                return Task.CompletedTask;
+            }, CancellationToken.None);
+
+        result.Succeeded.ShouldBeTrue("a child that exited before its identity was read must not fail the command");
+        git.Reads.ShouldBe(1, "one identity read serves the journal and the caller");
+        git.ExitedAtRead.ShouldBeTrue("the seam only reports a genuinely exited child as unidentifiable");
+        saves.Count.ShouldBe(1, "the started callback is skipped for an unidentifiable child");
+        op.ChildOperation.ShouldBe("commit");
+        op.ChildProcessId.ShouldBeNull("the caller's persisted child state stays unknown, never a fabricated PID");
+        op.ChildProcessStartTicks.ShouldBeNull("the caller's persisted child state stays unknown, never a fabricated identity");
+        (await fixture.RequiredAsync(fixture.Source, "log", "-1", "--format=%s")).Trim().ShouldBe("fast exit");
+
+        var common = await fixture.Git.CommonDirectoryAsync(fixture.Repository, CancellationToken.None);
+        Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children")).ShouldBeEmpty(
+            "the owner acknowledges its completed child once the streams drain");
+        await using var after = await new RepositoryMutationLease(fixture.Git).TryAcquireAsync(fixture.Repository, CancellationToken.None);
+        after.ShouldNotBeNull();
+        await fixture.AssertRemoteSourceAsync();
+    }
+
+    private sealed class IdentityLostGit(string home, Guid taskId) : LandingGitFixture.FixtureGit(home, taskId)
+    {
+        public int Reads { get; private set; }
+        public bool ExitedAtRead { get; private set; }
+
+        protected override bool TryReadStartIdentity(Process child, out long startTicks)
+        {
+            Reads++;
+            child.WaitForExit(); // A genuinely fast-exiting child: stdout is already being drained.
+            ExitedAtRead = child.HasExited;
+            startTicks = 0;
+            return false;
+        }
+    }
+
     [Test]
     public async Task C448_C24_KilledWorkerLeavesLiveGitChildFenced()
     {
