@@ -27,6 +27,16 @@
     recovery; any mismatch is a hard refusal. A tag with no published release
     stays pending, not released. Tags are never deleted or recreated.
 
+    Before it trusts the ledger's prepublication receipt it reads the bound
+    release card back through the Antiphon API (-AntiphonApiUrl, default
+    ANTIPHON_API or http://localhost:17202; GET /api/cards/{id} only): the card
+    must be at exactly the receipt's revision with this run's correlation line
+    in its body. An unavailable readback refuses.
+
+    -SeamsPath is test-only: it is refused unless ANTIPHON_RELEASE_GATE_TEST_MODE
+    is exactly 1, and test mode is refused unless both the Git and GitHub
+    adapters are fakes, so a real publication never runs on an injected clock.
+
     Publishing never restarts AppHost or the runner and never checks out a tag
     in the main worktree.
 
@@ -113,9 +123,9 @@ function Invoke-AntiphonPublishRelease {
         [string]$ExpectedPolicyHash,
         [string[]]$RequiredSuites,
         [string]$SeamsPath,
+        [string]$AntiphonApiUrl,
         [switch]$WhatIf
     )
-    Import-ReleaseGateSeams -SeamsPath $SeamsPath
     $result = [ordered]@{
         ExitCode = 1
         Refusal = ''
@@ -128,6 +138,15 @@ function Invoke-AntiphonPublishRelease {
         Resumed = $false
         ManifestDigest = ''
     }
+    # Review bf928242: seams (fake remote, injected clock) only in explicit test
+    # mode, and never alongside a real remote. Refused before anything is read.
+    $admission = Import-ReleaseGatePublisherSeams -SeamsPath $SeamsPath
+    if (-not [string]::IsNullOrEmpty($admission)) {
+        Write-PublishLine ('REFUSED: seam admission ({0}).' -f $admission)
+        $result.Refusal = $admission; $result.ExitCode = 3; return [pscustomobject]$result
+    }
+    if ([string]::IsNullOrWhiteSpace($AntiphonApiUrl)) { $AntiphonApiUrl = [string]$env:ANTIPHON_API }
+    if ([string]::IsNullOrWhiteSpace($AntiphonApiUrl)) { $AntiphonApiUrl = 'http://localhost:17202' }
     if ([string]::IsNullOrWhiteSpace($CandidateId)) {
         Write-PublishLine 'REFUSED: -CandidateId is required.'
         $result.Refusal = 'missing-candidate'; $result.ExitCode = 3; return [pscustomobject]$result
@@ -158,9 +177,10 @@ function Invoke-AntiphonPublishRelease {
     # D-15: the authority is re-verified on every attempt, recovery included. It
     # never reads summary.json; the pinned blob and the ledger are the only inputs.
     # Repository is the publication destination (it must equal the frozen value and
-    # the checkout's origin); evidence may not post-date the publisher's clock.
+    # the checkout's origin); evidence may not post-date the publisher's clock; the
+    # receipt must match the release card as the Antiphon API serves it now.
     $authority = Test-ReleaseGateAuthority -CandidateRoot $paths.Root -RepositoryRoot $CheckoutRoot -Green $green -Candidate $candidate `
-        -Repository $Repository -NowUtc (Get-ReleaseGateUtcNow)
+        -Repository $Repository -NowUtc (Get-ReleaseGateUtcNow) -CardApiBaseUrl $AntiphonApiUrl
     $gate = Test-ReleaseGatePublicationGate -Green $green -Candidate $candidate -RemoteSha $remoteSha `
         -Authority $authority -ExpectedPolicyHash $ExpectedPolicyHash -RequiredSuites $RequiredSuites
     if (-not $gate.Ok) {
@@ -386,7 +406,7 @@ function Invoke-AntiphonPublishRelease {
 
 $invokeResult = Invoke-AntiphonPublishRelease -ReleaseRoot $ReleaseRoot -CandidateId $CandidateId `
     -CheckoutRoot $CheckoutRoot -Repository $Repository -ExpectedPolicyHash $ExpectedPolicyHash `
-    -RequiredSuites $RequiredSuites -SeamsPath $SeamsPath -WhatIf:$WhatIf
+    -RequiredSuites $RequiredSuites -SeamsPath $SeamsPath -AntiphonApiUrl $AntiphonApiUrl -WhatIf:$WhatIf
 if ($PassThru) { return $invokeResult }
 Write-Host (ConvertTo-Json -InputObject ([ordered]@{
     candidateId = [string]$invokeResult.CandidateId

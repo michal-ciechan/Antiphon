@@ -626,6 +626,42 @@ function Test-ReleaseGatePublicationGate {
 # so the contract tests drive the real production code paths. Nothing below
 # replaces a predicate or a gate: a seam may only answer for the remote or the
 # time, never decide whether to publish.
+#
+# Review bf928242: the publisher admits seams only in explicit test mode
+# (ANTIPHON_RELEASE_GATE_TEST_MODE exactly '1'), and refuses test mode whenever a
+# real remote would be reached. A real publication therefore never runs on an
+# injected clock, and the clock seam itself refuses outside test mode.
+
+$script:ReleaseGateTestModeVariable = 'ANTIPHON_RELEASE_GATE_TEST_MODE'
+
+function Test-ReleaseGateTestMode {
+    # Explicit opt-in only: the exact value '1'. Unset or anything else is production.
+    return ([string][Environment]::GetEnvironmentVariable($script:ReleaseGateTestModeVariable) -ceq '1')
+}
+
+function Import-ReleaseGatePublisherSeams {
+    <#
+      The publisher's seam admission. Outside test mode a seams file is refused
+      before it is loaded ('seams-outside-test-mode'). In test mode both the Git and
+      the GitHub adapters must be fakes; no seams file, or one without either adapter,
+      would reach a real remote and is refused ('test-mode-real-remote'). Returns ''
+      when admitted; a refusal leaves no seam loaded.
+    #>
+    param([string]$SeamsPath)
+    $script:ReleaseGateSeams = $null
+    $testMode = Test-ReleaseGateTestMode
+    $hasSeams = -not [string]::IsNullOrWhiteSpace($SeamsPath)
+    if (-not $testMode) {
+        if ($hasSeams) { return 'seams-outside-test-mode' }
+        return ''
+    }
+    if ($hasSeams) { Import-ReleaseGateSeams -SeamsPath $SeamsPath }
+    if (-not ($script:ReleaseGateSeams -and $script:ReleaseGateSeams.Git -and $script:ReleaseGateSeams.GitHub)) {
+        $script:ReleaseGateSeams = $null
+        return 'test-mode-real-remote'
+    }
+    return ''
+}
 
 function Import-ReleaseGateSeams {
     param([string]$SeamsPath)
@@ -637,9 +673,11 @@ function Import-ReleaseGateSeams {
 }
 
 function Get-ReleaseGateUtcNow {
-    # D-15: the clock evidence timestamps are bounded by. Tests inject it; production
-    # reads the nightly clock (wall clock unless a nightly seam answers).
+    # D-15: the clock evidence timestamps are bounded by. Tests inject it, in test
+    # mode only; production reads the nightly clock (wall clock unless a nightly seam
+    # answers). A clock seam outside test mode is refused, never silently used.
     if ($script:ReleaseGateSeams -and $script:ReleaseGateSeams.UtcNow) {
+        if (-not (Test-ReleaseGateTestMode)) { throw 'release-gate clock seam refused outside test mode' }
         $value = @($script:ReleaseGateSeams.UtcNow.Invoke())
         if ($value.Count -gt 0 -and $value[0] -is [datetime]) { return ([datetime]$value[0]).ToUniversalTime() }
         throw 'release-gate clock seam returned no instant'

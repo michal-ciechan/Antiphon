@@ -12,7 +12,9 @@
 #   discovery.json         full discovery roster per native suite (incl. excluded rows)
 #   execution-plan.json    frozen chunk manifest (native) and declared entry rosters
 #   ledger.json            execution records: prerequisites, chunks, rosters and the
-#                          typed prepublication receipt (the release card's readback)
+#                          typed prepublication receipt (the release card's readback),
+#                          which the publisher re-reads from the card itself through
+#                          the Antiphon API (GET /api/cards/{id}) before it trusts it
 #   publication-authority.json  digest over all of the above, written by the publisher
 #
 # Every git read here is a real git child with a bounded wait: the policy blob is
@@ -38,6 +40,11 @@ $script:ReleaseAuthorityGitTimeoutMs = 30000
 $script:ReleaseAuthorityClockSkewSeconds = 120
 $script:ReleaseAuthorityReceiptKind = 'prepublication'
 $script:ReleaseAuthorityRecipientKind = 'release-card'
+# D-14 readback: the release card body carries exactly one line
+#   release-correlation: intentId=<id> candidateId=<id> sha=<full sha> runId=<id>
+# (the B5 report projection writes it). The GET has a bounded wait.
+$script:ReleaseAuthorityCorrelationPrefix = 'release-correlation:'
+$script:ReleaseAuthorityCardReadTimeoutSeconds = 15
 $script:ReleaseAuthorityRepositoryPattern = '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
 $script:ReleaseAuthorityScripts = @(
     'publish-release.ps1',
@@ -408,6 +415,73 @@ function Resolve-ReleaseAuthorityEvidencePath {
     return $full
 }
 
+function Read-ReleaseGateReleaseCard {
+    <#
+      D-14 readback (review bf928242): the release card as the Antiphon API serves it,
+      read-only - one GET /api/cards/{id}, no proxy, no redirect, bounded wait. Only a
+      200 answer whose body is one JSON object is a readback; a transport failure, any
+      other status, an empty, non-JSON or array body is unavailable (Ok = $false), and
+      the caller refuses. Nothing falls back to the ledger's own copy of the receipt.
+    #>
+    param([string]$BaseUrl, [string]$CardId)
+    $unavailable = [pscustomobject]@{ Ok = $false; Card = $null }
+    if ([string]::IsNullOrWhiteSpace($BaseUrl) -or -not (Test-ReleaseAuthorityGuid -Value $CardId)) { return $unavailable }
+    $uri = $null
+    if (-not [Uri]::TryCreate(($BaseUrl.TrimEnd('/') + '/api/cards/' + $CardId), [UriKind]::Absolute, [ref]$uri)) { return $unavailable }
+    if ($uri.Scheme -cne 'http' -and $uri.Scheme -cne 'https') { return $unavailable }
+    $handler = $null
+    $client = $null
+    $response = $null
+    try {
+        $handler = [System.Net.Http.HttpClientHandler]::new()
+        $handler.UseProxy = $false
+        $handler.AllowAutoRedirect = $false
+        $client = [System.Net.Http.HttpClient]::new($handler)
+        $client.Timeout = [TimeSpan]::FromSeconds($script:ReleaseAuthorityCardReadTimeoutSeconds)
+        $response = $client.GetAsync($uri).GetAwaiter().GetResult()
+        if ([int]$response.StatusCode -ne 200) { return $unavailable }
+        $text = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        $card = ConvertFrom-Json -InputObject $text -NoEnumerate -ErrorAction Stop
+        if (-not (Test-ReleaseAuthorityObject -Value $card)) { return $unavailable }
+        return [pscustomobject]@{ Ok = $true; Card = $card }
+    } catch {
+        return $unavailable
+    } finally {
+        if ($null -ne $response) { $response.Dispose() }
+        if ($null -ne $client) { $client.Dispose() }
+        if ($null -ne $handler) { $handler.Dispose() }
+    }
+}
+
+function Test-ReleaseAuthorityCardCorrelation {
+    <#
+      The release card body carries exactly one correlation line naming exactly these
+      identities: no key missing, repeated, renamed (keys are case-sensitive) or added,
+      no second correlation line, and every value equal to a non-empty expectation.
+    #>
+    param($Description, [System.Collections.IDictionary]$Expected)
+    if ($Description -isnot [string]) { return $false }
+    $prefix = $script:ReleaseAuthorityCorrelationPrefix
+    $lines = @(([string]$Description -split "`n") | ForEach-Object { $_.TrimEnd("`r") } |
+        Where-Object { $_.StartsWith($prefix, [StringComparison]::Ordinal) })
+    if ($lines.Count -ne 1) { return $false }
+    $seen = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::Ordinal)
+    foreach ($token in @($lines[0].Substring($prefix.Length).Trim() -split ' +')) {
+        $i = $token.IndexOf('=')
+        if ($i -le 0) { return $false }
+        $key = $token.Substring(0, $i)
+        if ($seen.ContainsKey($key)) { return $false }
+        $seen[$key] = $token.Substring($i + 1)
+    }
+    if ($seen.Count -ne $Expected.Count) { return $false }
+    foreach ($key in @($Expected.Keys)) {
+        $want = [string]$Expected[$key]
+        if ([string]::IsNullOrEmpty($want) -or -not $seen.ContainsKey([string]$key)) { return $false }
+        if (-not [string]::Equals($seen[[string]$key], $want, [StringComparison]::Ordinal)) { return $false }
+    }
+    return $true
+}
+
 function Read-ReleaseAuthorityJson {
     param([string]$Path)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
@@ -527,9 +601,11 @@ function Test-ReleaseGateExecutionLedger {
       failed, skipped, missing, unknown, duplicate or stale row. No instant may be
       later than NowUtc (the publisher's injectable clock) plus a small skew, and
       the D-14 prepublication receipt must be typed, addressed to the release card
-      bound to the authority, and correlated to this run.
+      bound to the authority, and correlated to this run - and the card itself, read
+      back through the Antiphon API at CardApiBaseUrl, must be at exactly the
+      receipt's revision with this run's correlation in its body.
     #>
-    param([string]$CandidateRoot, $Pinned, $Green, [datetime]$NowUtc = [datetime]::MinValue)
+    param([string]$CandidateRoot, $Pinned, $Green, [datetime]$NowUtc = [datetime]::MinValue, [string]$CardApiBaseUrl = '')
     $reasons = New-Object System.Collections.Generic.List[string]
     $dir = Get-ReleaseAuthorityDir -CandidateRoot $CandidateRoot
     $authority = $Pinned.Authority
@@ -619,6 +695,24 @@ function Test-ReleaseGateExecutionLedger {
         $acceptedAt = Test-ReleaseAuthorityInstant -Value $receipt.acceptedAt
         if ($null -eq $acceptedAt -or $null -eq $runEnd -or $acceptedAt -lt $runEnd) { $reasons.Add('receipt-timestamps') }
         if (Test-Future $acceptedAt) { $reasons.Add('evidence-future:receipt') }
+
+        # Review bf928242: a receipt is only as good as the card it names. Read the
+        # card bound to the authority back (read-only) and require it to be at exactly
+        # the receipt's revision - a card that moved on, or a receipt naming any other
+        # positive revision, refuses - with this run's correlation in its body. An
+        # unavailable readback refuses: publication fails closed.
+        $boundCard = Get-ReleaseAuthorityText -Value $authority.releaseCardId
+        $readback = Read-ReleaseGateReleaseCard -BaseUrl $CardApiBaseUrl -CardId $boundCard
+        if (-not $readback.Ok) { $reasons.Add('release-card-readback-unavailable') }
+        else {
+            $card = $readback.Card
+            if (-not ((Test-ReleaseAuthorityGuid -Value $card.id) -and ([guid]$card.id -eq [guid]$boundCard))) { $reasons.Add('release-card-readback-identity') }
+            $sameRevision = (Test-ReleaseAuthorityObject -Value $recipient) -and (Test-ReleaseAuthorityInteger -Value $recipient.revision) -and
+                (Test-ReleaseAuthorityInteger -Value $card.revisionCount) -and ([long]$card.revisionCount -eq [long]$recipient.revision)
+            if (-not $sameRevision) { $reasons.Add('release-card-readback-revision') }
+            $expected = [ordered]@{ intentId = $intent; candidateId = $candidateId; sha = $sha; runId = $runId }
+            if (-not (Test-ReleaseAuthorityCardCorrelation -Description $card.description -Expected $expected)) { $reasons.Add('release-card-readback-correlation') }
+        }
     }
 
     # Prerequisites: every declared build/prerequisite row succeeded.
@@ -783,7 +877,8 @@ function New-ReleaseGatePublicationAuthority {
 function Test-ReleaseGateAuthority {
     <#
       Single entry point for the publisher: pinned policy + ledger. Repository is the
-      publication destination; NowUtc is the publisher's clock (Get-ReleaseGateUtcNow).
+      publication destination; NowUtc is the publisher's clock (Get-ReleaseGateUtcNow);
+      CardApiBaseUrl is the Antiphon API the bound release card is read back from.
       Returns Ok, Reasons, the pinned required suites and the validated suite rows.
     #>
     param([string]$CandidateRoot, [string]$RepositoryRoot, $Green, $Candidate, [string]$Repository = '', [datetime]$NowUtc = [datetime]::MinValue, [string]$CardApiBaseUrl = '')
@@ -797,7 +892,7 @@ function Test-ReleaseGateAuthority {
     if ($null -eq $pinned.Policy) {
         return [pscustomobject]@{ Ok = $false; Reasons = $reasons; Pinned = $pinned; Suites = @() }
     }
-    $ledger = Test-ReleaseGateExecutionLedger -CandidateRoot $CandidateRoot -Pinned $pinned -Green $Green -NowUtc $NowUtc
+    $ledger = Test-ReleaseGateExecutionLedger -CandidateRoot $CandidateRoot -Pinned $pinned -Green $Green -NowUtc $NowUtc -CardApiBaseUrl $CardApiBaseUrl
     $reasons += @($ledger.Reasons)
     return [pscustomobject]@{ Ok = ($reasons.Count -eq 0); Reasons = $reasons; Pinned = $pinned; Suites = @($ledger.Suites) }
 }
