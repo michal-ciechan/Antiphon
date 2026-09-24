@@ -612,6 +612,82 @@ public sealed class ExpectationDirectDeliveryTests
         adapter.KillCount.ShouldBe(0);
     }
 
+    [Test]
+    public async Task C650_Ghost_empty_composer_on_one_snapshot_keeps_holding_while_the_next_shows_the_body()
+    {
+        // Review 97ea55ef: a stale ghost frame at the bottom of the screen (the body's tail, then an
+        // empty box with the hint bar under it) reads as a live, empty composer on its own. The body
+        // is still in the real composer, which the next snapshot shows. One empty snapshot is not
+        // evidence (CARD-0299): only two snapshots PostEvidenceSettleMs apart that both read empty
+        // release the hold.
+        await using var f = await ExpectationDeliveryFixture.CreateAsync();
+        var adapter = f.Harness.Adapter;
+        adapter.SwallowSubmits = 99;
+        var id = Guid.NewGuid();
+        string[] lines =
+        [
+            $"Expectation nudge {id:D}: the queue is held past its age limit",
+            .. Enumerable.Range(1, 4).Select(i => $"subject {i:D2}: task held 42m with no dispatch and no report"),
+            $"Reply with a line {ExpectationPromptFormatter.AckMarker(id)}",
+        ];
+        var nudge = await f.NudgeAsync(body: string.Join("\n", lines));
+        (await f.DeliverAsync(nudge.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Unconfirmed);
+        adapter.SubmittedBodies.ShouldBeEmpty("sanity: every Enter was swallowed, so the body never left the composer");
+        await f.Harness.Queue.EnqueueAsync(f.SessionId, "land note for CARD-0641", MessageSendMode.WhenIdle, CancellationToken.None);
+        // From here the rendered screen is each frame exactly; the fake draws no composer of its own.
+        adapter.PrimeComposer(string.Empty);
+        var writes = adapter.Inputs.Count;
+
+        const string bypass = "  ⏵⏵ bypass permissions on (shift+tab to cycle)";
+        var live = ClaudeFrame(120,
+            ["● Checking the queue."], [lines[0], $"[Pasted text #1 +{lines.Length - 1} lines]"], [bypass]);
+        Antiphon.Agents.Pty.ClaudeScreen.TryReadComposer(live, out var standing).ShouldBeTrue();
+        Antiphon.Agents.Pty.ClaudeScreen.ComposerContentIsEmpty(standing)
+            .ShouldBeFalse("sanity: the live frame shows the body in the composer");
+
+        (string Name, string Screen)[] ghosts =
+        [
+            ("ghost idle suggestion", Lines(
+                "  " + lines[^2], "  " + lines[^1], Rule(120), "❯ Try \"how does <filepath> work?\"", Rule(120), bypass)),
+            ("ghost bare prompt", Lines(
+                "  " + lines[^2], "  " + lines[^1], Rule(120), "❯ ", Rule(120), bypass)),
+        ];
+        foreach (var (name, ghost) in ghosts)
+        {
+            Antiphon.Agents.Pty.ClaudeScreen.TryReadComposer(ghost, out var read)
+                .ShouldBeTrue($"sanity: {name} reads as a composer on its own");
+            Antiphon.Agents.Pty.ClaudeScreen.ComposerContentIsEmpty(read)
+                .ShouldBeTrue($"sanity: {name} reads as an empty composer on its own");
+
+            Frames(adapter, ghost, live);
+            await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
+            adapter.Inputs.Count.ShouldBe(writes, $"{name}: one empty snapshot does not release the hold");
+
+            Frames(adapter, ghost, live);
+            var refused = await Should.ThrowAsync<ConflictException>(() => f.Harness.Queue.EnqueueAsync(
+                f.SessionId, "operator send now", MessageSendMode.Now, CancellationToken.None));
+            refused.Code.ShouldBe("expectation_prompt_unconfirmed", name);
+            adapter.Inputs.Count.ShouldBe(writes, $"{name}: nothing is typed on top of the body");
+        }
+        (await f.ReloadAsync(nudge.Id)).AttemptState.ShouldBe(ExpectationAttemptState.Unconfirmed);
+
+        // Control: a readable composer that is empty on both snapshots is the proof. The held note goes out once.
+        adapter.SwallowSubmits = 0;
+        var empty = ClaudeFrame(120, ["● The queue is moving again."], composer: [], hints: [bypass]);
+        Frames(adapter, empty, empty);
+        await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
+        adapter.SubmittedBodies.ShouldBe(["land note for CARD-0641"]);
+        adapter.KillCount.ShouldBe(0);
+    }
+
+    /// <summary>Serve <paramref name="frames"/> one per rendered snapshot; the last one stays.</summary>
+    private static void Frames(Antiphon.Tests.Agents.FakeAgentProtocolAdapter adapter, params string[] frames)
+    {
+        adapter.RenderedScreenFrames.Clear();
+        foreach (var frame in frames)
+            adapter.RenderedScreenFrames.Enqueue(frame);
+    }
+
     /// <summary>
     /// Claude screens, shaped like real layouts, on which the standing body's composer cannot be read
     /// as empty. <c>HeadHidden</c> marks the ones where the body's head is not visible whole, which is
