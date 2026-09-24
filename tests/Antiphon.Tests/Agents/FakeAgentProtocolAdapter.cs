@@ -52,6 +52,15 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     private readonly StringBuilder _composer = new();
 
     /// <summary>
+    /// CARD-0650 S4 repair 3: render the composer the way current Claude does, between two
+    /// full-width rules above the hint bar, instead of as a bare <c>"> "</c> row appended to the
+    /// output. Everything emitted, echoes of submitted prompts included, stays above the box.
+    /// </summary>
+    public bool ClaudeComposerChrome { get; set; }
+    public static readonly string ClaudeRule = new('─', 60);
+    public const string ClaudeHintBar = "  ⏵⏵ bypass permissions on (shift+tab to cycle)";
+
+    /// <summary>
     /// CARD-0137: an open overlay discards typed bytes (the composer is deaf) until Esc
     /// (<c>\u001b</c>) closes it. <see cref="SnapshotRenderedScreen"/> shows
     /// <see cref="OverlayScreen"/> while open so S6's fragment detector can match.
@@ -484,13 +493,20 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
             return RemoteControlMenuScreenText;
 
         var screen = RenderedScreenOverride ?? _rawOutput.ToString();
+        var composer = _composer.ToString();
         if (_emptyComposerSnapshotsRemaining > 0)
         {
             _emptyComposerSnapshotsRemaining--;
-            return screen;
+            composer = string.Empty;
         }
 
-        return _composer.Length > 0 ? screen + "\n> " + _composer : screen;
+        if (ClaudeComposerChrome)
+        {
+            return screen + "\n" + ClaudeRule + "\n❯ " + composer.ReplaceLineEndings("\n  ")
+                + "\n" + ClaudeRule + "\n" + ClaudeHintBar;
+        }
+
+        return composer.Length > 0 ? screen + "\n> " + composer : screen;
     }
 
     public void Emit(string text)

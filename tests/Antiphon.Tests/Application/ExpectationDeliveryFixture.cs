@@ -86,7 +86,8 @@ internal sealed class ExpectationDeliveryFixture : IAsyncDisposable
         ExpectationAttemptState state = ExpectationAttemptState.None,
         Guid? destination = null,
         DateTime? generation = null,
-        long? baseline = null)
+        long? baseline = null,
+        Guid? checkTaskId = null)
     {
         var id = Guid.NewGuid();
         var text = body ?? $"Expectation nudge {id:D}: 3 queued tasks held. Reply {ExpectationPromptFormatter.AckMarker(id)}";
@@ -115,10 +116,27 @@ internal sealed class ExpectationDeliveryFixture : IAsyncDisposable
             CreatedAt = now,
         };
         await using var db = Db();
+        if (checkTaskId is { } taskId)
+        {
+            // The nudge's Check note on its subject task, as the ledger commits it.
+            var check = ExpectationTestWorld.Event(taskId, AgentTaskEventType.Check, now, $"[expectation-nudge:{id:D}] StalledPipeline");
+            db.AgentTaskEvents.Add(check);
+            nudge.CheckEventIdsJson = System.Text.Json.JsonSerializer.Serialize(new[] { check.Id });
+        }
         db.CardComments.Add(comment);
         db.ExpectationNudges.Add(nudge);
         await db.SaveChangesAsync();
         return nudge;
+    }
+
+    /// <summary>A dispatched task on the audit card, to carry a nudge's Check note.</summary>
+    public async Task<Guid> SubjectTaskAsync()
+    {
+        var id = Guid.NewGuid();
+        await using var db = Db();
+        db.AgentTasks.Add(World.Task(id, AgentTaskStatus.Dispatched, DateTime.UtcNow.AddMinutes(-30)));
+        await db.SaveChangesAsync();
+        return id;
     }
 
     public async Task<ExpectationNudge> ReloadAsync(Guid nudgeId)
