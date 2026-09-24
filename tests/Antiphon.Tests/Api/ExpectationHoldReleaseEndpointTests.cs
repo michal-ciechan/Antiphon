@@ -65,7 +65,7 @@ public sealed class ExpectationHoldReleaseEndpointTests
         var comment = (await ReleasedCommentsAsync(f)).ShouldHaveSingleItem();
         comment.Body.ShouldContain("Released by admin (operator token)", Case.Sensitive);
         comment.Body.ShouldNotContain(host.Token, Case.Sensitive, "the credential is never recorded");
-        comment.Author.ShouldBe("operator:admin");
+        comment.Author.ShouldBe("operator:admin (operator token)");
         await using (var db = f.Db())
         {
             (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task && e.Type == AgentTaskEventType.Check

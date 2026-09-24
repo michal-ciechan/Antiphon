@@ -47,7 +47,9 @@ public interface IExpectationPromptSender
     /// Types <paramref name="body"/> only when <paramref name="sessionId"/> is still the owner's
     /// current session at <paramref name="expectedGeneration"/>. <paramref name="commitAttempt"/>
     /// runs under the session lock after every preflight and before any byte; false means another
-    /// claimant won and nothing is typed.
+    /// claimant won and nothing is typed. <paramref name="recordOutcome"/>, when given, runs under the
+    /// same lock once a committed attempt has its result, so nothing else that takes the lock (an
+    /// operator's hold release) can see the attempt still Attempting while its outcome is known.
     /// </summary>
     Task<ExpectationSendResult> SendAsync(
         Guid sessionId,
@@ -55,5 +57,6 @@ public interface IExpectationPromptSender
         Guid ownerAgentId,
         string body,
         Func<ExpectationSendAttempt, CancellationToken, Task<bool>> commitAttempt,
-        CancellationToken ct);
+        CancellationToken ct,
+        Func<ExpectationSendResult, CancellationToken, Task>? recordOutcome = null);
 }

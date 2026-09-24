@@ -508,15 +508,26 @@ Unconfirmed in the current generation, with no submitted-prompt record past its 
 ordinary input path to that session: WhenIdle flush, Now, SendNow, the local-command poll and a
 second nudge. The hold is released only by evidence, never by time: a submitted-prompt record, an
 empty composer, a new generation, or an operator release. For Claude the composer is read from its
-bottom box (the rows between the last two rules above the hint bar, `ClaudeScreen.TryReadComposer`):
-an empty box (or only the idle `Try "..."` hint) releases, anything in it holds, and an echo in the
-conversation above it counts for nothing. Kinds with no readable composer, and Claude frames
-without that box, keep the whole-screen rule: the body's head visible whole anywhere holds. There a
-submitted prompt whose record never arrives holds until the operator uses
-`POST /api/sessions/{id}/expectation-hold/release` with `{ "reason": "..." }` (reason required).
-The release marks the attempts Released, writes an `[expectation-hold-released:<nudge>]` comment on
-the nudge's audit card and a Check note on its subject tasks, keeps the operator page due, and types
-nothing. The hold's own Check note, audit comment and every 409 `expectation_prompt_unconfirmed`
-refusal name that route. Pinned by ExpectationDirectDeliveryTests (C650_Submitted_echo_above_a_readable_composer_does_not_hold,
+bottom box (`ClaudeScreen.TryReadComposer`): the rows between the last two rules, both the same
+width, the first carrying the prompt glyph, with one to three rows under the lower rule that are all
+Claude's hint bar (permission mode, shortcuts, auto-compact, effort, usage). An empty box (or only
+the idle `Try "..."` hint) releases, anything in it holds, and an echo in the conversation above it
+counts for nothing. A Claude frame whose box cannot be read (a composer taller than the screen
+showing only its tail, a narrow pane whose hint bar wraps, a scrolled view, a permission dialog, a
+ghost frame mid-redraw) holds: the body's head being off screen is not evidence that it left
+(review 8adb4cd6). Only kinds with no readable composer keep the whole-screen rule: the body's head
+visible whole anywhere holds. A submitted prompt whose record never arrives holds until the operator
+uses `POST /api/sessions/{id}/expectation-hold/release` with `{ "reason": "..." }` (reason
+required). The route is an operator surface: it needs the CARD-0658 `X-Antiphon-Operator-Token`
+(403 `operator_token_required` otherwise, whatever the client address), and the audit names the
+operator it authenticated. The release marks the attempts Released, writes an
+`[expectation-hold-released:<nudge>]` comment on the nudge's audit card and a Check note on its
+subject tasks, keeps the operator page due, and types nothing. It takes the session lock, and a
+watchdog send records its outcome before letting go of that lock, so a release never marks a send
+in flight Released. The hold's own Check note, audit comment and every 409
+`expectation_prompt_unconfirmed` refusal name that route. Pinned by ExpectationDirectDeliveryTests
+(C650_Submitted_echo_above_a_readable_composer_does_not_hold,
 C650_Swallowed_enter_keeps_holding_while_the_composer_shows_the_body,
-C650_Operator_release_clears_a_whole_screen_hold_with_an_audit_and_no_input).
+C650_Operator_release_clears_a_whole_screen_hold_with_an_audit_and_no_input,
+C650_Unreadable_Claude_composer_keeps_holding_until_it_is_proved_empty) and
+ExpectationHoldReleaseEndpointTests.

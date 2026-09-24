@@ -26,6 +26,8 @@ public sealed partial class SessionMessageQueueService
     /// through <paramref name="commitAttempt"/>, then reuses <see cref="DeliverAsync"/> with its
     /// overlay arms off. It never tests IsWorking, never creates a queue row, and never calls
     /// delivery-failure, truncation or forbidden-body recovery: every outcome is returned typed.
+    /// A committed attempt's outcome goes to <paramref name="recordOutcome"/> before the lock is let
+    /// go (review 8adb4cd6: a release waiting on the lock must not find a finished send Attempting).
     /// </summary>
     internal async Task<ExpectationSendResult> SendExpectationNowAsync(
         Guid sessionId,
@@ -33,7 +35,8 @@ public sealed partial class SessionMessageQueueService
         Guid ownerAgentId,
         string body,
         Func<ExpectationSendAttempt, CancellationToken, Task<bool>> commitAttempt,
-        CancellationToken ct)
+        CancellationToken ct,
+        Func<ExpectationSendResult, CancellationToken, Task>? recordOutcome = null)
     {
         var trimmed = (body ?? string.Empty).Trim();
         if (trimmed.Length == 0)
@@ -110,10 +113,11 @@ public sealed partial class SessionMessageQueueService
             if (!await commitAttempt(attempt, ct))
                 return ExpectationSendResult.Refuse("attempt_claim_lost");
 
-            DeliveryOutcome outcome;
+            ExpectationSendResult result;
             try
             {
-                outcome = await DeliverAsync(sessionId, trimmed, ct, baseline, ceilings, overlayRecovery: false);
+                var outcome = await DeliverAsync(sessionId, trimmed, ct, baseline, ceilings, overlayRecovery: false);
+                result = ResultOf(outcome, baseline);
             }
             catch (Exception ex)
             {
@@ -121,42 +125,51 @@ public sealed partial class SessionMessageQueueService
                 _logger.LogWarning(ex,
                     "Expectation prompt to session {SessionId} ended with {Error}; recorded Uncertain with no recovery",
                     sessionId, ex.GetType().Name);
-                return new ExpectationSendResult(
+                result = new ExpectationSendResult(
                     ExpectationSendOutcome.Uncertain,
                     ex is OperationCanceledException ? "cancelled" : "transport_failure:" + ex.GetType().Name,
                     AttemptCommitted: true);
             }
 
-            // The hold follows the evidence each verdict carries. Submitted (no hold) needs a
-            // submitted-prompt record carrying the body: whole past no floor, or Truncated. Its echo
-            // stays in the conversation, where the screen hold cannot tell it from a standing body
-            // (review D1). NoSubmitOutput, NoTranscriptRecord and a screen-only verdict are not
-            // evidence the body left the composer: a swallowed Enter redraws too, and a working
-            // caller already shows Working (review R1). Those hold until a record shows the prompt,
-            // the body is gone from the screen, or the generation changes, and they page the operator.
-            return outcome.Verdict switch
-            {
-                DeliveryVerdict.Delivered when outcome.ConfirmedBy == DeliveryConfirmedBy.Transcript && baseline.Observable =>
-                    new ExpectationSendResult(ExpectationSendOutcome.Confirmed, "transcript", true, UtcNow()),
-                DeliveryVerdict.Delivered when outcome.ConfirmedBy == DeliveryConfirmedBy.Transcript =>
-                    new ExpectationSendResult(ExpectationSendOutcome.Unconfirmed, "no_observable_baseline", true, Submitted: true),
-                DeliveryVerdict.Delivered =>
-                    new ExpectationSendResult(ExpectationSendOutcome.Unconfirmed, "screen_only_submit", true),
-                DeliveryVerdict.Truncated =>
-                    new ExpectationSendResult(ExpectationSendOutcome.Unconfirmed, Describe(outcome.Verdict), true, Submitted: true),
-                DeliveryVerdict.NoTranscriptRecord or DeliveryVerdict.NoSubmitOutput =>
-                    new ExpectationSendResult(ExpectationSendOutcome.Unconfirmed, Describe(outcome.Verdict), true),
-                DeliveryVerdict.ModalBlocked or DeliveryVerdict.ForbiddenBody or DeliveryVerdict.SpillBodyMissing =>
-                    new ExpectationSendResult(ExpectationSendOutcome.Refused, Describe(outcome.Verdict), true),
-                DeliveryVerdict.BackendUnreachable =>
-                    new ExpectationSendResult(ExpectationSendOutcome.Uncertain, Describe(outcome.Verdict), true),
-                _ => new ExpectationSendResult(ExpectationSendOutcome.Unconfirmed, Describe(outcome.Verdict), true),
-            };
+            // The outcome write must not be lost to the send's own cancellation.
+            if (recordOutcome is not null)
+                await recordOutcome(result, CancellationToken.None);
+            return result;
         }
         finally
         {
             sessionLock.Release();
         }
+    }
+
+    /// <summary>The typed result of a delivery that ran after the attempt was committed.</summary>
+    private ExpectationSendResult ResultOf(DeliveryOutcome outcome, TranscriptBaseline baseline)
+    {
+        // The hold follows the evidence each verdict carries. Submitted (no hold) needs a
+        // submitted-prompt record carrying the body: whole past no floor, or Truncated. Its echo
+        // stays in the conversation, where the screen hold cannot tell it from a standing body
+        // (review D1). NoSubmitOutput, NoTranscriptRecord and a screen-only verdict are not
+        // evidence the body left the composer: a swallowed Enter redraws too, and a working
+        // caller already shows Working (review R1). Those hold until a record shows the prompt,
+        // the body is gone from the screen, or the generation changes, and they page the operator.
+        return outcome.Verdict switch
+        {
+            DeliveryVerdict.Delivered when outcome.ConfirmedBy == DeliveryConfirmedBy.Transcript && baseline.Observable =>
+                new ExpectationSendResult(ExpectationSendOutcome.Confirmed, "transcript", true, UtcNow()),
+            DeliveryVerdict.Delivered when outcome.ConfirmedBy == DeliveryConfirmedBy.Transcript =>
+                new ExpectationSendResult(ExpectationSendOutcome.Unconfirmed, "no_observable_baseline", true, Submitted: true),
+            DeliveryVerdict.Delivered =>
+                new ExpectationSendResult(ExpectationSendOutcome.Unconfirmed, "screen_only_submit", true),
+            DeliveryVerdict.Truncated =>
+                new ExpectationSendResult(ExpectationSendOutcome.Unconfirmed, Describe(outcome.Verdict), true, Submitted: true),
+            DeliveryVerdict.NoTranscriptRecord or DeliveryVerdict.NoSubmitOutput =>
+                new ExpectationSendResult(ExpectationSendOutcome.Unconfirmed, Describe(outcome.Verdict), true),
+            DeliveryVerdict.ModalBlocked or DeliveryVerdict.ForbiddenBody or DeliveryVerdict.SpillBodyMissing =>
+                new ExpectationSendResult(ExpectationSendOutcome.Refused, Describe(outcome.Verdict), true),
+            DeliveryVerdict.BackendUnreachable =>
+                new ExpectationSendResult(ExpectationSendOutcome.Uncertain, Describe(outcome.Verdict), true),
+            _ => new ExpectationSendResult(ExpectationSendOutcome.Unconfirmed, Describe(outcome.Verdict), true),
+        };
     }
 
     /// <summary>
@@ -172,6 +185,10 @@ public sealed partial class SessionMessageQueueService
     /// composer counts: empty releases, anything in it holds, and an echo in the conversation above
     /// it is not evidence either way. Where it cannot be read, the body visible whole anywhere on
     /// screen holds, so a submitted echo with no record holds until the operator releases it.</para>
+    /// <para>Review 8adb4cd6: for Claude an unreadable composer holds whatever else the screen shows.
+    /// A long composer renders only its tail, and a dialog or a scrolled view hides the box, so the
+    /// body's head being off screen is not evidence that it left. The whole-screen rule is only for
+    /// kinds with no readable composer at all.</para>
     /// </summary>
     private async Task<bool> ExpectationBodyBlocksComposerAsync(
         AppDbContext db, Guid sessionId, DateTime generation, CancellationToken ct)
@@ -223,6 +240,14 @@ public sealed partial class SessionMessageQueueService
                 sessionId, unrecorded[0].Id, ExpectationHoldAudit.ReleaseRoute(sessionId));
             return true;
         }
+        if (kind == AgentKind.ClaudeCode)
+        {
+            _logger.LogWarning(
+                "Holding input to session {SessionId}: expectation nudge {NudgeId} is unconfirmed, has no "
+                + "transcript record, and Claude's composer cannot be read to show it empty. Release: {Route}",
+                sessionId, unrecorded[0].Id, ExpectationHoldAudit.ReleaseRoute(sessionId));
+            return true;
+        }
 
         var standing = unrecorded
             .Where(n => ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(
@@ -240,8 +265,8 @@ public sealed partial class SessionMessageQueueService
 
     /// <summary>
     /// The composer's content for a kind whose rendered composer can be told apart from the
-    /// conversation: Claude's bottom box. Codex, Grok and the rest have no reliable region here, and
-    /// neither does a Claude frame without one; false keeps the whole-screen rule for those.
+    /// conversation: Claude's bottom box. Codex, Grok and the rest have no reliable region here;
+    /// false keeps the whole-screen rule for them. A Claude frame without a readable box holds.
     /// </summary>
     private static bool TryReadComposerRegion(AgentKind kind, string renderedScreen, out string content)
     {
@@ -255,10 +280,15 @@ public sealed partial class SessionMessageQueueService
     /// the current generation becomes Released, with a comment on its audit card and a Check note on
     /// its subject tasks. Under the session lock, so it cannot interleave with a send. It never types,
     /// never touches the queue, and never clears operator debt. A session with no hold releases nothing.
+    /// <para>Repair 4 (review 8adb4cd6): <paramref name="releasedBy"/> is the operator the route
+    /// authenticated (the CARD-0658 operator token); it is written into every audit entry. A watchdog
+    /// send records its outcome before it lets go of the same lock, so an Attempting attempt seen
+    /// here is an interrupted one, never a send in flight.</para>
     /// </summary>
     public async Task<ExpectationHoldReleaseResult> ReleaseExpectationHoldAsync(
         Guid sessionId, string? reason, string releasedBy, CancellationToken ct)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(releasedBy);
         var why = (reason ?? string.Empty).Trim();
         if (why.Length == 0)
             throw new ValidationException("reason", "A reason is required to release an expectation-watchdog hold.");
@@ -302,8 +332,8 @@ public sealed partial class SessionMessageQueueService
                     continue;
                 await ExpectationHoldAudit.AddAsync(
                     db, nudge.AuditCommentId, nudge.CheckEventIdsJson,
-                    ExpectationHoldAudit.ReleasedNote(nudge.Id, sessionId, generation, nudge.AttemptState, why),
-                    "operator", now, ct);
+                    ExpectationHoldAudit.ReleasedNote(nudge.Id, sessionId, generation, nudge.AttemptState, releasedBy, why),
+                    ExpectationHoldAudit.ReleaseAuthor(releasedBy), now, ct);
                 released.Add(nudge.Id);
             }
             await db.SaveChangesAsync(ct);
@@ -312,8 +342,8 @@ public sealed partial class SessionMessageQueueService
             if (released.Count > 0)
             {
                 _logger.LogWarning(
-                    "Operator released the expectation composer hold on session {SessionId} for nudge(s) {NudgeIds}: {Reason}",
-                    sessionId, string.Join(", ", released), why);
+                    "Operator {ReleasedBy} released the expectation composer hold on session {SessionId} for nudge(s) {NudgeIds}: {Reason}",
+                    releasedBy, sessionId, string.Join(", ", released), why);
             }
             return new ExpectationHoldReleaseResult(sessionId, released);
         }
@@ -365,6 +395,7 @@ public sealed class SessionQueueExpectationPromptSender(SessionMessageQueueServi
         Guid ownerAgentId,
         string body,
         Func<ExpectationSendAttempt, CancellationToken, Task<bool>> commitAttempt,
-        CancellationToken ct) =>
-        queue.SendExpectationNowAsync(sessionId, expectedGeneration, ownerAgentId, body, commitAttempt, ct);
+        CancellationToken ct,
+        Func<ExpectationSendResult, CancellationToken, Task>? recordOutcome = null) =>
+        queue.SendExpectationNowAsync(sessionId, expectedGeneration, ownerAgentId, body, commitAttempt, ct, recordOutcome);
 }

@@ -1,9 +1,13 @@
 ﻿using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Security;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Api.Endpoints;
 
@@ -161,15 +165,25 @@ public static class SessionEndpoints
         });
     }
 
-    /// <summary>CARD-0650: audited operator release of an expectation-watchdog composer hold. Types nothing.</summary>
+    /// <summary>
+    /// CARD-0650: audited operator release of an expectation-watchdog composer hold. Types nothing.
+    /// An operator surface (review 8adb4cd6): it needs the CARD-0658 operator token, compared in
+    /// constant time, whatever the client address; the audit records the operator it authenticated.
+    /// </summary>
     public static RouteHandlerBuilder MapExpectationHoldRelease(this IEndpointRouteBuilder sessions) =>
         sessions.MapPost("/{id:guid}/expectation-hold/release", async (
+            HttpContext http,
             Guid id,
             ReleaseExpectationHoldRequest request,
+            IOptions<PhoneHomeRunnerSettings> settings,
+            ICurrentUser user,
             SessionMessageQueueService queue,
             CancellationToken cancellationToken) =>
         {
-            return Results.Ok(await queue.ReleaseExpectationHoldAsync(id, request.Reason, "operator", cancellationToken));
+            OperatorCredential.Require(http, settings.Value,
+                "Releasing an expectation-watchdog hold requires the operator token (X-Antiphon-Operator-Token).");
+            var releasedBy = $"{user.UserName} (operator token)";
+            return Results.Ok(await queue.ReleaseExpectationHoldAsync(id, request.Reason, releasedBy, cancellationToken));
         });
 
     private static void ValidateTerminalSize(int cols, int rows)

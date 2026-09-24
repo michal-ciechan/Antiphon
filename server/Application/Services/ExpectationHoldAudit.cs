@@ -23,7 +23,8 @@ public static class ExpectationHoldAudit
     /// <summary>The safe next action for a held session: named in the Check note, the audit card and every refusal.</summary>
     public static string ReleaseHint(Guid sessionId) =>
         "If the composer is clear (the prompt was submitted or removed), an operator can release the hold with "
-        + $"POST {ReleaseRoute(sessionId)} and a JSON body {{\"reason\": \"...\"}}. The release is audited and types nothing.";
+        + $"POST {ReleaseRoute(sessionId)} with the operator token (X-Antiphon-Operator-Token) and a JSON body "
+        + "{\"reason\": \"...\"}. The release is audited and types nothing.";
 
     public static string HoldNote(Guid nudgeId, Guid sessionId, ExpectationAttemptState state) =>
         $"[expectation-nudge:{nudgeId:D}] The prompt to session {sessionId:D} is {state} with no transcript record, "
@@ -31,10 +32,17 @@ public static class ExpectationHoldAudit
         + ReleaseHint(sessionId);
 
     public static string ReleasedNote(
-        Guid nudgeId, Guid sessionId, DateTime generation, ExpectationAttemptState previous, string reason) =>
+        Guid nudgeId, Guid sessionId, DateTime generation, ExpectationAttemptState previous, string releasedBy, string reason) =>
         $"{ReleasedMarkerPrefix}{nudgeId:D}] Operator released the composer hold on session {sessionId:D} "
-        + $"(generation {generation:O}, was {previous}). Nothing was typed; the prompt is still unconfirmed and "
-        + $"any operator page stays due. Reason: {reason}";
+        + $"(generation {generation:O}, was {previous}). Released by {releasedBy}. Nothing was typed; the prompt is "
+        + $"still unconfirmed and any operator page stays due. Reason: {reason}";
+
+    /// <summary>The audit comment's author for a release: who released it, within the column's 200 characters.</summary>
+    public static string ReleaseAuthor(string releasedBy)
+    {
+        var author = "operator:" + releasedBy;
+        return author.Length <= 200 ? author : author[..200];
+    }
 
     /// <summary>
     /// One comment on the nudge's audit card and one Check note on each task the nudge's own Check

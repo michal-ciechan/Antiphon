@@ -225,7 +225,7 @@ GET    /api/sessions/{id}/messages           the delivery queue
 POST   /api/sessions/{id}/messages           enqueue (Now / WhenIdle)
 DELETE /api/sessions/{id}/messages/{messageId}
 POST   /api/sessions/{id}/messages/{messageId}/send-now
-POST   /api/sessions/{id}/expectation-hold/release  { "reason": "..." } (required); audited release of an expectation-watchdog composer hold (CARD-0650). Types nothing; 422 without a reason, 404 unknown session, 200 with the released nudge ids (empty when nothing held).
+POST   /api/sessions/{id}/expectation-hold/release  { "reason": "..." } (required); audited release of an expectation-watchdog composer hold (CARD-0650). Needs X-Antiphon-Operator-Token (403 operator_token_required otherwise); the audit names the authenticated operator. Types nothing; 422 without a reason, 404 unknown session, 200 with the released nudge ids (empty when nothing held).
 POST   /api/sessions/{id}/resize  |  /resume  |  /kill
 ```
 

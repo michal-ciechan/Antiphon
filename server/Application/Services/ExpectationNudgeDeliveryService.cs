@@ -81,8 +81,19 @@ public sealed class ExpectationNudgeDeliveryService
             return claimed;
         }
 
+        // The outcome is recorded under the session lock the send holds (review 8adb4cd6), so an
+        // operator's hold release waiting on that lock never finds this attempt still Attempting.
+        var recorded = (ExpectationAttemptState?)null;
+        async Task RecordOutcomeAsync(ExpectationSendResult sent, CancellationToken token)
+        {
+            var state = StateFor(sent);
+            if (await RecordAsync(nudgeId, ExpectationAttemptState.Attempting, state, sent.ReceiptAt, token))
+                recorded = state;
+        }
+
         var result = await _sender.SendAsync(
-            sessionId, SessionGeneration.Normalize(session.StartedAt), agent.Id, nudge.Body, CommitAttemptAsync, ct);
+            sessionId, SessionGeneration.Normalize(session.StartedAt), agent.Id, nudge.Body, CommitAttemptAsync, ct,
+            RecordOutcomeAsync);
 
         if (!claimed)
         {
@@ -92,10 +103,8 @@ public sealed class ExpectationNudgeDeliveryService
                 : await RefuseUnclaimedAsync(nudgeId, result.Reason, ct);
         }
 
-        // The outcome write must not be lost to the send's own cancellation.
-        var recorded = StateFor(result);
-        if (await RecordAsync(nudgeId, ExpectationAttemptState.Attempting, recorded, result.ReceiptAt, CancellationToken.None))
-            await NoteHoldAsync(nudgeId, recorded, CancellationToken.None);
+        if (recorded is { } made)
+            await NoteHoldAsync(nudgeId, made, CancellationToken.None);
         return new ExpectationDeliveryResult(nudgeId, result.Outcome, result.Reason);
     }
 
