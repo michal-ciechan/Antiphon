@@ -1530,7 +1530,9 @@ public class AgentTaskServiceIntegrationTests
             await liveDb.SaveChangesAsync();
         }
 
-        var continued = await CreateService(db).CreateAsync(
+        // The predecessor worktree sits outside the caller's directory, the way a real task
+        // worktree does, so it has to be an allowed root or resolution rejects it first.
+        var continued = await CreateService(db, [agentCheckout.Path]).CreateAsync(
             NewRequest("keep going on the live agent", role: AgentTaskRole.Code) with
             {
                 FollowUpOnTask = DelegationReportFormatter.Short(livePrior.Id),
