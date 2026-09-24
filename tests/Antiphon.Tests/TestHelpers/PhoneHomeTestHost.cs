@@ -139,11 +139,19 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
     }
 
     /// <summary>POST as the operator: with the token when <paramref name="token"/> is set.</summary>
-    public async Task<HttpResponseMessage> PostOperatorAsync<T>(string path, T body, string? token)
+    /// <param name="proxied">CARD-0658: shape the request as the public vhost delivers it (Caddy
+    /// and Vite: Host rewritten to localhost:17202, X-Forwarded-* naming the tailnet client).</param>
+    public async Task<HttpResponseMessage> PostOperatorAsync<T>(string path, T body, string? token, bool proxied = false)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, path);
         if (token is not null)
             request.Headers.TryAddWithoutValidation(OperatorTokenFile.Header, token);
+        if (proxied)
+        {
+            request.Headers.Host = "localhost:17202";
+            request.Headers.TryAddWithoutValidation("X-Forwarded-For", "100.64.0.7");
+            request.Headers.TryAddWithoutValidation("X-Forwarded-Host", "antiphon.desktop.codeperf.net");
+        }
         request.Content = JsonContent.Create(body, options: new JsonSerializerOptions(JsonSerializerDefaults.Web));
         return await Http.SendAsync(request);
     }
