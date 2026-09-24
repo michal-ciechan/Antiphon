@@ -22,4 +22,13 @@ public sealed record RunnerSlotsDto(
 
 public sealed record RunnerSlotReleaseRequest(string? Reason);
 
-public sealed record RunnerSlotReleaseDto(int Released, IReadOnlyList<Guid> SessionIds);
+/// <summary>
+/// <see cref="Intents"/> is set when a failed request was finished by reconciliation: each intent
+/// this request recorded, with <c>released</c>, <c>failed</c> or <c>pending</c>.
+/// </summary>
+public sealed record RunnerSlotReleaseDto(
+    int Released,
+    IReadOnlyList<Guid> SessionIds,
+    IReadOnlyList<RunnerSlotIntentOutcomeDto>? Intents = null);
+
+public sealed record RunnerSlotIntentOutcomeDto(Guid IntentId, Guid SessionId, string Outcome);

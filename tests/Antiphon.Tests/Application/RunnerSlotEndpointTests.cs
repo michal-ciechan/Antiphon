@@ -215,6 +215,44 @@ public class RunnerSlotEndpointTests
     }
 
     [Test]
+    public async Task A_refused_sweep_is_a_failure_even_when_reconcile_finishes_an_unrelated_intent()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString);
+        await using var peer = await host.ConnectPeerAsync();
+        host.Directory.MarkRecovered(await host.WaitLiveAsync());
+        var refusedId = Guid.NewGuid();
+        var earlierId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        peer.Sessions.Add(new RunnerSessionDto(refusedId, 4, now, "Running", null, "", 0));
+        peer.Reply = frame => frame.Operation == PhoneHomeOperation.ReleaseSlot
+            ? new PhoneHomeFrame(
+                PhoneHomeFrameKind.Error, frame.Epoch, frame.RequestId, frame.Operation,
+                ErrorCode: "unsupported_target", ErrorDetail: "custody was retained", StatusCode: 409)
+            : null;
+        await SeedRunningSessionAsync(schema.ConnectionString, refusedId, now, host.StoreId);
+        // An earlier request's release reached the runner and its audit did not save.
+        await SeedRunningSessionAsync(schema.ConnectionString, earlierId, now, host.StoreId);
+        await SeedIntentAsync(schema.ConnectionString, earlierId, "pending:grok-linux", now.AddMinutes(-5));
+
+        using var response = await host.PostOperatorAsync(
+            $"/api/session-runners/{host.AllowedRunnerId}/slots/release-orphans",
+            new RunnerSlotReleaseRequest("sweep"),
+            OperatorTokenFile.ReadOrCreate(host.OperatorTokenPath));
+
+        ((int)response.StatusCode).ShouldBe(409);
+        peer.RequestCount(PhoneHomeOperation.ReleaseSlot).ShouldBe(1);
+        await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        (await verify.AgentIncidents.SingleAsync(incident => incident.SessionId == refusedId))
+            .FailureReason.ShouldBe("failed:custody was retained");
+        // The reconcile still ran and finished the unrelated intent; it just is not this answer.
+        (await verify.AgentIncidents.SingleAsync(incident =>
+                incident.SessionId == earlierId && incident.Kind == AgentIncidentKind.RunnerSlotReleaseIntent))
+            .FailureReason.ShouldBe("reconciled");
+        (await verify.AgentSessions.SingleAsync(session => session.Id == refusedId)).Status.ShouldBe(SessionStatus.Running);
+    }
+
+    [Test]
     public async Task One_failing_intent_does_not_block_the_others_and_a_claimed_orphan_is_left_alone()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();

@@ -62,15 +62,16 @@ public static class RunnerSlotService
 
     public static async Task<RunnerSlotReleaseDto> ReleaseAsync(
         PhoneHomeRunnerDirectory directory, AppDbContext db, string runnerId, Guid sessionId, string? reason,
-        CancellationToken ct)
+        CancellationToken ct, ICollection<Guid>? intents = null)
     {
         var text = RequireReason(reason);
-        await ReleaseOneAsync(directory, db, runnerId, sessionId, text, fromOrphanSweep: false, ct);
+        await ReleaseOneAsync(directory, db, runnerId, sessionId, text, fromOrphanSweep: false, intents, ct);
         return new RunnerSlotReleaseDto(1, [sessionId]);
     }
 
     public static async Task<RunnerSlotReleaseDto> ReleaseOrphansAsync(
-        PhoneHomeRunnerDirectory directory, AppDbContext db, string runnerId, string? reason, CancellationToken ct)
+        PhoneHomeRunnerDirectory directory, AppDbContext db, string runnerId, string? reason, CancellationToken ct,
+        ICollection<Guid>? intents = null)
     {
         var text = RequireReason(reason);
         var listed = await ListAsync(directory, db, runnerId, ct);
@@ -86,7 +87,7 @@ public static class RunnerSlotService
                 || row.OpenTaskId != slot.OpenTaskId
                 || !IsOrphan(row.Live, row.OpenTaskId is not null, row.PooledWarm))
                 continue;
-            await ReleaseOneAsync(directory, db, runnerId, slot.SessionId, text, fromOrphanSweep: true, ct);
+            await ReleaseOneAsync(directory, db, runnerId, slot.SessionId, text, fromOrphanSweep: true, intents, ct);
             released.Add(slot.SessionId);
         }
 
@@ -151,6 +152,28 @@ public static class RunnerSlotService
         return finished;
     }
 
+    /// <summary>
+    /// Where each of the given intents stands: <c>released</c> once audited, <c>failed</c> when
+    /// refused or claimed, <c>pending</c> while the outcome is still unknown.
+    /// </summary>
+    public static async Task<IReadOnlyList<RunnerSlotIntentOutcomeDto>> IntentOutcomesAsync(
+        AppDbContext db, IReadOnlyCollection<Guid> intentIds, CancellationToken ct)
+    {
+        if (intentIds.Count == 0)
+            return [];
+        var rows = await db.AgentIncidents.AsNoTracking()
+            .Where(incident => intentIds.Contains(incident.Id))
+            .OrderBy(incident => incident.CreatedAt)
+            .Select(incident => new { incident.Id, incident.SessionId, incident.FailureReason })
+            .ToListAsync(ct);
+        return rows.Select(row => new RunnerSlotIntentOutcomeDto(
+            row.Id,
+            row.SessionId ?? Guid.Empty,
+            row.FailureReason == ReconciledMarker ? "released"
+                : row.FailureReason?.StartsWith(FailedPrefix, StringComparison.Ordinal) == true ? "failed"
+                : "pending")).ToArray();
+    }
+
     private const string PendingPrefix = "pending:";
     private const string OrphanMarker = "orphan:";
     private const string FailedPrefix = "failed:";
@@ -166,11 +189,12 @@ public static class RunnerSlotService
 
     private static async Task ReleaseOneAsync(
         PhoneHomeRunnerDirectory directory, AppDbContext db, string runnerId, Guid sessionId, string reason,
-        bool fromOrphanSweep, CancellationToken ct)
+        bool fromOrphanSweep, ICollection<Guid>? intents, CancellationToken ct)
     {
         var intent = NewIntent(runnerId, sessionId, reason, fromOrphanSweep);
         db.AgentIncidents.Add(intent);
         await db.SaveChangesAsync(ct);
+        intents?.Add(intent.Id);
         try
         {
             await directory.Resolve(runnerId).ReleaseSlotAsync(sessionId, reason, ct);

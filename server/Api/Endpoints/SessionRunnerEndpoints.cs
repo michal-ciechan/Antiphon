@@ -55,8 +55,8 @@ public static class SessionRunnerEndpoints
         {
             RequireOperator(http, settings.Value);
             return await ReleaseOrReconcileAsync(
-                () => RunnerSlotService.ReleaseAsync(directory, db, runnerId, sessionId, body.Reason, ct),
-                directory, db, sessionId, ct);
+                intents => RunnerSlotService.ReleaseAsync(directory, db, runnerId, sessionId, body.Reason, ct, intents),
+                directory, db, ct);
         }).WithTags("SessionRunners");
 
         app.MapPost("/api/session-runners/{runnerId}/slots/release-orphans", async (
@@ -70,8 +70,8 @@ public static class SessionRunnerEndpoints
         {
             RequireOperator(http, settings.Value);
             return await ReleaseOrReconcileAsync(
-                () => RunnerSlotService.ReleaseOrphansAsync(directory, db, runnerId, body.Reason, ct),
-                directory, db, null, ct);
+                intents => RunnerSlotService.ReleaseOrphansAsync(directory, db, runnerId, body.Reason, ct, intents),
+                directory, db, ct);
         }).WithTags("SessionRunners");
 
         app.MapGet("/api/session-runners/{runnerId}/provider-auth/{provider}", async (
@@ -142,19 +142,21 @@ public static class SessionRunnerEndpoints
 
     /// <summary>
     /// A save that fails after the runner has released leaves a pending intent. Finish that
-    /// audit before answering; a failure that saved nothing is still a failure.
+    /// audit before answering. The answer is about this request's own intents only: finishing an
+    /// earlier request's intent says nothing about this one, and a failure that recorded no
+    /// intent, or any intent of this request that is not released, is still a failure.
     /// </summary>
     private static async Task<IResult> ReleaseOrReconcileAsync(
-        Func<Task<RunnerSlotReleaseDto>> release,
+        Func<ICollection<Guid>, Task<RunnerSlotReleaseDto>> release,
         PhoneHomeRunnerDirectory directory,
         AppDbContext db,
-        Guid? sessionId,
         CancellationToken ct)
     {
+        var intents = new List<Guid>();
         Exception? failed = null;
         try
         {
-            return Results.Ok(await release());
+            return Results.Ok(await release(intents));
         }
         catch (Exception ex) when (ex is not OperationCanceledException and not ValidationException)
         {
@@ -162,9 +164,12 @@ public static class SessionRunnerEndpoints
         }
 
         db.ChangeTracker.Clear();
-        var finished = await RunnerSlotService.ReconcilePendingReleasesAsync(directory, db, ct);
-        if (finished.Count == 0 || (sessionId is Guid id && !finished.Contains(id)))
+        await RunnerSlotService.ReconcilePendingReleasesAsync(directory, db, ct);
+        var outcomes = await RunnerSlotService.IntentOutcomesAsync(db, intents, ct);
+        if (outcomes.Count == 0 || outcomes.Count != intents.Count
+            || outcomes.Any(outcome => outcome.Outcome != "released"))
             ExceptionDispatchInfo.Capture(failed!).Throw();
-        return Results.Ok(new RunnerSlotReleaseDto(finished.Count, finished));
+        var released = outcomes.Select(outcome => outcome.SessionId).ToArray();
+        return Results.Ok(new RunnerSlotReleaseDto(released.Length, released, outcomes));
     }
 }
