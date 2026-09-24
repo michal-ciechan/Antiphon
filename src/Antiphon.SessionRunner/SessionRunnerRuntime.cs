@@ -996,10 +996,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     internal int LiveSessionCount => _sessions.Values.Count(static session => !session.HasExited);
 
     /// <summary>
-    /// CARD-0653: kill the process tree when it is still live, drop the in-memory record, and
-    /// delete the manifest and herdr sidecar so the next start does not adopt the session again.
-    /// An already-exited record is evicted the same way. The reason is appended to
-    /// <c>slot-releases.jsonl</c> under the session log root.
+    /// CARD-0653: kill the process tree when it is still live, then drop the in-memory record
+    /// and the manifest only after exit is verified. A kill that throws or returns with the
+    /// process still live keeps the record and the manifest. An already-exited record is
+    /// evicted. The reason is appended to <c>slot-releases.jsonl</c> under the session log root
+    /// when custody is actually dropped.
     /// </summary>
     public async Task<RunnerSessionDto> ReleaseSlotAsync(
         Guid sessionId, string reason, TimeSpan timeout, CancellationToken ct)
@@ -1012,24 +1013,26 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         try
         {
             _sessions.TryGetValue(sessionId, out var session);
-            var killed = false;
             if (session is not null && !session.HasExited)
             {
                 try
                 {
                     await session.KillAsync(timeout, ct);
-                    killed = session.HasExited;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     _logger.LogWarning(ex, "Slot release kill failed for session {SessionId}", sessionId);
                 }
+
+                if (!session.HasExited)
+                    throw new InvalidOperationException(
+                        $"Session '{sessionId:D}' is still live after slot release; custody was retained.");
             }
 
             if (session is not null)
                 _sessions.TryRemove(sessionId, out _);
             ForgetDurableSession(sessionId);
-            AppendSlotRelease(sessionId, reason.Trim(), killed);
+            AppendSlotRelease(sessionId, reason.Trim(), session is not null);
             if (session is null)
                 return new RunnerSessionDto(sessionId, null, DateTime.UtcNow, "Exited", null, "Released", 0);
 
@@ -1041,6 +1044,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         {
             gate.Release();
         }
+    }
+
+    /// <summary>Test seam: register a session the release path can find.</summary>
+    internal void Track(RunnerSession session)
+    {
+        var id = session.ToDto().SessionId;
+        if (!_sessions.TryAdd(id, session))
+            throw new InvalidOperationException($"Session '{id:D}' is already tracked.");
     }
 
     private void ForgetDurableSession(Guid sessionId)
@@ -2835,6 +2846,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     return _status == "Exited";
             }
         }
+
+        /// <summary>Test seam: a child whose kill throws or never exits.</summary>
+        internal void BindChildForTest(ISessionChild child) => _herdrChild = child;
 
         public RunnerSessionDto ToDto()
         {

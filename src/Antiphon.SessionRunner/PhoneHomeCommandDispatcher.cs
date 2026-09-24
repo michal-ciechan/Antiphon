@@ -245,18 +245,19 @@ public sealed class PhoneHomeCommandDispatcher
         var launch = request.Payload?.Deserialize<RunnerLaunchRequest>(PhoneHomeFraming.Json)
             ?? throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Launch body is required.", 400);
         RejectUnsupportedLaunch(launch);
-        lock (_mutationGate)
+        await RejectSignedOutClaudeAsync(launch, ct);
+        await RejectSignedOutGrokAsync(launch, ct);
+        // Capacity has to be rechecked inside the mutation lock. A check before StartAsync
+        // lets two launches both pass while neither has recorded a session yet.
+        return await MutateAsync(request, async () =>
         {
             if (_runtime.OwnedSessionCount >= _settings.Capacity)
                 throw new PhoneHomeAdmissionException(
                     PhoneHomeProblemTypes.Capacity,
                     $"Phone-home capacity is {_settings.Capacity} session(s).",
                     409);
-        }
-
-        await RejectSignedOutClaudeAsync(launch, ct);
-        await RejectSignedOutGrokAsync(launch, ct);
-        return await MutateAsync(request, async () => Result(request, await _runtime.StartAsync(launch, ct)));
+            return Result(request, await _runtime.StartAsync(launch, ct));
+        });
     }
 
     /// <summary>
