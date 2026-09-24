@@ -17,6 +17,25 @@ public static class CodexStartupFixtures
     public static string N1 => File.ReadAllText(Path.Combine(DirectoryPath, "n1.txt"));
     public static string N2 => File.ReadAllText(Path.Combine(DirectoryPath, "n2.txt"));
 
+    // CARD-0662: codex-cli 0.156.1 captures from CARD-0660 (docs/investigations/evidence/card-0660/,
+    // ANSI-stripped `script` output, header/footer lines removed, body verbatim).
+    public static string V0156TrustPrompt => File.ReadAllText(Path.Combine(DirectoryPath, "v0156-trust-prompt.txt"));
+    public static string V0156SignedOut => File.ReadAllText(Path.Combine(DirectoryPath, "v0156-signed-out.txt"));
+    public static string V0156Ready => File.ReadAllText(Path.Combine(DirectoryPath, "v0156-ready.txt"));
+
+    /// <summary>The 0.156.1 trust modal with the highlight moved from "Trust and continue" to "Quit".</summary>
+    public static string V0156TrustPromptQuitHighlighted
+    {
+        get
+        {
+            var screen = V0156TrustPrompt;
+            const string selected = "› 1. Trust and continue 2. Quit";
+            if (!screen.Contains(selected, StringComparison.Ordinal))
+                throw new InvalidOperationException("0.156.1 trust fixture no longer has the highlighted accept option.");
+            return screen.Replace(selected, "1. Trust and continue › 2. Quit", StringComparison.Ordinal);
+        }
+    }
+
     public static string DerivedWriteTestsHint =>
         ReplaceComposer(P2, "› " + CodexStartupScreen.HintWriteTests);
 

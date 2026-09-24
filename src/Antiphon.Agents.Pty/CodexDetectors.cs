@@ -279,16 +279,24 @@ public static class CodexResponseAnalyzer
     }
 }
 
+/// <summary>
+/// Codex's first-use folder-trust modal. Two wordings are recognised:
+/// <list type="bullet">
+/// <item>pre-0.156: "Do you trust the contents of this directory?" / "1. Yes, continue".</item>
+/// <item>0.156.1 (CARD-0662, captured in
+/// <c>docs/investigations/evidence/card-0660/0156-linux-worktree-trust-prompt.txt</c>):
+/// "Trust this folder?" / "› 1. Trust and continue  2. Quit" with the footer
+/// "enter continue · esc quit". The 0.156.1 binary no longer contains the old question.</item>
+/// </list>
+/// Both are answered with Enter, which accepts the highlighted option, so Enter is only safe
+/// while the highlight is on the accept option — see <see cref="IsAcceptSelectedOnCurrentScreen"/>.
+/// </summary>
 public static class CodexTrustPromptDetector
 {
     public static bool IsVisible(string? rawSnapshot, string? renderedScreen = null)
     {
         var text = $"{AnsiStripper.Clean(rawSnapshot) ?? ""}\n{renderedScreen ?? ""}";
-        var compact = Regex.Replace(text, @"\s+", "", RegexOptions.CultureInvariant)
-            .ToLowerInvariant();
-
-        return compact.Contains("doyoutrustthecontentsofthisdirectory")
-            && compact.Contains("yes,continue");
+        return MatchesEitherWording(Compact(text));
     }
 
     /// <summary>
@@ -300,9 +308,40 @@ public static class CodexTrustPromptDetector
         if (string.IsNullOrEmpty(renderedScreen))
             return false;
 
-        var compact = Regex.Replace(renderedScreen, @"\s+", "", RegexOptions.CultureInvariant)
-            .ToLowerInvariant();
-        return compact.Contains("doyoutrustthecontentsofthisdirectory")
-            && compact.Contains("yes,continue");
+        return MatchesEitherWording(Compact(renderedScreen));
     }
+
+    /// <summary>
+    /// CARD-0662: true when the trust modal is on the current frame AND Enter would accept it.
+    /// The 0.156.1 modal's Enter takes the highlighted option, and its other option is
+    /// "2. Quit", so Enter is authorised only while the selection glyph sits on
+    /// "1. Trust and continue". The pre-0.156 wording keeps its historical rule (Enter takes the
+    /// default "Yes, continue").
+    /// </summary>
+    public static bool IsAcceptSelectedOnCurrentScreen(string? renderedScreen)
+    {
+        if (string.IsNullOrEmpty(renderedScreen))
+            return false;
+
+        var compact = Compact(renderedScreen);
+        if (MatchesV0156(compact))
+            return compact.Contains("›1.trustandcontinue", StringComparison.Ordinal)
+                || compact.Contains(">1.trustandcontinue", StringComparison.Ordinal);
+
+        return MatchesLegacy(compact);
+    }
+
+    private static string Compact(string text) =>
+        Regex.Replace(text, @"\s+", "", RegexOptions.CultureInvariant).ToLowerInvariant();
+
+    private static bool MatchesEitherWording(string compact) =>
+        MatchesLegacy(compact) || MatchesV0156(compact);
+
+    private static bool MatchesLegacy(string compact) =>
+        compact.Contains("doyoutrustthecontentsofthisdirectory", StringComparison.Ordinal)
+        && compact.Contains("yes,continue", StringComparison.Ordinal);
+
+    private static bool MatchesV0156(string compact) =>
+        compact.Contains("trustthisfolder?", StringComparison.Ordinal)
+        && compact.Contains("1.trustandcontinue", StringComparison.Ordinal);
 }

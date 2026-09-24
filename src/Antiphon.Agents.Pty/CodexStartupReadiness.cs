@@ -254,10 +254,17 @@ public static class CodexStartupScreen
         return parts.Length >= 2;
     }
 
+    /// <summary>
+    /// CARD-0662: the 0.156.1 signed-out screen offers "1. Sign in with ChatGPT / 2. Sign in with
+    /// Device Code / 3. Provide your own API key" above "Press enter to continue", so it must be
+    /// matched here, before <see cref="ContainsBlockingUpdate"/> claims that footer.
+    /// </summary>
     private static bool ContainsSignIn(string text) =>
         text.Contains("Please sign in", StringComparison.OrdinalIgnoreCase)
         || text.Contains("Sign in to continue", StringComparison.OrdinalIgnoreCase)
-        || text.Contains("sign in to", StringComparison.OrdinalIgnoreCase);
+        || text.Contains("sign in to", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("Sign in with ChatGPT", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("Sign in with Device Code", StringComparison.OrdinalIgnoreCase);
 
     private static bool ContainsSandboxOrInputDisabled(string text) =>
         text.Contains("sandbox setup", StringComparison.OrdinalIgnoreCase)
@@ -435,7 +442,9 @@ public static class CodexReadyWait
                 var screen = snapshot.RenderedScreen ?? "";
                 if (!acceptedTrust && CodexTrustPromptDetector.IsVisibleOnCurrentScreen(screen))
                 {
-                    if (writeAsync is null)
+                    // CARD-0662: Enter takes the highlighted option; never send it while the
+                    // highlight is off the accept option (0.156.1's other option is "Quit").
+                    if (writeAsync is null || !CodexTrustPromptDetector.IsAcceptSelectedOnCurrentScreen(screen))
                     {
                         tracker.Observe(
                             CodexStartupObservation.NotReady(CodexStartupReason.Trust),
