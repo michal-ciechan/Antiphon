@@ -7,6 +7,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -40,7 +41,7 @@ public sealed class DispatcherRemotePrepStarvationTests
         var live = await host.WaitLiveAsync();
         host.Directory.MarkRecovered(live);
         peer.SilentFor(PhoneHomeOperation.WorkspaceMirror);
-        var capture = new MutationDispatchTestsCapture();
+        var receiptAdapter = new AdapterSlot();
         await using var harness = await BridgeQueueHarness.CreateAsync(new()
         {
             AlwaysOn = false,
@@ -50,8 +51,29 @@ public sealed class DispatcherRemotePrepStarvationTests
                 MaxConcurrentTasks = 32,
                 AllowedRoots = ["C:\\", "/"],
             },
-            ConfigureServices = services => Configure(services, host, capture),
+            ConfigureServices = services => Configure(services, host, receiptAdapter),
         });
+        // The receipt reads this adapter. queue-inserted and lost-wakeup hold boot-ready so the
+        // brief is still Pending with no UserPrompt; ConfirmQueuedReceiptAsync delivers it.
+        // after-receipt lets the launch deliver first.
+        var deferDelivery = cut is "queue-inserted" or "lost-wakeup";
+        var ready = deferDelivery
+            ? new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously)
+            : null;
+        receiptAdapter.Adapter = harness.Adapter;
+        harness.Adapter.RegisterOnStart = harness.Runtime;
+        harness.Adapter.ReadyHold = ready;
+        harness.Adapter.OnSubmitted = async submitted =>
+        {
+            if (harness.Adapter.StartedSessionId is not Guid sid)
+                return;
+            await BridgeQueueHarness.InsertEntryAsync(
+                sid, TranscriptKinds.UserPrompt, submitted, timestamp: DateTime.UtcNow,
+                connectionString: schema.ConnectionString);
+            await BridgeQueueHarness.InsertEntryAsync(
+                sid, TranscriptKinds.TurnEnd, stopReason: "end_turn",
+                connectionString: schema.ConnectionString);
+        };
 
         var workspace = Path.Combine(harness.TempRoot, "workspace");
         var localId = Guid.NewGuid();
@@ -86,12 +108,22 @@ public sealed class DispatcherRemotePrepStarvationTests
 
         peer.RequestCount(PhoneHomeOperation.WorkspaceMirror).ShouldBe(3);
 
-        await harness.Provider.GetRequiredService<AgentSessionLaunchQueue>()
-            .WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
         var queued = await db.SessionQueuedMessages.AsNoTracking()
             .SingleAsync(m => m.ExecutionTaskId == localId);
-        await QueuedReceiptAssertions.ConfirmQueuedReceiptAsync(
-            schema.ConnectionString, harness, queued, sessionId, busy, cut);
+        if (deferDelivery)
+        {
+            await QueuedReceiptAssertions.ConfirmQueuedReceiptAsync(
+                schema.ConnectionString, harness, queued, sessionId, busy, cut);
+            ready!.TrySetResult(true);
+        }
+
+        await harness.Provider.GetRequiredService<AgentSessionLaunchQueue>()
+            .WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+        if (!deferDelivery)
+        {
+            await QueuedReceiptAssertions.ConfirmQueuedReceiptAsync(
+                schema.ConnectionString, harness, queued, sessionId, busy, cut);
+        }
 
         await Task.Delay(100);
         clock.Advance(PhoneHomeLiveConnection.RequestTimeoutFor(PhoneHomeOperation.WorkspaceMirror)
@@ -116,7 +148,7 @@ public sealed class DispatcherRemotePrepStarvationTests
     }
 
     private static void Configure(
-        IServiceCollection services, PhoneHomeTestHost host, MutationDispatchTestsCapture capture)
+        IServiceCollection services, PhoneHomeTestHost host, AdapterSlot receiptAdapter)
     {
         services.RemoveAll<IOptionsMonitor<AgentRegistrySettings>>();
         services.RemoveAll<AgentRegistry>();
@@ -142,7 +174,7 @@ public sealed class DispatcherRemotePrepStarvationTests
             }));
         services.AddSingleton<AgentRegistry>();
         services.RemoveAll<IAgentProtocolAdapterFactory>();
-        services.AddSingleton<IAgentProtocolAdapterFactory>(capture);
+        services.AddSingleton<IAgentProtocolAdapterFactory>(receiptAdapter);
         services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
         services.AddSingleton<DelegationWorkspaceResolver>();
         services.AddDelegationWorktreeGraph(new GitSettings
@@ -217,6 +249,23 @@ public sealed class DispatcherRemotePrepStarvationTests
             ConcurrencyToken = Guid.NewGuid(),
         });
         await db.SaveChangesAsync();
+        // AgentKind's CLR zero is Raw, and the column default is ClaudeCode, so an insert that
+        // leaves the property at Raw is stored as ClaudeCode. Stamp it after the insert.
+        await db.AgentTasks.Where(t => t.Id == localId)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.AgentKind, AgentKind.Raw));
+    }
+
+    /// <summary>
+    /// CARD-0633 V-15 uses the harness adapter as the launch factory so
+    /// <see cref="QueuedReceiptAssertions"/> observes the same submitted body. The slot is filled
+    /// after <see cref="BridgeQueueHarness.CreateAsync"/> returns that adapter.
+    /// </summary>
+    private sealed class AdapterSlot : IAgentProtocolAdapterFactory
+    {
+        public FakeAgentProtocolAdapter? Adapter { get; set; }
+
+        public IAgentProtocolAdapter Create(AgentKind kind) =>
+            Adapter ?? throw new InvalidOperationException("The receipt adapter is not installed yet.");
     }
 
     private sealed class PushGit : ILandingGit
