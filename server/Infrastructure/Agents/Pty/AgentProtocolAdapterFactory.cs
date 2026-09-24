@@ -38,7 +38,7 @@ public sealed class AgentProtocolAdapterFactory : IAgentProtocolAdapterFactory
     {
         var client = string.IsNullOrWhiteSpace(runnerId) || _directory is null
             ? _sessionRunnerClient
-            : _directory.Resolve(runnerId);
+            : RemoteClient(_directory, runnerId);
         return kind switch
         {
             AgentKind.Raw => new RunnerRawAdapter(client),
@@ -54,5 +54,18 @@ public sealed class AgentProtocolAdapterFactory : IAgentProtocolAdapterFactory
                 _loggerFactory?.CreateLogger<RunnerGrokAdapter>(), _rulesSettings),
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, $"No adapter is registered for AgentKind '{kind}'."),
         };
+    }
+
+    /// <summary>
+    /// CARD-0679 D-6: a remote adapter routes every call to the runner's current connection, so it
+    /// follows a reconnect. Resolving once here keeps today's refusal of an adapter for a runner
+    /// that is unavailable at creation.
+    /// </summary>
+    private static ISessionRunnerClient RemoteClient(ISessionRunnerDirectory directory, string runnerId)
+    {
+        var resolved = directory.Resolve(runnerId);
+        return ReferenceEquals(resolved, directory.Local)
+            ? resolved
+            : new RunnerScopedSessionRunnerClient(directory, runnerId);
     }
 }

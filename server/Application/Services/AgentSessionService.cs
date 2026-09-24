@@ -540,7 +540,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 && (IsClaudeSessionNotFound(adapter, ex)
                     || ex is ConflictException { Code: HerdrProblemTypes.GrokNativeSessionMissing });
             if (adapter is not null)
-                await KillAndDisposeAsync(adapter, acceptedGeneration);
+                await KillAndDisposeAsync(adapter, acceptedGeneration, session);
 
             if (resumeTargetMissing)
             {
@@ -584,7 +584,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     /// longer knows.
     /// </summary>
     private async Task KillAndDisposeAsync(
-        IAgentProtocolAdapter adapter, DateTime? acceptedGeneration = null)
+        IAgentProtocolAdapter adapter, DateTime? acceptedGeneration = null, AgentSession? session = null)
     {
         try
         {
@@ -596,6 +596,28 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             else
             {
                 await adapter.KillAsync(grace, CancellationToken.None);
+            }
+        }
+        catch (Exception ex) when (acceptedGeneration is { } generation
+            && !string.IsNullOrWhiteSpace(session?.RunnerId)
+            && PhoneHomeTransportLoss.Is(ex))
+        {
+            // CARD-0679 D-7: no phone-home connection could carry the kill, and the runner may hold
+            // the session. Record it as a generation-conditional kill intent; the reconcile sends it
+            // when the runner is back, instead of leaving a live orphan behind a Failed row.
+            _logger.LogWarning(ex,
+                "Killing remote session {SessionId} on runner {RunnerId} after a failed launch could not be sent; "
+                + "recording a deferred generation kill", session!.Id, session.RunnerId);
+            try
+            {
+                await RunnerSlotService.RecordDeferredKillAsync(
+                    _db, session.RunnerId!, session.Id, generation,
+                    $"failed launch clean-up: {ex.Message}", CancellationToken.None);
+            }
+            catch (Exception recordEx)
+            {
+                _logger.LogError(recordEx,
+                    "Recording the deferred kill for remote session {SessionId} failed", session.Id);
             }
         }
         catch (Exception ex)
@@ -707,7 +729,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         {
             _logger.LogWarning(ex, "Resumed launch after a server restart failed for session {SessionId}", sessionId);
             if (attached && adapter is not null)
-                await KillAndDisposeAsync(adapter, resumedGeneration);
+                await KillAndDisposeAsync(adapter, resumedGeneration, session);
             else
             {
                 await KillRunnerSessionAsync(session.Id);

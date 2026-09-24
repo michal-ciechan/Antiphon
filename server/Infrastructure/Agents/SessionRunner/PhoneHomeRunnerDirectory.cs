@@ -69,6 +69,10 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             throw new ServiceUnavailableException("Phone-home runner is unavailable.", PhoneHomeProblemTypes.Unavailable);
         if (!live.DispatchEligible)
             throw new ServiceUnavailableException("Phone-home runner has not completed recovery.", PhoneHomeProblemTypes.Unavailable);
+        // CARD-0679 D-6 (card ask 2): the socket can close before the connect route records the
+        // end; a client on it would only fail its first request.
+        if (!live.SocketOpen)
+            throw new ServiceUnavailableException("Phone-home runner connection is closed.", PhoneHomeProblemTypes.Unavailable);
         return new PhoneHomeRunnerClient(live, _spills);
     }
 
@@ -229,7 +233,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             if (_live is { } superseded)
             {
                 RecordDisconnect(superseded, "superseded");
-                superseded.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                superseded.DisposeAsync("superseded").AsTask().GetAwaiter().GetResult();
             }
             // The ticket already carries the epoch the runner was told at registration.
             var epoch = ticket.Epoch;

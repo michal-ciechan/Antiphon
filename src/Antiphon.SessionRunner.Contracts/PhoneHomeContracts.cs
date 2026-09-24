@@ -183,6 +183,13 @@ public static class PhoneHomeProblemTypes
     public const string RequestTimeout = "phone_home_request_timeout";
 
     /// <summary>
+    /// CARD-0679 D-5: the connection a request was sent on (or was about to be sent on) closed
+    /// before its reply arrived. A transport loss, never a caller cancellation: the runner may or
+    /// may not have acted, and the next connection is the place to find out.
+    /// </summary>
+    public const string ConnectionClosed = "phone_home_connection_closed";
+
+    /// <summary>
     /// CARD-0679 D-9: a Launch for a session id the runner already holds live under a different
     /// generation. The same generation is not refused: it is answered with the existing session.
     /// </summary>

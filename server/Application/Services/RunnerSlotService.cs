@@ -5,6 +5,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 
 namespace Antiphon.Server.Application.Services;
@@ -103,6 +104,9 @@ public static class RunnerSlotService
     /// Each intent is isolated, so one that throws (an unreachable runner, a failed save) does
     /// not block the rest; it stays pending for the next pass. Runs at startup, on the
     /// <c>RunnerSlotReconcileJob</c> schedule, and after a failed force-release request.
+    /// The one exception is a <c>pending:kill-generation:</c> intent (CARD-0679 D-7): the kill was
+    /// already decided by a failed launch, so it is sent, conditional on the recorded generation,
+    /// once the runner resolves. The recovery pump also enqueues this job right after a reconnect.
     /// </summary>
     public static async Task<IReadOnlyList<Guid>> ReconcilePendingReleasesAsync(
         PhoneHomeRunnerDirectory directory, AppDbContext db, CancellationToken ct)
@@ -119,12 +123,20 @@ public static class RunnerSlotService
         {
             try
             {
-                var (runnerId, fromOrphanSweep) = ParsePending(intent.FailureReason!);
                 if (intent.SessionId is not Guid sessionId)
                 {
                     await MarkAsync(db, intent.Id, FailedPrefix + "the intent names no session", ct);
                     continue;
                 }
+
+                if (TryParseKillGeneration(intent.FailureReason!, out var killRunnerId, out var generation))
+                {
+                    if (await KillGenerationAsync(directory, db, intent.Id, killRunnerId, sessionId, generation, intent.Message, ct))
+                        finished.Add(sessionId);
+                    continue;
+                }
+
+                var (runnerId, fromOrphanSweep) = ParsePending(intent.FailureReason!);
 
                 var listed = await directory.Resolve(runnerId).ListAsync(ct);
                 if (listed.Any(session => session.SessionId == sessionId))
@@ -174,7 +186,95 @@ public static class RunnerSlotService
                 : "pending")).ToArray();
     }
 
+    /// <summary>
+    /// CARD-0679 D-7: a failed remote launch whose clean-up kill could not be sent (no eligible
+    /// connection) leaves this intent instead of only a log line. The reconcile sends a
+    /// generation-conditional kill once the runner resolves again; a session with the same id
+    /// under another generation is a replacement and is never killed.
+    /// </summary>
+    public static async Task<Guid> RecordDeferredKillAsync(
+        AppDbContext db, string runnerId, Guid sessionId, DateTime acceptedGeneration, string reason,
+        CancellationToken ct)
+    {
+        var message = string.IsNullOrWhiteSpace(reason) ? "deferred kill after a failed remote launch" : reason.Trim();
+        if (message.Length > AgentIncident.MessageMaxLength)
+            message = message[..AgentIncident.MessageMaxLength];
+        var intent = new AgentIncident
+        {
+            Id = Guid.NewGuid(),
+            SessionId = sessionId,
+            Kind = AgentIncidentKind.RunnerSlotReleaseIntent,
+            Severity = AlertSeverity.Warning,
+            Message = message,
+            FailureReason = PendingPrefix + KillGenerationMarker + runnerId + ":" + acceptedGeneration.Ticks,
+            CreatedAt = DateTime.UtcNow,
+        };
+        db.AgentIncidents.Add(intent);
+        await db.SaveChangesAsync(ct);
+        return intent.Id;
+    }
+
+    private static bool TryParseKillGeneration(string failureReason, out string runnerId, out DateTime generation)
+    {
+        runnerId = "";
+        generation = default;
+        var prefix = PendingPrefix + KillGenerationMarker;
+        if (!failureReason.StartsWith(prefix, StringComparison.Ordinal))
+            return false;
+        var rest = failureReason[prefix.Length..];
+        var split = rest.LastIndexOf(':');
+        if (split <= 0 || !long.TryParse(rest[(split + 1)..], out var ticks)
+            || ticks < DateTime.MinValue.Ticks || ticks > DateTime.MaxValue.Ticks)
+            return false;
+        runnerId = rest[..split];
+        generation = new DateTime(ticks, DateTimeKind.Utc);
+        return true;
+    }
+
+    /// <summary>
+    /// CARD-0679 D-7: the kill arm. Resolve throws while the runner is unavailable, which leaves the
+    /// intent pending (the caller's per-intent catch). A killed, already-exited or unknown session
+    /// finishes the intent with an audit naming the outcome; a generation mismatch fails it.
+    /// </summary>
+    private static async Task<bool> KillGenerationAsync(
+        PhoneHomeRunnerDirectory directory, AppDbContext db, Guid intentId, string runnerId, Guid sessionId,
+        DateTime generation, string? reason, CancellationToken ct)
+    {
+        var result = await directory.Resolve(runnerId).KillGenerationAsync(sessionId, generation, ct);
+        if (result.Outcome == KillGenerationOutcomes.Mismatch)
+        {
+            await MarkAsync(db, intentId,
+                FailedPrefix + $"runner holds session {sessionId:D} under another generation; nothing killed", ct);
+            return false;
+        }
+
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var claimed = await db.AgentIncidents
+            .Where(incident => incident.Id == intentId && incident.FailureReason != null
+                && incident.FailureReason.StartsWith(PendingPrefix))
+            .ExecuteUpdateAsync(set => set.SetProperty(incident => incident.FailureReason, ReconciledMarker), ct);
+        if (claimed == 0)
+            return false;
+        var message = $"Runner '{runnerId}' session {sessionId:D} generation {generation:O} deferred kill: "
+            + $"{result.Outcome} ({reason})";
+        if (message.Length > AgentIncident.MessageMaxLength)
+            message = message[..AgentIncident.MessageMaxLength];
+        db.AgentIncidents.Add(new AgentIncident
+        {
+            Id = Guid.NewGuid(),
+            SessionId = sessionId,
+            Kind = AgentIncidentKind.RunnerSlotForceReleased,
+            Severity = AlertSeverity.Warning,
+            Message = message,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+        return true;
+    }
+
     private const string PendingPrefix = "pending:";
+    private const string KillGenerationMarker = "kill-generation:";
     private const string OrphanMarker = "orphan:";
     private const string FailedPrefix = "failed:";
     private const string ReconciledMarker = "reconciled";

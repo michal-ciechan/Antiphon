@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -13,7 +14,10 @@ public sealed class RestartFailurePolicy
     {
         var chain = Flatten(exception).ToArray();
         if (chain.Any(e => e is DbException { IsTransient: true }
-            or HttpRequestException or SocketException or IOException or UnauthorizedAccessException or TimeoutException or OperationCanceledException))
+            or HttpRequestException or SocketException or IOException or UnauthorizedAccessException or TimeoutException or OperationCanceledException
+            // CARD-0679 D-5: a lost phone-home socket is pacing evidence, never permission to replace a
+            // conversation.
+            or PhoneHomeTransportException or ServiceUnavailableException { Code: PhoneHomeProblemTypes.Unavailable }))
             return RestartFailureKind.Infrastructure;
         if (chain.Any(e => e is AgentSessionService.ResumeTargetMissingException))
             return RestartFailureKind.ContinuityUnavailable;
