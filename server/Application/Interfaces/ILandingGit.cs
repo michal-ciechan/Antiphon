@@ -13,6 +13,11 @@ public interface ILandingGit
     Task<string> CommonDirectoryAsync(string repository, CancellationToken ct);
     Task<bool> HasActiveSequencerAsync(string repository, CancellationToken ct);
     Task<IReadOnlyList<LandingRegistration>> RegistrationsAsync(string repository, CancellationToken ct);
+    /// <summary>CARD-0642 R1: always a fresh listing, never an operation-scope cache hit. Another process
+    /// switching an existing worktree onto a branch moves no registration stamp, so the checkout decision
+    /// at a target-ref mutation boundary reads this.</summary>
+    Task<IReadOnlyList<LandingRegistration>> LiveRegistrationsAsync(string repository, CancellationToken ct)
+        => RegistrationsAsync(repository, ct);
     Task<LandSourceInspection> InspectAsync(LandSourceCoordinates coordinates, CancellationToken ct);
     /// <summary>CARD-0642 D-5: <see cref="LandInspectionScope.IdentityAndStatus"/> skips the ignored listing and
     /// returns empty <see cref="LandSourceSnapshot.IgnoredPaths"/>; the dirty check is unchanged.</summary>

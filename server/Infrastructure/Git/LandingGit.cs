@@ -155,17 +155,22 @@ public class LandingGit : ILandingGit
     }
 
     public Task<IReadOnlyList<LandingRegistration>> RegistrationsAsync(string repository, CancellationToken ct)
-        => ListRegistrationsAsync(repository, ct);
+        => ListRegistrationsAsync(repository, live: false, ct);
+
+    public Task<IReadOnlyList<LandingRegistration>> LiveRegistrationsAsync(string repository, CancellationToken ct)
+        => ListRegistrationsAsync(repository, live: true, ct);
 
     /// <summary>CARD-0642 D-4. Inside an operation scope the parsed listing is reused until this
-    /// instance runs a registration/HEAD mutation or the <c>&lt;common&gt;/worktrees</c> stamp moves.</summary>
-    private async Task<IReadOnlyList<LandingRegistration>> ListRegistrationsAsync(string repository, CancellationToken ct)
+    /// instance runs a registration/HEAD mutation or the <c>&lt;common&gt;/worktrees</c> stamp moves.
+    /// The stamp does not see another process switching an existing worktree's HEAD, so a
+    /// <paramref name="live"/> read always lists (and refreshes the cache).</summary>
+    private async Task<IReadOnlyList<LandingRegistration>> ListRegistrationsAsync(string repository, bool live, CancellationToken ct)
     {
         string[] list = ["worktree", "list", "--porcelain", "-z"];
         var scope = Scope;
         if (scope is null) return ParseRegistrations(await RequiredAsync(repository, list, ct));
         var stamp = await RegistrationStampAsync(repository, ct);
-        if (stamp is not null && scope.Registrations.TryGetValue(repository, out var cached) && cached.Stamp == stamp)
+        if (!live && stamp is not null && scope.Registrations.TryGetValue(repository, out var cached) && cached.Stamp == stamp)
         {
             scope.Profile.RegistrationHit();
             return cached.Rows;
@@ -342,7 +347,7 @@ public class LandingGit : ILandingGit
         var common = await CommonDirectoryAsync(coordinates.RepositoryPath, ct);
         var path = await CanonicalDirectoryAsync(coordinates.WorktreePath, ct);
         if (!PathsEqual(common, await CommonDirectoryAsync(path, ct))) return new(null, "wrong_repository");
-        var registrations = await ListRegistrationsAsync(coordinates.RepositoryPath, ct);
+        var registrations = await ListRegistrationsAsync(coordinates.RepositoryPath, live: false, ct);
         var matching = new List<LandingRegistration>();
         foreach (var entry in registrations)
         {
