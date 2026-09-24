@@ -5201,6 +5201,13 @@ namespace Antiphon.Server.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("RemoteSpillBody")
+                        .HasColumnType("text");
+
+                    b.Property<string>("RemoteSpillRelativePath")
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
+
                     b.Property<DateTime?>("CanceledAt")
                         .HasColumnType("timestamp with time zone");
 

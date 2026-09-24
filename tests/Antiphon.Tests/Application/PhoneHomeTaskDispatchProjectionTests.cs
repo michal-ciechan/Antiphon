@@ -273,6 +273,7 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         var sink = new RecordingLaunchSink();
         var courier = new RemoteSpillCourier();
         var graph = CreateDispatcher(schema, host, sink, grokCredentialProbe: true, grokHome: grokHome.Path, spills: courier);
+        courier.UseScopeFactory(graph.Services.GetRequiredService<IServiceScopeFactory>());
 
         try
         {
@@ -299,29 +300,51 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
                     db, session, graph.Services.GetRequiredService<SessionMessageQueueService>(), CancellationToken.None);
             }
 
-            var pointer = await db.SessionQueuedMessages.AsNoTracking()
+            var first = await db.SessionQueuedMessages.AsNoTracking()
                 .Where(m => m.AgentSessionId == session.Id && m.Origin == QueuedMessageOrigin.Delegation)
-                .Select(m => m.Body)
                 .SingleAsync();
-            var relative = ".antiphon/task-" + DelegationReportFormatter.Short(task.Id) + "-brief.md";
-            pointer.ShouldContain(mirror + "/" + relative);
-            pointer.ShouldNotContain(workspace.Path);
+            var relative = TypedBodySpill.InboxRelativePath(first.Id.ToString("D"));
+            first.Body.ShouldContain(mirror + "/" + relative);
+            first.Body.ShouldNotContain(workspace.Path);
             // The observed runner prompt lost its heading line. Keep a marker beside the
             // instruction that survives that loss, before the spilled path is read.
-            pointer.ShouldContain(DelegationReportFormatter.TaskMarker(task.Id)
+            first.Body.ShouldContain(DelegationReportFormatter.TaskMarker(task.Id)
                 + " YOUR BRIEF IS NOT IN THIS MESSAGE");
+            first.RemoteSpillBody.ShouldNotBeNull().ShouldContain(goal);
+            first.RemoteSpillRelativePath.ShouldBe(relative);
 
-            courier.TryPeek(session.Id, out var staged).ShouldBeTrue();
-            staged.RunnerCwd.ShouldBe(mirror);
-            staged.Spill.RelativePath.ShouldBe(relative);
-            staged.Spill.Body.ShouldContain(goal);
+            // A second queued pointer for the same busy session owns separate bytes and Id.
+            var queue = graph.Services.GetRequiredService<SessionMessageQueueService>();
+            const string secondOldPath = ".antiphon/second-brief.md";
+            var secondBody = "second-brief-sentinel-0647\n" + new string('z', 4096);
+            queue.StageRemoteSpill(session.Id, mirror, new PhoneHomeInputSpill(secondOldPath, secondBody));
+            await queue.EnqueueAsync(session.Id, "Read " + mirror + "/" + secondOldPath,
+                MessageSendMode.WhenIdle, CancellationToken.None, QueuedMessageOrigin.Delegation);
+            var second = await db.SessionQueuedMessages.AsNoTracking()
+                .Where(m => m.AgentSessionId == session.Id && m.Id != first.Id)
+                .SingleAsync();
+            second.RemoteSpillBody.ShouldBe(secondBody);
+            second.Body.ShouldContain(TypedBodySpill.InboxRelativePath(second.Id.ToString("D")));
 
-            await new PhoneHomeRunnerClient(live, courier).SendInputAsync(session.Id, pointer, CancellationToken.None);
-
-            var written = Path.Combine(mirror, ".antiphon", $"task-{DelegationReportFormatter.Short(task.Id)}-brief.md");
-            File.Exists(written).ShouldBeTrue();
-            (await File.ReadAllTextAsync(written)).ShouldBe(staged.Spill.Body);
-            courier.IsStaged(session.Id).ShouldBeFalse();
+            // Replace the service object: no staged bytes survive in memory.
+            var restarted = new RemoteSpillCourier(graph.Services.GetRequiredService<IServiceScopeFactory>());
+            var client = new PhoneHomeRunnerClient(live, restarted);
+            var attempts = 0;
+            peer.Reply = frame => frame.Operation == PhoneHomeOperation.Input && ++attempts == 1
+                ? new PhoneHomeFrame(PhoneHomeFrameKind.Error, frame.Epoch, frame.RequestId,
+                    frame.Operation, ErrorCode: "runner_unavailable", StatusCode: 503)
+                : writer.Answer(frame);
+            await Should.ThrowAsync<Exception>(() => client.SendInputAsync(session.Id, first.Body, CancellationToken.None));
+            var firstFile = Path.Combine(mirror, relative.Replace('/', Path.DirectorySeparatorChar));
+            File.Exists(firstFile).ShouldBeFalse();
+            await client.SendInputAsync(session.Id, second.Body, CancellationToken.None);
+            await client.SendInputAsync(session.Id, first.Body, CancellationToken.None);
+            (await File.ReadAllTextAsync(firstFile)).ShouldBe(first.RemoteSpillBody);
+            var secondFile = Path.Combine(mirror, second.RemoteSpillRelativePath!.Replace('/', Path.DirectorySeparatorChar));
+            (await File.ReadAllTextAsync(secondFile)).ShouldBe(secondBody);
+            peer.Incoming.Where(f => f.Operation == PhoneHomeOperation.Input)
+                .Select(f => f.Payload!.Value.GetProperty("spill").GetProperty("messageId").GetGuid())
+                .ToArray().ShouldBe([first.Id, second.Id, first.Id]);
         }
         finally
         {

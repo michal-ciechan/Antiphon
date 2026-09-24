@@ -141,7 +141,7 @@ public sealed record PhoneHomeWorkspaceRemoveResponse(bool Removed, string? Resi
 /// The desktop never writes the file: its Cwd is a Windows path the session cannot see, and a
 /// desktop write would leave a file no one reads plus a prompt pointing at nothing.
 /// </summary>
-public sealed record PhoneHomeInputSpill(string RelativePath, string Body);
+public sealed record PhoneHomeInputSpill(string RelativePath, string Body, Guid? MessageId = null);
 
 public enum PhoneHomeFrameKind
 {

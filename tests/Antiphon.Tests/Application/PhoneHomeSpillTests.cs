@@ -69,14 +69,18 @@ public sealed class PhoneHomeSpillTests
     }
 
     [Test]
-    public void Staging_a_second_body_replaces_the_first()
+    public void Different_pointers_keep_their_own_staged_bodies()
     {
         var courier = new RemoteSpillCourier();
         var sessionId = Guid.NewGuid();
         courier.Stage(sessionId, "/work", new PhoneHomeInputSpill("a.md", "first"));
         courier.Stage(sessionId, "/work", new PhoneHomeInputSpill("b.md", "second"));
-        courier.TryTake(sessionId, out var staged).ShouldBeTrue();
-        staged.Spill.RelativePath.ShouldBe("b.md", "a stale body must never be delivered in place of the current one");
+        courier.TryPeek(sessionId, "read a.md", out var first).ShouldBeTrue();
+        first.Spill.Body.ShouldBe("first");
+        courier.TryPeek(sessionId, "read b.md", out var second).ShouldBeTrue();
+        second.Spill.Body.ShouldBe("second");
+        courier.Ack(sessionId, first).ShouldBeTrue();
+        courier.TryPeek(sessionId, "read b.md", out _).ShouldBeTrue();
     }
 
     [Test]

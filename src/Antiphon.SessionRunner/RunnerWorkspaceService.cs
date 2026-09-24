@@ -197,6 +197,10 @@ public sealed partial class RunnerWorkspaceService
         }
 
         var relative = (spill.RelativePath ?? "").Replace('\\', '/');
+        if (spill.MessageId is { } messageId
+            && !string.Equals(relative, $".antiphon/inbox/{messageId:D}.md", StringComparison.Ordinal))
+            throw new PhoneHomeAdmissionException(
+                PhoneHomeProblemTypes.UnsupportedTarget, "Spill path does not match its queue identity.", 409);
         // An ABSOLUTE path is refused rather than quietly rebased under the cwd: "/etc/passwd"
         // silently becoming "<mirror>/etc/passwd" would be safe but is not what the caller asked
         // for, and a spill pointer the agent is told to read must name the file that exists.

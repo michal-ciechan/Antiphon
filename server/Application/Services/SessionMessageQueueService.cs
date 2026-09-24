@@ -112,6 +112,29 @@ public sealed partial class SessionMessageQueueService
         _remoteSpills.Stage(sessionId, runnerCwd, spill);
     }
 
+    private RemoteSpillCourier.StagedSpill? BindStagedSpill(Guid sessionId, SessionQueuedMessage row)
+    {
+        if (_remoteSpills is null || !_remoteSpills.TryPeek(sessionId, row.Body, out var staged))
+            return null;
+        var relative = TypedBodySpill.InboxRelativePath(row.Id.ToString("D"));
+        row.Body = row.Body.Replace(staged.Spill.RelativePath, relative, StringComparison.Ordinal);
+        row.RemoteSpillBody = staged.Spill.Body;
+        row.RemoteSpillRelativePath = relative;
+        return staged;
+    }
+
+    private void BindGeneratedSpill(Guid sessionId, SessionQueuedMessage row, string wire)
+    {
+        if (_remoteSpills is null || !_remoteSpills.TryPeek(sessionId, wire, out var staged))
+            return;
+        var relative = TypedBodySpill.InboxRelativePath(row.Id.ToString("D"));
+        if (!string.Equals(staged.Spill.RelativePath, relative, StringComparison.Ordinal))
+            return;
+        row.RemoteSpillBody = staged.Spill.Body;
+        row.RemoteSpillRelativePath = relative;
+        _remoteSpills.Ack(sessionId, staged);
+    }
+
     internal async Task<string> SpillQueueBodyAsync(
         Guid sessionId,
         string body,
@@ -481,6 +504,10 @@ public sealed partial class SessionMessageQueueService
                 CapacityRecoveryActionKey = capacityRecoveryActionKey,
                 CapacityWaitId = capacityWaitId,
             };
+            // A producer can fit a remote brief before it knows the queue row Id. Bind the
+            // pointer and bytes to that Id in the same insert; neither can then be replaced by
+            // a later brief for this busy session.
+            var stagedBrief = BindStagedSpill(sessionId, row);
             db.SessionQueuedMessages.Add(row);
             var stampCompletion = CompletionNoteStamp.IsCallerCompletionNote(
                 origin, sourceLandNotificationId, sourceTaskId, conversationKey);
@@ -499,6 +526,8 @@ public sealed partial class SessionMessageQueueService
                 onCreated?.Invoke(existing.Id);
                 return await GetQueueAsync(sessionId, ct);
             }
+            if (stagedBrief is not null)
+                _remoteSpills?.Ack(sessionId, stagedBrief);
 
             if (stampCompletion && sourceTaskId is Guid completionTaskId)
                 await CompletionNoteStamp.ApplyAsync(db, completionTaskId, contentDigest, now, ct);
@@ -625,6 +654,7 @@ public sealed partial class SessionMessageQueueService
                 db, ct);
             if (!ReferenceEquals(nowBody, trimmed) && nowBody != trimmed)
                 row.Body = nowBody;
+            BindGeneratedSpill(sessionId, row, nowBody);
 
             nowBaseline = _verification.TranscriptConfirmEnabled
                 ? await CaptureTranscriptBaselineAsync(db, sessionId, ct)
@@ -1880,16 +1910,10 @@ public sealed partial class SessionMessageQueueService
         var body = committedWire ?? await SpillQueueBodyAsync(
             sessionId, composed, head.Id.ToString("D"), channelEnvelope, db, ct, ceilings,
             head.SpecialistInputPolicyJson);
+        BindGeneratedSpill(sessionId, head, body);
         var spilled = committedWire is null && !ReferenceEquals(body, composed) && body != composed;
-        if (committedWire is not null)
-        {
-            // CARD-0604 D-3. A replay of a frozen Completion rendering skips SpillQueueBodyAsync
-            // entirely, and that is where a REMOTE session's body is staged for the Input frame.
-            // Without this, every retry of a spilled completion typed the frozen pointer with no
-            // body travelling behind it, so the runner wrote nothing and the agent was told to
-            // read a file that did not exist.
+        if (committedWire is not null && head.RemoteSpillBody is null)
             await RestageCommittedSpillAsync(db, sessionId, run, completionRows, committedWire, ct);
-        }
 
         // CARD-0340 S3 / CARD-0342: a previously typed body still standing in the composer gets
         // Enter only in the process that took the typing, with the whole head visible (CARD-0501).

@@ -1280,6 +1280,8 @@ public class AppDbContext : DbContext
             entity.HasKey(m => m.Id);
             entity.Property(m => m.AgentSessionId).IsRequired();
             entity.Property(m => m.Body).IsRequired().HasColumnType("text");
+            entity.Property(m => m.RemoteSpillBody).HasColumnType("text");
+            entity.Property(m => m.RemoteSpillRelativePath).HasMaxLength(160);
             entity.Property(m => m.Status).IsRequired();
             entity.Property(m => m.Sequence).IsRequired();
             entity.Property(m => m.ContentDigest).HasColumnType("text");
