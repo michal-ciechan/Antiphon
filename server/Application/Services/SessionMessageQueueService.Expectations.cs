@@ -14,9 +14,10 @@ namespace Antiphon.Server.Application.Services;
 
 public sealed partial class SessionMessageQueueService
 {
-    private const string UnconfirmedExpectationBodyReason =
+    private static string UnconfirmedExpectationBodyReason(Guid sessionId) =>
         "An unconfirmed expectation-watchdog prompt may still stand in this session's composer; "
-        + "nothing is typed on top of it until it is confirmed, the composer is clear, or the session restarts.";
+        + "nothing is typed on top of it until it is confirmed, the composer is clear, or the session restarts. "
+        + ExpectationHoldAudit.ReleaseHint(sessionId);
 
     /// <summary>
     /// CARD-0650 D-7. The watchdog's direct Now send. Under the per-session lock it rechecks the
@@ -161,13 +162,16 @@ public sealed partial class SessionMessageQueueService
     /// <summary>
     /// True when an unconfirmed watchdog attempt of this generation may still stand in the
     /// composer: Attempting, Uncertain, or Unconfirmed (Enter withheld, NoSubmitOutput,
-    /// NoTranscriptRecord or a screen-only verdict). A Submitted attempt never holds. Release is
-    /// positive evidence only, never time: a submitted-prompt record carrying the body past the
-    /// attempt's floor (a full late receipt, or a partial one, since either means the composer
-    /// was submitted), the body no longer visible whole, or a new generation. With no floor the
-    /// transcript was empty when the attempt was committed, so every record is later than it. An
-    /// echo left in the conversation keeps the screen arm holding, so the record is the release
-    /// for a prompt that lands late. An unreadable snapshot holds.
+    /// NoTranscriptRecord or a screen-only verdict). Submitted and Released attempts never hold.
+    /// Release is positive evidence only, never time: a submitted-prompt record carrying the body
+    /// past the attempt's floor (a full late receipt, or a partial one, since either means the
+    /// composer was submitted), an empty composer, a new generation, or an operator's audited
+    /// release. With no floor the transcript was empty when the attempt was committed, so every
+    /// record is later than it. An unreadable snapshot holds.
+    /// <para>Review 02e08ff1: where the kind's composer can be read (Claude's bottom box) only the
+    /// composer counts: empty releases, anything in it holds, and an echo in the conversation above
+    /// it is not evidence either way. Where it cannot be read, the body visible whole anywhere on
+    /// screen holds, so a submitted echo with no record holds until the operator releases it.</para>
     /// </summary>
     private async Task<bool> ExpectationBodyBlocksComposerAsync(
         AppDbContext db, Guid sessionId, DateTime generation, CancellationToken ct)
@@ -205,6 +209,21 @@ public sealed partial class SessionMessageQueueService
             return true;
         }
 
+        var kind = await db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => s.AgentKind)
+            .FirstOrDefaultAsync(ct);
+        if (TryReadComposerRegion(kind, snapshot.RenderedScreen, out var composer))
+        {
+            if (ClaudeScreen.ComposerContentIsEmpty(composer))
+                return false;
+            _logger.LogWarning(
+                "Holding input to session {SessionId}: expectation nudge {NudgeId} is unconfirmed, has no "
+                + "transcript record, and the composer is not empty. Release: {Route}",
+                sessionId, unrecorded[0].Id, ExpectationHoldAudit.ReleaseRoute(sessionId));
+            return true;
+        }
+
         var standing = unrecorded
             .Where(n => ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(
                 snapshot.RenderedScreen, PtyInputEncoding.NormalizeBody(n.Body.Trim())))
@@ -214,17 +233,104 @@ public sealed partial class SessionMessageQueueService
             return false;
         _logger.LogWarning(
             "Holding input to session {SessionId}: expectation nudge {NudgeId} is unconfirmed, has no "
-            + "transcript record, and is still visible whole on screen",
-            sessionId, standingId);
+            + "transcript record, and is still visible whole on screen. Release: {Route}",
+            sessionId, standingId, ExpectationHoldAudit.ReleaseRoute(sessionId));
         return true;
     }
+
+    /// <summary>
+    /// The composer's content for a kind whose rendered composer can be told apart from the
+    /// conversation: Claude's bottom box. Codex, Grok and the rest have no reliable region here, and
+    /// neither does a Claude frame without one; false keeps the whole-screen rule for those.
+    /// </summary>
+    private static bool TryReadComposerRegion(AgentKind kind, string renderedScreen, out string content)
+    {
+        content = string.Empty;
+        return kind == AgentKind.ClaudeCode && ClaudeScreen.TryReadComposer(renderedScreen, out content);
+    }
+
+    /// <summary>
+    /// CARD-0650 S4 repair 3. The operator's audited release of an expectation-watchdog composer
+    /// hold on <paramref name="sessionId"/>: every Attempting, Uncertain or Unconfirmed attempt of
+    /// the current generation becomes Released, with a comment on its audit card and a Check note on
+    /// its subject tasks. Under the session lock, so it cannot interleave with a send. It never types,
+    /// never touches the queue, and never clears operator debt. A session with no hold releases nothing.
+    /// </summary>
+    public async Task<ExpectationHoldReleaseResult> ReleaseExpectationHoldAsync(
+        Guid sessionId, string? reason, CancellationToken ct)
+    {
+        var why = (reason ?? string.Empty).Trim();
+        if (why.Length == 0)
+            throw new ValidationException("reason", "A reason is required to release an expectation-watchdog hold.");
+        if (why.Length > MaxExpectationReleaseReasonChars)
+            throw new ValidationException("reason", $"The reason must be at most {MaxExpectationReleaseReasonChars} characters.");
+
+        var sessionLock = GetLock(sessionId);
+        await sessionLock.WaitAsync(ct);
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var startedAt = await db.AgentSessions.AsNoTracking()
+                .Where(s => s.Id == sessionId)
+                .Select(s => (DateTime?)s.StartedAt)
+                .FirstOrDefaultAsync(ct)
+                ?? throw new NotFoundException("Session", sessionId);
+            var generation = SessionGeneration.Normalize(startedAt);
+
+            var holding = (await db.ExpectationNudges.AsNoTracking()
+                    .Where(n => n.DestinationSessionId == sessionId
+                        && (n.AttemptState == ExpectationAttemptState.Attempting
+                            || n.AttemptState == ExpectationAttemptState.Uncertain
+                            || n.AttemptState == ExpectationAttemptState.Unconfirmed))
+                    .Select(n => new { n.Id, n.AttemptState, n.DestinationGeneration, n.AuditCommentId, n.CheckEventIdsJson })
+                    .ToListAsync(ct))
+                .Where(n => n.DestinationGeneration is { } typed && SessionGeneration.Equal(typed, generation))
+                .ToList();
+
+            var released = new List<Guid>();
+            var now = UtcNow();
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            foreach (var nudge in holding)
+            {
+                var rows = await db.ExpectationNudges
+                    .Where(n => n.Id == nudge.Id && n.AttemptState == nudge.AttemptState)
+                    .ExecuteUpdateAsync(u => u
+                        .SetProperty(n => n.AttemptState, ExpectationAttemptState.Released)
+                        .SetProperty(n => n.ConcurrencyToken, Guid.NewGuid()), ct);
+                if (rows != 1)
+                    continue;
+                await ExpectationHoldAudit.AddAsync(
+                    db, nudge.AuditCommentId, nudge.CheckEventIdsJson,
+                    ExpectationHoldAudit.ReleasedNote(nudge.Id, sessionId, generation, nudge.AttemptState, why),
+                    "operator", now, ct);
+                released.Add(nudge.Id);
+            }
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+
+            if (released.Count > 0)
+            {
+                _logger.LogWarning(
+                    "Operator released the expectation composer hold on session {SessionId} for nudge(s) {NudgeIds}: {Reason}",
+                    sessionId, string.Join(", ", released), why);
+            }
+            return new ExpectationHoldReleaseResult(sessionId, released);
+        }
+        finally
+        {
+            sessionLock.Release();
+        }
+    }
+
+    private const int MaxExpectationReleaseReasonChars = 1000;
 
     private async Task EnsureNoUnconfirmedExpectationBodyAsync(Guid sessionId, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         if (await ExpectationBodyBlocksCurrentGenerationAsync(db, sessionId, ct))
-            throw new ConflictException(UnconfirmedExpectationBodyReason, "expectation_prompt_unconfirmed");
+            throw new ConflictException(UnconfirmedExpectationBodyReason(sessionId), "expectation_prompt_unconfirmed");
     }
 
     /// <summary><see cref="ExpectationBodyBlocksComposerAsync"/> at the session's current generation.</summary>

@@ -30,7 +30,8 @@ public enum ExpectationAttemptState
     Uncertain = 3,
     /// <summary>No receipt and no evidence the body left the composer: Enter withheld, NoSubmitOutput,
     /// NoTranscriptRecord, or a screen-only verdict. Ordinary input holds until a transcript record
-    /// shows the prompt, the body is no longer visible whole, or the generation changes.</summary>
+    /// shows the prompt, the composer is shown empty (Claude) or the body is no longer visible whole
+    /// (kinds with no readable composer), the generation changes, or an operator releases it.</summary>
     Unconfirmed = 4,
     Refused = 5,
 
@@ -41,6 +42,13 @@ public enum ExpectationAttemptState
     /// the body left the composer and its echo stays on screen.
     /// </summary>
     Submitted = 6,
+
+    /// <summary>
+    /// CARD-0650 S4 repair 3. An operator released the composer hold of an Attempting, Uncertain or
+    /// Unconfirmed attempt through the audited release route. Still no receipt: operator debt stays,
+    /// a late receipt can still confirm it, and nothing is ever retyped. It never holds ordinary input.
+    /// </summary>
+    Released = 7,
 }
 
 /// <summary>
