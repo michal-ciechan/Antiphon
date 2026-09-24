@@ -277,6 +277,35 @@ public sealed class AgentTaskLandService
             await HoldOnBusyLeaseAsync(task, request, ct);
             return LandRunResult.Held;
         }
+        // CARD-0642 D-4/D-7: one read-cache scope per land, disposed before the lease it relies on.
+        using var gitScope = _landingGit.BeginOperationScope();
+        var wall = Stopwatch.StartNew();
+        var outcome = "Exception";
+        try
+        {
+            var run = await RunLeasedAsync(task, request, lease, ct);
+            outcome = run.ToString();
+            return run;
+        }
+        finally
+        {
+            var terminal = _db.ChangeTracker.Entries<AgentTaskEvent>().Select(e => e.Entity)
+                .Where(e => e.AgentTaskId == task.Id && e.LandRequestId == request.Id && e.IsLandTerminal)
+                .OrderBy(e => e.At).LastOrDefault();
+            var profile = gitScope.Profile;
+            _logger.LogInformation(
+                "Land git profile task={TaskId} request={RequestId} outcome={Outcome} wallSeconds={WallSeconds} processes={Processes} "
+                + "worktreeList={WorktreeList} registrationHits={RegistrationHits} canonicalHits={CanonicalHits} "
+                + "inspections={Inspections} remote={Remote} gitSeconds={GitSeconds}",
+                task.Id, request.Id, terminal is null ? outcome : $"{outcome}/{terminal.Type}",
+                Math.Round(wall.Elapsed.TotalSeconds, 2), profile.Processes, profile.WorktreeLists, profile.RegistrationHits,
+                profile.CanonicalHits, profile.Inspections, profile.RemoteRoundTrips, Math.Round(profile.GitSeconds, 2));
+        }
+    }
+
+    private async Task<LandRunResult> RunLeasedAsync(AgentTask task, AgentTaskLandRequest request, RepositoryLease lease,
+        CancellationToken ct)
+    {
         await _db.Entry(task).ReloadAsync(ct);
         if (task.LandRequestedAt is null || task.Status != AgentTaskStatus.Succeeded || task.CurrentLandRequestId != request.Id)
             return LandRunResult.Complete;

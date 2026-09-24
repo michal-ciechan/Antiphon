@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Collections.Immutable;
 using System.Security.Cryptography;
@@ -41,6 +42,18 @@ public class LandingGit : ILandingGit
     }
 
     private async Task<LandingGitResult> ExecuteAsync(string repository, IReadOnlyList<string> arguments,
+        Func<int, long, CancellationToken, Task>? started, CancellationToken ct)
+    {
+        var scope = Scope;
+        if (scope is null) return await ExecuteProcessAsync(repository, arguments, started, ct);
+        // Before the process starts, so a failed or cancelled mutation still forces a re-list.
+        if (ChangesRegistrations(arguments, out var topology)) scope.Invalidate(topology);
+        var clock = Stopwatch.StartNew();
+        try { return await ExecuteProcessAsync(repository, arguments, started, ct); }
+        finally { scope.Profile.Record(arguments, clock.Elapsed); }
+    }
+
+    private async Task<LandingGitResult> ExecuteProcessAsync(string repository, IReadOnlyList<string> arguments,
         Func<int, long, CancellationToken, Task>? started, CancellationToken ct)
     {
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -121,6 +134,20 @@ public class LandingGit : ILandingGit
     public Task<string> CanonicalDirectoryAsync(string path, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
+        var scope = Scope;
+        // Existence stays live: a removed or pruned directory must still fail, never resolve from cache.
+        if (scope is not null && scope.Canonical.TryGetValue(path, out var cached) && Directory.Exists(path))
+        {
+            scope.Profile.CanonicalHit();
+            return Task.FromResult(cached);
+        }
+        var canonical = Canonicalize(path);
+        if (scope is not null) scope.Canonical[path] = canonical;
+        return Task.FromResult(canonical);
+    }
+
+    private static string Canonicalize(string path)
+    {
         var full = Path.GetFullPath(path);
         var root = Path.GetPathRoot(full)!;
         var current = root;
@@ -134,17 +161,129 @@ public class LandingGit : ILandingGit
                 current = info.ResolveLinkTarget(returnFinalTarget: true)?.FullName
                     ?? throw new IOException("path_alias_unresolved");
         }
-        return Task.FromResult(Path.TrimEndingDirectorySeparator(Path.GetFullPath(current)));
+        return Path.TrimEndingDirectorySeparator(Path.GetFullPath(current));
     }
 
     public async Task<string> CommonDirectoryAsync(string repository, CancellationToken ct)
     {
+        var scope = Scope;
+        if (scope is not null && scope.Common.TryGetValue(repository, out var cached) && Directory.Exists(repository))
+            return cached;
         var result = await RequiredAsync(repository, ["rev-parse", "--path-format=absolute", "--git-common-dir"], ct);
-        return await CanonicalDirectoryAsync(result.Trim(), ct);
+        var common = await CanonicalDirectoryAsync(result.Trim(), ct);
+        if (scope is not null) scope.Common[repository] = common;
+        return common;
     }
 
-    public async Task<IReadOnlyList<LandingRegistration>> RegistrationsAsync(string repository, CancellationToken ct)
-        => ParseRegistrations(await RequiredAsync(repository, ["worktree", "list", "--porcelain", "-z"], ct));
+    public Task<IReadOnlyList<LandingRegistration>> RegistrationsAsync(string repository, CancellationToken ct)
+        => ListRegistrationsAsync(repository, ct);
+
+    /// <summary>CARD-0642 D-4. Inside an operation scope the parsed listing is reused until this
+    /// instance runs a registration/HEAD mutation or the <c>&lt;common&gt;/worktrees</c> stamp moves.</summary>
+    private async Task<IReadOnlyList<LandingRegistration>> ListRegistrationsAsync(string repository, CancellationToken ct)
+    {
+        string[] list = ["worktree", "list", "--porcelain", "-z"];
+        var scope = Scope;
+        if (scope is null) return ParseRegistrations(await RequiredAsync(repository, list, ct));
+        var stamp = await RegistrationStampAsync(repository, ct);
+        if (stamp is not null && scope.Registrations.TryGetValue(repository, out var cached) && cached.Stamp == stamp)
+        {
+            scope.Profile.RegistrationHit();
+            return cached.Rows;
+        }
+        // Stamp before list: a change racing the listing leaves a stale stamp, which re-lists next time.
+        var generation = scope.Generation;
+        var rows = ParseRegistrations(await RequiredAsync(repository, list, ct));
+        if (stamp is not null && generation == scope.Generation) scope.Registrations[repository] = (stamp.Value, rows);
+        return rows;
+    }
+
+    private async Task<RegistrationStamp?> RegistrationStampAsync(string repository, CancellationToken ct)
+    {
+        try
+        {
+            var worktrees = Path.Combine(await CommonDirectoryAsync(repository, ct), "worktrees");
+            if (!Directory.Exists(worktrees)) return new(DateTime.MinValue, -1);
+            return new(Directory.GetLastWriteTimeUtc(worktrees), Directory.EnumerateFileSystemEntries(worktrees).Count());
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return null; // Unknown stamp: never serve or store a cached listing.
+        }
+    }
+
+    /// <summary>CARD-0642 D-4: commands that can add/remove registrations or move a worktree's HEAD or branch.
+    /// <paramref name="topology"/> also drops cached canonical/common-dir resolutions.</summary>
+    internal static bool ChangesRegistrations(IReadOnlyList<string> arguments, out bool topology)
+    {
+        topology = false;
+        if (arguments.Count == 0) return false;
+        var rest = arguments.Skip(1).ToList();
+        switch (arguments[0])
+        {
+            case "worktree":
+                topology = rest.Count == 0 || rest[0] != "list";
+                return topology;
+            case "gc" or "prune":
+                topology = true;
+                return true;
+            case "rebase" or "merge" or "checkout" or "switch" or "reset" or "commit" or "branch"
+                or "cherry-pick" or "revert" or "am" or "pull" or "stash":
+                return true;
+            case "symbolic-ref":
+                return rest.Any(a => a is "-d" or "--delete") || rest.Count(a => !a.StartsWith('-')) >= 2;
+            case "update-ref":
+                return rest.Any(a => a is "--stdin" or "HEAD" || a.StartsWith("refs/heads/", StringComparison.Ordinal));
+            default:
+                return false;
+        }
+    }
+
+    public ILandingOperationScope BeginOperationScope()
+    {
+        if (Scope is { } live) return new BorrowedScope(live.Profile);
+        var scope = new OperationScope(this);
+        _scope.Value = scope;
+        return scope;
+    }
+
+    private readonly AsyncLocal<OperationScope?> _scope = new();
+    private OperationScope? Scope => _scope.Value is { Disposed: false } live ? live : null;
+
+    private readonly record struct RegistrationStamp(DateTime WorktreesWriteUtc, int Entries);
+
+    private sealed class OperationScope(LandingGit owner) : ILandingOperationScope
+    {
+        private int _generation;
+        public LandingGitProfile Profile { get; } = new();
+        public bool Disposed { get; private set; }
+        public int Generation => Volatile.Read(ref _generation);
+        public ConcurrentDictionary<string, (RegistrationStamp Stamp, IReadOnlyList<LandingRegistration> Rows)> Registrations { get; }
+            = new(StringComparer.Ordinal);
+        public ConcurrentDictionary<string, string> Canonical { get; } = new(StringComparer.Ordinal);
+        public ConcurrentDictionary<string, string> Common { get; } = new(StringComparer.Ordinal);
+
+        public void Invalidate(bool topology)
+        {
+            Interlocked.Increment(ref _generation);
+            Registrations.Clear();
+            if (!topology) return;
+            Canonical.Clear();
+            Common.Clear();
+        }
+
+        public void Dispose()
+        {
+            Disposed = true;
+            if (ReferenceEquals(owner._scope.Value, this)) owner._scope.Value = null;
+        }
+    }
+
+    private sealed class BorrowedScope(LandingGitProfile profile) : ILandingOperationScope
+    {
+        public LandingGitProfile Profile { get; } = profile;
+        public void Dispose() { }
+    }
 
     public async Task<bool> HasActiveSequencerAsync(string repository, CancellationToken ct)
         => HasSequencerAt(await CanonicalDirectoryAsync((await RequiredAsync(repository,
@@ -161,8 +300,12 @@ public class LandingGit : ILandingGit
         return false;
     }
 
-    public async Task<LandSourceInspection> InspectAsync(LandSourceCoordinates coordinates, CancellationToken ct)
+    public Task<LandSourceInspection> InspectAsync(LandSourceCoordinates coordinates, CancellationToken ct)
+        => InspectAsync(coordinates, LandInspectionScope.Full, ct);
+
+    public async Task<LandSourceInspection> InspectAsync(LandSourceCoordinates coordinates, LandInspectionScope scope, CancellationToken ct)
     {
+        Scope?.Profile.Inspection();
         try
         {
             await ValidateBranchAsync(coordinates.RepositoryPath, coordinates.SourceFullRef, ct);
@@ -177,14 +320,18 @@ public class LandingGit : ILandingGit
             if (!status.Succeeded)
                 return new(null, "status_error", LandFailureDiagnostic.FromCommand(statusArgs, status.ExitCode));
             var ignoredArgs = new[] { "ls-files", "--others", "--ignored", "--exclude-standard", "-z" };
-            var ignored = await RunAsync(snapshot.RegisteredPath, ignoredArgs, ct);
-            if (!ignored.Succeeded)
-                return new(null, "ignored_status_error", LandFailureDiagnostic.FromCommand(ignoredArgs, ignored.ExitCode));
+            var ignoredPaths = ImmutableArray<string>.Empty;
+            if (scope == LandInspectionScope.Full)
+            {
+                var ignored = await RunAsync(snapshot.RegisteredPath, ignoredArgs, ct);
+                if (!ignored.Succeeded)
+                    return new(null, "ignored_status_error", LandFailureDiagnostic.FromCommand(ignoredArgs, ignored.ExitCode));
+                ignoredPaths = ignored.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries).ToImmutableArray();
+            }
             var after = await IdentityAsync(coordinates, ct);
             if (after.Reason is not null || after.Snapshot != snapshot) return new(null, "source_changed");
             if (status.Output.Length != 0) return new(null, "source_dirty");
-            return new(snapshot with { Status = status.Output,
-                IgnoredPaths = ignored.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries).ToImmutableArray() }, null);
+            return new(snapshot with { Status = status.Output, IgnoredPaths = ignoredPaths }, null);
         }
         catch (LandingGitCommandException ex)
         {
@@ -206,8 +353,7 @@ public class LandingGit : ILandingGit
         var common = await CommonDirectoryAsync(coordinates.RepositoryPath, ct);
         var path = await CanonicalDirectoryAsync(coordinates.WorktreePath, ct);
         if (!PathsEqual(common, await CommonDirectoryAsync(path, ct))) return new(null, "wrong_repository");
-        var registrations = ParseRegistrations(await RequiredAsync(coordinates.RepositoryPath,
-            ["worktree", "list", "--porcelain", "-z"], ct));
+        var registrations = await ListRegistrationsAsync(coordinates.RepositoryPath, ct);
         var matching = new List<LandingRegistration>();
         foreach (var entry in registrations)
         {

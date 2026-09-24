@@ -83,3 +83,37 @@ public sealed record LandingSourceObservation(string? Sha, string? ObservationRe
 public sealed record LandingSourceGraph(LandSourceRelationship Relationship, string? Reason);
 
 public sealed record LandingVerification(bool Passed, string Description);
+
+/// <summary>CARD-0642 D-5. Only guarded cleanup reads <see cref="LandSourceSnapshot.IgnoredPaths"/>;
+/// the resolver and protocol ask for identity and the dirty check only.</summary>
+public enum LandInspectionScope { Full, IdentityAndStatus }
+
+/// <summary>CARD-0642 D-7: git I/O spent inside one land operation scope. Thread-safe.</summary>
+public sealed class LandingGitProfile
+{
+    private long _processes, _worktreeLists, _registrationHits, _canonicalHits, _inspections, _remote, _gitTicks;
+
+    public long Processes => Interlocked.Read(ref _processes);
+    public long WorktreeLists => Interlocked.Read(ref _worktreeLists);
+    public long RegistrationHits => Interlocked.Read(ref _registrationHits);
+    public long CanonicalHits => Interlocked.Read(ref _canonicalHits);
+    public long Inspections => Interlocked.Read(ref _inspections);
+    public long RemoteRoundTrips => Interlocked.Read(ref _remote);
+    public double GitSeconds => TimeSpan.FromTicks(Interlocked.Read(ref _gitTicks)).TotalSeconds;
+
+    public void Record(IReadOnlyList<string> arguments, TimeSpan elapsed)
+    {
+        Interlocked.Increment(ref _processes);
+        Interlocked.Add(ref _gitTicks, elapsed.Ticks);
+        var command = arguments.Count == 0 ? "" : arguments[0];
+        if (command == "worktree" && arguments.Count > 1 && arguments[1] == "list") Interlocked.Increment(ref _worktreeLists);
+        if (command is "ls-remote" or "fetch" or "push") Interlocked.Increment(ref _remote);
+    }
+
+    public void RegistrationHit() => Interlocked.Increment(ref _registrationHits);
+    public void CanonicalHit() => Interlocked.Increment(ref _canonicalHits);
+    public void Inspection() => Interlocked.Increment(ref _inspections);
+
+    public string Describe() => string.Create(System.Globalization.CultureInfo.InvariantCulture,
+        $"processes={Processes} worktreeList={WorktreeLists} registrationHits={RegistrationHits} canonicalHits={CanonicalHits} inspections={Inspections} remote={RemoteRoundTrips} gitSeconds={GitSeconds:F2}");
+}
