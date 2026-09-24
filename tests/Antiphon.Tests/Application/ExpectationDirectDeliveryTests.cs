@@ -437,11 +437,7 @@ public sealed class ExpectationDirectDeliveryTests
         await using var f = await ExpectationDeliveryFixture.CreateAsync();
         var adapter = f.Harness.Adapter;
         adapter.ClaudeComposerChrome = true;
-        adapter.OnSubmitted = submitted =>
-        {
-            adapter.Emit("\n> " + submitted + "\n");
-            return Task.CompletedTask;
-        };
+        EchoWithoutRecordingTheWatchdogPrompt(adapter);
         var nudge = await f.NudgeAsync();
         (await f.DeliverAsync(nudge.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Unconfirmed);
         (await f.ReloadAsync(nudge.Id)).AttemptState.ShouldBe(ExpectationAttemptState.Unconfirmed,
@@ -504,11 +500,7 @@ public sealed class ExpectationDirectDeliveryTests
         // the submitted echo holds. The operator's audited release is the way out.
         await using var f = await ExpectationDeliveryFixture.CreateAsync();
         var adapter = f.Harness.Adapter;
-        adapter.OnSubmitted = submitted =>
-        {
-            adapter.Emit("\n> " + submitted + "\n");
-            return Task.CompletedTask;
-        };
+        EchoWithoutRecordingTheWatchdogPrompt(adapter);
         var task = await f.SubjectTaskAsync();
         var nudge = await f.NudgeAsync(checkTaskId: task);
         (await f.DeliverAsync(nudge.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Unconfirmed);
@@ -560,5 +552,20 @@ public sealed class ExpectationDirectDeliveryTests
             (await db.CardComments.CountAsync(c => c.Body.Contains("[expectation-hold-released:"))).ShouldBe(1);
         }
         adapter.KillCount.ShouldBe(0);
+    }
+
+    /// <summary>
+    /// The watchdog prompt is taken and its echo stays in the conversation, but its transcript record
+    /// never arrives (NoTranscriptRecord). Ordinary notes still record as usual.
+    /// </summary>
+    private static void EchoWithoutRecordingTheWatchdogPrompt(Antiphon.Tests.Agents.FakeAgentProtocolAdapter adapter)
+    {
+        var record = adapter.OnSubmitted!;
+        adapter.OnSubmitted = async submitted =>
+        {
+            adapter.Emit("\n> " + submitted + "\n");
+            if (!submitted.StartsWith("Expectation nudge", StringComparison.Ordinal))
+                await record(submitted);
+        };
     }
 }
