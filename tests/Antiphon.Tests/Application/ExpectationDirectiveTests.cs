@@ -146,7 +146,7 @@ public sealed class ExpectationDirectiveTests
             {
                 RunnerId = " server2 ",
                 InFlightTarget = 3,
-                Candidates = [Candidate(" claude-main ")],
+                Candidates = [Candidate(" claude-main ", AgentKind.ClaudeCode, AgentModelLevel.High)],
             },
             new ExpectationTargetSettings
             {
