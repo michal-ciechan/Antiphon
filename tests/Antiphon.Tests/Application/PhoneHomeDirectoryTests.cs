@@ -1,6 +1,9 @@
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Agents.Pty;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
@@ -9,6 +12,7 @@ using Microsoft.Extensions.Options;
 using Shouldly;
 using System.Net;
 using System.Net.Http.Json;
+using System.Net.WebSockets;
 using System.Text.Json;
 using TUnit.Core;
 
@@ -98,7 +102,80 @@ public sealed class PhoneHomeDirectoryTests
             .GetString().ShouldBe("claude");
     }
 
-    private static readonly Guid StoreId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    // CARD-0679 D-6: a remote adapter held the one PhoneHomeRunnerClient that Resolve returned when
+    // it was created, so after a reconnect every call (including the clean-up kill) went to the
+    // dead connection and failed its dispatch gate.
+    [Test]
+    public async Task Remote_adapter_reaches_the_replacement_connection_after_a_reconnect()
+    {
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        var sessionId = Guid.NewGuid();
+        var generation = new DateTime(2026, 9, 24, 10, 0, 0, DateTimeKind.Utc);
+        var held = new RunnerSessionDto(sessionId, 4242, generation, "Running", null, "", 0, AcceptedStartedAt: generation);
+        await using var peerA = await host.ConnectPeerAsync();
+        peerA.Sessions.Add(held);
+        var liveA = await host.WaitLiveAsync();
+        host.Directory.MarkRecovered(liveA);
+        var factory = new AgentProtocolAdapterFactory(
+            Options.Create(new AgentRegistrySettings()), host.Local, directory: host.Directory);
+        var adapter = factory.Create(AgentKind.Raw, host.AllowedRunnerId);
+        await ((IAttachableProtocolAdapter)adapter).AttachAsync(sessionId, CancellationToken.None);
+
+        peerA.Socket.Abort();
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while ((liveA.SocketOpen || ReferenceEquals(host.Directory.SnapshotLive(), liveA)) && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+        await using var peerB = await host.ConnectPeerAsync();
+        peerB.Sessions.Add(held);
+        var liveB = await host.WaitLiveAsync();
+        liveB.ShouldNotBeSameAs(liveA);
+        host.Directory.MarkRecovered(liveB);
+
+        Exception? thrown = null;
+        try
+        {
+            await adapter.KillGenerationAsync(generation, TimeSpan.FromMilliseconds(100), CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            thrown = ex;
+        }
+
+        peerB.RequestCount(PhoneHomeOperation.KillGeneration).ShouldBe(1, $"the kill threw {thrown}");
+        thrown.ShouldBeNull();
+    }
+
+    // CARD-0679 D-6 (card ask 2): between the socket closing and the connect route recording the
+    // end, Resolve handed out a client bound to a closed socket because it checked only the flag.
+    [Test]
+    public void Resolve_refuses_a_recovered_connection_whose_socket_is_closed()
+    {
+        var directory = Directory(maxCapacity: 8);
+        var ticket = directory.Register(Registration(capacity: 1));
+        var socket = WebSocket.CreateFromStream(new MemoryStream(), new WebSocketCreationOptions { IsServer = true });
+        var live = directory.AcceptConnect("server2", ticket.Ticket, socket);
+        directory.MarkRecovered(live);
+        directory.Resolve("server2").ShouldNotBeNull();
+
+        socket.Abort();
+        live.SocketOpen.ShouldBeFalse();
+        live.IsLeaseExpired(TimeSpan.FromSeconds(90)).ShouldBeFalse("the lease is still fresh");
+
+        Exception? thrown = null;
+        try
+        {
+            directory.Resolve("server2");
+        }
+        catch (Exception ex)
+        {
+            thrown = ex;
+        }
+
+        var refused = thrown.ShouldBeOfType<ServiceUnavailableException>();
+        refused.Code.ShouldBe(PhoneHomeProblemTypes.Unavailable);
+    }
+
+    private static readonly Guid StoreId =Guid.Parse("11111111-1111-1111-1111-111111111111");
 
     private static PhoneHomeRegistrationRequest Registration(
         int capacity, string platform = "linux", RunnerCapabilitiesDto? capabilities = null) =>
