@@ -58,9 +58,15 @@ public class LandingGit : ILandingGit
         var mutating = arguments.Any(a => a is "rebase" or "merge" or "push" or "fetch" or "update-ref"
             or "add" or "remove" or "commit" or "checkout" or "checkout-index" or "restore" or "reset");
         var journal = mutating ? await RepositoryChildJournal.BeginAsync(repository, ct) : null;
-        Process? child = null;
+        Process? child;
         try { child = StartProcess(start); }
-        finally { if (child is null) journal?.NotStarted(); } // Start threw or returned no process: no child exists.
+        catch (Exception ex) when (journal is not null && CreatedNoChild(ex))
+        {
+            journal.NotStarted();
+            throw;
+        }
+        // Any other start failure is ambiguous (Windows builds the redirected streams after
+        // CreateProcess), so its record stands as a fence for recover-repository-children.ps1.
         using var process = child ?? throw new IOException("git_start_failed");
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
@@ -102,6 +108,15 @@ public class LandingGit : ILandingGit
         return new(process.ExitCode, await output,
             process.ExitCode == 0 ? "" : $"git_exit_{process.ExitCode}") { RebaseHeadSha = rebaseHead };
     }
+
+    /// <summary>
+    /// True only for a start failure that definitely created no child: CreateProcess (Windows) or
+    /// exec (Unix, whose failed child has already exited) refusing the executable or its directory.
+    /// </summary>
+    internal static bool CreatedNoChild(Exception ex) => ex is System.ComponentModel.Win32Exception win32
+        && (OperatingSystem.IsWindows()
+            ? win32.NativeErrorCode is 2 or 3 or 5 or 193 or 267 // FILE/PATH_NOT_FOUND, ACCESS_DENIED, BAD_EXE_FORMAT, DIRECTORY
+            : win32.NativeErrorCode is 2 or 8 or 13 or 20); // ENOENT, ENOEXEC, EACCES, ENOTDIR
 
     public Task<string> CanonicalDirectoryAsync(string path, CancellationToken ct)
     {
