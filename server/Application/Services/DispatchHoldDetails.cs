@@ -103,4 +103,53 @@ public static class DispatchHoldDetails
         var occupants = string.Join(",", occupantShorts.Take(8));
         return $"{prefix} dispatch held {seconds}s since {heldSince:O}; created {createdAt:O}; reason={lastHeldDetail}; running={running} of {max}; occupants={occupants}.";
     }
+
+    /// <summary>
+    /// Maps a stored hold sentence onto a diagnostic class. The original text stays the evidence.
+    /// This does not acquire a lease, delete a journal, or change dispatch.
+    /// </summary>
+    public static ExpectationHoldClassification Classify(string? detail)
+    {
+        var evidence = detail ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(evidence))
+            return new ExpectationHoldClassification(ExpectationHoldClass.Unknown, evidence);
+
+        var reason = ExtractEscalationReason(evidence) ?? evidence;
+        if (reason.Contains("repository mutation lease is fenced", StringComparison.Ordinal))
+            return new ExpectationHoldClassification(ExpectationHoldClass.RepositoryFenced, evidence);
+        if (reason.Contains("repository mutation lease is occupied by another process", StringComparison.Ordinal)
+            || reason.Contains("no running land on this repository", StringComparison.Ordinal))
+            return new ExpectationHoldClassification(ExpectationHoldClass.RepositoryOwnerUnknown, evidence);
+        if (reason.Contains("RunnerUnavailable", StringComparison.Ordinal)
+            || reason.Contains("is not dispatch-eligible", StringComparison.Ordinal))
+            return new ExpectationHoldClassification(ExpectationHoldClass.RunnerUnavailable, evidence);
+        if (reason.Contains("is held; dispatch paused for that model", StringComparison.Ordinal))
+            return new ExpectationHoldClassification(ExpectationHoldClass.ModelHeld, evidence);
+        if (IsOrdinaryWait(reason))
+            return new ExpectationHoldClassification(ExpectationHoldClass.OrdinaryWait, evidence);
+        return new ExpectationHoldClassification(ExpectationHoldClass.Unknown, evidence);
+    }
+
+    private static string? ExtractEscalationReason(string text)
+    {
+        const string marker = "reason=";
+        var start = text.IndexOf(marker, StringComparison.Ordinal);
+        if (start < 0)
+            return null;
+        start += marker.Length;
+        var end = text.IndexOf("; running=", start, StringComparison.Ordinal);
+        return (end < 0 ? text[start..] : text[start..end]).Trim();
+    }
+
+    private static bool IsOrdinaryWait(string text) =>
+        text.Contains("concurrency cap reached", StringComparison.Ordinal)
+        || text.Contains("repository mutation lease is held by the land", StringComparison.Ordinal)
+        || text.Contains("is landing", StringComparison.Ordinal)
+        || text.Contains(RoutingPinPrefix, StringComparison.Ordinal)
+        || text.Contains("remote workspace preparation", StringComparison.Ordinal)
+        || text.Contains("pinned agent '", StringComparison.Ordinal)
+        || text.Contains("standing agent '", StringComparison.Ordinal)
+        || text.Contains("already writing in this shared checkout", StringComparison.Ordinal)
+        || (text.Contains("intersects", StringComparison.Ordinal)
+            && text.Contains("running task", StringComparison.Ordinal));
 }
