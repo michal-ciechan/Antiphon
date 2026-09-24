@@ -3725,10 +3725,39 @@ public sealed class AgentTaskDispatcher
     }
 
     /// <summary>
-    /// CARD-0215 / CARD-0146 S4: same-card kept Worktree branches whose tip is not an ancestor
-    /// of this task's dispatch base. Succeeded and Blocked both count — a conflicted land
-    /// leaves the branch kept, which is the one most likely to be forgotten. Not Code-only:
-    /// any card-bound Worktree is held, which includes every IsStage pair.
+    /// A sibling whose landing publication is Landed or AlreadyPresent, or whose timeline has a
+    /// Landed, AlreadyPresent, or LandedWithResidue event. Refused and in-flight rows do not count.
+    /// </summary>
+    private async Task<HashSet<Guid>> LoadPublishedLandingIdsAsync(
+        List<Guid> siblingIds, CancellationToken ct)
+    {
+        var published = new HashSet<Guid>();
+        if (siblingIds.Count == 0)
+            return published;
+        published.UnionWith(await _db.AgentTaskLandings.AsNoTracking()
+            .Where(l => siblingIds.Contains(l.TaskId)
+                && (l.Publication == LandPublicationOutcome.Landed
+                    || l.Publication == LandPublicationOutcome.AlreadyPresent))
+            .Select(l => l.TaskId)
+            .ToListAsync(ct));
+        published.UnionWith(await _db.AgentTaskEvents.AsNoTracking()
+            .Where(e => siblingIds.Contains(e.AgentTaskId)
+                && (e.Type == AgentTaskEventType.Landed
+                    || e.Type == AgentTaskEventType.AlreadyPresent
+                    || e.Type == AgentTaskEventType.LandedWithResidue))
+            .Select(e => e.AgentTaskId)
+            .ToListAsync(ct));
+        return published;
+    }
+
+    /// <summary>
+    /// CARD-0215 / CARD-0146 S4 / CARD-0643: same-card kept Worktree branches whose commits are
+    /// not already present on this task's dispatch base. Succeeded and Blocked both count — a
+    /// conflicted land leaves the branch kept, which is the one most likely to be forgotten.
+    /// Not Code-only: any card-bound Worktree is held, which includes every IsStage pair.
+    /// Present means <c>git cherry</c> has no '+' commits, or the sibling's landing is Landed /
+    /// AlreadyPresent (a LandedWithResidue event counts), or a later sibling that superseded it
+    /// has such a landing. An in-flight land still holds.
     /// </summary>
     private async Task<SiblingBaseGuard> EvaluateCardSiblingBaseAsync(AgentTask task, CancellationToken ct)
     {
@@ -3749,7 +3778,17 @@ public sealed class AgentTaskDispatcher
                 && t.Workspace == WorkspaceMode.Worktree
                 && (t.Status == AgentTaskStatus.Succeeded || t.Status == AgentTaskStatus.Blocked)
                 && t.WorktreeBranch != null)
-            .Select(t => new { t.Id, t.WorktreeBranch, t.RepoPath, t.WorktreePath, t.LandRequestedAt, t.CreatedAt })
+            .Select(t => new
+            {
+                t.Id,
+                t.WorktreeBranch,
+                t.RepoPath,
+                t.WorktreePath,
+                t.LandRequestedAt,
+                t.CreatedAt,
+                t.RepairSourceTaskId,
+                t.WorktreeBaseTaskId,
+            })
             .ToListAsync(ct);
 
         var sameRepo = siblings
@@ -3757,12 +3796,36 @@ public sealed class AgentTaskDispatcher
                 || DelegationWorktreeService.SharesRepo(task.RepoPath, s.WorktreePath))
             .ToList();
 
+        var published = await LoadPublishedLandingIdsAsync(sameRepo.Select(s => s.Id).ToList(), ct);
         var cardIdentifier = await _db.Cards.AsNoTracking()
             .Where(c => c.Id == task.CardId)
             .Select(c => c.Identifier)
             .FirstOrDefaultAsync(ct) ?? "the card";
         UnlandedSibling? hold = null;
         var warnings = new List<UnlandedSibling>();
+
+        // A later published sibling supersedes this branch when it was cut as a repair or
+        // worktree base of it, or when its tip already contains this tip's patches. Same
+        // CreatedAt still counts; an earlier sibling does not.
+        async Task<bool> SupersededByLaterLandingAsync(Guid siblingId, DateTime createdAt, string? fullTip)
+        {
+            foreach (var other in sameRepo)
+            {
+                if (other.Id == siblingId || other.CreatedAt < createdAt || !published.Contains(other.Id))
+                    continue;
+                if (other.RepairSourceTaskId == siblingId || other.WorktreeBaseTaskId == siblingId)
+                    return true;
+                if (fullTip is null
+                    || !await _worktrees.KeptBranchExistsAsync(task.RepoPath, other.WorktreeBranch!, ct))
+                    continue;
+                var otherTip = await _worktrees.ResolveKeptBranchTipAsync(task.RepoPath, other.WorktreeBranch!, ct);
+                if (otherTip is not null
+                    && await _worktrees.ContainsPatchesAsync(task.RepoPath, fullTip, otherTip, ct))
+                    return true;
+            }
+
+            return false;
+        }
 
         foreach (var sibling in sameRepo)
         {
@@ -3771,6 +3834,12 @@ public sealed class AgentTaskDispatcher
                 continue;
             var fullTip = await _worktrees.ResolveKeptBranchTipAsync(task.RepoPath, branch, ct);
             if (fullTip is not null && await _worktrees.ContainsPatchesAsync(task.RepoPath, fullTip, baseRef, ct))
+                continue;
+
+            // Hold wins over a previous publication: a re-land in flight is not "already present".
+            if (sibling.LandRequestedAt is null
+                && (published.Contains(sibling.Id)
+                    || await SupersededByLaterLandingAsync(sibling.Id, sibling.CreatedAt, fullTip)))
                 continue;
 
             var described = fullTip is null ? null

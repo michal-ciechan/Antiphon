@@ -200,7 +200,10 @@ requested ref, then the merge target, then the project's `BaseBranch` / `Git:Def
 `master` when that ref resolves to a commit, then `HEAD` with a warning naming the failed default
 (CARD-0508 S1). The card's current kept sibling is not chosen as a base in this release
 (CARD-0215 policy is unchanged). Containment of a kept sibling is patch-aware (`git cherry`): a
-rebase-landed branch is silent. The dispatcher still holds while a sibling land is in flight, and
+rebase-landed branch is silent. It is also silent when that sibling's landing is Landed,
+AlreadyPresent, or LandedWithResidue, or when a not-earlier sibling that superseded it has one of
+those landings (CARD-0643): a repair or worktree-base link, or a tip that already contains the
+patches. The dispatcher still holds while a sibling land is in flight, and
 still warns when a divergent kept branch is simply not landed. CARD-0540 snapshots full sibling
 commit IDs and emits one warning per surviving observed tip: identical tips share a deterministic
 representative, strict ancestors are covered by containing tips, and divergent tips remain separate.
