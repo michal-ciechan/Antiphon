@@ -160,6 +160,49 @@ public sealed class DispatchHoldVisibilityTests
     }
 
     [Test]
+    public async Task remote_running_task_does_not_consume_the_desktop_cap()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var t0 = UtcMs();
+        var clock = new FakeTimeProvider(new DateTimeOffset(t0, TimeSpan.Zero));
+        await using var world = CreateWorld(schema.ConnectionString, clock, new FakeLease(), maxConcurrent: 1);
+        var (agentId, _) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
+            schema.ConnectionString, workspace.Path);
+        await SeedDispatchedAsync(schema, workspace.Path, t0, runnerId: "server2");
+        var queued = await SeedQueuedAsync(schema, workspace.Path, agentId, t0);
+
+        var tick = await world.Dispatcher.TickAsync(CancellationToken.None);
+        tick.SkippedConcurrency.ShouldBe(0);
+        tick.Dispatched.ShouldBe(1);
+        await using var verify = CreateContext(schema);
+        (await verify.AgentTasks.SingleAsync(t => t.Id == queued.Id)).Status
+            .ShouldBe(AgentTaskStatus.Dispatched);
+    }
+
+    [Test]
+    public async Task runner_bound_queued_task_is_not_held_on_the_desktop_cap()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var t0 = UtcMs();
+        var clock = new FakeTimeProvider(new DateTimeOffset(t0, TimeSpan.Zero));
+        await using var world = CreateWorld(schema.ConnectionString, clock, new FakeLease(), maxConcurrent: 1);
+        var (agentId, _) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
+            schema.ConnectionString, workspace.Path);
+        await SeedDispatchedAsync(schema, workspace.Path, t0);
+        var queued = await SeedQueuedAsync(schema, workspace.Path, agentId, t0, runnerId: "server2");
+
+        var tick = await world.Dispatcher.TickAsync(CancellationToken.None);
+        tick.SkippedConcurrency.ShouldBe(0);
+        await using var verify = CreateContext(schema);
+        var held = await HeldAsync(verify, queued.Id);
+        held.ShouldNotContain(e => e.Detail == DispatchHoldDetails.ConcurrencyCap(1));
+        (await verify.AgentTasks.SingleAsync(t => t.Id == queued.Id)).Status
+            .ShouldBe(AgentTaskStatus.Queued);
+    }
+
+    [Test]
     public async Task held_age_escalates_at_warning_then_error_once_each()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -423,7 +466,7 @@ public sealed class DispatchHoldVisibilityTests
 
     private static async Task<AgentTask> SeedQueuedAsync(
         IsolatedTestSchema schema, string directory, Guid agentId, DateTime at,
-        string? repoPath = null, AgentTaskRole role = AgentTaskRole.Docs)
+        string? repoPath = null, AgentTaskRole role = AgentTaskRole.Docs, string? runnerId = null)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -442,6 +485,7 @@ public sealed class DispatchHoldVisibilityTests
             AgentId = agentId,
             Ephemeral = false,
             CreatedAt = at,
+            RunnerId = runnerId,
         };
         await using var db = CreateContext(schema);
         db.AgentTasks.Add(task);
@@ -450,7 +494,7 @@ public sealed class DispatchHoldVisibilityTests
     }
 
     private static async Task<AgentTask> SeedDispatchedAsync(
-        IsolatedTestSchema schema, string directory, DateTime at)
+        IsolatedTestSchema schema, string directory, DateTime at, string? runnerId = null)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -468,6 +512,7 @@ public sealed class DispatchHoldVisibilityTests
             DispatchedAt = at.AddMinutes(-1),
             CapacityWaitRetained = false,
             CreatedAt = at.AddMinutes(-2),
+            RunnerId = runnerId,
         };
         await using var db = CreateContext(schema);
         db.AgentTasks.Add(task);

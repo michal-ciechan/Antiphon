@@ -26,6 +26,7 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
             GrokRulesTransport.Capability,
             RunnerCapabilityFeatures.SessionGenerationV1,
             RunnerCapabilityFeatures.ConditionalMaintenanceInputV1,
+            RunnerCapabilityFeatures.CompactionContinuationStopV1,
         ];
         // CARD-0604 D-17 (Cut B). Phone-home advertises the LINUX custody backend, and only
         // when the runner's live probe passed. It never advertises windows-job-v1: a Windows
@@ -74,4 +75,14 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
     public Task<RunnerKillGenerationResult> KillGenerationAsync(
         Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct) =>
         _runtime.KillGenerationAsync(sessionId, expectedAcceptedStartedAt, TimeSpan.FromSeconds(15), ct);
+
+    public Task<RunnerSessionDto> ReleaseSlotAsync(Guid sessionId, string reason, CancellationToken ct) =>
+        _runtime.ReleaseSlotAsync(sessionId, reason, TimeSpan.FromSeconds(5), ct);
+
+    public Task<CompactionContinuationStopResult> StopCompactionContinuationAsync(
+        Guid sessionId, CompactionContinuationStopRequest request, CancellationToken ct) =>
+        _runtime.StopCompactionContinuationAsync(sessionId, request, TimeSpan.FromSeconds(5), ct);
+
+    public Task<CompactionTailObservation> ObserveCompactionAsync(Guid sessionId, CancellationToken ct) =>
+        _runtime.ObserveCompactionAsync(sessionId, ct);
 }

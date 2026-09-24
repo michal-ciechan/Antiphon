@@ -146,6 +146,44 @@ public sealed class RemoteWorkspacePreparerTests
     }
 
     [Test]
+    public async Task Full_runner_holds_before_remote_prep_and_the_trace_is_deduped()
+    {
+        await using var rig = await Rig.StartAsync();
+        rig.Peer.SilentFor(PhoneHomeOperation.WorkspaceMirror);
+        await rig.SeedOccupantAsync(SessionStatus.Running);
+        var taskId = await rig.SeedAsync();
+
+        await rig.TickAsync().WaitAsync(TickBound);
+        await rig.TickAsync().WaitAsync(TickBound);
+
+        var task = await rig.ReadTaskAsync(taskId);
+        task.Status.ShouldBe(AgentTaskStatus.Queued);
+        task.RemoteWorktreePath.ShouldBeNull();
+        var held = await rig.EventsAsync(taskId, AgentTaskEventType.Held);
+        held.Count.ShouldBe(1);
+        held[0].Detail.ShouldContain($"runner '{rig.RunnerId}' at capacity 1/1");
+        rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceMirror).ShouldBe(0);
+        (await rig.EventsAsync(taskId, AgentTaskEventType.Dispatched)).ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Failed_and_stopped_runner_sessions_do_not_reserve_a_slot()
+    {
+        await using var rig = await Rig.StartAsync();
+        rig.Peer.SilentFor(PhoneHomeOperation.WorkspaceMirror);
+        await rig.SeedOccupantAsync(SessionStatus.Failed);
+        await rig.SeedOccupantAsync(SessionStatus.Stopped);
+        var taskId = await rig.SeedAsync();
+
+        await rig.TickAsync().WaitAsync(TickBound);
+
+        (await rig.ReadTaskAsync(taskId)).Status.ShouldBe(AgentTaskStatus.Queued);
+        var held = await rig.EventsAsync(taskId, AgentTaskEventType.Held);
+        held.ShouldNotContain(e => e.Detail.Contains("at capacity", StringComparison.Ordinal));
+        await rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, 1);
+    }
+
+    [Test]
     public async Task Runner_not_eligible_is_one_held_trace_not_a_warning_per_tick()
     {
         await using var rig = await Rig.StartAsync(recovered: false);
@@ -306,6 +344,30 @@ public sealed class RemoteWorkspacePreparerTests
             }
 
             throw new TimeoutException($"Expected {count} {operation} request(s); saw {Peer.RequestCount(operation)}.");
+        }
+
+        public async Task SeedOccupantAsync(SessionStatus status)
+        {
+            var now = Now;
+            await using var db = NewDb();
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = Guid.NewGuid(),
+                DefinitionName = "grok",
+                AgentKind = AgentKind.Grok,
+                Status = status,
+                Cwd = WorkspacePath,
+                Cols = 80,
+                Rows = 24,
+                CreatedAt = now,
+                StartedAt = now,
+                LastSeenAt = now,
+                EndedAt = status is SessionStatus.Failed or SessionStatus.Stopped ? now : null,
+                RunnerId = RunnerId,
+                RunnerStoreId = Host.StoreId,
+                RunnerCwd = "/work",
+            });
+            await db.SaveChangesAsync();
         }
 
         public async Task<Guid> SeedAsync()
