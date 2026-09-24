@@ -1,9 +1,12 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Git;
+using Microsoft.Extensions.Options;
+using System.Collections.Immutable;
 using Shouldly;
 using TUnit.Core;
 
@@ -17,10 +20,10 @@ public sealed class LandingRemovalPolicyControlTests
     [Test]
     [Arguments(1, ".antiphon/report.md")]
     [Arguments(1, ".claude/settings.json")]
-    [Arguments(1, "bin-private/keep.txt")]
+    [Arguments(1, ".claude/settings.local.json")]
     [Arguments(2, ".antiphon/report.md")]
     [Arguments(2, ".claude/settings.json")]
-    [Arguments(2, "bin-private/keep.txt")]
+    [Arguments(2, ".claude/settings.local.json")]
     [Arguments(1, "head")]
     [Arguments(2, "head")]
     public async Task C448_V18_EachContentReadingRefusesBeforeItsNextCommand(int reading, string change)
@@ -201,6 +204,106 @@ public sealed class LandingRemovalPolicyControlTests
         }
     }
 
+    // CARD-0665 V-2. Null gate keeps today's total refusal; the real gate lets disposable content
+    // go with the tree, retains evidence between the two readings and names protected paths.
+    [Test]
+    public async Task C665_NullGateProtectsEveryIgnoredPath()
+    {
+        using var f = new RemovalFixture();
+        f.IgnoredPaths.Add("obj/a.json");
+        var result = await f.RemoveAsync();
+        result.Residue.ShouldBe("ignored_content_preserved");
+        f.Mutations.ShouldBeEmpty("an unwired composition must stay fail-closed");
+        f.InspectionCount.ShouldBe(1);
+        f.BranchPresent.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task C665_DisposableOnlyProceedsToRemoval()
+    {
+        using var f = new RemovalFixture();
+        f.IgnoredPaths.AddRange(["obj/a.json", "bin-x/a.dll"]);
+        var result = await f.RemoveAsync(gate: true);
+        result.IsClean.ShouldBeTrue(result.Residue);
+        f.Mutations[0].ShouldBe(["worktree", "remove", "--", f.Source]);
+        f.InspectionCount.ShouldBe(2);
+        f.Retention.Calls.ShouldHaveSingleItem().ShouldBe((0, 1), "an evidence-free tree still passes the artifact-pointer check once");
+        result.Detail.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task C665_ProtectedRefusalNamesPaths()
+    {
+        using var f = new RemovalFixture();
+        f.IgnoredPaths.AddRange(["x.user", ".claude/settings.json", "obj/a.json"]);
+        var result = await f.RemoveAsync(gate: true);
+        result.Residue.ShouldBe("ignored_content_preserved");
+        result.Detail.ShouldNotBeNull().ShouldContain(".claude/settings.json");
+        result.Detail.ShouldContain("x.user");
+        result.Detail.ShouldNotContain("obj/a.json");
+        f.Mutations.ShouldBeEmpty();
+        f.Retention.Calls.ShouldBeEmpty("protected content refuses before anything is copied");
+        f.InspectionCount.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task C665_EvidenceRetainedBeforeSecondReading()
+    {
+        using var f = new RemovalFixture();
+        f.IgnoredPaths.AddRange([".antiphon/task-0123abcd.md", "obj/a.json"]);
+        var result = await f.RemoveAsync(gate: true);
+        result.IsClean.ShouldBeTrue(result.Residue);
+        f.Retention.Paths.Single().ShouldBe([".antiphon/task-0123abcd.md"]);
+        f.Retention.Calls.ShouldHaveSingleItem().ShouldBe((1, 1), "evidence is retained once, after reading 1 and before reading 2");
+        f.InspectionCount.ShouldBe(2);
+        f.Mutations[0].ShouldBe(["worktree", "remove", "--", f.Source]);
+        result.Detail.ShouldNotBeNull().ShouldStartWith("retained=1");
+    }
+
+    [Test]
+    public async Task C665_RetentionRefusalPreservesTree()
+    {
+        using var f = new RemovalFixture();
+        f.IgnoredPaths.Add(".antiphon/task-0123abcd.md");
+        f.Retention.Refusal = "evidence_retention_exceeded";
+        var result = await f.RemoveAsync(gate: true);
+        result.Residue.ShouldBe("evidence_retention_exceeded");
+        f.Mutations.ShouldBeEmpty();
+        f.InspectionCount.ShouldBe(1);
+        File.ReadAllText(Path.Combine(f.Source, "keep.txt")).ShouldBe("private work");
+        f.BranchPresent.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task C665_EvidenceAppearingAtSecondReadingRefuses()
+    {
+        using var f = new RemovalFixture();
+        f.IgnoredPaths.Add("obj/a.json");
+        f.AfterInspection = count => { if (count == 2) f.IgnoredPaths.Add(".antiphon/task-0123abcd.md"); };
+        var result = await f.RemoveAsync(gate: true);
+        result.Residue.ShouldBe("ignored_content_changed");
+        f.Mutations.ShouldBeEmpty("evidence that was never retained must not be deleted");
+        f.InspectionCount.ShouldBe(2);
+        f.BranchPresent.ShouldBeTrue();
+    }
+
+    private sealed class RecordingRetention(RemovalFixture fixture) : IWorktreeEvidenceRetention
+    {
+        public List<(int Evidence, int AtInspection)> Calls { get; } = [];
+        public List<string[]> Paths { get; } = [];
+        public string? Refusal { get; set; }
+        public Task<WorktreeEvidenceRetentionResult> RetainAsync(AgentTask task, string worktreePath,
+            ImmutableArray<string> relativePaths, Guid? attemptId, CancellationToken ct)
+        {
+            Calls.Add((relativePaths.Length, fixture.InspectionCount));
+            if (relativePaths.Length != 0) Paths.Add([.. relativePaths]);
+            var root = Path.Combine(fixture.Root, "retained");
+            return Task.FromResult(Refusal is not null ? new WorktreeEvidenceRetentionResult(null, [], Refusal)
+                : new WorktreeEvidenceRetentionResult(root, [.. relativePaths.Select(p =>
+                    new RetainedWorktreeFile(p, Path.Combine(root, p), 1, new string('0', 64)))], null));
+        }
+    }
+
     private sealed class RemovalFixture : ILandingGit, IRepositoryMutationLease, IWorktreeRemovalEvidence, IDisposable
     {
         public static readonly string Sha = new('a', 40);
@@ -217,8 +320,11 @@ public sealed class LandingRemovalPolicyControlTests
         public int InspectionCount { get; private set; }
         public string InspectedSha { get; set; } = Sha;
         public string? IgnoredPath { get; set; }
+        public List<string> IgnoredPaths { get; } = [];
+        public RecordingRetention Retention { get; }
         public RemovalFixture()
         {
+            Retention = new(this);
             Directory.CreateDirectory(Source);
             File.WriteAllText(Path.Combine(Source, "keep.txt"), "private work");
             Operation = new() { Id = Guid.NewGuid(), TaskId = Guid.NewGuid(), Active = true,
@@ -234,7 +340,12 @@ public sealed class LandingRemovalPolicyControlTests
                 new(Operation.TaskId, Root, Source, Operation.SourceFullRef, Operation.TargetFullRef), Root,
                 Operation.GitDirectory, Sha, Sha, Operation.Id, new Lease(Root));
         }
-        public Task<WorktreeRemoval> RemoveAsync() => new GuardedWorktreeRemoval(this, this, this).RemoveAsync(Request, default);
+        public Task<WorktreeRemoval> RemoveAsync(bool gate = false) => (gate
+            ? new GuardedWorktreeRemoval(this, this, this, null, new WorktreeIgnoredContentGate(
+                new WorktreeIgnoredContentClassifier(Options.Create(new WorktreeCleanupSettings())), Retention, this))
+            : new GuardedWorktreeRemoval(this, this, this)).RemoveAsync(Request, default);
+        public Task<AgentTask?> ReadTaskAsync(Guid taskId, CancellationToken ct) =>
+            Task.FromResult<AgentTask?>(new AgentTask { Id = taskId });
         public Task<AgentTaskLanding?> ReadAsync(Guid id, CancellationToken ct) => Task.FromResult<AgentTaskLanding?>(Operation);
         public bool Owns(RepositoryLease lease, string commonDirectory) => ValidLease && ReferenceEquals(lease, Request.Lease) && commonDirectory == Root;
         public Task<RepositoryLease?> TryAcquireAsync(string repository, CancellationToken ct) => Task.FromResult<RepositoryLease?>(Request.Lease);
@@ -248,7 +359,8 @@ public sealed class LandingRemovalPolicyControlTests
             InspectionCount++;
             AfterInspection?.Invoke(InspectionCount);
             return Task.FromResult(new LandSourceInspection(new(coordinates, Root, Source, Request.GitDirectory,
-                coordinates.SourceFullRef, InspectedSha, InspectedSha, "", IgnoredPath is null ? [] : [IgnoredPath]), null));
+                coordinates.SourceFullRef, InspectedSha, InspectedSha, "",
+                IgnoredPath is null ? [.. IgnoredPaths] : [.. IgnoredPaths, IgnoredPath]), null));
         }
         public Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> args, CancellationToken ct)
         {

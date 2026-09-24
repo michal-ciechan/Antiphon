@@ -38,7 +38,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         await RequiredAsync(Remote, "init", "--bare");
         await File.WriteAllTextAsync(Path.Combine(Repository, "keep.txt"), "seed\n");
         await File.WriteAllTextAsync(Path.Combine(Repository, "fixture-owner.txt"), TaskId.ToString("N") + "\n");
-        await File.WriteAllTextAsync(Path.Combine(Repository, ".gitignore"), ".antiphon/\n.claude/\nbin-*/\n");
+        await File.WriteAllTextAsync(Path.Combine(Repository, ".gitignore"), ".antiphon/\n.claude/\nbin-*/\nobj/\n");
         await RequiredAsync(Repository, "add", ".");
         await RequiredAsync(Repository, "commit", "-m", "seed");
         SeedSha = (await RequiredAsync(Repository, "rev-parse", "HEAD")).Trim();

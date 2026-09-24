@@ -319,7 +319,7 @@ public sealed class AgentTaskLandPublicationTests
     [Test]
     [Arguments(".antiphon/report.md")]
     [Arguments(".claude/settings.local.json")]
-    [Arguments("bin-private/data.txt")]
+    [Arguments(".antiphon/inbox/photo.png")]
     public async Task C448_V04_IgnoredFilesSurviveConfirmedPublication(string relative)
     {
         await using var h = new LandingSafetyHarness();
@@ -335,6 +335,59 @@ public sealed class AgentTaskLandPublicationTests
         op.Cleanup.ShouldBe(LandCleanupStatus.Refused);
         op.LastReason.ShouldBe("ignored_content_preserved");
         (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.SourceRef)).Trim().ShouldBe(h.Fixture.SeedSha);
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
+
+    // CARD-0665 V-4: end-to-end land through the real remover and gate.
+    [Test]
+    public async Task C665_DisposableOnlyIgnoredContentIsRemovedOnLand()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        var shortId = DelegationReportFormatter.Short(h.Fixture.TaskId);
+        foreach (var relative in new[] { Path.Combine("obj", "project.assets.json"), Path.Combine("bin-c665", "out.dll"),
+                     Path.Combine(".antiphon", "inbox", "brief.md"), Path.Combine(".antiphon", $"task-{shortId}-brief.md") })
+        {
+            var path = Path.Combine(h.Fixture.Source, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            await File.WriteAllTextAsync(path, "rebuildable\n");
+        }
+        await h.RunAsync();
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Cleanup.ShouldBe(LandCleanupStatus.Complete, op.LastReason);
+        op.LastReason.ShouldBeNull();
+        Directory.Exists(h.Fixture.Source).ShouldBeFalse();
+        await using var db = h.CreateContext();
+        (await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Fixture.TaskId && e.Type == AgentTaskEventType.Landed))
+            .Detail.ShouldContain("cleanup=Complete");
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
+
+    [Test]
+    public async Task C665_ProtectedIgnoredRefusalNamesPaths()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        var secret = Path.Combine(h.Fixture.Source, ".claude", "settings.local.json");
+        var build = Path.Combine(h.Fixture.Source, "obj", "x");
+        foreach (var path in new[] { secret, build })
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            await File.WriteAllTextAsync(path, "irreplaceable\n");
+        }
+        await h.RunAsync();
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Cleanup.ShouldBe(LandCleanupStatus.Refused);
+        op.LastReason.ShouldBe("ignored_content_preserved");
+        await using var db = h.CreateContext();
+        var detail = (await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Fixture.TaskId
+            && e.Type == AgentTaskEventType.LandedWithResidue)).Detail;
+        detail.ShouldContain("cleanup=Refused: ignored_content_preserved; protected: .claude/settings.local.json");
+        detail.ShouldNotContain("obj/x");
+        (await File.ReadAllTextAsync(secret)).ShouldBe("irreplaceable\n");
+        (await File.ReadAllTextAsync(build)).ShouldBe("irreplaceable\n");
         await h.Fixture.AssertRemoteSourceAsync();
     }
 

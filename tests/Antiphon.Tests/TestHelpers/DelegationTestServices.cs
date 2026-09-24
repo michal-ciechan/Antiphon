@@ -86,6 +86,10 @@ internal static class DelegationTestServices
         services.TryAddSingleton<IWorktreeDeleteAccessProbe, WindowsWorktreeDeleteAccessProbe>();
         services.TryAddSingleton<IWorktreeCleanupJournal, Antiphon.Server.Infrastructure.Data.WorktreeCleanupJournal>();
         services.TryAddSingleton<WorktreeGuardedCleanup>();
+        services.AddOptions<WorktreeCleanupSettings>();
+        services.TryAddSingleton<WorktreeIgnoredContentClassifier>();
+        services.TryAddSingleton<IWorktreeEvidenceRetention, RefusingEvidenceRetention>();
+        services.TryAddSingleton<WorktreeIgnoredContentGate>();
         services.TryAddSingleton<GuardedWorktreeRemoval>();
         services.TryAddSingleton<IRepositoryMutationLease, RepositoryMutationLease>();
         services.TryAddSingleton<RepositoryLeaseWaiters>();
@@ -123,7 +127,10 @@ internal static class DelegationTestServices
         probe ??= new WindowsWorktreeDeleteAccessProbe(native, TimeProvider.System);
         var cleanup = new WorktreeGuardedCleanup(journal, diagnostics, probe, TimeProvider.System,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<WorktreeGuardedCleanup>.Instance);
-        var guarded = new GuardedWorktreeRemoval(git, leases, new TestRemovalEvidence(db), cleanup);
+        var removalEvidence = new TestRemovalEvidence(db);
+        var guarded = new GuardedWorktreeRemoval(git, leases, removalEvidence, cleanup,
+            new WorktreeIgnoredContentGate(new WorktreeIgnoredContentClassifier(Options.Create(new WorktreeCleanupSettings())),
+                new RefusingEvidenceRetention(), removalEvidence));
         var manager = new WorktreeManager(Options.Create(settings), TimeProvider.System,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<WorktreeManager>.Instance, guarded, leases, git);
         // CARD-0527 S3 seam: a caller can supply a spy so the gate's post-commit receipt search fails.
@@ -147,6 +154,15 @@ internal static class DelegationTestServices
                 TestDbFixture.CreateDbContextOptions(Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.GetConnectionString(database.Database)));
             return await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.SingleOrDefaultAsync(
                 fresh.AgentTaskLandings, o => o.Id == operationId, ct);
+        }
+
+        public async Task<Antiphon.Server.Domain.Entities.AgentTask?> ReadTaskAsync(Guid taskId, CancellationToken ct)
+        {
+            if (database is null) return null;
+            await using var fresh = new Antiphon.Server.Infrastructure.Data.AppDbContext(
+                TestDbFixture.CreateDbContextOptions(Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.GetConnectionString(database.Database)));
+            return await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.SingleOrDefaultAsync(
+                fresh.AgentTasks, t => t.Id == taskId, ct);
         }
     }
 }
