@@ -161,26 +161,81 @@ public class WorktreeStartRefDispatchTests
     public async Task C613_StartRefAdmissionMatrixAcceptsTheColumnLimit()
     {
         await using var world = await RepairSourceWorld.CreateAsync(ordinaryCodeTask: true, createTaskThroughService: true);
+        var before = await world.TaskCountAsync();
         var longest = new string('b', 300);
 
-        // 300 characters is valid input: it is refused later, at PROVISIONING, for naming nothing —
-        // which is a different failure from "this is not a selector".
-        var created = await world.CreateTaskAsync(new CreateAgentTaskRequest(
+        // 300 characters is valid SYNTAX: it passes the selector check and is refused afterwards,
+        // at create's availability check (CARD-0666), for naming nothing — a different failure
+        // from "this is not a selector", and still before any row exists.
+        var refused = await Should.ThrowAsync<ValidationException>(() => world.CreateTaskAsync(new CreateAgentTaskRequest(
             "long but syntactically valid", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree)
-        { WorktreeBaseRequestedRef = longest });
-        created.WorktreeBaseRequestedRef.ShouldBe(longest);
+        { WorktreeBaseRequestedRef = longest }));
+
+        refused.Code.ShouldBe(StartRefAvailability.NotFullShaCode);
+        refused.Code.ShouldNotBe("worktree_start_ref_invalid");
+        (await world.TaskCountAsync()).ShouldBe(before);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    [Arguments("missing-ref", StartRefAvailability.NotFullShaCode)]
+    [Arguments("blob-tag", StartRefAvailability.NotCommitCode)]
+    [Arguments("sha-absent-on-origin", StartRefAvailability.NotOnOriginCode)]
+    public async Task C666_CreateRefusesAStartRefItCannotMakeAvailable(string shape, string code)
+    {
+        await using var world = await RepairSourceWorld.CreateAsync(ordinaryCodeTask: true, createTaskThroughService: true);
+        var before = await world.TaskCountAsync();
+        var selector = shape switch
+        {
+            "missing-ref" => "no-such-ref-c613",
+            "blob-tag" => "c613-blob",
+            _ => "0123456789abcdef0123456789abcdef01234567",
+        };
+        if (shape == "blob-tag")
+        {
+            var blob = (await world.Repo.GitReadAsync("hash-object", "-w", "README.md")).Trim();
+            await world.Repo.GitAsync("tag", selector, blob);
+        }
+
+        var refused = await Should.ThrowAsync<ValidationException>(() => world.CreateTaskAsync(new CreateAgentTaskRequest(
+            "names no commit", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree)
+        { WorktreeBaseRequestedRef = selector }));
+
+        refused.Code.ShouldBe(code);
+        refused.Message.ShouldContain($"'{selector}'");
+        (await world.TaskCountAsync()).ShouldBe(before, "a start ref create cannot make available leaves no row");
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task C666_CreateFetchesAnOriginOnlyStartShaAndDispatchCutsFromIt()
+    {
+        await using var world = await RepairSourceWorld.CreateAsync(ordinaryCodeTask: true, createTaskThroughService: true);
+        // Pushed from a second clone: on origin, never fetched into the server's repository.
+        var sha = await world.CommitFromSecondCloneAsync("refs/heads/" + world.Owner.WorktreeBranch, "pushed from server2");
+        (await ScratchGitRepo.GitInAsync(world.Repo.Path, "rev-parse", "--verify", "--quiet", sha + "^{commit}")).Ok
+            .ShouldBeFalse("precondition: the start SHA must be missing locally");
+
+        var created = await world.CreateTaskAsync(new CreateAgentTaskRequest(
+            "continue server2's work", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree)
+        { WorktreeBaseRequestedRef = sha });
+
+        created.Status.ShouldBe(AgentTaskStatus.Queued);
+        (await ScratchGitRepo.GitInAsync(world.Repo.Path, "rev-parse", "--verify", "--quiet", sha + "^{commit}")).Ok
+            .ShouldBeTrue("create fetched the start SHA before the row existed");
 
         var (task, _) = await world.DispatchAsync();
-        task.Status.ShouldBe(AgentTaskStatus.Failed);
-        task.WorktreePath.ShouldBeNull();
-        task.WorktreeBaseRef.ShouldBeNull("provisioning never falls back to master for an EXPLICIT request");
-        task.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.Unset);
+
+        task.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim().ShouldBe(sha);
+        task.WorktreeBaseSha.ShouldBe(sha);
     }
 
     [Test]
     [Timeout(120_000)]
     [Arguments("missing-ref", "no-such-ref-c613")]
     [Arguments("blob-tag", "c613-blob")]
+    [Arguments("origin-only-sha", "")]
     public async Task C613_StartRefAdmissionMatrixRefusesProvisioningWithoutFallback(string shape, string selector)
     {
         await using var world = await RepairSourceWorld.CreateAsync(ordinaryCodeTask: true, createTaskThroughService: true);
@@ -189,9 +244,19 @@ public class WorktreeStartRefDispatchTests
             var blob = (await world.Repo.GitReadAsync("hash-object", "-w", "README.md")).Trim();
             await world.Repo.GitAsync("tag", selector, blob);
         }
-        await world.CreateTaskAsync(new CreateAgentTaskRequest(
+        if (shape == "origin-only-sha")
+            selector = await world.CommitFromSecondCloneAsync("refs/heads/" + world.Owner.WorktreeBranch, "only on origin");
+        // Create now refuses these (CARD-0666), so the row is admitted with a good ref and the
+        // selector changes underneath it: provisioning must still refuse without a fallback.
+        var created = await world.CreateTaskAsync(new CreateAgentTaskRequest(
             "names no commit", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree)
-        { WorktreeBaseRequestedRef = selector });
+        { WorktreeBaseRequestedRef = world.Owner.WorktreeBranch! });
+        await using (var db = world.CreateContext())
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == created.Id);
+            row.WorktreeBaseRequestedRef = selector;
+            await db.SaveChangesAsync();
+        }
 
         var (task, _) = await world.DispatchAsync();
 
@@ -199,6 +264,8 @@ public class WorktreeStartRefDispatchTests
         // the caller explicitly named, which would hand the delegate a checkout it did not ask for.
         task.Status.ShouldBe(AgentTaskStatus.Failed);
         task.FailureReason.ShouldNotBeNull().ShouldContain("validation");
+        task.FailureReason.ShouldContain($"'{selector}'");
+        task.FailureReason.ShouldContain("Dispatch does not fetch");
         task.WorktreePath.ShouldBeNull();
         task.WorktreeBranch.ShouldBeNull();
         task.WorktreeBaseRef.ShouldBeNull();
@@ -209,6 +276,9 @@ public class WorktreeStartRefDispatchTests
         var identifier = "task-" + DelegationReportFormatter.Short(task.Id);
         (await ScratchGitRepo.GitInAsync(world.Repo.Path, "worktree", "list", "--porcelain")).StdOut
             .ShouldNotContain(identifier);
+        if (shape == "origin-only-sha")
+            (await ScratchGitRepo.GitInAsync(world.Repo.Path, "rev-parse", "--verify", "--quiet", selector + "^{commit}")).Ok
+                .ShouldBeFalse("dispatch refuses a missing start SHA without fetching it");
     }
 
     [Test]
