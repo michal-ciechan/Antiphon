@@ -67,6 +67,10 @@ public static partial class ClaudeScreen
     /// rule. The glyph, box sides and surrounding blanks are removed. False when no such region is
     /// on screen (a mid-redraw frame, a menu open under the composer, a composer taller than the
     /// screen); the caller then has no composer evidence and must not treat the composer as empty.
+    /// <para>Repair 4 (review 8adb4cd6): the box must be the live one at the bottom of the screen.
+    /// Every non-blank row under it is Claude's hint bar (at least one, all recognised), so an older
+    /// frame in a scrolled view, a dialog, or a ghost frame with the body's tail under it is not read;
+    /// and both rules are the same width, so a partial ghost border does not pair with a real one.</para>
     /// </summary>
     public static bool TryReadComposer(string screen, out string content)
     {
@@ -81,13 +85,16 @@ public static partial class ClaudeScreen
         var below = 0;
         for (var r = bottom + 1; r < rows.Length; r++)
         {
-            if (rows[r].Trim().Length > 0)
-                below++;
+            if (rows[r].Trim().Length == 0)
+                continue;
+            if (!IsComposerHintRow(rows[r]))
+                return false;
+            below++;
         }
-        if (below > MaxHintRowsBelowComposer)
+        if (below == 0 || below > MaxHintRowsBelowComposer)
             return false;
         var top = LastRuleRow(rows, bottom - 1);
-        if (top < 0 || bottom - top < 2)
+        if (top < 0 || bottom - top < 2 || rows[top].Trim().Length != rows[bottom].Trim().Length)
             return false;
 
         var first = rows[top + 1].Trim().Trim('│').Trim();
@@ -116,6 +123,28 @@ public static partial class ClaudeScreen
 
     /// <summary>The hint bar, and at most a usage banner and an effort row, sit under the composer.</summary>
     private const int MaxHintRowsBelowComposer = 3;
+
+    /// <summary>
+    /// A row of the hint bar under Claude's composer: the permission-mode line, the shortcuts hint,
+    /// the auto-compact meter, the effort row or the usage banner. Anything else under the lower rule
+    /// (conversation, a dialog option, a wrapped remainder, the body's own tail) is not.
+    /// </summary>
+    private static bool IsComposerHintRow(string row)
+    {
+        var compact = Compact(row);
+        return compact.Contains("forshortcuts", StringComparison.Ordinal)
+            || compact.Contains("bypasspermissionson", StringComparison.Ordinal)
+            || compact.Contains("accepteditson", StringComparison.Ordinal)
+            || compact.Contains("planmodeon", StringComparison.Ordinal)
+            || compact.Contains("shifttabtocycle", StringComparison.Ordinal)
+            || compact.Contains("autocompact", StringComparison.Ordinal)
+            || compact.Contains("usagelimit", StringComparison.Ordinal)
+            || (compact.Contains("effort", StringComparison.Ordinal)
+                && (compact.Contains("low", StringComparison.Ordinal)
+                    || compact.Contains("medium", StringComparison.Ordinal)
+                    || compact.Contains("high", StringComparison.Ordinal)
+                    || compact.Contains("max", StringComparison.Ordinal)));
+    }
 
     private static int LastRuleRow(string[] rows, int from)
     {
