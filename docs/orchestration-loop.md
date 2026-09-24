@@ -501,6 +501,8 @@ check at **$0.12**.
 
 ### Launching an agent
 
+A Queued runner-bound task whose mirror is not recorded yet stays Queued. Its deduplicated `Held` detail is one of three texts: remote workspace preparation is in flight (the branch push and mirror were requested); preparation failed N times in a row and the next attempt is not before an instant (exponential backoff, base 30 seconds, cap 900 seconds, reset when the mirror is recorded); or the runner is not dispatch-eligible. Those traces are not a warning on every tick. A warning is written once per failed preparation attempt.
+
 Start a new project through `POST /api/projects/setup` (or `scripts/project.ps1 new -Dir ... -Orchestrator -Start`): it creates the project, board, and preset agent in one transaction and returns readiness. `POST /api/agents` remains for adding an agent to a project that already exists.
 
 Create and start an agent through `POST /api/agents` + `POST /api/agents/{id}/start` (or the UI).

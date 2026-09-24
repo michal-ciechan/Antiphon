@@ -5,6 +5,17 @@
   HTTP/SSE is unchanged; remote sessions persist `RunnerId`/`RunnerStoreId`/`RunnerCwd` and never
   fall back to the local runner.
 
+- **A runner is dispatch-eligible only after a successful catch-up List (CARD-0633).** A failed or
+  timed-out List leaves the runner ineligible and the pump waits `PhoneHomeRunner:CatchUpRetrySeconds`
+  (default 5) before asking again. One session's transcript failure is a warning and does not fence
+  the runner.
+
+- **No runner RPC inside a claim transaction (CARD-0633).** Branch push and the runner mirror run
+  on `RemoteWorkspacePreparer` after the claim commits with the task still Queued, so a silent
+  mirror cannot hold the row lock or the rest of the tick. The Claude credential probe
+  (`GetProviderAuthAsync`) runs before that claim opens, on a 5-second budget; a timeout does not
+  fail the task and does not hold `FOR UPDATE`.
+
 - **Workspace-use reservation (CARD-0459).** Create, requeue, dispatch (including ReadOnly),
   Answer/Continue/Refine, Land, card reopen, Start/Attach/Resume and Herdr attach consult a
   persisted workspace reservation. A claimed retirement excludes new use of that exact path and
