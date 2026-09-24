@@ -225,6 +225,9 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
         if (PhoneHome is not null)
             services.AddSingleton(PhoneHome);
         services.AddScoped<AgentTaskService>();
+        // CARD-0644 S2. Absent, a configured standing-agent pin is invisible and the cwd
+        // assertion cannot see the real create path. No pin rows leaves every other caller unchanged.
+        services.AddScoped<RoutingPinService>();
         services.AddScoped<AgentTaskDispatcher>();
         services.AddScoped<AgentReviewCheckpointService>();
         services.AddScoped<AgentFilesService>();
