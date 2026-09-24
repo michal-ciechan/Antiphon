@@ -43,7 +43,11 @@ public sealed class PhoneHomeLaunchPolicy
     public bool ClaudeAuthProbeEnabled => _settings.ClaudeAuthProbeEnabled;
     public string ChildClaudeHome => _settings.ChildClaudeHome;
     public string ChildGrokHome => _settings.ChildGrokHome;
+    public string ChildCodexHome => _settings.ChildCodexHome;
+    public bool CodexAuthProbeEnabled => _settings.CodexAuthProbeEnabled;
     public static bool IsAdmittedKind(AgentKind kind) => kind is AgentKind.Grok or AgentKind.ClaudeCode;
+
+    public static bool IsExplicitRunnerTaskKind(AgentKind kind) => IsAdmittedKind(kind);
 
     public void RefuseUnsupportedStart(
         Agent agent,

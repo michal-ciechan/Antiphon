@@ -33,6 +33,19 @@ public sealed class PhoneHomeRunnerSettings
     public string ChildGrokHome { get; set; } = "/state/grok";
     public string ChildClaudeHome { get; set; } = "/state/claude";
     public bool ClaudeAuthProbeEnabled { get; set; } = true;
+
+    /// <summary>
+    /// CARD-0660 D-3: the runner-only Codex home, projected as <c>CODEX_HOME</c> on every
+    /// runner-bound Codex launch. It must agree with the runner's compose <c>CODEX_HOME</c> and
+    /// <c>PhoneHome__CodexHome</c>; a desktop or <c>/tmp</c> home is refused.
+    /// </summary>
+    public string ChildCodexHome { get; set; } = "/state/codex";
+
+    /// <summary>
+    /// CARD-0660 D-9: a runner-bound Codex create/retry asks THAT runner whether its Codex home has
+    /// a login. Only a definite "no" refuses; the answer is a presence hint, never token validity.
+    /// </summary>
+    public bool CodexAuthProbeEnabled { get; set; } = true;
     public string CallbackOrigin { get; set; } = "";
     public string SharedSecret { get; set; } = "";
     public int TicketTtlSeconds { get; set; } = 30;
