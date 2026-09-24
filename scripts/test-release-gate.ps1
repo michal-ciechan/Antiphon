@@ -24,6 +24,10 @@ $lib = Join-Path $here 'lib'
 . (Join-Path $lib 'c487-harness.ps1')
 
 $ResultsDirectory = New-C487Root -ResultsDirectory $ResultsDirectory
+# CARD-0599: every seam this harness hands the publisher (fake Git, fake GitHub,
+# injected clock) is admitted only in explicit test mode, and test mode is refused
+# whenever a real remote would be reached. C599A_PublisherTestMode clears it.
+$env:ANTIPHON_RELEASE_GATE_TEST_MODE = '1'
 $repoRoot = Split-Path -Parent $here
 $ShaA = ('a' * 40)
 $ShaB = ('b' * 40)
@@ -544,6 +548,108 @@ function Set-C599GitHubFailure {
         if ($CommitsAnyway) { $obj[$Key + '_commits'] = $true }
     }
     Write-NightlyAtomicJson -Path $Gh.FailPath -Object $obj
+}
+
+# ------------------------------------------------------------ fake card API ---
+# D-14 readback: the publisher GETs the release card through the Antiphon API over
+# real loopback HTTP. One owned stub per harness child answers
+# GET /fx/<fixture>/api/cards/<id> from that fixture's card-api.json, so each
+# fixture's card is its own recipient state; every request line is logged for the
+# read-only proof. The store is { status; raw; cards = { <requested id> = card } }:
+# a non-200 status or a raw body replaces the card answer.
+
+$script:C599CardStub = $null
+
+function Get-C599CardStub {
+    if ($null -ne $script:C599CardStub) { return $script:C599CardStub }
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $listener.Start()
+    $port = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+    $ps = [powershell]::Create()
+    [void]$ps.AddScript({
+        param($listener, $root)
+        while ($true) {
+            try { $client = $listener.AcceptTcpClient() } catch { break }
+            try {
+                $stream = $client.GetStream()
+                $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::ASCII)
+                $lines = @()
+                while ($true) { $line = $reader.ReadLine(); if ([string]::IsNullOrEmpty($line)) { break }; $lines += $line }
+                if ($lines.Count -eq 0) { continue }
+                $parts = $lines[0] -split ' '
+                $status = 404
+                $body = '{}'
+                $m = [regex]::Match([string]$parts[1], '^/fx/(?<fx>[0-9a-f]{32})/api/cards/(?<id>[^/?]+)$')
+                if ($m.Success) {
+                    $dir = Join-Path $root $m.Groups['fx'].Value
+                    [System.IO.File]::AppendAllText((Join-Path $dir 'card-api.requests'), ($lines[0] + "`n"))
+                    $store = Get-Content -LiteralPath (Join-Path $dir 'card-api.json') -Raw | ConvertFrom-Json
+                    $id = [uri]::UnescapeDataString($m.Groups['id'].Value)
+                    if ($parts[0] -cne 'GET') { $status = 405 }
+                    elseif ([int]$store.status -ne 200) { $status = [int]$store.status }
+                    elseif ($null -ne $store.raw) { $status = 200; $body = [string]$store.raw }
+                    elseif ($store.cards.PSObject.Properties.Name -contains $id) { $status = 200; $body = ($store.cards.$id | ConvertTo-Json -Depth 8 -Compress) }
+                }
+                $reason = $(if ($status -eq 200) { 'OK' } elseif ($status -eq 404) { 'Not Found' } else { 'Error' })
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+                $head = "HTTP/1.1 $status $reason`r`nContent-Type: application/json; charset=utf-8`r`nContent-Length: $($bytes.Length)`r`nConnection: close`r`n`r`n"
+                $h = [System.Text.Encoding]::ASCII.GetBytes($head)
+                $stream.Write($h, 0, $h.Length)
+                $stream.Write($bytes, 0, $bytes.Length)
+                $stream.Flush()
+            } catch {
+            } finally { $client.Close() }
+        }
+    }).AddArgument($listener).AddArgument($ResultsDirectory)
+    $handle = $ps.BeginInvoke()
+    $script:C599CardStub = [pscustomobject]@{ Port = $port; Shell = $ps; Handle = $handle; Listener = $listener }
+    return $script:C599CardStub
+}
+
+function Stop-C599CardStub {
+    if ($null -eq $script:C599CardStub) { return }
+    $stub = $script:C599CardStub
+    $script:C599CardStub = $null
+    $stub.Listener.Stop()
+    try { [void]$stub.Shell.EndInvoke($stub.Handle) } catch { }
+    $stub.Shell.Dispose()
+}
+
+function Get-C599CardBody {
+    # The release card body carrying this run's correlation line (D-14 readback).
+    param([string]$IntentId = $script:C599IntentId, [string]$Candidate = $CandidateId, [string]$Sha, [string]$RunId = $script:C599RunId)
+    return ("Release candidate {0}`n`nrelease-correlation: intentId={1} candidateId={0} sha={2} runId={3}`n`nTests: all eight suites passed." -f $Candidate, $IntentId, $Sha, $RunId)
+}
+
+function New-C599CardApi {
+    # The fixture's release card as the API serves it: revision 4 (the receipt's) and
+    # a body correlated to this intent, candidate, SHA and native run.
+    param([string]$Root, [string]$Sha)
+    $store = Join-Path $Root 'card-api.json'
+    $card = [ordered]@{
+        id = $script:C599ReleaseCardId; identifier = 'CARD-0601'; title = ('Release {0}' -f $CandidateId)
+        description = (Get-C599CardBody -Sha $Sha); revisionCount = 4; status = 'Review'
+        concurrencyToken = '0b0e6c1e-8f1c-4c3e-9a55-0c5990c59900'
+    }
+    Write-NightlyAtomicJson -Path $store -Object ([ordered]@{ status = 200; raw = $null; cards = [ordered]@{ ($script:C599ReleaseCardId) = $card } })
+    [System.IO.File]::WriteAllText((Join-Path $Root 'card-api.requests'), '')
+    $stub = Get-C599CardStub
+    return [pscustomobject]@{
+        Url = ('http://127.0.0.1:{0}/fx/{1}' -f $stub.Port, (Split-Path -Leaf $Root))
+        Store = $store
+        Requests = (Join-Path $Root 'card-api.requests')
+    }
+}
+
+function Update-C599Card {
+    # Mutate the served store (status/raw) or the release card itself.
+    param($Fx, [scriptblock]$Card = $null, [scriptblock]$Store = $null)
+    $c599Card = $Card; $c599Store = $Store
+    Update-C599Json -Path $Fx.CardApi.Store -Mutate {
+        param($s)
+        if ($c599Store) { & $c599Store $s }
+        if ($c599Card) { & $c599Card $s.cards.($script:C599ReleaseCardId) }
+    }
 }
 
 # =============================================================== V-1 policy ===
@@ -1109,8 +1215,10 @@ function New-C599PublishFx {
     # The remote holds the candidate at the tested sha.
     $state = [ordered]@{ ('release_rc_20260923T083000Z') = $Head }
     Write-NightlyAtomicJson -Path $git.RemotePath -Object $state
+    # The release card the receipt names, served by the fake Antiphon API.
+    $cardApi = New-C599CardApi -Root $root -Sha $Head
     return [pscustomobject]@{
-        Root = $root; Git = $git; Gh = $gh; ReleaseRoot = $releaseRoot; Checkout = $checkout; Head = $Head
+        Root = $root; Git = $git; Gh = $gh; ReleaseRoot = $releaseRoot; Checkout = $checkout; Head = $Head; CardApi = $cardApi
     }
 }
 
@@ -1121,6 +1229,7 @@ function Invoke-C599Publish {
         CandidateId = $CandidateId
         CheckoutRoot = $Fx.Checkout
         SeamsPath = $Fx.Gh.Path
+        AntiphonApiUrl = $Fx.CardApi.Url
         PassThru = $true
     }
     if ($Extra) { foreach ($k in $Extra.Keys) { $splat[$k] = $Extra[$k] } }
@@ -1921,7 +2030,7 @@ function Save-C599ASnapshot {
     $files = @{}
     foreach ($f in @(Get-ChildItem -LiteralPath $Fx.ReleaseRoot -Recurse -File -Force)) { $files[$f.FullName] = [System.IO.File]::ReadAllBytes($f.FullName) }
     $absent = @()
-    foreach ($p in @($Fx.Git.RemotePath, $Fx.Git.Trace, $Fx.Gh.StorePath, (Join-Path $Fx.Checkout (Join-Path 'tests' 'test-execution-policy.json')))) {
+    foreach ($p in @($Fx.Git.RemotePath, $Fx.Git.Trace, $Fx.Gh.StorePath, $Fx.CardApi.Store, (Join-Path $Fx.Checkout (Join-Path 'tests' 'test-execution-policy.json')))) {
         if (Test-Path -LiteralPath $p -PathType Leaf) { $files[$p] = [System.IO.File]::ReadAllBytes($p) } else { $absent += $p }
     }
     return [pscustomobject]@{ Root = $Fx.ReleaseRoot; Files = $files; Absent = $absent }
@@ -1948,7 +2057,7 @@ function Get-C599AGate {
     $candidate = Get-Content -LiteralPath $paths.JournalPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $remoteSha = Read-C599Remote -Seams $Fx.Git -Ref $CandidateRef
     $authority = Test-ReleaseGateAuthority -CandidateRoot $paths.Root -RepositoryRoot $Fx.Checkout -Green $green -Candidate $candidate `
-        -Repository 'michal-ciechan/Antiphon' -NowUtc $script:C599Now
+        -Repository 'michal-ciechan/Antiphon' -NowUtc $script:C599Now -CardApiBaseUrl $Fx.CardApi.Url
     $gate = Test-ReleaseGatePublicationGate -Green $green -Candidate $candidate -RemoteSha $remoteSha -Authority $authority
     $verdict = Get-ReleaseGateCreditVerdict -State $green
     return [pscustomobject]@{ Ok = [bool]$gate.Ok; Reasons = @(@($gate.Reasons) + @($verdict.Reasons) | ForEach-Object { [string]$_ }); Suites = @($authority.Suites) }
@@ -2160,8 +2269,8 @@ function Remove-C599AEvidenceLink {
 }
 
 function Test-C599A_PinnedPolicy {
-    # V-12 full matrix for the pinned policy, first child (G-224, G-225, G-285,
-    # G-286, -WhatIf). Summary/report and working tree never decide.
+    # V-12 full matrix for the pinned policy, first child (G-224, G-225, G-285 gate
+    # rows). Summary/report and working tree never decide.
     $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
     $snap = Save-C599ASnapshot -Fx $fx
     $croot = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId
@@ -2228,6 +2337,16 @@ function Test-C599A_PinnedPolicy {
         [System.IO.File]::WriteAllBytes((Join-Path (Get-C599AuthorityDir -Fx $fx) 'policy.json'), $sevenBytes)
     }
     Assert-C599AMatrix -Name 'C599 G-285: an edited private copy or working-tree policy cannot replace the pinned blob' -Results $m
+}
+
+function Test-C599A_PinnedPolicySchema {
+    # V-12 full matrix for the pinned policy, second child (G-286, -WhatIf and the
+    # publisher controls): the pinned blob's own shape, and what a publication writes.
+    $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
+    $snap = Save-C599ASnapshot -Fx $fx
+    $croot = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId
+    $eight = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging', 'client', 'scripts', 'e2e')
+    $sevenBytes = New-C599APolicyBytes -Edit { param($o) $o.profiles.rc.requiredSuites = @($eight | Where-Object { $_ -ne 'e2e' }) }
 
     # G-286: the pinned blob itself must be schema 2 with the full rc profile. Each
     # variant re-pins the whole candidate to a real commit holding that blob.
@@ -2308,9 +2427,11 @@ function Test-C599A_PinnedPolicy {
         -Name 'C599 V-18: the frozen publication authority digest is journalled and carried in the manifest' -Detail ([string]$pub.digest)
 }
 
-function Test-C599A_PinnedPolicyFields {
-    # V-12 full matrix, second child of C599A_PinnedPolicy: every frozen authority
-    # field absent, null, mistyped and foreign, each re-bound so it alone differs.
+function Invoke-C599AFieldMatrix {
+    # V-12 full matrix, the authority field children of C599A_PinnedPolicy: every frozen
+    # authority field absent, null, mistyped and foreign, each re-bound so it alone
+    # differs. Skip/Take select this child's fields, keeping each child near 30 s.
+    param([int]$Skip, [int]$Take, [string]$MatrixName)
     $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
     $snap = Save-C599ASnapshot -Fx $fx
     $eight = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging', 'client', 'scripts', 'e2e')
@@ -2340,6 +2461,7 @@ function Test-C599A_PinnedPolicyFields {
         @{ n = 'scriptHashes'; t = @('script-digest-mismatch:lib/release-authority.ps1'); wt = 'x'; fv = 'one-changed' },
         @{ n = 'createdAt'; t = @('ledger-timestamps'); wt = $true; fv = '2026-09-23T09:00:00Z' }
     )
+    $fields = @($fields | Select-Object -Skip $Skip -First $Take)
     $m = @()
     foreach ($f in $fields) {
         foreach ($kind in @('absent', 'null', 'type', 'array', 'foreign')) {
@@ -2363,7 +2485,23 @@ function Test-C599A_PinnedPolicyFields {
             }
         }
     }
-    Assert-C599AMatrix -Name 'C599 V-12: every frozen authority field refuses when absent, null, mistyped, array-wrapped or foreign' -Results $m
+    Assert-C599AMatrix -Name $MatrixName -Results $m
+}
+
+function Test-C599A_PinnedPolicyFields {
+    Invoke-C599AFieldMatrix -Skip 0 -Take 5 -MatrixName 'C599 V-12: the frozen schemaVersion, kind, repository, profile and coordinatorVersion fields refuse when absent, null, mistyped, array-wrapped or foreign'
+}
+
+function Test-C599A_PinnedPolicyIdentityFields {
+    Invoke-C599AFieldMatrix -Skip 5 -Take 5 -MatrixName 'C599 V-12: the frozen sha, candidateId, candidateRef, intentId and releaseCardId fields refuse when absent, null, mistyped, array-wrapped or foreign'
+}
+
+function Test-C599A_PinnedPolicyBlobFields {
+    Invoke-C599AFieldMatrix -Skip 10 -Take 4 -MatrixName 'C599 V-12: the frozen policyPath, policyBlobId, policyRawSha256 and policyHash fields refuse when absent, null, mistyped, array-wrapped or foreign'
+}
+
+function Test-C599A_PinnedPolicySuiteFields {
+    Invoke-C599AFieldMatrix -Skip 14 -Take 4 -MatrixName 'C599 V-12: the frozen requiredSuites, exclusions, scriptHashes and createdAt fields refuse when absent, null, mistyped, array-wrapped or foreign'
 }
 
 function New-C599AWrapped {
@@ -2437,8 +2575,8 @@ function Test-C599A_PinnedPolicyBindings {
 
 function Test-C599A_ExecutionLedger {
     # V-12 full matrix for the frozen plan and full execution ledger, first child
-    # (G-226, G-287..G-295): every chunk, every required expanded UID, exits,
-    # counts, evidence containment and pinned exclusions.
+    # (G-226, G-287..G-289): failed siblings, evidence containment, prerequisites,
+    # native exits and zero executions.
     $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
     $snap = Save-C599ASnapshot -Fx $fx
     $croot = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId
@@ -2525,6 +2663,22 @@ function Test-C599A_ExecutionLedger {
     $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'roster exit absent' -Expect @('roster-exit:client') -Mutate { Update-C599ARosterRow -Fx $fx -Suite 'client' -Mutate { param($r) $r.PSObject.Properties.Remove('exitCode') } }
     $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher messaging-002 exit 1' -Publish -Expect @('chunk-exit:messaging-002') -Mutate { Update-C599AChunkRow -Fx $fx -Chunk 'messaging-002' -Mutate { param($c) $c.exitCode = 1 } }
     Assert-C599AMatrix -Name 'C599 G-289: a nonzero or non-numeric child exit or zero executions blocks despite a passing TRX' -Results $m
+}
+
+function Test-C599A_ExecutionLedgerChunks {
+    # V-12 full matrix, second child of C599A_ExecutionLedger (G-290..G-292): the
+    # exact frozen chunk set, disjoint UID membership and every required expanded UID.
+    $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
+    $snap = Save-C599ASnapshot -Fx $fx
+    $croot = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId
+    $planDoc = Get-Content -LiteralPath (Join-Path (Get-C599AuthorityDir -Fx $fx) 'execution-plan.json') -Raw | ConvertFrom-Json
+    $chunks = @()
+    foreach ($s in @($planDoc.suites | Where-Object { [string]$_.kind -eq 'native' })) {
+        foreach ($c in @($s.chunks)) { $chunks += [pscustomobject]@{ Suite = [string]$s.id; Id = [string]$c.id; Uids = @($c.uids | ForEach-Object { [string]$_ }) } }
+    }
+    $uids = @($chunks | ForEach-Object { $_.Uids })
+    $control = Get-C599AGate -Fx $fx
+    Assert-C487 -Cond ($control.Ok -and $chunks.Count -eq 13 -and $uids.Count -eq 19) -Name 'C599 V-12: the valid 13-chunk 19-UID control ledger passes the publication gate' -Detail ((@($control.Reasons) -join ' ') + (' chunks={0} uids={1}' -f $chunks.Count, $uids.Count))
 
     # G-290: exactly the frozen chunk set.
     $m = @()
@@ -2589,6 +2743,22 @@ function Test-C599A_ExecutionLedger {
     }
     $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher unknown outcome' -Publish -Expect @('uid-not-passed:pty-host-u1') -Mutate { Set-C599TrxOutcome -Fx $fx -Chunk 'pty-host-001' -Uid 'pty-host-u1' -Outcome 'Inconclusive' }
     Assert-C599AMatrix -Name 'C599 G-292: skipped, unknown-outcome, unknown-UID, stale and missing evidence refuse' -Results $m
+}
+
+function Test-C599A_ExecutionLedgerCounts {
+    # V-12 full matrix, third child of C599A_ExecutionLedger (G-293..G-295): empty
+    # required sets, counts recomputed from the TRX and pinned exclusions.
+    $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
+    $snap = Save-C599ASnapshot -Fx $fx
+    $croot = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId
+    $planDoc = Get-Content -LiteralPath (Join-Path (Get-C599AuthorityDir -Fx $fx) 'execution-plan.json') -Raw | ConvertFrom-Json
+    $chunks = @()
+    foreach ($s in @($planDoc.suites | Where-Object { [string]$_.kind -eq 'native' })) {
+        foreach ($c in @($s.chunks)) { $chunks += [pscustomobject]@{ Suite = [string]$s.id; Id = [string]$c.id; Uids = @($c.uids | ForEach-Object { [string]$_ }) } }
+    }
+    $uids = @($chunks | ForEach-Object { $_.Uids })
+    $control = Get-C599AGate -Fx $fx
+    Assert-C487 -Cond ($control.Ok -and $chunks.Count -eq 13 -and $uids.Count -eq 19) -Name 'C599 V-12: the valid 13-chunk 19-UID control ledger passes the publication gate' -Detail ((@($control.Reasons) -join ' ') + (' chunks={0} uids={1}' -f $chunks.Count, $uids.Count))
 
     # G-293: a consistent zero-required suite or empty declared roster never publishes.
     $m = @()
@@ -2660,8 +2830,8 @@ function Test-C599A_ExecutionLedger {
 }
 
 function Test-C599A_ExecutionLedgerJoins {
-    # V-12 full matrix, second child of C599A_ExecutionLedger: identity joins,
-    # digests, timestamps, whole-run markers, credit flags and declared rosters.
+    # V-12 full matrix, second child of C599A_ExecutionLedger: identity joins
+    # (G-296..G-299), digests (G-300) and timestamps (G-301).
     $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
     $snap = Save-C599ASnapshot -Fx $fx
     $croot = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId
@@ -2773,6 +2943,23 @@ function Test-C599A_ExecutionLedgerJoins {
         Move-C599AEvidenceTime -Fx $fx -Offset ([timespan]::FromDays(1))
     }
     Assert-C599AMatrix -Name 'C599 G-301: evidence dated after the injected publisher clock refuses' -Results $m
+}
+
+function Test-C599A_ExecutionLedgerMarkers {
+    # V-12 full matrix, fourth child of C599A_ExecutionLedger: whole-run markers
+    # (G-302..G-305), credit flags (G-387..G-389), declared rosters and the restored
+    # control publication.
+    $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
+    $snap = Save-C599ASnapshot -Fx $fx
+    $croot = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId
+    $planDoc = Get-Content -LiteralPath (Join-Path (Get-C599AuthorityDir -Fx $fx) 'execution-plan.json') -Raw | ConvertFrom-Json
+    $chunks = @()
+    foreach ($s in @($planDoc.suites | Where-Object { [string]$_.kind -eq 'native' })) {
+        foreach ($c in @($s.chunks)) { $chunks += [pscustomobject]@{ Suite = [string]$s.id; Id = [string]$c.id; Uids = @($c.uids | ForEach-Object { [string]$_ }) } }
+    }
+    $uids = @($chunks | ForEach-Object { $_.Uids })
+    $control = Get-C599AGate -Fx $fx
+    Assert-C487 -Cond ($control.Ok -and $chunks.Count -eq 13 -and $uids.Count -eq 19) -Name 'C599 V-12: the valid 13-chunk 19-UID control ledger passes the publication gate' -Detail ((@($control.Reasons) -join ' ') + (' chunks={0} uids={1}' -f $chunks.Count, $uids.Count))
 
     # G-302..G-305 and report acceptance: whole-run markers are real booleans / exact values.
     $markers = @(
@@ -2931,15 +3118,239 @@ function Test-C599A_ExecutionLedgerReceipt {
     Assert-C599AMatrix -Name 'C599 V-12: a receipt not correlated to this intent, candidate, SHA and native run refuses' -Results $m
 }
 
+function Get-C599ClosedPort {
+    # A loopback port that was just free: bound, read and released, so a connect is refused.
+    $l = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $l.Start()
+    $port = ([System.Net.IPEndPoint]$l.LocalEndpoint).Port
+    $l.Stop()
+    return $port
+}
+
+function Test-C599A_ReceiptReadback {
+    # V-12 full matrix, D-14 readback (review bf928242 finding 1): publication reads the
+    # release card bound to the authority back through the Antiphon API (GET
+    # /api/cards/{id}, read-only), requires the receipt's revision to equal the card's
+    # CURRENT revision and the card body to carry this run's correlation line. An
+    # unavailable readback refuses: publication fails closed. Producer-to-recipient
+    # delivery through the report queue is B5/B6 (the report stage writes the receipt).
+    $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
+    $snap = Save-C599ASnapshot -Fx $fx
+    $expectedLine = ('GET /fx/{0}/api/cards/{1} HTTP/1.1' -f (Split-Path -Leaf $fx.Root), $script:C599ReleaseCardId)
+    [System.IO.File]::WriteAllText($fx.CardApi.Requests, '')
+    $control = Get-C599AGate -Fx $fx
+    $requests = @(Get-Content -LiteralPath $fx.CardApi.Requests | Where-Object { $_ })
+    Assert-C487 -Cond ($control.Ok -and $requests.Count -eq 1 -and $requests[0] -ceq $expectedLine) `
+        -Name 'C599 V-12: the valid control reads the bound release card back once through GET /api/cards/{id}' `
+        -Detail ((@($control.Reasons) -join ' ') + ' requests=[' + ($requests -join ' | ') + ']')
+
+    # Unavailable: any transport failure, non-200 answer or body that is not one JSON
+    # object refuses. Nothing falls back to the ledger's own copy of the receipt.
+    $apiUrl = $fx.CardApi.Url
+    $closed = ('http://127.0.0.1:{0}/fx/{1}' -f (Get-C599ClosedPort), (Split-Path -Leaf $fx.Root))
+    $restoreUrl = { $fx.CardApi.Url = $apiUrl }
+    $m = @()
+    foreach ($v in @(
+            @{ l = 'api answers 500'; e = { Update-C599Card -Fx $fx -Store { param($s) $s.status = 500 } } },
+            @{ l = 'api answers 404'; e = { Update-C599Card -Fx $fx -Store { param($s) $s.status = 404 } } },
+            @{ l = 'api answers 401'; e = { Update-C599Card -Fx $fx -Store { param($s) $s.status = 401 } } },
+            @{ l = 'card unknown to the api'; e = { Update-C599Card -Fx $fx -Store { param($s) $s.cards.PSObject.Properties.Remove($script:C599ReleaseCardId) } } },
+            @{ l = 'body not json'; e = { Update-C599Card -Fx $fx -Store { param($s) $s.raw = '<html>maintenance</html>' } } },
+            @{ l = 'body a json array'; e = { Update-C599Card -Fx $fx -Store { param($s) $s.raw = '[]' } } },
+            @{ l = 'body empty'; e = { Update-C599Card -Fx $fx -Store { param($s) $s.raw = '' } } },
+            @{ l = 'api unreachable'; e = { $fx.CardApi.Url = $closed } },
+            @{ l = 'api url empty'; e = { $fx.CardApi.Url = '' } },
+            @{ l = 'api url not http'; e = { $fx.CardApi.Url = ('file:///' + ($fx.CardApi.Store -replace '\\', '/')) } })) {
+        $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label $v.l -Expect @('release-card-readback-unavailable') -Mutate $v.e -Cleanup $restoreUrl
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher api answers 503' -Publish -Expect @('release-card-readback-unavailable') -Mutate {
+        Update-C599Card -Fx $fx -Store { param($s) $s.status = 503 }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher api unreachable' -Publish -Expect @('release-card-readback-unavailable') `
+        -Extra @{ AntiphonApiUrl = $closed } -Mutate { }
+    Assert-C599AMatrix -Name 'C599 V-12: an unavailable, failed, unknown or non-object release card readback refuses (fail closed)' -Results $m
+
+    # Revision: the receipt must name the card's current revision, exactly.
+    $m = @()
+    foreach ($v in @(
+            @{ l = 'card moved on after the receipt'; e = { Update-C599Card -Fx $fx -Card { param($c) $c.revisionCount = 5 } } },
+            @{ l = 'receipt names an earlier revision'; e = { Update-C599AReceipt -Fx $fx -Mutate { param($r) $r.recipient.revision = 3 } } },
+            @{ l = 'receipt names a later revision'; e = { Update-C599AReceipt -Fx $fx -Mutate { param($r) $r.recipient.revision = 9 } } },
+            @{ l = 'card revision string'; e = { Update-C599Card -Fx $fx -Card { param($c) $c.revisionCount = '4' } } },
+            @{ l = 'card revision array-wrapped'; e = { Update-C599Card -Fx $fx -Card { param($c) $c.revisionCount = (New-C599AWrapped -Value 4) } } },
+            @{ l = 'card revision null'; e = { Update-C599Card -Fx $fx -Card { param($c) $c.revisionCount = $null } } },
+            @{ l = 'card revision absent'; e = { Update-C599Card -Fx $fx -Card { param($c) $c.PSObject.Properties.Remove('revisionCount') } } })) {
+        $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label $v.l -Expect @('release-card-readback-revision') -Mutate $v.e
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher receipt names an earlier revision' -Publish -Expect @('release-card-readback-revision') -Mutate {
+        Update-C599AReceipt -Fx $fx -Mutate { param($r) $r.recipient.revision = 3 }
+    }
+    Assert-C599AMatrix -Name 'C599 V-12: a receipt revision other than the release card current revision refuses' -Results $m
+
+    # Body: exactly one correlation line naming exactly this intent, candidate, full SHA and run.
+    $head = $fx.Head
+    $valid = Get-C599CardBody -Sha $head
+    $m = @()
+    foreach ($v in @(
+            @{ l = 'no correlation line'; b = ('Release candidate {0}' -f $CandidateId) },
+            @{ l = 'foreign intent'; b = (Get-C599CardBody -Sha $head -IntentId 'intent-foreign') },
+            @{ l = 'foreign candidate'; b = (Get-C599CardBody -Sha $head -Candidate 'rc-20260101T000000Z') },
+            @{ l = 'foreign sha'; b = (Get-C599CardBody -Sha $ShaC) },
+            @{ l = 'abbreviated sha'; b = (Get-C599CardBody -Sha $head.Substring(0, 12)) },
+            @{ l = 'foreign run'; b = (Get-C599CardBody -Sha $head -RunId 'rc-run-foreign') },
+            @{ l = 'run key missing'; b = ($valid -replace ' runId=\S+', '') },
+            @{ l = 'key case changed'; b = ($valid -creplace 'runId=', 'RunId=') },
+            @{ l = 'extra key'; b = ($valid -replace '(runId=\S+)', '$1 note=x') },
+            @{ l = 'second foreign line'; b = ($valid + "`n" + ((Get-C599CardBody -Sha $head -RunId 'rc-run-foreign') -split "`n" | Where-Object { $_ -like 'release-correlation:*' })) },
+            @{ l = 'description number'; b = 7 },
+            @{ l = 'description null'; b = $null })) {
+        $c599Body = $v.b
+        $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label $v.l -Expect @('release-card-readback-correlation') -Mutate {
+            Update-C599Card -Fx $fx -Card { param($c) $c.description = $c599Body }
+        }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'description absent' -Expect @('release-card-readback-correlation') -Mutate {
+        Update-C599Card -Fx $fx -Card { param($c) $c.PSObject.Properties.Remove('description') }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher body names a foreign run' -Publish -Expect @('release-card-readback-correlation') -Mutate {
+        Update-C599Card -Fx $fx -Card { param($c) $c.description = (Get-C599CardBody -Sha $fx.Head -RunId 'rc-run-foreign') }
+    }
+    Assert-C599AMatrix -Name 'C599 V-12: a release card body without exactly this run correlation refuses' -Results $m
+
+    # Identity: the API must answer with the bound card itself.
+    $m = @()
+    foreach ($v in @(
+            @{ l = 'api serves a different card'; e = { param($c) $c.id = '00000000-0000-4000-8000-00000000c599' } },
+            @{ l = 'served card id not a guid'; e = { param($c) $c.id = 'CARD-0601' } },
+            @{ l = 'served card id absent'; e = { param($c) $c.PSObject.Properties.Remove('id') } })) {
+        $c599CardEdit = $v.e
+        $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label $v.l -Expect @('release-card-readback-identity') -Mutate { Update-C599Card -Fx $fx -Card $c599CardEdit }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher api serves a different card' -Publish -Expect @('release-card-readback-identity') -Mutate {
+        Update-C599Card -Fx $fx -Card { param($c) $c.id = '00000000-0000-4000-8000-00000000c599' }
+    }
+    Assert-C599AMatrix -Name 'C599 V-12: a readback of any card but the bound release card refuses' -Results $m
+
+    # The restored control publishes, and every request the API saw was a GET of the bound card.
+    Restore-C599ASnapshot -Snap $snap
+    [System.IO.File]::WriteAllText($fx.CardApi.Requests, '')
+    $ok = Invoke-C599Publish -Fx $fx
+    $requests = @(Get-Content -LiteralPath $fx.CardApi.Requests | Where-Object { $_ })
+    $rel = Get-C599Release -Gh $fx.Gh -Tag ([string]$ok.Tag)
+    $foreign = @($requests | Where-Object { $_ -cne $expectedLine })
+    Assert-C487 -Cond ([bool]$ok.Published -and $null -ne $rel -and -not [bool]$rel.isDraft -and $requests.Count -ge 1 -and $foreign.Count -eq 0) `
+        -Name 'C599 V-12: the restored control publishes after only read-only GETs of the bound release card' `
+        -Detail ([string]$ok.Refusal + ' requests=[' + ($requests -join ' | ') + ']')
+}
+
+function Invoke-C599ATestModeVariant {
+    <#
+      One publisher run from the restored control under a changed seam admission.
+      Passes only when it is refused with every Expect token, wrote nothing remote,
+      never read the injected clock and never consulted the fake git remote.
+    #>
+    param($Fx, $Snap, [string]$ClockTrace, [string]$Label, [string[]]$Expect, [hashtable]$Extra = $null, [scriptblock]$Before, [scriptblock]$After)
+    Restore-C599ASnapshot -Snap $Snap
+    if (Test-Path -LiteralPath $ClockTrace) { Remove-Item -LiteralPath $ClockTrace -Force }
+    $got = @(); $refused = $false; $touched = $false; $err = ''
+    try {
+        & $Before
+        $res = Invoke-C599Publish -Fx $Fx -Extra $Extra
+        $got = @(([string]$res.Refusal) -split ',' | Where-Object { $_ })
+        $refused = (-not [bool]$res.Published) -and ([int]$res.ExitCode -ne 0) -and (Test-C599NoRemoteWrite -Fx $Fx)
+        $touched = (Test-Path -LiteralPath $ClockTrace) -or ((Test-Path -LiteralPath $Fx.Git.Trace) -and ((Get-Content -LiteralPath $Fx.Git.Trace -Raw) -match 'GIT '))
+    } catch {
+        $err = 'threw: ' + $_.Exception.Message
+    } finally {
+        & $After
+        if (Test-Path -LiteralPath $ClockTrace) { Remove-Item -LiteralPath $ClockTrace -Force }
+        Restore-C599ASnapshot -Snap $Snap
+    }
+    $absentTokens = @($Expect | Where-Object { $got -notcontains $_ })
+    return [pscustomobject]@{
+        Pass = ($refused -and -not $touched -and $absentTokens.Count -eq 0 -and $err -eq '')
+        Detail = ('{0}: refused={1} seams-used={2} missing=[{3}] got=[{4}] {5}' -f $Label, $refused, $touched, ($absentTokens -join ' '), ($got -join ' '), $err)
+    }
+}
+
+function Test-C599A_PublisherTestMode {
+    # Review bf928242 finding 2: the clock seam (and every other publisher seam) is
+    # admitted only in explicit test mode, ANTIPHON_RELEASE_GATE_TEST_MODE=1 exactly,
+    # and publish-release refuses test mode whenever a real remote would be reached (no
+    # seams file, or one without the Git or GitHub adapter). A real publication can
+    # therefore never run on an injected clock.
+    $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
+    $clockTrace = Join-Path $fx.Root 'clock-trace.log'
+    # Record every read of the injected clock (overrides the fixture clock, same instant).
+    Add-Content -LiteralPath $fx.Gh.Path -Encoding ASCII -Value ("`n`$ReleaseGateSeams.UtcNow = {{ Add-Content -LiteralPath '{0}' -Value 'clock' -Encoding ASCII; return [datetime]::Parse('{1}', [System.Globalization.CultureInfo]::InvariantCulture, ([System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal)) }}" -f $clockTrace, $script:C599Now.ToString('o'))
+    $snap = Save-C599ASnapshot -Fx $fx
+    $clearTrace = { if (Test-Path -LiteralPath $clockTrace) { Remove-Item -LiteralPath $clockTrace -Force } }
+
+    $ok = Invoke-C599Publish -Fx $fx
+    $rel = Get-C599Release -Gh $fx.Gh -Tag ([string]$ok.Tag)
+    Assert-C487 -Cond ([bool]$ok.Published -and $null -ne $rel -and -not [bool]$rel.isDraft -and (Test-Path -LiteralPath $clockTrace)) `
+        -Name 'C599 V-18: in test mode the fake remote and the injected clock publish the valid control' -Detail ([string]$ok.Refusal)
+    Restore-C599ASnapshot -Snap $snap
+    & $clearTrace
+
+    # Outside test mode (unset, or any value but exactly 1) a seams file is refused
+    # before it is loaded: the clock is never read and no fake or real remote is touched.
+    $m = @()
+    foreach ($value in @('', '0', 'true', 'TRUE', ' 1', '1 ', 'yes')) {
+        $c599Mode = $value
+        $m += Invoke-C599ATestModeVariant -Fx $fx -Snap $snap -ClockTrace $clockTrace -Label ('test mode [' + $value + ']') -Expect @('seams-outside-test-mode') `
+            -Before { [Environment]::SetEnvironmentVariable('ANTIPHON_RELEASE_GATE_TEST_MODE', $c599Mode) } `
+            -After { [Environment]::SetEnvironmentVariable('ANTIPHON_RELEASE_GATE_TEST_MODE', '1') }
+    }
+    Assert-C599AMatrix -Name 'C599 V-18: outside test mode a seams file is refused before it is loaded, the clock is never read and nothing remote is written' -Results $m
+
+    # The production clock function itself: the seam answers only in test mode.
+    $saved = $script:ReleaseGateSeams
+    $outside = ''
+    $inside = $null
+    try {
+        $script:ReleaseGateSeams = @{ UtcNow = { return $script:C599Now } }
+        [Environment]::SetEnvironmentVariable('ANTIPHON_RELEASE_GATE_TEST_MODE', $null)
+        try { $outside = 'returned ' + (Get-ReleaseGateUtcNow).ToString('o') } catch { $outside = 'refused' }
+        [Environment]::SetEnvironmentVariable('ANTIPHON_RELEASE_GATE_TEST_MODE', '1')
+        try { $inside = Get-ReleaseGateUtcNow } catch { $inside = $null }
+    } finally {
+        $script:ReleaseGateSeams = $saved
+        [Environment]::SetEnvironmentVariable('ANTIPHON_RELEASE_GATE_TEST_MODE', '1')
+    }
+    Assert-C487 -Cond ($outside -eq 'refused' -and $null -ne $inside -and $inside -eq $script:C599Now) `
+        -Name 'C599 V-18: the release-gate clock seam is refused outside test mode and honoured inside it' -Detail ('outside=' + $outside + ' inside=' + $inside)
+
+    # Test mode with a real remote refuses before any remote read or write. The
+    # checkout's origin points at a missing local path for these variants, so even a
+    # missing guard could never reach a real remote.
+    $gitText = Get-Content -LiteralPath $fx.Git.Path -Raw
+    $ghText = Get-Content -LiteralPath $fx.Gh.Path -Raw
+    $clockLine = @($ghText -split "`n" | Where-Object { $_ -like '$ReleaseGateSeams.UtcNow = *' })[-1]
+    $gitOnly = Join-Path $fx.Root 'seams-git-only.ps1'
+    Set-Content -LiteralPath $gitOnly -Encoding ASCII -Value ($gitText + "`n" + $clockLine)
+    $ghOnly = Join-Path $fx.Root 'seams-github-only.ps1'
+    Set-Content -LiteralPath $ghOnly -Encoding ASCII -Value ($ghText.Replace($gitText, '$ReleaseGateSeams = @{}'))
+    $originUrl = Invoke-C599RealGit -Repo $fx.Checkout -Arguments @('remote', 'get-url', 'origin')
+    $noRemote = Join-Path $fx.Root 'no-such-remote'
+    $isolate = { [void](Invoke-C599RealGit -Repo $fx.Checkout -Arguments @('remote', 'set-url', 'origin', $noRemote)) }
+    $restore = { [void](Invoke-C599RealGit -Repo $fx.Checkout -Arguments @('remote', 'set-url', 'origin', $originUrl)) }
+    $m = @()
+    foreach ($v in @(@{ l = 'no seams file'; p = '' }, @{ l = 'seams without the GitHub adapter'; p = $gitOnly }, @{ l = 'seams without the Git adapter'; p = $ghOnly })) {
+        $m += Invoke-C599ATestModeVariant -Fx $fx -Snap $snap -ClockTrace $clockTrace -Label $v.l -Expect @('test-mode-real-remote') -Extra @{ SeamsPath = $v.p } -Before $isolate -After $restore
+    }
+    Assert-C599AMatrix -Name 'C599 V-18: test mode refuses a real remote: no seams file, or one without the Git or GitHub adapter' -Results $m
+}
+
 # ====================================================================== run ===
 
 $cases = Get-C487CaseFunctions -Prefix 'C599_'
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -CommandType Function -ErrorAction SilentlyContinue
     if (-not $fn) { Write-Error ('unknown case {0}' -f $Case); exit 2 }
-    & $fn
+    try { & $fn } finally { Stop-C599CardStub }
 } else {
-    foreach ($fn in $cases) { & $fn }
+    try { foreach ($fn in $cases) { & $fn } } finally { Stop-C599CardStub }
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'release-gate-summary' -Body @{
     passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows
