@@ -277,11 +277,12 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 await RecheckSourceAsync(op, op.VerifiedSourceSha!, ct);
                 var current = await CommitAsync(op.RepositoryPath, op.TargetFullRef, ct);
                 Require(current == op.TargetBeforeSha || current == op.VerifiedSourceSha, "target_changed");
-                await CheckTargetAsync(op, current, ct);
+                // CARD-0642 R1: the checkout behind update-ref/merge comes from a fresh listing, never the
+                // land's cache; another process can switch an existing worktree onto the target unseen.
+                var checkout = await CheckTargetAsync(op, current, live: true, ct);
                 if (current != op.VerifiedSourceSha)
                 {
                     Require(await IsAncestorAsync(op.RepositoryPath, current, op.VerifiedSourceSha!, ct), "target_not_fast_forward");
-                    var checkout = await TargetCheckoutAsync(op, ct);
                     LandingGitResult advanced;
                     if (checkout is null)
                     {
@@ -529,13 +530,17 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             : op.TargetCheckoutPath is null || !SamePath(checkout, op.TargetCheckoutPath));
     }
 
-    private async Task CheckTargetAsync(AgentTaskLanding op, string expected, CancellationToken ct)
+    private Task CheckTargetAsync(AgentTaskLanding op, string expected, CancellationToken ct)
+        => CheckTargetAsync(op, expected, live: false, ct);
+
+    /// <summary>Returns the verified target checkout, or null when the target is not checked out.</summary>
+    private async Task<string?> CheckTargetAsync(AgentTaskLanding op, string expected, bool live, CancellationToken ct)
     {
         Require(await CommitAsync(op.RepositoryPath, op.TargetFullRef, ct) == expected, "target_changed");
-        var checkout = await TargetCheckoutAsync(op, ct);
+        var checkout = await TargetCheckoutAsync(op, live, ct);
         Require(op.TargetCheckoutRecorded && (checkout is null ? op.TargetCheckoutPath is null
             : op.TargetCheckoutPath is not null && SamePath(checkout, op.TargetCheckoutPath)), "target_checkout_changed");
-        if (checkout is null) return;
+        if (checkout is null) return null;
         Require(!await git.HasActiveSequencerAsync(checkout, ct), "target_active_sequencer");
         var symbolic = await git.RunAsync(checkout, ["symbolic-ref", "-q", "HEAD"], ct);
         Require(symbolic.Succeeded && symbolic.Output.Trim() == op.TargetFullRef, "target_checkout_changed");
@@ -543,11 +548,15 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
         Require(status.Succeeded && status.Output.Length == 0, "target_dirty_or_unknown");
         Require(await CommitAsync(checkout, "HEAD", ct) == expected, "target_changed");
+        return checkout;
     }
 
-    private async Task<string?> TargetCheckoutAsync(AgentTaskLanding op, CancellationToken ct)
+    private Task<string?> TargetCheckoutAsync(AgentTaskLanding op, CancellationToken ct) => TargetCheckoutAsync(op, live: false, ct);
+
+    private async Task<string?> TargetCheckoutAsync(AgentTaskLanding op, bool live, CancellationToken ct)
     {
-        var rows = (await git.RegistrationsAsync(op.RepositoryPath, ct)).Where(r => r.Branch == op.TargetFullRef).ToList();
+        var registrations = live ? await git.LiveRegistrationsAsync(op.RepositoryPath, ct) : await git.RegistrationsAsync(op.RepositoryPath, ct);
+        var rows = registrations.Where(r => r.Branch == op.TargetFullRef).ToList();
         Require(rows.Count <= 1, "ambiguous_target_checkout");
         if (rows.Count == 0) return null;
         Require(!rows[0].Locked && !rows[0].Prunable, "target_registration_unavailable");
