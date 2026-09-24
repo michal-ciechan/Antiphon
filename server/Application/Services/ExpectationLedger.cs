@@ -378,22 +378,22 @@ public sealed class ExpectationLedger
     /// <summary>
     /// Resolve open episodes of the current digest that this successful scan did not observe and
     /// that were not observed by the previous successful scan either (two clear scans at least
-    /// <see cref="ExpectationWindows.ClearGap"/> apart). Kept subjects (observed or unknown) stay open.
+    /// <see cref="ExpectationWindows.ClearGap"/> apart). Observed subjects stay open. A subject whose
+    /// evidence was unknown this scan (or every subject, when the scan preserves all episodes) has
+    /// its LastObservedAt moved to this scan: an unknown scan is never counted as a clear one.
     /// </summary>
     public async Task<int> ResolveClearedAsync(
         string directiveId,
         string configDigest,
-        IReadOnlyCollection<string> keepSubjects,
-        DateTime previousSuccessfulScanAt,
+        IReadOnlyCollection<string> observedSubjects,
+        IReadOnlyCollection<string> unknownSubjects,
+        bool preserveAll,
+        DateTime? previousSuccessfulScanAt,
         DateTime observedAt,
         CancellationToken ct)
     {
         ValidateIdentity(directiveId, configDigest, "scan", "scan");
         var now = AsUtc(observedAt);
-        var previous = AsUtc(previousSuccessfulScanAt);
-        if (now - previous < ExpectationWindows.ClearGap)
-            return 0;
-
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
         try
         {
@@ -405,15 +405,32 @@ public sealed class ExpectationLedger
                     WHERE "DirectiveId" = {id}
                       AND "ResolvedAt" IS NULL
                       AND "ConfigDigest" = {digest}
-                      AND "LastObservedAt" < {previous}
                     FOR UPDATE
                     """)
                 .AsTracking()
                 .ToListAsync(ct);
-            var keep = keepSubjects.ToHashSet(StringComparer.Ordinal);
+            var observed = observedSubjects.ToHashSet(StringComparer.Ordinal);
+            var unknown = unknownSubjects.ToHashSet(StringComparer.Ordinal);
+            var previous = AsUtc(previousSuccessfulScanAt);
+            var canResolve = !preserveAll && previous is not null && now - previous.Value >= ExpectationWindows.ClearGap;
             var resolved = 0;
-            foreach (var row in rows.Where(row => !keep.Contains(row.SubjectKey)))
+            foreach (var row in rows)
             {
+                if (observed.Contains(row.SubjectKey))
+                    continue;
+                if (preserveAll || unknown.Contains(row.SubjectKey))
+                {
+                    if (row.LastObservedAt < now)
+                    {
+                        row.LastObservedAt = now;
+                        row.ConcurrencyToken = Guid.NewGuid();
+                    }
+
+                    continue;
+                }
+
+                if (!canResolve || row.LastObservedAt >= previous!.Value)
+                    continue;
                 row.ResolvedAt = now;
                 row.ConcurrencyToken = Guid.NewGuid();
                 resolved++;
