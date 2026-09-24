@@ -77,7 +77,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 }
                 else if (op.Phase == LandPhase.Refused)
                 {
-                    var fresh = await git.InspectAsync(coordinates, ct);
+                    var fresh = await git.InspectAsync(coordinates, LandInspectionScope.IdentityAndStatus, ct);
                     var explicitRequest = request is not null
                         && GitObjectId.IsFull(request.ExpectedSourceSha)
                         && (op.ApprovalLandRequestId is null || request.Id != op.ApprovalLandRequestId);
@@ -112,7 +112,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 return await CleanupAsync(op, lease, request, ct);
             }
 
-            var source = await git.InspectAsync(coordinates, ct);
+            var source = await git.InspectAsync(coordinates, LandInspectionScope.IdentityAndStatus, ct);
             Require(source.Accepted, source.Reason ?? "source_unknown");
             var snapshot = source.Snapshot!;
             if (op is null)
@@ -227,7 +227,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 }
                 Require(rebase.RebaseHeadSha is not null, "interrupted_rebase_requires_inspection");
                 await RecheckSourceAsync(op, rebase.RebaseHeadSha!, ct);
-                var prepared = await git.InspectAsync(Coordinates(op), ct);
+                var prepared = await git.InspectAsync(Coordinates(op), LandInspectionScope.IdentityAndStatus, ct);
                 Require(prepared.Accepted && prepared.Snapshot!.GitDirectory == op.GitDirectory,
                     prepared.Reason ?? "source_changed");
                 Require(prepared.Snapshot!.HeadSha == rebase.RebaseHeadSha, "source_changed");
@@ -506,14 +506,14 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 ["show-ref", "--verify", "--hash", op.RecoveryRefPrefix + "/" + pin.Name], ct);
             Require(read.Succeeded && read.Output.Trim() == pin.Sha, "recovery_pin_changed");
         }
-        var inspected = await git.InspectAsync(Coordinates(op), ct);
+        var inspected = await git.InspectAsync(Coordinates(op), LandInspectionScope.IdentityAndStatus, ct);
         Require(inspected.Accepted && Matches(inspected.Snapshot!, op, sha), inspected.Reason ?? "source_changed");
     }
 
     private async Task<bool> PreparationChangedAsync(AgentTaskLanding op, LandSourceCoordinates coordinates,
         string? verificationFilter, CancellationToken ct)
     {
-        var fresh = await git.InspectAsync(coordinates, ct);
+        var fresh = await git.InspectAsync(coordinates, LandInspectionScope.IdentityAndStatus, ct);
         Require(fresh.Accepted, fresh.Reason ?? "source_unknown");
         if (!Matches(fresh.Snapshot!, op, op.VerifiedSourceSha!)
             || coordinates.SourceFullRef != op.SourceFullRef

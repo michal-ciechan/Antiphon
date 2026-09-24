@@ -86,7 +86,7 @@ public sealed class AgentTaskLandSourceResolver(
             return await CreateOperationAsync(task, request, coordinates, lease, baseline, ct);
         }
 
-        var inspection = await git.InspectAsync(coordinates, ct);
+        var inspection = await git.InspectAsync(coordinates, LandInspectionScope.IdentityAndStatus, ct);
         if (!inspection.Accepted)
             return await RefuseAsync(task, request, baseline, inspection.Reason ?? "source_unknown",
                 inspection.Snapshot?.HeadSha, null, null, ct, inspection.Diagnostic);
@@ -135,7 +135,7 @@ public sealed class AgentTaskLandSourceResolver(
                         return retryFailedLock;
                     return await RefuseAsync(task, request, baseline, "source_fast_forward_failed", local.HeadSha, savedR, expected, ct);
                 }
-                var after = await git.InspectAsync(coordinates, ct);
+                var after = await git.InspectAsync(coordinates, LandInspectionScope.IdentityAndStatus, ct);
                 if (!after.Accepted || after.Snapshot!.HeadSha != expected)
                     return await RefuseAsync(task, request, baseline, after.Reason ?? "source_changed",
                         after.Snapshot?.HeadSha, savedR, expected, ct, after.Diagnostic);
@@ -233,7 +233,7 @@ public sealed class AgentTaskLandSourceResolver(
 
         if (needFf)
         {
-            var still = await git.InspectAsync(coordinates, ct);
+            var still = await git.InspectAsync(coordinates, LandInspectionScope.IdentityAndStatus, ct);
             if (!still.Accepted || still.Snapshot!.HeadSha != local.HeadSha
                 || still.Snapshot.GitDirectory != local.GitDirectory
                 || still.Snapshot.CommonDirectory != local.CommonDirectory)
@@ -272,7 +272,7 @@ public sealed class AgentTaskLandSourceResolver(
                 return await RefuseAsync(task, request, baseline, "source_fast_forward_failed", local.HeadSha,
                     observed.Sha, expected, ct);
             }
-            var after = await git.InspectAsync(coordinates, ct);
+            var after = await git.InspectAsync(coordinates, LandInspectionScope.IdentityAndStatus, ct);
             if (!after.Accepted || after.Snapshot!.HeadSha != expected
                 || after.Snapshot.GitDirectory != local.GitDirectory
                 || after.Snapshot.CommonDirectory != local.CommonDirectory
@@ -330,7 +330,7 @@ public sealed class AgentTaskLandSourceResolver(
             return await RefuseAsync(task, request, baseline, "commit_lookup_failed", request.LocalBeforeSha,
                 request.RemoteSourceSha, request.CandidateSourceSha, ct, diagnostic);
         }
-        var fresh = await git.InspectAsync(coordinates, ct);
+        var fresh = await git.InspectAsync(coordinates, LandInspectionScope.IdentityAndStatus, ct);
         if (!fresh.Accepted)
             return await RefuseAsync(task, request, baseline, fresh.Reason ?? "source_unknown",
                 fresh.Snapshot?.HeadSha, request.RemoteSourceSha, request.CandidateSourceSha, ct, fresh.Diagnostic);

@@ -14,6 +14,13 @@ public interface ILandingGit
     Task<bool> HasActiveSequencerAsync(string repository, CancellationToken ct);
     Task<IReadOnlyList<LandingRegistration>> RegistrationsAsync(string repository, CancellationToken ct);
     Task<LandSourceInspection> InspectAsync(LandSourceCoordinates coordinates, CancellationToken ct);
+    /// <summary>CARD-0642 D-5: <see cref="LandInspectionScope.IdentityAndStatus"/> skips the ignored listing and
+    /// returns empty <see cref="LandSourceSnapshot.IgnoredPaths"/>; the dirty check is unchanged.</summary>
+    Task<LandSourceInspection> InspectAsync(LandSourceCoordinates coordinates, LandInspectionScope scope, CancellationToken ct)
+        => InspectAsync(coordinates, ct);
+    /// <summary>CARD-0642 D-4: read caches bounded by the caller (a land holds the repository lease for the
+    /// scope's lifetime). A nested call borrows the live scope.</summary>
+    ILandingOperationScope BeginOperationScope() => LandingOperationScope.None;
     Task<LandingDestination> DestinationAsync(string repository, string targetFullRef, CancellationToken ct);
     Task<LandingRemoteObservation> ObserveAsync(string repository, LandingDestination destination,
         string sourceSha, string observationRef, CancellationToken ct);
@@ -31,4 +38,22 @@ public interface ILandingGit
     Task<LandingGitResult> PushOwnedAsync(string repository, LandingDestination destination, string sha,
         Func<int, long, CancellationToken, Task> started, CancellationToken ct);
     Task<LandingIndexLockObservation> InspectIndexLockAsync(string checkout, CancellationToken ct);
+}
+
+/// <summary>CARD-0642 D-4/D-7: one land's read-cache lifetime and its git profile.</summary>
+public interface ILandingOperationScope : IDisposable
+{
+    LandingGitProfile Profile { get; }
+}
+
+public static class LandingOperationScope
+{
+    /// <summary>No cache; a fresh profile nothing records into.</summary>
+    public static ILandingOperationScope None => new NoScope();
+
+    private sealed class NoScope : ILandingOperationScope
+    {
+        public LandingGitProfile Profile { get; } = new();
+        public void Dispose() { }
+    }
 }

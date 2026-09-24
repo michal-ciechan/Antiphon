@@ -56,13 +56,13 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 if (rows.Any(r => !LandingGit.PathsEqual(r.Path, source.WorktreePath)
                     && WorktreeNativeIO.Within(r.Path, source.WorktreePath)))
                     return Finish("nested_registration");
-                var inspection = await git.InspectAsync(source, ct);
+                var inspection = await git.InspectAsync(source, LandInspectionScope.Full, ct);
                 if (!Matches(inspection, request)) return Finish(inspection.Reason ?? "source_changed");
                 // Non-forcing Git removal ALSO deletes ignored files. No patterns grant ownership.
                 if (HasProtectedIgnored(inspection.Snapshot!)) return Finish("ignored_content_preserved");
                 reason = await AuthorityAsync(request, ct);
                 if (reason is not null) return Finish(reason);
-                var final = await git.InspectAsync(source, ct);
+                var final = await git.InspectAsync(source, LandInspectionScope.Full, ct);
                 if (!Matches(final, request)) return Finish(final.Reason ?? "source_changed");
                 if (HasProtectedIgnored(final.Snapshot!)) return Finish("ignored_content_preserved");
                 if (consumeSlot is not null && !await consumeSlot(ct)) return Finish("cleanup_command_slot_spent");
