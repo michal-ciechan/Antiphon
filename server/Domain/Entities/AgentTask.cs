@@ -133,8 +133,8 @@ public class AgentTask
     public int MaxAttempts { get; set; } = 2;
 
     /// <summary>
-    /// Workers default to Shared; an orchestrator defaults to its own worktree unless it already
-    /// has its own location (see <see cref="WorkspaceMode"/>).
+    /// Stored initializer stays Shared so existing rows and fixtures keep their mode.
+    /// A fresh omitted create is Worktree at admission (CARD-0644); this default is not that decision.
     /// </summary>
     public WorkspaceMode Workspace { get; set; } = WorkspaceMode.Shared;
 

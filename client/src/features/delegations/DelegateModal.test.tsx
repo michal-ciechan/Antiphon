@@ -42,10 +42,10 @@ describe('DelegateModal', () => {
     await userEvent.type(screen.getByLabelText('Goal'), 'run planned positive controls')
     await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
     await waitFor(() => expect(captured.body).not.toBeNull())
-    expect(captured.body).toMatchObject({ role: 'Mutation', workspace: 'Shared', workingDirectory: 'C:/worktrees/card-task-aabbccdd' })
+    expect(captured.body).toMatchObject({ role: 'Mutation', workspace: 'Worktree', workingDirectory: 'C:/worktrees/card-task-aabbccdd' })
   })
 
-  it('defaults to a worker in the shared directory — isolation is opt-in', async () => {
+  it('defaults to a worker and leaves the tier to the role', async () => {
     const captured = captureCreate()
     renderWithProviders(<DelegateModal opened onClose={() => {}} />)
 
@@ -53,7 +53,7 @@ describe('DelegateModal', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
 
     await waitFor(() => expect(captured.body).not.toBeNull())
-    expect(captured.body).toMatchObject({ kind: 'Worker', workspace: 'Shared', modelLevel: null })
+    expect(captured.body).toMatchObject({ kind: 'Worker', workspace: 'Worktree', modelLevel: null })
   })
 
   it('lets the role carry the tier rather than asking for one', async () => {

@@ -338,6 +338,7 @@ public sealed class SpecialistTaskRunner
             SpecialistSessionId = selectedSession?.Id,
             SpecialistSessionStartedAt = selectedSession?.StartedAt,
             SpecialistProfileRevisionId = selectedSession?.TuiProfileRevisionId,
+            // CARD-0644 D-9. Explicit Shared: the run stays in the specialist's seat.
             Workspace = WorkspaceMode.Shared,
             WorkingDirectory = specialist.WorkingDirectory,
             AgentId = specialist.Id,
