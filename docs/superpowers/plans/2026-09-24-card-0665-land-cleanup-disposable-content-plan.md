@@ -49,6 +49,7 @@ the [CARD-0459 investigation](../../investigations/2026-09-19-card-0459-worktree
 | Test fixtures use real git. | `LandingGitFixture` seeds `.gitignore` with `.antiphon/`, `.claude/`, `bin-*/` (`LandingGitFixture.cs:41`); `LandingSafetyHarness` builds `GuardedWorktreeRemoval` explicitly (`:72-75`); `DelegationTestServices` registers it (`:89`) and builds one (`:125`); `LandingRemovalPolicyControlTests` and `DelegationWorktreeTests` use the 3-argument constructor. | Add `obj/` to the fixture ignore list; the gate is an optional constructor parameter (D-6). |
 | Globbing needs a new dependency. | `Microsoft.Extensions.FileSystemGlobbing` 10.0.5 is already referenced (`server/Antiphon.Server.csproj:49`) and used on string lists by `ScopeDriftPolicy` (`:115-131`). | Reuse `Matcher(StringComparison.OrdinalIgnoreCase).Match(paths)`. |
 | Paths are OS-specific. | `ls-files -z` emits worktree-relative, `/`-separated paths on both OSes; `LandSourceSnapshot.IgnoredPaths` keeps them verbatim (`LandingDtos.cs:25-27`). | Classify on the relative string; tests build inputs with `/` and file paths with `Path.Combine`; no `/tmp` or drive letters in tests. |
+| The Code stage can verify on server2. | **Measured here at the base commit:** one isolated build (`bin-c665-plan/`, `UseAppHost=false`, 2m32s cold) then `/*/*/AgentTaskLandPublicationTests/C448_V04_IgnoredFilesSurviveConfirmedPublication`: 3 executed, **3 failed** in 45 s, all with `OperationAsync()` null. The harness evidence dump shows `land refused: source_ref_error` before any landing operation exists. Cause: the runner image installs Debian bookworm git **2.39.5** (`docker/session-runner-grok/Dockerfile:33`), and `git show-ref --exists` needs git 2.43+; it is called at `LandingGit.cs:192` and `:380`, `GuardedWorktreeRemoval.cs:124` and `:140`, `GuardedVerificationRemoval.cs:79` and `:85`, so every real-git land/cleanup/retirement test refuses here (`exit 129`, `unknown option`). Testcontainers Postgres works on this runner. | Rows that drive `InspectAsync` (CP-4, CP-5, CP-6 land half, CP-7, CP-9, CP-10) need a host with git ≥ 2.43: the desktop, or the runner image after its git is raised. CP-1, CP-2, CP-3, CP-8, CP-11 and the `WorktreeEvidenceRetentionTests` half of CP-6 run on server2 today. See Runner constraint below. |
 
 ## Decisions
 
@@ -288,6 +289,12 @@ then the implementation, and runs the rows listed for it.
   investigation's read). Plan/Review/Investigate/TestDesign trees have no publication and no
   automatic release today; `POST /api/agent-tasks/{id}/worktree-retirement` is manual.
 - CARD-0452 keeps V-07/V-21/V-29 and R1-R3; its D2 is closed by this card.
+- Card: the server2 runner image installs git 2.39.5, below the 2.43 that `git show-ref
+  --exists` needs; every land, guarded removal and verification-removal path calls it. A land
+  or cleanup executed on that runner would refuse `source_ref_error`, and its real-git tests
+  cannot run there (measured in this plan's baseline). Raise git in
+  `docker/session-runner-grok/Dockerfile` and `docker/tests/Dockerfile`, or make the call
+  tolerant of exit 129 with a `rev-parse --verify` fallback.
 
 ## Verification design
 
@@ -303,6 +310,19 @@ CARD-0403 combined-class syntax with trailing class wildcards, or the method-seg
 (which this card's own evidence class will retain on land). Delete every `bin-c665-*`
 directory this producer created before finishing. Existing red is confirmed on the base
 commit with the exact failing method, never a full suite.
+
+### Runner constraint (measured 2026-09-24)
+
+server2's runner image has git 2.39.5; `git show-ref --exists` (git 2.43+) is used by every
+land inspection, so `LandingSafetyHarness` / `SettledRemovalHarness` tests refuse with
+`source_ref_error` there at the base commit (3 of 3 rows of `C448_V04` red, evidence dump
+`land refused: source_ref_error`). Dispatch the Code rounds where git ≥ 2.43 is present
+(the desktop), or first raise git in `docker/session-runner-grok/Dockerfile` (a separate
+card; bookworm-backports or the git-core PPA equivalent) and re-verify the row above green
+before trusting any red on server2. Rows runnable on server2 today: CP-1, CP-2, CP-3,
+CP-8, CP-11, plus `WorktreeEvidenceRetentionTests` (no `show-ref --exists` on its path).
+A red land row on server2 is not evidence of anything about this card until that gap is
+closed; confirm pre-existing red with this exact method on the base commit, never a suite.
 
 ### Coverage and falsifiable assertions
 
