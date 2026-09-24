@@ -120,7 +120,7 @@ public sealed class RunnerCompletionProgressTests
                 .VerifiedSha.ShouldBe(d);
             evaluated.Evidence.RemoteSync.ShouldBeNull();
             // The local path still observes origin as before; it never synchronizes the checkout.
-            world.Git.Commands.ShouldNotContain(x => x.Split(' ').Contains("merge"));
+            world.Git.Commands.ShouldNotContain(x => IsMergeCommand(x));
         }
 
         // A local task whose branch moved only on origin still needs a task-scoped claim.
@@ -216,6 +216,8 @@ public sealed class RunnerCompletionProgressTests
     /// <summary>A fetch, an advertisement read or a merge; never an ancestry query such as merge-base.</summary>
     internal static bool IsSyncCommand(string command) =>
         command.Split(' ').Any(token => token is "fetch" or "ls-remote" or "merge");
+
+    private static bool IsMergeCommand(string command) => command.Split(' ').Contains("merge");
 
     private static string Claim(SyncWorld world, string sha) => $"[antiphon-progress:{world.TaskId:D} commit={sha}]";
 
