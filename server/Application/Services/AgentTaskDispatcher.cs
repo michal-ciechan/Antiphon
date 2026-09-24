@@ -558,6 +558,17 @@ public sealed class AgentTaskDispatcher
                 }
             }
 
+            // CARD-0659 D-5: a runner-bound task whose persisted kind its runner cannot run (a legacy
+            // or out-of-band mismatch) is Blocked here, before any claim, worktree or remote prep.
+            // It is never launched remotely as that kind and never moved to the desktop.
+            if (!DefaultRunnerRoutingPolicy.IsHostKindCompatible(task.RunnerId, task.AgentKind))
+            {
+                await BlockRunnerKindAsync(task, DefaultRunnerRoutingPolicy.RunnerKindBlockedReason(
+                    task.RunnerId!, task.AgentKind, ModelLevelAliases.For(task.AgentKind, task.ModelLevel)), ct);
+                blockedRoutingExhausted++;
+                continue;
+            }
+
             // CARD-0022: a held model must not spawn. Check-role tasks skip only if the
             // interpreter's own alias is held — a fable hold does not starve haiku checks.
             // CARD-0090: a chain-chosen task re-walks instead of sitting Held on a snapshot
@@ -573,11 +584,17 @@ public sealed class AgentTaskDispatcher
 
                 if (modelHeld)
                 {
-                    if (ComplexityRoutingService.IsListGoverned(task)
-                        && _complexityRouting is not null
-                        && await TryRewalkQueuedChainAsync(task, alias, ct))
+                    var rewalk = ComplexityRoutingService.IsListGoverned(task) && _complexityRouting is not null
+                        ? await TryRewalkQueuedChainAsync(task, alias, ct)
+                        : RewalkOutcome.None;
+                    if (rewalk == RewalkOutcome.Rerouted)
                     {
                         // Kind/level updated; fall through to spawn.
+                    }
+                    else if (rewalk == RewalkOutcome.BlockedRunnerKind)
+                    {
+                        blockedRoutingExhausted++;
+                        continue;
                     }
                     else if (ComplexityRoutingService.IsListGoverned(task)
                         && _complexityRouting is not null
@@ -1159,18 +1176,27 @@ public sealed class AgentTaskDispatcher
     /// were updated to a different survivor (caller falls through to spawn). Required pins never
     /// reroute.
     /// </summary>
-    private async Task<bool> TryRewalkQueuedChainAsync(
+    private async Task<RewalkOutcome> TryRewalkQueuedChainAsync(
         AgentTask task, string currentAlias, CancellationToken ct)
     {
         var walk = await WalkTaskChainAsync(task, ct);
         if (walk is null)
-            return false;
+            return RewalkOutcome.None;
         if (PinForbidsReroute(walk, task))
-            return false;
+            return RewalkOutcome.None;
         if (walk.Chosen is not { } chosen)
-            return false;
+            return RewalkOutcome.None;
         if (chosen.Kind == task.AgentKind && chosen.Level == task.ModelLevel)
-            return false;
+            return RewalkOutcome.None;
+
+        // CARD-0659 D-5: the walk may not publish a kind the task's runner cannot run. Block with
+        // the runner, original kind and pin intact instead of launching or preparing anything.
+        if (!DefaultRunnerRoutingPolicy.IsHostKindCompatible(task.RunnerId, chosen.Kind))
+        {
+            await BlockRunnerKindAsync(task,
+                DefaultRunnerRoutingPolicy.RunnerKindBlockedReason(task.RunnerId!, chosen.Kind, chosen.Alias), ct);
+            return RewalkOutcome.BlockedRunnerKind;
+        }
 
         var from = currentAlias;
         task.AgentKind = chosen.Kind;
@@ -1202,7 +1228,7 @@ public sealed class AgentTaskDispatcher
         _logger.LogInformation(
             "Task {ShortId} rerouted at dispatch: {From} → {To}",
             DelegationReportFormatter.Short(task.Id), from, chosen.Alias);
-        return true;
+        return RewalkOutcome.Rerouted;
     }
 
     private async Task<bool> BlockQueuedChainIfExhaustedAsync(AgentTask task, CancellationToken ct)
@@ -1304,6 +1330,16 @@ public sealed class AgentTaskDispatcher
             if (ComplexityRoutingService.CascadeTriedEveryCandidate(
                     reroutedCounts.GetValueOrDefault(task.Id), walk.Outcomes.Count))
                 continue;
+
+            // CARD-0659 D-5: the walk's choice is a kind this task's runner cannot run. Record that
+            // once (one Blocked event per transition) and leave the task Blocked; the same
+            // incompatible choice on a later tick is not a reason to requeue it.
+            if (!DefaultRunnerRoutingPolicy.IsHostKindCompatible(task.RunnerId, chosen.Kind))
+            {
+                await BlockRunnerKindAsync(task,
+                    DefaultRunnerRoutingPolicy.RunnerKindBlockedReason(task.RunnerId!, chosen.Kind, chosen.Alias), ct);
+                continue;
+            }
 
             if (_capacityRecovery is not null)
             {
@@ -5443,6 +5479,31 @@ public sealed class AgentTaskDispatcher
             At = now,
         });
         await _db.SaveChangesAsync(ct);
+    }
+
+    private enum RewalkOutcome
+    {
+        None = 0,
+        Rerouted = 1,
+        BlockedRunnerKind = 2,
+    }
+
+    /// <summary>
+    /// CARD-0659 D-5. Blocks a runner-bound task on an incompatible kind with the stable
+    /// <c>runner_kind_unsupported</c> reason, leaving runner, kind, level and pin untouched. A task
+    /// already Blocked for exactly this reason gets no second event.
+    /// </summary>
+    private async Task BlockRunnerKindAsync(AgentTask task, string reason, CancellationToken ct)
+    {
+        if (task.Status == AgentTaskStatus.Blocked && string.Equals(task.FailureReason, reason, StringComparison.Ordinal))
+            return;
+        task.AgentSessionId = null;
+        await BlockAsync(task, reason, ct);
+        await _tasks.EnqueueBlockedParentNoteAsync(task, reason, ct);
+        await _db.SaveChangesAsync(ct);
+        _logger.LogInformation(
+            "Task {ShortId} blocked: runner {Runner} cannot run the chosen kind",
+            DelegationReportFormatter.Short(task.Id), task.RunnerId);
     }
 
     /// <summary>

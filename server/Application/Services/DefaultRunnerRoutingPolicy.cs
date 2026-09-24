@@ -102,6 +102,26 @@ public sealed class DefaultRunnerRoutingPolicy
     public const string ReasonTasksDisabled = "runner_tasks_disabled";
     public const string ReasonDirectoryUnavailable = "runner_directory_unavailable";
     public const string ReasonNotDispatchEligible = "runner_not_dispatch_eligible";
+    public const string ReasonRunnerKindUnsupported = "runner_kind_unsupported";
+
+    /// <summary>
+    /// CARD-0659 D-5. The one host/kind rule every post-create kind change shares: a task bound to
+    /// a runner may only run a kind that runner admits (Grok or Claude Code), whatever the model
+    /// walk prefers. The desktop runs every kind. The host itself never changes after create.
+    /// </summary>
+    public static bool IsHostKindCompatible(string? runnerId, AgentKind kind) =>
+        string.IsNullOrWhiteSpace(runnerId) || PhoneHomeLaunchPolicy.IsAdmittedKind(kind);
+
+    /// <summary>
+    /// The stable Blocked reason for an automatic choice of a kind the task's runner cannot run.
+    /// It carries the routing-exhausted prefix so the existing reroute API (and nothing else) moves
+    /// it on, and it names the candidate that was refused, not the kind the task keeps.
+    /// </summary>
+    public static string RunnerKindBlockedReason(string runnerId, AgentKind candidateKind, string candidateAlias) =>
+        ComplexityRoutingService.RoutingExhaustedPrefix
+        + $"{ReasonRunnerKindUnsupported} - the walk chose {candidateKind} {candidateAlias}, which runner '{runnerId}' "
+        + "cannot run (Grok or Claude Code only). The task keeps its runner, kind and pins. "
+        + "A human must choose; reroute to a runner-compatible kind.";
 
     private readonly string? _defaultRunnerId;
     private readonly PhoneHomeLaunchPolicy? _phoneHome;
@@ -188,10 +208,11 @@ public sealed class DefaultRunnerRoutingPolicy
             return ReasonKindNotSupported;
         if (AgentTaskRoles.IsSpecialist(shape.Role))
             return ReasonKindNotSupported;
-        // The dispatcher's launch policy still refuses a runner-bound SourceLanding task, so an
-        // automatic choice would only queue work to be refused; an explicit -Runner keeps the
-        // existing create admission.
-        if (shape.SourceLanding)
+        // CARD-0604 Cut B: a SourceLanding Mutation has a runner shape (runner-side custody), so the
+        // valid fresh Worker/Mutation/Worktree shape takes the default like any other task, and
+        // custody admission then asks the SELECTED runner and refuses rather than falling back.
+        // Create already refuses every other SourceLanding shape; this only keeps the policy honest.
+        if (shape.SourceLanding && (shape.Role != AgentTaskRole.Mutation || shape.TaskKind != AgentTaskKind.Worker))
             return ReasonSourceLandingNotSupported;
         return null;
     }
