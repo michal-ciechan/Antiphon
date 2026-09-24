@@ -93,8 +93,8 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
             {
                 _logger.LogError(
                     ended.Exception?.GetBaseException(),
-                    "Phone-home event pump for runner {RunnerId} epoch {Epoch} ended while the connection is "
-                    + "live ({PumpStatus}); restarting it with {PendingEvents} events pending",
+                    "Phone-home event pump ended while the connection is live (runner {RunnerId} epoch {Epoch}, "
+                    + "{PumpStatus}); restarting it with {PendingEvents} events pending",
                     live.RunnerId, live.Epoch, ended.Status, live.PendingEvents);
                 StartPump(live, ct);
             }
