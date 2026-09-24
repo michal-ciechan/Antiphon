@@ -112,6 +112,9 @@ public sealed class DefaultRunnerRoutingPolicy
     public static bool IsHostKindCompatible(string? runnerId, AgentKind kind) =>
         string.IsNullOrWhiteSpace(runnerId) || PhoneHomeLaunchPolicy.IsAdmittedKind(kind);
 
+    public static bool IsHostKindAdmitted(string? runnerId, AgentKind kind) =>
+        IsHostKindCompatible(runnerId, kind);
+
     /// <summary>
     /// The stable Blocked reason for an automatic choice of a kind the task's runner cannot run.
     /// It carries the routing-exhausted prefix so the existing reroute API (and nothing else) moves

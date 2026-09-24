@@ -8,7 +8,11 @@ public sealed class ProviderSignInRequiredException : HttpException
 {
     public const string ErrorCode = "provider_sign_in_required";
 
-    public string GrokHome { get; }
+    public string? GrokHome { get; }
+
+    public string AgentKind { get; } = "Grok";
+
+    public string? CodexHome { get; }
 
     public string? RunnerId { get; }
 
@@ -18,6 +22,9 @@ public sealed class ProviderSignInRequiredException : HttpException
         GrokHome = grokHome;
         RunnerId = string.IsNullOrWhiteSpace(runnerId) ? null : runnerId;
     }
+
+    public static ProviderSignInRequiredException ForCodex(string codexHome, string runnerId) =>
+        throw new NotImplementedException();
 
     private static string MessageFor(string grokHome, string? runnerId)
     {
