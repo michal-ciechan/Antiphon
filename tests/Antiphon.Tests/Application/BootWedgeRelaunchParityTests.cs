@@ -41,7 +41,8 @@ public sealed class BootWedgeRelaunchParityTests
 
         var spec = sink.Specs.ShouldHaveSingleItem();
         spec.Kind.ShouldBe(AgentKind.Grok);
-        Path.GetFileName(spec.Exe).ShouldBe("grok");
+        // The desktop spec resolves "grok.exe" on Windows and "grok" elsewhere.
+        Path.GetFileNameWithoutExtension(spec.Exe).ShouldBe("grok", StringCompareShould.IgnoreCase);
         spec.Args.ShouldContain(GrokLaunchArgs.ReasoningEffortFlag);
         spec.Args.ShouldContain("xhigh");
         spec.VerificationBinding.ShouldNotBeNull();
@@ -79,6 +80,11 @@ public sealed class BootWedgeRelaunchParityTests
         var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == seeded.TaskId);
         task.AgentSessionId.ShouldBe(seeded.OldSessionId);
         task.BootWedgeRelaunchCount.ShouldBe(0);
+        var events = await db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == seeded.TaskId)
+            .Select(e => e.Detail)
+            .ToListAsync();
+        events.ShouldHaveSingleItem().ShouldStartWith("boot-wedge relaunch refused: ");
     }
 
     private static async Task<Seed> SeedAsync(IsolatedTestSchema schema, string workspace, bool unresolvedCustody)
