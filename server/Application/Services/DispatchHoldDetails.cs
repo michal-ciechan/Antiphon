@@ -28,6 +28,21 @@ public static class DispatchHoldDetails
     public static string LeaseFenced(string reason) =>
         $"Held: repository mutation lease is fenced: {reason}.";
 
+    public const string LeaseHeldUntagged =
+        "Held: repository mutation lease is occupied by an untagged in-process owner.";
+
+    public static string LeaseHeldByOwner(Guid? taskId, string? purpose, DateTimeOffset? acquiredAt)
+    {
+        var who = taskId is Guid id ? id.ToString("N") : "none";
+        return $"Held: repository mutation lease is occupied by task {who} purpose={purpose} acquired={acquiredAt:O}.";
+    }
+
+    public static string LeaseUnknownAdmissionWriter(string holderShort, string holderTitle, string requestShort)
+    {
+        var title = holderTitle.Length <= 60 ? holderTitle : holderTitle[..60];
+        return $"Held: repository mutation lease owner is unknown; admission writer task {holderShort} ({title}); land request {requestShort}.";
+    }
+
     public static string PinnedAgentParkedOn(
         string agentName, string parkedShort, AgentTaskStatus parkedStatus)
     {

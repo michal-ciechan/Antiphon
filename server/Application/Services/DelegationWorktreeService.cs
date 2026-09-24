@@ -259,7 +259,8 @@ public sealed class DelegationWorktreeService
     {
         if (_leases is null || task.RepoPath is null)
             throw new ConflictException("repository_lease_required");
-        await using var lease = await _leases.TryAcquireAsync(task.RepoPath, ct);
+        await using var lease = await _leases.TryAcquireAsync(
+            task.RepoPath, new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.WorktreeProvision), ct);
         if (lease is null) throw new ConflictException("repository_busy");
         return await CreateForTaskAsync(task, lease, ct, startAtSha);
     }
@@ -512,7 +513,8 @@ public sealed class DelegationWorktreeService
 
         if (_leases is null || _landingGit is null)
             return new MergeOutcome(MergeResult.Failed, [], "repository_lease_required");
-        await using var lease = await _leases.TryAcquireAsync(repo, ct);
+        await using var lease = await _leases.TryAcquireAsync(
+            repo, new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.WorktreeSettlement), ct);
         if (lease is null) return new MergeOutcome(MergeResult.Failed, [], "repository_busy");
         // Missing registration is unknown, never evidence that this child merged.
         if (!await IsRegisteredWorktreeAsync(repo, worktree, ct))

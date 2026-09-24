@@ -255,11 +255,11 @@ public sealed class AgentTaskLandService
             await RefuseAsync(task, "landing_protocol_unavailable", ct);
             return LandRunResult.Complete;
         }
-        await using var lease = await _leases.TryAcquireAsync(task.RepoPath, ct);
+        await using var lease = await _leases.TryAcquireAsync(
+            task.RepoPath, new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.Land), ct);
         if (lease is null)
         {
-            await HoldAsync(task, request, "repository_mutation_lease_busy", null,
-                "Repository mutation lease is occupied; owner unknown.", ct);
+            await HoldOnBusyLeaseAsync(task, request, ct);
             return LandRunResult.Held;
         }
         await _db.Entry(task).ReloadAsync(ct);
@@ -953,6 +953,64 @@ public sealed class AgentTaskLandService
         task.CurrentLandRequestId = request.Id;
         await _db.SaveChangesAsync(ct);
         return request;
+    }
+
+    private async Task HoldOnBusyLeaseAsync(AgentTask task, AgentTaskLandRequest request, CancellationToken ct)
+    {
+        var observed = await _leases!.FindOwnerAsync(task.RepoPath!, ct);
+        if (observed?.State == RepositoryLeaseOwnerState.Known)
+        {
+            var owner = observed.TaskId is Guid ownerId
+                ? await _db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == ownerId, ct)
+                : null;
+            var who = observed.TaskId is Guid id ? id.ToString("N") : "none";
+            var status = owner?.Status.ToString() ?? "unknown";
+            await HoldAsync(task, request, "repository_mutation_lease_busy", owner,
+                $"Repository mutation lease is occupied by task {who} ({observed.Purpose}); status={status}.", ct);
+            return;
+        }
+
+        if (observed?.State == RepositoryLeaseOwnerState.Untagged)
+        {
+            await HoldAsync(task, request, "repository_mutation_lease_busy", null,
+                "Repository mutation lease is occupied; owner untagged in-process.", ct);
+            return;
+        }
+
+        if (observed is null)
+        {
+            await HoldAsync(task, request, "repository_mutation_lease_busy", null,
+                "Repository mutation lease is occupied; owner unknown.", ct);
+            return;
+        }
+
+        AgentTask? writer = null;
+        try
+        {
+            var common = await _landingGit!.CommonDirectoryAsync(task.RepoPath!, ct);
+            writer = await FindWriterAsync(task, common, ct);
+        }
+        catch (IOException) { }
+
+        var keepKnown = request.HoldReasonCode == "repository_mutation_lease_busy" && request.HoldingTaskId is Guid;
+        AgentTask? preserved = null;
+        if (keepKnown)
+        {
+            preserved = await _db.AgentTasks.AsNoTracking()
+                .SingleOrDefaultAsync(t => t.Id == request.HoldingTaskId, ct);
+            preserved ??= new AgentTask
+            {
+                Id = request.HoldingTaskId!.Value,
+                Status = request.HoldingTaskStatus ?? AgentTaskStatus.Working,
+            };
+        }
+
+        var detail = "Repository mutation lease is occupied; owner unknown.";
+        if (keepKnown)
+            detail += $" last-known lease owner={request.HoldingTaskId:N}.";
+        if (writer is not null)
+            detail += $" admission writer {writer.Id:N} ({writer.Status}).";
+        await HoldAsync(task, request, "repository_mutation_lease_busy", preserved, detail, ct);
     }
 
     private async Task HoldAsync(AgentTask task, AgentTaskLandRequest request, string reason,

@@ -51,10 +51,17 @@ public sealed class GatedCommitService
         IReadOnlyList<(string Key, string Value)> trailers,
         CancellationToken ct)
     {
-        await using var lease = await _leases.TryAcquireAsync(repo, ct);
+        var tag = OwnerFromTrailers(trailers);
+        await using var lease = await _leases.TryAcquireAsync(repo, tag, ct);
         if (lease is null)
             return new GatedCommitResult(GatedCommitOutcome.RepositoryBusy, null, [], []);
         return await CommitHeldAsync(repo, pathspec, message, trailers, ct);
+    }
+
+    private static RepositoryLeaseOwnerTag OwnerFromTrailers(IReadOnlyList<(string Key, string Value)> trailers)
+    {
+        var raw = trailers.Single(t => t.Key == "antiphon-task").Value;
+        return new RepositoryLeaseOwnerTag(Guid.Parse(raw), RepositoryLeasePurposes.GatedCommit);
     }
 
     public Task<GatedCommitResult> CommitAsync(

@@ -941,24 +941,36 @@ public sealed class AgentTaskDispatcher
 
     private async Task<string> DescribeLeaseHoldAsync(AgentTask task, CancellationToken ct)
     {
-        var taskKey = ScopeResolver.KeyFor(task.RepoPath, task.WorkingDirectory);
-        var running = await (
-            from request in _db.AgentTaskLandRequests.AsNoTracking()
-            join holder in _db.AgentTasks.AsNoTracking() on request.TaskId equals holder.Id
-            where request.IsPending && request.State == LandRequestState.Running
-            select new { request, holder }).ToListAsync(ct);
-        var match = running
-            .Where(x => ScopeResolver.KeyFor(x.holder.RepoPath, x.holder.WorkingDirectory) == taskKey)
-            .OrderBy(x => x.request.StartedAt ?? DateTime.MaxValue)
-            .ThenBy(x => x.request.Id)
-            .FirstOrDefault();
-        if (match is not null)
+        if (_repositoryLeases is not null && task.RepoPath is not null)
+        {
+            var observed = await _repositoryLeases.FindOwnerAsync(task.RepoPath, ct);
+            if (observed?.State == RepositoryLeaseOwnerState.Known)
+                return DispatchHoldDetails.LeaseHeldByOwner(observed.TaskId, observed.Purpose, observed.AcquiredAt);
+            if (observed?.State == RepositoryLeaseOwnerState.Untagged)
+                return DispatchHoldDetails.LeaseHeldUntagged;
+            if (observed?.State == RepositoryLeaseOwnerState.Unknown)
+            {
+                var reason = await _repositoryLeases.DescribeUnavailableAsync(task.RepoPath, ct);
+                if (!string.IsNullOrWhiteSpace(reason))
+                    return DispatchHoldDetails.LeaseFenced(reason);
+                var admission = await FindRunningLandMatchAsync(task, ct);
+                if (admission is not null)
+                    return DispatchHoldDetails.LeaseUnknownAdmissionWriter(
+                        DelegationReportFormatter.Short(admission.Holder.Id),
+                        admission.Holder.Title,
+                        DelegationReportFormatter.Short(admission.Request.Id));
+                return DispatchHoldDetails.LeaseOccupiedUnknown;
+            }
+        }
+
+        var running = await FindRunningLandMatchAsync(task, ct);
+        if (running is not null)
         {
             return DispatchHoldDetails.LeaseHeldByLand(
-                DelegationReportFormatter.Short(match.holder.Id),
-                match.holder.Title,
-                DelegationReportFormatter.Short(match.request.Id),
-                match.request.StartedAt ?? match.request.RequestedAt);
+                DelegationReportFormatter.Short(running.Holder.Id),
+                running.Holder.Title,
+                DelegationReportFormatter.Short(running.Request.Id),
+                running.Request.StartedAt ?? running.Request.RequestedAt);
         }
 
         if (_repositoryLeases is not null && task.RepoPath is not null)
@@ -970,6 +982,24 @@ public sealed class AgentTaskDispatcher
 
         return DispatchHoldDetails.LeaseOccupiedUnknown;
     }
+
+    private async Task<RunningLandMatch?> FindRunningLandMatchAsync(AgentTask task, CancellationToken ct)
+    {
+        var taskKey = ScopeResolver.KeyFor(task.RepoPath, task.WorkingDirectory);
+        var running = await (
+            from request in _db.AgentTaskLandRequests.AsNoTracking()
+            join holder in _db.AgentTasks.AsNoTracking() on request.TaskId equals holder.Id
+            where request.IsPending && request.State == LandRequestState.Running
+            select new { request, holder }).ToListAsync(ct);
+        var match = running
+            .Where(x => ScopeResolver.KeyFor(x.holder.RepoPath, x.holder.WorkingDirectory) == taskKey)
+            .OrderBy(x => x.request.StartedAt ?? DateTime.MaxValue)
+            .ThenBy(x => x.request.Id)
+            .FirstOrDefault();
+        return match is null ? null : new RunningLandMatch(match.holder, match.request);
+    }
+
+    private sealed record RunningLandMatch(AgentTask Holder, AgentTaskLandRequest Request);
 
     private async Task<string> DescribeAgentWaitAsync(AgentTask task, CancellationToken ct)
     {
@@ -3838,7 +3868,9 @@ public sealed class AgentTaskDispatcher
         var needsLease = task.Workspace != WorkspaceMode.ReadOnly && !AgentTaskRoles.IsSpecialist(task.Role)
             && task.RepoPath is not null;
         await using var repositoryLease = needsLease && _repositoryLeases is not null
-            ? await _repositoryLeases.TryAcquireAsync(task.RepoPath!, ct) : null;
+            ? await _repositoryLeases.TryAcquireAsync(
+                task.RepoPath!, new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.Dispatch), ct)
+            : null;
         if (needsLease && repositoryLease is null)
             return DispatchOneResult.HeldOnLease;
 

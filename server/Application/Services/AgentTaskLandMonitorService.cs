@@ -9,7 +9,8 @@ using Microsoft.Extensions.Options;
 namespace Antiphon.Server.Application.Services;
 
 public sealed class AgentTaskLandMonitorService(AppDbContext db, TimeProvider clock,
-    IOptions<DelegationSettings> settings, IEventBus events, AgentTaskLandQueue? queue = null)
+    IOptions<DelegationSettings> settings, IEventBus events, AgentTaskLandQueue? queue = null,
+    IRepositoryMutationLease? leases = null)
 {
     public async Task SweepAsync(CancellationToken ct)
     {
@@ -105,8 +106,38 @@ public sealed class AgentTaskLandMonitorService(AppDbContext db, TimeProvider cl
             || snapshot.WaitingPosition(request.TaskId, request.Id) is null
             ? DescribePersistedHolder(request)
             : await DescribePredecessorAsync(request, snapshot, ct);
+        who = await AppendLeaseOwnerAsync(request, who, ct);
         return $"{request.State}; requested {request.RequestedAt:O}; no progress since {request.LastProgressAt:O}; "
             + $"attempt={request.Attempt}; request={request.Id:N}; reason={reason}; {queueClause}; {who}.";
+    }
+
+    private async Task<string> AppendLeaseOwnerAsync(AgentTaskLandRequest request, string who, CancellationToken ct)
+    {
+        if (leases is null || string.IsNullOrWhiteSpace(request.RepositoryPathSnapshot))
+            return who;
+        RepositoryLeaseOwner? observed;
+        try
+        {
+            observed = await leases.FindOwnerAsync(request.RepositoryPathSnapshot, ct);
+        }
+        catch (Exception ex) when (ex is IOException or TimeoutException)
+        {
+            return who;
+        }
+
+        if (observed?.State == RepositoryLeaseOwnerState.Known)
+        {
+            var id = observed.TaskId is Guid taskId ? taskId.ToString("N") : "none";
+            return who + $"; repository lease owner={id} purpose={observed.Purpose}";
+        }
+
+        if (observed?.State == RepositoryLeaseOwnerState.Untagged)
+            return who + "; repository lease owner=untagged in-process";
+        if (observed?.State == RepositoryLeaseOwnerState.Unknown
+            && request.HoldReasonCode == "repository_mutation_lease_busy"
+            && request.HoldingTaskId is Guid previous)
+            return who + $"; last-known lease owner={previous:N}";
+        return who;
     }
 
     private static string DescribeQueue(AgentTaskLandRequest request, LandQueueSnapshot? snapshot, DateTime now)
