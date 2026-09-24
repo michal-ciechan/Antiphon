@@ -76,6 +76,54 @@ public sealed class WorktreeIgnoredContentClassifierTests
         result.Evidence.ShouldBeEmpty();
     }
 
+    // Review 5b79328d item 2: a `.antiphon` segment anywhere is protected unless one of the explicit
+    // `.antiphon` patterns names it, so a nested spill tree under a build directory is not disposable
+    // (and nested report spills are not evidence) just because its ancestor is.
+    [Test]
+    [Arguments("server/bin-x/.antiphon/other.json")]
+    [Arguments("server/bin-x/.antiphon/inbox/1e3f.md")]
+    [Arguments("server/bin-x/.antiphon/task-ab12cd34-brief.md")]
+    [Arguments("server/bin-x/.antiphon/task-ab12cd34.md")]
+    [Arguments("client/node_modules/pkg/.antiphon/c665-checkpoints/run.trx")]
+    [Arguments("server/obj/.Antiphon/x")]
+    public void Nested_antiphon_segment_is_protected(string path)
+    {
+        var result = Defaults().Classify([path, "server/bin-x/a.dll"]);
+        Same(result.Protected, path);
+        Same(result.Disposable, "server/bin-x/a.dll");
+        result.Evidence.ShouldBeEmpty();
+    }
+
+    // The explicit root patterns keep their buckets, and a name that only starts with `.antiphon`
+    // is not a `.antiphon` segment.
+    [Test]
+    [Arguments(".antiphon/inbox/1e3f.md", "disposable")]
+    [Arguments(".antiphon/task-ab12cd34-brief.md", "disposable")]
+    [Arguments(".antiphon-cache/x.bin", "disposable")]
+    [Arguments("server/bin-x/.antiphon-cache/x.bin", "disposable")]
+    [Arguments(".antiphon/task-ab12cd34.md", "evidence")]
+    [Arguments(".antiphon/results/unit.trx", "evidence")]
+    public void Explicit_antiphon_patterns_keep_their_bucket(string path, string bucket)
+    {
+        var result = Defaults().Classify([path]);
+        Same(bucket == "evidence" ? result.Evidence : result.Disposable, path);
+        (bucket == "evidence" ? result.Disposable : result.Evidence).ShouldBeEmpty();
+        result.Protected.ShouldBeEmpty();
+    }
+
+    // Only a pattern that itself names a `.antiphon` segment grants a nested one.
+    [Test]
+    public void Configured_antiphon_pattern_is_explicit()
+    {
+        var classifier = new WorktreeIgnoredContentClassifier(Options.Create(new WorktreeCleanupSettings
+        {
+            DisposableIgnored = ["**/bin-*/**", "**/bin-*/.antiphon/scratch/**"],
+        }));
+        var result = classifier.Classify(["bin-x/.antiphon/scratch/a.txt", "bin-x/.antiphon/other.txt", "bin-x/a.dll"]);
+        Same(result.Disposable, "bin-x/.antiphon/scratch/a.txt", "bin-x/a.dll");
+        Same(result.Protected, "bin-x/.antiphon/other.txt");
+    }
+
     [Test]
     public void Protected_precedes_evidence_on_overlap()
     {
