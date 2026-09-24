@@ -340,6 +340,27 @@ of validation, never a source for required suites or success. Missing evidence f
 before the first remote publication write. A network-only publication recovery uses
 the same authority/tests; a failed or interrupted test run gets no automatic full rerun.
 
+**B1 repair 2 (review bf928242), as built.** The ledger's prepublication receipt is
+not trusted on its own: `publish-release.ps1` reads the release card bound to the
+authority back through the Antiphon API (`GET /api/cards/{releaseCardId}` only;
+`-AntiphonApiUrl`, default `ANTIPHON_API` or `http://localhost:17202`). It requires the
+served card's `id` to be the bound GUID, its `revisionCount` to equal
+`recipient.revision` exactly, and its description to carry exactly one line
+`release-correlation: intentId=<id> candidateId=<id> sha=<full sha> runId=<id>` with
+exactly those four keys. A transport failure, non-200 status or non-object body is
+`release-card-readback-unavailable` and refuses. B5's projection writes that line;
+because a later revision fails the equality, B4/B5 must make any stage move before
+the prepublication receipt is taken (or take a new receipt after it). Producer-to-
+recipient delivery through the report queue remains B5/B6. Seams are test-only:
+publish-release refuses `-SeamsPath` unless `ANTIPHON_RELEASE_GATE_TEST_MODE` is
+exactly `1` (`seams-outside-test-mode`), refuses test mode unless both the Git and
+GitHub adapters are fakes (`test-mode-real-remote`), and `Get-ReleaseGateUtcNow`
+throws on a clock seam outside test mode. The C599A full matrix is one TUnit method
+per harness child (15 methods, each near 30 s on server2). Mutation candidates for
+these guards have no PC row yet: readback fail-closed, identity, revision equality,
+body correlation, seam admission outside test mode, real-remote refusal in test
+mode, and the clock-seam refusal (`C599A_ReceiptReadback`, `C599A_PublisherTestMode`).
+
 ### D-16: One lock and one owned native lifetime across phases (A-1/A-4)
 
 The C# `ReleaseGateCoordinator` owns orchestration. Refactor `release-cut.ps1` into
@@ -1165,27 +1186,27 @@ from a shared/live database. Their six-minute cycle estimate includes generation
 | PC-283 | rerun FullTest after terminal receipt acknowledgement loss | `ReleaseGateQueueTests.C599A_HandoffRecovery` | valid complete receipt imports same RunId with test start count one | 6 |
 | PC-284 | skip using a pending release or old policy hash | `ReleaseGateSchedulerTests.C599A_RepairDisposition` | pending or old-policy same SHA never gets no-new-SHA credit | 4 |
 | PC-285 | read policy from working tree instead of git blob | `ReleaseGatePublicationAuthorityTests.C599A_PinnedPolicy` | changed working policy cannot alter frozen suite authority | 4 |
-| PC-286 | accept unknown schema or empty rc profile | `ReleaseGatePublicationAuthorityTests.C599A_PinnedPolicy` | unknown schema profile and each absent suite refuse | 4 |
+| PC-286 | accept unknown schema or empty rc profile | `ReleaseGatePublicationAuthorityTests.C599A_PinnedPolicySchema` | unknown schema profile and each absent suite refuse | 4 |
 | PC-287 | accept evidence symlink outside candidate root | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | outside and reparse-escaped evidence refuse before publication | 4 |
 | PC-288 | ignore failed required build row | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | each failed or absent required prerequisite blocks remote writes | 4 |
 | PC-289 | infer success from TRX when native exit is nonzero | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | nonzero child exit or zero relevant executions blocks | 4 |
-| PC-290 | ignore missing or unexpected chunk IDs | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | deleted or extra chunk blocks authority | 4 |
-| PC-291 | deduplicate UIDs before checking coverage | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | duplicate UID in sibling chunk refuses | 4 |
-| PC-292 | count skipped or unknown UID as pass | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | required skip unknown missing and stale rows refuse | 4 |
-| PC-293 | accept empty required roster | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | zero-required ledger cannot publish | 4 |
-| PC-294 | trust summary counts instead of raw discovery/TRX | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | inflated pass count refuses even with plausible summary | 4 |
-| PC-295 | reload exclusions after test results | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | post-result exclusion edit cannot remove a failed UID | 4 |
-| PC-296 | omit intent equality when joining receipts | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | foreign intent evidence refuses | 4 |
-| PC-297 | omit candidate ID/ref equality | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | foreign candidate evidence refuses | 4 |
-| PC-298 | omit full SHA equality on ledger entries | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | foreign or abbreviated SHA refuses | 4 |
-| PC-299 | omit native RunId equality | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | foreign run evidence refuses | 4 |
-| PC-300 | accept changed script or authority digest | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | modified input digest blocks publication | 4 |
-| PC-301 | ignore end-before-start or stale evidence timestamps | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | out-of-order or stale evidence refuses | 4 |
-| PC-302 | coerce unknown cleanup to success | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | missing false or string cleanup cannot publish | 4 |
-| PC-303 | ignore seam-driven marker in RC authority | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | seam-driven ledger creates no release | 4 |
-| PC-304 | ignore NoReport marker | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | NoReport ledger creates no release | 4 |
-| PC-305 | allow subset or diagnostic selection in authority | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | subset and diagnostic ledgers create no release | 4 |
-| PC-306 | accept final receipt where prepublication receipt is required | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | wrong receipt kind cannot mint complete-green | 4 |
+| PC-290 | ignore missing or unexpected chunk IDs | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerChunks` | deleted or extra chunk blocks authority | 4 |
+| PC-291 | deduplicate UIDs before checking coverage | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerChunks` | duplicate UID in sibling chunk refuses | 4 |
+| PC-292 | count skipped or unknown UID as pass | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerChunks` | required skip unknown missing and stale rows refuse | 4 |
+| PC-293 | accept empty required roster | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerCounts` | zero-required ledger cannot publish | 4 |
+| PC-294 | trust summary counts instead of raw discovery/TRX | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerCounts` | inflated pass count refuses even with plausible summary | 4 |
+| PC-295 | reload exclusions after test results | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerCounts` | post-result exclusion edit cannot remove a failed UID | 4 |
+| PC-296 | omit intent equality when joining receipts | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerJoins` | foreign intent evidence refuses | 4 |
+| PC-297 | omit candidate ID/ref equality | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerJoins` | foreign candidate evidence refuses | 4 |
+| PC-298 | omit full SHA equality on ledger entries | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerJoins` | foreign or abbreviated SHA refuses | 4 |
+| PC-299 | omit native RunId equality | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerJoins` | foreign run evidence refuses | 4 |
+| PC-300 | accept changed script or authority digest | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerJoins` | modified input digest blocks publication | 4 |
+| PC-301 | ignore end-before-start or stale evidence timestamps | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerJoins` | out-of-order or stale evidence refuses | 4 |
+| PC-302 | coerce unknown cleanup to success | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerMarkers` | missing false or string cleanup cannot publish | 4 |
+| PC-303 | ignore seam-driven marker in RC authority | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerMarkers` | seam-driven ledger creates no release | 4 |
+| PC-304 | ignore NoReport marker | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerMarkers` | NoReport ledger creates no release | 4 |
+| PC-305 | allow subset or diagnostic selection in authority | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerMarkers` | subset and diagnostic ledgers create no release | 4 |
+| PC-306 | accept final receipt where prepublication receipt is required | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerReceipt` | wrong receipt kind cannot mint complete-green | 4 |
 | PC-307 | rewrite sanitized summary after journaling its digest | `ReleaseGatePublicationAuthorityTests.C599A_AssetReadback` | modified summary leaves publication pending and original digest unchanged | 4 |
 | PC-308 | accept arbitrary html_url | `ReleaseGatePublicationAuthorityTests.C599A_GitHubReadback` | foreign origin userinfo http or wrong repository/tag URL refuses | 4 |
 | PC-309 | trust target_commitish instead of remote peel | `ReleaseGatePublicationAuthorityTests.C599A_GitHubReadback` | matching target_commitish with wrong peeled SHA refuses | 4 |
@@ -1266,9 +1287,9 @@ from a shared/live database. Their six-minute cycle estimate includes generation
 | PC-384 | remove column WorkflowKind predicate only | `ReleaseGateBoardBoundaryTests.C599A_CodePipeline` | Code-typed corrupt card in Release column is not eligible | 6 |
 | PC-385 | exclude all Release-bound sessions from physical capacity count | `ReleaseGateBoardBoundaryTests.C599A_CodePipeline` | live legacy-bound session still consumes real process capacity | 6 |
 | PC-386 | let linked fix Done bypass failed RC outcome | `ReleaseGateReportDeliveryTests.C599A_FixDeliveryCuts` | fix Done alone cannot publish failed candidate | 8 |
-| PC-387 | coerce coverageComplete string true to true | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | string coverage flag cannot publish | 4 |
-| PC-388 | coerce testsPassed string true to true | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | string test flag cannot publish | 4 |
-| PC-389 | coerce reportDelivered string true to true | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | string report flag cannot publish | 4 |
+| PC-387 | coerce coverageComplete string true to true | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerMarkers` | string coverage flag cannot publish | 4 |
+| PC-388 | coerce testsPassed string true to true | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerMarkers` | string test flag cannot publish | 4 |
+| PC-389 | coerce reportDelivered string true to true | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerMarkers` | string report flag cannot publish | 4 |
 | PC-390 | accept reordered event with current version but wrong prior stage | `ReleaseGateBoardBoundaryTests.C599A_StageTransitions` | wrong prior stage changes no card revision | 6 |
 | PC-391 | acquire lane lock before shared lock | `ReleaseGateQueueTests.C599A_LockScope` | recorded acquisition order is shared then lane for master and RC | 6 |
 | PC-392 | accept arbitrary API URL origin while preserving expected path | `ReleaseGatePublicationAuthorityTests.C599A_GitHubReadback` | foreign origin http or userinfo API URL refuses | 4 |
@@ -1355,7 +1376,20 @@ minutes plus the method times below; it is not concealed in a three-minute CP.
 | Antiphon.Tests | `/*/*/ReleaseGateQueueTests/C599A_ReadyAndBusy` | 1 | 2 |
 | Antiphon.Tests | `/*/*/ReleaseGateQueueTests/C599A_ClaimsAndRecovery` | 1 | 2 |
 | Antiphon.Tests | `/*/*/ReleaseGatePublicationAuthorityTests/C599A_PinnedPolicy` | 1 | 1 |
+| Antiphon.Tests | `/*/*/ReleaseGatePublicationAuthorityTests/C599A_PinnedPolicySchema` | 1 | 1 |
+| Antiphon.Tests | `/*/*/ReleaseGatePublicationAuthorityTests/C599A_PinnedPolicyFields` | 1 | 1 |
+| Antiphon.Tests | `/*/*/ReleaseGatePublicationAuthorityTests/C599A_PinnedPolicyIdentityFields` | 1 | 1 |
+| Antiphon.Tests | `/*/*/ReleaseGatePublicationAuthorityTests/C599A_PinnedPolicyBlobFields` | 1 | 1 |
+| Antiphon.Tests | `/*/*/ReleaseGatePublicationAuthorityTests/C599A_PinnedPolicySuiteFields` | 1 | 1 |
+| Antiphon.Tests | `/*/*/ReleaseGatePublicationAuthorityTests/C599A_PinnedPolicyBindings` | 1 | 1 |
 | Antiphon.Tests | `/*/*/ReleaseGatePublicationAuthorityTests/C599A_ExecutionLedger` | 1 | 1 |
+| Antiphon.Tests | `/*/*/ReleaseGatePublicationAuthorityTests/C599A_ExecutionLedgerChunks` | 1 | 1 |
+| Antiphon.Tests | `/*/*/ReleaseGatePublicationAuthorityTests/C599A_ExecutionLedgerCounts` | 1 | 1 |
+| Antiphon.Tests | `/*/*/ReleaseGatePublicationAuthorityTests/C599A_ExecutionLedgerJoins` | 1 | 1 |
+| Antiphon.Tests | `/*/*/ReleaseGatePublicationAuthorityTests/C599A_ExecutionLedgerMarkers` | 1 | 1 |
+| Antiphon.Tests | `/*/*/ReleaseGatePublicationAuthorityTests/C599A_ExecutionLedgerReceipt` | 1 | 1 |
+| Antiphon.Tests | `/*/*/ReleaseGatePublicationAuthorityTests/C599A_ReceiptReadback` | 1 | 1 |
+| Antiphon.Tests | `/*/*/ReleaseGatePublicationAuthorityTests/C599A_PublisherTestMode` | 1 | 1 |
 | Antiphon.Tests | `/*/*/ReleaseGatePublicationAuthorityTests/C599A_GitHubReadback` | 1 | 1 |
 | Antiphon.Tests | `/*/*/ReleaseGatePublicationAuthorityTests/C599A_AssetReadback` | 1 | 1 |
 | Antiphon.Tests | `/*/*/ReleaseGatePublicationAuthorityTests/C599A_RemoteWriteRecovery` | 1 | 2 |
@@ -1418,8 +1452,14 @@ builds/tests/PCs and generated no alternate output directories.
 | `ReleaseGateQueueTests.C599A_DisableAndShutdown` | 3 | 18 |
 | `ReleaseGateQueueTests.C599A_ReadyAndBusy` | 3 | 18 |
 | `ReleaseGateQueueTests.C599A_ClaimsAndRecovery` | 8 | 48 |
-| `ReleaseGatePublicationAuthorityTests.C599A_PinnedPolicy` | 4 | 16 |
-| `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | 24 | 96 |
+| `ReleaseGatePublicationAuthorityTests.C599A_PinnedPolicy` | 3 | 12 |
+| `ReleaseGatePublicationAuthorityTests.C599A_PinnedPolicySchema` | 1 | 4 |
+| `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` | 4 | 16 |
+| `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerChunks` | 3 | 12 |
+| `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerCounts` | 3 | 12 |
+| `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerJoins` | 6 | 24 |
+| `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerMarkers` | 7 | 28 |
+| `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerReceipt` | 1 | 4 |
 | `ReleaseGatePublicationAuthorityTests.C599A_GitHubReadback` | 12 | 48 |
 | `ReleaseGatePublicationAuthorityTests.C599A_AssetReadback` | 11 | 44 |
 | `ReleaseGatePublicationAuthorityTests.C599A_RemoteWriteRecovery` | 9 | 54 |

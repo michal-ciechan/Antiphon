@@ -2223,8 +2223,8 @@ function Set-C599APinnedPolicy {
     <#
       Commit PolicyBytes on the real checkout and re-pin the whole candidate to that
       commit: journal, green, remote, authority blob identity/digests/hash, private
-      copy, plan, ledger, every chunk/roster row and the receipt correlation. Only the
-      policy content differs.
+      copy, plan, ledger, every chunk/roster row, the receipt correlation and the release
+      card body the API serves. Only the policy content differs.
     #>
     param($Fx, [byte[]]$PolicyBytes)
     [System.IO.File]::WriteAllBytes((Join-Path $Fx.Checkout (Join-Path 'tests' 'test-execution-policy.json')), $PolicyBytes)
@@ -2253,6 +2253,7 @@ function Set-C599APinnedPolicy {
         foreach ($r in @($l.rosters)) { $r.sha = $pinSha }
         $l.prepublicationReceipt.correlation.sha = $pinSha
     }
+    Update-C599Card -Fx $Fx -Card { param($c) $c.description = (Get-C599CardBody -Sha $pinSha) }
 }
 
 function New-C599AEvidenceLink {
@@ -3157,6 +3158,7 @@ function Test-C599A_ReceiptReadback {
             @{ l = 'card unknown to the api'; e = { Update-C599Card -Fx $fx -Store { param($s) $s.cards.PSObject.Properties.Remove($script:C599ReleaseCardId) } } },
             @{ l = 'body not json'; e = { Update-C599Card -Fx $fx -Store { param($s) $s.raw = '<html>maintenance</html>' } } },
             @{ l = 'body a json array'; e = { Update-C599Card -Fx $fx -Store { param($s) $s.raw = '[]' } } },
+            @{ l = 'body a one-card json array'; e = { Update-C599Card -Fx $fx -Store { param($s) $s.raw = ('[' + ($s.cards.($script:C599ReleaseCardId) | ConvertTo-Json -Depth 8 -Compress) + ']') } } },
             @{ l = 'body empty'; e = { Update-C599Card -Fx $fx -Store { param($s) $s.raw = '' } } },
             @{ l = 'api unreachable'; e = { $fx.CardApi.Url = $closed } },
             @{ l = 'api url empty'; e = { $fx.CardApi.Url = '' } },
