@@ -181,7 +181,7 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
         services.AddScoped<AgentTaskLandService>();
         // CARD-0085 bind-refusal recovery as the dispatcher's watchdog runs it. The desktop's Claude
         // projects root is an empty directory: a runner session's transcript is never on this box.
-        services.AddSingleton<GitWorkspaceService>();
+        // Its GitWorkspaceService is AddDelegationWorktreeGraph's (census RuleD: no one-liner here).
         services.AddSingleton(Options.Create(new DelegateBindRefusalRecoverySettings
         {
             ClaudeProjectsRoot = Path.Combine(Git.Root, "desktop-claude-projects"),
