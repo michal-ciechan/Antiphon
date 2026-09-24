@@ -285,17 +285,23 @@ public class StartRefAvailabilityTests
         {
             var (repo, _, _) = await CreateRepoAsync(root);
             const string missing = "0123456789abcdef0123456789abcdef01234567";
-            var git = new SlowFetchGit(TimeSpan.FromSeconds(5));
+            var fetchDelay = TimeSpan.FromSeconds(5);
+            var budget = TimeSpan.FromSeconds(6);
+            var git = new SlowFetchGit(fetchDelay);
 
             var ex = await Should.ThrowAsync<ServiceUnavailableException>(() =>
                 new StartRefAvailability(git, new RepositoryMutationLease(new LandingGit()),
-                        NullLogger<StartRefAvailability>.Instance, TimeSpan.FromSeconds(6))
+                        NullLogger<StartRefAvailability>.Instance, budget)
                     .EnsureAvailableAsync(repo, missing, testCt));
 
             ex.Code.ShouldBe(StartRefAvailability.FetchTimeoutCode);
+            git.FetchElapsed.ShouldNotBeNull("precondition: the fetch ran");
             git.ProbeAllowed.ShouldNotBeNull("precondition: the failed fetch was followed by the origin probe");
-            // One 6s deadline covers all network work: a 5s fetch leaves the probe about 1s, not a fresh 6s.
-            git.ProbeAllowed.Value.ShouldBeLessThan(TimeSpan.FromSeconds(3));
+            // One deadline covers all network work: the probe gets what the fetch left, not a fresh
+            // budget. Measured against the fetch's actual elapsed time so a loaded host that slows the
+            // fetch cannot fail it; the margin (half the fetch) absorbs cancellation latency while a
+            // fresh budget (probe >= budget) still exceeds it, since the fetch takes >= fetchDelay.
+            git.ProbeAllowed.Value.ShouldBeLessThan(budget - git.FetchElapsed.Value + fetchDelay / 2);
         }
         finally
         {
@@ -372,13 +378,16 @@ public class StartRefAvailabilityTests
     private sealed class SlowFetchGit(TimeSpan fetchDelay) : LandingGit
     {
         public TimeSpan? ProbeAllowed { get; private set; }
+        public TimeSpan? FetchElapsed { get; private set; }
 
         public override async Task<Antiphon.Server.Application.Dtos.LandingGitResult> RunAsync(
             string repository, IReadOnlyList<string> arguments, CancellationToken ct)
         {
             if (arguments[0] == "fetch")
             {
-                await Task.Delay(fetchDelay, ct);
+                var clock = Stopwatch.StartNew();
+                try { await Task.Delay(fetchDelay, ct); }
+                finally { FetchElapsed = clock.Elapsed; }
                 return new(128, "", "fixture fetch failed");
             }
             if (arguments[0] == "ls-remote")
