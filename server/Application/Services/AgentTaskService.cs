@@ -70,6 +70,7 @@ public sealed class AgentTaskService
     // CARD-0644 D-4. Optional so harnesses that never continue a retired worktree keep constructing
     // this. Absent, a retired Worktree tip cannot be proven and create refuses rather than guessing.
     private readonly DelegationWorktreeService? _worktrees;
+    private readonly StartRefAvailability? _startRefs;
     // CARD-0659 D-2. Built from the dependencies above, not injected: a harness without a
     // phone-home policy or directory simply never selects a runner.
     private readonly DefaultRunnerRoutingPolicy _defaultRunner;
@@ -104,8 +105,11 @@ public sealed class AgentTaskService
         // CARD-0647. Optional. A runner-bound Grok create asks this directory; absent, the
         // runner store cannot be measured and the desktop store is not consulted instead.
         ISessionRunnerDirectory? runners = null,
-        DelegationWorktreeService? worktrees = null)
+        DelegationWorktreeService? worktrees = null,
+        // CARD-0666. Optional. Absent, a caller start ref is checked only at dispatch, locally.
+        StartRefAvailability? startRefs = null)
     {
+        _startRefs = startRefs;
         _worktrees = worktrees;
         _runners = runners;
         _phoneHome = phoneHome;
@@ -1152,10 +1156,11 @@ public sealed class AgentTaskService
                 $"'{explicitStage}' is not an orchestration stage. Use Rebase, Verify, Cleanup, Review, FollowUp, or Deploy.");
         }
 
-        // CARD-0604 D-15. A remote task is admitted only in the exact shape the runner has: the
-        // configured runner, a Worktree workspace, a Grok kind, and no pin, OnAgent, Shared,
-        // ReadOnly or SourceLanding. Everything else is refused HERE rather than queued forever,
-        // because none of those shapes has a remote design yet (SourceLanding is Cut B).
+        // CARD-0604 D-15/D-19. A remote task is admitted only in the exact shape the runner has: the
+        // configured runner with delegated tasks on, a Worktree workspace, a Grok or Claude Code
+        // kind (CARD-0628), no agent pin or OnAgent follow-up, and SourceLanding only as a Mutation
+        // (Cut B, whose custody the runner itself is asked about below). Everything else is refused
+        // HERE rather than queued forever.
         var remoteRunnerId = runnerIntent.RemoteRunnerId;
         if (remoteRunnerId is not null)
         {
@@ -1198,6 +1203,11 @@ public sealed class AgentTaskService
             remoteRunnerId = selectedRunner;
         if (runnerDecision?.Warning is { } runnerWarning)
             warning = warning is null ? runnerWarning : warning + " " + runnerWarning;
+
+        // CARD-0666. Last of the refusals, and before the row exists: a start SHA only origin has is
+        // fetched HERE (bounded, journaled), never in the dispatch claim under the repository lease.
+        if (startRef is not null && _startRefs is not null && resolved.RepoPath is not null)
+            await _startRefs.EnsureAvailableAsync(resolved.RepoPath, startRef, ct);
 
         var task = new AgentTask
         {
@@ -2318,6 +2328,16 @@ public sealed class AgentTaskService
                 "An orchestrator cannot be rerouted off ClaudeCode.");
         }
 
+        // CARD-0659 D-5: the host was fixed at create. A runner-bound task may move between the
+        // kinds its runner admits, never onto one it cannot run, and never to the desktop.
+        if (!DefaultRunnerRoutingPolicy.IsHostKindCompatible(task.RunnerId, agentKind))
+        {
+            throw new ConflictException(
+                $"Task {DelegationReportFormatter.Short(id)} runs on runner '{task.RunnerId}', which cannot run "
+                + $"{agentKind}. Reroute to Grok or ClaudeCode.",
+                DefaultRunnerRoutingPolicy.ReasonRunnerKindUnsupported);
+        }
+
         var alias = ModelLevelAliases.For(agentKind, modelLevel);
         if (_modelAvailability is not null)
             await _modelAvailability.RequireAsync(agentKind, alias, ct);
@@ -2392,6 +2412,15 @@ public sealed class AgentTaskService
         if (walk.Chosen is { } chosen
             && (chosen.Kind != task.AgentKind || chosen.Level != task.ModelLevel))
         {
+            // CARD-0659 D-5: a runner-bound task never requeues onto a kind its runner cannot run.
+            // It is Blocked instead (the walled process still released by BlockOnWallAsync), with
+            // the runner, original kind and pins intact for a human reroute.
+            if (!DefaultRunnerRoutingPolicy.IsHostKindCompatible(task.RunnerId, chosen.Kind))
+            {
+                return await BlockOnWallAsync(task, walk, ct, cascadeExhausted: false, reroutedCount,
+                    DefaultRunnerRoutingPolicy.RunnerKindBlockedReason(task.RunnerId!, chosen.Kind, chosen.Alias));
+            }
+
             return await RequeueOnWallAsync(task, walk, chosen, walledAlias, errorText, ct);
         }
 
@@ -2575,7 +2604,8 @@ public sealed class AgentTaskService
         ComplexityRoutingService.Walk walk,
         CancellationToken ct,
         bool cascadeExhausted,
-        int reroutedCount)
+        int reroutedCount,
+        string? reasonOverride = null)
     {
         await StopDelegateAsync(task, ct);
         if (task.Ephemeral)
@@ -2595,10 +2625,10 @@ public sealed class AgentTaskService
                 ct);
         }
 
-        var reason = cascadeExhausted
+        var reason = reasonOverride ?? (cascadeExhausted
             ? ComplexityRoutingService.CascadeExhaustedSentence(
                 ComplexityRoutingService.ListEventLabel(walk), reroutedCount, walk.Outcomes.Count)
-            : walk.ExhaustedSentence(pin) + " A human must choose; do not pick a kind yourself.";
+            : walk.ExhaustedSentence(pin) + " A human must choose; do not pick a kind yourself.");
         task.Status = AgentTaskStatus.Blocked;
         task.FailureReason = reason;
         task.AgentSessionId = null;

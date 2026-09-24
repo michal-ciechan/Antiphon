@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
 
@@ -222,6 +224,152 @@ public sealed class RepositoryMutationLeaseTests
         after.ShouldNotBeNull();
     }
 
+    // CARD-0661. A git child that exits before the journal reads its start identity. On Linux the
+    // exited child is reaped and Process.StartTime throws; Windows still reads it through the
+    // handle. Either way the command must not fail, the record must name the child, and the file
+    // must keep fencing admission until its owner acknowledges the exit.
+    [Test]
+    public async Task C661_AlreadyExitedChildIsJournalledInsteadOfThrowing()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var provider = new RepositoryMutationLease(fixture.Git);
+        var journal = await RepositoryChildJournal.BeginAsync(fixture.Repository, CancellationToken.None);
+        var start = new ProcessStartInfo("git") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true };
+        start.ArgumentList.Add("--version");
+        using var child = Process.Start(start)!;
+        await child.StandardOutput.ReadToEndAsync();
+        await child.WaitForExitAsync(); // Exited, and on Linux reaped, before its identity is read.
+
+        await journal.StartedAsync(child, CancellationToken.None);
+
+        var common = await fixture.Git.CommonDirectoryAsync(fixture.Repository, CancellationToken.None);
+        var path = Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children"), "*.json").Single();
+        var record = System.Text.Json.JsonSerializer.Deserialize<RepositoryChildJournal.ChildRecord>(await File.ReadAllTextAsync(path))!;
+        record.ProcessId.ShouldBe(child.Id);
+        (record.Completed || record.StartTicks is not null)
+            .ShouldBeTrue("the child is identified by its start identity or recorded as completed");
+        await using (var fenced = await provider.TryAcquireAsync(fixture.Source, CancellationToken.None))
+            fenced.ShouldBeNull("the journal fences admission until its owner acknowledges the exit");
+        journal.Exited(child);
+        File.Exists(path).ShouldBeFalse();
+        await using var after = await provider.TryAcquireAsync(fixture.Repository, CancellationToken.None);
+        after.ShouldNotBeNull();
+    }
+
+    // CARD-0661 (review c09b17c8 #2). A real mutating Git child exits before RunOwnedAsync reads its
+    // start identity, which the platform can no longer report (Linux after reaping; the seam makes
+    // that deterministic on Windows, which still reads it through the handle). The command succeeds
+    // and the started callback is skipped, so the caller's persisted child state stays unknown:
+    // after a crash here landing recovery refuses with interrupted_process_requires_inspection
+    // rather than trusting a fabricated identity. The owner still clears its own journal on return.
+    [Test]
+    public async Task C661_FastExitingOwnedChildLeavesTheCallersChildStateUnknown()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var git = new IdentityLostGit(Path.Combine(fixture.Root, "home"), fixture.TaskId);
+        // The caller's shape (AgentTaskLandingProtocol.OwnedAsync): persist intent with no identity,
+        // let the callback persist the identity, clear only after the command returns.
+        var op = new Antiphon.Server.Domain.Entities.AgentTaskLanding { TaskId = fixture.TaskId, ChildOperation = "commit" };
+        var saves = new List<(string? Operation, int? ProcessId, long? StartTicks)>();
+        void Save() => saves.Add((op.ChildOperation, op.ChildProcessId, op.ChildProcessStartTicks));
+        Save();
+
+        var result = await git.RunOwnedAsync(fixture.Source, ["commit", "--allow-empty", "-m", "fast exit"],
+            (pid, ticks, _) =>
+            {
+                op.ChildProcessId = pid;
+                op.ChildProcessStartTicks = ticks;
+                Save();
+                return Task.CompletedTask;
+            }, CancellationToken.None);
+
+        result.Succeeded.ShouldBeTrue("a child that exited before its identity was read must not fail the command");
+        git.Reads.ShouldBe(1, "one identity read serves the journal and the caller");
+        git.ExitedAtRead.ShouldBeTrue("the seam only reports a genuinely exited child as unidentifiable");
+        saves.Count.ShouldBe(1, "the started callback is skipped for an unidentifiable child");
+        op.ChildOperation.ShouldBe("commit");
+        op.ChildProcessId.ShouldBeNull("the caller's persisted child state stays unknown, never a fabricated PID");
+        op.ChildProcessStartTicks.ShouldBeNull("the caller's persisted child state stays unknown, never a fabricated identity");
+        (await fixture.RequiredAsync(fixture.Source, "log", "-1", "--format=%s")).Trim().ShouldBe("fast exit");
+
+        var common = await fixture.Git.CommonDirectoryAsync(fixture.Repository, CancellationToken.None);
+        Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children")).ShouldBeEmpty(
+            "the owner acknowledges its completed child once the streams drain");
+        await using var after = await new RepositoryMutationLease(fixture.Git).TryAcquireAsync(fixture.Repository, CancellationToken.None);
+        after.ShouldNotBeNull();
+        await fixture.AssertRemoteSourceAsync();
+    }
+
+    // CARD-0661 (review 047193d4). The same fast exit through the real AgentTaskLandingProtocol and
+    // Postgres: the owned rebase child exits before its identity is read, and the worker dies before
+    // the protocol's clearing save. The persisted landing names the child operation with no identity,
+    // and crash recovery refuses as needs-inspection instead of trusting or discarding that state.
+    [Test]
+    public async Task C661_FastExitingOwnedChildPersistsUnknownIdentityAndRecoveryRefuses()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        var git = new IdentityLostGit(Path.Combine(h.Fixture.Root, "home"), h.Fixture.TaskId) { Armed = false };
+        git.BeforeCommand = (_, arguments) =>
+        {
+            git.Armed = arguments.Contains("rebase"); // Only the protocol's owned rebase loses its identity.
+            return Task.FromResult<Antiphon.Server.Application.Dtos.LandingGitResult?>(null);
+        };
+        h.ConfigureServices = services => services.AddSingleton<Antiphon.Server.Application.Interfaces.ILandingGit>(git);
+        await h.RestartServicesAsync();
+        // The worker dies after the child exits, before the protocol clears its child state.
+        h.Fault.Matches = op => git.Reads > 0 && op.ChildOperation is null;
+
+        await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync());
+
+        h.Fault.Triggered.ShouldBeTrue();
+        git.Reads.ShouldBe(1, "exactly the owned rebase read its identity");
+        git.ExitedAtRead.ShouldBeTrue("the seam only reports a genuinely exited child as unidentifiable");
+        await using (var observer = h.CreateContext())
+        {
+            var persisted = await observer.AgentTaskLandings.AsNoTracking()
+                .SingleAsync(o => o.TaskId == h.Fixture.TaskId && o.Active);
+            persisted.Phase.ShouldBe(Antiphon.Server.Domain.Enums.LandPhase.RebaseStarted);
+            persisted.ChildOperation.ShouldNotBeNull().ShouldContain("rebase");
+            persisted.ChildProcessId.ShouldBeNull("an unidentifiable child is never persisted with a fabricated PID");
+            persisted.ChildProcessStartTicks.ShouldBeNull("an unidentifiable child is never persisted with a fabricated identity");
+        }
+
+        h.Fault.Matches = null;
+        h.ConfigureServices = null;
+        await h.RestartServicesAsync();
+        await h.RunAsync();
+
+        var recovered = (await h.OperationAsync()).ShouldNotBeNull();
+        recovered.LastReason.ShouldBe("interrupted_process_requires_inspection");
+        recovered.ChildOperation.ShouldNotBeNull("recovery keeps the unknown child for inspection");
+        recovered.ChildProcessId.ShouldBeNull();
+        recovered.ChildProcessStartTicks.ShouldBeNull();
+        (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.TargetRef)).Trim()
+            .ShouldBe(h.Fixture.SeedSha, "a refused recovery publishes nothing");
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
+
+    private sealed class IdentityLostGit(string home, Guid taskId) : LandingGitFixture.FixtureGit(home, taskId)
+    {
+        public bool Armed { get; set; } = true;
+        public int Reads { get; private set; }
+        public bool ExitedAtRead { get; private set; }
+
+        protected override bool TryReadStartIdentity(Process child, out long startTicks)
+        {
+            if (!Armed) return base.TryReadStartIdentity(child, out startTicks);
+            Reads++;
+            child.WaitForExit(); // A genuinely fast-exiting child: stdout is already being drained.
+            ExitedAtRead = child.HasExited;
+            startTicks = 0;
+            return false;
+        }
+    }
+
     [Test]
     public async Task C448_C24_KilledWorkerLeavesLiveGitChildFenced()
     {
@@ -385,6 +533,59 @@ public sealed class RepositoryMutationLeaseTests
         }
     }
 
+    // CARD-0661. A fast child's owner saw its exact handle exit before reading a start identity and
+    // saved Completed=true with no StartTicks; the owner then crashed before draining its output.
+    // The server keeps the record fencing admission (a restart cannot prove descendant exit), and
+    // the explicit script recovers it only after -Execute -ConfirmDescendantsExited. It must never
+    // look up the recorded PID's start time: that PID may be reused and Linux start times are
+    // unstable across readers (CARD-0668). Incomplete or foreign completed records stay retained.
+    [Test]
+    [Arguments("completed")]
+    [Arguments("completed-without-pid")]
+    [Arguments("completed-wrong-repository")]
+    public async Task C661_CompletedRecordIsRecoveredOnlyUnderExplicitConfirmation(string state)
+    {
+        using var repo = new ScratchGitRepo("antiphon-journal-completed");
+        var git = new LandingGit();
+        var common = await git.CommonDirectoryAsync(repo.Path, CancellationToken.None);
+        await RepositoryChildJournal.BeginAsync(repo.Path, CancellationToken.None);
+        var start = new ProcessStartInfo("git") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true };
+        start.ArgumentList.Add("--version");
+        int exitedId;
+        using (var exited = Process.Start(start)!)
+        {
+            await exited.StandardOutput.ReadToEndAsync();
+            await exited.WaitForExitAsync();
+            exitedId = exited.Id;
+        }
+        var path = Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children"), "*.json").Single();
+        await File.WriteAllTextAsync(path, System.Text.Json.JsonSerializer.Serialize(new RepositoryChildJournal.ChildRecord(1,
+            state == "completed-wrong-repository" ? repo.WorktreeRoot : common,
+            state == "completed-without-pid" ? null : exitedId, null, Completed: true)));
+
+        // Server path: every fresh provider (as after a restart) stays fenced and names the recovery.
+        foreach (var provider in new[] { new RepositoryMutationLease(git), new RepositoryMutationLease(git) })
+        {
+            await using (var fenced = await provider.TryAcquireAsync(repo.Path, CancellationToken.None))
+                fenced.ShouldBeNull("a completed root cannot prove its descendants exited");
+            (await provider.DescribeUnavailableAsync(repo.Path, CancellationToken.None))
+                .ShouldNotBeNull().ShouldContain("recover-repository-children.ps1");
+        }
+        File.Exists(path).ShouldBeTrue("the server never clears a child record on its own");
+
+        // Script path: preview and unconfirmed execution retain it.
+        await RecoverChildrenAsync(repo.Path, 3);
+        await RecoverChildrenAsync(repo.Path, 3, "-Execute");
+        File.Exists(path).ShouldBeTrue("recovery requires explicit descendant confirmation");
+
+        var recoverable = state == "completed";
+        await RecoverChildrenAsync(repo.Path, recoverable ? 0 : 3, "-Execute", "-ConfirmDescendantsExited");
+        File.Exists(path).ShouldBe(!recoverable);
+        await using var admission = await new RepositoryMutationLease(git).TryAcquireAsync(repo.Path, CancellationToken.None);
+        if (recoverable) admission.ShouldNotBeNull("a confirmed completed record no longer fences the repository");
+        else admission.ShouldBeNull("an incomplete or foreign completed record stays retained");
+    }
+
     private static async Task RecoverChildrenAsync(string repository, int expectedExit, params string[] options)
     {
         var root = new DirectoryInfo(AppContext.BaseDirectory);
@@ -445,6 +646,83 @@ public sealed class RepositoryMutationLeaseTests
         }
         await Task.WhenAll(output, error);
         child.ExitCode.ShouldBe(expectedExit, await error);
+    }
+
+    [Test]
+    public async Task C666_JournaledGitThatCannotStartLeavesNoStandingFence()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var git = new UnstartableGit(Path.Combine(fixture.Root, "no-such-git-executable"));
+
+        // update-ref is journaled, so its record is written before Process.Start fails.
+        await Should.ThrowAsync<System.ComponentModel.Win32Exception>(() =>
+            git.RunAsync(fixture.Repository, ["update-ref", "refs/heads/c666-never", "HEAD"], CancellationToken.None));
+
+        var common = await fixture.Git.CommonDirectoryAsync(fixture.Repository, CancellationToken.None);
+        Directory.EnumerateFileSystemEntries(Path.Combine(common, "antiphon", "children")).ShouldBeEmpty(
+            "a child that never started cannot need fencing, so its start record is removed");
+        await using var admitted = await new RepositoryMutationLease(fixture.Git).TryAcquireAsync(fixture.Repository, CancellationToken.None);
+        admitted.ShouldNotBeNull("a failed git start must not leave the repository permanently fenced");
+        await fixture.AssertRemoteSourceAsync();
+    }
+
+    private sealed class UnstartableGit(string missingExecutable) : LandingGit
+    {
+        protected override void ConfigureProcess(ProcessStartInfo start) => start.FileName = missingExecutable;
+    }
+
+    [Test]
+    [Arguments("io-after-create")]
+    [Arguments("win32-unclassified")]
+    public async Task C666_AmbiguousGitStartFailureKeepsTheStandingFence(string failure)
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var git = new AmbiguousStartGit(failure);
+        try
+        {
+            // Process.Start can throw after the native child exists (Windows builds the redirected
+            // streams after CreateProcess). Only a definite pre-creation failure may drop the record.
+            Exception? thrown = null;
+            try { await git.RunAsync(fixture.Repository, ["update-ref", "refs/heads/c666-ambiguous", "HEAD"], CancellationToken.None); }
+            catch (Exception ex) { thrown = ex; }
+            if (failure == "io-after-create") thrown.ShouldBeOfType<IOException>();
+            else thrown.ShouldBeOfType<System.ComponentModel.Win32Exception>();
+
+            var common = await fixture.Git.CommonDirectoryAsync(fixture.Repository, CancellationToken.None);
+            Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children"), "*.json").ShouldHaveSingleItem(
+                "an ambiguous start may have left a live child, so its start record must stand");
+            await using var fenced = await new RepositoryMutationLease(fixture.Git).TryAcquireAsync(fixture.Repository, CancellationToken.None);
+            fenced.ShouldBeNull("the retained start record fences admission until explicit recovery");
+        }
+        finally
+        {
+            if (git.Child is { } child)
+            {
+                using var exit = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                await child.WaitForExitAsync(exit.Token);
+                child.Dispose();
+            }
+        }
+        await fixture.AssertRemoteSourceAsync();
+    }
+
+    /// <summary>Creates the real child (or not), then fails the way an ambiguous Process.Start can.</summary>
+    private sealed class AmbiguousStartGit(string failure) : LandingGit
+    {
+        public Process? Child { get; private set; }
+
+        protected override Process? StartProcess(ProcessStartInfo start)
+        {
+            if (failure == "io-after-create")
+            {
+                Child = Process.Start(start);
+                throw new IOException("fixture: redirected stream setup failed after the child was created");
+            }
+            // A Win32 error that is not a known pre-creation CreateProcess/exec failure code.
+            throw new System.ComponentModel.Win32Exception(4660);
+        }
     }
 
     [Test]

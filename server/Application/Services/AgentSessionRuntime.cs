@@ -40,6 +40,8 @@ public sealed class AgentSessionRuntime
     // CARD-0334 S2 test seam: transcript bind flag on in-process adapters (production reads it from the runner).
     private readonly ConcurrentDictionary<Guid, bool?> _testTranscriptBound = new();
     private readonly ConcurrentDictionary<Guid, StringBuilder> _testBuffers = new();
+    // CARD-0679 D-3: when each session's output activity was last written.
+    private readonly ConcurrentDictionary<Guid, DateTimeOffset> _lastActivityWrites = new();
     private readonly ISessionRunnerClient _runnerClient;
     private readonly IEventBus _eventBus;
     private readonly AgentSessionSettings _settings;
@@ -1402,11 +1404,15 @@ public sealed class AgentSessionRuntime
 
     private async Task RecordActivityAsync(Guid sessionId)
     {
+        var at = _timeProvider.GetUtcNow();
+        if (!ClaimActivityWrite(sessionId, at))
+            return;
+
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var now = _timeProvider.GetUtcNow().UtcDateTime;
+            var now = at.UtcDateTime;
 
             var session = await db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId);
             if (session is not null)
@@ -1427,6 +1433,34 @@ public sealed class AgentSessionRuntime
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to record activity for agent session {SessionId}", sessionId);
+        }
+    }
+
+    /// <summary>
+    /// CARD-0679 D-3: true when this session's activity has not been written within
+    /// <see cref="AgentSessionSettings.ActivityWriteMinIntervalMs"/>, and records <paramref name="at"/>
+    /// as its last write. One output chunk used to cost two queries and a save; a phone-home burst
+    /// of them was the pump's main database load.
+    /// </summary>
+    private bool ClaimActivityWrite(Guid sessionId, DateTimeOffset at)
+    {
+        if (_settings.ActivityWriteMinIntervalMs <= 0)
+            return true;
+
+        var interval = TimeSpan.FromMilliseconds(_settings.ActivityWriteMinIntervalMs);
+        while (true)
+        {
+            if (!_lastActivityWrites.TryGetValue(sessionId, out var last))
+            {
+                if (_lastActivityWrites.TryAdd(sessionId, at))
+                    return true;
+                continue;
+            }
+
+            if (at - last < interval)
+                return false;
+            if (_lastActivityWrites.TryUpdate(sessionId, at, last))
+                return true;
         }
     }
 

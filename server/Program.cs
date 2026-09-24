@@ -1,6 +1,5 @@
 using System.Text.Json.Serialization;
 using Hangfire;
-using Hangfire.Dashboard;
 using Hangfire.InMemory;
 using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.EntityFrameworkCore;
@@ -265,10 +264,14 @@ try
         .Bind(builder.Configuration.GetSection("PhoneHomeRunner"))
         .ValidateOnStart();
     builder.Services.AddSingleton<PhoneHomeLaunchPolicy>();
+    // CARD-0658: one-time dashboard login links and the dashboard sessions they create.
+    builder.Services.AddSingleton<OperatorDashboardSessions>();
     // CARD-0604 D-15/G-21: the remote mirror seam and the spill courier. Both singletons: the
     // courier holds a one-shot body per live session, and the workspace service is stateless.
     builder.Services.AddSingleton<RemoteSpillCourier>();
     builder.Services.AddScoped<RemoteWorkspaceService>();
+    // CARD-0657 D-1: the pre-attribution sync the completion evaluator prepares through.
+    builder.Services.AddScoped<IRemoteSettlementSync>(sp => sp.GetRequiredService<RemoteWorkspaceService>());
     builder.Services.AddHttpClient<SessionRunnerHttpClient>((sp, client) =>
     {
         var runnerSettings = sp.GetRequiredService<IOptions<SessionRunnerSettings>>().Value;
@@ -350,6 +353,8 @@ try
     builder.Services.AddScoped<AgentTaskPipelineStatusService>();
     builder.Services.AddSingleton<AgentTaskLandQueue>();
     builder.Services.AddSingleton<ILandingGit, LandingGit>();
+    // CARD-0666: a caller start SHA only origin has is fetched at create, never in the dispatch claim.
+    builder.Services.AddSingleton<StartRefAvailability>();
     builder.Services.AddSingleton<ITaskProgressGit, TaskProgressGit>();
     builder.Services.AddScoped<TaskCompletionProgressService>();
     builder.Services.AddSingleton<IWorktreeRemovalEvidence, WorktreeRemovalEvidence>();
@@ -823,6 +828,9 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
         var llmSettings = scope.ServiceProvider.GetRequiredService<IOptions<LlmSettings>>().Value;
         dbContext.Database.Migrate();
         await DatabaseSeeder.SeedAsync(dbContext, llmSettings, CancellationToken.None);
+        // CARD-0664 D-8: one-time backfill of the orphaned workspace-use Launch backlog, repeated
+        // harmlessly on every start. Best-effort: a failed reconcile never blocks startup.
+        await WorkspaceReservationStartupReconcile.RunAsync(scope.ServiceProvider, app.Logger, CancellationToken.None);
         var agentTuiMetrics = scope.ServiceProvider.GetRequiredService<AgentTuiMetrics>();
         var profileImport = new Antiphon.Server.Application.Dtos.AgentTuiImportResultDto(0, 0);
         if (scope.ServiceProvider.GetRequiredService<IOptions<AgentTuiSettings>>()
@@ -919,6 +927,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     app.MapGitHubEndpoints();
     app.MapSessionEndpoints();
     app.MapSessionRunnerEndpoints();
+    app.MapOperatorEndpoints();
     app.MapOrchestratorEndpoints();
     app.MapAgentTaskEndpoints();
     app.MapModelAvailabilityEndpoints();
@@ -939,9 +948,18 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     // SignalR hub
     app.MapHub<AntiphonHub>("/hubs/antiphon");
 
+    // CARD-0658: the dashboard needs the operator credential (header token, or the session cookie
+    // scripts/hangfire-dashboard.ps1 bootstraps). The client address is not consulted: every
+    // request Kestrel receives is loopback (Aspire's DCP proxy, Vite, Caddy), so the former
+    // LocalRequestsOnlyAuthorizationFilter admitted everything. Filters are AND-ed; this is the only one.
     app.MapHangfireDashboard("/hangfire", new DashboardOptions
     {
-        Authorization = [new LocalRequestsOnlyAuthorizationFilter()]
+        Authorization =
+        [
+            new OperatorDashboardAuthorizationFilter(
+                app.Services.GetRequiredService<OperatorDashboardSessions>(),
+                app.Services.GetRequiredService<IOptions<PhoneHomeRunnerSettings>>()),
+        ]
     });
 
     // SPA fallback for production (serves React build from wwwroot)

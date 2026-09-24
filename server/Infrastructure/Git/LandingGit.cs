@@ -12,6 +12,14 @@ public class LandingGit : ILandingGit
 {
     protected virtual void ConfigureProcess(ProcessStartInfo start) { }
 
+    /// <summary>The started child's start identity, or false once it has exited and the platform
+    /// can no longer report it (CARD-0661). A test seam: Windows always reads it through the handle.</summary>
+    protected virtual bool TryReadStartIdentity(Process child, out long startTicks)
+        => RepositoryChildJournal.TryStartTicks(child, out startTicks);
+
+    /// <summary>Test seam for the one call that creates the git child.</summary>
+    protected virtual Process? StartProcess(ProcessStartInfo start) => Process.Start(start);
+
     public virtual async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
         => await ExecuteAsync(repository, arguments, null, ct);
 
@@ -50,13 +58,31 @@ public class LandingGit : ILandingGit
         var mutating = arguments.Any(a => a is "rebase" or "merge" or "push" or "fetch" or "update-ref"
             or "add" or "remove" or "commit" or "checkout" or "checkout-index" or "restore" or "reset");
         var journal = mutating ? await RepositoryChildJournal.BeginAsync(repository, ct) : null;
-        using var process = Process.Start(start) ?? throw new IOException("git_start_failed");
+        Process? child;
+        try { child = StartProcess(start); }
+        catch (Exception ex) when (journal is not null && CreatedNoChild(ex))
+        {
+            journal.NotStarted();
+            throw;
+        }
+        // Any other start failure is ambiguous (Windows builds the redirected streams after
+        // CreateProcess), so its record stands as a fence for recover-repository-children.ps1.
+        using var process = child ?? throw new IOException("git_start_failed");
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
         try
         {
-            if (journal is not null) await journal.StartedAsync(process, ct);
-            if (started is not null) await started(process.Id, process.StartTime.ToUniversalTime().Ticks, ct);
+            if (journal is not null || started is not null)
+            {
+                // One identity read serves the journal and the caller, so they cannot disagree.
+                // CARD-0661: a child that already exited may have no start identity left to read;
+                // the journal records its root as completed and the caller's unknown-identity
+                // state is the conservative one. We await its exit below either way.
+                var identified = TryReadStartIdentity(process, out var startTicks);
+                if (!identified && !process.HasExited) throw new InvalidOperationException("owned_child_identity_unavailable");
+                if (journal is not null) await journal.StartedAsync(process.Id, identified ? startTicks : null, ct);
+                if (started is not null && identified) await started(process.Id, startTicks, ct);
+            }
             await process.WaitForExitAsync(budget.Token);
         }
         catch
@@ -82,6 +108,15 @@ public class LandingGit : ILandingGit
         return new(process.ExitCode, await output,
             process.ExitCode == 0 ? "" : $"git_exit_{process.ExitCode}") { RebaseHeadSha = rebaseHead };
     }
+
+    /// <summary>
+    /// True only for a start failure that definitely created no child: CreateProcess (Windows) or
+    /// exec (Unix, whose failed child has already exited) refusing the executable or its directory.
+    /// </summary>
+    internal static bool CreatedNoChild(Exception ex) => ex is System.ComponentModel.Win32Exception win32
+        && (OperatingSystem.IsWindows()
+            ? win32.NativeErrorCode is 2 or 3 or 5 or 193 or 267 // FILE/PATH_NOT_FOUND, ACCESS_DENIED, BAD_EXE_FORMAT, DIRECTORY
+            : win32.NativeErrorCode is 2 or 8 or 13 or 20); // ENOENT, ENOEXEC, EACCES, ENOTDIR
 
     public Task<string> CanonicalDirectoryAsync(string path, CancellationToken ct)
     {
@@ -375,7 +410,7 @@ public class LandingGit : ILandingGit
         var existing = await RunAsync(repository, ["show-ref", "--verify", "--hash", recoveryRef], ct);
         if (existing.Succeeded)
             return existing.Output.Trim() == sha ? new(0, "", "") : new(1, "", "recovery_ref_collision");
-        // show-ref --verify uses 128 for a missing named ref, so use --exists (Git >= 2.46)
+        // show-ref --verify uses 128 for a missing named ref, so use --exists (Git >= 2.43)
         // to distinguish absence (2) from a lookup error (1) before expected-old creation.
         var existence = await RunAsync(repository, ["show-ref", "--exists", recoveryRef], ct);
         if (existence.ExitCode != 2) return new(1, "", "recovery_ref_query_error");

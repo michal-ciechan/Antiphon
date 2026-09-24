@@ -358,6 +358,93 @@ public class PhoneHomeConnectionServiceTests
         replacement.Sent.ShouldBeEmpty();
     }
 
+    // --- CARD-0679 D-4: the runner names the loop that ended its connection. ---
+
+    [Test]
+    public async Task Connection_end_logs_the_loop_that_ended_and_its_fault()
+    {
+        const long epoch = 9;
+        var logs = new List<string>();
+        var (service, _) = Connected(logs);
+        var socket = new PhoneHomeTestWebSocket();
+        // The heartbeat is the connection's first send; nothing else is published or requested.
+        socket.FailNextSend(new WebSocketException(WebSocketError.ConnectionClosedPrematurely));
+
+        await service.RunConnectedAsync(socket, epoch, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+
+        var ends = EndLines(logs);
+        ends.Count.ShouldBe(1, string.Join(Environment.NewLine, logs));
+        var end = ends[0];
+        end.ShouldStartWith("[Information]");
+        end.ShouldContain("epoch=9");
+        end.ShouldContain("loop=heartbeat");
+        end.ShouldContain(nameof(WebSocketException));
+        end.ShouldContain("overflow=false");
+        end.ShouldContain("pending=");
+        end.ShouldContain("pendingBytes=");
+        end.ShouldContain("inFlight=0");
+        end.ShouldContain("lifetimeMs=");
+    }
+
+    [Test]
+    public async Task Event_hub_overflow_end_names_the_events_loop_and_overflow_true()
+    {
+        const long epoch = 12;
+        var logs = new List<string>();
+        var (service, runtime) = Connected(logs, new PhoneHomeLimits(MaxPendingEvents: 2));
+        var socket = new PhoneHomeTestWebSocket();
+        var heartbeatHold = socket.HoldNextSend();
+
+        var run = service.RunConnectedAsync(socket, epoch, CancellationToken.None);
+        await heartbeatHold.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        for (var i = 0; i < 3; i++)
+            runtime.EventHubForTest.Publish("session", new { n = i });
+
+        var overflow = await Should.ThrowAsync<PhoneHomeTransportException>(() => run.WaitAsync(TimeSpan.FromSeconds(5)));
+        overflow.Code.ShouldBe(PhoneHomeProblemTypes.EventOverflow);
+        var ends = EndLines(logs);
+        ends.Count.ShouldBe(1, string.Join(Environment.NewLine, logs));
+        ends[0].ShouldStartWith("[Information]");
+        ends[0].ShouldContain("epoch=12");
+        ends[0].ShouldContain("loop=events");
+        ends[0].ShouldContain("overflow=true");
+    }
+
+    private static List<string> EndLines(List<string> logs)
+    {
+        lock (logs)
+            return logs.Where(line => line.Contains("Phone-home connection ended", StringComparison.Ordinal)).ToList();
+    }
+
+    private static (PhoneHomeConnectionService Service, SessionRunnerRuntime Runtime) Connected(
+        List<string> logs, PhoneHomeLimits? limits = null)
+    {
+        var settings = Options.Create(new PhoneHomeSettings
+        {
+            Enabled = true,
+            RunnerId = "grok-linux",
+            ServerOrigin = "http://127.0.0.1:1",
+            AllowedCwd = "/work",
+            Capacity = 1,
+            Limits = limits ?? new PhoneHomeLimits(),
+        });
+        var runtime = new SessionRunnerRuntime(
+            Options.Create(new SessionRunnerSettings
+            {
+                SessionLogPath = Path.Combine(Path.GetTempPath(), "c679-runtime-" + Guid.NewGuid().ToString("N")),
+            }),
+            NullLogger<SessionRunnerRuntime>.Instance);
+        var service = new PhoneHomeConnectionService(
+            settings,
+            new PhoneHomeAdoptionGate(),
+            new PhoneHomeCommandDispatcher(new RecordingRuntime(), settings.Value),
+            runtime,
+            new SingleHandlerFactory(new RecordingHandler([])),
+            TimeProvider.System,
+            new ListLogger<PhoneHomeConnectionService>(logs));
+        return (service, runtime);
+    }
+
     private static PhoneHomeFrame Request(PhoneHomeOperation operation, long epoch, object? payload = null) =>
         new(PhoneHomeFrameKind.Request, epoch, Guid.NewGuid(), operation,
             payload is null ? null : JsonSerializer.SerializeToElement(payload, PhoneHomeFraming.Json));

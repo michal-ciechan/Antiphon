@@ -13,7 +13,7 @@ public static class PhoneHomeProtocol
     public const string LocalRunnerId = "local";
     public const int DefaultMaxInFlightRequests = 32;
     public const int DefaultMaxMessageUtf8Bytes = 16 * 1024 * 1024;
-    public const int DefaultMaxPendingEvents = 1024;
+    public const int DefaultMaxPendingEvents = 8192;
     public const int DefaultMaxPendingEventBytes = 16 * 1024 * 1024;
     public const int DefaultHeartbeatSeconds = 15;
     public const int DefaultLeaseSeconds = 90;
@@ -182,6 +182,12 @@ public static class PhoneHomeProblemTypes
     public const string StaleEpoch = "phone_home_stale_epoch";
     public const string RequestTimeout = "phone_home_request_timeout";
 
+    /// <summary>
+    /// CARD-0679 D-9: a Launch for a session id the runner already holds live under a different
+    /// generation. The same generation is not refused: it is answered with the existing session.
+    /// </summary>
+    public const string SessionAlreadyRunning = "phone_home_session_already_running";
+
     /// <summary>CARD-0628 D-7: the provider CLI is not signed in on the runner.</summary>
     public const string ProviderSignInRequired = "provider_sign_in_required";
 
@@ -258,6 +264,11 @@ public sealed record PhoneHomeEventEnvelope(
     string EventName,
     JsonElement Payload);
 
+/// <summary>
+/// CARD-0679 D-1: <see cref="DisconnectReason"/> is the recorded reason the last connection ended
+/// (or <c>lease_expired</c>), not a constant; the pending counts are the live connection's,
+/// <see cref="Reconnects"/> counts accepted connections since the desktop started.
+/// </summary>
 public sealed record PhoneHomeRunnerStatusDto(
     string RunnerId,
     Guid? RunnerStoreId,
@@ -268,4 +279,9 @@ public sealed record PhoneHomeRunnerStatusDto(
     DateTimeOffset? LastHeartbeatUtc,
     string? Platform,
     string? BuildVersion,
-    string? DisconnectReason);
+    string? DisconnectReason,
+    int? PendingEvents = null,
+    int? PendingEventBytes = null,
+    DateTimeOffset? LastDisconnectAtUtc = null,
+    long Reconnects = 0,
+    long? LastCatchUpMs = null);

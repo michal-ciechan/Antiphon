@@ -989,6 +989,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         int maxEvents, int maxBytes, Action onOverflow, CancellationToken ct) =>
         _events.SubscribeBounded(maxEvents, maxBytes, onOverflow, ct);
 
+    /// <summary>Test seam: publish into the same hub a phone-home connection subscribes to.</summary>
+    internal SessionRunnerEventHub EventHubForTest => _events;
+
     /// <summary>
     /// CARD-0653: seats in use. Exited and ProcessVanished records stay in <c>_sessions</c> so a
     /// restart can still report them, and they must not fill phone-home capacity.

@@ -1,8 +1,13 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain;
 using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -21,21 +26,62 @@ namespace Antiphon.Server.Application.Services;
 /// warning and the task keeps its report; it is never a reset, because a reset would silently
 /// throw away whichever side the operator actually wanted.
 /// </summary>
-public sealed class RemoteWorkspaceService
+public sealed class RemoteWorkspaceService : IRemoteSettlementSync
 {
     private readonly ISessionRunnerDirectory _runners;
     private readonly ILandingGit _git;
     private readonly ILogger<RemoteWorkspaceService> _logger;
+    private readonly ITaskProgressGit? _progressGit;
+    private readonly IRepositoryMutationLease? _leases;
+    private readonly IWorkspaceReservationJournal? _reservations;
 
     public RemoteWorkspaceService(
         ISessionRunnerDirectory runners,
         ILandingGit git,
-        ILogger<RemoteWorkspaceService> logger)
+        ILogger<RemoteWorkspaceService> logger,
+        ITaskProgressGit? progressGit = null,
+        IRepositoryMutationLease? leases = null,
+        IWorkspaceReservationJournal? reservations = null,
+        IOptions<DelegationSettings>? settings = null)
     {
         _runners = runners;
         _git = git;
         _logger = logger;
+        _progressGit = progressGit;
+        _leases = leases;
+        _reservations = reservations;
+        SyncBudget = TimeSpan.FromSeconds(
+            settings?.Value.RunnerSyncBudgetSeconds ?? new DelegationSettings().RunnerSyncBudgetSeconds);
     }
+
+    /// <summary>
+    /// CARD-0657 D-3. The whole settlement sync attempt's deadline:
+    /// <c>Delegation:RunnerSyncBudgetSeconds</c> (default 120). A busy repository lease is waited
+    /// for inside it, not refused at once.
+    /// </summary>
+    public TimeSpan SyncBudget { get; init; }
+
+    /// <summary>The clock <see cref="SyncBudget"/> is measured on.</summary>
+    public TimeProvider Clock { get; init; } = TimeProvider.System;
+
+    /// <summary>How long a sync waits before asking again for a busy repository lease.</summary>
+    public TimeSpan LeaseRetryInterval { get; init; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>The default for <see cref="LeaseWaitSlice"/>.</summary>
+    public static readonly TimeSpan DefaultLeaseWaitSlice = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// CARD-0657 R4. The longest ONE sync attempt waits for a busy repository lease. The attempt
+    /// runs inside a dispatcher sweep, so a lease that stays busy must not hold that sweep for the
+    /// whole <see cref="SyncBudget"/>.
+    /// </summary>
+    public TimeSpan LeaseWaitSlice { get; init; } = DefaultLeaseWaitSlice;
+
+    /// <summary>Where a task's lease wait is carried from one sweep's attempt to the next.</summary>
+    public RunnerSyncLeaseWaits LeaseWaits { get; init; } = RunnerSyncLeaseWaits.Process;
+
+    /// <summary>Test seam: called each time the sync finds the repository lease busy.</summary>
+    public Action? LeaseBusyObserved { get; init; }
 
     /// <summary>The mirror directory name for a task: the dispatcher's own short form.</summary>
     public static string MirrorName(Guid taskId) => "task-" + taskId.ToString("N")[..8];
@@ -75,45 +121,399 @@ public sealed class RemoteWorkspaceService
     }
 
     /// <summary>
-    /// Settlement sync: bring the canonical desktop worktree up to whatever the session pushed.
-    /// Fast-forward only, and never on a dirty tree.
+    /// CARD-0657 D-2. An ordinary runner-bound Worktree task. RunnerId and the task coordinates
+    /// decide this, never whether a mirror path happens to be recorded.
     /// </summary>
-    public async Task<RemoteSyncResult> SyncAsync(AgentTask task, CancellationToken ct)
+    public static bool IsEligible(AgentTask task) =>
+        task.Workspace == WorkspaceMode.Worktree
+        && !string.IsNullOrWhiteSpace(task.RunnerId)
+        && task.Role != AgentTaskRole.Mutation
+        && task.SourceLandingOperationId is null;
+
+    /// <summary>CARD-0657 D-2. The only branch a task may be synchronized from, derived from its id.</summary>
+    public static string OwnedBranch(Guid taskId) => "feat/card-task-" + taskId.ToString("N")[..8];
+
+    /// <summary>
+    /// CARD-0657 D-1..D-3. Settlement sync: confirm the canonical desktop worktree at the commit the
+    /// session pushed to the task's OWN branch. The exact ref is observed and pinned once, the
+    /// checkout's identity is revalidated under the repository lease, and the only mutation is a
+    /// fast-forward to that full object id. A refusal leaves the checkout exactly as found; an
+    /// unreadable answer is Unavailable, never a guessed success.
+    /// </summary>
+    public async Task<RemoteSettlementSyncResult> SyncAsync(
+        AgentTask task, CancellationToken ct, IReadOnlyCollection<string>? reportedTips = null)
     {
-        if (string.IsNullOrWhiteSpace(task.WorktreePath) || string.IsNullOrWhiteSpace(task.WorktreeBranch))
-            return new RemoteSyncResult(false, null, "the task has no desktop worktree or branch");
+        if (!IsEligible(task))
+            return RemoteSettlementSyncResult.NotApplicable;
 
-        var status = await _git.RunAsync(
-            task.WorktreePath, ["status", "--porcelain", "--untracked-files=all"], ct);
-        if (status.ExitCode != 0)
-            return new RemoteSyncResult(false, null, "could not read the desktop worktree status");
-        if (status.Output.Trim().Length > 0)
+        var branch = OwnedBranch(task.Id);
+        var fullRef = "refs/heads/" + branch;
+        if (!string.Equals(task.WorktreeBranch, branch, StringComparison.Ordinal))
+            return Outcome(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.BranchMismatch, fullRef);
+        if (_progressGit is null || _leases is null)
+            return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.DependencyUnavailable, fullRef);
+
+        var baseline = TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson)?.Primary;
+        if (baseline is null || !GitObjectId.IsFull(baseline.LocalSha)
+            || baseline.Remote.EndpointFingerprint is not { Length: > 0 })
+            return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.BaselineUnavailable, fullRef);
+        if (!string.Equals(baseline.FullRef, fullRef, StringComparison.Ordinal))
+            return Outcome(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.BranchMismatch, fullRef);
+        if ((baseline.OwnerTaskId is Guid owner && owner != task.Id)
+            || string.IsNullOrWhiteSpace(task.WorktreePath)
+            || string.IsNullOrWhiteSpace(baseline.RegisteredCheckout)
+            || !PathsEqual(task.WorktreePath, baseline.RegisteredCheckout))
+            return Outcome(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.IdentityMismatch, fullRef);
+
+        using var budget = new CancellationTokenSource(SyncBudget, Clock);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct, budget.Token);
+        RemoteSettlementSyncResult result;
+        try
         {
-            // Something is in the desktop tree that the runner did not put there. Fast-forwarding
-            // over it could lose it, so this is reported and left exactly as found.
-            return new RemoteSyncResult(
-                false, null,
-                "the desktop worktree has uncommitted changes; it was left untouched and is behind the pushed branch");
+            result = await SyncAdmittedAsync(task, baseline, fullRef, reportedTips, deadline.Token, ct);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested && budget.IsCancellationRequested)
+        {
+            result = Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.Timeout, fullRef, baseline.LocalSha);
+        }
+        catch (TimeoutException)
+        {
+            result = Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.Timeout, fullRef, baseline.LocalSha);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning("Settlement sync for task {Task} could not inspect its checkout ({Type})",
+                task.Id, ex.GetType().Name);
+            result = Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable,
+                fullRef, baseline.LocalSha);
         }
 
-        var fetch = await _git.RunAsync(task.WorktreePath, ["fetch", "origin", task.WorktreeBranch], ct);
-        if (fetch.ExitCode != 0)
-            return new RemoteSyncResult(false, null, "git fetch failed: " + Tail(fetch.Diagnostic));
-
-        var merge = await _git.RunAsync(task.WorktreePath, ["merge", "--ff-only", "FETCH_HEAD"], ct);
-        if (merge.ExitCode != 0)
-        {
-            return new RemoteSyncResult(
-                false, null,
-                "the desktop worktree and the pushed branch have diverged; a non-fast-forward sync was refused: "
-                + Tail(merge.Diagnostic));
-        }
-
-        var head = await _git.RunAsync(task.WorktreePath, ["rev-parse", "HEAD"], ct);
-        return head.ExitCode == 0
-            ? new RemoteSyncResult(true, head.Output.Trim(), null)
-            : new RemoteSyncResult(true, null, null);
+        // Only an attempt still waiting for the lease carries its wait into the next sweep. The
+        // caller's own cancellation propagates above and leaves the wait running for the re-hand.
+        if (result.Reason != RemoteSettlementSyncReasons.LeaseWaiting)
+            LeaseWaits.End(task.Id);
+        return result;
     }
+
+    /// <summary>
+    /// CARD-0657 D-3 step 1. The whole sync runs as an admitted workspace consumer, so retirement
+    /// cannot claim the checkout between the checks and the fast-forward. The consumer is released
+    /// however the sync ends, including on timeout or cancellation. <paramref name="ct"/> is the
+    /// budget-linked token; <paramref name="caller"/> is the caller's own.
+    /// </summary>
+    private async Task<RemoteSettlementSyncResult> SyncAdmittedAsync(
+        AgentTask task, ProgressSourceBaseline baseline, string fullRef, IReadOnlyCollection<string>? reportedTips,
+        CancellationToken ct, CancellationToken caller)
+    {
+        if (_reservations is null)
+            return await SyncOwnedCheckoutAsync(task, baseline, fullRef, reportedTips, ct, caller);
+
+        var admitted = await _reservations.TryAdmitConsumerAsync(new WorkspaceReservationCommand(
+            WorkspaceReservationKey.ForTask(task.WorktreePath, task.WorkingDirectory, task.WorktreeBranch, task.RepoPath),
+            WorkspaceReservationKind.Launch, task.Id), ct);
+        if (!admitted.Accepted)
+            return Outcome(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.RetirementReserved,
+                fullRef, baseline.LocalSha);
+        try
+        {
+            return await SyncOwnedCheckoutAsync(task, baseline, fullRef, reportedTips, ct, caller);
+        }
+        finally
+        {
+            if (admitted.Snapshot is { } consumer)
+            {
+                try
+                {
+                    await _reservations.ReleaseConsumerAsync(consumer.Id, consumer.Generation, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("Settlement sync for task {Task} could not release its workspace consumer ({Type})",
+                        task.Id, ex.GetType().Name);
+                }
+            }
+        }
+    }
+
+    private async Task<RemoteSettlementSyncResult> SyncOwnedCheckoutAsync(
+        AgentTask task, ProgressSourceBaseline baseline, string fullRef, IReadOnlyCollection<string>? reportedTips,
+        CancellationToken ct, CancellationToken caller)
+    {
+        var repo = baseline.CanonicalRepository;
+        var b = baseline.LocalSha;
+        var fingerprint = baseline.Remote.EndpointFingerprint!;
+
+        var before = await ValidateCheckoutAsync(task, baseline, fullRef, ct);
+        if (before.Refusal is { } refused)
+            return refused with { FullRef = fullRef, BaselineSha = b };
+        var l0 = before.Head!;
+
+        // Observe (and, if absent locally, fetch) the exact ref BEFORE taking the lease: the
+        // observation takes its own lease for the fetch, and nested acquisition is not reentrant.
+        var (observed, observeSpent) = await WhileLeaseBusyAsync(
+            task.Id,
+            () => _progressGit!.ObserveExactRefAsync(repo, fullRef, fingerprint, task.Id, ct),
+            o => o.State == ProgressRemoteState.Unavailable && o.Reason == "repository_lease_busy",
+            ct, caller);
+        switch (observed.State)
+        {
+            case ProgressRemoteState.Missing:
+                return Outcome(RemoteSettlementSyncState.NoPushedProgress, RemoteSettlementSyncReasons.BranchNotPushed,
+                    fullRef, b, desktopBefore: l0, fingerprint: fingerprint);
+            case ProgressRemoteState.NotConfigured:
+                return Outcome(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.EndpointAmbiguous, fullRef, b);
+            case ProgressRemoteState.Unavailable:
+                return observed.Reason switch
+                {
+                    "source_remote_endpoint_changed" => Outcome(RemoteSettlementSyncState.Refused,
+                        RemoteSettlementSyncReasons.EndpointChanged, fullRef, b),
+                    "source_remote_endpoint_ambiguous" => Outcome(RemoteSettlementSyncState.Refused,
+                        RemoteSettlementSyncReasons.EndpointAmbiguous, fullRef, b),
+                    "repository_lease_busy" => Outcome(RemoteSettlementSyncState.Unavailable,
+                        LeaseReason(observeSpent), fullRef, b),
+                    _ => Outcome(RemoteSettlementSyncState.Unavailable,
+                        RemoteSettlementSyncReasons.FetchUnavailable, fullRef, b),
+                };
+        }
+
+        var s = observed.Sha;
+        if (!GitObjectId.IsFull(s))
+            return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.FetchUnavailable, fullRef, b);
+
+        // Bind-refusal recovery correlated no prompt with the report: only a full commit id that
+        // report names ties the tip to this task's work. Any other tip is left, untouched, for a
+        // fresh completion report.
+        if (reportedTips is not null && !reportedTips.Any(named => NamesCommit(named, s!)))
+            return Outcome(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.TipNotReported,
+                fullRef, b, s, l0, fingerprint: fingerprint);
+
+        var (acquired, acquireSpent) = await WhileLeaseBusyAsync(
+            task.Id,
+            () => _leases!.TryAcquireAsync(
+                repo, new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.WorktreeSettlement), ct),
+            held => held is null,
+            ct, caller);
+        await using var lease = acquired;
+        if (lease is null)
+            return Outcome(RemoteSettlementSyncState.Unavailable, LeaseReason(acquireSpent), fullRef, b, s);
+
+        var under = await ValidateCheckoutAsync(task, baseline, fullRef, ct);
+        if (under.Refusal is { } refusedUnder)
+            return refusedUnder with { FullRef = fullRef, BaselineSha = b, RemoteSha = s };
+        var l = under.Head!;
+        if (!string.Equals(l, l0, StringComparison.Ordinal))
+            return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.ChangedDuringValidation, fullRef, b, s);
+
+        // The task-owned pin always names S, whether or not the object was already local.
+        if (observed.ObservationRef is { } observationRef)
+        {
+            var pinned = await _progressGit.RevParseCommitAsync(repo, observationRef, ct);
+            if (!pinned.Succeeded || !string.Equals(pinned.Sha, s, StringComparison.Ordinal))
+                return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.ChangedDuringValidation, fullRef, b, s);
+        }
+        var pin = SettlementPin(task.Id);
+        var update = await _git.RunAsync(repo, ["update-ref", pin, s], ct);
+        if (!update.Succeeded)
+            return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable, fullRef, b, s);
+
+        if (!string.Equals(s, b, StringComparison.Ordinal))
+        {
+            var descends = await _progressGit.IsAncestorAsync(repo, b, s, ct);
+            if (descends is null)
+                return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable, fullRef, b, s);
+            if (descends == false)
+            {
+                var rewound = await _progressGit.IsAncestorAsync(repo, s, b, ct);
+                if (rewound is null)
+                    return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable, fullRef, b, s);
+                return Outcome(RemoteSettlementSyncState.Refused,
+                    rewound == true ? RemoteSettlementSyncReasons.Rewound : RemoteSettlementSyncReasons.Diverged,
+                    fullRef, b, s, l, observationRef: pin, fingerprint: fingerprint);
+            }
+        }
+
+        if (!string.Equals(l, s, StringComparison.Ordinal))
+        {
+            var behind = await _progressGit.IsAncestorAsync(repo, l, s, ct);
+            if (behind is null)
+                return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable, fullRef, b, s);
+            if (behind == false)
+            {
+                // `merge --ff-only` alone would accept an already-ahead desktop and report its tip.
+                var ahead = await _progressGit.IsAncestorAsync(repo, s, l, ct);
+                if (ahead is null)
+                    return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable, fullRef, b, s);
+                return Outcome(RemoteSettlementSyncState.Refused,
+                    ahead == true ? RemoteSettlementSyncReasons.LocalAhead : RemoteSettlementSyncReasons.Diverged,
+                    fullRef, b, s, l, observationRef: pin, fingerprint: fingerprint);
+            }
+
+            var merge = await _git.RunAsync(task.WorktreePath!, ["-c", "merge.autoStash=false", "merge", "--ff-only", s], ct);
+            if (!merge.Succeeded)
+                return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.MergeFailed, fullRef, b, s, l);
+        }
+
+        // Postconditions: the same registered checkout, on the same branch, clean, at exactly S.
+        ValidatedCheckout after;
+        try
+        {
+            after = await ValidateCheckoutAsync(task, baseline, fullRef, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException and not TimeoutException)
+        {
+            after = new(Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.PostconditionUnavailable), null);
+        }
+        if (after.Refusal is not null || !string.Equals(after.Head, s, StringComparison.Ordinal))
+            return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.PostconditionUnavailable,
+                fullRef, b, s, l, observationRef: pin, fingerprint: fingerprint);
+
+        return string.Equals(s, b, StringComparison.Ordinal)
+            ? Outcome(RemoteSettlementSyncState.NoPushedProgress, RemoteSettlementSyncReasons.NoPushedProgress,
+                fullRef, b, s, l, s, pin, fingerprint)
+            : Outcome(RemoteSettlementSyncState.Synchronized, null, fullRef, b, s, l, s, pin, fingerprint);
+    }
+
+    /// <summary>
+    /// A busy repository lease is somebody else's short mutation, not a verdict: ask again every
+    /// <see cref="LeaseRetryInterval"/>. This attempt runs inside a dispatcher sweep, so it waits at
+    /// most <see cref="LeaseWaitSlice"/>, cut to what is left of <see cref="SyncBudget"/> since the
+    /// task's sync FIRST found the lease busy (<see cref="LeaseWaits"/>, carried across sweeps).
+    /// Still busy when the wait ends, the last busy answer is returned with
+    /// <c>Spent</c> true only once that cumulative wait has reached the budget; the budget-linked
+    /// <paramref name="ct"/> running out also ends the wait. The caller's own cancellation propagates.
+    /// </summary>
+    private async Task<(T Result, bool Spent)> WhileLeaseBusyAsync<T>(
+        Guid taskId, Func<Task<T>> attempt, Func<T, bool> busy, CancellationToken ct, CancellationToken caller)
+    {
+        var result = await attempt();
+        if (!busy(result))
+            return (result, false);
+
+        var since = LeaseWaits.FirstBusy(taskId, Clock.GetUtcNow());
+        bool Spent() => Clock.GetUtcNow() - since >= SyncBudget;
+        var left = SyncBudget - (Clock.GetUtcNow() - since);
+        var slice = left < LeaseWaitSlice ? left : LeaseWaitSlice;
+        if (slice <= TimeSpan.Zero)
+        {
+            LeaseBusyObserved?.Invoke();
+            return (result, true);
+        }
+
+        // The slice is armed before anyone hears the lease is busy, so a clock that moves on that
+        // news always ends this wait.
+        using var sliceEnd = new CancellationTokenSource(slice, Clock);
+        using var wait = CancellationTokenSource.CreateLinkedTokenSource(ct, sliceEnd.Token);
+        while (busy(result))
+        {
+            LeaseBusyObserved?.Invoke();
+            try
+            {
+                await Task.Delay(LeaseRetryInterval, Clock, wait.Token);
+                result = await attempt();
+            }
+            catch (OperationCanceledException) when (!caller.IsCancellationRequested && wait.IsCancellationRequested)
+            {
+                // Git's bounded I/O has already awaited its child before this cancellation surfaced.
+                return (result, Spent() || (ct.IsCancellationRequested && !caller.IsCancellationRequested));
+            }
+        }
+        return (result, false);
+    }
+
+    /// <summary>A lease still busy is lease-busy once its cumulative wait is spent, else still waiting.</summary>
+    private static string LeaseReason(bool spent) =>
+        spent ? RemoteSettlementSyncReasons.LeaseBusy : RemoteSettlementSyncReasons.LeaseWaiting;
+
+    private sealed record ValidatedCheckout(RemoteSettlementSyncResult? Refusal, string? Head);
+
+    /// <summary>
+    /// CARD-0657 D-2/D-3. The recorded endpoint, repository, registration, symbolic HEAD, branch
+    /// tip, sequencer and clean status. Read-only: it never switches, stashes or resets anything.
+    /// </summary>
+    private async Task<ValidatedCheckout> ValidateCheckoutAsync(
+        AgentTask task, ProgressSourceBaseline baseline, string fullRef, CancellationToken ct)
+    {
+        static ValidatedCheckout Refuse(RemoteSettlementSyncState state, string reason) =>
+            new(new RemoteSettlementSyncResult(state, reason), null);
+
+        var repo = baseline.CanonicalRepository;
+        var fingerprint = await _progressGit!.EndpointFingerprintAsync(repo, ct);
+        if (fingerprint is null)
+            return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.EndpointAmbiguous);
+        if (!string.Equals(fingerprint, baseline.Remote.EndpointFingerprint, StringComparison.OrdinalIgnoreCase))
+            return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.EndpointChanged);
+
+        string worktree;
+        try
+        {
+            worktree = await _git.CanonicalDirectoryAsync(task.WorktreePath!, ct);
+            var repoCommon = await _git.CommonDirectoryAsync(repo, ct);
+            var worktreeCommon = await _git.CommonDirectoryAsync(worktree, ct);
+            if (!PathsEqual(repoCommon, baseline.CanonicalCommonDirectory)
+                || !PathsEqual(worktreeCommon, baseline.CanonicalCommonDirectory))
+                return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.IdentityMismatch);
+        }
+        catch (IOException)
+        {
+            return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.IdentityMismatch);
+        }
+
+        var registrations = (await _git.RegistrationsAsync(repo, ct)).Where(r => PathsEqual(r.Path, worktree)).ToList();
+        if (registrations.Count != 1 || registrations[0].Locked || registrations[0].Prunable)
+            return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.IdentityMismatch);
+        var registered = registrations[0];
+
+        var symbolic = await _git.RunAsync(worktree, ["symbolic-ref", "-q", "HEAD"], ct);
+        if (symbolic.ExitCode == 1)
+            return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.BranchMismatch);
+        if (!symbolic.Succeeded)
+            return Refuse(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable);
+        if (!string.Equals(symbolic.Output.Trim(), fullRef, StringComparison.Ordinal)
+            || !string.Equals(registered.Branch, fullRef, StringComparison.Ordinal))
+            return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.BranchMismatch);
+
+        var head = await _progressGit.RevParseCommitAsync(worktree, "HEAD", ct);
+        var tip = await _progressGit.RevParseCommitAsync(worktree, fullRef, ct);
+        if (!head.Succeeded || !tip.Succeeded || head.Sha is null)
+            return Refuse(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable);
+        if (!string.Equals(head.Sha, tip.Sha, StringComparison.Ordinal)
+            || !string.Equals(head.Sha, registered.Head, StringComparison.Ordinal))
+            return Refuse(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.ChangedDuringValidation);
+
+        if (await _git.HasActiveSequencerAsync(worktree, ct))
+            return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.Sequencer);
+
+        var status = await _git.RunAsync(worktree,
+            ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
+        if (!status.Succeeded)
+            return Refuse(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable);
+        if (status.Output.Length != 0)
+            return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.Dirty);
+
+        return new(null, head.Sha);
+    }
+
+    /// <summary>
+    /// True only when <paramref name="named"/> is the full object id <paramref name="fullSha"/>.
+    /// An abbreviation never names a commit: it cannot tell the pushed tip from a lookalike.
+    /// </summary>
+    public static bool NamesCommit(string? named, string fullSha) =>
+        GitObjectId.TryNormalize(named, out var candidate)
+        && string.Equals(candidate, fullSha, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The task-owned settlement pin: one name per task, rewritten, never accumulated.</summary>
+    public static string SettlementPin(Guid taskId) => $"refs/antiphon/progress/{taskId:N}/settlement-sync";
+
+    private static RemoteSettlementSyncResult Outcome(
+        RemoteSettlementSyncState state, string? reason, string? fullRef = null, string? baselineSha = null,
+        string? remoteSha = null, string? desktopBefore = null, string? desktopAfter = null,
+        string? observationRef = null, string? fingerprint = null) =>
+        new(state, reason, fullRef, baselineSha, remoteSha, desktopBefore, desktopAfter, observationRef, fingerprint);
+
+    private static bool PathsEqual(string left, string right) => string.Equals(
+        Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
+        Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
     /// <summary>
     /// Removes the runner-side mirror at retirement. Best effort: a mirror that cannot be removed
@@ -152,4 +552,3 @@ public sealed class RemoteWorkspaceService
 
 public sealed record RemotePushResult(bool Pushed, string? Sha, string? Warning);
 
-public sealed record RemoteSyncResult(bool Synced, string? Sha, string? Warning);

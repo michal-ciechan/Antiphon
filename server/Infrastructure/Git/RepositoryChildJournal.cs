@@ -23,8 +23,41 @@ internal sealed class RepositoryChildJournal
         return journal;
     }
 
-    public async Task StartedAsync(Process child, CancellationToken ct)
-        => await StartedAsync(child.Id, child.StartTime.ToUniversalTime().Ticks, ct);
+    public Task StartedAsync(Process child, CancellationToken ct)
+        => StartedAsync(child.Id, TryStartTicks(child, out var startTicks) ? startTicks : null, ct);
+
+    /// <summary>Records the child, or with no start identity records its already-exited root.</summary>
+    internal async Task StartedAsync(int processId, long? startTicks, CancellationToken ct)
+    {
+        if (startTicks is { } ticks)
+        {
+            await StartedAsync(processId, ticks, ct);
+            return;
+        }
+        // CARD-0661: a fast child exited (and on Linux was reaped, taking its /proc start
+        // identity with it) before we read it. Its own handle has exited, so record it as
+        // completed rather than failing the command. The file still fences admission until
+        // Exited removes it after the streams drain, exactly as a started record does.
+        _record = _record with { ProcessId = processId, Completed = true };
+        await SaveAsync(ct);
+    }
+
+    /// <summary>The child's start identity, or false when it has already exited and the
+    /// platform can no longer report it. A still-running child that cannot be read throws.</summary>
+    internal static bool TryStartTicks(Process child, out long startTicks)
+    {
+        try
+        {
+            startTicks = child.StartTime.ToUniversalTime().Ticks;
+            return true;
+        }
+        catch (Exception ex) when ((ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+                                   && child.HasExited)
+        {
+            startTicks = 0;
+            return false;
+        }
+    }
 
     public async Task StartedAsync(int processId, long startTicks, CancellationToken ct)
     {
@@ -37,6 +70,9 @@ internal sealed class RepositoryChildJournal
         if (!child.HasExited) throw new InvalidOperationException("owned_child_still_running");
         File.Delete(_path); // Only this operation's journal, after its exact handle exited.
     }
+
+    /// <summary>Process.Start definitely created no child (LandingGit.CreatedNoChild), so none needs fencing.</summary>
+    public void NotStarted() => File.Delete(_path);
 
     public async Task ExitedAsync(CancellationToken ct)
     {
@@ -71,6 +107,9 @@ internal sealed class RepositoryChildJournal
             foreach (var path in Directory.EnumerateFiles(directory))
             {
                 // A torn/unacknowledged start or PID save is ambiguous and fences admission too.
+                // So does a Completed record (CARD-0661): its root exited, but a crash before the
+                // streams drained leaves descendants unproven. There is no startup auto-clear; the
+                // explicit script recovers it after descendant inspection, as for a dead root.
                 if (!path.EndsWith(".json", StringComparison.Ordinal)) return true;
                 using var stream = File.OpenRead(path);
                 var record = await JsonSerializer.DeserializeAsync<ChildRecord>(stream, cancellationToken: ct);
@@ -89,5 +128,6 @@ internal sealed class RepositoryChildJournal
         { return true; }
     }
 
-    internal sealed record ChildRecord(int SchemaVersion, string CommonDirectory, int? ProcessId, long? StartTicks);
+    internal sealed record ChildRecord(int SchemaVersion, string CommonDirectory, int? ProcessId, long? StartTicks,
+        bool Completed = false);
 }

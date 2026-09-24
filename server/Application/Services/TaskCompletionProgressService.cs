@@ -17,13 +17,16 @@ public sealed class TaskCompletionProgressService
     private readonly ITaskProgressGit _git;
     private readonly IWorkspaceProgressProbe? _files;
     private readonly TimeProvider _clock;
+    private readonly IRemoteSettlementSync? _remoteSync;
 
     public TaskCompletionProgressService(
-        ITaskProgressGit git, IWorkspaceProgressProbe? files = null, TimeProvider? clock = null)
+        ITaskProgressGit git, IWorkspaceProgressProbe? files = null, TimeProvider? clock = null,
+        IRemoteSettlementSync? remoteSync = null)
     {
         _git = git;
         _files = files;
         _clock = clock ?? TimeProvider.System;
+        _remoteSync = remoteSync;
     }
 
     /// <summary>
@@ -71,10 +74,24 @@ public sealed class TaskCompletionProgressService
         public bool IsIndeterminate => Assessment == CompletionProgressAssessment.Indeterminate;
     }
 
-    public async Task<Evaluation> EvaluateAsync(AgentTask task, string body, CancellationToken ct)
+    public Task<Evaluation> EvaluateAsync(AgentTask task, string body, CancellationToken ct) =>
+        EvaluateAsync(task, body, prepared: null, ct);
+
+    public async Task<Evaluation> EvaluateAsync(
+        AgentTask task, string body, RemoteSettlementSyncResult? prepared, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         var claim = ParseClaim(task.Id, body);
+
+        // CARD-0657 D-1/D-4. A runner-bound task's commits reach the desktop only through the
+        // pre-attribution sync, so its evaluation is against that ONE prepared observation. A
+        // caller that did not prepare is prepared here: no report-time path bypasses the guard.
+        if (RemoteWorkspaceService.IsEligible(task))
+        {
+            prepared ??= await PrepareAsync(_remoteSync, task, ct);
+            return await EvaluateRemoteAsync(task, claim, prepared, ct);
+        }
+
         var baseline = TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson);
         if (baseline is null)
             return await EvaluateLegacyAsync(task, claim, ct);
@@ -89,6 +106,118 @@ public sealed class TaskCompletionProgressService
             await EvaluateSourceAsync(task, repair, baseline, now, claim.Sha, isRepair: true, sources, ct);
 
         return Aggregate(task, claim, sources);
+    }
+
+    /// <summary>
+    /// CARD-0657 D-1/D-6. One bounded sync attempt for an eligible runner-bound task. Missing
+    /// wiring is Unavailable, never NotApplicable or success; an unexpected fault or the attempt's
+    /// own deadline is uncertainty. Only the caller's cancellation propagates.
+    /// </summary>
+    public static async Task<RemoteSettlementSyncResult> PrepareAsync(
+        IRemoteSettlementSync? sync, AgentTask task, CancellationToken ct, IReadOnlyCollection<string>? reportedTips = null)
+    {
+        if (!RemoteWorkspaceService.IsEligible(task))
+            return RemoteSettlementSyncResult.NotApplicable;
+        var fullRef = "refs/heads/" + RemoteWorkspaceService.OwnedBranch(task.Id);
+        if (sync is null)
+            return new(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.DependencyUnavailable, fullRef);
+        try
+        {
+            var result = await sync.SyncAsync(task, ct, reportedTips);
+            return result.State == RemoteSettlementSyncState.NotApplicable
+                ? new(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.DependencyUnavailable, fullRef)
+                : result;
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return new(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.Timeout, fullRef);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable, fullRef);
+        }
+    }
+
+    /// <summary>
+    /// CARD-0657 D-4/D-5. Progress for a runner-bound task, judged against the prepared commit S
+    /// and the captured baseline B only. No second remote observation, no desktop file rescue:
+    /// a refused or unavailable sync is Indeterminate, and only a confirmed S can be Primary.
+    /// </summary>
+    private async Task<Evaluation> EvaluateRemoteAsync(
+        AgentTask task, ProgressClaimParse claim, RemoteSettlementSyncResult prepared, CancellationToken ct)
+    {
+        var sync = RemoteSyncEvidence.From(task.Attempt, prepared);
+        var baseline = TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson)?.Primary;
+
+        Evaluation Result(CompletionProgressAssessment assessment, string? reason, bool complete,
+            string? local = null, string? verified = null)
+        {
+            CompletionProgressSource[]? sources = baseline is null
+                ? null
+                : [Arm(ProgressOrigin.Primary, assessment, reason, complete, baseline,
+                    local ?? prepared.DesktopAfterSha ?? prepared.DesktopBeforeSha, prepared.RemoteSha, claim.Sha, verified)];
+            var evidence = new CompletionProgressEvidence(1, assessment,
+                assessment == CompletionProgressAssessment.ProgressObserved ? null : reason,
+                claim.Sha, claim.Warning, sources, sync);
+            return ToEvaluation(claim, evidence, primaryDirect: assessment == CompletionProgressAssessment.ProgressObserved);
+        }
+
+        Evaluation Unknown(string reason) => Result(CompletionProgressAssessment.Indeterminate, reason, false);
+        Evaluation Negative(string reason) => Result(CompletionProgressAssessment.NoAttributedProgress, reason, true);
+
+        if (baseline is null)
+            return Unknown(prepared.Reason ?? RemoteSettlementSyncReasons.BaselineUnavailable);
+
+        if (prepared.State == RemoteSettlementSyncState.NoPushedProgress)
+            return Negative(claim.Sha is not null
+                ? RemoteSettlementSyncReasons.ReportedCommitNotPushed
+                : prepared.Reason ?? RemoteSettlementSyncReasons.NoPushedProgress);
+
+        if (prepared.State != RemoteSettlementSyncState.Synchronized || !prepared.Confirmed)
+            return Unknown(prepared.Reason ?? RemoteSettlementSyncReasons.InspectionUnavailable);
+
+        var s = prepared.DesktopAfterSha!;
+        var repo = baseline.CanonicalRepository;
+
+        // The desktop must still represent S: a checkout that moved after the sync is uncertainty.
+        var observed = await ObservePrimaryCheckoutAsync(baseline, ct);
+        if (!observed.Succeeded
+            || !string.Equals(observed.ObservedRef, baseline.FullRef, StringComparison.Ordinal)
+            || !string.Equals(observed.ObservedSha, s, StringComparison.OrdinalIgnoreCase))
+            return Unknown("primary_head_changed");
+
+        // A claim must be reachable from the pushed S and novel against BOTH captured baselines;
+        // an unpushed C cannot borrow an earlier pushed S. C is never fetched as an object.
+        if (claim.Sha is { } c)
+        {
+            // Every object reachable from S is local after the sync, so an absent C is not in S.
+            var present = await _git.RevParseCommitAsync(repo, c, ct);
+            if (!present.Succeeded)
+                return present.Reason == "rev_parse_failed"
+                    ? Unknown("primary_log_unavailable")
+                    : Negative(RemoteSettlementSyncReasons.ReportedCommitNotPushed);
+            var reachable = await _git.IsAncestorAsync(repo, c, s, ct);
+            if (reachable is null)
+                return Unknown("primary_log_unavailable");
+            if (reachable == false)
+                return Negative(RemoteSettlementSyncReasons.ReportedCommitNotPushed);
+            foreach (var tip in PresentBaselineTips(baseline))
+            {
+                var contained = await _git.IsAncestorAsync(repo, c, tip, ct);
+                if (contained is null)
+                    return Unknown("primary_log_unavailable");
+                if (contained == true)
+                    return Negative("claimed_commit_not_novel");
+            }
+        }
+
+        return await ClassifyNoveltyAsync(repo, s, baseline, ct) switch
+        {
+            CommitNovelty.Descendant => Result(CompletionProgressAssessment.ProgressObserved, null, true, s, s),
+            CommitNovelty.Contained => Negative(RemoteSettlementSyncReasons.NoPushedProgress),
+            CommitNovelty.Divergent => Unknown("baseline_lineage_broken"),
+            _ => Unknown("primary_log_unavailable"),
+        };
     }
 
     public static ProgressClaimParse ParseClaim(Guid taskId, string? text)

@@ -755,13 +755,12 @@ public class PhoneHomeStandingLaunchTests
         Should.Throw<ConflictException>(() => Refuse(policy, agent, backend: SessionBackend.Herdr))
             .Code.ShouldBe("phone_home_backend_refused");
 
-        // A delegated task IS admitted now, but only as a Grok Worktree task without SourceLanding.
+        // A delegated task IS admitted now, but only as a Worktree task. Since Cut B that includes
+        // a SourceLanding Mutation (CARD-0659: the gate agrees with create's custody admission).
         Refuse(policy, agent, delegatedTask: true, worktree: true, kind: AgentKind.Grok);
         Should.Throw<ConflictException>(() => Refuse(policy, agent, delegatedTask: true, worktree: false))
             .Code.ShouldBe("phone_home_worktree_refused");
-        Should.Throw<ConflictException>(
-                () => Refuse(policy, agent, delegatedTask: true, worktree: true, sourceLanding: true))
-            .Code.ShouldBe("phone_home_sourcelanding_refused");
+        Refuse(policy, agent, delegatedTask: true, worktree: true, sourceLanding: true, kind: AgentKind.Grok);
 
         // An agent bound to no runner is not this policy's business at all.
         var local = new Agent { Id = Guid.NewGuid(), WorkingDirectory = @"C:\anywhere" };

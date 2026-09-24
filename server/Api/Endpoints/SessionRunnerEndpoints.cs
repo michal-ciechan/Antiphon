@@ -1,3 +1,4 @@
+using System.Net.WebSockets;
 using System.Runtime.ExceptionServices;
 using Microsoft.AspNetCore.Mvc;
 using Antiphon.Server.Application.Dtos;
@@ -87,6 +88,8 @@ public static class SessionRunnerEndpoints
             HttpContext http,
             PhoneHomeRunnerDirectory directory,
             IOptions<PhoneHomeRunnerSettings> settings,
+            ILogger<PhoneHomeLiveConnection> logger,
+            IHostApplicationLifetime lifetime,
             CancellationToken ct) =>
         {
             if (!settings.Value.Enabled)
@@ -109,36 +112,81 @@ public static class SessionRunnerEndpoints
                 throw;
             }
 
+            logger.LogInformation(
+                "Phone-home connection {RunnerId} epoch {Epoch} accepted: capacity {Capacity}, platform {Platform}, build {BuildVersion}",
+                connection.RunnerId, connection.Epoch, connection.Capacity, connection.Platform,
+                connection.Capabilities?.Version);
+
+            // CARD-0679 D-1: every end is classified once, recorded once and logged once. A runner
+            // dropping its socket is a transport event, not an unhandled request error; only a
+            // receive fault nobody classified still reaches the exception middleware.
+            string reason;
+            Exception? fault = null;
             try
             {
-                await connection.ReceiveLoopAsync(ct);
+                await connection.ReceiveLoopAsync(ct, logger);
+                reason = ct.IsCancellationRequested ? AbortReason(lifetime) : "close_received";
             }
             catch (PhoneHomeTransportException ex) when (ex.Code == PhoneHomeProblemTypes.EventOverflow
                 || ex.Code == PhoneHomeProblemTypes.MessageTooLarge)
             {
-                directory.Disconnect(connection, ex.Code);
+                reason = ex.Code;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                reason = AbortReason(lifetime);
+            }
+            catch (WebSocketException)
+            {
+                reason = "transport_abort";
+            }
+            catch (Exception) when (connection.LastDisconnectReason is { } recorded)
+            {
+                // Superseded by a newer connection, whose accept disposed this socket under the read.
+                reason = recorded;
+            }
+            catch (Exception ex)
+            {
+                reason = $"receive_fault:{ex.GetType().Name}";
+                fault = ex;
+            }
+
+            try
+            {
+                directory.Disconnect(connection, reason);
+                logger.LogWarning(
+                    "Phone-home connection {RunnerId} epoch {Epoch} ended: {Reason} after {LifetimeSeconds:0.0}s; "
+                    + "socket {SocketState}; pending {PendingEvents} events / {PendingEventBytes} bytes; "
+                    + "live buffer {LiveBufferEvents} events; in flight {InFlight}; failing {Waiters} waiters",
+                    connection.RunnerId, connection.Epoch, connection.LastDisconnectReason ?? reason,
+                    (connection.Clock.GetUtcNow() - connection.StartedAtUtc).TotalSeconds,
+                    connection.SocketState, connection.PendingEvents, connection.PendingEventBytes,
+                    connection.LiveBufferEvents, connection.InFlight, connection.PendingWaiters);
             }
             finally
             {
-                directory.Disconnect(connection, "closed");
                 await connection.DisposeAsync();
             }
+
+            if (fault is not null)
+                ExceptionDispatchInfo.Capture(fault).Throw();
         }).WithTags("SessionRunners");
     }
+
+    /// <summary>
+    /// CARD-0679 D-1: Kestrel cancels RequestAborted both when the runner's connection drops under
+    /// the read and when this host stops. Only the second is the server aborting the request.
+    /// </summary>
+    private static string AbortReason(IHostApplicationLifetime lifetime) =>
+        lifetime.ApplicationStopping.IsCancellationRequested ? "request_aborted" : "transport_abort";
 
     /// <summary>
     /// CARD-0653: force-release needs the operator credential. The client address proves nothing:
     /// the public vhost arrives through Caddy and Vite as a loopback connection.
     /// </summary>
-    private static void RequireOperator(HttpContext http, PhoneHomeRunnerSettings settings)
-    {
-        var path = OperatorTokenFile.ResolvePath(settings.OperatorTokenPath);
-        var provided = http.Request.Headers[OperatorTokenFile.Header].ToString();
-        if (!OperatorTokenFile.Matches(OperatorTokenFile.ReadOrCreate(path), provided))
-            throw new ForbiddenException(
-                "Force-release requires the operator token (scripts/runner-slots.ps1 sends it).",
-                "operator_token_required");
-    }
+    private static void RequireOperator(HttpContext http, PhoneHomeRunnerSettings settings) =>
+        OperatorCredential.Require(
+            http, settings, "Force-release requires the operator token (scripts/runner-slots.ps1 sends it).");
 
     /// <summary>
     /// A save that fails after the runner has released leaves a pending intent. Finish that

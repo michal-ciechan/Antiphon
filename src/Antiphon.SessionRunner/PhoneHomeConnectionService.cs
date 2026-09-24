@@ -110,8 +110,19 @@ public sealed class PhoneHomeConnectionService : BackgroundService
         // response. Numbering our own connections here desynchronised the two counters the moment
         // either process restarted alone, and both receive loops silently dropped every frame that
         // did not match - the socket stayed open while heartbeats, requests and replies vanished.
-        var epoch = ticket.Epoch;
+        await RunConnectedAsync(ws, ticket.Epoch, ct);
+    }
+
+    /// <summary>
+    /// One connected socket, from the server-owned epoch until the first of its receive,
+    /// heartbeat and event loops ends. Split from <see cref="RunConnectionAsync"/> so a scripted
+    /// socket can drive a connection's end without a registration round trip.
+    /// </summary>
+    internal async Task RunConnectedAsync(WebSocket ws, long epoch, CancellationToken ct)
+    {
         Interlocked.Exchange(ref _epoch, epoch);
+        var connectedAt = _clock.GetTimestamp();
+        _logger.LogInformation("Phone-home connection epoch={Epoch} connected (capacity {Capacity})", epoch, _settings.Capacity);
         using var connectionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var overflow = false;
         var reader = _runtime.SubscribeBounded(
@@ -128,9 +139,21 @@ public sealed class PhoneHomeConnectionService : BackgroundService
         var receive = ReceiveLoopAsync(writer, epoch, connectionCts.Token);
         var heartbeat = HeartbeatLoopAsync(writer, epoch, connectionCts.Token);
         var events = EventLoopAsync(writer, epoch, reader, connectionCts.Token);
+        Task? ended = null;
+        var pendingEvents = 0;
+        var pendingBytes = 0;
+        var inFlight = 0;
         try
         {
-            await Task.WhenAny(receive, heartbeat, events);
+            ended = await Task.WhenAny(receive, heartbeat, events);
+            // CARD-0679 D-4: measured before the cancel below closes the subscription, which
+            // releases every event it still held.
+            if (reader is ISessionRunnerEventLease lease)
+            {
+                pendingEvents = lease.PendingEvents;
+                pendingBytes = lease.PendingBytes;
+            }
+            inFlight = InFlight;
         }
         finally
         {
@@ -142,6 +165,21 @@ public sealed class PhoneHomeConnectionService : BackgroundService
             catch { /* closing a dropped socket */ }
             ws.Dispose();
         }
+
+        // CARD-0679 D-4: one line per connection end, naming the loop that ended it. An overflow
+        // cancels all three loops at once, so whichever finished first is incidental: the
+        // subscription the events loop drains is what failed.
+        var loop = overflow ? "events" : ended == receive ? "receive" : ended == heartbeat ? "heartbeat" : "events";
+        var fault = ended switch
+        {
+            { IsFaulted: true, Exception: { } faulted } => $"{faulted.GetBaseException().GetType().Name}: {faulted.GetBaseException().Message}",
+            { IsCanceled: true } => "cancelled",
+            _ => "none",
+        };
+        _logger.LogInformation(
+            "Phone-home connection ended: epoch={Epoch} loop={Loop} fault={Fault} overflow={Overflow} pending={PendingEvents} pendingBytes={PendingBytes} inFlight={InFlight} lifetimeMs={LifetimeMs}",
+            epoch, loop, fault, overflow ? "true" : "false", pendingEvents, pendingBytes, inFlight,
+            (long)_clock.GetElapsedTime(connectedAt).TotalMilliseconds);
 
         if (overflow)
             throw new PhoneHomeTransportException(PhoneHomeProblemTypes.EventOverflow, "Event hub overflow.");

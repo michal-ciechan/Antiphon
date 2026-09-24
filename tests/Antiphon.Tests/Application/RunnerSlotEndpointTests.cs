@@ -106,16 +106,17 @@ public class RunnerSlotEndpointTests
         host.Directory.MarkRecovered(await host.WaitLiveAsync());
         var sessionId = Guid.NewGuid();
         peer.Sessions.Add(new RunnerSessionDto(sessionId, 4, DateTime.UtcNow, "Running", null, "", 0));
-        // The public vhost reaches Kestrel through Caddy and Vite, so every request looks local.
+        // The public vhost reaches Kestrel through Caddy and Vite, so every request looks local;
+        // CARD-0658: X-Forwarded-* and the rewritten Host change nothing in either direction.
         host.ClientAddress = IPAddress.Loopback;
         var release = $"/api/session-runners/{host.AllowedRunnerId}/slots/{sessionId:D}/release";
         var orphans = $"/api/session-runners/{host.AllowedRunnerId}/slots/release-orphans";
 
-        using (var none = await host.PostOperatorAsync(release, new RunnerSlotReleaseRequest("proxied"), null))
+        using (var none = await host.PostOperatorAsync(release, new RunnerSlotReleaseRequest("proxied"), null, proxied: true))
             ((int)none.StatusCode).ShouldBe(403);
-        using (var wrong = await host.PostOperatorAsync(release, new RunnerSlotReleaseRequest("proxied"), "not-the-token"))
+        using (var wrong = await host.PostOperatorAsync(release, new RunnerSlotReleaseRequest("proxied"), "not-the-token", proxied: true))
             ((int)wrong.StatusCode).ShouldBe(403);
-        using (var sweep = await host.PostOperatorAsync(orphans, new RunnerSlotReleaseRequest("proxied"), null))
+        using (var sweep = await host.PostOperatorAsync(orphans, new RunnerSlotReleaseRequest("proxied"), null, proxied: true))
             ((int)sweep.StatusCode).ShouldBe(403);
         peer.RequestCount(PhoneHomeOperation.ReleaseSlot).ShouldBe(0);
 
@@ -124,7 +125,7 @@ public class RunnerSlotEndpointTests
         var token = OperatorTokenFile.ReadOrCreate(host.OperatorTokenPath);
         token.Length.ShouldBe(64);
         peer.Sessions.Clear();
-        using var empty = await host.PostOperatorAsync(orphans, new RunnerSlotReleaseRequest("empty sweep"), token);
+        using var empty = await host.PostOperatorAsync(orphans, new RunnerSlotReleaseRequest("empty sweep"), token, proxied: true);
         empty.EnsureSuccessStatusCode();
     }
 

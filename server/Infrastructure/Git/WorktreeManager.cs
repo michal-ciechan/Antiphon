@@ -759,8 +759,15 @@ public sealed class WorktreeManager : IWorktreeManager
     private async Task EnsureRefExistsAsync(string repoPath, string baseRef, CancellationToken ct)
     {
         var result = await RunGitAsync(repoPath, ["rev-parse", "--verify", "--quiet", $"{baseRef}^{{commit}}"], ct, throwOnError: false);
-        if (result.ExitCode != 0)
-            throw new ValidationException(nameof(baseRef), $"Base ref '{baseRef}' does not resolve to a commit.");
+        if (result.ExitCode == 0)
+            return;
+
+        // CARD-0666. Local only: this runs inside the dispatch claim, under the repository lease,
+        // so it never fetches. A caller start SHA only origin had was fetched at create
+        // (StartRefAvailability). The dispatch report shows only ex.Message, so name the ref here.
+        var error = $"Base ref '{baseRef}' failed validation: it does not resolve to a commit in {repoPath}. "
+            + "Dispatch does not fetch; a missing full start SHA is fetched from origin when the task is created.";
+        throw new ValidationException(nameof(baseRef), error, "worktree_base_ref_unresolved", error);
     }
 
     private async Task<bool> BranchExistsAsync(string repoPath, string branch, CancellationToken ct)

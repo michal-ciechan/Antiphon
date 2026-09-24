@@ -534,6 +534,122 @@ public class PhoneHomeCommandDispatcherTests
         JsonSerializer.SerializeToUtf8Bytes(tight, PhoneHomeFraming.Json).Length.ShouldBeLessThanOrEqualTo(budget);
     }
 
+    // --- CARD-0679 D-9: a retried Launch for a session the runner already holds. ---
+
+    [Test]
+    public async Task Duplicate_launch_with_the_same_generation_returns_the_existing_session()
+    {
+        var logs = new List<string>();
+        var runtime = new RecordingRuntime();
+        var dispatcher = Dispatcher(runtime, capacity: 1, logs: logs);
+        var generation = SessionGeneration.Normalize(new DateTime(2026, 9, 24, 10, 0, 0, DateTimeKind.Utc));
+        var request = Request("grok", "/work") with { AcceptedStartedAt = generation };
+
+        var first = await dispatcher.DispatchAsync(Launch(request), CancellationToken.None);
+        first.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        // Capacity 1 is full with the first launch: the retry must be recognised before capacity refuses it.
+        var second = await dispatcher.DispatchAsync(Launch(request), CancellationToken.None);
+
+        second.Kind.ShouldBe(PhoneHomeFrameKind.Result, $"{second.ErrorCode}: {second.ErrorDetail}");
+        var firstDto = first.Payload!.Value.Deserialize<RunnerSessionDto>(PhoneHomeFraming.Json)!;
+        var secondDto = second.Payload!.Value.Deserialize<RunnerSessionDto>(PhoneHomeFraming.Json)!;
+        secondDto.SessionId.ShouldBe(firstDto.SessionId);
+        secondDto.AcceptedStartedAt.ShouldBe(firstDto.AcceptedStartedAt);
+        secondDto.AcceptedStartedAt.ShouldBe(generation);
+        runtime.Mutations.Count(mutation => mutation == "start").ShouldBe(1);
+        runtime.List().Count.ShouldBe(1);
+        lock (logs)
+            logs.Count(line => line.StartsWith("[Information]", StringComparison.Ordinal)
+                && line.Contains("duplicate-ack", StringComparison.Ordinal)
+                && line.Contains(request.SessionId.ToString(), StringComparison.Ordinal)).ShouldBe(1, string.Join(Environment.NewLine, logs));
+    }
+
+    [Test]
+    public async Task Duplicate_launch_with_another_generation_is_a_typed_409()
+    {
+        var runtime = new RecordingRuntime();
+        var dispatcher = Dispatcher(runtime, capacity: 2);
+        var generation = SessionGeneration.Normalize(new DateTime(2026, 9, 24, 10, 0, 0, DateTimeKind.Utc));
+        var request = Request("grok", "/work") with { AcceptedStartedAt = generation };
+        (await dispatcher.DispatchAsync(Launch(request), CancellationToken.None)).Kind.ShouldBe(PhoneHomeFrameKind.Result);
+
+        var later = request with { AcceptedStartedAt = SessionGeneration.Next(generation, generation) };
+        var refused = await dispatcher.DispatchAsync(Launch(later), CancellationToken.None);
+
+        refused.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+        refused.StatusCode.ShouldBe(409);
+        // The wire value, pinned: the desktop matches on the code, never on detail text.
+        refused.ErrorCode.ShouldBe("phone_home_session_already_running");
+        runtime.Mutations.Count(mutation => mutation == "start").ShouldBe(1);
+        runtime.List().Single().AcceptedStartedAt.ShouldBe(generation);
+    }
+
+    // --- CARD-0679 D-4: the mutation log line carries ids, exe basename and generations only. ---
+
+    [Test]
+    public async Task Launch_and_kill_log_lines_carry_no_argv_env_cwd_or_error_detail()
+    {
+        const string argSentinel = "ARG-SENTINEL-7f3c-do-not-log";
+        const string envKeySentinel = "ENV_KEY_SENTINEL_7f3c";
+        const string envValueSentinel = "ENV-VALUE-SENTINEL-7f3c";
+        const string cwdSentinel = "/work/worktrees/task-7f3c0bad";
+        var logs = new List<string>();
+        var runtime = new RecordingRuntime();
+        var dispatcher = Dispatcher(runtime, logs: logs);
+        var generation = SessionGeneration.Normalize(new DateTime(2026, 9, 24, 11, 0, 0, DateTimeKind.Utc));
+        var env = new Dictionary<string, string> { [envKeySentinel] = envValueSentinel };
+        var admittedRequest = new RunnerLaunchRequest(Guid.NewGuid(), "/usr/local/bin/grok",
+            ["--prompt", argSentinel], env, cwdSentinel, 80, 24) with { AcceptedStartedAt = generation };
+
+        var admitted = await dispatcher.DispatchAsync(Launch(admittedRequest), CancellationToken.None);
+        admitted.Kind.ShouldBe(PhoneHomeFrameKind.Result, $"{admitted.ErrorCode}: {admitted.ErrorDetail}");
+
+        // A refusal whose detail text is non-empty: the line names the code, never the detail.
+        var refusedRequest = admittedRequest with { SessionId = Guid.NewGuid(), Cwd = "/outside-" + cwdSentinel.TrimStart('/') };
+        var refused = await dispatcher.DispatchAsync(Launch(refusedRequest), CancellationToken.None);
+        refused.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+        refused.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
+        refused.ErrorDetail.ShouldNotBeNullOrWhiteSpace();
+
+        var killSession = Guid.NewGuid();
+        var kill = await dispatcher.DispatchAsync(new PhoneHomeFrame(
+            PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.KillGeneration,
+            JsonSerializer.SerializeToElement(
+                new { sessionId = killSession, expectedAcceptedStartedAt = generation }, PhoneHomeFraming.Json)),
+            CancellationToken.None);
+        kill.Kind.ShouldBe(PhoneHomeFrameKind.Result, $"{kill.ErrorCode}: {kill.ErrorDetail}");
+
+        string[] lines;
+        lock (logs)
+            lines = [.. logs];
+        var all = string.Join(Environment.NewLine, lines);
+
+        var admittedLine = lines.Single(line => line.Contains("Phone-home Launch", StringComparison.Ordinal)
+            && line.Contains(admittedRequest.SessionId.ToString(), StringComparison.Ordinal));
+        admittedLine.ShouldStartWith("[Information]");
+        admittedLine.ShouldContain(" exe=grok ");
+        admittedLine.ShouldContain("outcome=started");
+        admittedLine.ShouldNotContain("/usr/local/bin");
+
+        var refusedLine = lines.Single(line => line.Contains("Phone-home Launch", StringComparison.Ordinal)
+            && line.Contains(refusedRequest.SessionId.ToString(), StringComparison.Ordinal));
+        refusedLine.ShouldStartWith("[Information]");
+        refusedLine.ShouldContain(" exe=grok ");
+        refusedLine.ShouldContain($"outcome=refused:{PhoneHomeProblemTypes.UnsupportedTarget}");
+        refusedLine.ShouldNotContain(refused.ErrorDetail!);
+        refusedLine.ShouldNotContain("cwd must be");
+
+        foreach (var sentinel in new[] { argSentinel, envKeySentinel, envValueSentinel, cwdSentinel, "task-7f3c0bad", "--prompt" })
+            all.ShouldNotContain(sentinel, customMessage: "log leaked " + sentinel + Environment.NewLine + all);
+
+        var killLine = lines.Single(line => line.Contains("Phone-home KillGeneration", StringComparison.Ordinal));
+        killLine.ShouldStartWith("[Information]");
+        killLine.ShouldContain(kill.RequestId.ToString());
+        killLine.ShouldContain($"session={killSession}");
+        killLine.ShouldContain("expectedGeneration=2026-09-24T11:00:00");
+        killLine.ShouldContain($"outcome={KillGenerationOutcomes.Missing}");
+    }
+
     private static PhoneHomeFrame SessionRequest(PhoneHomeOperation operation, long epoch) =>
         new(PhoneHomeFrameKind.Request, epoch, Guid.NewGuid(), operation,
             JsonSerializer.SerializeToElement(new { sessionId = Guid.NewGuid() }, PhoneHomeFraming.Json));
@@ -576,7 +692,7 @@ public class PhoneHomeCommandDispatcherTests
     private static PhoneHomeCommandDispatcher Dispatcher(
         IPhoneHomeRuntimeSurface runtime, int capacity = 8, IProviderAuthProbe? probe = null, bool claudeAuthProbeEnabled = true,
         bool grokAuthProbeEnabled = true,
-        int maxMessageUtf8Bytes = PhoneHomeProtocol.DefaultMaxMessageUtf8Bytes) =>
+        int maxMessageUtf8Bytes = PhoneHomeProtocol.DefaultMaxMessageUtf8Bytes, List<string>? logs = null) =>
         new(runtime, new PhoneHomeSettings
         {
             Enabled = true,
@@ -586,7 +702,7 @@ public class PhoneHomeCommandDispatcherTests
             ClaudeAuthProbeEnabled = claudeAuthProbeEnabled,
             GrokAuthProbeEnabled = grokAuthProbeEnabled,
             Limits = new PhoneHomeLimits(MaxMessageUtf8Bytes: maxMessageUtf8Bytes),
-        }, probe);
+        }, probe, logs is null ? null : new ListLogger<PhoneHomeCommandDispatcher>(logs));
 
     private static RunnerLaunchRequest Request(string exe, string cwd) =>
         new(Guid.NewGuid(), exe, [], new Dictionary<string, string>(), cwd, 80, 24);
@@ -612,14 +728,22 @@ public class PhoneHomeCommandDispatcherTests
         public RunnerCapabilitiesDto Capabilities() =>
             new("InboxConhost", "inbox", "test", false, Features: [], VerificationCustodyBackend: CustodyBackend);
         public string Health() => Fault is { } fault ? throw fault() : "Healthy";
-        public IReadOnlyList<RunnerSessionDto> List() => [];
+        /// <summary>CARD-0679: started sessions, keyed like the real runtime: one live session per id.</summary>
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, RunnerSessionDto> _sessions = new();
+        public IReadOnlyList<RunnerSessionDto> List() => [.. _sessions.Values];
         public Task<RunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
             throw (Fault?.Invoke() ?? new KeyNotFoundException());
         public Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct)
         {
+            // The real runtime refuses a second live session with the same id.
+            if (_sessions.TryGetValue(request.SessionId, out var running) && running.Status != "Exited")
+                throw new InvalidOperationException($"Session '{request.SessionId}' is already running.");
             Mutations.Add("start");
             Owned++;
-            return Task.FromResult(new RunnerSessionDto(request.SessionId, 1, DateTime.UtcNow, "Running", null, "", 0));
+            var session = new RunnerSessionDto(request.SessionId, 1, DateTime.UtcNow, "Running", null, "", 0,
+                AcceptedStartedAt: request.AcceptedStartedAt);
+            _sessions[request.SessionId] = session;
+            return Task.FromResult(session);
         }
         public RunnerBufferDto GetBuffer(Guid sessionId) => new(sessionId, "", 0);
         public RunnerSnapshotDto GetSnapshot(Guid sessionId) => new(sessionId, "", "", 0, DateTime.UtcNow);

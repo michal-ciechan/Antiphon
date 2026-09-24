@@ -105,10 +105,11 @@ public sealed class PhoneHomeLaunchPolicy
                 throw new ConflictException("A runner-bound task must use a Worktree workspace.", "phone_home_worktree_refused");
             if (!IsAdmittedKind(kind))
                 throw new ConflictException("A runner-bound task must be Grok or Claude Code.", "phone_home_kind_refused");
-            // SourceLanding on the runner is Cut B (CARD-0604 D-19): until the Linux custody
-            // backend exists, a tracked task here would have no receipt to seal.
-            if (sourceLanding)
-                throw new ConflictException("SourceLanding is not supported on the phone-home runner.", "phone_home_sourcelanding_refused");
+            // CARD-0604 D-19 (Cut B) / CARD-0659: a runner-bound SourceLanding Mutation is a
+            // supported shape. Create admits it only as a Mutation after asking THIS runner for
+            // custody (SourceLandingAdmission.RequireSupportAsync), the dispatcher launches it into
+            // the runner-side snapshot with its binding, and Project keeps that binding. Refusing
+            // it here too left every admitted remote Mutation to fail at launch.
             if (agent.AlwaysOn)
                 throw new ConflictException("A runner-bound task agent cannot be AlwaysOn.", "phone_home_pool_refused");
             return;

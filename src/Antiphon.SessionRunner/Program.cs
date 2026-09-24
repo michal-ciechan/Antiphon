@@ -46,7 +46,8 @@ builder.Services.AddSingleton<PhoneHomeCommandDispatcher>(sp =>
         new PhoneHomeRuntimeAdapter(runtime, new RunnerBuildDto(
             build.InformationalVersion, build.CommitSha, build.AssemblyWriteTimeUtc, build.ProcessStartUtc)),
         sp.GetRequiredService<IOptions<PhoneHomeSettings>>().Value,
-        sp.GetRequiredService<IProviderAuthProbe>());
+        sp.GetRequiredService<IProviderAuthProbe>(),
+        sp.GetRequiredService<ILogger<PhoneHomeCommandDispatcher>>());
 });
 // CARD-0628 D-7: measures Claude's sign-in state for the ProviderAuth operation and the launch backstop.
 builder.Services.AddSingleton(sp => new ClaudeAuthProbe(

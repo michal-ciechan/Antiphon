@@ -406,11 +406,12 @@ function Get-ReleaseGateReservedTag {
     return $null
 }
 
-function New-ReleaseGateTagReservation {
+function Get-ReleaseGateTagProposal {
     <#
-      Reserve the next daily sequence, or return the existing reservation for this
-      candidate. Reservation is idempotent by candidate id; a different SHA under
-      the same candidate id is a hard refusal (D-3 immutability).
+      The reservation New-ReleaseGateTagReservation would make, computed read-only:
+      the existing row for this candidate, or the next free daily sequence. It never
+      writes, so publish -WhatIf can report the proposed tag without reserving it.
+      A different SHA under the same candidate id is a hard refusal (D-3).
     #>
     param(
         [Parameter(Mandatory = $true)][string]$JournalPath,
@@ -429,7 +430,7 @@ function New-ReleaseGateTagReservation {
         if (-not [string]::Equals([string]$existing.sha, $Sha, [StringComparison]::OrdinalIgnoreCase)) {
             throw ('candidate {0} already reserved for sha {1}' -f $CandidateId, $existing.sha)
         }
-        return [pscustomobject]@{ Tag = [string]$existing.tag; Sequence = [int]$existing.sequence; Reused = $true; Row = $existing }
+        return [pscustomobject]@{ Tag = [string]$existing.tag; Sequence = [int]$existing.sequence; Reused = $true; Row = $existing; Journal = $journal }
     }
     $day = $CutUtc.ToUniversalTime().ToString('yyyy.MM.dd')
     $used = @()
@@ -439,7 +440,28 @@ function New-ReleaseGateTagReservation {
     }
     $next = 1
     while ($used -contains $next) { $next++ }
-    $tag = New-ReleaseGateTag -CutUtc $CutUtc -Sequence $next
+    return [pscustomobject]@{ Tag = (New-ReleaseGateTag -CutUtc $CutUtc -Sequence $next); Sequence = $next; Reused = $false; Row = $null; Journal = $journal }
+}
+
+function New-ReleaseGateTagReservation {
+    <#
+      Reserve the next daily sequence, or return the existing reservation for this
+      candidate. Reservation is idempotent by candidate id; a different SHA under
+      the same candidate id is a hard refusal (D-3 immutability).
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$JournalPath,
+        [Parameter(Mandatory = $true)][string]$CandidateId,
+        [Parameter(Mandatory = $true)][string]$Sha,
+        [datetime]$CutUtc
+    )
+    $proposal = Get-ReleaseGateTagProposal -JournalPath $JournalPath -CandidateId $CandidateId -Sha $Sha -CutUtc $CutUtc
+    if ($proposal.Reused) {
+        return [pscustomobject]@{ Tag = $proposal.Tag; Sequence = $proposal.Sequence; Reused = $true; Row = $proposal.Row }
+    }
+    $journal = $proposal.Journal
+    $tag = $proposal.Tag
+    $next = $proposal.Sequence
     $rows = @()
     foreach ($row in @($journal.reservations)) { $rows += $row }
     $rows += [ordered]@{
@@ -499,7 +521,7 @@ $script:ReleaseGateManifestAllowlist = @(
     'schemaVersion', 'repository', 'tag', 'candidateRef', 'candidateId', 'sha',
     'nativeRunId', 'windmillJobId', 'scheduleSlot', 'startedAt', 'completedAt',
     'policyHash', 'profile', 'scriptHashes', 'buildHash', 'bundleHash',
-    'suites', 'exclusions', 'summaryDigest', 'capabilities'
+    'suites', 'exclusions', 'summaryDigest', 'capabilities', 'publicationAuthorityDigest'
 )
 
 function New-ReleaseGateManifest {
@@ -544,16 +566,21 @@ function Get-ReleaseGateManifestDigest {
 
 function Test-ReleaseGatePublicationGate {
     <#
-      D-8: publication preconditions. Every one of these is a hard refusal; none
-      of them can be waived by a later readback succeeding.
+      D-8/D-15: publication preconditions. Every one of these is a hard refusal; none
+      of them can be waived by a later readback succeeding. The required suite set
+      and the pass/fail verdict come ONLY from the pinned authority and its full
+      execution ledger (Test-ReleaseGateAuthority); a report or summary confers
+      none. ExpectedPolicyHash / RequiredSuites are legacy extra equality
+      assertions against that authority, never a replacement for it, and an
+      absent value never waives the pinned requirement.
     #>
     param(
         $Green,
         $Candidate,
         [string]$RemoteSha = '',
+        $Authority = $null,
         [string]$ExpectedPolicyHash = '',
-        [string[]]$RequiredSuites = @(),
-        $SuiteResults = $null
+        [string[]]$RequiredSuites = @()
     )
     $reasons = @()
     $verdict = Get-ReleaseGateCreditVerdict -State $Green
@@ -569,29 +596,72 @@ function Test-ReleaseGatePublicationGate {
     if ([bool]$Green.noReport) { $reasons += 'no-report-run' }
     if ([bool]$Green.diagnostic) { $reasons += 'diagnostic-run' }
     if ([bool]$Green.seamed) { $reasons += 'seam-driven-run' }
-    if (-not [string]::IsNullOrWhiteSpace($ExpectedPolicyHash) -and
-        -not [string]::Equals([string]$Green.policyHash, $ExpectedPolicyHash, [StringComparison]::OrdinalIgnoreCase)) {
-        $reasons += 'policy-hash-mismatch'
-    }
-    if (@($RequiredSuites).Count -gt 0) {
-        $seen = @{}
-        foreach ($row in @($SuiteResults)) {
-            $id = [string]$row.id
-            if ([string]::IsNullOrWhiteSpace($id)) { continue }
-            $ok = (-not [bool]$row.skipped) -and ([int]$row.exitCode -eq 0) -and ([string]$row.result -eq 'pass')
-            if ($ok) { $seen[$id] = $true }
+    if ($null -eq $Authority) {
+        $reasons += 'missing-authority'
+    } else {
+        foreach ($r in @($Authority.Reasons)) { $reasons += [string]$r }
+        $pinned = $null
+        if ($Authority.Pinned) { $pinned = $Authority.Pinned.Authority }
+        $pinnedHash = ''
+        $pinnedSuites = @()
+        if ($pinned) {
+            $pinnedHash = [string]$pinned.policyHash
+            $pinnedSuites = @($pinned.requiredSuites | ForEach-Object { [string]$_ })
         }
-        foreach ($id in @($RequiredSuites)) {
-            if (-not $seen.ContainsKey([string]$id)) { $reasons += ('required-suite-missing:' + $id) }
+        if (-not [string]::IsNullOrWhiteSpace($ExpectedPolicyHash) -and
+            -not [string]::Equals($pinnedHash, $ExpectedPolicyHash, [StringComparison]::OrdinalIgnoreCase)) {
+            $reasons += 'policy-hash-mismatch'
+        }
+        if (@($RequiredSuites).Count -gt 0) {
+            $want = @($RequiredSuites | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+            $have = @($pinnedSuites | Sort-Object -Unique)
+            if (($want -join ',') -cne ($have -join ',')) { $reasons += 'required-suites-mismatch' }
         }
     }
-    return [pscustomobject]@{ Ok = ($reasons.Count -eq 0); Reasons = $reasons }
+    return [pscustomobject]@{ Ok = ($reasons.Count -eq 0); Reasons = @($reasons | Select-Object -Unique) }
 }
 
 # ------------------------------------------------------------------- seams ---
-# Git, GitHub and Windmill are injected at the I/O boundary so the contract tests
-# drive the real production code paths. Nothing below replaces a predicate or a
-# gate: a seam may only answer for the remote, never decide whether to publish.
+# Git, GitHub, Windmill and the publisher's clock are injected at the I/O boundary
+# so the contract tests drive the real production code paths. Nothing below
+# replaces a predicate or a gate: a seam may only answer for the remote or the
+# time, never decide whether to publish.
+#
+# Review bf928242: the publisher admits seams only in explicit test mode
+# (ANTIPHON_RELEASE_GATE_TEST_MODE exactly '1'), and refuses test mode whenever a
+# real remote would be reached. A real publication therefore never runs on an
+# injected clock, and the clock seam itself refuses outside test mode.
+
+$script:ReleaseGateTestModeVariable = 'ANTIPHON_RELEASE_GATE_TEST_MODE'
+
+function Test-ReleaseGateTestMode {
+    # Explicit opt-in only: the exact value '1'. Unset or anything else is production.
+    return ([string][Environment]::GetEnvironmentVariable($script:ReleaseGateTestModeVariable) -ceq '1')
+}
+
+function Import-ReleaseGatePublisherSeams {
+    <#
+      The publisher's seam admission. Outside test mode a seams file is refused
+      before it is loaded ('seams-outside-test-mode'). In test mode both the Git and
+      the GitHub adapters must be fakes; no seams file, or one without either adapter,
+      would reach a real remote and is refused ('test-mode-real-remote'). Returns ''
+      when admitted; a refusal leaves no seam loaded.
+    #>
+    param([string]$SeamsPath)
+    $script:ReleaseGateSeams = $null
+    $testMode = Test-ReleaseGateTestMode
+    $hasSeams = -not [string]::IsNullOrWhiteSpace($SeamsPath)
+    if (-not $testMode) {
+        if ($hasSeams) { return 'seams-outside-test-mode' }
+        return ''
+    }
+    if ($hasSeams) { Import-ReleaseGateSeams -SeamsPath $SeamsPath }
+    if (-not ($script:ReleaseGateSeams -and $script:ReleaseGateSeams.Git -and $script:ReleaseGateSeams.GitHub)) {
+        $script:ReleaseGateSeams = $null
+        return 'test-mode-real-remote'
+    }
+    return ''
+}
 
 function Import-ReleaseGateSeams {
     param([string]$SeamsPath)
@@ -600,6 +670,19 @@ function Import-ReleaseGateSeams {
     $script:ReleaseGateSeams = $null
     . $SeamsPath
     if ($ReleaseGateSeams) { $script:ReleaseGateSeams = $ReleaseGateSeams }
+}
+
+function Get-ReleaseGateUtcNow {
+    # D-15: the clock evidence timestamps are bounded by. Tests inject it, in test
+    # mode only; production reads the nightly clock (wall clock unless a nightly seam
+    # answers). A clock seam outside test mode is refused, never silently used.
+    if ($script:ReleaseGateSeams -and $script:ReleaseGateSeams.UtcNow) {
+        if (-not (Test-ReleaseGateTestMode)) { throw 'release-gate clock seam refused outside test mode' }
+        $value = @($script:ReleaseGateSeams.UtcNow.Invoke())
+        if ($value.Count -gt 0 -and $value[0] -is [datetime]) { return ([datetime]$value[0]).ToUniversalTime() }
+        throw 'release-gate clock seam returned no instant'
+    }
+    return (Get-NightlyUtcNow).ToUniversalTime()
 }
 
 function Invoke-ReleaseGateGit {

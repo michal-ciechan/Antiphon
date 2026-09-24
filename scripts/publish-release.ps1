@@ -4,9 +4,14 @@
     CARD-0599 D-8: publish one CalVer tag and GitHub Release for the exact tested SHA.
 
     Runs only on an RC complete-green. It validates the immutable candidate
-    journal, the profile/policy hash, every required suite result, report
-    delivery and the remote candidate SHA before it writes anything, and refuses
-    diagnostic / NoReport / seam-driven runs outright.
+    journal, the remote candidate SHA and - CARD-0599 D-15 - the pinned authority
+    before it writes anything: the policy blob re-read through git at the pinned
+    SHA, the exact eight-suite rc set, the frozen chunk plan and the full
+    execution ledger (every chunk, every required expanded UID, every declared
+    client/script roster entry, one intent/candidate/SHA/RunId). Diagnostic /
+    NoReport / seam-driven runs refuse outright. A summary or report is an output
+    of that validation, never a source of required suites or success; a legacy
+    candidate with no authority cannot publish and must be recut.
 
     Publication sequence, each transition journalled before the next begins:
       1. reserve tag vYYYY.MM.DD.N in the publication journal
@@ -22,6 +27,16 @@
     recovery; any mismatch is a hard refusal. A tag with no published release
     stays pending, not released. Tags are never deleted or recreated.
 
+    Before it trusts the ledger's prepublication receipt it reads the bound
+    release card back through the Antiphon API (-AntiphonApiUrl, default
+    ANTIPHON_API or http://localhost:17202; GET /api/cards/{id} only): the card
+    must be at exactly the receipt's revision with this run's correlation line
+    in its body. An unavailable readback refuses.
+
+    -SeamsPath is test-only: it is refused unless ANTIPHON_RELEASE_GATE_TEST_MODE
+    is exactly 1, and test mode is refused unless both the Git and GitHub
+    adapters are fakes, so a real publication never runs on an injected clock.
+
     Publishing never restarts AppHost or the runner and never checks out a tag
     in the main worktree.
 
@@ -35,6 +50,7 @@ param(
     [string]$ExpectedPolicyHash = '',
     [string[]]$RequiredSuites = @(),
     [string]$SeamsPath = '',
+    [string]$AntiphonApiUrl = '',
     [switch]$WhatIf,
     [switch]$PassThru
 )
@@ -43,7 +59,10 @@ $ErrorActionPreference = 'Continue'
 
 $lib = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
+. (Join-Path $lib 'nightly-policy.ps1')
+. (Join-Path $lib 'nightly-coverage.ps1')
 . (Join-Path $lib 'release-gate.ps1')
+. (Join-Path $lib 'release-authority.ps1')
 
 function Write-PublishLine { param([string]$Message) Write-Host ('[publish-release] {0}' -f $Message) }
 
@@ -104,9 +123,9 @@ function Invoke-AntiphonPublishRelease {
         [string]$ExpectedPolicyHash,
         [string[]]$RequiredSuites,
         [string]$SeamsPath,
+        [string]$AntiphonApiUrl,
         [switch]$WhatIf
     )
-    Import-ReleaseGateSeams -SeamsPath $SeamsPath
     $result = [ordered]@{
         ExitCode = 1
         Refusal = ''
@@ -119,6 +138,15 @@ function Invoke-AntiphonPublishRelease {
         Resumed = $false
         ManifestDigest = ''
     }
+    # Review bf928242: seams (fake remote, injected clock) only in explicit test
+    # mode, and never alongside a real remote. Refused before anything is read.
+    $admission = Import-ReleaseGatePublisherSeams -SeamsPath $SeamsPath
+    if (-not [string]::IsNullOrEmpty($admission)) {
+        Write-PublishLine ('REFUSED: seam admission ({0}).' -f $admission)
+        $result.Refusal = $admission; $result.ExitCode = 3; return [pscustomobject]$result
+    }
+    if ([string]::IsNullOrWhiteSpace($AntiphonApiUrl)) { $AntiphonApiUrl = [string]$env:ANTIPHON_API }
+    if ([string]::IsNullOrWhiteSpace($AntiphonApiUrl)) { $AntiphonApiUrl = 'http://localhost:17202' }
     if ([string]::IsNullOrWhiteSpace($CandidateId)) {
         Write-PublishLine 'REFUSED: -CandidateId is required.'
         $result.Refusal = 'missing-candidate'; $result.ExitCode = 3; return [pscustomobject]$result
@@ -146,25 +174,41 @@ function Invoke-AntiphonPublishRelease {
         if (-not [string]::IsNullOrWhiteSpace($line)) { $remoteSha = ($line -split '\s+')[0].Trim() }
     }
 
-    $suiteResults = $null
-    $summary = $null
-    if (-not [string]::IsNullOrWhiteSpace([string]$green.summaryPath) -and (Test-Path -LiteralPath ([string]$green.summaryPath))) {
-        try { $summary = Get-Content -LiteralPath ([string]$green.summaryPath) -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $summary = $null }
-    }
-    if ($summary) { $suiteResults = @($summary.suites) }
-    $wantSuites = @($RequiredSuites)
-    if ($wantSuites.Count -eq 0 -and $summary -and $summary.requiredSuites) { $wantSuites = @($summary.requiredSuites) }
-
+    # D-15: the authority is re-verified on every attempt, recovery included. It
+    # never reads summary.json; the pinned blob and the ledger are the only inputs.
+    # Repository is the publication destination (it must equal the frozen value and
+    # the checkout's origin); evidence may not post-date the publisher's clock; the
+    # receipt must match the release card as the Antiphon API serves it now.
+    $authority = Test-ReleaseGateAuthority -CandidateRoot $paths.Root -RepositoryRoot $CheckoutRoot -Green $green -Candidate $candidate `
+        -Repository $Repository -NowUtc (Get-ReleaseGateUtcNow) -CardApiBaseUrl $AntiphonApiUrl
     $gate = Test-ReleaseGatePublicationGate -Green $green -Candidate $candidate -RemoteSha $remoteSha `
-        -ExpectedPolicyHash $ExpectedPolicyHash -RequiredSuites $wantSuites -SuiteResults $suiteResults
+        -Authority $authority -ExpectedPolicyHash $ExpectedPolicyHash -RequiredSuites $RequiredSuites
     if (-not $gate.Ok) {
         Write-PublishLine ('REFUSED: publication gate ({0}).' -f ($gate.Reasons -join ','))
         $result.Refusal = ($gate.Reasons -join ','); $result.ExitCode = 3; return [pscustomobject]$result
     }
+    $pinned = $authority.Pinned.Authority
+    $ledgerDoc = Read-ReleaseAuthorityJson -Path (Join-Path (Get-ReleaseAuthorityDir -CandidateRoot $paths.Root) 'ledger.json')
+    $sanitizedSuites = @($authority.Suites)
+    $sanitizedExclusions = @($pinned.exclusions | ForEach-Object {
+        [ordered]@{ suite = [string]$_.suite; class = [string]$_.class; reason = [string]$_.reason; owner = [string]$_.owner } })
+    $summaryDigest = Get-NightlySha256Text -Text (ConvertTo-NightlyCanonicalJson -Object ([ordered]@{
+        profile = 'rc'; policyHash = [string]$pinned.policyHash; suites = $sanitizedSuites; exclusions = $sanitizedExclusions }))
+    $pubAuthority = New-ReleaseGatePublicationAuthority -CandidateRoot $paths.Root -Pinned $authority.Pinned -SummaryDigest $summaryDigest -NoWrite:$WhatIf
+    if (-not $pubAuthority.Ok) {
+        Write-PublishLine ('REFUSED: {0}.' -f $pubAuthority.Reason)
+        $result.Refusal = $pubAuthority.Reason; $result.ExitCode = 3; return [pscustomobject]$result
+    }
 
     $publicationJournal = Join-Path $ReleaseRoot 'publications.json'
-    $reservation = New-ReleaseGateTagReservation -JournalPath $publicationJournal -CandidateId $CandidateId -Sha $sha `
-        -CutUtc (ConvertTo-ReleaseGateUtc -Value $candidate.cutUtc -AllowEmpty)
+    $cutUtc = ConvertTo-ReleaseGateUtc -Value $candidate.cutUtc -AllowEmpty
+    if ($WhatIf) {
+        # Read-only: -WhatIf reports the proposed tag and never reserves it, so
+        # publications.json is untouched (not created, not rewritten).
+        $reservation = Get-ReleaseGateTagProposal -JournalPath $publicationJournal -CandidateId $CandidateId -Sha $sha -CutUtc $cutUtc
+    } else {
+        $reservation = New-ReleaseGateTagReservation -JournalPath $publicationJournal -CandidateId $CandidateId -Sha $sha -CutUtc $cutUtc
+    }
     $tag = $reservation.Tag
     $result.Tag = $tag
     $result.Resumed = [bool]$reservation.Reused
@@ -180,23 +224,16 @@ function Invoke-AntiphonPublishRelease {
         scheduleSlot = [string]$candidate.scheduleSlot
         startedAt = [string]$green.startedAt
         completedAt = [string]$green.completedAt
-        policyHash = [string]$green.policyHash
-        profile = [string]$green.profile
-        scriptHashes = $(if ($summary) { $summary.scriptHashes } else { $null })
-        buildHash = $(if ($summary) { [string]$summary.buildHash } else { '' })
-        bundleHash = $(if ($summary) { [string]$summary.bundleHash } else { '' })
-        suites = $(if ($summary) { @($summary.suites | ForEach-Object {
-            [ordered]@{
-                id = [string]$_.id
-                chunk = [string]$_.chunk
-                result = [string]$_.result
-                required = [int]$_.requiredUidCount
-                excluded = [int]$_.excludedUidCount
-                censusDigest = [string]$_.censusDigest
-            } }) } else { @() })
-        exclusions = $(if ($summary) { @($summary.suites | ForEach-Object { @($_.exclusions) }) | ForEach-Object { $_ } } else { @() })
-        summaryDigest = $(if ($summary) { Get-NightlySha256Text -Text (ConvertTo-NightlyCanonicalJson -Object $summary) } else { '' })
+        policyHash = [string]$pinned.policyHash
+        profile = 'rc'
+        scriptHashes = $pinned.scriptHashes
+        buildHash = [string]$ledgerDoc.buildHash
+        bundleHash = [string]$ledgerDoc.bundleHash
+        suites = $sanitizedSuites
+        exclusions = $sanitizedExclusions
+        summaryDigest = $summaryDigest
         capabilities = $(if ($green.capabilities) { @($green.capabilities) } else { @() })
+        publicationAuthorityDigest = $pubAuthority.Digest
     }
     $allow = Test-ReleaseGateManifestAllowlist -Manifest $manifest
     if (-not $allow.Ok) {
@@ -209,7 +246,7 @@ function Invoke-AntiphonPublishRelease {
     $publishJournal = $paths.PublishJournalPath
     if (Test-Path -LiteralPath $publishJournal) {
         $prior = Get-Content -LiteralPath $publishJournal -Raw -Encoding UTF8 | ConvertFrom-Json
-        foreach ($pair in @(@('tag', $tag), @('sha', $sha), @('manifestDigest', $manifestDigest))) {
+        foreach ($pair in @(@('tag', $tag), @('sha', $sha), @('manifestDigest', $manifestDigest), @('publicationAuthorityDigest', $pubAuthority.Digest))) {
             $have = [string]$prior.($pair[0])
             if (-not [string]::IsNullOrWhiteSpace($have) -and -not [string]::Equals($have, [string]$pair[1], [StringComparison]::OrdinalIgnoreCase)) {
                 Write-PublishLine ('REFUSED: {0} changed since the journal ({1} -> {2}).' -f $pair[0], $have, $pair[1])
@@ -227,6 +264,7 @@ function Invoke-AntiphonPublishRelease {
     New-Item -ItemType Directory -Path $paths.Root -Force | Out-Null
     [void](Write-ReleaseGateJournalStep -Path $publishJournal -Step 'intent' -Fields @{
         candidateId = $CandidateId; tag = $tag; sha = $sha; manifestDigest = $manifestDigest; repository = $Repository
+        publicationAuthorityDigest = $pubAuthority.Digest
     })
 
     $manifestPath = $paths.ManifestPath
@@ -310,8 +348,8 @@ function Invoke-AntiphonPublishRelease {
         schemaVersion = 1
         tag = $tag
         sha = $sha
-        profile = [string]$green.profile
-        policyHash = [string]$green.policyHash
+        profile = 'rc'
+        policyHash = [string]$pinned.policyHash
         suites = $manifest.suites
         exclusions = $manifest.exclusions
     })
@@ -368,7 +406,7 @@ function Invoke-AntiphonPublishRelease {
 
 $invokeResult = Invoke-AntiphonPublishRelease -ReleaseRoot $ReleaseRoot -CandidateId $CandidateId `
     -CheckoutRoot $CheckoutRoot -Repository $Repository -ExpectedPolicyHash $ExpectedPolicyHash `
-    -RequiredSuites $RequiredSuites -SeamsPath $SeamsPath -WhatIf:$WhatIf
+    -RequiredSuites $RequiredSuites -SeamsPath $SeamsPath -AntiphonApiUrl $AntiphonApiUrl -WhatIf:$WhatIf
 if ($PassThru) { return $invokeResult }
 Write-Host (ConvertTo-Json -InputObject ([ordered]@{
     candidateId = [string]$invokeResult.CandidateId

@@ -622,6 +622,13 @@ public sealed class DelegationSettings
     public int RemotePrepBackoffMaxSeconds { get; set; } = 900;
 
     /// <summary>
+    /// CARD-0657 D-3: the whole runner settlement sync attempt's budget, in seconds. A busy
+    /// repository lease is retried inside it; when it runs out the task blocks (lease-busy or
+    /// timeout) with its report retained. Default 120, floor 1.
+    /// </summary>
+    public int RunnerSyncBudgetSeconds { get; set; } = 120;
+
+    /// <summary>
     /// Started-and-interrupted git attempts on one land request before the sweep refuses
     /// (CARD-0331). Held passes do not count. Floor 1, ceiling 10.
     /// </summary>
@@ -1147,6 +1154,8 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
         if (options.RemotePrepBackoffBaseSeconds < 1
             || options.RemotePrepBackoffMaxSeconds < options.RemotePrepBackoffBaseSeconds)
             failures.Add("Delegation:RemotePrepBackoffBaseSeconds must be at least 1 and Delegation:RemotePrepBackoffMaxSeconds at least the base.");
+        if (options.RunnerSyncBudgetSeconds < 1)
+            failures.Add("Delegation:RunnerSyncBudgetSeconds must be at least 1.");
         if (options.CheckInterpreterFirstAttemptSeconds is { } firstAttempt
             && (firstAttempt <= 0 || firstAttempt > options.CheckInterpreterWaitSeconds))
             failures.Add("Delegation:CheckInterpreterFirstAttemptSeconds must be positive and no greater than CheckInterpreterWaitSeconds, or null.");

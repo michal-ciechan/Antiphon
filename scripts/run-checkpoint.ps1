@@ -10,6 +10,11 @@
     Exit codes: 0 green; 1 one or more failed tests; 2 invalid input, failed build or no TRX;
     3 fewer than -MinExecuted executed tests, or an -Expect token that matched no executed name.
 
+    -MsBuildProperty Name=Value (CARD-0671) is forwarded as --property:Name=Value to BOTH the build
+    and the `dotnet run`, so a -NoBuild row resolves the same output its build produced. Off
+    Windows, UseAppHost=false is added unless the caller names UseAppHost itself: the extensionless
+    fakeclaude apphost collides with the fakeclaude/ directory Antiphon.Tests stages beside it.
+
     Owner: docs/testing-and-build.md, "Checkpoint manifest (CARD-0585)".
     ASCII-only.
 #>
@@ -22,6 +27,7 @@ param(
     [switch]$NoBuild,
     [int]$MinExecuted = 1,
     [string[]]$Expect,
+    [string[]]$MsBuildProperty,
     [string]$DotnetShim
 )
 
@@ -45,6 +51,30 @@ function Stop-Invalid {
 if ($OutputPath -cnotmatch '^bin-[A-Za-z0-9._-]+/$') {
     Stop-Invalid ("OutputPath '$OutputPath' must be bin-<name>/ with a forward slash and no trailing space (CARD-0448 argv hazard: a trailing backslash creates a directory whose name ends in a space)")
 }
+
+# (1b) MSBuild properties (CARD-0671). Split on commas as -Expect is: `pwsh -File` binds every
+# argument as a string, so -MsBuildProperty A=1,B=2 arrives there as one element. A value that
+# itself needs a comma is written with MSBuild's %2C escape. The output path stays owned by (1).
+$propertyTokens = @(@($MsBuildProperty) | ForEach-Object { ([string]$_).Split(',') } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+foreach ($token in $propertyTokens) {
+    if ($token -cnotmatch '^[A-Za-z_][A-Za-z0-9_.-]*=') {
+        Stop-Invalid ("MsBuildProperty '$token' must be Name=Value")
+    }
+    if ($token -match '(^|;)\s*(OutputPath|OutDir|BaseOutputPath)\s*=') {
+        Stop-Invalid ("MsBuildProperty '$token' may not set the output path; use -OutputPath")
+    }
+}
+# Off Windows the extensionless fakeclaude apphost and the fakeclaude/ directory Antiphon.Tests
+# stages beside it are the same path, so the build fails; with no apphost `dotnet run` falls back
+# to `dotnet exec <dll>`. C671_PLATFORM is the offline harness's platform override.
+$onWindows = $IsWindows
+if ($env:C671_PLATFORM -eq 'windows') { $onWindows = $true }
+elseif ($env:C671_PLATFORM -eq 'linux') { $onWindows = $false }
+$namesAppHost = @($propertyTokens | Where-Object { $_ -match '(^|;)\s*UseAppHost\s*=' }).Count -gt 0
+if (-not $onWindows -and -not $namesAppHost) {
+    $propertyTokens = @($propertyTokens) + @('UseAppHost=false')
+}
+$propertyArguments = @($propertyTokens | ForEach-Object { '--property:' + $_ })
 
 # (2) Fresh results directory. A reused directory is how a stale TRX gets reported as this run.
 $stamp = $env:C585_STAMP
@@ -73,9 +103,10 @@ function Invoke-Dotnet {
 # (3) Build, unless this row reuses an earlier row's output.
 $buildState = 'reused'
 if (-not $NoBuild) {
-    $buildExit = Invoke-Dotnet @('build', $Project, ('--property:OutputPath=' + $OutputPath), '--nologo')
+    $buildExit = Invoke-Dotnet (@('build', $Project, ('--property:OutputPath=' + $OutputPath)) + $propertyArguments + @('--nologo'))
     if ($buildExit -ne 0) {
         Write-Host ('CHECKPOINT {0} build=failed project={1} outputPath={2} exit={3}' -f $Name, $Project, $OutputPath, $buildExit)
+        foreach ($token in $propertyTokens) { Write-Host ('MSBUILD PROPERTY {0}' -f $token) }
         Write-Trailer -Code 2
         exit 2
     }
@@ -84,10 +115,9 @@ if (-not $NoBuild) {
 
 # (4) One filter, one fresh TRX.
 $trxPath = Join-Path $resultsDirectory 'run.trx'
-$runExit = Invoke-Dotnet @(
-    'run', '--project', $Project, '--no-build', ('--property:OutputPath=' + $OutputPath), '--',
-    '--treenode-filter', $Filter, '--report-trx', '--report-trx-filename', 'run.trx',
-    '--results-directory', $resultsDirectory)
+$runExit = Invoke-Dotnet (@('run', '--project', $Project, '--no-build', ('--property:OutputPath=' + $OutputPath)) + $propertyArguments + @(
+    '--', '--treenode-filter', $Filter, '--report-trx', '--report-trx-filename', 'run.trx',
+    '--results-directory', $resultsDirectory))
 
 # (5) No TRX is not a result.
 if (-not (Test-Path -LiteralPath $trxPath)) {
@@ -174,6 +204,7 @@ try {
 Write-Host ('CHECKPOINT {0} commit={1} build={2} filter={3} executed={4} passed={5} failed={6} skipped={7} trx={8}' -f `
     $Name, $commit, $buildState, $Filter, $executed, $passed, $failed, $skipped, $trxPath)
 
+foreach ($token in $propertyTokens) { Write-Host ('MSBUILD PROPERTY {0}' -f $token) }
 foreach ($testName in $failedNames) { Write-Host ('FAILED {0}' -f $testName) }
 
 $shown = 0
