@@ -561,6 +561,84 @@ public sealed class WorktreeRetirementRaceTests
         acceptedAttachments.ShouldBe(0);
     }
 
+    [Test]
+    [Arguments("terminal-task")]
+    [Arguments("ended-session")]
+    [Arguments("unattributed")]
+    [Arguments("missing-task")]
+    public async Task C664_OrphanedLaunchRowsDoNotBlockRetirement(string shape)
+    {
+        await using var world = await RaceWorld.CreateAsync();
+        var launch = await world.SeedOwnedLaunchAsync(shape, aged: true);
+
+        var claim = await world.Journal.TryClaimRetirementAsync(world.CreateKeyCommand(), CancellationToken.None);
+
+        claim.Reason.ShouldBeNull();
+        claim.Accepted.ShouldBeTrue();
+        await using var db = world.CreateDb();
+        var row = await db.WorkspaceUseReservations.AsNoTracking().SingleAsync(r => r.Id == launch);
+        row.Active.ShouldBeFalse("an orphaned Launch row is released on sight by the claim");
+        row.ReleasedAt.ShouldNotBeNull();
+    }
+
+    [Test]
+    [Arguments("working-task")]
+    [Arguments("running-session")]
+    [Arguments("land-pending")]
+    [Arguments("fresh-unattributed")]
+    public async Task C664_LiveOwnerStillBlocksRetirement(string shape)
+    {
+        await using var world = await RaceWorld.CreateAsync();
+        var launch = await world.SeedOwnedLaunchAsync(shape, aged: shape != "fresh-unattributed");
+
+        var claim = await world.Journal.TryClaimRetirementAsync(world.CreateKeyCommand(), CancellationToken.None);
+
+        claim.Accepted.ShouldBeFalse();
+        claim.Reason.ShouldBe("workspace_in_use");
+        await using var db = world.CreateDb();
+        var row = await db.WorkspaceUseReservations.AsNoTracking().SingleAsync(r => r.Id == launch);
+        row.Active.ShouldBeTrue();
+        row.ReleasedAt.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task C664_FindLiveConsumersExcludesOrphanedRows()
+    {
+        await using var world = await RaceWorld.CreateAsync();
+        await world.SeedOwnedLaunchAsync("terminal-task", aged: true);
+        var working = await world.SeedOwnedLaunchAsync("working-task", aged: true);
+
+        var live = await world.Admission.FindLiveConsumersAsync(world.Key, world.OwnerTask.Id, CancellationToken.None);
+
+        live.Select(s => s.Id).ShouldBe(new[] { working });
+    }
+
+    [Test]
+    public async Task C664_ReconcileReleasesOnlyOrphanedRows()
+    {
+        await using var world = await RaceWorld.CreateAsync();
+        Guid[] orphaned =
+        [
+            await world.SeedOwnedLaunchAsync("terminal-task", aged: true),
+            await world.SeedOwnedLaunchAsync("ended-session", aged: true),
+            await world.SeedOwnedLaunchAsync("unattributed", aged: true),
+        ];
+        Guid[] live =
+        [
+            await world.SeedOwnedLaunchAsync("working-task", aged: true),
+            await world.SeedOwnedLaunchAsync("fresh-unattributed", aged: false),
+        ];
+
+        var released = await world.Journal.ReleaseOrphanedConsumersAsync(CancellationToken.None);
+
+        released.ShouldBe(3);
+        await using var db = world.CreateDb();
+        var rows = await db.WorkspaceUseReservations.AsNoTracking().ToListAsync();
+        rows.Where(r => !r.Active).Select(r => r.Id).OrderBy(id => id).ShouldBe(orphaned.OrderBy(id => id));
+        rows.Where(r => r.Active).Select(r => r.Id).OrderBy(id => id).ShouldBe(live.OrderBy(id => id));
+        rows.Where(r => !r.Active).ShouldAllBe(r => r.ReleasedAt != null);
+    }
+
     private sealed class RaceWorld : IAsyncDisposable
     {
         public required IsolatedTestSchema Schema { get; init; }
@@ -703,6 +781,94 @@ public sealed class WorktreeRetirementRaceTests
             db.AgentTasks.Add(row);
             await db.SaveChangesAsync();
             return row;
+        }
+
+        /// <summary>
+        /// CARD-0664: admit one <c>Launch</c> row at <see cref="Key"/> for the named owner shape and,
+        /// when <paramref name="aged"/>, move its <c>CreatedAt</c> two hours back (past any grace).
+        /// </summary>
+        public async Task<Guid> SeedOwnedLaunchAsync(string shape, bool aged)
+        {
+            Guid? taskId = null;
+            Guid? sessionId = null;
+            switch (shape)
+            {
+                case "terminal-task":
+                    taskId = (await SeedTaskAsync(AgentTaskStatus.Failed, landPending: false)).Id;
+                    break;
+                case "working-task":
+                    taskId = (await SeedTaskAsync(AgentTaskStatus.Working, landPending: false)).Id;
+                    break;
+                case "land-pending":
+                    taskId = (await SeedTaskAsync(AgentTaskStatus.Succeeded, landPending: true)).Id;
+                    break;
+                case "missing-task":
+                    taskId = Guid.NewGuid();
+                    break;
+                case "ended-session":
+                    sessionId = (await SeedSessionAsync(SessionStatus.Stopped)).Id;
+                    break;
+                case "running-session":
+                    sessionId = (await SeedSessionAsync(SessionStatus.Running)).Id;
+                    break;
+                case "unattributed":
+                case "fresh-unattributed":
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(shape), shape, null);
+            }
+
+            var admitted = await Journal.TryAdmitConsumerAsync(
+                new WorkspaceReservationCommand(Key, WorkspaceReservationKind.Launch, taskId, sessionId),
+                CancellationToken.None);
+            admitted.Accepted.ShouldBeTrue();
+            var id = admitted.Snapshot!.Id;
+            if (aged)
+            {
+                await using var db = CreateDb();
+                var row = await db.WorkspaceUseReservations.SingleAsync(r => r.Id == id);
+                row.CreatedAt = DateTime.UtcNow.AddHours(-2);
+                await db.SaveChangesAsync();
+            }
+
+            return id;
+        }
+
+        public async Task<AgentTask> SeedTaskAsync(AgentTaskStatus status, bool landPending)
+        {
+            await using var db = CreateDb();
+            var id = Guid.NewGuid();
+            var terminal = status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled;
+            var row = new AgentTask
+            {
+                Id = id, RootTaskId = id, Title = "c664-" + status, Goal = "c664",
+                Role = AgentTaskRole.Code, Kind = AgentTaskKind.Worker, AgentKind = AgentKind.ClaudeCode,
+                ModelLevel = AgentModelLevel.Medium, Workspace = WorkspaceMode.Shared,
+                WorkingDirectory = Path, RepoPath = Path, Status = status,
+                ReplyTo = AgentTaskReplyTo.None, CreatedAt = DateTime.UtcNow.AddHours(-3),
+                CompletedAt = terminal ? DateTime.UtcNow.AddHours(-2) : null,
+                LandRequestedAt = landPending ? DateTime.UtcNow : null,
+            };
+            db.AgentTasks.Add(row);
+            await db.SaveChangesAsync();
+            return row;
+        }
+
+        public async Task<AgentSession> SeedSessionAsync(SessionStatus status)
+        {
+            await using var db = CreateDb();
+            var now = DateTime.UtcNow;
+            var ended = status is SessionStatus.Stopped or SessionStatus.Failed;
+            var session = new AgentSession
+            {
+                Id = Guid.NewGuid(), DefinitionName = "fake", AgentKind = AgentKind.ClaudeCode,
+                Status = status, Cwd = Path, Cols = 120, Rows = 30,
+                CreatedAt = now.AddHours(-3), StartedAt = now.AddHours(-3), LastSeenAt = now,
+                EndedAt = ended ? now.AddHours(-2) : null,
+            };
+            db.AgentSessions.Add(session);
+            await db.SaveChangesAsync();
+            return session;
         }
 
         public async Task<Guid> SeedCardWithWorktreeAsync()
