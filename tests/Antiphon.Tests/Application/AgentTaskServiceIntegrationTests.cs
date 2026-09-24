@@ -1469,6 +1469,80 @@ public class AgentTaskServiceIntegrationTests
         created.FollowUpMessage.ShouldBe("agent retired - fresh delegate with inherited context");
     }
 
+    // CARD-0644 review repair / CARD-0636. A retired Worktree predecessor has no live checkout.
+    // Omission must not fall through to Shared in the caller's tree; an explicit Shared still may.
+    [Test]
+    public async Task retired_worktree_follow_up_omitted_workspace_is_refused()
+    {
+        using var callerCheckout = new TempWorkspace();
+        using var agentCheckout = new TempWorkspace();
+        const string tip = "feat/card-task-prior0644";
+        var prior = await SeedTaskAsync(
+            AgentTaskKind.Worker, callerCheckout.Path, status: AgentTaskStatus.Succeeded,
+            result: "Committed on the task branch.");
+        await PinTaskAgentAsync(prior.Id, Guid.NewGuid());
+
+        await using var db = CreateContext();
+        var storedPrior = await db.AgentTasks.SingleAsync(task => task.Id == prior.Id);
+        storedPrior.Workspace = WorkspaceMode.Worktree;
+        storedPrior.WorktreeBranch = tip;
+        await db.SaveChangesAsync();
+
+        var before = await db.AgentTasks.CountAsync();
+        var refused = await Should.ThrowAsync<ValidationException>(() => CreateService(db).CreateAsync(
+            NewRequest("continue the branch", role: AgentTaskRole.Code) with
+            {
+                FollowUpOnTask = prior.Id.ToString("D"),
+            },
+            ManualCaller(callerCheckout.Path),
+            CancellationToken.None));
+
+        refused.Code.ShouldBe("workspace_followup_requires_worktree");
+        var message = string.Join(" ", refused.Errors[nameof(CreateAgentTaskRequest.Workspace)]);
+        message.ShouldContain("-Worktree", Case.Sensitive);
+        message.ShouldContain("-StartRef", Case.Sensitive);
+        message.ShouldContain(tip, Case.Sensitive);
+        (await db.AgentTasks.CountAsync()).ShouldBe(before, "the refusal must insert nothing");
+
+        var shared = await CreateService(db).CreateAsync(
+            NewRequest("share the caller checkout on purpose", role: AgentTaskRole.Code) with
+            {
+                FollowUpOnTask = prior.Id.ToString("D"),
+                Workspace = WorkspaceMode.Shared,
+            },
+            ManualCaller(callerCheckout.Path),
+            CancellationToken.None);
+        var sharedRow = await db.AgentTasks.AsNoTracking().SingleAsync(task => task.Id == shared.Id);
+        sharedRow.Workspace.ShouldBe(WorkspaceMode.Shared);
+        sharedRow.WorkingDirectory.ShouldBe(callerCheckout.Path);
+
+        // A live agent whose checkout is the predecessor worktree, not the caller, still continues there.
+        var liveAgentId = await SeedPoolAgentAsync(agentCheckout.Path, AgentModelLevel.Low);
+        var livePrior = await SeedTaskAsync(
+            AgentTaskKind.Worker, callerCheckout.Path, status: AgentTaskStatus.Succeeded);
+        await PinTaskAgentAsync(livePrior.Id, liveAgentId);
+        await using (var liveDb = CreateContext())
+        {
+            var liveStored = await liveDb.AgentTasks.SingleAsync(task => task.Id == livePrior.Id);
+            liveStored.Workspace = WorkspaceMode.Worktree;
+            liveStored.WorktreeBranch = "feat/card-task-live0644";
+            liveStored.WorktreePath = agentCheckout.Path;
+            await liveDb.SaveChangesAsync();
+        }
+
+        var continued = await CreateService(db).CreateAsync(
+            NewRequest("keep going on the live agent", role: AgentTaskRole.Code) with
+            {
+                FollowUpOnTask = DelegationReportFormatter.Short(livePrior.Id),
+            },
+            ManualCaller(callerCheckout.Path),
+            CancellationToken.None);
+        var continuedRow = await db.AgentTasks.AsNoTracking().SingleAsync(task => task.Id == continued.Id);
+        continuedRow.Workspace.ShouldBe(WorkspaceMode.Shared);
+        continuedRow.WorkingDirectory.ShouldBe(agentCheckout.Path);
+        continuedRow.AgentId.ShouldBe(liveAgentId);
+    }
+
     [Test]
     public async Task a_follow_up_on_a_task_that_never_ran_degrades_to_a_fresh_delegate()
     {
