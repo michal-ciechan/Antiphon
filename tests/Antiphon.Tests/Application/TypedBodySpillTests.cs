@@ -106,6 +106,26 @@ public class TypedBodySpillTests
     }
 
     [Test]
+    public void Grok_spill_of_a_marked_body_keeps_the_marker_on_its_one_line()
+    {
+        using var tmp = new TempDir();
+        const string marker = "[antiphon-task:a8b2b9d5]";
+        var body = marker + " role=Custom\n\n" + new string('z', 2_000);
+        var relative = TypedBodySpill.InboxRelativePath("id");
+
+        var pointer = TypedBodySpill.Fit(new(
+            Body: body,
+            CeilingBytes: Inbox.SingleWriteMaxBytes,
+            AbsoluteSpillPath: TypedBodySpill.InboxAbsolutePath(tmp.Path, "id"),
+            RelativeSpillPath: relative,
+            AgentKind: AgentKind.Grok)).ToType;
+
+        pointer.ShouldNotContain("\n");
+        pointer.ShouldContain(marker + " " + TypedBodySpill.PointerHeadline);
+        pointer.ShouldContain($"'{relative}'");
+    }
+
+    [Test]
     public void Channel_envelope_prefix_survives_on_the_pointer()
     {
         using var tmp = new TempDir();
@@ -126,6 +146,38 @@ public class TypedBodySpillTests
         pointer.ShouldContain(TypedBodySpill.PointerHeadline);
         pointer.ShouldNotContain(new string('m', 50),
             customMessage: "the oversize text lives in the file, not on the pointer");
+    }
+
+    /// <summary>
+    /// CARD-0649. Server2 Claude task 903bf8a7 was spilled by the queue (inbox file, YOUR MESSAGE
+    /// pointer). The file still opened with the task marker; the typed prompt did not, so the
+    /// report could not be attributed. The marker has to ride the instruction line, and still be
+    /// present after that line is removed, because a runner UserPrompt has been observed to begin
+    /// after its heading.
+    /// </summary>
+    [Test]
+    public void Inbox_spill_pointer_keeps_the_opening_task_marker()
+    {
+        using var tmp = new TempDir();
+        const string marker = "[antiphon-task:903bf8a7]";
+        var body = marker + " role=Custom tier=High workspace=Worktree\n\n"
+            + new string('b', 2_000);
+        var relative = TypedBodySpill.InboxRelativePath("056f3eac-ebd7-4e1d-9544-6afc996292e6");
+        var path = TypedBodySpill.InboxAbsolutePath(tmp.Path, "056f3eac-ebd7-4e1d-9544-6afc996292e6");
+
+        var pointer = TypedBodySpill.Fit(new(
+            Body: body,
+            CeilingBytes: Inbox.SingleWriteMaxBytes,
+            AbsoluteSpillPath: path,
+            RelativeSpillPath: relative,
+            AgentKind: AgentKind.ClaudeCode)).ToType;
+
+        var instruction = pointer.Split('\n').First(line => line.Contains(TypedBodySpill.PointerHeadline, StringComparison.Ordinal));
+        instruction.ShouldStartWith(marker + " " + TypedBodySpill.PointerHeadline);
+        var withoutHeading = string.Join('\n', pointer.ReplaceLineEndings("\n").Split('\n').Skip(1));
+        withoutHeading.ShouldContain(marker);
+        File.ReadAllText(path).ShouldBe(body);
+        Encoding.UTF8.GetByteCount(pointer).ShouldBeLessThan(Inbox.SingleWriteMaxBytes);
     }
 
     [Test]

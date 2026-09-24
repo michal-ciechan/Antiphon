@@ -102,7 +102,41 @@ public class SessionDeliveryProfileTests
         var remoteSingleWriteMaxBytes = ceilings.SingleWriteMaxBytes;
         remoteSingleWriteMaxBytes.ShouldBe(1_024);
         ceilings.Backend.ShouldBe(DeliveryBackend.InboxConhost);
+        ceilings.BriefInlineMaxBytes.ShouldBe(0);
         owned.Pty.Ceilings.Backend.ShouldBe(DeliveryBackend.ModernConPty);
+    }
+
+    [Test]
+    public async Task Phone_home_Claude_keeps_the_inbox_ceiling_for_its_own_kind()
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        var session = new AgentSession
+        {
+            Id = Guid.NewGuid(),
+            DefinitionName = "claude",
+            AgentKind = AgentKind.ClaudeCode,
+            SessionBackend = SessionBackend.PtyHost,
+            Status = SessionStatus.Running,
+            Cwd = "D:/tmp",
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = DateTime.UtcNow,
+            StartedAt = DateTime.UtcNow,
+            LastSeenAt = DateTime.UtcNow,
+            RunnerId = "server2",
+            RunnerStoreId = Guid.NewGuid(),
+            RunnerCwd = "/work/worktrees/task-903bf8a7",
+        };
+        db.AgentSessions.Add(session);
+        await db.SaveChangesAsync();
+        await using var owned = Build(advertiseHerdr: true, backendOverride: "modern");
+
+        var ceilings = await owned.Profile.ForSessionAsync(db, session.Id, CancellationToken.None);
+
+        ceilings.Backend.ShouldBe(DeliveryBackend.InboxConhost);
+        ceilings.SingleWriteMaxBytes.ShouldBe(1_024);
+        ceilings.BriefInlineMaxBytes.ShouldBe(900);
+        owned.Pty.Ceilings.BriefInlineMaxBytes.ShouldBe(43_200);
     }
 
     [Test]
