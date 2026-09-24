@@ -45,5 +45,42 @@ public sealed class AgentTaskLandQueue
     /// <summary>Take one claim without waiting; false when the queue is empty (tests).</summary>
     public bool TryDequeue(out LandRequest request) => _channel.Reader.TryRead(out request!);
 
+    /// <summary>
+    /// Point-in-time view of the single global worker. Empty until the queue records
+    /// accepted channel entries; a new instance has no executing owner.
+    /// </summary>
+    public LandQueueSnapshot Capture(DateTime observedAt) =>
+        new(observedAt, null, Array.Empty<LandQueueEntry>());
+
     public sealed record LandRequest(Guid TaskId, string? VerifyFilter, Guid? RequestId = null);
+}
+
+/// <summary>One accepted channel entry. EntryId distinguishes a requeue from an unread older item.</summary>
+public sealed record LandQueueEntry(long EntryId, Guid TaskId, Guid? RequestId);
+
+/// <summary>Executing entry plus waiting entries in channel order. Position is one-based among waiting entries only.</summary>
+public sealed record LandQueueSnapshot(DateTime ObservedAt, LandQueueEntry? Executing, IReadOnlyList<LandQueueEntry> Waiting)
+{
+    public int WaitingCount => Waiting.Count;
+
+    public int? WaitingPosition(Guid taskId, Guid? requestId)
+    {
+        for (var i = 0; i < Waiting.Count; i++)
+        {
+            if (Matches(Waiting[i], taskId, requestId))
+                return i + 1;
+        }
+
+        return null;
+    }
+
+    public bool IsExecuting(Guid taskId, Guid? requestId) =>
+        Executing is not null && Matches(Executing, taskId, requestId);
+
+    private static bool Matches(LandQueueEntry entry, Guid taskId, Guid? requestId)
+    {
+        if (requestId is Guid id)
+            return entry.RequestId == id;
+        return entry.TaskId == taskId && entry.RequestId is null;
+    }
 }

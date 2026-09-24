@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 namespace Antiphon.Server.Application.Services;
 
 public sealed class AgentTaskLandMonitorService(AppDbContext db, TimeProvider clock,
-    IOptions<DelegationSettings> settings, IEventBus events)
+    IOptions<DelegationSettings> settings, IEventBus events, AgentTaskLandQueue? queue = null)
 {
     public async Task SweepAsync(CancellationToken ct)
     {
@@ -84,6 +84,7 @@ public sealed class AgentTaskLandMonitorService(AppDbContext db, TimeProvider cl
 
     private void AddAged(AgentTaskLandRequest request, AgentTaskLanding? operation, string severity, DateTime now)
     {
+        _ = queue?.Capture(now);
         var source = new AgentTaskEvent
         {
             Id = Guid.NewGuid(), AgentTaskId = request.TaskId, LandRequestId = request.Id,
