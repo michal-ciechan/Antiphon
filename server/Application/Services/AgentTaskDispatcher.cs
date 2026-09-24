@@ -3983,6 +3983,7 @@ public sealed class AgentTaskDispatcher
                     "workspace_existing_agent_conflict: explicit Worktree is pinned to an existing agent and was not launched.",
                     ct);
                 await transaction.CommitAsync(ct);
+                await ReleaseTaskConsumersAsync(claimed);
                 return DispatchOneResult.NotClaimed;
             }
 
@@ -3992,7 +3993,10 @@ public sealed class AgentTaskDispatcher
                 claimed.WorkingDirectory = pinnedAgent.WorkingDirectory;
         }
 
-        if (_workspaceUse is not null)
+        // CARD-0664 D-7: a first Worktree dispatch has no leaf yet; its key would be the repository
+        // root, which no retirement matches. The leaf is fenced by the session and every re-dispatch.
+        if (_workspaceUse is not null
+            && !(claimed.Workspace == WorkspaceMode.Worktree && claimed.WorktreePath is null))
         {
             var path = claimed.WorktreePath ?? claimed.WorkingDirectory;
             if (!string.IsNullOrWhiteSpace(path))
@@ -4120,6 +4124,7 @@ public sealed class AgentTaskDispatcher
             {
                 await FailAsync(claimed, prep.FailureReason, ct);
                 await transaction.CommitAsync(ct);
+                await ReleaseTaskConsumersAsync(claimed);
                 return DispatchOneResult.NotClaimed;
             }
 
@@ -4161,6 +4166,7 @@ public sealed class AgentTaskDispatcher
             {
                 await FailAsync(claimed, capture.FailureReason, ct);
                 await transaction.CommitAsync(ct);
+                await ReleaseTaskConsumersAsync(claimed);
                 return DispatchOneResult.NotClaimed;
             }
 
@@ -5711,7 +5717,15 @@ public sealed class AgentTaskDispatcher
             });
         }
         await _db.SaveChangesAsync(ct);
+        // CARD-0664 D-2: outside a claim transaction the Failed status is committed now; inside
+        // one, the claim path calls ReleaseTaskConsumersAsync after its own commit.
+        if (_db.Database.CurrentTransaction is null)
+            await ReleaseTaskConsumersAsync(task);
     }
+
+    /// <summary>CARD-0664 D-2/D-3: best-effort release of a failed task's Launch rows after its commit.</summary>
+    private Task ReleaseTaskConsumersAsync(AgentTask task) =>
+        _workspaceUse?.ReleaseTaskConsumersAsync(task.Id, CancellationToken.None) ?? Task.CompletedTask;
 
     internal enum ReuseOutcome
     {
