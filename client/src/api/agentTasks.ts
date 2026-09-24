@@ -573,9 +573,9 @@ export interface CreateAgentTaskRequest {
   /** Null takes the role policy's tier — which is the whole point of picking a role. */
   modelLevel?: AgentModelLevel | null
   /**
-   * Null lets the server decide: workers run Shared; an orchestrator gets its own worktree unless
-   * it already has its own location. An explicit value is honoured — with a warning when it puts
-   * an orchestrator in its caller's directory.
+   * Null lets the server decide: a fresh task gets its own worktree and task branch (a non-Git
+   * directory is refused rather than shared). An explicit value is honoured — with a warning when
+   * it puts an orchestrator in its caller's directory.
    */
   workspace?: WorkspaceMode | null
   workingDirectory?: string | null

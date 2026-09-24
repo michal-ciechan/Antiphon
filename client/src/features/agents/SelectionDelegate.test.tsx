@@ -50,7 +50,7 @@ describe('SelectionComposer', () => {
     onClose: vi.fn(),
   }
 
-  it('queues a delegation for the pool: quoted goal, server-decided workspace, file-path scope', async () => {
+  it('queues a delegation: quoted goal, server-decided (Worktree) workspace, file-path scope', async () => {
     const captured = captureCreate()
     renderWithProviders(<SelectionComposer {...props} />)
 
@@ -65,7 +65,7 @@ describe('SelectionComposer', () => {
       goal: 'In docs/plan.md:\n\n> The deploy step is manual for now.\n\nautomate it',
       kind: 'Worker',
       role: 'Docs',
-      // null = the server decides — the Shared default is what lets the warm pool pick it up.
+      // null = the server decides — an omitted workspace becomes the task's own worktree.
       workspace: null,
       workingDirectory: 'C:\\src\\antiphon',
       scope: 'docs/plan.md',

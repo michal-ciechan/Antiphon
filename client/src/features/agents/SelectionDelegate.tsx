@@ -118,7 +118,7 @@ export function SelectionComposer({
         goal,
         role,
         kind: 'Worker',
-        // null = the server decides (workers run Shared) — exactly the pool's pickup path.
+        // null = the server decides: an omitted workspace gets its own worktree and task branch.
         workspace: null,
         workingDirectory,
         scope: scope === undefined ? filePath : scope,
