@@ -38,11 +38,19 @@ public sealed class RemoteScriptContractTests
             .ToList();
         sudoLines.ShouldNotBeEmpty("the host lane still elevates to create its own directories");
         var containment = Block(text, "case_custody_containment");
+        // CARD-0660 (amended): the third is `ensure_runner_codex_home`, which creates and owns the
+        // host Codex home for uid 1654 -- a chown the host user mc cannot do. It refuses off the
+        // host lane before any of its sudo lines.
+        var codexHome = Block(text, "ensure_runner_codex_home");
         foreach (var line in sudoLines)
             (EnsureDirsBody(text).Contains(line, StringComparison.Ordinal)
-                || containment.Contains(line, StringComparison.Ordinal))
-                .ShouldBeTrue("sudo outside ensure_dirs' host branch or the containment case: " + line);
+                || containment.Contains(line, StringComparison.Ordinal)
+                || codexHome.Contains(line, StringComparison.Ordinal))
+                .ShouldBeTrue("sudo outside ensure_dirs' host branch, the Codex home or the containment case: " + line);
         EnsureDirsBody(text).ShouldContain("if [ \"$LANE\" = \"host\" ]; then");
+        var codexCommands = Commands(codexHome);
+        codexCommands[1].ShouldBe("if [ \"$LANE\" != \"host\" ]; then", "the Codex home refuses off the host lane first");
+        codexCommands[2].ShouldBe("write_result false CodexHomeHostLaneOnly 2");
 
         // And the containment case's sudo only READS the grant; it never runs a helper directly
         // (the probe does that, as uid 1654) and never elevates anything else.
@@ -694,6 +702,177 @@ public sealed class RemoteScriptContractTests
         output.ShouldContain("kept=600\n", customMessage: "an operator's existing file keeps its mode");
     }
 
+    // CARD-0660 (amended). The runner's Codex home is a DIRECTORY on server2 beside the identity
+    // files, bind-mounted read-write as CODEX_HOME. deploy-parent creates it for uid 1654 at 0700
+    // before anything binds it, and never reads, lists or copies what it holds; the evidence is
+    // presence only. persistent-restart ensures it while an older runner is still up.
+    [Test]
+    public void Deploy_parent_creates_the_codex_home_directory_without_reading_it()
+    {
+        var text = Remote();
+        text.ShouldContain("CODEX_HOME_PATH=\"$SERVER2_ROOT/secrets/codex\"\n");
+        text.ShouldContain("CODEX_HOME_OWNER=\"1654:1654\"\n");
+        Block(text, "compose_host").ShouldContain("RUNNER_CODEX_HOME_DIR=\"$CODEX_HOME_PATH\" \\");
+
+        var ensure = Block(text, "ensure_runner_codex_home");
+        var lines = Commands(ensure);
+        // A symlink refuses before anything touches the path (an install, chown or chmod through
+        // it would land on its target), and so does anything that is not a directory.
+        var symlink = lines.IndexOf("if [ -L \"$CODEX_HOME_PATH\" ]; then");
+        symlink.ShouldBeGreaterThan(0);
+        lines[symlink + 1].ShouldBe("write_result false CodexHomePathIsSymlink 2");
+        ensure.ShouldContain("write_result false CodexHomePathIsNotDirectory 2");
+        var firstTouch = lines.FindIndex(line => line.StartsWith("sudo -n install ", StringComparison.Ordinal)
+            || line.StartsWith("sudo -n chown ", StringComparison.Ordinal) || line.StartsWith("sudo -n chmod ", StringComparison.Ordinal));
+        firstTouch.ShouldBeGreaterThan(symlink);
+
+        // Created only when missing, owned by the runner uid at 0700 in one step.
+        var create = lines.IndexOf("if [ ! -e \"$CODEX_HOME_PATH\" ]; then");
+        create.ShouldBeGreaterThan(symlink);
+        lines[create + 1].ShouldBe(
+            "sudo -n install -d -o \"${CODEX_HOME_OWNER%:*}\" -g \"${CODEX_HOME_OWNER#*:}\" -m 0700 \"$CODEX_HOME_PATH\" 2>> \"$CASE_DIR/command.log\" || write_result false CodexHomeCreateFailed 2");
+        // Owner and mode are re-asserted on the directory itself only: never recursive, never a
+        // symlink's target.
+        ensure.ShouldContain("sudo -n chown -h \"$CODEX_HOME_OWNER\" \"$CODEX_HOME_PATH\"");
+        ensure.ShouldContain("sudo -n chmod 0700 \"$CODEX_HOME_PATH\"");
+        ensure.ShouldNotContain(" -R ");
+        ensure.ShouldNotContain("rm ");
+
+        // Presence only, as evidence and as a warning. Nothing in the script reads the home.
+        ensure.ShouldContain("printf 'true\\n' > \"$CASE_DIR/codex-home-present.txt\"");
+        ensure.ShouldContain("if sudo -n test -e \"$CODEX_HOME_PATH/auth.json\"; then");
+        ensure.ShouldContain("codex-auth-present.txt");
+        ensure.ShouldContain("WARN CodexAuthAbsent");
+        foreach (var line in Commands(text).Where(line => line.Contains("$CODEX_HOME_PATH", StringComparison.Ordinal)))
+            System.Text.RegularExpressions.Regex.IsMatch(line,
+                    @"(^|[\s;|&(])(cat|cp|mv|ls|head|tail|less|more|grep|sed|awk|tar|rsync|sha256sum|md5sum|base64|xxd|od|strings|scp)\s|<\s*""\$CODEX_HOME_PATH")
+                .ShouldBeFalse("the Codex home is never read: " + line);
+
+        // Before state-init binds it (seed_runner_checkout runs state-init) and before compose up;
+        // stack.env names it for every later compose call.
+        var deploy = Block(text, "case_deploy_parent");
+        Order(deploy, "ensure_runner_codex_home", "seed_runner_checkout").ShouldBeTrue();
+        Order(deploy, "ensure_runner_codex_home", "compose_host up -d").ShouldBeTrue();
+        deploy.ShouldContain("RUNNER_CODEX_HOME_DIR=$CODEX_HOME_PATH\n");
+
+        var restart = Block(text, "case_persistent_restart");
+        Order(restart, "ensure_runner_codex_home", "compose_host stop").ShouldBeTrue();
+    }
+
+    // The same function, run for real over a throwaway server2 root with sudo reduced to a plain
+    // call and the owner reduced to the current uid. The sentinel is not a credential.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void Deploy_parent_codex_home_refuses_a_symlink_or_file_and_keeps_contents()
+    {
+        var text = Remote();
+        var output = LinuxShell(CodexHomeHarness(text) + """
+            ( set -euo pipefail; ensure_runner_codex_home )
+            echo "fresh exit=$?"
+            [ "$(stat -c '%u:%g' "$CODEX_HOME_PATH")" = "$CODEX_HOME_OWNER" ] && echo fresh-owner-ok
+            stat -c 'fresh=%a %F' "$CODEX_HOME_PATH"
+            printf 'fresh-state=%s auth=%s\n' "$(cat "$CASE_DIR/codex-home-state.txt")" "$(cat "$CASE_DIR/codex-auth-present.txt")"
+
+            printf 'c660-sentinel-not-a-credential\n' > "$CODEX_HOME_PATH/auth.json"
+            chmod 0640 "$CODEX_HOME_PATH/auth.json"
+            chmod 0755 "$CODEX_HOME_PATH"
+            ( set -euo pipefail; ensure_runner_codex_home )
+            echo "existing exit=$?"
+            stat -c 'existing=%a' "$CODEX_HOME_PATH"
+            stat -c 'sentinel=%a' "$CODEX_HOME_PATH/auth.json"
+            printf 'sentinel-bytes=%s\n' "$(cat "$CODEX_HOME_PATH/auth.json")"
+            printf 'existing-state=%s home=%s auth=%s\n' "$(cat "$CASE_DIR/codex-home-state.txt")" \
+                "$(cat "$CASE_DIR/codex-home-present.txt")" "$(cat "$CASE_DIR/codex-auth-present.txt")"
+            grep -rq c660-sentinel "$CASE_DIR" || echo evidence-holds-no-contents
+
+            mv "$CODEX_HOME_PATH" "$root/elsewhere"
+            ln -s "$root/elsewhere" "$CODEX_HOME_PATH"
+            ( set -euo pipefail; ensure_runner_codex_home )
+            echo "symlink exit=$?"
+            stat -c 'target=%a' "$root/elsewhere"
+            [ -L "$CODEX_HOME_PATH" ] && echo link-left
+
+            rm "$CODEX_HOME_PATH"
+            printf 'not-a-directory\n' > "$CODEX_HOME_PATH"
+            chmod 0644 "$CODEX_HOME_PATH"
+            ( set -euo pipefail; ensure_runner_codex_home )
+            echo "file exit=$?"
+            stat -c 'file=%a %F' "$CODEX_HOME_PATH"
+
+            rm "$CODEX_HOME_PATH"
+            ( set -euo pipefail; LANE=nested; ensure_runner_codex_home )
+            echo "nested exit=$?"
+            [ -e "$CODEX_HOME_PATH" ] || echo nested-created-nothing
+            """);
+        output.ShouldContain("fresh exit=0");
+        output.ShouldContain("fresh-owner-ok");
+        output.ShouldContain("fresh=700 directory\n");
+        output.ShouldContain("fresh-state=created auth=false\n");
+        output.ShouldContain("WARN CodexAuthAbsent");
+        output.ShouldContain("existing exit=0");
+        output.ShouldContain("existing=700\n");
+        output.ShouldContain("sentinel=640\n", customMessage: "the home's contents are never re-moded");
+        output.ShouldContain("sentinel-bytes=c660-sentinel-not-a-credential\n");
+        output.ShouldContain("existing-state=kept home=true auth=true\n");
+        output.ShouldContain("evidence-holds-no-contents");
+        output.ShouldContain("RESULT accepted=false diagnosis=CodexHomePathIsSymlink\nsymlink exit=2");
+        output.ShouldContain("target=755\n", customMessage: "a symlink's target is never chowned or re-moded");
+        output.ShouldContain("link-left");
+        output.ShouldContain("RESULT accepted=false diagnosis=CodexHomePathIsNotDirectory\nfile exit=2");
+        output.ShouldContain("file=644 regular file\n");
+        output.ShouldContain("RESULT accepted=false diagnosis=CodexHomeHostLaneOnly\nnested exit=2");
+        output.ShouldContain("nested-created-nothing");
+    }
+
+    // ensure_dirs resets the host-lane trees to mc on every host case. Recursing into the Codex home
+    // would hand the runner's live sign-in to mc (and read every entry under it): the reset now
+    // prunes it, run for real with chown swapped for a print of what it would visit.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void Host_lane_ownership_reset_never_enters_the_codex_home()
+    {
+        var text = Remote();
+        var ensure = Commands(EnsureDirsBody(text));
+        ensure.ShouldNotContain(line => line.Contains("chown -R", StringComparison.Ordinal)
+            && line.Contains("$SERVER2_ROOT", StringComparison.Ordinal), "a recursive chown over the server2 root");
+        var reset = ensure.Single(line => line.Contains("-prune", StringComparison.Ordinal));
+        reset.ShouldBe("sudo -n find \"$SERVER2_ROOT\" -path \"$CODEX_HOME_PATH\" -prune -o -exec chown -h mc:mc {} +");
+
+        var visit = reset.Replace("sudo -n ", "", StringComparison.Ordinal)
+            .Replace("-exec chown -h mc:mc {} +", "-exec printf 'visit %s\\n' {} +", StringComparison.Ordinal);
+        var output = LinuxShell(string.Join('\n',
+            "root=\"$(mktemp -d)\"",
+            "trap 'rm -rf \"$root\"' EXIT",
+            "SERVER2_ROOT=\"$root/s2\"",
+            text.Replace("\r\n", "\n").Split('\n').Single(line => line.StartsWith("CODEX_HOME_PATH=", StringComparison.Ordinal)),
+            "mkdir -p \"$CODEX_HOME_PATH/sessions\"",
+            "touch \"$SERVER2_ROOT/secrets/gitconfig\" \"$CODEX_HOME_PATH/auth.json\"",
+            visit,
+            "") + "\n").Replace("\r\n", "\n");
+        output.ShouldContain("/s2\n");
+        output.ShouldContain("/s2/secrets\n");
+        output.ShouldContain("/s2/secrets/gitconfig\n");
+        output.ShouldNotContain("/s2/secrets/codex");
+    }
+
+    // The real Codex-home variables and function over a throwaway server2 root. sudo is a plain
+    // call and the owner is the current uid, so the harness needs no privilege.
+    private static string CodexHomeHarness(string text) =>
+        string.Join('\n', new[]
+            {
+                "root=\"$(mktemp -d)\"",
+                "trap 'rm -rf \"$root\"' EXIT",
+                "cd \"$root\"",
+                "CASE_DIR=\"$root/case\"; mkdir -p \"$CASE_DIR\"",
+                "SERVER2_ROOT=\"$root/server2\"; mkdir -p \"$SERVER2_ROOT/secrets\"",
+                "LANE=host",
+                "write_result() { printf 'RESULT accepted=%s diagnosis=%s\\n' \"$1\" \"$2\"; exit \"$3\"; }",
+                "sudo() { if [ \"$1\" = -n ]; then shift; fi; \"$@\"; }",
+            }
+            .Concat(text.Replace("\r\n", "\n").Split('\n').Where(line => line.StartsWith("CODEX_HOME_", StringComparison.Ordinal)))
+            .Concat(new[] { "CODEX_HOME_OWNER=\"$(id -u):$(id -g)\"", Block(text, "ensure_runner_codex_home") }))
+        + "\n";
+
     // The real identity variables and functions, over a throwaway server2 root, with write_result
     // reduced to a printed verdict. Extra functions are extracted from the script verbatim.
     private static string IdentityHarness(string text, params string[] functions)
@@ -720,7 +899,7 @@ public sealed class RemoteScriptContractTests
     // The remote script only ever runs under Linux bash, and these defects are behaviour (a
     // symlink's target mode, a restart's ordering), not text. On Windows the Linux shell is WSL:
     // Git Bash can neither create a symlink without privilege nor keep a 0600 mode.
-    private static string LinuxShell(string script)
+    internal static string LinuxShell(string script)
     {
         ProcessStartInfo start;
         if (OperatingSystem.IsWindows())
