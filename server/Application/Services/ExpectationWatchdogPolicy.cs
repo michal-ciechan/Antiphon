@@ -63,7 +63,15 @@ public static class ExpectationWatchdogPolicy
             && snapshot.AsOf - dispatched < ExpectationWindows.Queue;
         foreach (var group in snapshot.Queued.GroupBy(task => task.RepositoryScope, StringComparer.Ordinal))
         {
-            var ordered = group.OrderBy(task => task.StintStartedAt).ThenBy(task => task.TaskId).ToList();
+            // A live land or a full cap is ordinary occupancy. A dead journal, an unknown
+            // lease owner, and an ineligible runner stay in the set and can still page.
+            var ordered = group
+                .OrderBy(task => task.StintStartedAt)
+                .ThenBy(task => task.TaskId)
+                .Where(task => !IsProvenContinuingOrdinaryWait(task, snapshot))
+                .ToList();
+            if (ordered.Count == 0)
+                continue;
             var oldest = ordered[0].StintStartedAt;
             if (snapshot.AsOf - oldest < ExpectationWindows.Queue || recent)
                 continue;
@@ -271,6 +279,41 @@ public static class ExpectationWatchdogPolicy
         }
 
         return results;
+    }
+
+    private static bool IsProvenContinuingOrdinaryWait(ExpectationQueuedTask task, ExpectationSnapshot snapshot)
+    {
+        if (task.HoldClass != ExpectationHoldClass.OrdinaryWait)
+            return false;
+        if (string.IsNullOrWhiteSpace(task.HoldDetail))
+            return false;
+        if (!snapshot.Lanes.Any(lane => lane.Running > 0))
+            return false;
+        return IsLandInProgress(task.HoldDetail) || IsCapWithRunningTasks(task.HoldDetail);
+    }
+
+    private static bool IsLandInProgress(string detail) =>
+        detail.Contains("repository mutation lease is held by the land", StringComparison.Ordinal)
+        || detail.Contains("is landing", StringComparison.Ordinal);
+
+    private static bool IsCapWithRunningTasks(string detail)
+    {
+        const string marker = "concurrency cap reached (";
+        var start = detail.IndexOf(marker, StringComparison.Ordinal);
+        if (start < 0)
+            return false;
+        start += marker.Length;
+        var end = start;
+        while (end < detail.Length && char.IsDigit(detail[end]))
+            end++;
+        if (end == start)
+            return false;
+        return int.TryParse(
+                detail[start..end],
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var running)
+            && running > 0;
     }
 
     private static bool IsExplicitFence(ExpectationQueuedTask task) =>
