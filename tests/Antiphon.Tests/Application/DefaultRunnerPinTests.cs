@@ -129,7 +129,7 @@ public sealed class DefaultRunnerPinTests
         // without a runner in play.
         foreach (var runnerId in new string?[] { null, "local", "server2" })
         {
-            var refused = await Should.ThrowAsync<ConflictException>(() => service.CreateAsync(
+            var refused = await Should.ThrowAsync<RoutingPinConflictException>(() => service.CreateAsync(
                 Code("c659 conflict", AgentKind.Grok) with { RunnerId = runnerId }, kit.Caller, CancellationToken.None));
             refused.Code.ShouldBe("routing_pin_conflict", runnerId ?? "<omitted>");
         }

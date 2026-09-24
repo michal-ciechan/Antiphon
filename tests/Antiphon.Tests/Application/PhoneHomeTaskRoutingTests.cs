@@ -136,14 +136,14 @@ public sealed class PhoneHomeTaskRoutingTests
     }
 
     [Test]
-    public void Source_landing_is_refused_until_cut_b()
+    public void Source_landing_task_is_admitted_after_cut_b()
     {
-        // Cut B (D-19) is what teaches the runner to hold a binding; until then a tracked task
-        // there would have no receipt to seal.
-        Should.Throw<Antiphon.Server.Application.Exceptions.ConflictException>(() =>
-                Policy().RefuseUnsupportedStart(PoolAgent(), false, delegatedTask: true, worktree: true,
-                    sourceLanding: true, false, SessionBackend.PtyHost, AgentKind.Grok, null))
-            .Code.ShouldBe("phone_home_sourcelanding_refused");
+        // Cut B (D-19) taught the runner to hold a binding, and create admits a runner-bound
+        // SourceLanding Mutation after asking that runner for custody. CARD-0659: the launch gate
+        // must agree, or every admitted remote Mutation fails at dispatch.
+        Should.NotThrow(() =>
+            Policy().RefuseUnsupportedStart(PoolAgent(), false, delegatedTask: true, worktree: true,
+                sourceLanding: true, false, SessionBackend.PtyHost, AgentKind.Grok, null));
     }
 
     private static Agent PoolAgent() => new()
