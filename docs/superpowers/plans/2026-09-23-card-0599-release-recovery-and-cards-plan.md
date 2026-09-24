@@ -356,10 +356,12 @@ publish-release refuses `-SeamsPath` unless `ANTIPHON_RELEASE_GATE_TEST_MODE` is
 exactly `1` (`seams-outside-test-mode`), refuses test mode unless both the Git and
 GitHub adapters are fakes (`test-mode-real-remote`), and `Get-ReleaseGateUtcNow`
 throws on a clock seam outside test mode. The C599A full matrix is one TUnit method
-per harness child (15 methods, each near 30 s on server2). Mutation candidates for
-these guards have no PC row yet: readback fail-closed, identity, revision equality,
-body correlation, seam admission outside test mode, real-remote refusal in test
-mode, and the clock-seam refusal (`C599A_ReceiptReadback`, `C599A_PublisherTestMode`).
+per harness child (15 methods, each near 30 s on server2). Their positive controls
+are G/PC-396..402 (review 9df5bbae): readback fail-closed, identity, revision
+equality, body correlation, seam admission outside test mode, real-remote refusal
+in test mode, and the clock-seam refusal (`C599A_ReceiptReadback`,
+`C599A_PublisherTestMode`). The receipt-ordering obligation is carried into the
+B4/B5 round rows below.
 
 ### D-16: One lock and one owned native lifetime across phases (A-1/A-4)
 
@@ -515,8 +517,8 @@ No live registration/publication inside these rounds. No all-round CP replay per
 | B1 / 75 min | A-3 authority and all-chunk gate: `scripts/publish-release.ps1`, `scripts/lib/release-gate.ps1`, `nightly-policy.ps1`, `nightly-coverage.ps1`; new `scripts/lib/release-authority.ps1`; extend `scripts/test-release-gate.ps1`. | New `Scripts/ReleaseGateAuthorityContractTests.cs` (ordinary); `ReleaseGatePublicationAuthorityTests.C599A_PinnedPolicy` (full matrix). Missing authority cannot write remotely; legacy candidates refuse. |
 | B2 / 85 min | A-2 real stdout/JSON/binary adapter and immutable upload/recovery: `scripts/lib/release-gate.ps1`, new `release-github.ps1`, `scripts/publish-release.ps1`, process-boundary fixture under `scripts/fixtures/release-gate/`. | New `Scripts/ReleaseGateRecipientContractTests.cs` (ordinary); `ReleaseGatePublicationAuthorityTests.C599A_GitHubReadback/C599A_AssetReadback` plus inherited recovery methods. Valid real process output accepted, missing receipt/unequal bytes refuse. |
 | B3 / 85 min | D-11 durable entities/outbox/claims and atomic initial Cut-card allocation; new Domain release entities/enums, `Application/Services/ReleaseGateIntentService.cs`, `ReleaseGateOutboxDispatcher.cs` with a queue I/O boundary, `Infrastructure/Data/AppDbContext.cs`, CLI-generated migration. Add persisted card/column WorkflowKind with Code defaults here. | New `Infrastructure/ReleaseGateIntentTests.cs` (ordinary); persistence/restart cases in `ReleaseGateQueueTests`. Seed an isolated shared board with Code and Release columns until B4 adds setup. DB constraints and commit-before-enqueue; no production worker enabled. |
-| B4 / 85 min | D-13 shared-board workflow setup/stage projector and dispatch boundaries: new `ReleaseGateBoardService.cs`, `ReleaseGateCardProjector.cs`; `BoardService`, `CardService`, `CardWorkTransitionService`, `OrchestratorService`, `AgentTaskService`, `ScheduleService`/scheduled-action boundary, `WorkflowDefinitionLoader`, `ExternalTrackerSyncService`; related DTOs. | New `Application/ReleaseGateBoardTests.cs` (ordinary), full guards in `ReleaseGateBoardBoundaryTests.cs`. Same-status column moves and generic Code isolation; regular Code board behavior retained. |
-| B5 / 85 min | D-14 outcome delivery/fix links: new `ReleaseGateReportService.cs`, `ReleaseGateFixService.cs`, outbox consumers; `scripts/nightly-report.ps1` RC routing; generated body/changelog; fix/link DTOs. | New `Application/ReleaseGateReportContractTests.cs` (ordinary); update `E2E/ReleaseGateReportDeliveryTests.C599A_QueuedReportRecovery`. Pre-native failure, idempotent fix creation, pre/post-publish receipts; master incident untouched. |
+| B4 / 85 min | D-13 shared-board workflow setup/stage projector and dispatch boundaries: new `ReleaseGateBoardService.cs`, `ReleaseGateCardProjector.cs`; `BoardService`, `CardService`, `CardWorkTransitionService`, `OrchestratorService`, `AgentTaskService`, `ScheduleService`/scheduled-action boundary, `WorkflowDefinitionLoader`, `ExternalTrackerSyncService`; related DTOs. | New `Application/ReleaseGateBoardTests.cs` (ordinary), full guards in `ReleaseGateBoardBoundaryTests.cs`. Same-status column moves and generic Code isolation; regular Code board behavior retained. **Receipt ordering (D-15 B1 repair 2, G-398):** publish-release requires the release card's `revisionCount` to equal the prepublication receipt's `recipient.revision`, so every pre-publish stage move this projector makes must precede the receipt, or a new receipt must be taken after the move; `C599B_StageMoves` asserts the last pre-publish move's revision is the one the receipt names. |
+| B5 / 85 min | D-14 outcome delivery/fix links: new `ReleaseGateReportService.cs`, `ReleaseGateFixService.cs`, outbox consumers; `scripts/nightly-report.ps1` RC routing; generated body/changelog; fix/link DTOs. | New `Application/ReleaseGateReportContractTests.cs` (ordinary); update `E2E/ReleaseGateReportDeliveryTests.C599A_QueuedReportRecovery`. Pre-native failure, idempotent fix creation, pre/post-publish receipts; master incident untouched. **Receipt ordering (D-15 B1 repair 2, G-398):** the prepublication receipt is taken after the last pre-publish card move, or re-taken after any later move; the projection's `release-correlation:` line is written before that receipt. Recovery test in `C599B_FixAndFinalReceipt`: a card move after the receipt leaves publication refused with `release-card-readback-revision` and zero remote writes; re-taking the receipt at the new revision then publishes once, with no republish. |
 | B6 / 85 min | D-16 phase coordinator and owned native lifetime: new `Application/Services/ReleaseGateCoordinator.cs`, `Application/Interfaces/IReleaseGateNativeProcess.cs`, `Infrastructure/Releases/ReleaseGateNativeProcess.cs` and lock adapter; `release-cut.ps1`, `release-candidate.ps1`, `nightly-run.ps1`, `lib/nightly-run-impl.ps1`, `release-gate.ps1`. | New `Infrastructure/ReleaseGateOwnershipContractTests.cs` (ordinary); `ReleaseGateQueueTests.C599A_LockScope/C599A_DisableAndShutdown/C599A_HandoffRecovery`. Own short native child, no production runner; lock before cut through join/publish. |
 | B7 / 85 min | Main-instance Hangfire/admission and API: new `ReleaseGatesSettings`/validator, `ReleaseGateSlotJob`, `ReleaseGateRecoveryJob`, `ReleaseGateExecutionJob`; `HangfireConfiguration`, `Program`, `appsettings.json`; new `Api/Endpoints/ReleaseGateEndpoints.cs`, `scripts/release-gates.ps1`. | `Infrastructure/ReleaseGateSchedulerTests` five existing commissioned names (ordinary); queue ReadyAndBusy/restart matrix. One dedicated worker, durable recovery and false defaults. Normal test Program never launches it. |
 | B8 / 85 min | D-18 chunk plan and end-to-end envelopes: `scripts/lib/nightly-tests-impl.ps1`, `nightly-coverage.ps1`, `tests/test-execution-policy.json` if census disposition changes; update `release-status.ps1`, `register-release-gates.ps1` to refuse RC Windmill activation; owner docs `release-gates.md`, `testing-and-build.md`, `bootstrap.md`, `ops-http.md`, `agent-card-lifecycle.md`, `workflow-tracker-block.md`, `scripts/windmill/README.md`. | New `Scripts/ReleaseGateActivationContractTests.cs` (ordinary); full queue/report/authority integration and Q rehearsal. Executable operator commands, no RC Windmill path, exact chunks/correlation, still disabled. |
@@ -1080,6 +1082,13 @@ not waived by this delta.
 | G-393 | D-17 release API URL ID | PC-393 |
 | G-394 | D-17 stable known release ID | PC-394 |
 | G-395 | D-17 redirect secret custody | PC-395 |
+| G-396 | D-15 release card readback fails closed | PC-396 |
+| G-397 | D-15 readback is the bound release card | PC-397 |
+| G-398 | D-15 receipt revision equals current card revision | PC-398 |
+| G-399 | D-15 card body carries this run's correlation | PC-399 |
+| G-400 | D-15 seams refused outside test mode | PC-400 |
+| G-401 | D-15 test mode refuses a real remote | PC-401 |
+| G-402 | D-15 clock seam refused outside test mode | PC-402 |
 
 ### Positive controls
 
@@ -1296,6 +1305,26 @@ from a shared/live database. Their six-minute cycle estimate includes generation
 | PC-393 | omit numeric release ID equality with API URL ID | `ReleaseGatePublicationAuthorityTests.C599A_GitHubReadback` | release body ID 701 with API URL ID 702 refuses | 4 |
 | PC-394 | accept a different release ID on recovery readback | `ReleaseGatePublicationAuthorityTests.C599A_RemoteWriteRecovery` | same tag with changed known release ID stays remote-conflict | 6 |
 | PC-395 | persist raw signed download redirect URL in evidence | `ReleaseGatePublicationAuthorityTests.C599A_AssetReadback` | fixture signed query marker is absent from logs journals and public bytes | 4 |
+| PC-396 | in `release-authority.ps1`, on `-not $readback.Ok` add no refusal and skip the card checks | `ReleaseGatePublicationAuthorityTests.C599A_ReceiptReadback` | (full name) `C599 V-12: an unavailable, failed, unknown or non-object release card readback refuses (fail closed)`; every gate variant loses `release-card-readback-unavailable` and `publisher api answers 503`/`publisher api unreachable` publish to the fake remote | 4 |
+| PC-397 | keep the served `id` GUID-shape check but drop its equality with the authority's `releaseCardId` | `ReleaseGatePublicationAuthorityTests.C599A_ReceiptReadback` | (full name) `C599 V-12: a readback of any card but the bound release card refuses`; `api serves a different card` and `publisher api serves a different card` are not refused with `release-card-readback-identity` | 4 |
+| PC-398 | compare card `revisionCount` to `recipient.revision` with `-ge` instead of `-eq` | `ReleaseGatePublicationAuthorityTests.C599A_ReceiptReadback` | (full name) `C599 V-12: a receipt revision other than the release card current revision refuses`; `card moved on after the receipt`, `receipt names an earlier revision` and its publisher variant lose `release-card-readback-revision` | 4 |
+| PC-399 | skip `Test-ReleaseAuthorityCardCorrelation` on the served description | `ReleaseGatePublicationAuthorityTests.C599A_ReceiptReadback` | (full name) `C599 V-12: a release card body without exactly this run correlation refuses`; every body variant loses `release-card-readback-correlation` and `publisher body names a foreign run` publishes to the fake remote | 4 |
+| PC-400 | in `Import-ReleaseGatePublisherSeams`, outside test mode import the supplied seams file instead of returning `seams-outside-test-mode` | `ReleaseGatePublicationAuthorityTests.C599A_PublisherTestMode` | (full name) `C599 V-18: outside test mode a seams file is refused before it is loaded, the clock is never read and nothing remote is written`; each of the seven non-`1` mode values lacks `seams-outside-test-mode` | 4 |
+| PC-401 | in test mode drop the Git-and-GitHub adapter requirement (admit no seams file or a one-adapter file) | `ReleaseGatePublicationAuthorityTests.C599A_PublisherTestMode` | (full name) `C599 V-18: test mode refuses a real remote: no seams file, or one without the Git or GitHub adapter`; each of the three variants lacks `test-mode-real-remote` | 4 |
+| PC-402 | in `Get-ReleaseGateUtcNow`, invoke a clock seam outside test mode instead of throwing | `ReleaseGatePublicationAuthorityTests.C599A_PublisherTestMode` | (full name) `C599 V-18: the release-gate clock seam is refused outside test mode and honoured inside it`; Detail shows `outside=returned ...` | 4 |
+
+PC-396..402 (review 9df5bbae) guard the B1 repair 2 checks, whose harness assertions carry
+the `C599 V-12:`/`C599 V-18:` prefix rather than `C599 G-n:`, so their assertion column
+gives the full assertion name verbatim; the named assertion must fail and its matrix
+Detail must name the listed variant(s). Each mutant is applied alone. PC-402 is masked
+end to end by G-400 (the publisher never loads a seams file outside test mode), so it
+is the direct owning-boundary control over the production `Get-ReleaseGateUtcNow`; never
+combine it with PC-400. Safety: PC-400's defect must keep the fake Git/GitHub adapters
+loaded; a variant that silently drops the seams file instead would send the publisher
+down the real git/`gh` path and is not an acceptable substitute. PC-401 relies on the
+harness's own isolation of the checkout origin to a missing local path; run it with no
+`GH_TOKEN`, `GITHUB_TOKEN` or `GH_REPO` in the child environment, and restore at once and
+report if any real `gh` invocation is observed.
 
 ### Out of scope
 
@@ -1354,7 +1383,7 @@ ordinary-scope exception does not enable Interim.
 
 #### Full Q-2 / RC control-method roster (not ordinary CP rows)
 
-These are the 30 exact filters for the isolated rehearsal, with one executed
+These are the 43 exact filters for the isolated rehearsal, with one executed
 TUnit result per method, all named assertions/variants required and no skips.
 They are also full RC census obligations. Build the Antiphon.Tests and
 Antiphon.E2E graphs once into `bin-c599q/` and `bin-c599qe/`, including fixture
@@ -1425,18 +1454,18 @@ builds/tests/PCs and generated no alternate output directories.
   another 6 minutes, so ordinary verification/setup totals **30 minutes** across
   eight rounds. The plan's 670 active authoring-plus-CP minutes become **676**
   including that explicit setup allowance; measure cold-build differences.
-- **Mutation floor = 1010 minutes for 189 PCs**,
+- **Mutation floor = 1038 minutes for 196 PCs**,
   the exact PC-row cycle times summed once each. Each four-minute cycle reserves
   1.5 red build + 0.5 red execution + 1.5 restore/rebuild + 0.5 green execution;
   six-minute cycles use 1.5-minute red and green executions (index controls
   allocate their equivalent extra time to CLI generation); eight-minute API
   cycles use 2.5-minute red and green executions. No batch saving is assumed.
   Add 10 minutes for sourced snapshot discovery/baseline/fixture setup:
-  **1020 minutes Mutation budget**, separate from Code.
+  **1048 minutes Mutation budget**, separate from Code.
   Matrix variants within a row must each hit the named assertion; if a mutation
   changes only one shape, run and retain that shape's red/green rather than
   claiming the other shapes were killed.
-- **Combined ordinary setup/build + V/R + post-land Mutation = 1050 minutes**.
+- **Combined ordinary setup/build + V/R + post-land Mutation = 1078 minutes**.
   This excludes authoring, Review time, inherited PC-1..206 and live qualification.
   The per-method PC subtotals below identify where the Mutation floor is spent.
 
@@ -1460,6 +1489,8 @@ builds/tests/PCs and generated no alternate output directories.
 | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerJoins` | 6 | 24 |
 | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerMarkers` | 7 | 28 |
 | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerReceipt` | 1 | 4 |
+| `ReleaseGatePublicationAuthorityTests.C599A_ReceiptReadback` | 4 | 16 |
+| `ReleaseGatePublicationAuthorityTests.C599A_PublisherTestMode` | 3 | 12 |
 | `ReleaseGatePublicationAuthorityTests.C599A_GitHubReadback` | 12 | 48 |
 | `ReleaseGatePublicationAuthorityTests.C599A_AssetReadback` | 11 | 44 |
 | `ReleaseGatePublicationAuthorityTests.C599A_RemoteWriteRecovery` | 9 | 54 |
@@ -1479,12 +1510,12 @@ builds/tests/PCs and generated no alternate output directories.
 | `ReleaseGateActivationContractTests.C599A_ChunkExecution` | 4 | 16 |
 | `ReleaseGateActivationContractTests.C599A_EnvelopeIsolation` | 3 | 12 |
 
-- **Q-2 isolated rehearsal = 63 minutes**:
-  10 setup/build plus 53 method-execution minutes
-  from its named filters above, 30 executions. This is unmutated recipient/recovery
+- **Q-2 isolated rehearsal = 76 minutes**:
+  10 setup/build plus 66 method-execution minutes
+  from its named filters above, 43 executions. This is unmutated recipient/recovery
   rehearsal at the final landed SHA, separately commissioned; PC cycles are extra.
-- **Live Q reservation = 686 active minutes**:
-  Q-1 setup/readback 15, Q-2 63, Q-3 manual
+- **Live Q reservation = 699 active minutes**:
+  Q-1 setup/readback 15, Q-2 76, Q-3 manual
   303 (283 suites + 20 setup/readbacks), Q-4 scheduled 305 (one full 303-minute
   green plus a 2-minute no-new-SHA/busy second-slot observation). If the second
   slot also cuts a new SHA, reserve another 301 minutes. Actual slot waiting is
@@ -1497,8 +1528,10 @@ builds/tests/PCs and generated no alternate output directories.
   Nothing is saved by dropping full release suites or PCs. Operational savings
   measured so far remain **0 minutes** until real comparable qualification evidence.
 
-**Handoff audit:** test/fixture bodies read as listed; active addendum guards=189,
-mapped=189, missing=0, duplicate PC maps=0. All 189 PCs have a concrete
+**Handoff audit:** test/fixture bodies read as listed; active addendum guards=196,
+mapped=196, missing=0, duplicate PC maps=0 (review 9df5bbae added G/PC-396..402 from
+the `C599A_ReceiptReadback` and `C599A_PublisherTestMode` bodies and recounted the Q-2
+roster at its listed 43 filters and 66 method minutes). All 196 PCs have a concrete
 compiling defect, exact method, independent fixture setup and decisive assertion;
 they are executable specifications for the owning Code rounds. Runtime PC
 executions=0; no guard is represented as empirically killed. All delivery paths end
