@@ -999,6 +999,9 @@ public sealed class AgentTaskReplyService
             else
             {
                 prepared = await PrepareRemoteAsync(scope.ServiceProvider, task, ct, named);
+                // Left open: the delivery watchdog's next sweep recovers again and continues the wait.
+                if (StillWaitingForLease(task, prepared))
+                    return;
                 unconfirmed = await RunnerRecoveryBlockReasonAsync(scope.ServiceProvider, task, note, named, prepared, ct);
             }
         }
@@ -1608,6 +1611,21 @@ public sealed class AgentTaskReplyService
             sync = null;
         }
         return await TaskCompletionProgressService.PrepareAsync(sync, task, ct, reportedTips);
+    }
+
+    /// <summary>
+    /// CARD-0657 R4. The runner sync's lease wait ran out of this attempt's slice but not of its
+    /// cumulative budget: nothing is settled or saved, the task stays open, and the next sweep's
+    /// re-hand continues the same wait. Only the spent budget (lease-busy) blocks.
+    /// </summary>
+    private bool StillWaitingForLease(AgentTask task, RemoteSettlementSyncResult? prepared)
+    {
+        if (prepared?.Reason != RemoteSettlementSyncReasons.LeaseWaiting)
+            return false;
+        _logger.LogInformation(
+            "Task {ShortId}: runner sync is still waiting for the repository lease; settlement is left for the next sweep",
+            DelegationReportFormatter.Short(task.Id));
+        return true;
     }
 
     /// <summary>
@@ -3007,6 +3025,8 @@ public sealed class AgentTaskReplyService
             // CARD-0657 D-1: a correlated successful candidate prepares its runner checkout ONCE,
             // before the commit matcher and every file reader below it.
             remote.Result = await PrepareRemoteAsync(services, task, ct);
+            if (StillWaitingForLease(task, remote.Result))
+                return null;
             if (await TryClassifyCompletedWithoutProgressAsync(services, task, body, remote.Result, ct) is { } noProgress)
                 return noProgress;
             return (AgentTaskStatus.Succeeded, AgentTaskReportEvidence.Marked, body, null);
@@ -3065,6 +3085,8 @@ public sealed class AgentTaskReplyService
         // task gets exactly the progress policy an explicit `done` gets: an unpushed claim or no
         // pushed movement fails as no-progress instead of settling Succeeded on a confirmed S.
         remote.Result = await PrepareRemoteAsync(services, task, ct);
+        if (StillWaitingForLease(task, remote.Result))
+            return null;
         if (remote.Result is { State: not RemoteSettlementSyncState.NotApplicable }
             && await TryClassifyCompletedWithoutProgressAsync(services, task, body, remote.Result, ct) is { } unmarkedNoProgress)
             return (unmarkedNoProgress.Status, evidence, unmarkedNoProgress.Body, unmarkedNoProgress.FailureReason);

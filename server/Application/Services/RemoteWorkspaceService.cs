@@ -77,6 +77,9 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     /// </summary>
     public TimeSpan LeaseWaitSlice { get; init; } = DefaultLeaseWaitSlice;
 
+    /// <summary>Where a task's lease wait is carried from one sweep's attempt to the next.</summary>
+    public RunnerSyncLeaseWaits LeaseWaits { get; init; } = RunnerSyncLeaseWaits.Process;
+
     /// <summary>Test seam: called each time the sync finds the repository lease busy.</summary>
     public Action? LeaseBusyObserved { get; init; }
 
@@ -164,25 +167,32 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
 
         using var budget = new CancellationTokenSource(SyncBudget, Clock);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct, budget.Token);
+        RemoteSettlementSyncResult result;
         try
         {
-            return await SyncAdmittedAsync(task, baseline, fullRef, reportedTips, deadline.Token, ct);
+            result = await SyncAdmittedAsync(task, baseline, fullRef, reportedTips, deadline.Token, ct);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested && budget.IsCancellationRequested)
         {
-            return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.Timeout, fullRef, baseline.LocalSha);
+            result = Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.Timeout, fullRef, baseline.LocalSha);
         }
         catch (TimeoutException)
         {
-            return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.Timeout, fullRef, baseline.LocalSha);
+            result = Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.Timeout, fullRef, baseline.LocalSha);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning("Settlement sync for task {Task} could not inspect its checkout ({Type})",
                 task.Id, ex.GetType().Name);
-            return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable,
+            result = Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable,
                 fullRef, baseline.LocalSha);
         }
+
+        // Only an attempt still waiting for the lease carries its wait into the next sweep. The
+        // caller's own cancellation propagates above and leaves the wait running for the re-hand.
+        if (result.Reason != RemoteSettlementSyncReasons.LeaseWaiting)
+            LeaseWaits.End(task.Id);
+        return result;
     }
 
     /// <summary>
@@ -240,7 +250,8 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
 
         // Observe (and, if absent locally, fetch) the exact ref BEFORE taking the lease: the
         // observation takes its own lease for the fetch, and nested acquisition is not reentrant.
-        var observed = await WhileLeaseBusyAsync(
+        var (observed, observeSpent) = await WhileLeaseBusyAsync(
+            task.Id,
             () => _progressGit!.ObserveExactRefAsync(repo, fullRef, fingerprint, task.Id, ct),
             o => o.State == ProgressRemoteState.Unavailable && o.Reason == "repository_lease_busy",
             ct, caller);
@@ -259,7 +270,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
                     "source_remote_endpoint_ambiguous" => Outcome(RemoteSettlementSyncState.Refused,
                         RemoteSettlementSyncReasons.EndpointAmbiguous, fullRef, b),
                     "repository_lease_busy" => Outcome(RemoteSettlementSyncState.Unavailable,
-                        RemoteSettlementSyncReasons.LeaseBusy, fullRef, b),
+                        LeaseReason(observeSpent), fullRef, b),
                     _ => Outcome(RemoteSettlementSyncState.Unavailable,
                         RemoteSettlementSyncReasons.FetchUnavailable, fullRef, b),
                 };
@@ -276,13 +287,15 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
             return Outcome(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.TipNotReported,
                 fullRef, b, s, l0, fingerprint: fingerprint);
 
-        await using var lease = await WhileLeaseBusyAsync(
+        var (acquired, acquireSpent) = await WhileLeaseBusyAsync(
+            task.Id,
             () => _leases!.TryAcquireAsync(
                 repo, new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.WorktreeSettlement), ct),
-            acquired => acquired is null,
+            held => held is null,
             ct, caller);
+        await using var lease = acquired;
         if (lease is null)
-            return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.LeaseBusy, fullRef, b, s);
+            return Outcome(RemoteSettlementSyncState.Unavailable, LeaseReason(acquireSpent), fullRef, b, s);
 
         var under = await ValidateCheckoutAsync(task, baseline, fullRef, ct);
         if (under.Refusal is { } refusedUnder)
@@ -362,30 +375,54 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
 
     /// <summary>
     /// A busy repository lease is somebody else's short mutation, not a verdict: ask again every
-    /// <see cref="LeaseRetryInterval"/> while the budget-linked <paramref name="ct"/> lasts. When the
-    /// budget runs out during the wait or a retried attempt, the last busy answer is returned, so
-    /// the sync still says lease-busy; the caller's own cancellation propagates.
+    /// <see cref="LeaseRetryInterval"/>. This attempt runs inside a dispatcher sweep, so it waits at
+    /// most <see cref="LeaseWaitSlice"/>, cut to what is left of <see cref="SyncBudget"/> since the
+    /// task's sync FIRST found the lease busy (<see cref="LeaseWaits"/>, carried across sweeps).
+    /// Still busy when the wait ends, the last busy answer is returned with
+    /// <c>Spent</c> true only once that cumulative wait has reached the budget; the budget-linked
+    /// <paramref name="ct"/> running out also ends the wait. The caller's own cancellation propagates.
     /// </summary>
-    private async Task<T> WhileLeaseBusyAsync<T>(
-        Func<Task<T>> attempt, Func<T, bool> busy, CancellationToken ct, CancellationToken caller)
+    private async Task<(T Result, bool Spent)> WhileLeaseBusyAsync<T>(
+        Guid taskId, Func<Task<T>> attempt, Func<T, bool> busy, CancellationToken ct, CancellationToken caller)
     {
         var result = await attempt();
+        if (!busy(result))
+            return (result, false);
+
+        var since = LeaseWaits.FirstBusy(taskId, Clock.GetUtcNow());
+        bool Spent() => Clock.GetUtcNow() - since >= SyncBudget;
+        var left = SyncBudget - (Clock.GetUtcNow() - since);
+        var slice = left < LeaseWaitSlice ? left : LeaseWaitSlice;
+        if (slice <= TimeSpan.Zero)
+        {
+            LeaseBusyObserved?.Invoke();
+            return (result, true);
+        }
+
+        // The slice is armed before anyone hears the lease is busy, so a clock that moves on that
+        // news always ends this wait.
+        using var sliceEnd = new CancellationTokenSource(slice, Clock);
+        using var wait = CancellationTokenSource.CreateLinkedTokenSource(ct, sliceEnd.Token);
         while (busy(result))
         {
             LeaseBusyObserved?.Invoke();
             try
             {
-                await Task.Delay(LeaseRetryInterval, Clock, ct);
+                await Task.Delay(LeaseRetryInterval, Clock, wait.Token);
                 result = await attempt();
             }
-            catch (OperationCanceledException) when (!caller.IsCancellationRequested && ct.IsCancellationRequested)
+            catch (OperationCanceledException) when (!caller.IsCancellationRequested && wait.IsCancellationRequested)
             {
                 // Git's bounded I/O has already awaited its child before this cancellation surfaced.
-                return result;
+                return (result, Spent() || (ct.IsCancellationRequested && !caller.IsCancellationRequested));
             }
         }
-        return result;
+        return (result, false);
     }
+
+    /// <summary>A lease still busy is lease-busy once its cumulative wait is spent, else still waiting.</summary>
+    private static string LeaseReason(bool spent) =>
+        spent ? RemoteSettlementSyncReasons.LeaseBusy : RemoteSettlementSyncReasons.LeaseWaiting;
 
     private sealed record ValidatedCheckout(RemoteSettlementSyncResult? Refusal, string? Head);
 
