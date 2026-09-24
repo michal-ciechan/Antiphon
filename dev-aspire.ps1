@@ -9,8 +9,9 @@
     - Script exits after dashboard is ready (AppHost continues in background).
 .PARAMETER NoBuild    Skip dotnet restore/build before starting.
 .PARAMETER NoBrowser  Do not open the dashboard in a browser (used by the logon auto-start).
-.PARAMETER AllowWorktree  Intentionally allow a linked worktree to control the shared local stack.
-.PARAMETER ExpectedSha    Full commit SHA the source root HEAD must equal.
+.PARAMETER AllowWorktree  Admit a linked worktree at its current HEAD when it is not origin/master (warning).
+.PARAMETER ExpectedSha    Full commit SHA the source root HEAD must equal; default is the local
+                          refs/remotes/origin/master (CARD-0644; main and linked roots alike).
 .PARAMETER RestartOwnerPid  Set by restart-apphost.ps1 for the child it launches under its restart lock.
 #>
 param([switch]$NoBuild, [switch]$NoBrowser, [switch]$AllowWorktree, [string]$ExpectedSha, [int]$RestartOwnerPid)
@@ -24,24 +25,49 @@ if (-not [string]::IsNullOrWhiteSpace($appHostTestSeams) -and (Test-Path -Litera
     Write-Host 'TEST SEAMS ACTIVE'
 }
 
-$worktree = Get-AppHostWorktreeClassification -SourceRoot $root
-if (-not $worktree.Verified -or (-not $worktree.IsMainWorktree -and -not $AllowWorktree)) {
-    Format-AppHostWorktreeGuardMessage -Classification $worktree | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
+# CARD-0644: admit the source root by exact commit (restart-apphost.ps1 passes the SHA
+# it froze) before any lock, Docker, build or launch activity.
+$admission = Get-AppHostSourceAdmission -SourceRoot $root -ExpectedSha $ExpectedSha -AllowWorktree:$AllowWorktree
+if (-not $admission.Admitted) {
+    $admission.Lines | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
     exit 3
 }
-if (-not $worktree.IsMainWorktree -and $AllowWorktree) {
-    Format-AppHostWorktreeGuardMessage -Classification $worktree -AllowWorktree | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
-}
+$admissionColor = if ($admission.Override) { 'Yellow' } else { 'DarkGray' }
+$admission.Lines | ForEach-Object { Write-Host $_ -ForegroundColor $admissionColor }
 
 $appHostDir   = "$root\Antiphon.AppHost"
 $settingsFile = "$root\server\appsettings.json"
 
+# Shared-stack coordination state (locks, wrapper PID, dashboard URL, wrapper log)
+# lives in the MAIN worktree's logs/ whichever checkout launches (CARD-0644 D-7).
+$stateLogDir = Join-Path $admission.StateRoot 'logs'
+$launchLock  = Join-Path $stateLogDir 'apphost.launch.lock'
+$restartLock = Join-Path $stateLogDir 'apphost.restart.lock'
+
+# A restart owns teardown + launch. Only the child it launched (RestartOwnerPid = the
+# live restart-lock holder) may launch under it; a direct launch waits for it.
+$restartInFlight = Test-AppHostLockActive -Path $restartLock -Label 'restart lock'
+if ($restartInFlight) {
+    $restartHolder = Get-AppHostLock -Path $restartLock
+    $ownedByParent = ($RestartOwnerPid -gt 0) -and ($restartHolder.ProcessId -eq $RestartOwnerPid) -and $restartHolder.HolderAlive
+    if (-not $ownedByParent) {
+        Write-Host "REFUSED: a restart is in flight - $restartInFlight" -ForegroundColor Yellow
+        Write-Host "  restart-apphost.ps1 launches its own dev-aspire.ps1; wait for it, then check http://localhost:17202/health." -ForegroundColor DarkGray
+        Write-Host "  Nothing was started. If the holder is genuinely gone, delete $restartLock." -ForegroundColor DarkGray
+        exit 3
+    }
+}
+
 # CARD-0011: tell the watchdog a launch is in flight so a 2-minute fire does not
-# call restart-apphost.ps1 over the top of us. Removed in finally even on Write-Error
-# ($ErrorActionPreference Stop) -- a trailing Remove-Item would be skipped.
-$launchLock = Join-Path $root 'logs\apphost.launch.lock'
-New-Item -ItemType Directory -Force (Split-Path $launchLock) | Out-Null
-('{0} {1}' -f $PID, [datetime]::UtcNow.ToString('o')) | Set-Content -LiteralPath $launchLock
+# call restart-apphost.ps1 over the top of us. Taken atomically (CARD-0644: a second
+# direct launch refuses instead of overwriting it) and released in finally even on
+# Write-Error ($ErrorActionPreference Stop).
+$launch = New-AppHostLock -Path $launchLock -Label 'launch lock'
+if (-not $launch.Acquired) {
+    Write-Host "REFUSED: another launch is in flight - $($launch.Reason)" -ForegroundColor Yellow
+    Write-Host "  Nothing was started. If the holder is genuinely gone, delete $launchLock." -ForegroundColor DarkGray
+    exit 3
+}
 try {
 
 # CARD-0644 test seam: an inert fixture records the admitted launch here instead of
@@ -106,7 +132,7 @@ if ($aspireDirs) {
     Write-Host "  Cleaned $($aspireDirs.Count) old DCP temp dir(s)" -ForegroundColor DarkGray
 }
 
-foreach ($d in @("$root\logs", "$root\server\logs", "$root\server\logs\sessions", "$root\backups")) {
+foreach ($d in @("$root\logs", $stateLogDir, "$root\server\logs", "$root\server\logs\sessions", "$root\backups")) {
     if (-not (Test-Path $d)) { New-Item -ItemType Directory -Force $d | Out-Null }
 }
 
@@ -125,8 +151,8 @@ if (-not $NoBuild) {
     Pop-Location
 }
 
-$logFile = "$root\logs\apphost.log"
-$pidFile = "$root\logs\apphost.pid"
+$logFile = Join-Path $stateLogDir 'apphost.log'
+$pidFile = Join-Path $stateLogDir 'apphost.pid'
 
 Write-Host "`n▶ Starting Aspire AppHost (background)..." -ForegroundColor Cyan
 Write-Host "  OTLP    : http://localhost:17206" -ForegroundColor DarkGray
@@ -183,7 +209,7 @@ while ($elapsed -lt $timeout) {
 if ($dashboardUrl) {
     Write-Host ""
     Write-Host "  Dashboard : $dashboardUrl" -ForegroundColor Green
-    $dashboardUrl | Set-Content "$root\logs\apphost-dashboard-url.txt"
+    $dashboardUrl | Set-Content (Join-Path $stateLogDir 'apphost-dashboard-url.txt')
     if (-not $NoBrowser) { Start-Process $dashboardUrl }
 } else {
     Write-Host ""
@@ -212,5 +238,5 @@ Write-Host ""
 Write-Host "AppHost running in background (PID $($appHostProc.Id))." -ForegroundColor Green
 Start-Sleep 3
 } finally {
-    Remove-Item -LiteralPath $launchLock -ErrorAction SilentlyContinue
+    Remove-AppHostLock $launch
 }

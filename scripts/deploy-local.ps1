@@ -4,7 +4,8 @@
 
 .DESCRIPTION
     This is the orchestrator-triggered machine-global canonical-stack deploy action,
-    never an isolated linked-worktree validation. It deliberately
+    never an isolated linked-worktree validation: a linked worktree whose HEAD is the
+    admitted commit replaces the ONE shared stack. It deliberately
     composes restart-apphost.ps1 instead of reproducing its lock, teardown, or
     health-waiting behaviour. Once that restart succeeds, it verifies the full
     dev stack (without a browser smoke) and confirms every source migration is
@@ -20,7 +21,14 @@
     Pass the AppHost health wait timeout to restart-apphost.ps1.
 
 .PARAMETER AllowWorktree
-    Intentionally allow a linked worktree to control the shared local stack.
+    Admit a linked worktree at its current HEAD when it is not origin/master
+    (warning printed). Never overrides -ExpectedSha or an unverifiable root.
+
+.PARAMETER ExpectedSha
+    Full 40- or 64-character commit SHA that must equal source-root HEAD. Default
+    expectation: HEAD equals the local refs/remotes/origin/master (not fetched).
+    Main and linked worktrees are admitted alike (CARD-0644); the admitted SHA is
+    passed to restart-apphost.ps1 as -ExpectedSha.
 
 .OUTPUTS
     DEPLOY VERDICT: ok
@@ -42,16 +50,6 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'apphost-common.ps1')
-
-$worktree = Get-AppHostWorktreeClassification -SourceRoot $repoRoot
-if (-not $worktree.Verified -or (-not $worktree.IsMainWorktree -and -not $AllowWorktree)) {
-    $detail = (Format-AppHostWorktreeGuardMessage -Classification $worktree) -join ' '
-    Write-Output "DEPLOY VERDICT: refused $detail"
-    exit 3
-}
-if (-not $worktree.IsMainWorktree -and $AllowWorktree) {
-    Format-AppHostWorktreeGuardMessage -Classification $worktree -AllowWorktree | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
-}
 
 $restartScript = Join-Path $PSScriptRoot 'restart-apphost.ps1'
 $verifyScript = Join-Path $repoRoot 'verify-dev-stack.ps1'
@@ -122,11 +120,20 @@ if (-not [string]::IsNullOrWhiteSpace($appHostTestSeams) -and (Test-Path -Litera
     Write-Host 'TEST SEAMS ACTIVE'
 }
 
+# CARD-0644: admit the source root by exact commit before any side effect, then freeze
+# that SHA for the restart child (which rechecks it and passes it on to dev-aspire.ps1).
+$admission = Get-AppHostSourceAdmission -SourceRoot $repoRoot -ExpectedSha $ExpectedSha -AllowWorktree:$AllowWorktree
+if (-not $admission.Admitted) {
+    Write-Output ("DEPLOY VERDICT: refused {0}" -f (($admission.Lines | ForEach-Object { $_.Trim() }) -join ' '))
+    exit 3
+}
+$admissionColor = if ($admission.Override) { 'Yellow' } else { 'DarkGray' }
+$admission.Lines | ForEach-Object { Write-Host $_ -ForegroundColor $admissionColor }
+
 $failure = $null
 try {
-    $restartArguments = @('-TimeoutSec', $TimeoutSec)
+    $restartArguments = @('-TimeoutSec', $TimeoutSec, '-ExpectedSha', $admission.AdmittedSha)
     if ($NoBuild) { $restartArguments += '-NoBuild' }
-    if ($AllowWorktree) { $restartArguments += '-AllowWorktree' }
     Invoke-ChildPowerShell -ScriptPath $restartScript -Name 'restart-apphost.ps1' -Arguments $restartArguments
 
     # The built client can still be finishing its first post-restart build after

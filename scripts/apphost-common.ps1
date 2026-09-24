@@ -217,6 +217,180 @@ function Format-AppHostWorktreeGuardMessage {
     )
 }
 
+# CARD-0644 D-6: the default expectation is the LOCAL remote-tracking ref. Admission
+# never fetches, pulls or moves a branch; operators refresh it before an unpinned deploy.
+$AppHostDefaultExpectedRef = 'refs/remotes/origin/master'
+
+function Resolve-AppHostCommitRef {
+    <# Full lower-case commit SHA for Ref in SourceRoot, or $null when it does not resolve. #>
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceRoot,
+        [Parameter(Mandatory = $true)][string]$Ref
+    )
+    try {
+        $raw = @(& git -C $SourceRoot rev-parse --verify --quiet ($Ref + '^{commit}') 2>$null)
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $text = (@($raw | ForEach-Object { $_.ToString().Trim() } | Where-Object { $_ }) | Select-Object -First 1)
+        if (-not (Test-AppHostBuildShaFormat $text)) { return $null }
+        return $text.ToLowerInvariant()
+    } catch {
+        return $null
+    }
+}
+
+function Get-AppHostSourceAdmission {
+    <#
+      CARD-0644 D-6: read-only admission of an AppHost entry point's source root by
+      exact commit, not by directory name. Main and linked roots are treated alike:
+        -ExpectedSha  must be a full 40/64-hex SHA equal to source HEAD (it may be a
+                      release candidate that is not origin/master). Never overridden.
+        default       source HEAD must equal refs/remotes/origin/master as a commit.
+        -AllowWorktree  the deliberate escape hatch: with no -ExpectedSha it admits a
+                      verified LINKED root at its current HEAD, with a warning. It
+                      never overrides an unverifiable root, unreadable HEAD, an
+                      explicit mismatch, or the restart/launch locks.
+      StateRoot is the main worktree: shared-stack coordination files (locks, wrapper
+      PID, dashboard URL, wrapper log) live under <StateRoot>/logs for every caller.
+      Lines are the operator-facing message; callers print them and exit 3 on refusal
+      before touching locks, processes, Docker or launch state.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceRoot,
+        [string]$ExpectedSha,
+        [switch]$AllowWorktree
+    )
+
+    $classification = Get-AppHostWorktreeClassification -SourceRoot $SourceRoot
+    $result = [pscustomobject]@{
+        Admitted       = $false
+        Override       = $false
+        Reason         = $null
+        Verified       = [bool]$classification.Verified
+        IsMainWorktree = [bool]$classification.IsMainWorktree
+        SourceRoot     = $classification.ScriptWorktreeRoot
+        StateRoot      = $classification.MainWorktreeRoot
+        SourceHead     = $null
+        ExpectedRef    = $null
+        ExpectedSha    = $null
+        AdmittedSha    = $null
+        Lines          = @()
+    }
+    $nothing = '  Nothing was killed or started.'
+
+    if (-not $classification.Verified) {
+        $result.Reason = 'unverified-root'
+        $result.Lines = @(Format-AppHostWorktreeGuardMessage -Classification $classification)
+        return $result
+    }
+    $rootKind = if ($classification.IsMainWorktree) { 'main worktree' } else { 'linked worktree' }
+    $rootLine = ('  source root: {0} ({1})' -f $result.SourceRoot, $rootKind)
+    $hasExpected = -not [string]::IsNullOrWhiteSpace($ExpectedSha)
+
+    $head = Get-AppHostSourceHead -SourceRoot $result.SourceRoot
+    if (-not $head) {
+        $result.Reason = 'unreadable-head'
+        $lines = @(('REFUSED: could not read a full HEAD SHA from source root {0}' -f $result.SourceRoot))
+        if ($hasExpected) { $lines += ('  supplied -ExpectedSha: {0}' -f $ExpectedSha) }
+        $lines += '  Update the canonical checkout, then re-run.'
+        $lines += $nothing
+        $result.Lines = $lines
+        return $result
+    }
+    $result.SourceHead = $head
+
+    if ($hasExpected) {
+        $result.ExpectedRef = '-ExpectedSha'
+        if (-not (Test-AppHostBuildShaFormat $ExpectedSha)) {
+            $result.Reason = 'bad-expected'
+            $result.Lines = @(
+                ('REFUSED: -ExpectedSha is not a full 40- or 64-character commit SHA: {0}' -f $ExpectedSha),
+                $rootLine,
+                ('  HEAD: {0}' -f $head),
+                '  Pass the full SHA of the commit to deploy (or update the canonical checkout), then re-run.',
+                $nothing
+            )
+            return $result
+        }
+        $result.ExpectedSha = $ExpectedSha.ToLowerInvariant()
+        if ($result.ExpectedSha -ne $head) {
+            $result.Reason = 'expected-mismatch'
+            $lines = @(
+                ('REFUSED: -ExpectedSha {0} does not match source-root HEAD {1}' -f $ExpectedSha, $head),
+                $rootLine
+            )
+            if ($AllowWorktree) { $lines += '  -AllowWorktree never overrides an explicit -ExpectedSha.' }
+            $lines += '  Check that commit out here (or update the canonical checkout), then re-run.'
+            $lines += $nothing
+            $result.Lines = $lines
+            return $result
+        }
+        $result.Admitted = $true
+        $result.AdmittedSha = $head
+        $result.Lines = @(
+            ('ADMITTED: source HEAD {0} equals -ExpectedSha {1}.' -f $head, $result.ExpectedSha),
+            $rootLine,
+            ('  shared stack state: {0}' -f (Join-Path $result.StateRoot 'logs'))
+        )
+        return $result
+    }
+
+    $result.ExpectedRef = $AppHostDefaultExpectedRef
+    $originSha = Resolve-AppHostCommitRef -SourceRoot $result.SourceRoot -Ref $AppHostDefaultExpectedRef
+    $result.ExpectedSha = $originSha
+    $originText = if ($originSha) { $originSha } else { 'unresolved' }
+
+    if ($originSha -and $originSha -eq $head) {
+        $result.Admitted = $true
+        $result.AdmittedSha = $head
+        $result.Lines = @(
+            ('ADMITTED: source HEAD {0} equals {1} {2} (the local remote-tracking ref; not fetched).' -f $head, $AppHostDefaultExpectedRef, $originSha),
+            $rootLine,
+            ('  shared stack state: {0}' -f (Join-Path $result.StateRoot 'logs'))
+        )
+        return $result
+    }
+
+    if ($AllowWorktree -and -not $classification.IsMainWorktree) {
+        $result.Admitted = $true
+        $result.Override = $true
+        $result.AdmittedSha = $head
+        $result.Lines = @(
+            ('WARNING: -AllowWorktree admits this linked worktree at its current HEAD {0}, which is not {1} ({2}).' -f $head, $AppHostDefaultExpectedRef, $originText),
+            ('  Script worktree: {0}' -f $result.SourceRoot),
+            ('  Main worktree:   {0}' -f $result.StateRoot),
+            '  The shared local ports are not isolated; this command can replace the canonical AppHost stack.',
+            ('  The admitted SHA is frozen for the launch; pass -ExpectedSha {0} to make this reproducible.' -f $head)
+        )
+        return $result
+    }
+
+    if (-not $originSha) {
+        $result.Reason = 'missing-origin'
+        $lines = @(
+            ('REFUSED: could not resolve {0} to a commit.' -f $AppHostDefaultExpectedRef),
+            $rootLine,
+            ('  HEAD: {0}' -f $head),
+            '  origin/master is the local remote-tracking ref and this command never fetches: run git fetch origin, or pass -ExpectedSha <full-sha>, then re-run.'
+        )
+    } else {
+        $result.Reason = 'origin-mismatch'
+        $lines = @(
+            ('REFUSED: source-root HEAD {0} is not {1} {2}.' -f $head, $AppHostDefaultExpectedRef, $originSha),
+            $rootLine,
+            '  origin/master is the local remote-tracking ref as last fetched; this command never fetches, pulls or moves a branch.'
+        )
+        if ($classification.IsMainWorktree) {
+            $lines += '  Update the canonical checkout (git pull --rebase), or pass -ExpectedSha <full-sha> of the commit to deploy, then re-run.'
+            if ($AllowWorktree) { $lines += '  -AllowWorktree only admits a linked worktree; this is the main checkout.' }
+        } else {
+            $lines += ('  To deploy this exact commit pass -ExpectedSha {0}; -AllowWorktree also admits this linked worktree at its current HEAD.' -f $head)
+        }
+    }
+    $lines += $nothing
+    $result.Lines = $lines
+    return $result
+}
+
 function Get-AppHostLock {
     <#
       Reads a lock file without judging it. Never throws: an unreadable or

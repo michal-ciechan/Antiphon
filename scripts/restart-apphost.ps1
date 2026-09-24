@@ -28,21 +28,26 @@
 .PARAMETER NoBuild            Pass -NoBuild through to dev-aspire.ps1 (skip restore/npm).
 .PARAMETER TimeoutSec         Seconds to wait for the dashboard + backend health (default 150).
 .PARAMETER LockMaxAgeMinutes  Ignore a lock older than this (default 15, the watchdog's number).
-.PARAMETER AllowWorktree      Intentionally allow a linked worktree to control the shared local stack.
+.PARAMETER AllowWorktree      Admit a linked worktree at its current HEAD when it is not origin/master (warning printed).
+                              Never overrides -ExpectedSha, an unverifiable root, or the locks.
 
 .OUTPUTS
     Exit codes:
-      0  restarted, dashboard up, /health 200, and /api/version SHA matches the intended HEAD
+      0  restarted, dashboard up, /health 200, and /api/version SHA matches the admitted SHA
       1  failed (build failed, or did not come up within TimeoutSec)
-      3  REFUSED - a linked/unverifiable worktree root, SHA admission failure, or another restart or launch is in flight; nothing was killed
+      3  REFUSED - unverifiable root, SHA admission failure, or another restart or launch is in flight; nothing was killed
       4  Aspire's DCP dependency check timed out (see the printed verdict)
       5  server build unverified - health succeeded but /api/version SHA did not match; lock retained, child left running
-.PARAMETER ExpectedServerSha
-    Full 40- or 64-character SHA that must equal source-root HEAD. Default is that HEAD.
+.PARAMETER ExpectedSha
+    Full 40- or 64-character commit SHA that must equal source-root HEAD (alias
+    -ExpectedServerSha). Default expectation: HEAD must equal the local
+    refs/remotes/origin/master (never fetched here). Main and linked worktrees are
+    admitted alike (CARD-0644); shared-stack locks and state live in the main
+    worktree's logs/ either way.
 .EXAMPLE
     pwsh -File scripts/restart-apphost.ps1
+    pwsh -File scripts/restart-apphost.ps1 -ExpectedSha <full-sha>
     pwsh -File scripts/restart-apphost.ps1 -AllowWorktree
-    pwsh -File scripts/restart-apphost.ps1 -ExpectedServerSha <full-sha>
 .NOTES
     Keep this file ASCII-only: it may run under Windows PowerShell 5.1, which reads
     no-BOM .ps1 as CP1252 and mangles non-ASCII characters into parse errors.
@@ -69,16 +74,20 @@ if (-not $PSBoundParameters.ContainsKey('LockMaxAgeMinutes')) {
 
 $root    = Split-Path $PSScriptRoot -Parent      # scripts/ -> repo root
 $restartBeganUtc = [datetime]::UtcNow
-$worktree = Get-AppHostWorktreeClassification -SourceRoot $root
-if (-not $worktree.Verified -or (-not $worktree.IsMainWorktree -and -not $AllowWorktree)) {
-    Format-AppHostWorktreeGuardMessage -Classification $worktree | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
+# CARD-0644: admit the source root by exact commit before any lock, kill or launch.
+$admission = Get-AppHostSourceAdmission -SourceRoot $root -ExpectedSha $ExpectedSha -AllowWorktree:$AllowWorktree
+if (-not $admission.Admitted) {
+    $admission.Lines | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
     exit 3
 }
-if (-not $worktree.IsMainWorktree -and $AllowWorktree) {
-    Format-AppHostWorktreeGuardMessage -Classification $worktree -AllowWorktree | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
-}
+$admissionColor = if ($admission.Override) { 'Yellow' } else { 'DarkGray' }
+$admission.Lines | ForEach-Object { Write-Host $_ -ForegroundColor $admissionColor }
+$frozenSha = $admission.AdmittedSha
 
-$logDir  = Join-Path $root 'logs'
+# Shared-stack coordination state lives in the MAIN worktree whichever checkout this
+# runs from, so every restart/launch/watchdog on the machine contends on one set of
+# locks. Build inputs (dev-aspire.ps1 and the code it builds) come from $root.
+$logDir  = Join-Path $admission.StateRoot 'logs'
 $pidFile = Join-Path $logDir 'apphost.pid'
 $urlFile = Join-Path $logDir 'apphost-dashboard-url.txt'
 $logFile = Join-Path $logDir 'apphost.log'
@@ -132,35 +141,6 @@ $devProcess = $null
 
 try {
 
-    $sourceHead = Get-AppHostSourceHead -SourceRoot $root
-    if (-not $sourceHead) {
-        Write-Host "REFUSED: could not read a full HEAD SHA from source root $root" -ForegroundColor Yellow
-        if ($PSBoundParameters.ContainsKey('ExpectedSha') -and -not [string]::IsNullOrWhiteSpace($ExpectedSha)) {
-            Write-Host "  supplied -ExpectedServerSha: $ExpectedSha" -ForegroundColor DarkGray
-        }
-        Write-Host "  Update the canonical checkout, then re-run." -ForegroundColor DarkGray
-        Write-Host "  Nothing was killed." -ForegroundColor DarkGray
-        exit 3
-    }
-    $frozenSha = $sourceHead
-    if ($PSBoundParameters.ContainsKey('ExpectedSha') -and -not [string]::IsNullOrWhiteSpace($ExpectedSha)) {
-        if (-not (Test-AppHostBuildShaFormat $ExpectedSha)) {
-            Write-Host "REFUSED: -ExpectedServerSha is not a full 40- or 64-character SHA: $ExpectedSha" -ForegroundColor Yellow
-            Write-Host "  source root: $root" -ForegroundColor DarkGray
-            Write-Host "  HEAD: $sourceHead" -ForegroundColor DarkGray
-            Write-Host "  Update the canonical checkout, then re-run." -ForegroundColor DarkGray
-            Write-Host "  Nothing was killed." -ForegroundColor DarkGray
-            exit 3
-        }
-        if ($ExpectedSha.ToLowerInvariant() -ne $sourceHead) {
-            Write-Host "REFUSED: -ExpectedServerSha $ExpectedSha does not match source-root HEAD $sourceHead" -ForegroundColor Yellow
-            Write-Host "  source root: $root" -ForegroundColor DarkGray
-            Write-Host "  Update the canonical checkout, then re-run." -ForegroundColor DarkGray
-            Write-Host "  Nothing was killed." -ForegroundColor DarkGray
-            exit 3
-        }
-        $frozenSha = $ExpectedSha.ToLowerInvariant()
-    }
     if (Test-AppHostTrackedEdits -SourceRoot $root) {
         Write-Host "NOTE: source checkout has tracked edits; SHA equality does not prove uncommitted behavior is loaded. Probe the changed feature directly." -ForegroundColor Yellow
     }
@@ -207,9 +187,11 @@ try {
 
     # 5) Relaunch in a normal window (detached) - dev-aspire.ps1 backgrounds the AppHost.
     Write-Host "  launching dev-aspire.ps1$(if ($NoBuild) { ' -NoBuild' })..." -ForegroundColor DarkGray
+    # CARD-0644 D-7: the child rechecks HEAD against the frozen SHA, and RestartOwnerPid
+    # lets it launch under this run's restart lock without admitting any other restart.
     $devArgs = @('-NoLogo', '-File', $devScript)
     if ($NoBuild) { $devArgs += '-NoBuild' }
-    if ($AllowWorktree) { $devArgs += '-AllowWorktree' }
+    $devArgs += @('-ExpectedSha', $frozenSha, '-RestartOwnerPid', $PID)
     $devProcess = Start-AppHostDevLaunch -ArgumentList $devArgs
     $keepRestartLock = $true
 
