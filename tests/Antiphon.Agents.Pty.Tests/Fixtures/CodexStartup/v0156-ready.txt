@@ -1,0 +1,11 @@
+WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir "/tmp" (codex_home: AbsolutePathBuf("<scratch>/h-froot"))
+ GPT-6-Sol default · <scratch>/twt MMMMMMMMM 
+ ╭────────────────────────────────────────────────╮ 
+ │ >_ OpenAI Codex (v0.156.1) │ 
+ │ │ 
+ │ model: GPT-6-Sol /model to change │ 
+ │ directory: <scratch>/twt │ 
+ │ permissions: YOLO mode │ 
+ ╰────────────────────────────────────────────────╯ 
+ 
+ Tip: New Build faster with Codex. › Ask Codex to do anything GPT-6-Sol default · <scratch>/twt [0 q 
