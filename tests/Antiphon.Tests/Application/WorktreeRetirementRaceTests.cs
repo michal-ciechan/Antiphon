@@ -743,6 +743,95 @@ public sealed class WorktreeRetirementRaceTests
         rows[pastGrace].Active.ShouldBeFalse();
     }
 
+    [Test]
+    public async Task C664_LandRequestThenOutcome_ReleasesAndRetirementClaimAccepted()
+    {
+        await using var world = await RaceWorld.CreateAsync();
+        await world.MakeOwnerLandableAsync();
+        var requested = await world.Lands.RequestAsync(
+            world.OwnerTask.Id, new LandAgentTaskRequest(null, new string('a', 40), null), CancellationToken.None);
+        (await world.ActiveLaunchIdsAsync(world.OwnerTask.Id)).Count.ShouldBe(1, "the land request admits one Launch row");
+
+        await world.Lands.FailRequestAsync(
+            world.OwnerTask.Id, requested.RequestId, new InvalidOperationException("drain"), CancellationToken.None);
+
+        await using (var db = world.CreateDb())
+            (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == world.OwnerTask.Id)).LandRequestedAt
+                .ShouldBeNull("the failure reached the terminal land outcome");
+        (await world.ActiveLaunchIdsAsync(world.OwnerTask.Id)).ShouldBeEmpty("the land outcome releases the owner's Launch rows");
+        var claim = await world.Journal.TryClaimRetirementAsync(
+            world.ProductionRetirementCommand("feat/card-task-land"), CancellationToken.None);
+        claim.Reason.ShouldBeNull();
+        claim.Accepted.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task C664_LandRequestRefusedAfterAdmission_LeavesNoExtraLaunch()
+    {
+        await using var world = await RaceWorld.CreateAsync();
+        await world.MakeOwnerLandableAsync();
+        await world.Lands.RequestAsync(
+            world.OwnerTask.Id, new LandAgentTaskRequest(null, new string('a', 40), null), CancellationToken.None);
+        var first = await world.ActiveLaunchIdsAsync(world.OwnerTask.Id);
+        first.Count.ShouldBe(1);
+
+        var refused = await Should.ThrowAsync<ConflictException>(() => world.Lands.RequestAsync(
+            world.OwnerTask.Id, new LandAgentTaskRequest(null, new string('a', 40), null), CancellationToken.None));
+
+        refused.Code.ShouldBe("land_running");
+        (await world.ActiveLaunchIdsAsync(world.OwnerTask.Id)).ShouldBe(first, "the refused request releases its own admission");
+    }
+
+    [Test]
+    public async Task C664_AnswerRefusedAfterAdmission_LeavesNoActiveLaunch()
+    {
+        await using var world = await RaceWorld.CreateAsync();
+        var created = await world.SeedQueuedTaskAsync(WorkspaceMode.Worktree);
+        await using (var db = world.CreateDb())
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == created.Id);
+            row.Status = AgentTaskStatus.Blocked;
+            row.AgentSessionId = null;
+            await db.SaveChangesAsync();
+        }
+
+        await Should.ThrowAsync<ConflictException>(() =>
+            world.Replies.AnswerAsync(created.Id, "continue", CancellationToken.None));
+
+        (await world.ActiveLaunchIdsAsync(created.Id)).ShouldBeEmpty("the refused answer releases its own admission");
+    }
+
+    [Test]
+    public async Task C664_RequeueThenCanceled_RetirementClaimAccepted()
+    {
+        await using var world = await RaceWorld.CreateAsync();
+        var created = await world.Tasks.CreateAsync(
+            new CreateAgentTaskRequest(Goal: "retry then cancel", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Shared,
+                WorkingDirectory: world.Path),
+            world.ManualCaller(), CancellationToken.None);
+        await using (var db = world.CreateDb())
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == created.Id);
+            row.Status = AgentTaskStatus.Failed;
+            row.CompletedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        await using (var scope = world.Provider.CreateAsyncScope())
+            await scope.ServiceProvider.GetRequiredService<AgentTaskService>().RetryAsync(created.Id, CancellationToken.None);
+        await using (var db = world.CreateDb())
+            (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id)).Status.ShouldBe(AgentTaskStatus.Queued);
+        (await world.ActiveLaunchIdsAsync(created.Id)).Count.ShouldBe(2, "create and requeue each admit a Launch row");
+
+        await using (var scope = world.Provider.CreateAsyncScope())
+            await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CancelAsync(created.Id, CancellationToken.None);
+
+        (await world.ActiveLaunchIdsAsync(created.Id)).ShouldBeEmpty("cancel releases every Launch row of the task");
+        var claim = await world.Journal.TryClaimRetirementAsync(world.CreateKeyCommand(), CancellationToken.None);
+        claim.Reason.ShouldBeNull();
+        claim.Accepted.ShouldBeTrue();
+    }
+
     private sealed class RaceWorld : IAsyncDisposable
     {
         public required IsolatedTestSchema Schema { get; init; }
@@ -931,6 +1020,29 @@ public sealed class WorktreeRetirementRaceTests
                 await SetCreatedAtAsync(id, DateTime.UtcNow.AddHours(-2));
 
             return id;
+        }
+
+        /// <summary>CARD-0664: the owner as a landable Worktree task (the <c>C459_LandReservesWorkspace</c> shape).</summary>
+        public async Task MakeOwnerLandableAsync()
+        {
+            await using var db = CreateDb();
+            var owner = await db.AgentTasks.SingleAsync(t => t.Id == OwnerTask.Id);
+            owner.Workspace = WorkspaceMode.Worktree;
+            owner.WorktreePath = Path;
+            owner.RepoPath = Path;
+            owner.WorktreeBranch = "feat/card-task-land";
+            owner.Status = AgentTaskStatus.Succeeded;
+            await db.SaveChangesAsync();
+        }
+
+        public async Task<List<Guid>> ActiveLaunchIdsAsync(Guid taskId)
+        {
+            await using var db = CreateDb();
+            return await db.WorkspaceUseReservations.AsNoTracking()
+                .Where(r => r.TaskId == taskId && r.Active && r.Kind == WorkspaceReservationKind.Launch)
+                .OrderBy(r => r.Id)
+                .Select(r => r.Id)
+                .ToListAsync();
         }
 
         public async Task SetCreatedAtAsync(Guid reservationId, DateTime createdAt)
