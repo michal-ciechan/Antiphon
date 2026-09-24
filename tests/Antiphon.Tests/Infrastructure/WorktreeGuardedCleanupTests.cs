@@ -288,6 +288,86 @@ public sealed class WorktreeGuardedCleanupTests
         Directory.Exists(h.H.Fixture.Source).ShouldBeTrue();
     }
 
+    // Review 5b79328d item 2 over real Git: a nested `.antiphon` tree under a disposable directory is
+    // protected, so the directory is not wholly disposable.
+    [Test]
+    public async Task C665_NestedAntiphonInDisposableDirectoryIsRefused()
+    {
+        await using var h = await RemovalHarness.CreateAsync(); h.CleanFirst = true;
+        var reads = 0;
+        var directory = Path.Combine(h.H.Fixture.Source, "bin-private");
+        var path = Path.Combine(directory, ".antiphon", "other.json");
+        h.OtherCommand = async (repo, args) => {
+            if (repo == h.H.Fixture.Source && args[0] == "status" && h.Removes == 0 && ++reads == 2)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                await File.WriteAllTextAsync(path, "nested spill");
+                await File.WriteAllTextAsync(Path.Combine(directory, "a.dll"), "build output");
+            }
+            return null;
+        };
+        var result = await h.RemoveAsync();
+        result.Residue.ShouldBe("ignored_content_preserved"); reads.ShouldBe(2); h.Removes.ShouldBe(0);
+        result.Detail.ShouldBe("protected: bin-private/.antiphon/other.json");
+        (await File.ReadAllTextAsync(path)).ShouldBe("nested spill");
+    }
+
+    // Review 5b79328d item 1 over real Git: a junction that replaces a checked directory AFTER the
+    // second reading. Both readings passed, so only the deletion itself can keep the outside
+    // target: it must remove the link and never traverse it (non-forcing `git worktree remove`
+    // deletes through a junction).
+    [Test]
+    public async Task C665_JunctionSwappedInAfterSecondReadingKeepsOutsideTarget()
+    {
+        await using var h = await RemovalHarness.CreateAsync(); h.CleanFirst = true;
+        var outside = Directory.CreateDirectory(Path.Combine(h.H.Fixture.Root, "outside")).FullName;
+        var nested = Directory.CreateDirectory(Path.Combine(outside, "nested")).FullName;
+        await File.WriteAllTextAsync(Path.Combine(outside, "a.dll"), "outside bytes");
+        await File.WriteAllTextAsync(Path.Combine(nested, "b.dll"), "outside nested bytes");
+        var directory = Directory.CreateDirectory(Path.Combine(h.H.Fixture.Source, "bin-private")).FullName;
+        await File.WriteAllTextAsync(Path.Combine(directory, "a.dll"), "build output");
+        using var link = DirectoryLink.TryCreate(Path.Combine(h.H.Fixture.Root, "staged-link"), outside);
+        if (link is null) { Skip.Test("This host cannot create a directory junction or symbolic link."); return; }
+        var reads = 0; var swapped = false;
+        h.OtherCommand = (repo, args) => {
+            if (repo == h.H.Fixture.Source && args[0] == "status" && h.Removes == 0) reads++;
+            // The recovery-pin reads of the last authority check follow the second reading.
+            if (!swapped && reads == 2 && args[0] == "show-ref" && args[^1].StartsWith("refs/antiphon/land/", StringComparison.Ordinal))
+            { swapped = true; Directory.Delete(directory, recursive: true); link.MoveTo(directory); }
+            return Task.FromResult<LandingGitResult?>(null);
+        };
+        var result = await h.RemoveAsync();
+        swapped.ShouldBeTrue(); reads.ShouldBe(2);
+        (await File.ReadAllTextAsync(Path.Combine(outside, "a.dll"))).ShouldBe("outside bytes");
+        (await File.ReadAllTextAsync(Path.Combine(nested, "b.dll"))).ShouldBe("outside nested bytes");
+        result.IsClean.ShouldBeTrue(result.Residue); h.Removes.ShouldBe(1);
+        Directory.Exists(h.H.Fixture.Source).ShouldBeFalse();
+    }
+
+    // Review 5b79328d item 1: a junction to an empty directory is not listed by Git, so no reading
+    // sees it. Content that reaches its target after the readings must survive the removal.
+    [Test]
+    public async Task C665_EmptyUnlistedJunctionTargetSurvivesRemoval()
+    {
+        await using var h = await RemovalHarness.CreateAsync(); h.CleanFirst = true;
+        var outside = Directory.CreateDirectory(Path.Combine(h.H.Fixture.Root, "outside-empty")).FullName;
+        using var link = DirectoryLink.TryCreate(Path.Combine(h.H.Fixture.Source, "bin-link"), outside);
+        if (link is null) { Skip.Test("This host cannot create a directory junction or symbolic link."); return; }
+        var reads = 0; var written = false;
+        h.OtherCommand = async (repo, args) => {
+            if (repo == h.H.Fixture.Source && args[0] == "status" && h.Removes == 0) reads++;
+            if (!written && reads == 2 && args[0] == "show-ref" && args[^1].StartsWith("refs/antiphon/land/", StringComparison.Ordinal))
+            { written = true; await File.WriteAllTextAsync(Path.Combine(outside, "late.txt"), "outside owner bytes"); }
+            return null;
+        };
+        var result = await h.RemoveAsync();
+        written.ShouldBeTrue(); reads.ShouldBe(2);
+        Directory.Exists(outside).ShouldBeTrue();
+        (await File.ReadAllTextAsync(Path.Combine(outside, "late.txt"))).ShouldBe("outside owner bytes");
+        result.IsClean.ShouldBeTrue(result.Residue); h.Removes.ShouldBe(1);
+        Directory.Exists(h.H.Fixture.Source).ShouldBeFalse();
+    }
+
     [Test]
     public async Task C443_UnregisteredRootPreserved()
     {
