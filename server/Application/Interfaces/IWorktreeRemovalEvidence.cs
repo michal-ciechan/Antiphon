@@ -12,4 +12,7 @@ public interface IWorktreeRemovalEvidence
         => Task.FromResult(false);
     Task<TaskWorktreeRetirement?> ReadRetirementAsync(Guid retirementId, CancellationToken ct)
         => Task.FromResult<TaskWorktreeRetirement?>(null);
+    /// <summary>CARD-0665 D-4: the task row whose artifact pointers the ignored-content gate checks; null refuses.</summary>
+    Task<AgentTask?> ReadTaskAsync(Guid taskId, CancellationToken ct)
+        => Task.FromResult<AgentTask?>(null);
 }

@@ -369,6 +369,11 @@ try
     builder.Services.AddSingleton<IWorktreeDeleteAccessProbe, WindowsWorktreeDeleteAccessProbe>();
     builder.Services.AddSingleton<IWorktreeCleanupJournal, WorktreeCleanupJournal>();
     builder.Services.AddSingleton<WorktreeGuardedCleanup>();
+    // CARD-0665 S2: every guarded removal classifies ignored content; evidence is refused until
+    // the retaining implementation replaces this seam (S3).
+    builder.Services.AddSingleton<WorktreeIgnoredContentClassifier>();
+    builder.Services.AddSingleton<IWorktreeEvidenceRetention, RefusingEvidenceRetention>();
+    builder.Services.AddSingleton<WorktreeIgnoredContentGate>();
     builder.Services.AddSingleton<GuardedWorktreeRemoval>();
     builder.Services.AddSingleton<IRepositoryMutationLease, RepositoryMutationLease>();
     builder.Services.AddScoped<AgentTaskLandingState>();
