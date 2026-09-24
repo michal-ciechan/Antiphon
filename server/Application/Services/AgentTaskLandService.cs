@@ -1038,12 +1038,39 @@ public sealed class AgentTaskLandService
                 SetLandingEvidence(held, await _db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.Id == operationId, ct));
             held.LandRequestId = request.Id;
             _db.AgentTaskEvents.Add(held);
-            AddNotification(task, request, held, LandNotificationKind.Held);
+            if (await AdvanceHoldNotificationOwnerAsync(request, holder, ct))
+                AddNotification(task, request, held, LandNotificationKind.Held);
         }
         request.ConcurrencyToken = Guid.NewGuid();
         await _db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
         await PublishAsync(task, ct);
+    }
+
+    internal const string UnknownHoldNotificationOwner = "unknown";
+
+    internal static string HoldNotificationOwnerKey(Guid taskId) => $"task:{taskId:N}";
+
+    // CARD-0641 D-5: caller notes deduplicate per request and stable holder; the Held event above
+    // stays per episode. Runs inside HoldAsync's task-locked transaction so anchor and note commit
+    // or roll back together. Unknown never replaces or refines into a new holder.
+    private async Task<bool> AdvanceHoldNotificationOwnerAsync(AgentTaskLandRequest request, AgentTask? holder, CancellationToken ct)
+    {
+        var observed = holder is null ? UnknownHoldNotificationOwner : HoldNotificationOwnerKey(holder.Id);
+        var anchor = request.HoldNotificationOwnerKey;
+        if (anchor is null)
+        {
+            // Pre-upgrade Held notes for this request are existing debt: adopt, never replay.
+            var existing = await _db.AgentTaskLandNotifications.AsNoTracking()
+                .AnyAsync(n => n.RequestId == request.Id && n.Kind == LandNotificationKind.Held, ct);
+            request.HoldNotificationOwnerKey = observed;
+            return !existing;
+        }
+
+        if (observed == UnknownHoldNotificationOwner || observed == anchor)
+            return false;
+        request.HoldNotificationOwnerKey = observed;
+        return anchor != UnknownHoldNotificationOwner;
     }
 
     private static void CompleteRequest(AgentTask task, AgentTaskLandRequest request, AgentTaskEvent terminal)

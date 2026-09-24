@@ -779,6 +779,20 @@ repository's lease owner. A durable pending request this process has not replaye
 a live holder. A blank `holder= ()` is not a diagnosis. Time waiting still starts at last
 progress, not at dequeue.
 
+A held land request tells its caller once per holder, not once per hold episode (CARD-0641).
+Each change of hold reason or holder is still a `Held` event with its own `HoldEpisode`,
+`HeldSince` and aging clocks. The caller note is gated by the request's
+`HoldNotificationOwnerKey` anchor: null means no Held note yet, `unknown` means one was sent
+without an identified owner, `task:<guid-N>` names the known holder. The first hold of a
+request always notes. A later note is minted only when a different known task holds it. A
+reason change, a lease reacquisition by the same task, or an unknown/untagged observation
+sends nothing. Unknown refines to a known task without a note, and never erases a known
+anchor. Anchor, event and note commit in the same task-locked transaction, so a rolled-back
+hold does not consume the first note. The anchor survives restart, admission and completion.
+A new request starts at null. A request that already has Held notes from before the column
+existed adopts the current owner, or `unknown`, and does not replay them. Existing notes are
+never rewritten or deleted.
+
 A present `.git/index.lock` in a checkout the land is about to mutate holds the request
 before admission (`git_index_lock_stale` when the file is at least five minutes old with no
 git process started at or before it; `git_index_lock_held` when it is younger or a candidate
