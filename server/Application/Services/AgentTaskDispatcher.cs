@@ -3148,7 +3148,11 @@ public sealed class AgentTaskDispatcher
         // A completion note uses a separate DbContext and stamps this task. Commit the
         // pre-flight claim first or its row lock blocks that stamp until command timeout.
         if (commitBeforeNotify is not null)
+        {
             await commitBeforeNotify(ct);
+            // CARD-0664 D-2: FailAsync skipped its release inside the claim; the Failed status is committed now.
+            await ReleaseTaskConsumersAsync(task);
+        }
 
         if (task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is Guid parentSession)
         {
