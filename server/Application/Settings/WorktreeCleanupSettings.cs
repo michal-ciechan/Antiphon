@@ -21,6 +21,21 @@ public sealed class WorktreeCleanupSettings
         ".antiphon/task-????????.md", ".antiphon/**/*.trx", ".antiphon/*checkpoints*/**",
     ];
 
+    /// <summary>
+    /// Secret or user-local names that refuse removal wherever they sit, including inside a
+    /// disposable directory such as <c>server/bin-x/appsettings.Development.json</c>. They win over
+    /// both other lists. Configuration can only add to these; it cannot remove one.
+    /// </summary>
+    public static IReadOnlyList<string> DefaultProtectedIgnored { get; } =
+    [
+        "**/.claude/**", "**/appsettings.*.json", "**/*.user", "**/*.local.json",
+        "**/.antiphon/report.md", "**/.antiphon/deliverables/**",
+        "logs/**", "backups/**", ".superpowers/**", ".memsearch/**", "tests/Antiphon.E2E/TestOutput/**",
+    ];
+
+    /// <summary>Operator additions to <see cref="DefaultProtectedIgnored"/>.</summary>
+    public string[]? ProtectedIgnored { get; set; }
+
     /// <summary>Deleted with the tree by non-forcing <c>git worktree remove</c>.</summary>
     public string[]? DisposableIgnored { get; set; }
 
@@ -36,4 +51,8 @@ public sealed class WorktreeCleanupSettings
     public IReadOnlyList<string> EffectiveDisposableIgnored => DisposableIgnored ?? DefaultDisposableIgnored;
 
     public IReadOnlyList<string> EffectiveRetainedIgnored => RetainedIgnored ?? DefaultRetainedIgnored;
+
+    /// <summary>The defaults plus any operator additions; an empty or null list keeps the defaults.</summary>
+    public IReadOnlyList<string> EffectiveProtectedIgnored =>
+        [.. DefaultProtectedIgnored, .. (ProtectedIgnored ?? []).Where(p => !DefaultProtectedIgnored.Contains(p, StringComparer.Ordinal))];
 }

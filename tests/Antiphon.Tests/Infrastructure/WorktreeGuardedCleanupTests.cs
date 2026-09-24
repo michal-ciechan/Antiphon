@@ -240,6 +240,54 @@ public sealed class WorktreeGuardedCleanupTests
         result.Residue.ShouldBe("ignored_content_changed"); reads.ShouldBe(2); h.Removes.ShouldBe(0);
         (await File.ReadAllTextAsync(path)).ShouldBe("late report");
     }
+    // Review 9a0c7fb8 item 1 over real Git: a protected name inside a disposable directory.
+    [Test]
+    public async Task C665_ProtectedNameInDisposableDirectoryIsRefused()
+    {
+        await using var h = await RemovalHarness.CreateAsync(); h.CleanFirst = true;
+        var reads = 0;
+        var path = Path.Combine(h.H.Fixture.Source, "bin-private", "appsettings.Development.json");
+        h.OtherCommand = async (repo, args) => {
+            if (repo == h.H.Fixture.Source && args[0] == "status" && h.Removes == 0 && ++reads == 2)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                await File.WriteAllTextAsync(path, "{\"secret\":1}");
+                await File.WriteAllTextAsync(Path.Combine(Path.GetDirectoryName(path)!, "a.dll"), "build output");
+            }
+            return null;
+        };
+        var result = await h.RemoveAsync();
+        result.Residue.ShouldBe("ignored_content_preserved"); reads.ShouldBe(2); h.Removes.ShouldBe(0);
+        result.Detail.ShouldBe("protected: bin-private/appsettings.Development.json");
+        (await File.ReadAllTextAsync(path)).ShouldBe("{\"secret\":1}");
+    }
+
+    // Review 9a0c7fb8 item 2 over real Git, which lists through a junction and whose non-forcing
+    // `worktree remove` deletes through it: the swap between readings must refuse and leave the
+    // link's target untouched.
+    [Test]
+    public async Task C665_JunctionSwappedInBetweenReadingsIsRefused()
+    {
+        await using var h = await RemovalHarness.CreateAsync(); h.CleanFirst = true;
+        var outside = Directory.CreateDirectory(Path.Combine(h.H.Fixture.Root, "outside")).FullName;
+        await File.WriteAllTextAsync(Path.Combine(outside, "a.dll"), "outside bytes");
+        var directory = Directory.CreateDirectory(Path.Combine(h.H.Fixture.Source, "bin-private")).FullName;
+        await File.WriteAllTextAsync(Path.Combine(directory, "a.dll"), "build output");
+        using var link = DirectoryLink.TryCreate(Path.Combine(h.H.Fixture.Root, "staged-link"), outside);
+        if (link is null) { Skip.Test("This host cannot create a directory junction or symbolic link."); return; }
+        var reads = 0;
+        h.OtherCommand = (repo, args) => {
+            if (repo == h.H.Fixture.Source && args[0] == "status" && h.Removes == 0 && ++reads == 2)
+            { Directory.Delete(directory, recursive: true); link.MoveTo(directory); }
+            return Task.FromResult<LandingGitResult?>(null);
+        };
+        var result = await h.RemoveAsync();
+        result.Residue.ShouldBe("ignored_reparse_point"); reads.ShouldBe(2); h.Removes.ShouldBe(0);
+        result.Detail.ShouldBe("reparse: bin-private");
+        (await File.ReadAllTextAsync(Path.Combine(outside, "a.dll"))).ShouldBe("outside bytes");
+        Directory.Exists(h.H.Fixture.Source).ShouldBeTrue();
+    }
+
     [Test]
     public async Task C443_UnregisteredRootPreserved()
     {

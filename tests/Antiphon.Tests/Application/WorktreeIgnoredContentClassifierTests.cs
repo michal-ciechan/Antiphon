@@ -57,6 +57,57 @@ public sealed class WorktreeIgnoredContentClassifierTests
         result.Evidence.ShouldBeEmpty();
     }
 
+    // Review 9a0c7fb8: a protected name wins over a disposable directory rule anywhere in the tree.
+    // The disposable sibling proves the directory rule itself still applies, so the refusal comes
+    // from the name and the whole directory is no longer wholly disposable.
+    [Test]
+    [Arguments("server/bin-c665/appsettings.Development.json")]
+    [Arguments("server/bin/Debug/net10.0/appsettings.Production.json")]
+    [Arguments("client/node_modules/pkg/.claude/settings.local.json")]
+    [Arguments("tests/Antiphon.Tests/obj/Antiphon.Tests.csproj.user")]
+    [Arguments("scripts/bin-x/nightly-watchdog.local.json")]
+    [Arguments("logs/bin/a.log")]
+    [Arguments(".antiphon/deliverables/ab12cd34/bin/x.dll")]
+    public void Protected_name_inside_disposable_directory_is_protected(string path)
+    {
+        var result = Defaults().Classify([path, "server/bin-c665/a.dll"]);
+        Same(result.Protected, path);
+        Same(result.Disposable, "server/bin-c665/a.dll");
+        result.Evidence.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void Protected_precedes_evidence_on_overlap()
+    {
+        // Matches .antiphon/**/*.trx (evidence) and .antiphon/deliverables/** (protected).
+        var both = ".antiphon/deliverables/ab12cd34/run.trx";
+        var result = Defaults().Classify([both, ".antiphon/results/unit.trx"]);
+        Same(result.Protected, both);
+        Same(result.Evidence, ".antiphon/results/unit.trx");
+        result.Disposable.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void Configured_protected_names_extend_but_never_replace_the_defaults()
+    {
+        var classifier = new WorktreeIgnoredContentClassifier(Options.Create(new WorktreeCleanupSettings
+        {
+            DisposableIgnored = ["**/bin-*/**"],
+            ProtectedIgnored = ["**/keep.me"],
+        }));
+        var result = classifier.Classify(["bin-x/keep.me", "bin-x/appsettings.Development.json", "bin-x/a.dll"]);
+        Same(result.Protected, "bin-x/appsettings.Development.json", "bin-x/keep.me");
+        Same(result.Disposable, "bin-x/a.dll");
+
+        var emptied = new WorktreeIgnoredContentClassifier(Options.Create(new WorktreeCleanupSettings
+        {
+            DisposableIgnored = ["**/bin-*/**"],
+            ProtectedIgnored = [],
+        })).Classify(["bin-x/.claude/settings.local.json", "bin-x/a.dll"]);
+        Same(emptied.Protected, "bin-x/.claude/settings.local.json");
+        Same(emptied.Disposable, "bin-x/a.dll");
+    }
+
     [Test]
     public void Unknown_path_is_protected()
     {
