@@ -114,7 +114,7 @@ public sealed class TaskCompletionProgressService
     /// own deadline is uncertainty. Only the caller's cancellation propagates.
     /// </summary>
     public static async Task<RemoteSettlementSyncResult> PrepareAsync(
-        IRemoteSettlementSync? sync, AgentTask task, CancellationToken ct)
+        IRemoteSettlementSync? sync, AgentTask task, CancellationToken ct, IReadOnlyCollection<string>? reportedTips = null)
     {
         if (!RemoteWorkspaceService.IsEligible(task))
             return RemoteSettlementSyncResult.NotApplicable;
@@ -123,7 +123,7 @@ public sealed class TaskCompletionProgressService
             return new(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.DependencyUnavailable, fullRef);
         try
         {
-            var result = await sync.SyncAsync(task, ct);
+            var result = await sync.SyncAsync(task, ct, reportedTips);
             return result.State == RemoteSettlementSyncState.NotApplicable
                 ? new(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.DependencyUnavailable, fullRef)
                 : result;
