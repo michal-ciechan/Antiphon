@@ -30,6 +30,8 @@ public sealed class AgentSessionSettingsValidator : IValidateOptions<AgentSessio
             failures.Add("AgentSessions:RemoteControlSetupTimeoutMs must be positive.");
         if (options.RemoteControlResumeProbeTimeoutMs <= 0)
             failures.Add("AgentSessions:RemoteControlResumeProbeTimeoutMs must be positive.");
+        if (options.ActivityWriteMinIntervalMs < 0)
+            failures.Add("AgentSessions:ActivityWriteMinIntervalMs must not be negative.");
 
         return failures.Count == 0
             ? ValidateOptionsResult.Success
