@@ -181,6 +181,11 @@ try
     builder.Services.AddOptions<WorktreeResidueSettings>()
         .Bind(builder.Configuration.GetSection("WorktreeResidue"))
         .ValidateOnStart();
+    // CARD-0665: the ignored-content allowlist every guarded worktree removal consults.
+    builder.Services.AddSingleton<IValidateOptions<WorktreeCleanupSettings>, WorktreeCleanupSettingsValidator>();
+    builder.Services.AddOptions<WorktreeCleanupSettings>()
+        .Bind(builder.Configuration.GetSection("WorktreeCleanup"))
+        .ValidateOnStart();
     // CARD-0040: cards move themselves from the delegated work bound to them.
     builder.Services.Configure<CardWorkTransitionSettings>(builder.Configuration.GetSection("CardTransitions"));
     builder.Services.AddSingleton<IValidateOptions<ScheduleSettings>, ScheduleSettingsValidator>();
