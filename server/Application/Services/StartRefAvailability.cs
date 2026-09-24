@@ -28,7 +28,10 @@ public sealed class StartRefAvailability(ILandingGit git, ILogger<StartRefAvaila
     public const string FetchFailedCode = "worktree_start_ref_fetch_failed";
     public const string NotOnOriginCode = "worktree_start_ref_not_on_origin";
 
-    /// <summary>Sized for an interactive create call, not a bulk transfer: one commit's objects.</summary>
+    /// <summary>
+    /// Sized for an interactive create call, not a bulk transfer: one commit's objects. One deadline
+    /// for all network work at create: the fetch and, after a failed fetch, the origin probe share it.
+    /// </summary>
     public static readonly TimeSpan DefaultFetchTimeout = TimeSpan.FromSeconds(30);
 
     private static readonly TimeSpan LocalGitTimeout = TimeSpan.FromSeconds(30);
@@ -60,6 +63,8 @@ public sealed class StartRefAvailability(ILandingGit git, ILogger<StartRefAvaila
             Refuse(NoOriginCode,
                 $"Start ref '{startRef}' is not in {repoPath}, and the repository has no 'origin' remote to fetch it from.");
 
+        // One deadline covers all network work: the probe gets only what the fetch left of it.
+        var network = System.Diagnostics.Stopwatch.StartNew();
         var fetch = await RunBoundedAsync(repoPath, ["fetch", "--no-tags", "--quiet", "origin", startRef], _fetchTimeout, ct);
         if (fetch.TimedOut)
             Unavailable(FetchTimeoutCode,
@@ -73,11 +78,11 @@ public sealed class StartRefAvailability(ILandingGit git, ILogger<StartRefAvaila
 
         // Git's own wording is locale-dependent and may carry an endpoint, so the verdict comes from
         // whether origin answers at all: it answering while the fetch failed means it lacks the commit.
-        var probe = await RunBoundedAsync(repoPath, ["ls-remote", "origin", ProbePattern], _fetchTimeout, ct);
+        var probe = await RunBoundedAsync(repoPath, ["ls-remote", "origin", ProbePattern], _fetchTimeout - network.Elapsed, ct);
         if (probe.TimedOut)
             Unavailable(FetchTimeoutCode,
                 $"Start ref '{startRef}' is not in {repoPath}; fetching it from origin failed "
-                + $"({fetch.Result.Diagnostic}) and origin did not answer within {_fetchTimeout.TotalSeconds:0}s. "
+                + $"({fetch.Result.Diagnostic}) and origin did not answer within the {_fetchTimeout.TotalSeconds:0}s budget it shares with the fetch. "
                 + "The task was not created; retry, or fetch the commit first.");
         if (!probe.Result!.Succeeded)
             Unavailable(FetchFailedCode,
@@ -99,9 +104,10 @@ public sealed class StartRefAvailability(ILandingGit git, ILogger<StartRefAvaila
         string repoPath, IReadOnlyList<string> arguments, TimeSpan budget, CancellationToken ct)
     {
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        bounded.CancelAfter(budget);
+        bounded.CancelAfter(budget > TimeSpan.Zero ? budget : TimeSpan.Zero); // A spent deadline runs nothing.
         try
         {
+            bounded.Token.ThrowIfCancellationRequested();
             return (await git.RunAsync(repoPath, arguments, bounded.Token), false);
         }
         catch (Exception ex) when (ex is OperationCanceledException or TimeoutException && !ct.IsCancellationRequested)
