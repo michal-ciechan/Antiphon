@@ -5,7 +5,8 @@ namespace Antiphon.SessionRunner;
 
 /// <summary>
 /// CARD-0647. One <see cref="IProviderAuthProbe"/> for the phone-home operation: Claude keeps
-/// CARD-0628's probe, Grok is presence of <c>GROK_HOME/auth.json</c>.
+/// CARD-0628's probe, Grok is presence of <c>GROK_HOME/auth.json</c>, and Codex (CARD-0660) is
+/// metadata-only presence of <c>CODEX_HOME/auth.json</c>.
 /// </summary>
 public sealed class RoutingProviderAuthProbe(ClaudeAuthProbe claude, GrokAuthProbe grok, CodexAuthProbe codex) : IProviderAuthProbe
 {
@@ -15,6 +16,8 @@ public sealed class RoutingProviderAuthProbe(ClaudeAuthProbe claude, GrokAuthPro
             return grok.ProbeAsync(provider, ct);
         if (string.Equals(provider, ClaudeAuthProbe.ProviderName, StringComparison.OrdinalIgnoreCase))
             return claude.ProbeAsync(provider, ct);
+        if (string.Equals(provider, CodexAuthProbe.ProviderName, StringComparison.OrdinalIgnoreCase))
+            return codex.ProbeAsync(provider, ct);
         throw new PhoneHomeAdmissionException(
             PhoneHomeProblemTypes.UnsupportedTarget,
             $"Provider '{provider}' has no auth probe on this runner.",
@@ -38,6 +41,7 @@ public static class ProviderAuthProbeRegistration
         services.AddSingleton(sp => new GrokAuthProbe(
             sp.GetRequiredService<IOptions<PhoneHomeSettings>>().Value,
             sp.GetRequiredService<ILogger<GrokAuthProbe>>()));
+        // CARD-0660 D-6: Codex is metadata-only presence of CODEX_HOME/auth.json.
         services.AddSingleton(sp => new CodexAuthProbe(
             sp.GetRequiredService<IOptions<PhoneHomeSettings>>().Value,
             sp.GetRequiredService<ILogger<CodexAuthProbe>>()));

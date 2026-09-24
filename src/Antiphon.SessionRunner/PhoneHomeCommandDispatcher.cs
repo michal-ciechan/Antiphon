@@ -306,6 +306,7 @@ public sealed class PhoneHomeCommandDispatcher
         RejectUnsupportedLaunch(launch);
         await RejectSignedOutClaudeAsync(launch, ct);
         await RejectSignedOutGrokAsync(launch, ct);
+        await RejectSignedOutCodexAsync(launch, ct);
         // Capacity has to be rechecked inside the mutation lock. A check before StartAsync
         // lets two launches both pass while neither has recorded a session yet.
         return await MutateAsync(request, async () =>
@@ -354,7 +355,7 @@ public sealed class PhoneHomeCommandDispatcher
             throw new PhoneHomeAdmissionException(
                 PhoneHomeProblemTypes.UnsupportedTarget,
                 $"Provider '{body?.Provider}' has no auth probe on this runner; only "
-                + $"'{ClaudeAuthProbe.ProviderName}' and '{GrokAuthProbe.ProviderName}' are measured.",
+                + $"'{ClaudeAuthProbe.ProviderName}', '{GrokAuthProbe.ProviderName}' and '{CodexAuthProbe.ProviderName}' are measured.",
                 400);
         if (_authProbe is null)
             return new RunnerProviderAuthDto(provider, null, null, null, DateTimeOffset.UtcNow, "probe_unavailable");
@@ -367,6 +368,8 @@ public sealed class PhoneHomeCommandDispatcher
             return ClaudeAuthProbe.ProviderName;
         if (string.Equals(provider, GrokAuthProbe.ProviderName, StringComparison.OrdinalIgnoreCase))
             return GrokAuthProbe.ProviderName;
+        if (string.Equals(provider, CodexAuthProbe.ProviderName, StringComparison.OrdinalIgnoreCase))
+            return CodexAuthProbe.ProviderName;
         return null;
     }
 
@@ -410,6 +413,25 @@ public sealed class PhoneHomeCommandDispatcher
     }
 
     /// <summary>
+    /// CARD-0660 D-7/D-9. Same backstop for Codex: only a definite "signed out" (no
+    /// <c>CODEX_HOME/auth.json</c>) refuses; unknown, no probe, or the setting off admits. The
+    /// probe reads metadata only, so this message never carries the file's contents.
+    /// </summary>
+    private async Task RejectSignedOutCodexAsync(RunnerLaunchRequest launch, CancellationToken ct)
+    {
+        if (!_settings.CodexAuthProbeEnabled || _authProbe is null || !IsCodexExe(launch.Exe))
+            return;
+        var answer = await _authProbe.ProbeAsync(CodexAuthProbe.ProviderName, ct);
+        if (answer.LoggedIn != false)
+            return;
+        throw new PhoneHomeAdmissionException(
+            PhoneHomeProblemTypes.ProviderSignInRequired,
+            $"Codex is not signed in on runner '{_settings.RunnerId}' (CODEX_HOME={_settings.CodexHome}). "
+            + $"Run `codex login --device-auth` as uid 1654 with CODEX_HOME={_settings.CodexHome}, then re-dispatch.",
+            409);
+    }
+
+    /// <summary>
     /// CARD-0640. The image's own <c>grok</c>, by bare name or the exact path the runner
     /// Dockerfile installs it to. Any other path, even one ending in <c>/grok</c>
     /// (<c>/opt/evil/grok</c>, a <c>..</c> escape, a relative <c>./grok</c>), is not this image's.
@@ -433,22 +455,29 @@ public sealed class PhoneHomeCommandDispatcher
     /// <summary>Where <c>docker/session-runner-grok/Dockerfile</c> installs Claude Code.</summary>
     internal const string ImageClaudePath = "/usr/local/bin/claude";
 
-    /// <summary>CARD-0660 D-7. RED SEAM: no Codex executable is admitted yet.</summary>
-    internal static bool IsCodexExe(string? exe) => false;
+    /// <summary>
+    /// CARD-0660 D-7: the image's own native <c>codex</c>, by bare name or the exact link the runner
+    /// Dockerfile installs. The desktop's <c>codex.cmd</c>, another directory's <c>codex</c>, a
+    /// relative <c>./codex</c> or a <c>..</c> escape is not this image's.
+    /// </summary>
+    internal static bool IsCodexExe(string? exe) =>
+        string.Equals(exe, "codex", StringComparison.Ordinal)
+        || string.Equals(exe, ImageCodexPath, StringComparison.Ordinal);
 
     /// <summary>Where <c>docker/session-runner-grok/Dockerfile</c> links the native Codex CLI.</summary>
     internal const string ImageCodexPath = "/usr/local/bin/codex";
 
     internal void RejectUnsupportedLaunch(RunnerLaunchRequest launch)
     {
-        // CARD-0604 D-2 / CARD-0628 D-5: grok, claude, or an image-owned executable from the allow list. The runner keeps
-        // its own copy of that list: it is the image's contract, and the server telling it to run
+        // CARD-0604 D-2 / CARD-0628 D-5 / CARD-0660 D-7: grok, claude, codex, or an image-owned executable from the allow list.
+        // The runner keeps its own copy of that list: it is the image's contract, and the server telling it to run
         // some other path is exactly what this refusal exists for.
         var isGrok = IsGrokExe(launch.Exe);
         var isAllowedRaw = !string.IsNullOrWhiteSpace(launch.Exe)
             && _settings.RawExeAllowList.Any(allowed => string.Equals(allowed, launch.Exe, StringComparison.Ordinal));
         var isClaude = IsClaudeExe(launch.Exe);
-        if (!isGrok && !isClaude && !isAllowedRaw)
+        var isCodex = IsCodexExe(launch.Exe);
+        if (!isGrok && !isClaude && !isCodex && !isAllowedRaw)
             throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Only an image-owned executable may launch.", 409);
 
         // CARD-0604 D-15: the workspace root itself, or a mirror worktree directly under it. A
@@ -483,12 +512,14 @@ public sealed class PhoneHomeCommandDispatcher
         }
         if (launch.MemoryLimitMb != 0)
             throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Memory limit must be zero.", 409);
-        // CARD-0628 D-5: the two agents this image carries. Anything else (codex) has no tailer here.
+        // CARD-0628 D-5 / CARD-0660: the three agents this image carries, each with a runtime tailer
+        // (Codex's CodexTranscriptTailer reads the launch's CODEX_HOME). Anything else has none here.
         if (launch.TranscriptFormat is not null
             && !string.Equals(launch.TranscriptFormat, TranscriptFormats.Grok, StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(launch.TranscriptFormat, TranscriptFormats.Claude, StringComparison.OrdinalIgnoreCase))
+            && !string.Equals(launch.TranscriptFormat, TranscriptFormats.Claude, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(launch.TranscriptFormat, TranscriptFormats.Codex, StringComparison.OrdinalIgnoreCase))
             throw new PhoneHomeAdmissionException(
-                PhoneHomeProblemTypes.UnsupportedTarget, "Only the Grok and Claude transcript formats are admitted.", 409);
+                PhoneHomeProblemTypes.UnsupportedTarget, "Only the Grok, Claude and Codex transcript formats are admitted.", 409);
     }
 
     /// <summary>

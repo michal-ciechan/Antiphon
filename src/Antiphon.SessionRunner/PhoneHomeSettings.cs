@@ -86,6 +86,8 @@ public sealed class PhoneHomeSettings
             throw new InvalidOperationException("PhoneHome:RunnerRepository must be a POSIX absolute path.");
         if (string.IsNullOrWhiteSpace(ClaudeHome) || !ClaudeHome.StartsWith('/'))
             throw new InvalidOperationException("PhoneHome:ClaudeHome must be a POSIX absolute path.");
+        if (string.IsNullOrWhiteSpace(CodexHome) || !CodexHome.StartsWith('/'))
+            throw new InvalidOperationException("PhoneHome:CodexHome must be a POSIX absolute path.");
         if (Capacity < 1)
             throw new InvalidOperationException("PhoneHome:Capacity must be positive.");
         if (RawExeAllowList.Any(exe => string.IsNullOrWhiteSpace(exe) || !exe.StartsWith('/')))
