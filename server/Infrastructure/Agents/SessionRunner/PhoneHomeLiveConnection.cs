@@ -3,6 +3,7 @@ using System.Net.WebSockets;
 using System.Text.Json;
 using System.Threading.Channels;
 using Antiphon.SessionRunner.Contracts;
+using Microsoft.Extensions.Logging;
 
 namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
@@ -18,6 +19,18 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     private int _pendingEventBytes;
     private int _liveBufferEvents;
     private int _liveBufferBytes;
+    private string? _disconnectReason;
+    private DateTimeOffset? _disconnectAtUtc;
+    private readonly object _disconnectGate = new();
+    private bool _warnedHalf;
+    private bool _warnedHigh;
+
+    // CARD-0679 D-1: released events per wall-clock second, the last ten seconds, for the
+    // high-water line's pump rate.
+    private readonly object _rateGate = new();
+    private readonly long[] _releaseSecond = new long[RateWindowSeconds];
+    private readonly int[] _releaseCount = new int[RateWindowSeconds];
+    private const int RateWindowSeconds = 10;
 
     public PhoneHomeLiveConnection(
         string runnerId,
@@ -42,7 +55,11 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         Platform = platform;
         Capabilities = capabilities;
         LastHeartbeatUtc = clock.GetUtcNow();
+        StartedAtUtc = LastHeartbeatUtc;
     }
+
+    /// <summary>CARD-0679 D-1: when the directory accepted this connection.</summary>
+    public DateTimeOffset StartedAtUtc { get; }
 
     public string RunnerId { get; }
     public Guid RunnerStoreId { get; }
@@ -61,11 +78,52 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     public DateTimeOffset LastHeartbeatUtc { get; private set; }
     public bool DispatchEligible { get; set; }
     public bool SocketOpen => _socket.State == WebSocketState.Open;
+    internal WebSocketState SocketState => _socket.State;
     public ChannelReader<PhoneHomeFrame> Events => _events.Reader;
     public int InFlight => Volatile.Read(ref _inFlight);
     public int PendingEvents => Volatile.Read(ref _pendingEvents);
+    public int PendingEventBytes => Volatile.Read(ref _pendingEventBytes);
     internal int LiveBufferEvents => Volatile.Read(ref _liveBufferEvents);
     internal int LiveBufferBytes => Volatile.Read(ref _liveBufferBytes);
+
+    /// <summary>Requests still waiting for a reply; a dispose fails each of them.</summary>
+    internal int PendingWaiters => _waiters.Count;
+
+    /// <summary>CARD-0679 D-1: the first reason recorded for this connection's end, or null while it lives.</summary>
+    public string? LastDisconnectReason => Volatile.Read(ref _disconnectReason);
+
+    /// <summary>CARD-0679 D-1: when <see cref="LastDisconnectReason"/> was recorded.</summary>
+    public DateTimeOffset? LastDisconnectAtUtc
+    {
+        get
+        {
+            lock (_disconnectGate)
+                return _disconnectAtUtc;
+        }
+    }
+
+    /// <summary>
+    /// CARD-0679 D-1/D-10: how long the last recovery List took, in milliseconds; null until the
+    /// recovery pump records one.
+    /// </summary>
+    public long? LastCatchUpMs { get; set; }
+
+    /// <summary>
+    /// CARD-0679 D-1: records why this connection ended. The first writer wins, so the route's
+    /// classified reason is not overwritten by a later generic one. Returns false when a reason
+    /// was already recorded.
+    /// </summary>
+    internal bool TryRecordDisconnect(string reason)
+    {
+        lock (_disconnectGate)
+        {
+            if (_disconnectReason is not null)
+                return false;
+            _disconnectAtUtc = Clock.GetUtcNow();
+            Volatile.Write(ref _disconnectReason, reason);
+            return true;
+        }
+    }
 
     public void NoteHeartbeat(DateTimeOffset at) => LastHeartbeatUtc = at;
 
@@ -142,7 +200,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         }
     }
 
-    public async Task ReceiveLoopAsync(CancellationToken ct)
+    public async Task ReceiveLoopAsync(CancellationToken ct, ILogger? logger = null)
     {
         while (!ct.IsCancellationRequested && _socket.State == WebSocketState.Open)
         {
@@ -174,15 +232,81 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
                 Interlocked.Add(ref _pendingEventBytes, size);
                 Interlocked.Increment(ref _liveBufferEvents);
                 Interlocked.Add(ref _liveBufferBytes, size);
+                if (logger is not null)
+                    WarnHighWater(logger);
                 await _events.Writer.WriteAsync(frame, ct);
             }
         }
+    }
+
+    /// <summary>
+    /// CARD-0679 D-1: the backlog is visible before the overflow closes the socket. Warned once
+    /// per connection at 50% and once at 90% of the event or byte cap, whichever is fuller.
+    /// </summary>
+    private void WarnHighWater(ILogger logger)
+    {
+        var events = Volatile.Read(ref _pendingEvents);
+        var bytes = Volatile.Read(ref _pendingEventBytes);
+        var fill = Math.Max(
+            (double)events / _limits.MaxPendingEvents,
+            (double)bytes / _limits.MaxPendingEventBytes);
+        int percent;
+        if (fill >= 0.9 && !_warnedHigh)
+        {
+            _warnedHigh = _warnedHalf = true;
+            percent = 90;
+        }
+        else if (fill >= 0.5 && !_warnedHalf)
+        {
+            _warnedHalf = true;
+            percent = 50;
+        }
+        else
+        {
+            return;
+        }
+
+        logger.LogWarning(
+            "Phone-home connection {RunnerId} epoch {Epoch} pending live events passed {Percent}% of the cap: "
+            + "{PendingEvents}/{MaxPendingEvents} events, {PendingEventBytes}/{MaxPendingEventBytes} bytes; "
+            + "pump released {EventsPerSecond:0.0} events/s over the last 10s",
+            RunnerId, Epoch, percent, events, _limits.MaxPendingEvents, bytes, _limits.MaxPendingEventBytes,
+            ReleasedEventsPerSecond());
+    }
+
+    /// <summary>CARD-0679 D-1: the pump's release rate over the last ten seconds.</summary>
+    internal double ReleasedEventsPerSecond()
+    {
+        var now = Clock.GetUtcNow().ToUnixTimeSeconds();
+        var total = 0;
+        lock (_rateGate)
+        {
+            for (var i = 0; i < RateWindowSeconds; i++)
+            {
+                if (now - _releaseSecond[i] < RateWindowSeconds)
+                    total += _releaseCount[i];
+            }
+        }
+
+        return total / (double)RateWindowSeconds;
     }
 
     public void ReleaseEvent(int bytes)
     {
         Interlocked.Decrement(ref _pendingEvents);
         Interlocked.Add(ref _pendingEventBytes, -bytes);
+        var second = Clock.GetUtcNow().ToUnixTimeSeconds();
+        var slot = (int)(second % RateWindowSeconds);
+        lock (_rateGate)
+        {
+            if (_releaseSecond[slot] != second)
+            {
+                _releaseSecond[slot] = second;
+                _releaseCount[slot] = 0;
+            }
+
+            _releaseCount[slot]++;
+        }
     }
 
     public async ValueTask DisposeAsync()

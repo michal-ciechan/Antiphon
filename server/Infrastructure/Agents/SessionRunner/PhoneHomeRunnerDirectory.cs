@@ -26,6 +26,8 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
     private Guid? _liveBootId;
     private DateTimeOffset _liveLeaseUntil;
     private long _epoch;
+    private long _reconnects;
+    private LastDisconnectRecord? _lastDisconnect;
     private readonly Antiphon.Server.Application.Services.RemoteSpillCourier? _spills;
 
     public PhoneHomeRunnerDirectory(
@@ -215,7 +217,11 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
                 throw new ConflictException("Connection ticket is invalid.", PhoneHomeProblemTypes.InvalidTicket);
             ValidateTicket(runnerId, ticket);
 
-            _live?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            if (_live is { } superseded)
+            {
+                RecordDisconnect(superseded, "superseded");
+                superseded.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            }
             // The ticket already carries the epoch the runner was told at registration.
             var epoch = ticket.Epoch;
             var connection = new PhoneHomeLiveConnection(
@@ -223,6 +229,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
                 ticket.Capacity, ticket.Platform, ticket.Capabilities);
             _live = connection;
             _liveLeaseUntil = _clock.GetUtcNow().AddSeconds(_settings.LeaseSeconds);
+            _reconnects++;
             return connection;
         }
     }
@@ -249,14 +256,39 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             throw new ConflictException("Connection ticket is bound, expired, or already used.", PhoneHomeProblemTypes.InvalidTicket);
     }
 
+    /// <summary>
+    /// CARD-0679 D-1: the first reason recorded for a connection wins; the directory keeps the
+    /// current connection's reason as <see cref="PhoneHomeRunnerStatusDto.DisconnectReason"/>.
+    /// </summary>
     public void Disconnect(PhoneHomeLiveConnection connection, string reason)
     {
         lock (_gate)
         {
             if (!ReferenceEquals(_live, connection))
                 return;
+            RecordDisconnect(connection, reason);
             connection.DispatchEligible = false;
             _live = null;
+        }
+    }
+
+    // Caller holds _gate.
+    private void RecordDisconnect(PhoneHomeLiveConnection connection, string reason)
+    {
+        connection.TryRecordDisconnect(reason);
+        _lastDisconnect = new LastDisconnectRecord(
+            connection.LastDisconnectReason ?? reason,
+            connection.LastDisconnectAtUtc ?? _clock.GetUtcNow(),
+            connection.Epoch);
+    }
+
+    /// <summary>CARD-0679 D-1: connections accepted since this process started.</summary>
+    public long Reconnects
+    {
+        get
+        {
+            lock (_gate)
+                return _reconnects;
         }
     }
 
@@ -274,9 +306,25 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
     public PhoneHomeRunnerStatusDto Status(string runnerId)
     {
         var live = SnapshotLive();
-        var available = live is not null
-            && !live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds))
-            && live.SocketOpen;
+        var leaseExpired = live is not null && live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds));
+        var available = live is not null && !leaseExpired && live.SocketOpen;
+        LastDisconnectRecord? last;
+        long reconnects;
+        lock (_gate)
+        {
+            last = _lastDisconnect;
+            reconnects = _reconnects;
+        }
+
+        // CARD-0679 D-1: name why the runner is not available instead of a constant: the live
+        // connection's own recorded end, an expired lease, or the last connection's end.
+        var disconnectReason = available
+            ? null
+            : live?.LastDisconnectReason
+                ?? (leaseExpired ? "lease_expired" : null)
+                ?? (live is not null && !live.SocketOpen ? "socket_closed" : null)
+                ?? last?.Reason
+                ?? "unavailable";
         return new PhoneHomeRunnerStatusDto(
             runnerId,
             live?.RunnerStoreId ?? _liveStoreId,
@@ -289,7 +337,12 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             // a deploy or a restart row reads is the runner's own report, not a null placeholder.
             Platform: live?.Platform,
             BuildVersion: live?.Capabilities?.Version,
-            DisconnectReason: available ? null : "unavailable");
+            DisconnectReason: disconnectReason,
+            PendingEvents: live?.PendingEvents,
+            PendingEventBytes: live?.PendingEventBytes,
+            LastDisconnectAtUtc: live?.LastDisconnectAtUtc ?? last?.AtUtc,
+            Reconnects: reconnects,
+            LastCatchUpMs: live?.LastCatchUpMs);
     }
 
     public PhoneHomeLiveConnection? SnapshotLive()
@@ -307,6 +360,8 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             return _live;
         }
     }
+
+    private sealed record LastDisconnectRecord(string Reason, DateTimeOffset AtUtc, long Epoch);
 
     private sealed record Ticket(
         string Value,
