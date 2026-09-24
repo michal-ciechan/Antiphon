@@ -125,6 +125,12 @@ public sealed class WorkspaceReservationJournal(IServiceScopeFactory scopes, Tim
         await db.SaveChangesAsync(ct);
     }
 
+    public Task ReleaseTaskConsumersAsync(Guid taskId, CancellationToken ct) => Task.CompletedTask;
+
+    public Task ReleaseSessionConsumersAsync(Guid sessionId, CancellationToken ct) => Task.CompletedTask;
+
+    public Task<int> ReleaseOrphanedConsumersAsync(CancellationToken ct) => Task.FromResult(0);
+
     private static WorkspaceReservationSnapshot ToSnapshot(WorkspaceUseReservation row) =>
         new(row.Id, row.Generation, row.Kind, row.TaskId, row.SessionId, row.RetirementId, row.Active);
 
