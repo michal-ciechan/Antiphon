@@ -499,7 +499,7 @@ $script:ReleaseGateManifestAllowlist = @(
     'schemaVersion', 'repository', 'tag', 'candidateRef', 'candidateId', 'sha',
     'nativeRunId', 'windmillJobId', 'scheduleSlot', 'startedAt', 'completedAt',
     'policyHash', 'profile', 'scriptHashes', 'buildHash', 'bundleHash',
-    'suites', 'exclusions', 'summaryDigest', 'capabilities'
+    'suites', 'exclusions', 'summaryDigest', 'capabilities', 'publicationAuthorityDigest'
 )
 
 function New-ReleaseGateManifest {
@@ -544,16 +544,21 @@ function Get-ReleaseGateManifestDigest {
 
 function Test-ReleaseGatePublicationGate {
     <#
-      D-8: publication preconditions. Every one of these is a hard refusal; none
-      of them can be waived by a later readback succeeding.
+      D-8/D-15: publication preconditions. Every one of these is a hard refusal; none
+      of them can be waived by a later readback succeeding. The required suite set
+      and the pass/fail verdict come ONLY from the pinned authority and its full
+      execution ledger (Test-ReleaseGateAuthority); a report or summary confers
+      none. ExpectedPolicyHash / RequiredSuites are legacy extra equality
+      assertions against that authority, never a replacement for it, and an
+      absent value never waives the pinned requirement.
     #>
     param(
         $Green,
         $Candidate,
         [string]$RemoteSha = '',
+        $Authority = $null,
         [string]$ExpectedPolicyHash = '',
-        [string[]]$RequiredSuites = @(),
-        $SuiteResults = $null
+        [string[]]$RequiredSuites = @()
     )
     $reasons = @()
     $verdict = Get-ReleaseGateCreditVerdict -State $Green
@@ -569,23 +574,29 @@ function Test-ReleaseGatePublicationGate {
     if ([bool]$Green.noReport) { $reasons += 'no-report-run' }
     if ([bool]$Green.diagnostic) { $reasons += 'diagnostic-run' }
     if ([bool]$Green.seamed) { $reasons += 'seam-driven-run' }
-    if (-not [string]::IsNullOrWhiteSpace($ExpectedPolicyHash) -and
-        -not [string]::Equals([string]$Green.policyHash, $ExpectedPolicyHash, [StringComparison]::OrdinalIgnoreCase)) {
-        $reasons += 'policy-hash-mismatch'
-    }
-    if (@($RequiredSuites).Count -gt 0) {
-        $seen = @{}
-        foreach ($row in @($SuiteResults)) {
-            $id = [string]$row.id
-            if ([string]::IsNullOrWhiteSpace($id)) { continue }
-            $ok = (-not [bool]$row.skipped) -and ([int]$row.exitCode -eq 0) -and ([string]$row.result -eq 'pass')
-            if ($ok) { $seen[$id] = $true }
+    if ($null -eq $Authority) {
+        $reasons += 'missing-authority'
+    } else {
+        foreach ($r in @($Authority.Reasons)) { $reasons += [string]$r }
+        $pinned = $null
+        if ($Authority.Pinned) { $pinned = $Authority.Pinned.Authority }
+        $pinnedHash = ''
+        $pinnedSuites = @()
+        if ($pinned) {
+            $pinnedHash = [string]$pinned.policyHash
+            $pinnedSuites = @($pinned.requiredSuites | ForEach-Object { [string]$_ })
         }
-        foreach ($id in @($RequiredSuites)) {
-            if (-not $seen.ContainsKey([string]$id)) { $reasons += ('required-suite-missing:' + $id) }
+        if (-not [string]::IsNullOrWhiteSpace($ExpectedPolicyHash) -and
+            -not [string]::Equals($pinnedHash, $ExpectedPolicyHash, [StringComparison]::OrdinalIgnoreCase)) {
+            $reasons += 'policy-hash-mismatch'
+        }
+        if (@($RequiredSuites).Count -gt 0) {
+            $want = @($RequiredSuites | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+            $have = @($pinnedSuites | Sort-Object -Unique)
+            if (($want -join ',') -cne ($have -join ',')) { $reasons += 'required-suites-mismatch' }
         }
     }
-    return [pscustomobject]@{ Ok = ($reasons.Count -eq 0); Reasons = $reasons }
+    return [pscustomobject]@{ Ok = ($reasons.Count -eq 0); Reasons = @($reasons | Select-Object -Unique) }
 }
 
 # ------------------------------------------------------------------- seams ---
