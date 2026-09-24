@@ -24,7 +24,36 @@ internal sealed class RepositoryChildJournal
     }
 
     public async Task StartedAsync(Process child, CancellationToken ct)
-        => await StartedAsync(child.Id, child.StartTime.ToUniversalTime().Ticks, ct);
+    {
+        if (TryStartTicks(child, out var startTicks))
+        {
+            await StartedAsync(child.Id, startTicks, ct);
+            return;
+        }
+        // CARD-0661: a fast child exited (and on Linux was reaped, taking its /proc start
+        // identity with it) before we read it. Its own handle has exited, so record it as
+        // completed rather than failing the command. The file still fences admission until
+        // Exited removes it after the streams drain, exactly as a started record does.
+        _record = _record with { ProcessId = child.Id, Completed = true };
+        await SaveAsync(ct);
+    }
+
+    /// <summary>The child's start identity, or false when it has already exited and the
+    /// platform can no longer report it. A still-running child that cannot be read throws.</summary>
+    internal static bool TryStartTicks(Process child, out long startTicks)
+    {
+        try
+        {
+            startTicks = child.StartTime.ToUniversalTime().Ticks;
+            return true;
+        }
+        catch (Exception ex) when ((ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+                                   && child.HasExited)
+        {
+            startTicks = 0;
+            return false;
+        }
+    }
 
     public async Task StartedAsync(int processId, long startTicks, CancellationToken ct)
     {
@@ -89,5 +118,6 @@ internal sealed class RepositoryChildJournal
         { return true; }
     }
 
-    internal sealed record ChildRecord(int SchemaVersion, string CommonDirectory, int? ProcessId, long? StartTicks);
+    internal sealed record ChildRecord(int SchemaVersion, string CommonDirectory, int? ProcessId, long? StartTicks,
+        bool Completed = false);
 }

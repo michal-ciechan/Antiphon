@@ -624,6 +624,44 @@ public sealed class DockerStackContractTests
         testing.Contains("/etc/sudoers.d/antiphon-custody", StringComparison.Ordinal).ShouldBeTrue();
     }
 
+    // CARD-0661. LandingGit and the guarded removals run `git show-ref --exists`, new in Git 2.43;
+    // bookworm's apt git is 2.39.5 and bookworm-backports has none. The runner image declares the
+    // minimum, builds a SHA-256-pinned release at or above it, checks the installed version against
+    // it at build time, and installs no apt git beside it. The docs state the same minimum.
+    [Test]
+    public void Runner_git_meets_the_declared_minimum()
+    {
+        var dockerfile = Text("docker/session-runner-grok/Dockerfile");
+        var minimum = System.Text.RegularExpressions.Regex.Match(dockerfile, @"ARG GIT_MINIMUM_VERSION=(\d+\.\d+)\r?\n");
+        minimum.Success.ShouldBeTrue("the runner Dockerfile declares its minimum Git version");
+        var floor = Version.Parse(minimum.Groups[1].Value);
+        floor.ShouldBeGreaterThanOrEqualTo(new Version(2, 43), "show-ref --exists is Git 2.43");
+        var pinned = System.Text.RegularExpressions.Regex.Match(dockerfile, @"ARG GIT_VERSION=(\d+\.\d+\.\d+)\r?\n");
+        pinned.Success.ShouldBeTrue("the runner Git is a pinned release");
+        Version.Parse(pinned.Groups[1].Value).ShouldBeGreaterThanOrEqualTo(floor);
+        System.Text.RegularExpressions.Regex.IsMatch(dockerfile, @"ARG GIT_SHA256=[0-9a-f]{64}\r?\n")
+            .ShouldBeTrue("the Git tarball is pinned by SHA-256");
+
+        var build = Stage("docker/session-runner-grok/Dockerfile", "git-build").Body;
+        var verify = build.IndexOf("sha256sum -c -", StringComparison.Ordinal);
+        verify.ShouldBeGreaterThan(-1);
+        verify.ShouldBeLessThan(build.IndexOf("tar -xzf", StringComparison.Ordinal), "the tarball is verified before it is unpacked");
+        build.Contains("sysconfdir=/etc", StringComparison.Ordinal)
+            .ShouldBeTrue("the baked /etc/gitconfig must stay the system config the pinned Git reads");
+
+        var runtime = RunnerBody();
+        runtime.Contains("COPY --from=git-build /opt/git-root/usr/local/ /usr/local/", StringComparison.Ordinal).ShouldBeTrue();
+        runtime.Contains("\"${GIT_MINIMUM_VERSION}\" \"$(git --version | cut -d' ' -f3)\" | sort -V -C", StringComparison.Ordinal)
+            .ShouldBeTrue("the installed Git is checked against the minimum at build time");
+        foreach (var stage in DockerStackDocuments.Stages(dockerfile).Where(stage => stage.Name != "node22"))
+            System.Text.RegularExpressions.Regex.IsMatch(stage.Body, @"apt-get install[^\n]*\sgit(\s|\\|$)",
+                    System.Text.RegularExpressions.RegexOptions.Multiline)
+                .ShouldBeFalse(stage.Name + " installs Debian's git, which is below the minimum");
+
+        Text("docs/docker-stack.md").Contains("minimum Git " + minimum.Groups[1].Value, StringComparison.Ordinal)
+            .ShouldBeTrue("docs/docker-stack.md states the runner's minimum Git");
+    }
+
     [Test]
     public void Stock_server_excludes_fixture()
     {

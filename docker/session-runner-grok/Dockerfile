@@ -2,6 +2,35 @@
 # The default target is the last stage (runtime). receipt-probe and session-testing
 # are opt-in and must not become the default image.
 ARG SOURCE_REVISION=unknown
+# CARD-0661: minimum Git 2.43. LandingGit, GuardedWorktreeRemoval and GuardedVerificationRemoval
+# use `git show-ref --exists` (new in 2.43) to tell a missing ref (2) from a lookup error (1).
+# Debian bookworm ships 2.39.5 and bookworm-backports carries no git, so the image builds a pinned
+# upstream release, verified by its kernel.org SHA-256 before it is unpacked. A re-published
+# tarball fails the build at sha256sum -c; the remedy is a new pinned pair, never dropping the check.
+ARG GIT_MINIMUM_VERSION=2.43
+ARG GIT_VERSION=2.47.3
+ARG GIT_SHA256=c073471530e92b716641ea2b381fcd0ece53eea9a76a9c5415f93f89e870dd5f
+
+# Built on the runtime's own base so the binary links against the same bookworm libraries.
+# sysconfdir=/etc keeps the baked system config (/etc/gitconfig) in force; the /usr/local default
+# would read /usr/local/etc/gitconfig and silently drop core.sshCommand and pushInsteadOf.
+FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS git-build
+ARG GIT_VERSION
+ARG GIT_SHA256
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl make gcc libc6-dev \
+      libcurl4-gnutls-dev libexpat1-dev zlib1g-dev \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p /tmp/git-src \
+ && curl -fsSL -o /tmp/git-src/git.tar.gz "https://mirrors.edge.kernel.org/pub/software/scm/git/git-${GIT_VERSION}.tar.gz" \
+ && echo "${GIT_SHA256}  /tmp/git-src/git.tar.gz" | sha256sum -c - \
+ && tar -xzf /tmp/git-src/git.tar.gz -C /tmp/git-src \
+ && make -C "/tmp/git-src/git-${GIT_VERSION}" -j"$(nproc)" prefix=/usr/local sysconfdir=/etc \
+      NO_GETTEXT=1 NO_TCLTK=1 NO_PERL=1 NO_PYTHON=1 NO_OPENSSL=1 INSTALL_SYMLINKS=1 \
+      DESTDIR=/opt/git-root all install \
+ && /opt/git-root/usr/local/bin/git --version | grep -F "git version ${GIT_VERSION}" \
+ && test -x /opt/git-root/usr/local/libexec/git-core/git-remote-https \
+ && rm -rf /tmp/git-src
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 ARG SOURCE_REVISION=unknown
@@ -15,6 +44,8 @@ FROM node:22-bookworm AS node22
 
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime-base
 ARG SOURCE_REVISION=unknown
+ARG GIT_MINIMUM_VERSION
+ARG GIT_VERSION
 # CARD-0628 D-2: Claude Code's native linux-x64 binary, pinned by version AND published SHA-256.
 # A re-published 2.1.280 fails the build at sha256sum -c; the remedy is a new pinned pair, never
 # dropping the check.
@@ -30,7 +61,7 @@ WORKDIR /app
 # never a layer of this image.
 USER root
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl ca-certificates bash git \
+ && apt-get install -y --no-install-recommends curl ca-certificates bash libcurl3-gnutls libexpat1 zlib1g \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir -p /tmp/grok-install \
  && curl -fsSL https://x.ai/cli/install.sh | env HOME=/tmp/grok-install GROK_BIN_DIR=/usr/local/bin bash -s 1.0.40 \
@@ -45,6 +76,12 @@ RUN apt-get update \
  && install -m 0755 /tmp/claude-install/claude /usr/local/bin/claude \
  && env HOME=/tmp/claude-install CLAUDE_CONFIG_DIR=/tmp/claude-install/cfg DISABLE_AUTOUPDATER=1 /usr/local/bin/claude --version | grep -F "${CLAUDE_CODE_VERSION}" \
  && rm -rf /tmp/claude-install
+# CARD-0661: the pinned Git (see git-build) replaces Debian's 2.39.5; no apt git is installed.
+COPY --from=git-build /opt/git-root/usr/local/ /usr/local/
+RUN test "$(command -v git)" = /usr/local/bin/git \
+ && git --version | grep -F "git version ${GIT_VERSION}" \
+ && printf '%s\n%s\n' "${GIT_MINIMUM_VERSION}" "$(git --version | cut -d' ' -f3)" | sort -V -C \
+ && test -x /usr/local/libexec/git-core/git-remote-https
 COPY --from=build /out/runner/ /app/
 COPY --from=build /out/ptyhost/ /tmp/ptyhost/
 RUN cp /tmp/ptyhost/Antiphon.PtyHost /app/Antiphon.PtyHost \
@@ -150,6 +187,7 @@ RUN chmod 0755 /usr/local/bin/antiphon-dind-entrypoint.sh \
  && env HOME=/tmp/claude-probe CLAUDE_CONFIG_DIR=/tmp/claude-probe DISABLE_AUTOUPDATER=1 claude --version | grep -F '2.1.280' \
  && rm -rf /tmp/claude-probe \
  && ssh -V \
+ && git config --system --show-origin --get core.sshCommand | grep -F 'file:/etc/gitconfig' \
  && sudo --version \
  && setpriv --help | grep -F -- '--no-new-privs' \
  && getent group docker-nested \
