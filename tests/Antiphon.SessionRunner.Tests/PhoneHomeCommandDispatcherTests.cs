@@ -283,6 +283,41 @@ public class PhoneHomeCommandDispatcherTests
     }
 
     [Test]
+    public async Task Grok_exe_is_only_the_bare_name_or_the_image_install_path()
+    {
+        // CARD-0640. Same contract as Claude: the Dockerfile installs exactly /usr/local/bin/grok.
+        // A path that merely ends in "/grok" is not this image's binary.
+        var runtime = new RecordingRuntime();
+        var dispatcher = Dispatcher(runtime);
+
+        foreach (var exe in new[]
+                 {
+                     "/opt/evil/grok",
+                     "/usr/local/bin/grok/../../tmp/grok",
+                     "./grok",
+                     "Grok",
+                     "grok.exe",
+                 })
+        {
+            PhoneHomeCommandDispatcher.IsGrokExe(exe).ShouldBeFalse(exe);
+            var refused = await dispatcher.DispatchAsync(Launch(Request(exe, "/work")), CancellationToken.None);
+            refused.Kind.ShouldBe(PhoneHomeFrameKind.Error, exe + " is not the image's grok");
+            refused.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
+        }
+
+        runtime.Mutations.ShouldBeEmpty();
+
+        foreach (var exe in new[] { "grok", "/usr/local/bin/grok" })
+        {
+            PhoneHomeCommandDispatcher.IsGrokExe(exe).ShouldBeTrue(exe);
+            var admitted = await dispatcher.DispatchAsync(Launch(Request(exe, "/work")), CancellationToken.None);
+            admitted.Kind.ShouldBe(PhoneHomeFrameKind.Result, exe + " is the image's grok and must be admitted");
+        }
+
+        runtime.Mutations.Count.ShouldBe(2);
+    }
+
+    [Test]
     public async Task Transcript_format_null_grok_and_claude_admitted_codex_refused()
     {
         var runtime = new RecordingRuntime();
