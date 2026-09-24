@@ -1,5 +1,11 @@
 # Session runtime invariants
 
+- **A queued runner spill is owned by its message row (CARD-0647 follow-up).** The row
+  persists the exact file body and a runner-relative path derived from its Id before
+  the first Input. An Input frame carries that Id with the body. The runner checks the
+  path against the Id and writes the same bytes to the same file on retries. A fresh
+  server process reads the row; another spill for the same busy session cannot replace it.
+
 - **Phone-home Grok (CARD-0490) is transcript-confirmed.** Registration, heartbeat and screen PONG
   are not delivery. The complete matching UserPrompt past the attempt floor is the receipt. Local
   HTTP/SSE is unchanged; remote sessions persist `RunnerId`/`RunnerStoreId`/`RunnerCwd` and never
