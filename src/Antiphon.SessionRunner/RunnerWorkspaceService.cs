@@ -211,11 +211,138 @@ public sealed partial class RunnerWorkspaceService
             throw new PhoneHomeAdmissionException(
                 PhoneHomeProblemTypes.UnsupportedTarget, "Spill relative path is not admitted.", 409);
 
-        var full = runnerCwd.TrimEnd('/') + "/" + relative;
+        // Lexical admission above does not see a symlink. The bytes have to land inside the
+        // resolved mirror, or a directory link planted in that mirror writes somewhere else.
+        var mirror = TryResolveFinal(runnerCwd);
+        if (mirror is null || !ResolvedMirrorIsAdmitted(mirror)
+            || !TryResolveContained(mirror, relative, out var full))
+            throw new PhoneHomeAdmissionException(
+                PhoneHomeProblemTypes.UnsupportedTarget, "Spill path escapes the mirror worktree.", 409);
+
         var directory = Path.GetDirectoryName(full);
         if (!string.IsNullOrEmpty(directory))
             Directory.CreateDirectory(directory);
         await File.WriteAllTextAsync(full, spill.Body ?? "", new UTF8Encoding(false), ct);
+    }
+
+    private bool ResolvedMirrorIsAdmitted(string resolvedMirror)
+    {
+        var worktrees = TryResolveFinal(_worktreeRoot) ?? Path.GetFullPath(_worktreeRoot);
+        if (IsInside(resolvedMirror, worktrees))
+        {
+            var rest = Path.GetRelativePath(worktrees, resolvedMirror);
+            return rest.Length > 0
+                && rest is not "."
+                && !rest.Contains(Path.DirectorySeparatorChar)
+                && !rest.Contains(Path.AltDirectorySeparatorChar);
+        }
+
+        var parent = Path.GetDirectoryName(_worktreeRoot);
+        if (string.IsNullOrEmpty(parent))
+            return false;
+        var resolvedParent = TryResolveFinal(parent) ?? Path.GetFullPath(parent);
+        return PathsEqual(resolvedMirror, resolvedParent);
+    }
+
+    private static bool TryResolveContained(string mirrorRoot, string relative, out string full)
+    {
+        var current = mirrorRoot;
+        var parts = relative.Split('/');
+        for (var i = 0; i < parts.Length; i++)
+        {
+            var next = Path.Combine(current, parts[i]);
+            if (Directory.Exists(next) || File.Exists(next))
+            {
+                next = TryResolveFinal(next) ?? "";
+                if (next.Length == 0 || !IsInside(next, mirrorRoot))
+                {
+                    full = "";
+                    return false;
+                }
+            }
+            else
+            {
+                next = Path.GetFullPath(next);
+                if (!IsInside(next, mirrorRoot))
+                {
+                    full = "";
+                    return false;
+                }
+            }
+
+            if (i == parts.Length - 1)
+            {
+                full = next;
+                return true;
+            }
+
+            current = next;
+        }
+
+        full = "";
+        return false;
+    }
+
+    /// <summary>Follow directory and file links. Null when a link cannot be resolved.</summary>
+    private static string? TryResolveFinal(string path)
+    {
+        string full;
+        try
+        {
+            full = Path.GetFullPath(path);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
+        }
+
+        var root = Path.GetPathRoot(full);
+        if (string.IsNullOrEmpty(root))
+            return full;
+        var segments = full[root.Length..].Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries);
+        var current = root;
+        for (var i = 0; i < segments.Length; i++)
+        {
+            var candidate = Path.Combine(current, segments[i]);
+            FileSystemInfo? info = Directory.Exists(candidate)
+                ? new DirectoryInfo(candidate)
+                : File.Exists(candidate) ? new FileInfo(candidate) : null;
+            if (info is null)
+                return Path.GetFullPath(Path.Combine(current, Path.Combine(segments[i..])));
+            try
+            {
+                var link = info.ResolveLinkTarget(returnFinalTarget: true);
+                current = link is null ? info.FullName : Path.GetFullPath(link.FullName);
+            }
+            catch (IOException)
+            {
+                return null;
+            }
+        }
+
+        return Path.GetFullPath(current);
+    }
+
+    private static bool IsInside(string candidate, string root)
+    {
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        var prefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar;
+        return Path.GetFullPath(candidate).StartsWith(prefix, comparison);
+    }
+
+    private static bool PathsEqual(string left, string right)
+    {
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        return string.Equals(
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
+            comparison);
     }
 
     private bool IsUnderRoot(string path)
