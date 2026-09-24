@@ -110,7 +110,16 @@ public sealed class PhoneHomeConnectionService : BackgroundService
         // response. Numbering our own connections here desynchronised the two counters the moment
         // either process restarted alone, and both receive loops silently dropped every frame that
         // did not match - the socket stayed open while heartbeats, requests and replies vanished.
-        var epoch = ticket.Epoch;
+        await RunConnectedAsync(ws, ticket.Epoch, ct);
+    }
+
+    /// <summary>
+    /// One connected socket, from the server-owned epoch until the first of its receive,
+    /// heartbeat and event loops ends. Split from <see cref="RunConnectionAsync"/> so a scripted
+    /// socket can drive a connection's end without a registration round trip.
+    /// </summary>
+    internal async Task RunConnectedAsync(WebSocket ws, long epoch, CancellationToken ct)
+    {
         Interlocked.Exchange(ref _epoch, epoch);
         using var connectionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var overflow = false;

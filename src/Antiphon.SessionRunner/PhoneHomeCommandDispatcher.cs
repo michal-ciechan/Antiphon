@@ -51,14 +51,17 @@ public sealed class PhoneHomeCommandDispatcher
     private readonly PhoneHomeSettings _settings;
     private readonly IProviderAuthProbe? _authProbe;
     private readonly object _mutationGate = new();
+    private readonly ILogger _logger;
     private RunnerWorkspaceService? _workspace;
 
     public PhoneHomeCommandDispatcher(
-        IPhoneHomeRuntimeSurface runtime, PhoneHomeSettings settings, IProviderAuthProbe? authProbe = null)
+        IPhoneHomeRuntimeSurface runtime, PhoneHomeSettings settings, IProviderAuthProbe? authProbe = null,
+        ILogger<PhoneHomeCommandDispatcher>? logger = null)
     {
         _runtime = runtime;
         _settings = settings;
         _authProbe = authProbe;
+        _logger = (ILogger?)logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
     }
 
     /// <summary>
