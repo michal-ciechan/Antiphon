@@ -1,6 +1,8 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Domain;
 using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging;
@@ -88,33 +90,283 @@ public sealed class RemoteWorkspaceService
     }
 
     /// <summary>
-    /// Settlement sync: bring the canonical desktop worktree up to whatever the session pushed.
-    /// Fast-forward only, and never on a dirty tree.
+    /// CARD-0657 D-2. An ordinary runner-bound Worktree task. RunnerId and the task coordinates
+    /// decide this, never whether a mirror path happens to be recorded.
+    /// </summary>
+    public static bool IsEligible(AgentTask task) =>
+        task.Workspace == WorkspaceMode.Worktree
+        && !string.IsNullOrWhiteSpace(task.RunnerId)
+        && task.Role != AgentTaskRole.Mutation
+        && task.SourceLandingOperationId is null;
+
+    /// <summary>CARD-0657 D-2. The only branch a task may be synchronized from, derived from its id.</summary>
+    public static string OwnedBranch(Guid taskId) => "feat/card-task-" + taskId.ToString("N")[..8];
+
+    /// <summary>
+    /// CARD-0657 D-1..D-3. Settlement sync: confirm the canonical desktop worktree at the commit the
+    /// session pushed to the task's OWN branch. The exact ref is observed and pinned once, the
+    /// checkout's identity is revalidated under the repository lease, and the only mutation is a
+    /// fast-forward to that full object id. A refusal leaves the checkout exactly as found; an
+    /// unreadable answer is Unavailable, never a guessed success.
     /// </summary>
     public async Task<RemoteSettlementSyncResult> SyncAsync(AgentTask task, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(task.WorktreePath) || string.IsNullOrWhiteSpace(task.WorktreeBranch))
-            return new(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.IdentityMismatch);
+        if (!IsEligible(task))
+            return RemoteSettlementSyncResult.NotApplicable;
 
-        var status = await _git.RunAsync(
-            task.WorktreePath, ["status", "--porcelain", "--untracked-files=all"], ct);
-        if (status.ExitCode != 0)
-            return new(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable);
-        if (status.Output.Trim().Length > 0)
-            return new(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.Dirty);
+        var branch = OwnedBranch(task.Id);
+        var fullRef = "refs/heads/" + branch;
+        if (!string.Equals(task.WorktreeBranch, branch, StringComparison.Ordinal))
+            return Outcome(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.BranchMismatch, fullRef);
+        if (_progressGit is null || _leases is null)
+            return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.DependencyUnavailable, fullRef);
 
-        var fetch = await _git.RunAsync(task.WorktreePath, ["fetch", "origin", task.WorktreeBranch], ct);
-        if (fetch.ExitCode != 0)
-            return new(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.FetchUnavailable);
+        var baseline = TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson)?.Primary;
+        if (baseline is null || !GitObjectId.IsFull(baseline.LocalSha)
+            || baseline.Remote.EndpointFingerprint is not { Length: > 0 })
+            return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.BaselineUnavailable, fullRef);
+        if (!string.Equals(baseline.FullRef, fullRef, StringComparison.Ordinal))
+            return Outcome(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.BranchMismatch, fullRef);
+        if ((baseline.OwnerTaskId is Guid owner && owner != task.Id)
+            || string.IsNullOrWhiteSpace(task.WorktreePath)
+            || string.IsNullOrWhiteSpace(baseline.RegisteredCheckout)
+            || !PathsEqual(task.WorktreePath, baseline.RegisteredCheckout))
+            return Outcome(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.IdentityMismatch, fullRef);
 
-        var merge = await _git.RunAsync(task.WorktreePath, ["merge", "--ff-only", "FETCH_HEAD"], ct);
-        if (merge.ExitCode != 0)
-            return new(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.Diverged);
-
-        var head = await _git.RunAsync(task.WorktreePath, ["rev-parse", "HEAD"], ct);
-        return new(RemoteSettlementSyncState.Synchronized,
-            DesktopAfterSha: head.ExitCode == 0 ? head.Output.Trim() : null);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(SyncBudget);
+        try
+        {
+            return await SyncOwnedCheckoutAsync(task, baseline, fullRef, deadline.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested && deadline.IsCancellationRequested)
+        {
+            return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.Timeout, fullRef, baseline.LocalSha);
+        }
+        catch (TimeoutException)
+        {
+            return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.Timeout, fullRef, baseline.LocalSha);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning("Settlement sync for task {Task} could not inspect its checkout ({Type})",
+                task.Id, ex.GetType().Name);
+            return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable,
+                fullRef, baseline.LocalSha);
+        }
     }
+
+    private async Task<RemoteSettlementSyncResult> SyncOwnedCheckoutAsync(
+        AgentTask task, ProgressSourceBaseline baseline, string fullRef, CancellationToken ct)
+    {
+        var repo = baseline.CanonicalRepository;
+        var b = baseline.LocalSha;
+        var fingerprint = baseline.Remote.EndpointFingerprint!;
+
+        var before = await ValidateCheckoutAsync(task, baseline, fullRef, ct);
+        if (before.Refusal is { } refused)
+            return refused with { FullRef = fullRef, BaselineSha = b };
+        var l0 = before.Head!;
+
+        // Observe (and, if absent locally, fetch) the exact ref BEFORE taking the lease: the
+        // observation takes its own lease for the fetch, and nested acquisition is not reentrant.
+        var observed = await _progressGit!.ObserveExactRefAsync(repo, fullRef, fingerprint, task.Id, ct);
+        switch (observed.State)
+        {
+            case ProgressRemoteState.Missing:
+                return Outcome(RemoteSettlementSyncState.NoPushedProgress, RemoteSettlementSyncReasons.BranchNotPushed,
+                    fullRef, b, desktopBefore: l0, fingerprint: fingerprint);
+            case ProgressRemoteState.NotConfigured:
+                return Outcome(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.EndpointAmbiguous, fullRef, b);
+            case ProgressRemoteState.Unavailable:
+                return observed.Reason switch
+                {
+                    "source_remote_endpoint_changed" => Outcome(RemoteSettlementSyncState.Refused,
+                        RemoteSettlementSyncReasons.EndpointChanged, fullRef, b),
+                    "source_remote_endpoint_ambiguous" => Outcome(RemoteSettlementSyncState.Refused,
+                        RemoteSettlementSyncReasons.EndpointAmbiguous, fullRef, b),
+                    "repository_lease_busy" => Outcome(RemoteSettlementSyncState.Unavailable,
+                        RemoteSettlementSyncReasons.LeaseBusy, fullRef, b),
+                    _ => Outcome(RemoteSettlementSyncState.Unavailable,
+                        RemoteSettlementSyncReasons.FetchUnavailable, fullRef, b),
+                };
+        }
+
+        var s = observed.Sha;
+        if (!GitObjectId.IsFull(s))
+            return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.FetchUnavailable, fullRef, b);
+
+        await using var lease = await _leases!.TryAcquireAsync(
+            repo, new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.WorktreeSettlement), ct);
+        if (lease is null)
+            return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.LeaseBusy, fullRef, b, s);
+
+        var under = await ValidateCheckoutAsync(task, baseline, fullRef, ct);
+        if (under.Refusal is { } refusedUnder)
+            return refusedUnder with { FullRef = fullRef, BaselineSha = b, RemoteSha = s };
+        var l = under.Head!;
+        if (!string.Equals(l, l0, StringComparison.Ordinal))
+            return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.ChangedDuringValidation, fullRef, b, s);
+
+        // The task-owned pin always names S, whether or not the object was already local.
+        if (observed.ObservationRef is { } observationRef)
+        {
+            var pinned = await _progressGit.RevParseCommitAsync(repo, observationRef, ct);
+            if (!pinned.Succeeded || !string.Equals(pinned.Sha, s, StringComparison.Ordinal))
+                return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.ChangedDuringValidation, fullRef, b, s);
+        }
+        var pin = SettlementPin(task.Id);
+        var update = await _git.RunAsync(repo, ["update-ref", pin, s], ct);
+        if (!update.Succeeded)
+            return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable, fullRef, b, s);
+
+        if (!string.Equals(s, b, StringComparison.Ordinal))
+        {
+            var descends = await _progressGit.IsAncestorAsync(repo, b, s, ct);
+            if (descends is null)
+                return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable, fullRef, b, s);
+            if (descends == false)
+            {
+                var rewound = await _progressGit.IsAncestorAsync(repo, s, b, ct);
+                if (rewound is null)
+                    return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable, fullRef, b, s);
+                return Outcome(RemoteSettlementSyncState.Refused,
+                    rewound == true ? RemoteSettlementSyncReasons.Rewound : RemoteSettlementSyncReasons.Diverged,
+                    fullRef, b, s, l, observationRef: pin, fingerprint: fingerprint);
+            }
+        }
+
+        if (!string.Equals(l, s, StringComparison.Ordinal))
+        {
+            var behind = await _progressGit.IsAncestorAsync(repo, l, s, ct);
+            if (behind is null)
+                return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable, fullRef, b, s);
+            if (behind == false)
+            {
+                // `merge --ff-only` alone would accept an already-ahead desktop and report its tip.
+                var ahead = await _progressGit.IsAncestorAsync(repo, s, l, ct);
+                if (ahead is null)
+                    return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable, fullRef, b, s);
+                return Outcome(RemoteSettlementSyncState.Refused,
+                    ahead == true ? RemoteSettlementSyncReasons.LocalAhead : RemoteSettlementSyncReasons.Diverged,
+                    fullRef, b, s, l, observationRef: pin, fingerprint: fingerprint);
+            }
+
+            var merge = await _git.RunAsync(task.WorktreePath!, ["-c", "merge.autoStash=false", "merge", "--ff-only", s], ct);
+            if (!merge.Succeeded)
+                return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.MergeFailed, fullRef, b, s, l);
+        }
+
+        // Postconditions: the same registered checkout, on the same branch, clean, at exactly S.
+        ValidatedCheckout after;
+        try
+        {
+            after = await ValidateCheckoutAsync(task, baseline, fullRef, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException and not TimeoutException)
+        {
+            after = new(Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.PostconditionUnavailable), null);
+        }
+        if (after.Refusal is not null || !string.Equals(after.Head, s, StringComparison.Ordinal))
+            return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.PostconditionUnavailable,
+                fullRef, b, s, l, observationRef: pin, fingerprint: fingerprint);
+
+        return string.Equals(s, b, StringComparison.Ordinal)
+            ? Outcome(RemoteSettlementSyncState.NoPushedProgress, RemoteSettlementSyncReasons.NoPushedProgress,
+                fullRef, b, s, l, s, pin, fingerprint)
+            : Outcome(RemoteSettlementSyncState.Synchronized, null, fullRef, b, s, l, s, pin, fingerprint);
+    }
+
+    private sealed record ValidatedCheckout(RemoteSettlementSyncResult? Refusal, string? Head);
+
+    /// <summary>
+    /// CARD-0657 D-2/D-3. The recorded endpoint, repository, registration, symbolic HEAD, branch
+    /// tip, sequencer and clean status. Read-only: it never switches, stashes or resets anything.
+    /// </summary>
+    private async Task<ValidatedCheckout> ValidateCheckoutAsync(
+        AgentTask task, ProgressSourceBaseline baseline, string fullRef, CancellationToken ct)
+    {
+        static ValidatedCheckout Refuse(RemoteSettlementSyncState state, string reason) =>
+            new(new RemoteSettlementSyncResult(state, reason), null);
+
+        var repo = baseline.CanonicalRepository;
+        var fingerprint = await _progressGit!.EndpointFingerprintAsync(repo, ct);
+        if (fingerprint is null)
+            return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.EndpointAmbiguous);
+        if (!string.Equals(fingerprint, baseline.Remote.EndpointFingerprint, StringComparison.OrdinalIgnoreCase))
+            return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.EndpointChanged);
+
+        if (_reservations is not null)
+        {
+            var active = await _reservations.ReadActiveAsync(WorkspaceReservationKey.ForTask(
+                task.WorktreePath, task.WorkingDirectory, task.WorktreeBranch, task.RepoPath), ct);
+            if (active.Any(r => r.Kind == WorkspaceReservationKind.Retirement))
+                return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.RetirementReserved);
+        }
+
+        string worktree;
+        try
+        {
+            worktree = await _git.CanonicalDirectoryAsync(task.WorktreePath!, ct);
+            var repoCommon = await _git.CommonDirectoryAsync(repo, ct);
+            var worktreeCommon = await _git.CommonDirectoryAsync(worktree, ct);
+            if (!PathsEqual(repoCommon, baseline.CanonicalCommonDirectory)
+                || !PathsEqual(worktreeCommon, baseline.CanonicalCommonDirectory))
+                return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.IdentityMismatch);
+        }
+        catch (IOException)
+        {
+            return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.IdentityMismatch);
+        }
+
+        var registrations = (await _git.RegistrationsAsync(repo, ct)).Where(r => PathsEqual(r.Path, worktree)).ToList();
+        if (registrations.Count != 1 || registrations[0].Locked || registrations[0].Prunable)
+            return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.IdentityMismatch);
+        var registered = registrations[0];
+
+        var symbolic = await _git.RunAsync(worktree, ["symbolic-ref", "-q", "HEAD"], ct);
+        if (symbolic.ExitCode == 1)
+            return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.BranchMismatch);
+        if (!symbolic.Succeeded)
+            return Refuse(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable);
+        if (!string.Equals(symbolic.Output.Trim(), fullRef, StringComparison.Ordinal)
+            || !string.Equals(registered.Branch, fullRef, StringComparison.Ordinal))
+            return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.BranchMismatch);
+
+        var head = await _progressGit.RevParseCommitAsync(worktree, "HEAD", ct);
+        var tip = await _progressGit.RevParseCommitAsync(worktree, fullRef, ct);
+        if (!head.Succeeded || !tip.Succeeded || head.Sha is null)
+            return Refuse(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable);
+        if (!string.Equals(head.Sha, tip.Sha, StringComparison.Ordinal)
+            || !string.Equals(head.Sha, registered.Head, StringComparison.Ordinal))
+            return Refuse(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.ChangedDuringValidation);
+
+        if (await _git.HasActiveSequencerAsync(worktree, ct))
+            return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.Sequencer);
+
+        var status = await _git.RunAsync(worktree,
+            ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
+        if (!status.Succeeded)
+            return Refuse(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable);
+        if (status.Output.Length != 0)
+            return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.Dirty);
+
+        return new(null, head.Sha);
+    }
+
+    /// <summary>The task-owned settlement pin: one name per task, rewritten, never accumulated.</summary>
+    public static string SettlementPin(Guid taskId) => $"refs/antiphon/progress/{taskId:N}/settlement-sync";
+
+    private static RemoteSettlementSyncResult Outcome(
+        RemoteSettlementSyncState state, string? reason, string? fullRef = null, string? baselineSha = null,
+        string? remoteSha = null, string? desktopBefore = null, string? desktopAfter = null,
+        string? observationRef = null, string? fingerprint = null) =>
+        new(state, reason, fullRef, baselineSha, remoteSha, desktopBefore, desktopAfter, observationRef, fingerprint);
+
+    private static bool PathsEqual(string left, string right) => string.Equals(
+        Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
+        Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
     /// <summary>
     /// Removes the runner-side mirror at retirement. Best effort: a mirror that cannot be removed
