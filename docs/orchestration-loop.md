@@ -1172,7 +1172,8 @@ and surviving work first. Recovery never kills an unrelated process by PID alone
 Use `pwsh -NoProfile -File scripts/recover-repository-children.ps1 -Repository <checkout>`
 to preview the records. After confirming the recorded children's descendants have exited,
 repeat with `-Execute -ConfirmDescendantsExited`. The command holds the same repository lock,
-clears only valid records whose exact PID/start identity is gone, and retains live, unreadable,
+clears only valid records whose exact PID/start identity is gone or whose owner recorded its
+root as already exited (`Completed`, CARD-0661: the PID is never looked up), and retains live, unreadable,
 malformed or torn evidence. Exit 3 means busy or retained evidence; exit 0 means none remains.
 A server restart alone does not establish descendant exit; a machine reboot does. Unknown
 start intents still require investigation. Recovery clears admission, not Git sequencer/lock
