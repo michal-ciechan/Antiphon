@@ -69,9 +69,16 @@ the [CARD-0459 investigation](../../investigations/2026-09-19-card-0459-worktree
     `.antiphon/inbox/*.md`, `.antiphon/task-*-brief.md`, `.antiphon/task-*-refinement-*.md`.
   - Evidence: `.antiphon/task-????????.md` (the report spill; the short id is 8 hex chars,
     `DelegationReportFormatter.Short`), `.antiphon/**/*.trx`, `.antiphon/*checkpoints*/**`.
-  - Precedence: Evidence before Disposable before Protected. When an operator's lists
-    overlap, the copy wins; `task-*-brief.md` does not match the 8-character evidence
-    pattern, so briefs are not copied.
+  - Precedence: protected names, then Evidence, then Disposable, else Protected. When an
+    operator's evidence and disposable lists overlap, the copy wins; `task-*-brief.md` does not
+    match the 8-character evidence pattern, so briefs are not copied.
+  - Protected names (`ProtectedIgnored`; Round A repair after review 9a0c7fb8) win over every
+    directory rule anywhere in the tree, so `server/bin-c665/appsettings.Development.json`
+    keeps `bin-c665/` from being wholly disposable and the tree refuses
+    `ignored_content_preserved`. Defaults: `**/.claude/**`, `**/appsettings.*.json`, `**/*.user`,
+    `**/*.local.json`, `**/.antiphon/report.md`, `**/.antiphon/deliverables/**`, `logs/**`,
+    `backups/**`, `.superpowers/**`, `.memsearch/**`, `tests/Antiphon.E2E/TestOutput/**`.
+    Configuration can only add names; it cannot remove a default.
   - Deliberately protected by default: `.antiphon/report.md` and any other `.antiphon`
     file not named above, `.antiphon/inbox/<non-md>` (channel attachments),
     `.antiphon/deliverables/**`, `.claude/**`, `appsettings.*.json`, `*.user`, `logs/**`,
@@ -106,6 +113,15 @@ the [CARD-0459 investigation](../../investigations/2026-09-19-card-0459-worktree
   a pass in `AgentTaskLandingProtocol.CleanupAsync` (SettledTask and LocalMerge would not
   benefit); deleting disposable files ourselves before `git worktree remove` (a second
   deletion path with no new safety).
+- **D-5a: Links refuse at both readings** (Round A repair). Git for Windows lists ignored files
+  through a directory junction, and non-forcing `git worktree remove` deletes through it
+  (measured on git 2.50.1: a file outside the tree behind junction `bin-z` was deleted). After
+  the protected check at each reading, any evidence or disposable path that is, or sits under,
+  a reparse point (symlink or junction; `FileAttributes.ReparsePoint` of the entry itself,
+  ancestors first, never read through a found link) refuses `ignored_reparse_point` with
+  `reparse: <relative link>` detail: before any evidence is copied, and again at the second
+  reading before deletion. An empty junction that git does not list is not seen; deleting it
+  removes only the link.
 - **D-6: Null gate means protect-all.** `GuardedWorktreeRemoval` takes an optional
   `WorktreeIgnoredContentGate? ignored = null`; null reproduces today's total refusal so an
   unwired composition stays fail-closed. Production DI, `DelegationTestServices` and
@@ -364,10 +380,17 @@ Pipes inside filters are escaped for Markdown; the real filter uses `|`.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1-red | `tests/Antiphon.Tests -> bin-c665-a/` | classifier-red | `/*/*/WorktreeIgnoredContentClassifierTests*/*` | V-1 red | all methods execute; Disposable/Evidence assertions fail against the all-Protected stub; no build/fixture errors | 20 | 5 |
-| CP-2 | S1 | `tests/Antiphon.Tests -> bin-c665-a/` | classifier-green | `/*/*/(WorktreeIgnoredContentClassifierTests*)\|(WorktreeCleanupSettingsValidatorTests*)/*` | V-1, V-9 | all listed, 0 failed/skipped | 24 | 3 |
+| CP-2 | S1 | `tests/Antiphon.Tests -> bin-c665-a/` | classifier-green | `/*/*/(WorktreeIgnoredContentClassifierTests*)\|(WorktreeCleanupSettingsValidatorTests*)/*` | V-1, V-9 | all listed, 0 failed/skipped (36 after the Round A repair) | 24 | 3 |
 | CP-3 | S2-red | `tests/Antiphon.Tests -> bin-c665-b/` | gate-red | `/*/*/LandingRemovalPolicyControlTests/C665_*` | V-2 red | all 6 execute; disposable/evidence/detail assertions fail; `C665_NullGateProtectsEveryIgnoredPath` may already pass | 6 | 4 |
-| CP-4 | S2 | `tests/Antiphon.Tests -> bin-c665-b/` | gate-green | `/*/*/(LandingRemovalPolicyControlTests*)\|(WorktreeGuardedCleanupTests*)/*` | V-2, V-3, R-1 | all listed, 0 failed/skipped; the four updated `C443_*IgnoredBoundary` rows and both `C665_*` cleanup rows present | 85 | 5 |
-| CP-5 | S2 | `CP-4`, `--no-build` | land-green | `/*/*/AgentTaskLandPublicationTests/(C448_V04*)\|(C665_*)` | V-4 | 3 updated `C448_V04` rows + 2 `C665_*` methods, 0 failed | 5 | 2 |
+| CP-4a | S2 | `tests/Antiphon.Tests -> bin-c665-b/` | gate-green | `/*/*/LandingRemovalPolicyControlTests/*` | V-2, R-1 | all listed, 0 failed/skipped; the nine `C665_*` rows present | 60 | 3 |
+| CP-4b | S2 | `CP-4a`, `--no-build` | cleanup-green | `/*/*/WorktreeGuardedCleanupTests/*` | V-3, R-1 | all listed, 0 failed/skipped; the four updated `C443_*IgnoredBoundary` rows and the four `C665_*` cleanup rows present | 30 | 8 |
+| CP-5a | S2 | `CP-4a`, `--no-build` | land-green-v04 | `/*/*/AgentTaskLandPublicationTests/C448_V04*` | V-4 | 3 updated `C448_V04` rows, 0 failed | 3 | 2 |
+| CP-5b | S2 | `CP-4a`, `--no-build` | land-green-c665 | `/*/*/AgentTaskLandPublicationTests/C665_*` | V-4 | 2 `C665_*` methods, 0 failed | 2 | 2 |
+
+Round A repair (review 9a0c7fb8): CP-4 and CP-5 are split because a method-level OR such as
+`/(C448_V04*)|(C665_*)` selected only its first operand (CP-5 executed 3 `C448_V04` rows and
+no `C665_*`), and the loaded desktop runs one class at a time. The repair adds 3 classifier
+rows' worth of methods to CP-2 (36 results), three `C665_*` methods to CP-4a and two to CP-4b.
 | CP-6 | S3-red | `tests/Antiphon.Tests -> bin-c665-c/` | retention-red | `/*/*/(WorktreeEvidenceRetentionTests*)\|(AgentTaskLandEvidenceRetentionTests*)/*` | V-5, V-6 red | all execute; land rows refuse `evidence_retention_unavailable`, retention rows fail on missing copies | 10 | 5 |
 | CP-7 | S3 | `tests/Antiphon.Tests -> bin-c665-c/` | retention-green | `/*/*/(WorktreeEvidenceRetentionTests*)\|(AgentTaskLandEvidenceRetentionTests*)\|(AgentTaskLandCleanupSafetyTests*)/*` | V-5, V-6, R-1 | all listed, 0 failed/skipped | 38 | 7 |
 | CP-8 | S3 | `CP-7`, `--no-build` | report-store-regression | `/*/*/(OutputDistillationDeliveryTests*)\|(OutputDistillationApplyRaceTests*)/*` | R-2 | all listed, 0 failed; if a class name differs, amend this row with a reason | 1 | 3 |
