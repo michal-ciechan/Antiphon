@@ -22,7 +22,7 @@ $mainRecord = @($worktrees | ForEach-Object { $_.ToString() } | Where-Object { $
 $mainRoot = [System.IO.Path]::GetFullPath(([regex]::Match($mainRecord, '^worktree\s+(.+)$').Groups[1].Value.Trim()))
 $expectedDirectory = Join-Path $mainRoot 'server\logs'
 
-$output = @(& pwsh -NoProfile -File $logs -Source desktop-server -Tail 1 2>&1 | ForEach-Object { $_.ToString() })
+$output = @(& $logs -Source desktop-server -Tail 1 2>&1 | ForEach-Object { $_.ToString() })
 $header = @($output | Where-Object { $_ -match '^--- .+ ---$' }) | Select-Object -First 1
 Assert-True ($LASTEXITCODE -eq 0) 'desktop-server helper exits successfully' ($output -join "`n")
 Assert-True ($null -ne $header) 'desktop-server helper emits a file header' ($output -join "`n")
