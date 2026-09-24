@@ -639,6 +639,110 @@ public sealed class WorktreeRetirementRaceTests
         rows.Where(r => !r.Active).ShouldAllBe(r => r.ReleasedAt != null);
     }
 
+    [Test]
+    public async Task C664_RefusedClaimStillReleasesOrphanedRows()
+    {
+        await using var world = await RaceWorld.CreateAsync();
+        var orphan = await world.SeedOwnedLaunchAsync("terminal-task", aged: true);
+        var live = await world.SeedOwnedLaunchAsync("working-task", aged: true);
+
+        var claim = await world.Journal.TryClaimRetirementAsync(world.CreateKeyCommand(), CancellationToken.None);
+
+        claim.Accepted.ShouldBeFalse();
+        claim.Reason.ShouldBe("workspace_in_use");
+        await using var db = world.CreateDb();
+        var rows = await db.WorkspaceUseReservations.AsNoTracking().ToDictionaryAsync(r => r.Id);
+        rows[orphan].Active.ShouldBeFalse("the refused claim still commits its on-sight release of the orphan");
+        rows[orphan].ReleasedAt.ShouldNotBeNull();
+        rows[live].Active.ShouldBeTrue();
+        rows[live].ReleasedAt.ShouldBeNull();
+        rows.Values.ShouldNotContain(r => r.Kind == WorkspaceReservationKind.Retirement);
+    }
+
+    [Test]
+    public async Task C664_StartupReconcileReleasesOrphanedRows()
+    {
+        await using var world = await RaceWorld.CreateAsync();
+        var orphan = await world.SeedOwnedLaunchAsync("ended-session", aged: true);
+        var live = await world.SeedOwnedLaunchAsync("running-session", aged: true);
+
+        await using var scope = world.Provider.CreateAsyncScope();
+        var released = await WorkspaceReservationStartupReconcile.RunAsync(
+            scope.ServiceProvider, NullLogger.Instance, CancellationToken.None);
+
+        released.ShouldBe(1);
+        await using var db = world.CreateDb();
+        var rows = await db.WorkspaceUseReservations.AsNoTracking().ToDictionaryAsync(r => r.Id);
+        rows[orphan].Active.ShouldBeFalse();
+        rows[orphan].ReleasedAt.ShouldNotBeNull();
+        rows[live].Active.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task C664_StartupReconcileFailureDoesNotThrow()
+    {
+        // No journal registered: resolution fails inside the hook, which must swallow and report null.
+        await using var empty = new ServiceCollection().BuildServiceProvider();
+
+        var released = await WorkspaceReservationStartupReconcile.RunAsync(
+            empty, NullLogger.Instance, CancellationToken.None);
+
+        released.ShouldBeNull();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C664_ResidueRunReconcilesOrphanedRows(bool preview)
+    {
+        await using var world = await RaceWorld.CreateAsync();
+        var orphan = await world.SeedOwnedLaunchAsync("terminal-task", aged: true);
+        var live = await world.SeedOwnedLaunchAsync("working-task", aged: true);
+        await using (var sweepDb = world.CreateDb())
+        {
+            var sweep = new WorktreeResidueSweepService(
+                sweepDb, new FixedWorktreeManager(world.Path),
+                Options.Create(new WorktreeResidueSettings()),
+                Options.Create(new GitSettings { DefaultBranch = "master" }),
+                TimeProvider.System, NullLogger<WorktreeResidueSweepService>.Instance,
+                world.Retirement, world.Lands, world.Journal);
+            if (preview)
+                await sweep.PreviewAsync(null, null, CancellationToken.None);
+            else
+                await sweep.RunAsync(CancellationToken.None);
+        }
+
+        await using var db = world.CreateDb();
+        var rows = await db.WorkspaceUseReservations.AsNoTracking().ToDictionaryAsync(r => r.Id);
+        rows[orphan].Active.ShouldBeFalse("the residue run reconciles before classifying");
+        rows[orphan].ReleasedAt.ShouldNotBeNull();
+        rows[live].Active.ShouldBeTrue();
+        (await db.WorktreeResidueRuns.AsNoTracking().CountAsync()).ShouldBe(1);
+    }
+
+    [Test]
+    [Arguments(0)]
+    [Arguments(-5)]
+    public async Task C664_LaunchGraceClampsToOneMinute(int configured)
+    {
+        await using var world = await RaceWorld.CreateAsync();
+        var journal = new WorkspaceReservationJournal(
+            world.Provider.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System,
+            Options.Create(new WorktreeResidueSettings { LaunchGraceMinutes = configured }));
+        var inGrace = await world.SeedOwnedLaunchAsync("terminal-task", aged: false);
+        var pastGrace = await world.SeedOwnedLaunchAsync("terminal-task", aged: false);
+        await world.SetCreatedAtAsync(inGrace, DateTime.UtcNow.AddSeconds(-20));
+        await world.SetCreatedAtAsync(pastGrace, DateTime.UtcNow.AddSeconds(-90));
+
+        var released = await journal.ReleaseOrphanedConsumersAsync(CancellationToken.None);
+
+        released.ShouldBe(1, "a zero or negative grace clamps to one minute, not to no grace and not to the default");
+        await using var db = world.CreateDb();
+        var rows = await db.WorkspaceUseReservations.AsNoTracking().ToDictionaryAsync(r => r.Id);
+        rows[inGrace].Active.ShouldBeTrue();
+        rows[pastGrace].Active.ShouldBeFalse();
+    }
+
     private sealed class RaceWorld : IAsyncDisposable
     {
         public required IsolatedTestSchema Schema { get; init; }
@@ -824,14 +928,17 @@ public sealed class WorktreeRetirementRaceTests
             admitted.Accepted.ShouldBeTrue();
             var id = admitted.Snapshot!.Id;
             if (aged)
-            {
-                await using var db = CreateDb();
-                var row = await db.WorkspaceUseReservations.SingleAsync(r => r.Id == id);
-                row.CreatedAt = DateTime.UtcNow.AddHours(-2);
-                await db.SaveChangesAsync();
-            }
+                await SetCreatedAtAsync(id, DateTime.UtcNow.AddHours(-2));
 
             return id;
+        }
+
+        public async Task SetCreatedAtAsync(Guid reservationId, DateTime createdAt)
+        {
+            await using var db = CreateDb();
+            var row = await db.WorkspaceUseReservations.SingleAsync(r => r.Id == reservationId);
+            row.CreatedAt = createdAt;
+            await db.SaveChangesAsync();
         }
 
         public async Task<AgentTask> SeedTaskAsync(AgentTaskStatus status, bool landPending)
