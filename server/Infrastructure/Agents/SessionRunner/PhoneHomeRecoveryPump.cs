@@ -6,6 +6,7 @@ using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.SessionRunner.Contracts;
+using Hangfire;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
@@ -20,6 +21,7 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
     private readonly PhoneHomeRunnerSettings _settings;
     private readonly IServiceScopeFactory _scopes;
     private readonly ILogger<PhoneHomeRecoveryPump> _logger;
+    private readonly IBackgroundJobClient? _jobs;
     private PhoneHomeLiveConnection? _recovered;
     private (PhoneHomeLiveConnection Live, DateTimeOffset At)? _nextCatchUp;
     private Task? _pump;
@@ -30,8 +32,11 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
         PhoneHomeRunnerDirectory directory,
         IOptions<PhoneHomeRunnerSettings> settings,
         IServiceScopeFactory scopes,
-        ILogger<PhoneHomeRecoveryPump> logger)
+        ILogger<PhoneHomeRecoveryPump> logger,
+        // CARD-0679 D-7: absent (tests, a host without Hangfire), deferred kills wait for the cron.
+        IBackgroundJobClient? jobs = null)
     {
+        _jobs = jobs;
         _directory = directory;
         _settings = settings.Value;
         _scopes = scopes;
@@ -119,7 +124,28 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
         _directory.MarkRecovered(live);
         _recovered = live;
         StartPump(live, ct);
+        EnqueueSlotReconcile(live);
         return true;
+    }
+
+    /// <summary>
+    /// CARD-0679 D-7: a deferred generation kill lands seconds after the runner is back, not at the
+    /// next <c>SlotReconcileCron</c> tick. Best effort: the cron still carries the intent.
+    /// </summary>
+    private void EnqueueSlotReconcile(PhoneHomeLiveConnection live)
+    {
+        if (_jobs is null)
+            return;
+        try
+        {
+            _jobs.Enqueue<RunnerSlotReconcileJob>(job => job.ExecuteAsync(CancellationToken.None));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Enqueueing the runner slot reconcile after phone-home recovery failed (runner {RunnerId} epoch {Epoch})",
+                live.RunnerId, live.Epoch);
+        }
     }
 
     private void StartPump(PhoneHomeLiveConnection live, CancellationToken ct)

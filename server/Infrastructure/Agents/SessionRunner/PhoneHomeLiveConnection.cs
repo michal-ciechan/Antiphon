@@ -12,7 +12,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     private readonly WebSocket _socket;
     private readonly PhoneHomeLimits _limits;
     private readonly SemaphoreSlim _send = new(1, 1);
-    private readonly ConcurrentDictionary<Guid, TaskCompletionSource<PhoneHomeFrame>> _waiters = new();
+    private readonly ConcurrentDictionary<Guid, Waiter> _waiters = new();
     private readonly Channel<PhoneHomeFrame> _events = Channel.CreateUnbounded<PhoneHomeFrame>();
     private int _inFlight;
     private int _pendingEvents;
@@ -24,6 +24,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     private readonly object _disconnectGate = new();
     private bool _warnedHalf;
     private bool _warnedHigh;
+    private string? _closedReason;
 
     // CARD-0679 D-1: released events per wall-clock second, the last ten seconds, for the
     // high-water line's pump rate.
@@ -141,30 +142,45 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
 
     public async Task<PhoneHomeFrame> RequestAsync(PhoneHomeOperation operation, object? payload, CancellationToken ct)
     {
+        // CARD-0679 D-5: a request on a connection that already closed is the same typed transport
+        // loss as one the close caught in flight, not a raw WebSocketException from the send.
+        if (Volatile.Read(ref _closedReason) is not null || _socket.State != WebSocketState.Open)
+            throw Closed(operation, Volatile.Read(ref _closedReason) ?? $"socket {_socket.State}");
         if (!DispatchEligible && operation is PhoneHomeOperation.Launch or PhoneHomeOperation.Input
             or PhoneHomeOperation.ConditionalInput or PhoneHomeOperation.KillGeneration
             or PhoneHomeOperation.ClearBuffer or PhoneHomeOperation.Resize)
-            throw new InvalidOperationException("Phone-home connection is not dispatch-eligible.");
+            throw new InvalidOperationException(Antiphon.Server.Application.Services.PhoneHomeTransportLoss.NotDispatchEligibleMessage);
         if (Volatile.Read(ref _inFlight) >= _limits.MaxInFlightRequests)
             throw new PhoneHomeTransportException(PhoneHomeProblemTypes.RequestLimit, "In-flight request limit reached.");
 
         var id = Guid.NewGuid();
-        var waiter = new TaskCompletionSource<PhoneHomeFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var waiter = new Waiter(operation,
+            new TaskCompletionSource<PhoneHomeFrame>(TaskCreationOptions.RunContinuationsAsynchronously));
         _waiters[id] = waiter;
+        // A dispose that ran between the check above and the registration never saw this waiter.
+        if (Volatile.Read(ref _closedReason) is { } raced && _waiters.TryRemove(id, out _))
+            throw Closed(operation, raced);
         Interlocked.Increment(ref _inFlight);
         var frame = new PhoneHomeFrame(
             PhoneHomeFrameKind.Request, Epoch, id, operation,
             payload is null ? null : JsonSerializer.SerializeToElement(payload, PhoneHomeFraming.Json));
         try
         {
-            await _send.WaitAsync(ct);
             try
             {
-                await PhoneHomeFraming.WriteFrameAsync(_socket, frame, _limits.MaxMessageUtf8Bytes, ct);
+                await _send.WaitAsync(ct);
+                try
+                {
+                    await PhoneHomeFraming.WriteFrameAsync(_socket, frame, _limits.MaxMessageUtf8Bytes, ct);
+                }
+                finally
+                {
+                    _send.Release();
+                }
             }
-            finally
+            catch (Exception ex) when (ex is WebSocketException or ObjectDisposedException)
             {
-                _send.Release();
+                throw Closed(operation, Volatile.Read(ref _closedReason) ?? $"send failed: {ex.GetType().Name}");
             }
 
             // CARD-0629: this used to wait on Timeout.Infinite. A runner that never answers one
@@ -173,9 +189,9 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
             // fleet-wide for hours while holding a claim transaction open. Bound every request.
             var timeout = RequestTimeoutFor(operation);
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            var completed = await Task.WhenAny(waiter.Task, Task.Delay(timeout, Clock, linked.Token));
+            var completed = await Task.WhenAny(waiter.Reply.Task, Task.Delay(timeout, Clock, linked.Token));
             linked.Cancel(); // release the delay timer on the success path
-            if (completed != waiter.Task)
+            if (completed != waiter.Reply.Task)
             {
                 _waiters.TryRemove(id, out _);
                 ct.ThrowIfCancellationRequested();
@@ -184,7 +200,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
                     $"Runner did not reply to {operation} within {timeout.TotalSeconds:0}s.");
             }
 
-            var result = await waiter.Task;
+            var result = await waiter.Reply.Task;
             if (result.Epoch != Epoch)
                 throw new PhoneHomeTransportException(PhoneHomeProblemTypes.StaleEpoch, "Stale epoch reply.");
             return result;
@@ -218,7 +234,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
             if (frame.Kind is PhoneHomeFrameKind.Result or PhoneHomeFrameKind.Error)
             {
                 if (_waiters.TryRemove(frame.RequestId, out var waiter))
-                    waiter.TrySetResult(frame);
+                    waiter.Reply.TrySetResult(frame);
                 continue;
             }
 
@@ -309,12 +325,24 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         }
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync() => DisposeAsync("dispose");
+
+    /// <summary>
+    /// CARD-0679 D-5: closing fails every request still waiting with a typed
+    /// <see cref="PhoneHomeProblemTypes.ConnectionClosed"/> naming the runner, epoch, operation and
+    /// <paramref name="reason"/>. It used to cancel them, and a cancellation reads as the caller's
+    /// own token to every <c>catch (OperationCanceledException)</c> on the way up.
+    /// </summary>
+    public async ValueTask DisposeAsync(string reason)
     {
+        Interlocked.CompareExchange(ref _closedReason, reason, null);
+        var closedReason = Volatile.Read(ref _closedReason) ?? reason;
         _events.Writer.TryComplete();
-        foreach (var waiter in _waiters.Values)
-            waiter.TrySetCanceled();
-        _waiters.Clear();
+        foreach (var (id, waiter) in _waiters)
+        {
+            if (_waiters.TryRemove(id, out _))
+                waiter.Reply.TrySetException(Closed(waiter.Operation, closedReason));
+        }
         try
         {
             if (_socket.State == WebSocketState.Open)
@@ -324,4 +352,10 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         _socket.Dispose();
         _send.Dispose();
     }
+
+    private PhoneHomeTransportException Closed(PhoneHomeOperation operation, string reason) =>
+        new(PhoneHomeProblemTypes.ConnectionClosed,
+            $"Phone-home connection to {RunnerId} (epoch {Epoch}) closed while {operation} was in flight: {reason}");
+
+    private sealed record Waiter(PhoneHomeOperation Operation, TaskCompletionSource<PhoneHomeFrame> Reply);
 }

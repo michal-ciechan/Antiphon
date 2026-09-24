@@ -2835,7 +2835,10 @@ public sealed partial class SessionMessageQueueService
         ex is ServiceUnavailableException { Code: HerdrProblemTypes.Unreachable }
         || ex is ServiceUnavailableException { Code: var code }
             && (code == PhoneHomeProblemTypes.Unavailable
-                || string.Equals(code, "phone_home_unavailable", StringComparison.Ordinal));
+                || string.Equals(code, "phone_home_unavailable", StringComparison.Ordinal))
+        // CARD-0679 D-5: the connection closed under the request. A timeout is deliberately not
+        // here: a request that timed out may have reached the runner.
+        || ex is PhoneHomeTransportException { Code: PhoneHomeProblemTypes.ConnectionClosed };
 
     private static string Describe(DeliveryVerdict verdict) => verdict switch
     {
