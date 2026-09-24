@@ -353,27 +353,28 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     /// <summary>
     /// A busy repository lease is somebody else's short mutation, not a verdict: ask again every
     /// <see cref="LeaseRetryInterval"/> while the budget-linked <paramref name="ct"/> lasts. When the
-    /// budget runs out the last busy answer is returned, so the sync still says lease-busy; the
-    /// caller's own cancellation propagates.
+    /// budget runs out during the wait or a retried attempt, the last busy answer is returned, so
+    /// the sync still says lease-busy; the caller's own cancellation propagates.
     /// </summary>
     private async Task<T> WhileLeaseBusyAsync<T>(
         Func<Task<T>> attempt, Func<T, bool> busy, CancellationToken ct, CancellationToken caller)
     {
-        while (true)
+        var result = await attempt();
+        while (busy(result))
         {
-            var result = await attempt();
-            if (!busy(result))
-                return result;
             LeaseBusyObserved?.Invoke();
             try
             {
                 await Task.Delay(LeaseRetryInterval, Clock, ct);
+                result = await attempt();
             }
-            catch (OperationCanceledException) when (!caller.IsCancellationRequested)
+            catch (OperationCanceledException) when (!caller.IsCancellationRequested && ct.IsCancellationRequested)
             {
+                // Git's bounded I/O has already awaited its child before this cancellation surfaced.
                 return result;
             }
         }
+        return result;
     }
 
     private sealed record ValidatedCheckout(RemoteSettlementSyncResult? Refusal, string? Head);
