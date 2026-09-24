@@ -258,6 +258,11 @@ public sealed record PhoneHomeEventEnvelope(
     string EventName,
     JsonElement Payload);
 
+/// <summary>
+/// CARD-0679 D-1: <see cref="DisconnectReason"/> is the recorded reason the last connection ended
+/// (or <c>lease_expired</c>), not a constant; the pending counts are the live connection's,
+/// <see cref="Reconnects"/> counts accepted connections since the desktop started.
+/// </summary>
 public sealed record PhoneHomeRunnerStatusDto(
     string RunnerId,
     Guid? RunnerStoreId,
@@ -268,4 +273,9 @@ public sealed record PhoneHomeRunnerStatusDto(
     DateTimeOffset? LastHeartbeatUtc,
     string? Platform,
     string? BuildVersion,
-    string? DisconnectReason);
+    string? DisconnectReason,
+    int? PendingEvents = null,
+    int? PendingEventBytes = null,
+    DateTimeOffset? LastDisconnectAtUtc = null,
+    long Reconnects = 0,
+    long? LastCatchUpMs = null);
