@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 
 namespace Antiphon.Server.Application.Services;
@@ -6,13 +7,18 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>
 /// In-process hand-off for explicit branch landings (CARD-0331). The durable fact that a land
 /// is wanted lives on <c>AgentTasks.LandRequestedAt</c>; this channel exists so the sweep never
-/// waits on git. The active set is the honest answer to "is a land queued or running here".
+/// waits on git. The channel is one global single reader. <see cref="Capture"/> is the ordered
+/// snapshot of the entry now executing and the entries still waiting.
 /// </summary>
 public sealed class AgentTaskLandQueue
 {
+    private readonly object _gate = new();
     private readonly ConcurrentDictionary<Guid, byte> _active = new();
     private readonly Channel<LandRequest> _channel = Channel.CreateUnbounded<LandRequest>(
         new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
+    private readonly List<Tracked> _waiting = new();
+    private Tracked? _executing;
+    private long _nextEntryId;
 
     /// <summary>
     /// Hand a pending land to the drain. Returns false when this id is already queued or
@@ -20,21 +26,47 @@ public sealed class AgentTaskLandQueue
     /// </summary>
     public bool TryEnqueue(Guid taskId, string? verifyFilter, Guid? requestId = null)
     {
-        if (!_active.TryAdd(taskId, 0))
-            return false;
-        if (_channel.Writer.TryWrite(new LandRequest(taskId, verifyFilter, requestId)))
+        var item = new LandRequest(taskId, verifyFilter, requestId);
+        lock (_gate)
+        {
+            if (!_active.TryAdd(taskId, 0))
+                return false;
+            if (!_channel.Writer.TryWrite(item))
+            {
+                _active.TryRemove(taskId, out _);
+                return false;
+            }
+
+            _waiting.Add(new Tracked(++_nextEntryId, item));
             return true;
-        _active.TryRemove(taskId, out _);
-        return false;
+        }
     }
 
     /// <summary>Queued or running in this process, now.</summary>
     public bool IsActive(Guid taskId) => _active.ContainsKey(taskId);
 
-    /// <summary>The drain calls this in a finally after every <c>RunAsync</c>.</summary>
-    public void Release(Guid taskId) => _active.TryRemove(taskId, out _);
+    /// <summary>
+    /// Drop the dedup claim and the executing entry. An item still unread in the channel stays
+    /// in the snapshot: early release followed by requeue is a new entry, not a rewrite of the old one.
+    /// </summary>
+    public void Release(Guid taskId)
+    {
+        lock (_gate)
+        {
+            _active.TryRemove(taskId, out _);
+            if (_executing is not null && _executing.Request.TaskId == taskId)
+                _executing = null;
+        }
+    }
 
-    public IAsyncEnumerable<LandRequest> ReadAllAsync(CancellationToken ct) => _channel.Reader.ReadAllAsync(ct);
+    public async IAsyncEnumerable<LandRequest> ReadAllAsync([EnumeratorCancellation] CancellationToken ct)
+    {
+        while (await _channel.Reader.WaitToReadAsync(ct).ConfigureAwait(false))
+        {
+            while (TryDequeue(out var request))
+                yield return request;
+        }
+    }
 
     /// <summary>
     /// Ids queued or running in this process. Unbounded SingleReader channels do not
@@ -43,14 +75,50 @@ public sealed class AgentTaskLandQueue
     public int PendingCount => _active.Count;
 
     /// <summary>Take one claim without waiting; false when the queue is empty (tests).</summary>
-    public bool TryDequeue(out LandRequest request) => _channel.Reader.TryRead(out request!);
+    public bool TryDequeue(out LandRequest request)
+    {
+        lock (_gate)
+        {
+            if (!_channel.Reader.TryRead(out request!))
+                return false;
+            Promote(request);
+            return true;
+        }
+    }
 
-    /// <summary>
-    /// Point-in-time view of the single global worker. Empty until the queue records
-    /// accepted channel entries; a new instance has no executing owner.
-    /// </summary>
-    public LandQueueSnapshot Capture(DateTime observedAt) =>
-        new(observedAt, null, Array.Empty<LandQueueEntry>());
+    /// <summary>Ordered snapshot. A new instance has no executing owner and no waiting entries.</summary>
+    public LandQueueSnapshot Capture(DateTime observedAt)
+    {
+        lock (_gate)
+        {
+            var waiting = new LandQueueEntry[_waiting.Count];
+            for (var i = 0; i < _waiting.Count; i++)
+                waiting[i] = _waiting[i].ToEntry();
+            return new LandQueueSnapshot(observedAt, _executing?.ToEntry(), waiting);
+        }
+    }
+
+    private void Promote(LandRequest item)
+    {
+        var index = _waiting.FindIndex(entry => ReferenceEquals(entry.Request, item));
+        if (index < 0)
+            index = _waiting.FindIndex(entry => entry.Request.TaskId == item.TaskId && entry.Request.RequestId == item.RequestId);
+        if (index < 0)
+        {
+            _executing = new Tracked(++_nextEntryId, item);
+            return;
+        }
+
+        var tracked = _waiting[index];
+        _waiting.RemoveAt(index);
+        _executing = tracked;
+    }
+
+    private sealed class Tracked(long entryId, LandRequest request)
+    {
+        public LandRequest Request { get; } = request;
+        public LandQueueEntry ToEntry() => new(entryId, Request.TaskId, Request.RequestId);
+    }
 
     public sealed record LandRequest(Guid TaskId, string? VerifyFilter, Guid? RequestId = null);
 }

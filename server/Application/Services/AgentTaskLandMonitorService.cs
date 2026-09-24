@@ -33,9 +33,9 @@ public sealed class AgentTaskLandMonitorService(AppDbContext db, TimeProvider cl
                 : null;
             var changed = false;
             if (age >= settings.Value.LandWarningSeconds && request.WarningAt is null)
-            { request.WarningAt = now; AddAged(request, operation, "Warning", now); changed = true; }
+            { request.WarningAt = now; await AddAgedAsync(request, operation, "Warning", now, ct); changed = true; }
             if (age >= settings.Value.LandErrorSeconds && request.ErrorAt is null)
-            { request.ErrorAt = now; AddAged(request, operation, "Error", now); changed = true; }
+            { request.ErrorAt = now; await AddAgedAsync(request, operation, "Error", now, ct); changed = true; }
             request.ConcurrencyToken = Guid.NewGuid();
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
@@ -82,19 +82,87 @@ public sealed class AgentTaskLandMonitorService(AppDbContext db, TimeProvider cl
         db.AgentTaskLandNotifications.Add(LandNotificationPayload.Create(request, source, LandNotificationKind.Aged));
     }
 
-    private void AddAged(AgentTaskLandRequest request, AgentTaskLanding? operation, string severity, DateTime now)
+    private async Task AddAgedAsync(AgentTaskLandRequest request, AgentTaskLanding? operation, string severity, DateTime now, CancellationToken ct)
     {
-        _ = queue?.Capture(now);
         var source = new AgentTaskEvent
         {
             Id = Guid.NewGuid(), AgentTaskId = request.TaskId, LandRequestId = request.Id,
             Type = AgentTaskEventType.LandAged, At = now,
             LandingOperationId = operation?.Id, LandingPublication = operation?.Publication,
             LandingCleanup = operation?.Cleanup, LandingMode = operation?.Mode,
-            Detail = $"{severity}: Land {request.State}; requested {request.RequestedAt:O}; no progress since {request.LastProgressAt:O}; "
-                + $"attempt={request.Attempt}; reason={request.HoldReasonCode}; holder={request.HoldingTaskId:N} ({request.HoldingTaskStatus}).",
+            Detail = $"{severity}: Land {await DescribeWaitingAsync(request, now, ct)}",
         };
         db.AgentTaskEvents.Add(source);
         db.AgentTaskLandNotifications.Add(LandNotificationPayload.Create(request, source, LandNotificationKind.Aged));
+    }
+
+    private async Task<string> DescribeWaitingAsync(AgentTaskLandRequest request, DateTime now, CancellationToken ct)
+    {
+        var reason = string.IsNullOrWhiteSpace(request.HoldReasonCode) ? "none" : request.HoldReasonCode;
+        var snapshot = queue?.Capture(now);
+        var queueClause = DescribeQueue(request, snapshot, now);
+        var who = snapshot is null || snapshot.Executing is null || snapshot.IsExecuting(request.TaskId, request.Id)
+            ? DescribePersistedHolder(request)
+            : await DescribePredecessorAsync(request, snapshot, ct);
+        return $"{request.State}; requested {request.RequestedAt:O}; no progress since {request.LastProgressAt:O}; "
+            + $"attempt={request.Attempt}; request={request.Id:N}; reason={reason}; {queueClause}; {who}.";
+    }
+
+    private static string DescribeQueue(AgentTaskLandRequest request, LandQueueSnapshot? snapshot, DateTime now)
+    {
+        if (snapshot is null)
+            return $"queue position=unknown (awaiting replay); observed={now:O}";
+        if (snapshot.IsExecuting(request.TaskId, request.Id))
+            return $"queue position=running; waiting={snapshot.WaitingCount}; observed={now:O}";
+        var position = snapshot.WaitingPosition(request.TaskId, request.Id);
+        return position is int waiting
+            ? $"queue position={waiting}; waiting={snapshot.WaitingCount}; observed={now:O}"
+            : $"queue position=unknown (awaiting replay); observed={now:O}";
+    }
+
+    private async Task<string> DescribePredecessorAsync(AgentTaskLandRequest request, LandQueueSnapshot snapshot, CancellationToken ct)
+    {
+        var executing = snapshot.Executing ?? throw new InvalidOperationException("queue predecessor requires an executing entry");
+        var predecessor = executing.RequestId is Guid requestId
+            ? await db.AgentTaskLandRequests.AsNoTracking().SingleOrDefaultAsync(r => r.Id == requestId, ct)
+            : null;
+        var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == executing.TaskId, ct);
+        var status = task?.Status.ToString() ?? "unknown";
+        var state = predecessor?.State.ToString() ?? "unknown";
+        var requestLabel = executing.RequestId is Guid id ? id.ToString("N") : "unknown";
+        if (SameRepository(request.RepositoryPathSnapshot, predecessor?.RepositoryPathSnapshot))
+            return $"holder={executing.TaskId:N} request={requestLabel} status={status} state={state}";
+
+        var blocker = $"queue blocker={executing.TaskId:N} request={requestLabel} status={status} state={state}";
+        if (request.HoldingTaskId is Guid owner)
+            blocker += $"; repository owner={owner:N} status={request.HoldingTaskStatus?.ToString() ?? "unknown"}";
+        return blocker;
+    }
+
+    private static string DescribePersistedHolder(AgentTaskLandRequest request)
+    {
+        if (request.HoldingTaskId is Guid holder)
+            return $"holder={holder:N} status={request.HoldingTaskStatus?.ToString() ?? "unknown"}";
+        return "holder=unknown";
+    }
+
+    private static bool SameRepository(string? left, string? right) =>
+        TryNormalize(left, out var a) && TryNormalize(right, out var b)
+        && string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+    private static bool TryNormalize(string? path, out string normalized)
+    {
+        normalized = "";
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+        try
+        {
+            normalized = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return true;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
     }
 }

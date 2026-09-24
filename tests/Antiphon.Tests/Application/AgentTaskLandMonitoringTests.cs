@@ -138,8 +138,9 @@ public sealed class AgentTaskLandMonitoringTests
         foreach (var note in notes)
         {
             var severity = note.CreatedAt == now.AddMinutes(5) ? "Warning" : "Error";
+            var observed = severity == "Warning" ? now.AddMinutes(5) : now.AddMinutes(15);
             var detail = heldCleanup
-                ? $"{severity}: Land Held; requested {now:O}; no progress since {now:O}; attempt=0; reason=repository_or_source_writer; holder= ()."
+                ? $"{severity}: Land Held; requested {now:O}; no progress since {now:O}; attempt=0; request={request.Id:N}; reason=repository_or_source_writer; queue position=unknown (awaiting replay); observed={observed:O}; holder=unknown."
                 : $"{severity}: outcome receipt unconfirmed; notification={outcome.Id:N}; outcome committed={now:O}; destination=; queue=; state=DestinationUnavailable; error=.";
             note.Body.ShouldBe($"[land {note.Id:N} request={request.Id:N} task={taskId:N} outcome=LandAged]\npublication={publication}; cleanup={cleanup}\nexpected=null; local=null; remote=null; candidate=null\n{detail}");
             note.LandingOperationId.ShouldBe(operation.Id);

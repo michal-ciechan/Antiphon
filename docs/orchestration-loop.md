@@ -761,6 +761,17 @@ wait for the outcome event; it never fires for a request no process holds. Three
 attempts refuse (`LandRefused`); `-Land` again starts a new request. A `Warning` "did not
 finish (server restarted); re-running" is informational.
 
+The in-process channel is one global single reader, not a queue per repository. A LandAged
+note for a request that is still waiting reports that snapshot. Position is one-based among
+waiting requests only: the request the worker is executing has no waiting position, the next
+waiting request is position 1, and the one behind it is position 2. The note also carries the
+waiting count and the time the snapshot was observed. The executing predecessor is named from
+that snapshot. A predecessor for a different repository is a queue blocker, not this
+repository's lease owner. A durable pending request this process has not replayed says
+`queue position=unknown (awaiting replay)` and does not treat a stale database Running row as
+a live holder. A blank `holder= ()` is not a diagnosis. Time waiting still starts at last
+progress, not at dequeue.
+
 A present `.git/index.lock` in a checkout the land is about to mutate holds the request
 before admission (`git_index_lock_stale` when the file is at least five minutes old with no
 git process started at or before it; `git_index_lock_held` when it is younger or a candidate
