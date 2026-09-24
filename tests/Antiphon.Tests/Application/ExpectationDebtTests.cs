@@ -111,7 +111,7 @@ public sealed class ExpectationDebtTests
         await using (var db = world.Db())
         {
             db.AgentSessions.Add(ExpectationTestWorld.Session(foreignSession, Guid.NewGuid(), now.AddHours(-1), SessionStatus.Running));
-            db.AgentTasks.Add(world.Task(taskId, AgentTaskStatus.Completed, now.AddMinutes(-70)));
+            db.AgentTasks.Add(world.Task(taskId, AgentTaskStatus.Succeeded, now.AddMinutes(-70)));
             db.SessionQueuedMessages.Add(ExpectationTestWorld.Queued(parkedMessage, world.OwnedSessionId,
                 QueuedMessageStatus.Pending, now.AddMinutes(-15), 1));
             db.SessionQueuedMessages.Add(ExpectationTestWorld.Queued(canceledMessage, world.OwnedSessionId,
