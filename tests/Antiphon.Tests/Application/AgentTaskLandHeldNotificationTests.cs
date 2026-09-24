@@ -148,22 +148,111 @@ public sealed class AgentTaskLandHeldNotificationTests
         await h.InitializeAsync();
         var a = await AddWriterAsync(h, "A");
         await h.RequestAsync();
-        // A holds the real lease for every racer, so no racer's own land acquisition names itself.
-        await using (var held = await h.Services.GetRequiredService<IRepositoryMutationLease>().TryAcquireAsync(
-            h.Fixture.Repository, new RepositoryLeaseOwnerTag(a, RepositoryLeasePurposes.Dispatch), CancellationToken.None))
+        var gate = new HoldLockGate();
+        h.Boundary = gate;
+        var leases = h.Services.GetRequiredService<IRepositoryMutationLease>();
+        const int perGroup = 3;
+        var runs = new List<Task<LandRunResult>>();
+        // Group one observes A's tagged lease, group two an untagged lease. Every racer parks after
+        // its observation and before the task lock, so distinct Held decisions (holder A versus
+        // unknown) all contend at that lock with the request still unanchored.
+        try
         {
-            held.ShouldNotBeNull();
-            var runs = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => Task.Run(h.RunAsync)));
-            runs.ShouldAllBe(r => r == LandRunResult.Held);
+            await using (var known = await leases.TryAcquireAsync(h.Fixture.Repository,
+                new RepositoryLeaseOwnerTag(a, RepositoryLeasePurposes.Dispatch), CancellationToken.None))
+            {
+                known.ShouldNotBeNull();
+                runs.AddRange(Enumerable.Range(0, perGroup).Select(_ => Task.Run(h.RunAsync)));
+                await gate.ArrivalsAsync(perGroup);
+            }
+            await using (var untagged = await leases.TryAcquireAsync(h.Fixture.Repository, CancellationToken.None))
+            {
+                untagged.ShouldNotBeNull();
+                runs.AddRange(Enumerable.Range(0, perGroup).Select(_ => Task.Run(h.RunAsync)));
+                await gate.ArrivalsAsync(perGroup);
+            }
         }
+        finally
+        {
+            gate.Open();
+        }
+        (await Task.WhenAll(runs)).ShouldAllBe(r => r == LandRunResult.Held);
 
         var request = await RequestAsync(h);
-        request.HoldNotificationOwnerKey.ShouldBe(Key(a));
-        (await HeldNotesAsync(h, request.Id)).Count.ShouldBe(1);
         await using var observer = h.CreateContext();
-        (await observer.AgentTaskEvents.CountAsync(e => e.LandRequestId == request.Id && e.Type == AgentTaskEventType.Held))
-            .ShouldBe(1);
-        request.HoldEpisode.ShouldBe(1);
+        var held = await observer.AgentTaskEvents.CountAsync(e => e.LandRequestId == request.Id && e.Type == AgentTaskEventType.Held);
+        held.ShouldBeGreaterThanOrEqualTo(2, "both owner observations committed a Held decision through the lock");
+        request.HoldEpisode.ShouldBe(held);
+        (await HeldNotesAsync(h, request.Id)).Count.ShouldBe(1, "exactly one contending decision commits the first note");
+        request.HoldNotificationOwnerKey.ShouldBe(Key(a), "unknown never displaces A, and A refines an unknown anchor");
+    }
+
+    [Test]
+    public async Task C641_Upgrade_adopts_debt_on_unchanged_first_evaluation()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var a = await AddWriterAsync(h, "A");
+        await h.RequestAsync();
+        await using (var db = h.CreateContext())
+        {
+            await db.AgentTaskLandRequests.Where(r => r.TaskId == h.Fixture.TaskId).ExecuteUpdateAsync(s => s
+                .SetProperty(r => r.ReplyTo, AgentTaskReplyTo.Session)
+                .SetProperty(r => r.ParentSessionId, Guid.NewGuid()));
+        }
+
+        await HoldAsync(h, Observation.Writer);
+        var request = await RequestAsync(h);
+        var debt = (await HeldNotesAsync(h, request.Id)).ShouldHaveSingleItem();
+        await using (var db = h.CreateContext())
+        {
+            // Upgrade state: the additive column is null on a row already Held by A with a note.
+            await db.AgentTaskLandRequests.Where(r => r.Id == request.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(r => r.HoldNotificationOwnerKey, (string?)null));
+        }
+
+        await h.RestartServicesAsync();
+        await HoldAsync(h, Observation.Writer);
+        var adopted = await RequestAsync(h);
+        adopted.HoldEpisode.ShouldBe(1, "the re-evaluation by the same holder changes no diagnostics");
+        adopted.HoldNotificationOwnerKey.ShouldBe(Key(a), "the first post-upgrade evaluation adopts even without a diagnostic change");
+        (await HeldNotesAsync(h, request.Id)).ShouldHaveSingleItem().Id.ShouldBe(debt.Id);
+
+        await SetStatusAsync(h, a, AgentTaskStatus.Succeeded);
+        var b = await AddWriterAsync(h, "B");
+        await HoldAsync(h, Observation.Writer);
+        var notes = await HeldNotesAsync(h, request.Id);
+        notes.Count.ShouldBe(2, "B taking over from the adopted A is a changed-holder note");
+        notes.OrderBy(n => n.CreatedAt).Last().Body.ShouldContain(b.ToString("N"));
+        (await RequestAsync(h)).HoldNotificationOwnerKey.ShouldBe(Key(b));
+    }
+
+    [Test]
+    public async Task C641_Tagged_owner_without_task_row_notes_takeover()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var a = await AddWriterAsync(h, "A");
+        await HoldAsync(h, Observation.Known, a);
+        var request = await RequestAsync(h);
+        request.HoldNotificationOwnerKey.ShouldBe(Key(a));
+
+        // B and C tag the lease but have no task row, so the holder lookup returns null.
+        var b = Guid.NewGuid();
+        await HoldAsync(h, Observation.Known, b);
+        await HoldAsync(h, Observation.Known, b);
+        var afterB = await RequestAsync(h);
+        afterB.HoldNotificationOwnerKey.ShouldBe(Key(b), "the tagged id owns the note without its row");
+        var notes = await HeldNotesAsync(h, request.Id);
+        notes.Count.ShouldBe(2, "B's takeover from anchored A is one changed-holder note");
+        notes.OrderBy(n => n.CreatedAt).Last().Body.ShouldContain(b.ToString("N"));
+
+        var c = Guid.NewGuid();
+        await HoldAsync(h, Observation.Known, c);
+        var saved = await RequestAsync(h);
+        saved.HoldNotificationOwnerKey.ShouldBe(Key(c));
+        (await HeldNotesAsync(h, request.Id)).Count.ShouldBe(3, "a second row-less owner is still a different holder");
+        saved.HoldEpisode.ShouldBe(3, "A, then row-less B, then row-less C; B's repeat is not an episode");
     }
 
     [Test]
@@ -289,6 +378,28 @@ public sealed class AgentTaskLandHeldNotificationTests
                 .ShouldBe(1);
         (await world.Probes.TryAcquireAsync(land.Git.Repository, CancellationToken.None))
             .ShouldBeNull("the delivered note does not change repository lease exclusion");
+    }
+
+    /// <summary>Parks each Held decision after its observation and before the task lock until opened.</summary>
+    private sealed class HoldLockGate : LandDeliveryBoundary
+    {
+        private readonly TaskCompletionSource _open = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly SemaphoreSlim _arrived = new(0);
+
+        public override async Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
+        {
+            if (boundary != "hold-before-lock") return;
+            _arrived.Release();
+            await _open.Task.WaitAsync(ct);
+        }
+
+        public async Task ArrivalsAsync(int count)
+        {
+            for (var i = 0; i < count; i++)
+                (await _arrived.WaitAsync(TimeSpan.FromSeconds(60))).ShouldBeTrue("a racer never reached the hold gate");
+        }
+
+        public void Open() => _open.TrySetResult();
     }
 
     private enum Observation

@@ -28,6 +28,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     public IEventBus Events { get; set; } = new MockEventBus();
     public Action<IServiceCollection>? ConfigureServices { get; set; }
     public SessionMessageQueueService? Messages { get; set; }
+    public LandDeliveryBoundary? Boundary { get; set; }
     public Microsoft.Extensions.Logging.ILogger<AgentTaskLandService> Logger { get; set; } = NullLogger<AgentTaskLandService>.Instance;
 
     public async Task InitializeAsync()
@@ -280,7 +281,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
             tasks, Queue, Messages!, Events, Clock,
             Options.Create(new DelegationSettings()), Logger,
             services.GetRequiredService<AgentTaskLandingProtocol>(),
-            Services.GetRequiredService<IRepositoryMutationLease>(), Fixture.Git);
+            Services.GetRequiredService<IRepositoryMutationLease>(), Fixture.Git, Boundary);
     }
 
     public async Task<LandRequestResult> RequestAsync(string? filter = null, string? expectedSourceSha = null,

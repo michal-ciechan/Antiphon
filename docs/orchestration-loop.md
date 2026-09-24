@@ -790,8 +790,10 @@ sends nothing. Unknown refines to a known task without a note, and never erases 
 anchor. Anchor, event and note commit in the same task-locked transaction, so a rolled-back
 hold does not consume the first note. The anchor survives restart, admission and completion.
 A new request starts at null. A request that already has Held notes from before the column
-existed adopts the current owner, or `unknown`, and does not replay them. Existing notes are
-never rewritten or deleted.
+existed adopts the current owner, or `unknown`, and does not replay them. It adopts on its
+first post-upgrade evaluation even when nothing about the hold changed, so a later takeover
+is still compared against a real anchor. Existing notes are never rewritten or deleted. A
+lease tagged with a task id names that owner even when the task row is missing.
 
 A present `.git/index.lock` in a checkout the land is about to mutate holds the request
 before admission (`git_index_lock_stale` when the file is at least five minutes old with no
