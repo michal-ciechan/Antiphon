@@ -1167,6 +1167,12 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
             failures.Add("Delegation:MaxOpenTasks must be a positive integer.");
         }
 
+        if (!string.IsNullOrWhiteSpace(options.DefaultRunnerId)
+            && RunnerRequestIntent.DescribeInvalid(options.DefaultRunnerId.Trim()) is { } runnerProblem)
+        {
+            failures.Add($"Delegation:DefaultRunnerId {runnerProblem}.");
+        }
+
         if (options.CheckCompactionContinuationWaitMinutes < 0
             || (options.CheckCompactionContinuationWaitMinutes > 0
                 && options.CheckCompactionContinuationWaitMinutes < 10))

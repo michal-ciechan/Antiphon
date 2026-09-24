@@ -194,6 +194,12 @@ public sealed record CreateAgentTaskRequest(
     /// SourceLanding: everything else has no remote shape yet, and a 422 at create is better than
     /// a task that queues forever. The desktop worktree is still created and still canonical; the
     /// runner gets a mirror of the pushed branch.
+    /// <para>CARD-0659 D-1: three input states. Null/blank means automatic — a fresh
+    /// runner-compatible Worktree task takes <c>Delegation:DefaultRunnerId</c> when that runner is
+    /// dispatch-eligible, else the desktop with a recorded reason. The reserved <c>local</c>
+    /// (any case; <c>delegate.ps1 -Local</c>) is an explicit desktop request and is stored as null.
+    /// Any other value is an explicit runner: never replaced by the default, never fallen back.
+    /// At most 64 characters, no control characters.</para>
     /// </summary>
     string? RunnerId = null,
     /// <summary>
