@@ -500,3 +500,23 @@ note). One settlement event owns one `TaskCompletion`: when the profile-v1 oblig
 CARD-0527's mint stands down; otherwise CARD-0527's rule is unchanged. Pinned by
 VerificationRoundDeliveryTests, AgentTaskReplyIntegrationTests.C544_shared_commit_on_settle_mints_one_task_completion
 and DataRetentionServiceTests.C544_CompletionObligationRetention.
+
+### Expectation-watchdog composer hold (CARD-0650 S4)
+
+An expectation-watchdog prompt that was typed but not confirmed (Attempting, Uncertain or
+Unconfirmed in the current generation, with no submitted-prompt record past its floor) holds every
+ordinary input path to that session: WhenIdle flush, Now, SendNow, the local-command poll and a
+second nudge. The hold is released only by evidence, never by time: a submitted-prompt record, an
+empty composer, a new generation, or an operator release. For Claude the composer is read from its
+bottom box (the rows between the last two rules above the hint bar, `ClaudeScreen.TryReadComposer`):
+an empty box (or only the idle `Try "..."` hint) releases, anything in it holds, and an echo in the
+conversation above it counts for nothing. Kinds with no readable composer, and Claude frames
+without that box, keep the whole-screen rule: the body's head visible whole anywhere holds. There a
+submitted prompt whose record never arrives holds until the operator uses
+`POST /api/sessions/{id}/expectation-hold/release` with `{ "reason": "..." }` (reason required).
+The release marks the attempts Released, writes an `[expectation-hold-released:<nudge>]` comment on
+the nudge's audit card and a Check note on its subject tasks, keeps the operator page due, and types
+nothing. The hold's own Check note, audit comment and every 409 `expectation_prompt_unconfirmed`
+refusal name that route. Pinned by ExpectationDirectDeliveryTests (C650_Submitted_echo_above_a_readable_composer_does_not_hold,
+C650_Swallowed_enter_keeps_holding_while_the_composer_shows_the_body,
+C650_Operator_release_clears_a_whole_screen_hold_with_an_audit_and_no_input).

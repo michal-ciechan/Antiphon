@@ -115,6 +115,16 @@ public static class SessionEndpoints
             return Results.Ok(await queue.SendNowAsync(id, messageId, cancellationToken));
         });
 
+        // CARD-0650: audited operator release of an expectation-watchdog composer hold. Types nothing.
+        sessions.MapPost("/{id:guid}/expectation-hold/release", async (
+            Guid id,
+            ReleaseExpectationHoldRequest request,
+            SessionMessageQueueService queue,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await queue.ReleaseExpectationHoldAsync(id, request.Reason, cancellationToken));
+        });
+
         sessions.MapPost("/{id:guid}/resize", async (
             Guid id,
             ResizeSessionRequest request,

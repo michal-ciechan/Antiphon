@@ -12,6 +12,12 @@ public enum MessageSendMode
 
 public sealed record EnqueueMessageRequest(string Body, MessageSendMode Mode = MessageSendMode.WhenIdle);
 
+/// <summary>CARD-0650: the operator's reason for releasing an expectation-watchdog composer hold. Required.</summary>
+public sealed record ReleaseExpectationHoldRequest(string? Reason);
+
+/// <summary>The watchdog nudges whose composer hold was released. Empty when the session held nothing.</summary>
+public sealed record ExpectationHoldReleaseResult(Guid SessionId, IReadOnlyList<Guid> ReleasedNudgeIds);
+
 /// <summary>
 /// A message waiting in a session's queue.
 ///

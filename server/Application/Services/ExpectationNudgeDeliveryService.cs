@@ -93,7 +93,9 @@ public sealed class ExpectationNudgeDeliveryService
         }
 
         // The outcome write must not be lost to the send's own cancellation.
-        await RecordAsync(nudgeId, ExpectationAttemptState.Attempting, StateFor(result), result.ReceiptAt, CancellationToken.None);
+        var recorded = StateFor(result);
+        if (await RecordAsync(nudgeId, ExpectationAttemptState.Attempting, recorded, result.ReceiptAt, CancellationToken.None))
+            await NoteHoldAsync(nudgeId, recorded, CancellationToken.None);
         return new ExpectationDeliveryResult(nudgeId, result.Outcome, result.Reason);
     }
 
@@ -109,7 +111,8 @@ public sealed class ExpectationNudgeDeliveryService
 
         if (state == ExpectationAttemptState.Attempting)
         {
-            await RecordAsync(nudge.Id, ExpectationAttemptState.Attempting, ExpectationAttemptState.Uncertain, null, ct);
+            if (await RecordAsync(nudge.Id, ExpectationAttemptState.Attempting, ExpectationAttemptState.Uncertain, null, ct))
+                await NoteHoldAsync(nudge.Id, ExpectationAttemptState.Uncertain, ct);
             state = ExpectationAttemptState.Uncertain;
         }
 
@@ -163,22 +166,22 @@ public sealed class ExpectationNudgeDeliveryService
     /// <summary>
     /// Conditional on the state this pass observed, so a concurrent pass cannot be overwritten.
     /// Every non-receipt outcome is operator debt due now; a receipt never clears existing debt.
+    /// True when this pass made the transition.
     /// </summary>
-    private async Task RecordAsync(
+    private async Task<bool> RecordAsync(
         Guid nudgeId, ExpectationAttemptState from, ExpectationAttemptState to, DateTime? receiptAt, CancellationToken ct)
     {
         var now = _time.GetUtcNow().UtcDateTime;
         var rows = _db.ExpectationNudges.Where(n => n.Id == nudgeId && n.AttemptState == from);
         if (to == ExpectationAttemptState.Confirmed)
         {
-            await rows.ExecuteUpdateAsync(u => u
+            return await rows.ExecuteUpdateAsync(u => u
                 .SetProperty(n => n.AttemptState, to)
                 .SetProperty(n => n.ReceiptAt, receiptAt ?? now)
-                .SetProperty(n => n.ConcurrencyToken, Guid.NewGuid()), ct);
-            return;
+                .SetProperty(n => n.ConcurrencyToken, Guid.NewGuid()), ct) == 1;
         }
 
-        await rows.ExecuteUpdateAsync(u => u
+        return await rows.ExecuteUpdateAsync(u => u
             .SetProperty(n => n.AttemptState, to)
             .SetProperty(n => n.OperatorOutboxState, n => n.OperatorOutboxState == ExpectationOperatorOutboxState.None
                 ? ExpectationOperatorOutboxState.Due
@@ -186,7 +189,27 @@ public sealed class ExpectationNudgeDeliveryService
             .SetProperty(n => n.OperatorNextAttemptAt, n => n.OperatorOutboxState == ExpectationOperatorOutboxState.None
                 ? now
                 : n.OperatorNextAttemptAt)
-            .SetProperty(n => n.ConcurrencyToken, Guid.NewGuid()), ct);
+            .SetProperty(n => n.ConcurrencyToken, Guid.NewGuid()), ct) == 1;
+    }
+
+    /// <summary>
+    /// CARD-0650 S4 repair 3. An attempt left in a holding state holds ordinary input to its session.
+    /// Its Check note and audit card say so and name the audited operator release, once per transition.
+    /// </summary>
+    private async Task NoteHoldAsync(Guid nudgeId, ExpectationAttemptState state, CancellationToken ct)
+    {
+        if (state is not (ExpectationAttemptState.Unconfirmed or ExpectationAttemptState.Uncertain))
+            return;
+        var nudge = await _db.ExpectationNudges.AsNoTracking()
+            .Where(n => n.Id == nudgeId)
+            .Select(n => new { n.DestinationSessionId, n.AuditCommentId, n.CheckEventIdsJson })
+            .SingleAsync(ct);
+        if (nudge.DestinationSessionId is not { } sessionId)
+            return;
+        await ExpectationHoldAudit.AddAsync(
+            _db, nudge.AuditCommentId, nudge.CheckEventIdsJson, ExpectationHoldAudit.HoldNote(nudgeId, sessionId, state),
+            ExpectationLedger.AuditAuthor, _time.GetUtcNow().UtcDateTime, ct);
+        await _db.SaveChangesAsync(ct);
     }
 
     /// <summary>Submitted keeps the Unconfirmed receipt verdict; only the composer hold differs.</summary>
@@ -201,7 +224,8 @@ public sealed class ExpectationNudgeDeliveryService
     private static ExpectationSendOutcome? Outcome(ExpectationAttemptState state) => state switch
     {
         ExpectationAttemptState.Confirmed => ExpectationSendOutcome.Confirmed,
-        ExpectationAttemptState.Unconfirmed or ExpectationAttemptState.Submitted => ExpectationSendOutcome.Unconfirmed,
+        ExpectationAttemptState.Unconfirmed or ExpectationAttemptState.Submitted or ExpectationAttemptState.Released =>
+            ExpectationSendOutcome.Unconfirmed,
         ExpectationAttemptState.Uncertain => ExpectationSendOutcome.Uncertain,
         ExpectationAttemptState.Refused => ExpectationSendOutcome.Refused,
         _ => null,
