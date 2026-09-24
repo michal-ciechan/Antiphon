@@ -125,10 +125,13 @@ public sealed class WorktreeLockDiagnosticsTests
         var io = new RecordingIO(); io.TargetCsv = RecordingIO.Header + RecordingIO.Row("quoted,\"name", 45, Path.Combine(io.Root, "file,\"name"));
         var owner = (await RunAsync(io)).Owners.Single(); owner.Name.ShouldBe("quoted,\"name"); owner.RelativePath.ShouldBe("file,\"name");
     }
+    /// <summary>CARD-0681: handle.exe reports NTFS paths, which match the root case-insensitively on
+    /// Windows; off Windows a differently-cased root is another directory, so the row keeps its case.</summary>
+    private static string CaseFoldedRoot(string root) => OperatingSystem.IsWindows() ? root.ToUpperInvariant() : root;
     [Test]
     public async Task C443_ExactRootAndDescendants()
     {
-        var io = new RecordingIO(); io.TargetCsv = RecordingIO.Header + RecordingIO.Row("root", 1, io.Root.ToUpperInvariant())
+        var io = new RecordingIO(); io.TargetCsv = RecordingIO.Header + RecordingIO.Row("root", 1, CaseFoldedRoot(io.Root))
             + RecordingIO.Row("child", 2, Path.Combine(io.Root, "file")) + RecordingIO.Row("sibling", 3, io.Root + "-sibling");
         var result = await RunAsync(io); result.Owners.Count.ShouldBe(2);
         result.Owners[0].RelativePath.ShouldBe("."); result.Owners[1].RelativePath.ShouldBe("file");

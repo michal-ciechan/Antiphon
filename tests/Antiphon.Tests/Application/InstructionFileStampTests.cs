@@ -166,7 +166,8 @@ public class InstructionFileStampTests
         {
             PolicyRefresh = new PolicyRefreshSettings
             {
-                InstructionFiles = ["AGENTS.md", "C:\\Windows\\win.ini", "docs/../secrets.md"],
+                // CARD-0681: an absolute path in the host's own form; off Windows a drive-letter path is a relative name.
+                InstructionFiles = ["AGENTS.md", OperatingSystem.IsWindows() ? "C:\\Windows\\win.ini" : "/etc/hosts", "docs/../secrets.md"],
             },
         });
 

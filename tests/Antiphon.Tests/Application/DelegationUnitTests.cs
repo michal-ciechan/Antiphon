@@ -6,6 +6,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Application;
 
@@ -578,6 +579,10 @@ public class DelegationReportFormatterTests
     [Test]
     public void reported_repository_paths_normalize_relative_and_absolute_windows_forms()
     {
+        // CARD-0681: the absolute pattern is drive-letter only and the repo is a Windows root, which
+        // the host's Path cannot root off Windows.
+        if (!OperatingSystem.IsWindows())
+            throw new SkipTestException("Drive-letter report paths resolve only against a Windows repo root");
         var paths = AgentTaskReplyService.ExtractReportedRepositoryPaths(
             "Updated `docs/superpowers/plans/CARD-0261.md` and C:\\src\\Antiphon\\server\\Bundles\\delegate-basics.md.",
             "C:\\src\\Antiphon");

@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Application;
 
@@ -29,6 +30,9 @@ public class AgentExecutableResolverTests
     public void Resolves_sibling_flavor_when_configured_one_is_gone()
     {
         // The incident, in miniature: config says claude.cmd, disk only has claude.exe.
+        // CARD-0681: the sibling-flavor pass (.exe/.cmd/.bat) is IsWindows-gated in the resolver.
+        if (!OperatingSystem.IsWindows())
+            throw new SkipTestException("Sibling executable flavors (.exe/.cmd/.bat) are resolved only on Windows");
         using var dir = new TempToolDir("claude.exe");
         var resolver = new AgentExecutableResolver(dir.Path);
 

@@ -19,6 +19,13 @@ public class OrchestratorWorkspaceLayoutTests
     private static readonly Guid ProjectId = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
     private static readonly OrchestratorWorkspaceFactGatherer Gatherer = new();
 
+    /// <summary>CARD-0681: constructed facts are compared with the host's Path, so off Windows a
+    /// <c>C:\</c> fixture path is not rooted and a backslash is not a separator. Map it to its rooted
+    /// Unix form there; on Windows the path is used unchanged.</summary>
+    private static string P(string windowsPath) => OperatingSystem.IsWindows()
+        ? windowsPath
+        : windowsPath.Replace(@"C:\", "/", StringComparison.Ordinal).Replace('\\', '/');
+
     // ---- marker schema -------------------------------------------------------------------------
 
     [Test]
@@ -59,13 +66,17 @@ public class OrchestratorWorkspaceLayoutTests
         OrchestratorWorkspaceLayout.ReadClaudeExternalIncludes(approved, dir.Path)
             .ShouldBe(ClaudeExternalIncludesApproval.Approved);
 
-        var escapedBackslash = JsonSerializer.Serialize(backslash);
-        var trap = $$"""
-            { "projects": { {{escapedBackslash}}: { "hasClaudeMdExternalIncludesApproved": true } } }
-            """;
-        OrchestratorWorkspaceLayout.ReadClaudeExternalIncludes(trap, dir.Path)
-            .ShouldBe(ClaudeExternalIncludesApproval.Absent,
-                "a backslash project key is the CARD-0251 trap — Claude looks up the forward-slash form");
+        // CARD-0681: off Windows the full path has no backslash, so the trap key is the slash key.
+        if (!string.Equals(backslash, slash, StringComparison.Ordinal))
+        {
+            var escapedBackslash = JsonSerializer.Serialize(backslash);
+            var trap = $$"""
+                { "projects": { {{escapedBackslash}}: { "hasClaudeMdExternalIncludesApproved": true } } }
+                """;
+            OrchestratorWorkspaceLayout.ReadClaudeExternalIncludes(trap, dir.Path)
+                .ShouldBe(ClaudeExternalIncludesApproval.Absent,
+                    "a backslash project key is the CARD-0251 trap — Claude looks up the forward-slash form");
+        }
 
         var declined = $$"""
             { "projects": { "{{slash}}": { "hasClaudeMdExternalIncludesApproved": false } } }
@@ -281,12 +292,12 @@ public class OrchestratorWorkspaceLayoutTests
     public void Classify_is_pure_over_constructed_facts()
     {
         var dedicated = new OrchestratorWorkspaceDirectoryFacts(
-            Path: @"C:\src\gym-stat-orchestrator",
+            Path: P(@"C:\src\gym-stat-orchestrator"),
             Marker: new OrchestratorWorkspaceMarker(1, "../gym-stat", ProjectId, "claude"),
-            ResolvedCheckout: @"C:\src\gym-stat",
+            ResolvedCheckout: P(@"C:\src\gym-stat"),
             CheckoutExists: true,
             DirectoryGitToplevel: null,
-            CheckoutGitToplevel: @"C:\src\gym-stat",
+            CheckoutGitToplevel: P(@"C:\src\gym-stat"),
             ContextFileExists: true,
             ContextFileNamesCheckoutAgents: true,
             GitRootHasInstructionArtifacts: false);
@@ -297,9 +308,9 @@ public class OrchestratorWorkspaceLayoutTests
 
         var nested = dedicated with
         {
-            Path = @"C:\src\gym-stat-orchestrator",
-            ResolvedCheckout = @"C:\src\gym-stat-orchestrator\source\repo",
-            CheckoutGitToplevel = @"C:\src\gym-stat-orchestrator\source\repo",
+            Path = P(@"C:\src\gym-stat-orchestrator"),
+            ResolvedCheckout = P(@"C:\src\gym-stat-orchestrator\source\repo"),
+            CheckoutGitToplevel = P(@"C:\src\gym-stat-orchestrator\source\repo"),
         };
         OrchestratorWorkspaceLayout.Classify(nested, OrchestratorWorkspaceCli.Claude, home)
             .ShouldBe(OrchestratorWorkspaceState.DedicatedNested);
