@@ -171,7 +171,10 @@ public sealed class DurableRunnerSpillReceiptTests
             });
             await BindRunnerAsync(schema.ConnectionString, h.SessionId, mirror);
 
-            var fullBody = "joined-brief-0647\n" + new string('j', 2048);
+            // CARD-0649: an opening task marker rides the typed pointer. The file keeps the
+            // original bytes, and a complete UserPrompt of that pointer is what clears them.
+            const string marker = "[antiphon-task:f67e6efa]";
+            var fullBody = marker + " joined-brief-0647\n" + new string('j', 2048);
             await QueuedReceiptAssertions.HoldRecipientBusyAsync(schema.ConnectionString, h.SessionId);
             await h.Queue.EnqueueAsync(h.SessionId, fullBody, MessageSendMode.WhenIdle, CancellationToken.None);
 
@@ -205,7 +208,8 @@ public sealed class DurableRunnerSpillReceiptTests
 
             h.Adapter.SubmittedBodies.ShouldNotBeEmpty();
             var submitted = h.Adapter.SubmittedBodies[^1];
-            submitted.ShouldContain(TypedBodySpill.PointerHeadline);
+            submitted.ShouldContain(marker + " " + TypedBodySpill.PointerHeadline);
+            submitted.ShouldEndWith(marker);
             await using var after = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
             var confirmed = await after.SessionQueuedMessages.AsNoTracking()
                 .SingleAsync(m => m.AgentSessionId == h.SessionId);
@@ -216,6 +220,62 @@ public sealed class DurableRunnerSpillReceiptTests
                 e.AgentSessionId == h.SessionId && e.Kind == TranscriptKinds.UserPrompt);
             PromptSubmissionMatch.IsCompleteIn(submitted, prompt.Text!).ShouldBeTrue();
             var file = Path.Combine(mirror, ".antiphon", "inbox", confirmed.Id.ToString("D") + ".md");
+            (await File.ReadAllTextAsync(file)).ShouldBe(fullBody);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Screen_only_delivery_keeps_spill_bytes_and_a_retry_writes_the_same_body()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var root = Path.Combine(Path.GetTempPath(), "c647-screen-" + Guid.NewGuid().ToString("N")).Replace('\\', '/');
+        var mirror = root + "/worktrees/task-screen";
+        Directory.CreateDirectory(mirror);
+        var writer = new RunnerWorkspaceService(root + "/repo", root);
+        try
+        {
+            await using var h = await BridgeQueueHarness.CreateAsync(new()
+            {
+                ConnectionString = schema.ConnectionString,
+                ConfigureServices = services => services.AddSingleton<RemoteSpillCourier>(),
+            });
+            await BindRunnerAsync(schema.ConnectionString, h.SessionId, mirror);
+            // The harness records a UserPrompt on submit. This delivery is the screen-only
+            // fallback: the terminal redrew, and no recipient prompt exists.
+            h.Adapter.OnSubmitted = _ => Task.CompletedTask;
+
+            const string marker = "[antiphon-task:f67e6efa]";
+            var fullBody = marker + " screen-only-0647\n" + new string('k', 2048);
+            await h.Queue.EnqueueAsync(h.SessionId, fullBody, MessageSendMode.WhenIdle, CancellationToken.None);
+
+            h.Adapter.SubmittedBodies.ShouldNotBeEmpty();
+            var submitted = h.Adapter.SubmittedBodies[^1];
+            submitted.ShouldContain(marker + " " + TypedBodySpill.PointerHeadline);
+            submitted.ShouldEndWith(marker);
+            submitted.ShouldNotBe(fullBody);
+
+            await using var after = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+            var row = await after.SessionQueuedMessages.AsNoTracking()
+                .SingleAsync(m => m.AgentSessionId == h.SessionId);
+            row.Status.ShouldBe(QueuedMessageStatus.Sent);
+            row.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+            row.RemoteSpillBody.ShouldBe(fullBody);
+            (await after.TranscriptEntries.CountAsync(e =>
+                e.AgentSessionId == h.SessionId && e.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
+
+            var courier = new RemoteSpillCourier(h.Provider.GetRequiredService<IServiceScopeFactory>());
+            var retry = await courier.FindDurableAsync(h.SessionId, row.Body, CancellationToken.None);
+            retry.ShouldNotBeNull();
+            retry!.Spill.Body.ShouldBe(fullBody);
+            await writer.WriteSpillAsync(mirror, retry.Spill, CancellationToken.None);
+            var file = Path.Combine(mirror, ".antiphon", "inbox", row.Id.ToString("D") + ".md");
+            (await File.ReadAllTextAsync(file)).ShouldBe(fullBody);
+            await writer.WriteSpillAsync(mirror, retry.Spill, CancellationToken.None);
             (await File.ReadAllTextAsync(file)).ShouldBe(fullBody);
         }
         finally

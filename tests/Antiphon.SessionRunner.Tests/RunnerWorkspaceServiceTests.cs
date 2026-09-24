@@ -378,6 +378,108 @@ public sealed class RunnerWorkspaceServiceTests
             throw new IOException($"Could not create the test junction (exit code {process.ExitCode}).");
     }
 
+    [Test]
+    public async Task Spill_write_refuses_a_dangling_final_file_symlink()
+    {
+        using var scratch = Scratch.Create();
+        var service = new RunnerWorkspaceService(scratch.Clone, scratch.Work);
+        var mirror = (await service.MirrorAsync(
+            new PhoneHomeWorkspaceMirrorRequest(Scratch.Branch, scratch.Sha, "task-deadbeef"),
+            CancellationToken.None)).Path;
+        var outside = Path.Combine(Path.GetTempPath(), "c647-dangling-file-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outside);
+        var inbox = Path.Combine(mirror, ".antiphon", "inbox");
+        Directory.CreateDirectory(inbox);
+        var link = Path.Combine(inbox, "note.md");
+        var target = Path.Combine(outside, "secret.md");
+        try
+        {
+            if (!TryCreateDanglingSymlink(link, target, directory: false))
+            {
+                Skip.Test(
+                    "Windows denied symlink creation. This dangling final-file refusal runs on Linux, where CreateSymbolicLink does not need that privilege.");
+                return;
+            }
+
+            var refused = await Should.ThrowAsync<PhoneHomeAdmissionException>(() => service.WriteSpillAsync(
+                mirror, new PhoneHomeInputSpill(".antiphon/inbox/note.md", "secret"), CancellationToken.None));
+            refused.Message.ShouldContain("escapes the mirror");
+            File.Exists(target).ShouldBeFalse();
+        }
+        finally
+        {
+            TryDeleteLink(link);
+            if (Directory.Exists(outside))
+                Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Spill_write_refuses_a_dangling_directory_symlink()
+    {
+        using var scratch = Scratch.Create();
+        var service = new RunnerWorkspaceService(scratch.Clone, scratch.Work);
+        var mirror = (await service.MirrorAsync(
+            new PhoneHomeWorkspaceMirrorRequest(Scratch.Branch, scratch.Sha, "task-deadbeef"),
+            CancellationToken.None)).Path;
+        var outside = Path.Combine(Path.GetTempPath(), "c647-dangling-dir-" + Guid.NewGuid().ToString("N"));
+        var link = Path.Combine(mirror, "escape");
+        try
+        {
+            if (!TryCreateDanglingSymlink(link, outside, directory: true))
+            {
+                Skip.Test(
+                    "Windows denied symlink creation. This dangling directory refusal runs on Linux, where CreateSymbolicLink does not need that privilege.");
+                return;
+            }
+
+            var refused = await Should.ThrowAsync<PhoneHomeAdmissionException>(() => service.WriteSpillAsync(
+                mirror, new PhoneHomeInputSpill("escape/inbox/note.md", "secret"), CancellationToken.None));
+            refused.Message.ShouldContain("escapes the mirror");
+            Directory.Exists(outside).ShouldBeFalse();
+            File.Exists(Path.Combine(outside, "inbox", "note.md")).ShouldBeFalse();
+        }
+        finally
+        {
+            TryDeleteLink(link);
+            if (Directory.Exists(outside))
+                Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A dangling link is the case <see cref="File.Exists"/> misses. Junctions cannot dangle, so
+    /// there is no Windows fallback: without the privilege the test skips and Linux runs it.
+    /// </summary>
+    private static bool TryCreateDanglingSymlink(string linkPath, string targetPath, bool directory)
+    {
+        try
+        {
+            if (directory)
+                Directory.CreateSymbolicLink(linkPath, targetPath);
+            else
+                File.CreateSymbolicLink(linkPath, targetPath);
+            return true;
+        }
+        catch (Exception ex) when (OperatingSystem.IsWindows()
+            && ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private static void TryDeleteLink(string linkPath)
+    {
+        try
+        {
+            if (new FileInfo(linkPath).LinkTarget is not null || new DirectoryInfo(linkPath).LinkTarget is not null)
+                File.Delete(linkPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+        }
+    }
+
     // ---- CARD-0604 D-19 (Cut B): the verification snapshot, not the mirror -------------------
     //
     // The distinction matters: a mirror is a disposable copy of a branch that also exists on
