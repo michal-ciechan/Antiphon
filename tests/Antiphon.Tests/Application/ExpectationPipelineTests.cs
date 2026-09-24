@@ -348,6 +348,121 @@ public sealed class ExpectationPipelineTests
         var evaluation = ExpectationWatchdogPolicy.Evaluate(Snap(now, queued), Directive());
         evaluation.DispatchFence.ShouldBeNull();
         evaluation.ScopedFences.ShouldBeEmpty();
+
+        var landDetail = DispatchHoldDetails.LeaseHeldByLand("abcd1234", "land the card", "req1", now);
+        var capDetail = DispatchHoldDetails.ConcurrencyCap(4);
+        var wrappedCap = DispatchHoldDetails.Escalation(
+            "Warning:", 900, now.AddMinutes(-20), now.AddMinutes(-40), capDetail, 4, 4, ["abcd1234"]);
+        var branchLanding = "held: CARD-0647's kept branch feat/x (task abcd1234) is landing and is not yet in origin/master";
+        foreach (var detail in new[] { landDetail, capDetail, wrappedCap, branchLanding })
+        {
+            var occupied = AgedHold(detail, running: 1);
+            occupied.StalledPipelines.Count.ShouldBe(
+                0,
+                "a land or a full cap with running tasks is not a stalled-pipeline episode");
+            occupied.DispatchFence.ShouldBeNull();
+            occupied.ScopedFences.ShouldBeEmpty();
+            PagesStalledPipeline(occupied).ShouldBe(
+                false,
+                "occupied capacity must not page a stalled pipeline");
+        }
+
+        var openLand = new ExpectationOpenEpisode
+        {
+            Kind = ExpectationEpisodeKind.StalledPipeline,
+            SubjectKey = ExpectationSubjects.Pipeline(DirectiveId, Repo),
+            FirstObservedAt = now.AddHours(-2),
+            Evidence = "queued behind a land",
+        };
+        var cleared = AgedHold(landDetail, running: 1, open: [openLand]);
+        cleared.StalledPipelines.ShouldBeEmpty();
+        cleared.ObservedClear.ShouldBeTrue();
+        PagesStalledPipeline(cleared).ShouldBeFalse();
+
+        var idleLand = AgedHold(landDetail, running: 0);
+        var idleCap = AgedHold(capDetail, running: 0);
+        var pinWhileBusy = AgedHold(
+            "routing pin not before 2099-01-01T00:00:00Z; dispatch paused (wait).",
+            running: 4);
+        foreach (var paging in new[] { idleLand, idleCap, pinWhileBusy })
+        {
+            var episode = paging.StalledPipelines.ShouldHaveSingleItem();
+            episode.Kind.ShouldBe(ExpectationEpisodeKind.StalledPipeline);
+            episode.IsDue.ShouldBeTrue();
+            episode.Immediate.ShouldBeFalse();
+            PagesStalledPipeline(paging).ShouldBeTrue();
+            paging.DispatchFence.ShouldBeNull();
+            paging.ObservedClear.ShouldBeFalse();
+        }
+
+        var deadDetail = DispatchHoldDetails.LeaseFenced("dead child journal");
+        var dead = AgedHold(deadDetail, running: 1);
+        var deadEpisode = dead.StalledPipelines.ShouldHaveSingleItem();
+        deadEpisode.Kind.ShouldBe(ExpectationEpisodeKind.StalledPipeline);
+        deadEpisode.IsDue.ShouldBeTrue();
+        deadEpisode.Immediate.ShouldBeFalse();
+        deadEpisode.Evidence.ShouldContain("dead child journal");
+        PagesStalledPipeline(dead).ShouldBeTrue();
+        dead.DispatchFence.ShouldNotBeNull();
+        dead.DispatchFence!.IsDue.ShouldBeTrue();
+        dead.DispatchFence.Immediate.ShouldBeTrue();
+        dead.ObservedClear.ShouldBeFalse();
+
+        var unknownOwner = AgedHold(DispatchHoldDetails.LeaseOccupiedUnknown, running: 1);
+        var unknownEpisode = unknownOwner.StalledPipelines.ShouldHaveSingleItem();
+        unknownEpisode.Kind.ShouldBe(ExpectationEpisodeKind.StalledPipeline);
+        unknownEpisode.IsDue.ShouldBeTrue();
+        PagesStalledPipeline(unknownOwner).ShouldBeTrue();
+        unknownOwner.DispatchFence.ShouldNotBeNull();
+        unknownOwner.DispatchFence!.ReasonCode.ShouldBe("repository-owner-unknown");
+        unknownOwner.DispatchFence.IsDue.ShouldBeTrue();
+
+        var ineligible = AgedHold(
+            DispatchHoldDetails.RunnerUnavailable("server2", "lease expired"),
+            running: 1,
+            runnerId: "server2");
+        var ineligibleEpisode = ineligible.StalledPipelines.ShouldHaveSingleItem();
+        ineligibleEpisode.Kind.ShouldBe(ExpectationEpisodeKind.StalledPipeline);
+        ineligibleEpisode.IsDue.ShouldBeTrue();
+        ineligibleEpisode.Immediate.ShouldBeFalse();
+        PagesStalledPipeline(ineligible).ShouldBeTrue();
+        ineligible.DispatchFence.ShouldBeNull();
+        var runnerFence = ineligible.ScopedFences.ShouldHaveSingleItem();
+        runnerFence.Scope.ShouldBe("runner:server2");
+        runnerFence.IsDue.ShouldBeTrue();
+        runnerFence.Immediate.ShouldBeTrue();
+
+        var youngFence = DispatchHoldDetails.LeaseFenced("dead child journal");
+        var landBesideYoungFence = ExpectationWatchdogPolicy.Evaluate(
+            Snap(now,
+            [
+                Hold(LocalTaskId, landDetail, now.AddMinutes(-40)),
+                Hold(RemoteTaskId, youngFence, now.AddMinutes(-1)),
+            ]) with
+            {
+                Lanes = [new ExpectationLaneSnapshot { RunnerId = null, Target = 3, Running = 1 }],
+            },
+            Directive());
+        landBesideYoungFence.StalledPipelines.ShouldBeEmpty();
+        landBesideYoungFence.DispatchFence.ShouldBeNull();
+        PagesStalledPipeline(landBesideYoungFence).ShouldBeFalse();
+
+        var landBesideOldFence = ExpectationWatchdogPolicy.Evaluate(
+            Snap(now,
+            [
+                Hold(LocalTaskId, landDetail, now.AddMinutes(-40)),
+                Hold(RemoteTaskId, youngFence, now.AddMinutes(-30)),
+            ]) with
+            {
+                Lanes = [new ExpectationLaneSnapshot { RunnerId = null, Target = 3, Running = 1 }],
+            },
+            Directive());
+        landBesideOldFence.DispatchFence.ShouldBeNull();
+        var fenceEpisode = landBesideOldFence.StalledPipelines.ShouldHaveSingleItem();
+        fenceEpisode.Kind.ShouldBe(ExpectationEpisodeKind.StalledPipeline);
+        fenceEpisode.IsDue.ShouldBeTrue();
+        fenceEpisode.ExampleTaskIds.ShouldBe([RemoteTaskId]);
+        PagesStalledPipeline(landBesideOldFence).ShouldBeTrue();
         await Task.CompletedTask;
     }
 
@@ -447,6 +562,47 @@ public sealed class ExpectationPipelineTests
         LastScopedDispatchAt = lastDispatch,
         RepositoryScope = Repo,
     };
+
+    private static bool PagesStalledPipeline(ExpectationEvaluation evaluation) =>
+        evaluation.StalledPipelines.Any(condition =>
+            condition.IsDue && condition.Kind == ExpectationEpisodeKind.StalledPipeline);
+
+    private static ExpectationQueuedTask Hold(Guid id, string detail, DateTime stint) => new()
+    {
+        TaskId = id,
+        RepositoryScope = Repo,
+        StintStartedAt = stint,
+        HoldClass = DispatchHoldDetails.Classify(detail).Class,
+        HoldDetail = detail,
+    };
+
+    private static ExpectationEvaluation AgedHold(
+        string detail,
+        int running,
+        string? runnerId = null,
+        Guid? taskId = null,
+        IReadOnlyList<ExpectationOpenEpisode>? open = null)
+    {
+        var id = taskId ?? LocalTaskId;
+        return ExpectationWatchdogPolicy.Evaluate(
+            Snap(Now,
+            [
+                Hold(id, detail, Now.AddMinutes(-30)) with { RunnerId = runnerId },
+            ]) with
+            {
+                Lanes =
+                [
+                    new ExpectationLaneSnapshot
+                    {
+                        RunnerId = null,
+                        Target = 3,
+                        Running = running,
+                    },
+                ],
+                OpenEpisodes = open ?? [],
+            },
+            Directive());
+    }
 
     private static ExpectationQueuedTask Queue(Guid id, DateTime stint) => new()
     {
