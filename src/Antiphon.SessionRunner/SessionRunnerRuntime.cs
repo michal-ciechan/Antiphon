@@ -3433,64 +3433,137 @@ public sealed class SessionRunnerEventHub
             subscriber.Channel.Writer.TryComplete();
         });
 
-        return subscriber.Channel.Reader;
+        return subscriber.Reader;
     }
 
     public void Publish<T>(string eventName, T payload)
     {
         var json = System.Text.Json.JsonSerializer.Serialize(payload);
         var evt = new RunnerServerSentEvent(eventName, json);
-        var bytes = System.Text.Encoding.UTF8.GetByteCount(json) + eventName.Length;
+        var bytes = MeasuredBytes(eventName, json);
         Subscriber[] subscribers;
         lock (_gate)
             subscribers = [.. _subscribers];
 
         foreach (var subscriber in subscribers)
         {
-            if (subscriber.TryOverflow(bytes, out var overflowed) && overflowed)
+            var bounded = subscriber.TryReserve(bytes, out var overflowed);
+            if (bounded && overflowed)
             {
                 subscriber.Channel.Writer.TryComplete();
                 subscriber.OnOverflow?.Invoke();
                 continue;
             }
 
-            subscriber.Channel.Writer.TryWrite(evt);
+            // A completed subscription (overflow or unsubscribe) rejects the write. Give the
+            // reservation back so the depth stays equal to events actually queued.
+            if (!subscriber.Channel.Writer.TryWrite(evt) && bounded)
+                subscriber.Release(bytes);
         }
     }
 
-    private sealed class Subscriber(
-        Channel<RunnerServerSentEvent> channel,
-        int? maxEvents = null,
-        int? maxBytes = null,
-        Action? onOverflow = null)
+    internal static int MeasuredBytes(string eventName, string json) =>
+        System.Text.Encoding.UTF8.GetByteCount(json) + eventName.Length;
+
+    private sealed class Subscriber
     {
-        public Channel<RunnerServerSentEvent> Channel { get; } = channel;
-        public Action? OnOverflow { get; } = onOverflow;
+        // CARD-0655: queue depth, not a lifetime total. The phone-home event loop releases each
+        // event after it is sent. A lifetime counter overflowed every live connection at MaxPendingEvents.
         private int _count;
         private int _bytes;
-        private bool _overflowed;
+        private int _overflowed;
 
-        public bool TryOverflow(int incomingBytes, out bool overflowed)
+        public Subscriber(Channel<RunnerServerSentEvent> channel)
+        {
+            Channel = channel;
+            Reader = channel.Reader;
+        }
+
+        public Subscriber(Channel<RunnerServerSentEvent> channel, int maxEvents, int maxBytes, Action onOverflow)
+        {
+            Channel = channel;
+            MaxEvents = maxEvents;
+            MaxBytes = maxBytes;
+            OnOverflow = onOverflow;
+            Reader = new EventLease(channel.Reader, this);
+        }
+
+        public Channel<RunnerServerSentEvent> Channel { get; }
+        public ChannelReader<RunnerServerSentEvent> Reader { get; }
+        public Action? OnOverflow { get; }
+        private int? MaxEvents { get; }
+        private int? MaxBytes { get; }
+        public int PendingEvents => Volatile.Read(ref _count);
+        public int PendingBytes => Volatile.Read(ref _bytes);
+
+        public bool TryReserve(int incomingBytes, out bool overflowed)
         {
             overflowed = false;
-            if (maxEvents is null || maxBytes is null)
+            if (MaxEvents is null || MaxBytes is null)
                 return false;
-            if (_overflowed)
+
+            if (Volatile.Read(ref _overflowed) != 0)
             {
                 overflowed = true;
                 return true;
             }
 
-            if (_count + 1 > maxEvents.Value || _bytes + incomingBytes > maxBytes.Value)
+            var maxEvents = MaxEvents.Value;
+            var maxBytes = MaxBytes.Value;
+            // Same shape as PhoneHomeLiveConnection: observe the depth, then Interlocked-account the event.
+            if (Volatile.Read(ref _count) + 1 > maxEvents
+                || (long)Volatile.Read(ref _bytes) + incomingBytes > maxBytes)
             {
-                _overflowed = true;
+                Interlocked.Exchange(ref _overflowed, 1);
                 overflowed = true;
                 return true;
             }
 
-            _count++;
-            _bytes += incomingBytes;
+            var newCount = Interlocked.Increment(ref _count);
+            var newBytes = Interlocked.Add(ref _bytes, incomingBytes);
+            if (newCount > maxEvents || newBytes > maxBytes)
+            {
+                Interlocked.Decrement(ref _count);
+                Interlocked.Add(ref _bytes, -incomingBytes);
+                Interlocked.Exchange(ref _overflowed, 1);
+                overflowed = true;
+                return true;
+            }
+
             return true;
         }
+
+        public void Release(int releasedBytes)
+        {
+            Interlocked.Decrement(ref _count);
+            Interlocked.Add(ref _bytes, -releasedBytes);
+        }
+
+        private sealed class EventLease(ChannelReader<RunnerServerSentEvent> inner, Subscriber owner)
+            : ChannelReader<RunnerServerSentEvent>, ISessionRunnerEventLease
+        {
+            public int PendingEvents => owner.PendingEvents;
+            public int PendingBytes => owner.PendingBytes;
+
+            public void Release(RunnerServerSentEvent evt) =>
+                owner.Release(MeasuredBytes(evt.EventName, evt.Json));
+
+            public override Task Completion => inner.Completion;
+            public override bool CanCount => inner.CanCount;
+            public override bool CanPeek => inner.CanPeek;
+            public override int Count => inner.Count;
+            public override bool TryRead(out RunnerServerSentEvent item) => inner.TryRead(out item!);
+            public override bool TryPeek(out RunnerServerSentEvent item) => inner.TryPeek(out item!);
+            public override ValueTask<bool> WaitToReadAsync(CancellationToken cancellationToken = default) =>
+                inner.WaitToReadAsync(cancellationToken);
+        }
     }
+}
+
+/// <summary>Bounded hub subscription. The consumer releases each event after it has been sent.</summary>
+internal interface ISessionRunnerEventLease
+{
+    int PendingEvents { get; }
+    int PendingBytes { get; }
+    void Release(RunnerServerSentEvent evt);
 }

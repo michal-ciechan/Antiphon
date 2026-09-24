@@ -273,11 +273,22 @@ public sealed class PhoneHomeConnectionService : BackgroundService
         }
     }
 
-    private async Task EventLoopAsync(
+    internal async Task EventLoopAsync(
         PhoneHomeConnectionWriter writer, long epoch, System.Threading.Channels.ChannelReader<RunnerServerSentEvent> reader, CancellationToken ct)
     {
         await foreach (var evt in reader.ReadAllAsync(ct))
-            await SendEventAsync(writer, epoch, evt, ct);
+        {
+            try
+            {
+                await SendEventAsync(writer, epoch, evt, ct);
+            }
+            finally
+            {
+                // After the send, so a socket held inside SendAsync still occupies queue depth.
+                if (reader is ISessionRunnerEventLease lease)
+                    lease.Release(evt);
+            }
+        }
     }
 
     private void CancelWaiters(long epoch)
