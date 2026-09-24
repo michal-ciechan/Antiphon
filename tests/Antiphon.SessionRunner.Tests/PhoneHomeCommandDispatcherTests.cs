@@ -353,12 +353,37 @@ public class PhoneHomeCommandDispatcherTests
             .DispatchAsync(Launch(Request("claude", "/work")), CancellationToken.None);
         noProbe.Kind.ShouldBe(PhoneHomeFrameKind.Result);
 
-        // A grok launch never asks about Claude, even on a signed-out runner.
-        var grokProbe = new RecordingProbe(false);
+        // A grok launch asks the Grok probe, never Claude's. Unknown still admits.
+        var grokProbe = new RecordingProbe(null);
         var grok = await Dispatcher(new RecordingRuntime(), probe: grokProbe)
             .DispatchAsync(Launch(Request("grok", "/work")), CancellationToken.None);
         grok.Kind.ShouldBe(PhoneHomeFrameKind.Result);
-        grokProbe.Calls.ShouldBeEmpty();
+        grokProbe.Calls.ShouldBe(["grok"]);
+    }
+
+    [Test]
+    public async Task Grok_launch_is_refused_when_the_probe_says_logged_out()
+    {
+        var runtime = new RecordingRuntime();
+        var probe = new RecordingProbe(false);
+        var refused = await Dispatcher(runtime, probe: probe)
+            .DispatchAsync(Launch(Request("grok", "/work")), CancellationToken.None);
+
+        refused.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+        refused.ErrorCode.ShouldBe(PhoneHomeProblemTypes.ProviderSignInRequired);
+        refused.StatusCode.ShouldBe(409);
+        refused.ErrorDetail.ShouldNotBeNull();
+        refused.ErrorDetail.ShouldContain("grok login");
+        refused.ErrorDetail.ShouldContain("/state/grok");
+        refused.ErrorDetail.ShouldNotContain("claude");
+        probe.Calls.ShouldBe(["grok"]);
+        runtime.Mutations.ShouldBeEmpty();
+
+        var disabledProbe = new RecordingProbe(false);
+        var admitted = await Dispatcher(runtime, probe: disabledProbe, grokAuthProbeEnabled: false)
+            .DispatchAsync(Launch(Request("grok", "/work")), CancellationToken.None);
+        admitted.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        disabledProbe.Calls.ShouldBeEmpty();
     }
 
     [Test]
@@ -379,11 +404,19 @@ public class PhoneHomeCommandDispatcherTests
         dto.SubscriptionType.ShouldBe("max");
         probe.Calls.ShouldBe(["claude"]);
 
+        var grokAnswered = await dispatcher.DispatchAsync(ProviderAuth("grok"), CancellationToken.None);
+        grokAnswered.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        var grokDto = grokAnswered.Payload!.Value.Deserialize<RunnerProviderAuthDto>(PhoneHomeFraming.Json);
+        grokDto.ShouldNotBeNull();
+        grokDto.Provider.ShouldBe("grok");
+        grokDto.LoggedIn.ShouldBe(true);
+        probe.Calls.ShouldBe(["claude", "grok"]);
+
         var codex = await dispatcher.DispatchAsync(ProviderAuth("codex"), CancellationToken.None);
         codex.Kind.ShouldBe(PhoneHomeFrameKind.Error);
         codex.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
         codex.StatusCode.ShouldBe(400);
-        probe.Calls.Count.ShouldBe(1);
+        probe.Calls.Count.ShouldBe(2);
         runtime.Mutations.ShouldBeEmpty();
 
         // The wire number follows CARD-0604 Cut B's custody operations (16-21); the server sends it by name.
@@ -472,6 +505,7 @@ public class PhoneHomeCommandDispatcherTests
 
     private static PhoneHomeCommandDispatcher Dispatcher(
         IPhoneHomeRuntimeSurface runtime, int capacity = 8, IProviderAuthProbe? probe = null, bool claudeAuthProbeEnabled = true,
+        bool grokAuthProbeEnabled = true,
         int maxMessageUtf8Bytes = PhoneHomeProtocol.DefaultMaxMessageUtf8Bytes) =>
         new(runtime, new PhoneHomeSettings
         {
@@ -480,6 +514,7 @@ public class PhoneHomeCommandDispatcherTests
             RunnerRepository = "/work/repos/antiphon",
             Capacity = capacity,
             ClaudeAuthProbeEnabled = claudeAuthProbeEnabled,
+            GrokAuthProbeEnabled = grokAuthProbeEnabled,
             Limits = new PhoneHomeLimits(MaxMessageUtf8Bytes: maxMessageUtf8Bytes),
         }, probe);
 

@@ -64,6 +64,7 @@ public sealed class AgentTaskService
     private readonly InterimVerificationPolicy? _interimPolicy;
     private readonly WorkspaceUseAdmission? _workspaceUse;
     private readonly PhoneHomeLaunchPolicy? _phoneHome;
+    private readonly ISessionRunnerDirectory? _runners;
 
     public AgentTaskService(
         AppDbContext db,
@@ -91,8 +92,12 @@ public sealed class AgentTaskService
         WorkspaceUseAdmission? workspaceUse = null,
         // CARD-0604 D-15: optional like the rest. A harness without it cannot create a
         // runner-bound task at all, which is the safe direction.
-        PhoneHomeLaunchPolicy? phoneHome = null)
+        PhoneHomeLaunchPolicy? phoneHome = null,
+        // CARD-0647. Optional. A runner-bound Grok create asks this directory; absent, the
+        // runner store cannot be measured and the desktop store is not consulted instead.
+        ISessionRunnerDirectory? runners = null)
     {
+        _runners = runners;
         _phoneHome = phoneHome;
         _workspaceUse = workspaceUse;
         _interimPolicy = interimPolicy;
@@ -1181,7 +1186,7 @@ public sealed class AgentTaskService
         {
             await RefuseUnauthenticatedGrokAsync(
                 agentKind, task.AgentId, request.LaunchEnvOverride, request.InheritedLlmEnv,
-                request.AllowUnauthenticatedProvider, ct);
+                request.AllowUnauthenticatedProvider, remoteRunnerId, ct);
         }
 
         if (repeatOf is not null)
@@ -2147,7 +2152,7 @@ public sealed class AgentTaskService
             task.AgentKind, task.AgentId,
             AgentLaunchEnv.Parse(task.LaunchEnvOverrideJson),
             AgentLaunchEnv.Parse(task.InheritedLaunchEnvJson),
-            allowUnauthenticated: false, ct);
+            allowUnauthenticated: false, task.RunnerId, ct);
 
         await RequeueAsync(
             task, AgentTaskEventType.Retried, task.ModelLevel,
@@ -3398,6 +3403,7 @@ public sealed class AgentTaskService
         IReadOnlyDictionary<string, string>? launchEnvOverride,
         IReadOnlyDictionary<string, string>? inheritedEnv,
         bool allowUnauthenticated,
+        string? runnerId,
         CancellationToken ct)
     {
         var settings = _registrySettings;
@@ -3405,6 +3411,34 @@ public sealed class AgentTaskService
             || agentKind != AgentKind.Grok
             || settings is not { GrokCredentialProbeEnabled: true })
             return;
+
+        // CARD-0647. A runner-bound task authenticates against the runner's GROK_HOME, never
+        // the desktop store. An answer that cannot tell admits; only LoggedIn false refuses.
+        if (!string.IsNullOrWhiteSpace(runnerId))
+        {
+            if (_runners is null)
+            {
+                _logger.LogWarning(
+                    "Grok credential probe skipped for runner {RunnerId}: no session-runner directory",
+                    runnerId);
+                return;
+            }
+
+            RunnerProviderAuthDto? answer;
+            try
+            {
+                answer = await _runners.Resolve(runnerId).GetProviderAuthAsync("grok", ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Grok credential probe unavailable for runner {RunnerId}", runnerId);
+                return;
+            }
+
+            if (answer?.LoggedIn == false)
+                throw new ProviderSignInRequiredException(_phoneHome?.ChildGrokHome ?? "/state/grok", runnerId);
+            return;
+        }
 
         if (agentId is Guid pinnedId)
         {

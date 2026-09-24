@@ -223,8 +223,9 @@ HTTPS and only pushes go over SSH, on `ssh.github.com:443`.
 
 Grok's OAuth store on the runner is provisioned once, interactively, inside the persistent container
 (`docker exec -it -u 1654:1654 <container> grok login`). It is never copied from the desktop and
-never baked (CARD-0575, CARD-0324); a missing or expired store is the existing 409
-`provider_sign_in_required`.
+never baked (CARD-0575, CARD-0324). A runner-bound Grok task checks that runner's
+`GROK_HOME/auth.json` for presence only — the file is never opened or logged — and a missing file
+is 409 `provider_sign_in_required` (CARD-0647). The desktop store is not consulted for that task.
 
 Claude Code on the runner (CARD-0628) signs in with a subscription credential, never an API key.
 Names and locations only:

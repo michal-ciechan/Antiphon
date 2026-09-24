@@ -10,23 +10,36 @@ public sealed class ProviderSignInRequiredException : HttpException
 
     public string GrokHome { get; }
 
-    public ProviderSignInRequiredException(string grokHome)
-        : base(
-            409,
-            "Grok is not signed in on this host. Run `grok login` as the Windows user that runs "
-            + "the session-runner, pick another agentKind, or re-send with "
-            + "allowUnauthenticatedProvider=true to queue anyway.",
-            ErrorCode,
-            BuildExtensions(grokHome))
+    public string? RunnerId { get; }
+
+    public ProviderSignInRequiredException(string grokHome, string? runnerId = null)
+        : base(409, MessageFor(grokHome, runnerId), ErrorCode, BuildExtensions(grokHome, runnerId))
     {
         GrokHome = grokHome;
+        RunnerId = string.IsNullOrWhiteSpace(runnerId) ? null : runnerId;
     }
 
-    private static IReadOnlyDictionary<string, object?> BuildExtensions(string grokHome) =>
-        new Dictionary<string, object?>
+    private static string MessageFor(string grokHome, string? runnerId)
+    {
+        if (string.IsNullOrWhiteSpace(runnerId))
+            return "Grok is not signed in on this host. Run `grok login` as the Windows user that runs "
+                + "the session-runner, pick another agentKind, or re-send with "
+                + "allowUnauthenticatedProvider=true to queue anyway.";
+        return "Grok is not signed in on runner '" + runnerId + "' (GROK_HOME=" + grokHome
+            + "). Run `grok login` inside that runner, pick another agentKind, or re-send with "
+            + "allowUnauthenticatedProvider=true to queue anyway.";
+    }
+
+    private static IReadOnlyDictionary<string, object?> BuildExtensions(string grokHome, string? runnerId)
+    {
+        var extensions = new Dictionary<string, object?>
         {
             ["agentKind"] = "Grok",
             ["grokHome"] = grokHome,
             ["remedy"] = "grok login",
         };
+        if (!string.IsNullOrWhiteSpace(runnerId))
+            extensions["runnerId"] = runnerId;
+        return extensions;
+    }
 }

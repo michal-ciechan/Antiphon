@@ -46,12 +46,19 @@ builder.Services.AddSingleton<PhoneHomeCommandDispatcher>(sp =>
         new PhoneHomeRuntimeAdapter(runtime, new RunnerBuildDto(
             build.InformationalVersion, build.CommitSha, build.AssemblyWriteTimeUtc, build.ProcessStartUtc)),
         sp.GetRequiredService<IOptions<PhoneHomeSettings>>().Value,
-        sp.GetRequiredService<ClaudeAuthProbe>());
+        sp.GetRequiredService<IProviderAuthProbe>());
 });
 // CARD-0628 D-7: measures Claude's sign-in state for the ProviderAuth operation and the launch backstop.
 builder.Services.AddSingleton(sp => new ClaudeAuthProbe(
     sp.GetRequiredService<IOptions<PhoneHomeSettings>>().Value,
     sp.GetRequiredService<ILogger<ClaudeAuthProbe>>()));
+// CARD-0647: Grok is presence of GROK_HOME/auth.json. The file is never opened.
+builder.Services.AddSingleton(sp => new GrokAuthProbe(
+    sp.GetRequiredService<IOptions<PhoneHomeSettings>>().Value,
+    sp.GetRequiredService<ILogger<GrokAuthProbe>>()));
+builder.Services.AddSingleton<IProviderAuthProbe>(sp => new RoutingProviderAuthProbe(
+    sp.GetRequiredService<ClaudeAuthProbe>(),
+    sp.GetRequiredService<GrokAuthProbe>()));
 builder.Services.AddHostedService<PhoneHomeConnectionService>();
 builder.Services.PostConfigure<SessionRunnerSettings>(settings =>
 {

@@ -42,6 +42,7 @@ public sealed class PhoneHomeLaunchPolicy
     public IReadOnlyList<string> RawExeAllowList => _settings.RawExeAllowList;
     public bool ClaudeAuthProbeEnabled => _settings.ClaudeAuthProbeEnabled;
     public string ChildClaudeHome => _settings.ChildClaudeHome;
+    public string ChildGrokHome => _settings.ChildGrokHome;
     public static bool IsAdmittedKind(AgentKind kind) => kind is AgentKind.Grok or AgentKind.ClaudeCode;
 
     public void RefuseUnsupportedStart(

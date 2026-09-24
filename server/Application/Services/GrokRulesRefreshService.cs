@@ -178,7 +178,7 @@ public sealed class GrokRulesRefreshService(
         }
     }
 
-    private async Task QueueLaunchBriefAsync(AppDbContext db, AgentSession session, SessionMessageQueueService queue, CancellationToken ct)
+    internal async Task QueueLaunchBriefAsync(AppDbContext db, AgentSession session, SessionMessageQueueService queue, CancellationToken ct)
     {
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         // Enqueue uses its own context; an advisory lock serializes the durable existence check
@@ -194,7 +194,12 @@ public sealed class GrokRulesRefreshService(
         using var scope = scopes.CreateScope();
         var options = scope.ServiceProvider.GetRequiredService<IOptions<Antiphon.Server.Application.Settings.DelegationSettings>>().Value;
         var profile = scope.ServiceProvider.GetService<PtyDeliveryProfile>();
-        var brief = AgentTaskDispatcher.FitBriefForTyping(task, options, profile?.Ceilings, null, session.AgentKind);
+        var brief = AgentTaskDispatcher.FitBriefForTyping(
+            task, options, profile?.Ceilings, null, session.AgentKind,
+            runnerCwd: session.RunnerCwd,
+            stageRemoteSpill: string.IsNullOrWhiteSpace(session.RunnerCwd)
+                ? null
+                : spill => queue.StageRemoteSpill(session.Id, session.RunnerCwd, spill));
         await queue.EnqueueAsync(session.Id, brief, MessageSendMode.WhenIdle, ct,
             QueuedMessageOrigin.Delegation, sourceTaskId: task.Id, deliverIfIdle: false);
         await transaction.CommitAsync(ct);
