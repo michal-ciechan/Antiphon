@@ -66,6 +66,10 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 var first = Classify(inspection.Snapshot!);
                 if (first.Protected.Length != 0)
                     return Finish("ignored_content_preserved", WorktreeIgnoredContentGate.ProtectedDetail(first.Protected));
+                // Nothing is copied or deleted through a link at either reading.
+                var firstLinks = WorktreeIgnoredContentGate.ReparsePoints(source.WorktreePath, first);
+                if (firstLinks.Length != 0)
+                    return Finish("ignored_reparse_point", WorktreeIgnoredContentGate.ReparseDetail(firstLinks));
                 if (ignored is not null)
                 {
                     var retained = await ignored.RetainAsync(request, first.Evidence, ct);
@@ -79,6 +83,9 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 var second = Classify(final.Snapshot!);
                 if (second.Protected.Length != 0)
                     return Finish("ignored_content_preserved", WorktreeIgnoredContentGate.ProtectedDetail(second.Protected));
+                var finalLinks = WorktreeIgnoredContentGate.ReparsePoints(source.WorktreePath, second);
+                if (finalLinks.Length != 0)
+                    return Finish("ignored_reparse_point", WorktreeIgnoredContentGate.ReparseDetail(finalLinks));
                 // Disposable churn is allowed; evidence must be exactly what was retained.
                 if (!second.Evidence.SequenceEqual(first.Evidence, StringComparer.Ordinal)) return Finish("ignored_content_changed");
                 if (consumeSlot is not null && !await consumeSlot(ct)) return Finish("cleanup_command_slot_spent");

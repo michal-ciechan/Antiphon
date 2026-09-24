@@ -2,9 +2,9 @@ namespace Antiphon.Server.Application.Settings;
 
 /// <summary>
 /// CARD-0665 D-1/D-2: the allowlist that classifies each git-ignored path in a source worktree
-/// before guarded removal. Evidence is copied to the retained report root first, disposable
-/// content is deleted with the tree, and any path matching neither list is protected and refuses
-/// removal. Patterns are worktree-relative globs with <c>/</c> separators (<c>**</c>, <c>*</c>,
+/// before guarded removal. A protected name refuses removal wherever it sits; otherwise evidence is
+/// copied to the retained report root first, disposable content is deleted with the tree, and any
+/// path matching neither list is protected and refuses removal. Patterns are worktree-relative globs with <c>/</c> separators (<c>**</c>, <c>*</c>,
 /// <c>?</c>). A null list uses the code default; an empty list matches nothing.
 /// </summary>
 public sealed class WorktreeCleanupSettings

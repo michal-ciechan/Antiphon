@@ -13,6 +13,7 @@ public sealed class WorktreeCleanupSettingsValidator : IValidateOptions<Worktree
         var failures = new List<string>();
         Patterns(nameof(WorktreeCleanupSettings.DisposableIgnored), options.EffectiveDisposableIgnored, failures);
         Patterns(nameof(WorktreeCleanupSettings.RetainedIgnored), options.EffectiveRetainedIgnored, failures);
+        Patterns(nameof(WorktreeCleanupSettings.ProtectedIgnored), options.EffectiveProtectedIgnored, failures);
         if (options.MaxRetainedEvidenceBytes <= 0)
             failures.Add("WorktreeCleanup:MaxRetainedEvidenceBytes must be positive.");
         if (options.MaxRetainedEvidenceFiles <= 0)

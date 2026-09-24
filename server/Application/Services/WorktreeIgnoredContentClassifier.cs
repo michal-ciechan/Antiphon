@@ -8,18 +8,22 @@ using Microsoft.Extensions.Options;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// CARD-0665 D-1: splits one reading's git-ignored paths into Evidence, then Disposable, else
-/// Protected. A rooted path or a <c>..</c> segment is Protected before any pattern is consulted.
+/// CARD-0665 D-1: splits one reading's git-ignored paths into Protected names, then Evidence, then
+/// Disposable, else Protected. A rooted path or a <c>..</c> segment is Protected before any pattern
+/// is consulted, and a protected name wins over every directory rule, so a secret copied into a
+/// build directory keeps that whole directory from being wholly disposable.
 /// Globs are compiled here rather than through FileSystemGlobbing because the report-spill
 /// pattern needs <c>?</c>, which that matcher treats as a literal.
 /// </summary>
 public sealed class WorktreeIgnoredContentClassifier
 {
+    private readonly Regex? _protected;
     private readonly Regex? _evidence;
     private readonly Regex? _disposable;
 
     public WorktreeIgnoredContentClassifier(IOptions<WorktreeCleanupSettings> options)
     {
+        _protected = Compile(options.Value.EffectiveProtectedIgnored);
         _evidence = Compile(options.Value.EffectiveRetainedIgnored);
         _disposable = Compile(options.Value.EffectiveDisposableIgnored);
     }
@@ -32,7 +36,7 @@ public sealed class WorktreeIgnoredContentClassifier
         foreach (var raw in ignoredPaths.IsDefault ? [] : ignoredPaths)
         {
             var path = Normalize(raw);
-            if (IsRootedOrEscaping(path)) protectedPaths.Add(path);
+            if (IsRootedOrEscaping(path) || _protected?.IsMatch(path) == true) protectedPaths.Add(path);
             else if (_evidence?.IsMatch(path) == true) evidence.Add(path);
             else if (_disposable?.IsMatch(path) == true) disposable.Add(path);
             else protectedPaths.Add(path);
