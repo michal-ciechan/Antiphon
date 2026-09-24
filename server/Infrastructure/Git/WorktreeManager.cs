@@ -19,7 +19,9 @@ public sealed class WorktreeManager : IWorktreeManager
     private const string MetadataDirectoryName = ".antiphon";
     private const string WorktreeMetadataDirectoryName = "worktrees";
     private static readonly Regex CardIdPattern = new("^[A-Za-z0-9._-]+$", RegexOptions.Compiled);
+    private static readonly Regex FullShaPattern = new("^([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$", RegexOptions.Compiled);
     private static readonly TimeSpan GitTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan FetchTimeout = TimeSpan.FromSeconds(60);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true
@@ -758,10 +760,49 @@ public sealed class WorktreeManager : IWorktreeManager
 
     private async Task EnsureRefExistsAsync(string repoPath, string baseRef, CancellationToken ct)
     {
-        var result = await RunGitAsync(repoPath, ["rev-parse", "--verify", "--quiet", $"{baseRef}^{{commit}}"], ct, throwOnError: false);
-        if (result.ExitCode != 0)
-            throw new ValidationException(nameof(baseRef), $"Base ref '{baseRef}' does not resolve to a commit.");
+        if (await ResolvesToCommitAsync(repoPath, baseRef, ct))
+            return;
+
+        // CARD-0666. A start SHA pushed from another checkout (server2 runner, a sibling task) is
+        // not here until fetched. Fetch exactly that object from origin, bounded by the fetch
+        // timeout, then refuse with a message naming the ref: the dispatch report shows only
+        // ex.Message, and the default ValidationException text says nothing.
+        string why;
+        if (!FullShaPattern.IsMatch(baseRef))
+        {
+            why = "it is not a full commit SHA, so it was not fetched from origin";
+        }
+        else if ((await RunGitAsync(repoPath, ["remote", "get-url", "origin"], ct, throwOnError: false)).ExitCode != 0)
+        {
+            why = "the repository has no origin remote to fetch it from";
+        }
+        else
+        {
+            GitCommandResult fetch;
+            try
+            {
+                fetch = await RunGitAsync(repoPath, ["fetch", "--no-tags", "--quiet", "origin", baseRef], ct, throwOnError: false);
+            }
+            catch (TimeoutException ex)
+            {
+                fetch = new GitCommandResult(-1, "", ex.Message);
+            }
+
+            if (fetch.ExitCode == 0 && await ResolvesToCommitAsync(repoPath, baseRef, ct))
+            {
+                _logger.LogInformation("Fetched start ref {BaseRef} from origin into {RepoPath}", baseRef, repoPath);
+                return;
+            }
+
+            why = "it is not on origin either (" + DescribeGitStep("git fetch origin " + baseRef, fetch) + ")";
+        }
+
+        var error = $"Base ref '{baseRef}' does not resolve to a commit in {repoPath}; {why}.";
+        throw new ValidationException(nameof(baseRef), error, "worktree_base_ref_unresolved", error);
     }
+
+    private async Task<bool> ResolvesToCommitAsync(string repoPath, string baseRef, CancellationToken ct) =>
+        (await RunGitAsync(repoPath, ["rev-parse", "--verify", "--quiet", $"{baseRef}^{{commit}}"], ct, throwOnError: false)).ExitCode == 0;
 
     private async Task<bool> BranchExistsAsync(string repoPath, string branch, CancellationToken ct)
     {
@@ -1061,6 +1102,9 @@ public sealed class WorktreeManager : IWorktreeManager
             return TimeSpan.FromSeconds(seconds);
         }
 
+        if (arguments.Count >= 1 && arguments[0].Equals("fetch", StringComparison.Ordinal))
+            return FetchTimeout;
+
         return GitTimeout;
     }
 
@@ -1175,6 +1219,8 @@ public sealed class WorktreeManager : IWorktreeManager
 
         foreach (var argument in arguments)
             psi.ArgumentList.Add(argument);
+        // No terminal behind the server: a credential prompt on fetch must fail, not wait out the budget.
+        psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
 
         _logger.LogDebug(
             "Running git {Arguments} in {WorkingDirectory} (timeout {TimeoutSeconds}s)",
