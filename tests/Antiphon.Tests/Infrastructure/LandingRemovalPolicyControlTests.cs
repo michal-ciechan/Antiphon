@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Git;
+using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.Options;
 using System.Collections.Immutable;
 using Shouldly;
@@ -285,6 +286,69 @@ public sealed class LandingRemovalPolicyControlTests
         f.Mutations.ShouldBeEmpty("evidence that was never retained must not be deleted");
         f.InspectionCount.ShouldBe(2);
         f.BranchPresent.ShouldBeTrue();
+    }
+
+    // Review 9a0c7fb8 item 1: a protected name inside a disposable directory makes that directory
+    // not wholly disposable, and `git worktree remove` cannot delete only part of a tree.
+    [Test]
+    public async Task C665_ProtectedNameInsideDisposableDirectoryRefuses()
+    {
+        using var f = new RemovalFixture();
+        f.IgnoredPaths.AddRange(["server/bin-c665/appsettings.Development.json", "server/bin-c665/a.dll"]);
+        var result = await f.RemoveAsync(gate: true);
+        result.Residue.ShouldBe("ignored_content_preserved");
+        result.Detail.ShouldBe("protected: server/bin-c665/appsettings.Development.json");
+        f.Mutations.ShouldBeEmpty();
+        f.Retention.Calls.ShouldBeEmpty();
+        f.InspectionCount.ShouldBe(1);
+        f.BranchPresent.ShouldBeTrue();
+    }
+
+    // Review 9a0c7fb8 item 2: Git follows a junction when it lists and removes ignored content, so a
+    // disposable directory swapped for a link between the readings would delete outside bytes.
+    [Test]
+    public async Task C665_JunctionSwappedInBetweenReadingsRefuses()
+    {
+        using var f = new RemovalFixture();
+        var outside = Directory.CreateDirectory(Path.Combine(f.Root, "outside")).FullName;
+        File.WriteAllText(Path.Combine(outside, "a.dll"), "outside bytes");
+        var directory = Directory.CreateDirectory(Path.Combine(f.Source, "bin-x")).FullName;
+        File.WriteAllText(Path.Combine(directory, "a.dll"), "build output");
+        using var link = DirectoryLink.TryCreate(Path.Combine(f.Root, "staged-link"), outside);
+        if (link is null) { Skip.Test("This host cannot create a directory junction or symbolic link."); return; }
+        f.IgnoredPaths.Add("bin-x/a.dll");
+        f.AfterInspection = count =>
+        {
+            if (count != 2) return;
+            Directory.Delete(directory, recursive: true);
+            link.MoveTo(directory);
+        };
+        var result = await f.RemoveAsync(gate: true);
+        result.Residue.ShouldBe("ignored_reparse_point");
+        result.Detail.ShouldBe("reparse: bin-x");
+        f.InspectionCount.ShouldBe(2);
+        f.Mutations.ShouldBeEmpty("a link at the removal boundary must refuse before any deletion");
+        File.ReadAllText(Path.Combine(outside, "a.dll")).ShouldBe("outside bytes");
+        f.BranchPresent.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task C665_JunctionAtFirstReadingRefusesBeforeRetention()
+    {
+        using var f = new RemovalFixture();
+        var outside = Directory.CreateDirectory(Path.Combine(f.Root, "outside")).FullName;
+        File.WriteAllText(Path.Combine(outside, "run.trx"), "outside bytes");
+        Directory.CreateDirectory(Path.Combine(f.Source, ".antiphon"));
+        using var link = DirectoryLink.TryCreate(Path.Combine(f.Source, ".antiphon", "c665-checkpoints"), outside);
+        if (link is null) { Skip.Test("This host cannot create a directory junction or symbolic link."); return; }
+        f.IgnoredPaths.Add(".antiphon/c665-checkpoints/run.trx");
+        var result = await f.RemoveAsync(gate: true);
+        result.Residue.ShouldBe("ignored_reparse_point");
+        result.Detail.ShouldBe("reparse: .antiphon/c665-checkpoints");
+        f.Retention.Calls.ShouldBeEmpty("evidence is never copied through a link");
+        f.InspectionCount.ShouldBe(1);
+        f.Mutations.ShouldBeEmpty();
+        File.ReadAllText(Path.Combine(outside, "run.trx")).ShouldBe("outside bytes");
     }
 
     private sealed class RecordingRetention(RemovalFixture fixture) : IWorktreeEvidenceRetention
