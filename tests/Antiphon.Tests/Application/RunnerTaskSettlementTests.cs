@@ -143,7 +143,7 @@ public sealed class RunnerTaskSettlementTests
         world.Task.NextHandoff!.ShouldContain("fresh completion report");
         world.Evidence()!.RemoteSync!.Reason.ShouldBe(RemoteSettlementSyncReasons.TipNotReported);
         world.Evidence()!.RemoteSync!.ObservedSha.ShouldBe(s);
-        world.Git.Git.Commands.ShouldNotContain(x => x.Split(' ').Contains("merge"));
+        world.Git.Git.Commands.ShouldNotContain(x => IsMergeCommand(x));
         (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
         (await world.EventsAsync()).ShouldNotContain(e => e.Type == AgentTaskEventType.Merged
             || e.Type == AgentTaskEventType.Completed);
@@ -492,6 +492,9 @@ public sealed class RunnerTaskSettlementTests
     /// <summary>Failure context only: the settled reason and the persisted progress/sync evidence.</summary>
     private static string Why(RunnerSettlementWorld world) =>
         world.Task.FailureReason + " | evidence=" + world.Task.CompletionProgressEvidenceJson;
+
+    /// <summary>Outside the Shouldly expression tree: Split's optional argument cannot appear in one.</summary>
+    private static bool IsMergeCommand(string command) => command.Split(' ').Contains("merge");
 
     private static void AssertNoSync(RunnerSettlementWorld world, string s)
     {
