@@ -58,12 +58,7 @@ public sealed class DurableRunnerSpillReceiptTests
             ConfigureServices = services => services.AddSingleton<RemoteSpillCourier>(),
         });
         const string runnerCwd = "/runner/worktrees/task-sendnow";
-        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
-        {
-            var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
-            session.RunnerCwd = runnerCwd;
-            await db.SaveChangesAsync();
-        }
+        await BindRunnerAsync(schema.ConnectionString, h.SessionId, runnerCwd);
 
         var fullBody = "send-now-handoff-0647\n" + new string('q', 2048);
         var id = await h.SeedPendingMessageAsync(fullBody);
@@ -104,10 +99,9 @@ public sealed class DurableRunnerSpillReceiptTests
             row.Body = pointer;
             row.RemoteSpillBody = null;
             row.RemoteSpillRelativePath = relative;
-            var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
-            session.RunnerCwd = "/runner/worktrees/task-missing";
             await db.SaveChangesAsync();
         }
+        await BindRunnerAsync(schema.ConnectionString, h.SessionId, "/runner/worktrees/task-missing");
 
         var missing = await Should.ThrowAsync<ConflictException>(() =>
             h.Queue.SendNowAsync(h.SessionId, id, CancellationToken.None));
@@ -139,13 +133,12 @@ public sealed class DurableRunnerSpillReceiptTests
         var relative = TypedBodySpill.InboxRelativePath(id.ToString("D"));
         await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
         {
-            var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
-            session.RunnerCwd = "/runner/worktrees/task-source";
             var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
             row.RemoteSpillBody = null;
             row.RemoteSpillRelativePath = relative;
             await db.SaveChangesAsync();
         }
+        await BindRunnerAsync(schema.ConnectionString, h.SessionId, "/runner/worktrees/task-source");
 
         var courier = new RemoteSpillCourier(h.Provider.GetRequiredService<IServiceScopeFactory>());
         var found = await courier.FindDurableAsync(
@@ -176,12 +169,7 @@ public sealed class DurableRunnerSpillReceiptTests
                 ConnectionString = schema.ConnectionString,
                 ConfigureServices = services => services.AddSingleton<RemoteSpillCourier>(),
             });
-            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
-            {
-                var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
-                session.RunnerCwd = mirror;
-                await db.SaveChangesAsync();
-            }
+            await BindRunnerAsync(schema.ConnectionString, h.SessionId, mirror);
 
             var fullBody = "joined-brief-0647\n" + new string('j', 2048);
             await QueuedReceiptAssertions.HoldRecipientBusyAsync(schema.ConnectionString, h.SessionId);
@@ -235,5 +223,17 @@ public sealed class DurableRunnerSpillReceiptTests
             if (Directory.Exists(root))
                 Directory.Delete(root, recursive: true);
         }
+    }
+
+    /// <summary>
+    /// CK_AgentSessions_RunnerBinding_AllOrNone: RunnerId, RunnerStoreId and RunnerCwd move together.
+    /// </summary>
+    private static async Task BindRunnerAsync(string connection, Guid sessionId, string runnerCwd)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
+        await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(s => s
+            .SetProperty(x => x.RunnerId, "server2")
+            .SetProperty(x => x.RunnerStoreId, Guid.NewGuid())
+            .SetProperty(x => x.RunnerCwd, runnerCwd));
     }
 }
