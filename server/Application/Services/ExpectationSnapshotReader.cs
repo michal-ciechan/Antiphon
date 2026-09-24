@@ -55,7 +55,7 @@ public sealed class ExpectationSnapshotReader
 
         var board = await _db.Boards.AsNoTracking()
             .Where(row => row.Id == directive.BoardId)
-            .Select(row => new { row.Id, row.ProjectId })
+            .Select(row => new { row.Id, row.ProjectId, row.ArchivedAt })
             .SingleOrDefaultAsync(ct);
         if (board is null)
         {
@@ -65,6 +65,15 @@ public sealed class ExpectationSnapshotReader
                 DirectiveActive = false,
                 ProbeUnknown = true,
                 ProbeError = "board not found",
+            };
+        }
+
+        if (board.ArchivedAt is not null)
+        {
+            return new ExpectationSnapshot
+            {
+                AsOf = asOf,
+                DirectiveActive = false,
             };
         }
 

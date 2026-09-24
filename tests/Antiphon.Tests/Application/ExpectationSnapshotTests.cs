@@ -267,6 +267,79 @@ public sealed class ExpectationSnapshotTests
         await Task.CompletedTask;
     }
 
+    [Test]
+    public async Task C650_Archived_board_is_inactive_for_detection()
+    {
+        var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = isolated;
+        var world = await World.CreateAsync(schema.ConnectionString);
+        var now = world.Now;
+        var queuedId = Guid.NewGuid();
+        var runningId = Guid.NewGuid();
+        var backlogId = Guid.NewGuid();
+        var hold = DispatchHoldDetails.LeaseFenced("dead child journal");
+
+        await using (var db = new AppDbContext(world.Options))
+        {
+            db.Cards.Add(Card(backlogId, world, "C650B", status: CardStatus.Backlog));
+            db.AgentTasks.Add(NewTask(
+                runningId, world.CardId, world.ProjectId, AgentTaskStatus.Working, AgentTaskRole.Code, null, now));
+            db.AgentTasks.Add(NewTask(
+                queuedId, world.CardId, world.ProjectId, AgentTaskStatus.Queued, AgentTaskRole.Code, null, now,
+                repo: @"C:\src\Antiphon"));
+            db.AgentTaskEvents.Add(Event(queuedId, AgentTaskEventType.Held, now, hold));
+            await db.SaveChangesAsync();
+        }
+
+        await using (var db = new AppDbContext(world.Options))
+        {
+            var active = await new ExpectationSnapshotReader(db).ReadAsync(
+                world.Directive, world.Digest, now, ExpectationProbeInput.None, CancellationToken.None);
+            active.DirectiveActive.ShouldBeTrue();
+            active.Queued.ShouldContain(task => task.TaskId == queuedId);
+            active.Lanes.ShouldContain(lane => lane.RunnerId is null && lane.Running >= 1 && lane.Queued >= 1);
+            active.EligibleBacklog.ShouldBe(1);
+            active.BacklogCandidateIds.ShouldBe([backlogId]);
+        }
+
+        await using (var db = new AppDbContext(world.Options))
+        {
+            var board = await db.Boards.SingleAsync(row => row.Id == world.BoardId);
+            board.ArchivedAt = now;
+            board.ArchivedReason = "retired";
+            await db.SaveChangesAsync();
+        }
+
+        await using (var db = new AppDbContext(world.Options))
+        {
+            var archived = await new ExpectationSnapshotReader(db).ReadAsync(
+                world.Directive, world.Digest, now, ExpectationProbeInput.None, CancellationToken.None);
+            archived.DirectiveActive.ShouldBeFalse();
+            archived.ProbeUnknown.ShouldBeFalse();
+            archived.Queued.ShouldBeEmpty();
+            archived.Lanes.ShouldBeEmpty();
+            archived.EligibleBacklog.ShouldBe(0);
+            archived.IncludedTaskIds.ShouldBeEmpty();
+            archived.BacklogCandidateIds.ShouldBeEmpty();
+        }
+
+        var clock = new FakeTimeProvider(new DateTimeOffset(now, TimeSpan.Zero));
+        await using (var db = new AppDbContext(world.Options))
+        {
+            var service = new ExpectationWatchdogService(db, new ExpectationLedger(db, clock, new QuietBus()), clock);
+            var scan = await service.ScanAsync(world.Directive, ExpectationProbeInput.None, CancellationToken.None);
+            scan.Evaluation.StalledPipelines.ShouldBeEmpty();
+            scan.Evaluation.DispatchFence.ShouldBeNull();
+            scan.Evaluation.Capacity.ShouldBeEmpty();
+            scan.Evaluation.ObservationUnknown.ShouldBeFalse();
+            scan.NudgesCommitted.ShouldBe(0);
+        }
+
+        await using var fresh = new AppDbContext(world.Options);
+        (await fresh.ExpectationEpisodes.CountAsync()).ShouldBe(0);
+        (await fresh.ExpectationNudges.CountAsync()).ShouldBe(0);
+    }
+
     private static void Classify(string detail, ExpectationHoldClass expected)
     {
         var classified = DispatchHoldDetails.Classify(detail);
