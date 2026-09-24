@@ -139,20 +139,47 @@ public sealed class ExpectationSnapshotTests
         }
 
         var clock = new FakeTimeProvider(new DateTimeOffset(now, TimeSpan.Zero));
+        Guid? nudgeId;
         await using (var db = new AppDbContext(world.Options))
         {
             var service = new ExpectationWatchdogService(db, new ExpectationLedger(db, clock, new QuietBus()), clock);
             var scan = await service.ScanAsync(world.Directive, ExpectationProbeInput.None, CancellationToken.None);
-            scan.NudgesCommitted.ShouldBe(0);
+            // S3: an explicit repository fence is immediate, so the first scan commits exactly one
+            // aggregate nudge naming only that fence. The lane rows above add no other condition.
+            scan.NudgesCommitted.ShouldBe(1);
+            nudgeId = scan.NudgeId;
+            nudgeId.ShouldNotBeNull();
+            scan.NudgedSubjectKeys.ShouldNotBeNull();
+            scan.NudgedSubjectKeys!.ShouldBe([ExpectationSubjects.Fence(world.Directive.Id, "repo:" + @"C:\src\Antiphon")]);
         }
 
         await using var fresh = new AppDbContext(world.Options);
-        (await fresh.ExpectationNudges.CountAsync()).ShouldBe(0);
-        (await fresh.SessionQueuedMessages.CountAsync()).ShouldBe(0);
         var episode = await fresh.ExpectationEpisodes.SingleAsync();
         episode.Kind.ShouldBe(ExpectationEpisodeKind.DispatchFence);
         episode.ResolvedAt.ShouldBeNull();
         episode.Evidence.ShouldContain("dead journal");
+        var nudge = await fresh.ExpectationNudges.SingleAsync();
+        nudge.Id.ShouldBe(nudgeId!.Value);
+        nudge.DirectiveId.ShouldBe(world.Directive.Id);
+        nudge.Ordinal.ShouldBe(1);
+        System.Text.Json.JsonSerializer.Deserialize<List<Guid>>(nudge.EpisodeIdsJson).ShouldBe([episode.Id]);
+        nudge.Body.ShouldContain("dead journal");
+        nudge.Body.ShouldContain(localQueued.ToString("D"));
+        foreach (var excluded in new[] { localRunning, server2Running, localBlocked, specialist, foreign })
+            nudge.Body.ShouldNotContain(excluded.ToString("D"));
+        // Committed and audited, never sent: S3 types into no session.
+        nudge.AttemptState.ShouldBe(ExpectationAttemptState.None);
+        (await fresh.SessionQueuedMessages.CountAsync()).ShouldBe(0);
+        var audit = await fresh.CardComments.SingleAsync(row => row.Author == ExpectationLedger.AuditAuthor);
+        audit.Id.ShouldBe(nudge.AuditCommentId);
+        audit.CardId.ShouldBe(world.Directive.AuditCardId);
+        audit.Body.ShouldContain(localQueued.ToString("D"));
+        audit.Body.ShouldContain(episode.SubjectKey);
+        (await fresh.AgentTaskEvents
+                .Where(row => row.Type == AgentTaskEventType.Check)
+                .Select(row => row.AgentTaskId)
+                .ToListAsync())
+            .ShouldBe([localQueued]);
         var state = await fresh.ExpectationWatchStates.SingleAsync();
         state.LastSuccessfulScanAt.ShouldNotBeNull();
         state.LastSuccessfulScanAt!.Value.ShouldBe(now, TimeSpan.FromMilliseconds(1));
