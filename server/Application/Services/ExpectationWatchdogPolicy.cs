@@ -39,7 +39,10 @@ public static class ExpectationWatchdogPolicy
         var fencePresent = global is not null || scoped.Count > 0;
         var deficitRemains = capacity.Any(lane => lane.InDeficit);
         var hadOpen = snapshot.OpenEpisodes.Count > 0;
-        var observedClear = hadOpen && fenceKnown && !fencePresent && pipelines.Count == 0 && !deficitRemains;
+        var (silent, unknownSubjects) = Silent(snapshot, directive);
+        var notes = Notes(snapshot, directive);
+        var observedClear = hadOpen && fenceKnown && !fencePresent && pipelines.Count == 0 && !deficitRemains
+            && silent.Count == 0 && notes.Count == 0 && unknownSubjects.Count == 0;
 
         return new ExpectationEvaluation
         {
@@ -49,6 +52,9 @@ public static class ExpectationWatchdogPolicy
             Capacity = capacity,
             ObservedClear = observedClear,
             PreservesOpenEpisodes = hadOpen && !fenceKnown,
+            SilentInFlight = silent,
+            UndeliveredNotes = notes,
+            UnknownSubjectKeys = unknownSubjects,
         };
     }
 
@@ -99,6 +105,7 @@ public static class ExpectationWatchdogPolicy
                 IsDue = true,
                 Immediate = false,
                 ExampleTaskIds = examples,
+                AffectedTaskIds = ordered.Select(task => task.TaskId).Distinct().ToList(),
             });
         }
 
@@ -148,6 +155,7 @@ public static class ExpectationWatchdogPolicy
                 IsDue = true,
                 Immediate = true,
                 ExampleTaskIds = examples,
+                AffectedTaskIds = queued.Select(task => task.TaskId).Distinct().ToList(),
             };
         }
 
@@ -175,6 +183,7 @@ public static class ExpectationWatchdogPolicy
                     IsDue = true,
                     Immediate = true,
                     ExampleTaskIds = examples,
+                    AffectedTaskIds = group.Select(task => task.TaskId).Distinct().ToList(),
                 });
             }
         }
@@ -280,6 +289,135 @@ public static class ExpectationWatchdogPolicy
 
         return results;
     }
+
+    /// <summary>
+    /// V-3a. Missing or terminal session plus ten silent minutes since max(dispatch, task-local
+    /// activity, transcript). A live session only counts through the existing progress-stall
+    /// verdict. An unreachable runner is Unknown and never proves a missing session.
+    /// </summary>
+    private static (List<ExpectationCondition> Silent, List<string> Unknown) Silent(
+        ExpectationSnapshot snapshot, ExpectationDirectiveSettings directive)
+    {
+        var silent = new List<ExpectationCondition>();
+        var unknown = new List<string>();
+        foreach (var task in snapshot.InFlight.OrderBy(row => row.DispatchedAt).ThenBy(row => row.TaskId))
+        {
+            var subject = ExpectationSubjects.Silent(directive.Id, task.TaskId, task.DispatchedAt);
+            var session = task.AgentSessionId?.ToString("D") ?? "none";
+            switch (task.SessionState)
+            {
+                case ExpectationSessionState.Unknown:
+                    unknown.Add(subject);
+                    continue;
+                case ExpectationSessionState.Missing or ExpectationSessionState.Terminal:
+                {
+                    var quiet = snapshot.AsOf - task.LastActivityAt;
+                    if (quiet < ExpectationWindows.MissingSession)
+                        continue;
+                    var reason = task.SessionState == ExpectationSessionState.Missing
+                        ? "missing-session"
+                        : "terminal-session";
+                    silent.Add(new ExpectationCondition
+                    {
+                        Kind = ExpectationEpisodeKind.SilentInFlight,
+                        SubjectKey = subject,
+                        Scope = "task:" + task.TaskId.ToString("D"),
+                        ReasonCode = reason,
+                        Evidence = Clip(
+                            reason
+                            + " task "
+                            + task.TaskId.ToString("D")
+                            + " session "
+                            + session
+                            + "; dispatched "
+                            + task.DispatchedAt.ToString("O")
+                            + "; no report and no activity since "
+                            + task.LastActivityAt.ToString("O")
+                            + " ("
+                            + Minutes(quiet)
+                            + "); as-of "
+                            + snapshot.AsOf.ToString("O")
+                            + "; inspect task status, transcript and checkpoint; no automatic cancel or stop"),
+                        IsDue = true,
+                        ExampleTaskIds = [task.TaskId],
+                        AffectedTaskIds = [task.TaskId],
+                    });
+                    continue;
+                }
+                case ExpectationSessionState.Live when !string.IsNullOrWhiteSpace(task.ProgressStall):
+                    silent.Add(new ExpectationCondition
+                    {
+                        Kind = ExpectationEpisodeKind.SilentInFlight,
+                        SubjectKey = subject,
+                        Scope = "task:" + task.TaskId.ToString("D"),
+                        ReasonCode = "progress-stalled",
+                        Evidence = Clip(
+                            "progress-stalled task "
+                            + task.TaskId.ToString("D")
+                            + " session "
+                            + session
+                            + "; "
+                            + task.ProgressStall!.Trim()
+                            + " as-of "
+                            + snapshot.AsOf.ToString("O")),
+                        IsDue = true,
+                        ExampleTaskIds = [task.TaskId],
+                        AffectedTaskIds = [task.TaskId],
+                    });
+                    continue;
+            }
+        }
+
+        return (silent, unknown);
+    }
+
+    /// <summary>
+    /// V-3b. Age runs from CreatedAt; a retry, a new NextAttemptAt or a Sent queue row never
+    /// resets it.
+    /// </summary>
+    private static List<ExpectationCondition> Notes(ExpectationSnapshot snapshot, ExpectationDirectiveSettings directive)
+    {
+        var due = new List<ExpectationCondition>();
+        foreach (var note in snapshot.Notes.OrderBy(row => row.CreatedAt).ThenBy(row => row.NotificationId))
+        {
+            var age = snapshot.AsOf - note.CreatedAt;
+            if (age < ExpectationWindows.Note)
+                continue;
+            due.Add(new ExpectationCondition
+            {
+                Kind = ExpectationEpisodeKind.UndeliveredNote,
+                SubjectKey = ExpectationSubjects.Note(directive.Id, note.NotificationId),
+                Scope = "note:" + note.NotificationId.ToString("D"),
+                ReasonCode = "undelivered-note",
+                Evidence = Clip(
+                    "note "
+                    + note.NotificationId.ToString("D")
+                    + " task "
+                    + note.TaskId.ToString("D")
+                    + " kind "
+                    + note.Kind
+                    + " state "
+                    + note.State
+                    + " age "
+                    + Minutes(age)
+                    + " destination "
+                    + (note.ParentSessionId?.ToString("D") ?? "none")
+                    + (note.QueueStatus is { } queue ? " queue " + queue : string.Empty)
+                    + " last error "
+                    + (string.IsNullOrWhiteSpace(note.LastErrorCode) ? "none" : note.LastErrorCode.Trim())
+                    + "; as-of "
+                    + snapshot.AsOf.ToString("O")),
+                IsDue = true,
+                ExampleTaskIds = [note.TaskId],
+                AffectedTaskIds = [note.TaskId],
+            });
+        }
+
+        return due;
+    }
+
+    private static string Minutes(TimeSpan span) =>
+        ((int)Math.Floor(span.TotalMinutes)).ToString(System.Globalization.CultureInfo.InvariantCulture) + "m";
 
     private static bool IsProvenContinuingOrdinaryWait(ExpectationQueuedTask task, ExpectationSnapshot snapshot)
     {
