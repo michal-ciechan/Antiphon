@@ -94,7 +94,8 @@ pwsh -NoProfile -File scripts/delegate.ps1 -Role Code -Worktree -StartRef <full-
 (For a long brief, read the file yourself and pass the resulting string to `-Goal`; the script has
 no `-GoalFile`.) The task still gets its own `feat/card-task-<id>`, cut at that commit; the named
 source branch is untouched and can stay checked out in its own worktree. `-StartRef` accepts a
-branch, remote-tracking ref, commit tag or SHA the server's repository can already resolve locally
+branch, remote-tracking ref, commit tag or SHA the server's repository can already resolve locally,
+or a full SHA origin has (fetched once at create under the repository lease)
 - prefer a full SHA. It requires `-Worktree` and is refused alongside `-Shared`/`-ReadOnly`,
 `-OnAgent`/`-Agent`, `-RepairSource` and `-SourceLanding`. It is distinct from `-RepairSource`:
 that one attributes work committed on ANOTHER task's branch and refuses `-Land`; `-StartRef` only

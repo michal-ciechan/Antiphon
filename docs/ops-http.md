@@ -335,13 +335,21 @@ returns 409 `repair_source_landing_owner_required`.
 `POST /api/agent-tasks` accepts optional `worktreeBaseRequestedRef` (CARD-0613), exposed by
 `delegate.ps1 -StartRef`. It is the commit-ish the task's OWN fresh worktree branch is cut at:
 a branch, a remote-tracking ref, a commit tag or a SHA that the server's repository can already
-resolve locally (no fetch is performed, and no remote URL is accepted) - prefer a full SHA for a
-reproducible continuation. It requires an explicitly requested Worktree and is refused 422
+resolve locally, or a full 40/64-hex SHA only origin has (no remote URL is accepted) - prefer a
+full SHA for a reproducible continuation. CARD-0666: a full SHA missing locally is fetched from
+origin once, at create, before the row exists, under the repository mutation lease (purpose
+`start-ref-fetch`) and one 30s network deadline shared by the lease wait, the fetch and an
+`ls-remote` probe; dispatch never fetches. Each refusal has its own code: 422
+`worktree_start_ref_not_full_sha` (a short SHA or name missing locally), `_not_commit`,
+`_no_origin`, `_not_on_origin`; 503 `_fetch_failed` (origin unreachable or auth), `_fetch_timeout`,
+and `_repository_busy` (another operation held the lease for the whole deadline; nothing was
+fetched). It requires an explicitly requested Worktree and is refused 422
 `worktree_start_ref_mode` alongside `Shared`/`ReadOnly`/an omitted workspace, an agent pin
 (`agentId`/`agent`), `followUpOnTask`, `repairSourceTaskId` or `sourceLandingOperationId` - the
 last two already carry authoritative structured bases. Blank, outer whitespace, a control
 character, a leading `-` or more than 300 characters is 422 `worktree_start_ref_invalid`; the
-value is never truncated or normalized. A selector that names no commit refuses provisioning and
+value is never truncated or normalized. A selector that names no commit is refused at create; one
+that no longer resolves at provisioning (`worktree_base_ref_unresolved`) refuses provisioning and
 fails the task, never falling back to master. `GET /api/agent-tasks/{id}` exposes
 `worktreeBaseRequestedRef` alongside the recorded `worktreeBaseRef`, `worktreeBaseSource`
 (`Explicit`) and `worktreeBaseSha`; the requested value is the caller's ask and the recorded ones

@@ -10,12 +10,13 @@ namespace Antiphon.Server.Application.Services;
 /// CARD-0666. A caller start ref (<c>delegate.ps1 -StartRef</c>) is made available at task CREATE,
 /// before the row exists: a full commit SHA pushed from another checkout (the server2 runner, a
 /// sibling task) is fetched from origin here, once, bounded. Dispatch never fetches; it only checks
-/// the commit is local, so no network call ever runs under the repository lease or a task row lock.
+/// the commit is local, so no network call ever runs in the dispatch claim or under a task row lock.
 /// <para>
-/// The fetch goes through <see cref="ILandingGit.RunAsync"/>, whose owned-child path writes the
-/// repository child journal for <c>fetch</c> like every other repository-mutating git child. Nothing
-/// here takes the repository mutation lease; while the journaled fetch runs, a dispatch in the same
-/// repository is fenced and held (not blocked), exactly as for any other journaled child.
+/// The fetch runs under the repository mutation lease (purpose <c>start-ref-fetch</c>) and goes
+/// through <see cref="ILandingGit.RunAsync"/>, whose owned-child path journals <c>fetch</c> like every
+/// other repository-mutating git child. A dispatch in the same repository meanwhile is held (not
+/// blocked). A lease another operation holds past the one network deadline refuses the create as
+/// busy; the fetch never runs unfenced.
 /// </para>
 /// Every refusal names the ref, the repository and which of these it was, each with its own code.
 /// </summary>
@@ -37,6 +38,7 @@ public sealed class StartRefAvailability(
     public static readonly TimeSpan DefaultFetchTimeout = TimeSpan.FromSeconds(30);
 
     private static readonly TimeSpan LocalGitTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan LeasePollInterval = TimeSpan.FromMilliseconds(250);
     private static readonly Regex FullShaPattern = new("^([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$", RegexOptions.Compiled);
     // A ref name nothing creates: ls-remote with it lists nothing but still has to reach origin.
     private const string ProbePattern = "refs/antiphon/start-ref-probe";
@@ -65,17 +67,22 @@ public sealed class StartRefAvailability(
             Refuse(NoOriginCode,
                 $"Start ref '{startRef}' is not in {repoPath}, and the repository has no 'origin' remote to fetch it from.");
 
-        // One deadline covers all network work: the probe gets only what the fetch left of it.
+        // One deadline covers all network work: the lease wait, the fetch, and the probe share it.
         var network = System.Diagnostics.Stopwatch.StartNew();
-        var fetch = await RunBoundedAsync(repoPath, ["fetch", "--no-tags", "--quiet", "origin", startRef], _fetchTimeout, ct);
-        if (fetch.TimedOut)
-            Unavailable(FetchTimeoutCode,
-                $"Start ref '{startRef}' is not in {repoPath}, and fetching it from origin did not finish within "
-                + $"{_fetchTimeout.TotalSeconds:0}s. The task was not created; retry, or fetch the commit first.");
-        if (fetch.Result!.Succeeded && await ResolvesAsync(repoPath, startRef + "^{commit}", ct))
+        (LandingGitResult? Result, bool TimedOut) fetch;
+        await using (await AcquireLeaseAsync(repoPath, startRef, network, ct))
         {
-            logger.LogInformation("Fetched start ref {StartRef} from origin into {RepoPath} at create", startRef, repoPath);
-            return;
+            fetch = await RunBoundedAsync(repoPath, ["fetch", "--no-tags", "--quiet", "origin", startRef],
+                _fetchTimeout - network.Elapsed, ct);
+            if (fetch.TimedOut)
+                Unavailable(FetchTimeoutCode,
+                    $"Start ref '{startRef}' is not in {repoPath}, and fetching it from origin did not finish within "
+                    + $"{_fetchTimeout.TotalSeconds:0}s. The task was not created; retry, or fetch the commit first.");
+            if (fetch.Result!.Succeeded && await ResolvesAsync(repoPath, startRef + "^{commit}", ct))
+            {
+                logger.LogInformation("Fetched start ref {StartRef} from origin into {RepoPath} at create", startRef, repoPath);
+                return;
+            }
         }
 
         // Git's own wording is locale-dependent and may carry an endpoint, so the verdict comes from
@@ -94,6 +101,31 @@ public sealed class StartRefAvailability(
         Refuse(NotOnOriginCode,
             $"Start ref '{startRef}' is not in {repoPath}, and origin does not have it either (origin answered, "
             + $"but fetching that commit failed: {fetch.Result.Diagnostic}). Push the commit, or check the SHA.");
+    }
+
+    /// <summary>
+    /// The fetch writes refs and objects, so it runs under the repository mutation lease like every
+    /// other repository mutation. A busy lease is polled, never waited on past the network deadline.
+    /// </summary>
+    private async Task<RepositoryLease> AcquireLeaseAsync(
+        string repoPath, string startRef, System.Diagnostics.Stopwatch network, CancellationToken ct)
+    {
+        var owner = new RepositoryLeaseOwnerTag(null, RepositoryLeasePurposes.StartRefFetch); // No task row exists yet.
+        while (true)
+        {
+            if (await leases.TryAcquireAsync(repoPath, owner, ct) is { } lease)
+                return lease;
+            var left = _fetchTimeout - network.Elapsed;
+            if (left <= TimeSpan.Zero)
+                break;
+            await Task.Delay(left < LeasePollInterval ? left : LeasePollInterval, ct);
+        }
+
+        var fence = await leases.DescribeUnavailableAsync(repoPath, ct);
+        throw new ServiceUnavailableException(
+            $"Start ref '{startRef}' is not in {repoPath}, and another operation held the repository mutation lease "
+            + $"for the whole {_fetchTimeout.TotalSeconds:0}s budget, so it was not fetched"
+            + (fence is null ? "" : $" ({fence})") + ". The task was not created; retry.", RepositoryBusyCode);
     }
 
     private async Task<bool> ResolvesAsync(string repoPath, string revision, CancellationToken ct)

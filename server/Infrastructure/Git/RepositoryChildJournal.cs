@@ -38,7 +38,7 @@ internal sealed class RepositoryChildJournal
         File.Delete(_path); // Only this operation's journal, after its exact handle exited.
     }
 
-    /// <summary>Process.Start threw or returned no process, so no child exists to fence.</summary>
+    /// <summary>Process.Start definitely created no child (LandingGit.CreatedNoChild), so none needs fencing.</summary>
     public void NotStarted() => File.Delete(_path);
 
     public async Task ExitedAsync(CancellationToken ct)
