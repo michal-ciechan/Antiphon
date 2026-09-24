@@ -24,10 +24,11 @@ public sealed class ExpectationWatchdogService
         ExpectationLedger ledger,
         TimeProvider time,
         DelegationSettings? delegation = null,
-        IExpectationCatchUp? catchUp = null)
+        IExpectationCatchUp? catchUp = null,
+        SupervisionSettings? supervision = null)
     {
         _db = db;
-        _reader = new ExpectationSnapshotReader(db, delegation);
+        _reader = new ExpectationSnapshotReader(db, delegation, supervision);
         _ledger = ledger;
         _time = time;
         _catchUp = catchUp ?? NoExpectationCatchUp.Instance;

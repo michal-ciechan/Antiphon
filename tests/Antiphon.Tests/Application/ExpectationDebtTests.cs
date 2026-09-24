@@ -159,6 +159,86 @@ public sealed class ExpectationDebtTests
     }
 
     [Test]
+    public async Task C650_Quoted_note_is_not_receipt_only_a_complete_delivery_above_the_floor_is()
+    {
+        var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = isolated;
+        var world = await ExpectationTestWorld.CreateAsync(schema.ConnectionString);
+        var now = world.Now;
+        var taskId = Guid.NewGuid();
+        var created = now.AddMinutes(-15);
+        var untypedMessage = Guid.NewGuid();
+        var belowMessage = Guid.NewGuid();
+        var clippedMessage = Guid.NewGuid();
+        var deliveredMessage = Guid.NewGuid();
+        // Never typed: the orchestrator quotes the whole body inside its own prompt.
+        var untyped = ExpectationTestWorld.Note(taskId, world.OwnedSessionId, LandNotificationState.AwaitingReceipt,
+            created, queueMessageId: untypedMessage);
+        // Typed, but the quoting prompt sits at or below that delivery's baseline floor.
+        var below = ExpectationTestWorld.Note(taskId, world.OwnedSessionId, LandNotificationState.AwaitingReceipt,
+            created, queueMessageId: belowMessage);
+        // Typed, and the prompt above the floor carries only the head of the body.
+        var clipped = ExpectationTestWorld.Note(taskId, world.OwnedSessionId, LandNotificationState.AwaitingReceipt,
+            created, queueMessageId: clippedMessage);
+        // Positive control: typed, and the complete body arrives above the floor.
+        var delivered = ExpectationTestWorld.Note(taskId, world.OwnedSessionId, LandNotificationState.AwaitingReceipt,
+            created, queueMessageId: deliveredMessage);
+
+        await using (var db = world.Db())
+        {
+            db.AgentTasks.Add(world.Task(taskId, AgentTaskStatus.Succeeded, now.AddMinutes(-70)));
+            db.SessionQueuedMessages.Add(ExpectationTestWorld.Queued(untypedMessage, world.OwnedSessionId,
+                QueuedMessageStatus.Pending, created, 1));
+            db.SessionQueuedMessages.Add(Typed(belowMessage, world.OwnedSessionId, created, 2, baseline: 20));
+            db.SessionQueuedMessages.Add(Typed(clippedMessage, world.OwnedSessionId, created, 3, baseline: 20));
+            db.SessionQueuedMessages.Add(Typed(deliveredMessage, world.OwnedSessionId, created, 4, baseline: 20));
+            foreach (var (source, note) in new[] { untyped, below, clipped, delivered })
+            {
+                db.AgentTaskEvents.Add(source);
+                db.AgentTaskLandNotifications.Add(note);
+            }
+
+            // Every prompt is after the note was created and in its destination session.
+            db.TranscriptEntries.Add(ExpectationTestWorld.Transcript(world.OwnedSessionId, 11, TranscriptKinds.UserPrompt,
+                created.AddMinutes(1), "FYI the land said: " + untyped.Note.Body + " - can you check it?"));
+            db.TranscriptEntries.Add(ExpectationTestWorld.Transcript(world.OwnedSessionId, 20, TranscriptKinds.QueuedUserPrompt,
+                created.AddMinutes(2), "quoting: " + below.Note.Body + " (end)"));
+            db.TranscriptEntries.Add(ExpectationTestWorld.Transcript(world.OwnedSessionId, 21, TranscriptKinds.UserPrompt,
+                created.AddMinutes(3), clipped.Note.Body[..^6]));
+            db.TranscriptEntries.Add(ExpectationTestWorld.Transcript(world.OwnedSessionId, 22, TranscriptKinds.UserPrompt,
+                created.AddMinutes(4), delivered.Note.Body));
+            await db.SaveChangesAsync();
+        }
+
+        var clock = new FakeTimeProvider(new DateTimeOffset(now, TimeSpan.Zero));
+        await using (var db = world.Db())
+        {
+            var scan = await world.Service(db, clock).ScanAsync(world.Directive, ExpectationProbeInput.None, CancellationToken.None);
+            scan.Evaluation.UndeliveredNotes.Select(row => row.SubjectKey).OrderBy(key => key, StringComparer.Ordinal).ShouldBe(
+                new[] { untyped.Note.Id, below.Note.Id, clipped.Note.Id }
+                    .Select(id => ExpectationSubjects.Note(world.Directive.Id, id))
+                    .OrderBy(key => key, StringComparer.Ordinal)
+                    .ToArray(),
+                "only CARD-0641's own receipt clears note debt; a quote, a pre-floor prompt or a clipped body does not");
+        }
+
+        // Read-only: no note is settled by the watchdog, the delivered one included.
+        await using var read = world.Db();
+        (await read.AgentTaskLandNotifications.AsNoTracking().CountAsync(row => row.State == LandNotificationState.AwaitingReceipt))
+            .ShouldBe(4);
+    }
+
+    private static Antiphon.Server.Domain.Entities.SessionQueuedMessage Typed(
+        Guid id, Guid sessionId, DateTime at, long sequence, long baseline)
+    {
+        var row = ExpectationTestWorld.Queued(id, sessionId, QueuedMessageStatus.Sent, at, sequence);
+        row.DeliveryAttempts = 1;
+        row.LastDeliveryBaselineSequence = baseline;
+        row.LastDeliveryStartedAt = at.AddSeconds(30);
+        return row;
+    }
+
+    [Test]
     public async Task C650_Unknown_runner_is_not_missing_session()
     {
         var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -317,8 +397,15 @@ public sealed class ExpectationDebtTests
         var now = world.Now;
         var noteTask = Guid.NewGuid();
         var silentTask = Guid.NewGuid();
+        var noteMessage = Guid.NewGuid();
         var note = ExpectationTestWorld.Note(noteTask, world.OwnedSessionId, LandNotificationState.AwaitingReceipt,
-            now.AddMinutes(-15));
+            now.AddMinutes(-15), queueMessageId: noteMessage);
+        // Typed once with a baseline floor below the prompt catch-up will record (CARD-0641 receipt).
+        var typed = ExpectationTestWorld.Queued(noteMessage, world.OwnedSessionId, QueuedMessageStatus.Sent,
+            now.AddMinutes(-15), 1);
+        typed.DeliveryAttempts = 1;
+        typed.LastDeliveryBaselineSequence = 5;
+        typed.LastDeliveryStartedAt = now.AddMinutes(-14);
 
         await using (var db = world.Db())
         {
@@ -326,6 +413,7 @@ public sealed class ExpectationDebtTests
             db.AgentTasks.Add(world.Task(silentTask, AgentTaskStatus.Dispatched, now.AddMinutes(-20)));
             db.AgentTaskEvents.Add(note.Source);
             db.AgentTaskLandNotifications.Add(note.Note);
+            db.SessionQueuedMessages.Add(typed);
             await db.SaveChangesAsync();
         }
 
