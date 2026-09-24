@@ -89,6 +89,7 @@ public static class SessionRunnerEndpoints
             PhoneHomeRunnerDirectory directory,
             IOptions<PhoneHomeRunnerSettings> settings,
             ILogger<PhoneHomeLiveConnection> logger,
+            IHostApplicationLifetime lifetime,
             CancellationToken ct) =>
         {
             if (!settings.Value.Enabled)
@@ -124,7 +125,7 @@ public static class SessionRunnerEndpoints
             try
             {
                 await connection.ReceiveLoopAsync(ct, logger);
-                reason = ct.IsCancellationRequested ? "request_aborted" : "close_received";
+                reason = ct.IsCancellationRequested ? AbortReason(lifetime) : "close_received";
             }
             catch (PhoneHomeTransportException ex) when (ex.Code == PhoneHomeProblemTypes.EventOverflow
                 || ex.Code == PhoneHomeProblemTypes.MessageTooLarge)
@@ -133,7 +134,7 @@ public static class SessionRunnerEndpoints
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                reason = "request_aborted";
+                reason = AbortReason(lifetime);
             }
             catch (WebSocketException)
             {
@@ -171,6 +172,13 @@ public static class SessionRunnerEndpoints
                 ExceptionDispatchInfo.Capture(fault).Throw();
         }).WithTags("SessionRunners");
     }
+
+    /// <summary>
+    /// CARD-0679 D-1: Kestrel cancels RequestAborted both when the runner's connection drops under
+    /// the read and when this host stops. Only the second is the server aborting the request.
+    /// </summary>
+    private static string AbortReason(IHostApplicationLifetime lifetime) =>
+        lifetime.ApplicationStopping.IsCancellationRequested ? "request_aborted" : "transport_abort";
 
     /// <summary>
     /// CARD-0653: force-release needs the operator credential. The client address proves nothing:
