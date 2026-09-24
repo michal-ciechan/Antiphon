@@ -55,7 +55,10 @@ public class LandingGit : ILandingGit
         var mutating = arguments.Any(a => a is "rebase" or "merge" or "push" or "fetch" or "update-ref"
             or "add" or "remove" or "commit" or "checkout" or "checkout-index" or "restore" or "reset");
         var journal = mutating ? await RepositoryChildJournal.BeginAsync(repository, ct) : null;
-        using var process = Process.Start(start) ?? throw new IOException("git_start_failed");
+        Process? child = null;
+        try { child = Process.Start(start); }
+        finally { if (child is null) journal?.NotStarted(); } // Start threw or returned no process: no child exists.
+        using var process = child ?? throw new IOException("git_start_failed");
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
         try
