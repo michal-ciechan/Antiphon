@@ -137,29 +137,62 @@ public sealed partial class SessionMessageQueueService
 
     /// <summary>
     /// A spill pointer with no stored bytes is recovered from the source text when that text is
-    /// still here, or the row is canceled. False means the pointer must not be typed.
+    /// still here, or from the frozen Completion batch when the pointer names one. Otherwise the
+    /// row is canceled. False means the pointer must not be typed.
     /// </summary>
     private async Task<bool> HoldSpillBodyForDeliveryAsync(
         AppDbContext db, Guid sessionId, SessionQueuedMessage row, string wire, CancellationToken ct)
     {
         if (!string.IsNullOrEmpty(row.RemoteSpillBody) || !IsOwnedSpillPointer(wire, row.Id))
             return true;
+        if (await RemoteSpillCourier.HasCompleteMatchingUserPromptAsync(db, sessionId, wire, ct))
+            return true;
+
+        var frozen = await RemoteSpillCourier.TryComposeFrozenSpillAsync(db, row, ct);
+        if (frozen.Kind == FrozenSpillCompose.Composed)
+        {
+            await PersistHeldSpillAsync(db, sessionId, row, frozen.Body!, ct);
+            return true;
+        }
+
+        if (frozen.Kind == FrozenSpillCompose.Incomplete)
+        {
+            await RemoteSpillCourier.CancelUndeliverableAsync(db, row, frozen.MemberIds, ct);
+            return false;
+        }
+
         string? staged = null;
         if (_remoteSpills is not null && _remoteSpills.TryPeek(sessionId, wire, out var peek))
             staged = peek.Spill.Body;
         var repair = RemoteSpillCourier.Inspect(row, staged);
         if (repair.Kind == SpillBodyRepairKind.Recovered)
         {
-            row.RemoteSpillBody = repair.Body;
-            row.RemoteSpillRelativePath ??= TypedBodySpill.InboxRelativePath(row.Id.ToString("D"));
+            await PersistHeldSpillAsync(db, sessionId, row, repair.Body!, ct);
             return true;
         }
 
         if (repair.Kind != SpillBodyRepairKind.Undeliverable)
             return true;
-        RemoteSpillCourier.MarkUndeliverable(row, UtcNow());
-        await db.SaveChangesAsync(ct);
+        await RemoteSpillCourier.CancelUndeliverableAsync(db, row, [], ct);
         return false;
+    }
+
+    private async Task PersistHeldSpillAsync(
+        AppDbContext db, Guid sessionId, SessionQueuedMessage row, string body, CancellationToken ct)
+    {
+        var relative = row.RemoteSpillRelativePath
+            ?? TypedBodySpill.InboxRelativePath(row.Id.ToString("D"));
+        row.RemoteSpillBody = body;
+        row.RemoteSpillRelativePath = relative;
+        if (_remoteSpills is null)
+            return;
+        var cwd = await db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => s.RunnerCwd)
+            .FirstOrDefaultAsync(ct);
+        if (string.IsNullOrWhiteSpace(cwd))
+            return;
+        _remoteSpills.Stage(sessionId, cwd, new PhoneHomeInputSpill(relative, body, row.Id));
     }
 
     private static bool IsOwnedSpillPointer(string? body, Guid messageId) =>

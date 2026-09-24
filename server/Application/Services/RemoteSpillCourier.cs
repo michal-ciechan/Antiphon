@@ -83,25 +83,42 @@ public sealed class RemoteSpillCourier
         if (!input.Contains(relative, StringComparison.Ordinal))
             return null;
 
+        if (!string.IsNullOrEmpty(row.RemoteSpillBody))
+        {
+            var storedCwd = await db.AgentSessions.AsNoTracking().Where(s => s.Id == sessionId)
+                .Select(s => s.RunnerCwd).SingleOrDefaultAsync(ct);
+            if (string.IsNullOrWhiteSpace(storedCwd))
+                throw new InvalidOperationException("Queued remote spill has no runner cwd.");
+            return new StagedSpill(storedCwd, new PhoneHomeInputSpill(relative, row.RemoteSpillBody, row.Id));
+        }
+
+        // A screen-only Delivered verdict is not a receipt. Only a complete UserPrompt of
+        // this pointer releases a null body; anything else is re-spilled or canceled.
+        if (await HasCompleteMatchingUserPromptAsync(db, sessionId, input, ct))
+            return null;
+
+        var frozen = await TryComposeFrozenSpillAsync(db, row, ct);
+        if (frozen.Kind == FrozenSpillCompose.Incomplete)
+        {
+            await CancelUndeliverableAsync(db, row, frozen.MemberIds, ct);
+            throw new RemoteSpillUndeliverableException();
+        }
+
         string? stagedBody = null;
         if (TryPeek(sessionId, input, out var staged) && !string.IsNullOrEmpty(staged.Spill.Body))
             stagedBody = staged.Spill.Body;
         var repair = Inspect(row, stagedBody);
-        string? source = repair.Kind switch
+        string? source = frozen.Kind == FrozenSpillCompose.Composed
+            ? frozen.Body
+            : repair.Kind switch
+            {
+                SpillBodyRepairKind.Ready => row.RemoteSpillBody,
+                SpillBodyRepairKind.Recovered => repair.Body,
+                _ => null,
+            };
+        if (string.IsNullOrEmpty(source))
         {
-            SpillBodyRepairKind.Ready => row.RemoteSpillBody,
-            SpillBodyRepairKind.Recovered => repair.Body,
-            SpillBodyRepairKind.Released => null,
-            _ => null,
-        };
-        if (repair.Kind == SpillBodyRepairKind.Released)
-            return null;
-        if (repair.Kind == SpillBodyRepairKind.Undeliverable || string.IsNullOrEmpty(source))
-        {
-            if (row.Status != QueuedMessageStatus.Canceled
-                || row.DeliveryVerdict != DeliveryVerdict.SpillBodyMissing)
-                MarkUndeliverable(row, DateTime.UtcNow);
-            await db.SaveChangesAsync(ct);
+            await CancelUndeliverableAsync(db, row, [], ct);
             throw new RemoteSpillUndeliverableException();
         }
 
@@ -141,13 +158,15 @@ public sealed class RemoteSpillCourier
     /// <summary>
     /// A null <see cref="SessionQueuedMessage.RemoteSpillBody"/> on a spill pointer. The source
     /// text is the row body when that body is not itself the pointer, or a body still staged
-    /// in memory. Anything else cannot be written, and lookup must say so.
+    /// in memory. A screen-only <see cref="DeliveryVerdict.Delivered"/> is not a release:
+    /// <paramref name="releasedByCompleteUserPrompt"/> is the only receipt that counts.
     /// </summary>
-    internal static SpillBodyRepair Inspect(SessionQueuedMessage row, string? stagedBody)
+    internal static SpillBodyRepair Inspect(
+        SessionQueuedMessage row, string? stagedBody, bool releasedByCompleteUserPrompt = false)
     {
         if (!string.IsNullOrEmpty(row.RemoteSpillBody))
             return new SpillBodyRepair(SpillBodyRepairKind.Ready, row.RemoteSpillBody);
-        if (row.DeliveryVerdict is DeliveryVerdict.Delivered or DeliveryVerdict.LateConfirmed)
+        if (releasedByCompleteUserPrompt)
             return new SpillBodyRepair(SpillBodyRepairKind.Released, null);
 
         var relative = row.RemoteSpillRelativePath
@@ -160,6 +179,102 @@ public sealed class RemoteSpillCourier
         if (!string.IsNullOrEmpty(stagedBody))
             return new SpillBodyRepair(SpillBodyRepairKind.Recovered, stagedBody);
         return new SpillBodyRepair(SpillBodyRepairKind.Undeliverable, null);
+    }
+
+    /// <summary>
+    /// True when a stored UserPrompt carries the whole typed pointer. A Delivered verdict
+    /// without that record is the screen-only fallback and must not release the bytes.
+    /// </summary>
+    internal static async Task<bool> HasCompleteMatchingUserPromptAsync(
+        AppDbContext db, Guid sessionId, string? typed, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(typed) || !PromptSubmissionMatch.RequiresTextMatch(typed))
+            return false;
+        var prompts = await db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId
+                && t.Kind == TranscriptKinds.UserPrompt
+                && t.Text != null)
+            .Select(t => t.Text!)
+            .ToListAsync(ct);
+        return prompts.Any(text => PromptSubmissionMatch.IsCompleteIn(typed, text));
+    }
+
+    /// <summary>
+    /// Rebuild the body a frozen Completion spill named. A batch is every member's logical
+    /// note, in the frozen member order. NotFrozen means this row has no committed rendering.
+    /// Incomplete means a rendering exists and a member note cannot be read.
+    /// </summary>
+    internal static async Task<FrozenSpillComposition> TryComposeFrozenSpillAsync(
+        AppDbContext db, SessionQueuedMessage head, CancellationToken ct)
+    {
+        if (head.SourceLandNotificationId is null)
+            return new FrozenSpillComposition(FrozenSpillCompose.NotFrozen, null, []);
+
+        var headJson = await db.AgentTaskLandNotifications.AsNoTracking()
+            .Where(n => n.Id == head.SourceLandNotificationId)
+            .Select(n => n.CompletionDeliveryJson)
+            .FirstOrDefaultAsync(ct);
+        if (string.IsNullOrEmpty(headJson))
+            return new FrozenSpillComposition(FrozenSpillCompose.NotFrozen, null, []);
+
+        var headDelivery = TaskCompletionNotification.TryReadDelivery(headJson);
+        if (headDelivery is null || headDelivery.MemberQueueIds.Count == 0)
+            return new FrozenSpillComposition(FrozenSpillCompose.Incomplete, null, headDelivery?.MemberQueueIds ?? []);
+
+        var memberIds = headDelivery.MemberQueueIds;
+        var rows = await db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => memberIds.Contains(m.Id))
+            .Select(m => new { m.Id, m.SourceLandNotificationId })
+            .ToListAsync(ct);
+        if (rows.Count != memberIds.Count)
+            return new FrozenSpillComposition(FrozenSpillCompose.Incomplete, null, memberIds);
+
+        var noteIds = new List<Guid>(memberIds.Count);
+        foreach (var id in memberIds)
+        {
+            var member = rows.SingleOrDefault(r => r.Id == id);
+            if (member?.SourceLandNotificationId is not Guid noteId)
+                return new FrozenSpillComposition(FrozenSpillCompose.Incomplete, null, memberIds);
+            noteIds.Add(noteId);
+        }
+
+        var notes = await db.AgentTaskLandNotifications.AsNoTracking()
+            .Where(n => noteIds.Contains(n.Id))
+            .Select(n => new { n.Id, n.CompletionDeliveryJson })
+            .ToListAsync(ct);
+        var logicals = new List<string>(memberIds.Count);
+        for (var i = 0; i < memberIds.Count; i++)
+        {
+            var json = notes.SingleOrDefault(n => n.Id == noteIds[i])?.CompletionDeliveryJson;
+            if (TaskCompletionNotification.TryReadDelivery(json) is not { } delivery
+                || delivery.MemberQueueIds.Count != memberIds.Count
+                || !memberIds.All(delivery.MemberQueueIds.Contains))
+                return new FrozenSpillComposition(FrozenSpillCompose.Incomplete, null, memberIds);
+            logicals.Add(delivery.LogicalNote);
+        }
+
+        var composed = logicals.Count == 1
+            ? logicals[0]
+            : ChannelPromptFormat.FormatBatch(logicals.Take(logicals.Count - 1).ToList(), logicals[^1]);
+        return new FrozenSpillComposition(FrozenSpillCompose.Composed, composed, memberIds);
+    }
+
+    internal static async Task CancelUndeliverableAsync(
+        AppDbContext db, SessionQueuedMessage head, IReadOnlyList<Guid> memberIds, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var others = memberIds.Where(id => id != head.Id).Distinct().ToArray();
+        if (others.Length > 0)
+        {
+            var rows = await db.SessionQueuedMessages.Where(m => others.Contains(m.Id)).ToListAsync(ct);
+            foreach (var row in rows)
+                MarkUndeliverable(row, now);
+        }
+
+        if (head.Status != QueuedMessageStatus.Canceled
+            || head.DeliveryVerdict != DeliveryVerdict.SpillBodyMissing)
+            MarkUndeliverable(head, now);
+        await db.SaveChangesAsync(ct);
     }
 
     internal static void MarkUndeliverable(SessionQueuedMessage row, DateTime now)
@@ -192,3 +307,13 @@ internal enum SpillBodyRepairKind
 }
 
 internal readonly record struct SpillBodyRepair(SpillBodyRepairKind Kind, string? Body);
+
+internal enum FrozenSpillCompose
+{
+    NotFrozen,
+    Composed,
+    Incomplete,
+}
+
+internal readonly record struct FrozenSpillComposition(
+    FrozenSpillCompose Kind, string? Body, IReadOnlyList<Guid> MemberIds);
