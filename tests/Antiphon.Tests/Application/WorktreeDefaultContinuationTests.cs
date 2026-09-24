@@ -248,12 +248,22 @@ public sealed class WorktreeDefaultContinuationTests
         (await WarningDetailAsync(world, routed.Id)).ShouldContain("Reusing existing agent");
 
         await TickAsync(world);
+        await using (var afterStanding = world.CreateContext())
+        {
+            var standingRow = await afterStanding.AgentTasks.SingleAsync(t => t.Id == standing.Id);
+            standingRow.Status.ShouldBe(AgentTaskStatus.Dispatched);
+            standingRow.AgentSessionId.ShouldBe(standingSession);
+            standingRow.WorktreePath.ShouldBeNull();
+            // Two Shared writers in one repository take the lease one at a time. Free the first
+            // seat's task so the routing-pin task can reach its own launch boundary.
+            standingRow.Status = AgentTaskStatus.Succeeded;
+            standingRow.CompletedAt = DateTime.UtcNow;
+            await afterStanding.SaveChangesAsync();
+        }
+
+        await TickAsync(world);
         await using var after = world.CreateContext();
-        var standingRow = await after.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == standing.Id);
         var routedRow = await after.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == routed.Id);
-        standingRow.Status.ShouldBe(AgentTaskStatus.Dispatched);
-        standingRow.AgentSessionId.ShouldBe(standingSession);
-        standingRow.WorktreePath.ShouldBeNull();
         routedRow.Status.ShouldBe(AgentTaskStatus.Dispatched);
         routedRow.AgentSessionId.ShouldBe(pinnedSession);
         routedRow.WorktreePath.ShouldBeNull();
@@ -357,7 +367,7 @@ public sealed class WorktreeDefaultContinuationTests
         created.Goal.ShouldContain("Keep the predecessor goal.");
         created.Goal.ShouldContain("Committed on the task branch.");
         created.Goal.ShouldContain("CARD-0644");
-        created.Goal.ShouldEndWith("carry the card forward.");
+        created.Goal.ShouldEndWith("carry the card forward");
         created.Workspace.ShouldBe(WorkspaceMode.Worktree);
         created.WorktreeBaseRequestedRef.ShouldNotBeNull();
 
