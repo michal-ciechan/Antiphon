@@ -81,13 +81,42 @@ public static class OperatorTokenFile
         return CryptographicOperations.FixedTimeEquals(left, right);
     }
 
+    /// <summary>
+    /// Windows briefly holds a just-renamed file (the rename itself, a scanner) and a plain read
+    /// then fails with a sharing violation. Read with a permissive share mode and retry that one
+    /// failure a bounded number of times; anything else, or a violation that outlasts it, throws.
+    /// </summary>
     private static string? TryRead(string path)
     {
-        if (!File.Exists(path))
-            return null;
-        var text = File.ReadAllText(path).Trim();
-        return text.Length == 0 ? null : text;
+        for (var attempt = 1; ; attempt++)
+        {
+            if (!File.Exists(path))
+                return null;
+            try
+            {
+                using var stream = new FileStream(
+                    path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var reader = new StreamReader(stream, Encoding.ASCII);
+                var text = reader.ReadToEnd().Trim();
+                return text.Length == 0 ? null : text;
+            }
+            catch (FileNotFoundException)
+            {
+                return null;
+            }
+            catch (IOException ex) when (IsSharingViolation(ex) && attempt < ReadAttempts)
+            {
+                Thread.Sleep(ReadRetryDelay);
+            }
+        }
     }
+
+    private const int ReadAttempts = 40;
+    private static readonly TimeSpan ReadRetryDelay = TimeSpan.FromMilliseconds(25);
+
+    // ERROR_SHARING_VIOLATION (32) and ERROR_LOCK_VIOLATION (33) as HRESULTs.
+    private static bool IsSharingViolation(IOException ex) =>
+        (ex.HResult & 0xFFFF) is 32 or 33;
 
     private static FileStream CreateOwnerOnly(string path)
     {
