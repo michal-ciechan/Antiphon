@@ -87,6 +87,13 @@ public static class DispatchHoldDetails
     public static string RunnerUnavailable(string runnerId, string reason) =>
         $"Held: RunnerUnavailable: runner '{runnerId}' is not dispatch-eligible ({reason}); the task stays Queued.";
 
+    /// <summary>
+    /// CARD-0653: the runner's declared seats are full. Occupied and capacity stay out of the
+    /// dedupe key's changing half only while the fraction is stable, which is the hold itself.
+    /// </summary>
+    public static string RunnerAtCapacity(string runnerId, int occupied, int capacity) =>
+        $"Held: runner '{runnerId}' at capacity {occupied}/{capacity}; the task stays Queued until a session slot frees.";
+
     public static string StandingAgentNoSession(string agentName) =>
         $"Held: standing agent '{agentName}' (always-on) has no live session; waiting for supervision to restart it.";
 

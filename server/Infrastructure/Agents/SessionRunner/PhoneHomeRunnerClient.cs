@@ -233,7 +233,48 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
     }
 
     public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct) =>
-        throw new ConflictException("Unconditional kill is not supported on the phone-home runner.", PhoneHomeProblemTypes.UnsupportedOperation);
+        ReleaseSlotAsync(sessionId, "session-stop", ct);
+
+    public async Task<SessionRunnerSessionDto> ReleaseSlotAsync(Guid sessionId, string reason, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(
+            PhoneHomeOperation.ReleaseSlot, new { sessionId, reason }, ct);
+        return _mapper.Map(Read<RunnerSessionDto>(frame) ?? throw Missing("release-slot"));
+    }
+
+    public async Task<CompactionContinuationStopResult> StopCompactionContinuationAsync(
+        Guid sessionId, CompactionContinuationStopRequest request, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(
+            PhoneHomeOperation.StopCompactionContinuation,
+            new
+            {
+                sessionId,
+                attemptId = request.AttemptId,
+                expectedAcceptedStartedAt = request.ExpectedAcceptedStartedAt,
+                nativeBoundaryIdentity = request.NativeBoundaryIdentity,
+                nativeContinuationIdentity = request.NativeContinuationIdentity,
+                thresholdMinutes = request.ThresholdMinutes,
+                bindingIdentity = request.BindingIdentity,
+                transcriptRevision = request.TranscriptRevision,
+                outputRevision = request.OutputRevision,
+            },
+            ct);
+        if (frame.Kind == PhoneHomeFrameKind.Error)
+            return new CompactionContinuationStopResult(
+                sessionId, request.AttemptId, false, CompactionStopOutcomes.Unsupported, null);
+        return Read<CompactionContinuationStopResult>(frame)
+            ?? new CompactionContinuationStopResult(
+                sessionId, request.AttemptId, false, CompactionStopOutcomes.Unsupported, null);
+    }
+
+    public async Task<CompactionTailObservation> ObserveCompactionAsync(Guid sessionId, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.ObserveCompaction, new { sessionId }, ct);
+        if (frame.Kind == PhoneHomeFrameKind.Error)
+            return CompactionTailObservation.Unsupported();
+        return Read<CompactionTailObservation>(frame) ?? CompactionTailObservation.Unsupported();
+    }
 
     public async Task<RunnerKillGenerationResult> KillGenerationAsync(
         Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct)

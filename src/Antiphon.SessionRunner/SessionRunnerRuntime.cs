@@ -989,7 +989,79 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         int maxEvents, int maxBytes, Action onOverflow, CancellationToken ct) =>
         _events.SubscribeBounded(maxEvents, maxBytes, onOverflow, ct);
 
-    internal int LiveSessionCount => _sessions.Count;
+    /// <summary>
+    /// CARD-0653: seats in use. Exited and ProcessVanished records stay in <c>_sessions</c> so a
+    /// restart can still report them, and they must not fill phone-home capacity.
+    /// </summary>
+    internal int LiveSessionCount => _sessions.Values.Count(static session => !session.HasExited);
+
+    /// <summary>
+    /// CARD-0653: kill the process tree when it is still live, drop the in-memory record, and
+    /// delete the manifest and herdr sidecar so the next start does not adopt the session again.
+    /// An already-exited record is evicted the same way. The reason is appended to
+    /// <c>slot-releases.jsonl</c> under the session log root.
+    /// </summary>
+    public async Task<RunnerSessionDto> ReleaseSlotAsync(
+        Guid sessionId, string reason, TimeSpan timeout, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+            throw new ArgumentException("A release reason is required.", nameof(reason));
+
+        var gate = _launchLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            _sessions.TryGetValue(sessionId, out var session);
+            var killed = false;
+            if (session is not null && !session.HasExited)
+            {
+                try
+                {
+                    await session.KillAsync(timeout, ct);
+                    killed = session.HasExited;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "Slot release kill failed for session {SessionId}", sessionId);
+                }
+            }
+
+            if (session is not null)
+                _sessions.TryRemove(sessionId, out _);
+            ForgetDurableSession(sessionId);
+            AppendSlotRelease(sessionId, reason.Trim(), killed);
+            if (session is null)
+                return new RunnerSessionDto(sessionId, null, DateTime.UtcNow, "Exited", null, "Released", 0);
+
+            var dto = session.ToDto();
+            await session.DisposeAsync();
+            return dto;
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private void ForgetDurableSession(Guid sessionId)
+    {
+        TryDeleteFile(PtyHostManifest.PathFor(_settings.PtyHostManifestDir, sessionId));
+        TryDeleteFile(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, sessionId));
+    }
+
+    private void AppendSlotRelease(Guid sessionId, string reason, bool killed)
+    {
+        try
+        {
+            Directory.CreateDirectory(_settings.SessionLogPath);
+            var line = System.Text.Json.JsonSerializer.Serialize(new { sessionId, reason, killed, at = DateTime.UtcNow });
+            File.AppendAllText(Path.Combine(_settings.SessionLogPath, "slot-releases.jsonl"), line + "\n");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(ex, "Slot release audit could not be written for {SessionId}", sessionId);
+        }
+    }
 
     /// <summary>Transcript ownership, rule C1 (see <see cref="TranscriptClaimRegistry"/>). Test surface.</summary>
     internal TranscriptClaimRegistry TranscriptClaims => _transcriptClaims;

@@ -20,6 +20,19 @@ public interface IPhoneHomeRuntimeSurface
     Task<RunnerKillGenerationResult> KillGenerationAsync(Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct);
     int OwnedSessionCount { get; }
 
+    /// <summary>CARD-0653. Default refuses so an old fake cannot pretend it freed a seat.</summary>
+    Task<RunnerSessionDto> ReleaseSlotAsync(Guid sessionId, string reason, CancellationToken ct) =>
+        throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation,
+            "Slot release is not supported on this runner.", 409);
+
+    Task<CompactionContinuationStopResult> StopCompactionContinuationAsync(
+        Guid sessionId, CompactionContinuationStopRequest request, CancellationToken ct) =>
+        Task.FromResult(new CompactionContinuationStopResult(
+            sessionId, request.AttemptId, false, CompactionStopOutcomes.Unsupported, null));
+
+    Task<CompactionTailObservation> ObserveCompactionAsync(Guid sessionId, CancellationToken ct) =>
+        Task.FromResult(CompactionTailObservation.Unsupported());
+
     // CARD-0604 D-19 (Cut B). The custody surface the phone-home lane needs: which mechanism
     // this runner actually advertises, which custody store is its own, and a read/seal of a
     // tracked execution. Defaults keep every existing fake compiling AND refusing: a fake that
@@ -172,6 +185,26 @@ public sealed class PhoneHomeCommandDispatcher
                         ?? throw new ArgumentException("Kill-generation body is required.");
                     return Result(request, await _runtime.KillGenerationAsync(ReadSessionId(request), body.ExpectedAcceptedStartedAt, ct));
                 }),
+                PhoneHomeOperation.ReleaseSlot => await MutateAsync(request, async () =>
+                {
+                    var reason = request.Payload is { } payload
+                        && payload.TryGetProperty("reason", out var raw)
+                        && raw.ValueKind == JsonValueKind.String
+                        ? raw.GetString()
+                        : null;
+                    if (string.IsNullOrWhiteSpace(reason))
+                        throw new PhoneHomeAdmissionException(
+                            PhoneHomeProblemTypes.UnsupportedTarget, "A release reason is required.", 400);
+                    return Result(request, await _runtime.ReleaseSlotAsync(ReadSessionId(request), reason, ct));
+                }),
+                PhoneHomeOperation.StopCompactionContinuation => await MutateAsync(request, async () =>
+                {
+                    var body = request.Payload?.Deserialize<CompactionContinuationStopRequest>(PhoneHomeFraming.Json)
+                        ?? throw new ArgumentException("Compaction stop body is required.");
+                    return Result(request, await _runtime.StopCompactionContinuationAsync(ReadSessionId(request), body, ct));
+                }),
+                PhoneHomeOperation.ObserveCompaction => Result(
+                    request, await _runtime.ObserveCompactionAsync(ReadSessionId(request), ct)),
                 _ => Error(request, PhoneHomeProblemTypes.UnsupportedOperation, $"Operation '{request.Operation}' is not supported.", 400),
             };
         }
