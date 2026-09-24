@@ -25,9 +25,10 @@ public sealed class WorktreeIgnoredContentGate(WorktreeIgnoredContentClassifier 
     }
 
     /// <summary>
-    /// Git lists and non-forcing <c>worktree remove</c> deletes through a directory junction, so a
-    /// removable path that is, or sits under, a symlink, junction or other reparse point would reach
-    /// outside the tree. Returns the worktree-relative link paths, checking ancestors first and never
+    /// Git lists through a directory junction, so a removable path that is, or sits under, a
+    /// symlink, junction or other reparse point names bytes outside the tree: evidence would be
+    /// copied from there, and the listing would stand in for content the tree does not own. The
+    /// deletion itself never follows a link (<see cref="WorktreeNoFollowDelete"/>). Returns the worktree-relative link paths, checking ancestors first and never
     /// reading through a link it has found. A path gone since the listing is disposable churn.
     /// </summary>
     public static ImmutableArray<string> ReparsePoints(string worktreePath, WorktreeIgnoredContent content)

@@ -79,6 +79,14 @@ the [CARD-0459 investigation](../../investigations/2026-09-19-card-0459-worktree
     `**/*.local.json`, `**/.antiphon/report.md`, `**/.antiphon/deliverables/**`, `logs/**`,
     `backups/**`, `.superpowers/**`, `.memsearch/**`, `tests/Antiphon.E2E/TestOutput/**`.
     Configuration can only add names; it cannot remove a default.
+  - Nested `.antiphon` (Round A repair 2 after review 5b79328d): a path with a `.antiphon`
+    segment anywhere (any case) is protected unless an evidence or disposable pattern that
+    itself names a `.antiphon` segment matches it. So `bin-x/.antiphon/other.json`,
+    `bin-x/.antiphon/inbox/a.md` and `node_modules/p/.antiphon/c/run.trx` are protected even
+    though `**/bin-*/**` or `**/node_modules/**` covers their ancestor, while the explicit root
+    patterns (`.antiphon/inbox/*.md`, `.antiphon/task-*-brief.md`,
+    `.antiphon/task-*-refinement-*.md`, the evidence patterns) keep their bucket.
+    `.antiphon-cache` is not a `.antiphon` segment.
   - Deliberately protected by default: `.antiphon/report.md` and any other `.antiphon`
     file not named above, `.antiphon/inbox/<non-md>` (channel attachments),
     `.antiphon/deliverables/**`, `.claude/**`, `appsettings.*.json`, `*.user`, `logs/**`,
@@ -112,7 +120,8 @@ the [CARD-0459 investigation](../../investigations/2026-09-19-card-0459-worktree
   refuse `ignored_content_changed`; disposable churn between readings is allowed. Rejected:
   a pass in `AgentTaskLandingProtocol.CleanupAsync` (SettledTask and LocalMerge would not
   benefit); deleting disposable files ourselves before `git worktree remove` (a second
-  deletion path with no new safety).
+  deletion path with no new safety). Superseded for the deletion itself by D-5b: guarded
+  removal now deletes the whole tree without following links and Git only unregisters it.
 - **D-5a: Links refuse at both readings** (Round A repair). Git for Windows lists ignored files
   through a directory junction, and non-forcing `git worktree remove` deletes through it
   (measured on git 2.50.1: a file outside the tree behind junction `bin-z` was deleted). After
@@ -122,6 +131,27 @@ the [CARD-0459 investigation](../../investigations/2026-09-19-card-0459-worktree
   `reparse: <relative link>` detail: before any evidence is copied, and again at the second
   reading before deletion. An empty junction that git does not list is not seen; deleting it
   removes only the link.
+- **D-5b: Git never traverses the tree** (Round A repair 2 after review 5b79328d item 1). A
+  junction can replace a checked directory after the second reading and before deletion, and
+  `git worktree remove` would delete through it. After the last authority check the source
+  tree is renamed to a fresh sibling `.<leaf>.removing-<8 hex>` (a rename moves the entry
+  itself); `git worktree remove -- <path>` then drops only the registration of the absent
+  directory (Git 2.18+ accepts a missing working tree; measured on 2.50.1); only after the
+  registration is confirmed gone are the set-aside bytes deleted by `WorktreeNoFollowDelete`.
+  That walk opens every entry with `FILE_FLAG_OPEN_REPARSE_POINT`, inspects it through the
+  same handle, deletes a reparse point (junction, symlink, mount point) as the link itself
+  and never enumerates it, and holds each directory open without delete sharing while its
+  children go, so no entry under the walk can be renamed or replaced by a link. Deletion is
+  by handle disposition (POSIX semantics, read-only ignored; classic disposition on volumes
+  without it). Off Windows the walk lstat-checks each entry and unlinks a link without
+  descending. If the rename is refused (a handle or working directory inside the tree) the
+  residue is `worktree_remove_failed` with outcome `worktree move-aside` and the Win32 code,
+  and nothing moved. If Git fails, times out, is cancelled or leaves the registration, the tree
+  is renamed back and the pass reports Git's residue exactly as before, so the CARD-0443 retry
+  and a later repost inspect the same tree. A failed rename-back or a failed set-aside delete
+  is `worktree_removal_incomplete` with `set-aside: <path>` detail. `git worktree prune` is
+  rejected: it prunes every missing registration in the repository, not only this one. The
+  D-5a refusals stay as the policy gate.
 - **D-6: Null gate means protect-all.** `GuardedWorktreeRemoval` takes an optional
   `WorktreeIgnoredContentGate? ignored = null`; null reproduces today's total refusal so an
   unwired composition stays fail-closed. Production DI, `DelegationTestServices` and
@@ -153,7 +183,9 @@ the [CARD-0459 investigation](../../investigations/2026-09-19-card-0459-worktree
   `FileAttributes.ReparsePoint`, which .NET sets for Unix symlinks too.
 - **D-11: The Windows lock diagnostics and the two-slot retry stay as they are.** A
   `bin-*` DLL held open on Windows still surfaces as `worktree_remove_failed` with the
-  CARD-0443 capture and one retry; this card does not add a third slot.
+  CARD-0443 capture and one retry; this card does not add a third slot. Since D-5b the held
+  file refuses the set-aside rename (outcome `worktree move-aside`, exit code = Win32 error),
+  which nominates the retry exactly as a failed Git exit did.
 
 ## Design
 
@@ -386,14 +418,24 @@ Pipes inside filters are escaped for Markdown; the real filter uses `|`.
 | CP-4b | S2 | `CP-4a`, `--no-build` | cleanup-green | `/*/*/WorktreeGuardedCleanupTests/*` | V-3, R-1 | all listed, 0 failed/skipped; the four updated `C443_*IgnoredBoundary` rows and the four `C665_*` cleanup rows present | 30 | 8 |
 | CP-5a | S2 | `CP-4a`, `--no-build` | land-green-v04 | `/*/*/AgentTaskLandPublicationTests/C448_V04*` | V-4 | 3 updated `C448_V04` rows, 0 failed | 3 | 2 |
 | CP-5b | S2 | `CP-4a`, `--no-build` | land-green-c665 | `/*/*/AgentTaskLandPublicationTests/C665_*` | V-4 | 2 `C665_*` methods, 0 failed | 2 | 2 |
-
-Round A repair (review 9a0c7fb8): CP-4 and CP-5 are split because a method-level OR such as
-`/(C448_V04*)|(C665_*)` selected only its first operand (CP-5 executed 3 `C448_V04` rows and
-no `C665_*`), and the loaded desktop runs one class at a time. The repair adds 3 classifier
-rows' worth of methods to CP-2 (36 results), three `C665_*` methods to CP-4a and two to CP-4b.
+| CP-R2r | repair-2-red | `tests/Antiphon.Tests -> bin-c665-r/` | repair-2-red | `/*/*/WorktreeGuardedCleanupTests/C665_*` | V-3 red | 7 execute; the three repair-2 rows fail (nested `.antiphon` removed as disposable; outside bytes deleted through the junction), the four earlier rows pass | 7 | 25 |
+| CP-U | repair-2 | `CP-4a`, `--no-build` | unit-lane | `/*/*/*/*[Category=Unit]` | R-3 | ≥ 1 executed; failures compared with the same filter at origin/master | 1 | 5 |
 | CP-6 | S3-red | `tests/Antiphon.Tests -> bin-c665-c/` | retention-red | `/*/*/(WorktreeEvidenceRetentionTests*)\|(AgentTaskLandEvidenceRetentionTests*)/*` | V-5, V-6 red | all execute; land rows refuse `evidence_retention_unavailable`, retention rows fail on missing copies | 10 | 5 |
 | CP-7 | S3 | `tests/Antiphon.Tests -> bin-c665-c/` | retention-green | `/*/*/(WorktreeEvidenceRetentionTests*)\|(AgentTaskLandEvidenceRetentionTests*)\|(AgentTaskLandCleanupSafetyTests*)/*` | V-5, V-6, R-1 | all listed, 0 failed/skipped | 38 | 7 |
 | CP-8 | S3 | `CP-7`, `--no-build` | report-store-regression | `/*/*/(OutputDistillationDeliveryTests*)\|(OutputDistillationApplyRaceTests*)/*` | R-2 | all listed, 0 failed; if a class name differs, amend this row with a reason | 1 | 3 |
 | CP-9 | S4-red | `tests/Antiphon.Tests -> bin-c665-d/` | sweep-red | `/*/*/WorktreeResidueSweepTests/C665_*` | V-8 red | both cooldown methods execute and fail on the Held/`retry_cooldown` assertions; `C665_SettledRetirementRemovesDisposableOnly` passes already (Round A) | 3 | 4 |
 | CP-10 | S4+S5 | `tests/Antiphon.Tests -> bin-c665-d/` | sweep-green | `/*/*/(WorktreeResidueSweepTests*)\|(WorktreeRemovalAuthorityTests*)\|(WorktreeRemovalDefaultTests*)\|(LandSourceIdentityTests*)/*` | V-7, V-8, R-1 | all listed, 0 failed/skipped | 40 | 5 |
 | CP-11 | all | `CP-10`, `--no-build` | unit-final | `/*/*/*/*[Category=Unit]` | R-3 | ≥ 1 executed, 0 failed; roster contains the two new Unit classes | 1 | 2 |
+
+Round A repair (review 9a0c7fb8): CP-4 and CP-5 are split because a method-level OR such as
+`/(C448_V04*)|(C665_*)` selected only its first operand (CP-5 executed 3 `C448_V04` rows and
+no `C665_*`), and the loaded desktop runs one class at a time. The repair adds 3 classifier
+rows' worth of methods to CP-2 (36 results), three `C665_*` methods to CP-4a and two to CP-4b.
+
+Round A repair 2 (review 5b79328d): CP-2 gains 13 classifier results (49), CP-4a three
+`C665_*` methods (twelve), CP-4b three (seven). CP-R2r is the red run of the committed repair
+tests against the Round A production code; CP-U is the Final-profile Unit lane. The
+fake-level CP-4a rows (`C665_UnlistedLinkIsRemovedWithoutTraversal`,
+`C665_FailedRegistrationRemovalRestoresTree`) cannot go red against Round A because the fake
+removes with .NET's non-following delete; they guard the new deletion and restore lines.
+`C665_ReadOnlyFileIsRemovedWithTheTree` is red at Round A only through the fake's delete.
