@@ -56,7 +56,10 @@ public class LandingGit : ILandingGit
         try
         {
             if (journal is not null) await journal.StartedAsync(process, ct);
-            if (started is not null) await started(process.Id, process.StartTime.ToUniversalTime().Ticks, ct);
+            // CARD-0661: a child that already exited has no start identity left to record; the
+            // caller's unknown-identity state is the conservative one and we await its exit below.
+            if (started is not null && RepositoryChildJournal.TryStartTicks(process, out var startTicks))
+                await started(process.Id, startTicks, ct);
             await process.WaitForExitAsync(budget.Token);
         }
         catch
@@ -375,7 +378,7 @@ public class LandingGit : ILandingGit
         var existing = await RunAsync(repository, ["show-ref", "--verify", "--hash", recoveryRef], ct);
         if (existing.Succeeded)
             return existing.Output.Trim() == sha ? new(0, "", "") : new(1, "", "recovery_ref_collision");
-        // show-ref --verify uses 128 for a missing named ref, so use --exists (Git >= 2.46)
+        // show-ref --verify uses 128 for a missing named ref, so use --exists (Git >= 2.43)
         // to distinguish absence (2) from a lookup error (1) before expected-old creation.
         var existence = await RunAsync(repository, ["show-ref", "--exists", recoveryRef], ct);
         if (existence.ExitCode != 2) return new(1, "", "recovery_ref_query_error");

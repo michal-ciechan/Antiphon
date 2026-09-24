@@ -222,6 +222,39 @@ public sealed class RepositoryMutationLeaseTests
         after.ShouldNotBeNull();
     }
 
+    // CARD-0661. A git child that exits before the journal reads its start identity. On Linux the
+    // exited child is reaped and Process.StartTime throws; Windows still reads it through the
+    // handle. Either way the command must not fail, the record must name the child, and the file
+    // must keep fencing admission until its owner acknowledges the exit.
+    [Test]
+    public async Task C661_AlreadyExitedChildIsJournalledInsteadOfThrowing()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var provider = new RepositoryMutationLease(fixture.Git);
+        var journal = await RepositoryChildJournal.BeginAsync(fixture.Repository, CancellationToken.None);
+        var start = new ProcessStartInfo("git") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true };
+        start.ArgumentList.Add("--version");
+        using var child = Process.Start(start)!;
+        await child.StandardOutput.ReadToEndAsync();
+        await child.WaitForExitAsync(); // Exited, and on Linux reaped, before its identity is read.
+
+        await journal.StartedAsync(child, CancellationToken.None);
+
+        var common = await fixture.Git.CommonDirectoryAsync(fixture.Repository, CancellationToken.None);
+        var path = Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children"), "*.json").Single();
+        var record = System.Text.Json.JsonSerializer.Deserialize<RepositoryChildJournal.ChildRecord>(await File.ReadAllTextAsync(path))!;
+        record.ProcessId.ShouldBe(child.Id);
+        (record.Completed || record.StartTicks is not null)
+            .ShouldBeTrue("the child is identified by its start identity or recorded as completed");
+        await using (var fenced = await provider.TryAcquireAsync(fixture.Source, CancellationToken.None))
+            fenced.ShouldBeNull("the journal fences admission until its owner acknowledges the exit");
+        journal.Exited(child);
+        File.Exists(path).ShouldBeFalse();
+        await using var after = await provider.TryAcquireAsync(fixture.Repository, CancellationToken.None);
+        after.ShouldNotBeNull();
+    }
+
     [Test]
     public async Task C448_C24_KilledWorkerLeavesLiveGitChildFenced()
     {
