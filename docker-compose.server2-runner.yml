@@ -59,6 +59,12 @@ services:
       # server projects the same value as PhoneHomeRunner:ChildClaudeHome onto every launch.
       CLAUDE_CONFIG_DIR: /state/claude
       PhoneHome__ClaudeHome: /state/claude
+      # CARD-0660 D-3: one Codex store, seeded by init-state at /runner-state/codex (this same
+      # volume). CODEX_HOME is the CLI's and the transcript tailer's, PhoneHome__CodexHome the
+      # auth probe's; the server projects PhoneHomeRunner:ChildCodexHome with the same value.
+      # Subscription sign-in only: no API key or access token is ever configured here.
+      CODEX_HOME: /state/codex
+      PhoneHome__CodexHome: /state/codex
       ANTIPHON_DEPLOY_KEY_SOURCE: /run/secrets/antiphon-deploy-key
       SessionRunner__SessionLogPath: /state/session-runner
       SessionRunner__PtyHostDir: /tmp/antiphon-pty-hosts

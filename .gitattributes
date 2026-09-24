@@ -28,3 +28,7 @@ docker/session-runner-grok/antiphon-custody-enter.sh text eol=lf
 docker/session-runner-grok/antiphon-custody-kill.sh text eol=lf
 docker/session-runner-grok/sudoers-antiphon-custody text eol=lf
 docker/session-runner-grok/custody-containment-probe.sh text eol=lf
+
+# CARD-0660: bind-mounted into Linux containers by scripts/verify-card0660-codex-image.ps1.
+docker/stack/init-state.sh text eol=lf
+docker/session-runner-grok/verify-codex-image.sh text eol=lf
