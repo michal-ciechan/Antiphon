@@ -51,7 +51,8 @@ public sealed class RunnerContractMapper
             dto.HerdrOrigin,
             dto.GrokRulesReceipt,
             dto.AcceptedStartedAt,
-            dto.LabelObservation is { Version: 1, Intent.Version: 1 } observation ? observation : null);
+            dto.LabelObservation is { Version: 1, Intent.Version: 1 } observation ? observation : null,
+            dto.VerificationBinding);
 
     public SessionRunnerTranscriptDto MapTranscript(RunnerTranscriptDto transcript) =>
         new(transcript.SessionId, transcript.Entries.Select(MapTranscript).ToList(), transcript.LastSequence);

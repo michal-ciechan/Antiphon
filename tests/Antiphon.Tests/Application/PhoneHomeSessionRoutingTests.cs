@@ -174,6 +174,42 @@ public class PhoneHomeSessionRoutingTests
         await Task.CompletedTask;
     }
 
+    [Test]
+    public async Task Conditional_stop_on_a_runner_session_is_forwarded()
+    {
+        var remote = new RecordingClient();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var session = new Antiphon.Server.Domain.Entities.AgentSession
+        {
+            Id = Guid.NewGuid(),
+            DefinitionName = "grok",
+            AgentKind = AgentKind.Grok,
+            Status = SessionStatus.Running,
+            Cwd = @"C:\work",
+            Cols = 80,
+            Rows = 24,
+            CreatedAt = DateTime.UtcNow,
+            StartedAt = DateTime.UtcNow,
+            LastSeenAt = DateTime.UtcNow,
+            RunnerId = "grok-linux",
+            RunnerStoreId = Guid.NewGuid(),
+            RunnerCwd = "/work",
+        };
+        db.AgentSessions.Add(session);
+        await db.SaveChangesAsync();
+        ISessionRunnerClient routing = new RoutingSessionRunnerClient(new ForwardingDirectory(remote, session));
+        var started = SessionGeneration.Normalize(DateTime.UtcNow);
+        var result = await routing.StopCompactionContinuationAsync(
+            session.Id,
+            new CompactionContinuationStopRequest(
+                Guid.NewGuid(), started, "boundary", "continuation", 10, "binding", 1, 1),
+            CancellationToken.None);
+
+        result.Outcome.ShouldBe(CompactionStopOutcomes.Exited);
+        remote.Calls.ShouldContain("stop-compaction");
+    }
+
     private sealed class RecordingClient : ISessionRunnerClient
     {
         public List<string> Calls { get; } = [];
@@ -199,8 +235,31 @@ public class PhoneHomeSessionRoutingTests
         public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) => Task.CompletedTask;
         public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) => Task.CompletedTask;
         public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct) => Task.FromResult(new SessionRunnerSessionDto(sessionId, 1, DateTime.UtcNow, "Exited", 0, AgentExitReason.KilledByRequest, 0));
+        public Task<CompactionContinuationStopResult> StopCompactionContinuationAsync(
+            Guid sessionId, CompactionContinuationStopRequest request, CancellationToken ct)
+        {
+            Calls.Add("stop-compaction");
+            return Task.FromResult(new CompactionContinuationStopResult(
+                sessionId, request.AttemptId, true, CompactionStopOutcomes.Exited, request.ExpectedAcceptedStartedAt));
+        }
         public IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(CancellationToken ct) => Empty();
         private static async IAsyncEnumerable<SessionRunnerEvent> Empty() { await Task.CompletedTask; yield break; }
+    }
+
+    private sealed class ForwardingDirectory(ISessionRunnerClient remote, Antiphon.Server.Domain.Entities.AgentSession session) : ISessionRunnerDirectory
+    {
+        public ISessionRunnerClient Local => remote;
+        public IReadOnlyList<string> KnownRunnerIds => ["local", "grok-linux"];
+        public Guid? LiveStoreId => session.RunnerStoreId;
+        public ISessionRunnerClient Resolve(string? runnerId) => remote;
+        public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) =>
+            Task.FromResult<SessionRunnerOwner?>(new SessionRunnerOwner(session.RunnerId!, session.RunnerStoreId!.Value, session.RunnerCwd!));
+        public Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct) =>
+            Task.FromResult<SessionRunnerBinding>(sessionId == session.Id
+                ? new SessionRunnerBinding.Remote(new SessionRunnerOwner(session.RunnerId!, session.RunnerStoreId!.Value, session.RunnerCwd!))
+                : SessionRunnerBinding.Missing.Instance);
+        public Task<RunnerInventory> GetInventoryAsync(string? runnerId, CancellationToken ct) =>
+            Task.FromResult<RunnerInventory>(new RunnerInventory.Unavailable("offline"));
     }
 
     private sealed class StubDirectory(ISessionRunnerClient local, Antiphon.Server.Domain.Entities.AgentSession session) : ISessionRunnerDirectory

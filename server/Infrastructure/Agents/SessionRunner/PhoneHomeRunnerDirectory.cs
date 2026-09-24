@@ -260,6 +260,17 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
         }
     }
 
+    public int? DeclaredCapacity(string runnerId)
+    {
+        var live = SnapshotLive();
+        if (live is null || !string.Equals(live.RunnerId, runnerId, StringComparison.Ordinal))
+            return null;
+        if (!live.DispatchEligible || !live.SocketOpen
+            || live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
+            return null;
+        return live.Capacity;
+    }
+
     public PhoneHomeRunnerStatusDto Status(string runnerId)
     {
         var live = SnapshotLive();

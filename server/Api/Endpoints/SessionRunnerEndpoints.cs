@@ -1,6 +1,9 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Options;
 
@@ -28,6 +31,33 @@ public static class SessionRunnerEndpoints
             string runnerId,
             PhoneHomeRunnerDirectory directory) =>
             Results.Ok(directory.Status(runnerId))).WithTags("SessionRunners");
+
+        app.MapGet("/api/session-runners/{runnerId}/slots", async (
+            string runnerId,
+            PhoneHomeRunnerDirectory directory,
+            AppDbContext db,
+            CancellationToken ct) =>
+            Results.Ok(await RunnerSlotService.ListAsync(directory, db, runnerId, ct)))
+            .WithTags("SessionRunners");
+
+        app.MapPost("/api/session-runners/{runnerId}/slots/{sessionId:guid}/release", async (
+            string runnerId,
+            Guid sessionId,
+            RunnerSlotReleaseRequest body,
+            PhoneHomeRunnerDirectory directory,
+            AppDbContext db,
+            CancellationToken ct) =>
+            Results.Ok(await RunnerSlotService.ReleaseAsync(directory, db, runnerId, sessionId, body.Reason, ct)))
+            .WithTags("SessionRunners");
+
+        app.MapPost("/api/session-runners/{runnerId}/slots/release-orphans", async (
+            string runnerId,
+            RunnerSlotReleaseRequest body,
+            PhoneHomeRunnerDirectory directory,
+            AppDbContext db,
+            CancellationToken ct) =>
+            Results.Ok(await RunnerSlotService.ReleaseOrphansAsync(directory, db, runnerId, body.Reason, ct)))
+            .WithTags("SessionRunners");
 
         app.MapGet("/api/session-runners/{runnerId}/provider-auth/{provider}", async (
             string runnerId,

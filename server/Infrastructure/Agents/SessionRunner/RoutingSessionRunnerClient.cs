@@ -51,6 +51,16 @@ public sealed class RoutingSessionRunnerClient : ISessionRunnerClient
     public async Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct) =>
         await (await Route(sessionId, ct)).KillAsync(sessionId, ct);
 
+    public async Task<SessionRunnerSessionDto> ReleaseSlotAsync(Guid sessionId, string reason, CancellationToken ct) =>
+        await (await Route(sessionId, ct)).ReleaseSlotAsync(sessionId, reason, ct);
+
+    public async Task<CompactionContinuationStopResult> StopCompactionContinuationAsync(
+        Guid sessionId, CompactionContinuationStopRequest request, CancellationToken ct) =>
+        await (await Route(sessionId, ct)).StopCompactionContinuationAsync(sessionId, request, ct);
+
+    public async Task<CompactionTailObservation> ObserveCompactionAsync(Guid sessionId, CancellationToken ct) =>
+        await (await Route(sessionId, ct)).ObserveCompactionAsync(sessionId, ct);
+
     public async Task<RunnerKillGenerationResult> KillGenerationAsync(
         Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct) =>
         await (await Route(sessionId, ct)).KillGenerationAsync(sessionId, expectedAcceptedStartedAt, ct);
