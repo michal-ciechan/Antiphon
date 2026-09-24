@@ -4734,9 +4734,26 @@ public sealed class AgentTaskDispatcher
         return DelegationReportFormatter.BuildBriefPointer(task, settings, spillPath, brief.Length, agentKind);
     }
 
+    /// <summary>
+    /// CARD-0649. A runner-bound brief is typed by the runner's queue, whose single-write
+    /// ceiling is the inbox 1 KB (<see cref="SessionDeliveryProfile"/>). Fitting it against
+    /// this process's modern 43 KB ceiling queued the whole brief, and the queue then replaced
+    /// it with a <c>YOUR MESSAGE</c> pointer that did not carry the opening task marker.
+    /// Runner cwd selects the inbox ceiling here so the queued body is already the brief
+    /// pointer. A local session keeps <paramref name="processCeilings"/>.
+    /// </summary>
+    internal static PtyDeliveryCeilings? CeilingsForBrief(
+        PtyDeliveryCeilings? processCeilings, string? runnerCwd, DelegationSettings settings) =>
+        string.IsNullOrWhiteSpace(runnerCwd)
+            ? processCeilings
+            : settings.CeilingsFor(
+                PtyBackend.InboxConhost,
+                "runner-bound session is delivered under the inbox single-write ceiling; the desktop pty is not this session");
+
     private string FitBriefForSession(AgentTask task, AgentSession session, bool refocus = false) =>
         FitBriefForTyping(
-            task, _settings, _ptyProfile?.Ceilings, _logger, session.AgentKind, refocus,
+            task, _settings, CeilingsForBrief(_ptyProfile?.Ceilings, session.RunnerCwd, _settings),
+            _logger, session.AgentKind, refocus,
             runnerCwd: session.RunnerCwd,
             stageRemoteSpill: string.IsNullOrWhiteSpace(session.RunnerCwd)
                 ? null
@@ -5931,7 +5948,8 @@ public sealed class AgentTaskDispatcher
 
         var briefKind = sessionKind ?? AgentKind.ClaudeCode;
         var brief = FitBriefForTyping(
-            task, _settings, _ptyProfile?.Ceilings, _logger, briefKind,
+            task, _settings, CeilingsForBrief(_ptyProfile?.Ceilings, sessionRow?.RunnerCwd, _settings),
+            _logger, briefKind,
             refocus: unrelated && !compactSupported,
             runnerCwd: sessionRow?.RunnerCwd,
             stageRemoteSpill: string.IsNullOrWhiteSpace(sessionRow?.RunnerCwd)

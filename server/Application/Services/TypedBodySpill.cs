@@ -63,14 +63,14 @@ internal static class TypedBodySpill
         if (written is null)
         {
             if (!string.IsNullOrWhiteSpace(request.ApiFallback))
-                return new Result(BuildPointer(body.Length, request.ApiFallback, request.AgentKind, request.EnvelopePrefix), Spilled: true);
+                return new Result(BuildPointer(body, body.Length, request.ApiFallback, request.AgentKind, request.EnvelopePrefix), Spilled: true);
             return Result.Inline(body);
         }
 
         var relative = string.IsNullOrWhiteSpace(request.RelativeSpillPath)
             ? written
             : request.RelativeSpillPath;
-        return new Result(BuildPointer(body.Length, relative, request.AgentKind, request.EnvelopePrefix), Spilled: true);
+        return new Result(BuildPointer(body, body.Length, relative, request.AgentKind, request.EnvelopePrefix), Spilled: true);
     }
 
     /// <summary>
@@ -95,14 +95,42 @@ internal static class TypedBodySpill
     public static string InboxAbsolutePath(string cwd, string fileStem) =>
         Path.Combine(cwd, ".antiphon", "inbox", fileStem + ".md");
 
+    /// <summary>
+    /// The <c>[antiphon-task:id]</c> token that opens <paramref name="body"/>, or null.
+    /// A marker quoted later in the body does not ride the pointer: attribution is the
+    /// opening line of the spilled prompt, which is what the queue replaced.
+    /// </summary>
+    internal static string? TryReadOpeningTaskMarker(string? body)
+    {
+        if (string.IsNullOrEmpty(body))
+            return null;
+        var text = body.ReplaceLineEndings("\n").TrimStart('\n', '\r', ' ', '\t');
+        if (text.Length == 0)
+            return null;
+        var lineEnd = text.IndexOf('\n');
+        var line = lineEnd < 0 ? text : text[..lineEnd];
+        var id = DelegationReportFormatter.TryReadTaskMarkerId(line);
+        if (id is null)
+            return null;
+        var token = "[antiphon-task:" + id + "]";
+        return line.TrimStart().StartsWith(token, StringComparison.Ordinal) ? token : null;
+    }
+
     private static string BuildPointer(
-        int fullLength, string where, AgentKind agentKind, string? envelopePrefix)
+        string body, int fullLength, string where, AgentKind agentKind, string? envelopePrefix)
     {
         var joins = PtyDeliveryCeilings.RequiresJoinSafeDelivery(agentKind);
         var display = joins ? $"'{where}'" : where;
+        // CARD-0649. The queue replaces an over-ceiling body with this pointer. The task
+        // marker is the body's opening line, so a pointer that starts at YOUR MESSAGE drops
+        // it (server2 Claude 903bf8a7). Put it on the instruction line, the same place
+        // CARD-0647 put it for YOUR BRIEF, and repeat it at the end so a UserPrompt that
+        // begins after the heading still attributes.
+        var marker = TryReadOpeningTaskMarker(body);
+        var headline = marker is null ? PointerHeadline : marker + " " + PointerHeadline;
 
         var pointer = $"""
-            {PointerHeadline} It is {fullLength:N0} characters — too long to type
+            {headline} It is {fullLength:N0} characters — too long to type
             into a terminal without the transport dropping part of it, so it was written out
             instead. Read it in full before you do anything else:
 
@@ -110,6 +138,9 @@ internal static class TypedBodySpill
 
             Everything you need is there. Do not start from this summary.
             """.ReplaceLineEndings("\n");
+
+        if (marker is not null)
+            pointer += "\n" + marker;
 
         if (!string.IsNullOrWhiteSpace(envelopePrefix))
             pointer = envelopePrefix.Trim() + "\n\n" + pointer;

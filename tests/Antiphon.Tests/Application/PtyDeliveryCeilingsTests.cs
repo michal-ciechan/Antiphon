@@ -127,6 +127,32 @@ public class PtyDeliveryCeilingsTests
     }
 
     /// <summary>
+    /// CARD-0649. The desktop process is on the modern pty, so this brief fits inline there.
+    /// A runner-bound session is delivered under the inbox single-write ceiling. Fitting the
+    /// brief against the desktop ceiling queued it whole, and the queue then replaced it with
+    /// a YOUR MESSAGE pointer. The runner cwd must select the inbox ceiling, and that pointer
+    /// must carry the marker on the YOUR BRIEF line.
+    /// </summary>
+    [Test]
+    public void A_runner_bound_brief_is_fitted_to_the_inbox_ceiling_not_the_desktop_pty()
+    {
+        var settings = new DelegationSettings();
+        var modern = settings.CeilingsFor(PtyBackend.ModernConPty, AnyReason);
+        var task = NewTask(string.Join("\n", Enumerable.Range(0, 120).Select(i => $"goal line {i:D4}")));
+        var runner = AgentTaskDispatcher.CeilingsForBrief(modern, "/work/worktrees/task-903bf8a7", settings);
+
+        var typed = AgentTaskDispatcher.FitBriefForTyping(
+            task, settings, runner, agentKind: AgentKind.ClaudeCode);
+        var inline = AgentTaskDispatcher.FitBriefForTyping(
+            task, settings, modern, agentKind: AgentKind.ClaudeCode);
+
+        typed.ShouldContain(DelegationReportFormatter.TaskMarker(task.Id) + " YOUR BRIEF IS NOT IN THIS MESSAGE");
+        typed.ShouldNotContain("goal line 0119");
+        inline.ShouldContain("goal line 0000");
+        inline.ShouldNotContain("YOUR BRIEF IS NOT IN THIS MESSAGE");
+    }
+
+    /// <summary>
     /// The gate is never widened by omission. Every caller that predates the profile — which is
     /// every test, and any future one that forgets — gets the conservative set.
     /// </summary>
