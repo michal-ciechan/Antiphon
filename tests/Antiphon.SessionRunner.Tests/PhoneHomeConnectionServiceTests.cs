@@ -139,6 +139,38 @@ public class PhoneHomeConnectionServiceTests
     }
 
     [Test]
+    public async Task Cancel_after_partial_read_releases_unread_reservations()
+    {
+        const int total = 4;
+        var hub = new SessionRunnerEventHub();
+        using var cts = new CancellationTokenSource();
+        var reader = hub.SubscribeBounded(total, 1_000_000, () => { }, cts.Token);
+        var lease = (ISessionRunnerEventLease)reader;
+        var socket = new PhoneHomeTestWebSocket();
+        var writer = new PhoneHomeConnectionWriter(socket, PhoneHomeProtocol.DefaultMaxMessageUtf8Bytes);
+        var firstHold = socket.HoldNextSend();
+        var secondHold = socket.HoldNextSend();
+        var loop = Service(new RecordingRuntime()).EventLoopAsync(writer, 1, reader, cts.Token);
+
+        for (var i = 0; i < total; i++)
+            hub.Publish("session", new { n = i });
+
+        await firstHold.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        lease.PendingEvents.ShouldBe(total);
+        firstHold.Release.TrySetResult();
+        (await Until(() => socket.Sent.Count >= 1 && lease.PendingEvents == total - 1)).ShouldBeTrue(
+            $"sent {socket.Sent.Count} pending {lease.PendingEvents}");
+        await secondHold.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        lease.PendingEvents.ShouldBe(total - 1);
+        lease.PendingBytes.ShouldBeGreaterThan(0);
+
+        cts.Cancel();
+        await EndsQuiet(loop);
+        lease.PendingEvents.ShouldBe(0);
+        lease.PendingBytes.ShouldBe(0);
+    }
+
+    [Test]
     public async Task Held_command_does_not_block_receive_progress()
     {
         var held = new TaskCompletionSource<RunnerSessionDto>(TaskCreationOptions.RunContinuationsAsynchronously);

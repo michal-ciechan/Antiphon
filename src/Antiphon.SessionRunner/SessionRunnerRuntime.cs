@@ -3430,7 +3430,7 @@ public sealed class SessionRunnerEventHub
         {
             lock (_gate)
                 _subscribers.Remove(subscriber);
-            subscriber.Channel.Writer.TryComplete();
+            subscriber.Close();
         });
 
         return subscriber.Reader;
@@ -3446,20 +3446,7 @@ public sealed class SessionRunnerEventHub
             subscribers = [.. _subscribers];
 
         foreach (var subscriber in subscribers)
-        {
-            var bounded = subscriber.TryReserve(bytes, out var overflowed);
-            if (bounded && overflowed)
-            {
-                subscriber.Channel.Writer.TryComplete();
-                subscriber.OnOverflow?.Invoke();
-                continue;
-            }
-
-            // A completed subscription (overflow or unsubscribe) rejects the write. Give the
-            // reservation back so the depth stays equal to events actually queued.
-            if (!subscriber.Channel.Writer.TryWrite(evt) && bounded)
-                subscriber.Release(bytes);
-        }
+            subscriber.Accept(evt, bytes);
     }
 
     internal static int MeasuredBytes(string eventName, string json) =>
@@ -3468,10 +3455,13 @@ public sealed class SessionRunnerEventHub
     private sealed class Subscriber
     {
         // CARD-0655: queue depth, not a lifetime total. The phone-home event loop releases each
-        // event after it is sent. A lifetime counter overflowed every live connection at MaxPendingEvents.
+        // event after it is sent, and closing the subscription releases every event still queued.
+        // A lifetime counter overflowed every live connection at MaxPendingEvents.
+        private readonly object _io = new();
         private int _count;
         private int _bytes;
         private int _overflowed;
+        private bool _closed;
 
         public Subscriber(Channel<RunnerServerSentEvent> channel)
         {
@@ -3495,6 +3485,66 @@ public sealed class SessionRunnerEventHub
         private int? MaxBytes { get; }
         public int PendingEvents => Volatile.Read(ref _count);
         public int PendingBytes => Volatile.Read(ref _bytes);
+
+        internal void Accept(RunnerServerSentEvent evt, int bytes)
+        {
+            Action? overflow = null;
+            lock (_io)
+            {
+                if (_closed)
+                    return;
+
+                var bounded = TryReserve(bytes, out var overflowed);
+                if (bounded && overflowed)
+                {
+                    Channel.Writer.TryComplete();
+                    overflow = OnOverflow;
+                }
+                else if (!Channel.Writer.TryWrite(evt) && bounded)
+                {
+                    // A completed writer rejects the write. Give the reservation back so the
+                    // depth stays equal to events actually queued.
+                    Release(bytes);
+                }
+            }
+
+            overflow?.Invoke();
+        }
+
+        internal void Close()
+        {
+            lock (_io)
+            {
+                if (_closed)
+                    return;
+                _closed = true;
+                Channel.Writer.TryComplete();
+                DrainUnread();
+            }
+        }
+
+        internal void ReleaseUnread()
+        {
+            lock (_io)
+                DrainUnread();
+        }
+
+        internal bool TryRead(out RunnerServerSentEvent item)
+        {
+            lock (_io)
+                return Channel.Reader.TryRead(out item!);
+        }
+
+        // Publish, the consumer read, and this drain share _io, so a queued event is released
+        // either by the consumer or here, and a publisher cannot reserve after close.
+        private void DrainUnread()
+        {
+            if (MaxEvents is null)
+                return;
+
+            while (Channel.Reader.TryRead(out var evt))
+                Release(MeasuredBytes(evt.EventName, evt.Json));
+        }
 
         public bool TryReserve(int incomingBytes, out bool overflowed)
         {
@@ -3548,11 +3598,14 @@ public sealed class SessionRunnerEventHub
             public void Release(RunnerServerSentEvent evt) =>
                 owner.Release(MeasuredBytes(evt.EventName, evt.Json));
 
+            public void ReleaseUnread() => owner.ReleaseUnread();
+
+            public override bool TryRead(out RunnerServerSentEvent item) => owner.TryRead(out item);
+
             public override Task Completion => inner.Completion;
             public override bool CanCount => inner.CanCount;
             public override bool CanPeek => inner.CanPeek;
             public override int Count => inner.Count;
-            public override bool TryRead(out RunnerServerSentEvent item) => inner.TryRead(out item!);
             public override bool TryPeek(out RunnerServerSentEvent item) => inner.TryPeek(out item!);
             public override ValueTask<bool> WaitToReadAsync(CancellationToken cancellationToken = default) =>
                 inner.WaitToReadAsync(cancellationToken);
@@ -3566,4 +3619,7 @@ internal interface ISessionRunnerEventLease
     int PendingEvents { get; }
     int PendingBytes { get; }
     void Release(RunnerServerSentEvent evt);
+
+    /// <summary>Releases every event still queued. Idempotent with <see cref="Release"/> of an event already read.</summary>
+    void ReleaseUnread();
 }

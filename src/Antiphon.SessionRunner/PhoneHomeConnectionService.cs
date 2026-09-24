@@ -276,18 +276,28 @@ public sealed class PhoneHomeConnectionService : BackgroundService
     internal async Task EventLoopAsync(
         PhoneHomeConnectionWriter writer, long epoch, System.Threading.Channels.ChannelReader<RunnerServerSentEvent> reader, CancellationToken ct)
     {
-        await foreach (var evt in reader.ReadAllAsync(ct))
+        try
         {
-            try
+            await foreach (var evt in reader.ReadAllAsync(ct))
             {
-                await SendEventAsync(writer, epoch, evt, ct);
+                try
+                {
+                    await SendEventAsync(writer, epoch, evt, ct);
+                }
+                finally
+                {
+                    // After the send, so a socket held inside SendAsync still occupies queue depth.
+                    if (reader is ISessionRunnerEventLease lease)
+                        lease.Release(evt);
+                }
             }
-            finally
-            {
-                // After the send, so a socket held inside SendAsync still occupies queue depth.
-                if (reader is ISessionRunnerEventLease lease)
-                    lease.Release(evt);
-            }
+        }
+        finally
+        {
+            // Cancellation stops ReadAllAsync before it sees the rest of the queue. Releasing
+            // those reservations is idempotent with the subscription close, which drains the same channel.
+            if (reader is ISessionRunnerEventLease unread)
+                unread.ReleaseUnread();
         }
     }
 
