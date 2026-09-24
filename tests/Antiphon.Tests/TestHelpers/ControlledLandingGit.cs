@@ -189,6 +189,15 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
         return Task.FromResult<IReadOnlyList<LandingRegistration>>(rows);
     }
 
+    /// <summary>CARD-0642: each scoped inspection with the trace length when it was asked for.</summary>
+    public List<(LandInspectionScope Scope, int TraceIndex)> InspectionScopes { get; } = [];
+
+    public Task<LandSourceInspection> InspectAsync(LandSourceCoordinates coordinates, LandInspectionScope scope, CancellationToken ct)
+    {
+        InspectionScopes.Add((scope, Trace.Count));
+        return InspectAsync(coordinates, ct);
+    }
+
     public async Task<LandSourceInspection> InspectAsync(LandSourceCoordinates coordinates, CancellationToken ct)
     {
         InspectionCalls++;

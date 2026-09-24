@@ -312,6 +312,31 @@ public sealed class AgentTaskLandRefusedRetryTests
 
     private sealed record Command(string Repository, string[] Args, LandingGitResult Result);
 
+    [Test]
+    public async Task C642_RealLandOpensOneScope()
+    {
+        // CARD-0642 V-7: one land shares one operation scope from admission through cleanup.
+        await using var s = await Scenario.CreateAsync(sentinel: false);
+        var logger = new RecordingLogger<AgentTaskLandService>();
+        s.H.Logger = logger;
+        s.Trace.Clear();
+        await s.H.RunAsync();
+        var op = (await s.H.OperationAsync())!;
+        await s.AssertSuccessAsync(op);
+        var lists = s.Trace.Count(t => t.Args.Length > 1 && t.Args[0] == "worktree" && t.Args[1] == "list");
+        lists.ShouldBeLessThanOrEqualTo(12, "a land lists registrations once per invalidation, not per identity read");
+        var entry = logger.Entries.Where(e => e.Message.StartsWith("Land git profile ", StringComparison.Ordinal)).ShouldHaveSingleItem();
+        Console.WriteLine("C642_PROFILE: " + entry.Message);
+        entry.Level.ShouldBe(Microsoft.Extensions.Logging.LogLevel.Information);
+        entry.State["TaskId"].ShouldBe(s.F.TaskId);
+        Convert.ToInt32(entry.State["WorktreeList"]).ShouldBe(lists, "the profile counts exactly the listings the land ran");
+        Convert.ToInt32(entry.State["WorktreeList"]).ShouldBeLessThanOrEqualTo(12);
+        Convert.ToInt32(entry.State["Inspections"]).ShouldBeGreaterThanOrEqualTo(15);
+        Convert.ToInt32(entry.State["RegistrationHits"]).ShouldBeGreaterThan(0);
+        Convert.ToInt32(entry.State["Processes"]).ShouldBeGreaterThanOrEqualTo(s.Trace.Count);
+        entry.Message.ShouldContain("outcome=Complete");
+    }
+
     private sealed class Scenario : IAsyncDisposable
     {
         public const string SentinelBytes = "operator-owned target sentinel\n";
