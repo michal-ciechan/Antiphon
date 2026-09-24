@@ -65,7 +65,29 @@ public sealed record CompletionProgressEvidence(
     string? Reason = null,
     string? ClaimedSha = null,
     string? ClaimWarning = null,
-    IReadOnlyList<CompletionProgressSource>? Sources = null);
+    IReadOnlyList<CompletionProgressSource>? Sources = null,
+    /// <summary>
+    /// CARD-0657 D-4. What the pre-attribution runner sync observed for this evaluation. Additive:
+    /// absent on local tasks and on evidence written before this card (still schema version 1).
+    /// </summary>
+    RemoteSyncEvidence? RemoteSync = null);
+
+/// <summary>
+/// CARD-0657 D-4. The durable sync facts of one completion evaluation. Never reused as fresh
+/// evidence: every attempt prepares again.
+/// </summary>
+public sealed record RemoteSyncEvidence(
+    int Attempt,
+    RemoteSettlementSyncState State,
+    string? FullRef = null,
+    string? ObservedSha = null,
+    string? ConfirmedSha = null,
+    string? Reason = null)
+{
+    public static RemoteSyncEvidence From(int attempt, RemoteSettlementSyncResult result) =>
+        new(attempt, result.State, result.FullRef, result.RemoteSha,
+            result.Confirmed ? result.DesktopAfterSha : null, result.Reason);
+}
 
 public sealed record CompletionProgressSource(
     ProgressOrigin Origin,
@@ -88,7 +110,8 @@ public sealed record CompletionProgressSource(
 public sealed record ProgressEvidenceDto(
     CompletionProgressAssessment Assessment,
     string? Reason = null,
-    IReadOnlyList<ProgressEvidenceSourceDto>? Sources = null);
+    IReadOnlyList<ProgressEvidenceSourceDto>? Sources = null,
+    RemoteSyncEvidence? RemoteSync = null);
 
 public sealed record ProgressEvidenceSourceDto(
     ProgressOrigin Origin,
@@ -166,6 +189,7 @@ public static class TaskProgressJson
                     s.RemoteObserved,
                     s.RegisteredPath,
                     s.Reason,
-                    s.ObservedRef)).ToArray());
+                    s.ObservedRef)).ToArray(),
+            evidence.RemoteSync);
     }
 }
