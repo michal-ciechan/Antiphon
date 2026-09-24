@@ -362,6 +362,102 @@ public sealed class LandingGitTests
         await fixture.AssertRemoteSourceAsync();
     }
 
+    // CARD-0642 V-2..V-5: the lease-scoped registration cache and the inspection scope.
+    private static int WorktreeLists(LandingGitFixture fixture) =>
+        fixture.Git.Trace.Count(a => a.Length > 1 && a[0] == "worktree" && a[1] == "list");
+
+    private static bool IsTree(LandingRegistration row, string name) =>
+        row.Path.Replace('\\', '/').EndsWith("/trees/" + name, StringComparison.OrdinalIgnoreCase);
+
+    [Test]
+    public async Task C642_ScopeCachesRegistrationsUntilOwnMutation()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var extra = Path.Combine(fixture.Root, "trees", "extra");
+        using (fixture.Git.BeginOperationScope())
+        {
+            fixture.Git.Trace.Clear();
+            for (var i = 0; i < 3; i++)
+                (await fixture.Git.RegistrationsAsync(fixture.Repository, CancellationToken.None))
+                    .ShouldContain(r => IsTree(r, "source"));
+            WorktreeLists(fixture).ShouldBe(1, "three reads inside one operation scope list registrations once");
+            (await fixture.Git.RunAsync(fixture.Repository, ["worktree", "add", "--detach", extra, "HEAD"], CancellationToken.None))
+                .Succeeded.ShouldBeTrue();
+            var rows = await fixture.Git.RegistrationsAsync(fixture.Repository, CancellationToken.None);
+            WorktreeLists(fixture).ShouldBe(2, "the scope's own worktree mutation must force a re-list");
+            rows.ShouldContain(r => IsTree(r, "extra"));
+            fixture.Git.BeginOperationScope().Dispose(); // a nested scope borrows the outer one; disposing it ends nothing
+            await fixture.Git.RegistrationsAsync(fixture.Repository, CancellationToken.None);
+            WorktreeLists(fixture).ShouldBe(2);
+        }
+        await fixture.Git.RegistrationsAsync(fixture.Repository, CancellationToken.None);
+        WorktreeLists(fixture).ShouldBe(3, "no cache outlives its operation scope");
+    }
+
+    [Test]
+    public async Task C642_InspectAsyncListsRegistrationsOncePerScope()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        using var scope = fixture.Git.BeginOperationScope();
+        fixture.Git.Trace.Clear();
+        var first = await fixture.Git.InspectAsync(fixture.Coordinates, CancellationToken.None);
+        var second = await fixture.Git.InspectAsync(fixture.Coordinates, CancellationToken.None);
+        first.Accepted.ShouldBeTrue(first.Reason);
+        second.Accepted.ShouldBeTrue(second.Reason);
+        second.Snapshot.ShouldBe(first.Snapshot);
+        WorktreeLists(fixture).ShouldBe(1, "two inspections (four identity reads) in one scope list registrations once");
+        scope.Profile.Inspections.ShouldBe(2);
+        scope.Profile.WorktreeLists.ShouldBe(1);
+        scope.Profile.RegistrationHits.ShouldBe(3);
+        scope.Profile.CanonicalHits.ShouldBeGreaterThan(0);
+        scope.Profile.Processes.ShouldBe(fixture.Git.Trace.Count);
+    }
+
+    [Test]
+    public async Task C642_ScopeSeesExternalRegistrationChange()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var external = new LandingGitFixture.FixtureGit(Path.Combine(fixture.Root, "home"), fixture.TaskId);
+        var extra = Path.Combine(fixture.Root, "trees", "janitor");
+        using var scope = fixture.Git.BeginOperationScope();
+        fixture.Git.Trace.Clear();
+        (await fixture.Git.RegistrationsAsync(fixture.Repository, CancellationToken.None)).ShouldNotContain(r => IsTree(r, "janitor"));
+        (await external.RunAsync(fixture.Repository, ["worktree", "add", "--detach", extra, "HEAD"], CancellationToken.None))
+            .Succeeded.ShouldBeTrue();
+        fixture.Git.Trace.ShouldNotContain(a => a[0] == "worktree" && a[1] == "add", "the change must come from outside the scoped instance");
+        var rows = await fixture.Git.RegistrationsAsync(fixture.Repository, CancellationToken.None);
+        rows.ShouldContain(r => IsTree(r, "janitor"), "a registration change by another process must invalidate the scope cache");
+        WorktreeLists(fixture).ShouldBe(2);
+        (await external.RunAsync(fixture.Repository, ["worktree", "remove", extra], CancellationToken.None)).Succeeded.ShouldBeTrue();
+        (await fixture.Git.RegistrationsAsync(fixture.Repository, CancellationToken.None)).ShouldNotContain(r => IsTree(r, "janitor"));
+        WorktreeLists(fixture).ShouldBe(3);
+    }
+
+    [Test]
+    public async Task C642_IdentityAndStatusScopeSkipsIgnoredListing()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        Directory.CreateDirectory(Path.Combine(fixture.Source, ".antiphon"));
+        await File.WriteAllTextAsync(Path.Combine(fixture.Source, ".antiphon", "ignored-note.md"), "ignored\n");
+        fixture.Git.Trace.Clear();
+        var light = await fixture.Git.InspectAsync(fixture.Coordinates, LandInspectionScope.IdentityAndStatus, CancellationToken.None);
+        light.Accepted.ShouldBeTrue(light.Reason);
+        light.Snapshot!.IgnoredPaths.ShouldBeEmpty();
+        fixture.Git.Trace.ShouldNotContain(a => a[0] == "ls-files");
+        fixture.Git.Trace.ShouldContain(a => a[0] == "status", "the dirty check is unchanged by the scope");
+        fixture.Git.Trace.Clear();
+        var full = await fixture.Git.InspectAsync(fixture.Coordinates, LandInspectionScope.Full, CancellationToken.None);
+        full.Accepted.ShouldBeTrue(full.Reason);
+        full.Snapshot!.IgnoredPaths.ShouldContain(".antiphon/ignored-note.md");
+        fixture.Git.Trace.ShouldContain(a => a[0] == "ls-files");
+        var legacy = await fixture.Git.InspectAsync(fixture.Coordinates, CancellationToken.None);
+        legacy.Snapshot!.IgnoredPaths.ShouldBe(full.Snapshot.IgnoredPaths, "the two-argument call stays Full");
+    }
+
     private sealed class MarkerHomeGit(string home, Guid taskId, string configPath) : LandingGitFixture.FixtureGit(home, taskId)
     {
         protected override void ConfigureProcess(System.Diagnostics.ProcessStartInfo start)

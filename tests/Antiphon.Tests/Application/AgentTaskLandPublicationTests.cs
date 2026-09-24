@@ -367,4 +367,19 @@ public sealed class AgentTaskLandPublicationTests
             .ShouldBe(pushAccepted ? source : h.Fixture.SeedSha);
         await h.Fixture.AssertRemoteSourceAsync();
     }
+
+    [Test]
+    public async Task C642_ProtocolInspectionsAreIdentityAndStatus()
+    {
+        // CARD-0642 V-6: the resolver and protocol never ask for the ignored listing.
+        await using var h = new LandingProtocolHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        (await h.RunAsync()).ShouldBe(LandRunResult.Complete);
+        var push = h.Git.Trace.FindIndex(a => a[0] == "push");
+        push.ShouldBeGreaterThan(0, "the land must publish");
+        var beforePush = h.Git.InspectionScopes.Where(i => i.TraceIndex <= push).Select(i => i.Scope).ToList();
+        beforePush.ShouldNotBeEmpty();
+        beforePush.ShouldAllBe(scope => scope == LandInspectionScope.IdentityAndStatus);
+    }
 }
