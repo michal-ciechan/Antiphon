@@ -24,7 +24,7 @@ public sealed class RunnerTaskSettlementTests
 
         await world.SettleAsync(RunnerSettlementWorld.Report("Implemented and pushed."));
 
-        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, world.Task.FailureReason);
+        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world));
         world.Task.FailureCode.ShouldBeNull();
         var evidence = world.Evidence()!;
         evidence.Assessment.ShouldBe(CompletionProgressAssessment.ProgressObserved);
@@ -97,7 +97,7 @@ public sealed class RunnerTaskSettlementTests
             await world.SettleAsync(RunnerSettlementWorld.Report("Implemented and pushed."));
         }
 
-        world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, world.Task.FailureReason);
+        world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world));
         world.Task.FailureCode.ShouldBeNull();
         world.Task.NextStage.ShouldBe(PipelineHandoffKind.Decide);
         world.Task.Result!.ShouldContain("Implemented and pushed.");
@@ -120,7 +120,7 @@ public sealed class RunnerTaskSettlementTests
         await world.SettleAsync(RunnerSettlementWorld.Report("Reported again."),
             DelegationReportFormatter.TaskMarker(world.TaskId) + "\n\nThe lease is free again; report once more.");
 
-        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, world.Task.FailureReason);
+        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world));
         world.Evidence()!.RemoteSync!.ConfirmedSha.ShouldBe(s);
         world.Evidence()!.Sources!.Single(x => x.Assessment == CompletionProgressAssessment.ProgressObserved)
             .VerifiedSha.ShouldBe(s);
@@ -207,7 +207,7 @@ public sealed class RunnerTaskSettlementTests
 
         await world.SettleAsync(RunnerSettlementWorld.Report("Plan written.", next: "code", artifact: "docs/plan.md"));
 
-        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, world.Task.FailureReason);
+        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world));
         world.Task.DeliverablePath.ShouldBe("docs/plan.md");
         world.Task.DeliverableRef.ShouldBe(s);
         world.Evidence()!.RemoteSync!.ConfirmedSha.ShouldBe(s);
@@ -218,7 +218,7 @@ public sealed class RunnerTaskSettlementTests
 
     private static void AssertNoPush(RunnerSettlementWorld world, string reason, string body)
     {
-        world.Task.Status.ShouldBe(AgentTaskStatus.Failed, world.Task.FailureReason);
+        world.Task.Status.ShouldBe(AgentTaskStatus.Failed, Why(world));
         world.Task.FailureCode.ShouldBe(AgentTaskFailureCode.CompletedWithoutProgress);
         world.Task.FailureReason!.ShouldContain(reason);
         world.Evidence()!.Assessment.ShouldBe(CompletionProgressAssessment.NoAttributedProgress);
@@ -229,7 +229,7 @@ public sealed class RunnerTaskSettlementTests
 
     private static async Task AssertRefusedAsync(RunnerSettlementWorld world, string reason)
     {
-        world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, world.Task.FailureReason);
+        world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world));
         world.Task.FailureCode.ShouldBeNull();
         world.Task.NextStage.ShouldBe(PipelineHandoffKind.Decide);
         world.Evidence()!.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Refused);
@@ -242,6 +242,10 @@ public sealed class RunnerTaskSettlementTests
         Directory.Exists(world.Git.Worktree).ShouldBeTrue();
         world.Task.WorktreePath.ShouldBe(world.Git.Task.WorktreePath);
     }
+
+    /// <summary>Failure context only: the settled reason and the persisted progress/sync evidence.</summary>
+    private static string Why(RunnerSettlementWorld world) =>
+        world.Task.FailureReason + " | evidence=" + world.Task.CompletionProgressEvidenceJson;
 
     private static void AssertNoSync(RunnerSettlementWorld world, string s)
     {
