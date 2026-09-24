@@ -8,7 +8,23 @@ namespace Antiphon.Server.Application.Services;
 /// </summary>
 public static class WorkspaceReservationStartupReconcile
 {
-    /// <summary>Red-first stub: releases nothing.</summary>
-    public static Task<int?> RunAsync(IServiceProvider services, ILogger logger, CancellationToken ct) =>
-        Task.FromResult<int?>(0);
+    /// <summary>
+    /// Releases orphaned <c>Launch</c> rows and returns the count. Best-effort: a failed
+    /// reconcile is logged and returns null, and never blocks startup.
+    /// </summary>
+    public static async Task<int?> RunAsync(IServiceProvider services, ILogger logger, CancellationToken ct)
+    {
+        try
+        {
+            var released = await services.GetRequiredService<IWorkspaceReservationJournal>()
+                .ReleaseOrphanedConsumersAsync(ct);
+            logger.LogInformation("Workspace reservations reconciled: released {Count} orphaned Launch rows", released);
+            return released;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Workspace reservation reconcile failed at startup; continuing");
+            return null;
+        }
+    }
 }
