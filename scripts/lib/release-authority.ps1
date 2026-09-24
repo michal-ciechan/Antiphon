@@ -11,11 +11,19 @@
 #   authority.json         pinned identity: repository/ref/sha, blob id, digests, suites
 #   discovery.json         full discovery roster per native suite (incl. excluded rows)
 #   execution-plan.json    frozen chunk manifest (native) and declared entry rosters
-#   ledger.json            execution records: prerequisites, chunks, rosters
+#   ledger.json            execution records: prerequisites, chunks, rosters and the
+#                          typed prepublication receipt (the release card's readback)
 #   publication-authority.json  digest over all of the above, written by the publisher
 #
 # Every git read here is a real git child with a bounded wait: the policy blob is
 # never taken from a working tree and never from a seam.
+#
+# JSON types are validated strictly before any comparison: a one-element array is
+# not the scalar it holds, a comma-joined string is not a list, and no identity is
+# compared through a [string] cast. The digest chain is recomputable by whoever
+# writes these files, so repository, coordinator and clock bind to things outside
+# them: the checkout's origin, the publication destination, the supported
+# coordinator version and the publisher's (injectable) clock.
 
 if ($script:AntiphonReleaseAuthorityLoaded) { return }
 $script:AntiphonReleaseAuthorityLoaded = $true
@@ -26,6 +34,11 @@ $script:ReleaseAuthorityRosterSuites = @('client', 'scripts')
 $script:ReleaseAuthoritySchema = 1
 $script:ReleaseAuthorityCoordinatorVersion = 'c599-b1'
 $script:ReleaseAuthorityGitTimeoutMs = 30000
+# Evidence may not be dated after the publisher's clock by more than this skew.
+$script:ReleaseAuthorityClockSkewSeconds = 120
+$script:ReleaseAuthorityReceiptKind = 'prepublication'
+$script:ReleaseAuthorityRecipientKind = 'release-card'
+$script:ReleaseAuthorityRepositoryPattern = '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
 $script:ReleaseAuthorityScripts = @(
     'publish-release.ps1',
     'lib/release-gate.ps1',
@@ -101,6 +114,74 @@ function Invoke-ReleaseAuthorityGit {
     } finally {
         if ($null -ne $proc) { $proc.Dispose() }
     }
+}
+
+# --------------------------------------------------------- strict JSON types ---
+
+function Test-ReleaseAuthorityText {
+    # A real JSON string, equal to a non-empty Expected. Never a cast of an array/number.
+    param($Value, [string]$Expected, [switch]$IgnoreCase)
+    if ($Value -isnot [string] -or [string]::IsNullOrEmpty($Expected)) { return $false }
+    $comparison = [StringComparison]::Ordinal
+    if ($IgnoreCase) { $comparison = [StringComparison]::OrdinalIgnoreCase }
+    return [string]::Equals([string]$Value, $Expected, $comparison)
+}
+
+function Get-ReleaseAuthorityText {
+    # The value when it is a real string, otherwise '' (which no comparison accepts).
+    param($Value)
+    if ($Value -is [string]) { return [string]$Value }
+    return ''
+}
+
+function Test-ReleaseAuthorityInteger {
+    param($Value)
+    return ($Value -is [int] -or $Value -is [long])
+}
+
+function Test-ReleaseAuthorityObject {
+    # A JSON object as ConvertFrom-Json produces it; never an array, string or boolean.
+    param($Value)
+    return ($Value -is [System.Management.Automation.PSCustomObject])
+}
+
+function Test-ReleaseAuthorityStringList {
+    # A JSON array whose every element is a string. A joined string is not a list.
+    param($Value)
+    if ($null -eq $Value -or $Value -isnot [array]) { return $false }
+    foreach ($item in $Value) { if ($item -isnot [string]) { return $false } }
+    return $true
+}
+
+function Test-ReleaseAuthorityGuid {
+    param($Value)
+    if ($Value -isnot [string]) { return $false }
+    $parsed = [guid]::Empty
+    return [guid]::TryParseExact([string]$Value, 'D', [ref]$parsed)
+}
+
+function ConvertTo-ReleaseAuthorityUtc {
+    # An unspecified kind is UTC (as AssumeUniversal parsing is), never local time.
+    param([datetime]$Value)
+    if ($Value.Kind -eq [DateTimeKind]::Unspecified) { return [datetime]::SpecifyKind($Value, [DateTimeKind]::Utc) }
+    return $Value.ToUniversalTime()
+}
+
+function ConvertTo-ReleaseAuthorityRepositoryName {
+    # owner/name from a GitHub remote URL (https, ssh or scp form); '' for anything else.
+    param([string]$Url)
+    if ([string]::IsNullOrWhiteSpace($Url)) { return '' }
+    $m = [regex]::Match($Url.Trim(), '^(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:)(?<owner>[A-Za-z0-9_.-]+)/(?<name>[A-Za-z0-9_.-]+?)(?:\.git)?/?$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if (-not $m.Success) { return '' }
+    return ('{0}/{1}' -f $m.Groups['owner'].Value, $m.Groups['name'].Value)
+}
+
+function Get-ReleaseAuthorityOriginRepository {
+    # The checkout's origin through real git (never a seam), as owner/name.
+    param([string]$RepositoryRoot)
+    $origin = Invoke-ReleaseAuthorityGit -RepositoryRoot $RepositoryRoot -Arguments @('remote', 'get-url', 'origin')
+    if ([int]$origin.ExitCode -ne 0) { return '' }
+    return (ConvertTo-ReleaseAuthorityRepositoryName -Url $origin.Text)
 }
 
 function ConvertFrom-ReleaseAuthorityPolicyBytes {
@@ -191,13 +272,17 @@ function New-ReleaseGateAuthority {
         [string]$CandidateId,
         [string]$CandidateRef,
         [string]$IntentId,
-        [string]$ReleaseCardId = '',
+        [string]$ReleaseCardId,
         [datetime]$CreatedUtc = [datetime]::MinValue
     )
     if (-not (Test-ReleaseGateFullSha -Sha $Sha)) { throw 'authority-sha-not-full' }
-    foreach ($pair in @(@('repository', $Repository), @('candidateId', $CandidateId), @('candidateRef', $CandidateRef), @('intentId', $IntentId))) {
+    foreach ($pair in @(@('repository', $Repository), @('candidateId', $CandidateId), @('candidateRef', $CandidateRef), @('intentId', $IntentId), @('releaseCardId', $ReleaseCardId))) {
         if ([string]::IsNullOrWhiteSpace([string]$pair[1])) { throw ('authority-missing:' + $pair[0]) }
     }
+    if ($Repository -notmatch $script:ReleaseAuthorityRepositoryPattern) { throw 'authority-repository-shape' }
+    if (-not (Test-ReleaseAuthorityGuid -Value $ReleaseCardId)) { throw 'authority-release-card-shape' }
+    $origin = Get-ReleaseAuthorityOriginRepository -RepositoryRoot $RepositoryRoot
+    if (-not [string]::Equals($origin, $Repository, [StringComparison]::OrdinalIgnoreCase)) { throw 'checkout-origin-repository' }
     $blob = Read-ReleaseAuthorityPinnedBlob -RepositoryRoot $RepositoryRoot -Sha $Sha
     $policy = ConvertFrom-ReleaseAuthorityPolicyBytes -Bytes $blob.Bytes
     $dir = Get-ReleaseAuthorityDir -CandidateRoot $CandidateRoot
@@ -211,7 +296,7 @@ function New-ReleaseGateAuthority {
         candidateId = $CandidateId
         candidateRef = $CandidateRef
         intentId = $IntentId
-        releaseCardId = $ReleaseCardId
+        releaseCardId = ([guid]$ReleaseCardId).ToString('D')
         sha = $Sha
         profile = 'rc'
         coordinatorVersion = $script:ReleaseAuthorityCoordinatorVersion
@@ -331,8 +416,11 @@ function Read-ReleaseAuthorityJson {
 
 function Test-ReleaseAuthorityInstant {
     param($Value)
+    # A JSON string (or the DateTime pwsh 7 ConvertFrom-Json makes of one); an array,
+    # number or boolean is never an instant.
     if ($null -eq $Value) { return $null }
-    if ($Value -is [datetime]) { return ([datetime]$Value).ToUniversalTime() }
+    if ($Value -is [datetime]) { return (ConvertTo-ReleaseAuthorityUtc -Value ([datetime]$Value)) }
+    if ($Value -isnot [string]) { return $null }
     $parsed = [datetime]::MinValue
     $styles = [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal
     if ([datetime]::TryParse([string]$Value, [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$parsed)) { return $parsed }
@@ -344,8 +432,11 @@ function Test-ReleaseGatePinnedAuthority {
       Publisher-side reload of the frozen authority. The policy blob is re-read at
       the pinned SHA through git and must match the private copy, the recorded blob
       id, raw digest and canonical hash; the required suite set is exactly the eight.
+      Every field is type-checked before it is compared. repository must name the
+      publication destination AND the checkout's origin; coordinatorVersion must be
+      the coordinator this publisher supports.
     #>
-    param([string]$CandidateRoot, [string]$RepositoryRoot, [string]$Sha, [string]$CandidateId, [string]$CandidateRef)
+    param([string]$CandidateRoot, [string]$RepositoryRoot, [string]$Sha, [string]$CandidateId, [string]$CandidateRef, [string]$Repository)
     $reasons = @()
     $dir = Get-ReleaseAuthorityDir -CandidateRoot $CandidateRoot
     $authorityPath = Join-Path $dir 'authority.json'
@@ -353,15 +444,21 @@ function Test-ReleaseGatePinnedAuthority {
     if ($null -eq $authority) {
         return [pscustomobject]@{ Ok = $false; Reasons = @('missing-authority'); Authority = $null; Policy = $null; Digest = '' }
     }
-    if ($authority.schemaVersion -isnot [long] -and $authority.schemaVersion -isnot [int]) { $reasons += 'authority-schema' }
-    elseif ([int]$authority.schemaVersion -ne $script:ReleaseAuthoritySchema) { $reasons += 'authority-schema' }
-    if ([string]$authority.kind -cne 'release-authority') { $reasons += 'authority-kind' }
-    if ([string]$authority.profile -cne 'rc') { $reasons += 'authority-profile' }
-    if (-not [string]::Equals([string]$authority.sha, $Sha, [StringComparison]::Ordinal) -or -not (Test-ReleaseGateFullSha -Sha ([string]$authority.sha))) { $reasons += 'authority-sha' }
-    if ([string]$authority.candidateId -cne $CandidateId) { $reasons += 'authority-candidate' }
-    if ([string]$authority.candidateRef -cne $CandidateRef) { $reasons += 'authority-candidate-ref' }
-    if ([string]::IsNullOrWhiteSpace([string]$authority.intentId)) { $reasons += 'authority-intent' }
-    if ([string]$authority.policyPath -cne $script:ReleaseAuthorityPolicyPath) { $reasons += 'authority-policy-path' }
+    if (-not (Test-ReleaseAuthorityInteger -Value $authority.schemaVersion) -or [int]$authority.schemaVersion -ne $script:ReleaseAuthoritySchema) { $reasons += 'authority-schema' }
+    if (-not (Test-ReleaseAuthorityText -Value $authority.kind -Expected 'release-authority')) { $reasons += 'authority-kind' }
+    if (-not (Test-ReleaseAuthorityText -Value $authority.profile -Expected 'rc')) { $reasons += 'authority-profile' }
+    if (-not (Test-ReleaseAuthorityText -Value $authority.coordinatorVersion -Expected $script:ReleaseAuthorityCoordinatorVersion)) { $reasons += 'authority-coordinator-version' }
+    $destination = ''
+    if (-not [string]::IsNullOrWhiteSpace($Repository) -and $Repository -match $script:ReleaseAuthorityRepositoryPattern) { $destination = $Repository }
+    if (-not (Test-ReleaseAuthorityText -Value $authority.repository -Expected $destination -IgnoreCase)) { $reasons += 'authority-repository' }
+    $origin = Get-ReleaseAuthorityOriginRepository -RepositoryRoot $RepositoryRoot
+    if ([string]::IsNullOrEmpty($destination) -or -not [string]::Equals($origin, $destination, [StringComparison]::OrdinalIgnoreCase)) { $reasons += 'checkout-origin-repository' }
+    if (-not (Test-ReleaseAuthorityText -Value $authority.sha -Expected $Sha) -or -not (Test-ReleaseGateFullSha -Sha $Sha)) { $reasons += 'authority-sha' }
+    if (-not (Test-ReleaseAuthorityText -Value $authority.candidateId -Expected $CandidateId)) { $reasons += 'authority-candidate' }
+    if (-not (Test-ReleaseAuthorityText -Value $authority.candidateRef -Expected $CandidateRef)) { $reasons += 'authority-candidate-ref' }
+    if ([string]::IsNullOrWhiteSpace((Get-ReleaseAuthorityText -Value $authority.intentId))) { $reasons += 'authority-intent' }
+    if (-not (Test-ReleaseAuthorityGuid -Value $authority.releaseCardId)) { $reasons += 'authority-release-card' }
+    if (-not (Test-ReleaseAuthorityText -Value $authority.policyPath -Expected $script:ReleaseAuthorityPolicyPath)) { $reasons += 'authority-policy-path' }
     $policy = $null
     try {
         $blob = Read-ReleaseAuthorityPinnedBlob -RepositoryRoot $RepositoryRoot -Sha $Sha
@@ -369,25 +466,49 @@ function Test-ReleaseGatePinnedAuthority {
         $copy = [byte[]]@()
         if (Test-Path -LiteralPath $copyPath -PathType Leaf) { $copy = [System.IO.File]::ReadAllBytes($copyPath) }
         $pinnedRaw = Get-ReleaseAuthorityBytesSha256 -Bytes $blob.Bytes
-        if ([string]$authority.policyBlobId -cne $blob.BlobId) { $reasons += 'policy-blob-id-mismatch' }
-        if ([string]$authority.policyRawSha256 -cne $pinnedRaw) { $reasons += 'policy-raw-digest-mismatch' }
+        if (-not (Test-ReleaseAuthorityText -Value $authority.policyBlobId -Expected $blob.BlobId)) { $reasons += 'policy-blob-id-mismatch' }
+        if (-not (Test-ReleaseAuthorityText -Value $authority.policyRawSha256 -Expected $pinnedRaw)) { $reasons += 'policy-raw-digest-mismatch' }
         if ((Get-ReleaseAuthorityBytesSha256 -Bytes $copy) -cne $pinnedRaw) { $reasons += 'policy-copy-mismatch' }
         $policy = ConvertFrom-ReleaseAuthorityPolicyBytes -Bytes $blob.Bytes
-        if ([string]$authority.policyHash -cne $policy.PolicyHash) { $reasons += 'policy-hash-mismatch' }
-        $recorded = @($authority.requiredSuites | ForEach-Object { [string]$_ })
-        if (($recorded -join ',') -cne (@($policy.RequiredSuites) -join ',')) { $reasons += 'authority-suites-mismatch' }
-        $pinnedEx = ConvertTo-NightlyCanonicalJson -Object @($policy.Exclusions)
-        $recordedEx = ConvertTo-NightlyCanonicalJson -Object @($authority.exclusions | ForEach-Object {
-            [ordered]@{ suite = [string]$_.suite; class = [string]$_.class; methods = @($_.methods | ForEach-Object { [string]$_ }); reason = [string]$_.reason; owner = [string]$_.owner } })
-        if ($pinnedEx -cne $recordedEx) { $reasons += 'authority-exclusions-mismatch' }
+        if (-not (Test-ReleaseAuthorityText -Value $authority.policyHash -Expected $policy.PolicyHash)) { $reasons += 'policy-hash-mismatch' }
+
+        # requiredSuites: a JSON array of distinct known suite names, then exactly the pinned list.
+        $recorded = $authority.requiredSuites
+        $suitesTyped = Test-ReleaseAuthorityStringList -Value $recorded
+        if ($suitesTyped) {
+            $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+            foreach ($id in $recorded) {
+                if ($script:ReleaseAuthorityRcSuites -cnotcontains $id -or -not $seen.Add($id)) { $suitesTyped = $false }
+            }
+        }
+        if (-not $suitesTyped) { $reasons += 'authority-suites-type'; $reasons += 'authority-suites-mismatch' }
+        elseif ((@($recorded) -join ',') -cne (@($policy.RequiredSuites) -join ',')) { $reasons += 'authority-suites-mismatch' }
+
+        # exclusions: a JSON array of objects with string fields and a string-list methods.
+        $exclusionsTyped = ($authority.exclusions -is [array])
+        if ($exclusionsTyped) {
+            foreach ($e in $authority.exclusions) {
+                if (-not (Test-ReleaseAuthorityObject -Value $e)) { $exclusionsTyped = $false; break }
+                foreach ($k in @('suite', 'class', 'reason', 'owner')) { if ($e.$k -isnot [string]) { $exclusionsTyped = $false } }
+                if (-not (Test-ReleaseAuthorityStringList -Value $e.methods)) { $exclusionsTyped = $false }
+            }
+        }
+        if (-not $exclusionsTyped) { $reasons += 'authority-exclusions-type'; $reasons += 'authority-exclusions-mismatch' }
+        else {
+            $pinnedEx = ConvertTo-NightlyCanonicalJson -Object @($policy.Exclusions)
+            $recordedEx = ConvertTo-NightlyCanonicalJson -Object @($authority.exclusions | ForEach-Object {
+                [ordered]@{ suite = $_.suite; class = $_.class; methods = @($_.methods); reason = $_.reason; owner = $_.owner } })
+            if ($pinnedEx -cne $recordedEx) { $reasons += 'authority-exclusions-mismatch' }
+        }
     } catch {
         $reasons += [string]$_.Exception.Message
     }
     $current = Get-ReleaseAuthorityScriptHashes
+    $hashes = $authority.scriptHashes
+    $hashesTyped = Test-ReleaseAuthorityObject -Value $hashes
     foreach ($k in @($current.Keys)) {
-        $have = ''
-        if ($authority.scriptHashes -and ($authority.scriptHashes.PSObject.Properties.Name -contains $k)) { $have = [string]$authority.scriptHashes.$k }
-        if ($have -cne [string]$current[$k]) { $reasons += ('script-digest-mismatch:' + $k) }
+        $bound = $hashesTyped -and ($hashes.PSObject.Properties.Name -contains $k) -and (Test-ReleaseAuthorityText -Value $hashes.$k -Expected ([string]$current[$k]))
+        if (-not $bound) { $reasons += ('script-digest-mismatch:' + $k) }
     }
     return [pscustomobject]@{
         Ok = ($reasons.Count -eq 0)
@@ -403,9 +524,12 @@ function Test-ReleaseGateExecutionLedger {
       D-15: the frozen plan and full ledger. Every chunk, every required expanded
       UID and every declared roster entry, each joined to the same intent,
       candidate, SHA, native RunId and authority. A passing sibling never hides a
-      failed, skipped, missing, unknown, duplicate or stale row.
+      failed, skipped, missing, unknown, duplicate or stale row. No instant may be
+      later than NowUtc (the publisher's injectable clock) plus a small skew, and
+      the D-14 prepublication receipt must be typed, addressed to the release card
+      bound to the authority, and correlated to this run.
     #>
-    param([string]$CandidateRoot, $Pinned, $Green)
+    param([string]$CandidateRoot, $Pinned, $Green, [datetime]$NowUtc = [datetime]::MinValue)
     $reasons = New-Object System.Collections.Generic.List[string]
     $dir = Get-ReleaseAuthorityDir -CandidateRoot $CandidateRoot
     $authority = $Pinned.Authority
@@ -418,43 +542,51 @@ function Test-ReleaseGateExecutionLedger {
     if ($null -eq $plan) { $reasons.Add('missing-execution-plan') }
     if ($null -eq $ledger) { $reasons.Add('missing-ledger') }
     if ($null -eq $discovery) { $reasons.Add('missing-discovery') }
+    if ($NowUtc -eq [datetime]::MinValue) { $reasons.Add('clock-unavailable') }
     $summaryRows = @()
     if ($reasons.Count -gt 0) { return [pscustomobject]@{ Ok = $false; Reasons = @($reasons); Suites = @() } }
 
-    $intent = [string]$authority.intentId
-    $candidateId = [string]$authority.candidateId
-    $sha = [string]$authority.sha
-    $runId = [string]$Green.runId
+    # Expected identities are taken only from real strings; '' matches nothing.
+    $intent = Get-ReleaseAuthorityText -Value $authority.intentId
+    $candidateId = Get-ReleaseAuthorityText -Value $authority.candidateId
+    $candidateRef = Get-ReleaseAuthorityText -Value $authority.candidateRef
+    $sha = Get-ReleaseAuthorityText -Value $authority.sha
+    $runId = Get-ReleaseAuthorityText -Value $Green.runId
+    $latest = (ConvertTo-ReleaseAuthorityUtc -Value $NowUtc).AddSeconds($script:ReleaseAuthorityClockSkewSeconds)
 
     # Plan binding.
-    if ([string]$plan.authorityDigest -cne [string]$Pinned.Digest) { $reasons.Add('plan-authority-digest') }
-    if ([string]$plan.discoveryDigest -cne (Get-NightlyFileSha256 -Path $discoveryPath)) { $reasons.Add('plan-discovery-digest') }
-    if ([string]$plan.intentId -cne $intent) { $reasons.Add('plan-intent') }
-    if ([string]$plan.candidateId -cne $candidateId) { $reasons.Add('plan-candidate') }
-    if ([string]$plan.sha -cne $sha) { $reasons.Add('plan-sha') }
+    if (-not (Test-ReleaseAuthorityText -Value $plan.authorityDigest -Expected ([string]$Pinned.Digest))) { $reasons.Add('plan-authority-digest') }
+    if (-not (Test-ReleaseAuthorityText -Value $plan.discoveryDigest -Expected (Get-NightlyFileSha256 -Path $discoveryPath))) { $reasons.Add('plan-discovery-digest') }
+    if (-not (Test-ReleaseAuthorityText -Value $plan.intentId -Expected $intent)) { $reasons.Add('plan-intent') }
+    if (-not (Test-ReleaseAuthorityText -Value $plan.candidateId -Expected $candidateId)) { $reasons.Add('plan-candidate') }
+    if (-not (Test-ReleaseAuthorityText -Value $plan.sha -Expected $sha)) { $reasons.Add('plan-sha') }
 
     # Ledger identity and whole-run markers (real booleans only).
-    if ([string]$ledger.intentId -cne $intent) { $reasons.Add('ledger-intent') }
-    if ([string]$ledger.candidateId -cne $candidateId) { $reasons.Add('ledger-candidate') }
-    if ([string]$ledger.candidateRef -cne [string]$authority.candidateRef) { $reasons.Add('ledger-candidate-ref') }
-    if ([string]$ledger.sha -cne $sha -or -not (Test-ReleaseGateFullSha -Sha ([string]$ledger.sha))) { $reasons.Add('ledger-sha') }
-    if ([string]::IsNullOrWhiteSpace($runId) -or [string]$ledger.runId -cne $runId) { $reasons.Add('ledger-run') }
-    if ([string]$ledger.authorityDigest -cne [string]$Pinned.Digest) { $reasons.Add('ledger-authority-digest') }
-    if ([string]$ledger.executionPlanDigest -cne (Get-NightlyFileSha256 -Path $planPath)) { $reasons.Add('ledger-plan-digest') }
+    if (-not (Test-ReleaseAuthorityText -Value $ledger.intentId -Expected $intent)) { $reasons.Add('ledger-intent') }
+    if (-not (Test-ReleaseAuthorityText -Value $ledger.candidateId -Expected $candidateId)) { $reasons.Add('ledger-candidate') }
+    if (-not (Test-ReleaseAuthorityText -Value $ledger.candidateRef -Expected $candidateRef)) { $reasons.Add('ledger-candidate-ref') }
+    if (-not (Test-ReleaseAuthorityText -Value $ledger.sha -Expected $sha) -or -not (Test-ReleaseGateFullSha -Sha $sha)) { $reasons.Add('ledger-sha') }
+    if ([string]::IsNullOrWhiteSpace($runId) -or -not (Test-ReleaseAuthorityText -Value $ledger.runId -Expected $runId)) { $reasons.Add('ledger-run') }
+    if (-not (Test-ReleaseAuthorityText -Value $ledger.authorityDigest -Expected ([string]$Pinned.Digest))) { $reasons.Add('ledger-authority-digest') }
+    if (-not (Test-ReleaseAuthorityText -Value $ledger.executionPlanDigest -Expected (Get-NightlyFileSha256 -Path $planPath))) { $reasons.Add('ledger-plan-digest') }
     if (-not (Test-ReleaseGateRealBoolean -Value $ledger.teardownSucceeded)) { $reasons.Add('teardown-not-succeeded') }
     if ($ledger.seamed -isnot [bool] -or [bool]$ledger.seamed) { $reasons.Add('ledger-seamed') }
     if ($ledger.noReport -isnot [bool] -or [bool]$ledger.noReport) { $reasons.Add('ledger-no-report') }
     if ($ledger.diagnostic -isnot [bool] -or [bool]$ledger.diagnostic) { $reasons.Add('ledger-diagnostic') }
-    if ([string]$ledger.selection -cne 'full') { $reasons.Add('ledger-selection') }
-    if (-not (Test-ReleaseGateRealBoolean -Value $ledger.reportAccepted)) { $reasons.Add('ledger-report-not-accepted') }
+    if (-not (Test-ReleaseAuthorityText -Value $ledger.selection -Expected 'full')) { $reasons.Add('ledger-selection') }
 
-    # Freshness and ordering: authority <= run start <= every chunk start < end <= run end.
+    # Freshness and ordering: authority <= run start <= every chunk start < end <= run end,
+    # and nothing dated after the publisher's clock (evidence from the future).
     $authorityAt = Test-ReleaseAuthorityInstant -Value $authority.createdAt
     $runStart = Test-ReleaseAuthorityInstant -Value $ledger.startedAt
     $runEnd = Test-ReleaseAuthorityInstant -Value $ledger.completedAt
     if ($null -eq $authorityAt -or $null -eq $runStart -or $null -eq $runEnd -or $runStart -lt $authorityAt -or $runEnd -le $runStart) {
         $reasons.Add('ledger-timestamps')
     }
+    function Test-Future($t) { return ($null -ne $t -and $t -gt $latest) }
+    function Test-FutureWindow($s, $e) { return ((Test-Future (Test-ReleaseAuthorityInstant -Value $s)) -or (Test-Future (Test-ReleaseAuthorityInstant -Value $e))) }
+    if (Test-Future $authorityAt) { $reasons.Add('evidence-future:authority') }
+    if ((Test-Future $runStart) -or (Test-Future $runEnd)) { $reasons.Add('evidence-future:ledger') }
     function Test-Window($s, $e) {
         $a = Test-ReleaseAuthorityInstant -Value $s
         $b = Test-ReleaseAuthorityInstant -Value $e
@@ -462,39 +594,71 @@ function Test-ReleaseGateExecutionLedger {
         return ($a -ge $runStart -and $b -gt $a -and $b -le $runEnd)
     }
 
+    # D-14 / G-306: the prepublication receipt is the release card's readback of the
+    # projected test result. Only that kind, from that card, for this run, counts;
+    # a final/publication receipt or any boolean acceptance flag confers nothing.
+    $receipt = $ledger.prepublicationReceipt
+    if ($null -eq $receipt) { $reasons.Add('receipt-missing') }
+    elseif (-not (Test-ReleaseAuthorityObject -Value $receipt)) { $reasons.Add('receipt-type') }
+    else {
+        if (-not (Test-ReleaseAuthorityText -Value $receipt.kind -Expected $script:ReleaseAuthorityReceiptKind)) { $reasons.Add('receipt-kind') }
+        $recipient = $receipt.recipient
+        $recipientOk = (Test-ReleaseAuthorityObject -Value $recipient) -and
+            (Test-ReleaseAuthorityText -Value $recipient.kind -Expected $script:ReleaseAuthorityRecipientKind) -and
+            (Test-ReleaseAuthorityGuid -Value $recipient.cardId) -and (Test-ReleaseAuthorityGuid -Value $authority.releaseCardId) -and
+            ([guid]$recipient.cardId -eq [guid]$authority.releaseCardId) -and
+            (Test-ReleaseAuthorityInteger -Value $recipient.revision) -and ([long]$recipient.revision -ge 1)
+        if (-not $recipientOk) { $reasons.Add('receipt-recipient') }
+        $correlation = $receipt.correlation
+        $correlated = (Test-ReleaseAuthorityObject -Value $correlation) -and
+            (Test-ReleaseAuthorityText -Value $correlation.intentId -Expected $intent) -and
+            (Test-ReleaseAuthorityText -Value $correlation.candidateId -Expected $candidateId) -and
+            (Test-ReleaseAuthorityText -Value $correlation.sha -Expected $sha) -and
+            (Test-ReleaseAuthorityText -Value $correlation.runId -Expected $runId)
+        if (-not $correlated) { $reasons.Add('receipt-correlation') }
+        $acceptedAt = Test-ReleaseAuthorityInstant -Value $receipt.acceptedAt
+        if ($null -eq $acceptedAt -or $null -eq $runEnd -or $acceptedAt -lt $runEnd) { $reasons.Add('receipt-timestamps') }
+        if (Test-Future $acceptedAt) { $reasons.Add('evidence-future:receipt') }
+    }
+
     # Prerequisites: every declared build/prerequisite row succeeded.
     $prereqIds = @('build', 'client-bundle', 'script-census')
     foreach ($preId in $prereqIds) {
-        $rows = @($ledger.prerequisites | Where-Object { [string]$_.id -ceq $preId })
+        $rows = @($ledger.prerequisites | Where-Object { Test-ReleaseAuthorityText -Value $_.id -Expected $preId })
         if ($rows.Count -ne 1) { $reasons.Add('prerequisite-missing:' + $preId); continue }
         $row = $rows[0]
-        if ($row.exitCode -isnot [long] -and $row.exitCode -isnot [int]) { $reasons.Add('prerequisite-failed:' + $preId); continue }
+        if (-not (Test-ReleaseAuthorityInteger -Value $row.exitCode)) { $reasons.Add('prerequisite-failed:' + $preId); continue }
         if ([int]$row.exitCode -ne 0 -or -not (Test-ReleaseGateRealBoolean -Value $row.succeeded)) { $reasons.Add('prerequisite-failed:' + $preId) }
     }
 
     # Suite set exactly the pinned eight, in plan and in ledger.
     $required = @($Pinned.Policy.RequiredSuites)
-    $planSuites = @($plan.suites | ForEach-Object { [string]$_.id })
-    foreach ($id in $required) { if ($planSuites -notcontains $id) { $reasons.Add('required-suite-missing:' + $id) } }
-    foreach ($id in $planSuites) { if ($required -notcontains $id) { $reasons.Add('plan-suite-unexpected:' + $id) } }
+    $planSuites = @($plan.suites | ForEach-Object { Get-ReleaseAuthorityText -Value $_.id })
+    foreach ($id in $required) { if ($planSuites -cnotcontains $id) { $reasons.Add('required-suite-missing:' + $id) } }
+    foreach ($id in $planSuites) { if ($required -cnotcontains $id) { $reasons.Add('plan-suite-unexpected:' + $id) } }
 
     # Discovery-derived required UIDs, recomputed from the pinned exclusions.
     $allChunkIds = @{}
     foreach ($suite in @($plan.suites)) {
-        $id = [string]$suite.id
-        if ($required -notcontains $id) { continue }
+        $id = Get-ReleaseAuthorityText -Value $suite.id
+        if ($required -cnotcontains $id) { continue }
         if ($script:ReleaseAuthorityRosterSuites -contains $id) {
-            $declared = @($suite.entries | ForEach-Object { [string]$_ })
+            if (-not (Test-ReleaseAuthorityStringList -Value $suite.entries)) { $reasons.Add('roster-empty:' + $id); continue }
+            $declared = @($suite.entries)
             if ($declared.Count -eq 0) { $reasons.Add('roster-empty:' + $id); continue }
-            $rosterRows = @($ledger.rosters | Where-Object { [string]$_.suite -ceq $id })
+            $rosterRows = @($ledger.rosters | Where-Object { Test-ReleaseAuthorityText -Value $_.suite -Expected $id })
             if ($rosterRows.Count -ne 1) { $reasons.Add('roster-missing:' + $id); continue }
             $r = $rosterRows[0]
-            if ([string]$r.intentId -cne $intent -or [string]$r.candidateId -cne $candidateId -or [string]$r.sha -cne $sha -or [string]$r.runId -cne $runId) { $reasons.Add('roster-identity:' + $id) }
-            if ($r.exitCode -isnot [long] -and $r.exitCode -isnot [int]) { $reasons.Add('roster-exit:' + $id) }
+            $rosterJoined = (Test-ReleaseAuthorityText -Value $r.intentId -Expected $intent) -and (Test-ReleaseAuthorityText -Value $r.candidateId -Expected $candidateId) -and
+                (Test-ReleaseAuthorityText -Value $r.sha -Expected $sha) -and (Test-ReleaseAuthorityText -Value $r.runId -Expected $runId)
+            if (-not $rosterJoined) { $reasons.Add('roster-identity:' + $id) }
+            if (-not (Test-ReleaseAuthorityInteger -Value $r.exitCode)) { $reasons.Add('roster-exit:' + $id) }
             elseif ([int]$r.exitCode -ne 0) { $reasons.Add('roster-exit:' + $id) }
             if (-not (Test-Window $r.startedAt $r.completedAt)) { $reasons.Add('roster-timestamps:' + $id) }
+            if (Test-FutureWindow $r.startedAt $r.completedAt) { $reasons.Add('evidence-future:roster:' + $id) }
             $seen = @{}
             foreach ($e in @($r.entries)) {
+                if ($e.id -isnot [string] -or $e.outcome -isnot [string]) { $reasons.Add('roster-entry-type:' + $id); continue }
                 $eid = [string]$e.id
                 if ($seen.ContainsKey($eid)) { $reasons.Add('roster-duplicate:' + $id + ':' + $eid); continue }
                 $seen[$eid] = [string]$e.outcome
@@ -515,6 +679,7 @@ function Test-ReleaseGateExecutionLedger {
         $member = @{}
         $planChunks = @($suite.chunks)
         foreach ($c in $planChunks) {
+            if ($c.id -isnot [string] -or -not (Test-ReleaseAuthorityStringList -Value $c.uids)) { $reasons.Add('plan-chunk-type:' + $id); continue }
             $allChunkIds[[string]$c.id] = $id
             foreach ($u in @($c.uids)) {
                 $key = [string]$u
@@ -527,23 +692,25 @@ function Test-ReleaseGateExecutionLedger {
         $terminal = @{}
         $executed = 0; $passed = 0
         foreach ($c in $planChunks) {
+            if ($c.id -isnot [string]) { continue }
             $cid = [string]$c.id
-            $rows = @($ledger.chunks | Where-Object { [string]$_.chunk -ceq $cid })
+            $rows = @($ledger.chunks | Where-Object { Test-ReleaseAuthorityText -Value $_.chunk -Expected $cid })
             if ($rows.Count -eq 0) { $reasons.Add('chunk-missing:' + $cid); continue }
             if ($rows.Count -gt 1) { $reasons.Add('chunk-duplicate:' + $cid); continue }
             $row = $rows[0]
-            if ([string]$row.suite -cne $id) { $reasons.Add('chunk-suite:' + $cid) }
-            if ([string]$row.intentId -cne $intent) { $reasons.Add('chunk-intent:' + $cid) }
-            if ([string]$row.candidateId -cne $candidateId) { $reasons.Add('chunk-candidate:' + $cid) }
-            if ([string]$row.sha -cne $sha) { $reasons.Add('chunk-sha:' + $cid) }
-            if ([string]$row.runId -cne $runId) { $reasons.Add('chunk-run:' + $cid) }
+            if (-not (Test-ReleaseAuthorityText -Value $row.suite -Expected $id)) { $reasons.Add('chunk-suite:' + $cid) }
+            if (-not (Test-ReleaseAuthorityText -Value $row.intentId -Expected $intent)) { $reasons.Add('chunk-intent:' + $cid) }
+            if (-not (Test-ReleaseAuthorityText -Value $row.candidateId -Expected $candidateId)) { $reasons.Add('chunk-candidate:' + $cid) }
+            if (-not (Test-ReleaseAuthorityText -Value $row.sha -Expected $sha)) { $reasons.Add('chunk-sha:' + $cid) }
+            if (-not (Test-ReleaseAuthorityText -Value $row.runId -Expected $runId)) { $reasons.Add('chunk-run:' + $cid) }
             if (-not (Test-Window $row.startedAt $row.completedAt)) { $reasons.Add('chunk-timestamps:' + $cid) }
-            if ($row.exitCode -isnot [long] -and $row.exitCode -isnot [int]) { $reasons.Add('chunk-exit:' + $cid) }
+            if (Test-FutureWindow $row.startedAt $row.completedAt) { $reasons.Add('evidence-future:chunk:' + $cid) }
+            if (-not (Test-ReleaseAuthorityInteger -Value $row.exitCode)) { $reasons.Add('chunk-exit:' + $cid) }
             elseif ([int]$row.exitCode -ne 0) { $reasons.Add('chunk-exit:' + $cid) }
-            $trx = Resolve-ReleaseAuthorityEvidencePath -CandidateRoot $CandidateRoot -Relative ([string]$row.trx)
+            $trx = Resolve-ReleaseAuthorityEvidencePath -CandidateRoot $CandidateRoot -Relative (Get-ReleaseAuthorityText -Value $row.trx)
             if ([string]::IsNullOrWhiteSpace($trx)) { $reasons.Add('chunk-evidence-escape:' + $cid); continue }
             if (-not (Test-Path -LiteralPath $trx -PathType Leaf)) { $reasons.Add('chunk-evidence-missing:' + $cid); continue }
-            if ([string]$row.trxSha256 -cne (Get-NightlyFileSha256 -Path $trx)) { $reasons.Add('chunk-evidence-digest:' + $cid) }
+            if (-not (Test-ReleaseAuthorityText -Value $row.trxSha256 -Expected (Get-NightlyFileSha256 -Path $trx))) { $reasons.Add('chunk-evidence-digest:' + $cid) }
             try { $results = @(Read-NightlyTrxIdentities -TrxPath $trx) } catch { $reasons.Add('chunk-trx-unreadable:' + $cid); continue }
             $cx = 0; $cp = 0; $cf = 0; $cs = 0
             foreach ($t in $results) {
@@ -557,7 +724,7 @@ function Test-ReleaseGateExecutionLedger {
             }
             foreach ($pair in @(@('executed', $cx), @('passed', $cp), @('failed', $cf), @('skipped', $cs))) {
                 $v = $row.($pair[0])
-                if (($v -isnot [long] -and $v -isnot [int]) -or [int]$v -ne [int]$pair[1]) { $reasons.Add('chunk-count-' + $pair[0] + ':' + $cid) }
+                if (-not (Test-ReleaseAuthorityInteger -Value $v) -or [int]$v -ne [int]$pair[1]) { $reasons.Add('chunk-count-' + $pair[0] + ':' + $cid) }
             }
             if ($cx -eq 0) { $reasons.Add('chunk-zero-executed:' + $cid) }
             $executed += $cx; $passed += $cp
@@ -569,7 +736,8 @@ function Test-ReleaseGateExecutionLedger {
         $summaryRows += [ordered]@{ id = $id; kind = 'native'; chunks = $planChunks.Count; required = $requiredUids.Count; executed = $executed; passed = $passed }
     }
     foreach ($row in @($ledger.chunks)) {
-        if (-not $allChunkIds.ContainsKey([string]$row.chunk)) { $reasons.Add('chunk-unexpected:' + [string]$row.chunk) }
+        $rowChunk = Get-ReleaseAuthorityText -Value $row.chunk
+        if ([string]::IsNullOrEmpty($rowChunk) -or -not $allChunkIds.ContainsKey($rowChunk)) { $reasons.Add('chunk-unexpected:' + [string]$row.chunk) }
     }
     return [pscustomobject]@{ Ok = ($reasons.Count -eq 0); Reasons = @($reasons); Suites = $summaryRows }
 }
@@ -614,21 +782,22 @@ function New-ReleaseGatePublicationAuthority {
 
 function Test-ReleaseGateAuthority {
     <#
-      Single entry point for the publisher: pinned policy + ledger. Returns Ok,
-      Reasons, the pinned required suites and the validated suite rows.
+      Single entry point for the publisher: pinned policy + ledger. Repository is the
+      publication destination; NowUtc is the publisher's clock (Get-ReleaseGateUtcNow).
+      Returns Ok, Reasons, the pinned required suites and the validated suite rows.
     #>
     param([string]$CandidateRoot, [string]$RepositoryRoot, $Green, $Candidate, [string]$Repository = '', [datetime]$NowUtc = [datetime]::MinValue)
     $pinned = Test-ReleaseGatePinnedAuthority -CandidateRoot $CandidateRoot -RepositoryRoot $RepositoryRoot `
-        -Sha ([string]$Candidate.sha) -CandidateId ([string]$Candidate.candidateId) -CandidateRef ([string]$Candidate.ref)
+        -Sha ([string]$Candidate.sha) -CandidateId ([string]$Candidate.candidateId) -CandidateRef ([string]$Candidate.ref) -Repository $Repository
     if ($null -eq $pinned.Authority) {
         return [pscustomobject]@{ Ok = $false; Reasons = @($pinned.Reasons); Pinned = $pinned; Suites = @() }
     }
     $reasons = @($pinned.Reasons)
-    if ([string]$Green.policyHash -cne [string]$pinned.Authority.policyHash) { $reasons += 'green-policy-hash-mismatch' }
+    if (-not (Test-ReleaseAuthorityText -Value $Green.policyHash -Expected (Get-ReleaseAuthorityText -Value $pinned.Authority.policyHash))) { $reasons += 'green-policy-hash-mismatch' }
     if ($null -eq $pinned.Policy) {
         return [pscustomobject]@{ Ok = $false; Reasons = $reasons; Pinned = $pinned; Suites = @() }
     }
-    $ledger = Test-ReleaseGateExecutionLedger -CandidateRoot $CandidateRoot -Pinned $pinned -Green $Green
+    $ledger = Test-ReleaseGateExecutionLedger -CandidateRoot $CandidateRoot -Pinned $pinned -Green $Green -NowUtc $NowUtc
     $reasons += @($ledger.Reasons)
     return [pscustomobject]@{ Ok = ($reasons.Count -eq 0); Reasons = $reasons; Pinned = $pinned; Suites = @($ledger.Suites) }
 }
