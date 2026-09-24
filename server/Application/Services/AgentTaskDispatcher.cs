@@ -4158,14 +4158,31 @@ public sealed class AgentTaskDispatcher
             && string.IsNullOrEmpty(claimed.ProgressBaselineJson)
             && _progressGit is not null)
         {
-            var capture = await CaptureProgressBaselineAsync(claimed, now, ct);
-            if (capture.FailureReason is not null && claimed.Role != AgentTaskRole.Code)
+            BaselineCapture capture;
+            if (claimed.Role == AgentTaskRole.Code)
+                capture = await CaptureProgressBaselineAsync(claimed, now, ct);
+            else
             {
-                // A non-Code runner task is not failed for this: its settlement blocks with
-                // runner_sync_baseline_unavailable instead, and the report is kept.
-                (repairWarnings ??= []).Add($"progress=unavailable; reason={capture.FailureReason}");
+                // A non-Code runner task is never failed, warned or held for this: its settlement
+                // blocks with runner_sync_baseline_unavailable instead, and the report is kept.
+                try
+                {
+                    capture = await CaptureProgressBaselineAsync(claimed, now, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    capture = new(null, null, ex.GetType().Name);
+                }
+                if (capture.FailureReason is not null)
+                {
+                    _logger.LogInformation(
+                        "Task {ShortId}: runner source identity not captured ({Reason}); settlement will block",
+                        DelegationReportFormatter.Short(claimed.Id), capture.FailureReason);
+                    capture = capture with { FailureReason = null, Warning = null };
+                }
             }
-            else if (capture.FailureReason is not null)
+
+            if (capture.FailureReason is not null)
             {
                 await FailAsync(claimed, capture.FailureReason, ct);
                 await transaction.CommitAsync(ct);
