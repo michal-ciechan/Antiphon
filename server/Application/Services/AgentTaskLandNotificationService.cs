@@ -15,7 +15,7 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>Durable handoff and transcript-only receipt. All typing belongs to the existing queue.</summary>
 public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMessageQueueService messages,
     CompletionNoteFlushQueue flushes, AgentSessionRuntime runtime, TimeProvider clock, LandDeliveryBoundary? boundary = null,
-    IRepositoryMutationLease? leases = null, IOptions<SupervisionSettings>? supervision = null,
+    IOptions<SupervisionSettings>? supervision = null,
     IAgentReportStore? reports = null, CheckCompactionBoundary? compactionBoundary = null)
 {
     /// <summary>
@@ -95,25 +95,6 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                     note.NextAttemptAt = now.AddMinutes(5);
                     await db.SaveChangesAsync(ct);
                     return;
-                }
-                // A scanning worker can see the commit before the producer leaves its lease.
-                // Probe only terminal/conflict handoffs; a held note must remain deliverable while a lease is occupied.
-                if (leases is not null && note.Kind is LandNotificationKind.Outcome or LandNotificationKind.Conflict)
-                {
-                    var repository = await db.AgentTasks.Where(t => t.Id == note.TaskId).Select(t => t.RepoPath).SingleAsync(ct);
-                    if (repository is not null)
-                    {
-                        try
-                        {
-                            var released = await leases.TryAcquireAsync(repository, ct);
-                            if (released is null) return;
-                            await released.DisposeAsync();
-                        }
-                        catch (IOException)
-                        {
-                            // A failed land can leave RepoPath unreadable; the producer is no longer holding a lease.
-                        }
-                    }
                 }
                 // CARD-0544 D-9: a Completion enqueues its immutable snapshot rendering — header and
                 // hold deadline fixed at settlement — after making sure the report it points at is
