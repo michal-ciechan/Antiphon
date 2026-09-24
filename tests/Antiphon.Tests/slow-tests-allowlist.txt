@@ -129,3 +129,5 @@ Antiphon.Tests.Application.ContinuationSettlementTests
 Antiphon.Tests.Application.WorktreeDefaultAdmissionTests
 # CARD-0644: real Git retired-worktree continuation at a frozen tip; 120s case budget.
 Antiphon.Tests.Application.WorktreeDefaultContinuationTests
+# CARD-0644: real Git/schema retained-caller regressions (factories, settlement, card launch, nightly guard); 120s case budget.
+Antiphon.Tests.Application.WorktreeDefaultCallerTests
