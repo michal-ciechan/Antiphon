@@ -213,31 +213,41 @@ public class LandingGit : ILandingGit
     }
 
     /// <summary>CARD-0642 D-4: commands that can add/remove registrations or move a worktree's HEAD or branch.
-    /// <paramref name="topology"/> also drops cached canonical/common-dir resolutions.</summary>
+    /// Leading global options (<c>-c key=value</c>, <c>-C path</c>) are skipped to find the subcommand;
+    /// a subcommand not known to be read-only invalidates. <paramref name="topology"/> also drops
+    /// cached canonical/common-dir resolutions.</summary>
     internal static bool ChangesRegistrations(IReadOnlyList<string> arguments, out bool topology)
     {
         topology = false;
-        if (arguments.Count == 0) return false;
-        var rest = arguments.Skip(1).ToList();
-        switch (arguments[0])
+        var index = LandingGitProfile.SubcommandIndex(arguments);
+        if (index >= arguments.Count) return false;
+        var rest = arguments.Skip(index + 1).ToList();
+        switch (arguments[index])
         {
             case "worktree":
                 topology = rest.Count == 0 || rest[0] != "list";
                 return topology;
-            case "gc" or "prune":
-                topology = true;
-                return true;
-            case "rebase" or "merge" or "checkout" or "switch" or "reset" or "commit" or "branch"
-                or "cherry-pick" or "revert" or "am" or "pull" or "stash":
-                return true;
             case "symbolic-ref":
                 return rest.Any(a => a is "-d" or "--delete") || rest.Count(a => !a.StartsWith('-')) >= 2;
             case "update-ref":
                 return rest.Any(a => a is "--stdin" or "HEAD" || a.StartsWith("refs/heads/", StringComparison.Ordinal));
-            default:
+            case var read when ReadOnlyCommands.Contains(read):
                 return false;
+            default:
+                // rebase, merge, checkout, switch, reset, commit, branch, gc, prune and anything unknown.
+                topology = arguments[index] is "gc" or "prune";
+                return true;
         }
     }
+
+    /// <summary>Subcommands that never add/remove a registration or move a HEAD/branch. fetch/push
+    /// write only remote or recovery refs (pins), per CARD-0642 D-4.</summary>
+    private static readonly HashSet<string> ReadOnlyCommands = new(StringComparer.Ordinal)
+    {
+        "rev-parse", "show-ref", "status", "ls-files", "merge-base", "ls-remote", "fetch", "push",
+        "check-ref-format", "for-each-ref", "cat-file", "remote", "config", "diff", "diff-tree", "diff-index",
+        "log", "show", "rev-list", "ls-tree", "commit-tree", "hash-object", "name-rev", "describe", "version",
+    };
 
     public ILandingOperationScope BeginOperationScope()
     {

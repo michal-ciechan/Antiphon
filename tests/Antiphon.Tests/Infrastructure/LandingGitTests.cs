@@ -396,6 +396,25 @@ public sealed class LandingGitTests
     }
 
     [Test]
+    public async Task C642_ScopeReListsAfterOwnOptionPrefixedHeadMove()
+    {
+        // The protocol's rebase/ff-merge run as `-c key=value <command>`; the cached HEAD must not survive them.
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        using var scope = fixture.Git.BeginOperationScope();
+        (await fixture.Git.RegistrationsAsync(fixture.Repository, CancellationToken.None))
+            .Single(r => IsTree(r, "source")).Head.ShouldBe(fixture.SeedSha);
+        (await fixture.Git.RunAsync(fixture.Source, ["-c", "commit.gpgSign=false", "commit", "--allow-empty", "-m", "moved"],
+            CancellationToken.None)).Succeeded.ShouldBeTrue();
+        var moved = (await fixture.RequiredAsync(fixture.Source, "rev-parse", "HEAD")).Trim();
+        moved.ShouldNotBe(fixture.SeedSha);
+        (await fixture.Git.RegistrationsAsync(fixture.Repository, CancellationToken.None))
+            .Single(r => IsTree(r, "source")).Head.ShouldBe(moved);
+        (await fixture.Git.InspectAsync(fixture.Coordinates, LandInspectionScope.IdentityAndStatus, CancellationToken.None))
+            .Snapshot!.HeadSha.ShouldBe(moved);
+    }
+
+    [Test]
     public async Task C642_InspectAsyncListsRegistrationsOncePerScope()
     {
         await using var fixture = new LandingGitFixture();

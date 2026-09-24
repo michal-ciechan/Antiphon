@@ -105,9 +105,19 @@ public sealed class LandingGitProfile
     {
         Interlocked.Increment(ref _processes);
         Interlocked.Add(ref _gitTicks, elapsed.Ticks);
-        var command = arguments.Count == 0 ? "" : arguments[0];
-        if (command == "worktree" && arguments.Count > 1 && arguments[1] == "list") Interlocked.Increment(ref _worktreeLists);
+        var index = SubcommandIndex(arguments);
+        var command = index < arguments.Count ? arguments[index] : "";
+        if (command == "worktree" && index + 1 < arguments.Count && arguments[index + 1] == "list") Interlocked.Increment(ref _worktreeLists);
         if (command is "ls-remote" or "fetch" or "push") Interlocked.Increment(ref _remote);
+    }
+
+    /// <summary>Index of the git subcommand after leading global options such as <c>-c key=value</c> or <c>-C path</c>.</summary>
+    public static int SubcommandIndex(IReadOnlyList<string> arguments)
+    {
+        var index = 0;
+        while (index < arguments.Count && arguments[index].StartsWith('-'))
+            index += arguments[index] is "-c" or "-C" or "--git-dir" or "--work-tree" or "--namespace" ? 2 : 1;
+        return index;
     }
 
     public void RegistrationHit() => Interlocked.Increment(ref _registrationHits);
