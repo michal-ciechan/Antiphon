@@ -251,7 +251,10 @@ public sealed partial class RunnerWorkspaceService
         for (var i = 0; i < parts.Length; i++)
         {
             var next = Path.Combine(current, parts[i]);
-            if (Directory.Exists(next) || File.Exists(next))
+            // Exists follows a link and is false when the target is missing, so a dangling
+            // symlink looks like a new file. LinkTarget sees the link itself. Writing through
+            // it would create the target outside this mirror.
+            if (IsSymbolicLink(next) || Directory.Exists(next) || File.Exists(next))
             {
                 next = TryResolveFinal(next) ?? "";
                 if (next.Length == 0 || !IsInside(next, mirrorRoot))
@@ -306,23 +309,78 @@ public sealed partial class RunnerWorkspaceService
         for (var i = 0; i < segments.Length; i++)
         {
             var candidate = Path.Combine(current, segments[i]);
+            if (IsSymbolicLink(candidate))
+            {
+                if (!TryResolveLinkTarget(candidate, out var resolved))
+                    return null;
+                current = resolved;
+                continue;
+            }
+
             FileSystemInfo? info = Directory.Exists(candidate)
                 ? new DirectoryInfo(candidate)
                 : File.Exists(candidate) ? new FileInfo(candidate) : null;
             if (info is null)
                 return Path.GetFullPath(Path.Combine(current, Path.Combine(segments[i..])));
-            try
-            {
-                var link = info.ResolveLinkTarget(returnFinalTarget: true);
-                current = link is null ? info.FullName : Path.GetFullPath(link.FullName);
-            }
-            catch (IOException)
-            {
-                return null;
-            }
+            current = Path.GetFullPath(info.FullName);
         }
 
         return Path.GetFullPath(current);
+    }
+
+    /// <summary>
+    /// True when <paramref name="path"/> is a symlink or junction. <see cref="File.Exists"/> is
+    /// false for a dangling link, so it cannot answer this.
+    /// </summary>
+    private static bool IsSymbolicLink(string path) =>
+        LinkTargetOf(new FileInfo(path)) is not null
+        || LinkTargetOf(new DirectoryInfo(path)) is not null;
+
+    private static string? LinkTargetOf(FileSystemInfo info)
+    {
+        try
+        {
+            return info.LinkTarget;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Follow the link to a target that exists. An unresolved link, including a dangling one,
+    /// returns false so the caller refuses the write.
+    /// </summary>
+    private static bool TryResolveLinkTarget(string path, out string resolved)
+    {
+        resolved = "";
+        FileSystemInfo? final = null;
+        foreach (FileSystemInfo info in new FileSystemInfo[] { new DirectoryInfo(path), new FileInfo(path) })
+        {
+            try
+            {
+                var found = info.ResolveLinkTarget(returnFinalTarget: true);
+                if (found is not null)
+                {
+                    final = found;
+                    break;
+                }
+            }
+            catch (IOException)
+            {
+                // A file/directory mismatch throws. The other shape may still resolve the same link.
+            }
+        }
+
+        if (final is null)
+            return false;
+        var full = Path.GetFullPath(final.FullName);
+        // The target path, not the link. Exists is false when the final target was never created.
+        if (!Directory.Exists(full) && !File.Exists(full))
+            return false;
+        resolved = full;
+        return true;
     }
 
     private static bool IsInside(string candidate, string root)
