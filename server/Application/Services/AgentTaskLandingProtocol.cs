@@ -404,7 +404,8 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         // The terminal cleanup evidence is committed with the outcome event and pending-task
         // changes by AgentTaskLandService. Until then the saved cleanup intent supports retry.
         if (removed.IsClean && op.Phase != LandPhase.Complete) _state.Transition(op, LandPhase.Complete, Now());
-        return new(op, removed.Residue, []);
+        // CARD-0665 D-8: LastReason keeps the bare code; the protected paths or retained count ride beside it.
+        return new(op, removed.Residue, []) { Detail = removed.Detail };
     }
 
     private async Task ConfirmAsync(AgentTaskLanding op, LandingRemoteObservation remote,

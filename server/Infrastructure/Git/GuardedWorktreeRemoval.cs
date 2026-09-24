@@ -31,7 +31,9 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
         var unregistered = false;
         WorktreeGitOutcome? outcome = null;
         long? failedAt = null;
-        WorktreeDirectoryPass Finish(string? reason) => new(new(unregistered, directoryGone, false, reason), outcome, failedAt);
+        string? retainedDetail = null;
+        WorktreeDirectoryPass Finish(string? reason, string? detail = null) => new(new(unregistered, directoryGone, false, reason)
+            { Detail = detail ?? (reason is null ? retainedDetail : null) }, outcome, failedAt);
         try
         {
             if ((request.CleanupContext is not null || request.Purpose == WorktreeRemovalPurpose.SettledTask)
@@ -59,13 +61,26 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                     return Finish("nested_registration");
                 var inspection = await git.InspectAsync(source, LandInspectionScope.Full, ct);
                 if (!Matches(inspection, request)) return Finish(inspection.Reason ?? "source_changed");
-                // Non-forcing Git removal ALSO deletes ignored files. No patterns grant ownership.
-                if (HasProtectedIgnored(inspection.Snapshot!)) return Finish("ignored_content_preserved");
+                // Non-forcing Git removal ALSO deletes ignored files. Only the CARD-0665 allowlist
+                // grants that: protected content refuses, evidence is retained before reading 2.
+                var first = Classify(inspection.Snapshot!);
+                if (first.Protected.Length != 0)
+                    return Finish("ignored_content_preserved", WorktreeIgnoredContentGate.ProtectedDetail(first.Protected));
+                if (ignored is not null)
+                {
+                    var retained = await ignored.RetainAsync(request, first.Evidence, ct);
+                    if (retained.Reason is not null) return Finish(retained.Reason);
+                    retainedDetail = WorktreeIgnoredContentGate.RetainedDetail(retained);
+                }
                 reason = await AuthorityAsync(request, ct);
                 if (reason is not null) return Finish(reason);
                 var final = await git.InspectAsync(source, LandInspectionScope.Full, ct);
                 if (!Matches(final, request)) return Finish(final.Reason ?? "source_changed");
-                if (HasProtectedIgnored(final.Snapshot!)) return Finish("ignored_content_preserved");
+                var second = Classify(final.Snapshot!);
+                if (second.Protected.Length != 0)
+                    return Finish("ignored_content_preserved", WorktreeIgnoredContentGate.ProtectedDetail(second.Protected));
+                // Disposable churn is allowed; evidence must be exactly what was retained.
+                if (!second.Evidence.SequenceEqual(first.Evidence, StringComparer.Ordinal)) return Finish("ignored_content_changed");
                 if (consumeSlot is not null && !await consumeSlot(ct)) return Finish("cleanup_command_slot_spent");
                 // The final status/identity read can race a task-coordinate or receipt revision.
                 // Revalidate durable authority immediately before deletion without reusing a tracked row.
@@ -250,7 +265,9 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
         && LandingGit.PathsEqual(result.Snapshot.CommonDirectory, expected.CommonDirectory)
         && LandingGit.PathsEqual(result.Snapshot.GitDirectory, expected.GitDirectory);
 
-    private static bool HasProtectedIgnored(LandSourceSnapshot snapshot) => snapshot.IgnoredPaths.Length != 0;
+    /// <summary>CARD-0665 D-6: without a gate every ignored path is protected, as before.</summary>
+    private WorktreeIgnoredContent Classify(LandSourceSnapshot snapshot) => ignored?.Classify(snapshot)
+        ?? new([], [], [.. snapshot.IgnoredPaths.Order(StringComparer.Ordinal)]);
 
     private static bool IsAbsent(string path)
     {
