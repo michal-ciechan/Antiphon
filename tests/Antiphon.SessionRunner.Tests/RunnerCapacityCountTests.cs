@@ -100,6 +100,87 @@ public class RunnerCapacityCountTests
         }
     }
 
+    [Test]
+    public async Task Release_keeps_custody_when_kill_throws()
+    {
+        var (runtime, root, sessionId, manifest) = LiveSeat(new StubChild
+        {
+            Kill = _ => throw new IOException("kill failed"),
+        });
+        try
+        {
+            var failed = await Should.ThrowAsync<InvalidOperationException>(() =>
+                runtime.ReleaseSlotAsync(sessionId, "operator evict", TimeSpan.FromSeconds(1), CancellationToken.None));
+            failed.Message.ShouldContain("custody was retained");
+            runtime.List().ShouldContain(session => session.SessionId == sessionId && session.Status != "Exited");
+            File.Exists(manifest).ShouldBeTrue();
+            File.Exists(Path.Combine(root, "slot-releases.jsonl")).ShouldBeFalse();
+        }
+        finally
+        {
+            await runtime.DisposeAsync();
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Test]
+    public async Task Release_keeps_custody_when_kill_times_out()
+    {
+        var (runtime, root, sessionId, manifest) = LiveSeat(new StubChild
+        {
+            Kill = _ => Task.FromResult(false),
+        });
+        try
+        {
+            var failed = await Should.ThrowAsync<InvalidOperationException>(() =>
+                runtime.ReleaseSlotAsync(sessionId, "operator evict", TimeSpan.Zero, CancellationToken.None));
+            failed.Message.ShouldContain("custody was retained");
+            runtime.List().ShouldContain(session => session.SessionId == sessionId && session.Status != "Exited");
+            File.Exists(manifest).ShouldBeTrue();
+        }
+        finally
+        {
+            await runtime.DisposeAsync();
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    private static (SessionRunnerRuntime Runtime, string Root, Guid SessionId, string Manifest) LiveSeat(StubChild child)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "antiphon-c653-rel-" + Guid.NewGuid().ToString("N"));
+        var settings = new SessionRunnerSettings { SessionLogPath = root, PtyHostLingerHours = 0.02 };
+        var sessionId = Guid.NewGuid();
+        Directory.CreateDirectory(settings.PtyHostManifestDir);
+        var manifest = PtyHostManifest.PathFor(settings.PtyHostManifestDir, sessionId);
+        new PtyHostManifest
+        {
+            SessionId = sessionId,
+            PipeName = "live-host",
+            HostPid = 1,
+            HostStartTimeUtc = DateTime.UtcNow,
+            CreatedAtUtc = DateTime.UtcNow,
+        }.SaveAtomic(manifest);
+        var runtime = new SessionRunnerRuntime(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance);
+        var session = new SessionRunnerRuntime.RunnerSession(
+            sessionId, settings, new SessionRunnerEventHub(), NullLogger<SessionRunnerRuntime>.Instance);
+        session.BindChildForTest(child);
+        runtime.Track(session);
+        return (runtime, root, sessionId, manifest);
+    }
+
+    private sealed class StubChild : ISessionChild
+    {
+        public Func<CancellationToken, Task<bool>>? Kill { get; init; }
+        public Task<ChildStarted> LaunchAsync(RunnerLaunchRequest request, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task WriteAsync(string input, CancellationToken ct) => Task.CompletedTask;
+        public Task ResizeAsync(int cols, int rows, CancellationToken ct) => Task.CompletedTask;
+        public Task<bool> KillAsync(CancellationToken ct) => Kill?.Invoke(ct) ?? Task.FromResult(false);
+        public Task<ChildScreen?> ReadScreenAsync(CancellationToken ct) => Task.FromResult<ChildScreen?>(null);
+        public event Action<ChildExit>? Exited { add { } remove { } }
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
     private sealed class AdmitProbe(PhoneHomeRuntimeAdapter adapter) : IPhoneHomeRuntimeSurface
     {
         public bool Started { get; private set; }
