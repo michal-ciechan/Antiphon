@@ -2800,23 +2800,48 @@ public sealed class AgentTaskDispatcher
         return true;
     }
 
-    private async Task<bool> TryFailClaudeCredentialProbeAsync(
-        AgentTask claimed, Func<CancellationToken, Task> commitBeforeNotify, CancellationToken ct)
-    {
-        if (_runners is null || _phoneHome is null || claimed.RunnerId is null)
-            return false;
+    /// <summary>
+    /// A silent <c>GetProviderAuthAsync</c> used to sit inside the claim's <c>FOR UPDATE</c>
+    /// (review 0b52f4cd). The RPC runs before that transaction, and this budget bounds the tick
+    /// when the runner never answers. Timeout and transport failure match the old catch: the task
+    /// is not failed.
+    /// </summary>
+    private static readonly TimeSpan ClaudeCredentialProbeBudget = TimeSpan.FromSeconds(5);
 
-        Antiphon.SessionRunner.Contracts.RunnerProviderAuthDto? answer;
+    private async Task<Antiphon.SessionRunner.Contracts.RunnerProviderAuthDto?> ReadClaudeProviderAuthBeforeClaimAsync(
+        AgentTask task, CancellationToken ct)
+    {
+        if (_runners is null || _phoneHome?.ClaudeAuthProbeEnabled != true
+            || task.RunnerId is null || task.AgentKind != AgentKind.ClaudeCode)
+            return null;
+
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        budget.CancelAfter(ClaudeCredentialProbeBudget);
         try
         {
-            answer = await _runners.Resolve(claimed.RunnerId).GetProviderAuthAsync("claude", ct);
+            return await _runners.Resolve(task.RunnerId).GetProviderAuthAsync("claude", budget.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                "Claude credential probe timed out for runner {RunnerId}; the claim was not opened",
+                task.RunnerId);
+            return null;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogWarning(ex, "Claude credential probe unavailable for runner {RunnerId}", claimed.RunnerId);
-            return false;
+            _logger.LogWarning(ex, "Claude credential probe unavailable for runner {RunnerId}", task.RunnerId);
+            return null;
         }
-        if (answer?.LoggedIn != false)
+    }
+
+    private async Task<bool> TryFailClaudeCredentialProbeAsync(
+        AgentTask claimed,
+        Antiphon.SessionRunner.Contracts.RunnerProviderAuthDto? answer,
+        Func<CancellationToken, Task> commitBeforeNotify,
+        CancellationToken ct)
+    {
+        if (_phoneHome is null || claimed.RunnerId is null || answer?.LoggedIn != false)
             return false;
 
         // CARD-0628 D-1 (operator decision): the `claude setup-token` OAuth token in the runner
@@ -3723,6 +3748,10 @@ public sealed class AgentTaskDispatcher
     private async Task<DispatchOneResult> DispatchOneAsync(
         AgentTask task, CancellationToken ct, SiblingBaseGuard? siblingObservation = null)
     {
+        // Runner RPC before any row lock. A pinned profile cannot change the task's kind, so the
+        // pre-claim answer is the one the claim applies.
+        var claudeAuth = await ReadClaudeProviderAuthBeforeClaimAsync(task, ct);
+
         // Admission and landing read running claims under the same common-directory lease.
         // Hold through commit of the claim, including warm-agent and follow-up paths.
         var needsLease = task.Workspace != WorkspaceMode.ReadOnly && !AgentTaskRoles.IsSpecialist(task.Role)
@@ -3866,7 +3895,7 @@ public sealed class AgentTaskDispatcher
 
         if (claimed.RunnerId is not null && program.Kind == AgentKind.ClaudeCode
             && _phoneHome?.ClaudeAuthProbeEnabled == true
-            && await TryFailClaudeCredentialProbeAsync(claimed,
+            && await TryFailClaudeCredentialProbeAsync(claimed, claudeAuth,
                 token => transaction.CommitAsync(token), ct))
         {
             return DispatchOneResult.NotClaimed;

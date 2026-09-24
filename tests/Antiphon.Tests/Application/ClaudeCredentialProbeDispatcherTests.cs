@@ -105,6 +105,44 @@ public sealed class ClaudeCredentialProbeDispatcherTests
         probe.Requests.ShouldBe(0);
     }
 
+    [Test]
+    public async Task Slow_or_silent_probe_does_not_hold_the_claim_row_lock()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var (_, taskId) = await SeedAsync(schema, workspace.Path);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<RunnerProviderAuthDto?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var probe = new ProbeClient(_ =>
+        {
+            entered.TrySetResult();
+            return release.Task;
+        });
+
+        var tick = CreateDispatcher(schema, probe, enabled: true).TickAsync(CancellationToken.None);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            db.Database.SetCommandTimeout(2);
+            var updated = await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE \"AgentTasks\" SET \"Title\" = \"Title\" WHERE \"Id\" = {taskId}");
+            updated.ShouldBe(1);
+        }
+
+        release.TrySetResult(new RunnerProviderAuthDto(
+            "claude", false, "none", null, DateTimeOffset.UtcNow, null));
+        await tick.WaitAsync(TimeSpan.FromSeconds(10));
+
+        await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var task = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        task.Status.ShouldBe(AgentTaskStatus.Failed);
+        task.FailureCode.ShouldBe(AgentTaskFailureCode.AuthenticationRequired);
+        task.WorktreePath.ShouldBeNull();
+        probe.Requests.ShouldBe(1);
+    }
+
     private static async Task<(Guid ParentId, Guid TaskId)> SeedAsync(
         IsolatedTestSchema schema, string path, AgentKind kind = AgentKind.ClaudeCode)
     {
@@ -200,14 +238,24 @@ public sealed class ClaudeCredentialProbeDispatcherTests
             Task.FromResult<RunnerInventory>(new RunnerInventory.Unavailable("test"));
     }
 
-    private sealed class ProbeClient(RunnerProviderAuthDto? answer) : ISessionRunnerClient
+    private sealed class ProbeClient : ISessionRunnerClient
     {
+        private readonly Func<CancellationToken, Task<RunnerProviderAuthDto?>> _answer;
+
+        public ProbeClient(RunnerProviderAuthDto? answer)
+            : this(_ => Task.FromResult(answer))
+        {
+        }
+
+        public ProbeClient(Func<CancellationToken, Task<RunnerProviderAuthDto?>> answer) => _answer = answer;
+
         public int Requests { get; private set; }
+
         public Task<RunnerProviderAuthDto?> GetProviderAuthAsync(string provider, CancellationToken ct)
         {
             provider.ShouldBe("claude");
             Requests++;
-            return Task.FromResult(answer);
+            return _answer(ct);
         }
         public Task<SessionRunnerSessionDto> StartAsync(Guid id, AgentLaunchSpec spec, CancellationToken ct) => throw new NotSupportedException();
         public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
