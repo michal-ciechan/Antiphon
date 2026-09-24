@@ -294,11 +294,17 @@ public sealed class PhoneHomeCommandDispatcher
             409);
     }
 
+    /// <summary>
+    /// CARD-0640. The image's own <c>grok</c>, by bare name or the exact path the runner
+    /// Dockerfile installs it to. Any other path, even one ending in <c>/grok</c>
+    /// (<c>/opt/evil/grok</c>, a <c>..</c> escape, a relative <c>./grok</c>), is not this image's.
+    /// </summary>
     internal static bool IsGrokExe(string? exe) =>
-        !string.IsNullOrWhiteSpace(exe)
-        && (string.Equals(Path.GetFileName(exe), "grok", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(exe, "grok", StringComparison.OrdinalIgnoreCase)
-            || exe.EndsWith("/grok", StringComparison.Ordinal));
+        string.Equals(exe, "grok", StringComparison.Ordinal)
+        || string.Equals(exe, ImageGrokPath, StringComparison.Ordinal);
+
+    /// <summary>Where <c>docker/session-runner-grok/Dockerfile</c> installs the Grok CLI.</summary>
+    internal const string ImageGrokPath = "/usr/local/bin/grok";
 
     /// <summary>
     /// CARD-0628 D-5: the image's own <c>claude</c>, by bare name or the exact path the runner
