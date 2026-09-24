@@ -170,7 +170,7 @@ function Invoke-AntiphonPublishRelease {
         [ordered]@{ suite = [string]$_.suite; class = [string]$_.class; reason = [string]$_.reason; owner = [string]$_.owner } })
     $summaryDigest = Get-NightlySha256Text -Text (ConvertTo-NightlyCanonicalJson -Object ([ordered]@{
         profile = 'rc'; policyHash = [string]$pinned.policyHash; suites = $sanitizedSuites; exclusions = $sanitizedExclusions }))
-    $pubAuthority = New-ReleaseGatePublicationAuthority -CandidateRoot $paths.Root -Pinned $authority.Pinned -SummaryDigest $summaryDigest
+    $pubAuthority = New-ReleaseGatePublicationAuthority -CandidateRoot $paths.Root -Pinned $authority.Pinned -SummaryDigest $summaryDigest -NoWrite:$WhatIf
     if (-not $pubAuthority.Ok) {
         Write-PublishLine ('REFUSED: {0}.' -f $pubAuthority.Reason)
         $result.Refusal = $pubAuthority.Reason; $result.ExitCode = 3; return [pscustomobject]$result
