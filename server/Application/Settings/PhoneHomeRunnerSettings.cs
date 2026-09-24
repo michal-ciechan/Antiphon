@@ -47,6 +47,14 @@ public sealed class PhoneHomeRunnerSettings
     public int CatchUpRetrySeconds { get; set; } = 5;
 
     /// <summary>
+    /// CARD-0679 D-3: how long the recovery pump trusts a "not ours" owner lookup for one session on
+    /// one connection before reading the binding again (a match is trusted for the connection's
+    /// life). Short, so a session row committed just after its first event is still picked up;
+    /// <c>0</c> re-reads every miss.
+    /// </summary>
+    public int OwnerCacheNegativeSeconds { get; set; } = 5;
+
+    /// <summary>
     /// CARD-0653: the owner-only file holding the operator credential for force-release. Empty
     /// means <c>%LOCALAPPDATA%\Antiphon\operator-token</c> (else the XDG data home).
     /// </summary>
@@ -102,6 +110,8 @@ public static class PhoneHomeRunnerSettingsRules
             failures.Add("PhoneHomeRunner:LeaseSeconds must be positive.");
         if (options.CatchUpRetrySeconds < 1)
             failures.Add("PhoneHomeRunner:CatchUpRetrySeconds must be at least 1.");
+        if (options.OwnerCacheNegativeSeconds < 0)
+            failures.Add("PhoneHomeRunner:OwnerCacheNegativeSeconds must not be negative.");
         if (!string.IsNullOrWhiteSpace(options.OperatorTokenPath) && !Path.IsPathFullyQualified(options.OperatorTokenPath))
             failures.Add("PhoneHomeRunner:OperatorTokenPath must be an absolute path.");
         if (string.IsNullOrWhiteSpace(options.SlotReconcileCron))

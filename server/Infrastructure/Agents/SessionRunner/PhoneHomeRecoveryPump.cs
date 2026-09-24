@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -22,6 +24,7 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
     private (PhoneHomeLiveConnection Live, DateTimeOffset At)? _nextCatchUp;
     private Task? _pump;
     private CancellationTokenSource? _pumpStop;
+    private readonly ConditionalWeakTable<PhoneHomeLiveConnection, ConnectionState> _states = new();
 
     public PhoneHomeRecoveryPump(
         PhoneHomeRunnerDirectory directory,
@@ -80,7 +83,24 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
         }
 
         if (ReferenceEquals(_recovered, live))
+        {
+            // CARD-0679 D-2: nothing else would ever release this connection's later events. A
+            // pump that ended because the connection was disposed drained a completed Events
+            // channel; that ending is not an error, and the next cycle sees the closed socket.
+            if (_pump is { IsCompleted: true } ended
+                && !ct.IsCancellationRequested
+                && !live.Events.Completion.IsCompleted)
+            {
+                _logger.LogError(
+                    ended.Exception?.GetBaseException(),
+                    "Phone-home event pump for runner {RunnerId} epoch {Epoch} ended while the connection is "
+                    + "live ({PumpStatus}); restarting it with {PendingEvents} events pending",
+                    live.RunnerId, live.Epoch, ended.Status, live.PendingEvents);
+                StartPump(live, ct);
+            }
+
             return false;
+        }
 
         // CARD-0633 D-2: a failed catch-up is retried after CatchUpRetrySeconds on the connection's
         // own clock, not on the next 50 ms turn of the loop.
@@ -146,7 +166,7 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
     }
 
     /// <summary>CARD-0679 D-2: events on <paramref name="live"/> whose processing threw.</summary>
-    internal int EventFailures(PhoneHomeLiveConnection live) => 0;
+    internal int EventFailures(PhoneHomeLiveConnection live) => Volatile.Read(ref StateFor(live).EventFailures);
 
     internal async Task<bool> CatchUpAsync(PhoneHomeLiveConnection live, CancellationToken ct)
     {
@@ -213,6 +233,7 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
         await foreach (var frame in live.Events.ReadAllAsync(ct))
         {
             var size = frame.Payload?.GetRawText().Length ?? 0;
+            Guid? sessionId = null;
             try
             {
                 if (frame.EventName is null || frame.Payload is null)
@@ -220,6 +241,7 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
                 var parsed = RunnerContractMapper.ParseEvent(frame.EventName, frame.Payload.Value.GetRawText());
                 if (parsed is null)
                     continue;
+                sessionId = parsed.SessionId;
                 if (!await OwnerMatchesAsync(live, parsed.SessionId, ct))
                     continue;
 
@@ -232,6 +254,17 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
                 else if (parsed.Transcript is not null)
                     await runtime.ObserveTranscriptAsync(parsed.Transcript, ct);
             }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                // CARD-0679 D-2: one event that cannot be observed must not end the pump, or every
+                // later event on the connection stays pending until the cap closes the socket. The
+                // runner's transcript still holds it, and the next connection's catch-up re-reads it.
+                var failures = Interlocked.Increment(ref StateFor(live).EventFailures);
+                _logger.LogWarning(
+                    ex, "Phone-home event {EventName} for session {SessionId} on runner {RunnerId} epoch {Epoch} "
+                    + "failed; the pump continues ({EventFailures} failed events on this connection)",
+                    frame.EventName, sessionId, live.RunnerId, live.Epoch, failures);
+            }
             finally
             {
                 live.ReleaseEvent(size);
@@ -239,11 +272,34 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
         }
     }
 
+    /// <summary>
+    /// CARD-0679 D-3: a session's runner binding is persisted before its Launch and never changes,
+    /// so a match holds for the connection's life. A miss is re-read after
+    /// <see cref="PhoneHomeRunnerSettings.OwnerCacheNegativeSeconds"/>, so a row committed just
+    /// after its first event is still picked up.
+    /// </summary>
     internal async Task<bool> OwnerMatchesAsync(PhoneHomeLiveConnection live, Guid sessionId, CancellationToken ct)
     {
+        var owners = StateFor(live).Owners;
+        var now = live.Clock.GetUtcNow();
+        if (owners.TryGetValue(sessionId, out var cached)
+            && (cached.Owned || now - cached.At < TimeSpan.FromSeconds(_settings.OwnerCacheNegativeSeconds)))
+            return cached.Owned;
+
         var binding = await _directory.GetBindingAsync(sessionId, ct);
-        return binding is SessionRunnerBinding.Remote remote
+        var owned = binding is SessionRunnerBinding.Remote remote
             && string.Equals(remote.Owner.RunnerId, live.RunnerId, StringComparison.Ordinal)
             && remote.Owner.RunnerStoreId == live.RunnerStoreId;
+        owners[sessionId] = (owned, now);
+        return owned;
+    }
+
+    private ConnectionState StateFor(PhoneHomeLiveConnection live) => _states.GetValue(live, _ => new ConnectionState());
+
+    /// <summary>What the pump keeps for one connection; it goes with the connection.</summary>
+    private sealed class ConnectionState
+    {
+        public ConcurrentDictionary<Guid, (bool Owned, DateTimeOffset At)> Owners { get; } = new();
+        public int EventFailures;
     }
 }

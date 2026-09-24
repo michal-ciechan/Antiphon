@@ -78,4 +78,12 @@ public sealed class AgentSessionSettings
     public string ResumeContinuePrompt { get; set; } =
         "Your previous turn was interrupted by a restart. Review where you got to and continue the "
         + "work you were doing; if it was already complete, briefly confirm that instead.";
+
+    /// <summary>
+    /// CARD-0679 D-3: output activity (<c>LastSeenAt</c> and the streaming attempt's
+    /// <c>LastEventAt</c>) is written at most once per session per this many milliseconds, on the
+    /// runtime's clock. A burst of output chunks is one heartbeat, not one write per chunk; every
+    /// stall and idle rule measures in seconds or minutes. <c>0</c> writes on every chunk.
+    /// </summary>
+    public int ActivityWriteMinIntervalMs { get; set; } = 1_000;
 }

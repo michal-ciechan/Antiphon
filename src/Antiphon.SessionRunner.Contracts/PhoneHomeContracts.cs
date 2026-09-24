@@ -13,7 +13,7 @@ public static class PhoneHomeProtocol
     public const string LocalRunnerId = "local";
     public const int DefaultMaxInFlightRequests = 32;
     public const int DefaultMaxMessageUtf8Bytes = 16 * 1024 * 1024;
-    public const int DefaultMaxPendingEvents = 1024;
+    public const int DefaultMaxPendingEvents = 8192;
     public const int DefaultMaxPendingEventBytes = 16 * 1024 * 1024;
     public const int DefaultHeartbeatSeconds = 15;
     public const int DefaultLeaseSeconds = 90;
