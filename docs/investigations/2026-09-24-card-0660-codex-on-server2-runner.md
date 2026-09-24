@@ -4,7 +4,7 @@ Date: 2026-09-24. Stage: Investigate (retry; first attempt stalled and wrote not
 Investigator ran inside the server2 runner container (`PhoneHome__RunnerId=server2`, uid `app`), read-only.
 Card: "Codex on the server2 phone-home runner (follow-up to default-runner)"; parent CARD-0659 keeps Codex local.
 
-Status: IN PROGRESS — sections are appended as findings land.
+Status: COMPLETE. The mechanism for each question is established from code + measurement; the live end-to-end proof on server2 is gated on operator sign-in (B1). Next: Plan.
 
 ## 1. How a Codex session launches and is supervised today (desktop)
 
@@ -94,4 +94,60 @@ Nothing new is needed in the transport. Discovery runs where the process runs:
 - Sidecar re-adopt after a runner restart (`SessionRunnerRuntime.cs:2669-2700`, the Codex branch at `:2685`) uses the recorded rollout path under `/state`. `/state/session-runner` is on the persistent volume, so it survives a container replacement, as it already does for Grok and Claude.
 - Server-side code that reads a *local* `.codex` is limited to `OrchestratorWorkspaceLayout` (`server/Application/Services/OrchestratorWorkspaceLayout.cs:220,512`), and only for orchestrator workspaces. Orchestrators are not runner-eligible (CARD-0659 plan), so it is not on the path.
 - Kind-agnostic runner issues apply to Codex exactly as they do to Grok/Claude: CARD-0657 (runner-bound progress read from the desktop worktree), CARD-0653 (capacity leak on finished sessions) and CARD-0649 (attribution). None is Codex-specific.
+
+## 5b. Dispatch changes needed (exe admission, auth probe, capacity, routing)
+
+| Point | Today | Needed |
+|---|---|---|
+| Server kind admission | `IsAdmittedKind` = Grok/ClaudeCode (`PhoneHomeLaunchPolicy.cs:47`) | add `Codex`; the `phone_home_kind_refused` messages at `:101`, `:117` follow. |
+| Server exe projection | `ProjectExe` maps `grok(.exe)` / `claude(.exe)` only (`:185-205`) | map file name `codex`, `codex.cmd`, `codex.exe` → bare `codex` (non-pinned only, like Claude). A profile whose exe is `node.exe … codex.js` does not arise: the `node.exe codex.js` rewrite happens runner-side and on Windows only (`CodexWindowsLaunchPolicy.cs:39-41`). |
+| Server env projection | sets `GROK_HOME`, `CLAUDE_CONFIG_DIR`, `ANTIPHON_API` (`:162-167`) | add `CODEX_HOME = PhoneHomeRunner:ChildCodexHome` (default `/state/codex`, POSIX-absolute validation like `ChildGrokHome` in `PhoneHomeRunnerSettings.cs:75-78`). Refuse `OPENAI_API_KEY`, `CODEX_API_KEY` and `CODEX_ACCESS_TOKEN` in a runner-bound Codex launch env, extending the Claude refusal loop at `:150-157`. |
+| Runner exe admission | `IsGrokExe` / `IsClaudeExe`, exact bare name or image path (`PhoneHomeCommandDispatcher.cs:302-319`) | `IsCodexExe`: `codex` or `/usr/local/bin/codex` exactly, with the same traversal-refusal tests as CARD-0640. |
+| Runner transcript-format admission | Grok/Claude only (`:365-370`) | admit `codex`. The tailer already exists (`SessionRunnerRuntime.cs:25-26`). |
+| Runner auth probe | `ProviderAuthAsync` knows `claude`, `grok` (`:233-256`) | a `CodexAuthProbe` shaped like `GrokAuthProbe` (`src/Antiphon.SessionRunner/GrokAuthProbe.cs`): **presence of `CODEX_HOME/auth.json` only, never opened**, with a `PhoneHome:CodexHome` setting (compose `PhoneHome__CodexHome=/state/codex`). Add `RejectSignedOutCodexAsync` as the launch backstop. `codex login status` also works as a probe (exit 1 + "Not logged in" when signed out, measured). But it prints a login summary when signed in and costs a process spawn, so file presence is the safer choice under the "never print a secret" rule. **Unverified:** that ChatGPT sign-in writes `auth.json` specifically. The CLI's own strings name `auth.json` next to `OPENAI_API_KEY`/`CODEX_API_KEY`/`CODEX_ACCESS_TOKEN` as its credential sources; confirm after the operator's login. |
+| Server pre-flight | `ReadClaudeProviderAuthBeforeClaimAsync` / `TryFailClaudeCredentialProbeAsync` and the Grok pair in `AgentTaskDispatcher.cs:~2840-2990`; create-time Grok refusal `AgentTaskService.cs:3490-3515` | a Codex pair with an `episodeKey` of `codex-home:{runner}:{home}` and a remedy line `docker exec -it -u 1654:1654 -e HOME=/home/app -e CODEX_HOME=/state/codex antiphon-runner-session-runner-1 codex login --device-auth`. It fails `AuthenticationRequired` before a worktree is cut. |
+| Capacity | `PhoneHome__Capacity=2` (compose), server bound `PhoneHomeRunner:MaxCapacity` 8 | no Codex-specific change; Codex shares the runner's slots. The CARD-0653 leak and CARD-0654 per-host budgets apply unchanged. A native Codex process is light next to the 24 cores. |
+| Default routing (CARD-0659) | the plan keeps Codex out of default placement, with guards so that "Codex must never launch remotely", including reroute/rewalk (`docs/.../2026-09-24-card-0659-default-runner-plan.md` lines 13, 45, 127-129, 195, 249) | after Codex is admitted and proven, drop Codex from the exclusion set and turn the "Codex never remote" reroute guards into the ordinary kind-admission check (`IsAdmittedKind`). Sequenced **after** CARD-0659 lands, so this is a small follow-on diff rather than a fork of its plan. |
+| Readiness detector | trust detector matches only the pre-0.156 wording; the sign-in detector misses the 0.156 wording (§2b, §3) | recognise `Trust this folder?` + `Trust and continue` as `Trust`, and `Sign in with ChatGPT` / `Sign in with Device Code` as `SignIn`, with fixtures from `docs/investigations/evidence/card-0660/`. Also pre-seed trust (below) so the runner never depends on auto-accepting a modal. |
+
+## Recommended design
+
+1. **Image.** Pin codex-cli `0.156.1` (the desktop's measured version) native linux-x64 musl in `runtime-base`: a version + SHA-256 ARG pair, the whole `vendor/x86_64-unknown-linux-musl` tree under `/opt/codex/<v>`, and `/usr/local/bin/codex` as a symlink to it, with a build-time `--version` check. No Node dependency.
+2. **State.** `init-state.sh` creates `/state/codex` (0700, uid 1654) and writes a **runner-owned, non-secret** `/state/codex/config.toml` only when it is absent: `[projects."/work/repos/antiphon"] trust_level = "trusted"` and `check_for_update_on_startup = false`. Compose sets `CODEX_HOME=/state/codex` and `PhoneHome__CodexHome=/state/codex`, and the server `PhoneHomeRunner:ChildCodexHome=/state/codex`: one store in three places, as CARD-0628 D-6 did for Claude.
+3. **Auth.** The operator runs `codex login --device-auth` once, interactively, in the running container as uid 1654, with `CODEX_HOME=/state/codex`. Nothing is copied from the desktop, nothing goes in the vault or image, and no API key is used. `docs/agent-credentials.md` gets a Codex row in the server2 table.
+4. **Admission.** Add Codex to the server kind, exe and env projection and to the runner exe and format admission, with the `CodexAuthProbe` presence probe plus the server pre-flight and runner backstop.
+5. **Readiness.** Update the trust and sign-in detectors for the 0.156 wording (a desktop fix as well).
+6. **Proof on server2** (the card's acceptance): one runner-bound Codex Worker task → `Running` → transcript-confirmed `UserPrompt` → `TurnEnd` with the report text; then a relaunch/re-adopt check.
+7. **Routing.** After CARD-0659 lands and the proof passes, admit Codex to default runner placement.
+
+## Operator blockers
+
+- **B1 — Codex sign-in on server2.** `codex login --device-auth` must be run interactively by the operator, since an agent must not log in. Before that, check whether the ChatGPT account/workspace requires device-code sign-in to be enabled in ChatGPT security settings (unverified here).
+- **B2 — Which account.** The runner's Codex draws on whichever ChatGPT plan is signed in. If that is the operator's own account, desktop and server2 Codex share one rate-limit pool, and the Codex subscription-quota notices then describe a shared pool. Decide: same account, or a separate seat.
+- **B3 — Redeploy.** The image change needs a server2 redeploy (deploy-parent / `scripts/c590-real.ps1`) and the server change a desktop restart. Both are operator-gated.
+- **B4 — Disk** (non-blocking): `/state` and `/work` share a host volume at 92% used (18 GB free). Codex adds ~370 MB of image, plus rollouts that grow on `/state`.
+
+## Slice outline (for the Plan)
+
+- **S1 Detectors (desktop-safe, no runner):** trust and sign-in wording for 0.156 in `CodexDetectors.cs` / `CodexStartupReadiness.cs`, with the three captures as fixtures, red first against today's detector.
+- **S2 Image + state:** Dockerfile codex pin, `init-state.sh` `/state/codex` + seeded `config.toml`, compose env (`CODEX_HOME`, `PhoneHome__CodexHome`), and an image test that `codex --version` equals the pin and that the default `runtime` stage carries it.
+- **S3 Runner admission + probe:** `IsCodexExe`, the transcript-format admission, `CodexAuthProbe`, `RejectSignedOutCodexAsync` and the `ProviderAuthAsync` provider list; the dispatcher tests mirror the CARD-0640/0647 Grok ones.
+- **S4 Server projection + pre-flight:** `IsAdmittedKind`, `ProjectExe`, `CODEX_HOME` projection, `ChildCodexHome` setting, credential-env refusal, Codex pre-flight and create-time refusal, and relaunch projection parity (CARD-0640 pattern).
+- **S5 Docs:** `docs/agent-credentials.md` server2 Codex row, `docs/agent-kinds.md` §6 runner note.
+- **S6 Operator + proof on server2:** B1–B3, then one real runner-bound Codex task end-to-end (evidence: the transcript `UserPrompt` + `TurnEnd` rows and the task report).
+- **S7 Routing:** remove the Codex exclusion from CARD-0659's default-runner policy (depends on CARD-0659 landed + S6).
+
+## Remaining uncertainties
+
+- The runner's VT-rendered 0.156.1 ready screen was not classified by `CodexStartupScreen.Classify`. Only the text markers were measured (S6 settles it).
+- Whether `-c check_for_update_on_startup=false` / the config key suppresses the update nag (no newer release to trigger it today).
+- The device-code prerequisites on the operator's ChatGPT account, and the exact credential file name ChatGPT login writes (expected `auth.json`).
+- `CODEX_ACCESS_TOKEN` / `--with-access-token` semantics (Agent Identity?) and billing: a possible non-interactive analogue of `claude setup-token`, not designed on.
+- Whether the desktop's `~/.codex/config.toml` is what hides the trust-detector gap on the desktop. It was not inspected, by rule.
+- Which upstream codex artifact publishes a checksum to pin against.
+
+## Not done, noted
+
+- Fix idea: file a card for the stale `CodexTrustPromptDetector` / `ContainsSignIn` wording. It affects any untrusted cwd on the desktop too, and slice S1 covers it.
+- No code, image, deploy or login changes were made. Scratchpad installs and captures only.
 
