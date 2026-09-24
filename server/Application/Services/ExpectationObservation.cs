@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 
@@ -37,6 +38,11 @@ public static class ExpectationWindows
 {
     public static readonly TimeSpan Queue = TimeSpan.FromMinutes(10);
     public static readonly TimeSpan Capacity = TimeSpan.FromMinutes(10);
+    public static readonly TimeSpan MissingSession = TimeSpan.FromMinutes(10);
+    public static readonly TimeSpan Note = TimeSpan.FromMinutes(10);
+    public static readonly TimeSpan Cooldown = TimeSpan.FromMinutes(10);
+    public static readonly TimeSpan Repeat = TimeSpan.FromMinutes(30);
+    public static readonly TimeSpan ClearGap = TimeSpan.FromMinutes(1);
 }
 
 public static class ExpectationSubjects
@@ -49,6 +55,14 @@ public static class ExpectationSubjects
 
     public static string Capacity(string directiveId, string? runnerId) =>
         "capacity:" + directiveId.Trim() + ":" + RunnerKey(runnerId);
+
+    /// <summary>Task plus dispatch stint. A new dispatch is a new subject.</summary>
+    public static string Silent(string directiveId, Guid taskId, DateTime dispatchedAt) =>
+        "silent:" + directiveId.Trim() + ":" + taskId.ToString("D") + ":"
+        + dispatchedAt.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    public static string Note(string directiveId, Guid notificationId) =>
+        "note:" + directiveId.Trim() + ":" + notificationId.ToString("D");
 
     public static string RunnerKey(string? runnerId) =>
         string.IsNullOrWhiteSpace(runnerId) ? "local" : runnerId.Trim();
@@ -213,6 +227,40 @@ public sealed record ExpectationAdmissionCandidate
     public string? Evidence { get; init; }
 }
 
+/// <summary>What the watchdog knows about a dispatched task's worker session.</summary>
+public enum ExpectationSessionState
+{
+    /// <summary>No binding, no row, or the runner confirmed the session is gone.</summary>
+    Missing = 0,
+    Terminal = 1,
+    Live = 2,
+    /// <summary>Runner unreachable. Not proof that the session is missing.</summary>
+    Unknown = 3,
+}
+
+public sealed record ExpectationInFlightTask
+{
+    public Guid TaskId { get; init; }
+    public Guid? AgentSessionId { get; init; }
+    public string? RunnerId { get; init; }
+    public DateTime DispatchedAt { get; init; }
+    public DateTime LastActivityAt { get; init; }
+    public ExpectationSessionState SessionState { get; init; }
+    public string? ProgressStall { get; init; }
+}
+
+public sealed record ExpectationNoteDebt
+{
+    public Guid NotificationId { get; init; }
+    public Guid TaskId { get; init; }
+    public LandNotificationKind Kind { get; init; }
+    public LandNotificationState State { get; init; }
+    public DateTime CreatedAt { get; init; }
+    public Guid? ParentSessionId { get; init; }
+    public string? LastErrorCode { get; init; }
+    public QueuedMessageStatus? QueueStatus { get; init; }
+}
+
 public sealed record ExpectationOpenEpisode
 {
     public ExpectationEpisodeKind Kind { get; init; }
@@ -238,6 +286,8 @@ public sealed record ExpectationSnapshot
     public IReadOnlyList<ExpectationLaneSnapshot> Lanes { get; init; } = [];
     public IReadOnlyList<ExpectationAdmissionCandidate> Admission { get; init; } = [];
     public IReadOnlyList<ExpectationOpenEpisode> OpenEpisodes { get; init; } = [];
+    public IReadOnlyList<ExpectationInFlightTask> InFlight { get; init; } = [];
+    public IReadOnlyList<ExpectationNoteDebt> Notes { get; init; } = [];
 }
 
 public sealed record ExpectationCondition
@@ -251,6 +301,8 @@ public sealed record ExpectationCondition
     public bool Immediate { get; init; }
     public bool ExplainsHeldQueue { get; init; }
     public IReadOnlyList<Guid> ExampleTaskIds { get; init; } = [];
+    /// <summary>Every task the condition names, for audit. The prompt shows at most three.</summary>
+    public IReadOnlyList<Guid> AffectedTaskIds { get; init; } = [];
 }
 
 public sealed record ExpectationCapacityVerdict
@@ -278,9 +330,16 @@ public sealed record ExpectationEvaluation
     public bool PreservesOpenEpisodes { get; init; }
     public bool ObservedClear { get; init; }
     public string? ProbeError { get; init; }
+    public IReadOnlyList<ExpectationCondition> SilentInFlight { get; init; } = [];
+    public IReadOnlyList<ExpectationCondition> UndeliveredNotes { get; init; } = [];
+    /// <summary>Subjects whose evidence was unknown this scan. Their open episodes stay open.</summary>
+    public IReadOnlyList<string> UnknownSubjectKeys { get; init; } = [];
 }
 
 public sealed record ExpectationRunnerProbe(bool? Available, DateTime? AsOf, string? Detail);
+
+/// <summary>Runner answer for one session. Live null means the runner could not be asked.</summary>
+public sealed record ExpectationSessionProbe(bool? Live, DateTime? AsOf, string? Detail);
 
 public sealed record ExpectationCandidateProbe(
     string? RunnerId,
@@ -296,7 +355,9 @@ public sealed record ExpectationProbeInput(
     IReadOnlyList<ExpectationCandidateProbe> Candidates,
     IReadOnlyDictionary<string, ExpectationRunnerProbe> Runners,
     bool Unavailable,
-    string? Error)
+    string? Error,
+    IReadOnlyDictionary<Guid, ExpectationSessionProbe>? Sessions = null,
+    IReadOnlyDictionary<Guid, WorkspaceProgressArm>? Workspace = null)
 {
     public static ExpectationProbeInput None { get; } = new(
         null,
@@ -306,4 +367,24 @@ public sealed record ExpectationProbeInput(
         null);
 }
 
-public sealed record ExpectationScanResult(ExpectationEvaluation Evaluation, int NudgesCommitted);
+public sealed record ExpectationScanResult(
+    ExpectationEvaluation Evaluation,
+    int NudgesCommitted,
+    Guid? NudgeId = null,
+    IReadOnlyList<string>? NudgedSubjectKeys = null);
+
+/// <summary>
+/// Transcript and receipt catch-up before a nudge is minted (CARD-0055). Production pulls the
+/// named sessions' transcripts; it never marks a note delivered or resends it.
+/// </summary>
+public interface IExpectationCatchUp
+{
+    Task CatchUpAsync(IReadOnlyCollection<Guid> sessionIds, CancellationToken ct);
+}
+
+public sealed class NoExpectationCatchUp : IExpectationCatchUp
+{
+    public static NoExpectationCatchUp Instance { get; } = new();
+
+    public Task CatchUpAsync(IReadOnlyCollection<Guid> sessionIds, CancellationToken ct) => Task.CompletedTask;
+}

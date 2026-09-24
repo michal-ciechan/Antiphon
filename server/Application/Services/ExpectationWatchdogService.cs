@@ -13,13 +13,20 @@ public sealed class ExpectationWatchdogService
     private readonly ExpectationSnapshotReader _reader;
     private readonly ExpectationLedger _ledger;
     private readonly TimeProvider _time;
+    private readonly IExpectationCatchUp _catchUp;
 
-    public ExpectationWatchdogService(AppDbContext db, ExpectationLedger ledger, TimeProvider time)
+    public ExpectationWatchdogService(
+        AppDbContext db,
+        ExpectationLedger ledger,
+        TimeProvider time,
+        DelegationSettings? delegation = null,
+        IExpectationCatchUp? catchUp = null)
     {
         _db = db;
-        _reader = new ExpectationSnapshotReader(db);
+        _reader = new ExpectationSnapshotReader(db, delegation);
         _ledger = ledger;
         _time = time;
+        _catchUp = catchUp ?? NoExpectationCatchUp.Instance;
     }
 
     public async Task<ExpectationScanResult> ScanAsync(
