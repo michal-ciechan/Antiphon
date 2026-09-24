@@ -979,18 +979,41 @@ public sealed class AgentTaskReplyService
         var (note, warning, incidentSummary, incidentDetail) = BindRefusalRecoveryText(
             DelegationReportFormatter.Short(task.Id), where, ingested);
 
-        task.Status = AgentTaskStatus.Succeeded;
+        // CARD-0657 D-5. A runner task's work is on its pushed branch, which nothing here has
+        // confirmed: no report was read and no desktop SHA was synchronized. It blocks, keeping the
+        // session and the workspace, until a fresh correlated report confirms S; Review must not
+        // start from an unconfirmed branch.
+        var runnerUnconfirmed = RemoteWorkspaceService.IsEligible(task);
+        if (runnerUnconfirmed)
+        {
+            note = $"Blocked: bind refusal recovery cannot confirm the runner's pushed commit (work may be at {where}); "
+                + "no completion report was read and the desktop checkout was not synchronized.";
+            warning = $"WARNING: runner task {DelegationReportFormatter.Short(task.Id)} was recovered from a bind refusal "
+                + $"without a confirmed desktop SHA or a matching completion report. Branch {task.WorktreeBranch} is "
+                + "unconfirmed and not prepared for Review; reply to this task for a fresh completion report.";
+        }
+
+        task.Status = runnerUnconfirmed ? AgentTaskStatus.Blocked : AgentTaskStatus.Succeeded;
         task.Result = note;
         task.FailureReason = null;
         task.CompletedAt = now;
         task.RecoveredAt = now;
         task.ConcurrencyToken = Guid.NewGuid();
+        if (runnerUnconfirmed)
+        {
+            task.NextStage = PipelineHandoffKind.Decide;
+            task.NextHandoff = "Runner bind-refusal recovery is unconfirmed: reply to this task for a fresh completion "
+                + "report that confirms the pushed commit before any Review or land.";
+        }
 
-        db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Completed, note, now));
+        db.AgentTaskEvents.Add(NewEvent(
+            task.Id, runnerUnconfirmed ? AgentTaskEventType.Blocked : AgentTaskEventType.Completed, note, now));
         db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, warning, now));
 
         string? workspaceNote = null;
-        if (task.Workspace == WorkspaceMode.Worktree)
+        if (runnerUnconfirmed)
+            workspaceNote = $"branch {task.WorktreeBranch} unconfirmed; workspace retained";
+        else if (task.Workspace == WorkspaceMode.Worktree)
             workspaceNote = await MergeBackAsync(scope.ServiceProvider, db, task, now, ct);
 
         // Incident before release: AgentIncidents cascade-delete with the agent row, and a
@@ -1018,12 +1041,12 @@ public sealed class AgentTaskReplyService
             afterPersist: _ =>
             {
                 _logger.LogWarning(
-                    "Task {ShortId} {Phrase} ({Evidence}); settled Succeeded. Session not killed.",
+                    "Task {ShortId} {Phrase} ({Evidence}); settled {Status}. Session not killed.",
                     DelegationReportFormatter.Short(task.Id),
                     ingested == 0
                         ? "recovered from an unbound session (zero ingested transcript rows)"
                         : $"settled from workspace evidence with a bound transcript ({ingested} ingested transcript row(s); no report was read)",
-                    where);
+                    where, task.Status);
                 return Task.CompletedTask;
             });
     }
@@ -1995,10 +2018,26 @@ public sealed class AgentTaskReplyService
             await DescribeOverlappingRunningAsync(task, ct), drift,
             ReportEvidenceHeader(task.ReportEvidence), git,
             DescribeDeliverable(task),
-            PipelineHandoff.HeaderBit(task.Role, InterimVerificationPolicy.CapHandoff(task, PipelineHandoff.TryParse(report))),
+            PipelineHandoff.HeaderBit(task.Role, SettledHandoff(task, report)),
             await LandCompletionFacts.LoadAsync(factsDb, task, ct),
             review, sessionLiveness,
             TaskCompletionNotification.HeaderBit(task, scopeOutcome?.OrdinaryScopeCompleted));
+    }
+
+    /// <summary>
+    /// The handoff the caller dispatches from. CARD-0657 D-5: a runner task the server blocked on an
+    /// unconfirmed checkout names <c>decide</c> and the repair handoff, never the stage its report
+    /// asked for, so no Review is dispatched against an unconfirmed branch.
+    /// </summary>
+    private static PipelineHandoff.Result SettledHandoff(AgentTask task, string report)
+    {
+        var parsed = InterimVerificationPolicy.CapHandoff(task, PipelineHandoff.TryParse(report));
+        return task.Status == AgentTaskStatus.Blocked
+            && task.NextStage == PipelineHandoffKind.Decide
+            && parsed.Kind != PipelineHandoffKind.Decide
+            && RemoteWorkspaceService.IsEligible(task)
+                ? parsed with { Found = true, Kind = PipelineHandoffKind.Decide, Handoff = task.NextHandoff ?? parsed.Handoff }
+                : parsed;
     }
 
     private async Task EnqueueParentNoteAsync(AgentTask task, string report, Guid parentSession,
@@ -2070,7 +2109,7 @@ public sealed class AgentTaskReplyService
     {
         var note = await BuildParentNoteAsync(task, report, ct, workspaceNote, warning, drift, git, db);
         var outcome = SettlementOutcome(db, task);
-        var handoff = InterimVerificationPolicy.CapHandoff(task, PipelineHandoff.TryParse(report));
+        var handoff = SettledHandoff(task, report);
         var admission = VerificationAdmission.TryRead(task.VerificationAdmissionJson);
         var distill = OutputDistillationService.ShouldRequest(task, _settings);
         var requestedAt = _timeProvider.GetUtcNow();
@@ -2932,12 +2971,17 @@ public sealed class AgentTaskReplyService
             }
         }
 
-        // CARD-0657 D-1: the unmarked-success fallback is a successful candidate too.
-        remote.Result = await PrepareRemoteAsync(services, task, ct);
-        await RecordRemoteEvidenceAsync(services, task, body, remote.Result, ct);
         var evidence = turn.FinalMessageMissing
             ? AgentTaskReportEvidence.FinalMessageMissing
             : AgentTaskReportEvidence.UnmarkedAfterNudge;
+
+        // CARD-0657 D-1: the unmarked-success fallback is a successful candidate too, and a runner
+        // task gets exactly the progress policy an explicit `done` gets: an unpushed claim or no
+        // pushed movement fails as no-progress instead of settling Succeeded on a confirmed S.
+        remote.Result = await PrepareRemoteAsync(services, task, ct);
+        if (remote.Result is { State: not RemoteSettlementSyncState.NotApplicable }
+            && await TryClassifyCompletedWithoutProgressAsync(services, task, body, remote.Result, ct) is { } noProgress)
+            return (noProgress.Status, evidence, noProgress.Body, noProgress.FailureReason);
         return (AgentTaskStatus.Succeeded, evidence, body, null);
     }
 

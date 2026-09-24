@@ -30,12 +30,20 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
     public AgentTask Task { get; private set; } = null!;
     public Guid TaskId => Git.TaskId;
 
-    private RunnerSettlementWorld(SyncWorld git) => Git = git;
+    private readonly bool _fenced;
 
-    public static async Task<RunnerSettlementWorld> CreateAsync(
-        AgentTaskRole role = AgentTaskRole.Code, bool pushBranch = true)
+    private RunnerSettlementWorld(SyncWorld git, bool fenced)
     {
-        var world = new RunnerSettlementWorld(await SyncWorld.CreateAsync(pushBranch));
+        Git = git;
+        _fenced = fenced;
+    }
+
+    /// <param name="fenced">Give settlement sync the real workspace reservation journal (the
+    /// production fence), so a competing retirement claim can be raced against it.</param>
+    public static async Task<RunnerSettlementWorld> CreateAsync(
+        AgentTaskRole role = AgentTaskRole.Code, bool pushBranch = true, bool fenced = false)
+    {
+        var world = new RunnerSettlementWorld(await SyncWorld.CreateAsync(pushBranch), fenced);
         world.Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         world.BuildServices();
 
@@ -131,7 +139,14 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
         services.AddScoped<AgentReviewCheckpointService>();
         services.AddScoped<AgentFilesService>();
         services.AddScoped<IWorkspaceProgressProbe>(sp => sp.GetRequiredService<AgentFilesService>());
-        services.AddScoped(_ => Git.Service());
+        if (_fenced)
+        {
+            services.AddScoped<IWorkspaceReservationJournal>(sp => new WorkspaceReservationJournal(
+                sp.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System));
+            services.AddScoped(sp => Git.Service(reservations: sp.GetRequiredService<IWorkspaceReservationJournal>()));
+        }
+        else
+            services.AddScoped(_ => Git.Service());
         services.AddScoped<IRemoteSettlementSync>(sp => sp.GetRequiredService<RemoteWorkspaceService>());
         services.AddScoped(sp => new TaskCompletionProgressService(
             sp.GetRequiredService<ITaskProgressGit>(),
@@ -155,13 +170,26 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
         body + "\n--- next stage ---\nnext: " + next + "\nhandoff: continue\n"
         + (artifact is null ? "" : "artifact: " + artifact + "\n");
 
-    /// <summary>The owning prompt, the report and a TurnEnd, then the real reply service.</summary>
-    public async Task SettleAsync(string report, string? prompt = null)
+    /// <summary>
+    /// The owning prompt, the report and a TurnEnd, then the real reply service. With
+    /// <paramref name="closingVerdict"/> false the report carries no verdict token (unmarked).
+    /// </summary>
+    public async Task SettleAsync(string report, string? prompt = null, bool closingVerdict = true)
     {
         await TurnSeeding.SeedTurnAsync(
-            CreateContext, SessionId, prompt ?? DelegationReportFormatter.TaskMarker(TaskId), report);
+            CreateContext, SessionId, prompt ?? DelegationReportFormatter.TaskMarker(TaskId), report, closingVerdict);
         await Services.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(SessionId, CancellationToken.None);
         await ReloadAsync();
+    }
+
+    /// <summary>The delegate session has ended, so an unmarked turn settles without a nudge.</summary>
+    public async Task EndDelegateSessionAsync()
+    {
+        await using var db = CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == SessionId);
+        session.Status = SessionStatus.Stopped;
+        session.EndedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
     }
 
     public async Task ReloadAsync()

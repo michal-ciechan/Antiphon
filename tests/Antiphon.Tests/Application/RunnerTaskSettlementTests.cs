@@ -1,6 +1,8 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
@@ -83,6 +85,119 @@ public sealed class RunnerTaskSettlementTests
             world.Evidence()!.RemoteSync!.ConfirmedSha.ShouldBe(s);
             (await world.Git.HasObjectAsync(c)).ShouldBeFalse();
         }
+    }
+
+    [Test]
+    public async Task Unmarked_completion_gets_the_code_progress_policy()
+    {
+        // (a) An unmarked report claims C, but only an earlier S reached origin.
+        await using (var world = await RunnerSettlementWorld.CreateAsync())
+        {
+            var s = await world.Git.RunnerPushAsync("work.txt", "pushed");
+            File.WriteAllText(Path.Combine(world.Git.Runner, "later.txt"), "unpushed");
+            await world.Git.RunAsync(world.Git.Runner, "add", "later.txt");
+            await world.Git.RunAsync(world.Git.Runner, "commit", "-m", "unpushed");
+            var c = await world.Git.RunAsync(world.Git.Runner, "rev-parse", "HEAD");
+            await world.EndDelegateSessionAsync();
+
+            await world.SettleAsync(RunnerSettlementWorld.Report("Done.\n" + world.Claim(c)), closingVerdict: false);
+
+            AssertNoPush(world, RemoteSettlementSyncReasons.ReportedCommitNotPushed, "Done.");
+            world.Task.ReportEvidence.ShouldBe(AgentTaskReportEvidence.UnmarkedAfterNudge);
+            world.Evidence()!.ClaimedSha.ShouldBe(c);
+            world.Evidence()!.RemoteSync!.ConfirmedSha.ShouldBe(s);
+            (await world.EventsAsync()).ShouldNotContain(e => e.Type == AgentTaskEventType.Completed);
+        }
+
+        // (b) An unmarked report after nothing new was pushed: the branch is still at B.
+        await using (var world = await RunnerSettlementWorld.CreateAsync())
+        {
+            await world.EndDelegateSessionAsync();
+
+            await world.SettleAsync(RunnerSettlementWorld.Report("Done, all pushed."), closingVerdict: false);
+
+            AssertNoPush(world, RemoteSettlementSyncReasons.NoPushedProgress, "Done, all pushed.");
+            world.Task.ReportEvidence.ShouldBe(AgentTaskReportEvidence.UnmarkedAfterNudge);
+            (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+            (await world.EventsAsync()).ShouldNotContain(e => e.Type == AgentTaskEventType.Completed);
+        }
+    }
+
+    [Test]
+    public async Task Bind_refusal_recovery_blocks_an_unconfirmed_runner_branch()
+    {
+        await using var world = await RunnerSettlementWorld.CreateAsync();
+        var s = await world.Git.RunnerPushAsync("work.txt", "runner work");
+        world.Git.Git.Clear();
+        var replies = world.Services.GetRequiredService<AgentTaskReplyService>();
+
+        await replies.RecoverFromBindRefusalAsync(world.TaskId, new DelegateBindRefusalEvidence([s], null), CancellationToken.None);
+        await world.ReloadAsync();
+
+        // No report was read and no desktop SHA was confirmed: blocked with a repair handoff, not Succeeded.
+        world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world));
+        world.Task.FailureCode.ShouldBeNull();
+        world.Task.NextStage.ShouldBe(PipelineHandoffKind.Decide);
+        world.Task.NextHandoff!.ShouldContain("fresh completion report");
+        AssertNoSync(world, s);
+        (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+        (await world.EventsAsync()).ShouldNotContain(e => e.Type == AgentTaskEventType.Merged
+            || e.Type == AgentTaskEventType.Completed);
+        world.Services.GetRequiredService<RecordingSessionStopper>().Killed.ShouldBeEmpty();
+        Directory.Exists(world.Git.Worktree).ShouldBeTrue();
+        world.Task.WorktreePath.ShouldBe(world.Git.Task.WorktreePath);
+
+        // Downstream: the caller is told to decide, never to review, and land refuses the branch.
+        var note = await world.NoteAsync();
+        note.ShouldNotBeNull();
+        note!.Body.ShouldContain("next=decide");
+        note.Body.ShouldNotContain("next=review");
+        await using (var scope = world.Services.CreateAsyncScope())
+        {
+            await Should.ThrowAsync<ConflictException>(() => scope.ServiceProvider
+                .GetRequiredService<AgentTaskLandService>()
+                .RequestAsync(world.TaskId, new LandAgentTaskRequest(), CancellationToken.None));
+        }
+
+        // Only a fresh, correlated report confirms S.
+        await replies.AnswerAsync(world.TaskId, "Report the pushed commit.", AnswerOrigin.Cli, null, CancellationToken.None);
+        await world.ReloadAsync();
+        world.Task.Status.ShouldBe(AgentTaskStatus.Working);
+        await world.SettleAsync(RunnerSettlementWorld.Report("Implemented and pushed."),
+            DelegationReportFormatter.TaskMarker(world.TaskId) + "\n\nReport the pushed commit.");
+
+        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world));
+        world.Evidence()!.RemoteSync!.ConfirmedSha.ShouldBe(s);
+        (await world.Git.HeadAsync()).ShouldBe(s);
+    }
+
+    [Test]
+    public async Task Settlement_sync_fences_a_competing_retirement()
+    {
+        await using var world = await RunnerSettlementWorld.CreateAsync(fenced: true);
+        var s = await world.Git.RunnerPushAsync("work.txt", "runner work");
+        var journal = new WorkspaceReservationJournal(
+            world.Services.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System);
+        // Retirement's own coordinates: worktree path, source full ref, repository path.
+        var retirement = new WorkspaceReservationCommand(
+            WorkspaceReservationKey.For(world.Git.Task.WorktreePath, world.Git.FullRef, world.Git.Task.RepoPath),
+            WorkspaceReservationKind.Retirement, world.TaskId, RetirementId: Guid.NewGuid());
+        world.Git.Git.BlockOn = args => args.Contains("--ff-only");
+
+        // Settlement's sync holds the consumer slot while the fast-forward is in flight.
+        var settle = world.SettleAsync(RunnerSettlementWorld.Report("Implemented and pushed."));
+        (await System.Threading.Tasks.Task.WhenAny(world.Git.Git.Entered, settle)).ShouldBe(world.Git.Git.Entered);
+        var during = await journal.TryClaimRetirementAsync(retirement, CancellationToken.None);
+        world.Git.Git.OpenGate();
+        await settle;
+
+        during.Accepted.ShouldBeFalse();
+        during.Reason.ShouldBe("workspace_in_use");
+        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world));
+        world.Evidence()!.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Synchronized);
+        world.Evidence()!.RemoteSync!.ConfirmedSha.ShouldBe(s);
+        (await world.Git.HeadAsync()).ShouldBe(s);
+        world.Git.Git.Blocked.ShouldBe(1);
     }
 
     [Test]
@@ -241,6 +356,10 @@ public sealed class RunnerTaskSettlementTests
         world.Services.GetRequiredService<RecordingSessionStopper>().Killed.ShouldBeEmpty();
         Directory.Exists(world.Git.Worktree).ShouldBeTrue();
         world.Task.WorktreePath.ShouldBe(world.Git.Task.WorktreePath);
+        // The caller dispatches from the header: decide, not the report's own next: review.
+        var note = await world.NoteAsync();
+        note!.Body.ShouldContain("next=decide");
+        note.Body.ShouldNotContain("next=review");
     }
 
     /// <summary>Failure context only: the settled reason and the persisted progress/sync evidence.</summary>
