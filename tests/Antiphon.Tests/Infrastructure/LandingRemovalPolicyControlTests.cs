@@ -351,6 +351,61 @@ public sealed class LandingRemovalPolicyControlTests
         File.ReadAllText(Path.Combine(outside, "run.trx")).ShouldBe("outside bytes");
     }
 
+    // Review 5b79328d item 1: the tree is deleted by guarded removal itself, never through a link,
+    // and Git only drops the registration of the absent directory. A link Git does not list is
+    // removed as a link; its target and descendants stay.
+    [Test]
+    public async Task C665_UnlistedLinkIsRemovedWithoutTraversal()
+    {
+        using var f = new RemovalFixture();
+        var outside = Directory.CreateDirectory(Path.Combine(f.Root, "outside")).FullName;
+        Directory.CreateDirectory(Path.Combine(outside, "nested"));
+        File.WriteAllText(Path.Combine(outside, "a.dll"), "outside bytes");
+        File.WriteAllText(Path.Combine(outside, "nested", "b.dll"), "outside nested bytes");
+        Directory.CreateDirectory(Path.Combine(f.Source, "bin-x"));
+        using var link = DirectoryLink.TryCreate(Path.Combine(f.Source, "bin-x", "link"), outside);
+        if (link is null) { Skip.Test("This host cannot create a directory junction or symbolic link."); return; }
+        var result = await f.RemoveAsync(gate: true);
+        result.IsClean.ShouldBeTrue(result.Residue);
+        Directory.Exists(f.Source).ShouldBeFalse();
+        File.ReadAllText(Path.Combine(outside, "a.dll")).ShouldBe("outside bytes");
+        File.ReadAllText(Path.Combine(outside, "nested", "b.dll")).ShouldBe("outside nested bytes");
+        Directory.GetFileSystemEntries(f.Root).Select(Path.GetFileName).ShouldBe(["outside"], "no set-aside copy of the tree remains");
+    }
+
+    // A read-only file does not stop the removal (Git removes one too).
+    [Test]
+    public async Task C665_ReadOnlyFileIsRemovedWithTheTree()
+    {
+        using var f = new RemovalFixture();
+        var path = Path.Combine(Directory.CreateDirectory(Path.Combine(f.Source, "obj")).FullName, "a.json");
+        File.WriteAllText(path, "{}");
+        File.SetAttributes(path, FileAttributes.ReadOnly);
+        f.IgnoredPaths.Add("obj/a.json");
+        var result = await f.RemoveAsync(gate: true);
+        result.IsClean.ShouldBeTrue(result.Residue);
+        Directory.Exists(f.Source).ShouldBeFalse();
+    }
+
+    // A failed registration removal puts the tree back at its path, so a later pass (the CARD-0443
+    // retry or a repost) inspects exactly the tree the refused pass saw.
+    [Test]
+    public async Task C665_FailedRegistrationRemovalRestoresTree()
+    {
+        using var f = new RemovalFixture();
+        Directory.CreateDirectory(Path.Combine(f.Source, "bin-x"));
+        File.WriteAllText(Path.Combine(f.Source, "bin-x", "a.dll"), "build output");
+        f.IgnoredPaths.Add("bin-x/a.dll");
+        f.RemoveExitCode = 128;
+        var result = await f.RemoveAsync(gate: true);
+        result.Residue.ShouldBe("worktree_remove_failed");
+        f.Mutations.ShouldHaveSingleItem().ShouldBe(["worktree", "remove", "--", f.Source]);
+        File.ReadAllText(Path.Combine(f.Source, "keep.txt")).ShouldBe("private work");
+        File.ReadAllText(Path.Combine(f.Source, "bin-x", "a.dll")).ShouldBe("build output");
+        Directory.GetFileSystemEntries(f.Root).Select(Path.GetFileName).ShouldBe(["source"], "no set-aside copy of the tree remains");
+        f.BranchPresent.ShouldBeTrue();
+    }
+
     private sealed class RecordingRetention(RemovalFixture fixture) : IWorktreeEvidenceRetention
     {
         public List<(int Evidence, int AtInspection)> Calls { get; } = [];
@@ -385,6 +440,7 @@ public sealed class LandingRemovalPolicyControlTests
         public string InspectedSha { get; set; } = Sha;
         public string? IgnoredPath { get; set; }
         public List<string> IgnoredPaths { get; } = [];
+        public int RemoveExitCode { get; set; }
         public RecordingRetention Retention { get; }
         public RemovalFixture()
         {
@@ -436,8 +492,9 @@ public sealed class LandingRemovalPolicyControlTests
             else if (args[0] == "worktree" && args[1] == "remove")
             {
                 Mutations.Add(args.ToArray());
-                Directory.Delete(Source, recursive: true);
-                result = new(0, "", "");
+                // Like Git, a registration whose directory is already gone is dropped without touching disk.
+                if (RemoveExitCode == 0 && Directory.Exists(Source)) Directory.Delete(Source, recursive: true);
+                result = new(RemoveExitCode, "", "");
             }
             else if (args[0] == "update-ref" && args.Contains("-d"))
             { Mutations.Add(args.ToArray()); BranchPresent = false; result = new(0, "", ""); }
