@@ -265,38 +265,8 @@ public sealed class DefaultRunnerPinTests
         await using var peer = await host.ConnectPeerAsync();
         var live = await host.WaitLiveAsync();
         host.Directory.MarkRecovered(live);
-        const string runnerRepository = "/work/repos/antiphon";
-        VerificationCreationCoordinates? created = null;
-        string? createdSha = null;
-        peer.Reply = frame =>
-        {
-            switch (frame.Operation)
-            {
-                case PhoneHomeOperation.Capabilities:
-                    return Result(frame, new RunnerCapabilitiesDto("InboxConhost", "inbox", "test", false,
-                        Features: [RunnerCapabilityFeatures.VerificationCustodyV1],
-                        VerificationCustodyBackend: VerificationCustodyBackends.LinuxCgroup,
-                        RunnerStoreId: host.StoreId));
-                case PhoneHomeOperation.ProviderAuth:
-                    return Result(frame, new RunnerProviderAuthDto(
-                        "claude", true, "claude.ai", "max", DateTimeOffset.UtcNow, null));
-                case PhoneHomeOperation.VerificationWorkspaceCreate:
-                    var create = frame.Payload!.Value.Deserialize<PhoneHomeVerificationCreateRequest>(PhoneHomeFraming.Json)!;
-                    created = new VerificationCreationCoordinates(runnerRepository, runnerRepository + "/.git",
-                        "/work/worktrees/" + create.Identifier, runnerRepository + "/.git/worktrees/" + create.Identifier,
-                        create.Branch, Guid.NewGuid());
-                    createdSha = create.Sha;
-                    return Result(frame, new PhoneHomeVerificationCreateResponse(created, create.Sha));
-                case PhoneHomeOperation.VerificationWorkspaceValidate:
-                    return Result(frame, new PhoneHomeVerificationValidateResponse(true, null));
-                case PhoneHomeOperation.VerificationWorkspaceInspect:
-                    var c = created!;
-                    return Result(frame, new PhoneHomeVerificationInspectResponse(c.CreationId, createdSha, c.Branch,
-                        c.RepositoryPath, c.WorktreePath, c.WorktreeGitDirectory, createdSha, true, true, false));
-                default:
-                    return null;
-            }
-        };
+        var runner = new ScriptedSnapshotRunner(host);
+        peer.Reply = runner.Reply;
 
         var sink = new RecordingLaunchSink();
         await using var services = SourceLandingDispatchGraph(schema, root.Path, host, sink);
@@ -329,8 +299,8 @@ public sealed class DefaultRunnerPinTests
         await using var verify = Context(schema);
         var task = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
         task.Status.ShouldBe(AgentTaskStatus.Dispatched, task.FailureReason);
-        var snapshot = created.ShouldNotBeNull("the snapshot is created on the runner, not the desktop");
-        createdSha.ShouldBe(task.SourceLandingSha);
+        var snapshot = runner.Created.ShouldNotBeNull("the snapshot is created on the runner, not the desktop");
+        runner.CreatedSha.ShouldBe(task.SourceLandingSha);
         task.WorktreePath.ShouldBe(snapshot.WorktreePath);
         task.RemoteWorktreePath.ShouldBe(snapshot.WorktreePath);
         task.VerificationCreationJson.ShouldBe(JsonSerializer.Serialize(snapshot));
@@ -372,8 +342,68 @@ public sealed class DefaultRunnerPinTests
             .RunnerCallIntentAt.ShouldNotBeNull("the runner-call intent is recorded before the launch frame");
     }
 
+    /// <summary>
+    /// Review 12773346: the runner drops after it created and validated the snapshot but before the
+    /// dispatcher's own validation re-resolves it. That re-resolution goes through
+    /// <see cref="VerificationWorkspaceDirectory"/>, whose answer for an unavailable remote runner is
+    /// the phone-home 503: the dispatch refuses, the desktop workspace is never asked about a
+    /// runner-side path, and nothing is launched.
+    /// </summary>
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task SourceLanding_runner_disconnect_before_dispatch_validation_refuses_without_local_fallback()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var root = new TempRoot();
+        var source = await SeedPublishedSourceAsync(schema, root.Path);
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+        host.Directory.MarkRecovered(live);
+        // The creation-time validation is the runner's last answer: the directory loses the
+        // connection (what the connect endpoint does when the socket closes) before it is sent.
+        var runner = new ScriptedSnapshotRunner(host)
+        {
+            BeforeValidateReply = () => host.Directory.Disconnect(live, "closed"),
+        };
+        peer.Reply = runner.Reply;
+
+        var sink = new RecordingLaunchSink();
+        var local = new RecordingVerificationWorkspace();
+        await using var services = SourceLandingDispatchGraph(schema, root.Path, host, sink, local);
+        Guid taskId;
+        await using (var scope = services.CreateAsyncScope())
+        {
+            taskId = (await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CreateAsync(
+                source.Request, source.Caller, CancellationToken.None)).Id;
+        }
+
+        await using (var scope = services.CreateAsyncScope())
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
+
+        runner.Created.ShouldNotBeNull("the snapshot was created on the runner before it dropped");
+        peer.RequestCount(PhoneHomeOperation.VerificationWorkspaceValidate)
+            .ShouldBe(1, "dispatch validation never reached a runner that was gone");
+        Should.Throw<ServiceUnavailableException>(() => host.Directory.Resolve(host.AllowedRunnerId))
+            .Code.ShouldBe(PhoneHomeProblemTypes.Unavailable);
+
+        await using var verify = Context(schema);
+        var task = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        task.RunnerId.ShouldBe(host.AllowedRunnerId);
+        task.Status.ShouldBe(AgentTaskStatus.Failed, "the dispatch refuses rather than proceeding");
+        task.FailureReason.ShouldNotBeNull().ShouldContain("Phone-home runner is unavailable");
+        task.AgentSessionId.ShouldBeNull();
+        local.Calls.ShouldBeEmpty("an unavailable runner is never answered from the desktop filesystem");
+
+        sink.Specs.ShouldBeEmpty("no launch was projected");
+        peer.Launches.ShouldBeEmpty("no Launch frame reached the runner");
+        (await verify.AgentSessions.AsNoTracking().AnyAsync(s => s.RunnerId == host.AllowedRunnerId)).ShouldBeFalse();
+        (await verify.VerificationExecutions.AsNoTracking().AnyAsync(e => e.TaskId == taskId)).ShouldBeFalse();
+    }
+
     private static ServiceProvider SourceLandingDispatchGraph(
-        IsolatedTestSchema schema, string root, PhoneHomeTestHost host, RecordingLaunchSink sink)
+        IsolatedTestSchema schema, string root, PhoneHomeTestHost host, RecordingLaunchSink sink,
+        IVerificationWorkspace? local = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -424,7 +454,10 @@ public sealed class DefaultRunnerPinTests
         services.AddSingleton<RemoteWorkspacePreparer>();
         services.AddSingleton<IAgentTaskLaunchSink>(sink);
         services.AddScoped<SourceLandingAdmission>();
-        services.AddScoped<IVerificationWorkspace, LocalVerificationWorkspace>();
+        if (local is null)
+            services.AddScoped<IVerificationWorkspace, LocalVerificationWorkspace>();
+        else
+            services.AddSingleton(local);
         services.AddScoped<IVerificationWorkspaceDirectory, VerificationWorkspaceDirectory>();
         services.AddScoped<VerificationExecutionService>();
         services.AddScoped<AgentTaskService>();
@@ -524,6 +557,84 @@ public sealed class DefaultRunnerPinTests
     private static PhoneHomeFrame Result(PhoneHomeFrame request, object payload) =>
         new(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
             JsonSerializer.SerializeToElement(payload, PhoneHomeFraming.Json));
+
+    /// <summary>
+    /// The runner side of a SourceLanding snapshot: verification custody, a signed-in Claude, and
+    /// the typed create/validate/inspect operations answered at runner-side POSIX coordinates.
+    /// </summary>
+    private sealed class ScriptedSnapshotRunner(PhoneHomeTestHost host)
+    {
+        private const string RunnerRepository = "/work/repos/antiphon";
+
+        public VerificationCreationCoordinates? Created { get; private set; }
+        public string? CreatedSha { get; private set; }
+
+        /// <summary>Runs on the peer's loop before a VerificationWorkspaceValidate result is written.</summary>
+        public Action? BeforeValidateReply { get; init; }
+
+        public PhoneHomeFrame? Reply(PhoneHomeFrame frame)
+        {
+            switch (frame.Operation)
+            {
+                case PhoneHomeOperation.Capabilities:
+                    return Result(frame, new RunnerCapabilitiesDto("InboxConhost", "inbox", "test", false,
+                        Features: [RunnerCapabilityFeatures.VerificationCustodyV1],
+                        VerificationCustodyBackend: VerificationCustodyBackends.LinuxCgroup,
+                        RunnerStoreId: host.StoreId));
+                case PhoneHomeOperation.ProviderAuth:
+                    return Result(frame, new RunnerProviderAuthDto(
+                        "claude", true, "claude.ai", "max", DateTimeOffset.UtcNow, null));
+                case PhoneHomeOperation.VerificationWorkspaceCreate:
+                    var create = frame.Payload!.Value.Deserialize<PhoneHomeVerificationCreateRequest>(PhoneHomeFraming.Json)!;
+                    Created = new VerificationCreationCoordinates(RunnerRepository, RunnerRepository + "/.git",
+                        "/work/worktrees/" + create.Identifier, RunnerRepository + "/.git/worktrees/" + create.Identifier,
+                        create.Branch, Guid.NewGuid());
+                    CreatedSha = create.Sha;
+                    return Result(frame, new PhoneHomeVerificationCreateResponse(Created, create.Sha));
+                case PhoneHomeOperation.VerificationWorkspaceValidate:
+                    BeforeValidateReply?.Invoke();
+                    return Result(frame, new PhoneHomeVerificationValidateResponse(true, null));
+                case PhoneHomeOperation.VerificationWorkspaceInspect:
+                    var c = Created!;
+                    return Result(frame, new PhoneHomeVerificationInspectResponse(c.CreationId, CreatedSha, c.Branch,
+                        c.RepositoryPath, c.WorktreePath, c.WorktreeGitDirectory, CreatedSha, true, true, false));
+                default:
+                    return null;
+            }
+        }
+    }
+
+    /// <summary>The desktop workspace: records every question and answers none of them.</summary>
+    private sealed class RecordingVerificationWorkspace : IVerificationWorkspace
+    {
+        public List<string> Calls { get; } = [];
+
+        public Task<VerificationWorkspaceCreation> CreateAsync(
+            string repositoryPath, string identifier, string landedSha, CancellationToken ct) =>
+            Refuse<VerificationWorkspaceCreation>(nameof(CreateAsync) + " " + repositoryPath);
+
+        public Task<VerificationWorkspaceValidation> ValidateAsync(
+            VerificationCreationCoordinates coordinates, string landedSha, CancellationToken ct) =>
+            Refuse<VerificationWorkspaceValidation>(nameof(ValidateAsync) + " " + coordinates.WorktreePath);
+
+        public Task<VerificationWorkspaceInspection> InspectAsync(string worktreePath, CancellationToken ct) =>
+            Refuse<VerificationWorkspaceInspection>(nameof(InspectAsync) + " " + worktreePath);
+
+        public Task<byte[]?> ReadRestorationAsync(
+            string commonGitDirectory, Guid sourceOperationId, Guid taskId, CancellationToken ct) =>
+            Refuse<byte[]?>(nameof(ReadRestorationAsync) + " " + commonGitDirectory);
+
+        public Task<VerificationWorkspaceRemoval> RemoveAsync(
+            VerificationCreationCoordinates coordinates, string expectedSha,
+            IReadOnlyList<string> expectedOutputs, CancellationToken ct) =>
+            Refuse<VerificationWorkspaceRemoval>(nameof(RemoveAsync) + " " + coordinates.WorktreePath);
+
+        private Task<T> Refuse<T>(string call)
+        {
+            Calls.Add(call);
+            throw new InvalidOperationException("desktop verification workspace asked: " + call);
+        }
+    }
 
     private sealed class RecordingLaunchSink : IAgentTaskLaunchSink
     {
