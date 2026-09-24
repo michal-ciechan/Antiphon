@@ -490,12 +490,13 @@ public sealed class AgentTaskLandService
         }
         Record(task, OrchestrationStage.Cleanup,
             op.Cleanup == LandCleanupStatus.Complete ? StageOutcomeKind.Clean : StageOutcomeKind.Failed,
-            DurationSeconds(op, OrchestrationStage.Cleanup), result.Reason ?? "cleanup complete");
+            DurationSeconds(op, OrchestrationStage.Cleanup), AppendDetail(result.Reason ?? "cleanup complete", result.Detail));
         var type = op.Publication == LandPublicationOutcome.AlreadyPresent ? AgentTaskEventType.AlreadyPresent
             : op.Cleanup == LandCleanupStatus.Complete ? AgentTaskEventType.Landed : AgentTaskEventType.LandedWithResidue;
         var (siblings, warnings) = await CollectUnlandedSiblingsAsync(task, op.RepositoryPath, ct, op.VerifiedSourceSha);
         var marker = UnlandedMarker(siblings);
-        await SettleLandedAsync(task, type, AppendUnlandedMarker(FormatOutcome(op), marker), warnings, siblings, ct);
+        await SettleLandedAsync(task, type, AppendUnlandedMarker(AppendDetail(FormatOutcome(op), result.Detail), marker),
+            warnings, siblings, ct, result.Detail);
         return LandRunResult.Complete;
     }
 
@@ -604,7 +605,8 @@ public sealed class AgentTaskLandService
         string outcome,
         IReadOnlyList<string> warnings,
         IReadOnlyList<string>? unlandedSiblings,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? cleanupDetail = null)
     {
         var expectedRequest = task.CurrentLandRequestId;
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
@@ -614,7 +616,7 @@ public sealed class AgentTaskLandService
         var request = await EnsureRequestAsync(task, ct);
         await _db.Entry(request).ReloadAsync(ct);
         if (request.TerminalEventId is not null) return;
-        await CompleteTerminalLockedAsync(task, request, type, outcome, warnings, unlandedSiblings, ct);
+        await CompleteTerminalLockedAsync(task, request, type, outcome, warnings, unlandedSiblings, ct, cleanupDetail);
     }
 
     private static string AppendUnlandedMarker(string outcome, string? marker) =>
@@ -870,7 +872,7 @@ public sealed class AgentTaskLandService
 
     private async Task CompleteTerminalLockedAsync(AgentTask task, AgentTaskLandRequest request,
         AgentTaskEventType type, string outcome, IReadOnlyList<string> warnings, IReadOnlyList<string>? unlandedSiblings,
-        CancellationToken ct)
+        CancellationToken ct, string? cleanupDetail = null)
     {
         var now = _clock.GetUtcNow().UtcDateTime;
         foreach (var warning in warnings)
@@ -914,10 +916,14 @@ public sealed class AgentTaskLandService
             {
                 var stage = _db.StageOutcomes.Local.LastOrDefault(s => s.SubjectTaskId == task.Id
                     && s.Stage == OrchestrationStage.Cleanup && _db.Entry(s).State == EntityState.Added);
+                // CARD-0665 D-8: the stage keeps the protected paths / retained count; the outcome
+                // line already carries them from the protocol result.
+                var stageDetail = cleanupDetail is null ? detail : new WorktreeCleanupPresentation().Detail(
+                    AppendDetail(op.LastReason ?? "cleanup complete", cleanupDetail), cleanupEvidence.Capture);
                 if (stage is null) Record(task, OrchestrationStage.Cleanup,
                     op.Cleanup == LandCleanupStatus.Complete ? StageOutcomeKind.Clean : StageOutcomeKind.Failed,
-                    DurationSeconds(op, OrchestrationStage.Cleanup), detail);
-                else stage.Detail = detail;
+                    DurationSeconds(op, OrchestrationStage.Cleanup), stageDetail);
+                else stage.Detail = stageDetail;
             }
         }
         var terminal = Event(task.Id, type, outcome, now);
