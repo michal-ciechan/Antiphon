@@ -261,6 +261,15 @@ public sealed record ExpectationNoteDebt
     public QueuedMessageStatus? QueueStatus { get; init; }
 }
 
+/// <summary>A pending land request, read only when a queued task's hold names a land.</summary>
+public sealed record ExpectationLandProgress
+{
+    public Guid RequestId { get; init; }
+    public Guid TaskId { get; init; }
+    public LandRequestState State { get; init; }
+    public DateTime LastProgressAt { get; init; }
+}
+
 public sealed record ExpectationOpenEpisode
 {
     public ExpectationEpisodeKind Kind { get; init; }
@@ -288,6 +297,24 @@ public sealed record ExpectationSnapshot
     public IReadOnlyList<ExpectationOpenEpisode> OpenEpisodes { get; init; } = [];
     public IReadOnlyList<ExpectationInFlightTask> InFlight { get; init; } = [];
     public IReadOnlyList<ExpectationNoteDebt> Notes { get; init; } = [];
+
+    /// <summary>Pending lands, read only when a queued hold names one. Each carries its own progress clock.</summary>
+    public IReadOnlyList<ExpectationLandProgress> Lands { get; init; } = [];
+
+    /// <summary>
+    /// The land monitor's own no-progress warning (<c>Delegation:LandWarningSeconds</c>): a land
+    /// quieter than this is not proven to be progressing.
+    /// </summary>
+    public TimeSpan LandProgressWindow { get; init; } = TimeSpan.FromSeconds(300);
+
+    /// <summary>
+    /// The dispatcher's counted local cap population right now (non-specialist, Dispatched or
+    /// Working, no runner, not a retained capacity wait). Read only when a queued hold is the cap.
+    /// </summary>
+    public int CapOccupantCount { get; init; }
+
+    /// <summary>Progress facts for those occupants that can have any (dispatched, no report yet).</summary>
+    public IReadOnlyList<ExpectationInFlightTask> CapOccupants { get; init; } = [];
 }
 
 public sealed record ExpectationCondition

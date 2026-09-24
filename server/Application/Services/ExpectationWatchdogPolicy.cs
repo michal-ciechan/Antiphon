@@ -69,8 +69,9 @@ public static class ExpectationWatchdogPolicy
             && snapshot.AsOf - dispatched < ExpectationWindows.Queue;
         foreach (var group in snapshot.Queued.GroupBy(task => task.RepositoryScope, StringComparer.Ordinal))
         {
-            // A live land or a full cap is ordinary occupancy. A dead journal, an unknown
-            // lease owner, and an ineligible runner stay in the set and can still page.
+            // A land or a cap hold is ordinary occupancy only with current evidence about that
+            // hold itself. A dead journal, an unknown lease owner, and an ineligible runner stay in
+            // the set and can still page.
             var ordered = group
                 .OrderBy(task => task.StintStartedAt)
                 .ThenBy(task => task.TaskId)
@@ -419,40 +420,48 @@ public static class ExpectationWatchdogPolicy
     private static string Minutes(TimeSpan span) =>
         ((int)Math.Floor(span.TotalMinutes)).ToString(System.Globalization.CultureInfo.InvariantCulture) + "m";
 
+    /// <summary>
+    /// A land or cap hold is ordinary occupancy only with current evidence about that hold itself.
+    /// Other running work on the board proves nothing: it is exactly what hid a five-hour stalled
+    /// queue overnight. Every other ordinary wait stays in the set and can page once aged.
+    /// </summary>
     private static bool IsProvenContinuingOrdinaryWait(ExpectationQueuedTask task, ExpectationSnapshot snapshot)
     {
         if (task.HoldClass != ExpectationHoldClass.OrdinaryWait)
             return false;
         if (string.IsNullOrWhiteSpace(task.HoldDetail))
             return false;
-        if (!snapshot.Lanes.Any(lane => lane.Running > 0))
-            return false;
-        return IsLandInProgress(task.HoldDetail) || IsCapWithRunningTasks(task.HoldDetail);
+        var reason = DispatchHoldDetails.Reason(task.HoldDetail);
+        if (DispatchHoldDetails.LandHolder(reason) is { } holder)
+            return IsLandProgressing(holder.TaskShort, holder.RequestShort, snapshot);
+        if (DispatchHoldDetails.ConcurrencyCapLimit(reason) is int cap)
+            return IsCapFullOfProgressingTasks(cap, snapshot);
+        return false;
     }
 
-    private static bool IsLandInProgress(string detail) =>
-        detail.Contains("repository mutation lease is held by the land", StringComparison.Ordinal)
-        || detail.Contains("is landing", StringComparison.Ordinal);
+    /// <summary>
+    /// The named land (and, when the hold names it, that exact request) is still pending, queued or
+    /// running rather than held or needing resolution, and moved within the land monitor's window.
+    /// </summary>
+    private static bool IsLandProgressing(string taskShort, string? requestShort, ExpectationSnapshot snapshot) =>
+        snapshot.Lands.Any(land =>
+            land.TaskId.ToString("N").StartsWith(taskShort, StringComparison.Ordinal)
+            && (requestShort is null || land.RequestId.ToString("N").StartsWith(requestShort, StringComparison.Ordinal))
+            && land.State is LandRequestState.Queued or LandRequestState.Running
+            && snapshot.AsOf - land.LastProgressAt < snapshot.LandProgressWindow);
 
-    private static bool IsCapWithRunningTasks(string detail)
-    {
-        const string marker = "concurrency cap reached (";
-        var start = detail.IndexOf(marker, StringComparison.Ordinal);
-        if (start < 0)
-            return false;
-        start += marker.Length;
-        var end = start;
-        while (end < detail.Length && char.IsDigit(detail[end]))
-            end++;
-        if (end == start)
-            return false;
-        return int.TryParse(
-                detail[start..end],
-                System.Globalization.NumberStyles.None,
-                System.Globalization.CultureInfo.InvariantCulture,
-                out var running)
-            && running > 0;
-    }
+    /// <summary>
+    /// The cap is full now, and every occupant is itself progressing: a live session with no
+    /// progress-stall verdict. An occupant with a report, a missing or terminal session, or an
+    /// unknown runner answer is not proof.
+    /// </summary>
+    private static bool IsCapFullOfProgressingTasks(int cap, ExpectationSnapshot snapshot) =>
+        cap > 0
+        && snapshot.CapOccupantCount >= cap
+        && snapshot.CapOccupants.Count == snapshot.CapOccupantCount
+        && snapshot.CapOccupants.All(occupant =>
+            occupant.SessionState == ExpectationSessionState.Live
+            && string.IsNullOrWhiteSpace(occupant.ProgressStall));
 
     private static bool IsExplicitFence(ExpectationQueuedTask task) =>
         task.HoldClass is ExpectationHoldClass.RepositoryFenced

@@ -356,10 +356,10 @@ public sealed class ExpectationPipelineTests
         var branchLanding = "held: CARD-0647's kept branch feat/x (task abcd1234) is landing and is not yet in origin/master";
         foreach (var detail in new[] { landDetail, capDetail, wrappedCap, branchLanding })
         {
-            var occupied = AgedHold(detail, running: 1);
+            var occupied = AgedHold(detail, running: 1, ownEvidence: true);
             occupied.StalledPipelines.Count.ShouldBe(
                 0,
-                "a land or a full cap with running tasks is not a stalled-pipeline episode");
+                "the named land moving, or a full cap of progressing tasks, is not a stalled-pipeline episode");
             occupied.DispatchFence.ShouldBeNull();
             occupied.ScopedFences.ShouldBeEmpty();
             PagesStalledPipeline(occupied).ShouldBe(
@@ -374,7 +374,7 @@ public sealed class ExpectationPipelineTests
             FirstObservedAt = now.AddHours(-2),
             Evidence = "queued behind a land",
         };
-        var cleared = AgedHold(landDetail, running: 1, open: [openLand]);
+        var cleared = AgedHold(landDetail, running: 1, open: [openLand], ownEvidence: true);
         cleared.StalledPipelines.ShouldBeEmpty();
         cleared.ObservedClear.ShouldBeTrue();
         PagesStalledPipeline(cleared).ShouldBeFalse();
@@ -441,6 +441,7 @@ public sealed class ExpectationPipelineTests
             ]) with
             {
                 Lanes = [new ExpectationLaneSnapshot { RunnerId = null, Target = 3, Running = 1 }],
+                Lands = [ProgressingLand()],
             },
             Directive());
         landBesideYoungFence.StalledPipelines.ShouldBeEmpty();
@@ -455,6 +456,7 @@ public sealed class ExpectationPipelineTests
             ]) with
             {
                 Lanes = [new ExpectationLaneSnapshot { RunnerId = null, Target = 3, Running = 1 }],
+                Lands = [ProgressingLand()],
             },
             Directive());
         landBesideOldFence.DispatchFence.ShouldBeNull();
@@ -463,6 +465,100 @@ public sealed class ExpectationPipelineTests
         fenceEpisode.IsDue.ShouldBeTrue();
         fenceEpisode.ExampleTaskIds.ShouldBe([RemoteTaskId]);
         PagesStalledPipeline(landBesideOldFence).ShouldBeTrue();
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task C650_Stale_land_or_cap_hold_beside_unrelated_running_work_opens_the_episode()
+    {
+        var landDetail = DispatchHoldDetails.LeaseHeldByLand("abcd1234", "land the card", "eeee0000", Now.AddHours(-5));
+        var capDetail = DispatchHoldDetails.ConcurrencyCap(4);
+        var wrappedCap = DispatchHoldDetails.Escalation(
+            "Error:", 18000, Now.AddHours(-5), Now.AddHours(-5), capDetail, 4, 4, ["abcd1234"]);
+        var branchLanding = "held: CARD-0647's kept branch feat/x (task abcd1234) is landing and is not yet in origin/master";
+        var repairLanding = "abcd1234 is landing";
+
+        // Unrelated work fills every lane. None of it is the land or the cap occupancy the hold names.
+        ExpectationSnapshot Busy(string detail) => Snap(Now, [Hold(LocalTaskId, detail, Now.AddHours(-5))]) with
+        {
+            Lanes =
+            [
+                new ExpectationLaneSnapshot { RunnerId = null, Target = 3, Running = 3 },
+                new ExpectationLaneSnapshot { RunnerId = "server2", Target = 3, Running = 3 },
+            ],
+        };
+
+        var stale = new (string Why, ExpectationSnapshot Snapshot)[]
+        {
+            ("the named land is no longer pending", Busy(landDetail)),
+            ("the named land is held", Busy(landDetail) with
+            {
+                Lands = [ProgressingLand() with { State = LandRequestState.Held }],
+            }),
+            ("the named land needs resolution", Busy(landDetail) with
+            {
+                Lands = [ProgressingLand() with { State = LandRequestState.NeedsResolution }],
+            }),
+            ("the named land has not moved within the land monitor window", Busy(landDetail) with
+            {
+                Lands = [ProgressingLand() with { LastProgressAt = Now.AddMinutes(-5) }],
+            }),
+            ("only a different land is progressing", Busy(landDetail) with
+            {
+                Lands = [ProgressingLand() with { TaskId = Guid.Parse("ffff9999-0000-0000-0000-000000000001") }],
+            }),
+            ("the named land request was superseded", Busy(landDetail) with
+            {
+                Lands = [ProgressingLand() with { RequestId = Guid.Parse("eeee1111-0000-0000-0000-000000000001") }],
+            }),
+            ("the kept branch's land is no longer pending", Busy(branchLanding)),
+            ("the repair source's land is no longer pending", Busy(repairLanding)),
+            ("the cap is no longer full", Busy(capDetail) with
+            {
+                CapOccupantCount = 2,
+                CapOccupants = Enumerable.Range(1, 2).Select(LiveOccupant).ToList(),
+            }),
+            ("a cap occupant is progress-stalled", Busy(capDetail) with
+            {
+                CapOccupantCount = 4,
+                CapOccupants = Enumerable.Range(1, 4)
+                    .Select(index => index == 4 ? LiveOccupant(index) with { ProgressStall = "no novel output 45m" } : LiveOccupant(index))
+                    .ToList(),
+            }),
+            ("a cap occupant's session is gone", Busy(capDetail) with
+            {
+                CapOccupantCount = 4,
+                CapOccupants = Enumerable.Range(1, 4)
+                    .Select(index => index == 4 ? LiveOccupant(index) with { SessionState = ExpectationSessionState.Missing } : LiveOccupant(index))
+                    .ToList(),
+            }),
+            ("a cap occupant has no progress facts", Busy(capDetail) with
+            {
+                CapOccupantCount = 4,
+                CapOccupants = Enumerable.Range(1, 3).Select(LiveOccupant).ToList(),
+            }),
+            ("an aged cap hold with no current occupants read", Busy(wrappedCap)),
+        };
+
+        foreach (var (why, snapshot) in stale)
+        {
+            var evaluation = ExpectationWatchdogPolicy.Evaluate(snapshot, Directive());
+            var episode = evaluation.StalledPipelines.ShouldHaveSingleItem(why);
+            episode.Kind.ShouldBe(ExpectationEpisodeKind.StalledPipeline, why);
+            episode.IsDue.ShouldBeTrue(why);
+            episode.ExampleTaskIds.ShouldBe([LocalTaskId], why);
+            PagesStalledPipeline(evaluation).ShouldBeTrue(why);
+            evaluation.DispatchFence.ShouldBeNull(why);
+        }
+
+        // Controls: the same busy board with current evidence about the hold itself stays quiet.
+        foreach (var detail in new[] { landDetail, capDetail, wrappedCap, branchLanding, repairLanding })
+        {
+            var quiet = ExpectationWatchdogPolicy.Evaluate(WithOwnEvidence(Busy(detail)), Directive());
+            quiet.StalledPipelines.ShouldBeEmpty(detail);
+            PagesStalledPipeline(quiet).ShouldBeFalse(detail);
+        }
+
         await Task.CompletedTask;
     }
 
@@ -581,11 +677,11 @@ public sealed class ExpectationPipelineTests
         int running,
         string? runnerId = null,
         Guid? taskId = null,
-        IReadOnlyList<ExpectationOpenEpisode>? open = null)
+        IReadOnlyList<ExpectationOpenEpisode>? open = null,
+        bool ownEvidence = false)
     {
         var id = taskId ?? LocalTaskId;
-        return ExpectationWatchdogPolicy.Evaluate(
-            Snap(Now,
+        var snapshot = Snap(Now,
             [
                 Hold(id, detail, Now.AddMinutes(-30)) with { RunnerId = runnerId },
             ]) with
@@ -600,9 +696,37 @@ public sealed class ExpectationPipelineTests
                     },
                 ],
                 OpenEpisodes = open ?? [],
-            },
-            Directive());
+            };
+        return ExpectationWatchdogPolicy.Evaluate(ownEvidence ? WithOwnEvidence(snapshot) : snapshot, Directive());
     }
+
+    /// <summary>The land task abcd1234 that the land holds name.</summary>
+    private static readonly Guid HolderTaskId = Guid.Parse("abcd1234-0000-0000-0000-000000000001");
+
+    private static ExpectationLandProgress ProgressingLand() => new()
+    {
+        RequestId = Guid.Parse("eeee0000-0000-0000-0000-000000000001"),
+        TaskId = HolderTaskId,
+        State = LandRequestState.Running,
+        LastProgressAt = Now.AddMinutes(-1),
+    };
+
+    private static ExpectationInFlightTask LiveOccupant(int index) => new()
+    {
+        TaskId = Guid.Parse($"cccc0000-0000-0000-0000-{index:000000000000}"),
+        AgentSessionId = Guid.NewGuid(),
+        DispatchedAt = Now.AddHours(-1),
+        LastActivityAt = Now.AddMinutes(-1),
+        SessionState = ExpectationSessionState.Live,
+    };
+
+    /// <summary>Current evidence about the hold itself: the named land moving, the cap of 4 full of live work.</summary>
+    private static ExpectationSnapshot WithOwnEvidence(ExpectationSnapshot snapshot) => snapshot with
+    {
+        Lands = [ProgressingLand()],
+        CapOccupantCount = 4,
+        CapOccupants = Enumerable.Range(1, 4).Select(LiveOccupant).ToList(),
+    };
 
     private static ExpectationQueuedTask Queue(Guid id, DateTime stint) => new()
     {
