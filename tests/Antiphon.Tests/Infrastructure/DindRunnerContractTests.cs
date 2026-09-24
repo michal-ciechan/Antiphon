@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text.Json.Nodes;
 using Shouldly;
 using TUnit.Core;
 
@@ -311,6 +313,100 @@ public sealed class DindRunnerContractTests
         loop.Split([' ', '\n', '\\'], StringSplitOptions.RemoveEmptyEntries)
             .ShouldContain("/runner-state/claude", "the mkdir loop names the Claude store");
         text.ShouldContain("chown -R \"$uid:$gid\" /state /work /runner-state");
+    }
+
+    // CARD-0628: the entrypoint merges the keys the CLI reads before dockerd, and the script
+    // does that merge without replacing an existing credential file.
+    [Test]
+    public void Entrypoint_seeds_claude_onboarding_before_dockerd()
+    {
+        var text = Entrypoint();
+        text.ShouldContain("node /usr/local/bin/antiphon-seed-claude-onboarding.mjs");
+        text.ShouldContain("CLAUDE_CONFIG_DIR=/state/claude");
+        Refusal(text, "ClaudeOnboardingSeedFailed").ShouldBeTrue();
+        Order(text, "node /usr/local/bin/antiphon-seed-claude-onboarding.mjs", "dockerd --config-file")
+            .ShouldBeTrue("a seed failure refuses before dockerd starts");
+        var dockerfile = Read("docker/session-runner-grok/Dockerfile");
+        dockerfile.ShouldContain(
+            "COPY docker/session-runner-grok/seed-claude-onboarding.mjs /usr/local/bin/antiphon-seed-claude-onboarding.mjs");
+        var seed = Read("docker/session-runner-grok/seed-claude-onboarding.mjs");
+        seed.ShouldContain("hasCompletedOnboarding");
+        seed.ShouldContain("hasTrustDialogAccepted");
+        seed.ShouldContain("hasCompletedProjectOnboarding");
+        seed.ShouldContain("skipDangerousModePermissionPrompt");
+        seed.ShouldContain("\"/work/worktrees\"");
+        seed.ShouldContain("\"/work/repos/antiphon\"");
+        var version = System.Text.RegularExpressions.Regex.Match(
+            dockerfile, @"ARG CLAUDE_CODE_VERSION=(\d+\.\d+\.\d+)");
+        version.Success.ShouldBeTrue();
+        seed.ShouldContain("\"" + version.Groups[1].Value + "\"");
+    }
+
+    [Test]
+    public async Task Seed_script_merges_onboarding_and_trust_and_keeps_credentials()
+    {
+        var root = Directory.CreateTempSubdirectory("c628-claude-seed");
+        try
+        {
+            var configDir = Path.Combine(root.FullName, "claude");
+            Directory.CreateDirectory(configDir);
+            var credentials = Path.Combine(configDir, ".credentials.json");
+            await File.WriteAllTextAsync(credentials, "{\"keep\":true}");
+            await File.WriteAllTextAsync(
+                Path.Combine(configDir, ".claude.json"),
+                "{\"numStartups\":3,\"theme\":\"light\"}");
+            await File.WriteAllTextAsync(
+                Path.Combine(configDir, "settings.json"),
+                "{\"model\":\"opus\"}");
+
+            var script = Path.Combine(
+                DockerStackDocuments.RepoRoot, "docker", "session-runner-grok", "seed-claude-onboarding.mjs");
+            var first = await RunNodeAsync(script, configDir);
+            first.ExitCode.ShouldBe(0, first.Error);
+            var again = await RunNodeAsync(script, configDir);
+            again.ExitCode.ShouldBe(0, again.Error);
+
+            var config = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(configDir, ".claude.json")))!;
+            config["hasCompletedOnboarding"]!.GetValue<bool>().ShouldBeTrue();
+            config["lastOnboardingVersion"]!.GetValue<string>().ShouldBe("2.1.280");
+            config["theme"]!.GetValue<string>().ShouldBe("light");
+            config["numStartups"]!.GetValue<int>().ShouldBe(3);
+            foreach (var key in new[] { "/work/worktrees", "/work/repos/antiphon" })
+            {
+                var project = config["projects"]![key]!;
+                project["hasTrustDialogAccepted"]!.GetValue<bool>().ShouldBeTrue();
+                project["hasCompletedProjectOnboarding"]!.GetValue<bool>().ShouldBeTrue();
+            }
+
+            var settings = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(configDir, "settings.json")))!;
+            settings["skipDangerousModePermissionPrompt"]!.GetValue<bool>().ShouldBeTrue();
+            settings["model"]!.GetValue<string>().ShouldBe("opus");
+            (await File.ReadAllTextAsync(credentials)).ShouldBe("{\"keep\":true}");
+        }
+        finally
+        {
+            Directory.Delete(root.FullName, recursive: true);
+        }
+    }
+
+    private static async Task<(int ExitCode, string Error)> RunNodeAsync(string script, string configDir)
+    {
+        var start = new ProcessStartInfo
+        {
+            FileName = "node",
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+        };
+        start.ArgumentList.Add(script);
+        start.Environment["CLAUDE_CONFIG_DIR"] = configDir;
+        using var process = Process.Start(start);
+        process.ShouldNotBeNull();
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        await Task.WhenAll(stdout, stderr);
+        return (process.ExitCode, await stderr);
     }
 
     private static bool Refusal(string text, string diagnosis)

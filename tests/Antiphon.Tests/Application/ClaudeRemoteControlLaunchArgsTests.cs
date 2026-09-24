@@ -81,6 +81,40 @@ public class ClaudeRemoteControlLaunchArgsTests
     }
 
     [Test]
+    public void Runner_path_replaces_a_windows_settings_file()
+    {
+        var windows = @"C:\src\Antiphon\server\bin\Debug\net9.0\claude-remote-control-off.json";
+        var args = ClaudeRemoteControlLaunchArgs.ApplyOff(
+            AgentKind.ClaudeCode,
+            ["--dangerously-skip-permissions", "--settings", windows],
+            ClaudeRemoteControlLaunchArgs.RunnerOffSettingsPath);
+
+        args.ShouldBe(new[]
+        {
+            "--dangerously-skip-permissions",
+            ClaudeRemoteControlLaunchArgs.SettingsFlag,
+            ClaudeRemoteControlLaunchArgs.RunnerOffSettingsPath,
+        });
+        args.ShouldNotContain(a => a.Contains('\\') || a.Contains("C:", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void Runner_path_twice_stays_a_single_flag()
+    {
+        var once = ClaudeRemoteControlLaunchArgs.ApplyOff(
+            AgentKind.ClaudeCode,
+            ["--dangerously-skip-permissions"],
+            ClaudeRemoteControlLaunchArgs.RunnerOffSettingsPath);
+        var twice = ClaudeRemoteControlLaunchArgs.ApplyOff(
+            AgentKind.ClaudeCode,
+            once,
+            ClaudeRemoteControlLaunchArgs.RunnerOffSettingsPath);
+
+        twice.ShouldBe(once);
+        twice.Count(a => a == ClaudeRemoteControlLaunchArgs.SettingsFlag).ShouldBe(1);
+    }
+
+    [Test]
     public void ApplyOff_twice_does_not_duplicate_the_flag()
     {
         var once = ClaudeRemoteControlLaunchArgs.ApplyOff(AgentKind.ClaudeCode, ["--name", "pool"]);

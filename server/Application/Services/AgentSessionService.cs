@@ -1626,7 +1626,15 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         var args = UsesSessionIdentityArgs(session.AgentKind)
             ? BuildSessionIdentityArgs(launchSpec.Args, session.Id, resumeMode)
             : launchSpec.Args;
-        args = ClaudeRemoteControlLaunchArgs.ApplyOff(session.AgentKind, args);
+        // Phone-home projection has already rewritten exe, cwd and env. ApplyOff runs after
+        // that, so a runner-bound session must name the image file rather than the desktop
+        // assembly directory. RunnerId and RunnerCwd are committed together.
+        var runnerBound = !string.IsNullOrWhiteSpace(session.RunnerId)
+            || !string.IsNullOrWhiteSpace(session.RunnerCwd);
+        args = ClaudeRemoteControlLaunchArgs.ApplyOff(
+            session.AgentKind,
+            args,
+            runnerBound ? ClaudeRemoteControlLaunchArgs.RunnerOffSettingsPath : null);
 
         // Read the SESSION snapshot, never the agent's live value — ceilings follow the lane
         // this process was actually launched on. A resume restamps the snapshot from the agent
