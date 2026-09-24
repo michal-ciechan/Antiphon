@@ -377,7 +377,8 @@ public sealed class TestClassificationPolicyTests
         }) ?? throw new InvalidOperationException("dotnet build");
         await build.WaitForExitAsync();
         build.ExitCode.ShouldBe(0, await build.StandardOutput.ReadToEndAsync() + await build.StandardError.ReadToEndAsync());
-        var exe = Directory.GetFiles(dir, "Probe.exe", SearchOption.AllDirectories).First();
+        // CARD-0681: the probe's apphost has no extension off Windows.
+        var exe = Directory.GetFiles(dir, OperatingSystem.IsWindows() ? "Probe.exe" : "Probe", SearchOption.AllDirectories).First();
         async Task<string> Run(params string[] args)
         {
             var p = new ProcessStartInfo(exe)

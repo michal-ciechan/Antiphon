@@ -9,6 +9,7 @@ using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Application;
 
@@ -30,6 +31,10 @@ public sealed class GrokRulesTransportCompatibilityTests
     [Arguments("env_flag")]
     public async Task Unsafe_raw_rules_are_refused_server_side_before_runner_calls(string variant)
     {
+        // CARD-0681: the CARD-0382 argv guard (GrokLaunchArgs.EnsureWindowsRulesArgv) only applies
+        // where OperatingSystem.IsWindows(); elsewhere it deliberately lets the argv through.
+        if (!OperatingSystem.IsWindows())
+            throw new SkipTestException("CARD-0382 Grok rules argv guard is Windows-only by design");
         foreach (var backend in new[] { SessionBackend.PtyHost, SessionBackend.Herdr })
         {
             if (variant.Contains("env") && backend != SessionBackend.Herdr) continue;

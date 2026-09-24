@@ -15,8 +15,15 @@ namespace Antiphon.Tests.Application;
 [Category("Unit")]
 public class SlashCommandCatalogServiceTests
 {
-    private const string UserDir = @"C:\Users\test\.claude";
-    private const string ProjectDir = @"C:\proj\.claude";
+    private static readonly string UserDir = P(@"C:\Users\test\.claude");
+    private static readonly string ProjectDir = P(@"C:\proj\.claude");
+
+    /// <summary>CARD-0681: MockFileSystem follows the host OS, so off Windows a <c>C:\</c> path is
+    /// not rooted and a backslash is not a separator. Map the Windows fixture path to its rooted
+    /// Unix form there; on Windows the path is used unchanged.</summary>
+    private static string P(string windowsPath) => OperatingSystem.IsWindows()
+        ? windowsPath
+        : windowsPath.Replace(@"C:\", "/", StringComparison.Ordinal).Replace('\\', '/');
 
     private sealed class FakeConfigDir(string dir) : IClaudeConfigDirProvider
     {
@@ -61,9 +68,9 @@ public class SlashCommandCatalogServiceTests
     public async Task Enumerates_commands_with_subfolder_namespacing()
     {
         var fs = new MockFileSystem();
-        AddFile(fs, @"C:\proj\.claude\commands\hello.md", "Say hello");
-        AddFile(fs, @"C:\proj\.claude\commands\git\commit.md", "---\ndescription: Make a commit\n---\nbody");
-        AddFile(fs, @"C:\proj\.claude\commands\a\b\c.md", "deep");
+        AddFile(fs, P(@"C:\proj\.claude\commands\hello.md"), "Say hello");
+        AddFile(fs, P(@"C:\proj\.claude\commands\git\commit.md"), "---\ndescription: Make a commit\n---\nbody");
+        AddFile(fs, P(@"C:\proj\.claude\commands\a\b\c.md"), "deep");
         var service = Build(fs);
 
         var result = await service.GetForDirsAsync(UserDir, ProjectDir, CancellationToken.None);
@@ -78,9 +85,9 @@ public class SlashCommandCatalogServiceTests
     public async Task Skill_name_comes_from_folder_with_and_without_frontmatter()
     {
         var fs = new MockFileSystem();
-        AddFile(fs, @"C:\proj\.claude\skills\antiphon-run\SKILL.md",
+        AddFile(fs, P(@"C:\proj\.claude\skills\antiphon-run\SKILL.md"),
             "# antiphon-run — Dev Stack Manager\n\nManages the local dev stack.");
-        AddFile(fs, @"C:\proj\.claude\skills\bmad-architect\SKILL.md",
+        AddFile(fs, P(@"C:\proj\.claude\skills\bmad-architect\SKILL.md"),
             "---\nname: architect\ndescription: Designs the architecture.\n---\nbody");
         var service = Build(fs);
 
@@ -96,8 +103,8 @@ public class SlashCommandCatalogServiceTests
     public async Task Project_command_overrides_user_command_of_same_name()
     {
         var fs = new MockFileSystem();
-        AddFile(fs, @"C:\Users\test\.claude\commands\deploy.md", "user deploy");
-        AddFile(fs, @"C:\proj\.claude\commands\deploy.md", "---\ndescription: project deploy\n---\nx");
+        AddFile(fs, P(@"C:\Users\test\.claude\commands\deploy.md"), "user deploy");
+        AddFile(fs, P(@"C:\proj\.claude\commands\deploy.md"), "---\ndescription: project deploy\n---\nx");
         var service = Build(fs);
 
         var result = await service.GetForDirsAsync(UserDir, ProjectDir, CancellationToken.None);
@@ -111,7 +118,7 @@ public class SlashCommandCatalogServiceTests
     public async Task Project_skill_overrides_builtin_of_same_name()
     {
         var fs = new MockFileSystem();
-        AddFile(fs, @"C:\proj\.claude\skills\review\SKILL.md", "---\ndescription: Custom review\n---\nx");
+        AddFile(fs, P(@"C:\proj\.claude\skills\review\SKILL.md"), "---\ndescription: Custom review\n---\nx");
         var service = Build(fs);
 
         var result = await service.GetForDirsAsync(UserDir, ProjectDir, CancellationToken.None);
@@ -125,7 +132,7 @@ public class SlashCommandCatalogServiceTests
     public async Task Builtin_beats_user_skill_of_same_name()
     {
         var fs = new MockFileSystem();
-        AddFile(fs, @"C:\Users\test\.claude\skills\model\SKILL.md", "---\ndescription: a user skill\n---\nx");
+        AddFile(fs, P(@"C:\Users\test\.claude\skills\model\SKILL.md"), "---\ndescription: a user skill\n---\nx");
         var service = Build(fs);
 
         var result = await service.GetForDirsAsync(UserDir, ProjectDir, CancellationToken.None);
@@ -138,7 +145,7 @@ public class SlashCommandCatalogServiceTests
     public async Task Caches_within_ttl_and_refreshes_after()
     {
         var fs = new MockFileSystem();
-        AddFile(fs, @"C:\proj\.claude\commands\one.md", "first");
+        AddFile(fs, P(@"C:\proj\.claude\commands\one.md"), "first");
         var time = new FakeTimeProvider();
         var service = Build(fs, time);
 
@@ -146,7 +153,7 @@ public class SlashCommandCatalogServiceTests
         first.ShouldContain(c => c.Name == "/one");
 
         // Add a file, re-query within the 10s TTL → stale cached result (no /two yet).
-        AddFile(fs, @"C:\proj\.claude\commands\two.md", "second");
+        AddFile(fs, P(@"C:\proj\.claude\commands\two.md"), "second");
         time.Advance(TimeSpan.FromSeconds(5));
         var withinTtl = await service.GetForDirsAsync(UserDir, ProjectDir, CancellationToken.None);
         withinTtl.ShouldNotContain(c => c.Name == "/two");
@@ -162,7 +169,7 @@ public class SlashCommandCatalogServiceTests
     public async Task Slugifies_skill_folder_names_with_spaces_and_caps()
     {
         var fs = new MockFileSystem();
-        AddFile(fs, @"C:\proj\.claude\skills\Object Type Router\SKILL.md", "---\ndescription: Routes objects\n---\nx");
+        AddFile(fs, P(@"C:\proj\.claude\skills\Object Type Router\SKILL.md"), "---\ndescription: Routes objects\n---\nx");
         var service = Build(fs);
 
         var result = await service.GetForDirsAsync(UserDir, ProjectDir, CancellationToken.None);
@@ -175,11 +182,11 @@ public class SlashCommandCatalogServiceTests
     public async Task Enumerates_installed_plugin_skills_and_commands()
     {
         var fs = new MockFileSystem();
-        const string installPath = @"C:\Users\test\.claude\plugins\cache\mp\myplugin\1.0";
+        var installPath = P(@"C:\Users\test\.claude\plugins\cache\mp\myplugin\1.0");
         var manifest = "{\"plugins\":{\"myplugin@mp\":[{\"installPath\":\"" + installPath.Replace("\\", "\\\\") + "\"}]}}";
-        AddFile(fs, @"C:\Users\test\.claude\plugins\installed_plugins.json", manifest);
-        AddFile(fs, installPath + @"\skills\cool-skill\SKILL.md", "---\ndescription: A cool plugin skill\n---\nx");
-        AddFile(fs, installPath + @"\commands\do-thing.md", "---\ndescription: A plugin command\n---\nx");
+        AddFile(fs, P(@"C:\Users\test\.claude\plugins\installed_plugins.json"), manifest);
+        AddFile(fs, P(installPath + @"\skills\cool-skill\SKILL.md"), "---\ndescription: A cool plugin skill\n---\nx");
+        AddFile(fs, P(installPath + @"\commands\do-thing.md"), "---\ndescription: A plugin command\n---\nx");
         var service = Build(fs);
 
         var result = await service.GetForDirsAsync(UserDir, ProjectDir, CancellationToken.None);
@@ -192,7 +199,7 @@ public class SlashCommandCatalogServiceTests
     public async Task Null_project_dir_skips_project_scope()
     {
         var fs = new MockFileSystem();
-        AddFile(fs, @"C:\Users\test\.claude\commands\useronly.md", "user only");
+        AddFile(fs, P(@"C:\Users\test\.claude\commands\useronly.md"), "user only");
         var service = Build(fs);
 
         var result = await service.GetForDirsAsync(UserDir, projectClaudeDir: null, CancellationToken.None);

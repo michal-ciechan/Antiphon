@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Application;
 
@@ -46,6 +47,15 @@ public class DirectoryBrowseServiceTests
     private static FileSystemDirectoryLister RealLister(MockFileSystem fs) =>
         new(fs, NullLogger<FileSystemDirectoryLister>.Instance);
 
+    /// <summary>CARD-0681: these cases list real children of a <c>C:\</c> drive through
+    /// MockFileSystem, which follows the host OS and has no drive letters off Windows; the
+    /// service's path model (PathNormalizer's "C:/" roots) is the Windows working-directory picker.</summary>
+    private static void RequireWindowsDrives()
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new SkipTestException("Drive-letter directory listing needs a Windows MockFileSystem");
+    }
+
     [Test]
     public async Task empty_input_returns_drive_roots()
     {
@@ -62,6 +72,7 @@ public class DirectoryBrowseServiceTests
     [Test]
     public async Task prefix_returns_matching_child_directories()
     {
+        RequireWindowsDrives();
         var fs = new MockFileSystem();
         fs.AddDirectory(@"C:\src");
         fs.AddDirectory(@"C:\srv");
@@ -78,6 +89,7 @@ public class DirectoryBrowseServiceTests
     [Test]
     public async Task partial_leaf_matches_substring_within_child_name()
     {
+        RequireWindowsDrives();
         // Repro for the reported bug: typing "C:/src/lea" surfaced nothing because the old code
         // prefix-filtered child paths, and "C:/src/torquay-leander" does not start with ".../lea".
         // Fuzzy/partial matching on the leaf segment must now surface it.
@@ -96,6 +108,7 @@ public class DirectoryBrowseServiceTests
     [Test]
     public async Task trailing_slash_lists_children_of_that_directory()
     {
+        RequireWindowsDrives();
         var fs = new MockFileSystem();
         fs.AddDirectory(@"C:\src\alpha");
         fs.AddDirectory(@"C:\src\beta");
@@ -114,6 +127,7 @@ public class DirectoryBrowseServiceTests
     [Test]
     public async Task existing_path_reports_exists_true()
     {
+        RequireWindowsDrives();
         var fs = new MockFileSystem();
         fs.AddDirectory(@"C:\src");
         var service = new DirectoryBrowseService(
@@ -153,6 +167,7 @@ public class DirectoryBrowseServiceTests
     [Test]
     public async Task caches_within_ttl_and_refreshes_after()
     {
+        RequireWindowsDrives();
         var fs = new MockFileSystem();
         fs.AddDirectory(@"C:\src\alpha");
         var fakeTime = new FakeTimeProvider();
