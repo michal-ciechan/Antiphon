@@ -5,7 +5,7 @@ namespace Antiphon.Tests.Scripts;
 
 /// <summary>
 /// CARD-0599 D-15 full V-12 matrix (round B1; ordinary contract is
-/// <see cref="ReleaseGateAuthorityContractTests"/>). Each method runs two <c>Test-C599A_*</c> cases of
+/// <see cref="ReleaseGateAuthorityContractTests"/>). Each method runs three <c>Test-C599A_*</c> cases of
 /// <c>scripts/test-release-gate.ps1</c>, each its own pwsh child under the harness's unchanged
 /// 120-second limit, against the PRODUCTION <c>release-authority.ps1</c> guards and publisher.
 ///
@@ -15,10 +15,14 @@ namespace Antiphon.Tests.Scripts;
 /// composition; one publisher variant per guard also proves zero remote writes through the observer.</para>
 ///
 /// <para>The decisive behaviours: the pinned blob - never the summary, private copy or working tree -
-/// names the eight suites; every authority field refuses absent, null, mistyped and foreign; every
-/// frozen chunk and required expanded UID must pass exactly once in its own chunk; exits, counts,
-/// evidence containment, identities, digests, timestamps, whole-run markers and credit flags are
-/// checked independently; and <c>-WhatIf</c> writes no publication authority.</para>
+/// names the eight suites; every authority field refuses absent, null, mistyped, array-wrapped and
+/// foreign; repository binds to the checkout origin and the publication destination and
+/// coordinatorVersion to the supported coordinator; every frozen chunk and required expanded UID must
+/// pass exactly once in its own chunk; exits, counts, evidence containment, identities, digests,
+/// timestamps (never after the injected publisher clock), whole-run markers and credit flags are
+/// checked independently; only a typed prepublication receipt from the bound release card, correlated
+/// to this run, is accepted (PC-306); and <c>-WhatIf</c> writes no publication authority and no tag
+/// reservation.</para>
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -27,7 +31,7 @@ public sealed class ReleaseGatePublicationAuthorityTests
     [Test]
     public async Task C599A_PinnedPolicy()
     {
-        await RunCaseAsync("C599A_PinnedPolicy", 9,
+        await RunCaseAsync("C599A_PinnedPolicy", 10,
             "C599 V-12: the valid eight-suite control passes the publication gate",
             "C599 G-224: each of the eight pinned suites missing from an agreeing report refuses with zero remote writes",
             "C599 G-225: a wrong, absent, null or mistyped pinned hash blocks before any remote write",
@@ -35,11 +39,16 @@ public sealed class ReleaseGatePublicationAuthorityTests
             "C599 G-286: re-pinning the candidate to a new commit with a valid blob is accepted (repin control)",
             "C599 G-286: an unknown schema, missing or empty rc profile and each absent suite in the pinned blob refuse",
             "C599 V-18: -WhatIf passes the gate but writes no publication authority and nothing remote",
+            "C599 V-18: -WhatIf proposes the next tag without reserving it and leaves publications.json byte-identical",
             "C599 G-285: a changed working tree and moved HEAD cannot alter the frozen suite authority",
             "C599 V-18: the frozen publication authority digest is journalled and carried in the manifest");
         await RunCaseAsync("C599A_PinnedPolicyFields", 2,
             "C599 V-12: the valid authority control passes before the field matrix",
-            "C599 V-12: every frozen authority field refuses when absent, null, mistyped or foreign");
+            "C599 V-12: every frozen authority field refuses when absent, null, mistyped, array-wrapped or foreign");
+        await RunCaseAsync("C599A_PinnedPolicyBindings", 3,
+            "C599 V-12: the valid authority control passes before the binding matrix",
+            "C599 V-12: requiredSuites, exclusions and script digests refuse joined strings, unknown names and array-wrapped scalars",
+            "C599 V-12: repository binds to the checkout origin and the publication destination, coordinatorVersion to the supported coordinator");
     }
 
     [Test]
@@ -66,16 +75,23 @@ public sealed class ReleaseGatePublicationAuthorityTests
             "C599 G-299: foreign native RunId evidence on the plan, ledger, a chunk or a roster refuses",
             "C599 G-300: a modified script, authority, plan or discovery digest blocks publication",
             "C599 G-301: out-of-order or stale evidence timestamps refuse",
+            "C599 G-301: evidence dated after the injected publisher clock refuses",
             "C599 G-302: a missing, false, string or numeric teardown cannot publish",
             "C599 G-303: a seam-driven ledger or run creates no release",
             "C599 G-304: a NoReport ledger or run creates no release",
             "C599 G-305: subset and diagnostic ledgers or runs create no release",
-            "C599 V-12: a missing, false or string pre-publish report acceptance cannot publish",
+
             "C599 G-387: a string or non-true coverageComplete flag cannot publish",
             "C599 G-388: a string or non-true testsPassed flag cannot publish",
             "C599 G-389: a string or non-true reportDelivered flag cannot publish",
             "C599 V-12: client and script evidence validate against their own declared rosters",
             "C599 V-12: the restored control ledger publishes with suite counts recomputed from the evidence");
+        await RunCaseAsync("C599A_ExecutionLedgerReceipt", 5,
+            "C599 V-12: the valid control ledger with a correlated prepublication receipt passes",
+            "C599 G-306: a final or foreign receipt kind where the prepublication receipt is required refuses",
+            "C599 V-12: a missing, boolean, string or array-wrapped receipt cannot publish and the legacy reportAccepted flag confers nothing",
+            "C599 V-12: a receipt from any recipient but the release card bound to the authority refuses",
+            "C599 V-12: a receipt not correlated to this intent, candidate, SHA and native run refuses");
     }
 
     private static Task RunCaseAsync(string caseName, int expectedRows, params string[] requiredRows) =>

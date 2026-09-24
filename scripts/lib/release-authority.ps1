@@ -191,6 +191,7 @@ function New-ReleaseGateAuthority {
         [string]$CandidateId,
         [string]$CandidateRef,
         [string]$IntentId,
+        [string]$ReleaseCardId = '',
         [datetime]$CreatedUtc = [datetime]::MinValue
     )
     if (-not (Test-ReleaseGateFullSha -Sha $Sha)) { throw 'authority-sha-not-full' }
@@ -210,6 +211,7 @@ function New-ReleaseGateAuthority {
         candidateId = $CandidateId
         candidateRef = $CandidateRef
         intentId = $IntentId
+        releaseCardId = $ReleaseCardId
         sha = $Sha
         profile = 'rc'
         coordinatorVersion = $script:ReleaseAuthorityCoordinatorVersion
@@ -615,7 +617,7 @@ function Test-ReleaseGateAuthority {
       Single entry point for the publisher: pinned policy + ledger. Returns Ok,
       Reasons, the pinned required suites and the validated suite rows.
     #>
-    param([string]$CandidateRoot, [string]$RepositoryRoot, $Green, $Candidate)
+    param([string]$CandidateRoot, [string]$RepositoryRoot, $Green, $Candidate, [string]$Repository = '', [datetime]$NowUtc = [datetime]::MinValue)
     $pinned = Test-ReleaseGatePinnedAuthority -CandidateRoot $CandidateRoot -RepositoryRoot $RepositoryRoot `
         -Sha ([string]$Candidate.sha) -CandidateId ([string]$Candidate.candidateId) -CandidateRef ([string]$Candidate.ref)
     if ($null -eq $pinned.Authority) {
