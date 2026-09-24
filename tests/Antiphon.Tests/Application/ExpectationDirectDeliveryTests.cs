@@ -170,8 +170,8 @@ public sealed class ExpectationDirectDeliveryTests
         (await f.DeliverAsync(swallowed.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Unconfirmed);
         adapter.Inputs.Count(i => i == swallowed.Body).ShouldBe(1, "the body is typed once; retries are Enter-only");
         adapter.Inputs.ShouldNotContain("\u001b");
-        (await f.ReloadAsync(swallowed.Id)).AttemptState.ShouldBe(ExpectationAttemptState.Submitted,
-            "Enter went out: no receipt, but no composer hold either");
+        (await f.ReloadAsync(swallowed.Id)).AttemptState.ShouldBe(ExpectationAttemptState.Unconfirmed,
+            "NoTranscriptRecord past a floor: every Enter may have been swallowed, so the body may still stand");
 
         adapter.KillCount.ShouldBe(0);
         adapter.Killed.ShouldBeFalse();
@@ -234,14 +234,16 @@ public sealed class ExpectationDirectDeliveryTests
     {
         await using var f = await ExpectationDeliveryFixture.CreateAsync();
         var adapter = f.Harness.Adapter;
-        // No composer evidence inside the window, so Enter is withheld; the terminal then renders
-        // the body late and it stands whole in the composer.
-        adapter.EchoTypedInputToScreen = false;
+        // Every Enter is swallowed: the screen redraws, the body stays whole in the composer and no
+        // record past the floor ever arrives (NoTranscriptRecord).
+        adapter.SwallowSubmits = 99;
         var stranded = await f.NudgeAsync();
         (await f.DeliverAsync(stranded.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Unconfirmed);
-        (await f.ReloadAsync(stranded.Id)).AttemptState.ShouldBe(ExpectationAttemptState.Unconfirmed);
-        adapter.EchoTypedInputToScreen = true;
-        adapter.PrimeComposer(stranded.Body);
+        var strandedStored = await f.ReloadAsync(stranded.Id);
+        strandedStored.AttemptState.ShouldBe(ExpectationAttemptState.Unconfirmed,
+            "a swallowed Enter is not submit evidence, so the body holds the composer");
+        strandedStored.OperatorOutboxState.ShouldBe(ExpectationOperatorOutboxState.Due);
+        adapter.SubmittedBodies.ShouldBeEmpty("sanity: nothing was submitted");
         var writes = adapter.Inputs.Count;
 
         // The idle local-command poll (Codex /status, Grok /usage) must not type on top of it.
@@ -253,14 +255,18 @@ public sealed class ExpectationDirectDeliveryTests
         adapter.Inputs.Count.ShouldBe(writes, "the poll sent no Escape, command or Enter");
 
         // Ordinary WhenIdle flush on an idle session must not append to the stranded body.
-        await f.Harness.Queue.EnqueueAsync(f.SessionId, "ordinary caller note", MessageSendMode.WhenIdle, CancellationToken.None);
+        var queued = await f.Harness.Queue.EnqueueAsync(
+            f.SessionId, "ordinary caller note", MessageSendMode.WhenIdle, CancellationToken.None);
+        var noteId = queued.Messages.Single(m => m.Body == "ordinary caller note").Id;
         await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
         await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
         adapter.Inputs.Count.ShouldBe(writes, "repeated ordinary flushes typed nothing on top of the watchdog body");
 
-        // Ordinary send-now is refused rather than typed on top of it.
+        // Ordinary Now and SendNow are refused rather than typed on top of it.
         await Should.ThrowAsync<ConflictException>(() => f.Harness.Queue.EnqueueAsync(
             f.SessionId, "operator send now", MessageSendMode.Now, CancellationToken.None));
+        await Should.ThrowAsync<ConflictException>(() => f.Harness.Queue.SendNowAsync(
+            f.SessionId, noteId, CancellationToken.None));
         adapter.Inputs.Count.ShouldBe(writes);
 
         // A second watchdog nudge is refused too.
@@ -276,9 +282,56 @@ public sealed class ExpectationDirectDeliveryTests
         }
 
         // Proven empty composer releases the hold: the queue may type again.
+        adapter.SwallowSubmits = 0;
         adapter.PrimeComposer(string.Empty);
         await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
-        adapter.SubmittedBodies.ShouldContain("ordinary caller note");
+        adapter.SubmittedBodies.ShouldBe(["ordinary caller note"]);
+        adapter.KillCount.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C650_No_baseline_screen_only_submit_holds_until_the_transcript_shows_it()
+    {
+        // No transcript floor and every Enter swallowed. The screen redrew (Claude's screen-only
+        // submit verdict) but no record carries the prompt, so the body may still stand whole in
+        // the composer: it holds, and the operator is paged.
+        await using var f = await ExpectationDeliveryFixture.CreateAsync(observable: false);
+        var adapter = f.Harness.Adapter;
+        adapter.SwallowSubmits = 99;
+        adapter.SubmitAck = "\nclaude submit redraw";
+        var unbased = await f.NudgeAsync();
+        var sent = await f.DeliverAsync(unbased.Id);
+        sent.Outcome.ShouldBe(ExpectationSendOutcome.Unconfirmed);
+        sent.Reason.ShouldBe("screen_only_submit", "a redraw is the screen-only verdict, which is not submit evidence without a record");
+        var stored = await f.ReloadAsync(unbased.Id);
+        stored.BaselineSequence.ShouldBeNull("sanity: no floor");
+        stored.AttemptState.ShouldBe(ExpectationAttemptState.Unconfirmed, "no positive submit evidence");
+        stored.OperatorOutboxState.ShouldBe(ExpectationOperatorOutboxState.Due, "the unconfirmed hold pages the operator");
+        adapter.SubmittedBodies.ShouldBeEmpty("sanity: the body never left the composer");
+        var writes = adapter.Inputs.Count;
+
+        await f.Harness.Queue.EnqueueAsync(f.SessionId, "land note for CARD-0641", MessageSendMode.WhenIdle, CancellationToken.None);
+        await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
+        await Should.ThrowAsync<ConflictException>(() => f.Harness.Queue.EnqueueAsync(
+            f.SessionId, "operator send now", MessageSendMode.Now, CancellationToken.None));
+        adapter.Inputs.Count.ShouldBe(writes, "nothing is typed on top of a body that may stand in the composer");
+
+        // The Enter finally lands. Its echo stays in the conversation, so the screen alone can
+        // never show the composer empty, and time passing is not evidence either.
+        adapter.SwallowSubmits = 0;
+        adapter.PrimeComposer(string.Empty);
+        adapter.Emit("\n> " + unbased.Body + "\n");
+        await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
+        adapter.Inputs.Count.ShouldBe(writes, "an echo on screen does not release the hold");
+
+        // Positive evidence: the transcript binds and shows the prompt taken as a turn. The hold releases.
+        await BridgeQueueHarness.InsertEntryAsync(f.SessionId, TranscriptKinds.UserPrompt, unbased.Body,
+            timestamp: DateTime.UtcNow, connectionString: f.Schema.ConnectionString);
+        await BridgeQueueHarness.InsertEntryAsync(f.SessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn",
+            connectionString: f.Schema.ConnectionString);
+        await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
+        adapter.SubmittedBodies.ShouldBe(["land note for CARD-0641"]);
+        (await f.ReloadAsync(unbased.Id)).ReceiptAt.ShouldBeNull("releasing the hold is not a receipt without a floor");
         adapter.KillCount.ShouldBe(0);
     }
 
