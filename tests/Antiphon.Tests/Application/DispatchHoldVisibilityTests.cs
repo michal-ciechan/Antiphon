@@ -169,7 +169,9 @@ public sealed class DispatchHoldVisibilityTests
         await using var world = CreateWorld(schema.ConnectionString, clock, new FakeLease(), maxConcurrent: 1);
         var (agentId, _) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
             schema.ConnectionString, workspace.Path);
-        await SeedDispatchedAsync(schema, workspace.Path, t0, runnerId: "server2");
+        var remoteDir = Path.Combine(workspace.Path, "remote-seat");
+        Directory.CreateDirectory(remoteDir);
+        await SeedDispatchedAsync(schema, remoteDir, t0, runnerId: "server2");
         var queued = await SeedQueuedAsync(schema, workspace.Path, agentId, t0);
 
         var tick = await world.Dispatcher.TickAsync(CancellationToken.None);
