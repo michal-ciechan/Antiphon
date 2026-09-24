@@ -231,6 +231,104 @@ public sealed class RemoteCompletionSpillTests
         delivery.SpillPath.ShouldBe(TypedBodySpill.InboxAbsolutePath(cwd!, run[0].Id.ToString("D")));
     }
 
+    [Test]
+    public async Task A_null_body_batched_completion_retry_persists_and_sends_the_composed_batch()
+    {
+        var courier = new RemoteSpillCourier();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            AlwaysOn = false,
+            ConnectionString = schema.ConnectionString,
+            ConfigureServices = s => s.AddSingleton(courier),
+        });
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        await SetRunnerCwdAsync(db, h.SessionId, RunnerCwd);
+
+        var first = "earlier completion note " + new string('s', 80);
+        var second = "later completion note " + new string('t', 80);
+        var composed = ChannelPromptFormat.FormatBatch([first], second);
+        var (run, _, wire) = await SeedFrozenRenderingAsync(db, h.SessionId, [first, second]);
+        await ArmBatchRetryAsync(db, h.SessionId, run);
+
+        string? held = null;
+        var record = h.Adapter.OnSubmitted;
+        h.Adapter.OnSubmitted = async submitted =>
+        {
+            await using var live = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+            held = (await live.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == run[0].Id))
+                .RemoteSpillBody;
+            submitted.ShouldContain(TypedBodySpill.InboxRelativePath(run[0].Id.ToString("D")));
+            submitted.ShouldNotBe(first);
+            if (record is not null)
+                await record(submitted);
+        };
+
+        await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        held.ShouldBe(composed);
+        courier.TryPeek(h.SessionId, out var staged).ShouldBeTrue();
+        staged.Spill.Body.ShouldBe(composed);
+        staged.Spill.RelativePath.ShouldBe(TypedBodySpill.InboxRelativePath(run[0].Id.ToString("D")));
+    }
+
+    [Test]
+    public async Task A_batched_completion_whose_member_note_cannot_be_rebuilt_is_canceled()
+    {
+        var courier = new RemoteSpillCourier();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            AlwaysOn = false,
+            ConnectionString = schema.ConnectionString,
+            ConfigureServices = s => s.AddSingleton(courier),
+        });
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        await SetRunnerCwdAsync(db, h.SessionId, RunnerCwd);
+
+        var first = "earlier completion note " + new string('a', 80);
+        var second = "later completion note " + new string('b', 80);
+        var (run, completions, _) = await SeedFrozenRenderingAsync(db, h.SessionId, [first, second]);
+        completions[1].CompletionSnapshotJson = null;
+        completions[1].CompletionDeliveryJson = null;
+        await ArmBatchRetryAsync(db, h.SessionId, run);
+
+        await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        courier.IsStaged(h.SessionId).ShouldBeFalse();
+        await using var saved = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var rows = await saved.SessionQueuedMessages.AsNoTracking()
+            .Where(m => run.Select(r => r.Id).Contains(m.Id))
+            .ToListAsync();
+        rows.Count.ShouldBe(2);
+        rows.ShouldAllBe(row => row.Status == QueuedMessageStatus.Canceled
+            && row.DeliveryVerdict == DeliveryVerdict.SpillBodyMissing
+            && row.RemoteSpillBody == null);
+    }
+
+    /// <summary>
+    /// A pending retry of a frozen batch: both rows share a conversation key and one prior attempt,
+    /// and the logical notes stay on the rows. The pointer lives only in the frozen wire.
+    /// </summary>
+    private static async Task ArmBatchRetryAsync(
+        AppDbContext db, Guid sessionId, IReadOnlyList<SessionQueuedMessage> run)
+    {
+        var generation = SessionGeneration.Normalize(await db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId).Select(s => s.StartedAt).SingleAsync());
+        foreach (var row in run)
+        {
+            row.ConversationKey = "c647-null-batch";
+            row.DeliveryAttempts = 1;
+            row.LastDeliveryStartedAt = DateTime.UtcNow.AddMinutes(-4);
+            row.LastDeliveryGeneration = generation;
+            row.LastDeliveryBaselineSequence = 0;
+            row.RemoteSpillBody = null;
+        }
+
+        await db.SaveChangesAsync();
+    }
+
     /// <summary>
     /// Binds the fixture session to a runner. CK_AgentSessions_RunnerBinding_AllOrNone means the
     /// three columns move together, so a RunnerCwd on its own is not a state the database allows.

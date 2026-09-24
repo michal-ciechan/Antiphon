@@ -3,9 +3,12 @@
 - **A queued runner spill is owned by its message row (CARD-0647 follow-up).** The row
   persists the exact file body and a runner-relative path derived from its Id before
   the first Input, including SendNow. The bytes stay until a complete matching UserPrompt
-  is recorded, then the body column is cleared. A pointer with no stored bytes is re-spilled
-  from the source message when that text is still available, or the message is canceled as
-  undeliverable. The runner resolves the mirror and refuses a symlink that leaves it,
+  is recorded, then the body column is cleared. A screen-only Delivered or LateConfirmed
+  verdict is not that receipt. A pointer with no stored bytes is re-spilled from the source
+  message when that text is still available, or the message is canceled as undeliverable. A
+  null-body batched Completion is rebuilt from every member's frozen logical note before it
+  is stored or sent; if that composition cannot be rebuilt, every member of the batch is
+  canceled. The runner resolves the mirror and refuses a symlink that leaves it,
   including an unresolved link at any path component: Exists is false for a dangling
   symlink, and writing through that link follows it. An
   Input frame carries that Id with the body. The runner checks the path against the Id and

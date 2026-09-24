@@ -155,6 +155,114 @@ public sealed class DurableRunnerSpillReceiptTests
     }
 
     [Test]
+    public async Task A_screen_only_Delivered_null_body_is_respilled_from_the_source_message()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString,
+            ConfigureServices = services => services.AddSingleton<RemoteSpillCourier>(),
+        });
+        var source = "legacy-screen-only-source-0647\n" + new string('s', 300);
+        var id = await h.SeedPendingMessageAsync(source);
+        var relative = TypedBodySpill.InboxRelativePath(id.ToString("D"));
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+            row.RemoteSpillBody = null;
+            row.RemoteSpillRelativePath = relative;
+            row.DeliveryVerdict = DeliveryVerdict.Delivered;
+            row.DeliveryVerdictAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
+        await BindRunnerAsync(schema.ConnectionString, h.SessionId, "/runner/worktrees/task-legacy-source");
+
+        var courier = new RemoteSpillCourier(h.Provider.GetRequiredService<IServiceScopeFactory>());
+        var found = await courier.FindDurableAsync(
+            h.SessionId, "Read " + relative + " before doing anything else", CancellationToken.None);
+        found.ShouldNotBeNull();
+        found.Spill.Body.ShouldBe(source);
+        found.Spill.MessageId.ShouldBe(id);
+
+        await using var saved = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var stored = await saved.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == id);
+        stored.Status.ShouldBe(QueuedMessageStatus.Pending);
+        stored.RemoteSpillBody.ShouldBe(source);
+        stored.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+    }
+
+    [Test]
+    public async Task A_screen_only_Delivered_null_body_pointer_is_canceled_instead_of_typed_without_bytes()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString,
+            ConfigureServices = services => services.AddSingleton<RemoteSpillCourier>(),
+        });
+        var id = await h.SeedPendingMessageAsync("placeholder");
+        var relative = TypedBodySpill.InboxRelativePath(id.ToString("D"));
+        var pointer = TypedBodySpill.PointerHeadline + "\n\n    " + relative;
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+            row.Body = pointer;
+            row.RemoteSpillBody = null;
+            row.RemoteSpillRelativePath = relative;
+            row.DeliveryVerdict = DeliveryVerdict.Delivered;
+            row.DeliveryVerdictAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
+        await BindRunnerAsync(schema.ConnectionString, h.SessionId, "/runner/worktrees/task-legacy-missing");
+
+        var restarted = new RemoteSpillCourier(h.Provider.GetRequiredService<IServiceScopeFactory>());
+        var again = await Should.ThrowAsync<RemoteSpillUndeliverableException>(() =>
+            restarted.FindDurableAsync(h.SessionId, pointer, CancellationToken.None));
+        again.Message.ShouldBe(RemoteSpillUndeliverableException.MissingBodyReason);
+
+        await using var saved = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var canceled = await saved.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == id);
+        canceled.Status.ShouldBe(QueuedMessageStatus.Canceled);
+        canceled.DeliveryVerdict.ShouldBe(DeliveryVerdict.SpillBodyMissing);
+    }
+
+    [Test]
+    public async Task A_complete_matching_UserPrompt_releases_a_null_body_pointer()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString,
+            ConfigureServices = services => services.AddSingleton<RemoteSpillCourier>(),
+        });
+        var id = await h.SeedPendingMessageAsync("placeholder");
+        var relative = TypedBodySpill.InboxRelativePath(id.ToString("D"));
+        var pointer = TypedBodySpill.PointerHeadline + "\n\n    " + relative + "\n" + new string('u', 80);
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+            row.Body = pointer;
+            row.RemoteSpillBody = null;
+            row.RemoteSpillRelativePath = relative;
+            row.DeliveryVerdict = DeliveryVerdict.Delivered;
+            row.DeliveryVerdictAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, pointer, timestamp: DateTime.UtcNow);
+        await BindRunnerAsync(schema.ConnectionString, h.SessionId, "/runner/worktrees/task-legacy-released");
+
+        var courier = new RemoteSpillCourier(h.Provider.GetRequiredService<IServiceScopeFactory>());
+        var found = await courier.FindDurableAsync(h.SessionId, pointer, CancellationToken.None);
+        found.ShouldBeNull();
+
+        await using var saved = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var stored = await saved.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == id);
+        stored.Status.ShouldBe(QueuedMessageStatus.Pending);
+        stored.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        stored.RemoteSpillBody.ShouldBeNull();
+    }
+
+    [Test]
     public async Task Queued_brief_is_written_by_the_runner_when_a_busy_recipient_becomes_eligible()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
