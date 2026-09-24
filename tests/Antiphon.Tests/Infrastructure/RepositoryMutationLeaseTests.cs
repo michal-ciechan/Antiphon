@@ -649,6 +649,30 @@ public sealed class RepositoryMutationLeaseTests
     }
 
     [Test]
+    public async Task C666_JournaledGitThatCannotStartLeavesNoStandingFence()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var git = new UnstartableGit(Path.Combine(fixture.Root, "no-such-git-executable"));
+
+        // update-ref is journaled, so its record is written before Process.Start fails.
+        await Should.ThrowAsync<System.ComponentModel.Win32Exception>(() =>
+            git.RunAsync(fixture.Repository, ["update-ref", "refs/heads/c666-never", "HEAD"], CancellationToken.None));
+
+        var common = await fixture.Git.CommonDirectoryAsync(fixture.Repository, CancellationToken.None);
+        Directory.EnumerateFileSystemEntries(Path.Combine(common, "antiphon", "children")).ShouldBeEmpty(
+            "a child that never started cannot need fencing, so its start record is removed");
+        await using var admitted = await new RepositoryMutationLease(fixture.Git).TryAcquireAsync(fixture.Repository, CancellationToken.None);
+        admitted.ShouldNotBeNull("a failed git start must not leave the repository permanently fenced");
+        await fixture.AssertRemoteSourceAsync();
+    }
+
+    private sealed class UnstartableGit(string missingExecutable) : LandingGit
+    {
+        protected override void ConfigureProcess(ProcessStartInfo start) => start.FileName = missingExecutable;
+    }
+
+    [Test]
     public async Task C448_V13_LeaseUsesCommonRepositoryIdentity()
     {
         await using var fixture = new LandingGitFixture();
