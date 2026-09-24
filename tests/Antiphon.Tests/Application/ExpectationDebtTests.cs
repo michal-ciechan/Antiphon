@@ -214,12 +214,12 @@ public sealed class ExpectationDebtTests
         await using (var db = world.Db())
         {
             var scan = await world.Service(db, clock).ScanAsync(world.Directive, ExpectationProbeInput.None, CancellationToken.None);
+            // Only CARD-0641's own receipt clears note debt; a quote, a pre-floor prompt or a clipped body does not.
             scan.Evaluation.UndeliveredNotes.Select(row => row.SubjectKey).OrderBy(key => key, StringComparer.Ordinal).ShouldBe(
                 new[] { untyped.Note.Id, below.Note.Id, clipped.Note.Id }
                     .Select(id => ExpectationSubjects.Note(world.Directive.Id, id))
                     .OrderBy(key => key, StringComparer.Ordinal)
-                    .ToArray(),
-                "only CARD-0641's own receipt clears note debt; a quote, a pre-floor prompt or a clipped body does not");
+                    .ToArray());
         }
 
         // Read-only: no note is settled by the watchdog, the delivered one included.
