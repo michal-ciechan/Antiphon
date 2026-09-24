@@ -34,7 +34,7 @@ public class PinnedAgentKindTests
 
         await using var db = CreateContext();
         var created = await CreateService(db).CreateAsync(
-            new CreateAgentTaskRequest(Goal: "run this on my Codex agent") { AgentId = agentId },
+            new CreateAgentTaskRequest(Goal: "run this on my Codex agent", Workspace: WorkspaceMode.Shared) { AgentId = agentId },
             ManualCaller(workspace.Path),
             CancellationToken.None);
 
@@ -58,7 +58,7 @@ public class PinnedAgentKindTests
 
         var mismatch = await Should.ThrowAsync<ConflictException>(
             () => service.CreateAsync(
-                new CreateAgentTaskRequest(Goal: "please run as Claude")
+                new CreateAgentTaskRequest(Goal: "please run as Claude", Workspace: WorkspaceMode.Shared)
                 {
                     AgentId = agentId,
                     AgentKind = AgentKind.ClaudeCode,
@@ -70,7 +70,7 @@ public class PinnedAgentKindTests
         mismatch.Message.ShouldContain("ClaudeCode");
 
         var created = await service.CreateAsync(
-            new CreateAgentTaskRequest(Goal: "run as Codex, which it is")
+            new CreateAgentTaskRequest(Goal: "run as Codex, which it is", Workspace: WorkspaceMode.Shared)
             {
                 AgentId = agentId,
                 AgentKind = AgentKind.Codex,
@@ -90,7 +90,7 @@ public class PinnedAgentKindTests
 
         await using var db = CreateContext();
         var created = await CreateService(db).CreateAsync(
-            new CreateAgentTaskRequest(Goal: "pin the long way to a pool row") { AgentId = poolId },
+            new CreateAgentTaskRequest(Goal: "pin the long way to a pool row", Workspace: WorkspaceMode.Shared) { AgentId = poolId },
             ManualCaller(workspace.Path),
             CancellationToken.None);
 
@@ -125,7 +125,7 @@ public class PinnedAgentKindTests
         await using var db = CreateContext();
         var ex = await Should.ThrowAsync<ValidationException>(
             () => CreateService(db).CreateAsync(
-                new CreateAgentTaskRequest(Goal: goal, Kind: AgentTaskKind.Orchestrator)
+                new CreateAgentTaskRequest(Goal: goal, Kind: AgentTaskKind.Orchestrator, Workspace: WorkspaceMode.Shared)
                 {
                     AgentId = agentId,
                 },

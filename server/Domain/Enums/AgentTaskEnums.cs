@@ -91,9 +91,10 @@ public enum AgentTaskStatus
 }
 
 /// <summary>
-/// Where the delegate runs. <see cref="Shared"/> is the DEFAULT: most delegated work either must
-/// see live state (deploys, test runs, log reads) or is small enough that a worktree's branch +
-/// merge-back + conflict path is pure overhead. Isolation is opt-in.
+/// Where the delegate runs. A fresh delegation that omits it gets <see cref="Worktree"/>
+/// (CARD-0644); <see cref="Shared"/> and <see cref="ReadOnly"/> are explicit choices, as is reusing
+/// an existing agent's checkout. The numeric values and the stored/entity default of
+/// <see cref="Shared"/> are persistence compatibility for historical rows, not the dispatch default.
 /// </summary>
 public enum WorkspaceMode
 {

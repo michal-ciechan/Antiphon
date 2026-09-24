@@ -79,8 +79,8 @@ param(
     # default base - the structured way to continue a sibling's work. Prefer a full SHA already in
     # the server's repository; a branch or commit tag resolves when the checkout is created. It
     # never sets -Into and never takes over the named branch: the task still gets its own
-    # feat/card-task-<id>, and landing is still the explicit -Land path. Requires -Worktree, and
-    # refuses -Shared/-ReadOnly, -OnAgent/-Agent, -RepairSource and -SourceLanding, each of which
+    # feat/card-task-<id>, and landing is still the explicit -Land path. Runs in the default fresh
+    # Worktree (-Worktree is optional), and refuses -Shared/-ReadOnly, -OnAgent/-Agent, -RepairSource and -SourceLanding, each of which
     # already carries its own authoritative base.
     [Parameter(ParameterSetName = 'Create')]
     [string]$StartRef,
@@ -125,13 +125,16 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [string]$Agent,
 
-    # Isolate in a fresh git worktree, merged back when it finishes. Workers default to running
-    # right in the directory; a sub-orchestrator gets a worktree by default already.
+    # Isolate in a fresh git worktree on its own task branch. This is already the default for a
+    # fresh worker or sub-orchestrator (CARD-0644); the switch just says so explicitly. Landing is
+    # still the explicit -Land path, never automatic. -Worktree, -Shared and -ReadOnly are exclusive.
     [Parameter(ParameterSetName = 'Create')]
     [switch]$Worktree,
 
-    # Force the shared directory - opts a sub-orchestrator OUT of its default worktree. The server
-    # will warn: its delegates and its caller can overwrite each other.
+    # Run directly in the directory, opting OUT of the default worktree - for work that must see
+    # live state in that checkout, or a directory that is not a git repository. For an orchestrator
+    # the server warns: its delegates and its caller can overwrite each other. -OnAgent / -Agent
+    # reuse that agent's checkout without it.
     [Parameter(ParameterSetName = 'Create')]
     [switch]$Shared,
 
@@ -900,13 +903,21 @@ switch ($PSCmdlet.ParameterSetName) {
             exit 1
         }
 
+        # CARD-0644 D-1: two workspace switches are ambiguous. Refused here, before any POST, rather
+        # than letting the first one silently win.
+        if (@($Worktree, $Shared, $ReadOnly | Where-Object { $_ }).Count -gt 1) {
+            Write-Error 'workspace_switch_conflict: -Worktree, -Shared and -ReadOnly are exclusive; pass at most one.'
+            exit 2
+        }
+
         $body = @{
             goal = $Goal
             kind = if ($Orchestrator) { 'Orchestrator' } else { 'Worker' }
             role = if ($Orchestrator -and $Role -eq 'Custom') { 'Plan' } else { $Role }
         }
-        # Workspace is sent only when chosen - omitted, the server decides: workers run shared,
-        # a sub-orchestrator gets its own worktree unless it already has its own -Dir.
+        # Workspace is sent only when chosen - omitted, the server applies its fresh default (a
+        # Worktree for a fresh worker or sub-orchestrator; the pinned agent's own checkout for
+        # -OnAgent / -Agent). Omission keeps a pin distinguishable from an explicit -Worktree.
         if ($Worktree) { $body['workspace'] = 'Worktree' }
         elseif ($ReadOnly) { $body['workspace'] = 'ReadOnly' }
         elseif ($Shared) { $body['workspace'] = 'Shared' }
@@ -941,10 +952,6 @@ switch ($PSCmdlet.ParameterSetName) {
         # admit. The selector itself goes over VERBATIM - the server validates and refuses it, and
         # a value this script quietly trimmed would be a base the caller did not ask for.
         if ($PSBoundParameters.ContainsKey('StartRef')) {
-            if (-not $Worktree) {
-                Write-Error 'worktree_start_ref_mode: -StartRef requires -Worktree; it selects the base for a fresh task worktree.'
-                exit 2
-            }
             if ($Shared -or $ReadOnly) {
                 Write-Error 'worktree_start_ref_mode: -StartRef cannot be combined with -Shared or -ReadOnly.'
                 exit 2
@@ -958,6 +965,8 @@ switch ($PSCmdlet.ParameterSetName) {
                 exit 2
             }
             $body['worktreeBaseRequestedRef'] = $StartRef
+            # CARD-0644 D-5: the default fresh Worktree is what a start ref needs; say so on the wire.
+            $body['workspace'] = 'Worktree'
         }
         # CARD-0544: refused locally, before any POST, when the shape can never be admitted.
         $verificationFields = @('VerificationSubject', 'VerificationBaselineOutcome', 'VerificationSelectionFile') |
@@ -972,10 +981,12 @@ switch ($PSCmdlet.ParameterSetName) {
                 exit 1
             }
             if ($VerificationRound -eq 'Interim') {
-                if (($Role -eq 'Code' -and -not $Worktree) -or ($Role -eq 'Review' -and -not $ReadOnly)) {
-                    Write-Error 'verification_round_role: Interim is supported only for -Role Code -Worktree and -Role Review -ReadOnly.'
+                if (($Role -eq 'Code' -and ($Shared -or $ReadOnly)) -or ($Role -eq 'Review' -and -not $ReadOnly)) {
+                    Write-Error 'verification_round_role: Interim is supported only for -Role Code in its (default) Worktree and -Role Review -ReadOnly.'
                     exit 1
                 }
+                # CARD-0644 D-5: Interim Code runs in the default fresh Worktree; say so on the wire.
+                if ($Role -eq 'Code') { $body['workspace'] = 'Worktree' }
                 $fullGuid = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
                 foreach ($name in @('VerificationSubject', 'VerificationBaselineOutcome')) {
                     $value = [string]$PSBoundParameters[$name]

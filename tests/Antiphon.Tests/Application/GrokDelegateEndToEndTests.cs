@@ -104,7 +104,7 @@ public class GrokDelegateEndToEndTests
         using var relay = new DelegateTaskApiRelay(workspace.Path, harness.Delegation);
         var title = "unsafe-raw-" + Guid.NewGuid().ToString("N");
         var run = await DelegateScriptRunner.RunAsync(relay.BaseUrl,
-            "-Role", "Code", "-Kind", "Grok", "-Title", title, "-Goal", MultilineGoal, "-Dir", workspace.Path);
+            "-Role", "Code", "-Shared", "-Kind", "Grok", "-Title", title, "-Goal", MultilineGoal, "-Dir", workspace.Path);
         run.ExitCode.ShouldBe(0, run.Output);
         using (var scope = harness.Provider.CreateScope())
             await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
@@ -151,7 +151,7 @@ public class GrokDelegateEndToEndTests
             using var relay = new DelegateTaskApiRelay(workspace.Path, harness.Delegation);
             var run = await DelegateScriptRunner.RunAsync(
                 relay.BaseUrl,
-                "-Role", "Code", "-Kind", "Grok", "-Title", "CARD-0084 S6", "-Goal", MultilineGoal,
+                "-Role", "Code", "-Shared", "-Kind", "Grok", "-Title", "CARD-0084 S6", "-Goal", MultilineGoal,
                 "-Dir", workspace.Path);
 
             run.ExitCode.ShouldBe(0, $"{run.Output}\n{relay.LastFailure}");
@@ -248,7 +248,7 @@ public class GrokDelegateEndToEndTests
             using var relay = new DelegateTaskApiRelay(workspace.Path, harness.Delegation);
             var run = await DelegateScriptRunner.RunAsync(
                 relay.BaseUrl,
-                "-Role", "Code", "-Kind", "Grok", "-Title", "CARD-0329 unmarked nudge", "-Goal", MultilineGoal, "-Dir", workspace.Path);
+                "-Role", "Code", "-Shared", "-Kind", "Grok", "-Title", "CARD-0329 unmarked nudge", "-Goal", MultilineGoal, "-Dir", workspace.Path);
 
             run.ExitCode.ShouldBe(0, $"{run.Output}\n{relay.LastFailure}");
 
@@ -381,7 +381,7 @@ public class GrokDelegateEndToEndTests
             using var relay = new DelegateTaskApiRelay(workspace.Path, harness.Delegation);
             var run = await DelegateScriptRunner.RunAsync(
                 relay.BaseUrl,
-                "-Role", "Code", "-Kind", "Grok", "-Title", "CARD-0353 boot stall", "-Goal", MultilineGoal, "-Dir", workspace.Path);
+                "-Role", "Code", "-Shared", "-Kind", "Grok", "-Title", "CARD-0353 boot stall", "-Goal", MultilineGoal, "-Dir", workspace.Path);
             run.ExitCode.ShouldBe(0, $"{run.Output}\n{relay.LastFailure}");
 
             Guid taskId;
@@ -620,7 +620,7 @@ public class GrokDelegateEndToEndTests
         {
             using var relay = new DelegateTaskApiRelay(workspace.Path, harness.Delegation);
             var run = await DelegateScriptRunner.RunAsync(
-                relay.BaseUrl, "-Role", "Code", "-Title", "CARD-0084 S6 control", "-Goal", MultilineGoal,
+                relay.BaseUrl, "-Role", "Code", "-Shared", "-Title", "CARD-0084 S6 control", "-Goal", MultilineGoal,
                 "-Dir", workspace.Path);
 
             run.ExitCode.ShouldBe(0, $"{run.Output}\n{relay.LastFailure}");

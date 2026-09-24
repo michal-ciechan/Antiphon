@@ -38,7 +38,7 @@ public class AgentTaskAgentKindTests
         using var workspace = new TempWorkspace();
 
         var created = await CreateService(db).CreateAsync(
-            new CreateAgentTaskRequest(Goal: "run the suite", Role: AgentTaskRole.Test),
+            new CreateAgentTaskRequest(Goal: "run the suite", Role: AgentTaskRole.Test, Workspace: WorkspaceMode.Shared),
             ManualCaller(workspace.Path),
             CancellationToken.None);
 
@@ -101,7 +101,7 @@ public class AgentTaskAgentKindTests
         using var workspace = new TempWorkspace();
 
         var created = await CreateService(db).CreateAsync(
-            new CreateAgentTaskRequest(Goal: "run the suite", Role: AgentTaskRole.Test)
+            new CreateAgentTaskRequest(Goal: "run the suite", Role: AgentTaskRole.Test, Workspace: WorkspaceMode.Shared)
             {
                 AgentKind = AgentKind.Grok,
             },
@@ -128,7 +128,7 @@ public class AgentTaskAgentKindTests
         using var workspace = new TempWorkspace();
 
         var created = await CreateService(db).CreateAsync(
-            new CreateAgentTaskRequest(Goal: "run the suite") { AgentKind = AgentKind.ClaudeCode },
+            new CreateAgentTaskRequest(Goal: "run the suite", Workspace: WorkspaceMode.Shared) { AgentKind = AgentKind.ClaudeCode },
             ManualCaller(workspace.Path),
             CancellationToken.None);
 
@@ -159,7 +159,7 @@ public class AgentTaskAgentKindTests
         var goal = $"do the work {Guid.NewGuid():N}";
         var ex = await Should.ThrowAsync<ValidationException>(
             () => CreateService(db).CreateAsync(
-                new CreateAgentTaskRequest(Goal: goal) { AgentKind = kind },
+                new CreateAgentTaskRequest(Goal: goal, Workspace: WorkspaceMode.Shared) { AgentKind = kind },
                 ManualCaller(workspace.Path),
                 CancellationToken.None));
 
@@ -219,7 +219,7 @@ public class AgentTaskAgentKindTests
 
         var ex = await Should.ThrowAsync<ValidationException>(
             () => CreateService(db).CreateAsync(
-                new CreateAgentTaskRequest(Goal: "own this chunk", Kind: AgentTaskKind.Orchestrator)
+                new CreateAgentTaskRequest(Goal: "own this chunk", Kind: AgentTaskKind.Orchestrator, Workspace: WorkspaceMode.Shared)
                 {
                     AgentKind = AgentKind.Grok,
                 },
@@ -243,7 +243,7 @@ public class AgentTaskAgentKindTests
 
         var ex = await Should.ThrowAsync<ValidationException>(
             () => CreateService(db).CreateAsync(
-                new CreateAgentTaskRequest(Goal: "own this chunk", Kind: AgentTaskKind.Orchestrator)
+                new CreateAgentTaskRequest(Goal: "own this chunk", Kind: AgentTaskKind.Orchestrator, Workspace: WorkspaceMode.Shared)
                 {
                     AgentKind = AgentKind.Codex,
                 },
@@ -276,7 +276,7 @@ public class AgentTaskAgentKindTests
         using var workspace = new TempWorkspace();
 
         var created = await CreateService(db).CreateAsync(
-            new CreateAgentTaskRequest(Goal: "run the suite", Role: AgentTaskRole.Test)
+            new CreateAgentTaskRequest(Goal: "run the suite", Role: AgentTaskRole.Test, Workspace: WorkspaceMode.Shared)
             {
                 AgentKind = AgentKind.Codex,
             },
@@ -315,7 +315,7 @@ public class AgentTaskAgentKindTests
         var service = CreateService(db, configure: s => s.RolePolicy["Code"].Kind = AgentKind.Grok);
 
         var created = await service.CreateAsync(
-            new CreateAgentTaskRequest(Goal: "write the code", Role: AgentTaskRole.Code),
+            new CreateAgentTaskRequest(Goal: "write the code", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Shared),
             ManualCaller(workspace.Path),
             CancellationToken.None);
 
@@ -429,7 +429,7 @@ public class AgentTaskAgentKindTests
 
         await using var db = CreateContext();
         var created = await CreateService(db).CreateAsync(
-            new CreateAgentTaskRequest(Goal: "now add the edge cases")
+            new CreateAgentTaskRequest(Goal: "now add the edge cases", Workspace: WorkspaceMode.Shared)
             {
                 FollowUpOnTask = DelegationReportFormatter.Short(prior.Id),
             },
@@ -450,7 +450,7 @@ public class AgentTaskAgentKindTests
         await using var db = CreateContext();
         var ex = await Should.ThrowAsync<ConflictException>(
             () => CreateService(db).CreateAsync(
-                new CreateAgentTaskRequest(Goal: "now on Grok please")
+                new CreateAgentTaskRequest(Goal: "now on Grok please", Workspace: WorkspaceMode.Shared)
                 {
                     FollowUpOnTask = DelegationReportFormatter.Short(prior.Id),
                     AgentKind = AgentKind.Grok,
@@ -473,7 +473,7 @@ public class AgentTaskAgentKindTests
         await using var db = CreateContext();
         var ex = await Should.ThrowAsync<SubscriptionQuotaLowException>(
             () => CreateService(db, quotaGate: CreateGate(db)).CreateAsync(
-                new CreateAgentTaskRequest(Goal: "run this on my Codex agent") { AgentId = agentId },
+                new CreateAgentTaskRequest(Goal: "run this on my Codex agent", Workspace: WorkspaceMode.Shared) { AgentId = agentId },
                 ManualCaller(workspace.Path),
                 CancellationToken.None));
 
@@ -498,7 +498,7 @@ public class AgentTaskAgentKindTests
         var created = await CreateService(db, quotaGate: CreateGate(db)).CreateAsync(
             new CreateAgentTaskRequest(
                 Goal: "run anyway on Codex",
-                IgnoreSubscriptionQuota: true) { AgentId = agentId },
+                IgnoreSubscriptionQuota: true, Workspace: WorkspaceMode.Shared) { AgentId = agentId },
             ManualCaller(workspace.Path),
             CancellationToken.None);
 
@@ -524,7 +524,7 @@ public class AgentTaskAgentKindTests
 
         await using var db = CreateContext();
         var created = await CreateService(db, quotaGate: CreateGate(db)).CreateAsync(
-            new CreateAgentTaskRequest(Goal: $"unpinned Codex {Guid.NewGuid():N}") { AgentKind = AgentKind.Codex },
+            new CreateAgentTaskRequest(Goal: $"unpinned Codex {Guid.NewGuid():N}", Workspace: WorkspaceMode.Shared) { AgentKind = AgentKind.Codex },
             ManualCaller(workspace.Path),
             CancellationToken.None);
 

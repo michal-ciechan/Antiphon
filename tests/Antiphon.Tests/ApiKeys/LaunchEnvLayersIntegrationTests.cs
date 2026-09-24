@@ -94,7 +94,7 @@ public sealed class LaunchEnvLayersIntegrationTests
                 LaunchEnvOverride: new Dictionary<string, string>
                 {
                     ["ANTHROPIC_BASE_URL"] = "http://proxy:8080",
-                }),
+                }, Workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(null, null, workspace.Path),
             Ct);
 
@@ -109,7 +109,7 @@ public sealed class LaunchEnvLayersIntegrationTests
                 LaunchEnvOverride: new Dictionary<string, string>
                 {
                     ["ANTIPHON_TASK_TOKEN"] = "stolen",
-                }),
+                }, Workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(null, null, workspace.Path),
             Ct));
         ex.StatusCode.ShouldBe(422);
@@ -158,7 +158,7 @@ public sealed class LaunchEnvLayersIntegrationTests
                 LaunchEnvOverride: new Dictionary<string, string>
                 {
                     ["ANTHROPIC_BASE_URL"] = "http://proxy:8080",
-                }),
+                }, Workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(null, null, workspace.Path),
             Ct));
 
@@ -260,7 +260,7 @@ public sealed class LaunchEnvLayersIntegrationTests
 
         var service = CreateTaskService(db, [workspace.Path]);
         var created = await service.CreateAsync(
-            new CreateAgentTaskRequest(Goal: "plan the next slice", Role: AgentTaskRole.Plan),
+            new CreateAgentTaskRequest(Goal: "plan the next slice", Role: AgentTaskRole.Plan, Workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(null, sessionId, workspace.Path),
             Ct);
 
@@ -313,7 +313,7 @@ public sealed class LaunchEnvLayersIntegrationTests
 
         var service = CreateTaskService(db, [workspace.Path]);
         var created = await service.CreateAsync(
-            new CreateAgentTaskRequest(Goal: "child work", WorkingDirectory: workspace.Path),
+            new CreateAgentTaskRequest(Goal: "child work", WorkingDirectory: workspace.Path, Workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(parent, Guid.NewGuid(), workspace.Path),
             Ct);
 
@@ -365,7 +365,7 @@ public sealed class LaunchEnvLayersIntegrationTests
             new CreateAgentTaskRequest(
                 Goal: "follow up",
                 WorkingDirectory: workspace.Path,
-                FollowUpOnTask: DelegationReportFormatter.Short(prior.Id)),
+                FollowUpOnTask: DelegationReportFormatter.Short(prior.Id), Workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(null, null, workspace.Path),
             Ct);
 
@@ -401,7 +401,7 @@ public sealed class LaunchEnvLayersIntegrationTests
             new CreateAgentTaskRequest(
                 Goal: "pin to standing",
                 WorkingDirectory: workspace.Path,
-                AgentId: standing.Id),
+                AgentId: standing.Id, Workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(null, null, workspace.Path),
             Ct);
 
@@ -425,7 +425,7 @@ public sealed class LaunchEnvLayersIntegrationTests
 
         var service = CreateTaskService(db, [workspace.Path], ApiKeys(db));
         var ex = await Should.ThrowAsync<ValidationException>(() => service.CreateAsync(
-            new CreateAgentTaskRequest(Goal: "use proxy", WorkingDirectory: workspace.Path),
+            new CreateAgentTaskRequest(Goal: "use proxy", WorkingDirectory: workspace.Path, Workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(parent, Guid.NewGuid(), workspace.Path),
             Ct));
 
@@ -452,7 +452,7 @@ public sealed class LaunchEnvLayersIntegrationTests
             new CreateAgentTaskRequest(
                 Goal: "use proxy",
                 WorkingDirectory: workspace.Path,
-                LaunchEnvOverride: new Dictionary<string, string> { ["X_LLM_PROJECT"] = "PredictionMarkets" }),
+                LaunchEnvOverride: new Dictionary<string, string> { ["X_LLM_PROJECT"] = "PredictionMarkets" }, Workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(parent, Guid.NewGuid(), workspace.Path),
             Ct);
 
@@ -474,7 +474,7 @@ public sealed class LaunchEnvLayersIntegrationTests
         await db.SaveChangesAsync(Ct);
 
         var created = await CreateTaskService(db, [workspace.Path], ApiKeys(db)).CreateAsync(
-            new CreateAgentTaskRequest(Goal: "use remote proxy", WorkingDirectory: workspace.Path),
+            new CreateAgentTaskRequest(Goal: "use remote proxy", WorkingDirectory: workspace.Path, Workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(parent, Guid.NewGuid(), workspace.Path),
             Ct);
 
@@ -506,7 +506,7 @@ public sealed class LaunchEnvLayersIntegrationTests
         await db.SaveChangesAsync(Ct);
 
         var created = await CreateTaskService(db, [workspace.Path]).CreateAsync(
-            new CreateAgentTaskRequest(Goal: "wrapper fallback", WorkingDirectory: workspace.Path),
+            new CreateAgentTaskRequest(Goal: "wrapper fallback", WorkingDirectory: workspace.Path, Workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(parent, Guid.NewGuid(), workspace.Path),
             Ct);
 
@@ -544,7 +544,7 @@ public sealed class LaunchEnvLayersIntegrationTests
             new CreateAgentTaskRequest(
                 Goal: "use live project",
                 WorkingDirectory: workspace.Path,
-                InheritedLlmEnv: new Dictionary<string, string> { ["X_LLM_PROJECT"] = "LiveProject" }),
+                InheritedLlmEnv: new Dictionary<string, string> { ["X_LLM_PROJECT"] = "LiveProject" }, Workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(parent, Guid.NewGuid(), workspace.Path),
             Ct);
 
@@ -567,7 +567,7 @@ public sealed class LaunchEnvLayersIntegrationTests
                 {
                     ["X_LLM_PROJECT"] = "LiveProject",
                     ["NOT_ROUTING"] = "discard",
-                }),
+                }, Workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(null, null, workspace.Path),
             Ct);
 
@@ -587,7 +587,7 @@ public sealed class LaunchEnvLayersIntegrationTests
             new CreateAgentTaskRequest(
                 Goal: "override plumbing",
                 WorkingDirectory: workspace.Path,
-                InheritedLlmEnv: new Dictionary<string, string> { ["ANTIPHON_TASK_TOKEN"] = "no" }),
+                InheritedLlmEnv: new Dictionary<string, string> { ["ANTIPHON_TASK_TOKEN"] = "no" }, Workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(null, null, workspace.Path),
             Ct));
 

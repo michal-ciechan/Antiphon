@@ -215,7 +215,6 @@ public class WorktreeStartRefDispatchTests
     [Timeout(120_000)]
     [Arguments("shared", "worktree_start_ref_mode")]
     [Arguments("read-only", "worktree_start_ref_mode")]
-    [Arguments("omitted-workspace", "worktree_start_ref_mode")]
     [Arguments("agent-pin", "worktree_start_ref_mode")]
     [Arguments("follow-up", "worktree_start_ref_mode")]
     [Arguments("repair-source", "worktree_start_ref_mode")]
@@ -228,7 +227,6 @@ public class WorktreeStartRefDispatchTests
         {
             "shared" => new CreateAgentTaskRequest("x", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Shared),
             "read-only" => new CreateAgentTaskRequest("x", Role: AgentTaskRole.Review, Workspace: WorkspaceMode.ReadOnly),
-            "omitted-workspace" => new CreateAgentTaskRequest("x", Role: AgentTaskRole.Code),
             "agent-pin" => new CreateAgentTaskRequest("x", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree,
                 AgentId: Guid.NewGuid()),
             "follow-up" => new CreateAgentTaskRequest("x", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree,
@@ -251,6 +249,7 @@ public class WorktreeStartRefDispatchTests
     [Arguments("worker-plan")]
     [Arguments("worker-code")]
     [Arguments("orchestrator")]
+    [Arguments("omitted-workspace")]
     public async Task C613_StartRefAdmissionMatrixAcceptsOrdinaryFreshWorktrees(string shape)
     {
         await using var world = await RepairSourceWorld.CreateAsync(ordinaryCodeTask: true, createTaskThroughService: true);
@@ -260,6 +259,8 @@ public class WorktreeStartRefDispatchTests
                 Workspace: WorkspaceMode.Worktree),
             "worker-code" => new CreateAgentTaskRequest("code it", Role: AgentTaskRole.Code,
                 Workspace: WorkspaceMode.Worktree),
+            // CARD-0644 D-5: an omitted workspace IS the fresh Worktree a start ref needs.
+            "omitted-workspace" => new CreateAgentTaskRequest("code it by default", Role: AgentTaskRole.Code),
             _ => new CreateAgentTaskRequest("orchestrate it", Kind: AgentTaskKind.Orchestrator,
                 Role: AgentTaskRole.Plan, Workspace: WorkspaceMode.Worktree),
         };

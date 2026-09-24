@@ -44,7 +44,7 @@ public class AgentTaskCheckScheduleTests
         var service = CreateService(db);
 
         var created = await service.CreateAsync(
-            new CreateAgentTaskRequest(Goal: "rebuild the client bundle", ExpectedMinutes: 45),
+            new CreateAgentTaskRequest(Goal: "rebuild the client bundle", ExpectedMinutes: 45, Workspace: WorkspaceMode.Shared),
             ManualCaller(workspace.Path),
             CancellationToken.None);
 
@@ -62,7 +62,7 @@ public class AgentTaskCheckScheduleTests
         var service = CreateService(db);
 
         var created = await service.CreateAsync(
-            new CreateAgentTaskRequest(Goal: "run the suite"), ManualCaller(workspace.Path), CancellationToken.None);
+            new CreateAgentTaskRequest(Goal: "run the suite", Workspace: WorkspaceMode.Shared), ManualCaller(workspace.Path), CancellationToken.None);
 
         await using var verify = CreateContext();
         (await verify.AgentTasks.SingleAsync(t => t.Id == created.Id))
@@ -85,7 +85,7 @@ public class AgentTaskCheckScheduleTests
         var service = CreateService(db);
 
         var ex = await Should.ThrowAsync<ValidationException>(() => service.CreateAsync(
-            new CreateAgentTaskRequest(Goal: "do the thing", ExpectedMinutes: minutes),
+            new CreateAgentTaskRequest(Goal: "do the thing", ExpectedMinutes: minutes, Workspace: WorkspaceMode.Shared),
             ManualCaller(workspace.Path),
             CancellationToken.None));
 

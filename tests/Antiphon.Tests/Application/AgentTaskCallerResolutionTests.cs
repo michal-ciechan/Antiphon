@@ -71,7 +71,7 @@ public class AgentTaskCallerResolutionTests
                     Goal: "capability policy",
                     Role: AgentTaskRole.Deploy,
                     WorkingDirectory: root.FullName,
-                    InternalDecisionPolicy: InternalDecisionFixtures.Sample()),
+                    InternalDecisionPolicy: InternalDecisionFixtures.Sample(), Workspace: WorkspaceMode.Shared),
                 new AgentTaskService.Caller(null, null, root.FullName, capabilityId, "gym-stat"),
                 CancellationToken.None);
 

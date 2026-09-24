@@ -34,7 +34,7 @@ public class ModelAvailabilityCreateTests
             var service = CreateService(db);
             var ex = await Should.ThrowAsync<ModelDisabledException>(() =>
                 service.CreateAsync(
-                    new CreateAgentTaskRequest("plan the work", Role: AgentTaskRole.Plan),
+                    new CreateAgentTaskRequest("plan the work", Role: AgentTaskRole.Plan, Workspace: WorkspaceMode.Shared),
                     new AgentTaskService.Caller(null, null, workspace.Path),
                     CancellationToken.None));
 
@@ -66,7 +66,7 @@ public class ModelAvailabilityCreateTests
                     new CreateAgentTaskRequest(
                         "plan on grok",
                         Role: AgentTaskRole.Plan,
-                        AgentKind: AgentKind.Grok),
+                        AgentKind: AgentKind.Grok, Workspace: WorkspaceMode.Shared),
                     new AgentTaskService.Caller(null, null, workspace.Path),
                     CancellationToken.None));
 
@@ -91,7 +91,7 @@ public class ModelAvailabilityCreateTests
         try
         {
             var created = await CreateService(db).CreateAsync(
-                new CreateAgentTaskRequest("plan the work", Role: AgentTaskRole.Plan),
+                new CreateAgentTaskRequest("plan the work", Role: AgentTaskRole.Plan, Workspace: WorkspaceMode.Shared),
                 new AgentTaskService.Caller(null, null, workspace.Path),
                 CancellationToken.None);
             createdId = created.Id;
@@ -123,7 +123,7 @@ public class ModelAvailabilityCreateTests
                 new CreateAgentTaskRequest(
                     "plan on grok",
                     Role: AgentTaskRole.Plan,
-                    AgentKind: AgentKind.Grok),
+                    AgentKind: AgentKind.Grok, Workspace: WorkspaceMode.Shared),
                 new AgentTaskService.Caller(null, null, workspace.Path),
                 CancellationToken.None);
             createdId = created.Id;
@@ -155,7 +155,7 @@ public class ModelAvailabilityCreateTests
                 new CreateAgentTaskRequest(
                     "run the tests",
                     Role: AgentTaskRole.Test,
-                    ModelLevel: AgentModelLevel.Low),
+                    ModelLevel: AgentModelLevel.Low, Workspace: WorkspaceMode.Shared),
                 new AgentTaskService.Caller(null, null, workspace.Path),
                 CancellationToken.None);
             createdId = created.Id;
@@ -187,7 +187,7 @@ public class ModelAvailabilityCreateTests
                 new CreateAgentTaskRequest(
                     "park until Thursday",
                     Role: AgentTaskRole.Plan,
-                    IgnoreModelDisabled: true),
+                    IgnoreModelDisabled: true, Workspace: WorkspaceMode.Shared),
                 new AgentTaskService.Caller(null, null, workspace.Path),
                 CancellationToken.None);
             createdId = created.Id;
@@ -224,7 +224,7 @@ public class ModelAvailabilityCreateTests
         {
             var ex = await Should.ThrowAsync<ModelDisabledException>(() =>
                 CreateService(db).CreateAsync(
-                    new CreateAgentTaskRequest("plan the work", Role: AgentTaskRole.Plan),
+                    new CreateAgentTaskRequest("plan the work", Role: AgentTaskRole.Plan, Workspace: WorkspaceMode.Shared),
                     new AgentTaskService.Caller(null, null, workspace.Path),
                     CancellationToken.None));
             ex.Code.ShouldBe("model_disabled");

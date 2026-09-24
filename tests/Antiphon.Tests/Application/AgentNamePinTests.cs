@@ -34,7 +34,7 @@ public class AgentNamePinTests
 
         await using var db = CreateContext();
         var created = await CreateService(db).CreateAsync(
-            new CreateAgentTaskRequest(Goal: "pin by guid text") { Agent = agentId.ToString() },
+            new CreateAgentTaskRequest(Goal: "pin by guid text", Workspace: WorkspaceMode.Shared) { Agent = agentId.ToString() },
             ManualCaller(workspace.Path),
             CancellationToken.None);
 
@@ -57,7 +57,7 @@ public class AgentNamePinTests
 
         await using var db = CreateContext();
         var created = await CreateService(db).CreateAsync(
-            new CreateAgentTaskRequest(Goal: "pin by slug") { Agent = slug },
+            new CreateAgentTaskRequest(Goal: "pin by slug", Workspace: WorkspaceMode.Shared) { Agent = slug },
             ManualCaller(workspace.Path),
             CancellationToken.None);
 
@@ -77,7 +77,7 @@ public class AgentNamePinTests
 
         await using var db = CreateContext();
         var created = await CreateService(db).CreateAsync(
-            new CreateAgentTaskRequest(Goal: "pin by shouted name") { Agent = name.ToUpperInvariant() },
+            new CreateAgentTaskRequest(Goal: "pin by shouted name", Workspace: WorkspaceMode.Shared) { Agent = name.ToUpperInvariant() },
             ManualCaller(workspace.Path),
             CancellationToken.None);
 
@@ -97,7 +97,7 @@ public class AgentNamePinTests
         await using var db = CreateContext();
         var ex = await Should.ThrowAsync<ValidationException>(
             () => CreateService(db).CreateAsync(
-                new CreateAgentTaskRequest(Goal: "which twin?") { Agent = name },
+                new CreateAgentTaskRequest(Goal: "which twin?", Workspace: WorkspaceMode.Shared) { Agent = name },
                 ManualCaller(workspace.Path),
                 CancellationToken.None));
 
@@ -117,7 +117,7 @@ public class AgentNamePinTests
         await using var db = CreateContext();
         var ex = await Should.ThrowAsync<ValidationException>(
             () => CreateService(db).CreateAsync(
-                new CreateAgentTaskRequest(Goal: goal) { Agent = reference },
+                new CreateAgentTaskRequest(Goal: goal, Workspace: WorkspaceMode.Shared) { Agent = reference },
                 ManualCaller(workspace.Path),
                 CancellationToken.None));
 
@@ -135,7 +135,7 @@ public class AgentNamePinTests
         await using var db = CreateContext();
         var ex = await Should.ThrowAsync<ValidationException>(
             () => CreateService(db).CreateAsync(
-                new CreateAgentTaskRequest(Goal: "pin the ephemeral population") { Agent = poolId.ToString() },
+                new CreateAgentTaskRequest(Goal: "pin the ephemeral population", Workspace: WorkspaceMode.Shared) { Agent = poolId.ToString() },
                 ManualCaller(workspace.Path),
                 CancellationToken.None));
 
@@ -158,7 +158,7 @@ public class AgentNamePinTests
 
         var ex = await Should.ThrowAsync<ValidationException>(
             () => service.CreateAsync(
-                new CreateAgentTaskRequest(Goal: "two different pins")
+                new CreateAgentTaskRequest(Goal: "two different pins", Workspace: WorkspaceMode.Shared)
                 {
                     Agent = name,
                     AgentId = otherId,
@@ -168,7 +168,7 @@ public class AgentNamePinTests
         string.Join(" ", ex.Errors.Values.SelectMany(v => v)).ShouldContain(otherId.ToString());
 
         var created = await service.CreateAsync(
-            new CreateAgentTaskRequest(Goal: "the same pin twice")
+            new CreateAgentTaskRequest(Goal: "the same pin twice", Workspace: WorkspaceMode.Shared)
             {
                 Agent = name,
                 AgentId = agentId,
@@ -189,7 +189,7 @@ public class AgentNamePinTests
         await using var db = CreateContext();
         var ex = await Should.ThrowAsync<ValidationException>(
             () => CreateService(db).CreateAsync(
-                new CreateAgentTaskRequest(Goal: "two idioms at once")
+                new CreateAgentTaskRequest(Goal: "two idioms at once", Workspace: WorkspaceMode.Shared)
                 {
                     Agent = name,
                     FollowUpOnTask = "deadbeef",

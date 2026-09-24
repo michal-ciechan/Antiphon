@@ -263,7 +263,7 @@ public class DelegationCapabilityTests
                 new CreateAgentTaskRequest(
                     Goal: "own this chunk",
                     Kind: AgentTaskKind.Orchestrator,
-                    WorkingDirectory: h.FirstRoot) { AgentKind = AgentKind.Codex },
+                    WorkingDirectory: h.FirstRoot, Workspace: WorkspaceMode.Shared) { AgentKind = AgentKind.Codex },
                 caller,
                 CancellationToken.None));
         var detail = Detail(ex);

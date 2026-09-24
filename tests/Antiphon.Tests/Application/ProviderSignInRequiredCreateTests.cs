@@ -30,7 +30,7 @@ public class ProviderSignInRequiredCreateTests
 
         var ex = await Should.ThrowAsync<ProviderSignInRequiredException>(
             () => service.CreateAsync(
-                new CreateAgentTaskRequest(Goal: "run on grok", Role: AgentTaskRole.Code)
+                new CreateAgentTaskRequest(Goal: "run on grok", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Shared)
                 {
                     AgentKind = AgentKind.Grok,
                 },
@@ -56,7 +56,7 @@ public class ProviderSignInRequiredCreateTests
         var service = CreateService(db, workspace.Path, grokHome.Path);
 
         var created = await service.CreateAsync(
-            new CreateAgentTaskRequest(Goal: "queue anyway", Role: AgentTaskRole.Code)
+            new CreateAgentTaskRequest(Goal: "queue anyway", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Shared)
             {
                 AgentKind = AgentKind.Grok,
                 AllowUnauthenticatedProvider = true,

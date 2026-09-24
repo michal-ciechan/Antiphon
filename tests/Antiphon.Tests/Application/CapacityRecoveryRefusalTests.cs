@@ -52,7 +52,7 @@ public class CapacityRecoveryRefusalTests
                     "plan the work",
                     Role: AgentTaskRole.Plan,
                     AgentKind: AgentKind.ClaudeCode,
-                    ModelLevel: AgentModelLevel.High),
+                    ModelLevel: AgentModelLevel.High, Workspace: WorkspaceMode.Shared),
                 new AgentTaskService.Caller(null, sessionId, workspace.Path),
                 CancellationToken.None));
         ex.Code.ShouldBe(ModelDisabledException.ErrorCode);
@@ -72,7 +72,7 @@ public class CapacityRecoveryRefusalTests
                     "plan the work",
                     Role: AgentTaskRole.Plan,
                     AgentKind: AgentKind.ClaudeCode,
-                    ModelLevel: AgentModelLevel.High),
+                    ModelLevel: AgentModelLevel.High, Workspace: WorkspaceMode.Shared),
                 new AgentTaskService.Caller(null, sessionId, workspace.Path),
                 CancellationToken.None));
         await using var again = Ctx(schema);
@@ -97,7 +97,7 @@ public class CapacityRecoveryRefusalTests
                     "plan the work",
                     Role: AgentTaskRole.Plan,
                     AgentKind: AgentKind.ClaudeCode,
-                    ModelLevel: AgentModelLevel.High),
+                    ModelLevel: AgentModelLevel.High, Workspace: WorkspaceMode.Shared),
                 new AgentTaskService.Caller(null, null, workspace.Path, CapabilityId: Guid.NewGuid()),
                 CancellationToken.None));
         await using var verify = Ctx(schema);
@@ -136,7 +136,7 @@ public class CapacityRecoveryRefusalTests
                     "plan the work",
                     Role: AgentTaskRole.Plan,
                     AgentKind: AgentKind.ClaudeCode,
-                    ModelLevel: AgentModelLevel.High),
+                    ModelLevel: AgentModelLevel.High, Workspace: WorkspaceMode.Shared),
                 new AgentTaskService.Caller(null, sessionId, workspace.Path, CapabilityId: Guid.NewGuid()),
                 CancellationToken.None));
         await using var verify = Ctx(schema);
@@ -161,7 +161,7 @@ public class CapacityRecoveryRefusalTests
                     "plan the work",
                     Role: AgentTaskRole.Plan,
                     AgentKind: AgentKind.ClaudeCode,
-                    ModelLevel: AgentModelLevel.High),
+                    ModelLevel: AgentModelLevel.High, Workspace: WorkspaceMode.Shared),
                 new AgentTaskService.Caller(null, Guid.NewGuid(), workspace.Path),
                 CancellationToken.None));
         await using var verify = Ctx(schema);

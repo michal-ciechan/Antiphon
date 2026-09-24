@@ -69,7 +69,7 @@ public class MutationAdmissionTests
         async Task AssertRouted(AgentKind kind, AgentModelLevel level)
         {
             var created = await service.CreateAsync(new CreateAgentTaskRequest(Goal: Unique("routing"), Role: AgentTaskRole.Mutation,
-                Complexity: TaskComplexity.Hard), ManualCaller(workspace.Path), default);
+                Complexity: TaskComplexity.Hard, Workspace: WorkspaceMode.Shared), ManualCaller(workspace.Path), default);
             await using var read = CreateContext(schema);
             var row = await read.AgentTasks.SingleAsync(t => t.Id == created.Id);
             row.AgentKind.ShouldBe(kind);

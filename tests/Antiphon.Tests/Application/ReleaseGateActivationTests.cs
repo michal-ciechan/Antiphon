@@ -160,9 +160,9 @@ public sealed class ReleaseGateActivationTests
     public void C599_RollbackLatch()
     {
         // Final is the default round: an omitted request is never quietly Interim.
-        InterimVerificationPolicy.ResolveRound(new CreateAgentTaskRequest("g", Role: AgentTaskRole.Code))
+        InterimVerificationPolicy.ResolveRound(new CreateAgentTaskRequest("g", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Shared))
             .ShouldBe(VerificationRound.Final, "omitted round is Final");
-        InterimVerificationPolicy.ResolveRound(new CreateAgentTaskRequest("g", Role: AgentTaskRole.Investigate))
+        InterimVerificationPolicy.ResolveRound(new CreateAgentTaskRequest("g", Role: AgentTaskRole.Investigate, Workspace: WorkspaceMode.Shared))
             .ShouldBeNull("a role with no profile has no round");
         InterimVerificationPolicy.HasProfile(AgentTaskRole.Code).ShouldBeTrue("Code carries a round");
         InterimVerificationPolicy.HasProfile(AgentTaskRole.Review).ShouldBeTrue("Review carries a round");

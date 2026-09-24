@@ -216,8 +216,7 @@ public sealed class AgentTaskService
         var verificationRound = InterimVerificationPolicy.ResolveRound(request);
         if (verificationRound == VerificationRound.Interim)
         {
-            InterimVerificationPolicy.RequireInterimShape(request.Kind, request.Role,
-                request.Workspace ?? (request.Kind == AgentTaskKind.Worker ? WorkspaceMode.Shared : WorkspaceMode.Worktree));
+            InterimVerificationPolicy.RequireInterimShape(request.Kind, request.Role, EffectiveRequestedWorkspace(request));
             if (request.AgentId is not null || request.Agent is not null)
                 throw new ValidationException(nameof(request.VerificationRound),
                     "Interim cannot run on a pinned agent.", InterimVerificationPolicy.RoundRoleCode);
@@ -243,14 +242,14 @@ public sealed class AgentTaskService
         if (startRef is not null)
         {
             RequireValidStartRef(startRef);
-            if (request.Workspace != WorkspaceMode.Worktree
+            if (EffectiveRequestedWorkspace(request) != WorkspaceMode.Worktree
                 || request.AgentId is not null || !string.IsNullOrWhiteSpace(request.Agent)
                 || !string.IsNullOrWhiteSpace(request.FollowUpOnTask)
                 || request.RepairSourceTaskId is not null
                 || request.SourceLandingOperationId is not null)
             {
                 throw new ValidationException(nameof(request.WorktreeBaseRequestedRef),
-                    "A start ref requires an explicitly requested fresh Worktree without an agent pin, "
+                    "A start ref requires a fresh Worktree (the default) without an agent pin, "
                     + "follow-up, RepairSource or SourceLanding.",
                     "worktree_start_ref_mode");
             }
@@ -258,7 +257,7 @@ public sealed class AgentTaskService
 
         if (request.SourceLandingOperationId is not null
             && (request.Kind != AgentTaskKind.Worker || request.Role != AgentTaskRole.Mutation
-                || request.Workspace != WorkspaceMode.Worktree || request.MergeTargetRef is not null
+                || EffectiveRequestedWorkspace(request) != WorkspaceMode.Worktree || request.MergeTargetRef is not null
                 || request.AgentId is not null || request.Agent is not null || request.FollowUpOnTask is not null))
             throw new ValidationException(nameof(request.SourceLandingOperationId),
                 "SourceLanding requires a fresh Worker/Mutation Worktree without an agent pin, follow-up or merge target.",
@@ -518,9 +517,12 @@ public sealed class AgentTaskService
             throw new ValidationException(
                 nameof(request.Workspace),
                 $"'{resolved.WorkingDirectory}' is not a git repository, so there is nothing to branch. "
-                + "Use the default shared workspace instead.");
+                + "Choose -Shared or -ReadOnly explicitly instead.");
         }
 
+        // CARD-0644 D-1. Omission is only a default for a FRESH process; a configured routing pin
+        // can still turn it into a reuse below, so the non-Git refusal waits until pins are known.
+        var workspaceDefaulted = request.Workspace is null;
         var (workspace, warning) = ResolveWorkspace(request, caller, resolved);
         if (request.RepairSourceTaskId is not null && workspace != WorkspaceMode.Worktree)
         {
@@ -535,7 +537,7 @@ public sealed class AgentTaskService
         if (startRef is not null && workspace != WorkspaceMode.Worktree)
         {
             throw new ValidationException(nameof(request.WorktreeBaseRequestedRef),
-                "A start ref requires an explicitly requested fresh Worktree without an agent pin, "
+                "A start ref requires a fresh Worktree (the default) without an agent pin, "
                 + "follow-up, RepairSource or SourceLanding.",
                 "worktree_start_ref_mode");
         }
@@ -706,6 +708,35 @@ public sealed class AgentTaskService
 
                 request = request with { AgentKind = pinned.Kind };
             }
+        }
+
+        // CARD-0644 D-3 (interim until S2 orders placement before admission): a configured routing
+        // pin that names an existing agent reuses that agent's checkout, exactly as an explicit
+        // -Agent does; it never provisions an unused worktree for a pinned process.
+        if (workspaceDefaulted && workspace == WorkspaceMode.Worktree && request.AgentId is not null
+            && startRef is null && request.RepairSourceTaskId is null
+            && request.SourceLandingOperationId is null && string.IsNullOrWhiteSpace(request.RunnerId))
+        {
+            workspace = WorkspaceMode.Shared;
+            storedPolicy = InternalDecisionPolicy.Normalize(
+                request.InternalDecisionPolicy,
+                request.Role,
+                workspace,
+                InternalDecisionPolicy.GrantorFrom(
+                    caller.Task?.Id, caller.SessionId, caller.CapabilityId, caller.CapabilityName),
+                UtcNow());
+        }
+
+        // CARD-0644 D-1. The fresh default is a Worktree; a directory that cannot branch is refused
+        // with the explicit alternatives, never silently shared.
+        if (workspaceDefaulted && workspace == WorkspaceMode.Worktree && resolved.RepoPath is null)
+        {
+            var message = $"'{resolved.WorkingDirectory}' is not a git repository, so the default fresh "
+                + "Worktree has nothing to branch. Choose -Shared (workspace: Shared) or -ReadOnly "
+                + "(workspace: ReadOnly) explicitly.";
+            if (parent is not null)
+                await RecordRejectionAsync(parent, message, ct);
+            throw new ValidationException(nameof(request.Workspace), message, "workspace_default_not_git");
         }
 
         var id = Guid.NewGuid();
@@ -1672,21 +1703,23 @@ public sealed class AgentTaskService
             return (explicitMode, warned);
         }
 
-        if (request.Kind != AgentTaskKind.Orchestrator)
-            return (WorkspaceMode.Shared, null);
-
-        // Its own location IS isolation — a second worktree on top would be pure overhead.
-        if (!sharesCallersDirectory)
-            return (WorkspaceMode.Shared, null);
-
-        if (resolved.RepoPath is not null)
-            return (WorkspaceMode.Worktree, null);
-
-        return (WorkspaceMode.Shared,
-            $"'{resolved.WorkingDirectory}' is not a git repository, so this orchestrator cannot "
-            + "be isolated in a worktree and will share its caller's directory. Its delegates and "
-            + "its caller can overwrite each other's files.");
+        return (EffectiveRequestedWorkspace(request), null);
     }
+
+    /// <summary>
+    /// CARD-0644 D-1/D-3/D-5. What an omitted workspace means: a fresh Worker or Orchestrator gets
+    /// its own Worktree whatever its role or -Dir (a different location is not isolation); an
+    /// explicit existing-agent selection (-Agent / agentId) reuses that agent's checkout. A live
+    /// follow-up has already stamped Shared by the time ResolveWorkspace runs. A RETIRED follow-up
+    /// keeps its pre-CARD-0644 Shared meaning here until S2 gives it the predecessor's frozen tip
+    /// (D-4); a fresh Worktree off the default base would silently drop that branch's work.
+    /// </summary>
+    internal static WorkspaceMode EffectiveRequestedWorkspace(CreateAgentTaskRequest request) =>
+        request.Workspace
+        ?? (request.AgentId is not null || !string.IsNullOrWhiteSpace(request.Agent)
+            || !string.IsNullOrWhiteSpace(request.FollowUpOnTask)
+                ? WorkspaceMode.Shared
+                : WorkspaceMode.Worktree);
 
     private static bool PathsEqual(string a, string b)
     {

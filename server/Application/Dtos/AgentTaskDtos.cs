@@ -23,9 +23,11 @@ public sealed record CreateAgentTaskRequest(
     /// </summary>
     AgentKind? AgentKind = null,
     /// <summary>
-    /// Null = let the server decide: workers run Shared; an orchestrator gets its own worktree
-    /// unless it already has its own location. An explicit value is always honoured — with a
-    /// warning when it puts an orchestrator in its caller's directory.
+    /// Null = the server's fresh default (CARD-0644): a fresh Worker or Orchestrator gets its own
+    /// Worktree and task branch, whatever its role or directory, and a directory that is not a git
+    /// repository is refused rather than silently shared. An existing-agent selection (agent,
+    /// agentId, followUpOnTask) keeps that agent's checkout. An explicit value is always honoured —
+    /// with a warning when it puts an orchestrator in its caller's directory.
     /// </summary>
     WorkspaceMode? Workspace = null,
     /// <summary>Run somewhere else — another repo, another checkout. Null inherits the caller's.</summary>

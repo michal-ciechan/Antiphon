@@ -43,7 +43,7 @@ public class ModelAvailabilityManualTests
 
             var ex = await Should.ThrowAsync<ModelDisabledException>(() =>
                 CreateService(db).CreateAsync(
-                    new CreateAgentTaskRequest("plan the work", Role: AgentTaskRole.Plan),
+                    new CreateAgentTaskRequest("plan the work", Role: AgentTaskRole.Plan, Workspace: WorkspaceMode.Shared),
                     new AgentTaskService.Caller(null, null, workspace.Path),
                     CancellationToken.None));
             ex.Code.ShouldBe("model_disabled");
@@ -59,7 +59,7 @@ public class ModelAvailabilityManualTests
                 new CreateAgentTaskRequest(
                     "plan on grok",
                     Role: AgentTaskRole.Plan,
-                    AgentKind: AgentKind.Grok),
+                    AgentKind: AgentKind.Grok, Workspace: WorkspaceMode.Shared),
                 new AgentTaskService.Caller(null, null, workspace.Path),
                 CancellationToken.None);
             createdId = grok.Id;
@@ -102,7 +102,7 @@ public class ModelAvailabilityManualTests
             await availability.ClearAsync("ClaudeCode", "fable", CancellationToken.None);
 
             var created = await CreateService(db).CreateAsync(
-                new CreateAgentTaskRequest("plan after clear", Role: AgentTaskRole.Plan),
+                new CreateAgentTaskRequest("plan after clear", Role: AgentTaskRole.Plan, Workspace: WorkspaceMode.Shared),
                 new AgentTaskService.Caller(null, null, workspace.Path),
                 CancellationToken.None);
             createdId = created.Id;
@@ -219,7 +219,7 @@ public class ModelAvailabilityManualTests
             (await verify.ModelAvailabilityHolds.SingleAsync(h => h.Id == row.Id)).ClearedAt.ShouldNotBeNull();
 
             var created = await CreateService(db).CreateAsync(
-                new CreateAgentTaskRequest("plan after expiry", Role: AgentTaskRole.Plan),
+                new CreateAgentTaskRequest("plan after expiry", Role: AgentTaskRole.Plan, Workspace: WorkspaceMode.Shared),
                 new AgentTaskService.Caller(null, null, workspace.Path),
                 CancellationToken.None);
             createdId = created.Id;

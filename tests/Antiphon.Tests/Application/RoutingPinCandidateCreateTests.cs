@@ -31,7 +31,7 @@ public sealed class RoutingPinCandidateCreateTests
         await SeedHoldAsync(db, AgentKind.ClaudeCode, "fable", DateTime.UtcNow.AddHours(4));
 
         var created = await Service(db, workspace).CreateAsync(
-            new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Card: "CARD-0301"),
+            new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Card: "CARD-0301", Workspace: WorkspaceMode.Shared),
             Manual(workspace.Path),
             CancellationToken.None);
 
@@ -64,7 +64,7 @@ public sealed class RoutingPinCandidateCreateTests
         var sessionId = await SeedSessionAsync(db, workspace.Path);
 
         var created = await Service(db, workspace).CreateAsync(
-            new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Card: "CARD-0301"),
+            new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Card: "CARD-0301", Workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(null, sessionId, workspace.Path),
             CancellationToken.None);
 
@@ -96,7 +96,7 @@ public sealed class RoutingPinCandidateCreateTests
                     "plan it",
                     Role: AgentTaskRole.Plan,
                     Card: "CARD-0301",
-                    RefuseIfExhausted: true),
+                    RefuseIfExhausted: true, Workspace: WorkspaceMode.Shared),
                 Manual(workspace.Path),
                 CancellationToken.None));
 
@@ -127,7 +127,7 @@ public sealed class RoutingPinCandidateCreateTests
 
         var ex = await Should.ThrowAsync<ModelDisabledException>(() =>
             Service(db, workspace).CreateAsync(
-                new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Card: "CARD-0301"),
+                new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Card: "CARD-0301", Workspace: WorkspaceMode.Shared),
                 Manual(workspace.Path),
                 CancellationToken.None));
 
@@ -159,7 +159,7 @@ public sealed class RoutingPinCandidateCreateTests
         await SeedHoldAsync(db, AgentKind.Grok, "grok-4.7", null);
 
         var created = await Service(db, workspace).CreateAsync(
-            new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan),
+            new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Workspace: WorkspaceMode.Shared),
             Manual(workspace.Path),
             CancellationToken.None);
 
@@ -194,7 +194,7 @@ public sealed class RoutingPinCandidateCreateTests
         await SeedHoldAsync(db, AgentKind.Grok, "grok-4.7", null);
 
         var created = await Service(db, workspace).CreateAsync(
-            new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan),
+            new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Workspace: WorkspaceMode.Shared),
             Manual(workspace.Path),
             CancellationToken.None);
 
@@ -227,7 +227,7 @@ public sealed class RoutingPinCandidateCreateTests
 
         var created = await Service(db, workspace).CreateAsync(
             new CreateAgentTaskRequest(
-                "plan it", Role: AgentTaskRole.Plan, AgentKind: AgentKind.ClaudeCode),
+                "plan it", Role: AgentTaskRole.Plan, AgentKind: AgentKind.ClaudeCode, Workspace: WorkspaceMode.Shared),
             Manual(workspace.Path),
             CancellationToken.None);
 
@@ -250,7 +250,7 @@ public sealed class RoutingPinCandidateCreateTests
 
         var created = await Service(db, workspace).CreateAsync(
             new CreateAgentTaskRequest(
-                "plan it", Role: AgentTaskRole.Plan, AgentKind: AgentKind.ClaudeCode),
+                "plan it", Role: AgentTaskRole.Plan, AgentKind: AgentKind.ClaudeCode, Workspace: WorkspaceMode.Shared),
             Manual(workspace.Path),
             CancellationToken.None);
 
@@ -275,7 +275,7 @@ public sealed class RoutingPinCandidateCreateTests
 
         var created = await Service(db, workspace).CreateAsync(
             new CreateAgentTaskRequest(
-                "plan it", Role: AgentTaskRole.Plan, ModelLevel: AgentModelLevel.High),
+                "plan it", Role: AgentTaskRole.Plan, ModelLevel: AgentModelLevel.High, Workspace: WorkspaceMode.Shared),
             Manual(workspace.Path),
             CancellationToken.None);
 
@@ -301,7 +301,7 @@ public sealed class RoutingPinCandidateCreateTests
         var ex = await Should.ThrowAsync<RoutingPinConflictException>(() =>
             Service(db, workspace).CreateAsync(
                 new CreateAgentTaskRequest(
-                    "plan it", Role: AgentTaskRole.Plan, AgentKind: AgentKind.Codex),
+                    "plan it", Role: AgentTaskRole.Plan, AgentKind: AgentKind.Codex, Workspace: WorkspaceMode.Shared),
                 Manual(workspace.Path),
                 CancellationToken.None));
 
@@ -326,7 +326,7 @@ public sealed class RoutingPinCandidateCreateTests
                     "plan it",
                     Role: AgentTaskRole.Plan,
                     AgentKind: AgentKind.ClaudeCode,
-                    ModelLevel: AgentModelLevel.High),
+                    ModelLevel: AgentModelLevel.High, Workspace: WorkspaceMode.Shared),
                 Manual(workspace.Path),
                 CancellationToken.None));
 
@@ -346,7 +346,7 @@ public sealed class RoutingPinCandidateCreateTests
             new CreateAgentTaskRequest(
                 "plan it",
                 Role: AgentTaskRole.Plan,
-                IgnoreRoutingPin: true),
+                IgnoreRoutingPin: true, Workspace: WorkspaceMode.Shared),
             Manual(workspace.Path),
             CancellationToken.None);
 
@@ -385,7 +385,7 @@ public sealed class RoutingPinCandidateCreateTests
                 "plan it",
                 Role: AgentTaskRole.Plan,
                 Card: "CARD-0301",
-                Complexity: TaskComplexity.Hard),
+                Complexity: TaskComplexity.Hard, Workspace: WorkspaceMode.Shared),
             Manual(workspace.Path),
             CancellationToken.None);
 
@@ -422,7 +422,7 @@ public sealed class RoutingPinCandidateCreateTests
 
         var created = await Service(db, workspace).CreateAsync(
             new CreateAgentTaskRequest(
-                "plan it", Role: AgentTaskRole.Plan, Complexity: TaskComplexity.Hard),
+                "plan it", Role: AgentTaskRole.Plan, Complexity: TaskComplexity.Hard, Workspace: WorkspaceMode.Shared),
             Manual(workspace.Path),
             CancellationToken.None);
 
@@ -452,7 +452,7 @@ public sealed class RoutingPinCandidateCreateTests
         await Pins(db).UpsertAsync(RequiredList("CARD-0301"), null, CancellationToken.None);
 
         var created = await Service(db, workspace).CreateAsync(
-            new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Card: "CARD-0301"),
+            new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Card: "CARD-0301", Workspace: WorkspaceMode.Shared),
             Manual(workspace.Path),
             CancellationToken.None);
 
@@ -485,7 +485,7 @@ public sealed class RoutingPinCandidateCreateTests
             new CreateAgentTaskRequest(
                 "orchestrate it",
                 Kind: AgentTaskKind.Orchestrator,
-                Role: AgentTaskRole.Plan),
+                Role: AgentTaskRole.Plan, Workspace: WorkspaceMode.Shared),
             Manual(workspace.Path),
             CancellationToken.None);
 
@@ -507,7 +507,7 @@ public sealed class RoutingPinCandidateCreateTests
             new CreateAgentTaskRequest(
                 "plan it",
                 Role: AgentTaskRole.Plan,
-                IgnoreModelDisabled: true),
+                IgnoreModelDisabled: true, Workspace: WorkspaceMode.Shared),
             Manual(workspace.Path),
             CancellationToken.None);
 

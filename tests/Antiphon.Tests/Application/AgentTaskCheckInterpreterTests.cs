@@ -206,7 +206,7 @@ public class AgentTaskCheckInterpreterTests
         await using var h = await Harness.CreateAsync();
         var title = new string('x', 300);
         var created = await h.Tasks.CreateAsync(
-            new CreateAgentTaskRequest(Goal: "do the checked thing", Title: title, Role: AgentTaskRole.Code),
+            new CreateAgentTaskRequest(Goal: "do the checked thing", Title: title, Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(null, null, h.Scratch),
             CancellationToken.None);
 
@@ -234,7 +234,7 @@ public class AgentTaskCheckInterpreterTests
             "Investigate the long-running check header dump that repeats the entire goal\n"
             + "paragraph across several lines until the first check overflows the composer";
         var created = await h.Tasks.CreateAsync(
-            new CreateAgentTaskRequest(Goal: "do the checked thing", Title: title, Role: AgentTaskRole.Code),
+            new CreateAgentTaskRequest(Goal: "do the checked thing", Title: title, Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(null, null, h.Scratch),
             CancellationToken.None);
 

@@ -156,7 +156,7 @@ public sealed class AgentTaskInternalDecisionLifecycleTests
             new CreateAgentTaskRequest(
                 Goal: "repair the deploy script",
                 Kind: AgentTaskKind.Orchestrator,
-                Role: AgentTaskRole.Code) with
+                Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Shared) with
             {
                 Authority = "start the remaining epics one after another",
                 AutoContinue = true,

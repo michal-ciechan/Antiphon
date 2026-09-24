@@ -386,7 +386,7 @@ public class AgentTaskAutoTitleTests
         public Task<AgentTaskCreatedDto> CreateAsync(
             string goal, string? title = null, AgentTaskRole role = AgentTaskRole.Code) =>
             Tasks.CreateAsync(
-                new CreateAgentTaskRequest(Goal: goal, Title: title, Role: role),
+                new CreateAgentTaskRequest(Goal: goal, Title: title, Role: role, Workspace: WorkspaceMode.Shared),
                 new AgentTaskService.Caller(null, null, _scratch),
                 CancellationToken.None);
 

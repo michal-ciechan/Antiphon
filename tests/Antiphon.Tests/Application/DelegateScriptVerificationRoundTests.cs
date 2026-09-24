@@ -102,7 +102,8 @@ public sealed class DelegateScriptVerificationRoundTests
             ("invalid-role", ["-Role", "Docs", .. Interim(full, Baseline.ToString("D"), good)], "verification_round_role"),
             ("orchestrator", ["-Role", "Code", "-Orchestrator", .. Interim(full, Baseline.ToString("D"), good)], "verification_round_role"),
             ("mutation-final", ["-Role", "Mutation", "-Worktree", "-VerificationRound", "Final"], "verification_round_role"),
-            ("code-without-worktree", ["-Role", "Code", .. Interim(full, Baseline.ToString("D"), good)], "verification_round_role"),
+            // CARD-0644 D-5: Interim Code runs in the default Worktree; an explicit Shared is the invalid shape.
+            ("code-shared", ["-Role", "Code", "-Shared", .. Interim(full, Baseline.ToString("D"), good)], "verification_round_role"),
             ("review-worktree", ["-Role", "Review", "-Worktree", .. Interim(full, Baseline.ToString("D"), good)], "verification_round_role"),
             ("short-subject", ["-Role", "Review", "-ReadOnly", .. Interim(full[..8], Baseline.ToString("D"), good)], "verification_baseline_invalid"),
             ("short-baseline", ["-Role", "Review", "-ReadOnly", .. Interim(full, Baseline.ToString("N"), good)], "verification_baseline_invalid"),

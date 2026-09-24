@@ -288,7 +288,7 @@ public sealed class PostLandMutationAdmissionTests
         var caller = new AgentTaskService.Caller(null, null, world.Host.Fixture.Repository, ProjectId: projectId);
         await Should.ThrowAsync<ConcurrencyLimitException>(() =>
             service.CreateAsync(world.Request(world.Companion), caller, default));
-        var unrelated = await service.CreateAsync(new CreateAgentTaskRequest("unrelated mutation", Role: AgentTaskRole.Mutation),
+        var unrelated = await service.CreateAsync(new CreateAgentTaskRequest("unrelated mutation", Role: AgentTaskRole.Mutation, Workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(null, null, world.Host.Fixture.Repository, ProjectId: otherProject), default);
         unrelated.Status.ShouldBe(AgentTaskStatus.Queued);
         await using var observer = world.Host.CreateContext();

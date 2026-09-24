@@ -30,7 +30,7 @@ public class ComplexityCreateTests
         await SeedHoldAsync(db, AgentKind.ClaudeCode, "fable", until: DateTime.UtcNow.AddDays(1));
 
         var created = await Service(db, workspace).CreateAsync(
-            new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Complexity: TaskComplexity.Hard),
+            new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Complexity: TaskComplexity.Hard, Workspace: WorkspaceMode.Shared),
             Manual(workspace.Path),
             CancellationToken.None);
 
@@ -63,7 +63,7 @@ public class ComplexityCreateTests
         var sessionId = await SeedSessionAsync(db, workspace.Path);
 
         var created = await Service(db, workspace).CreateAsync(
-            new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Complexity: TaskComplexity.Hard),
+            new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Complexity: TaskComplexity.Hard, Workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(null, sessionId, workspace.Path),
             CancellationToken.None);
 
@@ -98,7 +98,7 @@ public class ComplexityCreateTests
                     "plan it",
                     Role: AgentTaskRole.Plan,
                     Complexity: TaskComplexity.Hard,
-                    RefuseIfExhausted: true),
+                    RefuseIfExhausted: true, Workspace: WorkspaceMode.Shared),
                 Manual(workspace.Path),
                 CancellationToken.None));
 
@@ -118,7 +118,7 @@ public class ComplexityCreateTests
         await SeedHoldAsync(db, AgentKind.ClaudeCode, "fable", until: DateTime.UtcNow.AddDays(1));
 
         var created = await Service(db, workspace).CreateAsync(
-            new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Complexity: TaskComplexity.Hard),
+            new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Complexity: TaskComplexity.Hard, Workspace: WorkspaceMode.Shared),
             Manual(workspace.Path),
             CancellationToken.None);
 
@@ -144,7 +144,7 @@ public class ComplexityCreateTests
         await SeedHardChainAsync(db);
 
         var created = await Service(db, workspace).CreateAsync(
-            new CreateAgentTaskRequest("write it", Role: AgentTaskRole.Code, Complexity: TaskComplexity.Hard),
+            new CreateAgentTaskRequest("write it", Role: AgentTaskRole.Code, Complexity: TaskComplexity.Hard, Workspace: WorkspaceMode.Shared),
             Manual(workspace.Path),
             CancellationToken.None);
 
@@ -166,7 +166,7 @@ public class ComplexityCreateTests
         var sessionId = await SeedSessionAsync(db, workspace.Path);
 
         var created = await Service(db, workspace).CreateAsync(
-            new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Complexity: TaskComplexity.Hard),
+            new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Complexity: TaskComplexity.Hard, Workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(null, sessionId, workspace.Path),
             CancellationToken.None);
 
@@ -197,7 +197,7 @@ public class ComplexityCreateTests
                     "plan it",
                     Role: AgentTaskRole.Plan,
                     AgentKind: AgentKind.Grok,
-                    Complexity: TaskComplexity.Hard),
+                    Complexity: TaskComplexity.Hard, Workspace: WorkspaceMode.Shared),
                 Manual(workspace.Path),
                 CancellationToken.None));
 
@@ -218,7 +218,7 @@ public class ComplexityCreateTests
                     "plan it",
                     Role: AgentTaskRole.Plan,
                     Complexity: TaskComplexity.Hard,
-                    IgnoreModelDisabled: true),
+                    IgnoreModelDisabled: true, Workspace: WorkspaceMode.Shared),
                 Manual(workspace.Path),
                 CancellationToken.None));
 
@@ -237,7 +237,7 @@ public class ComplexityCreateTests
 
         var ex = await Should.ThrowAsync<ModelDisabledException>(() =>
             Service(db, workspace).CreateAsync(
-                new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan),
+                new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Workspace: WorkspaceMode.Shared),
                 Manual(workspace.Path),
                 CancellationToken.None));
 
@@ -266,7 +266,7 @@ public class ComplexityCreateTests
 
         var created = await Service(db, workspace).CreateAsync(
             new CreateAgentTaskRequest(
-                "plan it", Role: AgentTaskRole.Plan, Card: "CARD-0301", Complexity: TaskComplexity.Hard),
+                "plan it", Role: AgentTaskRole.Plan, Card: "CARD-0301", Complexity: TaskComplexity.Hard, Workspace: WorkspaceMode.Shared),
             Manual(workspace.Path),
             CancellationToken.None);
 
@@ -302,7 +302,7 @@ public class ComplexityCreateTests
         var ex = await Should.ThrowAsync<ModelDisabledException>(() =>
             Service(db, workspace).CreateAsync(
                 new CreateAgentTaskRequest(
-                    "plan it", Role: AgentTaskRole.Plan, Card: "CARD-0301", Complexity: TaskComplexity.Hard),
+                    "plan it", Role: AgentTaskRole.Plan, Card: "CARD-0301", Complexity: TaskComplexity.Hard, Workspace: WorkspaceMode.Shared),
                 Manual(workspace.Path),
                 CancellationToken.None));
 
@@ -333,7 +333,7 @@ public class ComplexityCreateTests
 
         var created = await Service(db, workspace).CreateAsync(
             new CreateAgentTaskRequest(
-                "plan it", Role: AgentTaskRole.Plan, Card: "CARD-0304", Complexity: TaskComplexity.Hard),
+                "plan it", Role: AgentTaskRole.Plan, Card: "CARD-0304", Complexity: TaskComplexity.Hard, Workspace: WorkspaceMode.Shared),
             Manual(workspace.Path),
             CancellationToken.None);
 
@@ -359,7 +359,7 @@ public class ComplexityCreateTests
             CancellationToken.None);
 
         var created = await Service(db, workspace).CreateAsync(
-            new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Complexity: TaskComplexity.Hard),
+            new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Complexity: TaskComplexity.Hard, Workspace: WorkspaceMode.Shared),
             Manual(workspace.Path),
             CancellationToken.None);
 
@@ -396,7 +396,7 @@ public class ComplexityCreateTests
                 "own the chunk",
                 Kind: AgentTaskKind.Orchestrator,
                 Role: AgentTaskRole.Plan,
-                Complexity: TaskComplexity.Hard),
+                Complexity: TaskComplexity.Hard, Workspace: WorkspaceMode.Shared),
             Manual(workspace.Path),
             CancellationToken.None);
 

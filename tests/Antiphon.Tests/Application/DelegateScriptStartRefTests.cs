@@ -49,7 +49,6 @@ public sealed class DelegateScriptStartRefTests
     }
 
     [Test]
-    [Arguments("no-worktree", "-Role", "Code")]
     [Arguments("shared", "-Role", "Code", "-Shared")]
     [Arguments("read-only", "-Role", "Code", "-ReadOnly")]
     [Arguments("on-agent", "-Role", "Code", "-Worktree", "-OnAgent", "1234abcd")]
