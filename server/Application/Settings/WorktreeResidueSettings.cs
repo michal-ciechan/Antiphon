@@ -32,4 +32,10 @@ public sealed class WorktreeResidueSettings
 
     /// <summary>Maximum candidate rows returned in one run-result page.</summary>
     public int RunResultPageSize { get; set; } = 50;
+
+    /// <summary>
+    /// CARD-0664 D-1: a workspace-use <c>Launch</c> reservation younger than this blocks retirement
+    /// whatever its owner says (the admit-before-status window). Default 15; clamped to at least 1.
+    /// </summary>
+    public int LaunchGraceMinutes { get; set; } = 15;
 }
