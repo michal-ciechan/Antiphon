@@ -73,7 +73,8 @@ public sealed class ExpectationLedgerTests
         events.Count.ShouldBe(1);
         events[0].Type.ShouldBe(AgentTaskEventType.Check);
         events[0].Detail.ShouldContain(nudge.Id.ToString("D"));
-        events.ShouldNotContain(row => row.Type is AgentTaskEventType.Held or AgentTaskEventType.HeldAged);
+        events.ShouldNotContain(row => row.Type == AgentTaskEventType.Held);
+        events.ShouldNotContain(row => row.Type == AgentTaskEventType.HeldAged);
         JsonSerializer.Deserialize<Guid[]>(nudge.CheckEventIdsJson).ShouldBe([events[0].Id]);
 
         var state = await fresh.ExpectationWatchStates.SingleAsync();
