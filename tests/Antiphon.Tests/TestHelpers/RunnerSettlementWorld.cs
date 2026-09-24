@@ -211,6 +211,77 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
         await ReloadAsync();
     }
 
+    /// <summary>The owning prompt, the marked report and a TurnEnd, left for a sweep to hand off.</summary>
+    public Task SeedReportAsync(string report) =>
+        TurnSeeding.SeedTurnAsync(CreateContext, SessionId, DelegationReportFormatter.TaskMarker(TaskId), report);
+
+    /// <summary>
+    /// A second, local ReadOnly task on its own delegate session with its marked report already in
+    /// the transcript: ordinary work the same deferred-report sweep settles. Returns its id.
+    /// </summary>
+    public async Task<Guid> AddLocalReportedTaskAsync(string report)
+    {
+        var id = Guid.NewGuid();
+        var session = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await using (var db = CreateContext())
+        {
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = session,
+                DefinitionName = "local",
+                AgentKind = AgentKind.ClaudeCode,
+                Status = SessionStatus.Running,
+                Cwd = Git.Desktop,
+                Cols = 120, Rows = 30,
+                CreatedAt = now.AddHours(-1),
+                StartedAt = now.AddHours(-1),
+                LastSeenAt = now,
+            });
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = id,
+                RootTaskId = id,
+                Title = "local investigate",
+                Goal = "local work",
+                Kind = AgentTaskKind.Worker,
+                Role = AgentTaskRole.Investigate,
+                AgentKind = AgentKind.ClaudeCode,
+                ModelLevel = AgentModelLevel.Medium,
+                Workspace = WorkspaceMode.ReadOnly,
+                WorkingDirectory = Git.Desktop,
+                ParentSessionId = CallerSessionId,
+                ReplyTo = AgentTaskReplyTo.Session,
+                Status = AgentTaskStatus.Working,
+                AgentSessionId = session,
+                CreatedAt = now.AddMinutes(-30),
+                DispatchedAt = now.AddMinutes(-20),
+            });
+            await db.SaveChangesAsync();
+        }
+        await TurnSeeding.SeedTurnAsync(CreateContext, session, DelegationReportFormatter.TaskMarker(id), report);
+        return id;
+    }
+
+    /// <summary>One run of the dispatcher's real deferred-report sweep on its own scope.</summary>
+    public async Task<int> SweepDeferredReportsAsync()
+    {
+        int swept;
+        await using (var scope = Services.CreateAsyncScope())
+        {
+            swept = await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
+                .SettleDeferredReportsAsync(CancellationToken.None);
+        }
+        await ReloadAsync();
+        return swept;
+    }
+
+    public async Task<AgentTaskStatus> StatusOfAsync(Guid taskId)
+    {
+        await using var db = CreateContext();
+        return await db.AgentTasks.AsNoTracking().Where(t => t.Id == taskId).Select(t => t.Status).SingleAsync();
+    }
+
     /// <summary>The delivery watchdog's bind-refusal recovery, through the real reply service.</summary>
     public async Task RecoverAsync(DelegateBindRefusalEvidence evidence)
     {

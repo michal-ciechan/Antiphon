@@ -67,6 +67,16 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     /// <summary>How long a sync waits before asking again for a busy repository lease.</summary>
     public TimeSpan LeaseRetryInterval { get; init; } = TimeSpan.FromSeconds(1);
 
+    /// <summary>The default for <see cref="LeaseWaitSlice"/>.</summary>
+    public static readonly TimeSpan DefaultLeaseWaitSlice = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// CARD-0657 R4. The longest ONE sync attempt waits for a busy repository lease. The attempt
+    /// runs inside a dispatcher sweep, so a lease that stays busy must not hold that sweep for the
+    /// whole <see cref="SyncBudget"/>.
+    /// </summary>
+    public TimeSpan LeaseWaitSlice { get; init; } = DefaultLeaseWaitSlice;
+
     /// <summary>Test seam: called each time the sync finds the repository lease busy.</summary>
     public Action? LeaseBusyObserved { get; init; }
 
