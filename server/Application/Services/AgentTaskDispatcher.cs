@@ -264,7 +264,7 @@ public sealed class AgentTaskDispatcher
     private enum HoldKind
     {
         Scope, RoutingPin, ModelHeld, CapacityWait, RepairSourceLanding, SiblingLanding, Lease, ConcurrencyCap, PinnedAgent,
-        RemotePrep, RemotePrepBackoff, RunnerUnavailable,
+        RemotePrep, RemotePrepBackoff, RunnerUnavailable, RunnerCapacity,
     }
 
     private sealed class QueuedHoldIndex
@@ -370,11 +370,14 @@ public sealed class AgentTaskDispatcher
             async (d, ct2) => resumedRoutingBlocked = await d.ResumeRoutingBlockedAsync(ct2),
             ct);
 
+        // CARD-0653: a runner-bound task occupies that runner's declared seats, not this
+        // desktop process cap. An empty RunnerId is the local process-spawning population.
         var active = await _db.AgentTasks
             .Where(AgentTaskRoles.NotSpecialist)
             .CountAsync(
                 t => (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
-                    && !t.CapacityWaitRetained,
+                    && !t.CapacityWaitRetained
+                    && (t.RunnerId == null || t.RunnerId == ""),
                 ct);
 
         // Deadline is durable: recovery does not depend on the optional caller surviving.
@@ -478,7 +481,9 @@ public sealed class AgentTaskDispatcher
         {
             ct.ThrowIfCancellationRequested();
 
-            if (!AgentTaskRoles.IsSpecialist(task.Role)
+            var runnerBound = !string.IsNullOrEmpty(task.RunnerId);
+            if (!runnerBound
+                && !AgentTaskRoles.IsSpecialist(task.Role)
                 && active + dispatchedAgainstCap >= _settings.MaxConcurrentTasks)
             {
                 skippedConcurrency++;
@@ -672,7 +677,7 @@ public sealed class AgentTaskDispatcher
             // CARD-0633 D-5: a runner-bound task holds cheaply BEFORE any claim - a backoff after a
             // failed preparation, a preparation still in flight, or a runner that cannot take work.
             // Each is one deduplicated Held trace, never a Warning per tick.
-            if (RemoteHoldFor(task) is { } remoteHold)
+            if (await RemoteHoldForAsync(task, ct) is { } remoteHold)
             {
                 heldThisTick.Add((task.Id, remoteHold.Kind));
                 if (await TraceHeldAsync(task, remoteHold.Detail, lastHeld, ct))
@@ -775,7 +780,7 @@ public sealed class AgentTaskDispatcher
                         }
                     }
                     dispatched++;
-                    if (!AgentTaskRoles.IsSpecialist(task.Role))
+                    if (!AgentTaskRoles.IsSpecialist(task.Role) && string.IsNullOrEmpty(task.RunnerId))
                         dispatchedAgainstCap++;
                     if (inLease)
                     {
@@ -852,7 +857,7 @@ public sealed class AgentTaskDispatcher
     /// usual. Without a runner directory the claim path's "unavailable in this process" warning
     /// still applies, so this stays silent.
     /// </summary>
-    private (HoldKind Kind, string Detail)? RemoteHoldFor(AgentTask task)
+    private async Task<(HoldKind Kind, string Detail)?> RemoteHoldForAsync(AgentTask task, CancellationToken ct)
     {
         if (_runners is null || task.RunnerId is not { Length: > 0 } runnerId)
             return null;
@@ -873,7 +878,36 @@ public sealed class AgentTaskDispatcher
             return (HoldKind.RunnerUnavailable, DispatchHoldDetails.RunnerUnavailable(runnerId, ex.Message));
         }
 
+        // CARD-0653: declared seats, before any claim or remote prep. Failed and stopped
+        // sessions do not reserve. In-flight mirrors and prepared-but-unlaunched tasks do.
+        if (_runners.DeclaredCapacity(runnerId) is int capacity)
+        {
+            var occupied = await CountRunnerOccupancyAsync(runnerId, task.Id, ct);
+            if (occupied >= capacity)
+                return (HoldKind.RunnerCapacity, DispatchHoldDetails.RunnerAtCapacity(runnerId, occupied, capacity));
+        }
+
         return null;
+    }
+
+    private async Task<int> CountRunnerOccupancyAsync(string runnerId, Guid exceptTaskId, CancellationToken ct)
+    {
+        var sessions = await _db.AgentSessions.CountAsync(
+            s => s.RunnerId == runnerId
+                && (s.Status == SessionStatus.Created
+                    || s.Status == SessionStatus.Starting
+                    || s.Status == SessionStatus.Running
+                    || s.Status == SessionStatus.Stopping),
+            ct);
+        var pendingLaunch = await _db.AgentTasks.CountAsync(
+            t => t.Id != exceptTaskId
+                && t.RunnerId == runnerId
+                && t.Status == AgentTaskStatus.Queued
+                && t.AgentSessionId == null
+                && t.RemoteWorktreePath != null,
+            ct);
+        var inFlight = _remotePrep?.InFlightCount(runnerId, exceptTaskId) ?? 0;
+        return sessions + pendingLaunch + inFlight;
     }
 
     private async Task<bool> TraceHeldAsync(
@@ -4100,7 +4134,7 @@ public sealed class AgentTaskDispatcher
                 claimed.ConcurrencyToken = Guid.NewGuid();
                 await _db.SaveChangesAsync(ct);
                 await transaction.CommitAsync(ct);
-                _remotePrep.TryBegin(claimed.Id);
+                _remotePrep.TryBegin(claimed.Id, claimed.RunnerId);
                 return DispatchOneResult.HeldForRemotePrep;
             }
 

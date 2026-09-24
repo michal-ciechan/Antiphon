@@ -57,6 +57,18 @@ public enum PhoneHomeOperation
     // CARD-0628 D-7. Ask the runner whether a provider's CLI is signed in inside its own state.
     // Read-only: the runner reports names and booleans, never a credential value.
     ProviderAuth = 22,
+
+    /// <summary>
+    /// CARD-0653: kill the process tree when it is still live, drop the in-memory record, and
+    /// delete the manifest so a restart does not adopt the session again.
+    /// </summary>
+    ReleaseSlot = 23,
+
+    /// <summary>CARD-0653 / CARD-0079: generation-conditional compaction stop over phone-home.</summary>
+    StopCompactionContinuation = 24,
+
+    /// <summary>CARD-0653 / CARD-0079: fresh compaction tail read over phone-home.</summary>
+    ObserveCompaction = 25,
 }
 
 /// <summary>CARD-0604: read (and optionally seal) a tracked execution's custody on the runner.</summary>

@@ -51,7 +51,7 @@ services:
       PhoneHome__SecretPath: /run/antiphon/phone-home
       PhoneHome__StoreIdPath: /state/runner-store-id
       PhoneHome__AllowedCwd: /work
-      PhoneHome__Capacity: "2"
+      PhoneHome__Capacity: "3"
       PhoneHome__GrokHome: /state/grok
       GROK_HOME: /state/grok
       # CARD-0628 D-6: one Claude store in three places. CLAUDE_CONFIG_DIR is the runner process's

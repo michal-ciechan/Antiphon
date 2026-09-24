@@ -616,4 +616,10 @@ public enum AgentIncidentKind
     /// CARD-0079: useful Check evidence and a whole caller receipt closed the episode.
     /// </summary>
     CompactionContinuationRecovered = 73,
+
+    /// <summary>
+    /// CARD-0653: an operator force-released a phone-home runner seat. Warning. The message
+    /// names the runner, the session and the required reason.
+    /// </summary>
+    RunnerSlotForceReleased = 74,
 }
