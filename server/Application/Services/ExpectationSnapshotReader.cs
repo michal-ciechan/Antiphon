@@ -27,8 +27,13 @@ public sealed class ExpectationSnapshotReader
     ];
 
     private readonly AppDbContext _db;
+    private readonly DelegationSettings _delegation;
 
-    public ExpectationSnapshotReader(AppDbContext db) => _db = db;
+    public ExpectationSnapshotReader(AppDbContext db, DelegationSettings? delegation = null)
+    {
+        _db = db;
+        _delegation = delegation ?? new DelegationSettings();
+    }
 
     public async Task<ExpectationSnapshot> ReadAsync(
         ExpectationDirectiveSettings directive,
