@@ -77,6 +77,68 @@ public class PhoneHomeConnectionServiceTests
     }
 
     [Test]
+    public async Task Draining_event_loop_accepts_more_than_max_pending_without_overflow()
+    {
+        const int max = 8;
+        const int rounds = 40;
+        var overflow = false;
+        var hub = new SessionRunnerEventHub();
+        using var cts = new CancellationTokenSource();
+        var reader = hub.SubscribeBounded(max, 1_000_000, () => overflow = true, cts.Token);
+        var lease = (ISessionRunnerEventLease)reader;
+        var socket = new PhoneHomeTestWebSocket();
+        var writer = new PhoneHomeConnectionWriter(socket, PhoneHomeProtocol.DefaultMaxMessageUtf8Bytes);
+        var loop = Service(new RecordingRuntime()).EventLoopAsync(writer, 1, reader, cts.Token);
+
+        for (var round = 0; round < rounds; round++)
+        {
+            var drained = await Until(() => lease.PendingEvents == 0 && !overflow);
+            drained.ShouldBeTrue($"pending depth stuck at {lease.PendingEvents} after {socket.Sent.Count} sent events");
+            for (var i = 0; i < max; i++)
+                hub.Publish("session", new { n = round * max + i });
+            var target = (round + 1) * max;
+            var sent = await Until(() => socket.Sent.Count >= target || overflow);
+            sent.ShouldBeTrue($"sent {socket.Sent.Count} of {target}");
+            overflow.ShouldBeFalse();
+        }
+
+        var idle = await Until(() => lease.PendingEvents == 0 && lease.PendingBytes == 0);
+        idle.ShouldBeTrue($"pending events {lease.PendingEvents} bytes {lease.PendingBytes}");
+        socket.Sent.Count.ShouldBe(max * rounds);
+        cts.Cancel();
+        await EndsQuiet(loop);
+    }
+
+    [Test]
+    public async Task Stalled_event_send_still_overflows()
+    {
+        var overflow = false;
+        var hub = new SessionRunnerEventHub();
+        using var cts = new CancellationTokenSource();
+        var reader = hub.SubscribeBounded(2, 1_000_000, () => overflow = true, cts.Token);
+        var lease = (ISessionRunnerEventLease)reader;
+        var socket = new PhoneHomeTestWebSocket();
+        var writer = new PhoneHomeConnectionWriter(socket, PhoneHomeProtocol.DefaultMaxMessageUtf8Bytes);
+        var hold = socket.HoldNextSend();
+        var loop = Service(new RecordingRuntime()).EventLoopAsync(writer, 1, reader, cts.Token);
+
+        hub.Publish("session", new { n = 1 });
+        await hold.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        socket.Sent.Count.ShouldBe(0);
+        lease.PendingEvents.ShouldBe(1);
+
+        hub.Publish("session", new { n = 2 });
+        lease.PendingEvents.ShouldBe(2);
+        hub.Publish("session", new { n = 3 });
+        overflow.ShouldBeTrue();
+        lease.PendingEvents.ShouldBe(2);
+
+        hold.Release.TrySetResult();
+        cts.Cancel();
+        await EndsQuiet(loop);
+    }
+
+    [Test]
     public async Task Held_command_does_not_block_receive_progress()
     {
         var held = new TaskCompletionSource<RunnerSessionDto>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -280,6 +342,30 @@ public class PhoneHomeConnectionServiceTests
         catch (OperationCanceledException)
         {
             return true;
+        }
+    }
+
+    private static async Task<bool> Until(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (condition())
+                return true;
+            await Task.Delay(5);
+        }
+
+        return condition();
+    }
+
+    private static async Task EndsQuiet(Task task)
+    {
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (OperationCanceledException)
+        {
         }
     }
 
