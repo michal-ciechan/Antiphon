@@ -502,6 +502,70 @@ public class PhoneHomeConnectionTests
         ended.Single()["Reason"].ShouldBe(PhoneHomeProblemTypes.EventOverflow);
     }
 
+    // CARD-0679 D-5: a dropped socket used to cancel every waiter, so an acknowledged launch read
+    // "A task was canceled." and every catch (OperationCanceledException) took it for the caller.
+    [Test]
+    public async Task Disconnect_fails_in_flight_requests_with_a_typed_connection_closed_error()
+    {
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        await using var peer = await host.ConnectPeerAsync(autoReply: false);
+        var live = await host.WaitLiveAsync();
+        host.Directory.MarkRecovered(live);
+        var client = new PhoneHomeRunnerClient(live);
+
+        var pending = client.GetHealthAsync(CancellationToken.None);
+        await peer.WaitForAsync(PhoneHomeOperation.Health);
+        peer.Socket.Abort();
+
+        Exception? thrown = null;
+        try
+        {
+            await pending.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (Exception ex)
+        {
+            thrown = ex;
+        }
+
+        var typed = thrown.ShouldBeOfType<PhoneHomeTransportException>();
+        typed.Code.ShouldBe("phone_home_connection_closed");
+        typed.Message.ShouldContain(host.AllowedRunnerId);
+        typed.Message.ShouldContain($"epoch {live.Epoch}");
+        typed.Message.ShouldContain(nameof(PhoneHomeOperation.Health));
+    }
+
+    // CARD-0679 D-5: the e34a1fcd shape. A send on a socket that already closed surfaced as a raw
+    // WebSocketException, which no transport-loss predicate recognised.
+    [Test]
+    public async Task Send_on_a_closed_connection_is_the_same_typed_error()
+    {
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+        host.Directory.MarkRecovered(live);
+
+        peer.Socket.Abort();
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while (live.SocketOpen && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+        live.SocketOpen.ShouldBeFalse();
+
+        Exception? thrown = null;
+        try
+        {
+            await live.RequestAsync(PhoneHomeOperation.List, null, CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (Exception ex)
+        {
+            thrown = ex;
+        }
+
+        var typed = thrown.ShouldBeOfType<PhoneHomeTransportException>();
+        typed.Code.ShouldBe("phone_home_connection_closed");
+        typed.Message.ShouldContain(nameof(PhoneHomeOperation.List));
+    }
+
     private static PhoneHomeFrame OutputEvent(long epoch, int n) =>
         new(PhoneHomeFrameKind.Event, epoch, Guid.Empty, EventName: SessionRunnerEventNames.SessionOutput,
             Payload: JsonSerializer.SerializeToElement(new { sessionId = Guid.Empty, text = $"chunk-{n}" }, PhoneHomeFraming.Json));
