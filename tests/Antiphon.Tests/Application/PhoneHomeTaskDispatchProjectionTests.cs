@@ -423,7 +423,14 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         return id;
     }
 
-    private sealed record DispatchGraph(AgentTaskDispatcher Dispatcher, RemoteWorkspacePreparer Preparer, ServiceProvider Services);
+    private sealed record DispatchGraph(AgentTaskDispatcher Dispatcher, RemoteWorkspacePreparer Preparer, ServiceProvider Services)
+    {
+        public void Deconstruct(out AgentTaskDispatcher dispatcher, out RemoteWorkspacePreparer preparer)
+        {
+            dispatcher = Dispatcher;
+            preparer = Preparer;
+        }
+    }
 
     private static DispatchGraph CreateDispatcher(
         IsolatedTestSchema schema, PhoneHomeTestHost host, RecordingLaunchSink sink,
