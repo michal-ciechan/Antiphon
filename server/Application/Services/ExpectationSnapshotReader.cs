@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Settings;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -110,7 +111,10 @@ public sealed class ExpectationSnapshotReader
                 task.Role,
                 task.RunnerId,
                 task.RepoPath,
-                task.CreatedAt))
+                task.CreatedAt,
+                task.AgentSessionId,
+                task.DispatchedAt,
+                task.Result != null || task.ResultFilePath != null))
             .ToListAsync(ct);
 
         var parentIds = loaded
@@ -265,6 +269,8 @@ public sealed class ExpectationSnapshotReader
         }
 
         var backlog = await ReadBacklogAsync(board.Id, ct);
+        var inFlight = await ReadInFlightAsync(throughput.Select(task => task.Row).ToList(), asOf, probes, ct);
+        var notes = await ReadNotesAsync(directive.AgentId, ct);
         return new ExpectationSnapshot
         {
             AsOf = asOf,
@@ -280,6 +286,8 @@ public sealed class ExpectationSnapshotReader
             Lanes = lanes,
             Admission = Admission(directive, probes, asOf),
             OpenEpisodes = episodes,
+            InFlight = inFlight,
+            Notes = notes,
         };
     }
 
@@ -318,6 +326,208 @@ public sealed class ExpectationSnapshotReader
                 && !open.Contains(card.Id))
             .Select(card => card.Id)
             .ToList();
+    }
+
+    /// <summary>
+    /// Dispatched/Working scoped tasks with no report. A null binding, a missing row, or a runner
+    /// answer that the session is gone is Missing; an unreachable runner is Unknown. Live sessions
+    /// get the existing progress-stall verdict, with its thresholds, workspace arm and working rule.
+    /// Watchdog Check events never count as activity.
+    /// </summary>
+    private async Task<IReadOnlyList<ExpectationInFlightTask>> ReadInFlightAsync(
+        IReadOnlyList<TaskRow> scoped,
+        DateTime asOf,
+        ExpectationProbeInput probes,
+        CancellationToken ct)
+    {
+        var rows = scoped
+            .Where(task => task.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working
+                && task.DispatchedAt is not null
+                && !task.HasReport)
+            .ToList();
+        if (rows.Count == 0)
+            return [];
+
+        var taskIds = rows.Select(task => task.Id).ToList();
+        var sessionIds = rows.Where(task => task.AgentSessionId is not null)
+            .Select(task => task.AgentSessionId!.Value)
+            .Distinct()
+            .ToList();
+        var sessions = sessionIds.Count == 0
+            ? new Dictionary<Guid, SessionStatus>()
+            : await _db.AgentSessions.AsNoTracking()
+                .Where(session => sessionIds.Contains(session.Id))
+                .ToDictionaryAsync(session => session.Id, session => session.Status, ct);
+        var taskActivity = await _db.AgentTaskEvents.AsNoTracking()
+            .Where(row => taskIds.Contains(row.AgentTaskId)
+                && row.Type != AgentTaskEventType.Check
+                && row.At <= asOf)
+            .GroupBy(row => row.AgentTaskId)
+            .Select(group => new { TaskId = group.Key, At = group.Max(row => row.At) })
+            .ToDictionaryAsync(row => row.TaskId, row => row.At, ct);
+        var transcriptActivity = sessionIds.Count == 0
+            ? new Dictionary<Guid, DateTime>()
+            : await _db.TranscriptEntries.AsNoTracking()
+                .Where(row => sessionIds.Contains(row.AgentSessionId))
+                .GroupBy(row => row.AgentSessionId)
+                .Select(group => new
+                {
+                    SessionId = group.Key,
+                    At = group.Max(row => row.Timestamp ?? row.CreatedAt),
+                })
+                .ToDictionaryAsync(row => row.SessionId, row => row.At, ct);
+
+        var results = new List<ExpectationInFlightTask>(rows.Count);
+        foreach (var task in rows)
+        {
+            var dispatched = SpecifyUtc(task.DispatchedAt!.Value);
+            var last = dispatched;
+            if (taskActivity.TryGetValue(task.Id, out var eventAt) && SpecifyUtc(eventAt) > last)
+                last = SpecifyUtc(eventAt);
+            if (task.AgentSessionId is Guid bound
+                && transcriptActivity.TryGetValue(bound, out var transcriptAt)
+                && SpecifyUtc(transcriptAt) > last)
+            {
+                last = SpecifyUtc(transcriptAt);
+            }
+
+            var state = SessionState(task, sessions, probes);
+            string? stall = null;
+            if (state == ExpectationSessionState.Live)
+            {
+                WorkspaceProgressArmOrNull(probes, task.Id, out var arm);
+                var verdict = await TaskProgressPolicy.EvaluateAsync(
+                    _db,
+                    new AgentTask { Id = task.Id, AgentSessionId = task.AgentSessionId, DispatchedAt = dispatched },
+                    asOf,
+                    _delegation,
+                    ct,
+                    arm);
+                stall = verdict?.Summary;
+            }
+
+            results.Add(new ExpectationInFlightTask
+            {
+                TaskId = task.Id,
+                AgentSessionId = task.AgentSessionId,
+                RunnerId = task.RunnerId,
+                DispatchedAt = dispatched,
+                LastActivityAt = last,
+                SessionState = state,
+                ProgressStall = stall,
+            });
+        }
+
+        return results;
+    }
+
+    private static void WorkspaceProgressArmOrNull(
+        ExpectationProbeInput probes, Guid taskId, out Dtos.WorkspaceProgressArm? arm)
+    {
+        arm = null;
+        if (probes.Workspace is { } workspace && workspace.TryGetValue(taskId, out var found))
+            arm = found;
+    }
+
+    private static ExpectationSessionState SessionState(
+        TaskRow task, IReadOnlyDictionary<Guid, SessionStatus> sessions, ExpectationProbeInput probes)
+    {
+        if (task.AgentSessionId is not Guid sessionId || !sessions.TryGetValue(sessionId, out var status))
+            return ExpectationSessionState.Missing;
+        if (status is SessionStatus.Stopped or SessionStatus.Failed)
+            return ExpectationSessionState.Terminal;
+        if (probes.Sessions is { } answers && answers.TryGetValue(sessionId, out var answer))
+        {
+            return answer.Live switch
+            {
+                null => ExpectationSessionState.Unknown,
+                false => ExpectationSessionState.Missing,
+                true => ExpectationSessionState.Live,
+            };
+        }
+
+        if (probes.Runners.TryGetValue(ExpectationSubjects.RunnerKey(task.RunnerId), out var runner)
+            && runner.Available is null)
+        {
+            return ExpectationSessionState.Unknown;
+        }
+
+        return ExpectationSessionState.Live;
+    }
+
+    /// <summary>
+    /// Non-legacy caller notes to sessions the standing agent owns, not yet Confirmed or
+    /// NotRequired. A matching submitted prompt already in the destination transcript excludes
+    /// the note; this read never settles or resends it (CARD-0641 owns that).
+    /// </summary>
+    private async Task<IReadOnlyList<ExpectationNoteDebt>> ReadNotesAsync(Guid agentId, CancellationToken ct)
+    {
+        var rows = await _db.AgentTaskLandNotifications.AsNoTracking()
+            .Where(note => !note.IsLegacy
+                && note.ConfirmedAt == null
+                && note.State != LandNotificationState.Confirmed
+                && note.State != LandNotificationState.NotRequired
+                && note.State != LandNotificationState.LegacyUnverified
+                && note.ParentSessionId != null
+                && _db.AgentSessions.Any(session =>
+                    session.Id == note.ParentSessionId && session.StandingAgentId == agentId))
+            .OrderBy(note => note.CreatedAt)
+            .ThenBy(note => note.Id)
+            .Take(100)
+            .Select(note => new
+            {
+                note.Id,
+                note.TaskId,
+                note.Kind,
+                note.State,
+                note.CreatedAt,
+                note.ParentSessionId,
+                note.LastErrorCode,
+                note.QueueMessageId,
+                note.Body,
+            })
+            .ToListAsync(ct);
+        if (rows.Count == 0)
+            return [];
+
+        var queueIds = rows.Where(row => row.QueueMessageId is not null)
+            .Select(row => row.QueueMessageId!.Value)
+            .ToList();
+        var queue = queueIds.Count == 0
+            ? new Dictionary<Guid, QueuedMessageStatus>()
+            : await _db.SessionQueuedMessages.AsNoTracking()
+                .Where(message => queueIds.Contains(message.Id))
+                .ToDictionaryAsync(message => message.Id, message => message.Status, ct);
+
+        var results = new List<ExpectationNoteDebt>(rows.Count);
+        foreach (var row in rows)
+        {
+            var body = row.Body.Trim();
+            var created = row.CreatedAt;
+            var received = body.Length > 0 && await _db.TranscriptEntries.AsNoTracking()
+                .AnyAsync(entry => entry.AgentSessionId == row.ParentSessionId
+                    && (entry.Kind == TranscriptKinds.UserPrompt || entry.Kind == TranscriptKinds.QueuedUserPrompt)
+                    && (entry.Timestamp ?? entry.CreatedAt) >= created
+                    && entry.Text != null
+                    && entry.Text.Contains(body), ct);
+            if (received)
+                continue;
+            results.Add(new ExpectationNoteDebt
+            {
+                NotificationId = row.Id,
+                TaskId = row.TaskId,
+                Kind = row.Kind,
+                State = row.State,
+                CreatedAt = SpecifyUtc(row.CreatedAt),
+                ParentSessionId = row.ParentSessionId,
+                LastErrorCode = row.LastErrorCode,
+                QueueStatus = row.QueueMessageId is Guid queueId && queue.TryGetValue(queueId, out var status)
+                    ? status
+                    : null,
+            });
+        }
+
+        return results;
     }
 
     private static List<ExpectationAdmissionCandidate> Admission(
@@ -366,7 +576,10 @@ public sealed class ExpectationSnapshotReader
         AgentTaskRole Role,
         string? RunnerId,
         string? RepoPath,
-        DateTime CreatedAt);
+        DateTime CreatedAt,
+        Guid? AgentSessionId = null,
+        DateTime? DispatchedAt = null,
+        bool HasReport = false);
 
     private sealed record ScopedTask(TaskRow Row, string RepositoryScope);
 

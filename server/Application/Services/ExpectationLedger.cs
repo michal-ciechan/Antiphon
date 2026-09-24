@@ -37,6 +37,25 @@ public sealed record ExpectationNudgeRequest(
     DateTime? NextNudgeAt,
     DateTime? ObservedAt);
 
+/// <summary>
+/// S3 aggregate nudge. <see cref="ExpectedLatestNudgeId"/> is the latest nudge the caller's
+/// cooldown decision saw; a different latest nudge under the lock means another sweep won.
+/// </summary>
+public sealed record ExpectationAggregateNudgeRequest(
+    Guid NudgeId,
+    string DirectiveId,
+    string ConfigDigest,
+    Guid BoardId,
+    Guid AuditCardId,
+    IReadOnlyList<Guid> EpisodeIds,
+    IReadOnlyList<string> SubjectKeys,
+    IReadOnlyList<Guid> AffectedTaskIds,
+    string Evidence,
+    string Body,
+    Guid? ExpectedLatestNudgeId,
+    DateTime ObservedAt,
+    DateTime NextNudgeAt);
+
 public sealed record ExpectationNudgeCommit(
     Guid NudgeId,
     int Ordinal,
@@ -223,6 +242,194 @@ public sealed class ExpectationLedger
 
         await _events.PublishToAllAsync("BoardChanged", new { boardId = request.BoardId }, ct);
         return committed;
+    }
+
+    /// <summary>
+    /// One aggregate nudge for several open episodes, with a Check event on every affected task
+    /// and the audit card comment, in one transaction. Under the directive row lock the latest
+    /// nudge is re-read: if another sweep committed since this decision was made, nothing is
+    /// written and null is returned. A resolved episode is dropped; none left means no nudge.
+    /// </summary>
+    public async Task<ExpectationNudgeCommit?> CommitAggregateNudgeAsync(
+        ExpectationAggregateNudgeRequest request,
+        CancellationToken ct)
+    {
+        ValidateIdentity(request.DirectiveId, request.ConfigDigest, "aggregate", request.Evidence);
+        if (string.IsNullOrWhiteSpace(request.Body) || request.Body.Length > MaxBodyChars)
+        {
+            throw new ValidationException(
+                nameof(request.Body),
+                "Nudge body is required and must fit the audit ceiling.");
+        }
+
+        if (request.EpisodeIds is not { Count: > 0 })
+            throw new ValidationException(nameof(request.EpisodeIds), "At least one episode is required.");
+
+        ExpectationNudgeCommit? committed = null;
+        await using (var tx = await _db.Database.BeginTransactionAsync(ct))
+        {
+            try
+            {
+                var now = AsUtc(request.ObservedAt);
+                var directiveId = request.DirectiveId.Trim();
+                await LockOrCreateStateAsync(directiveId, request.ConfigDigest.Trim(), null, null, now, ct);
+                var latest = await _db.ExpectationNudges.AsNoTracking()
+                    .Where(nudge => nudge.DirectiveId == directiveId)
+                    .OrderByDescending(nudge => nudge.Ordinal)
+                    .Select(nudge => (Guid?)nudge.Id)
+                    .FirstOrDefaultAsync(ct);
+                if (latest != request.ExpectedLatestNudgeId)
+                {
+                    await tx.RollbackAsync(ct);
+                    _db.ChangeTracker.Clear();
+                    return null;
+                }
+
+                var wanted = request.EpisodeIds.Distinct().ToList();
+                var open = await _db.ExpectationEpisodes.AsNoTracking()
+                    .Where(row => wanted.Contains(row.Id) && row.DirectiveId == directiveId && row.ResolvedAt == null)
+                    .Select(row => row.Id)
+                    .ToListAsync(ct);
+                if (open.Count == 0)
+                {
+                    await tx.RollbackAsync(ct);
+                    _db.ChangeTracker.Clear();
+                    return null;
+                }
+
+                var state = await _db.ExpectationWatchStates
+                    .SingleAsync(row => row.DirectiveId == directiveId, ct);
+                state.NextNudgeAt = AsUtc(request.NextNudgeAt);
+                state.UpdatedAt = now;
+                state.ConcurrencyToken = Guid.NewGuid();
+
+                var ordinal = await NextOrdinalAsync(directiveId, ct);
+                var commentId = Guid.NewGuid();
+                var checkIds = new List<Guid>();
+                foreach (var taskId in request.AffectedTaskIds.Distinct())
+                {
+                    var checkId = Guid.NewGuid();
+                    checkIds.Add(checkId);
+                    var detail = $"[expectation-nudge:{request.NudgeId:D}] {request.Evidence.Trim()}";
+                    _db.AgentTaskEvents.Add(new AgentTaskEvent
+                    {
+                        Id = checkId,
+                        AgentTaskId = taskId,
+                        Type = AgentTaskEventType.Check,
+                        At = now,
+                        Detail = detail.Length <= MaxCheckDetailChars ? detail : detail[..MaxCheckDetailChars],
+                    });
+                }
+
+                _db.CardComments.Add(new CardComment
+                {
+                    Id = commentId,
+                    CardId = request.AuditCardId,
+                    Body = AuditBody(request.NudgeId, request.Body)
+                        + "\nSubjects: " + string.Join(", ", request.SubjectKeys)
+                        + "\nTasks: " + (request.AffectedTaskIds.Count == 0
+                            ? "none"
+                            : string.Join(", ", request.AffectedTaskIds.Distinct().Select(id => id.ToString("D")))),
+                    Author = AuditAuthor,
+                    Origin = CardCommentOrigin.Antiphon,
+                    CreatedAt = now,
+                });
+                var digest = ExpectationDirectiveDigest.HashUtf8(request.Body);
+                _db.ExpectationNudges.Add(new ExpectationNudge
+                {
+                    Id = request.NudgeId,
+                    DirectiveId = directiveId,
+                    Ordinal = ordinal,
+                    EpisodeIdsJson = JsonSerializer.Serialize(open),
+                    EvidenceSnapshot = request.Evidence.Trim(),
+                    Body = request.Body,
+                    BodyDigest = digest,
+                    AttemptState = ExpectationAttemptState.None,
+                    OperatorOutboxState = ExpectationOperatorOutboxState.None,
+                    AuditCommentId = commentId,
+                    CheckEventIdsJson = JsonSerializer.Serialize(checkIds),
+                    CreatedAt = now,
+                    ConcurrencyToken = Guid.NewGuid(),
+                });
+                await _db.SaveChangesAsync(ct);
+                await tx.CommitAsync(ct);
+                committed = new ExpectationNudgeCommit(request.NudgeId, ordinal, digest, commentId, checkIds, open[0]);
+            }
+            catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+            {
+                // A concurrent sweep took this ordinal first: its nudge stands, this one is not written.
+                await tx.RollbackAsync(ct);
+                _db.ChangeTracker.Clear();
+                return null;
+            }
+            catch
+            {
+                await tx.RollbackAsync(ct);
+                _db.ChangeTracker.Clear();
+                throw;
+            }
+        }
+
+        _db.ChangeTracker.Clear();
+        await _events.PublishToAllAsync("BoardChanged", new { boardId = request.BoardId }, ct);
+        return committed;
+    }
+
+    /// <summary>
+    /// Resolve open episodes of the current digest that this successful scan did not observe and
+    /// that were not observed by the previous successful scan either (two clear scans at least
+    /// <see cref="ExpectationWindows.ClearGap"/> apart). Kept subjects (observed or unknown) stay open.
+    /// </summary>
+    public async Task<int> ResolveClearedAsync(
+        string directiveId,
+        string configDigest,
+        IReadOnlyCollection<string> keepSubjects,
+        DateTime previousSuccessfulScanAt,
+        DateTime observedAt,
+        CancellationToken ct)
+    {
+        ValidateIdentity(directiveId, configDigest, "scan", "scan");
+        var now = AsUtc(observedAt);
+        var previous = AsUtc(previousSuccessfulScanAt);
+        if (now - previous < ExpectationWindows.ClearGap)
+            return 0;
+
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            var id = directiveId.Trim();
+            var digest = configDigest.Trim();
+            var rows = await _db.ExpectationEpisodes
+                .FromSqlInterpolated($"""
+                    SELECT * FROM "ExpectationEpisodes"
+                    WHERE "DirectiveId" = {id}
+                      AND "ResolvedAt" IS NULL
+                      AND "ConfigDigest" = {digest}
+                      AND "LastObservedAt" < {previous}
+                    FOR UPDATE
+                    """)
+                .AsTracking()
+                .ToListAsync(ct);
+            var keep = keepSubjects.ToHashSet(StringComparer.Ordinal);
+            var resolved = 0;
+            foreach (var row in rows.Where(row => !keep.Contains(row.SubjectKey)))
+            {
+                row.ResolvedAt = now;
+                row.ConcurrencyToken = Guid.NewGuid();
+                resolved++;
+            }
+
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            _db.ChangeTracker.Clear();
+            return resolved;
+        }
+        catch
+        {
+            await tx.RollbackAsync(ct);
+            _db.ChangeTracker.Clear();
+            throw;
+        }
     }
 
     /// <summary>
