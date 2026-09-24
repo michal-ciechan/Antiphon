@@ -576,8 +576,9 @@ function New-ReleaseGatePublicationAuthority {
     <#
       Freezes the digest over the pinned authority, plan, discovery, ledger and every
       chunk's evidence, plus the sanitized summary digest. The summary is an output.
+      -NoWrite (publisher -WhatIf) computes and compares the digest but writes nothing.
     #>
-    param([string]$CandidateRoot, $Pinned, [string]$SummaryDigest)
+    param([string]$CandidateRoot, $Pinned, [string]$SummaryDigest, [switch]$NoWrite)
     $dir = Get-ReleaseAuthorityDir -CandidateRoot $CandidateRoot
     $ledger = Read-ReleaseAuthorityJson -Path (Join-Path $dir 'ledger.json')
     $evidence = [ordered]@{}
@@ -603,7 +604,7 @@ function New-ReleaseGatePublicationAuthority {
     if ($null -ne $existing -and [string]$existing.digest -cne $digest) {
         return [pscustomobject]@{ Ok = $false; Reason = 'publication-authority-changed'; Digest = $digest; Path = $path }
     }
-    if ($null -eq $existing) {
+    if ($null -eq $existing -and -not $NoWrite) {
         Write-NightlyAtomicJson -Path $path -Object ([ordered]@{ digest = $digest; inputs = $doc })
     }
     return [pscustomobject]@{ Ok = $true; Reason = ''; Digest = $digest; Path = $path }
