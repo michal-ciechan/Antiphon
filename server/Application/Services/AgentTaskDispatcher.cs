@@ -4311,27 +4311,10 @@ public sealed class AgentTaskDispatcher
         // this is a lookup that costs nothing in the common case and is the whole point in the
         // pinned one (CARD-0058 slice 6).
         var attachedBundleKeys = await AgentBundleAttachments.LoadAsync(_db, agent.Id, _logger, ct);
-        var spec = await BuildLaunchSpecAsync(claimed, agent, session, program, attachedBundleKeys, ct);
-        spec = spec with { VerificationBinding = verificationBinding };
-        // CARD-0115 S2 — this is the bottom-level path a pool delegate takes. The task's recorded
-        // project scope wins; a task without one falls back to its pinned standing agent's board.
-        // A pool delegate has neither a board nor a path-derived fallback: no trustworthy scope
-        // means global-only resolution. The profile path already resolved keys inside
-        // AgentLaunchResolution (CARD-0140 D5), so running this again would double-substitute.
-        if (program.ProfileId is null && _apiKeyEnvResolver is not null)
-        {
-            var projectId = claimed.ProjectId
-                ?? await _apiKeyEnvResolver.ResolveProjectIdAsync(agent.BoardId, ct);
-            spec = await _apiKeyEnvResolver.ResolveSpecAsync(
-                spec,
-                projectId,
-                $"task {DelegationReportFormatter.Short(claimed.Id)} on agent '{agent.Name}'",
-                ct);
-        }
-        if (_phoneHome?.IsRunnerBound(agent) == true)
-            spec = _phoneHome.Project(spec, agent, remoteCwd);
-        GrokLaunchArgs.EnsureWindowsRulesArgv(spec.Args, session.AgentKind, session.SessionBackend,
-            spec.Env, $"Session {session.Id}");
+        var spec = await FinishDispatchedLaunchSpecAsync(
+            claimed, agent, session, program, attachedBundleKeys, verificationBinding, remoteCwd,
+            $"task {DelegationReportFormatter.Short(claimed.Id)} on agent '{agent.Name}'",
+            ct);
         if (_taskLaunchSink is not null)
             _taskLaunchSink.Enqueue(session.Id, agent.Id, session.StartedAt, spec);
         else
@@ -4447,6 +4430,44 @@ public sealed class AgentTaskDispatcher
         return drafts;
     }
 
+    /// <summary>
+    /// CARD-0640. The spec both a first dispatch and a boot-wedge relaunch enqueue: the task's
+    /// verification binding, profile-less key resolution, phone-home projection, and the Windows
+    /// Grok argv guard. A relaunch that stops after <see cref="BuildLaunchSpecAsync"/> drops the
+    /// binding and skips the guard.
+    /// </summary>
+    private async Task<AgentLaunchSpec> FinishDispatchedLaunchSpecAsync(
+        AgentTask task,
+        Agent agent,
+        AgentSession session,
+        DelegateProgram program,
+        IReadOnlyList<string>? attachedBundleKeys,
+        VerificationExecutionBinding? verificationBinding,
+        string? remoteCwd,
+        string resolveSubject,
+        CancellationToken ct)
+    {
+        var spec = await BuildLaunchSpecAsync(task, agent, session, program, attachedBundleKeys, ct);
+        spec = spec with { VerificationBinding = verificationBinding };
+        // CARD-0115 S2 — this is the bottom-level path a pool delegate takes. The task's recorded
+        // project scope wins; a task without one falls back to its pinned standing agent's board.
+        // A pool delegate has neither a board nor a path-derived fallback: no trustworthy scope
+        // means global-only resolution. The profile path already resolved keys inside
+        // AgentLaunchResolution (CARD-0140 D5), so running this again would double-substitute.
+        if (program.ProfileId is null && _apiKeyEnvResolver is not null)
+        {
+            var projectId = task.ProjectId
+                ?? await _apiKeyEnvResolver.ResolveProjectIdAsync(agent.BoardId, ct);
+            spec = await _apiKeyEnvResolver.ResolveSpecAsync(spec, projectId, resolveSubject, ct);
+        }
+
+        if (_phoneHome?.IsRunnerBound(agent) == true)
+            spec = _phoneHome.Project(spec, agent, remoteCwd);
+        GrokLaunchArgs.EnsureWindowsRulesArgv(
+            spec.Args, session.AgentKind, session.SessionBackend, spec.Env, $"Session {session.Id}");
+        return spec;
+    }
+
     internal const string BootWedgeFailedReason =
         "boot prompt could not be delivered; TUI stopped reading after the brief rendered, twice; "
         + "relaunched once and wedged again.";
@@ -4546,7 +4567,40 @@ public sealed class AgentTaskDispatcher
             At = now,
         });
 
-        await _db.SaveChangesAsync(ct);
+        // CARD-0640. Commit the new session with the same reservation the first dispatch makes,
+        // before any spec is built. An unresolved earlier execution must not launch unbound.
+        VerificationExecutionBinding? verificationBinding = null;
+        await using (var transaction = await _db.Database.BeginTransactionAsync(ct))
+        {
+            try
+            {
+                if (program is not null && task.SourceLandingOperationId is not null)
+                {
+                    if (_verification is null
+                        || task.VerificationCleanupSealJson is not null
+                        || task.Workspace != WorkspaceMode.Worktree)
+                        throw new ConflictException("verification_dispatch_requires_fresh_unsealed_reservation");
+                    verificationBinding = await _verification.ReserveAsync(task, session, ct);
+                }
+
+                await _db.SaveChangesAsync(ct);
+                await transaction.CommitAsync(ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+                _db.ChangeTracker.Clear();
+                if (ex is ConflictException)
+                {
+                    _logger.LogWarning(
+                        ex, "Task {ShortId}: boot-wedge relaunch refused an unbound session {SessionId}",
+                        DelegationReportFormatter.Short(task.Id), session.Id);
+                    return;
+                }
+
+                throw;
+            }
+        }
 
         var deferRulesBrief = false;
         if (program is { } resolved)
@@ -4554,22 +4608,10 @@ public sealed class AgentTaskDispatcher
             try
             {
                 var attachedBundleKeys = await AgentBundleAttachments.LoadAsync(_db, agent.Id, _logger, ct);
-                var spec = await BuildLaunchSpecAsync(task, agent, session, resolved, attachedBundleKeys, ct);
-                if (resolved.ProfileId is null && _apiKeyEnvResolver is not null)
-                {
-                    var projectId = task.ProjectId
-                        ?? await _apiKeyEnvResolver.ResolveProjectIdAsync(agent.BoardId, ct);
-                    spec = await _apiKeyEnvResolver.ResolveSpecAsync(
-                        spec,
-                        projectId,
-                        $"task {DelegationReportFormatter.Short(task.Id)} boot-wedge relaunch on agent '{agent.Name}'",
-                        ct);
-                }
-
-                // The same projection the first dispatch applied: without it the retry spec keeps
-                // the desktop exe, cwd and environment.
-                if (_phoneHome?.IsRunnerBound(agent) == true)
-                    spec = _phoneHome.Project(spec, agent, session.RunnerCwd);
+                var spec = await FinishDispatchedLaunchSpecAsync(
+                    task, agent, session, resolved, attachedBundleKeys, verificationBinding, session.RunnerCwd,
+                    $"task {DelegationReportFormatter.Short(task.Id)} boot-wedge relaunch on agent '{agent.Name}'",
+                    ct);
                 deferRulesBrief = spec.GrokRulesPayload is not null;
                 if (_taskLaunchSink is not null)
                     _taskLaunchSink.Enqueue(session.Id, agent.Id, session.StartedAt, spec);
