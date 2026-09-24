@@ -102,6 +102,7 @@ public sealed class AgentTaskLandMonitorService(AppDbContext db, TimeProvider cl
         var snapshot = queue?.Capture(now);
         var queueClause = DescribeQueue(request, snapshot, now);
         var who = snapshot is null || snapshot.Executing is null || snapshot.IsExecuting(request.TaskId, request.Id)
+            || snapshot.WaitingPosition(request.TaskId, request.Id) is null
             ? DescribePersistedHolder(request)
             : await DescribePredecessorAsync(request, snapshot, ct);
         return $"{request.State}; requested {request.RequestedAt:O}; no progress since {request.LastProgressAt:O}; "
@@ -135,14 +136,14 @@ public sealed class AgentTaskLandMonitorService(AppDbContext db, TimeProvider cl
 
         var blocker = $"queue blocker={executing.TaskId:N} request={requestLabel} status={status} state={state}";
         if (request.HoldingTaskId is Guid owner)
-            blocker += $"; repository owner={owner:N} status={request.HoldingTaskStatus?.ToString() ?? "unknown"}";
+            blocker += $"; historical repository owner={owner:N} status={request.HoldingTaskStatus?.ToString() ?? "unknown"}";
         return blocker;
     }
 
     private static string DescribePersistedHolder(AgentTaskLandRequest request)
     {
         if (request.HoldingTaskId is Guid holder)
-            return $"holder={holder:N} status={request.HoldingTaskStatus?.ToString() ?? "unknown"}";
+            return $"historical holder={holder:N} status={request.HoldingTaskStatus?.ToString() ?? "unknown"}";
         return "holder=unknown";
     }
 

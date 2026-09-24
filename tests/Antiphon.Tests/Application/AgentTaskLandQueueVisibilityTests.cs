@@ -132,6 +132,33 @@ public sealed class AgentTaskLandQueueVisibilityTests
     }
 
     [Test]
+    public void C641_Old_entry_completion_cannot_release_new_requeue_claim()
+    {
+        var queue = new AgentTaskLandQueue();
+        var task = Guid.NewGuid();
+        var oldRequest = Guid.NewGuid();
+        var newRequest = Guid.NewGuid();
+        queue.TryEnqueue(task, null, oldRequest).ShouldBeTrue();
+        queue.TryDequeue(out var oldItem).ShouldBeTrue();
+
+        queue.Release(task); // request reset before the old worker finishes
+        queue.TryEnqueue(task, null, newRequest).ShouldBeTrue();
+        queue.Release(oldItem); // old worker's eventual finally
+
+        queue.IsActive(task).ShouldBeTrue();
+        queue.PendingCount.ShouldBe(1);
+        queue.TryEnqueue(task, null, Guid.NewGuid()).ShouldBeFalse();
+        var snapshot = queue.Capture(DateTime.UtcNow);
+        snapshot.Executing.ShouldBeNull();
+        snapshot.Waiting.Select(entry => entry.RequestId).ShouldBe([newRequest]);
+
+        queue.TryDequeue(out var newItem).ShouldBeTrue();
+        newItem.RequestId.ShouldBe(newRequest);
+        queue.Release(newItem);
+        queue.IsActive(task).ShouldBeFalse();
+    }
+
+    [Test]
     public async Task C641_Concurrent_enqueue_snapshot_is_consistent()
     {
         var queue = new AgentTaskLandQueue();

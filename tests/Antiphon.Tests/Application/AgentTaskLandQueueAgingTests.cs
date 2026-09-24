@@ -142,6 +142,44 @@ public sealed class AgentTaskLandQueueAgingTests
 
     [Test]
     [Timeout(120_000)]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C641_Unreplayed_request_does_not_name_unrelated_executing_entry(bool persistedHolder)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var now = new DateTime(2026, 9, 10, 4, 6, 0, DateTimeKind.Utc);
+        var requested = now.AddMinutes(-6);
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var unrelated = await AddRequestAsync(db, requested, now, LandRequestState.Running, OtherRepository, AgentTaskStatus.Working);
+        var waiting = await AddRequestAsync(db, requested, requested, LandRequestState.Queued, SameRepository, AgentTaskStatus.Succeeded);
+        if (persistedHolder)
+        {
+            var request = db.AgentTaskLandRequests.Local.Single(r => r.Id == waiting.RequestId);
+            request.HoldingTaskId = Guid.NewGuid();
+            request.HoldingTaskStatus = AgentTaskStatus.Working;
+        }
+        await db.SaveChangesAsync();
+
+        var queue = new AgentTaskLandQueue();
+        queue.TryEnqueue(unrelated.TaskId, null, unrelated.RequestId).ShouldBeTrue();
+        queue.TryDequeue(out _).ShouldBeTrue();
+        var body = await SweepAgedBodyAsync(schema.ConnectionString, queue, now, waiting.RequestId);
+        body.ShouldContain("queue position=unknown (awaiting replay)");
+        body.ShouldNotContain("queue blocker=");
+        body.ShouldNotContain(unrelated.TaskId.ToString("N"));
+        body.ShouldNotContain(unrelated.RequestId.ToString("N"));
+        if (persistedHolder)
+        {
+            var request = db.AgentTaskLandRequests.Local.Single(r => r.Id == waiting.RequestId);
+            body.ShouldContain($"historical holder={request.HoldingTaskId:N} status=Working");
+            body.ShouldNotContain($"; holder={request.HoldingTaskId:N}");
+        }
+        else
+            body.ShouldContain("holder=unknown");
+    }
+
+    [Test]
+    [Timeout(120_000)]
     public async Task C641_Queue_observation_does_not_reset_age_or_attempts()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();

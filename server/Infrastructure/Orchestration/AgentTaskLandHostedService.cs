@@ -68,7 +68,7 @@ public sealed class AgentTaskLandHostedService : BackgroundService
                 }
                 finally
                 {
-                    _queue.Release(request.TaskId);
+                    _queue.Release(request);
                 }
             }
         }

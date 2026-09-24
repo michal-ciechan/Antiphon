@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 
@@ -13,7 +12,7 @@ namespace Antiphon.Server.Application.Services;
 public sealed class AgentTaskLandQueue
 {
     private readonly object _gate = new();
-    private readonly ConcurrentDictionary<Guid, byte> _active = new();
+    private readonly Dictionary<Guid, LandRequest> _active = new();
     private readonly Channel<LandRequest> _channel = Channel.CreateUnbounded<LandRequest>(
         new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
     private readonly List<Tracked> _waiting = new();
@@ -29,21 +28,23 @@ public sealed class AgentTaskLandQueue
         var item = new LandRequest(taskId, verifyFilter, requestId);
         lock (_gate)
         {
-            if (!_active.TryAdd(taskId, 0))
+            if (_active.ContainsKey(taskId))
                 return false;
             if (!_channel.Writer.TryWrite(item))
-            {
-                _active.TryRemove(taskId, out _);
                 return false;
-            }
 
+            _active.Add(taskId, item);
             _waiting.Add(new Tracked(++_nextEntryId, item));
             return true;
         }
     }
 
     /// <summary>Queued or running in this process, now.</summary>
-    public bool IsActive(Guid taskId) => _active.ContainsKey(taskId);
+    public bool IsActive(Guid taskId)
+    {
+        lock (_gate)
+            return _active.ContainsKey(taskId);
+    }
 
     /// <summary>
     /// Drop the dedup claim and the executing entry. An item still unread in the channel stays
@@ -53,8 +54,20 @@ public sealed class AgentTaskLandQueue
     {
         lock (_gate)
         {
-            _active.TryRemove(taskId, out _);
+            _active.Remove(taskId);
             if (_executing is not null && _executing.Request.TaskId == taskId)
+                _executing = null;
+        }
+    }
+
+    /// <summary>Finish only this channel entry; a later requeue keeps its own claim.</summary>
+    public void Release(LandRequest item)
+    {
+        lock (_gate)
+        {
+            if (_active.TryGetValue(item.TaskId, out var claimed) && ReferenceEquals(claimed, item))
+                _active.Remove(item.TaskId);
+            if (_executing is not null && ReferenceEquals(_executing.Request, item))
                 _executing = null;
         }
     }
@@ -72,7 +85,10 @@ public sealed class AgentTaskLandQueue
     /// Ids queued or running in this process. Unbounded SingleReader channels do not
     /// implement <c>Reader.Count</c>; the active set is the durable in-process fact.
     /// </summary>
-    public int PendingCount => _active.Count;
+    public int PendingCount
+    {
+        get { lock (_gate) return _active.Count; }
+    }
 
     /// <summary>Take one claim without waiting; false when the queue is empty (tests).</summary>
     public bool TryDequeue(out LandRequest request)
