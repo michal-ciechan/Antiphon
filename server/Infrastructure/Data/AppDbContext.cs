@@ -1570,6 +1570,7 @@ public class AppDbContext : DbContext
             entity.Property(r => r.VerifyFilter).HasMaxLength(400);
             entity.Property(r => r.HoldReasonCode).HasMaxLength(100);
             entity.Property(r => r.HoldDetail).HasMaxLength(2000);
+            entity.Property(r => r.HoldNotificationOwnerKey).HasMaxLength(200);
             entity.Property(r => r.SchemaVersion).IsRequired().HasDefaultValue(1);
             entity.Property(r => r.ExpectedSourceSha).HasMaxLength(64);
             entity.Property(r => r.ResolvedSourceSha).HasMaxLength(64);

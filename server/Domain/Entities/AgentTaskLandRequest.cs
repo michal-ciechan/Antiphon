@@ -27,6 +27,13 @@ public sealed class AgentTaskLandRequest
     public AgentTaskStatus? HoldingTaskStatus { get; set; }
     public DateTime? HeldSince { get; set; }
     public int HoldEpisode { get; set; }
+
+    /// <summary>
+    /// CARD-0641: the holder a Held caller note was last minted for. Null means no Held note
+    /// exists for this request; <c>unknown</c> means one exists without identified ownership;
+    /// <c>task:&lt;guid-N&gt;</c> is a known task anchor. Diagnostic Held events are not gated by it.
+    /// </summary>
+    public string? HoldNotificationOwnerKey { get; set; }
     public DateTime? WarningAt { get; set; }
     public DateTime? ErrorAt { get; set; }
     public string? ReconciliationError { get; set; }
