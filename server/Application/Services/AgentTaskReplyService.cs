@@ -979,18 +979,42 @@ public sealed class AgentTaskReplyService
         var (note, warning, incidentSummary, incidentDetail) = BindRefusalRecoveryText(
             DelegationReportFormatter.Short(task.Id), where, ingested);
 
-        // CARD-0657 D-5. A runner task's work is on its pushed branch, which nothing here has
-        // confirmed: no report was read and no desktop SHA was synchronized. It blocks, keeping the
-        // session and the workspace, until a fresh correlated report confirms S; Review must not
-        // start from an unconfirmed branch.
-        var runnerUnconfirmed = RemoteWorkspaceService.IsEligible(task);
+        // CARD-0657 D-5. A runner task's work is on its pushed branch, and no report was read here.
+        // Only a commit this correlated evidence names can confirm it: fetch the task's own branch
+        // and settle like a correlated report only when origin's tip IS that commit and descends from
+        // the dispatch base. Anything else blocks, keeping the session and the workspace, until a
+        // fresh correlated report confirms S; Review must not start from an unconfirmed branch.
+        var runnerTask = RemoteWorkspaceService.IsEligible(task);
+        RemoteSettlementSyncResult? prepared = null;
+        string? unconfirmed = null;
+        if (runnerTask)
+        {
+            var named = evidence.NamedCommits(task.Id);
+            if (named.Count == 0)
+                unconfirmed = "the recovered evidence names no commit";
+            else
+            {
+                prepared = await PrepareRemoteAsync(scope.ServiceProvider, task, ct, named);
+                unconfirmed = await RunnerRecoveryBlockReasonAsync(scope.ServiceProvider, task, note, named, prepared, ct);
+            }
+        }
+
+        var runnerUnconfirmed = unconfirmed is not null;
+        var confirmedSha = runnerTask && !runnerUnconfirmed ? prepared!.DesktopAfterSha : null;
         if (runnerUnconfirmed)
         {
-            note = $"Blocked: bind refusal recovery cannot confirm the runner's pushed commit (work may be at {where}); "
-                + "no completion report was read and the desktop checkout was not synchronized.";
+            note = $"Blocked: bind refusal recovery cannot confirm the runner's pushed commit ({unconfirmed}; work may be "
+                + $"at {where}); no completion report was read and the desktop checkout was not confirmed.";
             warning = $"WARNING: runner task {DelegationReportFormatter.Short(task.Id)} was recovered from a bind refusal "
-                + $"without a confirmed desktop SHA or a matching completion report. Branch {task.WorktreeBranch} is "
-                + "unconfirmed and not prepared for Review; reply to this task for a fresh completion report.";
+                + $"without a confirmed desktop SHA or a matching completion report ({unconfirmed}). Branch "
+                + $"{task.WorktreeBranch} is unconfirmed and not prepared for Review; reply to this task for a fresh "
+                + "completion report.";
+        }
+        else if (confirmedSha is not null)
+        {
+            note = $"Succeeded: bind refusal recovery confirmed the runner's pushed commit {confirmedSha} on "
+                + $"{prepared!.FullRef}: origin's tip is the commit the recovered evidence names ({where}) and descends "
+                + "from the dispatch base. No completion report was read.";
         }
 
         task.Status = runnerUnconfirmed ? AgentTaskStatus.Blocked : AgentTaskStatus.Succeeded;
@@ -1006,15 +1030,45 @@ public sealed class AgentTaskReplyService
                 + "report that confirms the pushed commit before any Review or land.";
         }
 
-        db.AgentTaskEvents.Add(NewEvent(
-            task.Id, runnerUnconfirmed ? AgentTaskEventType.Blocked : AgentTaskEventType.Completed, note, now));
+        // CARD-0544 D-9: retain this exact event; the completion obligation is keyed to it.
+        var settlementEvent = NewEvent(
+            task.Id, runnerUnconfirmed ? AgentTaskEventType.Blocked : AgentTaskEventType.Completed, note, now);
+        db.AgentTaskEvents.Add(settlementEvent);
         db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, warning, now));
 
         string? workspaceNote = null;
         if (runnerUnconfirmed)
             workspaceNote = $"branch {task.WorktreeBranch} unconfirmed; workspace retained";
         else if (task.Workspace == WorkspaceMode.Worktree)
-            workspaceNote = await MergeBackAsync(scope.ServiceProvider, db, task, now, ct);
+        {
+            if (confirmedSha is not null
+                && TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson) is { } progressEvidence
+                && !TaskCompletionProgressService.AllowsAutomaticWorkspaceMutation(progressEvidence))
+            {
+                workspaceNote = $"branch {task.WorktreeBranch} left for review";
+                db.AgentTaskEvents.Add(NewEvent(
+                    task.Id, AgentTaskEventType.Completed,
+                    $"Alternate or unavailable progress does not authorize merge-back; {workspaceNote}.", now));
+            }
+            else
+                workspaceNote = await MergeBackAsync(scope.ServiceProvider, db, task, now, ct, prepared);
+        }
+
+        // CARD-0657 D-6/D-7: the caller reads the full source SHA it reviews and lands against.
+        if (confirmedSha is not null && prepared!.State == RemoteSettlementSyncState.Synchronized)
+        {
+            db.AgentTaskEvents.Add(NewEvent(
+                task.Id, AgentTaskEventType.Merged,
+                $"Desktop worktree confirmed at the runner's pushed commit {confirmedSha}.", now));
+            workspaceNote = workspaceNote is null ? $"source {confirmedSha}" : $"{workspaceNote}; source {confirmedSha}";
+        }
+
+        // CARD-0544 D-9: a profile-v1 caller's completion is an obligation committed WITH this
+        // settlement — added before the incident below flushes the tracker.
+        var completion = TaskCompletionNotification.AppliesToBindRefusalRecovery(task)
+            ? await AddCompletionObligationAsync(scope.ServiceProvider, db, task, settlementEvent, note, now,
+                workspaceNote, warning, drift: null, git: null, ct)
+            : null;
 
         // Incident before release: AgentIncidents cascade-delete with the agent row, and a
         // worktree pool delegate's ordinary success removes that row.
@@ -1038,6 +1092,7 @@ public sealed class AgentTaskReplyService
             killSession: false,
             workspaceNote: workspaceNote,
             warning: warning,
+            completion: completion,
             afterPersist: _ =>
             {
                 _logger.LogWarning(
@@ -1535,7 +1590,7 @@ public sealed class AgentTaskReplyService
     /// before any Git-dependent completion decision. Null for every task outside that flow.
     /// </summary>
     private static async Task<RemoteSettlementSyncResult?> PrepareRemoteAsync(
-        IServiceProvider services, AgentTask task, CancellationToken ct)
+        IServiceProvider services, AgentTask task, CancellationToken ct, IReadOnlyCollection<string>? reportedTips = null)
     {
         if (!RemoteWorkspaceService.IsEligible(task))
             return null;
@@ -1548,7 +1603,7 @@ public sealed class AgentTaskReplyService
         {
             sync = null;
         }
-        return await TaskCompletionProgressService.PrepareAsync(sync, task, ct);
+        return await TaskCompletionProgressService.PrepareAsync(sync, task, ct, reportedTips);
     }
 
     /// <summary>
@@ -1595,6 +1650,33 @@ public sealed class AgentTaskReplyService
                 { Assessment: CompletionProgressAssessment.Indeterminate } uncertain)
             return uncertain.Reason ?? RemoteSettlementSyncReasons.InspectionUnavailable;
         return null;
+    }
+
+    /// <summary>
+    /// CARD-0657 D-5, bind-refusal recovery. Null when the prepared sync confirmed the desktop at a
+    /// tip the recovered evidence names (the sync itself fetched only the task's own branch and
+    /// refused a tip that does not descend from the dispatch base) AND that commit passes the same
+    /// progress policy a correlated report gets. Otherwise the reason the task must stay Blocked;
+    /// without a report it never becomes a no-progress accusation.
+    /// </summary>
+    private async Task<string?> RunnerRecoveryBlockReasonAsync(
+        IServiceProvider services, AgentTask task, string body, IReadOnlyList<string> named,
+        RemoteSettlementSyncResult? prepared, CancellationToken ct)
+    {
+        if (prepared is not { Confirmed: true, DesktopAfterSha: { } sha }
+            || !named.Any(n => RemoteWorkspaceService.NamesCommit(n, sha)))
+        {
+            await RecordRemoteEvidenceAsync(services, task, body, prepared, ct);
+            return prepared?.Reason ?? RemoteSettlementSyncReasons.InspectionUnavailable;
+        }
+
+        if (await TryClassifyCompletedWithoutProgressAsync(services, task, body, prepared, ct) is { } noProgress)
+        {
+            task.FailureCode = null;
+            return TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson)?.Reason
+                ?? noProgress.FailureReason ?? RemoteSettlementSyncReasons.NoPushedProgress;
+        }
+        return RemoteSyncBlockReason(task, prepared);
     }
 
     /// <summary>

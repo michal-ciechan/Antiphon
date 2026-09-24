@@ -258,6 +258,46 @@ public sealed class DelegateBindRefusalRecovery
     }
 
     /// <summary>
+    /// CARD-0657: the text of the assistant record that closed this task with a <c>done</c> report,
+    /// the record <see cref="MatchJsonl"/> accepted. Null when the file is gone, unreadable, or no
+    /// such record exists. Read-only; never binds or ingests the file.
+    /// </summary>
+    internal static string? ReadDoneReportText(string path, Guid taskId)
+    {
+        try
+        {
+            using var reader = new StreamReader(path);
+            string? line;
+            while ((line = reader.ReadLine()) is not null)
+            {
+                if (line.Length == 0)
+                    continue;
+                string? text;
+                try
+                {
+                    using var doc = JsonDocument.Parse(line);
+                    if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                        continue;
+                    text = ConcatenateAssistantTextBlocks(doc.RootElement);
+                }
+                catch (JsonException)
+                {
+                    continue;
+                }
+
+                if (text is not null
+                    && DelegationReportFormatter.TryFindReportToken(taskId, text, out var verdict)
+                    && string.Equals(verdict, "done", StringComparison.Ordinal))
+                    return text;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+        }
+        return null;
+    }
+
+    /// <summary>
     /// Same extraction <c>TranscriptNormalizer.FromAssistant</c> uses: concatenated
     /// <c>message.content[]</c> blocks of <c>type:"text"</c>, joined with LF. Thinking and
     /// <c>tool_use</c> blocks are ignored — a report written through the Write tool is not a
@@ -439,6 +479,22 @@ public sealed record DelegateBindRefusalEvidence(
         if (JsonlPath is { } path)
             bits.Add("transcript file " + path + " (reported done)");
         return bits.Count == 0 ? "unknown evidence" : string.Join("; ", bits);
+    }
+
+    private static readonly Regex FullObjectId = new(
+        @"(?<![0-9A-Fa-f])[0-9A-Fa-f]{40}(?:[0-9A-Fa-f]{24})?(?![0-9A-Fa-f])",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    /// <summary>
+    /// CARD-0657: every commit this correlated evidence names — the task-branch commits the git arm
+    /// found, and each full object id in the recovered transcript's own <c>done</c> report.
+    /// </summary>
+    public IReadOnlyList<string> NamedCommits(Guid taskId)
+    {
+        var named = new List<string>(Commits);
+        if (JsonlPath is { } path && DelegateBindRefusalRecovery.ReadDoneReportText(path, taskId) is { } report)
+            named.AddRange(FullObjectId.Matches(report).Select(m => m.Value.ToLowerInvariant()));
+        return [.. named.Where(c => !string.IsNullOrWhiteSpace(c)).Distinct(StringComparer.OrdinalIgnoreCase)];
     }
 }
 

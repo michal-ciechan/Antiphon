@@ -10,5 +10,8 @@ namespace Antiphon.Server.Application.Interfaces;
 /// </summary>
 public interface IRemoteSettlementSync
 {
-    Task<RemoteSettlementSyncResult> SyncAsync(AgentTask task, CancellationToken ct);
+    /// <param name="reportedTips">Bind-refusal recovery only: the commits its correlated evidence
+    /// names. When given, origin's tip must be one of them, checked before any checkout mutation.</param>
+    Task<RemoteSettlementSyncResult> SyncAsync(
+        AgentTask task, CancellationToken ct, IReadOnlyCollection<string>? reportedTips = null);
 }

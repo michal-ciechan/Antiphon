@@ -112,7 +112,8 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     /// fast-forward to that full object id. A refusal leaves the checkout exactly as found; an
     /// unreadable answer is Unavailable, never a guessed success.
     /// </summary>
-    public async Task<RemoteSettlementSyncResult> SyncAsync(AgentTask task, CancellationToken ct)
+    public async Task<RemoteSettlementSyncResult> SyncAsync(
+        AgentTask task, CancellationToken ct, IReadOnlyCollection<string>? reportedTips = null)
     {
         if (!IsEligible(task))
             return RemoteSettlementSyncResult.NotApplicable;
@@ -140,7 +141,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct, budget.Token);
         try
         {
-            return await SyncAdmittedAsync(task, baseline, fullRef, deadline.Token);
+            return await SyncAdmittedAsync(task, baseline, fullRef, reportedTips, deadline.Token);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested && budget.IsCancellationRequested)
         {
@@ -165,10 +166,11 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     /// however the sync ends, including on timeout or cancellation.
     /// </summary>
     private async Task<RemoteSettlementSyncResult> SyncAdmittedAsync(
-        AgentTask task, ProgressSourceBaseline baseline, string fullRef, CancellationToken ct)
+        AgentTask task, ProgressSourceBaseline baseline, string fullRef, IReadOnlyCollection<string>? reportedTips,
+        CancellationToken ct)
     {
         if (_reservations is null)
-            return await SyncOwnedCheckoutAsync(task, baseline, fullRef, ct);
+            return await SyncOwnedCheckoutAsync(task, baseline, fullRef, reportedTips, ct);
 
         var admitted = await _reservations.TryAdmitConsumerAsync(new WorkspaceReservationCommand(
             WorkspaceReservationKey.ForTask(task.WorktreePath, task.WorkingDirectory, task.WorktreeBranch, task.RepoPath),
@@ -178,7 +180,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
                 fullRef, baseline.LocalSha);
         try
         {
-            return await SyncOwnedCheckoutAsync(task, baseline, fullRef, ct);
+            return await SyncOwnedCheckoutAsync(task, baseline, fullRef, reportedTips, ct);
         }
         finally
         {
@@ -198,7 +200,8 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     }
 
     private async Task<RemoteSettlementSyncResult> SyncOwnedCheckoutAsync(
-        AgentTask task, ProgressSourceBaseline baseline, string fullRef, CancellationToken ct)
+        AgentTask task, ProgressSourceBaseline baseline, string fullRef, IReadOnlyCollection<string>? reportedTips,
+        CancellationToken ct)
     {
         var repo = baseline.CanonicalRepository;
         var b = baseline.LocalSha;
@@ -236,6 +239,12 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         var s = observed.Sha;
         if (!GitObjectId.IsFull(s))
             return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.FetchUnavailable, fullRef, b);
+
+        // Bind-refusal recovery read no report: only a commit its evidence names correlates the tip
+        // with this task's work. Any other tip is left, untouched, for a fresh completion report.
+        if (reportedTips is not null && !reportedTips.Any(named => NamesCommit(named, s!)))
+            return Outcome(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.TipNotReported,
+                fullRef, b, s, l0, fingerprint: fingerprint);
 
         await using var lease = await _leases!.TryAcquireAsync(
             repo, new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.WorktreeSettlement), ct);
@@ -385,6 +394,19 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
             return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.Dirty);
 
         return new(null, head.Sha);
+    }
+
+    /// <summary>
+    /// True when <paramref name="named"/> is <paramref name="fullSha"/> or an unambiguous-length
+    /// (at least seven hex digits) abbreviation of it, as <c>git log --oneline</c> prints it.
+    /// </summary>
+    public static bool NamesCommit(string? named, string fullSha)
+    {
+        var candidate = named?.Trim();
+        return candidate is { Length: >= 7 }
+            && candidate.Length <= fullSha.Length
+            && candidate.All(char.IsAsciiHexDigit)
+            && fullSha.StartsWith(candidate, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>The task-owned settlement pin: one name per task, rewritten, never accumulated.</summary>
