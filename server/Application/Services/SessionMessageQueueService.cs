@@ -738,7 +738,8 @@ public sealed partial class SessionMessageQueueService
                 throw new ConflictException(RemoteSpillUndeliverableException.MissingBodyReason);
             if (outcome.Verdict == DeliveryVerdict.Delivered)
             {
-                StampAttemptVerdict([row], DeliveryVerdict.Delivered, UtcNow());
+                StampAttemptVerdict([row], DeliveryVerdict.Delivered, UtcNow(),
+                    releaseSpillBody: AcceptedByCompleteUserPrompt(outcome));
                 await db.SaveChangesAsync(ct);
             }
             else
@@ -1139,7 +1140,8 @@ public sealed partial class SessionMessageQueueService
                     + $"({Describe(outcome.Verdict)}). The message has been returned to the queue.");
             }
 
-            StampAttemptVerdict([message], DeliveryVerdict.Delivered, UtcNow());
+            StampAttemptVerdict([message], DeliveryVerdict.Delivered, UtcNow(),
+                releaseSpillBody: AcceptedByCompleteUserPrompt(outcome));
             await db.SaveChangesAsync(ct);
         }
         finally
@@ -2062,7 +2064,8 @@ public sealed partial class SessionMessageQueueService
             foreach (var landRow in run.Where(m => m.SourceLandNotificationId != null))
                 if (rulesScope.ServiceProvider.GetService<LandDeliveryBoundary>() is { } landBoundary)
                     await landBoundary.ReachedAsync("queue-before-verdict", landRow.SourceTaskId!.Value, landRow.Id, ct);
-            StampAttemptVerdict(run, DeliveryVerdict.Delivered, UtcNow());
+            StampAttemptVerdict(run, DeliveryVerdict.Delivered, UtcNow(),
+                releaseSpillBody: AcceptedByCompleteUserPrompt(outcome));
             await ArmBootReplyWatchAsync(db, sessionId, ct);
             await db.SaveChangesAsync(ct);
             return FlushResult.Delivered;
@@ -2536,13 +2539,15 @@ public sealed partial class SessionMessageQueueService
         if (outcome.Verdict == DeliveryVerdict.Delivered)
         {
             var now = UtcNow();
+            var accepted = AcceptedByCompleteUserPrompt(outcome);
             foreach (var message in run)
             {
                 message.Status = QueuedMessageStatus.Sent;
                 message.SentAt ??= now;
                 message.DeliveryVerdict = DeliveryVerdict.Delivered;
                 message.DeliveryVerdictAt = now;
-                message.RemoteSpillBody = null;
+                if (accepted)
+                    message.RemoteSpillBody = null;
             }
 
             await ArmBootReplyWatchAsync(db, sessionId, ct);
@@ -2828,14 +2833,22 @@ public sealed partial class SessionMessageQueueService
         message.DeliveryVerdictAt = null;
     }
 
+    /// <summary>
+    /// Screen-only <see cref="DeliveryVerdict.Delivered"/> has no UserPrompt. Clearing the spill
+    /// there drops the bytes before the recipient accepts them, and the retry cannot rewrite them.
+    /// </summary>
+    private static bool AcceptedByCompleteUserPrompt(DeliveryOutcome outcome) =>
+        outcome.ConfirmedBy == DeliveryConfirmedBy.Transcript;
+
     private static void StampAttemptVerdict(
-        IEnumerable<SessionQueuedMessage> run, DeliveryVerdict verdict, DateTime at)
+        IEnumerable<SessionQueuedMessage> run, DeliveryVerdict verdict, DateTime at,
+        bool releaseSpillBody = false)
     {
         foreach (var message in run)
         {
             message.DeliveryVerdict = verdict;
             message.DeliveryVerdictAt = at;
-            if (verdict is DeliveryVerdict.Delivered or DeliveryVerdict.LateConfirmed)
+            if (releaseSpillBody)
                 message.RemoteSpillBody = null;
         }
     }

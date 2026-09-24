@@ -19,10 +19,10 @@ new tests. The ordinary Unit lane and other integration classes defer under this
 
 ### Checkpoints
 
-| ID | Slice committed before run | Build | Filter | Fresh TRX |
-| --- | --- | --- | --- | --- |
-| CP-1 | queue persistence, identity transport and runner write, migration, tests | one isolated solution build | named server selection | `.antiphon/d2e9bfc3-cp1/server.trx` |
-| CP-2 | same committed slice | reuse CP-1 build | named runner selection | `.antiphon/d2e9bfc3-cp2/runner.trx` |
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+| --- | --- | --- | --- | --- | --- | --- | ---: | ---: |
+| CP-1 | repair | `tests/Antiphon.Tests -> bin-c647/` | spill-receipt | `/*/*/DurableRunnerSpillReceiptTests*/*` | V-1, V-2, V-3, V-4 | all DurableRunnerSpillReceiptTests methods, 0 failed | 6 | 2 |
+| CP-2 | repair | `tests/Antiphon.SessionRunner.Tests -> bin-c647/` | spill-write | `/*/*/RunnerWorkspaceServiceTests/Spill_write*` | V-1 | Spill_write_stays_inside_runner_cwd and Spill_write_refuses_a_symlink_that_escapes_the_mirror executed, 0 failed. Dangling final-file and directory symlink tests run on Linux and skip when Windows denies symlink creation | 2 | 1 |
 
 ## Pending post-land controls
 

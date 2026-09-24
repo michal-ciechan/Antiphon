@@ -5,7 +5,9 @@
   the first Input, including SendNow. The bytes stay until a complete matching UserPrompt
   is recorded, then the body column is cleared. A pointer with no stored bytes is re-spilled
   from the source message when that text is still available, or the message is canceled as
-  undeliverable. The runner resolves the mirror and refuses a symlink that leaves it. An
+  undeliverable. The runner resolves the mirror and refuses a symlink that leaves it,
+  including an unresolved link at any path component: Exists is false for a dangling
+  symlink, and writing through that link follows it. An
   Input frame carries that Id with the body. The runner checks the path against the Id and
   writes the same bytes to the same file on retries. A fresh server process reads the row;
   another spill for the same busy session cannot replace it.
