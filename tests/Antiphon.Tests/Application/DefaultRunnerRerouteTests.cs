@@ -7,6 +7,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -20,7 +21,8 @@ namespace Antiphon.Tests.Application;
 /// task between Grok and Claude Code but never onto Codex, and never onto the desktop. Explicit
 /// incompatible reroutes refuse without touching the row; automatic ones (queued rewalk, routing
 /// resume, usage wall) Block with a stable <c>runner_kind_unsupported</c> detail that keeps the
-/// runner, the original kind and the pin, and do so once per transition.
+/// runner, the original kind and the pin, and do so once per transition. The Block and the
+/// parent's note commit together (review 5de2b154).
 /// </summary>
 [Category("Integration")]
 public sealed class DefaultRunnerRerouteTests
@@ -216,6 +218,76 @@ public sealed class DefaultRunnerRerouteTests
             .ShouldBe(1);
     }
 
+    [Test]
+    public async Task Runner_kind_block_and_parent_note_commit_together()
+    {
+        // Review 5de2b154. Every other routing-exhausted Block stages its parent note as a
+        // SessionQueuedMessages row in the SAME save as the Blocked state (the queue row is the
+        // durable outbox the delivery loop drains after a restart). A runner_kind_unsupported Block
+        // must do the same: a crash after the save keeps both, and a failed enqueue saves neither,
+        // so the next tick can still Block the task and tell the parent once.
+        foreach (var cut in new[] { BlockNoteCut.CrashAfterSave, BlockNoteCut.EnqueueFails })
+        {
+            await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            using var workspace = new TempWorkspace();
+            var parentSessionId = await SeedParentSessionAsync(schema, workspace.Path);
+            // A persisted Codex kind on a runner: the pre-claim fence Blocks it on the first tick.
+            var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, routingPinId: null, AgentTaskStatus.Queued,
+                kind: AgentKind.Codex, parentSessionId: parentSessionId);
+            var fault = new BlockNoteFault(cut, taskId, parentSessionId);
+
+            try
+            {
+                await CreateDispatcher(schema, eligible: true, interceptors: [fault]).Dispatcher.TickAsync(CancellationToken.None);
+            }
+            catch (Exception ex) when (ex is SimulatedCutException || ex.InnerException is SimulatedCutException)
+            {
+                // The process "died" at the cut; what survives is whatever was committed.
+            }
+
+            fault.Fired.ShouldBeTrue(cut + ": the fault never reached its cut, so the test proved nothing");
+            await using (var verify = CreateContext(schema))
+            {
+                var stored = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+                var notes = await verify.SessionQueuedMessages.CountAsync(
+                    m => m.AgentSessionId == parentSessionId && m.SourceTaskId == taskId);
+                var blockedEvents = await verify.AgentTaskEvents.CountAsync(
+                    e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Blocked);
+                if (cut == BlockNoteCut.CrashAfterSave)
+                {
+                    stored.Status.ShouldBe(AgentTaskStatus.Blocked, cut.ToString());
+                    notes.ShouldBe(1, cut + ": the committed Block carries its parent note");
+                    blockedEvents.ShouldBe(1, cut.ToString());
+                }
+                else
+                {
+                    stored.Status.ShouldBe(AgentTaskStatus.Queued, cut + ": no Block is committed without its note");
+                    stored.FailureReason.ShouldBeNull(cut.ToString());
+                    notes.ShouldBe(0, cut.ToString());
+                    blockedEvents.ShouldBe(0, cut.ToString());
+                }
+            }
+
+            // Restart: a fresh dispatcher with no fault. Either way the parent is told exactly once.
+            await CreateDispatcher(schema, eligible: true).Dispatcher.TickAsync(CancellationToken.None);
+            await using (var verify = CreateContext(schema))
+            {
+                var stored = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+                stored.Status.ShouldBe(AgentTaskStatus.Blocked, cut + " after restart");
+                stored.FailureReason.ShouldNotBeNull().ShouldContain("runner_kind_unsupported");
+                var notes = await verify.SessionQueuedMessages.AsNoTracking()
+                    .Where(m => m.AgentSessionId == parentSessionId && m.SourceTaskId == taskId)
+                    .ToListAsync();
+                notes.Count.ShouldBe(1, cut + " after restart: one note, never lost and never duplicated");
+                notes[0].Status.ShouldBe(QueuedMessageStatus.Pending, cut.ToString());
+                notes[0].Origin.ShouldBe(QueuedMessageOrigin.Delegation, cut.ToString());
+                (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Blocked))
+                    .ShouldBe(1, cut + " after restart");
+                (await verify.AgentSessions.CountAsync(s => s.Id != parentSessionId)).ShouldBe(0, cut.ToString());
+            }
+        }
+    }
+
     private static void AssertRunnerKindBlocked(AgentTask stored, Guid pinId)
     {
         stored.Status.ShouldBe(AgentTaskStatus.Blocked);
@@ -269,7 +341,8 @@ public sealed class DefaultRunnerRerouteTests
         Guid? routingPinId,
         AgentTaskStatus status,
         AgentKind kind = AgentKind.ClaudeCode,
-        Guid? sessionId = null)
+        Guid? sessionId = null,
+        Guid? parentSessionId = null)
     {
         var id = Guid.NewGuid();
         await using var db = CreateContext(schema);
@@ -288,6 +361,8 @@ public sealed class DefaultRunnerRerouteTests
             RunnerId = Runner,
             Status = status,
             AgentSessionId = sessionId,
+            ParentSessionId = parentSessionId,
+            ReplyTo = parentSessionId is null ? AgentTaskReplyTo.None : AgentTaskReplyTo.Session,
             FailureReason = status == AgentTaskStatus.Blocked
                 ? ComplexityRoutingService.RoutingExhaustedPrefix + "stage Code pin (human, required) - fable held"
                 : null,
@@ -296,6 +371,93 @@ public sealed class DefaultRunnerRerouteTests
         });
         await db.SaveChangesAsync();
         return id;
+    }
+
+    private static async Task<Guid> SeedParentSessionAsync(IsolatedTestSchema schema, string directory)
+    {
+        var id = Guid.NewGuid();
+        await using var db = CreateContext(schema);
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = id,
+            Status = SessionStatus.Running,
+            Cwd = directory,
+            AgentKind = AgentKind.ClaudeCode,
+            StartedAt = DateTime.UtcNow,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+        return id;
+    }
+
+    private enum BlockNoteCut
+    {
+        CrashAfterSave,
+        EnqueueFails,
+    }
+
+    private sealed class SimulatedCutException(string cut) : Exception("simulated cut: " + cut);
+
+    /// <summary>
+    /// The two failure cuts around a runner_kind_unsupported Block. <c>CrashAfterSave</c> kills the
+    /// dispatcher immediately after the first save that commits this task's Blocked event, so
+    /// anything staged for a later save is lost. <c>EnqueueFails</c> fails the parent-note enqueue
+    /// at its read of the parent's queue sequence, before the note row is staged.
+    /// </summary>
+    private sealed class BlockNoteFault(BlockNoteCut cut, Guid taskId, Guid parentSessionId)
+        : DbCommandInterceptor, ISaveChangesInterceptor
+    {
+        private bool _blockSaving;
+
+        public bool Fired { get; private set; }
+
+        public ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            _blockSaving = cut == BlockNoteCut.CrashAfterSave && !Fired
+                && eventData.Context!.ChangeTracker.Entries<AgentTaskEvent>().Any(e =>
+                    e.State == EntityState.Added && e.Entity.AgentTaskId == taskId
+                    && e.Entity.Type == AgentTaskEventType.Blocked);
+            return ValueTask.FromResult(result);
+        }
+
+        public ValueTask<int> SavedChangesAsync(
+            SaveChangesCompletedEventData eventData, int result, CancellationToken cancellationToken = default)
+        {
+            if (!_blockSaving)
+                return ValueTask.FromResult(result);
+            _blockSaving = false;
+            Fired = true;
+            throw new SimulatedCutException("crash after the Blocked save");
+        }
+
+        public override ValueTask<InterceptionResult<System.Data.Common.DbDataReader>> ReaderExecutingAsync(
+            System.Data.Common.DbCommand command, CommandEventData eventData,
+            InterceptionResult<System.Data.Common.DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            FailEnqueue(command);
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<InterceptionResult<object>> ScalarExecutingAsync(
+            System.Data.Common.DbCommand command, CommandEventData eventData,
+            InterceptionResult<object> result, CancellationToken cancellationToken = default)
+        {
+            FailEnqueue(command);
+            return base.ScalarExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        private void FailEnqueue(System.Data.Common.DbCommand command)
+        {
+            if (cut != BlockNoteCut.EnqueueFails || Fired
+                || !command.CommandText.Contains("\"SessionQueuedMessages\"", StringComparison.Ordinal)
+                || !command.CommandText.Contains("max(", StringComparison.OrdinalIgnoreCase)
+                || !command.Parameters.Cast<System.Data.Common.DbParameter>()
+                    .Any(p => p.Value is Guid id && id == parentSessionId))
+                return;
+            Fired = true;
+            throw new SimulatedCutException("parent note enqueue failed");
+        }
     }
 
     private static AgentTaskService TaskService(AppDbContext db, string directory, RecordingSessionStopper? stopper = null)
@@ -322,12 +484,18 @@ public sealed class DefaultRunnerRerouteTests
     /// remote hold answers from it) and every kind defined, so an incompatible launch would not be
     /// stopped by a missing definition instead of by the fence under test.
     /// </summary>
-    private static DispatcherWorld CreateDispatcher(IsolatedTestSchema schema, bool eligible, string? defaultRunnerId = Runner)
+    private static DispatcherWorld CreateDispatcher(
+        IsolatedTestSchema schema, bool eligible, string? defaultRunnerId = Runner, IInterceptor[]? interceptors = null)
     {
         var directory = new DefaultRunnerKit.FakeRunnerDirectory(eligible, fault: null, grokAuth: null);
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(schema.ConnectionString));
+        services.AddDbContext<AppDbContext>(o =>
+        {
+            o.UseNpgsql(schema.ConnectionString);
+            if (interceptors is not null)
+                o.AddInterceptors(interceptors);
+        });
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton(Options.Create(new SupervisionSettings()));
