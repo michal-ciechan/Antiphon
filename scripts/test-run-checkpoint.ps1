@@ -73,7 +73,9 @@ function Invoke-C585Runner {
         [int]$MinExecuted = 1,
         [string[]]$Expect,
         [string]$Stamp = '',
-        [string]$ResultsRoot = ''
+        [string]$ResultsRoot = '',
+        [string[]]$MsBuildProperty,
+        [string]$Platform = ''
     )
     if ([string]::IsNullOrWhiteSpace($ResultsRoot)) { $ResultsRoot = $Fx.ResultsRoot }
     $env:C585_SHIM_LOG = $Fx.Log
@@ -81,6 +83,7 @@ function Invoke-C585Runner {
     $env:C585_BUILD_EXIT = [string]$BuildExit
     $env:C585_RUN_EXIT = [string]$RunExit
     $env:C585_STAMP = $Stamp
+    $env:C671_PLATFORM = $Platform
     $callArgs = @(
         '-NoProfile', '-NonInteractive', '-File', $script:Runner,
         '-Name', $Name,
@@ -92,6 +95,9 @@ function Invoke-C585Runner {
         '-DotnetShim', $Fx.Shim
     )
     if ($NoBuild) { $callArgs += '-NoBuild' }
+    foreach ($property in @($MsBuildProperty)) {
+        if ($property) { $callArgs += @('-MsBuildProperty', $property) }
+    }
     foreach ($token in @($Expect)) {
         if ($token) { $callArgs += @('-Expect', $token) }
     }
@@ -106,6 +112,7 @@ function Invoke-C585Runner {
         $env:C585_BUILD_EXIT = $null
         $env:C585_RUN_EXIT = $null
         $env:C585_STAMP = $null
+        $env:C671_PLATFORM = $null
     }
     $lines = @($output | ForEach-Object { [string]$_ })
     $calls = @()
@@ -287,7 +294,101 @@ function Test-C585_AsciiOnly {
     Assert-C487 -Cond ($harnessBytes.Count -eq 0) -Name 'C585 AsciiOnly the harness is ASCII-only' -Detail ([string]$harnessBytes.Count)
 }
 
-$script:C585ExpectedRows = 46
+# CARD-0671: -MsBuildProperty reaches the build AND the `dotnet run`, so a UseAppHost=false build
+# is run through `dotnet exec <dll>` rather than a missing apphost. C671_PLATFORM pins the
+# platform so both branches run on any host. The shim is itself run by `pwsh -File`, whose binder
+# splits a -name:value token, so its log shows each --property:X=Y as '--property X=Y'.
+$script:C671Build = 'build tests/Antiphon.Tests --property OutputPath=bin-c585h/'
+$script:C671Run = 'run --project tests/Antiphon.Tests --no-build --property OutputPath=bin-c585h/'
+$script:C671RunTail = '-- --treenode-filter /*/*/C585SampleTests/* --report-trx --report-trx-filename run.trx --results-directory '
+
+function Get-C671Call {
+    param($Calls)
+    # Re-wrap: a one-element return unrolls to a bare string.
+    $list = @($Calls)
+    if ($list.Count -ne 1) { return ('<{0} calls>' -f $list.Count) }
+    return [string]$list[0]
+}
+
+function Test-C585_MsBuildForwarding {
+    $fx = New-C585Case -Name 'msbuild-forward'
+    $r = Invoke-C585Runner -Fx $fx -Trx $script:GreenTrx -Platform 'windows' -MsBuildProperty @('UseAppHost=false')
+    $build = Get-C671Call (Get-C585BuildCalls -Result $r)
+    $run = Get-C671Call (Get-C585RunCalls -Result $r)
+    Assert-C487 -Cond ($r.Exit -eq 0) -Name 'C585 MsBuildForwarding exit code 0' -Detail ('exit={0} {1}' -f $r.Exit, $r.Text)
+    Assert-C487 -Cond ($build -ceq ($script:C671Build + ' --property UseAppHost=false --nologo')) `
+        -Name 'C585 MsBuildForwarding build carries the property' -Detail $build
+    Assert-C487 -Cond ($run.StartsWith($script:C671Run + ' --property UseAppHost=false ' + $script:C671RunTail, [StringComparison]::Ordinal)) `
+        -Name 'C585 MsBuildForwarding run carries the property before --' -Detail $run
+    Assert-C487 -Cond (@($r.Lines | Where-Object { $_ -ceq 'MSBUILD PROPERTY UseAppHost=false' }).Count -eq 1) `
+        -Name 'C585 MsBuildForwarding report names the property' -Detail $r.Text
+
+    $nb = New-C585Case -Name 'msbuild-nobuild'
+    $n = Invoke-C585Runner -Fx $nb -Trx $script:GreenTrx -Platform 'windows' -NoBuild -MsBuildProperty @('UseAppHost=false')
+    $nRun = Get-C671Call (Get-C585RunCalls -Result $n)
+    Assert-C487 -Cond ($n.Exit -eq 0 -and (Get-C585BuildCalls -Result $n).Count -eq 0 -and $nRun.StartsWith($script:C671Run + ' --property UseAppHost=false -- ', [StringComparison]::Ordinal)) `
+        -Name 'C585 MsBuildForwarding -NoBuild run still carries the property' -Detail ('exit={0} calls={1}' -f $n.Exit, ($n.Calls -join ' | '))
+
+    $cm = New-C585Case -Name 'msbuild-comma'
+    $c = Invoke-C585Runner -Fx $cm -Trx $script:GreenTrx -Platform 'windows' -MsBuildProperty @('UseAppHost=false, C671Probe=yes')
+    $cBuild = Get-C671Call (Get-C585BuildCalls -Result $c)
+    $cRun = Get-C671Call (Get-C585RunCalls -Result $c)
+    $pair = ' --property UseAppHost=false --property C671Probe=yes '
+    Assert-C487 -Cond ($c.Exit -eq 0 -and $cBuild -ceq ($script:C671Build + $pair + '--nologo') -and $cRun.StartsWith($script:C671Run + $pair + '-- ', [StringComparison]::Ordinal)) `
+        -Name 'C585 MsBuildForwarding a comma-separated value forwards each property' -Detail ('exit={0} calls={1}' -f $c.Exit, ($c.Calls -join ' | '))
+}
+
+function Test-C585_MsBuildLinuxDefault {
+    $fx = New-C585Case -Name 'msbuild-linux'
+    $r = Invoke-C585Runner -Fx $fx -Trx $script:GreenTrx -Platform 'linux'
+    $build = Get-C671Call (Get-C585BuildCalls -Result $r)
+    $run = Get-C671Call (Get-C585RunCalls -Result $r)
+    Assert-C487 -Cond ($r.Exit -eq 0) -Name 'C585 MsBuildLinuxDefault exit code 0' -Detail ('exit={0} {1}' -f $r.Exit, $r.Text)
+    Assert-C487 -Cond ($build -ceq ($script:C671Build + ' --property UseAppHost=false --nologo') -and $run.StartsWith($script:C671Run + ' --property UseAppHost=false -- ', [StringComparison]::Ordinal)) `
+        -Name 'C585 MsBuildLinuxDefault adds UseAppHost=false to build and run' -Detail ($r.Calls -join ' | ')
+
+    $ex = New-C585Case -Name 'msbuild-linux-explicit'
+    $e = Invoke-C585Runner -Fx $ex -Trx $script:GreenTrx -Platform 'linux' -MsBuildProperty @('UseAppHost=true')
+    $eText = ($e.Calls -join ' | ')
+    Assert-C487 -Cond ($e.Exit -eq 0 -and @($e.Calls).Count -eq 2 -and $eText -cnotmatch 'UseAppHost=false' -and @($e.Calls | Where-Object { $_ -cmatch ' --property UseAppHost=true ' }).Count -eq 2) `
+        -Name 'C585 MsBuildLinuxDefault an explicit UseAppHost wins' -Detail $eText
+
+    $ot = New-C585Case -Name 'msbuild-linux-other'
+    $o = Invoke-C585Runner -Fx $ot -Trx $script:GreenTrx -Platform 'linux' -MsBuildProperty @('C671Probe=yes')
+    $oBuild = Get-C671Call (Get-C585BuildCalls -Result $o)
+    Assert-C487 -Cond ($o.Exit -eq 0 -and $oBuild -ceq ($script:C671Build + ' --property C671Probe=yes --property UseAppHost=false --nologo')) `
+        -Name 'C585 MsBuildLinuxDefault other properties keep the default' -Detail ($o.Calls -join ' | ')
+}
+
+function Test-C585_MsBuildWindowsUnchanged {
+    $fx = New-C585Case -Name 'msbuild-windows'
+    $r = Invoke-C585Runner -Fx $fx -Trx $script:GreenTrx -Platform 'windows'
+    $build = Get-C671Call (Get-C585BuildCalls -Result $r)
+    $run = Get-C671Call (Get-C585RunCalls -Result $r)
+    Assert-C487 -Cond ($build -ceq ($script:C671Build + ' --nologo')) `
+        -Name 'C585 MsBuildWindowsUnchanged build arguments are the pre-CARD-0671 ones' -Detail $build
+    $prefix = $script:C671Run + ' ' + $script:C671RunTail
+    Assert-C487 -Cond ($run.StartsWith($prefix, [StringComparison]::Ordinal) -and $run.Substring([Math]::Min($prefix.Length, $run.Length)) -notmatch ' --') `
+        -Name 'C585 MsBuildWindowsUnchanged run arguments are the pre-CARD-0671 ones' -Detail $run
+    Assert-C487 -Cond ($r.Exit -eq 0 -and @($r.Lines | Where-Object { $_ -match '^MSBUILD PROPERTY ' }).Count -eq 0) `
+        -Name 'C585 MsBuildWindowsUnchanged prints no property lines' -Detail ('exit={0} {1}' -f $r.Exit, $r.Text)
+}
+
+function Test-C585_MsBuildInvalid {
+    $cases = @(
+        @{ Value = 'NotAProperty'; Row = 'C585 MsBuildInvalid a token without = exits 2 before dotnet'; Message = 'must be Name=Value' },
+        @{ Value = 'OutputPath=bin-y/'; Row = 'C585 MsBuildInvalid OutputPath is refused before dotnet'; Message = 'use -OutputPath' },
+        @{ Value = 'UseAppHost=false;OutDir=x/'; Row = 'C585 MsBuildInvalid an embedded OutDir is refused before dotnet'; Message = 'use -OutputPath' }
+    )
+    foreach ($case in $cases) {
+        $fx = New-C585Case -Name 'msbuild-invalid'
+        $r = Invoke-C585Runner -Fx $fx -Trx $script:GreenTrx -Platform 'linux' -MsBuildProperty @($case.Value)
+        Assert-C487 -Cond ($r.Exit -eq 2 -and $r.Text -match [regex]::Escape($case.Message) -and $r.Calls.Count -eq 0) `
+            -Name $case.Row -Detail ('exit={0} calls={1} {2}' -f $r.Exit, ($r.Calls -join ' | '), $r.Text)
+    }
+}
+
+$script:C585ExpectedRows = 62
 
 if (-not (Test-Path -LiteralPath $script:Runner)) { throw ('missing ' + $script:Runner) }
 

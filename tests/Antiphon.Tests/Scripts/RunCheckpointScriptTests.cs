@@ -89,6 +89,38 @@ public sealed class RunCheckpointScriptTests
         "C585 AsciiOnly run-checkpoint.ps1 is ASCII-only",
         "C585 AsciiOnly the harness is ASCII-only");
 
+    /// <summary>CARD-0671: <c>-MsBuildProperty</c> reaches both the build and the <c>dotnet run</c>, including under <c>-NoBuild</c>.</summary>
+    [Test]
+    public Task C585_MsBuildForwarding() => RunCaseAsync("C585_MsBuildForwarding", 6,
+        "C585 MsBuildForwarding exit code 0",
+        "C585 MsBuildForwarding build carries the property",
+        "C585 MsBuildForwarding run carries the property before --",
+        "C585 MsBuildForwarding report names the property",
+        "C585 MsBuildForwarding -NoBuild run still carries the property",
+        "C585 MsBuildForwarding a comma-separated value forwards each property");
+
+    /// <summary>CARD-0671: off Windows <c>UseAppHost=false</c> is the default unless the caller names <c>UseAppHost</c>.</summary>
+    [Test]
+    public Task C585_MsBuildLinuxDefault() => RunCaseAsync("C585_MsBuildLinuxDefault", 4,
+        "C585 MsBuildLinuxDefault exit code 0",
+        "C585 MsBuildLinuxDefault adds UseAppHost=false to build and run",
+        "C585 MsBuildLinuxDefault an explicit UseAppHost wins",
+        "C585 MsBuildLinuxDefault other properties keep the default");
+
+    /// <summary>CARD-0671: on Windows with no <c>-MsBuildProperty</c> the dotnet arguments are exactly the pre-change ones.</summary>
+    [Test]
+    public Task C585_MsBuildWindowsUnchanged() => RunCaseAsync("C585_MsBuildWindowsUnchanged", 3,
+        "C585 MsBuildWindowsUnchanged build arguments are the pre-CARD-0671 ones",
+        "C585 MsBuildWindowsUnchanged run arguments are the pre-CARD-0671 ones",
+        "C585 MsBuildWindowsUnchanged prints no property lines");
+
+    /// <summary>CARD-0671: a malformed property or one that sets the output path is refused before any dotnet call.</summary>
+    [Test]
+    public Task C585_MsBuildInvalid() => RunCaseAsync("C585_MsBuildInvalid", 3,
+        "C585 MsBuildInvalid a token without = exits 2 before dotnet",
+        "C585 MsBuildInvalid OutputPath is refused before dotnet",
+        "C585 MsBuildInvalid an embedded OutDir is refused before dotnet");
+
     private static Task RunCaseAsync(string caseName, int expectedRows, params string[] requiredRows) =>
         ScriptHarness.RunHarnessCaseAsync("test-run-checkpoint.ps1", "C585", caseName, expectedRows, requiredRows);
 }
