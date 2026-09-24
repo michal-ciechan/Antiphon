@@ -251,6 +251,10 @@ PC cycles remain method-scoped work for post-land SourceLanding Mutation.
 
 `RestartFixture.Run` caches only a successful AST preflight, keyed by resolved shell identity plus the hashed copied entry, helper, platform, wrapper, and validator identity. Every accepted `Run` still launches the real entry child. `Script` and `DecodeCapturedMilestones` stay uncached. Resolver identity walks PATH for the first readable regular file and launches that absolute path (skipping zero-byte/reparse WindowsApps aliases). Measured Code-stage Health+Compatibility+Safety selection: 94 passed in 8m 45s into `bin-c476/`. Paired before/after savings for the S3 procedure are left for Mutation/Review if needed; do not treat the historical 24–37 s bootstrap or 143 s Health total as recovered wall.
 
+### dotnet-ef from the repo tool manifest (CARD-0677)
+
+`dotnet-ef` is a repo-local tool pinned in `.config/dotnet-tools.json`, not a machine-global install. Before any `dotnet ef` command in a worktree (Windows or the server2 runner), run `dotnet tool restore` from the repo root, then `dotnet ef migrations add <Name> --project server`. The pin is an exact version whose major matches the server's `Microsoft.EntityFrameworkCore.Design` reference (currently `9.*`, pinned `9.0.20`); bump the pin together with an EF Core major move. `DotnetToolManifestContractTests` guards the exact pin and the major match. The runner image needs no extra layer: restore writes to the runner user's `~/.nuget/packages` and reaches nuget.org the same way package restore does.
+
 ## Combined class filters (CARD-0403)
 
 For one invocation covering several named classes on the pinned TUnit 1.44 runner, use
