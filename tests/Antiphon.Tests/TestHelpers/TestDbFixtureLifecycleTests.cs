@@ -461,6 +461,22 @@ public sealed class TestDbFixtureLifecycleTests
         SharedStoreWarmup.ProbeDefersWarmup("""{"mode":"mixed"}""").ShouldBeFalse();
     }
 
+    [Test]
+    public void Worker_mode_list_names_every_owned_child_worker()
+    {
+        var declared = typeof(TestWorkerModes).Assembly.GetTypes()
+            .Where(type => type.Name.EndsWith("Worker", StringComparison.Ordinal))
+            .Select(type => type.GetField("Marker", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
+            .Where(field => field is { IsLiteral: true } && field.FieldType == typeof(string))
+            .Select(field => (string)field!.GetRawConstantValue()!)
+            .OrderBy(marker => marker, StringComparer.Ordinal)
+            .ToArray();
+        declared.ShouldContain(CheckCompactionCrashWorker.Marker);
+        declared.ShouldContain(LandQueueRaceWorker.Marker);
+        TestWorkerModes.All.Select(mode => mode.Marker).OrderBy(marker => marker, StringComparer.Ordinal)
+            .ShouldBe(declared);
+    }
+
     private static System.Reflection.MethodInfo Sample(string name) =>
         typeof(StoreSamples).GetMethod(name, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
         ?? throw new InvalidOperationException(name);

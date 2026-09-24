@@ -65,7 +65,8 @@ public sealed class TestDbFixtureLazyInitializationTests
                 || name.Contains("A_child_at_depth", StringComparison.Ordinal)
                 || name.Contains("Mixed_first", StringComparison.Ordinal)
                 || name.Contains("A_post_start", StringComparison.Ordinal)
-                || name.Contains("A_failing_worker", StringComparison.Ordinal))
+                || name.Contains("A_failing_worker", StringComparison.Ordinal)
+                || name.Contains("A_worker_child", StringComparison.Ordinal))
             {
                 (outcome is "Skipped" or "NotExecuted").ShouldBeTrue(name + " " + outcome);
             }
@@ -158,6 +159,34 @@ public sealed class TestDbFixtureLazyInitializationTests
         (run.Stderr + run.Stdout).ShouldContain("InvalidOperationException");
         if (File.Exists(run.Trx))
             ReadExecuted(run.Trx).Count.ShouldBe(0);
+        File.Exists(Path.Combine(root, "lifecycle.json")).ShouldBeFalse();
+    }
+
+    public static IEnumerable<string> WorkerMarkers() => TestWorkerModes.All.Select(mode => mode.Marker);
+
+    /// <summary>
+    /// CARD-0646: a worker child selecting a store-reaching test must exit before the shared-store
+    /// warm-up. The malformed payload fails the worker at once; its recorded dbLifecycle is the
+    /// fixture state at that moment, so any warm-up ahead of the worker would show here.
+    /// </summary>
+    [Test]
+    [MethodDataSource(nameof(WorkerMarkers))]
+    public async Task A_worker_child_exits_before_the_shared_store_warmup(string marker)
+    {
+        SkipIfChildProcess();
+        var selected = typeof(Antiphon.Tests.Application.CheckCompactionCrashTests).GetMethod(
+            nameof(Antiphon.Tests.Application.CheckCompactionCrashTests.Resume_reservation_survives_crash_without_a_second_launch))
+            ?? throw new InvalidOperationException("selected store-reaching test is missing");
+        SharedStoreWarmup.ReachesDefaultStore(selected).ShouldBeTrue("the child selection must reach the shared store");
+
+        var root = CreateOwnedRoot();
+        var run = await LaunchProcessAsync(
+            root,
+            "/*/*/CheckCompactionCrashTests/" + selected.Name,
+            extraEnv: new Dictionary<string, string?> { [marker] = "{" });
+        run.Exit.ShouldBe(1, run.Stderr + run.Stdout);
+        run.Stderr.ShouldContain(marker + " failed (dbLifecycle=never-requested)", Case.Sensitive, run.Stderr + run.Stdout);
+        ReadExecuted(run.Trx).Count.ShouldBe(0);
         File.Exists(Path.Combine(root, "lifecycle.json")).ShouldBeFalse();
     }
 

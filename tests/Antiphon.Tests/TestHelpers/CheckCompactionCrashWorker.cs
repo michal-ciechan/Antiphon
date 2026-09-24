@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
@@ -13,7 +12,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using TUnit.Core;
 
 namespace Antiphon.Tests.TestHelpers;
 
@@ -24,37 +22,7 @@ internal static class CheckCompactionCrashWorker
 {
     internal const string Marker = "ANTIPHON_C79_CRASH_WORKER";
 
-    [Before(Assembly)]
-    public static async Task DispatchWorkerIfRequested()
-    {
-        if (Environment.GetEnvironmentVariable(Marker) is not { } worker)
-            return;
-        try
-        {
-            await RunAsync(worker);
-            Environment.Exit(0);
-        }
-        catch (Exception ex)
-        {
-            var text = ex.GetType().Name + ": " + ex.Message + Environment.NewLine + ex.StackTrace + Environment.NewLine;
-            Console.Error.Write(text);
-            Console.Error.Flush();
-            try
-            {
-                var stderr = Console.OpenStandardError();
-                var bytes = Encoding.UTF8.GetBytes(text);
-                stderr.Write(bytes, 0, bytes.Length);
-                stderr.Flush();
-            }
-            catch
-            {
-                // Best-effort: Environment.Exit still reports failure.
-            }
-
-            Environment.Exit(1);
-        }
-    }
-
+    // Dispatched by TestDbFixture.InitializeAsync through TestWorkerModes (CARD-0646).
     internal static async Task RunAsync(string encoded)
     {
         var request = JsonSerializer.Deserialize<CrashWorkerRequest>(encoded)
