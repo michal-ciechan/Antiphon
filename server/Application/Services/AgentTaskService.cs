@@ -70,6 +70,7 @@ public sealed class AgentTaskService
     // CARD-0644 D-4. Optional so harnesses that never continue a retired worktree keep constructing
     // this. Absent, a retired Worktree tip cannot be proven and create refuses rather than guessing.
     private readonly DelegationWorktreeService? _worktrees;
+    private readonly StartRefAvailability? _startRefs;
     // CARD-0659 D-2. Built from the dependencies above, not injected: a harness without a
     // phone-home policy or directory simply never selects a runner.
     private readonly DefaultRunnerRoutingPolicy _defaultRunner;
@@ -104,8 +105,11 @@ public sealed class AgentTaskService
         // CARD-0647. Optional. A runner-bound Grok create asks this directory; absent, the
         // runner store cannot be measured and the desktop store is not consulted instead.
         ISessionRunnerDirectory? runners = null,
-        DelegationWorktreeService? worktrees = null)
+        DelegationWorktreeService? worktrees = null,
+        // CARD-0666. Optional. Absent, a caller start ref is checked only at dispatch, locally.
+        StartRefAvailability? startRefs = null)
     {
+        _startRefs = startRefs;
         _worktrees = worktrees;
         _runners = runners;
         _phoneHome = phoneHome;
@@ -1199,6 +1203,11 @@ public sealed class AgentTaskService
             remoteRunnerId = selectedRunner;
         if (runnerDecision?.Warning is { } runnerWarning)
             warning = warning is null ? runnerWarning : warning + " " + runnerWarning;
+
+        // CARD-0666. Last of the refusals, and before the row exists: a start SHA only origin has is
+        // fetched HERE (bounded, journaled), never in the dispatch claim under the repository lease.
+        if (startRef is not null && _startRefs is not null && resolved.RepoPath is not null)
+            await _startRefs.EnsureAvailableAsync(resolved.RepoPath, startRef, ct);
 
         var task = new AgentTask
         {
