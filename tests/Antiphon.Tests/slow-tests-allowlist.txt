@@ -131,3 +131,5 @@ Antiphon.Tests.Application.WorktreeDefaultAdmissionTests
 Antiphon.Tests.Application.WorktreeDefaultContinuationTests
 # CARD-0644: real Git/schema retained-caller regressions (factories, settlement, card launch, nightly guard); 120s case budget.
 Antiphon.Tests.Application.WorktreeDefaultCallerTests
+# CARD-0657: real reply-service settlement with a bare origin, desktop worktree and runner clone.
+Antiphon.Tests.Application.RunnerTaskSettlementTests
