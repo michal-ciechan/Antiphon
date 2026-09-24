@@ -216,6 +216,7 @@ public sealed class AgentTaskLandQueueAgingTests
         {
             var holder = await AddRequestAsync(db, requested, now, LandRequestState.Running, SameRepository, AgentTaskStatus.Working);
             var waiting = await AddRequestAsync(db, requested, requested, LandRequestState.Queued, SameRepository, AgentTaskStatus.Succeeded);
+            await db.SaveChangesAsync();
             var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == waiting.RequestId);
             request.ReplyTo = AgentTaskReplyTo.Session;
             request.ParentSessionId = caller.SessionId;
