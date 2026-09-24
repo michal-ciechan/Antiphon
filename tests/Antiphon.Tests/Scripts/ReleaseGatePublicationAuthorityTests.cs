@@ -1,0 +1,83 @@
+using Antiphon.Tests.TestHelpers;
+using TUnit.Core;
+
+namespace Antiphon.Tests.Scripts;
+
+/// <summary>
+/// CARD-0599 D-15 full V-12 matrix (round B1; ordinary contract is
+/// <see cref="ReleaseGateAuthorityContractTests"/>). Each method runs two <c>Test-C599A_*</c> cases of
+/// <c>scripts/test-release-gate.ps1</c>, each its own pwsh child under the harness's unchanged
+/// 120-second limit, against the PRODUCTION <c>release-authority.ps1</c> guards and publisher.
+///
+/// <para>One real-git B1 fixture per child. Every variant restores that valid control byte for byte,
+/// changes exactly one field, row or handshake and must be refused with the NAMED reason token, so a
+/// removed guard cannot hide behind another refusal. Gate variants run the publisher's own pre-write
+/// composition; one publisher variant per guard also proves zero remote writes through the observer.</para>
+///
+/// <para>The decisive behaviours: the pinned blob - never the summary, private copy or working tree -
+/// names the eight suites; every authority field refuses absent, null, mistyped and foreign; every
+/// frozen chunk and required expanded UID must pass exactly once in its own chunk; exits, counts,
+/// evidence containment, identities, digests, timestamps, whole-run markers and credit flags are
+/// checked independently; and <c>-WhatIf</c> writes no publication authority.</para>
+/// </summary>
+[Category("Integration")]
+[ParallelLimiter<ProcessSpawnLimit>]
+public sealed class ReleaseGatePublicationAuthorityTests
+{
+    [Test]
+    public async Task C599A_PinnedPolicy()
+    {
+        await RunCaseAsync("C599A_PinnedPolicy", 9,
+            "C599 V-12: the valid eight-suite control passes the publication gate",
+            "C599 G-224: each of the eight pinned suites missing from an agreeing report refuses with zero remote writes",
+            "C599 G-225: a wrong, absent, null or mistyped pinned hash blocks before any remote write",
+            "C599 G-285: an edited private copy or working-tree policy cannot replace the pinned blob",
+            "C599 G-286: re-pinning the candidate to a new commit with a valid blob is accepted (repin control)",
+            "C599 G-286: an unknown schema, missing or empty rc profile and each absent suite in the pinned blob refuse",
+            "C599 V-18: -WhatIf passes the gate but writes no publication authority and nothing remote",
+            "C599 G-285: a changed working tree and moved HEAD cannot alter the frozen suite authority",
+            "C599 V-18: the frozen publication authority digest is journalled and carried in the manifest");
+        await RunCaseAsync("C599A_PinnedPolicyFields", 2,
+            "C599 V-12: the valid authority control passes before the field matrix",
+            "C599 V-12: every frozen authority field refuses when absent, null, mistyped or foreign");
+    }
+
+    [Test]
+    public async Task C599A_ExecutionLedger()
+    {
+        await RunCaseAsync("C599A_ExecutionLedger", 12,
+            "C599 V-12: the valid 13-chunk 19-UID control ledger passes the publication gate",
+            "C599 G-226: a passing sibling chunk never hides a failed chunk in any suite",
+            "C599 G-287: outside, absolute and reparse-escaped evidence refuses before publication",
+            "C599 G-288: each failed, absent, duplicated or mistyped required prerequisite blocks remote writes",
+            "C599 G-289: a nonzero or non-numeric child exit or zero executions blocks despite a passing TRX",
+            "C599 G-290: every deleted, extra or duplicated frozen chunk blocks authority",
+            "C599 G-291: a duplicated UID in a sibling chunk, the same chunk or the plan refuses",
+            "C599 G-292: each required expanded UID removed from its chunk evidence refuses",
+            "C599 G-292: skipped, unknown-outcome, unknown-UID, stale and missing evidence refuse",
+            "C599 G-293: a zero-required suite or empty declared roster cannot publish",
+            "C599 G-294: inflated or mistyped ledger counts refuse against the recomputed TRX",
+            "C599 G-295: a post-result exclusion edit cannot remove a failed UID");
+        await RunCaseAsync("C599A_ExecutionLedgerJoins", 17,
+            "C599 V-12: the valid 13-chunk 19-UID control ledger passes the publication gate",
+            "C599 G-296: foreign intent evidence on the plan, ledger, a chunk or a roster refuses",
+            "C599 G-297: foreign candidate evidence on the plan, ledger, a chunk or a roster refuses",
+            "C599 G-298: foreign full SHA evidence on the plan, ledger, a chunk or a roster refuses",
+            "C599 G-299: foreign native RunId evidence on the plan, ledger, a chunk or a roster refuses",
+            "C599 G-300: a modified script, authority, plan or discovery digest blocks publication",
+            "C599 G-301: out-of-order or stale evidence timestamps refuse",
+            "C599 G-302: a missing, false, string or numeric teardown cannot publish",
+            "C599 G-303: a seam-driven ledger or run creates no release",
+            "C599 G-304: a NoReport ledger or run creates no release",
+            "C599 G-305: subset and diagnostic ledgers or runs create no release",
+            "C599 V-12: a missing, false or string pre-publish report acceptance cannot publish",
+            "C599 G-387: a string or non-true coverageComplete flag cannot publish",
+            "C599 G-388: a string or non-true testsPassed flag cannot publish",
+            "C599 G-389: a string or non-true reportDelivered flag cannot publish",
+            "C599 V-12: client and script evidence validate against their own declared rosters",
+            "C599 V-12: the restored control ledger publishes with suite counts recomputed from the evidence");
+    }
+
+    private static Task RunCaseAsync(string caseName, int expectedRows, params string[] requiredRows) =>
+        ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C599", caseName, expectedRows, requiredRows);
+}

@@ -261,6 +261,7 @@ $script:C599IntentId = 'intent-20260923T083000Z'
 $script:C599RunId = 'rc-run-1'
 $script:C599NativeSuites = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging', 'e2e')
 $script:C599Rosters = @{ client = @('lint', 'build', 'vitest'); scripts = @('test-release-gate.ps1', 'test-nightly.ps1') }
+$script:C599ABasePolicy = $null
 
 function Invoke-C599RealGit {
     param([string]$Repo, [string[]]$Arguments)
@@ -1891,6 +1892,797 @@ function Test-C599B_AllChunks {
     Update-C599Ledger -Fx $fxR -Ledger { param($l) foreach ($r in @($l.rosters)) { if ([string]$r.suite -eq 'client') { $r.entries[2].outcome = 'failed' } } }
     $roster = Invoke-C599Publish -Fx $fxR
     Assert-C487 -Cond (([string]$roster.Refusal -match 'roster-entry-not-passed:client:vitest') -and (Test-C599NoRemoteWrite -Fx $fxR)) -Name 'C599 V-18: a failed client roster entry blocks before any remote write' -Detail ([string]$roster.Refusal)
+}
+
+# ================================= CARD-0599 D-15 full V-12 matrix (C599A, B1) ===
+# One valid B1 fixture per method. Every variant restores that control byte for
+# byte, changes exactly one field, row or handshake and requires the NAMED refusal
+# token. Gate variants run the same production composition publish-release.ps1
+# runs before its first write (Test-ReleaseGateAuthority + the publication gate +
+# the credit verdict); one publisher variant per guard also proves zero remote
+# writes through the observer. Rows aggregate each guard's variants.
+
+function Save-C599ASnapshot {
+    param($Fx)
+    $files = @{}
+    foreach ($f in @(Get-ChildItem -LiteralPath $Fx.ReleaseRoot -Recurse -File -Force)) { $files[$f.FullName] = [System.IO.File]::ReadAllBytes($f.FullName) }
+    $absent = @()
+    foreach ($p in @($Fx.Git.RemotePath, $Fx.Git.Trace, $Fx.Gh.StorePath, (Join-Path $Fx.Checkout (Join-Path 'tests' 'test-execution-policy.json')))) {
+        if (Test-Path -LiteralPath $p -PathType Leaf) { $files[$p] = [System.IO.File]::ReadAllBytes($p) } else { $absent += $p }
+    }
+    return [pscustomobject]@{ Root = $Fx.ReleaseRoot; Files = $files; Absent = $absent }
+}
+
+function Restore-C599ASnapshot {
+    param($Snap)
+    foreach ($f in @(Get-ChildItem -LiteralPath $Snap.Root -Recurse -File -Force)) {
+        if (-not $Snap.Files.ContainsKey($f.FullName)) { Remove-Item -LiteralPath $f.FullName -Force }
+    }
+    foreach ($p in @($Snap.Absent)) { if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force } }
+    foreach ($p in @($Snap.Files.Keys)) {
+        $parent = Split-Path -Parent $p
+        if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+        [System.IO.File]::WriteAllBytes($p, $Snap.Files[$p])
+    }
+}
+
+function Get-C599AGate {
+    # publish-release.ps1's pre-write decision, with the remote answer read from the recipient.
+    param($Fx)
+    $paths = Get-ReleaseGateStatePaths -CreditKind 'rc-release' -StateRoot '' -ReleaseRoot $Fx.ReleaseRoot -CandidateId $CandidateId
+    $green = Get-Content -LiteralPath $paths.GreenPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $candidate = Get-Content -LiteralPath $paths.JournalPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $remoteSha = Read-C599Remote -Seams $Fx.Git -Ref $CandidateRef
+    $authority = Test-ReleaseGateAuthority -CandidateRoot $paths.Root -RepositoryRoot $Fx.Checkout -Green $green -Candidate $candidate
+    $gate = Test-ReleaseGatePublicationGate -Green $green -Candidate $candidate -RemoteSha $remoteSha -Authority $authority
+    $verdict = Get-ReleaseGateCreditVerdict -State $green
+    return [pscustomobject]@{ Ok = [bool]$gate.Ok; Reasons = @(@($gate.Reasons) + @($verdict.Reasons) | ForEach-Object { [string]$_ }); Suites = @($authority.Suites) }
+}
+
+function Invoke-C599AVariant {
+    <#
+      Restore the valid control, apply Mutate, and require a refusal naming every
+      Expect token. -Publish drives the real publisher and the observer instead.
+    #>
+    param($Fx, $Snap, [string]$Label, [scriptblock]$Mutate, [string[]]$Expect, [switch]$Publish, [hashtable]$Extra = $null, [scriptblock]$Cleanup = $null)
+    Restore-C599ASnapshot -Snap $Snap
+    $got = @(); $refused = $false; $err = ''
+    try {
+        & $Mutate
+        if ($Publish) {
+            $res = Invoke-C599Publish -Fx $Fx -Extra $Extra
+            $got = @(([string]$res.Refusal) -split ',' | Where-Object { $_ })
+            $refused = (-not [bool]$res.Published) -and ([int]$res.ExitCode -ne 0) -and (Test-C599NoRemoteWrite -Fx $Fx)
+        } else {
+            $gate = Get-C599AGate -Fx $Fx
+            $got = @($gate.Reasons); $refused = -not $gate.Ok
+        }
+    } catch {
+        $err = 'threw: ' + $_.Exception.Message
+    } finally {
+        if ($Cleanup) { & $Cleanup }
+        Restore-C599ASnapshot -Snap $Snap
+    }
+    $absentTokens = @($Expect | Where-Object { $got -notcontains $_ })
+    return [pscustomobject]@{
+        Pass = ($refused -and $absentTokens.Count -eq 0 -and $err -eq '')
+        Detail = ('{0}: refused={1} missing=[{2}] got=[{3}] {4}' -f $Label, $refused, ($absentTokens -join ' '), ($got -join ' '), $err)
+    }
+}
+
+function Assert-C599AMatrix {
+    param([string]$Name, [object[]]$Results)
+    $bad = @($Results | Where-Object { -not $_.Pass })
+    Assert-C487 -Cond (@($Results).Count -gt 0 -and $bad.Count -eq 0) -Name $Name -Detail ((@($bad | ForEach-Object { $_.Detail })) -join ' | ')
+}
+
+function Set-C599AField {
+    param($Object, [string]$Name, $Value)
+    $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
+}
+
+function Update-C599AAuthority {
+    # Mutate the frozen authority and re-bind plan/ledger to its new digest, so the
+    # changed field is the only thing a guard can refuse on.
+    param($Fx, [scriptblock]$Mutate)
+    $authDir = Get-C599AuthorityDir -Fx $Fx
+    Update-C599Json -Path (Join-Path $authDir 'authority.json') -Mutate $Mutate
+    $authDigest = Get-NightlyFileSha256 -Path (Join-Path $authDir 'authority.json')
+    Update-C599Ledger -Fx $Fx -Plan { param($p) $p.authorityDigest = $authDigest } -Ledger { param($l) $l.authorityDigest = $authDigest }
+}
+
+function Update-C599ADiscovery {
+    # Mutate discovery.json (and optionally the plan) keeping the plan's discovery digest bound.
+    param($Fx, [scriptblock]$Mutate, [scriptblock]$Plan = $null, [scriptblock]$Ledger = $null)
+    $authDir = Get-C599AuthorityDir -Fx $Fx
+    Update-C599Json -Path (Join-Path $authDir 'discovery.json') -Mutate $Mutate
+    $discoveryDigest = Get-NightlyFileSha256 -Path (Join-Path $authDir 'discovery.json')
+    $c599aDiscoveryPlan = $Plan
+    Update-C599Ledger -Fx $Fx -Ledger $Ledger -Plan { param($p) $p.discoveryDigest = $discoveryDigest; if ($c599aDiscoveryPlan) { & $c599aDiscoveryPlan $p } }
+}
+
+function Update-C599ATrx {
+    # Rewrite one chunk's real TRX rows and re-bind its digest and all four counts.
+    param($Fx, [string]$Chunk, [scriptblock]$Rows, [switch]$KeepBinding)
+    $authDir = Get-C599AuthorityDir -Fx $Fx
+    $doc = Get-Content -LiteralPath (Join-Path $authDir 'ledger.json') -Raw | ConvertFrom-Json
+    $row = @($doc.chunks | Where-Object { [string]$_.chunk -eq $Chunk })[0]
+    $trxPath = Join-Path (Split-Path -Parent $authDir) ([string]$row.trx)
+    $c599aTrxChunk = $Chunk
+    $current = @(Read-NightlyTrxIdentities -TrxPath $trxPath | ForEach-Object {
+        [pscustomobject]@{ Id = [string]$_.TestId; ClassName = [string]$_.ClassName; MethodName = [string]$_.MethodName; Outcome = [string]$_.Outcome } })
+    $c599aTrxRows = @(& $Rows $current)
+    Write-C487Trx -Path $trxPath -Rows $c599aTrxRows
+    if ($KeepBinding) { return }
+    Update-C599Ledger -Fx $Fx -Ledger {
+        param($l)
+        foreach ($c in @($l.chunks)) {
+            if ([string]$c.chunk -ne $c599aTrxChunk) { continue }
+            $c.trxSha256 = (Get-NightlyFileSha256 -Path $trxPath)
+            $c.executed = $c599aTrxRows.Count
+            $c.passed = @($c599aTrxRows | Where-Object { $_.Outcome -eq 'Passed' }).Count
+            $c.failed = @($c599aTrxRows | Where-Object { $_.Outcome -eq 'Failed' }).Count
+            $c.skipped = @($c599aTrxRows | Where-Object { $_.Outcome -ne 'Passed' -and $_.Outcome -ne 'Failed' }).Count
+        }
+    }
+}
+
+function Update-C599AChunkRow {
+    param($Fx, [string]$Chunk, [scriptblock]$Mutate)
+    $c599aChunkId = $Chunk; $c599aChunkMutate = $Mutate
+    Update-C599Ledger -Fx $Fx -Ledger { param($l) foreach ($c in @($l.chunks)) { if ([string]$c.chunk -eq $c599aChunkId) { & $c599aChunkMutate $c } } }
+}
+
+function Update-C599ARosterRow {
+    param($Fx, [string]$Suite, [scriptblock]$Mutate)
+    $c599aRosterId = $Suite; $c599aRosterMutate = $Mutate
+    Update-C599Ledger -Fx $Fx -Ledger { param($l) foreach ($r in @($l.rosters)) { if ([string]$r.suite -eq $c599aRosterId) { & $c599aRosterMutate $r } } }
+}
+
+function Update-C599AGreen {
+    param($Fx, [scriptblock]$Mutate)
+    Update-C599Json -Path (Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $Fx.ReleaseRoot -CandidateId $CandidateId) 'complete-green.json') -Mutate $Mutate
+}
+
+function Get-C599ABasePolicyBytes {
+    <#
+      The live policy (schema, suites, profiles and the exact eight-suite rc set)
+      with its rc exclusions pruned to the two that name fixture classes, hash
+      restated. Pinned-exclusion handling is still exercised; the pruning only keeps
+      the per-variant canonical hashing inside the harness child time limit.
+    #>
+    if ($null -eq $script:C599ABasePolicy) {
+        $obj = Get-Content -LiteralPath $script:C599RepoPolicyPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $obj.profiles.rc.exclusions = @($obj.profiles.rc.exclusions | Where-Object { @('ClaudeAdapterIntegrationTests', 'DelegationPipelineE2ETests') -contains [string]$_.class })
+        $obj.policyHash = (Get-NightlyPolicyHash -Object $obj)
+        $script:C599ABasePolicy = [System.Text.Encoding]::UTF8.GetBytes(($obj | ConvertTo-Json -Depth 20))
+    }
+    return $script:C599ABasePolicy
+}
+
+function New-C599APolicyBytes {
+    # The C599A base policy with one edit and its canonical hash restated (unless -StaleHash).
+    param([scriptblock]$Edit = $null, [switch]$StaleHash)
+    $obj = [System.Text.Encoding]::UTF8.GetString((Get-C599ABasePolicyBytes)) | ConvertFrom-Json
+    if ($Edit) { & $Edit $obj }
+    $obj.policyHash = (Get-NightlyPolicyHash -Object $obj)
+    if ($StaleHash) { $obj.policyHash = ('0' * 64) }
+    return [System.Text.Encoding]::UTF8.GetBytes(($obj | ConvertTo-Json -Depth 20))
+}
+
+function Set-C599APinnedPolicy {
+    <#
+      Commit PolicyBytes on the real checkout and re-pin the whole candidate to that
+      commit: journal, green, remote, authority blob identity/digests/hash, private
+      copy, plan, ledger and every chunk/roster row. Only the policy content differs.
+    #>
+    param($Fx, [byte[]]$PolicyBytes)
+    [System.IO.File]::WriteAllBytes((Join-Path $Fx.Checkout (Join-Path 'tests' 'test-execution-policy.json')), $PolicyBytes)
+    [void](Invoke-C599RealGit -Repo $Fx.Checkout -Arguments @('add', '--', 'tests/test-execution-policy.json'))
+    [void](Invoke-C599RealGit -Repo $Fx.Checkout -Arguments @('-c', 'user.name=c599', '-c', 'user.email=c599@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'repin'))
+    $pinSha = Invoke-C599RealGit -Repo $Fx.Checkout -Arguments @('rev-parse', 'HEAD')
+    $pinHash = ''
+    try { $pinHash = Get-NightlyPolicyHash -Object ([System.Text.Encoding]::UTF8.GetString($PolicyBytes) | ConvertFrom-Json) } catch { $pinHash = ('0' * 64) }
+    $croot = Get-ReleaseGateCandidateRoot -ReleaseRoot $Fx.ReleaseRoot -CandidateId $CandidateId
+    [System.IO.File]::WriteAllBytes((Join-Path (Get-C599AuthorityDir -Fx $Fx) 'policy.json'), $PolicyBytes)
+    Update-C599Json -Path (Join-Path $croot 'candidate.json') -Mutate { param($c) $c.sha = $pinSha }
+    Update-C599AGreen -Fx $Fx -Mutate { param($g) $g.sha = $pinSha; $g.expectedSha = $pinSha; $g.policyHash = $pinHash }
+    Write-NightlyAtomicJson -Path $Fx.Git.RemotePath -Object ([ordered]@{ ('release_rc_20260923T083000Z') = $pinSha })
+    Update-C599Json -Path (Join-Path (Get-C599AuthorityDir -Fx $Fx) 'authority.json') -Mutate {
+        param($a)
+        $a.sha = $pinSha
+        $a.policyBlobId = (Get-ReleaseAuthorityGitBlobId -Bytes $PolicyBytes)
+        $a.policyRawSha256 = (Get-ReleaseAuthorityBytesSha256 -Bytes $PolicyBytes)
+        $a.policyHash = $pinHash
+    }
+    $pinDigest = Get-NightlyFileSha256 -Path (Join-Path (Get-C599AuthorityDir -Fx $Fx) 'authority.json')
+    Update-C599Ledger -Fx $Fx -Plan { param($p) $p.sha = $pinSha; $p.authorityDigest = $pinDigest } -Ledger {
+        param($l)
+        $l.sha = $pinSha; $l.authorityDigest = $pinDigest
+        foreach ($c in @($l.chunks)) { $c.sha = $pinSha }
+        foreach ($r in @($l.rosters)) { $r.sha = $pinSha }
+    }
+}
+
+function New-C599AEvidenceLink {
+    # A directory link inside the candidate root pointing outside it: a junction on
+    # Windows (no privilege needed), a symbolic link elsewhere.
+    param([string]$Link, [string]$Target)
+    if ($IsWindows -or $env:OS -eq 'Windows_NT') { New-Item -ItemType Junction -Path $Link -Target $Target | Out-Null }
+    else { New-Item -ItemType SymbolicLink -Path $Link -Target $Target | Out-Null }
+}
+
+function Remove-C599AEvidenceLink {
+    param([string]$Link)
+    if (Test-Path -LiteralPath $Link) { [System.IO.Directory]::Delete($Link, $false) }
+}
+
+function Test-C599A_PinnedPolicy {
+    # V-12 full matrix for the pinned policy, first child (G-224, G-225, G-285,
+    # G-286, -WhatIf). Summary/report and working tree never decide.
+    $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
+    $snap = Save-C599ASnapshot -Fx $fx
+    $croot = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId
+    $eight = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging', 'client', 'scripts', 'e2e')
+    $control = Get-C599AGate -Fx $fx
+    Assert-C487 -Cond ($control.Ok -and @($control.Suites).Count -eq 8) -Name 'C599 V-12: the valid eight-suite control passes the publication gate' -Detail (@($control.Reasons) -join ' ')
+
+    # G-224: each suite removed from a plan, ledger and summary that all agree still
+    # refuses, because the pinned blob names the eight.
+    $m = @()
+    foreach ($sid in $eight) {
+        $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label ('drop ' + $sid) -Expect @('required-suite-missing:' + $sid) -Mutate {
+            Update-C599Ledger -Fx $fx -Plan { param($p) $p.suites = @($p.suites | Where-Object { [string]$_.id -ne $sid }) } -Ledger {
+                param($l)
+                $l.chunks = @($l.chunks | Where-Object { [string]$_.suite -ne $sid })
+                $l.rosters = @($l.rosters | Where-Object { [string]$_.suite -ne $sid })
+            }
+            Update-C599Json -Path (Join-Path $croot 'summary.json') -Mutate { param($s) $s.requiredSuites = @($eight | Where-Object { $_ -ne $sid }) }
+        }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'extra plan suite' -Expect @('plan-suite-unexpected:extra') -Mutate {
+        Update-C599Ledger -Fx $fx -Plan { param($p) $p.suites = @($p.suites) + @([pscustomobject]@{ id = 'extra'; kind = 'roster'; entries = @('x') }) }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher drop client' -Publish -Expect @('required-suite-missing:client') -Mutate {
+        Update-C599Ledger -Fx $fx -Plan { param($p) $p.suites = @($p.suites | Where-Object { [string]$_.id -ne 'client' }) } -Ledger {
+            param($l) $l.rosters = @($l.rosters | Where-Object { [string]$_.suite -ne 'client' }) }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher legacy RequiredSuites seven' -Publish -Expect @('required-suites-mismatch') `
+        -Extra @{ RequiredSuites = @($eight | Where-Object { $_ -ne 'e2e' }) } -Mutate { }
+    Assert-C599AMatrix -Name 'C599 G-224: each of the eight pinned suites missing from an agreeing report refuses with zero remote writes' -Results $m
+
+    # G-225: no ExpectedPolicyHash is supplied; the pinned hash is still required.
+    $m = @()
+    foreach ($v in @(@{ l = 'zeros'; set = $true; val = ('0' * 64) }, @{ l = 'absent'; set = $false }, @{ l = 'null'; set = $true; val = $null }, @{ l = 'number'; set = $true; val = 7 })) {
+        $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label ('authority policyHash ' + $v.l) -Expect @('policy-hash-mismatch') -Mutate {
+            Update-C599AAuthority -Fx $fx -Mutate { param($a) if ($v.set) { Set-C599AField $a 'policyHash' $v.val } else { $a.PSObject.Properties.Remove('policyHash') } }
+        }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'green policyHash foreign' -Expect @('green-policy-hash-mismatch') -Mutate {
+        Update-C599AGreen -Fx $fx -Mutate { param($g) $g.policyHash = ('0' * 64) }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'pinned blob states a stale hash' -Expect @('policy-hash-stale') -Mutate {
+        Set-C599APinnedPolicy -Fx $fx -PolicyBytes (New-C599APolicyBytes -StaleHash)
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher absent authority hash' -Publish -Expect @('policy-hash-mismatch') -Mutate {
+        Update-C599AAuthority -Fx $fx -Mutate { param($a) $a.PSObject.Properties.Remove('policyHash') }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher legacy ExpectedPolicyHash foreign' -Publish -Expect @('policy-hash-mismatch') `
+        -Extra @{ ExpectedPolicyHash = ('f' * 64) } -Mutate { }
+    Assert-C599AMatrix -Name 'C599 G-225: a wrong, absent, null or mistyped pinned hash blocks before any remote write' -Results $m
+
+    # G-285: the blob at the pinned commit decides; the private copy and the working tree do not.
+    $sevenBytes = New-C599APolicyBytes -Edit { param($o) $o.profiles.rc.requiredSuites = @($eight | Where-Object { $_ -ne 'e2e' }) }
+    $m = @()
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'private copy edited' -Expect @('policy-copy-mismatch') -Mutate {
+        [System.IO.File]::WriteAllBytes((Join-Path (Get-C599AuthorityDir -Fx $fx) 'policy.json'), $sevenBytes)
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'seven-suite working tree with seven-suite ledger' -Expect @('required-suite-missing:e2e') -Mutate {
+        [System.IO.File]::WriteAllBytes((Join-Path $fx.Checkout (Join-Path 'tests' 'test-execution-policy.json')), $sevenBytes)
+        Update-C599Ledger -Fx $fx -Plan { param($p) $p.suites = @($p.suites | Where-Object { [string]$_.id -ne 'e2e' }) } -Ledger {
+            param($l) $l.chunks = @($l.chunks | Where-Object { [string]$_.suite -ne 'e2e' }) }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher private copy edited' -Publish -Expect @('policy-copy-mismatch') -Mutate {
+        [System.IO.File]::WriteAllBytes((Join-Path (Get-C599AuthorityDir -Fx $fx) 'policy.json'), $sevenBytes)
+    }
+    Assert-C599AMatrix -Name 'C599 G-285: an edited private copy or working-tree policy cannot replace the pinned blob' -Results $m
+
+    # G-286: the pinned blob itself must be schema 2 with the full rc profile. Each
+    # variant re-pins the whole candidate to a real commit holding that blob.
+    Restore-C599ASnapshot -Snap $snap
+    Set-C599APinnedPolicy -Fx $fx -PolicyBytes (Get-C599ABasePolicyBytes)
+    $repin = Get-C599AGate -Fx $fx
+    Restore-C599ASnapshot -Snap $snap
+    Assert-C487 -Cond ($repin.Ok) -Name 'C599 G-286: re-pinning the candidate to a new commit with a valid blob is accepted (repin control)' -Detail (@($repin.Reasons) -join ' ')
+    $shapes = @(
+        @{ l = 'schema 3'; t = 'policy-schema-unsupported'; e = { param($o) $o.schemaVersion = 3 } },
+        @{ l = 'schema 1'; t = 'policy-schema-unsupported'; e = { param($o) $o.schemaVersion = 1 } },
+        @{ l = 'schema string'; t = 'policy-schema-unsupported'; e = { param($o) $o.schemaVersion = '2' } },
+        @{ l = 'schema absent'; t = 'policy-schema-unsupported'; e = { param($o) $o.PSObject.Properties.Remove('schemaVersion') } },
+        @{ l = 'profiles absent'; t = 'policy-rc-profile-missing'; e = { param($o) $o.PSObject.Properties.Remove('profiles') } },
+        @{ l = 'rc absent'; t = 'policy-rc-profile-missing'; e = { param($o) $o.profiles.PSObject.Properties.Remove('rc') } },
+        @{ l = 'rc empty'; t = 'policy-rc-profile-missing'; e = { param($o) $o.profiles.rc.requiredSuites = @() } },
+        @{ l = 'unknown rc suite'; t = 'policy-rc-suite-unknown:extra-suite'; e = { param($o) $o.profiles.rc.requiredSuites = @($o.profiles.rc.requiredSuites) + 'extra-suite' } },
+        @{ l = 'undefined suite'; t = 'policy-rc-suite-undefined:messaging'; e = { param($o) $o.suites.PSObject.Properties.Remove('messaging') } }
+    )
+    foreach ($sid in $eight) {
+        $shapes += @{ l = ('rc without ' + $sid); t = ('policy-rc-suite-missing:' + $sid); e = [scriptblock]::Create(('param($o) $o.profiles.rc.requiredSuites = @($o.profiles.rc.requiredSuites | Where-Object {{ $_ -ne ''{0}'' }})' -f $sid)) }
+    }
+    $m = @()
+    foreach ($shape in $shapes) {
+        $bytes = New-C599APolicyBytes -Edit $shape.e
+        $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label $shape.l -Expect @($shape.t) -Mutate { Set-C599APinnedPolicy -Fx $fx -PolicyBytes $bytes }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'unparseable blob' -Expect @('policy-unparseable') -Mutate {
+        Set-C599APinnedPolicy -Fx $fx -PolicyBytes ([System.Text.Encoding]::UTF8.GetBytes('{ not json'))
+    }
+    $bytes = New-C599APolicyBytes -Edit { param($o) $o.schemaVersion = 3 }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher schema 3' -Publish -Expect @('policy-schema-unsupported') -Mutate { Set-C599APinnedPolicy -Fx $fx -PolicyBytes $bytes }
+    $bytes = New-C599APolicyBytes -Edit { param($o) $o.profiles.rc.requiredSuites = @($o.profiles.rc.requiredSuites | Where-Object { $_ -ne 'scripts' }) }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher rc without scripts' -Publish -Expect @('policy-rc-suite-missing:scripts') -Mutate { Set-C599APinnedPolicy -Fx $fx -PolicyBytes $bytes }
+    Assert-C599AMatrix -Name 'C599 G-286: an unknown schema, missing or empty rc profile and each absent suite in the pinned blob refuse' -Results $m
+
+    # -WhatIf validates the full authority but writes no publication authority and nothing remote.
+    Restore-C599ASnapshot -Snap $snap
+    $pubAuthPath = Join-Path (Get-C599AuthorityDir -Fx $fx) 'publication-authority.json'
+    $preview = Invoke-C599Publish -Fx $fx -Extra @{ WhatIf = $true }
+    Assert-C487 -Cond ([int]$preview.ExitCode -eq 0 -and -not [bool]$preview.Published -and -not (Test-Path -LiteralPath $pubAuthPath) -and (Test-C599NoRemoteWrite -Fx $fx)) `
+        -Name 'C599 V-18: -WhatIf passes the gate but writes no publication authority and nothing remote' -Detail ('exit=' + $preview.ExitCode + ' refusal=' + $preview.Refusal + ' file=' + (Test-Path -LiteralPath $pubAuthPath))
+
+    # G-285 publisher control: a seven-suite working tree AND a moved HEAD commit do
+    # not alter the frozen authority; the pinned eight still publish.
+    Restore-C599ASnapshot -Snap $snap
+    $pinnedBlob = Invoke-C599RealGit -Repo $fx.Checkout -Arguments @('rev-parse', ($fx.Head + ':tests/test-execution-policy.json'))
+    [System.IO.File]::WriteAllBytes((Join-Path $fx.Checkout (Join-Path 'tests' 'test-execution-policy.json')), $sevenBytes)
+    [void](Invoke-C599RealGit -Repo $fx.Checkout -Arguments @('-c', 'user.name=c599', '-c', 'user.email=c599@example.invalid', 'commit', '-q', '-a', '-m', 'seven'))
+    [System.IO.File]::WriteAllBytes((Join-Path $fx.Checkout (Join-Path 'tests' 'test-execution-policy.json')), [System.Text.Encoding]::UTF8.GetBytes('{ dirty'))
+    $ok = Invoke-C599Publish -Fx $fx
+    $manifest = Get-Content -LiteralPath (Join-Path $croot 'release-manifest.json') -Raw | ConvertFrom-Json
+    $auth = Get-Content -LiteralPath (Join-Path (Get-C599AuthorityDir -Fx $fx) 'authority.json') -Raw | ConvertFrom-Json
+    $rel = Get-C599Release -Gh $fx.Gh -Tag ([string]$ok.Tag)
+    Assert-C487 -Cond ([bool]$ok.Published -and $null -ne $rel -and -not [bool]$rel.isDraft -and @($manifest.suites).Count -eq 8 -and [string]$auth.policyBlobId -eq $pinnedBlob) `
+        -Name 'C599 G-285: a changed working tree and moved HEAD cannot alter the frozen suite authority' -Detail ([string]$ok.Refusal)
+    $pub = Get-Content -LiteralPath $pubAuthPath -Raw | ConvertFrom-Json
+    $journal = Get-Content -LiteralPath (Join-Path $croot 'publish.json') -Raw | ConvertFrom-Json
+    Assert-C487 -Cond (-not [string]::IsNullOrWhiteSpace([string]$pub.digest) -and [string]$manifest.publicationAuthorityDigest -eq [string]$pub.digest -and [string]$journal.publicationAuthorityDigest -eq [string]$pub.digest -and [string]$pub.inputs.policyBlobId -eq $pinnedBlob) `
+        -Name 'C599 V-18: the frozen publication authority digest is journalled and carried in the manifest' -Detail ([string]$pub.digest)
+}
+
+function Test-C599A_PinnedPolicyFields {
+    # V-12 full matrix, second child of C599A_PinnedPolicy: every frozen authority
+    # field absent, null, mistyped and foreign, each re-bound so it alone differs.
+    $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
+    $snap = Save-C599ASnapshot -Fx $fx
+    $eight = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging', 'client', 'scripts', 'e2e')
+    $control = Get-C599AGate -Fx $fx
+    Assert-C487 -Cond ($control.Ok) -Name 'C599 V-12: the valid authority control passes before the field matrix' -Detail (@($control.Reasons) -join ' ')
+
+    # Every frozen authority field: absent, null, wrong type and wrong identity.
+    $fields = @(
+        @{ n = 'schemaVersion'; t = @('authority-schema'); wt = '1'; fv = 2 },
+        @{ n = 'kind'; t = @('authority-kind'); wt = 7; fv = 'release-candidate' },
+        @{ n = 'profile'; t = @('authority-profile'); wt = 7; fv = 'nightly' },
+        @{ n = 'sha'; t = @('authority-sha'); wt = 7; fv = $ShaC },
+        @{ n = 'candidateId'; t = @('authority-candidate'); wt = 7; fv = 'rc-20260101T000000Z' },
+        @{ n = 'candidateRef'; t = @('authority-candidate-ref'); wt = 7; fv = 'release/rc-20260101T000000Z' },
+        @{ n = 'intentId'; t = @('authority-intent'); wt = 7; fv = 'intent-foreign'; ft = @('plan-intent', 'ledger-intent') },
+        @{ n = 'policyPath'; t = @('authority-policy-path'); wt = 7; fv = 'tests/other-policy.json' },
+        @{ n = 'policyBlobId'; t = @('policy-blob-id-mismatch'); wt = 7; fv = ('1' * 40) },
+        @{ n = 'policyRawSha256'; t = @('policy-raw-digest-mismatch'); wt = 7; fv = ('0' * 64) },
+        @{ n = 'policyHash'; t = @('policy-hash-mismatch'); wt = 7; fv = ('0' * 64) },
+        @{ n = 'requiredSuites'; t = @('authority-suites-mismatch'); wt = 8; fv = @($eight | Where-Object { $_ -ne 'e2e' }) },
+        @{ n = 'exclusions'; t = @('authority-exclusions-mismatch'); wt = 'none'; fv = 'drop-first' },
+        @{ n = 'scriptHashes'; t = @('script-digest-mismatch:lib/release-authority.ps1'); wt = 'x'; fv = 'one-changed' },
+        @{ n = 'createdAt'; t = @('ledger-timestamps'); wt = $true; fv = '2026-09-23T09:00:00Z' }
+    )
+    $m = @()
+    foreach ($f in $fields) {
+        foreach ($kind in @('absent', 'null', 'type', 'foreign')) {
+            $expect = @($f.t)
+            if ($f.n -eq 'intentId' -and ($kind -eq 'type' -or $kind -eq 'foreign')) { $expect = @($f.ft) }
+            $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label ('{0} {1}' -f $f.n, $kind) -Expect $expect -Mutate {
+                Update-C599AAuthority -Fx $fx -Mutate {
+                    param($a)
+                    switch ($kind) {
+                        'absent' { $a.PSObject.Properties.Remove($f.n) }
+                        'null' { Set-C599AField $a $f.n $null }
+                        'type' { Set-C599AField $a $f.n $f.wt }
+                        'foreign' {
+                            if ($f.fv -is [string] -and $f.fv -eq 'drop-first') { $a.exclusions = @($a.exclusions | Select-Object -Skip 1) }
+                            elseif ($f.fv -is [string] -and $f.fv -eq 'one-changed') { $a.scriptHashes.'lib/release-authority.ps1' = ('0' * 64) }
+                            else { Set-C599AField $a $f.n $f.fv }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Assert-C599AMatrix -Name 'C599 V-12: every frozen authority field refuses when absent, null, mistyped or foreign' -Results $m
+}
+
+function Test-C599A_ExecutionLedger {
+    # V-12 full matrix for the frozen plan and full execution ledger, first child
+    # (G-226, G-287..G-295): every chunk, every required expanded UID, exits,
+    # counts, evidence containment and pinned exclusions.
+    $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
+    $snap = Save-C599ASnapshot -Fx $fx
+    $croot = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId
+    $planDoc = Get-Content -LiteralPath (Join-Path (Get-C599AuthorityDir -Fx $fx) 'execution-plan.json') -Raw | ConvertFrom-Json
+    $chunks = @()
+    foreach ($s in @($planDoc.suites | Where-Object { [string]$_.kind -eq 'native' })) {
+        foreach ($c in @($s.chunks)) { $chunks += [pscustomobject]@{ Suite = [string]$s.id; Id = [string]$c.id; Uids = @($c.uids | ForEach-Object { [string]$_ }) } }
+    }
+    $uids = @($chunks | ForEach-Object { $_.Uids })
+    $control = Get-C599AGate -Fx $fx
+    Assert-C487 -Cond ($control.Ok -and $chunks.Count -eq 13 -and $uids.Count -eq 19) -Name 'C599 V-12: the valid 13-chunk 19-UID control ledger passes the publication gate' -Detail ((@($control.Reasons) -join ' ') + (' chunks={0} uids={1}' -f $chunks.Count, $uids.Count))
+
+    # G-226: a failed chunk is refused whether its passing sibling runs before or after it.
+    $m = @()
+    foreach ($suiteId in @($chunks | ForEach-Object { $_.Suite } | Select-Object -Unique)) {
+        $own = @($chunks | Where-Object { $_.Suite -eq $suiteId })
+        foreach ($target in @($own[0], $own[$own.Count - 1])) {
+            $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label ('fail ' + $target.Id) -Expect @('uid-not-passed:' + $target.Uids[0]) -Mutate {
+                Set-C599TrxOutcome -Fx $fx -Chunk $target.Id -Uid $target.Uids[0] -Outcome 'Failed'
+            }
+        }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher fail e2e-002' -Publish -Expect @('uid-not-passed:e2e-u3') -Mutate {
+        Set-C599TrxOutcome -Fx $fx -Chunk 'e2e-002' -Uid 'e2e-u3' -Outcome 'Failed'
+    }
+    Assert-C599AMatrix -Name 'C599 G-226: a passing sibling chunk never hides a failed chunk in any suite' -Results $m
+
+    # G-287: evidence must resolve under the candidate root with no link component.
+    $outsideDir = Join-Path $fx.Root 'outside-evidence'
+    $linkPath = Join-Path $croot 'evidence-link'
+    $m = @()
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'parent-relative escape' -Expect @('chunk-evidence-escape:antiphon-001') -Mutate {
+        Copy-Item -LiteralPath (Join-Path $croot (Join-Path 'evidence' 'antiphon-001.trx')) -Destination (Join-Path (Split-Path -Parent $croot) 'outside.trx')
+        Update-C599AChunkRow -Fx $fx -Chunk 'antiphon-001' -Mutate { param($c) $c.trx = '../outside.trx' }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'absolute path' -Expect @('chunk-evidence-escape:antiphon-001') -Mutate {
+        Update-C599AChunkRow -Fx $fx -Chunk 'antiphon-001' -Mutate { param($c) $c.trx = (Join-Path $croot (Join-Path 'evidence' 'antiphon-001.trx')) }
+    }
+    foreach ($via in @('gate', 'publisher')) {
+        $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label ('linked directory ' + $via) -Publish:($via -eq 'publisher') -Expect @('chunk-evidence-escape:antiphon-001') -Mutate {
+            New-Item -ItemType Directory -Path $outsideDir -Force | Out-Null
+            Copy-Item -LiteralPath (Join-Path $croot (Join-Path 'evidence' 'antiphon-001.trx')) -Destination (Join-Path $outsideDir 'antiphon-001.trx') -Force
+            New-C599AEvidenceLink -Link $linkPath -Target $outsideDir
+            Update-C599AChunkRow -Fx $fx -Chunk 'antiphon-001' -Mutate { param($c) $c.trx = 'evidence-link/antiphon-001.trx' }
+        } -Cleanup { Remove-C599AEvidenceLink -Link $linkPath }
+    }
+    Assert-C599AMatrix -Name 'C599 G-287: outside, absolute and reparse-escaped evidence refuses before publication' -Results $m
+
+    # G-288: every required build/prerequisite row.
+    $m = @()
+    foreach ($pre in @('build', 'client-bundle', 'script-census')) {
+        $shapes = @(
+            @{ l = 'exit 1'; t = 'prerequisite-failed'; e = { param($r) $r.exitCode = 1 } },
+            @{ l = 'succeeded false'; t = 'prerequisite-failed'; e = { param($r) $r.succeeded = $false } },
+            @{ l = 'succeeded string'; t = 'prerequisite-failed'; e = { param($r) $r.succeeded = 'true' } },
+            @{ l = 'exit string'; t = 'prerequisite-failed'; e = { param($r) $r.exitCode = '0' } },
+            @{ l = 'exit absent'; t = 'prerequisite-failed'; e = { param($r) $r.PSObject.Properties.Remove('exitCode') } }
+        )
+        foreach ($shape in $shapes) {
+            $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label ('{0} {1}' -f $pre, $shape.l) -Expect @($shape.t + ':' + $pre) -Mutate {
+                Update-C599Ledger -Fx $fx -Ledger { param($l) foreach ($r in @($l.prerequisites)) { if ([string]$r.id -eq $pre) { & $shape.e $r } } }
+            }
+        }
+        $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label ($pre + ' absent') -Expect @('prerequisite-missing:' + $pre) -Mutate {
+            Update-C599Ledger -Fx $fx -Ledger { param($l) $l.prerequisites = @($l.prerequisites | Where-Object { [string]$_.id -ne $pre }) }
+        }
+        $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label ($pre + ' duplicated') -Expect @('prerequisite-missing:' + $pre) -Mutate {
+            Update-C599Ledger -Fx $fx -Ledger { param($l) $l.prerequisites = @($l.prerequisites) + @($l.prerequisites | Where-Object { [string]$_.id -eq $pre }) }
+        }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher script-census exit 1' -Publish -Expect @('prerequisite-failed:script-census') -Mutate {
+        Update-C599Ledger -Fx $fx -Ledger { param($l) foreach ($r in @($l.prerequisites)) { if ([string]$r.id -eq 'script-census') { $r.exitCode = 1 } } }
+    }
+    Assert-C599AMatrix -Name 'C599 G-288: each failed, absent, duplicated or mistyped required prerequisite blocks remote writes' -Results $m
+
+    # G-289: native exit and actual counts, not an all-passed TRX, decide.
+    $m = @()
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'antiphon-001 exit 1' -Expect @('chunk-exit:antiphon-001') -Mutate { Update-C599AChunkRow -Fx $fx -Chunk 'antiphon-001' -Mutate { param($c) $c.exitCode = 1 } }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'e2e-002 exit -1' -Expect @('chunk-exit:e2e-002') -Mutate { Update-C599AChunkRow -Fx $fx -Chunk 'e2e-002' -Mutate { param($c) $c.exitCode = -1 } }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'exit absent' -Expect @('chunk-exit:pty-host-001') -Mutate { Update-C599AChunkRow -Fx $fx -Chunk 'pty-host-001' -Mutate { param($c) $c.PSObject.Properties.Remove('exitCode') } }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'exit string' -Expect @('chunk-exit:agents-pty-002') -Mutate { Update-C599AChunkRow -Fx $fx -Chunk 'agents-pty-002' -Mutate { param($c) $c.exitCode = '0' } }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'zero executions' -Expect @('chunk-zero-executed:messaging-002') -Mutate { Update-C599ATrx -Fx $fx -Chunk 'messaging-002' -Rows { param($rows) @() } }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'roster exit 1' -Expect @('roster-exit:scripts') -Mutate { Update-C599ARosterRow -Fx $fx -Suite 'scripts' -Mutate { param($r) $r.exitCode = 1 } }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'roster exit absent' -Expect @('roster-exit:client') -Mutate { Update-C599ARosterRow -Fx $fx -Suite 'client' -Mutate { param($r) $r.PSObject.Properties.Remove('exitCode') } }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher messaging-002 exit 1' -Publish -Expect @('chunk-exit:messaging-002') -Mutate { Update-C599AChunkRow -Fx $fx -Chunk 'messaging-002' -Mutate { param($c) $c.exitCode = 1 } }
+    Assert-C599AMatrix -Name 'C599 G-289: a nonzero or non-numeric child exit or zero executions blocks despite a passing TRX' -Results $m
+
+    # G-290: exactly the frozen chunk set.
+    $m = @()
+    foreach ($chunk in $chunks) {
+        $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label ('delete ' + $chunk.Id) -Expect @('chunk-missing:' + $chunk.Id) -Mutate {
+            Update-C599Ledger -Fx $fx -Ledger { param($l) $l.chunks = @($l.chunks | Where-Object { [string]$_.chunk -ne $chunk.Id }) }
+        }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'extra ledger chunk' -Expect @('chunk-unexpected:antiphon-099') -Mutate {
+        Update-C599Ledger -Fx $fx -Ledger { param($l) $x = ($l.chunks[0] | ConvertTo-Json -Depth 6 | ConvertFrom-Json); $x.chunk = 'antiphon-099'; $l.chunks = @($l.chunks) + @($x) }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'duplicate ledger chunk' -Expect @('chunk-duplicate:antiphon-001') -Mutate {
+        Update-C599Ledger -Fx $fx -Ledger { param($l) $l.chunks = @($l.chunks) + @($l.chunks | Where-Object { [string]$_.chunk -eq 'antiphon-001' }) }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'plan chunk removed' -Expect @('plan-uid-missing:antiphon-u3', 'chunk-unexpected:antiphon-002') -Mutate {
+        Update-C599Ledger -Fx $fx -Plan { param($p) foreach ($s in @($p.suites)) { if ([string]$s.id -eq 'antiphon') { $s.chunks = @($s.chunks | Where-Object { [string]$_.id -ne 'antiphon-002' }) } } }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'plan chunk added' -Expect @('plan-uid-unexpected:antiphon-u9', 'chunk-missing:antiphon-004') -Mutate {
+        Update-C599Ledger -Fx $fx -Plan { param($p) foreach ($s in @($p.suites)) { if ([string]$s.id -eq 'antiphon') { $s.chunks = @($s.chunks) + @([pscustomobject]@{ id = 'antiphon-004'; classes = @('antiphonDeltaTests'); uids = @('antiphon-u9') }) } } }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher extra ledger chunk' -Publish -Expect @('chunk-unexpected:antiphon-099') -Mutate {
+        Update-C599Ledger -Fx $fx -Ledger { param($l) $x = ($l.chunks[0] | ConvertTo-Json -Depth 6 | ConvertFrom-Json); $x.chunk = 'antiphon-099'; $l.chunks = @($l.chunks) + @($x) }
+    }
+    Assert-C599AMatrix -Name 'C599 G-290: every deleted, extra or duplicated frozen chunk blocks authority' -Results $m
+
+    # G-291: disjoint membership; a duplicate UID is never deduplicated into coverage.
+    $dupSibling = {
+        Update-C599ATrx -Fx $fx -Chunk 'antiphon-002' -Rows { param($rows) @($rows) + @([pscustomobject]@{ Id = 'antiphon-u1'; ClassName = 'antiphonAlphaTests'; MethodName = 'One'; Outcome = 'Passed' }) }
+    }
+    $m = @()
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'duplicate in sibling chunk' -Expect @('uid-wrong-chunk:antiphon-u1') -Mutate $dupSibling
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'duplicate in same chunk' -Expect @('chunk-trx-unreadable:antiphon-001') -Mutate {
+        Update-C599ATrx -Fx $fx -Chunk 'antiphon-001' -Rows { param($rows) @($rows) + @($rows[0]) }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'plan overlap' -Expect @('plan-uid-overlap:antiphon-u1') -Mutate {
+        Update-C599Ledger -Fx $fx -Plan { param($p) foreach ($s in @($p.suites)) { if ([string]$s.id -eq 'antiphon') { foreach ($c in @($s.chunks)) { if ([string]$c.id -eq 'antiphon-002') { $c.uids = @($c.uids) + 'antiphon-u1' } } } } }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher duplicate in sibling chunk' -Publish -Expect @('uid-wrong-chunk:antiphon-u1') -Mutate $dupSibling
+    Assert-C599AMatrix -Name 'C599 G-291: a duplicated UID in a sibling chunk, the same chunk or the plan refuses' -Results $m
+
+    # G-292: every required expanded UID independently, and every non-pass shape.
+    $m = @()
+    foreach ($chunk in $chunks) {
+        foreach ($u in $chunk.Uids) {
+            $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label ('remove ' + $u) -Expect @('uid-missing:' + $u) -Mutate {
+                Update-C599ATrx -Fx $fx -Chunk $chunk.Id -Rows { param($rows) @($rows | Where-Object { $_.Id -ne $u }) }
+            }
+        }
+    }
+    Assert-C599AMatrix -Name 'C599 G-292: each required expanded UID removed from its chunk evidence refuses' -Results $m
+    $m = @()
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'skipped' -Expect @('uid-not-passed:messaging-u2') -Mutate { Set-C599TrxOutcome -Fx $fx -Chunk 'messaging-001' -Uid 'messaging-u2' -Outcome 'NotExecuted' }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'unknown outcome' -Expect @('uid-not-passed:session-runner-u3') -Mutate { Set-C599TrxOutcome -Fx $fx -Chunk 'session-runner-002' -Uid 'session-runner-u3' -Outcome 'Inconclusive' }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'unknown uid' -Expect @('uid-unknown:antiphon-zz') -Mutate {
+        Update-C599ATrx -Fx $fx -Chunk 'antiphon-001' -Rows { param($rows) @($rows) + @([pscustomobject]@{ Id = 'antiphon-zz'; ClassName = 'antiphonAlphaTests'; MethodName = 'Stray'; Outcome = 'Passed' }) }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'stale evidence' -Expect @('chunk-evidence-digest:agents-pty-001') -Mutate {
+        Update-C599ATrx -Fx $fx -Chunk 'agents-pty-001' -KeepBinding -Rows { param($rows) @($rows | ForEach-Object { $_.Outcome = 'Failed'; $_ }) }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'evidence file missing' -Expect @('chunk-evidence-missing:e2e-001') -Mutate {
+        Remove-Item -LiteralPath (Join-Path $croot (Join-Path 'evidence' 'e2e-001.trx')) -Force
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher unknown outcome' -Publish -Expect @('uid-not-passed:pty-host-u1') -Mutate { Set-C599TrxOutcome -Fx $fx -Chunk 'pty-host-001' -Uid 'pty-host-u1' -Outcome 'Inconclusive' }
+    Assert-C599AMatrix -Name 'C599 G-292: skipped, unknown-outcome, unknown-UID, stale and missing evidence refuse' -Results $m
+
+    # G-293: a consistent zero-required suite or empty declared roster never publishes.
+    $m = @()
+    foreach ($suiteId in @($chunks | ForEach-Object { $_.Suite } | Select-Object -Unique)) {
+        $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label ('empty ' + $suiteId) -Expect @('required-uids-empty:' + $suiteId) -Mutate {
+            Update-C599ADiscovery -Fx $fx -Mutate { param($d) Set-C599AField $d.suites $suiteId @() } `
+                -Plan { param($p) foreach ($s in @($p.suites)) { if ([string]$s.id -eq $suiteId) { $s.chunks = @() } } } `
+                -Ledger { param($l) $l.chunks = @($l.chunks | Where-Object { [string]$_.suite -ne $suiteId }) }
+        }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'e2e all excluded' -Expect @('required-uids-empty:e2e') -Mutate {
+        Update-C599ADiscovery -Fx $fx -Mutate { param($d) $d.suites.e2e = @($d.suites.e2e | Where-Object { [string]$_.uid -eq 'e2e-x1' }) } `
+            -Plan { param($p) foreach ($s in @($p.suites)) { if ([string]$s.id -eq 'e2e') { $s.chunks = @() } } } `
+            -Ledger { param($l) $l.chunks = @($l.chunks | Where-Object { [string]$_.suite -ne 'e2e' }) }
+    }
+    foreach ($rid in @('client', 'scripts')) {
+        $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label ('empty roster ' + $rid) -Expect @('roster-empty:' + $rid) -Mutate {
+            Update-C599Ledger -Fx $fx -Plan { param($p) foreach ($s in @($p.suites)) { if ([string]$s.id -eq $rid) { $s.entries = @() } } } `
+                -Ledger { param($l) foreach ($r in @($l.rosters)) { if ([string]$r.suite -eq $rid) { $r.entries = @() } } }
+        }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher empty messaging' -Publish -Expect @('required-uids-empty:messaging') -Mutate {
+        Update-C599ADiscovery -Fx $fx -Mutate { param($d) $d.suites.messaging = @() } `
+            -Plan { param($p) foreach ($s in @($p.suites)) { if ([string]$s.id -eq 'messaging') { $s.chunks = @() } } } `
+            -Ledger { param($l) $l.chunks = @($l.chunks | Where-Object { [string]$_.suite -ne 'messaging' }) }
+    }
+    Assert-C599AMatrix -Name 'C599 G-293: a zero-required suite or empty declared roster cannot publish' -Results $m
+
+    # G-294: counts are recomputed from the raw TRX, never trusted from the ledger.
+    $m = @()
+    foreach ($shape in @(
+            @{ l = 'passed +1'; t = 'chunk-count-passed'; e = { param($c) $c.passed = [int]$c.passed + 1 } },
+            @{ l = 'executed +1'; t = 'chunk-count-executed'; e = { param($c) $c.executed = [int]$c.executed + 1 } },
+            @{ l = 'failed string'; t = 'chunk-count-failed'; e = { param($c) $c.failed = '0' } },
+            @{ l = 'skipped absent'; t = 'chunk-count-skipped'; e = { param($c) $c.PSObject.Properties.Remove('skipped') } })) {
+        $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label $shape.l -Expect @($shape.t + ':antiphon-001') -Mutate { Update-C599AChunkRow -Fx $fx -Chunk 'antiphon-001' -Mutate $shape.e }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher plausible inflated counts' -Publish -Expect @('chunk-count-passed:session-runner-001', 'chunk-count-executed:session-runner-001') -Mutate {
+        Update-C599AChunkRow -Fx $fx -Chunk 'session-runner-001' -Mutate { param($c) $c.passed = [int]$c.passed + 1; $c.executed = [int]$c.executed + 1 }
+    }
+    Assert-C599AMatrix -Name 'C599 G-294: inflated or mistyped ledger counts refuse against the recomputed TRX' -Results $m
+
+    # G-295: exclusions come from the pinned blob; a post-result edit cannot drop a failed UID.
+    $gammaExclusion = [pscustomobject]@{ suite = 'antiphon'; class = 'antiphonGammaTests'; reason = 'post-result edit'; owner = 'CARD-0599' }
+    $excludedBytes = New-C599APolicyBytes -Edit { param($o) $o.profiles.rc.exclusions = @($o.profiles.rc.exclusions) + @($gammaExclusion) }
+    $failGamma = { Set-C599TrxOutcome -Fx $fx -Chunk 'antiphon-003' -Uid 'antiphon-u4' -Outcome 'Failed' }
+    $m = @()
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'authority exclusions edited' -Expect @('authority-exclusions-mismatch') -Mutate {
+        & $failGamma
+        Update-C599AAuthority -Fx $fx -Mutate { param($a) $a.exclusions = @($a.exclusions) + @($gammaExclusion) }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'working-tree policy edited' -Expect @('uid-not-passed:antiphon-u4') -Mutate {
+        & $failGamma
+        [System.IO.File]::WriteAllBytes((Join-Path $fx.Checkout (Join-Path 'tests' 'test-execution-policy.json')), $excludedBytes)
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'private copy edited' -Expect @('policy-copy-mismatch', 'uid-not-passed:antiphon-u4') -Mutate {
+        & $failGamma
+        [System.IO.File]::WriteAllBytes((Join-Path (Get-C599AuthorityDir -Fx $fx) 'policy.json'), $excludedBytes)
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'summary exclusions edited' -Expect @('uid-not-passed:antiphon-u4') -Mutate {
+        & $failGamma
+        Update-C599Json -Path (Join-Path $croot 'summary.json') -Mutate { param($s) foreach ($r in @($s.suites)) { Set-C599AField $r 'exclusions' @($gammaExclusion) } }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher authority exclusions edited' -Publish -Expect @('authority-exclusions-mismatch') -Mutate {
+        & $failGamma
+        Update-C599AAuthority -Fx $fx -Mutate { param($a) $a.exclusions = @($a.exclusions) + @($gammaExclusion) }
+    }
+    Assert-C599AMatrix -Name 'C599 G-295: a post-result exclusion edit cannot remove a failed UID' -Results $m
+}
+
+function Test-C599A_ExecutionLedgerJoins {
+    # V-12 full matrix, second child of C599A_ExecutionLedger: identity joins,
+    # digests, timestamps, whole-run markers, credit flags and declared rosters.
+    $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
+    $snap = Save-C599ASnapshot -Fx $fx
+    $croot = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId
+    $planDoc = Get-Content -LiteralPath (Join-Path (Get-C599AuthorityDir -Fx $fx) 'execution-plan.json') -Raw | ConvertFrom-Json
+    $chunks = @()
+    foreach ($s in @($planDoc.suites | Where-Object { [string]$_.kind -eq 'native' })) {
+        foreach ($c in @($s.chunks)) { $chunks += [pscustomobject]@{ Suite = [string]$s.id; Id = [string]$c.id; Uids = @($c.uids | ForEach-Object { [string]$_ }) } }
+    }
+    $uids = @($chunks | ForEach-Object { $_.Uids })
+    $control = Get-C599AGate -Fx $fx
+    Assert-C487 -Cond ($control.Ok -and $chunks.Count -eq 13 -and $uids.Count -eq 19) -Name 'C599 V-12: the valid 13-chunk 19-UID control ledger passes the publication gate' -Detail ((@($control.Reasons) -join ' ') + (' chunks={0} uids={1}' -f $chunks.Count, $uids.Count))
+
+    # G-296..G-299: every record joins the same intent, candidate, full SHA and RunId.
+    $short = $fx.Head.Substring(0, 12)
+    $joins = @(
+        @{ g = 'G-296'; name = 'intent'; rows = @(
+            @{ l = 'plan'; t = @('plan-intent'); e = { Update-C599Ledger -Fx $fx -Plan { param($p) $p.intentId = 'intent-foreign' } } },
+            @{ l = 'ledger'; t = @('ledger-intent'); e = { Update-C599Ledger -Fx $fx -Ledger { param($l) $l.intentId = 'intent-foreign' } } },
+            @{ l = 'chunk'; t = @('chunk-intent:e2e-001'); e = { Update-C599AChunkRow -Fx $fx -Chunk 'e2e-001' -Mutate { param($c) $c.intentId = 'intent-foreign' } } },
+            @{ l = 'roster'; t = @('roster-identity:scripts'); e = { Update-C599ARosterRow -Fx $fx -Suite 'scripts' -Mutate { param($r) $r.intentId = 'intent-foreign' } } },
+            @{ l = 'publisher chunk'; p = $true; t = @('chunk-intent:agents-pty-002'); e = { Update-C599AChunkRow -Fx $fx -Chunk 'agents-pty-002' -Mutate { param($c) $c.intentId = 'intent-foreign' } } }) },
+        @{ g = 'G-297'; name = 'candidate'; rows = @(
+            @{ l = 'plan'; t = @('plan-candidate'); e = { Update-C599Ledger -Fx $fx -Plan { param($p) $p.candidateId = 'rc-20260101T000000Z' } } },
+            @{ l = 'ledger'; t = @('ledger-candidate'); e = { Update-C599Ledger -Fx $fx -Ledger { param($l) $l.candidateId = 'rc-20260101T000000Z' } } },
+            @{ l = 'ledger ref'; t = @('ledger-candidate-ref'); e = { Update-C599Ledger -Fx $fx -Ledger { param($l) $l.candidateRef = 'release/rc-20260101T000000Z' } } },
+            @{ l = 'chunk'; t = @('chunk-candidate:pty-host-002'); e = { Update-C599AChunkRow -Fx $fx -Chunk 'pty-host-002' -Mutate { param($c) $c.candidateId = 'rc-20260101T000000Z' } } },
+            @{ l = 'roster'; t = @('roster-identity:client'); e = { Update-C599ARosterRow -Fx $fx -Suite 'client' -Mutate { param($r) $r.candidateId = 'rc-20260101T000000Z' } } },
+            @{ l = 'publisher ledger ref'; p = $true; t = @('ledger-candidate-ref'); e = { Update-C599Ledger -Fx $fx -Ledger { param($l) $l.candidateRef = 'release/rc-20260101T000000Z' } } }) },
+        @{ g = 'G-298'; name = 'full SHA'; rows = @(
+            @{ l = 'plan'; t = @('plan-sha'); e = { Update-C599Ledger -Fx $fx -Plan { param($p) $p.sha = $ShaC } } },
+            @{ l = 'ledger foreign'; t = @('ledger-sha'); e = { Update-C599Ledger -Fx $fx -Ledger { param($l) $l.sha = $ShaC } } },
+            @{ l = 'ledger abbreviated'; t = @('ledger-sha'); e = { Update-C599Ledger -Fx $fx -Ledger { param($l) $l.sha = $short } } },
+            @{ l = 'chunk foreign'; t = @('chunk-sha:messaging-001'); e = { Update-C599AChunkRow -Fx $fx -Chunk 'messaging-001' -Mutate { param($c) $c.sha = $ShaC } } },
+            @{ l = 'roster'; t = @('roster-identity:scripts'); e = { Update-C599ARosterRow -Fx $fx -Suite 'scripts' -Mutate { param($r) $r.sha = $short } } },
+            @{ l = 'publisher chunk abbreviated'; p = $true; t = @('chunk-sha:antiphon-002'); e = { Update-C599AChunkRow -Fx $fx -Chunk 'antiphon-002' -Mutate { param($c) $c.sha = $short } } }) },
+        @{ g = 'G-299'; name = 'native RunId'; rows = @(
+            @{ l = 'ledger'; t = @('ledger-run'); e = { Update-C599Ledger -Fx $fx -Ledger { param($l) $l.runId = 'rc-run-foreign' } } },
+            @{ l = 'chunk'; t = @('chunk-run:session-runner-002'); e = { Update-C599AChunkRow -Fx $fx -Chunk 'session-runner-002' -Mutate { param($c) $c.runId = 'rc-run-foreign' } } },
+            @{ l = 'roster'; t = @('roster-identity:client'); e = { Update-C599ARosterRow -Fx $fx -Suite 'client' -Mutate { param($r) $r.runId = 'rc-run-foreign' } } },
+            @{ l = 'green'; t = @('ledger-run', 'chunk-run:antiphon-001'); e = { Update-C599AGreen -Fx $fx -Mutate { param($g) $g.runId = 'rc-run-foreign' } } },
+            @{ l = 'publisher chunk'; p = $true; t = @('chunk-run:e2e-002'); e = { Update-C599AChunkRow -Fx $fx -Chunk 'e2e-002' -Mutate { param($c) $c.runId = 'rc-run-foreign' } } }) }
+    )
+    foreach ($join in $joins) {
+        $m = @()
+        foreach ($row in $join.rows) {
+            $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label $row.l -Publish:([bool]$row.p) -Expect $row.t -Mutate $row.e
+        }
+        Assert-C599AMatrix -Name ('C599 {0}: foreign {1} evidence on the plan, ledger, a chunk or a roster refuses' -f $join.g, $join.name) -Results $m
+    }
+
+    # G-300: the authority, plan, discovery and every executable script digest bind.
+    $m = @()
+    foreach ($scriptRel in @('publish-release.ps1', 'lib/release-gate.ps1', 'lib/release-authority.ps1', 'lib/nightly-policy.ps1', 'lib/nightly-coverage.ps1', 'lib/nightly-common.ps1')) {
+        $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label ('script ' + $scriptRel) -Expect @('script-digest-mismatch:' + $scriptRel) -Mutate {
+            Update-C599AAuthority -Fx $fx -Mutate { param($a) $a.scriptHashes.$scriptRel = ('0' * 64) }
+        }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'authority changed without re-binding' -Expect @('plan-authority-digest', 'ledger-authority-digest') -Mutate {
+        Update-C599Json -Path (Join-Path (Get-C599AuthorityDir -Fx $fx) 'authority.json') -Mutate { param($a) $a.coordinatorVersion = 'c599-other' }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'plan digest' -Expect @('ledger-plan-digest') -Mutate {
+        Update-C599Ledger -Fx $fx -Ledger { param($l) $l.executionPlanDigest = ('0' * 64) }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'discovery changed without re-binding' -Expect @('plan-discovery-digest') -Mutate {
+        Update-C599Json -Path (Join-Path (Get-C599AuthorityDir -Fx $fx) 'discovery.json') -Mutate {
+            param($d) $d.suites.antiphon = @($d.suites.antiphon) + @([pscustomobject]@{ uid = 'antiphon-x2'; class = 'ClaudeAdapterIntegrationTests'; method = 'Other' }) }
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher script digest' -Publish -Expect @('script-digest-mismatch:publish-release.ps1') -Mutate {
+        Update-C599AAuthority -Fx $fx -Mutate { param($a) $a.scriptHashes.'publish-release.ps1' = ('0' * 64) }
+    }
+    Assert-C599AMatrix -Name 'C599 G-300: a modified script, authority, plan or discovery digest blocks publication' -Results $m
+
+    # G-301: authority <= run start <= every chunk/roster window <= run end.
+    $m = @()
+    foreach ($shape in @(
+            @{ l = 'chunk end before start'; t = 'chunk-timestamps:antiphon-002'; e = { Update-C599AChunkRow -Fx $fx -Chunk 'antiphon-002' -Mutate { param($c) $c.completedAt = '2026-09-23T08:30:59Z' } } },
+            @{ l = 'chunk before run'; t = 'chunk-timestamps:antiphon-001'; e = { Update-C599AChunkRow -Fx $fx -Chunk 'antiphon-001' -Mutate { param($c) $c.startedAt = '2026-09-23T08:30:40Z' } } },
+            @{ l = 'chunk after run'; t = 'chunk-timestamps:e2e-002'; e = { Update-C599AChunkRow -Fx $fx -Chunk 'e2e-002' -Mutate { param($c) $c.completedAt = '2026-09-23T09:51:00Z' } } },
+            @{ l = 'chunk unparseable'; t = 'chunk-timestamps:messaging-001'; e = { Update-C599AChunkRow -Fx $fx -Chunk 'messaging-001' -Mutate { param($c) $c.startedAt = 'yesterday' } } },
+            @{ l = 'run before authority'; t = 'ledger-timestamps'; e = { Update-C599Ledger -Fx $fx -Ledger { param($l) $l.startedAt = '2026-09-22T08:31:00Z' } } },
+            @{ l = 'run end equals start'; t = 'ledger-timestamps'; e = { Update-C599Ledger -Fx $fx -Ledger { param($l) $l.completedAt = $l.startedAt } } },
+            @{ l = 'run start absent'; t = 'ledger-timestamps'; e = { Update-C599Ledger -Fx $fx -Ledger { param($l) $l.PSObject.Properties.Remove('startedAt') } } },
+            @{ l = 'roster end before start'; t = 'roster-timestamps:client'; e = { Update-C599ARosterRow -Fx $fx -Suite 'client' -Mutate { param($r) $r.completedAt = '2026-09-23T09:29:00Z' } } })) {
+        $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label $shape.l -Expect @($shape.t) -Mutate $shape.e
+    }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher chunk end before start' -Publish -Expect @('chunk-timestamps:pty-host-001') -Mutate {
+        Update-C599AChunkRow -Fx $fx -Chunk 'pty-host-001' -Mutate { param($c) $c.completedAt = '2026-09-23T08:31:00Z' }
+    }
+    Assert-C599AMatrix -Name 'C599 G-301: out-of-order or stale evidence timestamps refuse' -Results $m
+
+    # G-302..G-305 and report acceptance: whole-run markers are real booleans / exact values.
+    $markers = @(
+        @{ n = 'C599 G-302: a missing, false, string or numeric teardown cannot publish'; f = 'teardownSucceeded'; t = 'teardown-not-succeeded'; values = @('absent', $false, 'true', 1); pv = $false },
+        @{ n = 'C599 G-303: a seam-driven ledger or run creates no release'; f = 'seamed'; t = 'ledger-seamed'; values = @('absent', $true, 'false'); pv = $true; g = 'seamed'; gt = 'seam-driven-run' },
+        @{ n = 'C599 G-304: a NoReport ledger or run creates no release'; f = 'noReport'; t = 'ledger-no-report'; values = @('absent', $true, 'false'); pv = $true; g = 'noReport'; gt = 'no-report-run' },
+        @{ n = 'C599 G-305: subset and diagnostic ledgers or runs create no release'; f = 'selection'; t = 'ledger-selection'; values = @('absent', 'subset', 'diagnostic', 'Full'); pv = 'subset'; g = 'diagnostic'; gt = 'diagnostic-run'; f2 = 'diagnostic'; t2 = 'ledger-diagnostic' },
+        @{ n = 'C599 V-12: a missing, false or string pre-publish report acceptance cannot publish'; f = 'reportAccepted'; t = 'ledger-report-not-accepted'; values = @('absent', $false, 'true'); pv = 'true' }
+    )
+    foreach ($mk in $markers) {
+        $m = @()
+        $fields = @(@{ f = $mk.f; t = $mk.t; values = $mk.values })
+        if ($mk.f2) { $fields += @{ f = $mk.f2; t = $mk.t2; values = @('absent', $true, 'false') } }
+        foreach ($fd in $fields) {
+            foreach ($val in $fd.values) {
+                $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label ('{0}={1}' -f $fd.f, $val) -Expect @($fd.t) -Mutate {
+                    Update-C599Ledger -Fx $fx -Ledger { param($l) if ($val -is [string] -and $val -eq 'absent') { $l.PSObject.Properties.Remove($fd.f) } else { Set-C599AField $l $fd.f $val } }
+                }
+            }
+        }
+        if ($mk.g) {
+            $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label ('green ' + $mk.g) -Expect @($mk.gt) -Mutate { Update-C599AGreen -Fx $fx -Mutate { param($g) Set-C599AField $g $mk.g $true } }
+        }
+        $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label ('publisher ' + $mk.f) -Publish -Expect @($mk.t) -Mutate {
+            Update-C599Ledger -Fx $fx -Ledger { param($l) Set-C599AField $l $mk.f $mk.pv }
+        }
+        Assert-C599AMatrix -Name $mk.n -Results $m
+    }
+
+    # G-387..G-389: complete-green credit flags are real booleans only.
+    foreach ($flag in @(@{ g = 'G-387'; f = 'coverageComplete' }, @{ g = 'G-388'; f = 'testsPassed' }, @{ g = 'G-389'; f = 'reportDelivered' })) {
+        $m = @()
+        foreach ($val in @('true', $false, 'absent', 1)) {
+            $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label ('{0}={1}' -f $flag.f, $val) -Expect @('not-rc-complete-green', ('not-true-boolean:' + $flag.f)) -Mutate {
+                Update-C599AGreen -Fx $fx -Mutate { param($g) if ($val -is [string] -and $val -eq 'absent') { $g.PSObject.Properties.Remove($flag.f) } else { Set-C599AField $g $flag.f $val } }
+            }
+        }
+        $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label ('publisher string ' + $flag.f) -Publish -Expect @('not-rc-complete-green') -Mutate {
+            Update-C599AGreen -Fx $fx -Mutate { param($g) Set-C599AField $g $flag.f 'true' }
+        }
+        Assert-C599AMatrix -Name ('C599 {0}: a string or non-true {1} flag cannot publish' -f $flag.g, $flag.f) -Results $m
+    }
+
+    # Client and script evidence validate by their own declared rosters.
+    $m = @()
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'roster entry missing' -Expect @('roster-entry-missing:scripts:test-nightly.ps1') -Mutate {
+        Update-C599ARosterRow -Fx $fx -Suite 'scripts' -Mutate { param($r) $r.entries = @($r.entries | Where-Object { [string]$_.id -ne 'test-nightly.ps1' }) } }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'roster entry unknown' -Expect @('roster-entry-unknown:client:e2e-invented') -Mutate {
+        Update-C599ARosterRow -Fx $fx -Suite 'client' -Mutate { param($r) $r.entries = @($r.entries) + @([pscustomobject]@{ id = 'e2e-invented'; outcome = 'passed' }) } }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'roster entry duplicate' -Expect @('roster-duplicate:client:lint') -Mutate {
+        Update-C599ARosterRow -Fx $fx -Suite 'client' -Mutate { param($r) $r.entries = @($r.entries) + @($r.entries[0]) } }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'roster entry skipped' -Expect @('roster-entry-not-passed:scripts:test-release-gate.ps1') -Mutate {
+        Update-C599ARosterRow -Fx $fx -Suite 'scripts' -Mutate { param($r) $r.entries[0].outcome = 'skipped' } }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'roster row missing' -Expect @('roster-missing:scripts') -Mutate {
+        Update-C599Ledger -Fx $fx -Ledger { param($l) $l.rosters = @($l.rosters | Where-Object { [string]$_.suite -ne 'scripts' }) } }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher roster entry missing' -Publish -Expect @('roster-entry-missing:client:vitest') -Mutate {
+        Update-C599ARosterRow -Fx $fx -Suite 'client' -Mutate { param($r) $r.entries = @($r.entries | Where-Object { [string]$_.id -ne 'vitest' }) } }
+    Assert-C599AMatrix -Name 'C599 V-12: client and script evidence validate against their own declared rosters' -Results $m
+
+    # The restored control still publishes, with suite counts recomputed from the ledger.
+    Restore-C599ASnapshot -Snap $snap
+    $ok = Invoke-C599Publish -Fx $fx
+    $manifest = Get-Content -LiteralPath (Join-Path $croot 'release-manifest.json') -Raw | ConvertFrom-Json
+    $antiphonRow = @($manifest.suites | Where-Object { [string]$_.id -eq 'antiphon' })[0]
+    $rel = Get-C599Release -Gh $fx.Gh -Tag ([string]$ok.Tag)
+    Assert-C487 -Cond ([bool]$ok.Published -and $null -ne $rel -and -not [bool]$rel.isDraft -and [int]$antiphonRow.chunks -eq 3 -and [int]$antiphonRow.required -eq 4 -and [int]$antiphonRow.executed -eq 4 -and [int]$antiphonRow.passed -eq 4) `
+        -Name 'C599 V-12: the restored control ledger publishes with suite counts recomputed from the evidence' -Detail ([string]$ok.Refusal + ' ' + ($antiphonRow | ConvertTo-Json -Compress))
 }
 
 # ====================================================================== run ===
