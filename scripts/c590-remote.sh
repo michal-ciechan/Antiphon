@@ -116,7 +116,11 @@ ensure_dirs() {
     # sudo at all. Only the host lane's own shell may elevate.
     if [ "$LANE" = "host" ]; then
         sudo -n mkdir -p "$CASE_DIR" /work/repos "$ROOT/secrets" "$ROOT/baseline" "$SERVER2_ROOT/secrets"
-        sudo -n chown -R mc:mc /work "$ROOT" "$SERVER2_ROOT"
+        sudo -n chown -R mc:mc /work "$ROOT"
+        # CARD-0660 (amended): the Codex home under the server2 root belongs to uid 1654 and holds
+        # the runner's live sign-in. Handing it to mc would lock the runner out of it (0700), and
+        # walking it would read its entries, so the reset prunes it: ensure_runner_codex_home owns it.
+        sudo -n find "$SERVER2_ROOT" -path "$CODEX_HOME_PATH" -prune -o -exec chown -h mc:mc {} +
     fi
     mkdir -p "$CASE_DIR" "$EVIDENCE_ROOT"
     cat > /work/test-evidence/current.env <<EOF
@@ -902,6 +906,11 @@ GIT_IDENTITY_PATH="$SERVER2_ROOT/secrets/gitconfig"
 GIT_IDENTITY_DEFAULT_NAME="antiphon-server2-runner"
 GIT_IDENTITY_DEFAULT_EMAIL="antiphon-server2-runner@users.noreply.github.com"
 GIT_IDENTITY_MOUNT="/run/antiphon/gitconfig"
+# CARD-0660 (amended): the runner's Codex home, a DIRECTORY beside the secrets it boots with and
+# bind-mounted read-write at CODEX_HOME. It holds the operator's ChatGPT sign-in, so it belongs to
+# the runner uid at 0700 and nothing here ever reads, lists or copies what is inside it.
+CODEX_HOME_PATH="$SERVER2_ROOT/secrets/codex"
+CODEX_HOME_OWNER="1654:1654"
 # CARD-0631 D-10: the anonymous origin RunnerWorkspaceService clones from.
 RUNNER_CHECKOUT_ORIGIN="https://github.com/michal-ciechan/Antiphon.git"
 RUNNER_CHECKOUT_DEFAULT="/work/repos/antiphon"
@@ -929,6 +938,7 @@ compose_host() {
     PHONE_HOME_SECRET_FILE="$PHONE_HOME_SECRET" \
     CLAUDE_OAUTH_TOKEN_FILE="$CLAUDE_OAUTH_TOKEN_PATH" \
     RUNNER_GIT_IDENTITY_FILE="$GIT_IDENTITY_PATH" \
+    RUNNER_CODEX_HOME_DIR="$CODEX_HOME_PATH" \
     PHONE_HOME_SERVER_ORIGIN="${C604_SERVER_ORIGIN:?}" \
     SOURCE_SHA12="$sha12" \
     SOURCE_REVISION="$SHA" \
@@ -1043,6 +1053,51 @@ ensure_runner_git_identity() {
         || write_result false GitIdentityIncomplete 2
     git config --file "$GIT_IDENTITY_PATH" --get user.email >> "$CASE_DIR/git-identity.txt" 2>> "$CASE_DIR/command.log" \
         || write_result false GitIdentityIncomplete 2
+}
+
+# CARD-0660 (amended). The runner's Codex home is a DIRECTORY on server2, bind-mounted read-write
+# at CODEX_HOME in the runner and at /codex-home in state-init. A directory and never a single
+# file: Codex rewrites its credential file by rename on every token refresh, which a file bind
+# mount cannot survive. It must exist before compose, or Docker would create it root-owned. The
+# host user mc cannot chown to the runner uid, so this is host-lane sudo, like ensure_dirs. A
+# symlink refuses before anything touches the path (a chown or chmod through it would land on its
+# target), and so does anything that is not a directory. Owner and mode are (re)asserted on the
+# directory itself only; its contents are the operator's sign-in and are never read, listed,
+# copied or re-moded. Only presence is evidence.
+ensure_runner_codex_home() {
+    if [ "$LANE" != "host" ]; then
+        write_result false CodexHomeHostLaneOnly 2
+    fi
+    if [ -L "$CODEX_HOME_PATH" ]; then
+        write_result false CodexHomePathIsSymlink 2
+    fi
+    if [ -e "$CODEX_HOME_PATH" ] && [ ! -d "$CODEX_HOME_PATH" ]; then
+        write_result false CodexHomePathIsNotDirectory 2
+    fi
+    if [ ! -e "$CODEX_HOME_PATH" ]; then
+        sudo -n install -d -o "${CODEX_HOME_OWNER%:*}" -g "${CODEX_HOME_OWNER#*:}" -m 0700 "$CODEX_HOME_PATH" 2>> "$CASE_DIR/command.log" || write_result false CodexHomeCreateFailed 2
+        printf 'created\n' > "$CASE_DIR/codex-home-state.txt"
+    else
+        printf 'kept\n' > "$CASE_DIR/codex-home-state.txt"
+    fi
+    # Again after the create: chmod follows a link, so nothing may have swapped the path meanwhile.
+    if [ -L "$CODEX_HOME_PATH" ]; then
+        write_result false CodexHomePathIsSymlink 2
+    fi
+    if [ ! -d "$CODEX_HOME_PATH" ]; then
+        write_result false CodexHomePathIsNotDirectory 2
+    fi
+    { sudo -n chown -h "$CODEX_HOME_OWNER" "$CODEX_HOME_PATH" \
+        && sudo -n chmod 0700 "$CODEX_HOME_PATH"; } 2>> "$CASE_DIR/command.log" \
+        || write_result false CodexHomeOwnershipFailed 2
+    printf 'true\n' > "$CASE_DIR/codex-home-present.txt"
+    if sudo -n test -e "$CODEX_HOME_PATH/auth.json"; then
+        printf 'true\n' > "$CASE_DIR/codex-auth-present.txt"
+    else
+        printf 'false\n' > "$CASE_DIR/codex-auth-present.txt"
+        printf 'WARN CodexAuthAbsent: the runner reports Codex signed out until the operator signs in or migrates the sign-in (docs/docker-stack.md)\n' \
+            | tee -a "$CASE_DIR/command.log" >&2
+    fi
 }
 
 # CARD-0631 D-9 (amended). The mounted file must be the identity uid 1654 actually commits with:
@@ -1169,6 +1224,8 @@ case_deploy_parent() {
     fi
     # CARD-0631: before compose binds it, and before stack.env is rewritten below.
     ensure_runner_git_identity
+    # CARD-0660: before state-init (seed_runner_checkout) or the runner binds it.
+    ensure_runner_codex_home
 
     retire_c590_leftovers
 
@@ -1181,6 +1238,7 @@ ANTIPHON_DEPLOY_KEY_FILE=$DEPLOY_KEY
 PHONE_HOME_SECRET_FILE=$PHONE_HOME_SECRET
 CLAUDE_OAUTH_TOKEN_FILE=$CLAUDE_OAUTH_TOKEN_PATH
 RUNNER_GIT_IDENTITY_FILE=$GIT_IDENTITY_PATH
+RUNNER_CODEX_HOME_DIR=$CODEX_HOME_PATH
 RUNNER_GIT_USER_NAME=$RUNNER_GIT_USER_NAME
 RUNNER_GIT_USER_EMAIL=$RUNNER_GIT_USER_EMAIL
 EOF
@@ -1429,6 +1487,7 @@ case_persistent_restart() {
     # existed would stop here and then fail both the start and the recovery below, so the file is
     # ensured (created when missing, refused when unusable) while the old runner is still up.
     ensure_runner_git_identity
+    ensure_runner_codex_home
 
     compose_host stop >> "$CASE_DIR/command.log" 2>&1 || write_result false StopFailed 2
     if ! compose_host up -d --no-build >> "$CASE_DIR/command.log" 2>&1; then

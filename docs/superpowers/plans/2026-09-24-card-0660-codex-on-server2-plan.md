@@ -67,6 +67,12 @@ changing the scope of a Code round.
   PhoneHomeRunner:ChildCodexHome, all resolve to /state/codex. New typed home
   settings require POSIX absolute paths when enabled. Project CODEX_HOME on every
   Codex launch including boot-wedge relaunch. Reject a desktop home or /tmp home.
+  **Amended 2026-09-24 (operator: "put the codex auth file somewhere in server2 and
+  mount it in"):** the home is no longer /runner-state/codex on the volume. It is the
+  host directory /home/mc/antiphon-server2/secrets/codex (1654:1654, 0700), created by
+  deploy-parent and bind-mounted read-write via RUNNER_CODEX_HOME_DIR at /state/codex in
+  the runner and /codex-home in state-init. The runner path, and so every setting above,
+  is still /state/codex. Identity table and the one-time migration: docs/docker-stack.md.
 - **D-4: Seed config only when absent.** The new non-secret file is mode 0600,
   owner 1654:1654, and contains the settings below. Do not replace an existing
   config or touch auth.json, SQLite stores or sessions. Existing configuration
