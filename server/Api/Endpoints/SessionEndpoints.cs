@@ -115,15 +115,7 @@ public static class SessionEndpoints
             return Results.Ok(await queue.SendNowAsync(id, messageId, cancellationToken));
         });
 
-        // CARD-0650: audited operator release of an expectation-watchdog composer hold. Types nothing.
-        sessions.MapPost("/{id:guid}/expectation-hold/release", async (
-            Guid id,
-            ReleaseExpectationHoldRequest request,
-            SessionMessageQueueService queue,
-            CancellationToken cancellationToken) =>
-        {
-            return Results.Ok(await queue.ReleaseExpectationHoldAsync(id, request.Reason, cancellationToken));
-        });
+        sessions.MapExpectationHoldRelease();
 
         sessions.MapPost("/{id:guid}/resize", async (
             Guid id,
@@ -168,6 +160,17 @@ public static class SessionEndpoints
             return Results.NoContent();
         });
     }
+
+    /// <summary>CARD-0650: audited operator release of an expectation-watchdog composer hold. Types nothing.</summary>
+    public static RouteHandlerBuilder MapExpectationHoldRelease(this IEndpointRouteBuilder sessions) =>
+        sessions.MapPost("/{id:guid}/expectation-hold/release", async (
+            Guid id,
+            ReleaseExpectationHoldRequest request,
+            SessionMessageQueueService queue,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await queue.ReleaseExpectationHoldAsync(id, request.Reason, "operator", cancellationToken));
+        });
 
     private static void ValidateTerminalSize(int cols, int rows)
     {
