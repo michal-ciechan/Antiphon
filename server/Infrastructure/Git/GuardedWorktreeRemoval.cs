@@ -8,7 +8,8 @@ namespace Antiphon.Server.Infrastructure.Git;
 
 /// <summary>One deletion path. Unknown authority, identity, content or I/O preserves residue.</summary>
 public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationLease leases,
-    IWorktreeRemovalEvidence evidence, WorktreeGuardedCleanup? cleanup = null)
+    IWorktreeRemovalEvidence evidence, WorktreeGuardedCleanup? cleanup = null,
+    WorktreeIgnoredContentGate? ignored = null)
 {
     public async Task<WorktreeRemoval> RemoveAsync(WorktreeRemovalRequest request, CancellationToken ct)
     {

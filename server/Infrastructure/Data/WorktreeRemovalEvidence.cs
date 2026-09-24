@@ -159,6 +159,14 @@ public sealed class WorktreeRemovalEvidence(IServiceScopeFactory scopes) : IWork
         return row;
     }
 
+    public async Task<AgentTask?> ReadTaskAsync(Guid taskId, CancellationToken ct)
+    {
+        // Independent context, like ReadAsync: a tracked, unsaved pointer change is not evidence.
+        await using var scope = scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == taskId, ct);
+    }
+
     public async Task<bool> RecordVerificationRemovalStartAsync(WorktreeRemovalRequest request, CancellationToken ct)
     {
         if (await ReadVerificationAsync(request, ct) is null) return false;
