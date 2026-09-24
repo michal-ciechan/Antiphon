@@ -19,7 +19,9 @@ Some endpoints are correspondingly powerful: `GET /api/filesystem/browse` enumer
 directories on the host, and its own source comment says so — *"intended for the single-user
 localhost dev tool only. If Antiphon ever becomes multi-user, gate this behind auth."*
 
-**Do not expose this port beyond localhost or the operator's tailnet.**
+**Do not expose this port beyond localhost or the operator's tailnet.** Operator-only surfaces
+(runner force-release, the Hangfire dashboard) need the operator token whatever the client address:
+every request reaches Kestrel as loopback (CARD-0653, CARD-0658).
 
 ## 1. Base URL and conventions
 
@@ -684,6 +686,8 @@ GET/POST /api/settings/providers/{id}/model-routing   PUT|DELETE /api/settings/m
 GET    /health                               liveness + PostgreSQL
 GET    /api/version                          build-time git SHA (CARD-0179) plus `capabilities` (CARD-0495 `land-v2`); /health stays the literal Healthy body
 POST   /api/diagnostics/bundle               Report-bug zip (application/zip); best-effort members + errors.txt
+POST   /api/operator/dashboard-sessions      one-time Hangfire dashboard login link; needs X-Antiphon-Operator-Token (CARD-0658)
+GET    /api/operator/dashboard-login?nonce=  redeems the link once; sets the /hangfire session cookie, 302 to /hangfire
 ```
 
 `GET /api/attention` includes `CardNeedsDecision` rows for cards currently in the Needs decision

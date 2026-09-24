@@ -471,7 +471,8 @@ logging survives any future turn-down of `Default`. Do not remove that override.
 
 ### Hangfire jobs
 
-In-process Hangfire dashboard: `http://localhost:17202/hangfire` (loopback only). Recurring jobs
+In-process Hangfire dashboard: `http://localhost:17202/hangfire` (operator token; open it with
+`scripts/hangfire-dashboard.ps1`). Recurring jobs
 register at process start when `Hangfire:ServerEnabled` is true. "Trigger now" on the dashboard is
 the one-shot rollout pass.
 
