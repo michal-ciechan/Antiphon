@@ -1,11 +1,13 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -39,7 +41,8 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         ILogger<RemoteWorkspaceService> logger,
         ITaskProgressGit? progressGit = null,
         IRepositoryMutationLease? leases = null,
-        IWorkspaceReservationJournal? reservations = null)
+        IWorkspaceReservationJournal? reservations = null,
+        IOptions<DelegationSettings>? settings = null)
     {
         _runners = runners;
         _git = git;
@@ -54,6 +57,12 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
 
     /// <summary>The clock <see cref="SyncBudget"/> is measured on.</summary>
     public TimeProvider Clock { get; init; } = TimeProvider.System;
+
+    /// <summary>How long a sync waits before asking again for a busy repository lease.</summary>
+    public TimeSpan LeaseRetryInterval { get; init; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>Test seam: called each time the sync finds the repository lease busy.</summary>
+    public Action? LeaseBusyObserved { get; init; }
 
     /// <summary>The mirror directory name for a task: the dispatcher's own short form.</summary>
     public static string MirrorName(Guid taskId) => "task-" + taskId.ToString("N")[..8];

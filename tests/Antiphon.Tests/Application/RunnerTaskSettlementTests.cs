@@ -1,6 +1,8 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
@@ -132,9 +134,9 @@ public sealed class RunnerTaskSettlementTests
         world.Git.Git.Clear();
         var replies = world.Services.GetRequiredService<AgentTaskReplyService>();
 
-        // The evidence names a commit, but origin's tip is a later one: the named commit is not the
-        // pushed tip, so nothing correlates the tip with this task's work.
-        await world.RecoverAsync(new DelegateBindRefusalEvidence([older], null));
+        // The held report names a commit in full, but origin's tip is a later one: the named commit
+        // is not the pushed tip, so nothing correlates the tip with this task's work.
+        await world.RecoverThroughWatchdogAsync($"Implemented and pushed {older}.");
 
         // Blocked with a repair handoff, not Succeeded, and the checkout was never fast-forwarded.
         world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world));
@@ -176,40 +178,62 @@ public sealed class RunnerTaskSettlementTests
     }
 
     [Test]
-    public async Task Bind_refusal_recovery_confirms_a_named_pushed_tip()
+    public async Task Bind_refusal_recovery_confirms_the_pushed_tip_its_held_report_names()
     {
-        // (a) The recovery's git evidence names the pushed tip (abbreviated, as `log --oneline` does);
-        // (b) the recovered transcript's done report names it in full.
-        foreach (var row in new[] { "git-evidence", "reported-transcript" })
+        // D1: the push exists only in the runner's clone and the bare origin, and the full SHA only
+        // in the delegate's own done report as the server received it. The desktop checkout is at
+        // the dispatch base and the desktop's Claude projects root holds no runner transcript, so
+        // neither of the older arms can see the work.
+        await using var world = await RunnerSettlementWorld.CreateAsync();
+        var s = await world.Git.RunnerPushAsync("work.txt", "runner work");
+        (await world.Git.HasObjectAsync(s)).ShouldBeFalse();
+        (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+
+        await world.RecoverThroughWatchdogAsync($"Implemented and pushed {s} to {world.Git.Branch}.");
+
+        // Settled like a correlated report: the own branch's tip is the named commit and descends from B.
+        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world));
+        world.Task.FailureCode.ShouldBeNull();
+        world.Task.NextStage.ShouldNotBe(PipelineHandoffKind.Decide);
+        var progress = world.Evidence().ShouldNotBeNull();
+        progress.Assessment.ShouldBe(CompletionProgressAssessment.ProgressObserved);
+        progress.Sources!.Single(x => x.Assessment == CompletionProgressAssessment.ProgressObserved)
+            .VerifiedSha.ShouldBe(s);
+        progress.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Synchronized);
+        progress.RemoteSync.ConfirmedSha.ShouldBe(s);
+        (await world.Git.HeadAsync()).ShouldBe(s);
+        world.Task.ProgressBaselineJson.ShouldBe(world.Git.Task.ProgressBaselineJson);
+        var events = await world.EventsAsync();
+        events.ShouldContain(e => e.Type == AgentTaskEventType.Merged && e.Detail.Contains(s, StringComparison.Ordinal));
+        events.ShouldNotContain(e => e.Type == AgentTaskEventType.Blocked || e.Type == AgentTaskEventType.Failed);
+        (await world.NoProgressIncidentsAsync()).ShouldBe(0);
+        world.Services.GetRequiredService<RecordingSessionStopper>().Killed.ShouldBeEmpty();
+        var note = await world.NoteAsync();
+        note.ShouldNotBeNull();
+        note!.Body.ShouldContain(s);
+        note.Body.ShouldNotContain("next=decide");
+    }
+
+    [Test]
+    public async Task Bind_refusal_recovery_names_only_full_commit_ids()
+    {
+        // The held report abbreviates the pushed tip (as `git log --oneline` prints it). Only a full
+        // object id names a commit: the tip stays unconfirmed and the checkout untouched.
+        foreach (var length in new[] { 7, 12 })
         {
             await using var world = await RunnerSettlementWorld.CreateAsync();
             var s = await world.Git.RunnerPushAsync("work.txt", "runner work");
-            var evidence = row == "git-evidence"
-                ? new DelegateBindRefusalEvidence([s[..12]], null)
-                : new DelegateBindRefusalEvidence([], world.WriteReportedTranscript($"Implemented and pushed {s}."));
+            world.Git.Git.Clear();
 
-            await world.RecoverAsync(evidence);
+            await world.RecoverThroughWatchdogAsync($"Implemented and pushed {s[..length]}.");
 
-            // Settled like a correlated report: the own branch's tip is the named commit and descends from B.
-            world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, row + ": " + Why(world));
+            var row = "abbreviated to " + length;
+            world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, row + ": " + Why(world));
             world.Task.FailureCode.ShouldBeNull(row);
-            world.Task.NextStage.ShouldNotBe(PipelineHandoffKind.Decide, row);
-            var progress = world.Evidence().ShouldNotBeNull(row);
-            progress.Assessment.ShouldBe(CompletionProgressAssessment.ProgressObserved, row);
-            progress.Sources!.Single(x => x.Assessment == CompletionProgressAssessment.ProgressObserved)
-                .VerifiedSha.ShouldBe(s, row);
-            progress.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Synchronized, row);
-            progress.RemoteSync.ConfirmedSha.ShouldBe(s, row);
-            (await world.Git.HeadAsync()).ShouldBe(s, row);
-            world.Task.ProgressBaselineJson.ShouldBe(world.Git.Task.ProgressBaselineJson, row);
-            var events = await world.EventsAsync();
-            events.ShouldContain(e => e.Type == AgentTaskEventType.Merged && e.Detail.Contains(s, StringComparison.Ordinal), row);
-            events.ShouldNotContain(e => e.Type == AgentTaskEventType.Blocked, row);
-            (await world.NoProgressIncidentsAsync()).ShouldBe(0, row);
-            var note = await world.NoteAsync();
-            note.ShouldNotBeNull(row);
-            note!.Body.ShouldContain(s, Case.Sensitive, row);
-            note.Body.ShouldNotContain("next=decide", Case.Sensitive, row);
+            world.Task.NextStage.ShouldBe(PipelineHandoffKind.Decide, row);
+            world.Git.Git.Commands.ShouldNotContain(x => IsMergeCommand(x), row);
+            (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline, row);
+            (await world.EventsAsync()).ShouldNotContain(e => e.Type == AgentTaskEventType.Merged, row);
         }
     }
 
@@ -227,7 +251,7 @@ public sealed class RunnerTaskSettlementTests
             var stray = await world.Git.RunAsync(world.Git.Runner, "rev-parse", "HEAD");
             await world.Git.RunAsync(world.Git.Runner, "push", "--force", "origin", "HEAD:" + world.Git.FullRef);
 
-            await world.RecoverAsync(new DelegateBindRefusalEvidence([stray], null));
+            await world.RecoverThroughWatchdogAsync($"Pushed {stray}.");
 
             world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world));
             world.Task.FailureCode.ShouldBeNull();
@@ -237,13 +261,13 @@ public sealed class RunnerTaskSettlementTests
             (await world.EventsAsync()).ShouldNotContain(e => e.Type == AgentTaskEventType.Merged);
         }
 
-        // The transcript reported done but named no commit: nothing to confirm, and nothing is fetched.
+        // The held report is done but names no commit: nothing to confirm, and nothing is fetched.
         await using (var world = await RunnerSettlementWorld.CreateAsync())
         {
             var s = await world.Git.RunnerPushAsync("work.txt", "runner work");
             world.Git.Git.Clear();
 
-            await world.RecoverAsync(new DelegateBindRefusalEvidence([], world.WriteReportedTranscript("All done and pushed.")));
+            await world.RecoverThroughWatchdogAsync("All done and pushed.");
 
             world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world));
             world.Task.NextStage.ShouldBe(PipelineHandoffKind.Decide);
@@ -263,39 +287,69 @@ public sealed class RunnerTaskSettlementTests
             await using var world = await RunnerSettlementWorld.CreateAsync(profiled: true);
             var s = await world.Git.RunnerPushAsync("work.txt", "runner work");
 
-            await world.RecoverAsync(new DelegateBindRefusalEvidence(confirm ? [s] : [], null));
+            await world.RecoverThroughWatchdogAsync(confirm ? $"Implemented and pushed {s}." : "Implemented and pushed.");
 
             world.Task.Status.ShouldBe(confirm ? AgentTaskStatus.Succeeded : AgentTaskStatus.Blocked, row + ": " + Why(world));
             var settlement = (await world.EventsAsync()).Single(e =>
                 e.Type == (confirm ? AgentTaskEventType.Completed : AgentTaskEventType.Blocked)
                 && e.Detail == world.Task.Result);
-            var obligation = (await world.ObligationsAsync()).ShouldHaveSingleItem(row);
-            obligation.SourceEventId.ShouldBe(settlement.Id, row);
-            obligation.ParentSessionId.ShouldBe(world.CallerSessionId, row);
-            var snapshot = TaskCompletionNotification.TryReadSnapshot(obligation.CompletionSnapshotJson).ShouldNotBeNull(row);
-            snapshot.TaskId.ShouldBe(world.TaskId, row);
-            snapshot.SourceEventId.ShouldBe(settlement.Id, row);
-            snapshot.Status.ShouldBe(world.Task.Status, row);
-            snapshot.RawResult.ShouldBe(world.Task.Result, row);
-            snapshot.ProfileVersion.ShouldBe(1, row);
-            snapshot.Round.ShouldBe(VerificationRound.Final, row);
-            snapshot.NoteHeader.ShouldContain("verification=Final", Case.Sensitive, row);
-            if (confirm)
-                snapshot.NoteHeader.ShouldNotContain("next=decide", Case.Sensitive, row);
-            else
-            {
-                snapshot.NextStage.ShouldBe("decide", row);
-                snapshot.NoteHeader.ShouldContain("next=decide", Case.Sensitive, row);
-            }
-            obligation.Body.ShouldStartWith(snapshot.NoteHeader, Case.Sensitive, row);
-
-            // Delivered through the outbox, not the legacy direct note.
-            obligation.State.ShouldBe(LandNotificationState.AwaitingReceipt, row);
-            var queued = (await world.QueuedForAsync(obligation.Id)).ShouldNotBeNull(row);
-            queued.AgentSessionId.ShouldBe(world.CallerSessionId, row);
-            queued.Body.ShouldBe(obligation.Body, row);
-            obligation.QueueMessageId.ShouldBe(queued.Id, row);
+            await AssertCompletionObligationAsync(world, settlement, row, decide: !confirm);
         }
+    }
+
+    [Test]
+    public async Task Runner_sync_block_commits_the_completion_obligation()
+    {
+        // The ordinary report path: the lease stays busy for the whole sync budget, so the runner
+        // sync blocks. A profile-v1 task still owes the caller its durable decide completion.
+        await using var world = await RunnerSettlementWorld.CreateAsync(profiled: true, controlledSyncClock: true);
+        await world.Git.RunnerPushAsync("work.txt", "runner work");
+
+        await using (var held = await world.Git.Leases.TryAcquireAsync(world.Git.Desktop, CancellationToken.None))
+        {
+            held.ShouldNotBeNull();
+            var settle = world.SettleAsync(RunnerSettlementWorld.Report("Implemented and pushed."));
+            (await System.Threading.Tasks.Task.WhenAny(world.LeaseBusy.First, settle)).ShouldBe(world.LeaseBusy.First,
+                "the settlement sync must wait for a busy lease within its budget");
+            world.SyncClock!.Advance(TimeSpan.FromSeconds(new DelegationSettings().RunnerSyncBudgetSeconds));
+            await settle;
+        }
+
+        world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world));
+        world.Evidence()!.RemoteSync!.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        var settlement = (await world.EventsAsync()).Single(e => e.Type == AgentTaskEventType.Blocked);
+        await AssertCompletionObligationAsync(world, settlement, "runner sync block", decide: true);
+    }
+
+    private static async Task AssertCompletionObligationAsync(
+        RunnerSettlementWorld world, AgentTaskEvent settlement, string row, bool decide)
+    {
+        var obligation = (await world.ObligationsAsync()).ShouldHaveSingleItem(row);
+        obligation.SourceEventId.ShouldBe(settlement.Id, row);
+        obligation.ParentSessionId.ShouldBe(world.CallerSessionId, row);
+        var snapshot = TaskCompletionNotification.TryReadSnapshot(obligation.CompletionSnapshotJson).ShouldNotBeNull(row);
+        snapshot.TaskId.ShouldBe(world.TaskId, row);
+        snapshot.SourceEventId.ShouldBe(settlement.Id, row);
+        snapshot.Status.ShouldBe(world.Task.Status, row);
+        snapshot.RawResult.ShouldBe(world.Task.Result, row);
+        snapshot.ProfileVersion.ShouldBe(1, row);
+        snapshot.Round.ShouldBe(VerificationRound.Final, row);
+        snapshot.NoteHeader.ShouldContain("verification=Final", Case.Sensitive, row);
+        if (decide)
+        {
+            snapshot.NextStage.ShouldBe("decide", row);
+            snapshot.NoteHeader.ShouldContain("next=decide", Case.Sensitive, row);
+        }
+        else
+            snapshot.NoteHeader.ShouldNotContain("next=decide", Case.Sensitive, row);
+        obligation.Body.ShouldStartWith(snapshot.NoteHeader, Case.Sensitive, row);
+
+        // Delivered through the outbox, not the legacy direct note.
+        obligation.State.ShouldBe(LandNotificationState.AwaitingReceipt, row);
+        var queued = (await world.QueuedForAsync(obligation.Id)).ShouldNotBeNull(row);
+        queued.AgentSessionId.ShouldBe(world.CallerSessionId, row);
+        queued.Body.ShouldBe(obligation.Body, row);
+        obligation.QueueMessageId.ShouldBe(queued.Id, row);
     }
 
     [Test]
@@ -330,13 +384,17 @@ public sealed class RunnerTaskSettlementTests
     [Test]
     public async Task Sync_uncertainty_blocks_and_reply_retries()
     {
-        await using var world = await RunnerSettlementWorld.CreateAsync();
+        await using var world = await RunnerSettlementWorld.CreateAsync(controlledSyncClock: true);
         var s = await world.Git.RunnerPushAsync("work.txt", "runner work");
 
+        // The lease stays busy for the sync's whole budget (waited on inside it, then given up).
         await using (var held = await world.Git.Leases.TryAcquireAsync(world.Git.Desktop, CancellationToken.None))
         {
             held.ShouldNotBeNull();
-            await world.SettleAsync(RunnerSettlementWorld.Report("Implemented and pushed."));
+            var settle = world.SettleAsync(RunnerSettlementWorld.Report("Implemented and pushed."));
+            (await System.Threading.Tasks.Task.WhenAny(world.LeaseBusy.First, settle)).ShouldBe(world.LeaseBusy.First);
+            world.SyncClock!.Advance(TimeSpan.FromSeconds(new DelegationSettings().RunnerSyncBudgetSeconds));
+            await settle;
         }
 
         world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world));
