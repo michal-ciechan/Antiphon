@@ -15,9 +15,8 @@ namespace Antiphon.Server.Application.Services;
 /// so a desktop write leaves a file no one reads behind a prompt pointing at nothing — the agent
 /// is told "read it in full before you do anything else" about a path that does not exist.
 ///
-/// The staged body is one-shot and per session: taking it clears it, so a retyped pointer after a
-/// composer-evidence retry does not rewrite the file, and a body left staged by a delivery that
-/// never happened is replaced by the next spill rather than accumulating.
+/// Transient staging is keyed by session and path. Queued bodies are persisted on their message
+/// rows; this service reads the exact row Id from the pointer when an Input is sent.
 /// </summary>
 public sealed class RemoteSpillCourier
 {
@@ -62,15 +61,22 @@ public sealed class RemoteSpillCourier
     {
         if (_scopeFactory is null)
             return null;
+        const string prefix = ".antiphon/inbox/";
+        var start = input.IndexOf(prefix, StringComparison.Ordinal);
+        if (start < 0)
+            return null;
+        start += prefix.Length;
+        var end = input.IndexOf(".md", start, StringComparison.Ordinal);
+        if (end < 0 || !Guid.TryParse(input[start..end], out var messageId))
+            return null;
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var rows = await db.SessionQueuedMessages.AsNoTracking()
-            .Where(m => m.AgentSessionId == sessionId && m.RemoteSpillBody != null)
+        var row = await db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.Id == messageId && m.AgentSessionId == sessionId && m.RemoteSpillBody != null)
             .Select(m => new { m.Id, m.RemoteSpillBody, m.RemoteSpillRelativePath })
-            .ToListAsync(ct);
-        var row = rows.SingleOrDefault(m => m.RemoteSpillRelativePath is not null
-            && input.Contains(m.RemoteSpillRelativePath, StringComparison.Ordinal));
-        if (row is null)
+            .SingleOrDefaultAsync(ct);
+        if (row is null || row.RemoteSpillRelativePath is null
+            || !input.Contains(row.RemoteSpillRelativePath, StringComparison.Ordinal))
             return null;
         var cwd = await db.AgentSessions.AsNoTracking().Where(s => s.Id == sessionId)
             .Select(s => s.RunnerCwd).SingleOrDefaultAsync(ct);
