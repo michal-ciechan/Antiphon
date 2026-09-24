@@ -511,7 +511,10 @@ empty composer, a new generation, or an operator release. For Claude the compose
 bottom box (`ClaudeScreen.TryReadComposer`): the rows between the last two rules, both the same
 width, the first carrying the prompt glyph, with one to three rows under the lower rule that are all
 Claude's hint bar (permission mode, shortcuts, auto-compact, effort, usage). An empty box (or only
-the idle `Try "..."` hint) releases, anything in it holds, and an echo in the conversation above it
+the idle `Try "..."` hint) releases only when a second snapshot `PostEvidenceSettleMs` later reads
+empty too: a stale ghost frame (the body's tail, then an empty box over the hint bar) reads empty on
+its own while the body still stands in the real composer, and one empty snapshot is not evidence
+(CARD-0299, review 97ea55ef). Anything in the box holds, and an echo in the conversation above it
 counts for nothing. A Claude frame whose box cannot be read (a composer taller than the screen
 showing only its tail, a narrow pane whose hint bar wraps, a scrolled view, a permission dialog, a
 ghost frame mid-redraw) holds: the body's head being off screen is not evidence that it left
@@ -529,5 +532,6 @@ in flight Released. The hold's own Check note, audit comment and every 409
 (C650_Submitted_echo_above_a_readable_composer_does_not_hold,
 C650_Swallowed_enter_keeps_holding_while_the_composer_shows_the_body,
 C650_Operator_release_clears_a_whole_screen_hold_with_an_audit_and_no_input,
-C650_Unreadable_Claude_composer_keeps_holding_until_it_is_proved_empty) and
+C650_Unreadable_Claude_composer_keeps_holding_until_it_is_proved_empty,
+C650_Ghost_empty_composer_on_one_snapshot_keeps_holding_while_the_next_shows_the_body) and
 ExpectationHoldReleaseEndpointTests.

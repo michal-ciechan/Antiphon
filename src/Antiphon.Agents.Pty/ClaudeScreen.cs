@@ -71,6 +71,9 @@ public static partial class ClaudeScreen
     /// Every non-blank row under it is Claude's hint bar (at least one, all recognised), so an older
     /// frame in a scrolled view, a dialog, or a ghost frame with the body's tail under it is not read;
     /// and both rules are the same width, so a partial ghost border does not pair with a real one.</para>
+    /// <para>Repair 5 (review 97ea55ef): one read is a single frame. A stale ghost box at the bottom
+    /// can read as present and empty while the body is still in the live composer, so a caller that
+    /// treats "empty" as proof needs a second snapshot, settled, that reads empty too.</para>
     /// </summary>
     public static bool TryReadComposer(string screen, out string content)
     {

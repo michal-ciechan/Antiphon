@@ -137,6 +137,16 @@ public sealed class ExpectationHoldReleaseEndpointTests
         // A release that arrives while a watchdog prompt is being typed must wait for that send to
         // record its outcome. Otherwise it finds the attempt still Attempting, marks it Released, and
         // the confirmed receipt is lost.
+        //
+        // Note for Mutation (repair 5): this guards two production lines, the session lock taken in
+        // ReleaseExpectationHoldAsync and recordOutcome running inside SendExpectationNowAsync's
+        // lock. Dropping the release's lock goes red: the release finishes while
+        // the gate is shut (IsCompleted assertion). Moving recordOutcome after sessionLock.Release()
+        // opens only a narrow window between the lock release and the outcome write, so the release
+        // wins it only by scheduling luck; a green run of that mutant is not a missing control. Widen
+        // the window inside the mutant (a delay between the lock release and recordOutcome) to make
+        // it deterministic: the release then finds the attempt Attempting and releases it
+        // (ReleasedNudgeIds / Confirmed assertions). Never widen this test's 200 ms probe instead.
         await using var f = await ExpectationDeliveryFixture.CreateAsync();
         await using var host = await ReleaseHost.StartAsync(f);
         var adapter = f.Harness.Adapter;

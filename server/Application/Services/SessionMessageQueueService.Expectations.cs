@@ -189,6 +189,8 @@ public sealed partial class SessionMessageQueueService
     /// A long composer renders only its tail, and a dialog or a scrolled view hides the box, so the
     /// body's head being off screen is not evidence that it left. The whole-screen rule is only for
     /// kinds with no readable composer at all.</para>
+    /// <para>Review 97ea55ef: an empty reading releases only when a second snapshot
+    /// PostEvidenceSettleMs later reads empty too (<see cref="ComposerStaysEmptyAsync"/>).</para>
     /// </summary>
     private async Task<bool> ExpectationBodyBlocksComposerAsync(
         AppDbContext db, Guid sessionId, DateTime generation, CancellationToken ct)
@@ -233,7 +235,15 @@ public sealed partial class SessionMessageQueueService
         if (TryReadComposerRegion(kind, snapshot.RenderedScreen, out var composer))
         {
             if (ClaudeScreen.ComposerContentIsEmpty(composer))
-                return false;
+            {
+                if (await ComposerStaysEmptyAsync(kind, sessionId, ct))
+                    return false;
+                _logger.LogWarning(
+                    "Holding input to session {SessionId}: expectation nudge {NudgeId} is unconfirmed, has no "
+                    + "transcript record, and the composer read empty on one snapshot but not on the next. Release: {Route}",
+                    sessionId, unrecorded[0].Id, ExpectationHoldAudit.ReleaseRoute(sessionId));
+                return true;
+            }
             _logger.LogWarning(
                 "Holding input to session {SessionId}: expectation nudge {NudgeId} is unconfirmed, has no "
                 + "transcript record, and the composer is not empty. Release: {Route}",
@@ -261,6 +271,23 @@ public sealed partial class SessionMessageQueueService
             + "transcript record, and is still visible whole on screen. Release: {Route}",
             sessionId, standingId, ExpectationHoldAudit.ReleaseRoute(sessionId));
         return true;
+    }
+
+    /// <summary>
+    /// Repair 5 (review 97ea55ef): the second look behind an empty composer reading. A stale ghost
+    /// frame (the body's tail, then an empty box above the hint bar) reads as a live, empty composer
+    /// on its own while the body still stands in the real one. One empty snapshot is not evidence
+    /// (CARD-0299), so the composer counts as empty only when a snapshot PostEvidenceSettleMs later
+    /// is readable and empty too.
+    /// </summary>
+    private async Task<bool> ComposerStaysEmptyAsync(AgentKind kind, Guid sessionId, CancellationToken ct)
+    {
+        var settle = TimeSpan.FromMilliseconds(Math.Clamp(_verification.PostEvidenceSettleMs, 0, 3_000));
+        if (settle > TimeSpan.Zero)
+            await Task.Delay(settle, _timeProvider, ct);
+        return _runtime.TryGetLiveSnapshot(sessionId, out var later)
+            && TryReadComposerRegion(kind, later.RenderedScreen, out var composer)
+            && ClaudeScreen.ComposerContentIsEmpty(composer);
     }
 
     /// <summary>
