@@ -269,6 +269,35 @@ public class AgentTaskSettlementRaceTests
         queued[0].Body.ShouldContain($"[task {DelegationReportFormatter.Short(task.Id)} done]");
     }
 
+    [Test]
+    public async Task C664_SettlementReleasesTaskLaunchRows()
+    {
+        using var workspace = new TempWorkspace();
+        await using var provider = BuildHarness();
+
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var (task, sessionId) = await SeedSharedTaskAsync(workspace.Path, parentSessionId);
+        await SeedMarkedTurnAsync(sessionId, task.Id, "Wrote the slice. 12 passed, 0 failed.");
+        Guid launchId;
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var admitted = await scope.ServiceProvider.GetRequiredService<IWorkspaceReservationJournal>()
+                .TryAdmitConsumerAsync(new WorkspaceReservationCommand(
+                    WorkspaceReservationKey.For(workspace.Path, "", workspace.Path),
+                    WorkspaceReservationKind.Launch, task.Id), CancellationToken.None);
+            admitted.Accepted.ShouldBeTrue();
+            launchId = admitted.Snapshot!.Id;
+        }
+
+        await provider.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Succeeded);
+        var row = await verify.WorkspaceUseReservations.AsNoTracking().SingleAsync(r => r.Id == launchId);
+        row.Active.ShouldBeFalse("CARD-0664: terminal settlement releases the task's fresh Launch row");
+        row.ReleasedAt.ShouldNotBeNull();
+    }
+
     internal static ServiceProvider BuildHarness(Action<IServiceCollection>? configure = null)
     {
         var services = new ServiceCollection();
