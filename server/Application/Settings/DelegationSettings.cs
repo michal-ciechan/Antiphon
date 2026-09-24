@@ -611,7 +611,11 @@ public sealed class DelegationSettings
     /// <summary>CARD-0633 D-6: the remote-preparation backoff cap. Default 900; at least the base.</summary>
     public int RemotePrepBackoffMaxSeconds { get; set; } = 900;
 
-    /// <summary>CARD-0657: the whole runner settlement sync attempt's budget. Default 120.</summary>
+    /// <summary>
+    /// CARD-0657 D-3: the whole runner settlement sync attempt's budget, in seconds. A busy
+    /// repository lease is retried inside it; when it runs out the task blocks (lease-busy or
+    /// timeout) with its report retained. Default 120, floor 1.
+    /// </summary>
     public int RunnerSyncBudgetSeconds { get; set; } = 120;
 
     /// <summary>
@@ -1140,6 +1144,8 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
         if (options.RemotePrepBackoffBaseSeconds < 1
             || options.RemotePrepBackoffMaxSeconds < options.RemotePrepBackoffBaseSeconds)
             failures.Add("Delegation:RemotePrepBackoffBaseSeconds must be at least 1 and Delegation:RemotePrepBackoffMaxSeconds at least the base.");
+        if (options.RunnerSyncBudgetSeconds < 1)
+            failures.Add("Delegation:RunnerSyncBudgetSeconds must be at least 1.");
         if (options.CheckInterpreterFirstAttemptSeconds is { } firstAttempt
             && (firstAttempt <= 0 || firstAttempt > options.CheckInterpreterWaitSeconds))
             failures.Add("Delegation:CheckInterpreterFirstAttemptSeconds must be positive and no greater than CheckInterpreterWaitSeconds, or null.");

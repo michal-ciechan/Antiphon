@@ -5487,7 +5487,10 @@ public sealed class AgentTaskDispatcher
         var knownSessionIds = await _db.AgentSessions.AsNoTracking()
             .Select(s => s.Id)
             .ToHashSetAsync(ct);
-        var scan = await _bindRefusalRecovery.TryFindAsync(task, session, knownSessionIds, ct);
+        // CARD-0657: a runner task's work is on the runner; its own done report, as this server
+        // received it, is the one evidence here that can name the pushed commit.
+        var heldReport = await DelegateBindRefusalRecovery.ReadHeldDoneReportAsync(_db, task, sessionId, ct);
+        var scan = await _bindRefusalRecovery.TryFindAsync(task, session, knownSessionIds, ct, heldReport);
         if (scan.Recovery is { } evidence)
         {
             await _replies.RecoverFromBindRefusalAsync(task.Id, evidence, ct);

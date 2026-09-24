@@ -837,8 +837,12 @@ public sealed class AgentTaskReplyService
 
         // CARD-0544 D-9: the caller's completion is an obligation committed WITH the settlement.
         // Added before any helper below can flush this tracker (the zero-progress incident saves),
-        // so a terminal task/outcome can never commit without it.
-        var completion = TaskCompletionNotification.Applies(task)
+        // so a terminal task/outcome can never commit without it. CARD-0657: a runner-sync block is a
+        // decide repair handoff, not a question, and owes the same obligation.
+        var owesCompletion = remoteBlock is not null
+            ? TaskCompletionNotification.AppliesToRunnerSyncBlock(task)
+            : TaskCompletionNotification.Applies(task);
+        var completion = owesCompletion
             ? await AddCompletionObligationAsync(services, db, task, settlementEvent, settledBody, now,
                 workspaceNote, callerWarning, drift, gitHeader, ct)
             : null;
@@ -979,19 +983,19 @@ public sealed class AgentTaskReplyService
         var (note, warning, incidentSummary, incidentDetail) = BindRefusalRecoveryText(
             DelegationReportFormatter.Short(task.Id), where, ingested);
 
-        // CARD-0657 D-5. A runner task's work is on its pushed branch, and no report was read here.
-        // Only a commit this correlated evidence names can confirm it: fetch the task's own branch
-        // and settle like a correlated report only when origin's tip IS that commit and descends from
-        // the dispatch base. Anything else blocks, keeping the session and the workspace, until a
-        // fresh correlated report confirms S; Review must not start from an unconfirmed branch.
+        // CARD-0657 D-5. A runner task's work is on its pushed branch, and no prompt correlated a report
+        // with this task. Only a full SHA its own done report names (as this server received it) can
+        // confirm it: fetch the task's own branch and settle like a correlated report only when origin's tip
+        // IS that commit and descends from the dispatch base. Anything else blocks, keeping the session and
+        // the workspace, until a fresh correlated report confirms S; Review must not start from an unconfirmed branch.
         var runnerTask = RemoteWorkspaceService.IsEligible(task);
         RemoteSettlementSyncResult? prepared = null;
         string? unconfirmed = null;
         if (runnerTask)
         {
-            var named = evidence.NamedCommits(task.Id);
+            var named = evidence.NamedCommits();
             if (named.Count == 0)
-                unconfirmed = "the recovered evidence names no commit";
+                unconfirmed = "the recovered evidence names no full commit SHA";
             else
             {
                 prepared = await PrepareRemoteAsync(scope.ServiceProvider, task, ct, named);
@@ -1004,7 +1008,7 @@ public sealed class AgentTaskReplyService
         if (runnerUnconfirmed)
         {
             note = $"Blocked: bind refusal recovery cannot confirm the runner's pushed commit ({unconfirmed}; work may be "
-                + $"at {where}); no completion report was read and the desktop checkout was not confirmed.";
+                + $"at {where}); no correlated completion report settled it and the desktop checkout was not confirmed.";
             warning = $"WARNING: runner task {DelegationReportFormatter.Short(task.Id)} was recovered from a bind refusal "
                 + $"without a confirmed desktop SHA or a matching completion report ({unconfirmed}). Branch "
                 + $"{task.WorktreeBranch} is unconfirmed and not prepared for Review; reply to this task for a fresh "
@@ -1014,7 +1018,7 @@ public sealed class AgentTaskReplyService
         {
             note = $"Succeeded: bind refusal recovery confirmed the runner's pushed commit {confirmedSha} on "
                 + $"{prepared!.FullRef}: origin's tip is the commit the recovered evidence names ({where}) and descends "
-                + "from the dispatch base. No completion report was read.";
+                + "from the dispatch base. No prompt correlated the report with this task.";
         }
 
         task.Status = runnerUnconfirmed ? AgentTaskStatus.Blocked : AgentTaskStatus.Succeeded;
@@ -1065,7 +1069,7 @@ public sealed class AgentTaskReplyService
 
         // CARD-0544 D-9: a profile-v1 caller's completion is an obligation committed WITH this
         // settlement — added before the incident below flushes the tracker.
-        var completion = TaskCompletionNotification.AppliesToBindRefusalRecovery(task)
+        var completion = TaskCompletionNotification.AppliesToRunnerSyncBlock(task)
             ? await AddCompletionObligationAsync(scope.ServiceProvider, db, task, settlementEvent, note, now,
                 workspaceNote, warning, drift: null, git: null, ct)
             : null;
