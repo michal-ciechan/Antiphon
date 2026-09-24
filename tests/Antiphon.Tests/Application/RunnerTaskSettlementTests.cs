@@ -245,8 +245,7 @@ public sealed class RunnerTaskSettlementTests
 
     private static void AssertNoSync(RunnerSettlementWorld world, string s)
     {
-        world.Git.Git.Commands.ShouldNotContain(x => x.Contains("fetch", StringComparison.Ordinal)
-            || x.Contains("ls-remote", StringComparison.Ordinal) || x.Contains("merge", StringComparison.Ordinal)
+        world.Git.Git.Commands.ShouldNotContain(x => RunnerCompletionProgressTests.IsSyncCommand(x)
             || x.Contains(s, StringComparison.Ordinal));
     }
 }

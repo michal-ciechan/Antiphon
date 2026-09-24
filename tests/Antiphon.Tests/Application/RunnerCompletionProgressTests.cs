@@ -74,8 +74,7 @@ public sealed class RunnerCompletionProgressTests
             .VerifiedSha.ShouldBe(s);
         evaluated.Evidence.RemoteSync!.ConfirmedSha.ShouldBe(s);
         evaluated.Evidence.Sources!.ShouldNotContain(x => x.RemoteObserved == s2 || x.VerifiedSha == s2);
-        world.Git.Commands.ShouldNotContain(x => x.Contains("fetch", StringComparison.Ordinal)
-            || x.Contains("ls-remote", StringComparison.Ordinal) || x.Contains("merge", StringComparison.Ordinal));
+        world.Git.Commands.ShouldNotContain(x => IsSyncCommand(x));
         (await world.HeadAsync()).ShouldBe(s);
     }
 
@@ -120,7 +119,7 @@ public sealed class RunnerCompletionProgressTests
             evaluated.Evidence.Sources!.Single(x => x.Assessment == CompletionProgressAssessment.ProgressObserved)
                 .VerifiedSha.ShouldBe(d);
             evaluated.Evidence.RemoteSync.ShouldBeNull();
-            world.Git.Commands.ShouldNotContain(x => x.Contains("merge", StringComparison.Ordinal));
+            world.Git.Commands.ShouldNotContain(x => IsSyncCommand(x));
         }
 
         // A local task whose branch moved only on origin still needs a task-scoped claim.
@@ -206,12 +205,16 @@ public sealed class RunnerCompletionProgressTests
         evaluated.IsIndeterminate.ShouldBeTrue(evaluated.Reason);
         evaluated.Reason.ShouldBe(RemoteSettlementSyncReasons.DependencyUnavailable);
         evaluated.Evidence.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Unavailable);
-        world.Git.Commands.ShouldNotContain(x => x.Contains("merge", StringComparison.Ordinal));
+        world.Git.Commands.ShouldNotContain(x => IsSyncCommand(x));
         (await world.HeadAsync()).ShouldBe(world.Baseline);
     }
 
     private static TaskCompletionProgressService Evaluator(SyncWorld world) =>
         new(world.Git, null, TimeProvider.System, world.Service());
+
+    /// <summary>A fetch, an advertisement read or a merge; never an ancestry query such as merge-base.</summary>
+    internal static bool IsSyncCommand(string command) =>
+        command.Split(' ').Any(token => token is "fetch" or "ls-remote" or "merge");
 
     private static string Claim(SyncWorld world, string sha) => $"[antiphon-progress:{world.TaskId:D} commit={sha}]";
 
