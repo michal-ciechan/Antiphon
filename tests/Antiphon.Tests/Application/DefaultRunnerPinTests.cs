@@ -258,7 +258,9 @@ public sealed class DefaultRunnerPinTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task SourceLanding_mutation_reaches_runner_launch_with_binding()
     {
-        await using var world = await PostLandMutationWorld.CreateAsync(provision: false);
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var root = new TempRoot();
+        var source = await SeedPublishedSourceAsync(schema, root.Path);
         await using var host = await PhoneHomeTestHost.StartAsync();
         await using var peer = await host.ConnectPeerAsync();
         var live = await host.WaitLiveAsync();
@@ -297,18 +299,18 @@ public sealed class DefaultRunnerPinTests
         };
 
         var sink = new RecordingLaunchSink();
-        await using var services = SourceLandingDispatchGraph(world, host, sink);
+        await using var services = SourceLandingDispatchGraph(schema, root.Path, host, sink);
 
         // Producer: an omitted runner on the valid SourceLanding shape takes the default runner.
         Guid taskId;
         await using (var scope = services.CreateAsyncScope())
         {
             var summary = await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CreateAsync(
-                world.Request(world.Companion) with { AgentKind = AgentKind.ClaudeCode }, world.Caller, CancellationToken.None);
+                source.Request, source.Caller, CancellationToken.None);
             taskId = summary.Id;
         }
 
-        await using (var db = world.Host.CreateContext())
+        await using (var db = Context(schema))
         {
             var queued = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
             queued.RunnerId.ShouldBe(host.AllowedRunnerId, "the default runner was selected for the Mutation");
@@ -324,7 +326,7 @@ public sealed class DefaultRunnerPinTests
         await using (var scope = services.CreateAsyncScope())
             await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
 
-        await using var verify = world.Host.CreateContext();
+        await using var verify = Context(schema);
         var task = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
         task.Status.ShouldBe(AgentTaskStatus.Dispatched, task.FailureReason);
         var snapshot = created.ShouldNotBeNull("the snapshot is created on the runner, not the desktop");
@@ -365,17 +367,17 @@ public sealed class DefaultRunnerPinTests
         started.SessionId.ShouldBe(session.Id);
         started.Cwd.ShouldBe(snapshot.WorktreePath);
         started.VerificationBinding.ShouldBe(binding, "the runner receives exactly the reserved binding");
-        await using var after = world.Host.CreateContext();
+        await using var after = Context(schema);
         (await after.VerificationExecutions.AsNoTracking().SingleAsync(e => e.Id == execution.Id))
             .RunnerCallIntentAt.ShouldNotBeNull("the runner-call intent is recorded before the launch frame");
     }
 
     private static ServiceProvider SourceLandingDispatchGraph(
-        PostLandMutationWorld world, PhoneHomeTestHost host, RecordingLaunchSink sink)
+        IsolatedTestSchema schema, string root, PhoneHomeTestHost host, RecordingLaunchSink sink)
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddScoped(_ => world.Host.CreateContext());
+        services.AddScoped(_ => Context(schema));
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton(Options.Create(new SupervisionSettings()));
@@ -383,7 +385,7 @@ public sealed class DefaultRunnerPinTests
         services.AddSingleton(Options.Create(new DelegationSettings
         {
             MaxConcurrentTasks = 512,
-            AllowedRoots = [world.Host.Fixture.Root],
+            AllowedRoots = [root],
             DefaultRunnerId = host.AllowedRunnerId,
         }));
         services.AddSingleton(Options.Create(new AgentSessionSettings()));
@@ -398,19 +400,18 @@ public sealed class DefaultRunnerPinTests
         services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
         services.AddSingleton<DelegationWorkspaceResolver>();
-        // The landing fixture's git: the lease, the source identity and the snapshot all agree on
-        // one repository.
-        services.AddSingleton<ILandingGit>(world.Host.Fixture.Git);
+        // Real git: the lease and the source identity both resolve the seeded repository.
+        services.AddSingleton<ILandingGit, LandingGit>();
         services.AddDelegationWorktreeGraph(new GitSettings
         {
-            WorktreeBasePath = Path.Combine(world.Host.Fixture.Root, "desktop-worktrees"),
+            WorktreeBasePath = Path.Combine(root, "desktop-worktrees"),
         });
         services.AddSingleton(Options.Create(new PhoneHomeRunnerSettings
         {
             Enabled = true,
             AllowedRunnerId = host.AllowedRunnerId,
             AllowDelegatedTasks = true,
-            HostWorkspaceRoot = world.Host.Fixture.Root,
+            HostWorkspaceRoot = root,
             RunnerWorkspace = "/work",
             RunnerRepository = "/work/repos/antiphon",
             CallbackOrigin = "https://antiphon.desktop.codeperf.net",
@@ -429,6 +430,95 @@ public sealed class DefaultRunnerPinTests
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentTaskDispatcher>();
         return services.BuildServiceProvider();
+    }
+
+    private sealed record PublishedSource(CreateAgentTaskRequest Request, AgentTaskService.Caller Caller);
+
+    /// <summary>
+    /// A confirmed publication of an ordinary Code task, seeded directly: a git repository (the
+    /// source identity compares common directories), the source task on its card, a companion card
+    /// on the same board and a landing row that satisfies <see cref="AgentTaskLandingState.HasPublication"/>.
+    /// The snapshot itself is the runner's, so the landed sha never has to exist on this machine.
+    /// </summary>
+    private static async Task<PublishedSource> SeedPublishedSourceAsync(IsolatedTestSchema schema, string root)
+    {
+        var repository = Path.Combine(root, "canonical");
+        Directory.CreateDirectory(repository);
+        var git = new LandingGit();
+        (await git.RunAsync(repository, ["init", "-q"], CancellationToken.None)).Succeeded.ShouldBeTrue("git init");
+        var common = await git.CommonDirectoryAsync(repository, CancellationToken.None);
+        var sha = "c659" + new string('a', 36);
+        var now = DateTime.UtcNow;
+        var sourceId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+        await using var db = Context(schema);
+        var project = new Project
+        {
+            Id = Guid.NewGuid(), Name = $"c659-{Guid.NewGuid():N}",
+            GitRepositoryUrl = "https://example.test/c659.git", CreatedAt = now, UpdatedAt = now,
+        };
+        var board = new Board
+        {
+            Id = Guid.NewGuid(), ProjectId = project.Id, Name = $"c659 {Guid.NewGuid():N}",
+            MaxConcurrentSessions = 1, CreatedAt = now, UpdatedAt = now,
+        };
+        var column = new BoardColumn
+        {
+            Id = Guid.NewGuid(), BoardId = board.Id, StateKey = "backlog", Name = "Backlog",
+            ColumnOrder = 0, CardStatus = CardStatus.Backlog, CreatedAt = now, UpdatedAt = now,
+        };
+        var cards = Enumerable.Range(1, 2).Select(i => new Card
+        {
+            Id = Guid.NewGuid(), BoardId = board.Id, BoardColumnId = column.Id, Identifier = $"CARD-965{i}",
+            Title = "c659 " + i, Description = "CARD-0659.", CreatedAt = now, UpdatedAt = now,
+        }).ToArray();
+        db.AddRange(project, board, column);
+        db.Cards.AddRange(cards);
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = sourceId, RootTaskId = sourceId, Title = "landed source", Goal = "code",
+            Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code, AgentKind = AgentKind.ClaudeCode,
+            ModelLevel = AgentModelLevel.Frontier, Workspace = WorkspaceMode.Worktree,
+            WorkingDirectory = repository, RepoPath = repository, CardId = cards[0].Id,
+            Status = AgentTaskStatus.Succeeded, ReplyTo = AgentTaskReplyTo.None,
+            CreatedAt = now, ConcurrencyToken = Guid.NewGuid(),
+        });
+        await db.SaveChangesAsync();
+        db.AgentTaskLandings.Add(new AgentTaskLanding
+        {
+            Id = operationId, TaskId = sourceId, SchemaVersion = 1, Active = false,
+            Phase = LandPhase.PublicationConfirmed, Publication = LandPublicationOutcome.Landed,
+            CreatedAt = now, UpdatedAt = now,
+            RepositoryPath = repository, CommonDirectory = common, WorktreePath = repository, GitDirectory = common,
+            SourceFullRef = $"refs/heads/feat/card-task-{sourceId:N}", OriginalSourceSha = sha,
+            VerifiedSourceSha = sha, VerificationPassed = true, VerifiedAt = now, SourcePinned = true, TargetPinned = true,
+            TargetFullRef = "refs/heads/master", TargetBeforeSha = new string('b', 40),
+            DestinationFullRef = "refs/heads/master", RemoteFingerprint = new string('f', 64),
+            ObservedRemoteTargetSha = sha, RemoteConfirmedAt = now,
+            ConfirmationMethod = "push-endpoint-read-fetch-ancestry",
+            RecoveryRefPrefix = $"refs/antiphon/land/{sourceId:N}/{operationId:N}",
+        });
+        await db.SaveChangesAsync();
+        return new PublishedSource(
+            new CreateAgentTaskRequest("c659 post-land mutation", Role: AgentTaskRole.Mutation,
+                AgentKind: AgentKind.ClaudeCode, Workspace: WorkspaceMode.Worktree, Card: cards[1].Id.ToString("D"),
+                SourceLandingOperationId: operationId),
+            new AgentTaskService.Caller(null, null, repository));
+    }
+
+    private static AppDbContext Context(IsolatedTestSchema schema) =>
+        new(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+
+    private sealed class TempRoot : IDisposable
+    {
+        public string Path { get; } = Directory.CreateTempSubdirectory("antiphon-c659-sourcelanding").FullName;
+
+        public void Dispose()
+        {
+            try { Directory.Delete(Path, recursive: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
     }
 
     private static PhoneHomeFrame Result(PhoneHomeFrame request, object payload) =>
