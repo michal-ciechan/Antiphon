@@ -4,6 +4,9 @@ using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
@@ -47,19 +50,62 @@ public sealed class DelegateBindRefusalRecovery
     /// carries this task's brief and no closing <c>done</c> report is
     /// <see cref="DelegateBindRefusalScan.UnreportedJsonlPath"/> — evidence the delegate is
     /// working unbound, never evidence of completion (CARD-0551).
+    ///
+    /// <para>CARD-0657: a runner-bound task's work and transcript are on the runner, so neither arm
+    /// above can see them from this box. Its third arm is <paramref name="heldReport"/>, the
+    /// delegate's own <c>done</c> report as this server already received it
+    /// (<see cref="ReadHeldDoneReportAsync"/>). It is ignored for every other task.</para>
     /// </summary>
     public async Task<DelegateBindRefusalScan> TryFindAsync(
-        AgentTask task, AgentSession? session, IReadOnlySet<Guid> knownSessionIds, CancellationToken ct)
+        AgentTask task, AgentSession? session, IReadOnlySet<Guid> knownSessionIds, CancellationToken ct,
+        string? heldReport = null)
     {
         var commits = await TryGitAsync(task, ct);
         var (reportedJsonl, unreportedJsonl) = TryScanJsonl(task, session, knownSessionIds);
+        var held = RemoteWorkspaceService.IsEligible(task) && IsDoneReport(task.Id, heldReport) ? heldReport : null;
 
         DelegateBindRefusalEvidence? recovery = null;
-        if (commits.Count > 0 || reportedJsonl is not null)
-            recovery = new DelegateBindRefusalEvidence(commits, reportedJsonl);
+        if (commits.Count > 0 || reportedJsonl is not null || held is not null)
+            recovery = new DelegateBindRefusalEvidence(commits, reportedJsonl?.Path, reportedJsonl?.Report, held);
 
         return new DelegateBindRefusalScan(recovery, unreportedJsonl);
     }
+
+    /// <summary>
+    /// CARD-0657: the delegate's own closing <c>done</c> report for a runner-bound task, as this
+    /// server already holds it — the newest assistant text on the task's session since dispatch
+    /// whose last line is this task's <c>done</c> token (the rule the completion path settles on).
+    /// The runner's transcript reaches the server through the session stream and the watchdog's
+    /// pull; the desktop checkout and the desktop's Claude folder never see a runner's work.
+    /// Null for any other task. Read-only.
+    /// </summary>
+    internal static async Task<string?> ReadHeldDoneReportAsync(
+        AppDbContext db, AgentTask task, Guid sessionId, CancellationToken ct)
+    {
+        if (!RemoteWorkspaceService.IsEligible(task))
+            return null;
+
+        var dispatchedAt = task.DispatchedAt;
+        var token = "[antiphon-report:" + DelegationReportFormatter.Short(task.Id);
+        var texts = await db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId
+                && t.Kind == TranscriptKinds.AssistantText
+                && t.IsApiError != true
+                && (dispatchedAt == null || t.Timestamp == null || t.Timestamp > dispatchedAt)
+                && t.Text != null && t.Text.Contains(token))
+            .OrderByDescending(t => t.Sequence)
+            .Select(t => t.Text!)
+            .Take(HeldReportScanLimit)
+            .ToListAsync(ct);
+        return texts.FirstOrDefault(text => IsDoneReport(task.Id, text));
+    }
+
+    private const int HeldReportScanLimit = 20;
+
+    /// <summary>The same closing-line rule <see cref="MatchJsonl"/> and settlement use.</summary>
+    private static bool IsDoneReport(Guid taskId, string? text) =>
+        DelegationReportFormatter.TryFindReportToken(taskId, text, out var verdict)
+        && string.Equals(verdict, "done", StringComparison.Ordinal);
 
     private async Task<IReadOnlyList<string>> TryGitAsync(AgentTask task, CancellationToken ct)
     {
@@ -101,7 +147,7 @@ public sealed class DelegateBindRefusalRecovery
             .Where(s => s.Length > 0)];
     }
 
-    private (string? Reported, string? Unreported) TryScanJsonl(
+    private ((string Path, string Report)? Reported, string? Unreported) TryScanJsonl(
         AgentTask task, AgentSession? session, IReadOnlySet<Guid> knownSessionIds)
     {
         // This root contains Claude Code transcripts only. A hit for any other tool is therefore
@@ -135,9 +181,9 @@ public sealed class DelegateBindRefusalRecovery
                 if (IsAnotherSessionTranscript(file, task.AgentSessionId, knownSessionIds))
                     continue;
 
-                var match = MatchJsonl(file, cwd, startedAt, needles, task.Id);
-                if (match == JsonlMatchKind.Reported)
-                    return (file, unreported);
+                var match = MatchJsonl(file, cwd, startedAt, needles, task.Id, out var report);
+                if (match == JsonlMatchKind.Reported && report is not null)
+                    return ((file, report), unreported);
                 if (match == JsonlMatchKind.Unreported && unreported is null)
                     unreported = file;
             }
@@ -179,11 +225,15 @@ public sealed class DelegateBindRefusalRecovery
     /// </summary>
     internal static bool TryMatchJsonl(
         string path, string sessionCwd, DateTime startedAt, IReadOnlyList<Needle> needles, Guid taskId) =>
-        MatchJsonl(path, sessionCwd, startedAt, needles, taskId) == JsonlMatchKind.Reported;
+        MatchJsonl(path, sessionCwd, startedAt, needles, taskId, out _) == JsonlMatchKind.Reported;
 
+    /// <param name="report">CARD-0657: when Reported, the text of exactly the assistant record this
+    /// match accepted, behind the same C2/C3/brief gates. Null otherwise.</param>
     internal static JsonlMatchKind MatchJsonl(
-        string path, string sessionCwd, DateTime startedAt, IReadOnlyList<Needle> needles, Guid taskId)
+        string path, string sessionCwd, DateTime startedAt, IReadOnlyList<Needle> needles, Guid taskId,
+        out string? report)
     {
+        report = null;
         using var reader = new StreamReader(path);
         string? cwd = null;
         DateTimeOffset? firstTimestamp = null;
@@ -250,51 +300,12 @@ public sealed class DelegateBindRefusalRecovery
                 && DelegationReportFormatter.TryFindReportToken(taskId, assistantText, out var verdict)
                 && string.Equals(verdict, "done", StringComparison.Ordinal))
             {
+                report = assistantText;
                 return JsonlMatchKind.Reported;
             }
         }
 
         return briefSeen ? JsonlMatchKind.Unreported : JsonlMatchKind.None;
-    }
-
-    /// <summary>
-    /// CARD-0657: the text of the assistant record that closed this task with a <c>done</c> report,
-    /// the record <see cref="MatchJsonl"/> accepted. Null when the file is gone, unreadable, or no
-    /// such record exists. Read-only; never binds or ingests the file.
-    /// </summary>
-    internal static string? ReadDoneReportText(string path, Guid taskId)
-    {
-        try
-        {
-            using var reader = new StreamReader(path);
-            string? line;
-            while ((line = reader.ReadLine()) is not null)
-            {
-                if (line.Length == 0)
-                    continue;
-                string? text;
-                try
-                {
-                    using var doc = JsonDocument.Parse(line);
-                    if (doc.RootElement.ValueKind != JsonValueKind.Object)
-                        continue;
-                    text = ConcatenateAssistantTextBlocks(doc.RootElement);
-                }
-                catch (JsonException)
-                {
-                    continue;
-                }
-
-                if (text is not null
-                    && DelegationReportFormatter.TryFindReportToken(taskId, text, out var verdict)
-                    && string.Equals(verdict, "done", StringComparison.Ordinal))
-                    return text;
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-        }
-        return null;
     }
 
     /// <summary>
@@ -467,9 +478,14 @@ public sealed class DelegateBindRefusalRecovery
 }
 
 /// <summary>Positive evidence that a bind-refused session still produced the task's work.</summary>
+/// <param name="JsonlReport">CARD-0657: the text of the transcript record the JSONL arm accepted.</param>
+/// <param name="HeldReport">CARD-0657: a runner-bound task's own <c>done</c> report as the server
+/// already received it (<see cref="DelegateBindRefusalRecovery.ReadHeldDoneReportAsync"/>).</param>
 public sealed record DelegateBindRefusalEvidence(
     IReadOnlyList<string> Commits,
-    string? JsonlPath)
+    string? JsonlPath,
+    string? JsonlReport = null,
+    string? HeldReport = null)
 {
     public string Describe()
     {
@@ -478,24 +494,26 @@ public sealed record DelegateBindRefusalEvidence(
             bits.Add("commit " + string.Join(", ", Commits.Take(5)));
         if (JsonlPath is { } path)
             bits.Add("transcript file " + path + " (reported done)");
+        if (HeldReport is not null)
+            bits.Add("the delegate's own done report as received by the server");
         return bits.Count == 0 ? "unknown evidence" : string.Join("; ", bits);
     }
 
-    private static readonly Regex FullObjectId = new(
-        @"(?<![0-9A-Fa-f])[0-9A-Fa-f]{40}(?:[0-9A-Fa-f]{24})?(?![0-9A-Fa-f])",
+    private static readonly Regex FullSha = new(
+        @"(?<![0-9A-Fa-f])[0-9A-Fa-f]{40}(?![0-9A-Fa-f])",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     /// <summary>
-    /// CARD-0657: every commit this correlated evidence names — the task-branch commits the git arm
-    /// found, and each full object id in the recovered transcript's own <c>done</c> report.
+    /// CARD-0657: every commit this correlated evidence names — each full 40-hex SHA in the
+    /// delegate's own <c>done</c> report text (held by the server, or the accepted transcript
+    /// record). Abbreviations, and the git arm's <c>--oneline</c> ids read from this box's
+    /// checkout, never name a runner's pushed tip.
     /// </summary>
-    public IReadOnlyList<string> NamedCommits(Guid taskId)
-    {
-        var named = new List<string>(Commits);
-        if (JsonlPath is { } path && DelegateBindRefusalRecovery.ReadDoneReportText(path, taskId) is { } report)
-            named.AddRange(FullObjectId.Matches(report).Select(m => m.Value.ToLowerInvariant()));
-        return [.. named.Where(c => !string.IsNullOrWhiteSpace(c)).Distinct(StringComparer.OrdinalIgnoreCase)];
-    }
+    public IReadOnlyList<string> NamedCommits() =>
+        [.. new[] { HeldReport, JsonlReport }
+            .OfType<string>()
+            .SelectMany(report => FullSha.Matches(report).Select(m => m.Value.ToLowerInvariant()))
+            .Distinct(StringComparer.Ordinal)];
 }
 
 /// <summary>

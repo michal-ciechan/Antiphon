@@ -50,10 +50,16 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         _progressGit = progressGit;
         _leases = leases;
         _reservations = reservations;
+        SyncBudget = TimeSpan.FromSeconds(
+            settings?.Value.RunnerSyncBudgetSeconds ?? new DelegationSettings().RunnerSyncBudgetSeconds);
     }
 
-    /// <summary>CARD-0657 D-3. The whole settlement sync attempt's deadline.</summary>
-    public TimeSpan SyncBudget { get; init; } = TimeSpan.FromSeconds(45);
+    /// <summary>
+    /// CARD-0657 D-3. The whole settlement sync attempt's deadline:
+    /// <c>Delegation:RunnerSyncBudgetSeconds</c> (default 120). A busy repository lease is waited
+    /// for inside it, not refused at once.
+    /// </summary>
+    public TimeSpan SyncBudget { get; init; }
 
     /// <summary>The clock <see cref="SyncBudget"/> is measured on.</summary>
     public TimeProvider Clock { get; init; } = TimeProvider.System;
@@ -150,7 +156,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct, budget.Token);
         try
         {
-            return await SyncAdmittedAsync(task, baseline, fullRef, reportedTips, deadline.Token);
+            return await SyncAdmittedAsync(task, baseline, fullRef, reportedTips, deadline.Token, ct);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested && budget.IsCancellationRequested)
         {
@@ -172,14 +178,15 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     /// <summary>
     /// CARD-0657 D-3 step 1. The whole sync runs as an admitted workspace consumer, so retirement
     /// cannot claim the checkout between the checks and the fast-forward. The consumer is released
-    /// however the sync ends, including on timeout or cancellation.
+    /// however the sync ends, including on timeout or cancellation. <paramref name="ct"/> is the
+    /// budget-linked token; <paramref name="caller"/> is the caller's own.
     /// </summary>
     private async Task<RemoteSettlementSyncResult> SyncAdmittedAsync(
         AgentTask task, ProgressSourceBaseline baseline, string fullRef, IReadOnlyCollection<string>? reportedTips,
-        CancellationToken ct)
+        CancellationToken ct, CancellationToken caller)
     {
         if (_reservations is null)
-            return await SyncOwnedCheckoutAsync(task, baseline, fullRef, reportedTips, ct);
+            return await SyncOwnedCheckoutAsync(task, baseline, fullRef, reportedTips, ct, caller);
 
         var admitted = await _reservations.TryAdmitConsumerAsync(new WorkspaceReservationCommand(
             WorkspaceReservationKey.ForTask(task.WorktreePath, task.WorkingDirectory, task.WorktreeBranch, task.RepoPath),
@@ -189,7 +196,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
                 fullRef, baseline.LocalSha);
         try
         {
-            return await SyncOwnedCheckoutAsync(task, baseline, fullRef, reportedTips, ct);
+            return await SyncOwnedCheckoutAsync(task, baseline, fullRef, reportedTips, ct, caller);
         }
         finally
         {
@@ -210,7 +217,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
 
     private async Task<RemoteSettlementSyncResult> SyncOwnedCheckoutAsync(
         AgentTask task, ProgressSourceBaseline baseline, string fullRef, IReadOnlyCollection<string>? reportedTips,
-        CancellationToken ct)
+        CancellationToken ct, CancellationToken caller)
     {
         var repo = baseline.CanonicalRepository;
         var b = baseline.LocalSha;
@@ -223,7 +230,10 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
 
         // Observe (and, if absent locally, fetch) the exact ref BEFORE taking the lease: the
         // observation takes its own lease for the fetch, and nested acquisition is not reentrant.
-        var observed = await _progressGit!.ObserveExactRefAsync(repo, fullRef, fingerprint, task.Id, ct);
+        var observed = await WhileLeaseBusyAsync(
+            () => _progressGit!.ObserveExactRefAsync(repo, fullRef, fingerprint, task.Id, ct),
+            o => o.State == ProgressRemoteState.Unavailable && o.Reason == "repository_lease_busy",
+            ct, caller);
         switch (observed.State)
         {
             case ProgressRemoteState.Missing:
@@ -249,14 +259,18 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         if (!GitObjectId.IsFull(s))
             return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.FetchUnavailable, fullRef, b);
 
-        // Bind-refusal recovery read no report: only a commit its evidence names correlates the tip
-        // with this task's work. Any other tip is left, untouched, for a fresh completion report.
+        // Bind-refusal recovery correlated no prompt with the report: only a full commit id that
+        // report names ties the tip to this task's work. Any other tip is left, untouched, for a
+        // fresh completion report.
         if (reportedTips is not null && !reportedTips.Any(named => NamesCommit(named, s!)))
             return Outcome(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.TipNotReported,
                 fullRef, b, s, l0, fingerprint: fingerprint);
 
-        await using var lease = await _leases!.TryAcquireAsync(
-            repo, new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.WorktreeSettlement), ct);
+        await using var lease = await WhileLeaseBusyAsync(
+            () => _leases!.TryAcquireAsync(
+                repo, new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.WorktreeSettlement), ct),
+            acquired => acquired is null,
+            ct, caller);
         if (lease is null)
             return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.LeaseBusy, fullRef, b, s);
 
@@ -336,6 +350,32 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
             : Outcome(RemoteSettlementSyncState.Synchronized, null, fullRef, b, s, l, s, pin, fingerprint);
     }
 
+    /// <summary>
+    /// A busy repository lease is somebody else's short mutation, not a verdict: ask again every
+    /// <see cref="LeaseRetryInterval"/> while the budget-linked <paramref name="ct"/> lasts. When the
+    /// budget runs out the last busy answer is returned, so the sync still says lease-busy; the
+    /// caller's own cancellation propagates.
+    /// </summary>
+    private async Task<T> WhileLeaseBusyAsync<T>(
+        Func<Task<T>> attempt, Func<T, bool> busy, CancellationToken ct, CancellationToken caller)
+    {
+        while (true)
+        {
+            var result = await attempt();
+            if (!busy(result))
+                return result;
+            LeaseBusyObserved?.Invoke();
+            try
+            {
+                await Task.Delay(LeaseRetryInterval, Clock, ct);
+            }
+            catch (OperationCanceledException) when (!caller.IsCancellationRequested)
+            {
+                return result;
+            }
+        }
+    }
+
     private sealed record ValidatedCheckout(RemoteSettlementSyncResult? Refusal, string? Head);
 
     /// <summary>
@@ -406,17 +446,12 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     }
 
     /// <summary>
-    /// True when <paramref name="named"/> is <paramref name="fullSha"/> or an unambiguous-length
-    /// (at least seven hex digits) abbreviation of it, as <c>git log --oneline</c> prints it.
+    /// True only when <paramref name="named"/> is the full object id <paramref name="fullSha"/>.
+    /// An abbreviation never names a commit: it cannot tell the pushed tip from a lookalike.
     /// </summary>
-    public static bool NamesCommit(string? named, string fullSha)
-    {
-        var candidate = named?.Trim();
-        return candidate is { Length: >= 7 }
-            && candidate.Length <= fullSha.Length
-            && candidate.All(char.IsAsciiHexDigit)
-            && fullSha.StartsWith(candidate, StringComparison.OrdinalIgnoreCase);
-    }
+    public static bool NamesCommit(string? named, string fullSha) =>
+        GitObjectId.TryNormalize(named, out var candidate)
+        && string.Equals(candidate, fullSha, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The task-owned settlement pin: one name per task, rewritten, never accumulated.</summary>
     public static string SettlementPin(Guid taskId) => $"refs/antiphon/progress/{taskId:N}/settlement-sync";

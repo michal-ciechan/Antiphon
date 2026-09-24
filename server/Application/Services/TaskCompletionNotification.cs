@@ -36,11 +36,12 @@ public static class TaskCompletionNotification
         && task.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled;
 
     /// <summary>
-    /// CARD-0657: bind-refusal recovery settles without reading a report. Its Blocked is a repair
-    /// handoff (decide), not a question the live conversation answers, so a profile-v1 task owes the
-    /// caller the same durable obligation a terminal settlement does.
+    /// CARD-0657: a runner-sync block — bind-refusal recovery that could not confirm the pushed tip,
+    /// or an ordinary report whose runner sync was refused, unavailable or timed out. Its Blocked is
+    /// a repair handoff (decide), not a question the live conversation answers, so a profile-v1 task
+    /// owes the caller the same durable obligation a terminal settlement does.
     /// </summary>
-    public static bool AppliesToBindRefusalRecovery(AgentTask task) =>
+    public static bool AppliesToRunnerSyncBlock(AgentTask task) =>
         Applies(task) || (Profiled(task) && task.Status == AgentTaskStatus.Blocked);
 
     private static bool Profiled(AgentTask task) =>
