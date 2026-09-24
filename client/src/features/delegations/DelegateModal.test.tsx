@@ -187,6 +187,48 @@ describe('DelegateModal', () => {
     })
   })
 
+  it('defaults to Worktree', async () => {
+    const captured = captureCreate()
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+
+    expect(screen.getByRole('radio', { name: 'Worktree' })).toBeChecked()
+
+    await userEvent.type(screen.getByLabelText('Goal'), 'rename the install section')
+    await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
+
+    await waitFor(() => expect(captured.body).not.toBeNull())
+    expect(captured.body).toMatchObject({ kind: 'Worker', role: 'Code', workspace: 'Worktree' })
+  })
+
+  it('keeps explicit Shared across kind changes', async () => {
+    const captured = captureCreate()
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Shared' }))
+    await userEvent.click(screen.getByRole('radio', { name: 'Sub-orchestrator' }))
+
+    expect(screen.getByRole('radio', { name: 'Shared' })).toBeChecked()
+    expect(screen.getByRole('radio', { name: 'Plan' })).toBeChecked()
+
+    await userEvent.type(screen.getByLabelText('Goal'), 'orchestrate in the caller directory')
+    await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
+
+    await waitFor(() => expect(captured.body).not.toBeNull())
+    expect(captured.body).toMatchObject({ kind: 'Orchestrator', role: 'Plan', workspace: 'Shared' })
+  })
+
+  it('submits explicit ReadOnly', async () => {
+    const captured = captureCreate()
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Read-only' }))
+    await userEvent.type(screen.getByLabelText('Goal'), 'read the landing notes')
+    await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
+
+    await waitFor(() => expect(captured.body).not.toBeNull())
+    expect(captured.body).toMatchObject({ kind: 'Worker', workspace: 'ReadOnly' })
+  })
+
   it('will not delegate an empty goal', async () => {
     renderWithProviders(<DelegateModal opened onClose={() => {}} />)
 
