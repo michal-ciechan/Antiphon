@@ -1,3 +1,5 @@
+using System.Net;
+using System.Runtime.ExceptionServices;
 using Microsoft.AspNetCore.Mvc;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -42,23 +44,33 @@ public static class SessionRunnerEndpoints
             .WithTags("SessionRunners");
 
         app.MapPost("/api/session-runners/{runnerId}/slots/{sessionId:guid}/release", async (
+            HttpContext http,
             string runnerId,
             Guid sessionId,
             RunnerSlotReleaseRequest body,
             PhoneHomeRunnerDirectory directory,
             [FromServices] AppDbContext db,
             CancellationToken ct) =>
-            Results.Ok(await RunnerSlotService.ReleaseAsync(directory, db, runnerId, sessionId, body.Reason, ct)))
-            .WithTags("SessionRunners");
+        {
+            RequireLocalOperator(http);
+            return await ReleaseOrReconcileAsync(
+                () => RunnerSlotService.ReleaseAsync(directory, db, runnerId, sessionId, body.Reason, ct),
+                directory, db, sessionId, ct);
+        }).WithTags("SessionRunners");
 
         app.MapPost("/api/session-runners/{runnerId}/slots/release-orphans", async (
+            HttpContext http,
             string runnerId,
             RunnerSlotReleaseRequest body,
             PhoneHomeRunnerDirectory directory,
             [FromServices] AppDbContext db,
             CancellationToken ct) =>
-            Results.Ok(await RunnerSlotService.ReleaseOrphansAsync(directory, db, runnerId, body.Reason, ct)))
-            .WithTags("SessionRunners");
+        {
+            RequireLocalOperator(http);
+            return await ReleaseOrReconcileAsync(
+                () => RunnerSlotService.ReleaseOrphansAsync(directory, db, runnerId, body.Reason, ct),
+                directory, db, null, ct);
+        }).WithTags("SessionRunners");
 
         app.MapGet("/api/session-runners/{runnerId}/provider-auth/{provider}", async (
             string runnerId,
@@ -110,5 +122,59 @@ public static class SessionRunnerEndpoints
                 await connection.DisposeAsync();
             }
         }).WithTags("SessionRunners");
+    }
+
+    /// <summary>
+    /// Same predicate as Hangfire's <c>LocalRequestsOnlyAuthorizationFilter</c> on <c>/hangfire</c>.
+    /// An unknown address is not local. The default admin identity is not a credential.
+    /// </summary>
+    internal static bool IsLocalOperator(HttpContext http)
+    {
+        var remote = http.Connection.RemoteIpAddress;
+        if (remote is null)
+            return false;
+        var text = remote.ToString();
+        if (text is "127.0.0.1" or "::1")
+            return true;
+        var local = http.Connection.LocalIpAddress;
+        if (local is not null && remote.Equals(local))
+            return true;
+        return IPAddress.IsLoopback(remote);
+    }
+
+    private static void RequireLocalOperator(HttpContext http)
+    {
+        if (!IsLocalOperator(http))
+            throw new ForbiddenException(
+                "Force-release is only accepted from the local machine.",
+                "local_operator_required");
+    }
+
+    /// <summary>
+    /// A save that fails after the runner has released leaves a pending intent. Finish that
+    /// audit before answering; a failure that saved nothing is still a failure.
+    /// </summary>
+    private static async Task<IResult> ReleaseOrReconcileAsync(
+        Func<Task<RunnerSlotReleaseDto>> release,
+        PhoneHomeRunnerDirectory directory,
+        AppDbContext db,
+        Guid? sessionId,
+        CancellationToken ct)
+    {
+        Exception? failed = null;
+        try
+        {
+            return Results.Ok(await release());
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException and not ValidationException)
+        {
+            failed = ex;
+        }
+
+        db.ChangeTracker.Clear();
+        var finished = await RunnerSlotService.ReconcilePendingReleasesAsync(directory, db, ct);
+        if (finished.Count == 0 || (sessionId is Guid id && !finished.Contains(id)))
+            ExceptionDispatchInfo.Capture(failed!).Throw();
+        return Results.Ok(new RunnerSlotReleaseDto(finished.Count, finished));
     }
 }
