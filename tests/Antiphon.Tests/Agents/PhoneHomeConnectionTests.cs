@@ -8,6 +8,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
@@ -405,6 +406,123 @@ public class PhoneHomeConnectionTests
         peerOutstandingRequests.ShouldBe(limits.MaxInFlightRequests);
         await Should.ThrowAsync<PhoneHomeTransportException>(() => client.GetHealthAsync(CancellationToken.None));
         waiters.Count(t => t.IsCompleted).ShouldBe(0);
+    }
+
+    // CARD-0679 D-1: an overflow used to end the connection with no line naming why, and the
+    // status route then reported the constant "unavailable".
+    [Test]
+    public async Task Overflow_disconnect_logs_reason_epoch_and_pending_counts()
+    {
+        await using var host = await PhoneHomeTestHost.StartAsync(limits: new PhoneHomeLimits(MaxPendingEvents: 2));
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+
+        for (var i = 0; i < 4; i++)
+        {
+            try
+            {
+                await peer.EmitAsync(OutputEvent(live.Epoch, i));
+            }
+            catch (Exception ex) when (ex is WebSocketException or ObjectDisposedException)
+            {
+                break; // the server closed after the overflow
+            }
+        }
+
+        var ended = await WaitForLogsAsync(host, e => e.Level == LogLevel.Warning && e["Reason"] is not null);
+        ended.Count.ShouldBe(1);
+        var line = ended[0];
+        line["Reason"].ShouldBe(PhoneHomeProblemTypes.EventOverflow);
+        line["RunnerId"].ShouldBe(host.AllowedRunnerId);
+        line["Epoch"].ShouldBe(live.Epoch);
+        line["PendingEvents"].ShouldBe(2);
+        host.Directory.Status(host.AllowedRunnerId).DisconnectReason.ShouldBe(PhoneHomeProblemTypes.EventOverflow);
+    }
+
+    // CARD-0679 D-1: a runner that drops its socket is a transport event with a reason, not an
+    // unhandled-exception Error from the middleware (95 of those on 2026-09-23 named nothing).
+    [Test]
+    public async Task Peer_abort_is_a_warning_with_transport_abort_not_a_middleware_error()
+    {
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+
+        peer.Socket.Abort();
+
+        var ended = await WaitForLogsAsync(host, e => e.Level == LogLevel.Warning && e["Reason"] is not null);
+        ended.Count.ShouldBe(1);
+        ended[0]["Reason"].ShouldBe("transport_abort");
+        ended[0]["Epoch"].ShouldBe(live.Epoch);
+        ended[0]["LifetimeSeconds"].ShouldNotBeNull();
+        await Task.Delay(200);
+        host.Logs.Entries
+            .Where(e => e.Level >= LogLevel.Error && e.Category.EndsWith("ExceptionMiddleware", StringComparison.Ordinal))
+            .ShouldBeEmpty();
+    }
+
+    // CARD-0679 D-1: the pending-event backlog is visible before the overflow closes the socket.
+    [Test]
+    public async Task Pending_event_high_water_is_warned_before_overflow()
+    {
+        await using var host = await PhoneHomeTestHost.StartAsync(limits: new PhoneHomeLimits(MaxPendingEvents: 10));
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+        static bool HighWater(CapturedLog e, int percent) =>
+            e.Level == LogLevel.Warning && e["Percent"] is int p && p == percent;
+
+        for (var i = 0; i < 6; i++)
+            await peer.EmitAsync(OutputEvent(live.Epoch, i));
+        var half = await WaitForLogsAsync(host, e => HighWater(e, 50));
+        half.Count.ShouldBe(1);
+        half[0].Message.ShouldContain("50%");
+        half[0]["PendingEvents"].ShouldBe(5);
+        half[0]["MaxPendingEvents"].ShouldBe(10);
+        live.SocketOpen.ShouldBeTrue();
+        host.Logs.Entries.Where(e => HighWater(e, 90)).ShouldBeEmpty();
+
+        for (var i = 6; i < 9; i++)
+            await peer.EmitAsync(OutputEvent(live.Epoch, i));
+        var high = await WaitForLogsAsync(host, e => HighWater(e, 90));
+        high.Count.ShouldBe(1);
+        high[0].Message.ShouldContain("90%");
+        high[0]["PendingEvents"].ShouldBe(9);
+        live.SocketOpen.ShouldBeTrue();
+
+        await peer.EmitAsync(OutputEvent(live.Epoch, 9));
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while (live.PendingEvents < 10 && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+        live.PendingEvents.ShouldBe(10);
+        live.SocketOpen.ShouldBeTrue("the tenth event fits the cap");
+        host.Logs.Entries.Count(e => HighWater(e, 50)).ShouldBe(1, "each threshold is warned once per connection");
+
+        await peer.EmitAsync(OutputEvent(live.Epoch, 10));
+        var ended = await WaitForLogsAsync(host, e => e.Level == LogLevel.Warning && e["Reason"] is not null);
+        ended.Single()["Reason"].ShouldBe(PhoneHomeProblemTypes.EventOverflow);
+    }
+
+    private static PhoneHomeFrame OutputEvent(long epoch, int n) =>
+        new(PhoneHomeFrameKind.Event, epoch, Guid.Empty, EventName: SessionRunnerEventNames.SessionOutput,
+            Payload: JsonSerializer.SerializeToElement(new { sessionId = Guid.Empty, text = $"chunk-{n}" }, PhoneHomeFraming.Json));
+
+    private static async Task<IReadOnlyList<CapturedLog>> WaitForLogsAsync(
+        PhoneHomeTestHost host, Func<CapturedLog, bool> match, TimeSpan? timeout = null)
+    {
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(2));
+        while (DateTime.UtcNow < deadline)
+        {
+            var found = host.Logs.Entries.Where(match).ToList();
+            if (found.Count > 0)
+            {
+                await Task.Delay(50); // let a duplicate line, if any, land before the count is read
+                return host.Logs.Entries.Where(match).ToList();
+            }
+
+            await Task.Delay(20);
+        }
+
+        return [];
     }
 
     private static AgentLaunchSpec DummySpec() =>

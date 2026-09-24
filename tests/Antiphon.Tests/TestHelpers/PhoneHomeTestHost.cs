@@ -34,6 +34,9 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
     public string AllowedRunnerId { get; } = "grok-linux";
     public RecordingLocalClient Local { get; } = new();
 
+    /// <summary>CARD-0679 D-11: every log entry the host wrote, with its structured properties.</summary>
+    public CapturingLoggerProvider Logs { get; } = new();
+
     /// <summary>CARD-0653: the owner-only operator token file this host's force-release routes read.</summary>
     public string OperatorTokenPath { get; } =
         Path.Combine(Path.GetTempPath(), "antiphon-operator-" + Guid.NewGuid().ToString("N"), "operator-token");
@@ -49,6 +52,7 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         var host = new PhoneHomeTestHost();
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
         builder.Logging.ClearProviders();
+        builder.Logging.AddProvider(host.Logs);
         builder.WebHost.ConfigureKestrel(o => o.Listen(IPAddress.Loopback, 0));
         var settings = Options.Create(new PhoneHomeRunnerSettings
         {
@@ -224,6 +228,52 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
             yield break;
         }
     }
+}
+
+/// <summary>
+/// CARD-0679 D-11: keeps each entry's level, category and structured state, so a test asserts on
+/// the named properties of a log line rather than on console text.
+/// </summary>
+internal sealed class CapturingLoggerProvider : ILoggerProvider
+{
+    private readonly System.Collections.Concurrent.ConcurrentQueue<CapturedLog> _entries = new();
+
+    public IReadOnlyList<CapturedLog> Entries => _entries.ToArray();
+
+    public ILogger CreateLogger(string categoryName) => new CapturingLogger(categoryName, _entries);
+
+    public void Dispose() { }
+
+    private sealed class CapturingLogger(
+        string category, System.Collections.Concurrent.ConcurrentQueue<CapturedLog> entries) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => logLevel != LogLevel.None;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            var properties = new Dictionary<string, object?>(StringComparer.Ordinal);
+            if (state is IEnumerable<KeyValuePair<string, object?>> pairs)
+            {
+                foreach (var (key, value) in pairs)
+                    properties[key] = value;
+            }
+
+            entries.Enqueue(new CapturedLog(category, logLevel, formatter(state, exception), exception, properties));
+        }
+    }
+}
+
+internal sealed record CapturedLog(
+    string Category,
+    LogLevel Level,
+    string Message,
+    Exception? Exception,
+    IReadOnlyDictionary<string, object?> Properties)
+{
+    public object? this[string name] => Properties.TryGetValue(name, out var value) ? value : null;
 }
 
 internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
