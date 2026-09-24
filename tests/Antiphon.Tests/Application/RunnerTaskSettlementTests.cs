@@ -127,19 +127,23 @@ public sealed class RunnerTaskSettlementTests
     public async Task Bind_refusal_recovery_blocks_an_unconfirmed_runner_branch()
     {
         await using var world = await RunnerSettlementWorld.CreateAsync();
-        var s = await world.Git.RunnerPushAsync("work.txt", "runner work");
+        var older = await world.Git.RunnerPushAsync("work.txt", "runner work");
+        var s = await world.Git.RunnerPushAsync("more.txt", "later runner work");
         world.Git.Git.Clear();
         var replies = world.Services.GetRequiredService<AgentTaskReplyService>();
 
-        await replies.RecoverFromBindRefusalAsync(world.TaskId, new DelegateBindRefusalEvidence([s], null), CancellationToken.None);
-        await world.ReloadAsync();
+        // The evidence names a commit, but origin's tip is a later one: the named commit is not the
+        // pushed tip, so nothing correlates the tip with this task's work.
+        await world.RecoverAsync(new DelegateBindRefusalEvidence([older], null));
 
-        // No report was read and no desktop SHA was confirmed: blocked with a repair handoff, not Succeeded.
+        // Blocked with a repair handoff, not Succeeded, and the checkout was never fast-forwarded.
         world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world));
         world.Task.FailureCode.ShouldBeNull();
         world.Task.NextStage.ShouldBe(PipelineHandoffKind.Decide);
         world.Task.NextHandoff!.ShouldContain("fresh completion report");
-        AssertNoSync(world, s);
+        world.Evidence()!.RemoteSync!.Reason.ShouldBe(RemoteSettlementSyncReasons.TipNotReported);
+        world.Evidence()!.RemoteSync!.ObservedSha.ShouldBe(s);
+        world.Git.Git.Commands.ShouldNotContain(x => x.Split(' ').Contains("merge"));
         (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
         (await world.EventsAsync()).ShouldNotContain(e => e.Type == AgentTaskEventType.Merged
             || e.Type == AgentTaskEventType.Completed);
@@ -169,6 +173,129 @@ public sealed class RunnerTaskSettlementTests
         world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world));
         world.Evidence()!.RemoteSync!.ConfirmedSha.ShouldBe(s);
         (await world.Git.HeadAsync()).ShouldBe(s);
+    }
+
+    [Test]
+    public async Task Bind_refusal_recovery_confirms_a_named_pushed_tip()
+    {
+        // (a) The recovery's git evidence names the pushed tip (abbreviated, as `log --oneline` does);
+        // (b) the recovered transcript's done report names it in full.
+        foreach (var row in new[] { "git-evidence", "reported-transcript" })
+        {
+            await using var world = await RunnerSettlementWorld.CreateAsync();
+            var s = await world.Git.RunnerPushAsync("work.txt", "runner work");
+            var evidence = row == "git-evidence"
+                ? new DelegateBindRefusalEvidence([s[..12]], null)
+                : new DelegateBindRefusalEvidence([], world.WriteReportedTranscript($"Implemented and pushed {s}."));
+
+            await world.RecoverAsync(evidence);
+
+            // Settled like a correlated report: the own branch's tip is the named commit and descends from B.
+            world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, row + ": " + Why(world));
+            world.Task.FailureCode.ShouldBeNull(row);
+            world.Task.NextStage.ShouldNotBe(PipelineHandoffKind.Decide, row);
+            var progress = world.Evidence().ShouldNotBeNull(row);
+            progress.Assessment.ShouldBe(CompletionProgressAssessment.ProgressObserved, row);
+            progress.Sources!.Single(x => x.Assessment == CompletionProgressAssessment.ProgressObserved)
+                .VerifiedSha.ShouldBe(s, row);
+            progress.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Synchronized, row);
+            progress.RemoteSync.ConfirmedSha.ShouldBe(s, row);
+            (await world.Git.HeadAsync()).ShouldBe(s, row);
+            world.Task.ProgressBaselineJson.ShouldBe(world.Git.Task.ProgressBaselineJson, row);
+            var events = await world.EventsAsync();
+            events.ShouldContain(e => e.Type == AgentTaskEventType.Merged && e.Detail.Contains(s, StringComparison.Ordinal), row);
+            events.ShouldNotContain(e => e.Type == AgentTaskEventType.Blocked, row);
+            (await world.NoProgressIncidentsAsync()).ShouldBe(0, row);
+            var note = await world.NoteAsync();
+            note.ShouldNotBeNull(row);
+            note!.Body.ShouldContain(s, Case.Sensitive, row);
+            note.Body.ShouldNotContain("next=decide", Case.Sensitive, row);
+        }
+    }
+
+    [Test]
+    public async Task Bind_refusal_recovery_stays_blocked_unless_the_named_tip_descends()
+    {
+        // The named commit IS origin's tip, but it does not descend from the dispatch base.
+        await using (var world = await RunnerSettlementWorld.CreateAsync())
+        {
+            await world.Git.EnsureRunnerAsync();
+            await world.Git.RunAsync(world.Git.Runner, "checkout", "--orphan", "stray");
+            File.WriteAllText(Path.Combine(world.Git.Runner, "stray.txt"), "unrelated history");
+            await world.Git.RunAsync(world.Git.Runner, "add", "stray.txt");
+            await world.Git.RunAsync(world.Git.Runner, "commit", "-m", "stray");
+            var stray = await world.Git.RunAsync(world.Git.Runner, "rev-parse", "HEAD");
+            await world.Git.RunAsync(world.Git.Runner, "push", "--force", "origin", "HEAD:" + world.Git.FullRef);
+
+            await world.RecoverAsync(new DelegateBindRefusalEvidence([stray], null));
+
+            world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world));
+            world.Task.FailureCode.ShouldBeNull();
+            world.Task.NextStage.ShouldBe(PipelineHandoffKind.Decide);
+            world.Evidence()!.RemoteSync!.Reason.ShouldBe(RemoteSettlementSyncReasons.Diverged);
+            (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+            (await world.EventsAsync()).ShouldNotContain(e => e.Type == AgentTaskEventType.Merged);
+        }
+
+        // The transcript reported done but named no commit: nothing to confirm, and nothing is fetched.
+        await using (var world = await RunnerSettlementWorld.CreateAsync())
+        {
+            var s = await world.Git.RunnerPushAsync("work.txt", "runner work");
+            world.Git.Git.Clear();
+
+            await world.RecoverAsync(new DelegateBindRefusalEvidence([], world.WriteReportedTranscript("All done and pushed.")));
+
+            world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world));
+            world.Task.NextStage.ShouldBe(PipelineHandoffKind.Decide);
+            AssertNoSync(world, s);
+            (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+        }
+    }
+
+    [Test]
+    public async Task Bind_refusal_recovery_commits_the_completion_obligation()
+    {
+        // Blocked (nothing named) and Succeeded (the named tip confirmed) recoveries of a profile-v1
+        // task both owe the caller the durable CARD-0544 D-9 completion, committed with the settlement.
+        foreach (var confirm in new[] { false, true })
+        {
+            var row = confirm ? "confirmed" : "blocked";
+            await using var world = await RunnerSettlementWorld.CreateAsync(profiled: true);
+            var s = await world.Git.RunnerPushAsync("work.txt", "runner work");
+
+            await world.RecoverAsync(new DelegateBindRefusalEvidence(confirm ? [s] : [], null));
+
+            world.Task.Status.ShouldBe(confirm ? AgentTaskStatus.Succeeded : AgentTaskStatus.Blocked, row + ": " + Why(world));
+            var settlement = (await world.EventsAsync()).Single(e =>
+                e.Type == (confirm ? AgentTaskEventType.Completed : AgentTaskEventType.Blocked)
+                && e.Detail == world.Task.Result);
+            var obligation = (await world.ObligationsAsync()).ShouldHaveSingleItem(row);
+            obligation.SourceEventId.ShouldBe(settlement.Id, row);
+            obligation.ParentSessionId.ShouldBe(world.CallerSessionId, row);
+            var snapshot = TaskCompletionNotification.TryReadSnapshot(obligation.CompletionSnapshotJson).ShouldNotBeNull(row);
+            snapshot.TaskId.ShouldBe(world.TaskId, row);
+            snapshot.SourceEventId.ShouldBe(settlement.Id, row);
+            snapshot.Status.ShouldBe(world.Task.Status, row);
+            snapshot.RawResult.ShouldBe(world.Task.Result, row);
+            snapshot.ProfileVersion.ShouldBe(1, row);
+            snapshot.Round.ShouldBe(VerificationRound.Final, row);
+            snapshot.NoteHeader.ShouldContain("verification=Final", Case.Sensitive, row);
+            if (confirm)
+                snapshot.NoteHeader.ShouldNotContain("next=decide", Case.Sensitive, row);
+            else
+            {
+                snapshot.NextStage.ShouldBe("decide", row);
+                snapshot.NoteHeader.ShouldContain("next=decide", Case.Sensitive, row);
+            }
+            obligation.Body.ShouldStartWith(snapshot.NoteHeader, Case.Sensitive, row);
+
+            // Delivered through the outbox, not the legacy direct note.
+            obligation.State.ShouldBe(LandNotificationState.AwaitingReceipt, row);
+            var queued = (await world.QueuedForAsync(obligation.Id)).ShouldNotBeNull(row);
+            queued.AgentSessionId.ShouldBe(world.CallerSessionId, row);
+            queued.Body.ShouldBe(obligation.Body, row);
+            obligation.QueueMessageId.ShouldBe(queued.Id, row);
+        }
     }
 
     [Test]

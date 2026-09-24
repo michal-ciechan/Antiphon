@@ -69,4 +69,7 @@ public static class RemoteSettlementSyncReasons
     public const string MergeFailed = "runner_sync_merge_failed";
     public const string PostconditionUnavailable = "runner_sync_postcondition_unavailable";
     public const string DependencyUnavailable = "runner_sync_dependency_unavailable";
+
+    /// <summary>Bind-refusal recovery: origin's tip is not a commit the recovered evidence names.</summary>
+    public const string TipNotReported = "runner_sync_tip_not_reported";
 }

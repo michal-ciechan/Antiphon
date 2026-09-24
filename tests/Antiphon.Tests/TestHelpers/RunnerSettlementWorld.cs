@@ -40,8 +40,10 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
 
     /// <param name="fenced">Give settlement sync the real workspace reservation journal (the
     /// production fence), so a competing retirement claim can be raced against it.</param>
+    /// <param name="profiled">Commission the task under verification profile v1 (Final), so its
+    /// settlement owes the caller the CARD-0544 D-9 durable completion obligation.</param>
     public static async Task<RunnerSettlementWorld> CreateAsync(
-        AgentTaskRole role = AgentTaskRole.Code, bool pushBranch = true, bool fenced = false)
+        AgentTaskRole role = AgentTaskRole.Code, bool pushBranch = true, bool fenced = false, bool profiled = false)
     {
         var world = new RunnerSettlementWorld(await SyncWorld.CreateAsync(pushBranch), fenced);
         world.Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -85,6 +87,8 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
             RemoteWorktreePath = shape.RemoteWorktreePath,
             RunnerId = shape.RunnerId,
             ProgressBaselineJson = shape.ProgressBaselineJson,
+            VerificationProfileVersion = profiled ? 1 : null,
+            VerificationRound = profiled ? VerificationRound.Final : null,
             ParentSessionId = world.CallerSessionId,
             ReplyTo = AgentTaskReplyTo.Session,
             Status = AgentTaskStatus.Working,
@@ -109,6 +113,7 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
         {
             MaxConcurrentTasks = 512,
             AllowedRoots = [Git.Desktop],
+            OutputDistillerEnabled = false,
         }));
         services.AddSingleton(Options.Create(new AgentSessionSettings()));
         services.AddSingleton<ApiErrorRecoveryService>();
@@ -121,6 +126,8 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
         services.AddSingleton<AgentSessionLaunchQueue>();
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
+        services.AddSingleton<CompletionNoteFlushQueue>();
+        services.AddScoped<AgentTaskLandNotificationService>();
         services.AddSingleton<RecordingSessionStopper>();
         services.AddSingleton<IDelegateSessionStopper>(sp => sp.GetRequiredService<RecordingSessionStopper>());
         services.AddSingleton<DelegationWorkspaceResolver>();
@@ -180,6 +187,47 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
             CreateContext, SessionId, prompt ?? DelegationReportFormatter.TaskMarker(TaskId), report, closingVerdict);
         await Services.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(SessionId, CancellationToken.None);
         await ReloadAsync();
+    }
+
+    /// <summary>The delivery watchdog's bind-refusal recovery, through the real reply service.</summary>
+    public async Task RecoverAsync(DelegateBindRefusalEvidence evidence)
+    {
+        await Services.GetRequiredService<AgentTaskReplyService>()
+            .RecoverFromBindRefusalAsync(TaskId, evidence, CancellationToken.None);
+        await ReloadAsync();
+    }
+
+    /// <summary>
+    /// A Claude transcript file whose closing assistant text is this task's done report: the
+    /// shape bind-refusal recovery's JSONL arm hands over as <see cref="DelegateBindRefusalEvidence.JsonlPath"/>.
+    /// </summary>
+    public string WriteReportedTranscript(string body)
+    {
+        var path = Path.Combine(Git.Root, "transcript-" + Guid.NewGuid().ToString("N")[..8] + ".jsonl");
+        var text = body + "\n" + DelegationReportFormatter.ReportToken(TaskId, "done");
+        var assistant = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            type = "assistant",
+            message = new { content = new object[] { new { type = "text", text } } },
+        });
+        File.WriteAllText(path, assistant + "\n");
+        return path;
+    }
+
+    /// <summary>The CARD-0544 D-9 completion obligation(s) committed for this task.</summary>
+    public async Task<List<AgentTaskLandNotification>> ObligationsAsync()
+    {
+        await using var db = CreateContext();
+        return await db.AgentTaskLandNotifications.AsNoTracking()
+            .Where(n => n.TaskId == TaskId && n.Kind == LandNotificationKind.TaskCompletion)
+            .ToListAsync();
+    }
+
+    public async Task<SessionQueuedMessage?> QueuedForAsync(Guid landNotificationId)
+    {
+        await using var db = CreateContext();
+        return await db.SessionQueuedMessages.AsNoTracking()
+            .SingleOrDefaultAsync(m => m.SourceLandNotificationId == landNotificationId);
     }
 
     /// <summary>The delegate session has ended, so an unmarked turn settles without a nudge.</summary>
