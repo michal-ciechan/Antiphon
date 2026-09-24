@@ -225,6 +225,118 @@ public sealed class ExpectationLedger
         return committed;
     }
 
+    /// <summary>
+    /// Stamp the last scan or its error. A failed observation does not move the success clock
+    /// or retire a digest. This writes no nudge and no session message.
+    /// </summary>
+    public async Task RecordObservationAsync(
+        string directiveId,
+        string configDigest,
+        DateTime observedAt,
+        bool successful,
+        string? error,
+        CancellationToken ct)
+    {
+        ValidateIdentity(directiveId, configDigest, "scan", "scan");
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            var now = AsUtc(observedAt);
+            var id = directiveId.Trim();
+            var digest = configDigest.Trim();
+            var state = await LockStateAsync(id, ct);
+            if (state is null)
+            {
+                state = new ExpectationWatchState
+                {
+                    Id = Guid.NewGuid(),
+                    DirectiveId = id,
+                    ConfigDigest = digest,
+                    UpdatedAt = now,
+                    ConcurrencyToken = Guid.NewGuid(),
+                };
+                _db.ExpectationWatchStates.Add(state);
+            }
+
+            if (successful)
+            {
+                state.ConfigDigest = digest;
+                state.LastSuccessfulScanAt = now;
+                state.LastObservationError = null;
+            }
+            else
+            {
+                state.LastObservationError = ClipError(error);
+            }
+
+            state.UpdatedAt = now;
+            state.ConcurrencyToken = Guid.NewGuid();
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+        }
+        catch
+        {
+            await tx.RollbackAsync(ct);
+            _db.ChangeTracker.Clear();
+            throw;
+        }
+    }
+
+    /// <summary>Retire open episodes whose digest is no longer the directive's. History stays.</summary>
+    public async Task ResolveDigestMismatchesAsync(
+        string directiveId,
+        string configDigest,
+        DateTime observedAt,
+        CancellationToken ct)
+    {
+        ValidateIdentity(directiveId, configDigest, "scan", "scan");
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            var now = AsUtc(observedAt);
+            var id = directiveId.Trim();
+            var digest = configDigest.Trim();
+            var rows = await _db.ExpectationEpisodes
+                .FromSqlInterpolated($"""
+                    SELECT * FROM "ExpectationEpisodes"
+                    WHERE "DirectiveId" = {id}
+                      AND "ResolvedAt" IS NULL
+                      AND "ConfigDigest" <> {digest}
+                    FOR UPDATE
+                    """)
+                .AsTracking()
+                .ToListAsync(ct);
+            foreach (var row in rows)
+            {
+                row.ResolvedAt = now;
+                row.ConcurrencyToken = Guid.NewGuid();
+            }
+
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+        }
+        catch
+        {
+            await tx.RollbackAsync(ct);
+            _db.ChangeTracker.Clear();
+            throw;
+        }
+    }
+
+    private async Task<ExpectationWatchState?> LockStateAsync(string directiveId, CancellationToken ct) =>
+        await _db.ExpectationWatchStates
+            .FromSqlInterpolated($"SELECT * FROM \"ExpectationWatchStates\" WHERE \"DirectiveId\" = {directiveId} FOR UPDATE")
+            .AsTracking()
+            .SingleOrDefaultAsync(ct);
+
+    private static string? ClipError(string? error)
+    {
+        if (string.IsNullOrWhiteSpace(error))
+            return "observation unknown";
+        var trimmed = error.Trim();
+        return trimmed.Length <= 400 ? trimmed : trimmed[..400];
+    }
+
     private async Task<ExpectationWatchState> LockOrCreateStateAsync(
         string directiveId,
         string digest,
