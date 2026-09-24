@@ -64,7 +64,12 @@ public sealed class AgentTaskService
     private readonly InterimVerificationPolicy? _interimPolicy;
     private readonly WorkspaceUseAdmission? _workspaceUse;
     private readonly PhoneHomeLaunchPolicy? _phoneHome;
+    // CARD-0647. Optional. A runner-bound Grok create asks this directory; absent, the
+    // runner store cannot be measured and the desktop store is not consulted instead.
     private readonly ISessionRunnerDirectory? _runners;
+    // CARD-0644 D-4. Optional so harnesses that never continue a retired worktree keep constructing
+    // this. Absent, a retired Worktree tip cannot be proven and create refuses rather than guessing.
+    private readonly DelegationWorktreeService? _worktrees;
 
     public AgentTaskService(
         AppDbContext db,
@@ -95,8 +100,10 @@ public sealed class AgentTaskService
         PhoneHomeLaunchPolicy? phoneHome = null,
         // CARD-0647. Optional. A runner-bound Grok create asks this directory; absent, the
         // runner store cannot be measured and the desktop store is not consulted instead.
-        ISessionRunnerDirectory? runners = null)
+        ISessionRunnerDirectory? runners = null,
+        DelegationWorktreeService? worktrees = null)
     {
+        _worktrees = worktrees;
         _runners = runners;
         _phoneHome = phoneHome;
         _workspaceUse = workspaceUse;
@@ -322,6 +329,8 @@ public sealed class AgentTaskService
         Guid? followUpCardId = null;
         Guid? followUpOfTaskId = null;
         string? followUpMessage = null;
+        string? explicitModeWarning = null;
+        string? continuationSha = null;
         var liveFollowUp = false;
         CommitOnSettlePolicy? priorCommitOnSettle = null;
 
@@ -369,11 +378,6 @@ public sealed class AgentTaskService
 
             if (followAgent is null)
             {
-                // CARD-0644 review / CARD-0636. S2 will continue a retired Worktree at its frozen
-                // tip. Until then an omitted workspace must not become Shared in the caller's checkout.
-                if (request.Workspace is null && prior.Workspace == WorkspaceMode.Worktree)
-                    await RefuseOmittedWorktreeFollowUpAsync(prior, caller, ct);
-
                 var completionHeader = await CompletionHeaderAsync(prior.Id, ct);
                 var cardIdentifier = prior.CardId is Guid cardId
                     ? await _db.Cards.AsNoTracking()
@@ -381,11 +385,35 @@ public sealed class AgentTaskService
                         .Select(card => card.Identifier)
                         .FirstOrDefaultAsync(ct)
                     : null;
-                request = request with
+                var inheritedGoal = BuildInheritedFollowUpGoal(prior, completionHeader, cardIdentifier, request.Goal);
+                // CARD-0644 D-4. Omitted or explicit Worktree continues the committed tip. A caller
+                // StartRef already refused above; this SHA is derived here, not from the request.
+                if (prior.Workspace == WorkspaceMode.Worktree
+                    && request.Workspace is null or WorkspaceMode.Worktree)
                 {
-                    Goal = BuildInheritedFollowUpGoal(prior, completionHeader, cardIdentifier, request.Goal),
-                };
-                followUpMessage = "agent retired - fresh delegate with inherited context";
+                    var tip = await RequireFrozenContinuationTipAsync(prior, caller, ct);
+                    var shortId = DelegationReportFormatter.Short(prior.Id);
+                    continuationSha = tip;
+                    followUpMessage = $"continuation of {shortId} at {tip} as Worktree";
+                    request = request with
+                    {
+                        Goal = inheritedGoal,
+                        Workspace = WorkspaceMode.Worktree,
+                        WorkingDirectory = prior.RepoPath,
+                    };
+                }
+                else
+                {
+                    if (prior.Workspace == WorkspaceMode.Worktree && request.Workspace is { } otherMode)
+                    {
+                        explicitModeWarning =
+                            $"Explicit {otherMode} does not continue {DelegationReportFormatter.Short(prior.Id)}'s branch "
+                            + $"{prior.WorktreeBranch}; the predecessor branch is left untouched.";
+                    }
+
+                    followUpMessage = "agent retired - fresh delegate with inherited context";
+                    request = request with { Goal = inheritedGoal };
+                }
             }
             else
             {
@@ -442,16 +470,23 @@ public sealed class AgentTaskService
                 }
 
                 var continuedDirectory = request.WorkingDirectory ?? followAgent.WorkingDirectory;
-                // The running checkout is reused as Shared. That reuse is the caller's checkout
-                // only when the agent itself is sitting there — the same CARD-0636 hazard.
-                if (request.Workspace is null && prior.Workspace == WorkspaceMode.Worktree
-                    && LandsInCallerCheckout(continuedDirectory, caller.WorkingDirectory))
-                    await RefuseOmittedWorktreeFollowUpAsync(prior, caller, ct);
+                // CARD-0644 D-3. The live process is the checkout. Explicit Worktree would cut a
+                // second one for an agent that is already running; ReadOnly stays ReadOnly.
+                if (request.Workspace == WorkspaceMode.Worktree)
+                {
+                    throw new ValidationException(
+                        nameof(CreateAgentTaskRequest.Workspace),
+                        $"Explicit Worktree cannot reuse the live agent '{followAgent.Name}'. "
+                        + $"Omit workspace to keep {continuedDirectory}, or drop the follow-up to cut a fresh worktree.",
+                        "workspace_existing_agent_conflict");
+                }
 
                 request = request with
                 {
                     WorkingDirectory = continuedDirectory,
-                    Workspace = WorkspaceMode.Shared,
+                    Workspace = request.Workspace == WorkspaceMode.ReadOnly
+                        ? WorkspaceMode.ReadOnly
+                        : WorkspaceMode.Shared,
                     ModelLevel = followAgent.ModelLevel,
                     AgentKind = prior.AgentKind,
                     AgentId = followAgent.Id,
@@ -541,6 +576,8 @@ public sealed class AgentTaskService
         // can still turn it into a reuse below, so the non-Git refusal waits until pins are known.
         var workspaceDefaulted = request.Workspace is null;
         var (workspace, warning) = ResolveWorkspace(request, caller, resolved);
+        if (explicitModeWarning is not null)
+            warning = warning is null ? explicitModeWarning : warning + " " + explicitModeWarning;
         if (request.RepairSourceTaskId is not null && workspace != WorkspaceMode.Worktree)
         {
             throw new ValidationException(nameof(request.RepairSourceTaskId),
@@ -727,9 +764,8 @@ public sealed class AgentTaskService
             }
         }
 
-        // CARD-0644 D-3 (interim until S2 orders placement before admission): a configured routing
-        // pin that names an existing agent reuses that agent's checkout, exactly as an explicit
-        // -Agent does; it never provisions an unused worktree for a pinned process.
+        // CARD-0644 D-3. A configured pin that names an existing agent is known only after the pin
+        // overlay. Reuse that checkout instead of provisioning a worktree the process will not use.
         if (workspaceDefaulted && workspace == WorkspaceMode.Worktree && request.AgentId is not null
             && startRef is null && request.RepairSourceTaskId is null
             && request.SourceLandingOperationId is null && string.IsNullOrWhiteSpace(request.RunnerId))
@@ -742,6 +778,32 @@ public sealed class AgentTaskService
                 InternalDecisionPolicy.GrantorFrom(
                     caller.Task?.Id, caller.SessionId, caller.CapabilityId, caller.CapabilityName),
                 UtcNow());
+        }
+
+        string? reusedDirectory = null;
+        if (!liveFollowUp && request.AgentId is Guid existingAgentId)
+        {
+            var existingAgent = pinnedStandingAgent is { Id: var standingId } && standingId == existingAgentId
+                ? pinnedStandingAgent
+                : await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == existingAgentId, ct);
+            if (existingAgent is not null && workspace == WorkspaceMode.Worktree)
+            {
+                throw new ValidationException(
+                    nameof(CreateAgentTaskRequest.Workspace),
+                    $"Explicit Worktree cannot reuse existing agent '{existingAgent.Name}'. "
+                    + $"Omit workspace to keep {existingAgent.WorkingDirectory}, or drop the pin to cut a fresh worktree.",
+                    "workspace_existing_agent_conflict");
+            }
+
+            if (existingAgent is not null
+                && workspace != WorkspaceMode.Worktree
+                && !string.IsNullOrWhiteSpace(existingAgent.WorkingDirectory))
+            {
+                reusedDirectory = existingAgent.WorkingDirectory;
+                var reuseNote =
+                    $"Reusing existing agent '{existingAgent.Name}' at {existingAgent.WorkingDirectory} as {workspace}.";
+                warning = warning is null ? reuseNote : warning + " " + reuseNote;
+            }
         }
 
         // CARD-0644 D-1. The fresh default is a Worktree; a directory that cannot branch is refused
@@ -1134,7 +1196,7 @@ public sealed class AgentTaskService
             ExplicitModelLevel = explicitAskLevel,
             Workspace = workspace,
             DenyDirectEdits = request.DenyDirectEdits,
-            WorkingDirectory = resolved.WorkingDirectory,
+            WorkingDirectory = reusedDirectory ?? resolved.WorkingDirectory,
             RepoPath = resolved.RepoPath,
             Scope = string.IsNullOrWhiteSpace(request.Scope) ? null : request.Scope.Trim(),
             // A worktree task merges into its parent's BRANCH — but only when they share a repo.
@@ -1167,10 +1229,10 @@ public sealed class AgentTaskService
             VerificationBaselineOutcomeId = verificationAdmission?.BaselineOutcomeId,
             VerificationAdmissionJson = verificationAdmission?.Serialize(),
             RunnerId = remoteRunnerId,
-            // CARD-0613 D-1/D-3. Stored verbatim as what the CALLER asked for. Provisioning
-            // resolves it once and records the base it actually used separately, so a reuse can
-            // never relabel the first recorded decision.
-            WorktreeBaseRequestedRef = startRef,
+            // CARD-0613 D-1/D-3. A caller StartRef is stored verbatim. CARD-0644 D-4 freezes a
+            // retired Worktree tip into the same field; that SHA is derived after the public
+            // StartRef conflict check, so a follow-up plus a caller StartRef still refuses.
+            WorktreeBaseRequestedRef = continuationSha ?? startRef,
         };
 
         if (storedPolicy is not null)
@@ -1260,7 +1322,8 @@ public sealed class AgentTaskService
                 // CARD-0305: which standing instruction produced that kind/tier. Without it the
                 // event says "Codex Frontier" and nothing records that a human pinned it there.
                 + (pinDecision.EventNote is { } pinNote ? $" [{pinNote}]" : string.Empty)
-                + (routingWalk is { } walk ? FormatComplexityCreatedDetail(walk) : string.Empty),
+                + (routingWalk is { } walk ? FormatComplexityCreatedDetail(walk) : string.Empty)
+                + (followUpMessage is { } followNote ? $" — {followNote}" : string.Empty),
             At = now,
         });
         if (repeatOf is not null || routingExhausted)
@@ -1727,48 +1790,59 @@ public sealed class AgentTaskService
     /// CARD-0644 D-1/D-3/D-5. What an omitted workspace means: a fresh Worker or Orchestrator gets
     /// its own Worktree whatever its role or -Dir (a different location is not isolation); an
     /// explicit existing-agent selection (-Agent / agentId) reuses that agent's checkout. A live
-    /// follow-up has already stamped Shared by the time ResolveWorkspace runs, in that agent's
-    /// checkout. A retired follow-up of a Worktree predecessor is refused before this runs
-    /// (workspace_followup_requires_worktree) until S2 continues it at the frozen tip. A retired
-    /// follow-up of any other predecessor still resolves to Shared here.
+    /// follow-up has already stamped Shared or ReadOnly by the time ResolveWorkspace runs. A
+    /// retired follow-up does not: a Worktree predecessor is rewritten to an explicit continuation
+    /// above, and any other retired predecessor takes this fresh Worktree default.
     /// </summary>
     internal static WorkspaceMode EffectiveRequestedWorkspace(CreateAgentTaskRequest request) =>
         request.Workspace
         ?? (request.AgentId is not null || !string.IsNullOrWhiteSpace(request.Agent)
-            || !string.IsNullOrWhiteSpace(request.FollowUpOnTask)
                 ? WorkspaceMode.Shared
                 : WorkspaceMode.Worktree);
 
     /// <summary>
-    /// CARD-0644. Omitted workspace after a Worktree predecessor would persist Shared in the
-    /// caller's checkout. Frozen-tip continuation is S2; until then the caller names the tip.
+    /// CARD-0644 D-4. The predecessor's recorded local branch, as a full commit, or a refusal.
+    /// Never substitutes master, the old base SHA, a remote ref, or the canonical HEAD.
     /// </summary>
-    private async Task RefuseOmittedWorktreeFollowUpAsync(AgentTask prior, Caller caller, CancellationToken ct)
+    private async Task<string> RequireFrozenContinuationTipAsync(
+        AgentTask prior, Caller caller, CancellationToken ct)
     {
-        var tip = string.IsNullOrWhiteSpace(prior.WorktreeBranch)
-            ? "<predecessor tip>"
+        var shortId = DelegationReportFormatter.Short(prior.Id);
+        var namedRef = string.IsNullOrWhiteSpace(prior.WorktreeBranch)
+            ? "(no branch)"
             : prior.WorktreeBranch.Trim();
+        string? why = null;
+        if (_worktrees is null)
+            why = "git tip lookup is unavailable";
+        else if (string.IsNullOrWhiteSpace(prior.WorktreeBranch) || string.IsNullOrWhiteSpace(prior.RepoPath))
+            why = "the predecessor was never dispatched";
+        else if (!IsPathAllowed(
+            prior.RepoPath,
+            caller.WorkingDirectory,
+            caller.CapabilityId is not null ? caller.ExtraAllowedRoots ?? [] : _settings.AllowedRoots))
+            why = "the predecessor repository is outside this caller's authority";
+        else
+        {
+            var callerProject = await DeriveCallerProjectAsync(caller, ct);
+            if (callerProject is Guid project && prior.ProjectId is Guid priorProject && project != priorProject)
+                why = "the predecessor is in another project";
+            else
+            {
+                var tip = await _worktrees.ResolveKeptBranchTipAsync(prior.RepoPath, prior.WorktreeBranch, ct);
+                if (tip is not null)
+                    return tip;
+                why = "the local branch does not name a commit";
+            }
+        }
+
         var message =
-            $"Task {DelegationReportFormatter.Short(prior.Id)} ran in a Worktree. An omitted workspace would continue it as Shared in the caller's checkout. "
-            + $"Until continuation at the predecessor's frozen tip exists, pass -Worktree -StartRef {tip}.";
+            $"Task {shortId} ran in a Worktree on {namedRef}, but its tip cannot be proven ({why}). "
+            + "No other ref was substituted for that missing local tip. "
+            + $"Pass -Worktree -StartRef {namedRef} to start a fresh task at a commit you choose.";
         if (caller.Task is not null)
             await RecordRejectionAsync(caller.Task, message, ct);
         throw new ValidationException(
-            nameof(CreateAgentTaskRequest.Workspace), message, "workspace_followup_requires_worktree");
-    }
-
-    private static bool LandsInCallerCheckout(string? directory, string callerDirectory)
-    {
-        if (string.IsNullOrWhiteSpace(directory) || string.IsNullOrWhiteSpace(callerDirectory))
-            return true;
-        try
-        {
-            return PathsEqual(directory, callerDirectory);
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            return true;
-        }
+            nameof(CreateAgentTaskRequest.FollowUpOnTask), message, "follow_up_source_unavailable");
     }
 
     private static bool PathsEqual(string a, string b)

@@ -546,8 +546,15 @@ the normal `[task … done]` note. A raw session message to a child is for steer
 dispatched, never for handing over work — no completion note will ever arrive for it. A follow-up
 behind a Working task waits visibly (`Held` naming the agent and task; `HeldAged` at 300/900 s;
 `DispatchHeld` on the attention feed). A follow-up onto an agent parked on a Blocked task is refused
-409 `follow_up_agent_blocked` — reply with `-Reply` or cancel the Blocked task, then re-send. Cancel
-retires a pool agent only when the canceled task ran on it and nothing else open still pins it.
+409 `follow_up_agent_blocked` — reply with `-Reply` or cancel the Blocked task, then re-send. A retired
+Worktree follow-up continues that task's committed tip: Antiphon freezes the local branch SHA and
+cuts a new `feat/card-task-<id>` worktree there. It does not reuse the old directory, reset the old
+branch, or fall back to master. If that tip cannot be proven, create refuses
+`follow_up_source_unavailable` and inserts nothing; pass `-Worktree -StartRef <sha>` to choose a
+commit yourself. Explicit `-Shared` or `-ReadOnly` is a new task and is warned as such. A live
+follow-up, `-Agent`, or a routing pin that names an existing agent keeps that agent's checkout
+(Shared, or ReadOnly when that was explicit). Explicit `-Worktree` together with one of those is
+`workspace_existing_agent_conflict`. Cancel retires a pool agent only when the canceled task ran on it and nothing else open still pins it.
 
 ---
 

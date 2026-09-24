@@ -3902,6 +3902,26 @@ public sealed class AgentTaskDispatcher
         // (a pre-claim route edit) rather than the outer snapshot. PC-71.
         await _db.Entry(claimed).ReloadAsync(ct);
 
+        // CARD-0644 D-3. Revalidate the create-time pin before any checkout is cut. A queued
+        // explicit Worktree that still names an existing agent is the conflict create should
+        // have refused; a Shared/ReadOnly pin follows the agent's checkout if it has moved.
+        if (claimed.AgentId is Guid pinnedAgentId && !claimed.Ephemeral)
+        {
+            if (claimed.Workspace == WorkspaceMode.Worktree)
+            {
+                await FailAsync(claimed,
+                    "workspace_existing_agent_conflict: explicit Worktree is pinned to an existing agent and was not launched.",
+                    ct);
+                await transaction.CommitAsync(ct);
+                return DispatchOneResult.NotClaimed;
+            }
+
+            var pinnedAgent = await _db.Agents.AsNoTracking()
+                .FirstOrDefaultAsync(a => a.Id == pinnedAgentId, ct);
+            if (pinnedAgent is not null && !string.IsNullOrWhiteSpace(pinnedAgent.WorkingDirectory))
+                claimed.WorkingDirectory = pinnedAgent.WorkingDirectory;
+        }
+
         if (_workspaceUse is not null)
         {
             var path = claimed.WorktreePath ?? claimed.WorkingDirectory;

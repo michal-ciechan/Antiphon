@@ -1412,7 +1412,8 @@ public class AgentTaskServiceIntegrationTests
     [Test]
     public async Task a_follow_up_on_a_retired_agent_degrades_to_a_fresh_delegate_with_inherited_context()
     {
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("c644-retired-shared");
+        await workspace.CommitFileAsync("README.md", "base\n");
         var prior = await SeedTaskAsync(
             AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Succeeded,
             result: "Changed the service and committed abc123.");
@@ -1453,7 +1454,8 @@ public class AgentTaskServiceIntegrationTests
         var fresh = await db.AgentTasks.AsNoTracking().SingleAsync(task => task.Id == created.Id);
         fresh.AgentId.ShouldBeNull("the retired agent must not be revived or pinned");
         fresh.WorkingDirectory.ShouldBe(workspace.Path, "a degraded follow-up uses normal fresh-dispatch resolution");
-        fresh.Workspace.ShouldBe(WorkspaceMode.Shared);
+        fresh.Workspace.ShouldBe(WorkspaceMode.Worktree, "a retired Shared predecessor takes the fresh Worktree default");
+        fresh.WorktreeBaseRequestedRef.ShouldBeNull();
         fresh.AgentKind.ShouldBe(AgentKind.ClaudeCode, "the prior session's program does not constrain a fresh delegate");
         fresh.ModelLevel.ShouldBe(AgentModelLevel.Frontier, "the prior session's tier does not constrain a fresh delegate");
         fresh.Goal.ShouldStartWith("--- inherited context from settled task");
@@ -1497,11 +1499,11 @@ public class AgentTaskServiceIntegrationTests
             ManualCaller(callerCheckout.Path),
             CancellationToken.None));
 
-        refused.Code.ShouldBe("workspace_followup_requires_worktree");
-        var message = string.Join(" ", refused.Errors[nameof(CreateAgentTaskRequest.Workspace)]);
-        message.ShouldContain("-Worktree", Case.Sensitive);
-        message.ShouldContain("-StartRef", Case.Sensitive);
+        refused.Code.ShouldBe("follow_up_source_unavailable");
+        var message = string.Join(" ", refused.Errors[nameof(CreateAgentTaskRequest.FollowUpOnTask)]);
+        message.ShouldContain(DelegationReportFormatter.Short(prior.Id));
         message.ShouldContain(tip, Case.Sensitive);
+        message.ShouldContain("-StartRef", Case.Sensitive);
         (await db.AgentTasks.CountAsync()).ShouldBe(before, "the refusal must insert nothing");
 
         var shared = await CreateService(db).CreateAsync(
@@ -1512,9 +1514,11 @@ public class AgentTaskServiceIntegrationTests
             },
             ManualCaller(callerCheckout.Path),
             CancellationToken.None);
+        shared.Warning.ShouldNotBeNull().ShouldContain("does not continue");
         var sharedRow = await db.AgentTasks.AsNoTracking().SingleAsync(task => task.Id == shared.Id);
         sharedRow.Workspace.ShouldBe(WorkspaceMode.Shared);
         sharedRow.WorkingDirectory.ShouldBe(callerCheckout.Path);
+        sharedRow.WorktreeBaseRequestedRef.ShouldBeNull();
 
         // A live agent whose checkout is the predecessor worktree, not the caller, still continues there.
         var liveAgentId = await SeedPoolAgentAsync(agentCheckout.Path, AgentModelLevel.Low);
@@ -1544,7 +1548,8 @@ public class AgentTaskServiceIntegrationTests
         continuedRow.WorkingDirectory.ShouldBe(agentCheckout.Path);
         continuedRow.AgentId.ShouldBe(liveAgentId);
 
-        // A live agent parked in the caller's checkout is the same hazard: omission must not share it.
+        // A live agent parked in the caller's checkout keeps that process. The retired case above
+        // is the one that must not become Shared there.
         var callerAgentId = await SeedPoolAgentAsync(callerCheckout.Path, AgentModelLevel.Low);
         var callerPrior = await SeedTaskAsync(
             AgentTaskKind.Worker, callerCheckout.Path, status: AgentTaskStatus.Succeeded);
@@ -1553,22 +1558,25 @@ public class AgentTaskServiceIntegrationTests
         callerStored.Workspace = WorkspaceMode.Worktree;
         callerStored.WorktreeBranch = "feat/card-task-caller0644";
         await db.SaveChangesAsync();
-        var beforeCallerFollowUp = await db.AgentTasks.CountAsync();
-        var refusedInCaller = await Should.ThrowAsync<ValidationException>(() => CreateService(db).CreateAsync(
-            NewRequest("do not share the caller checkout", role: AgentTaskRole.Code) with
+        var kept = await CreateService(db).CreateAsync(
+            NewRequest("keep the live caller checkout", role: AgentTaskRole.Code) with
             {
                 FollowUpOnTask = DelegationReportFormatter.Short(callerPrior.Id),
             },
             ManualCaller(callerCheckout.Path),
-            CancellationToken.None));
-        refusedInCaller.Code.ShouldBe("workspace_followup_requires_worktree");
-        (await db.AgentTasks.CountAsync()).ShouldBe(beforeCallerFollowUp);
+            CancellationToken.None);
+        var keptRow = await db.AgentTasks.AsNoTracking().SingleAsync(task => task.Id == kept.Id);
+        keptRow.Workspace.ShouldBe(WorkspaceMode.Shared);
+        keptRow.WorkingDirectory.ShouldBe(callerCheckout.Path);
+        keptRow.AgentId.ShouldBe(callerAgentId);
+        kept.FollowUpMessage.ShouldBe("follow-up on the live agent");
     }
 
     [Test]
     public async Task a_follow_up_on_a_task_that_never_ran_degrades_to_a_fresh_delegate()
     {
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("c644-never-ran");
+        await workspace.CommitFileAsync("README.md", "base\n");
         var prior = await SeedTaskAsync(
             AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Failed,
             result: "The launch failed before a delegate started.");
@@ -1584,6 +1592,7 @@ public class AgentTaskServiceIntegrationTests
 
         var fresh = await db.AgentTasks.AsNoTracking().SingleAsync(task => task.Id == created.Id);
         fresh.AgentId.ShouldBeNull();
+        fresh.Workspace.ShouldBe(WorkspaceMode.Worktree);
         fresh.AgentKind.ShouldBe(AgentKind.ClaudeCode);
         fresh.ModelLevel.ShouldBe(AgentModelLevel.Frontier);
         fresh.Goal.ShouldStartWith("--- inherited context from settled task");
