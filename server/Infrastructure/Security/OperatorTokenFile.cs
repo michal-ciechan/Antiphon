@@ -34,26 +34,40 @@ public static class OperatorTokenFile
         return Path.Combine(dataHome, "antiphon", "operator-token");
     }
 
-    /// <summary>Read the token, creating it with a fresh random value on first use.</summary>
+    /// <summary>
+    /// Read the token, creating it with a fresh random value on first use. The value is written
+    /// to an owner-only temp file and renamed into place, so a concurrent reader sees either no
+    /// file or the whole token, never a file its creator still holds open.
+    /// </summary>
     public static string ReadOrCreate(string path)
     {
         var existing = TryRead(path);
         if (existing is not null)
             return existing;
 
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var full = Path.GetFullPath(path);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
         var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        var temp = full + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            using var stream = CreateOwnerOnly(path);
-            stream.Write(Encoding.ASCII.GetBytes(token));
-            stream.Flush(flushToDisk: true);
+            using (var stream = CreateOwnerOnly(temp))
+            {
+                stream.Write(Encoding.ASCII.GetBytes(token));
+                stream.Flush(flushToDisk: true);
+            }
+
+            File.Move(temp, full, overwrite: false);
             return token;
         }
-        catch (IOException) when (File.Exists(path))
+        catch (IOException) when (File.Exists(full))
         {
-            // Another caller created it first; theirs is the token.
-            return TryRead(path) ?? throw new InvalidOperationException("The operator token file is empty.");
+            // Another caller renamed theirs into place first; theirs is the token.
+            return TryRead(full) ?? throw new InvalidOperationException("The operator token file is empty.");
+        }
+        finally
+        {
+            File.Delete(temp);
         }
     }
 
