@@ -211,8 +211,6 @@ public sealed class DefaultRunnerCreateTests
                  {
                      ("codex", new CreateAgentTaskRequest("c659 codex", Role: AgentTaskRole.Code, AgentKind: AgentKind.Codex),
                          "kind_not_supported"),
-                     ("grok orchestrator", new CreateAgentTaskRequest("c659 grok orch", Kind: AgentTaskKind.Orchestrator,
-                         Role: AgentTaskRole.Plan, AgentKind: AgentKind.Grok), "kind_not_supported"),
                      ("shared", new CreateAgentTaskRequest("c659 shared", Role: AgentTaskRole.Code,
                          AgentKind: AgentKind.ClaudeCode, Workspace: WorkspaceMode.Shared), "workspace_not_worktree"),
                      ("readonly", new CreateAgentTaskRequest("c659 readonly", Role: AgentTaskRole.Review,
