@@ -271,6 +271,56 @@ public class StartRefAvailabilityTests
         }
     }
 
+    [Test]
+    [Timeout(60_000)]
+    public async Task A_slow_fetch_leaves_the_origin_probe_only_the_remaining_budget(CancellationToken testCt)
+    {
+        await SkipIfGitUnavailableAsync();
+        var root = NewRoot();
+        try
+        {
+            var (repo, _, _) = await CreateRepoAsync(root);
+            const string missing = "0123456789abcdef0123456789abcdef01234567";
+            var git = new SlowFetchGit(TimeSpan.FromSeconds(5));
+
+            var ex = await Should.ThrowAsync<ServiceUnavailableException>(() =>
+                new StartRefAvailability(git, NullLogger<StartRefAvailability>.Instance, TimeSpan.FromSeconds(6))
+                    .EnsureAvailableAsync(repo, missing, testCt));
+
+            ex.Code.ShouldBe(StartRefAvailability.FetchTimeoutCode);
+            git.ProbeAllowed.ShouldNotBeNull("precondition: the failed fetch was followed by the origin probe");
+            // One 6s deadline covers all network work: a 5s fetch leaves the probe about 1s, not a fresh 6s.
+            git.ProbeAllowed.Value.ShouldBeLessThan(TimeSpan.FromSeconds(3));
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    /// <summary>A fetch that fails after a delay and an ls-remote that answers only its deadline; the rest is real git.</summary>
+    private sealed class SlowFetchGit(TimeSpan fetchDelay) : LandingGit
+    {
+        public TimeSpan? ProbeAllowed { get; private set; }
+
+        public override async Task<Antiphon.Server.Application.Dtos.LandingGitResult> RunAsync(
+            string repository, IReadOnlyList<string> arguments, CancellationToken ct)
+        {
+            if (arguments[0] == "fetch")
+            {
+                await Task.Delay(fetchDelay, ct);
+                return new(128, "", "fixture fetch failed");
+            }
+            if (arguments[0] == "ls-remote")
+            {
+                var clock = Stopwatch.StartNew();
+                try { await Task.Delay(System.Threading.Timeout.InfiniteTimeSpan, ct); }
+                finally { ProbeAllowed = clock.Elapsed; }
+            }
+            return await base.RunAsync(repository, arguments, ct);
+        }
+    }
+
     private static async Task<string> ChildJournalDirectoryAsync(string repo) =>
         Path.Combine(await new LandingGit().CommonDirectoryAsync(repo, CancellationToken.None), "antiphon", "children");
 }
