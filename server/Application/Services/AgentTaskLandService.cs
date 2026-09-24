@@ -965,8 +965,10 @@ public sealed class AgentTaskLandService
                 : null;
             var who = observed.TaskId is Guid id ? id.ToString("N") : "none";
             var status = owner?.Status.ToString() ?? "unknown";
+            // The tagged id decides note ownership even when its task row is missing.
             await HoldAsync(task, request, "repository_mutation_lease_busy", owner,
-                $"Repository mutation lease is occupied by task {who} ({observed.Purpose}); status={status}.", ct);
+                $"Repository mutation lease is occupied by task {who} ({observed.Purpose}); status={status}.", ct,
+                observed.TaskId);
             return;
         }
 
@@ -1014,16 +1016,24 @@ public sealed class AgentTaskLandService
     }
 
     private async Task HoldAsync(AgentTask task, AgentTaskLandRequest request, string reason,
-        AgentTask? holder, string detail, CancellationToken ct)
+        AgentTask? holder, string detail, CancellationToken ct, Guid? ownerTaskId = null)
     {
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        await _boundary.ReachedAsync("hold-before-lock", task.Id, request.Id, ct);
         await LockTaskAsync(task.Id, ct);
         await _db.Entry(request).ReloadAsync(ct);
         if (!request.IsPending) return;
         var now = _clock.GetUtcNow().UtcDateTime;
         request.LastEvaluatedAt = now;
+        // The note owner is the identified task even when its row is gone (a tagged lease names it).
+        var owner = ownerTaskId ?? holder?.Id;
+        var observedOwner = owner is Guid ownerId ? HoldNotificationOwnerKey(ownerId) : UnknownHoldNotificationOwner;
         var changed = request.State != LandRequestState.Held || request.HoldReasonCode != reason
-            || request.HoldingTaskId != holder?.Id;
+            || request.HoldingTaskId != holder?.Id
+            || owner is not null && request.HoldNotificationOwnerKey is { } anchor && anchor != observedOwner;
+        // Unconditional: the first post-upgrade evaluation adopts existing Held debt even when the
+        // diagnostics are unchanged, so a later takeover compares against a real anchor.
+        var notify = await AdvanceHoldNotificationOwnerAsync(request, observedOwner, ct);
         request.State = LandRequestState.Held;
         request.HoldReasonCode = reason;
         request.HoldDetail = detail.Length <= 2000 ? detail : detail[..2000];
@@ -1038,7 +1048,7 @@ public sealed class AgentTaskLandService
                 SetLandingEvidence(held, await _db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.Id == operationId, ct));
             held.LandRequestId = request.Id;
             _db.AgentTaskEvents.Add(held);
-            if (await AdvanceHoldNotificationOwnerAsync(request, holder, ct))
+            if (notify)
                 AddNotification(task, request, held, LandNotificationKind.Held);
         }
         request.ConcurrencyToken = Guid.NewGuid();
@@ -1053,10 +1063,10 @@ public sealed class AgentTaskLandService
 
     // CARD-0641 D-5: caller notes deduplicate per request and stable holder; the Held event above
     // stays per episode. Runs inside HoldAsync's task-locked transaction so anchor and note commit
-    // or roll back together. Unknown never replaces or refines into a new holder.
-    private async Task<bool> AdvanceHoldNotificationOwnerAsync(AgentTaskLandRequest request, AgentTask? holder, CancellationToken ct)
+    // or roll back together. Unknown never replaces or refines into a new holder. A true result on an
+    // unchanged evaluation mints nothing: that case is only the silent adoption of a null anchor.
+    private async Task<bool> AdvanceHoldNotificationOwnerAsync(AgentTaskLandRequest request, string observed, CancellationToken ct)
     {
-        var observed = holder is null ? UnknownHoldNotificationOwner : HoldNotificationOwnerKey(holder.Id);
         var anchor = request.HoldNotificationOwnerKey;
         if (anchor is null)
         {
