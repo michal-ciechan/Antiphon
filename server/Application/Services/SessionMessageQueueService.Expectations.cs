@@ -205,14 +205,17 @@ public sealed partial class SessionMessageQueueService
             return true;
         }
 
-        var standing = unrecorded.FirstOrDefault(n => ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(
-            snapshot.RenderedScreen, PtyInputEncoding.NormalizeBody(n.Body.Trim())));
-        if (standing is null)
+        var standing = unrecorded
+            .Where(n => ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(
+                snapshot.RenderedScreen, PtyInputEncoding.NormalizeBody(n.Body.Trim())))
+            .Select(n => (Guid?)n.Id)
+            .FirstOrDefault();
+        if (standing is not { } standingId)
             return false;
         _logger.LogWarning(
             "Holding input to session {SessionId}: expectation nudge {NudgeId} is unconfirmed, has no "
             + "transcript record, and is still visible whole on screen",
-            sessionId, standing.Id);
+            sessionId, standingId);
         return true;
     }
 
