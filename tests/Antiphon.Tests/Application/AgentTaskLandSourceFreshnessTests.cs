@@ -737,4 +737,49 @@ public sealed class AgentTaskLandSourceFreshnessTests
         h.Fixture.Git.Trace.Where(a => a.Length > 0 && a[0] == "push").Select(a => string.Join(' ', a)).ShouldBeEmpty();
         await h.Fixture.AssertRemoteSourceAsync();
     }
+
+    [Test]
+    public async Task C642_TargetSwitchedDuringTargetAdvanceAncestryIsSeenBeforeUpdateRef()
+    {
+        // CARD-0642 R1 repair 2 (review d36aeec1 D2): the fresh listing must be the LAST check before
+        // update-ref. Another process switches an existing worktree onto the target while the protocol
+        // runs the target-advance merge-base --is-ancestor; that switch must still refuse the advance.
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "checkout", "--detach");
+        var other = Path.Combine(h.Fixture.Root, "trees", "other");
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "add", "--detach", other, h.Fixture.TargetRef);
+        var targetBefore = (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim();
+        // Another process: an independent Git instance, so the land's own-mutation invalidation never sees it.
+        var outsider = new LandingGitFixture.FixtureGit(Path.Combine(h.Fixture.Root, "home"), h.Fixture.TaskId);
+        var switched = 0;
+        h.Fixture.Git.BeforeCommand = async (_, args) =>
+        {
+            // Only the target-advance ancestry asks whether the current target is an ancestor of another
+            // commit; the remote pre-check asks about the target itself and the observer about the source.
+            if (args.Count == 4 && args[0] == "merge-base" && args[1] == "--is-ancestor"
+                && args[2] == targetBefore && args[3] != targetBefore
+                && Interlocked.Exchange(ref switched, 1) == 0)
+                (await outsider.RunAsync(other, ["checkout", "master"], CancellationToken.None)).Succeeded.ShouldBeTrue();
+            return null;
+        };
+        h.Fixture.Git.Trace.Clear();
+
+        await h.RunAsync();
+
+        switched.ShouldBe(1, "the switch must happen on the target-advance ancestry command");
+        h.Fixture.Git.Trace.Where(a => a.Length > 0 && a[0] == "update-ref" && a.Contains(h.Fixture.TargetRef))
+            .Select(a => string.Join(' ', a)).ShouldBeEmpty("update-ref must never move a target another worktree has checked out");
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(targetBefore);
+        (await outsider.RunAsync(other, ["symbolic-ref", "-q", "HEAD"], CancellationToken.None)).Output.Trim().ShouldBe(h.Fixture.TargetRef);
+        (await outsider.RunAsync(other, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], CancellationToken.None))
+            .Output.ShouldBeEmpty("the other worktree's index and tree must not be left behind a moved branch");
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.LastReason.ShouldBe("target_checkout_changed");
+        op.LocalTargetAfterSha.ShouldBeNull();
+        op.RemoteConfirmedAt.ShouldBeNull();
+        h.Fixture.Git.Trace.Where(a => a.Length > 0 && a[0] == "push").Select(a => string.Join(' ', a)).ShouldBeEmpty();
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
 }
