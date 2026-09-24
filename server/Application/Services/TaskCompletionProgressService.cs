@@ -17,13 +17,16 @@ public sealed class TaskCompletionProgressService
     private readonly ITaskProgressGit _git;
     private readonly IWorkspaceProgressProbe? _files;
     private readonly TimeProvider _clock;
+    private readonly IRemoteSettlementSync? _remoteSync;
 
     public TaskCompletionProgressService(
-        ITaskProgressGit git, IWorkspaceProgressProbe? files = null, TimeProvider? clock = null)
+        ITaskProgressGit git, IWorkspaceProgressProbe? files = null, TimeProvider? clock = null,
+        IRemoteSettlementSync? remoteSync = null)
     {
         _git = git;
         _files = files;
         _clock = clock ?? TimeProvider.System;
+        _remoteSync = remoteSync;
     }
 
     /// <summary>
@@ -71,7 +74,11 @@ public sealed class TaskCompletionProgressService
         public bool IsIndeterminate => Assessment == CompletionProgressAssessment.Indeterminate;
     }
 
-    public async Task<Evaluation> EvaluateAsync(AgentTask task, string body, CancellationToken ct)
+    public Task<Evaluation> EvaluateAsync(AgentTask task, string body, CancellationToken ct) =>
+        EvaluateAsync(task, body, prepared: null, ct);
+
+    public async Task<Evaluation> EvaluateAsync(
+        AgentTask task, string body, RemoteSettlementSyncResult? prepared, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         var claim = ParseClaim(task.Id, body);
