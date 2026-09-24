@@ -24,7 +24,7 @@ namespace Antiphon.Server.Application.Services;
 /// warning and the task keeps its report; it is never a reset, because a reset would silently
 /// throw away whichever side the operator actually wanted.
 /// </summary>
-public sealed class RemoteWorkspaceService
+public sealed class RemoteWorkspaceService : IRemoteSettlementSync
 {
     private readonly ISessionRunnerDirectory _runners;
     private readonly ILandingGit _git;
