@@ -1133,6 +1133,21 @@ public class DelegationReportFormatterTests
             "the pointer itself must be small enough to type intact — otherwise it can be mangled too");
     }
 
+    [Test]
+    public void a_runner_spill_pointer_keeps_attribution_when_its_heading_is_lost()
+    {
+        var task = NewTask();
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+        var pointer = DelegationReportFormatter.BuildBriefPointer(task, Settings,
+            "/work/worktrees/task-remote/.antiphon/task-brief.md", 4_662);
+
+        // The observed runner UserPrompt began after the heading. Model the received
+        // instruction itself rather than counting the marker at either edge of the paste.
+        var instruction = pointer.Split("YOUR BRIEF IS NOT IN THIS MESSAGE", 2)[0]
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)[^1];
+        instruction.ShouldContain(marker);
+    }
+
     /// <summary>
     /// The ceiling that governs a brief must be BriefInlineMaxBytes, not ReplyInlineMaxChars.
     /// Four briefs stranded on 2026-08-11 at 1 366-2 320 characters, each arriving as its final
