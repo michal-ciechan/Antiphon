@@ -442,6 +442,27 @@ function Get-AppHostLock {
     return $info
 }
 
+function Get-AppHostLastBootUtc {
+    <#
+      UTC time of the last OS boot, or $null when it cannot be read (the boot rule
+      in Test-AppHostLockActive is then skipped, never guessed). Cached per process.
+    #>
+    if ($script:AppHostLastBootUtcCache) { return $script:AppHostLastBootUtcCache }
+    $boot = $null
+    try {
+        $ticks = [Environment]::TickCount64   # pwsh 7 (.NET Core); $null on Windows PowerShell 5.1
+        if ($ticks -gt 0) { $boot = [datetime]::UtcNow.AddMilliseconds(-[double]$ticks) }
+    } catch { }
+    if (-not $boot) {
+        try {
+            $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+            if ($os.LastBootUpTime) { $boot = ([datetime]$os.LastBootUpTime).ToUniversalTime() }
+        } catch { }
+    }
+    $script:AppHostLastBootUtcCache = $boot
+    return $boot
+}
+
 function Test-AppHostLockActive {
     <#
       Returns $null when the lock may be ignored (absent, or stamp older than
@@ -463,6 +484,15 @@ function Test-AppHostLockActive {
 
     if ($null -ne $lock.AgeMinutes -and $lock.AgeMinutes -ge $MaxAgeMinutes) {
         return $null   # older than any real launch/restart; treat as abandoned
+    }
+
+    # CARD-0644 R4: a stamp from before the last boot cannot belong to a live launch
+    # or restart - every holder and child died with the machine, and a "live" PID is
+    # a reuse. Without this a crash-and-reboot inside 15 minutes blocks the logon
+    # autostart and the watchdog on a corpse's lock.
+    $bootUtc = Get-AppHostLastBootUtc
+    if ($bootUtc -and $lock.StampUtc -and $lock.StampUtc -lt $bootUtc) {
+        return $null
     }
 
     $stamp = Format-AppHostLockStamp $lock
@@ -560,6 +590,32 @@ function Remove-AppHostLock {
     }
 }
 
+function Remove-AppHostOwnedLock {
+    <#
+      Deletes a lock file only when its recorded holder is OwnerPid. restart-apphost
+      uses it after killing its own dev-aspire child on BuildFailed: a Stop-Process
+      -Force skips the child's finally, so its launch lock would otherwise block the
+      next restart and the watchdog for 15 minutes. A lock written by anyone else is
+      left alone. Retries briefly while the killed holder's handle closes.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][int]$OwnerPid
+    )
+    $lock = Get-AppHostLock -Path $Path
+    if (-not $lock.Exists -or $lock.ProcessId -ne $OwnerPid) { return $false }
+    foreach ($attempt in 1..10) {
+        try {
+            Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+            return $true
+        } catch {
+            if (-not (Test-Path -LiteralPath $Path)) { return $true }
+            Start-Sleep -Milliseconds 200
+        }
+    }
+    return $false
+}
+
 function Test-AppHostProbeErrorIsConnectionRefused {
     param([string]$ErrorText)
     if ([string]::IsNullOrWhiteSpace($ErrorText)) { return $false }
@@ -617,7 +673,7 @@ function Format-AppHostRestartExitName {
     switch ($ExitCode) {
         0 { return '0=healthy' }
         1 { return '1=timeout/build' }
-        3 { return '3=refused (already unstamped)' }
+        3 { return '3=refused (nothing killed; counts toward the flap cap)' }
         4 { return '4=DCP dependency timeout' }
         5 { return '5=server build unverified' }
         default { return "$ExitCode" }
@@ -641,6 +697,41 @@ function Get-AppHostSourceHead {
     } catch {
         return $null
     }
+}
+
+function Get-AppHostRecoveryPin {
+    <#
+      CARD-0644 R4 (operator decision): crash recovery - the watchdog and the logon
+      autostart - restarts whatever the main checkout has checked out. It pins the
+      CURRENT HEAD as -ExpectedSha and only warns when that differs from the local
+      origin/master; it never refuses because origin/master moved on. Head is $null
+      when HEAD is unreadable; the caller then launches unpinned and the entry
+      point's own admission refuses with its full message.
+    #>
+    param([Parameter(Mandatory = $true)][string]$SourceRoot)
+    $head = Get-AppHostSourceHead -SourceRoot $SourceRoot
+    $origin = Resolve-AppHostCommitRef -SourceRoot $SourceRoot -Ref $AppHostDefaultExpectedRef
+    $warning = $null
+    if (-not $head) {
+        $warning = ('could not read HEAD in {0}; launching without -ExpectedSha, so the default admission decides (and refuses with its own message).' -f $SourceRoot)
+    } elseif ($origin -ne $head) {
+        $originText = if ($origin) { $origin } else { 'unresolved' }
+        $warning = ('recovering at the checked-out HEAD {0}, which is not {1} {2} (local remote-tracking ref, not fetched). Recovery never refuses for that; to deploy origin/master run git pull --rebase in {3}, then restart.' -f $head, $AppHostDefaultExpectedRef, $originText, $SourceRoot)
+    }
+    return [pscustomobject]@{ Head = $head; OriginSha = $origin; Warning = $warning }
+}
+
+function Test-AppHostDockerResponsive {
+    docker info 2>&1 | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Get-AppHostScheduledTaskState {
+    <# The named Scheduled Task's State as a string, or $null when it is not registered. #>
+    param([Parameter(Mandatory = $true)][string]$TaskName)
+    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if (-not $task) { return $null }
+    return [string]$task.State
 }
 
 function Test-AppHostTrackedEdits {
@@ -749,6 +840,7 @@ function Invoke-AppHostRestartCaptured {
     param(
         [Parameter(Mandatory = $true)][string]$PowerShellExe,
         [Parameter(Mandatory = $true)][string]$RestartScript,
+        [string[]]$Arguments = @(),
         [int]$TailLines = 40
     )
     $tag = [guid]::NewGuid().ToString('N')
@@ -757,7 +849,7 @@ function Invoke-AppHostRestartCaptured {
     try {
         try {
             $p = Start-Process -FilePath $PowerShellExe `
-                -ArgumentList @('-NoLogo', '-NonInteractive', '-File', $RestartScript) `
+                -ArgumentList (@('-NoLogo', '-NonInteractive', '-File', $RestartScript) + @($Arguments)) `
                 -Wait -PassThru -NoNewWindow `
                 -RedirectStandardOutput $outFile `
                 -RedirectStandardError $errFile

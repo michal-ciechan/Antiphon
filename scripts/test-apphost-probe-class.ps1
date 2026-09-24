@@ -70,7 +70,7 @@ Assert-True ($c4.Kind -eq 'Down' -and $c4.RestartWorthy) 'C4 health refused + cl
 Assert-True ($AppHostLockMaxAgeMinutes -eq 15) 'C5 AppHostLockMaxAgeMinutes is 15' ("value=$AppHostLockMaxAgeMinutes")
 Assert-True ((Format-AppHostRestartExitName 0) -eq '0=healthy') 'C5 exit 0 is named healthy'
 Assert-True ((Format-AppHostRestartExitName 1) -eq '1=timeout/build') 'C5 exit 1 is named timeout/build'
-Assert-True ((Format-AppHostRestartExitName 3) -eq '3=refused (already unstamped)') 'C5 exit 3 is named refused'
+Assert-True ((Format-AppHostRestartExitName 3) -eq '3=refused (nothing killed; counts toward the flap cap)') 'C5 exit 3 is named refused and counted'
 Assert-True ((Format-AppHostRestartExitName 4) -eq '4=DCP dependency timeout') 'C5 exit 4 is named DCP timeout'
 Assert-True ((Format-AppHostRestartExitName 5) -eq '5=server build unverified') 'C5 exit 5 is named server build unverified'
 

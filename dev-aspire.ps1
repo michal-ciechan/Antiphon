@@ -61,7 +61,8 @@ if ($restartInFlight) {
 # CARD-0011: tell the watchdog a launch is in flight so a 2-minute fire does not
 # call restart-apphost.ps1 over the top of us. Taken atomically (CARD-0644: a second
 # direct launch refuses instead of overwriting it) and released in finally even on
-# Write-Error ($ErrorActionPreference Stop).
+# Write-Error ($ErrorActionPreference Stop). A leftover lock stamped before the last
+# boot is stale (CARD-0644 R4), so a crash-and-reboot does not block the logon launch.
 $launch = New-AppHostLock -Path $launchLock -Label 'launch lock'
 if (-not $launch.Acquired) {
     Write-Host "REFUSED: another launch is in flight - $($launch.Reason)" -ForegroundColor Yellow

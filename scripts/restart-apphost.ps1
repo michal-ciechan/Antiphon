@@ -23,7 +23,9 @@
     CARD-0310: TimeoutSec (exit 1, child may still be launching) and DCP timeout
     (exit 4) leave apphost.restart.lock on disk for LockMaxAgeMinutes. A dead
     holder with a fresh stamp is still in-flight. Exit 0 and BuildFailed remove
-    the lock; BuildFailed also Stop-Process the spawned dev-aspire.ps1.
+    the lock; BuildFailed also Stop-Process the spawned dev-aspire.ps1 and removes
+    the launch lock when its recorded holder is that killed child (CARD-0644 R4).
+    A lock stamped before the last OS boot is stale whatever its age or PID.
 
 .PARAMETER NoBuild            Pass -NoBuild through to dev-aspire.ps1 (skip restore/npm).
 .PARAMETER TimeoutSec         Seconds to wait for the dashboard + backend health (default 150).
@@ -213,6 +215,12 @@ try {
         if ($verdict.Kind -eq 'BuildFailed') {
             $keepRestartLock = $false
             Stop-AppHostLaunchChild -Process $devProcess
+            # CARD-0644 R4: a forced kill skips the child's finally, so its launch lock
+            # would block the next restart and the watchdog for 15 minutes. Remove it
+            # only when the recorded holder is the child this run just killed.
+            if ($devProcess -and $devProcess.Id -and (Remove-AppHostOwnedLock -Path $launchLock -OwnerPid $devProcess.Id)) {
+                Write-Host "  removed the killed child's launch lock (PID $($devProcess.Id); $launchLock)" -ForegroundColor DarkGray
+            }
             Write-Host "AppHost build FAILED - check: Get-Content '$logFile' -Tail 40" -ForegroundColor Red
             exit 1
         }

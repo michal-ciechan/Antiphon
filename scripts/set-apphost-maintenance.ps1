@@ -14,7 +14,11 @@
 .PARAMETER Clear
     Leave maintenance: re-enable the watchdog, then remove the marker.
 .PARAMETER Root
-    Repo root. Defaults to the parent of this script.
+    Repo root whose logs/ holds the marker. Defaults to the MAIN worktree of the
+    checkout this script lives in (CARD-0644: shared-stack state lives in main's
+    logs/, which is where the watchdog-state observer looks), so running it from a
+    linked worktree still marks the one shared stack. Falls back to the parent of
+    this script, with a warning, only when Git cannot name the main worktree.
 .PARAMETER WatchdogTaskName
     Watchdog Scheduled Task name. Default: "Antiphon AppHost Watchdog".
 .NOTES
@@ -30,7 +34,17 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-if (-not $Root) { $Root = Split-Path $PSScriptRoot -Parent }
+if (-not $Root) {
+    . (Join-Path $PSScriptRoot 'apphost-common.ps1')
+    $scriptRepoRoot = Split-Path $PSScriptRoot -Parent
+    $classification = Get-AppHostWorktreeClassification -SourceRoot $scriptRepoRoot
+    if ($classification.Verified) {
+        $Root = $classification.MainWorktreeRoot
+    } else {
+        $Root = $scriptRepoRoot
+        Write-Host "WARNING: could not resolve the main worktree ($($classification.Failure)); using $Root. Pass -Root <main checkout> if this is a linked worktree."
+    }
+}
 $logDir = Join-Path $Root 'logs'
 $marker = Join-Path $logDir 'apphost.down-on-purpose'
 $observer = Join-Path $PSScriptRoot 'apphost-watchdog-state-observer.ps1'

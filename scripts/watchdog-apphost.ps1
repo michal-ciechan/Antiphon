@@ -23,10 +23,15 @@
          the last 60 minutes.
       6. Re-check the locks (CARD-0075: step 1 ran up to ~60s of probing ago, and
          a restart that started inside that window must not be raced).
-      7. Invoke restart-apphost.ps1, log its last ~40 stdout/stderr lines and
-         named exit (0=healthy, 1=timeout/build, 3=refused, 4=DCP timeout),
-         then stamp logs/apphost-watchdog.state - UNLESS it exits 3 (refused,
-         nothing killed), which spends no flap budget and so must not be stamped.
+      7. Invoke restart-apphost.ps1 -ExpectedSha <this checkout's CURRENT HEAD>
+         (CARD-0644 R4: recovery restarts whatever the main checkout has checked
+         out and only WARNs when that is not origin/master; it never refuses
+         because origin/master moved on), log its last ~40 stdout/stderr lines
+         and named exit (0=healthy, 1=timeout/build, 3=refused, 4=DCP timeout,
+         5=server build unverified), then stamp logs/apphost-watchdog.state.
+         Exit 3 (refused, nothing killed) is logged WARN/ERROR with the
+         refusal lines and IS stamped: a recovery that keeps being refused
+         must reach the flap cap and its ERROR alert, not repeat silently.
 
     -ProbeOnly probes and logs, never restarts (the safe acceptance check).
     -RestartScript overrides which script step 7 invokes; it exists so the refusal
@@ -156,8 +161,7 @@ function Test-LaunchInFlight {
     # stack down before dev-aspire.ps1 (and its launch lock) exists, so a fire that
     # begins inside that window sees no lock, three failed rounds, and calls a
     # second restart over the top of the first.
-    $ah = Get-ScheduledTask -TaskName $appHostTaskName -ErrorAction SilentlyContinue
-    if ($ah -and $ah.State -eq 'Running') {
+    if ((Get-AppHostScheduledTaskState -TaskName $appHostTaskName) -eq 'Running') {
         return "AppHost logon task '$appHostTaskName' is Running"
     }
     foreach ($pair in @(
@@ -173,6 +177,13 @@ function Test-LaunchInFlight {
         }
     }
     return $null
+}
+
+# CARD-0644 test seam: inert harness overrides (probes, Docker, task state, teardown).
+$appHostTestSeams = $env:ANTIPHON_APPHOST_TEST_SEAMS
+if (-not [string]::IsNullOrWhiteSpace($appHostTestSeams) -and (Test-Path -LiteralPath $appHostTestSeams)) {
+    . $appHostTestSeams
+    Write-Host 'TEST SEAMS ACTIVE'
 }
 
 Write-Log 'INFO' "fire beginning (PID $PID$(if ($ProbeOnly) { '; ProbeOnly' }))"
@@ -232,8 +243,7 @@ if ($downRounds -lt $roundsNeeded) {
 Write-Log 'WARN' "all $roundsNeeded probe rounds failed ($lastSummary)"
 
 # Docker down is not a reason to bounce the AppHost - the launch would fail anyway.
-docker info 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
+if (-not (Test-AppHostDockerResponsive)) {
     Write-Log 'WARN' "skip: Docker is not responsive (not counting against flap budget)"
     exit 0
 }
@@ -280,22 +290,30 @@ if ($inFlight) {
     exit 0
 }
 
-Write-Log 'WARN' "restarting AppHost via $restartScript"
+# CARD-0644 R4: pin the checked-out HEAD. The default admission (HEAD must equal
+# origin/master) would refuse recovery whenever origin/master has moved past main.
+$pin = Get-AppHostRecoveryPin -SourceRoot $root
+if ($pin.Warning) { Write-Log 'WARN' $pin.Warning }
+$restartArgs = @()
+if ($pin.Head) { $restartArgs = @('-ExpectedSha', $pin.Head) }
+
+Write-Log 'WARN' ("restarting AppHost via {0}{1}" -f $restartScript, $(if ($pin.Head) { " -ExpectedSha $($pin.Head)" } else { ' (unpinned)' }))
 $psExe = $null
 try { $psExe = (Get-Process -Id $PID).Path } catch { }
 if (-not $psExe) { $psExe = 'pwsh' }
-$captured = Invoke-AppHostRestartCaptured -PowerShellExe $psExe -RestartScript $RestartScript
+$captured = Invoke-AppHostRestartCaptured -PowerShellExe $psExe -RestartScript $RestartScript -Arguments $restartArgs
 $restartExit = $captured.ExitCode
+# A refusal's lines ARE the diagnosis (admission root/HEAD/expected SHA, or the lock
+# holder), so they are logged at WARN rather than buried as INFO.
+$tailLevel = if ($restartExit -eq 3) { 'WARN' } else { 'INFO' }
 foreach ($line in @($captured.Tail)) {
-    Write-Log 'INFO' ("restart-apphost: {0}" -f $line)
+    Write-Log $tailLevel ("restart-apphost: {0}" -f $line)
 }
 
-# Exit 3 = refused, nothing was killed. Stamping it would burn flap-cooldown
-# budget on a restart that never happened, so the next real failure would be
-# skipped by the cooldown.
+# Exit 3 = refused, nothing was killed. It is still stamped: an unattended recovery
+# that is refused every fire must hit the flap cap and raise its ERROR alert.
 if ($restartExit -eq 3) {
-    Write-Log 'INFO' ("restart-apphost.ps1 REFUSED ({0}, nothing killed) - not stamping a restart" -f $captured.ExitName)
-    exit 0
+    Write-Log 'ERROR' ("restart-apphost.ps1 REFUSED ({0}) - recovery did not happen; see the restart-apphost lines above. Stamping it toward the flap cap." -f $captured.ExitName)
 }
 
 $state = Read-WatchdogState

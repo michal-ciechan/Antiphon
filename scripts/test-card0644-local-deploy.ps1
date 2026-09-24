@@ -19,6 +19,11 @@
       RedWitness  pre-fix run: every designated scenario must fail on its
                   behavioural assertion and MainMatchesOrigin must pass; exits 1
                   when that witness holds, 2 when it does not.
+    Round-4 scenarios (RecoveryPinsCheckedOutHead, WatchdogRefusalIsLoggedAndCounted,
+    AutostartHonoursDevExit, PreBootLockIsStale, BuildFailedClearsChildLaunchLock,
+    MaintenanceMarkerInMain) run in the Green phase only: they cover the watchdog,
+    logon autostart, boot-stale locks and the maintenance marker, which the frozen
+    pre-fix RedWitness never had seams for.
     ASCII-only for pwsh 7 and Windows PowerShell 5.1.
 #>
 param(
@@ -41,6 +46,15 @@ $script:RedDesignated = @(
     'CrossRootRestartLock', 'CrossRootLaunchLock', 'ParentChildHandoff', 'VersionMismatchKeepsLock',
     'HeadMovementKeepsLock', 'HealthyWrongShaIsNotSuccess', 'TrackedEditsWarn'
 )
+
+$script:GreenOnly = @(
+    'RecoveryPinsCheckedOutHead', 'WatchdogRefusalIsLoggedAndCounted', 'AutostartHonoursDevExit',
+    'PreBootLockIsStale', 'BuildFailedClearsChildLaunchLock', 'MaintenanceMarkerInMain'
+)
+$script:RedScenarioCount = 16
+$script:GreenScenarioCount = $script:RedScenarioCount + $script:GreenOnly.Count
+# Watchdog probes are seamed; these closed-port URLs only guard against a seam miss.
+$script:DeadProbeArgs = @('-IntervalSeconds', '0', '-HealthUrl', 'http://127.0.0.1:9/health', '-ClientUrl', 'http://127.0.0.1:9/')
 
 function Check {
     param([bool]$Condition, [string]$Label, $Detail = '')
@@ -92,6 +106,7 @@ function Assert-DevBodyInMain {
 function Invoke-Scenario {
     param([string]$Name, [scriptblock]$Body)
     if ($Scenario -and $Scenario -ne $Name) { return }
+    if ($Phase -eq 'RedWitness' -and $script:GreenOnly -contains $Name) { return }
     $script:Checks = New-Object System.Collections.Generic.List[string]
     $fx = $null
     $started = Get-Date
@@ -325,6 +340,144 @@ Invoke-Scenario 'TrackedEditsWarn' {
     Assert-NoLocks $fx 'tracked edits'
 }
 
+function Read-C644Log {
+    param([string]$Root, [string]$Leaf)
+    $path = Get-StatePath $Root $Leaf
+    if (-not (Test-Path -LiteralPath $path)) { return '' }
+    return [string](Get-Content -LiteralPath $path -Raw)
+}
+
+function Get-C644WatchdogRestarts {
+    param([string]$Root)
+    $path = Get-StatePath $Root 'apphost-watchdog.state'
+    if (-not (Test-Path -LiteralPath $path)) { return 0 }
+    return @((Get-Content -LiteralPath $path -Raw | ConvertFrom-Json).restartsUtc | Where-Object { $_ }).Count
+}
+
+function Move-C644OriginAhead {
+    <# origin/master moves past main's checked-out HEAD, as after a land main has not pulled. #>
+    param($Fixture)
+    $ahead = New-C644Commit $Fixture.Linked 'landed after main last pulled'
+    Invoke-C644Git $Fixture.Main update-ref refs/remotes/origin/master $ahead | Out-Null
+    return $ahead
+}
+
+Invoke-Scenario 'RecoveryPinsCheckedOutHead' {
+    param($fx)
+    $ahead = Move-C644OriginAhead $fx
+    Check ((Get-C644Head $fx.Main) -eq $fx.OriginSha) 'main still checks out the old HEAD' (Get-C644Head $fx.Main)
+    $plain = Invoke-C644Entry $fx restart $fx.Main @('-NoBuild', '-TimeoutSec', '5')
+    Assert-NoEffects $plain 'control: unpinned restart of a main behind origin/master'
+
+    $w = Invoke-C644Entry $fx watchdog $fx.Main $script:DeadProbeArgs
+    Check ($w.ExitCode -eq 0) 'watchdog fire exits 0' ("exit=$($w.ExitCode); $($w.Text)")
+    $launch = @($w.Trace | Where-Object { $_.kind -eq 'launch' })
+    Check ($launch.Count -eq 1 -and $launch[0].args -match ('-ExpectedSha ' + $fx.OriginSha)) 'watchdog recovery restarts at the pinned checked-out HEAD' ("$($launch | ConvertTo-Json -Compress) $($w.Text)")
+    $body = @($w.Trace | Where-Object { $_.kind -eq 'dev-body' })
+    Check ($body.Count -eq 1 -and $body[0].args -match ('ExpectedSha=' + $fx.OriginSha)) 'watchdog recovery launched dev-aspire at the pinned HEAD' ("$($body | ConvertTo-Json -Compress) $($w.Text)")
+    $wlog = Read-C644Log $fx.MainGit 'watchdog-apphost.log'
+    Check ($wlog -match '\[WARN\] recovering at the checked-out HEAD' -and $wlog.Contains($fx.OriginSha) -and $wlog.Contains($ahead)) 'watchdog WARNs naming HEAD and origin/master' $wlog
+    Check ($wlog -match 'exited 0=healthy') 'watchdog records the healthy restart' $wlog
+    Check ((Get-C644WatchdogRestarts $fx.MainGit) -eq 1) 'watchdog stamped one restart' (Read-C644Log $fx.MainGit 'apphost-watchdog.state')
+
+    $a = Invoke-C644Entry $fx autostart $fx.Main @('-NoBuild')
+    $alog = Read-C644Log $fx.MainGit 'autostart-apphost.log'
+    Check ($a.ExitCode -eq 0) 'logon autostart exits 0' ("exit=$($a.ExitCode); $($a.Text) $alog")
+    $abody = @($a.Trace | Where-Object { $_.kind -eq 'dev-body' })
+    Check ($abody.Count -eq 1 -and $abody[0].args -match ('ExpectedSha=' + $fx.OriginSha)) 'autostart launched dev-aspire at the pinned HEAD' ("$($abody | ConvertTo-Json -Compress) $alog")
+    Check ((Get-C644Count $a 'autostart-health') -eq 1) 'autostart went on to confirm health after an admitted launch' (($a.Trace | ForEach-Object { $_.kind }) -join ',')
+    Check ($alog -match 'WARN: recovering at the checked-out HEAD' -and $alog.Contains($fx.OriginSha) -and $alog.Contains($ahead)) 'autostart WARNs naming HEAD and origin/master' $alog
+    Assert-NoLocks $fx 'recovery'
+}
+
+Invoke-Scenario 'WatchdogRefusalIsLoggedAndCounted' {
+    param($fx)
+    $stub = Join-Path $fx.Harness 'refusing-restart.ps1'
+    @(
+        'param([string]$ExpectedSha)'
+        'Write-Host ("REFUSED: stub admission refusal; -ExpectedSha " + $ExpectedSha)'
+        'Write-Host "  Nothing was killed or started."'
+        'exit 3'
+    ) | Set-Content -LiteralPath $stub -Encoding ASCII
+    $w = Invoke-C644Entry $fx watchdog $fx.Main ($script:DeadProbeArgs + @('-RestartScript', $stub))
+    Check ($w.ExitCode -eq 0) 'watchdog fire exits 0 after a refusal' ("exit=$($w.ExitCode); $($w.Text)")
+    $wlog = Read-C644Log $fx.MainGit 'watchdog-apphost.log'
+    Check ($wlog -match ('\[WARN\] restart-apphost: REFUSED: stub admission refusal; -ExpectedSha ' + $fx.OriginSha)) 'refusal lines are logged at WARN and show the pinned SHA' $wlog
+    Check ($wlog -match '\[ERROR\] restart-apphost\.ps1 REFUSED \(3=refused') 'exit 3 is logged as ERROR' $wlog
+    Check ((Get-C644WatchdogRestarts $fx.MainGit) -eq 1) 'exit 3 is stamped toward the flap cap' (Read-C644Log $fx.MainGit 'apphost-watchdog.state')
+}
+
+Invoke-Scenario 'AutostartHonoursDevExit' {
+    param($fx)
+    Move-C644OriginAhead $fx | Out-Null
+    $lock = Get-StatePath $fx.MainGit 'apphost.launch.lock'
+    Set-C644Lock $lock $PID
+    $started = Get-Date
+    $a = Invoke-C644Entry $fx autostart $fx.Main @('-NoBuild', '-HealthTimeoutSec', '30')
+    $seconds = ((Get-Date) - $started).TotalSeconds
+    $alog = Read-C644Log $fx.MainGit 'autostart-apphost.log'
+    Check ($a.ExitCode -eq 3) 'autostart returns dev-aspire exit 3' ("exit=$($a.ExitCode); $($a.Text) $alog")
+    Check ((Get-C644Count $a 'autostart-health') -eq 0) 'autostart does not wait for health after a refusal' (($a.Trace | ForEach-Object { $_.kind }) -join ',')
+    Check ((Get-C644Count $a 'dev-body') -eq 0) 'no launch happened' (($a.Trace | ForEach-Object { $_.kind }) -join ',')
+    Check ($alog -match 'ERROR: dev-aspire\.ps1 exited 3=refused' -and $alog -match 'another launch is in flight') 'autostart log carries the refusal and the named exit' $alog
+    Check ($alog -notmatch 'not healthy within') 'no misleading health-timeout message' $alog
+    Check ($seconds -lt 25) 'autostart returned promptly' ('{0:N1}s' -f $seconds)
+}
+
+Invoke-Scenario 'PreBootLockIsStale' {
+    param($fx)
+    $realBoot = & { . (Join-Path $PSScriptRoot 'apphost-common.ps1'); Get-AppHostLastBootUtc }
+    Check ($null -ne $realBoot -and $realBoot -lt [datetime]::UtcNow -and $realBoot -gt [datetime]::UtcNow.AddYears(-5)) 'real Get-AppHostLastBootUtc reads a plausible boot time' ([string]$realBoot)
+
+    $lock = Get-StatePath $fx.MainGit 'apphost.launch.lock'
+    $stamp = [datetime]::UtcNow.AddMinutes(-2)
+    Set-C644Config $fx @{ bootUtcTicks = [datetime]::UtcNow.AddMinutes(-1).Ticks }
+    Set-C644Lock $lock $PID $stamp
+    $d = Invoke-C644Entry $fx dev $fx.Main @('-NoBuild', '-NoBrowser')
+    Check ($d.ExitCode -eq 0 -and (Get-C644Count $d 'dev-body') -eq 1) 'dev-aspire launches over a 2-minute-old pre-boot lock whose PID is alive' ("exit=$($d.ExitCode); $($d.Text)")
+    Set-C644Lock $lock $PID $stamp
+    $r = Invoke-C644Entry $fx restart $fx.Main @('-NoBuild', '-TimeoutSec', '5')
+    Check ($r.ExitCode -eq 0 -and (Get-C644Count $r 'launch') -eq 1) 'restart ignores a launch lock stamped before boot' ("exit=$($r.ExitCode); $($r.Text)")
+    Assert-NoLocks $fx 'pre-boot'
+
+    Set-C644Config $fx @{ bootUtcTicks = [datetime]::UtcNow.AddMinutes(-10).Ticks }
+    Set-C644Lock $lock $PID $stamp
+    $dc = Invoke-C644Entry $fx dev $fx.Main @('-NoBuild', '-NoBrowser')
+    Assert-NoEffects $dc 'control: dev-aspire under a post-boot lock'
+    $rc = Invoke-C644Entry $fx restart $fx.Main @('-NoBuild', '-TimeoutSec', '5')
+    Assert-NoEffects $rc 'control: restart under a post-boot lock'
+    Check ($rc.Text -match 'launch is in flight') 'control refusal names the in-flight launch' $rc.Text
+}
+
+Invoke-Scenario 'BuildFailedClearsChildLaunchLock' {
+    param($fx)
+    $lock = Get-StatePath $fx.MainGit 'apphost.launch.lock'
+    Set-C644Config $fx @{ buildFailed = $true; buildFailedLaunchLock = $lock; buildFailedLog = (Get-StatePath $fx.MainGit 'apphost.log') }
+    $r = Invoke-C644Entry $fx restart $fx.Main @('-NoBuild', '-TimeoutSec', '5')
+    Check ($r.ExitCode -eq 1 -and $r.Text -match 'build FAILED') 'BuildFailed exits 1' ("exit=$($r.ExitCode); $($r.Text)")
+    Check ((Get-C644Count $r 'child-stop') -eq 1) 'the child was stopped' (($r.Trace | ForEach-Object { $_.kind }) -join ',')
+    Check (-not (Test-Path -LiteralPath $lock)) 'the killed child launch lock is removed' ("$lock :: $($r.Text)")
+    Assert-NoLocks $fx 'build failed'
+
+    Set-C644Config $fx @{ buildFailedLockPid = $PID }
+    $c = Invoke-C644Entry $fx restart $fx.Main @('-NoBuild', '-TimeoutSec', '5')
+    Check ($c.ExitCode -eq 1) 'control BuildFailed exits 1' ("exit=$($c.ExitCode); $($c.Text)")
+    Check ((Test-Path -LiteralPath $lock) -and ((Get-Content -LiteralPath $lock -Raw) -match ('^' + $PID + ' '))) 'a launch lock held by another PID is left alone' ("$lock :: $($c.Text)")
+}
+
+Invoke-Scenario 'MaintenanceMarkerInMain' {
+    param($fx)
+    $task = 'C644-no-such-task-' + [guid]::NewGuid().ToString('N')
+    $mainMarker = Get-StatePath $fx.MainGit 'apphost.down-on-purpose'
+    $linkedMarker = Get-StatePath $fx.LinkedGit 'apphost.down-on-purpose'
+    $m = Invoke-C644Entry $fx maintenance $fx.Linked @('-WatchdogTaskName', $task)
+    Check ($m.ExitCode -eq 0) 'maintenance from a linked worktree exits 0' ("exit=$($m.ExitCode); $($m.Text)")
+    Check (Test-Path -LiteralPath $mainMarker) 'marker lands in the main worktree logs' ("$mainMarker :: $($m.Text)")
+    Check (-not (Test-Path -LiteralPath $linkedMarker)) 'no marker in the linked worktree' $linkedMarker
+    $c = Invoke-C644Entry $fx maintenance $fx.Linked @('-Clear', '-WatchdogTaskName', $task)
+    Check ($c.ExitCode -eq 0 -and -not (Test-Path -LiteralPath $mainMarker)) '-Clear from the linked worktree removes the main marker' ("exit=$($c.ExitCode); $($c.Text)")
+}
+
 # Underlying harnesses: their own scenario output and counts are preserved verbatim.
 $components = [ordered]@{}
 if (-not $Scenario) {
@@ -345,7 +498,7 @@ foreach ($c in $components.Keys) { Write-Host ('  component {0}: exit {1}' -f $c
 
 if ($Phase -eq 'Green') {
     $componentRed = @($components.Keys | Where-Object { $components[$_] -ne 0 })
-    if ($failed.Count -eq 0 -and $componentRed.Count -eq 0 -and ($Scenario -or $names.Count -eq 16)) {
+    if ($failed.Count -eq 0 -and $componentRed.Count -eq 0 -and ($Scenario -or $names.Count -eq $script:GreenScenarioCount)) {
         Write-Host 'CARD-0644 LOCAL DEPLOY EXIT CODE: 0  (PASS)'
         exit 0
     }
@@ -359,7 +512,7 @@ $unexpected = @($failed | Where-Object { $script:RedDesignated -notcontains $_ }
 $harnessErrors = @($failed | Where-Object { @($script:Results[$_] | Where-Object { $_ -like 'harness exception*' }).Count -gt 0 })
 Write-Host ('red witness: designated failed {0}/{1}; designated but passed: [{2}]; unexpected failures: [{3}]; harness exceptions: [{4}]' -f `
     (@($script:RedDesignated | Where-Object { $failed -contains $_ }).Count), $script:RedDesignated.Count, ($unwitnessed -join ', '), ($unexpected -join ', '), ($harnessErrors -join ', '))
-if ($unwitnessed.Count -eq 0 -and $unexpected.Count -eq 0 -and $harnessErrors.Count -eq 0 -and $names.Count -eq 16) {
+if ($unwitnessed.Count -eq 0 -and $unexpected.Count -eq 0 -and $harnessErrors.Count -eq 0 -and $names.Count -eq $script:RedScenarioCount) {
     Write-Host 'CARD-0644 LOCAL DEPLOY RED WITNESS EXIT CODE: 1  (designated pre-fix failures observed)'
     exit 1
 }

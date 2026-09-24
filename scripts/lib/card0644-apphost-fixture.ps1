@@ -57,6 +57,13 @@ function Write-C644SeamFile {
         'function Stop-AppHostLaunchChild { param($Process) Write-C644Trace ''child-stop'' @{} }'
         'function Start-AppHostDevLaunch { param([string[]]$ArgumentList)'
         '  Write-C644Trace ''launch'' @{ args = ($ArgumentList -join '' '') }'
+        '  if ($script:C644Cfg.buildFailed) {'
+        '    $owner = 99999'
+        '    if ($script:C644Cfg.buildFailedLockPid) { $owner = [int]$script:C644Cfg.buildFailedLockPid }'
+        '    (''{0} {1}'' -f $owner, [datetime]::UtcNow.ToString(''o'')) | Set-Content -LiteralPath ([string]$script:C644Cfg.buildFailedLaunchLock) -Encoding ASCII -NoNewline'
+        '    Add-Content -LiteralPath ([string]$script:C644Cfg.buildFailedLog) -Value ''error : The build failed. Fix the build errors and run again.'' -Encoding ASCII'
+        '    return [pscustomobject]@{ Id = 99999; HasExited = $false }'
+        '  }'
         '  $n = @(Get-Content -LiteralPath $script:C644Trace | Where-Object { $_ -match ''"kind":"launch"'' }).Count'
         '  $prev = $env:C644_CHILD'
         '  $env:C644_CHILD = ''1'''
@@ -95,6 +102,19 @@ function Write-C644SeamFile {
         'function Show-DcpTimeoutVerdict { param($LogPath,$Evidence,[bool]$PodmanNoise=$false,$LaunchLock,$RestartLock,$WatchdogLog,[int]$DockerTimeoutSec=10) Write-C644Trace ''dcp'' @{} }'
         'function Get-DockerVerdict { param([int]$TimeoutSec=10) return [pscustomobject]@{ Healthy = $true; Summary = ''seamed''; Detail = @() } }'
         'function Get-RecordedMigrationIds { Write-C644Trace ''migrations'' @{}; return @($script:C644Cfg.migrations) }'
+        'function Get-AppHostLastBootUtc {'
+        '  if ($script:C644Cfg.bootUtcTicks) { return (New-Object datetime ([long]$script:C644Cfg.bootUtcTicks), ([System.DateTimeKind]::Utc)) }'
+        '  return $null'
+        '}'
+        'function Test-HttpOk { param([string]$url, [int[]]$okCodes)'
+        '  Write-C644Trace ''probe'' @{ url = $url }'
+        '  return [pscustomobject]@{ Ok = $false; Code = $null; Error = ''No connection could be made because the target machine actively refused it.'' }'
+        '}'
+        'function Test-AppHostDockerResponsive { Write-C644Trace ''docker'' @{}; return $true }'
+        'function Get-AppHostScheduledTaskState { param([string]$TaskName) Write-C644Trace ''task-state'' @{ task = $TaskName }; return $null }'
+        'function Test-PortListening([int]$p) { Write-C644Trace ''port-listen'' @{ port = $p }; return $false }'
+        'function Invoke-AppHostPostgresEnsure { Write-C644Trace ''postgres'' @{} }'
+        'function Wait-AppHostBackendHealthy([int]$TimeoutSec) { Write-C644Trace ''autostart-health'' @{}; return $true }'
         'function Invoke-AppHostDevLaunchSeam { param([string]$Root, [string]$LaunchLock, $Bound)'
         '  $argText = @($Bound.Keys | Sort-Object | ForEach-Object { ''{0}={1}'' -f $_, $Bound[$_] }) -join '' '''
         '  Write-C644Trace ''dev-body'' @{ root = $Root; lockDir = (Split-Path -Parent $LaunchLock); lockHeld = (Test-Path -LiteralPath $LaunchLock); args = $argText }'
@@ -126,7 +146,7 @@ function New-C644Fixture {
 
     $scripts = Join-Path $main 'scripts'
     New-Item -ItemType Directory -Force $scripts, (Join-Path (Join-Path $main 'server') 'Migrations') | Out-Null
-    foreach ($name in 'apphost-common.ps1', 'restart-apphost.ps1', 'deploy-local.ps1') {
+    foreach ($name in 'apphost-common.ps1', 'restart-apphost.ps1', 'deploy-local.ps1', 'watchdog-apphost.ps1', 'autostart-apphost.ps1', 'set-apphost-maintenance.ps1') {
         Copy-Item -LiteralPath (Join-Path $script:C644ScriptsDir $name) -Destination (Join-Path $scripts $name) -Force
     }
     Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $script:C644ScriptsDir) 'dev-aspire.ps1') -Destination (Join-Path $main 'dev-aspire.ps1') -Force
@@ -180,11 +200,14 @@ function Invoke-C644Entry {
       Runs one real entry point (restart | deploy | dev) rooted at $Root with the
       fixture's inert seams. Returns ExitCode, Text and the trace rows written.
     #>
-    param($Fixture, [ValidateSet('restart', 'deploy', 'dev')][string]$Entry, [string]$Root, [string[]]$Arguments = @())
+    param($Fixture, [ValidateSet('restart', 'deploy', 'dev', 'watchdog', 'autostart', 'maintenance')][string]$Entry, [string]$Root, [string[]]$Arguments = @())
     $path = switch ($Entry) {
-        'restart' { Join-Path (Join-Path $Root 'scripts') 'restart-apphost.ps1' }
-        'deploy'  { Join-Path (Join-Path $Root 'scripts') 'deploy-local.ps1' }
-        'dev'     { Join-Path $Root 'dev-aspire.ps1' }
+        'restart'     { Join-Path (Join-Path $Root 'scripts') 'restart-apphost.ps1' }
+        'deploy'      { Join-Path (Join-Path $Root 'scripts') 'deploy-local.ps1' }
+        'dev'         { Join-Path $Root 'dev-aspire.ps1' }
+        'watchdog'    { Join-Path (Join-Path $Root 'scripts') 'watchdog-apphost.ps1' }
+        'autostart'   { Join-Path (Join-Path $Root 'scripts') 'autostart-apphost.ps1' }
+        'maintenance' { Join-Path (Join-Path $Root 'scripts') 'set-apphost-maintenance.ps1' }
     }
     $trace = Join-Path $Fixture.Harness 'trace.jsonl'
     if (Test-Path -LiteralPath $trace) { Remove-Item -LiteralPath $trace -Force }
@@ -219,9 +242,10 @@ function Get-C644EffectCount {
 }
 
 function Set-C644Lock {
-    param([string]$Path, [int]$HolderPid)
+    param([string]$Path, [int]$HolderPid, $StampUtc = $null)
+    if ($null -eq $StampUtc) { $StampUtc = [datetime]::UtcNow }
     New-Item -ItemType Directory -Force (Split-Path -Parent $Path) | Out-Null
-    ('{0} {1}' -f $HolderPid, [datetime]::UtcNow.ToString('o')) | Set-Content -LiteralPath $Path -Encoding ASCII -NoNewline
+    ('{0} {1}' -f $HolderPid, ([datetime]$StampUtc).ToString('o')) | Set-Content -LiteralPath $Path -Encoding ASCII -NoNewline
 }
 
 function Get-C644GitPath {

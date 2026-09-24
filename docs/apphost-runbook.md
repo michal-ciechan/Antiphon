@@ -39,7 +39,9 @@ dashboard and other owned resources, then relaunches and waits for health
 first, rooted at the script's checkout, never the caller's cwd: source HEAD must
 equal `-ExpectedSha` (full 40/64 hex; `-ExpectedServerSha` is an alias) or, by
 default, the local `refs/remotes/origin/master`, which the script prints and never
-fetches - refresh it (`git fetch`) before an unpinned restart. The admitted SHA is
+fetches - update the main checkout (`git pull --rebase`) before an unpinned restart
+(a bare `git fetch` moves origin/master past the checked-out HEAD, and the
+restart is then refused). The admitted SHA is
 frozen and rechecked by `dev-aspire.ps1`. `-NoBuild` does not skip the identity
 check. SHA equality is committed-build provenance, not dirty-file attestation.
 Postgres, the runner on 17204, and live detached pty-host / herdr sessions survive.
@@ -137,11 +139,12 @@ show a rebuild after the client change before checking the browser. Use
 | Lock | Lifetime |
 |---|---|
 | `logs/apphost.restart.lock` | Held through restart. Exit 0 and detected build failure remove it; health timeout, exit 4, and exit 5 (unverified server build) retain its stamp. |
-| `logs/apphost.launch.lock` | Written by `dev-aspire.ps1` during launch and removed on script exit, including a successful dashboard start. |
+| `logs/apphost.launch.lock` | Written by `dev-aspire.ps1` during launch and removed on script exit, including a successful dashboard start. On a detected build failure restart kills its child and removes this lock only when the child is its recorded holder. |
 
 A present lock with a stamp younger than 15 minutes is active **even if its
 holder PID is gone**: the child may still be launching (CARD-0310). An unreadable
-lock is also treated as active. A stamp at least 15 minutes old is ignored.
+lock is also treated as active. A stamp at least 15 minutes old, or one from
+before the last OS boot (whatever its PID), is ignored.
 Do not delete a fresh lock merely because its holder exited.
 
 ```powershell
@@ -197,7 +200,12 @@ rolled back.
   auto-start scripts ASCII-only for Windows PowerShell 5.1 fallback.
 - **Antiphon AppHost Watchdog** runs every two minutes, delayed 15 minutes after
   logon. It probes API `/health` and the client root over HTTP, skips fresh
-  launch/restart locks, and does not count exit 3 as a restart.
+  launch/restart locks, and restarts at the main checkout's CURRENT HEAD
+  (`-ExpectedSha <HEAD>`), logging a WARN when that is not origin/master; recovery
+  never refuses because origin/master moved on. A refused restart (exit 3) is
+  logged WARN/ERROR with its refusal lines and counts toward the flap cap. The
+  logon task (`autostart-apphost.ps1`) pins HEAD the same way and returns
+  `dev-aspire.ps1`'s non-zero exit at once instead of waiting for health.
 - To suppress recovery for deliberate downtime, run
   `pwsh -File scripts/set-apphost-maintenance.ps1` before stopping the stack.
   This records intent and disables the watchdog; it does not stop AppHost itself.
