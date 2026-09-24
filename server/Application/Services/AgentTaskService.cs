@@ -1158,7 +1158,7 @@ public sealed class AgentTaskService
 
         // CARD-0604 D-15/D-19. A remote task is admitted only in the exact shape the runner has: the
         // configured runner with delegated tasks on, a Worktree workspace, a Grok or Claude Code
-        // kind (CARD-0628), no agent pin or OnAgent follow-up, and SourceLanding only as a Mutation
+        // kind (CARD-0628) or a Codex Worker (CARD-0660), no agent pin or OnAgent follow-up, and SourceLanding only as a Mutation
         // (Cut B, whose custody the runner itself is asked about below). Everything else is refused
         // HERE rather than queued forever.
         var remoteRunnerId = runnerIntent.RemoteRunnerId;
@@ -1170,8 +1170,14 @@ public sealed class AgentTaskService
                 throw new ValidationException(nameof(request.RunnerId), "Delegated tasks are not enabled for this session runner.");
             if (workspace != WorkspaceMode.Worktree)
                 throw new ValidationException(nameof(request.RunnerId), "A runner-bound task must use a Worktree workspace.");
-            if (!PhoneHomeLaunchPolicy.IsAdmittedKind(agentKind))
-                throw new ValidationException(nameof(request.RunnerId), "A runner-bound task must be Grok or Claude Code.");
+            // CARD-0660 D-7/D-10: an explicitly named runner also takes Codex, as an ordinary Worker
+            // task. The default placement below still keeps Codex on the desktop until S7.
+            if (!PhoneHomeLaunchPolicy.IsExplicitRunnerTaskKind(agentKind))
+                throw new ValidationException(nameof(request.RunnerId), "A runner-bound task must be Grok, Claude Code or Codex.");
+            if (agentKind == AgentKind.Codex && request.Kind != AgentTaskKind.Worker)
+                throw new ValidationException(nameof(request.RunnerId), "A runner-bound Codex task must be a Worker.");
+            if (agentKind == AgentKind.Codex && request.SourceLandingOperationId is not null)
+                throw new ValidationException(nameof(request.RunnerId), "A runner-bound Codex task cannot use SourceLanding.");
             if (request.AgentId is not null || !string.IsNullOrWhiteSpace(request.Agent))
                 throw new ValidationException(nameof(request.RunnerId), "A runner-bound task cannot run on a pinned or standing agent.");
             if (!string.IsNullOrWhiteSpace(request.FollowUpOnTask))
@@ -1292,6 +1298,8 @@ public sealed class AgentTaskService
             await RefuseUnauthenticatedGrokAsync(
                 agentKind, task.AgentId, request.LaunchEnvOverride, request.InheritedLlmEnv,
                 request.AllowUnauthenticatedProvider, remoteRunnerId, ct);
+            await RefuseUnauthenticatedRunnerCodexAsync(
+                agentKind, request.AllowUnauthenticatedProvider, remoteRunnerId, ct);
         }
 
         if (repeatOf is not null)
@@ -2273,6 +2281,8 @@ public sealed class AgentTaskService
             AgentLaunchEnv.Parse(task.LaunchEnvOverrideJson),
             AgentLaunchEnv.Parse(task.InheritedLaunchEnvJson),
             allowUnauthenticated: false, task.RunnerId, ct);
+        await RefuseUnauthenticatedRunnerCodexAsync(
+            task.AgentKind, allowUnauthenticated: false, task.RunnerId, ct);
 
         await RequeueAsync(
             task, AgentTaskEventType.Retried, task.ModelLevel,
@@ -3615,6 +3625,58 @@ public sealed class AgentTaskService
         var finding = GrokCredentialStore.Inspect(grokHome, env);
         if (GrokCredentialStore.IsLaunchBlocking(finding))
             throw new ProviderSignInRequiredException(grokHome);
+    }
+
+    /// <summary>
+    /// CARD-0660 D-9: the bound on the create/retry question to a runner, the same five seconds the
+    /// dispatcher allows before its claim. A runner that does not answer in time is "unknown".
+    /// </summary>
+    private static readonly TimeSpan RunnerCodexProbeBudget = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// CARD-0660 D-9: 409 <c>provider_sign_in_required</c> for a runner-bound Codex create/retry
+    /// whose runner reports no Codex login. Only the selected runner is asked, only a definite
+    /// Codex-attributed "no" refuses, and a desktop Codex task is never probed: no desktop store
+    /// stands in for the runner's. Unknown, unavailable and timed-out answers admit (the
+    /// dispatcher and runner backstops remain); the caller's own cancellation propagates.
+    /// </summary>
+    private async Task RefuseUnauthenticatedRunnerCodexAsync(
+        AgentKind agentKind,
+        bool allowUnauthenticated,
+        string? runnerId,
+        CancellationToken ct)
+    {
+        if (allowUnauthenticated
+            || agentKind != AgentKind.Codex
+            || string.IsNullOrWhiteSpace(runnerId)
+            || _phoneHome is not { CodexAuthProbeEnabled: true })
+            return;
+
+        if (_runners is null)
+        {
+            _logger.LogWarning(
+                "Codex credential probe skipped for runner {RunnerId}: no session-runner directory", runnerId);
+            return;
+        }
+
+        RunnerProviderAuthDto? answer;
+        using (var budget = CancellationTokenSource.CreateLinkedTokenSource(ct))
+        {
+            budget.CancelAfter(RunnerCodexProbeBudget);
+            try
+            {
+                answer = await _runners.Resolve(runnerId).GetProviderAuthAsync("codex", budget.Token);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                _logger.LogWarning(ex, "Codex credential probe unavailable for runner {RunnerId}", runnerId);
+                return;
+            }
+        }
+
+        if (answer is { LoggedIn: false }
+            && string.Equals(answer.Provider, "codex", StringComparison.OrdinalIgnoreCase))
+            throw ProviderSignInRequiredException.ForCodex(_phoneHome.ChildCodexHome, runnerId);
     }
 
     private async Task<AgentTask?> FindLaunchFailureRepeatAsync(

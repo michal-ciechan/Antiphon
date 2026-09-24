@@ -157,11 +157,13 @@ public sealed class DefaultRunnerPinTests
             "runner source=default requested=unset default=server2 selected=local reason=routing_exhausted", Case.Sensitive);
         kit.Directory.ResolveCalls.ShouldBeEmpty("an exhausted walk never consults the readiness gate");
 
-        // Explicit remote + Codex still refuses at create.
-        await Should.ThrowAsync<ValidationException>(() => service.CreateAsync(
+        // CARD-0660: explicit remote + Codex is admitted and keeps the named runner, while the
+        // automatic choice above still keeps Codex on the desktop.
+        var codexRemote = await service.CreateAsync(
             new CreateAgentTaskRequest("c659 codex remote", Role: AgentTaskRole.Review, AgentKind: AgentKind.Codex,
                 Workspace: WorkspaceMode.Worktree, RunnerId: "server2"),
-            kit.Caller, CancellationToken.None));
+            kit.Caller, CancellationToken.None);
+        (await kit.ReadAsync(codexRemote.Id)).Task.RunnerId.ShouldBe("server2");
     }
 
     [Test]

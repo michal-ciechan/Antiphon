@@ -62,6 +62,30 @@ public sealed class PhoneHomeRunnerSettingsValidatorTests
         settings.AllowDelegatedTasks.ShouldBeFalse("delegated tasks are opt-in, not a default");
         settings.ChildClaudeHome.ShouldBe("/state/claude");
         settings.ClaudeAuthProbeEnabled.ShouldBeTrue();
+        settings.ChildCodexHome.ShouldBe("/state/codex");
+        settings.CodexAuthProbeEnabled.ShouldBeTrue();
+    }
+
+    [Test]
+    public void Child_codex_home_must_be_a_persistent_posix_path()
+    {
+        // CARD-0660 D-3. The runner-state home the compose file and the runner's probe also name.
+        foreach (var valid in new[] { "/state/codex", "/state/codex/", "/var/lib/antiphon/codex" })
+            PhoneHomeRunnerSettingsRules.Validate(Settings(s => s.ChildCodexHome = valid)).ShouldBeEmpty(valid);
+
+        foreach (var invalid in new[]
+                 {
+                     "", "   ", "state/codex", @"C:\Users\x\.codex", "~/.codex", "/state/../tmp/codex",
+                     "/tmp", "/tmp/", "/tmp/codex", "/",
+                 })
+        {
+            PhoneHomeRunnerSettingsRules.Validate(Settings(s => s.ChildCodexHome = invalid))
+                .ShouldContain(m => m.Contains("ChildCodexHome", StringComparison.Ordinal), $"'{invalid}'");
+        }
+
+        // A disabled runner validates nothing, the Codex home included.
+        PhoneHomeRunnerSettingsRules.Validate(new PhoneHomeRunnerSettings { Enabled = false, ChildCodexHome = "/tmp/codex" })
+            .ShouldBeEmpty();
     }
 
     [Test]

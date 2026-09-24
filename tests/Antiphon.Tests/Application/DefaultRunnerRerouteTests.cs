@@ -84,15 +84,16 @@ public sealed class DefaultRunnerRerouteTests
         (await verify.AgentSessions.CountAsync()).ShouldBe(0, "no session anywhere, desktop or runner");
         world.Directory.ResolveCalls.ShouldNotContain((string?)null, "nothing was prepared against the desktop runner");
 
-        // A persisted/legacy mismatch (no rewalk involved) is fenced before any claim as well.
+        // A persisted/legacy mismatch (no rewalk involved) is fenced before any claim as well. CARD-0660:
+        // an explicitly placed Codex task is no longer a mismatch, so the fenced kind is OpenCode.
         var legacyId = await SeedRemoteTaskAsync(schema, workspace.Path, routingPinId: null, AgentTaskStatus.Queued,
-            kind: AgentKind.Codex);
+            kind: AgentKind.OpenCode);
         var second = await CreateDispatcher(schema, eligible: true).Dispatcher.TickAsync(CancellationToken.None);
         second.Dispatched.ShouldBe(0);
         await using var verify2 = CreateContext(schema);
         var legacy = await verify2.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == legacyId);
         legacy.Status.ShouldBe(AgentTaskStatus.Blocked);
-        legacy.AgentKind.ShouldBe(AgentKind.Codex);
+        legacy.AgentKind.ShouldBe(AgentKind.OpenCode);
         legacy.RunnerId.ShouldBe(Runner);
         legacy.FailureReason.ShouldNotBeNull().ShouldContain("runner_kind_unsupported");
         legacy.WorktreePath.ShouldBeNull();
@@ -231,9 +232,10 @@ public sealed class DefaultRunnerRerouteTests
             await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             using var workspace = new TempWorkspace();
             var parentSessionId = await SeedParentSessionAsync(schema, workspace.Path);
-            // A persisted Codex kind on a runner: the pre-claim fence Blocks it on the first tick.
+            // A persisted kind the runner cannot run (OpenCode; CARD-0660 admits an explicit Codex):
+            // the pre-claim fence Blocks it on the first tick.
             var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, routingPinId: null, AgentTaskStatus.Queued,
-                kind: AgentKind.Codex, parentSessionId: parentSessionId);
+                kind: AgentKind.OpenCode, parentSessionId: parentSessionId);
             var fault = new BlockNoteFault(cut, taskId, parentSessionId);
 
             try

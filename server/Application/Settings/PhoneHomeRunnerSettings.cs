@@ -110,6 +110,12 @@ public static class PhoneHomeRunnerSettingsRules
             failures.Add("PhoneHomeRunner:ChildGrokHome must be a POSIX absolute path.");
         if (string.IsNullOrWhiteSpace(options.ChildClaudeHome) || !options.ChildClaudeHome.StartsWith('/'))
             failures.Add("PhoneHomeRunner:ChildClaudeHome must be a POSIX absolute path.");
+        // CARD-0660 D-3: the persistent runner-state home, never a temporary one.
+        if (string.IsNullOrWhiteSpace(options.ChildCodexHome) || !options.ChildCodexHome.StartsWith('/')
+            || options.ChildCodexHome.Split('/').Contains(".."))
+            failures.Add("PhoneHomeRunner:ChildCodexHome must be a POSIX absolute path.");
+        else if (options.ChildCodexHome.TrimEnd('/') is "/tmp" or "" || options.ChildCodexHome.StartsWith("/tmp/", StringComparison.Ordinal))
+            failures.Add("PhoneHomeRunner:ChildCodexHome must be a persistent path, not /tmp or the filesystem root.");
         if (!Uri.TryCreate(options.CallbackOrigin, UriKind.Absolute, out var origin)
             || (origin.Scheme != Uri.UriSchemeHttp && origin.Scheme != Uri.UriSchemeHttps))
             failures.Add("PhoneHomeRunner:CallbackOrigin must be an absolute http(s) URI.");
