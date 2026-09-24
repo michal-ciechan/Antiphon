@@ -156,7 +156,7 @@ public class WorktreeManagerStartRefFetchTests
         catch (OperationCanceledException)
         {
             try { process.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-            throw new TimeoutException($"git {string.Join(" ", arguments)} timed out after {GitTimeout.TotalSeconds:0}s");
+            throw new System.TimeoutException($"git {string.Join(" ", arguments)} timed out after {GitTimeout.TotalSeconds:0}s");
         }
         return (process.ExitCode, await stdoutTask, await stderrTask);
     }
