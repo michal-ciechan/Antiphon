@@ -396,6 +396,26 @@ public sealed class DelegationWorktreeService
             throw new ConflictException("verification_creation_identity_mismatch");
         var common = await _landingGit.CommonDirectoryAsync(task.RepoPath, ct);
         if (!_leases.Owns(lease, common)) throw new ConflictException("repository_lease_required");
+        // CARD-0659 (review 5de2b154). A runner-bound snapshot lives on the runner: WorktreePath is a
+        // runner-side POSIX path that means nothing on this filesystem. Re-check the recorded
+        // coordinates through that runner, exactly as creation did, never against the desktop.
+        if (task.RunnerId is not null)
+        {
+            if (_verificationWorkspaces is null || task.VerificationCreationJson is null)
+                throw new ConflictException("verification_creation_identity_mismatch");
+            var recorded = System.Text.Json.JsonSerializer
+                .Deserialize<global::Antiphon.SessionRunner.Contracts.VerificationCreationCoordinates>(task.VerificationCreationJson);
+            if (recorded is null || recorded.CreationId == Guid.Empty
+                || !string.Equals(recorded.WorktreePath, task.WorktreePath, StringComparison.Ordinal)
+                || !string.Equals(recorded.Branch, task.WorktreeBranch, StringComparison.Ordinal))
+                throw new ConflictException("verification_creation_identity_mismatch");
+            var remote = await _verificationWorkspaces.Resolve(task.RunnerId)
+                .ValidateAsync(recorded, task.SourceLandingSha, ct);
+            if (!remote.Valid)
+                throw new ConflictException(remote.Reason ?? "verification_creation_identity_mismatch");
+            return;
+        }
+
         var creation = await _worktrees.ReadVerificationCreationAsync(task.WorktreePath, ct);
         if (creation is null || creation.CreationId == Guid.Empty || creation.InitialSha != task.SourceLandingSha
             || creation.Branch != task.WorktreeBranch)
