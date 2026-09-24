@@ -33,7 +33,7 @@ public class PhoneHomeDeferredKillTests
         host.Directory.MarkRecovered(live);
         // The launch is acknowledged; its first ready read is never answered, and the socket drops
         // under it, so the clean-up kill finds no connection to send on.
-        peer.SilentFor(PhoneHomeOperation.Buffer);
+        peer.SilentFor(PhoneHomeOperation.Snapshot);
         await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
@@ -91,7 +91,11 @@ public class PhoneHomeDeferredKillTests
             sessionId, h.AgentId,
             new AgentLaunchSpec("fake", AgentKind.Raw, "fake", [], new Dictionary<string, string>(), h.TempRoot, 120, 30),
             remoteControlName: null, resume: false, notes: null, CancellationToken.None);
-        await peer.WaitForAsync(PhoneHomeOperation.Buffer, TimeSpan.FromSeconds(10));
+        var ready = peer.WaitForAsync(PhoneHomeOperation.Snapshot, TimeSpan.FromSeconds(10));
+        if (await Task.WhenAny(ready, launch) == launch)
+            throw new InvalidOperationException(
+                $"The launch ended before its first ready read: {launch.Exception?.GetBaseException()}");
+        await ready;
         peer.RequestCount(PhoneHomeOperation.Launch).ShouldBe(1);
         peer.Socket.Abort();
         try
