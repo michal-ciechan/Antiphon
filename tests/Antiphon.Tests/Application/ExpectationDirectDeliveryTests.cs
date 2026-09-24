@@ -427,4 +427,138 @@ public sealed class ExpectationDirectDeliveryTests
         (await f.DeliverAsync(control.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Confirmed);
         adapter.Inputs.ShouldBe([control.Body, "\r"]);
     }
+
+    [Test]
+    public async Task C650_Submitted_echo_above_a_readable_composer_does_not_hold()
+    {
+        // Review 02e08ff1: the prompt was submitted and its echo stays in the conversation, but no
+        // transcript record ever arrives (NoTranscriptRecord). Claude's composer is readable, and
+        // it is empty, so the echo above it must not hold ordinary input forever.
+        await using var f = await ExpectationDeliveryFixture.CreateAsync();
+        var adapter = f.Harness.Adapter;
+        adapter.ClaudeComposerChrome = true;
+        adapter.OnSubmitted = submitted =>
+        {
+            adapter.Emit("\n> " + submitted + "\n");
+            return Task.CompletedTask;
+        };
+        var nudge = await f.NudgeAsync();
+        (await f.DeliverAsync(nudge.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Unconfirmed);
+        (await f.ReloadAsync(nudge.Id)).AttemptState.ShouldBe(ExpectationAttemptState.Unconfirmed,
+            "sanity: no record carries the body, so it cannot be Submitted");
+        adapter.SubmittedBodies.ShouldBe([nudge.Body], "sanity: the Enter was taken");
+        var screen = adapter.SnapshotRenderedScreen();
+        screen.Contains(nudge.Body, StringComparison.Ordinal).ShouldBeTrue("sanity: the echo is on screen");
+        Antiphon.Agents.Pty.ClaudeScreen.TryReadComposer(screen, out var composer).ShouldBeTrue();
+        composer.ShouldBeEmpty("sanity: the composer region is empty");
+
+        await f.Harness.Queue.EnqueueAsync(f.SessionId, "land note for CARD-0641", MessageSendMode.WhenIdle, CancellationToken.None);
+        await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
+        adapter.SubmittedBodies.ShouldContain("land note for CARD-0641", "an empty composer releases the hold");
+        await f.Harness.Queue.EnqueueAsync(f.SessionId, "operator send now", MessageSendMode.Now, CancellationToken.None);
+        adapter.SubmittedBodies.ShouldContain("operator send now");
+        adapter.KillCount.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C650_Swallowed_enter_keeps_holding_while_the_composer_shows_the_body()
+    {
+        // The same Claude layout, but the Enter is swallowed: the body is still in the composer.
+        await using var f = await ExpectationDeliveryFixture.CreateAsync();
+        var adapter = f.Harness.Adapter;
+        adapter.ClaudeComposerChrome = true;
+        adapter.SwallowSubmits = 99;
+        var nudge = await f.NudgeAsync();
+        (await f.DeliverAsync(nudge.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Unconfirmed);
+        adapter.SubmittedBodies.ShouldBeEmpty("sanity: nothing was submitted");
+        Antiphon.Agents.Pty.ClaudeScreen.TryReadComposer(adapter.SnapshotRenderedScreen(), out var composer).ShouldBeTrue();
+        composer.ShouldContain("Expectation nudge", Case.Sensitive, "sanity: the body stands in the composer");
+        var writes = adapter.Inputs.Count;
+
+        await f.Harness.Queue.EnqueueAsync(f.SessionId, "land note for CARD-0641", MessageSendMode.WhenIdle, CancellationToken.None);
+        await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
+        var refused = await Should.ThrowAsync<ConflictException>(() => f.Harness.Queue.EnqueueAsync(
+            f.SessionId, "operator send now", MessageSendMode.Now, CancellationToken.None));
+        refused.Message.ShouldContain($"/api/sessions/{f.SessionId:D}/expectation-hold/release",
+            Case.Sensitive, "the refusal tells the operator the audited release exists");
+        adapter.Inputs.Count.ShouldBe(writes, "nothing is typed on top of the body in the composer");
+
+        // Only the tail of a long body is visible once its head scrolls out of the composer. The
+        // composer is still not empty, so it still holds.
+        adapter.PrimeComposer(nudge.Body[^24..]);
+        await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
+        adapter.Inputs.Count.ShouldBe(writes, "a partly visible body still holds");
+
+        // A proven empty composer releases it.
+        adapter.SwallowSubmits = 0;
+        adapter.PrimeComposer(string.Empty);
+        await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
+        adapter.SubmittedBodies.ShouldBe(["land note for CARD-0641"]);
+        adapter.KillCount.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C650_Operator_release_clears_a_whole_screen_hold_with_an_audit_and_no_input()
+    {
+        // No readable composer region (the bare fake screen), so the whole-screen rule applies and
+        // the submitted echo holds. The operator's audited release is the way out.
+        await using var f = await ExpectationDeliveryFixture.CreateAsync();
+        var adapter = f.Harness.Adapter;
+        adapter.OnSubmitted = submitted =>
+        {
+            adapter.Emit("\n> " + submitted + "\n");
+            return Task.CompletedTask;
+        };
+        var task = await f.SubjectTaskAsync();
+        var nudge = await f.NudgeAsync(checkTaskId: task);
+        (await f.DeliverAsync(nudge.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Unconfirmed);
+        (await f.ReloadAsync(nudge.Id)).AttemptState.ShouldBe(ExpectationAttemptState.Unconfirmed);
+        Antiphon.Agents.Pty.ClaudeScreen.TryReadComposer(adapter.SnapshotRenderedScreen(), out _)
+            .ShouldBeFalse("sanity: no composer region on this screen");
+        var route = $"/api/sessions/{f.SessionId:D}/expectation-hold/release";
+
+        // The hold names the release in the nudge's Check note and on its audit card.
+        await using (var db = f.Db())
+        {
+            (await db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == task && e.Type == AgentTaskEventType.Check
+                && e.Detail!.Contains(route))).ShouldBeTrue("the Check note names the release route");
+            (await db.CardComments.AnyAsync(c => c.CardId == f.World.CardId && c.Body.Contains(route)))
+                .ShouldBeTrue("the audit card names the release route");
+        }
+
+        await f.Harness.Queue.EnqueueAsync(f.SessionId, "land note for CARD-0641", MessageSendMode.WhenIdle, CancellationToken.None);
+        await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
+        var writes = adapter.Inputs.Count;
+        adapter.SubmittedBodies.ShouldBe([nudge.Body], "sanity: the echo holds under the whole-screen rule");
+
+        await Should.ThrowAsync<ValidationException>(() => f.Harness.Queue.ReleaseExpectationHoldAsync(
+            f.SessionId, "  ", CancellationToken.None));
+        var released = await f.Harness.Queue.ReleaseExpectationHoldAsync(
+            f.SessionId, "checked the pane: the nudge was submitted", CancellationToken.None);
+        released.ReleasedNudgeIds.ShouldBe([nudge.Id]);
+        adapter.Inputs.Count.ShouldBe(writes, "the release types nothing");
+
+        var stored = await f.ReloadAsync(nudge.Id);
+        stored.AttemptState.ShouldBe(ExpectationAttemptState.Released);
+        stored.OperatorOutboxState.ShouldBe(ExpectationOperatorOutboxState.Due, "release is not a receipt; the page stays due");
+        await using (var db = f.Db())
+        {
+            (await db.CardComments.CountAsync(c => c.CardId == f.World.CardId
+                && c.Body.Contains("[expectation-hold-released:" + nudge.Id.ToString("D") + "]")
+                && c.Body.Contains("checked the pane: the nudge was submitted"))).ShouldBe(1);
+            (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task && e.Type == AgentTaskEventType.Check
+                && e.Detail!.Contains("[expectation-hold-released:" + nudge.Id.ToString("D") + "]"))).ShouldBe(1);
+        }
+
+        // Released, so ordinary input proceeds. A second release finds nothing and records nothing.
+        await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
+        adapter.SubmittedBodies.ShouldBe([nudge.Body, "land note for CARD-0641"]);
+        (await f.Harness.Queue.ReleaseExpectationHoldAsync(f.SessionId, "again", CancellationToken.None))
+            .ReleasedNudgeIds.ShouldBeEmpty();
+        await using (var db = f.Db())
+        {
+            (await db.CardComments.CountAsync(c => c.Body.Contains("[expectation-hold-released:"))).ShouldBe(1);
+        }
+        adapter.KillCount.ShouldBe(0);
+    }
 }
