@@ -19,7 +19,8 @@ namespace Antiphon.Server.Application.Services;
 /// </para>
 /// Every refusal names the ref, the repository and which of these it was, each with its own code.
 /// </summary>
-public sealed class StartRefAvailability(ILandingGit git, ILogger<StartRefAvailability> logger, TimeSpan? fetchTimeout = null)
+public sealed class StartRefAvailability(
+    ILandingGit git, IRepositoryMutationLease leases, ILogger<StartRefAvailability> logger, TimeSpan? fetchTimeout = null)
 {
     public const string NotFullShaCode = "worktree_start_ref_not_full_sha";
     public const string NotCommitCode = "worktree_start_ref_not_commit";
@@ -27,6 +28,7 @@ public sealed class StartRefAvailability(ILandingGit git, ILogger<StartRefAvaila
     public const string FetchTimeoutCode = "worktree_start_ref_fetch_timeout";
     public const string FetchFailedCode = "worktree_start_ref_fetch_failed";
     public const string NotOnOriginCode = "worktree_start_ref_not_on_origin";
+    public const string RepositoryBusyCode = "worktree_start_ref_repository_busy";
 
     /// <summary>
     /// Sized for an interactive create call, not a bulk transfer: one commit's objects. One deadline
