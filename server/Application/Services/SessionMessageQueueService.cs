@@ -399,6 +399,7 @@ public sealed partial class SessionMessageQueueService
             try
             {
                 await EnsureRulesAllowOrdinaryInputAsync(sessionId, ct);
+                await EnsureNoUnconfirmedExpectationBodyAsync(sessionId, ct);
                 var capturedGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
                 outcome = await DeliverAsync(sessionId, nowBody, ct, nowBaseline);
                 if (outcome.Verdict == DeliveryVerdict.ForbiddenBody)
@@ -690,6 +691,7 @@ public sealed partial class SessionMessageQueueService
         TranscriptBaseline nowBaseline;
         try
         {
+            await EnsureNoUnconfirmedExpectationBodyAsync(sessionId, ct);
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var now = UtcNow();
@@ -1080,6 +1082,7 @@ public sealed partial class SessionMessageQueueService
         try
         {
             await EnsureRulesAllowOrdinaryInputAsync(sessionId, ct);
+            await EnsureNoUnconfirmedExpectationBodyAsync(sessionId, ct);
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var message = await db.SessionQueuedMessages
@@ -1795,6 +1798,10 @@ public sealed partial class SessionMessageQueueService
         // are the other two.
         if (HeldBackTypingBlocksTheComposer(
                 sessionId, pending, deliverable, sessionGeneration))
+            return late.Handled > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
+
+        // CARD-0650 D-7: the same hold for an unconfirmed watchdog prompt of this generation.
+        if (await ExpectationBodyBlocksComposerAsync(db, sessionId, sessionGeneration, ct))
             return late.Handled > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
 
         pending = deliverable;
@@ -2942,7 +2949,10 @@ public sealed partial class SessionMessageQueueService
     // confirm loop reads identical. Callers with nothing to persist (Now-mode) pass none.
     private async Task<DeliveryOutcome> DeliverAsync(
         Guid sessionId, string body, CancellationToken ct, TranscriptBaseline? stampedBaseline = null,
-        PtyDeliveryCeilings? ceilings = null, DateTime? firstInputDeadlineAt = null)
+        PtyDeliveryCeilings? ceilings = null, DateTime? firstInputDeadlineAt = null,
+        // CARD-0650 D-7: the watchdog's direct send disables both overlay arms (S6 proactive Esc,
+        // S5 Esc-and-retype). Every existing caller keeps the default.
+        bool overlayRecovery = true)
     {
         // Line endings are normalized to LF before anything touches the PTY. Measured against real
         // Claude (probe runs 2026-07-31): a \n in written input is ALWAYS a literal newline in the
@@ -3080,7 +3090,7 @@ public sealed partial class SessionMessageQueueService
         // pre-send snapshot. A generic "looks like a modal" match is refused (CARD-0047).
         // At most one Esc per delivery — if this arm fires, S5 must not send another.
         var overlayDismissed = false;
-        if (verify && kind is { } overlayKind)
+        if (overlayRecovery && verify && kind is { } overlayKind)
         {
             // CARD-0241 S4: the question popup's body is the answer. Do not Esc — DetectFragments
             // for Grok stays /usage-only so S6 cannot dismiss a live question.
@@ -3126,7 +3136,8 @@ public sealed partial class SessionMessageQueueService
             // a session parked on a tool-permission modal is mid-turn, so working is true and
             // no Esc is sent. Re-typing is legal here: Enter was withheld, so nothing submitted.
             var recovered = false;
-            if (!overlayDismissed
+            if (overlayRecovery
+                && !overlayDismissed
                 && kind is { } recoverKind
                 && await TryDismissOverlayAsync(sessionId, recoverKind, ct))
             {
