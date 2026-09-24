@@ -52,6 +52,9 @@ public sealed class RemoteWorkspaceService
     /// <summary>CARD-0657 D-3. The whole settlement sync attempt's deadline.</summary>
     public TimeSpan SyncBudget { get; init; } = TimeSpan.FromSeconds(45);
 
+    /// <summary>The clock <see cref="SyncBudget"/> is measured on.</summary>
+    public TimeProvider Clock { get; init; } = TimeProvider.System;
+
     /// <summary>The mirror directory name for a task: the dispatcher's own short form.</summary>
     public static string MirrorName(Guid taskId) => "task-" + taskId.ToString("N")[..8];
 
@@ -133,13 +136,13 @@ public sealed class RemoteWorkspaceService
             || !PathsEqual(task.WorktreePath, baseline.RegisteredCheckout))
             return Outcome(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.IdentityMismatch, fullRef);
 
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        deadline.CancelAfter(SyncBudget);
+        using var budget = new CancellationTokenSource(SyncBudget, Clock);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct, budget.Token);
         try
         {
-            return await SyncOwnedCheckoutAsync(task, baseline, fullRef, deadline.Token);
+            return await SyncAdmittedAsync(task, baseline, fullRef, deadline.Token);
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested && deadline.IsCancellationRequested)
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested && budget.IsCancellationRequested)
         {
             return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.Timeout, fullRef, baseline.LocalSha);
         }
@@ -153,6 +156,44 @@ public sealed class RemoteWorkspaceService
                 task.Id, ex.GetType().Name);
             return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable,
                 fullRef, baseline.LocalSha);
+        }
+    }
+
+    /// <summary>
+    /// CARD-0657 D-3 step 1. The whole sync runs as an admitted workspace consumer, so retirement
+    /// cannot claim the checkout between the checks and the fast-forward. The consumer is released
+    /// however the sync ends, including on timeout or cancellation.
+    /// </summary>
+    private async Task<RemoteSettlementSyncResult> SyncAdmittedAsync(
+        AgentTask task, ProgressSourceBaseline baseline, string fullRef, CancellationToken ct)
+    {
+        if (_reservations is null)
+            return await SyncOwnedCheckoutAsync(task, baseline, fullRef, ct);
+
+        var admitted = await _reservations.TryAdmitConsumerAsync(new WorkspaceReservationCommand(
+            WorkspaceReservationKey.ForTask(task.WorktreePath, task.WorkingDirectory, task.WorktreeBranch, task.RepoPath),
+            WorkspaceReservationKind.Launch, task.Id), ct);
+        if (!admitted.Accepted)
+            return Outcome(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.RetirementReserved,
+                fullRef, baseline.LocalSha);
+        try
+        {
+            return await SyncOwnedCheckoutAsync(task, baseline, fullRef, ct);
+        }
+        finally
+        {
+            if (admitted.Snapshot is { } consumer)
+            {
+                try
+                {
+                    await _reservations.ReleaseConsumerAsync(consumer.Id, consumer.Generation, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("Settlement sync for task {Task} could not release its workspace consumer ({Type})",
+                        task.Id, ex.GetType().Name);
+                }
+            }
         }
     }
 
@@ -295,14 +336,6 @@ public sealed class RemoteWorkspaceService
             return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.EndpointAmbiguous);
         if (!string.Equals(fingerprint, baseline.Remote.EndpointFingerprint, StringComparison.OrdinalIgnoreCase))
             return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.EndpointChanged);
-
-        if (_reservations is not null)
-        {
-            var active = await _reservations.ReadActiveAsync(WorkspaceReservationKey.ForTask(
-                task.WorktreePath, task.WorkingDirectory, task.WorktreeBranch, task.RepoPath), ct);
-            if (active.Any(r => r.Kind == WorkspaceReservationKind.Retirement))
-                return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.RetirementReserved);
-        }
 
         string worktree;
         try
