@@ -1,4 +1,3 @@
-using System.Net;
 using System.Runtime.ExceptionServices;
 using Microsoft.AspNetCore.Mvc;
 using Antiphon.Server.Application.Dtos;
@@ -7,6 +6,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Security;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Options;
 
@@ -49,10 +49,11 @@ public static class SessionRunnerEndpoints
             Guid sessionId,
             RunnerSlotReleaseRequest body,
             PhoneHomeRunnerDirectory directory,
+            IOptions<PhoneHomeRunnerSettings> settings,
             [FromServices] AppDbContext db,
             CancellationToken ct) =>
         {
-            RequireLocalOperator(http);
+            RequireOperator(http, settings.Value);
             return await ReleaseOrReconcileAsync(
                 () => RunnerSlotService.ReleaseAsync(directory, db, runnerId, sessionId, body.Reason, ct),
                 directory, db, sessionId, ct);
@@ -63,10 +64,11 @@ public static class SessionRunnerEndpoints
             string runnerId,
             RunnerSlotReleaseRequest body,
             PhoneHomeRunnerDirectory directory,
+            IOptions<PhoneHomeRunnerSettings> settings,
             [FromServices] AppDbContext db,
             CancellationToken ct) =>
         {
-            RequireLocalOperator(http);
+            RequireOperator(http, settings.Value);
             return await ReleaseOrReconcileAsync(
                 () => RunnerSlotService.ReleaseOrphansAsync(directory, db, runnerId, body.Reason, ct),
                 directory, db, null, ct);
@@ -125,29 +127,17 @@ public static class SessionRunnerEndpoints
     }
 
     /// <summary>
-    /// Same predicate as Hangfire's <c>LocalRequestsOnlyAuthorizationFilter</c> on <c>/hangfire</c>.
-    /// An unknown address is not local. The default admin identity is not a credential.
+    /// CARD-0653: force-release needs the operator credential. The client address proves nothing:
+    /// the public vhost arrives through Caddy and Vite as a loopback connection.
     /// </summary>
-    internal static bool IsLocalOperator(HttpContext http)
+    private static void RequireOperator(HttpContext http, PhoneHomeRunnerSettings settings)
     {
-        var remote = http.Connection.RemoteIpAddress;
-        if (remote is null)
-            return false;
-        var text = remote.ToString();
-        if (text is "127.0.0.1" or "::1")
-            return true;
-        var local = http.Connection.LocalIpAddress;
-        if (local is not null && remote.Equals(local))
-            return true;
-        return IPAddress.IsLoopback(remote);
-    }
-
-    private static void RequireLocalOperator(HttpContext http)
-    {
-        if (!IsLocalOperator(http))
+        var path = OperatorTokenFile.ResolvePath(settings.OperatorTokenPath);
+        var provided = http.Request.Headers[OperatorTokenFile.Header].ToString();
+        if (!OperatorTokenFile.Matches(OperatorTokenFile.ReadOrCreate(path), provided))
             throw new ForbiddenException(
-                "Force-release is only accepted from the local machine.",
-                "local_operator_required");
+                "Force-release requires the operator token (scripts/runner-slots.ps1 sends it).",
+                "operator_token_required");
     }
 
     /// <summary>

@@ -65,7 +65,7 @@ public static class RunnerSlotService
         CancellationToken ct)
     {
         var text = RequireReason(reason);
-        await ReleaseOneAsync(directory, db, runnerId, sessionId, text, ct);
+        await ReleaseOneAsync(directory, db, runnerId, sessionId, text, fromOrphanSweep: false, ct);
         return new RunnerSlotReleaseDto(1, [sessionId]);
     }
 
@@ -86,7 +86,7 @@ public static class RunnerSlotService
                 || row.OpenTaskId != slot.OpenTaskId
                 || !IsOrphan(row.Live, row.OpenTaskId is not null, row.PooledWarm))
                 continue;
-            await ReleaseOneAsync(directory, db, runnerId, slot.SessionId, text, ct);
+            await ReleaseOneAsync(directory, db, runnerId, slot.SessionId, text, fromOrphanSweep: true, ct);
             released.Add(slot.SessionId);
         }
 
@@ -94,63 +94,139 @@ public static class RunnerSlotService
     }
 
     /// <summary>
-    /// Finish desktop audits whose runner release already happened and whose save did not.
-    /// A seat the runner still lists is released again; a seat it has already dropped is only audited.
+    /// Finish desktop audits whose runner release may have happened and whose save did not. This
+    /// never kills: an intent is finished by auditing only, and only once the runner no longer
+    /// lists the session. A seat the runner still holds stays pending, so a refused or stale
+    /// release is never retried here. An intent from an orphan sweep is re-checked first: a
+    /// seat a task claimed since the sweep is marked failed and its desktop row is left alone.
+    /// Each intent is isolated, so one that throws (an unreachable runner, a failed save) does
+    /// not block the rest; it stays pending for the next pass. Runs at startup, on the
+    /// <c>RunnerSlotReconcileJob</c> schedule, and after a failed force-release request.
     /// </summary>
     public static async Task<IReadOnlyList<Guid>> ReconcilePendingReleasesAsync(
         PhoneHomeRunnerDirectory directory, AppDbContext db, CancellationToken ct)
     {
-        var pending = await db.AgentIncidents
+        var pending = await db.AgentIncidents.AsNoTracking()
             .Where(incident => incident.Kind == AgentIncidentKind.RunnerSlotReleaseIntent
                 && incident.FailureReason != null
                 && incident.FailureReason.StartsWith(PendingPrefix))
+            .OrderBy(incident => incident.CreatedAt)
+            .Select(incident => new { incident.Id, incident.SessionId, incident.FailureReason, incident.Message })
             .ToListAsync(ct);
         var finished = new List<Guid>();
         foreach (var intent in pending)
         {
-            if (intent.SessionId is not Guid sessionId)
-                continue;
-            var runnerId = intent.FailureReason![PendingPrefix.Length..];
-            var listed = await directory.Resolve(runnerId).ListAsync(ct);
-            if (listed.Any(session => session.SessionId == sessionId))
-                await directory.Resolve(runnerId).ReleaseSlotAsync(sessionId, intent.Message, ct);
-            await AuditAsync(db, runnerId, sessionId, intent.Message, ct);
-            intent.FailureReason = ReconciledMarker;
-            finished.Add(sessionId);
+            try
+            {
+                var (runnerId, fromOrphanSweep) = ParsePending(intent.FailureReason!);
+                if (intent.SessionId is not Guid sessionId)
+                {
+                    await MarkAsync(db, intent.Id, FailedPrefix + "the intent names no session", ct);
+                    continue;
+                }
+
+                var listed = await directory.Resolve(runnerId).ListAsync(ct);
+                if (listed.Any(session => session.SessionId == sessionId))
+                    continue;
+                if (fromOrphanSweep)
+                {
+                    var current = await LoadDesktopAsync(db, [sessionId], ct);
+                    var row = current[sessionId];
+                    if (!IsOrphan(row.Live, row.OpenTaskId is not null, row.PooledWarm))
+                    {
+                        await MarkAsync(db, intent.Id, FailedPrefix + "the seat was claimed after the orphan sweep", ct);
+                        continue;
+                    }
+                }
+
+                if (await FinishAsync(db, runnerId, sessionId, intent.Message, ct))
+                    finished.Add(sessionId);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                db.ChangeTracker.Clear();
+            }
         }
 
-        if (finished.Count > 0)
-            await db.SaveChangesAsync(ct);
         return finished;
     }
 
     private const string PendingPrefix = "pending:";
+    private const string OrphanMarker = "orphan:";
+    private const string FailedPrefix = "failed:";
     private const string ReconciledMarker = "reconciled";
+
+    private static (string RunnerId, bool FromOrphanSweep) ParsePending(string failureReason)
+    {
+        var rest = failureReason[PendingPrefix.Length..];
+        return rest.StartsWith(OrphanMarker, StringComparison.Ordinal)
+            ? (rest[OrphanMarker.Length..], true)
+            : (rest, false);
+    }
 
     private static async Task ReleaseOneAsync(
         PhoneHomeRunnerDirectory directory, AppDbContext db, string runnerId, Guid sessionId, string reason,
-        CancellationToken ct)
+        bool fromOrphanSweep, CancellationToken ct)
     {
-        db.AgentIncidents.Add(NewIntent(runnerId, sessionId, reason));
+        var intent = NewIntent(runnerId, sessionId, reason, fromOrphanSweep);
+        db.AgentIncidents.Add(intent);
         await db.SaveChangesAsync(ct);
-        await directory.Resolve(runnerId).ReleaseSlotAsync(sessionId, reason, ct);
-        await AuditAsync(db, runnerId, sessionId, reason, ct);
-        var intent = db.AgentIncidents.Local.First(incident =>
-            incident.Kind == AgentIncidentKind.RunnerSlotReleaseIntent
-            && incident.SessionId == sessionId
-            && incident.FailureReason == PendingPrefix + runnerId);
-        intent.FailureReason = ReconciledMarker;
-        await db.SaveChangesAsync(ct);
+        try
+        {
+            await directory.Resolve(runnerId).ReleaseSlotAsync(sessionId, reason, ct);
+        }
+        catch (Exception ex) when (ex is ConflictException or RunnerProblemException)
+        {
+            // The runner answered and refused: nothing was released, so the intent is final.
+            // A lost answer (transport, timeout, unavailable) stays pending for the reconcile.
+            var detail = FailedPrefix + ex.Message;
+            if (detail.Length > AgentIncident.FailureReasonMaxLength)
+                detail = detail[..AgentIncident.FailureReasonMaxLength];
+            await MarkAsync(db, intent.Id, detail, CancellationToken.None);
+            throw;
+        }
+
+        await FinishAsync(db, runnerId, sessionId, reason, ct);
     }
 
-    private static AgentIncident NewIntent(string runnerId, Guid sessionId, string reason) => new()
+    /// <summary>
+    /// Claim every pending intent for this seat and audit once. The claim is a conditional
+    /// update inside the audit's transaction, so a concurrent reconcile cannot audit twice and a
+    /// failed audit save leaves the intents pending.
+    /// </summary>
+    private static async Task<bool> FinishAsync(
+        AppDbContext db, string runnerId, Guid sessionId, string reason, CancellationToken ct)
+    {
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var direct = PendingPrefix + runnerId;
+        var swept = PendingPrefix + OrphanMarker + runnerId;
+        var claimed = await db.AgentIncidents
+            .Where(incident => incident.Kind == AgentIncidentKind.RunnerSlotReleaseIntent
+                && incident.SessionId == sessionId
+                && (incident.FailureReason == direct || incident.FailureReason == swept))
+            .ExecuteUpdateAsync(set => set.SetProperty(incident => incident.FailureReason, ReconciledMarker), ct);
+        if (claimed == 0)
+            return false;
+        await AuditAsync(db, runnerId, sessionId, reason, ct);
+        await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+        return true;
+    }
+
+    private static Task<int> MarkAsync(AppDbContext db, Guid intentId, string failureReason, CancellationToken ct) =>
+        db.AgentIncidents
+            .Where(incident => incident.Id == intentId && incident.FailureReason != null
+                && incident.FailureReason.StartsWith(PendingPrefix))
+            .ExecuteUpdateAsync(set => set.SetProperty(incident => incident.FailureReason, failureReason), ct);
+
+    private static AgentIncident NewIntent(string runnerId, Guid sessionId, string reason, bool fromOrphanSweep) => new()
     {
         Id = Guid.NewGuid(),
         SessionId = sessionId,
         Kind = AgentIncidentKind.RunnerSlotReleaseIntent,
         Severity = AlertSeverity.Warning,
         Message = reason,
-        FailureReason = PendingPrefix + runnerId,
+        FailureReason = PendingPrefix + (fromOrphanSweep ? OrphanMarker : "") + runnerId,
         CreatedAt = DateTime.UtcNow,
     };
 
