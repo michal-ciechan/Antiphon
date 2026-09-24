@@ -49,6 +49,7 @@ public static class RemoteSettlementSyncReasons
 {
     public const string NoPushedProgress = "runner_no_pushed_progress";
     public const string BranchNotPushed = "runner_branch_not_pushed";
+    public const string ReportedCommitNotPushed = "runner_reported_commit_not_pushed";
     public const string Dirty = "runner_sync_dirty";
     public const string Sequencer = "runner_sync_sequencer_active";
     public const string IdentityMismatch = "runner_sync_identity_mismatch";

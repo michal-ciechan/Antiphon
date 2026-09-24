@@ -268,6 +268,8 @@ try
     // courier holds a one-shot body per live session, and the workspace service is stateless.
     builder.Services.AddSingleton<RemoteSpillCourier>();
     builder.Services.AddScoped<RemoteWorkspaceService>();
+    // CARD-0657 D-1: the pre-attribution sync the completion evaluator prepares through.
+    builder.Services.AddScoped<IRemoteSettlementSync>(sp => sp.GetRequiredService<RemoteWorkspaceService>());
     builder.Services.AddHttpClient<SessionRunnerHttpClient>((sp, client) =>
     {
         var runnerSettings = sp.GetRequiredService<IOptions<SessionRunnerSettings>>().Value;
