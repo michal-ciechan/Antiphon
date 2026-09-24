@@ -308,8 +308,8 @@ that slice. Every row is commissioned; R and G are distinct invocations, not hid
 
 | CP | After | Build | Group | Filter / exact command | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1R | S1-red | `tests/Antiphon.Tests -> bin-c644-s1/` | default-red | `/*/*/(WorktreeDefaultAdmissionTests)\|(DelegateScriptWorkspaceDefaultTests)/*` | V-1,V-2 | All 12 methods executed; designated default/admission failures, no build/fixture error | 12 | 1.5 |
-| CP-1G | S1 | `tests/Antiphon.Tests -> bin-c644-s1/` | default-green | `/*/*/(WorktreeDefaultAdmissionTests)\|(DelegateScriptWorkspaceDefaultTests)/*` | V-1,V-2 | All 12, 0 failed/skipped | 12 | 1.5 |
+| CP-1R | S1-red | `tests/Antiphon.Tests -> bin-c644-s1/` | default-red | `/*/Antiphon.Tests.Application/(WorktreeDefaultAdmissionTests*)\|(DelegateScriptWorkspaceDefaultTests*)/*` | V-1,V-2 | All 12 methods executed; designated default/admission failures, no build/fixture error | 12 | 1.5 |
+| CP-1G | S1 | `tests/Antiphon.Tests -> bin-c644-s1/` | default-green | `/*/Antiphon.Tests.Application/(WorktreeDefaultAdmissionTests*)\|(DelegateScriptWorkspaceDefaultTests*)/*` | V-1,V-2 | All 12, 0 failed/skipped | 12 | 1.5 |
 | CP-2R | S2-red | `tests/Antiphon.Tests -> bin-c644-s2/` | continuation-red | `/*/*/WorktreeDefaultContinuationTests/*` | V-3 | All 8; designated retired/pin failures | 8 | 1.5 |
 | CP-2G | S2 | `tests/Antiphon.Tests -> bin-c644-s2/` | continuation-green | `/*/*/WorktreeDefaultContinuationTests/*` | V-3 | All 8, 0 failed/skipped | 8 | 1.5 |
 | CP-3R | S3-red | `tests/Antiphon.Tests -> bin-c644-s3/` | callers-baseline | `/*/*/WorktreeDefaultCallerTests/*` | V-4 | All 8, 0 failed/skipped; retained behavior baseline | 8 | 1.25 |

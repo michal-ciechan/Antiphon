@@ -1541,6 +1541,26 @@ public class AgentTaskServiceIntegrationTests
         continuedRow.Workspace.ShouldBe(WorkspaceMode.Shared);
         continuedRow.WorkingDirectory.ShouldBe(agentCheckout.Path);
         continuedRow.AgentId.ShouldBe(liveAgentId);
+
+        // A live agent parked in the caller's checkout is the same hazard: omission must not share it.
+        var callerAgentId = await SeedPoolAgentAsync(callerCheckout.Path, AgentModelLevel.Low);
+        var callerPrior = await SeedTaskAsync(
+            AgentTaskKind.Worker, callerCheckout.Path, status: AgentTaskStatus.Succeeded);
+        await PinTaskAgentAsync(callerPrior.Id, callerAgentId);
+        var callerStored = await db.AgentTasks.SingleAsync(task => task.Id == callerPrior.Id);
+        callerStored.Workspace = WorkspaceMode.Worktree;
+        callerStored.WorktreeBranch = "feat/card-task-caller0644";
+        await db.SaveChangesAsync();
+        var beforeCallerFollowUp = await db.AgentTasks.CountAsync();
+        var refusedInCaller = await Should.ThrowAsync<ValidationException>(() => CreateService(db).CreateAsync(
+            NewRequest("do not share the caller checkout", role: AgentTaskRole.Code) with
+            {
+                FollowUpOnTask = DelegationReportFormatter.Short(callerPrior.Id),
+            },
+            ManualCaller(callerCheckout.Path),
+            CancellationToken.None));
+        refusedInCaller.Code.ShouldBe("workspace_followup_requires_worktree");
+        (await db.AgentTasks.CountAsync()).ShouldBe(beforeCallerFollowUp);
     }
 
     [Test]

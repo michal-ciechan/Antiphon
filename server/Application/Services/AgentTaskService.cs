@@ -364,6 +364,11 @@ public sealed class AgentTaskService
 
             if (followAgent is null)
             {
+                // CARD-0644 review / CARD-0636. S2 will continue a retired Worktree at its frozen
+                // tip. Until then an omitted workspace must not become Shared in the caller's checkout.
+                if (request.Workspace is null && prior.Workspace == WorkspaceMode.Worktree)
+                    await RefuseOmittedWorktreeFollowUpAsync(prior, caller, ct);
+
                 var completionHeader = await CompletionHeaderAsync(prior.Id, ct);
                 var cardIdentifier = prior.CardId is Guid cardId
                     ? await _db.Cards.AsNoTracking()
@@ -431,9 +436,16 @@ public sealed class AgentTaskService
                         + "in the session that is already running. Delegate normally to change kind.");
                 }
 
+                var continuedDirectory = request.WorkingDirectory ?? followAgent.WorkingDirectory;
+                // The running checkout is reused as Shared. That reuse is the caller's checkout
+                // only when the agent itself is sitting there — the same CARD-0636 hazard.
+                if (request.Workspace is null && prior.Workspace == WorkspaceMode.Worktree
+                    && LandsInCallerCheckout(continuedDirectory, caller.WorkingDirectory))
+                    await RefuseOmittedWorktreeFollowUpAsync(prior, caller, ct);
+
                 request = request with
                 {
-                    WorkingDirectory = request.WorkingDirectory ?? followAgent.WorkingDirectory,
+                    WorkingDirectory = continuedDirectory,
                     Workspace = WorkspaceMode.Shared,
                     ModelLevel = followAgent.ModelLevel,
                     AgentKind = prior.AgentKind,
@@ -1710,9 +1722,10 @@ public sealed class AgentTaskService
     /// CARD-0644 D-1/D-3/D-5. What an omitted workspace means: a fresh Worker or Orchestrator gets
     /// its own Worktree whatever its role or -Dir (a different location is not isolation); an
     /// explicit existing-agent selection (-Agent / agentId) reuses that agent's checkout. A live
-    /// follow-up has already stamped Shared by the time ResolveWorkspace runs. A RETIRED follow-up
-    /// keeps its pre-CARD-0644 Shared meaning here until S2 gives it the predecessor's frozen tip
-    /// (D-4); a fresh Worktree off the default base would silently drop that branch's work.
+    /// follow-up has already stamped Shared by the time ResolveWorkspace runs, in that agent's
+    /// checkout. A retired follow-up of a Worktree predecessor is refused before this runs
+    /// (workspace_followup_requires_worktree) until S2 continues it at the frozen tip. A retired
+    /// follow-up of any other predecessor still resolves to Shared here.
     /// </summary>
     internal static WorkspaceMode EffectiveRequestedWorkspace(CreateAgentTaskRequest request) =>
         request.Workspace
@@ -1720,6 +1733,38 @@ public sealed class AgentTaskService
             || !string.IsNullOrWhiteSpace(request.FollowUpOnTask)
                 ? WorkspaceMode.Shared
                 : WorkspaceMode.Worktree);
+
+    /// <summary>
+    /// CARD-0644. Omitted workspace after a Worktree predecessor would persist Shared in the
+    /// caller's checkout. Frozen-tip continuation is S2; until then the caller names the tip.
+    /// </summary>
+    private async Task RefuseOmittedWorktreeFollowUpAsync(AgentTask prior, Caller caller, CancellationToken ct)
+    {
+        var tip = string.IsNullOrWhiteSpace(prior.WorktreeBranch)
+            ? "<predecessor tip>"
+            : prior.WorktreeBranch.Trim();
+        var message =
+            $"Task {DelegationReportFormatter.Short(prior.Id)} ran in a Worktree. An omitted workspace would continue it as Shared in the caller's checkout. "
+            + $"Until continuation at the predecessor's frozen tip exists, pass -Worktree -StartRef {tip}.";
+        if (caller.Task is not null)
+            await RecordRejectionAsync(caller.Task, message, ct);
+        throw new ValidationException(
+            nameof(CreateAgentTaskRequest.Workspace), message, "workspace_followup_requires_worktree");
+    }
+
+    private static bool LandsInCallerCheckout(string? directory, string callerDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(directory) || string.IsNullOrWhiteSpace(callerDirectory))
+            return true;
+        try
+        {
+            return PathsEqual(directory, callerDirectory);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return true;
+        }
+    }
 
     private static bool PathsEqual(string a, string b)
     {
