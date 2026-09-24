@@ -53,7 +53,9 @@ switch ($Source) {
         $api = if ($env:ANTIPHON_API) { $env:ANTIPHON_API } else { 'http://localhost:17202' }
         $headers = @{}
         if ($env:ANTIPHON_TASK_TOKEN) { $headers['X-Antiphon-Task-Token'] = $env:ANTIPHON_TASK_TOKEN }
-        $agents = @(Invoke-RestMethod "$api/api/agents" -Headers $headers -ErrorAction Stop)
+        # Invoke-RestMethod already returns an Object[] for this endpoint. Do not wrap the call in
+        # @(): that makes the whole array one pseudo-agent and produces a malformed transcript URL.
+        $agents = Invoke-RestMethod "$api/api/agents" -Headers $headers -ErrorAction Stop
         $sessions = $agents | Where-Object { $_.liveSession -and $_.liveSession.id }
         if ($sessions.Count -eq 0) { throw 'No live agent sessions were returned; use the session id from an agent/task record for a historical transcript.' }
         foreach ($agent in $sessions) {
