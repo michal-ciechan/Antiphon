@@ -45,6 +45,16 @@ public sealed class PhoneHomeRunnerSettings
     /// meanwhile; without the delay a fast-failing List would be re-sent every 50 ms.
     /// </summary>
     public int CatchUpRetrySeconds { get; set; } = 5;
+
+    /// <summary>
+    /// CARD-0653: the owner-only file holding the operator credential for force-release. Empty
+    /// means <c>%LOCALAPPDATA%\Antiphon\operator-token</c> (else the XDG data home).
+    /// </summary>
+    public string OperatorTokenPath { get; set; } = "";
+
+    /// <summary>CARD-0653: how often pending slot-release intents are finished (audit only).</summary>
+    public string SlotReconcileCron { get; set; } = "*/2 * * * *";
+
     public PhoneHomeLimits Limits { get; set; } = new();
 }
 
@@ -89,6 +99,10 @@ public static class PhoneHomeRunnerSettingsRules
             failures.Add("PhoneHomeRunner:LeaseSeconds must be positive.");
         if (options.CatchUpRetrySeconds < 1)
             failures.Add("PhoneHomeRunner:CatchUpRetrySeconds must be at least 1.");
+        if (!string.IsNullOrWhiteSpace(options.OperatorTokenPath) && !Path.IsPathFullyQualified(options.OperatorTokenPath))
+            failures.Add("PhoneHomeRunner:OperatorTokenPath must be an absolute path.");
+        if (string.IsNullOrWhiteSpace(options.SlotReconcileCron))
+            failures.Add("PhoneHomeRunner:SlotReconcileCron must be set when enabled.");
         try { options.Limits.Validate("PhoneHomeRunner:Limits"); }
         catch (InvalidOperationException ex) { failures.Add(ex.Message); }
         return failures;

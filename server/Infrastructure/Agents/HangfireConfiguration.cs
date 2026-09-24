@@ -1,6 +1,7 @@
 using Antiphon.Server.Application.Settings;
 using Hangfire;
 using Hangfire.InMemory;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
 namespace Antiphon.Server.Infrastructure.Agents;
 
@@ -20,6 +21,18 @@ internal static class HangfireConfiguration
             {
                 TimeZone = TimeZoneInfo.FindSystemTimeZoneById(settings.TimeZoneId)
             });
+    }
+
+    /// <summary>CARD-0653: register the pending slot-release reconcile and run it once now.</summary>
+    public static void AddOrUpdateRunnerSlotReconcileJob(
+        IRecurringJobManager manager, PhoneHomeRunnerSettings settings)
+    {
+        manager.AddOrUpdate<RunnerSlotReconcileJob>(
+            RunnerSlotReconcileJob.RecurringJobId,
+            job => job.ExecuteAsync(CancellationToken.None),
+            settings.SlotReconcileCron,
+            new RecurringJobOptions());
+        manager.Trigger(RunnerSlotReconcileJob.RecurringJobId);
     }
 
     public static void AddOrUpdateWorktreeResidueJob(

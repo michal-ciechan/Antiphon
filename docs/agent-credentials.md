@@ -193,6 +193,17 @@ interactive `--reader-login`. The deploy profile that names the host is untracke
 qualification artifact record the destination only as `sha256(chatId)[..16]`. Names and locations only:
 [nightly-watchdog.md § Custody](nightly-watchdog.md#custody).
 
+### Operator token for runner force-release (CARD-0653)
+
+`POST /api/session-runners/{runnerId}/slots/.../release` and `.../release-orphans` require the header
+`X-Antiphon-Operator-Token`. The value is 32 random bytes (hex) in an owner-only file the server creates
+at startup or on first use: `%LOCALAPPDATA%\Antiphon\operator-token` on Windows (protected ACL, one allow
+rule for the server's own account, same pattern as the key ring), else `$XDG_DATA_HOME/antiphon/operator-token`
+(mode 0600). Override with `PhoneHomeRunner:OperatorTokenPath` (absolute). `scripts/runner-slots.ps1` reads it
+(`ANTIPHON_OPERATOR_TOKEN_FILE` overrides the path) and never prints it; the server compares it in constant
+time and never logs it. Rotate by deleting the file and restarting the server. A loopback client address is not
+a credential: the public vhost reaches Kestrel through Caddy and Vite as loopback.
+
 ### server2 runner credentials (CARD-0604)
 
 Two secrets live only on server2 and never enter Antiphon's stores, the desktop scripts, the image
