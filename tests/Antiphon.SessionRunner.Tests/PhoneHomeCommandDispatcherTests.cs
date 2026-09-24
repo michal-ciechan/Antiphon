@@ -584,6 +584,72 @@ public class PhoneHomeCommandDispatcherTests
         runtime.List().Single().AcceptedStartedAt.ShouldBe(generation);
     }
 
+    // --- CARD-0679 D-4: the mutation log line carries ids, exe basename and generations only. ---
+
+    [Test]
+    public async Task Launch_and_kill_log_lines_carry_no_argv_env_cwd_or_error_detail()
+    {
+        const string argSentinel = "ARG-SENTINEL-7f3c-do-not-log";
+        const string envKeySentinel = "ENV_KEY_SENTINEL_7f3c";
+        const string envValueSentinel = "ENV-VALUE-SENTINEL-7f3c";
+        const string cwdSentinel = "/work/worktrees/task-7f3c0bad";
+        var logs = new List<string>();
+        var runtime = new RecordingRuntime();
+        var dispatcher = Dispatcher(runtime, logs: logs);
+        var generation = SessionGeneration.Normalize(new DateTime(2026, 9, 24, 11, 0, 0, DateTimeKind.Utc));
+        var env = new Dictionary<string, string> { [envKeySentinel] = envValueSentinel };
+        var admittedRequest = new RunnerLaunchRequest(Guid.NewGuid(), "/usr/local/bin/grok",
+            ["--prompt", argSentinel], env, cwdSentinel, 80, 24) with { AcceptedStartedAt = generation };
+
+        var admitted = await dispatcher.DispatchAsync(Launch(admittedRequest), CancellationToken.None);
+        admitted.Kind.ShouldBe(PhoneHomeFrameKind.Result, $"{admitted.ErrorCode}: {admitted.ErrorDetail}");
+
+        // A refusal whose detail text is non-empty: the line names the code, never the detail.
+        var refusedRequest = admittedRequest with { SessionId = Guid.NewGuid(), Cwd = "/outside-" + cwdSentinel.TrimStart('/') };
+        var refused = await dispatcher.DispatchAsync(Launch(refusedRequest), CancellationToken.None);
+        refused.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+        refused.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
+        refused.ErrorDetail.ShouldNotBeNullOrWhiteSpace();
+
+        var killSession = Guid.NewGuid();
+        var kill = await dispatcher.DispatchAsync(new PhoneHomeFrame(
+            PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.KillGeneration,
+            JsonSerializer.SerializeToElement(
+                new { sessionId = killSession, expectedAcceptedStartedAt = generation }, PhoneHomeFraming.Json)),
+            CancellationToken.None);
+        kill.Kind.ShouldBe(PhoneHomeFrameKind.Result, $"{kill.ErrorCode}: {kill.ErrorDetail}");
+
+        string[] lines;
+        lock (logs)
+            lines = [.. logs];
+        var all = string.Join(Environment.NewLine, lines);
+
+        var admittedLine = lines.Single(line => line.Contains("Phone-home Launch", StringComparison.Ordinal)
+            && line.Contains(admittedRequest.SessionId.ToString(), StringComparison.Ordinal));
+        admittedLine.ShouldStartWith("[Information]");
+        admittedLine.ShouldContain(" exe=grok ");
+        admittedLine.ShouldContain("outcome=started");
+        admittedLine.ShouldNotContain("/usr/local/bin");
+
+        var refusedLine = lines.Single(line => line.Contains("Phone-home Launch", StringComparison.Ordinal)
+            && line.Contains(refusedRequest.SessionId.ToString(), StringComparison.Ordinal));
+        refusedLine.ShouldStartWith("[Information]");
+        refusedLine.ShouldContain(" exe=grok ");
+        refusedLine.ShouldContain($"outcome=refused:{PhoneHomeProblemTypes.UnsupportedTarget}");
+        refusedLine.ShouldNotContain(refused.ErrorDetail!);
+        refusedLine.ShouldNotContain("cwd must be");
+
+        foreach (var sentinel in new[] { argSentinel, envKeySentinel, envValueSentinel, cwdSentinel, "task-7f3c0bad", "--prompt" })
+            all.ShouldNotContain(sentinel, customMessage: "log leaked " + sentinel + Environment.NewLine + all);
+
+        var killLine = lines.Single(line => line.Contains("Phone-home KillGeneration", StringComparison.Ordinal));
+        killLine.ShouldStartWith("[Information]");
+        killLine.ShouldContain(kill.RequestId.ToString());
+        killLine.ShouldContain($"session={killSession}");
+        killLine.ShouldContain("expectedGeneration=2026-09-24T11:00:00");
+        killLine.ShouldContain($"outcome={KillGenerationOutcomes.Missing}");
+    }
+
     private static PhoneHomeFrame SessionRequest(PhoneHomeOperation operation, long epoch) =>
         new(PhoneHomeFrameKind.Request, epoch, Guid.NewGuid(), operation,
             JsonSerializer.SerializeToElement(new { sessionId = Guid.NewGuid() }, PhoneHomeFraming.Json));
