@@ -29,11 +29,14 @@ public sealed class ExpectationSnapshotReader
 
     private readonly AppDbContext _db;
     private readonly DelegationSettings _delegation;
+    private readonly SupervisionSettings _supervision;
 
-    public ExpectationSnapshotReader(AppDbContext db, DelegationSettings? delegation = null)
+    public ExpectationSnapshotReader(
+        AppDbContext db, DelegationSettings? delegation = null, SupervisionSettings? supervision = null)
     {
         _db = db;
         _delegation = delegation ?? new DelegationSettings();
+        _supervision = supervision ?? new SupervisionSettings();
     }
 
     public async Task<ExpectationSnapshot> ReadAsync(
@@ -457,8 +460,11 @@ public sealed class ExpectationSnapshotReader
 
     /// <summary>
     /// Non-legacy caller notes to sessions the standing agent owns, not yet Confirmed or
-    /// NotRequired. A matching submitted prompt already in the destination transcript excludes
-    /// the note; this read never settles or resends it (CARD-0641 owns that).
+    /// NotRequired. A note is excluded only by CARD-0641's own receipt (<see cref="LandNoteReceipt"/>):
+    /// its keyed queue row was typed into the same destination, and a prompt above that row's
+    /// delivery floor carries the complete expected text. A prompt that merely quotes the body,
+    /// before or without that delivery, leaves the debt open. This read never settles or resends
+    /// the note (CARD-0641 owns that).
     /// </summary>
     private async Task<IReadOnlyList<ExpectationNoteDebt>> ReadNotesAsync(Guid agentId, CancellationToken ct)
     {
@@ -474,8 +480,7 @@ public sealed class ExpectationSnapshotReader
             .OrderBy(note => note.CreatedAt)
             .ThenBy(note => note.Id)
             .Take(100)
-            .Select(note => new
-            {
+            .Select(note => new NoteRow(
                 note.Id,
                 note.TaskId,
                 note.Kind,
@@ -485,7 +490,9 @@ public sealed class ExpectationSnapshotReader
                 note.LastErrorCode,
                 note.QueueMessageId,
                 note.Body,
-            })
+                note.IsLegacy,
+                note.CompletionSnapshotJson != null,
+                note.CompletionDeliveryJson))
             .ToListAsync(ct);
         if (rows.Count == 0)
             return [];
@@ -494,23 +501,25 @@ public sealed class ExpectationSnapshotReader
             .Select(row => row.QueueMessageId!.Value)
             .ToList();
         var queue = queueIds.Count == 0
-            ? new Dictionary<Guid, QueuedMessageStatus>()
+            ? new Dictionary<Guid, QueueRow>()
             : await _db.SessionQueuedMessages.AsNoTracking()
                 .Where(message => queueIds.Contains(message.Id))
-                .ToDictionaryAsync(message => message.Id, message => message.Status, ct);
+                .Select(message => new QueueRow(
+                    message.Id,
+                    message.AgentSessionId,
+                    message.Status,
+                    message.DeliveryAttempts,
+                    message.LastDeliveryBaselineSequence,
+                    message.LastDeliveryStartedAt))
+                .ToDictionaryAsync(message => message.Id, ct);
 
         var results = new List<ExpectationNoteDebt>(rows.Count);
         foreach (var row in rows)
         {
-            var body = row.Body.Trim();
-            var created = row.CreatedAt;
-            var received = body.Length > 0 && await _db.TranscriptEntries.AsNoTracking()
-                .AnyAsync(entry => entry.AgentSessionId == row.ParentSessionId
-                    && (entry.Kind == TranscriptKinds.UserPrompt || entry.Kind == TranscriptKinds.QueuedUserPrompt)
-                    && (entry.Timestamp ?? entry.CreatedAt) >= created
-                    && entry.Text != null
-                    && entry.Text.Contains(body), ct);
-            if (received)
+            QueueRow? keyed = row.QueueMessageId is Guid queueId && queue.TryGetValue(queueId, out var found)
+                ? found
+                : null;
+            if (await IsReceivedAsync(row, keyed, ct))
                 continue;
             results.Add(new ExpectationNoteDebt
             {
@@ -521,13 +530,50 @@ public sealed class ExpectationSnapshotReader
                 CreatedAt = SpecifyUtc(row.CreatedAt),
                 ParentSessionId = row.ParentSessionId,
                 LastErrorCode = row.LastErrorCode,
-                QueueStatus = row.QueueMessageId is Guid queueId && queue.TryGetValue(queueId, out var status)
-                    ? status
-                    : null,
+                QueueStatus = keyed?.Status,
             });
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// CARD-0641's receipt, read-only: the reconciler's expected text (the frozen wire rendering
+    /// for a profiled completion, else the immutable body), destination, kinds and floor.
+    /// </summary>
+    private async Task<bool> IsReceivedAsync(NoteRow row, QueueRow? keyed, CancellationToken ct)
+    {
+        if (row.ParentSessionId is not Guid session
+            || keyed is null
+            || keyed.AgentSessionId != session
+            || keyed.DeliveryAttempts <= 0)
+            return false;
+
+        var expected = row.Body;
+        TaskCompletionNotification.Delivery? rendering = null;
+        if (row.Kind == LandNotificationKind.TaskCompletion && row.HasCompletionSnapshot)
+        {
+            rendering = TaskCompletionNotification.TryReadDelivery(row.CompletionDeliveryJson);
+            if (rendering is null || !rendering.MemberQueueIds.Contains(keyed.Id))
+                return false;
+            expected = rendering.WireText;
+        }
+
+        var prompts = LandNoteReceipt.Prompts(
+            _db.TranscriptEntries.AsNoTracking(),
+            session,
+            row.IsLegacy,
+            row.Kind,
+            keyed.LastDeliveryBaselineSequence,
+            keyed.LastDeliveryStartedAt,
+            _supervision.DeliveryVerification.UnobservableBaselineConfirmClockToleranceSeconds);
+        if (prompts is null)
+            return false;
+        var texts = await prompts.OrderBy(p => p.Sequence).Select(p => p.Text!).ToListAsync(ct);
+        if (!texts.Any(text => LandNoteReceipt.IsReceipt(expected, text)))
+            return false;
+        return rendering?.SpillPath is not { } spillPath
+            || await AgentTaskLandNotificationService.FileHasSha256Async(spillPath, rendering.SpillSha256, ct);
     }
 
     private static List<ExpectationAdmissionCandidate> Admission(
@@ -584,4 +630,26 @@ public sealed class ExpectationSnapshotReader
     private sealed record ScopedTask(TaskRow Row, string RepositoryScope);
 
     private sealed record EventRow(Guid Id, Guid TaskId, AgentTaskEventType Type, DateTime At, string Detail);
+
+    private sealed record NoteRow(
+        Guid Id,
+        Guid TaskId,
+        LandNotificationKind Kind,
+        LandNotificationState State,
+        DateTime CreatedAt,
+        Guid? ParentSessionId,
+        string? LastErrorCode,
+        Guid? QueueMessageId,
+        string Body,
+        bool IsLegacy,
+        bool HasCompletionSnapshot,
+        string? CompletionDeliveryJson);
+
+    private sealed record QueueRow(
+        Guid Id,
+        Guid AgentSessionId,
+        QueuedMessageStatus Status,
+        int DeliveryAttempts,
+        long? LastDeliveryBaselineSequence,
+        DateTime? LastDeliveryStartedAt);
 }

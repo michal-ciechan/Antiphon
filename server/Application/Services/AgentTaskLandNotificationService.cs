@@ -195,28 +195,14 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
             if (row.DeliveryAttempts > 0)
             {
                 await runtime.CatchUpTranscriptAsync(session, ct);
-                // CARD-0641 D-2: a submitted QueuedUserPrompt is receipt for non-legacy Held, Aged,
-                // Conflict and Outcome notes. Housekeeping queue operations and every other kind,
-                // including a legacy Outcome, stay on the UserPrompt contract.
-                var acceptQueued = !note.IsLegacy && note.Kind is LandNotificationKind.Held
-                    or LandNotificationKind.Aged or LandNotificationKind.Conflict or LandNotificationKind.Outcome;
-                var prompts = db.TranscriptEntries.AsNoTracking().Where(p =>
-                    p.AgentSessionId == session && p.Text != null);
-                prompts = acceptQueued
-                    ? prompts.Where(p => p.Kind == TranscriptKinds.UserPrompt || p.Kind == TranscriptKinds.QueuedUserPrompt)
-                    : prompts.Where(p => p.Kind == TranscriptKinds.UserPrompt);
-                if (row.LastDeliveryBaselineSequence is long floor)
-                    prompts = prompts.Where(p => p.Sequence > floor);
-                else if (row.LastDeliveryStartedAt is DateTime started)
-                {
-                    var floorTime = started.AddSeconds(-Math.Max(0, (supervision?.Value ?? new SupervisionSettings())
-                        .DeliveryVerification.UnobservableBaselineConfirmClockToleranceSeconds));
-                    prompts = prompts.Where(p => p.Timestamp >= floorTime);
-                }
-                else return;
+                // CARD-0641 D-2 kinds, destination and delivery floor: LandNoteReceipt, shared with
+                // the CARD-0650 watchdog's read-only note-debt check.
+                var prompts = LandNoteReceipt.Prompts(db.TranscriptEntries.AsNoTracking(), session, note.IsLegacy,
+                    note.Kind, row.LastDeliveryBaselineSequence, row.LastDeliveryStartedAt,
+                    (supervision?.Value ?? new SupervisionSettings()).DeliveryVerification.UnobservableBaselineConfirmClockToleranceSeconds);
+                if (prompts is null) return;
                 var evidence = (await prompts.OrderBy(p => p.Sequence).ToListAsync(ct))
-                    .FirstOrDefault(p => PromptSubmissionMatch.IsConfirmedBy(expected, p.Text!)
-                        && PromptSubmissionMatch.IsCompleteIn(expected, p.Text!));
+                    .FirstOrDefault(p => LandNoteReceipt.IsReceipt(expected, p.Text!));
                 // A pointer prompt proves receipt of the pointer only; the referenced file must still
                 // hold exactly the content that was spilled behind it.
                 if (evidence is not null && rendering?.SpillPath is { } spillPath
