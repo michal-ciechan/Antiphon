@@ -57,7 +57,7 @@ public sealed class PhoneHomeRunnerSettingsValidatorTests
     {
         var settings = new PhoneHomeRunnerSettings();
         settings.RunnerRepository.ShouldBe("/work/repos/antiphon");
-        settings.MaxCapacity.ShouldBe(8);
+        settings.MaxCapacity.ShouldBe(10);
         settings.RawExeAllowList.ShouldBe(["/bin/sh", "/bin/bash", "/usr/local/bin/pwsh"]);
         settings.AllowDelegatedTasks.ShouldBeFalse("delegated tasks are opt-in, not a default");
         settings.ChildClaudeHome.ShouldBe("/state/claude");
