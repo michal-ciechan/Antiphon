@@ -61,7 +61,7 @@ public sealed class PhoneHomeTaskRoutingTests
     public void Task_session_projects_claude_exe_and_config_dir()
     {
         var spec = new Antiphon.Server.Application.Dtos.AgentLaunchSpec(
-            "claude", AgentKind.ClaudeCode, @"C:\Users\x\.local\bin\claude.exe", [],
+            "claude", AgentKind.ClaudeCode, DesktopExe(@"C:\Users\x\.local\bin\claude.exe"), [],
             new Dictionary<string, string>
             {
                 ["DISABLE_AUTOUPDATER"] = "1",
@@ -104,7 +104,7 @@ public sealed class PhoneHomeTaskRoutingTests
         var policy = Policy();
         var agent = PoolAgent();
         var spec = new Antiphon.Server.Application.Dtos.AgentLaunchSpec(
-            "grok", AgentKind.Grok, @"C:\tools\grok.exe", [], new Dictionary<string, string>(),
+            "grok", AgentKind.Grok, DesktopExe(@"C:\tools\grok.exe"), [], new Dictionary<string, string>(),
             @"C:\Antiphon\worktrees\card-task-deadbeef", 80, 24);
 
         var projected = policy.Project(spec, agent, "/work/worktrees/task-deadbeef");
@@ -153,6 +153,13 @@ public sealed class PhoneHomeTaskRoutingTests
         IsPoolDelegate = true,
         WorkingDirectory = @"C:\Antiphon\worktrees\card-task-deadbeef",
     };
+
+    /// <summary>CARD-0681: the spec's Exe is a desktop-host path, and the projection reads its file
+    /// name with the host's Path. Off Windows a backslash is not a separator, so the Windows fixture
+    /// is given in its host (Unix) form there; on Windows it is used unchanged.</summary>
+    private static string DesktopExe(string windowsPath) => OperatingSystem.IsWindows()
+        ? windowsPath
+        : windowsPath.Replace(@"C:\", "/", StringComparison.Ordinal).Replace('\\', '/');
 
     private static PhoneHomeLaunchPolicy Policy() => new(Options.Create(Settings(allowDelegatedTasks: true)));
 

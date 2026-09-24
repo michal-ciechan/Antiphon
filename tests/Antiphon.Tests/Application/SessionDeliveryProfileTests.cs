@@ -12,6 +12,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Application;
 
@@ -76,6 +77,7 @@ public class SessionDeliveryProfileTests
     [Test]
     public async Task Phone_home_Grok_never_uses_local_modern_evidence()
     {
+        RequireLocalModernConPty();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
         var session = new AgentSession
         {
@@ -109,6 +111,7 @@ public class SessionDeliveryProfileTests
     [Test]
     public async Task Phone_home_Claude_keeps_the_inbox_ceiling_for_its_own_kind()
     {
+        RequireLocalModernConPty();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
         var session = new AgentSession
         {
@@ -148,6 +151,16 @@ public class SessionDeliveryProfileTests
         var ceilings = await owned.Profile.ForSessionAsync(db, Guid.NewGuid(), CancellationToken.None);
 
         ceilings.Backend.ShouldBe(owned.Pty.Ceilings.Backend);
+    }
+
+    /// <summary>CARD-0681: these cases prove the phone-home ceiling ignores THIS process's modern
+    /// ConPTY evidence, so this process must resolve modern. ConPTY exists only on Windows; off it
+    /// the local profile is inbox too and the contrast cannot be observed. On Windows a missing
+    /// conpty.dll still fails the local-modern assertion rather than skipping.</summary>
+    private static void RequireLocalModernConPty()
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new SkipTestException("ConPTY only on Windows");
     }
 
     private static async Task<AgentSession> SeedSessionAsync(AppDbContext db, SessionBackend backend)

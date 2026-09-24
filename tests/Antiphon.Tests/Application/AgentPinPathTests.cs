@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Application;
 
@@ -20,6 +21,10 @@ public sealed class AgentPinPathTests
     [Test]
     public void V01_canonical_cwd_uses_windows_separators_and_drops_trailing_slash()
     {
+        // CARD-0681: the canonical cwd is the Windows projection key (backslashes, drive roots);
+        // off Windows Path.GetFullPath treats "D:/src/work/" as relative to the process cwd.
+        if (!OperatingSystem.IsWindows())
+            throw new SkipTestException("Canonical pin cwd is a Windows drive-rooted path");
         var canonical = AgentPinPaths.CanonicalCwd(@"D:/src/work/");
         canonical.ShouldBe(@"D:\src\work");
         AgentPinPaths.CanonicalHost(" Local ").ShouldBe("local");

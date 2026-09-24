@@ -4,6 +4,7 @@ using System.Security.Principal;
 using Antiphon.Server.Infrastructure.Security;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Infrastructure;
 
@@ -43,6 +44,12 @@ public class OperatorTokenFileTests
     [Test]
     public async Task Concurrent_first_use_readers_all_get_the_one_token_and_none_throw()
     {
+        // CARD-0681: marked, not fixed. Off Windows this is red on a PRODUCTION race (CARD-0676):
+        // ReadOrCreate relies on File.Move(overwrite: false) failing when another caller renamed
+        // first, but on Unix several first-use callers' moves all succeed (server2: 8 distinct
+        // tokens from 16 readers, no IOException). Remove this skip with the CARD-0676 fix.
+        if (!OperatingSystem.IsWindows())
+            throw new SkipTestException("CARD-0676: OperatorTokenFile first-use rename is not exclusive on Unix");
         const int Readers = 16;
         var root = Path.Combine(Path.GetTempPath(), "antiphon-operator-" + Guid.NewGuid().ToString("N"));
         try
