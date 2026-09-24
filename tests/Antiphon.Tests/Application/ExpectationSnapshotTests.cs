@@ -297,7 +297,7 @@ public sealed class ExpectationSnapshotTests
                 world.Directive, world.Digest, now, ExpectationProbeInput.None, CancellationToken.None);
             active.DirectiveActive.ShouldBeTrue();
             active.Queued.ShouldContain(task => task.TaskId == queuedId);
-            active.Lanes.ShouldContain(lane => lane.RunnerId is null && lane.Running >= 1 && lane.Queued >= 1);
+            active.Lanes.ShouldContain(lane => lane.RunnerId == null && lane.Running >= 1 && lane.Queued >= 1);
             active.EligibleBacklog.ShouldBe(1);
             active.BacklogCandidateIds.ShouldBe([backlogId]);
         }
